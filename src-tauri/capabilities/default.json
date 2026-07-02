@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Core permissions for the Relay main window. Add capabilities here as real backend commands land (see PROMPT.md build phases).",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}

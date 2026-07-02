@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Relay — Technical Specification (v0.1 draft)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#fbf9f5; --surface:#ffffff; --surface-2:#f4f0e7;
+    --border:#e3dccc;
+    --text:#211d17; --text-dim:#5c5648; --text-faint:#948d7c;
+    --accent:#b96a1e; --accent-soft:#f2e2cc; --accent-line:#e6c497;
+    --green:#3e7d5a; --green-soft:#e3f0e8;
+    --f-display:'Space Grotesk',sans-serif;
+    --f-body:'Inter',sans-serif;
+    --f-mono:'JetBrains Mono',monospace;
+  }
+  *{ box-sizing:border-box; }
+  html{ scroll-behavior:smooth; }
+  body{
+    margin:0; background:var(--bg); color:var(--text);
+    font-family:var(--f-body); font-size:15px; line-height:1.65;
+  }
+  .wrap{ max-width:840px; margin:0 auto; padding:0 24px 100px; }
+
+  /* header */
+  .doc-head{ padding:52px 0 28px; border-bottom:1px solid var(--border); }
+  .eyebrow{ font-family:var(--f-mono); font-size:11.5px; letter-spacing:0.08em; text-transform:uppercase; color:var(--accent); margin-bottom:10px; }
+  h1.title{ font-family:var(--f-display); font-size:36px; font-weight:700; margin:0 0 8px; letter-spacing:-0.01em; }
+  .subtitle{ font-family:var(--f-body); font-size:16px; color:var(--text-dim); margin:0 0 20px; max-width:560px; }
+  .meta-row{ display:flex; flex-wrap:wrap; gap:18px; font-family:var(--f-mono); font-size:12px; color:var(--text-faint); }
+  .meta-row b{ color:var(--text); font-weight:500; }
+
+  /* nav */
+  nav.toc{
+    position:sticky; top:0; z-index:5; background:var(--bg);
+    border-bottom:1px solid var(--border); padding:12px 0; margin-bottom:8px;
+    display:flex; gap:4px; flex-wrap:wrap; font-family:var(--f-mono); font-size:11.5px;
+  }
+  nav.toc a{
+    color:var(--text-dim); text-decoration:none; padding:5px 9px; border-radius:6px;
+    white-space:nowrap;
+  }
+  nav.toc a:hover{ background:var(--accent-soft); color:var(--accent); }
+
+  section{ padding:40px 0; border-bottom:1px solid var(--border); }
+  section:last-of-type{ border-bottom:none; }
+  .sec-num{ font-family:var(--f-mono); font-size:12px; color:var(--accent); font-weight:500; }
+  h2{ font-family:var(--f-display); font-size:23px; font-weight:600; margin:6px 0 16px; letter-spacing:-0.005em; }
+  h3{ font-family:var(--f-display); font-size:16.5px; font-weight:600; margin:26px 0 10px; }
+  p{ margin:0 0 14px; color:var(--text); }
+  p.dim{ color:var(--text-dim); }
+  ul, ol{ margin:0 0 14px; padding-left:22px; }
+  li{ margin-bottom:7px; }
+  strong{ font-weight:600; }
+  code{ font-family:var(--f-mono); font-size:0.87em; background:var(--surface-2); padding:1px 5px; border-radius:4px; }
+
+  .callout{
+    background:var(--accent-soft); border:1px solid var(--accent-line); border-radius:10px;
+    padding:14px 16px; margin:18px 0; font-size:14px;
+  }
+  .callout .label{ font-family:var(--f-mono); font-size:10.5px; text-transform:uppercase; letter-spacing:0.06em; color:var(--accent); margin-bottom:5px; font-weight:600; }
+
+  .callout.good{ background:var(--green-soft); border-color:#bcdcc8; }
+  .callout.good .label{ color:var(--green); }
+
+  table{ width:100%; border-collapse:collapse; margin:16px 0 22px; font-size:13.5px; }
+  th, td{ text-align:left; padding:9px 12px; border-bottom:1px solid var(--border); vertical-align:top; }
+  th{ font-family:var(--f-display); font-weight:600; font-size:12px; text-transform:uppercase; letter-spacing:0.03em; color:var(--text-dim); background:var(--surface-2); }
+  td.mono{ font-family:var(--f-mono); font-size:12.5px; }
+  tr td:first-child{ font-weight:600; }
+
+  pre{
+    background:#1b1e24; color:#e4e6ea; border-radius:10px; padding:16px 18px;
+    overflow-x:auto; font-family:var(--f-mono); font-size:12.5px; line-height:1.6; margin:16px 0;
+  }
+  pre .k{ color:#e8a33d; } pre .s{ color:#8fd0a8; } pre .c{ color:#7c8391; }
+
+  /* diagram */
+  .diagram{ margin:22px 0; }
+  .d-row{ display:flex; gap:10px; margin-bottom:10px; justify-content:center; flex-wrap:wrap; }
+  .d-box{
+    border:1.5px solid var(--border); border-radius:9px; padding:10px 14px; background:var(--surface);
+    font-family:var(--f-display); font-weight:600; font-size:12.5px; text-align:center; flex:1; min-width:120px;
+  }
+  .d-box .d-sub{ font-family:var(--f-body); font-weight:400; font-size:11px; color:var(--text-faint); margin-top:2px; }
+  .d-box.accent{ border-color:var(--accent-line); background:var(--accent-soft); }
+  .d-arrow{ text-align:center; color:var(--text-faint); font-size:15px; margin:2px 0; }
+  .d-note{ text-align:center; font-family:var(--f-mono); font-size:10.5px; color:var(--text-faint); margin:4px 0 10px; }
+  .d-outer{ border:1.5px dashed var(--border); border-radius:12px; padding:14px; }
+  .d-outer-label{ font-family:var(--f-mono); font-size:10.5px; color:var(--text-faint); text-align:center; margin-bottom:10px; text-transform:uppercase; letter-spacing:0.05em; }
+
+  .grid2{ display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+  @media (max-width:640px){ .grid2{ grid-template-columns:1fr; } .d-row{ flex-direction:column; } }
+
+  .glossary dt{ font-family:var(--f-display); font-weight:600; font-size:14px; margin-top:14px; }
+  .glossary dd{ margin:3px 0 0; color:var(--text-dim); }
+
+  footer{ padding:36px 0 0; font-family:var(--f-mono); font-size:11.5px; color:var(--text-faint); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="doc-head">
+    <div class="eyebrow">Technical specification — draft</div>
+    <h1 class="title">Relay</h1>
+    <p class="subtitle">AI-assisted live presentation software for churches. Combines OBS-style capture, ATEM-style multi-output switching (reframed), and ProPresenter-style templated display, driven by real-time scripture detection tuned for African-language services. Built to interoperate with existing gear, not replace it.</p>
+    <div class="meta-row">
+      <span>Version <b>v0.1</b></span>
+      <span>Status <b>Draft — from brainstorm session</b></span>
+      <span>Source session <b>2026-07-02</b></span>
+      <span>Product name <b>Relay (placeholder — rename freely)</b></span>
+    </div>
+  </div>
+
+  <nav class="toc">
+    <a href="#overview">1. Overview</a>
+    <a href="#goals">2. Goals &amp; non-goals</a>
+    <a href="#architecture">3. Architecture</a>
+    <a href="#pipeline">4. AI detection pipeline</a>
+    <a href="#channels">5. Output channels &amp; templates</a>
+    <a href="#data">6. Data model</a>
+    <a href="#stack">7. Platform &amp; stack</a>
+    <a href="#languages">8. Languages</a>
+    <a href="#integration">9. Integration</a>
+    <a href="#roadmap">10. Roadmap</a>
+    <a href="#glossary">Glossary</a>
+  </nav>
+
+  <section id="overview">
+    <div class="sec-num">01</div>
+    <h2>Overview &amp; positioning</h2>
+    <p>Three existing tool categories currently cover live church production: <strong>OBS</strong> (capture, scene compositing, recording, free), <strong>ATEM</strong> (hardware video switching, one program bus from many inputs), and <strong>ProPresenter</strong> (templated lyrics, stage display, timers). <strong>Pewbeam</strong> is a newer, funded competitor that adds real-time AI scripture detection on top of a presentation layer, with paying churches in 30 countries and a stated roadmap toward a full presentation suite.</p>
+    <p>Relay's wedge is not to rebuild all four categories to parity. It's the combination of <strong>AI content intelligence</strong> (what should be on screen, right now, based on what's actually being said) with <strong>independent multi-screen templating</strong> (each screen gets its own style from the same decision) — and doing both with African-language speech understanding as a first-class target, not an afterthought.</p>
+
+    <table>
+      <tr><th>Capability</th><th>OBS</th><th>ATEM</th><th>ProPresenter</th><th>Pewbeam</th><th>Relay (v1)</th></tr>
+      <tr><td>Recording / scene compositing</td><td>Yes</td><td>—</td><td>Limited</td><td>—</td><td class="mono">Not v1 — use OBS</td></tr>
+      <tr><td>Hardware video switching</td><td>—</td><td>Yes</td><td>—</td><td>—</td><td class="mono">Not built — interop only</td></tr>
+      <tr><td>Templated lyrics / stage display</td><td>—</td><td>—</td><td>Yes</td><td>Basic (roadmap)</td><td class="mono">Yes — per-channel templates</td></tr>
+      <tr><td>Live AI scripture detection</td><td>—</td><td>—</td><td>—</td><td>Yes</td><td class="mono">Yes — + context memory</td></tr>
+      <tr><td>Independent output channels, own template each</td><td>—</td><td>Partial (one bus)</td><td>Partial</td><td>Unclear</td><td class="mono">Core design principle</td></tr>
+      <tr><td>African-language STT priority</td><td>—</td><td>—</td><td>—</td><td>English-first today</td><td class="mono">Yoruba / Swahili / Hausa tier 1</td></tr>
+      <tr><td>Offline-first</td><td>N/A</td><td>N/A</td><td>Partial</td><td>Yes</td><td class="mono">Yes</td></tr>
+    </table>
+
+    <div class="callout">
+      <div class="label">Explicit design stance</div>
+      Relay sits <em>above</em> the existing AV chain, not in place of it. It talks to OBS, ATEM, and ProPresenter over NDI, HDMI, and the local network — it does not try to replace what any of them already do well.
+    </div>
+  </section>
+
+  <section id="goals">
+    <div class="sec-num">02</div>
+    <h2>Goals &amp; non-goals</h2>
+    <h3>v1 success criteria</h3>
+    <ul>
+      <li>≥90% correct verse ID on direct quotes, ≥75% on paraphrase, in under 3 seconds (p50), in real live-room audio</li>
+      <li>Wrong-verse rate under 5% of AI triggers, with an always-visible one-tap operator override</li>
+      <li>A full service runs 100% offline, zero internet dependency</li>
+      <li>3+ simultaneous output channels, each with its own template, under 100ms cross-channel sync drift</li>
+      <li>At least one output channel confirmed running on a $50 Raspberry Pi kiosk client</li>
+      <li>NDI output confirmed ingestible by both OBS and vMix</li>
+      <li>Runs smoothly on an 8GB RAM Windows laptop</li>
+      <li>Survives 3 consecutive live Sunday services with zero crashes, and the projection team reports it beats manual control</li>
+    </ul>
+    <h3>Explicit non-goals (v1)</h3>
+    <ul>
+      <li><strong>Not</strong> a recording / scene-compositing replacement for OBS.</li>
+      <li><strong>Not</strong> building native SDI hardware output (Blackmagic DeckLink-class integration) — see §9.</li>
+      <li><strong>Not</strong> a general-purpose AI assistant — scope is strictly live-service content routing.</li>
+      <li><strong>Not</strong> attempting song-lyric/setlist detection in v1 — scripture detection only; worship-set control remains manual (may be a v2 track).</li>
+    </ul>
+  </section>
+
+  <section id="architecture">
+    <div class="sec-num">03</div>
+    <h2>System architecture</h2>
+    <p>One AI decision, fanned out to independently-styled output channels. This deliberately breaks from ATEM's single-program-bus model — see the glossary entry for <em>output channel</em>.</p>
+
+    <div class="diagram">
+      <div class="d-row">
+        <div class="d-box">Audio input<div class="d-sub">mic / mixer feed</div></div>
+        <div class="d-box">Manual control<div class="d-sub">search &amp; override</div></div>
+      </div>
+      <div class="d-arrow">↓</div>
+      <div class="d-row"><div class="d-box accent" style="flex:1 1 100%;">AI understanding core<div class="d-sub">speech-to-text · language ID · verse / topic match</div></div></div>
+      <div class="d-arrow">↓</div>
+      <div class="d-row"><div class="d-box accent" style="flex:1 1 100%;">Content router<div class="d-sub">decides what each output channel shows, and when</div></div></div>
+      <div class="d-arrow">↓</div>
+      <div class="d-row">
+        <div class="d-box">Main screen</div>
+        <div class="d-box">Stage display</div>
+        <div class="d-box">Streaming</div>
+        <div class="d-box">Lobby screen</div>
+      </div>
+      <div class="d-note">↓ NDI / HDMI / same network</div>
+      <div class="d-outer">
+        <div class="d-outer-label">Your existing studio gear — unchanged</div>
+        <div class="d-row">
+          <div class="d-box">OBS Studio</div>
+          <div class="d-box">ATEM switcher</div>
+          <div class="d-box">ProPresenter</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="pipeline">
+    <div class="sec-num">04</div>
+    <h2>AI detection pipeline</h2>
+    <ol>
+      <li><strong>Chunking:</strong> audio → 200–500ms overlapping chunks → voice-activity-detection gate, skip silence.</li>
+      <li><strong>Streaming STT:</strong> local whisper.cpp-class model → rolling partial + final transcript window, with per-chunk language identification (required for English/local-language code-switching, very common in African preaching).</li>
+      <li><strong>Direct pattern match:</strong> regex over the transcript for <code>&lt;book&gt; &lt;chapter&gt;:&lt;verse&gt;</code> shapes, multilingual book-name alias tables per priority language, phonetic-ASR-error tolerance (e.g. "John free sixteen" → John 3:16).</li>
+      <li><strong>Semantic match:</strong> embed the rolling window, vector-similarity search against a pre-embedded verse corpus, return top-k candidates with a confidence score. Catches paraphrase and topical reference.</li>
+      <li><strong>Context memory:</strong> track "current passage" state. If the preacher already anchored on Psalm 23 and later says only "verse 4," resolve against the last active book/chapter rather than requiring a fresh full reference. Not something Pewbeam advertises publicly — a deliberate differentiator.</li>
+      <li><strong>Confidence gating, two-tier:</strong> high confidence (exact regex match, or semantic score above threshold) auto-fires to the program. Mid confidence surfaces as a one-tap "suggested" chip in the operator UI without touching output on its own. Low confidence is dropped silently.</li>
+      <li><strong>Debounce:</strong> ~4–6 second cooldown on repeat auto-fire of the same verse, immediately overridden by any new explicit direct-quote match.</li>
+      <li><strong>Operator override:</strong> first-class, top-of-UI control, one tap — never a buried escape hatch.</li>
+    </ol>
+    <div class="callout">
+      <div class="label">Open / needs real data</div>
+      Exact confidence-score thresholds are not something to guess in a spec — they need tuning against a real transcript + verse corpus once sample sermon audio exists.
+    </div>
+  </section>
+
+  <section id="channels">
+    <div class="sec-num">05</div>
+    <h2>Output channels &amp; template system</h2>
+    <p>A <strong>channel</strong> is a configured destination. A <strong>template</strong> is a layout + style + data-binding definition that any channel can be assigned. The same content event (e.g. "John 3:16 fired") renders differently per channel because each channel points at a different template — not because the content pipeline treats them differently.</p>
+
+    <h3>Render targets</h3>
+    <table>
+      <tr><th>Target type</th><th>What it is</th><th>Maps to</th></tr>
+      <tr><td>Native window</td><td>Borderless fullscreen window pinned to a specific display</td><td>HDMI output</td></tr>
+      <tr><td>Headless render → NDI encode</td><td>Off-screen render, encoded as an NDI source</td><td>NDI output into OBS / ATEM / vMix / ProPresenter</td></tr>
+      <tr><td>Networked browser client</td><td>Any device on the LAN hitting a local URL, state pushed over WebSocket</td><td>Kiosk-mode screens — e.g. a $50 Raspberry Pi</td></tr>
+    </table>
+
+    <h3>Template shape (draft)</h3>
+    <pre>{
+  <span class="k">"id"</span>: <span class="s">"tmpl_main_screen_classic"</span>,
+  <span class="k">"layout"</span>: {
+    <span class="k">"regions"</span>: [
+      { <span class="k">"id"</span>: <span class="s">"verse_text"</span>, <span class="k">"binding"</span>: <span class="s">"content.text"</span>, <span class="k">"align"</span>: <span class="s">"center"</span> },
+      { <span class="k">"id"</span>: <span class="s">"reference"</span>, <span class="k">"binding"</span>: <span class="s">"content.ref"</span>, <span class="k">"align"</span>: <span class="s">"center"</span> }
+    ]
+  },
+  <span class="k">"style"</span>: {
+    <span class="k">"font_display"</span>: <span class="s">"Fraunces"</span>,
+    <span class="k">"background"</span>: <span class="s">"radial-warm-dark"</span>,
+    <span class="k">"transition"</span>: <span class="s">"fade"</span>, <span class="k">"transition_ms"</span>: <span class="s">400</span>
+  }
+}</pre>
+    <p class="dim">Stage display and lobby-screen templates follow the same shape with different region sets (e.g. stage adds a <code>timer</code> region; lobby adds a <code>next_event</code> region) — same engine, different JSON.</p>
+  </section>
+
+  <section id="data">
+    <div class="sec-num">06</div>
+    <h2>Data model (SQLite, local-first)</h2>
+    <pre><span class="c">-- core reference data</span>
+translations(id, name, language, license_type)
+verses(id, translation_id, book, chapter, verse, text)
+
+<span class="c">-- presentation</span>
+templates(id, name, region_config_json, style_json)
+output_channels(id, name, render_target, template_id, display_target, status)
+
+<span class="c">-- live session</span>
+services(id, date, title)
+transcripts(id, service_id, timestamp, text, language, confidence)
+detections(id, transcript_id, verse_id, method, confidence, status, fired_at)
+cues(id, service_id, type, payload_json, triggered_at)</pre>
+    <p class="dim"><code>detections.method</code> is <code>direct</code> or <code>semantic</code>. <code>detections.status</code> is <code>auto</code>, <code>suggested</code>, or <code>dismissed</code>. All tables local by default, matching the offline-first / local-trust posture set in §2.</p>
+  </section>
+
+  <section id="stack">
+    <div class="sec-num">07</div>
+    <h2>Platform &amp; tech stack</h2>
+    <table>
+      <tr><th>Layer</th><th>Choice</th><th>Why</th></tr>
+      <tr><td>Core engine</td><td class="mono">Rust</td><td>Real-time audio/inference workloads suit Rust's performance and FFI story to C SDKs (NDI, whisper.cpp) better than a Node-based core</td></tr>
+      <tr><td>Desktop shell</td><td class="mono">Tauri</td><td>~10–20x smaller install than Electron, lower idle memory — matters on modest hardware and unreliable power in the target market</td></tr>
+      <tr><td>UI framework</td><td class="mono">Svelte (suggested)</td><td>Small bundle, no heavy runtime — consistent with the lean-footprint priority. Swappable for React if the team prefers it; not a load-bearing decision</td></tr>
+      <tr><td>Speech-to-text</td><td class="mono">whisper.cpp-class, local-first</td><td>Offline reliability; optional cloud fallback when online; keeps door open to community African-language fine-tunes</td></tr>
+      <tr><td>Local data</td><td class="mono">SQLite (rusqlite)</td><td>Local-first trust posture, zero external dependency</td></tr>
+      <tr><td>Local distribution</td><td class="mono">WebSocket (tokio-tungstenite)</td><td>Powers networked-browser-client output channels</td></tr>
+      <tr><td>Video-over-IP</td><td class="mono">NDI SDK via Rust FFI</td><td>Free SDK, industry standard for over-network broadcast interop</td></tr>
+      <tr><td>Platforms</td><td class="mono">Windows + macOS, day one</td><td>Near-free with Rust+Tauri; Windows dominant in target market on cost grounds, macOS present in wealthier/urban churches</td></tr>
+    </table>
+  </section>
+
+  <section id="languages">
+    <div class="sec-num">08</div>
+    <h2>Priority languages &amp; STT strategy</h2>
+    <table>
+      <tr><th>Tier</th><th>Language</th><th>Rationale</th></tr>
+      <tr><td>1</td><td>Swahili</td><td>Strongest existing Whisper coverage of any African language — cheapest accuracy win</td></tr>
+      <tr><td>1</td><td>Yoruba</td><td>Largest addressable church market (Nigeria), reasonable Common Voice data, heavy English code-switching in real preaching</td></tr>
+      <tr><td>1</td><td>Hausa</td><td>~80M speakers, growing dataset support, Northern Nigeria / Niger / Chad reach</td></tr>
+      <tr><td>2 (post-v1)</td><td>Igbo</td><td>Large market, dataset maturity lower today</td></tr>
+      <tr><td>Parked</td><td>Zulu, Amharic, Twi, Shona, others</td><td>Low-resource — need dedicated fine-tuning effort, not yet scoped</td></tr>
+    </table>
+    <p class="dim">Community datasets to evaluate for fine-tuning: Masakhane (African NLP research), Mozilla Common Voice. Code-switching handling (English mixed mid-sentence with a local language) is treated as a first-class requirement, not an edge case — it's the normal case in target-market preaching.</p>
+  </section>
+
+  <section id="integration">
+    <div class="sec-num">09</div>
+    <h2>Integration &amp; interoperability</h2>
+    <div class="grid2">
+      <div>
+        <h3>NDI</h3>
+        <p class="dim">Free SDK, cross-platform. Relay is an NDI source; OBS, ATEM (NDI-enabled models), vMix, and ProPresenter can all ingest it directly.</p>
+      </div>
+      <div>
+        <h3>HDMI</h3>
+        <p class="dim">Not a special integration — a borderless fullscreen window on whichever display is physically connected via HDMI. Cheap, no hardware SDK needed.</p>
+      </div>
+    </div>
+    <h3>SDI — explicitly out of scope</h3>
+    <p>True SDI I/O requires dedicated capture/output hardware (Blackmagic DeckLink-class) and a C++ SDK — high engineering cost for narrow reach. <strong>Decision: not building it.</strong> Anyone with SDI-based gear already owns hardware (an ATEM, or a standalone converter) that accepts NDI or HDMI input and re-outputs SDI. Relay's NDI/HDMI output preserves full SDI-setup compatibility without owning the SDI hardware problem.</p>
+  </section>
+
+  <section id="roadmap">
+    <div class="sec-num">10</div>
+    <h2>Roadmap &amp; open questions</h2>
+    <h3>Still open</h3>
+    <ul>
+      <li>Business model — free/open-source core with a paid AI tier (Pewbeam's model), fully open source, or something else</li>
+      <li>Exact confidence-score thresholds — needs real transcript/corpus testing</li>
+      <li>Book-name alias tables + phonetic-error tolerance lists for the three tier-1 languages</li>
+      <li>Full detail on the output-channel template/style editor UX</li>
+    </ul>
+    <h3>Parked, not eliminated</h3>
+    <ul>
+      <li>Native SDI hardware output — revisit only if a real target segment has SDI gear with no ATEM/converter at all</li>
+      <li>Recording / full scene compositing — OBS already does this well; not a differentiation target</li>
+      <li>Song-lyric / setlist detection — separate subsystem, not scoped for v1</li>
+    </ul>
+  </section>
+
+  <section id="glossary">
+    <div class="sec-num">—</div>
+    <h2>Glossary</h2>
+    <dl class="glossary">
+      <dt>Output channel</dt>
+      <dd>An independently-styled destination (a screen, a stream, a kiosk) that receives its own template rendering of the same underlying content decision. Deliberately not modeled as an ATEM-style single program bus.</dd>
+      <dt>Content router</dt>
+      <dd>The subsystem that decides what each output channel shows, and when, based on AI detections and manual cues.</dd>
+      <dt>Render target</dt>
+      <dd>How a channel's template is actually output — native window (HDMI), headless NDI encode, or networked browser client (kiosk).</dd>
+      <dt>Direct match</dt>
+      <dd>Regex-based detection of an explicit spoken reference, e.g. "John 3:16."</dd>
+      <dt>Semantic match</dt>
+      <dd>Embedding + vector-similarity detection of a paraphrased or topical scripture reference.</dd>
+      <dt>Context memory</dt>
+      <dd>Tracking the "current passage" so a bare "verse 4" resolves against the last-referenced book/chapter.</dd>
+      <dt>Confidence gating</dt>
+      <dd>Two-tier trigger logic — high confidence auto-fires, mid confidence surfaces as an operator-confirmable suggestion, low confidence is dropped.</dd>
+    </dl>
+  </section>
+
+  <footer>
+    Generated from the tracked brainstorm document (multiview-v1.md, session 2026-07-02). Treat every "suggested" and "draft" label in this spec as exactly that — open to revision as real testing happens.
+  </footer>
+
+</div>
+</body>
+</html>

@@ -1,0 +1,24 @@
+[package]
+name = "relay"
+version = "0.1.0"
+description = "AI-assisted live presentation software for churches"
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rusqlite = { version = "0.31", features = ["bundled"] }
+tokio = { version = "1", features = ["full"] }
+tokio-tungstenite = "0.23"
+
+# Added in later build phases — uncomment as each phase lands (see PROMPT.md):
+# whisper-rs = "0.11"        # Phase 4 — local speech-to-text
+# ndi-sdk-sys or equivalent  # Phase 10 — NDI render target (evaluate available crates, may need custom FFI bindings)
+
+[[bin]]
+name = "relay"
+path = "src/main.rs"

@@ -1,0 +1,21 @@
+# Rust
+/src-tauri/target/
+# Cargo.lock IS committed — Relay ships as an application, not a library:
+# a pinned lockfile gives reproducible builds across dev machines and CI.
+
+# Node
+node_modules/
+dist/
+
+# Local data — never commit real service/sermon data
+*.db
+*.sqlite
+*.sqlite3
+
+# Env / secrets
+.env
+.env.local
+
+# OS
+.DS_Store
+Thumbs.db
