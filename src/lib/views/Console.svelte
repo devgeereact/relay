@@ -1,14 +1,20 @@
 <script>
-  import { capture, transcript } from '../stores/capture.js';
+  import { capture, transcript, detections } from '../stores/capture.js';
 
-  // Transcript panel is LIVE (Phase 4): finals + in-progress partial come from
-  // the STT engine over `stt://transcript`. Detection cards + channel previews
-  // are still static demo data until Phase 5/6 wire the detection pipeline.
+  // Transcript + detection list are LIVE (Phase 4/5): transcript from the STT
+  // engine, detections from direct-match over `detection://match`. Channel
+  // previews are still static demo until the router/template phases.
   $: hasTranscript = $transcript.finals.length > 0 || $transcript.partial.length > 0;
+
+  // Confidence styling previews the Phase 6 gate: ≥0.90 reads as live/high,
+  // below as a suggestion. Real auto-fire vs suggest gating lands in the router.
+  const pct = (c) => Math.round(c * 100);
 
   // Operator override (search box) is a first-class control per CLAUDE.md —
   // it stays here at the top of the console, always reachable, never a fallback.
-  const detections = [
+
+  // Shown only when no live detections yet — keeps the console legible at rest.
+  const demoDetections = [
     { ref: 'John 3:16',   state: 'is-live',    tag: 'Auto-fired', pct: 96, conf: '0.96 · direct match',  action: 'undo' },
     { ref: 'Romans 8:28', state: 'is-suggest', tag: 'Suggested',  pct: 71, conf: '0.71 · paraphrase',    action: 'confirm' },
   ];
@@ -41,22 +47,49 @@
       {/if}
     </div>
 
-    <div class="panel-title" style="margin-top:16px;">AI detection <span class="count">{detections.length} active</span></div>
+    <div class="panel-title" style="margin-top:16px;">
+      AI detection
+      {#if $detections.length}<span class="count">{$detections.length} recent</span>
+      {:else}<span class="count">2 demo</span>{/if}
+    </div>
     <div class="detect-list">
-      {#each detections as d}
-        <div class="detect-card {d.state}">
-          <div class="detect-top"><div class="detect-ref">{d.ref}</div><div class="detect-tag">{d.tag}</div></div>
-          <div class="detect-meter"><i style="width:{d.pct}%;"></i></div>
-          <div class="detect-bottom">
-            <span class="detect-conf">{d.conf}</span>
-            {#if d.action === 'confirm'}
-              <button class="btn-confirm">Confirm</button>
-            {:else}
-              <button class="btn-ghost">Undo</button>
+      {#if $detections.length}
+        {#each $detections as d (d.reference + d.at)}
+          <div class="detect-card {d.confidence >= 0.9 ? 'is-live' : 'is-suggest'}">
+            <div class="detect-top">
+              <div class="detect-ref">{d.reference}</div>
+              <div class="detect-tag">{d.confidence >= 0.9 ? 'High' : 'Suggested'}</div>
+            </div>
+            <div class="detect-meter"><i style="width:{pct(d.confidence)}%;"></i></div>
+            <div class="detect-bottom">
+              <span class="detect-conf">{d.confidence.toFixed(2)} · {d.method}{d.in_library ? '' : ' · not in library'}</span>
+              {#if d.confidence >= 0.9}
+                <button class="btn-ghost">Undo</button>
+              {:else}
+                <button class="btn-confirm">Confirm</button>
+              {/if}
+            </div>
+            {#if d.text}
+              <div class="detect-verse">"{d.text}"</div>
             {/if}
           </div>
-        </div>
-      {/each}
+        {/each}
+      {:else}
+        {#each demoDetections as d}
+          <div class="detect-card {d.state}">
+            <div class="detect-top"><div class="detect-ref">{d.ref}</div><div class="detect-tag">{d.tag}</div></div>
+            <div class="detect-meter"><i style="width:{d.pct}%;"></i></div>
+            <div class="detect-bottom">
+              <span class="detect-conf">{d.conf}</span>
+              {#if d.action === 'confirm'}
+                <button class="btn-confirm">Confirm</button>
+              {:else}
+                <button class="btn-ghost">Undo</button>
+              {/if}
+            </div>
+          </div>
+        {/each}
+      {/if}
     </div>
 
     <div class="panel-title" style="margin-top:16px; margin-bottom:8px;">Manual override</div>

@@ -21,9 +21,15 @@ export const capture = writable({
 // utterances (silence-delimited). Kept across capture stop/start.
 export const transcript = writable({ partial: '', finals: [] });
 
+// Direct-match detections (Phase 5), most-recent first, de-duplicated by
+// reference. Gating/debounce is Phase 6 — for now every candidate lands here.
+export const detections = writable([]);
+
 const MAX_FINALS = 12;
+const MAX_DETECTIONS = 6;
 let unlistenAudio = null;
 let unlistenStt = null;
+let unlistenDetect = null;
 
 async function invoke() {
   const core = await import('@tauri-apps/api/core'); // throws in a plain browser
@@ -64,6 +70,14 @@ export async function startCapture(device) {
       return { ...t, partial: text };
     });
   });
+  unlistenDetect = await listen('detection://match', (e) => {
+    const d = e.payload;
+    detections.update((list) => {
+      // De-dup by reference: drop any prior card for the same verse, prepend.
+      const rest = list.filter((x) => x.reference !== d.reference);
+      return [{ ...d, at: Date.now() }, ...rest].slice(0, MAX_DETECTIONS);
+    });
+  });
 
   capture.update((s) => ({ ...s, capturing: true }));
 }
@@ -83,6 +97,10 @@ export async function stopCapture() {
   if (unlistenStt) {
     unlistenStt();
     unlistenStt = null;
+  }
+  if (unlistenDetect) {
+    unlistenDetect();
+    unlistenDetect = null;
   }
   capture.update((s) => ({ ...s, capturing: false, level: 0, isVoice: false }));
   transcript.update((t) => ({ ...t, partial: '' }));

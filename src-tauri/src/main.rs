@@ -12,6 +12,7 @@ mod router;
 mod stt;
 
 use audio::AudioEngine;
+use detection::DetectionMethod;
 use rusqlite::Connection;
 use serde::Serialize;
 use std::sync::Mutex;
@@ -56,7 +57,11 @@ fn main() {
             let handle = app.handle().clone();
             let engine = match stt::default_model_path() {
                 Some(path) => match SttEngine::try_load(path, move |update| {
-                    let _ = handle.emit("stt://transcript", update);
+                    let _ = handle.emit("stt://transcript", &update);
+                    // Phase 5: run direct detection on each transcript update and
+                    // emit resolved references. Debounce/gating is the router's
+                    // job (Phase 6) — here we just surface candidates.
+                    emit_detections(&handle, &update.text);
                 }) {
                     Ok(e) => {
                         println!("stt: model loaded from {}", e.model_path().display());
@@ -86,6 +91,53 @@ fn main() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running Relay");
+}
+
+/// A direct-match detection pushed to the console. `in_library` is false when
+/// the reference parsed cleanly but isn't in the seeded corpus yet (still worth
+/// showing the operator — they can pull it manually).
+#[derive(Clone, Serialize)]
+struct DetectionEvent {
+    reference: String,
+    book: String,
+    chapter: i64,
+    verse: i64,
+    confidence: f32,
+    method: DetectionMethod,
+    in_library: bool,
+    text: Option<String>,
+    translation: Option<String>,
+}
+
+/// Detect references in `text`, resolve each against the local corpus, and emit
+/// one `detection://match` per candidate. The frontend de-duplicates.
+fn emit_detections(handle: &tauri::AppHandle, text: &str) {
+    let matches = detection::detect_direct(text);
+    if matches.is_empty() {
+        return;
+    }
+    let db = handle.state::<Db>();
+    let Ok(conn) = db.0.lock() else { return };
+    for m in matches {
+        let r = &m.reference;
+        let looked = db::lookup_verse(&conn, &r.book, r.chapter, r.verse)
+            .ok()
+            .flatten();
+        let _ = handle.emit(
+            "detection://match",
+            DetectionEvent {
+                reference: format!("{} {}:{}", r.book, r.chapter, r.verse),
+                book: r.book.clone(),
+                chapter: r.chapter,
+                verse: r.verse,
+                confidence: m.confidence,
+                method: m.method.clone(),
+                in_library: looked.is_some(),
+                text: looked.as_ref().map(|v| v.text.clone()),
+                translation: looked.as_ref().map(|v| v.translation.clone()),
+            },
+        );
+    }
 }
 
 // Bridge liveness probe — the frontend calls this on mount to tell whether the
