@@ -1,4 +1,20 @@
 <script>
+  import { onMount, onDestroy } from 'svelte';
+  import { capture, initAudio, startCapture, stopCapture } from '../stores/capture.js';
+
+  // --- Phase 3: live audio input (real cpal capture through the Rust engine) ---
+  let selectedDevice = ''; // '' = default input
+  onMount(initAudio);
+  onDestroy(stopCapture);
+
+  async function toggleCapture() {
+    if ($capture.capturing) await stopCapture();
+    else await startCapture(selectedDevice || null);
+  }
+
+  // RMS on speech sits well below 1.0; scale so normal talking fills the meter.
+  $: levelPct = Math.min(100, Math.round($capture.level * 320));
+
   // Phase 1 static controls. Thresholds here are the manual-override slider
   // that must ALWAYS exist (CLAUDE.md / DECISIONS.md self-calibrating gate):
   // seed auto-fire ≥0.90, suggest ≥0.60, nudged per install, never a hardcoded
@@ -31,9 +47,34 @@
 
 <div class="settings-grid">
   <div class="panel">
-    <div class="panel-title">Audio input</div>
-    <select class="select-mock"><option>Shure MV7 — USB mic</option><option>Behringer X32 — Aux out</option></select>
-    <div class="level-meter"><i></i></div>
+    <div class="panel-title">
+      Audio input
+      {#if $capture.available}
+        <span class="count">{$capture.devices.length} device{$capture.devices.length === 1 ? '' : 's'}</span>
+      {:else}
+        <span class="count">backend not attached</span>
+      {/if}
+    </div>
+    <select class="select-mock" bind:value={selectedDevice} disabled={!$capture.available || $capture.capturing}>
+      <option value="">Default input</option>
+      {#each $capture.devices as d}
+        <option value={d.name}>{d.name}{d.is_default ? ' — default' : ''}</option>
+      {/each}
+    </select>
+
+    <div class="level-meter"><i style="width:{levelPct}%;"></i></div>
+
+    <div style="display:flex; align-items:center; justify-content:space-between; margin-top:10px;">
+      <button class="ctrl-btn" class:primary={!$capture.capturing} on:click={toggleCapture} disabled={!$capture.available}>
+        <span class="dot" style="background:{$capture.capturing ? 'var(--red)' : '#1b1204'};"></span>
+        {$capture.capturing ? 'Stop listening' : 'Start listening'}
+      </button>
+      {#if $capture.capturing}
+        <span style="font-family:var(--f-mono); font-size:11px; color:{$capture.isVoice ? 'var(--green)' : 'var(--text-faint)'};">
+          {$capture.isVoice ? '● voice' : '○ silence'} · {$capture.level.toFixed(3)} rms
+        </span>
+      {/if}
+    </div>
 
     <div class="panel-title" style="margin-top:18px;">AI detection thresholds</div>
     <div style="font-family:var(--f-mono); font-size:11px; color:var(--text-faint);">Auto-fire above</div>
@@ -61,7 +102,7 @@
 
   <div class="panel">
     <div class="panel-title">Network &amp; kiosks</div>
-    <div style="font-family:var(--f-mono); font-size:11.5px; color:var(--text-dim); margin-bottom:10px;">Local server — port 5173 — running</div>
+    <div style="font-family:var(--f-mono); font-size:11.5px; color:var(--text-dim); margin-bottom:10px;">Kiosk server — port 8031 — running</div>
     {#each kiosks as k}
       <div class="kiosk-row">
         <span>{k.name}</span>

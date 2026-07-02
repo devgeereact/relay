@@ -11,12 +11,31 @@ mod detection;
 mod router;
 mod stt;
 
+use audio::AudioEngine;
 use rusqlite::Connection;
+use serde::Serialize;
 use std::sync::Mutex;
+use tauri::Emitter;
 
 /// The open SQLite connection, guarded for shared access across commands.
 /// rusqlite's Connection is not Sync, so a Mutex is required in Tauri state.
 struct Db(Mutex<Connection>);
+
+/// The currently-running audio capture engine, if any.
+#[derive(Default)]
+struct Audio(Mutex<Option<AudioEngine>>);
+
+/// Per-chunk metadata pushed to the frontend on `audio://chunk`. Deliberately
+/// does NOT carry the raw samples — the console only needs level + voicing to
+/// drive the meter; STT (Phase 4) consumes the samples through a separate path.
+#[derive(Clone, Serialize)]
+struct ChunkEvent {
+    timestamp_ms: u64,
+    sample_rate: u32,
+    rms: f32,
+    is_voice: bool,
+    samples: usize,
+}
 
 fn main() {
     // Open the on-device DB at startup. Failing here is intentional and loud:
@@ -25,7 +44,15 @@ fn main() {
 
     tauri::Builder::default()
         .manage(Db(Mutex::new(conn)))
-        .invoke_handler(tauri::generate_handler![greet, lookup_verse, data_health])
+        .manage(Audio::default())
+        .invoke_handler(tauri::generate_handler![
+            greet,
+            lookup_verse,
+            data_health,
+            list_audio_devices,
+            start_capture,
+            stop_capture
+        ])
         .run(tauri::generate_context!())
         .expect("error while running Relay");
 }
@@ -57,4 +84,50 @@ fn lookup_verse(
 fn data_health(db: tauri::State<'_, Db>) -> Result<i64, String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
     db::verse_count(&conn).map_err(|e| e.to_string())
+}
+
+/// List available audio input devices for the Settings picker.
+#[tauri::command]
+fn list_audio_devices() -> Vec<audio::DeviceInfo> {
+    audio::list_input_devices()
+}
+
+/// Start capturing from `device` (default input when None). Each produced chunk
+/// is emitted to the frontend as `audio://chunk` (metadata only). Replaces any
+/// capture already running.
+#[tauri::command]
+fn start_capture(
+    app: tauri::AppHandle,
+    audio: tauri::State<'_, Audio>,
+    device: Option<String>,
+) -> Result<(), String> {
+    let mut slot = audio.0.lock().map_err(|e| e.to_string())?;
+    if let Some(engine) = slot.take() {
+        engine.stop();
+    }
+    let emitter = app.clone();
+    let engine = AudioEngine::start(device, move |chunk| {
+        let _ = emitter.emit(
+            "audio://chunk",
+            ChunkEvent {
+                timestamp_ms: chunk.timestamp_ms,
+                sample_rate: chunk.sample_rate,
+                rms: chunk.rms,
+                is_voice: chunk.is_voice,
+                samples: chunk.samples.len(),
+            },
+        );
+    })?;
+    *slot = Some(engine);
+    Ok(())
+}
+
+/// Stop the running capture, if any. Idempotent.
+#[tauri::command]
+fn stop_capture(audio: tauri::State<'_, Audio>) -> Result<(), String> {
+    let mut slot = audio.0.lock().map_err(|e| e.to_string())?;
+    if let Some(engine) = slot.take() {
+        engine.stop();
+    }
+    Ok(())
 }

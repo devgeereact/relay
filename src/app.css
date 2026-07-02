@@ -43,6 +43,8 @@ body{ margin:0; background:var(--bg); color:var(--text); font-family:var(--f-bod
 .listen-rings span{ position:absolute; inset:0; border-radius:50%; border:1.5px solid var(--amber); animation:ping 2.2s cubic-bezier(.3,.6,.4,1) infinite; opacity:0; }
 .listen-rings span:nth-child(2){ animation-delay:.7s; }
 .listen-rings .dot{ position:absolute; inset:8px; border-radius:50%; background:var(--amber); }
+.listen-rings.idle span{ animation:none; }
+.listen-rings.idle .dot{ background:var(--text-faint); }
 @keyframes ping{ 0%{transform:scale(.4); opacity:.9;} 100%{transform:scale(1.6); opacity:0;} }
 .listen-label{ font-family:var(--f-mono); font-size:11px; color:var(--text-dim); }
 .topbar-meta{ font-family:var(--f-mono); font-size:11.5px; color:var(--text-dim); display:flex; gap:16px; }

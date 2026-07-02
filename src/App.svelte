@@ -1,5 +1,6 @@
 <script>
   import { onMount, onDestroy } from 'svelte';
+  import { capture } from './lib/stores/capture.js';
   import Console from './lib/views/Console.svelte';
   import Channels from './lib/views/Channels.svelte';
   import Templates from './lib/views/Templates.svelte';
@@ -57,8 +58,12 @@
     </div>
     <div class="topbar-right">
       <div class="listen">
-        <div class="listen-rings"><span></span><span></span><div class="dot"></div></div>
-        <div class="listen-label">Listening in <b>English + Yoruba</b></div>
+        <div class="listen-rings" class:idle={!$capture.capturing}><span></span><span></span><div class="dot"></div></div>
+        {#if $capture.capturing}
+          <div class="listen-label">Listening — <b>{$capture.isVoice ? 'voice' : 'silence'}</b></div>
+        {:else}
+          <div class="listen-label">Not listening</div>
+        {/if}
       </div>
       <div class="topbar-meta"><span>4/5 channels online</span><span class="clock">{clock}</span></div>
     </div>

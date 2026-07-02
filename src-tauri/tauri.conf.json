@@ -5,7 +5,7 @@
   "identifier": "com.relay.app",
   "build": {
     "frontendDist": "../dist",
-    "devUrl": "http://localhost:5173",
+    "devUrl": "http://localhost:5032",
     "beforeDevCommand": "npm run dev",
     "beforeBuildCommand": "npm run build"
   },
