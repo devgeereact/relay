@@ -1,6 +1,6 @@
 <script>
   import { onMount, onDestroy } from 'svelte';
-  import { capture, initAudio, startCapture, stopCapture, setThresholds } from '../stores/capture.js';
+  import { capture, initAudio, startCapture, stopCapture, setThresholds, setSttLanguage } from '../stores/capture.js';
 
   // Threshold sliders push to the router; keep the invariant auto_fire ≥ suggest.
   function onAuto(v) {
@@ -105,7 +105,24 @@
   </div>
 
   <div class="panel">
-    <div class="panel-title">Language priority</div>
+    <div class="panel-title">
+      Recognition language
+      {#if $capture.capturing && $capture.detectedLang}
+        <span class="count" style="color:var(--green);">hearing: {$capture.detectedLang}</span>
+      {/if}
+    </div>
+    <select class="select-mock" value={$capture.stt.language ?? ''} on:change={(e) => setSttLanguage(e.target.value || null)} disabled={!$capture.stt.loaded}>
+      <option value="">Auto-detect (code-switching)</option>
+      <option value="en">English</option>
+      <option value="yo">Yoruba</option>
+      <option value="sw">Swahili</option>
+      <option value="ha">Hausa</option>
+    </select>
+    <div style="font-family:var(--f-mono); font-size:10.5px; color:var(--text-faint); margin-top:8px;">
+      Auto-detect handles English mixed with a local language mid-sentence — the normal case. Tier-1: Yoruba · Swahili · Hausa.
+    </div>
+
+    <div class="panel-title" style="margin-top:16px;">Language priority</div>
     {#each languages as l, i}
       <div class="lang-row" style={l.dim ? 'opacity:.5;' : ''}>
         <span><span class="handle">⠿</span>{l.name}</span>

@@ -16,7 +16,13 @@ use crate::audio::AudioChunk;
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
+
+/// Shared, mutable STT language setting. `None` = auto-detect per window, which
+/// is how code-switching (English mixed with a local language) is handled — the
+/// normal case for the target market (CLAUDE.md), not an edge case.
+pub type LangSetting = Arc<Mutex<Option<String>>>;
 use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
 
 const TARGET_RATE: u32 = 16_000; // whisper input rate
@@ -42,12 +48,14 @@ pub struct SttEngine {
     tx: Sender<AudioChunk>,
     handle: Option<JoinHandle<()>>,
     model_path: PathBuf,
+    lang: LangSetting,
 }
 
 impl SttEngine {
     /// Load the model at `model_path` and start the worker. Fails if the model
     /// file is missing or unreadable — capture can still run without STT, so
-    /// callers treat this as optional (audio-only mode).
+    /// callers treat this as optional (audio-only mode). Language starts on
+    /// auto-detect (code-switching); change it with `set_language`.
     pub fn try_load<F>(model_path: PathBuf, on_update: F) -> Result<Self, String>
     where
         F: Fn(TranscriptUpdate) + Send + 'static,
@@ -61,12 +69,15 @@ impl SttEngine {
         )
         .map_err(|e| format!("failed to load whisper model: {e}"))?;
 
+        let lang: LangSetting = Arc::new(Mutex::new(None));
         let (tx, rx) = mpsc::channel::<AudioChunk>();
-        let handle = std::thread::spawn(move || worker(ctx, rx, on_update));
+        let lang_worker = lang.clone();
+        let handle = std::thread::spawn(move || worker(ctx, rx, lang_worker, on_update));
         Ok(SttEngine {
             tx,
             handle: Some(handle),
             model_path,
+            lang,
         })
     }
 
@@ -77,6 +88,20 @@ impl SttEngine {
 
     pub fn model_path(&self) -> &Path {
         &self.model_path
+    }
+
+    /// Set the transcription language: `Some("yo"|"sw"|"ha"|"en"|…)` to force
+    /// one, `None` to auto-detect (code-switching). Takes effect on the next
+    /// window — the running worker reads it live.
+    pub fn set_language(&self, lang: Option<String>) {
+        if let Ok(mut g) = self.lang.lock() {
+            *g = lang;
+        }
+    }
+
+    /// Current language setting (None = auto).
+    pub fn language(&self) -> Option<String> {
+        self.lang.lock().ok().and_then(|g| g.clone())
     }
 }
 
@@ -93,7 +118,7 @@ impl Drop for SttEngine {
 /// The worker loop: accumulate voiced audio, emit partials on a cadence, and
 /// finalize on silence. Runs on its own thread; whisper's blocking `full()`
 /// never touches the audio or UI threads.
-fn worker<F>(ctx: WhisperContext, rx: Receiver<AudioChunk>, on_update: F)
+fn worker<F>(ctx: WhisperContext, rx: Receiver<AudioChunk>, lang: LangSetting, on_update: F)
 where
     F: Fn(TranscriptUpdate) + Send + 'static,
 {
@@ -127,10 +152,13 @@ where
             new_since_step += resampled.len();
 
             if new_since_step >= STEP_SAMPLES && window.len() >= MIN_SAMPLES {
-                if let Some(text) = transcribe(&mut state, &window, threads) {
+                let lang_opt = lang.lock().ok().and_then(|g| g.clone());
+                if let Some((text, detected)) =
+                    transcribe(&mut state, &window, threads, lang_opt.as_deref())
+                {
                     on_update(TranscriptUpdate {
                         text,
-                        language: "en".into(),
+                        language: detected,
                         is_final: false,
                         timestamp_ms: last_ts_ms,
                     });
@@ -141,10 +169,13 @@ where
             silence_run += 1;
             if silence_run == SILENCE_FINALIZE && !window.is_empty() {
                 if window.len() >= MIN_SAMPLES {
-                    if let Some(text) = transcribe(&mut state, &window, threads) {
+                    let lang_opt = lang.lock().ok().and_then(|g| g.clone());
+                    if let Some((text, detected)) =
+                        transcribe(&mut state, &window, threads, lang_opt.as_deref())
+                    {
                         on_update(TranscriptUpdate {
                             text,
-                            language: "en".into(),
+                            language: detected,
                             is_final: true,
                             timestamp_ms: last_ts_ms,
                         });
@@ -157,10 +188,17 @@ where
     }
 }
 
-/// Run whisper over the window, returning trimmed text (None if empty/blank).
-fn transcribe(state: &mut whisper_rs::WhisperState, audio: &[f32], threads: i32) -> Option<String> {
+/// Run whisper over the window. `lang` = Some(code) forces a language, None
+/// auto-detects (code-switching). Returns (text, detected-language) or None if
+/// blank. Detected language is what enables per-window code-switch reporting.
+fn transcribe(
+    state: &mut whisper_rs::WhisperState,
+    audio: &[f32],
+    threads: i32,
+    lang: Option<&str>,
+) -> Option<(String, String)> {
     let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
-    params.set_language(Some("en"));
+    params.set_language(lang); // None → whisper auto-detects
     params.set_n_threads(threads);
     params.set_translate(false);
     params.set_single_segment(true);
@@ -181,10 +219,19 @@ fn transcribe(state: &mut whisper_rs::WhisperState, audio: &[f32], threads: i32)
     }
     let text = text.trim().to_string();
     if text.is_empty() || text == "[BLANK_AUDIO]" {
-        None
-    } else {
-        Some(text)
+        return None;
     }
+    let detected = lang
+        .map(|l| l.to_string())
+        .or_else(|| {
+            state
+                .full_lang_id_from_state()
+                .ok()
+                .and_then(whisper_rs::get_lang_str)
+                .map(|s| s.to_string())
+        })
+        .unwrap_or_else(|| "en".into());
+    Some((text, detected))
 }
 
 /// Linear resample to `dst_rate`. Adequate to prove the loop; a windowed-sinc
@@ -207,24 +254,34 @@ pub fn resample_linear(input: &[f32], src_rate: u32, dst_rate: u32) -> Vec<f32> 
     out
 }
 
-/// Resolve the default model path: RELAY_MODEL_PATH override, then the
-/// repo-local dev model (compile-time path), then the per-OS app-data dir.
+/// Candidate model filenames, most-preferred first. The multilingual model
+/// (ggml-base.bin) is preferred so Yoruba/Swahili/Hausa + code-switching work;
+/// the English-only model is the fallback. Swap in a fine-tuned model by name.
+const MODEL_CANDIDATES: &[&str] = &["ggml-base.bin", "ggml-base.en.bin"];
+
+/// Resolve the default model path: RELAY_MODEL_PATH override, then the first
+/// existing candidate in the repo-local dev dir, then the per-OS app-data dir.
 pub fn default_model_path() -> Option<PathBuf> {
     if let Ok(p) = std::env::var("RELAY_MODEL_PATH") {
         return Some(PathBuf::from(p));
     }
-    // Dev: model downloaded to <repo>/models (see README). CARGO_MANIFEST_DIR
+    // Dev: models downloaded to <repo>/models (see README). CARGO_MANIFEST_DIR
     // is <repo>/src-tauri at compile time.
-    let dev = Path::new(env!("CARGO_MANIFEST_DIR")).join("../models/ggml-base.en.bin");
-    if dev.exists() {
-        return Some(dev);
+    let dev_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../models");
+    for name in MODEL_CANDIDATES {
+        let p = dev_dir.join(name);
+        if p.exists() {
+            return Some(p);
+        }
     }
     // Prod: alongside the SQLite DB in the app-data dir.
     if let Some(home) = std::env::var_os("HOME") {
-        let p = PathBuf::from(home)
-            .join("Library/Application Support/com.relay.app/models/ggml-base.en.bin");
-        if p.exists() {
-            return Some(p);
+        let dir = PathBuf::from(home).join("Library/Application Support/com.relay.app/models");
+        for name in MODEL_CANDIDATES {
+            let p = dir.join(name);
+            if p.exists() {
+                return Some(p);
+            }
         }
     }
     None

@@ -94,6 +94,13 @@ fn main() {
             app.manage(Semantic(SemanticIndex::build(&corpus)));
             app.manage(Context(Mutex::new(ContextMemory::default())));
 
+            // Start the kiosk WebSocket server (network_client render target) on
+            // the reserved api port. Kiosks on the LAN connect here for state.
+            let kiosk = channels::KioskHub::default();
+            let kiosk_tx = kiosk.sender();
+            app.manage(kiosk);
+            tauri::async_runtime::spawn(channels::run_kiosk_server(kiosk_tx, 8031));
+
             // Load STT here (not before .run) because the worker needs an
             // AppHandle to emit transcript events. Missing model → audio-only,
             // logged but non-fatal: capture and manual override still work.
@@ -141,7 +148,9 @@ fn main() {
             clear_screens,
             list_templates,
             get_template,
-            save_template
+            save_template,
+            set_stt_language,
+            open_ndi_output
         ])
         .run(tauri::generate_context!())
         .expect("error while running Relay");
@@ -350,7 +359,8 @@ fn stop_capture(audio: tauri::State<'_, Audio>) -> Result<(), String> {
     Ok(())
 }
 
-/// Whether a local STT model is loaded, and its path — surfaced in Settings.
+/// Whether a local STT model is loaded, its path, and the current language
+/// setting (None = auto-detect / code-switching) — surfaced in Settings.
 #[tauri::command]
 fn stt_status(stt: tauri::State<'_, Stt>) -> Result<StatusStt, String> {
     let slot = stt.0.lock().map_err(|e| e.to_string())?;
@@ -358,18 +368,47 @@ fn stt_status(stt: tauri::State<'_, Stt>) -> Result<StatusStt, String> {
         Some(e) => StatusStt {
             loaded: true,
             model: Some(e.model_path().display().to_string()),
+            language: e.language(),
         },
         None => StatusStt {
             loaded: false,
             model: None,
+            language: None,
         },
     })
+}
+
+/// Set the STT language: a code ("yo"/"sw"/"ha"/"en"/…) or null for auto-detect
+/// (code-switching). Tier-1 targets: Yoruba, Swahili, Hausa (CLAUDE.md).
+#[tauri::command]
+fn set_stt_language(stt: tauri::State<'_, Stt>, language: Option<String>) -> Result<(), String> {
+    let slot = stt.0.lock().map_err(|e| e.to_string())?;
+    if let Some(e) = slot.as_ref() {
+        e.set_language(language);
+    }
+    Ok(())
 }
 
 #[derive(Clone, Serialize)]
 struct StatusStt {
     loaded: bool,
     model: Option<String>,
+    language: Option<String>,
+}
+
+/// NDI render target — not yet available. Honest seam: NDI needs the
+/// proprietary NDI SDK (native lib + FFI, no pure-Rust crate), which isn't
+/// bundled. Returns a clear error rather than pretending. Integration path:
+/// install the NDI SDK, add FFI bindings, render each channel's template to an
+/// off-screen surface, and publish it as an NDI source. See docs/SPEC.md §9.
+#[tauri::command]
+fn open_ndi_output(_template_id: i64) -> Result<String, String> {
+    Err(
+        "NDI output is not yet available — it requires the NDI SDK (Phase 10, \
+         parked). Use a native output window, or point OBS/vMix at a kiosk \
+         (network) channel for now."
+            .into(),
+    )
 }
 
 /// Operator confirmed a suggestion — fire it to the output channels and feed the

@@ -14,7 +14,8 @@ export const capture = writable({
   level: 0, // latest chunk RMS (0..~1)
   isVoice: false, // VAD gate result for the latest chunk
   devices: [], // [{ name, is_default }]
-  stt: { loaded: false, model: null }, // local STT model status
+  stt: { loaded: false, model: null, language: null }, // local STT model status (language null = auto)
+  detectedLang: null, // language of the latest transcript window (code-switching)
   thresholds: { auto_fire: 0.9, suggest: 0.6 }, // router gate (self-calibrating)
 });
 
@@ -66,7 +67,8 @@ export async function startCapture(device) {
     capture.update((s) => ({ ...s, level: rms, isVoice: is_voice }));
   });
   unlistenStt = await listen('stt://transcript', (e) => {
-    const { text, is_final } = e.payload;
+    const { text, is_final, language } = e.payload;
+    if (language) capture.update((s) => ({ ...s, detectedLang: language }));
     transcript.update((t) => {
       if (is_final) {
         const finals = [...t.finals, text].slice(-MAX_FINALS);
@@ -174,6 +176,17 @@ export async function clearScreens() {
   try {
     const call = await invoke();
     await call('clear_screens');
+  } catch {
+    /* backend absent */
+  }
+}
+
+/** Set STT language: a code ("yo"/"sw"/"ha"/"en") or null for auto-detect. */
+export async function setSttLanguage(language) {
+  try {
+    const call = await invoke();
+    await call('set_stt_language', { language: language ?? null });
+    capture.update((s) => ({ ...s, stt: { ...s.stt, language: language ?? null } }));
   } catch {
     /* backend absent */
   }

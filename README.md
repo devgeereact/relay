@@ -2,7 +2,7 @@
 
 > AI-assisted live presentation software for churches — real-time scripture detection routed to independently-styled output screens, built to interoperate with OBS, ATEM, and ProPresenter rather than replace them.
 
-**Status:** builds and runs. Phases 0–4 complete (shell + console UI, SQLite data layer, live audio capture + VAD, local English STT). Detection pipeline is next. Working name — rename freely.
+**Status:** builds and runs, full pipeline end to end. Phases 0–10 complete — shell + 5-screen console, SQLite data layer, audio capture + VAD, local STT (multilingual + code-switching), direct + semantic + context-memory detection, confidence-gating router with manual override, and output channels (native fullscreen + kiosk WebSocket; NDI parked on the external SDK). Next: full-Bible corpus import, African-language STT fine-tunes, real-service hardening. Working name — rename freely.
 
 ## Start here
 
@@ -27,19 +27,26 @@ Rust core · Tauri v2 shell · Svelte + Vite frontend · SQLite (`rusqlite`) · 
 
 ## STT model (offline speech-to-text)
 
-The local speech model is a large binary and is **not** committed. Download the
-English base model into `models/` before running (the app auto-detects it there;
-override with the `RELAY_MODEL_PATH` env var):
+The local speech model is a large binary and is **not** committed. Download a
+model into `models/` before running (auto-detected there; the **multilingual**
+`ggml-base.bin` is preferred so Yoruba/Swahili/Hausa + code-switching work,
+falling back to `ggml-base.en.bin`; override with `RELAY_MODEL_PATH`):
 
 ```bash
 mkdir -p models
+# Multilingual (recommended — enables the tier-1 African languages):
+curl -L -o models/ggml-base.bin \
+  https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin
+# English-only fallback (smaller quality edge on English):
 curl -L -o models/ggml-base.en.bin \
   https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin
 ```
 
-Without a model the app still runs — audio capture works, transcript panel shows
-"no model", and manual override is fully functional. Larger/multilingual models
-(`ggml-small.en`, `ggml-medium`, African-language fine-tunes) drop in the same way.
+Recognition language is set in Settings (Auto-detect / English / Yoruba /
+Swahili / Hausa); Auto handles code-switching. **Note:** base multilingual has
+weak Yoruba/Hausa accuracy — production quality needs community fine-tunes
+(Masakhane, Common Voice), which drop in by filename. Without any model the app
+still runs audio-only (transcript shows "no model"; manual override works).
 
 ## Running
 
@@ -51,6 +58,21 @@ npm run tauri dev      # opens the desktop app; dev server on http://localhost:5
 The operator console (app surface) is pinned to port **5032** (Relay = slot
 NN=03 in the global dev-port registry). Audio + STT only work inside the desktop
 app window — a plain browser at `:5032` renders the UI but has no Rust backend.
+
+## Render targets (output channels)
+
+One shared template engine renders to three target types (docs/SPEC.md §5):
+
+- **Native window** — borderless fullscreen webview (HDMI). Open from the
+  Channels tab. Live now.
+- **Kiosk / network client** — a LAN browser (e.g. a $50 Raspberry Pi) points at
+  `http://<app-host>:5032/output.html?template_id=<n>` and receives state over
+  the WebSocket hub on **port 8031**. Live now. (Serve the dev page to the LAN
+  with `vite --host`, or a static host of `dist/` in production.)
+- **NDI encode** — into OBS/vMix/ATEM/ProPresenter. **Not yet available:**
+  requires the proprietary NDI SDK (native lib + FFI). The command returns a
+  clear error; integration path is documented in `src-tauri/src/main.rs`
+  (`open_ndi_output`) and docs/SPEC.md §9.
 
 ## Repo structure
 
