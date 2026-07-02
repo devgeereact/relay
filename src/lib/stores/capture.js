@@ -15,6 +15,7 @@ export const capture = writable({
   isVoice: false, // VAD gate result for the latest chunk
   devices: [], // [{ name, is_default }]
   stt: { loaded: false, model: null }, // local STT model status
+  thresholds: { auto_fire: 0.9, suggest: 0.6 }, // router gate (self-calibrating)
 });
 
 // Rolling transcript: `partial` is the in-progress line, `finals` are closed
@@ -40,11 +41,12 @@ async function invoke() {
 export async function initAudio() {
   try {
     const call = await invoke();
-    const [devices, stt] = await Promise.all([
+    const [devices, stt, thresholds] = await Promise.all([
       call('list_audio_devices'),
       call('stt_status').catch(() => ({ loaded: false, model: null })),
+      call('get_thresholds').catch(() => ({ auto_fire: 0.9, suggest: 0.6 })),
     ]);
-    capture.update((s) => ({ ...s, available: true, devices, stt }));
+    capture.update((s) => ({ ...s, available: true, devices, stt, thresholds }));
   } catch {
     capture.update((s) => ({ ...s, available: false }));
   }
@@ -104,4 +106,47 @@ export async function stopCapture() {
   }
   capture.update((s) => ({ ...s, capturing: false, level: 0, isVoice: false }));
   transcript.update((t) => ({ ...t, partial: '' }));
+}
+
+/** Operator confirms a suggested detection → promote to fired, nudge the gate. */
+export async function confirmDetection(reference) {
+  detections.update((list) =>
+    list.map((d) => (d.reference === reference ? { ...d, status: 'auto' } : d))
+  );
+  try {
+    const call = await invoke();
+    const thresholds = await call('confirm_detection');
+    capture.update((s) => ({ ...s, thresholds }));
+  } catch {
+    /* backend absent */
+  }
+}
+
+/** Operator dismisses/undoes a detection → remove card, tighten the gate. */
+export async function dismissDetection(reference) {
+  detections.update((list) => list.filter((d) => d.reference !== reference));
+  try {
+    const call = await invoke();
+    const thresholds = await call('dismiss_detection');
+    capture.update((s) => ({ ...s, thresholds }));
+  } catch {
+    /* backend absent */
+  }
+}
+
+/** Manual override: fire a free-text reference now (throws if unparseable). */
+export async function manualFire(reference) {
+  const call = await invoke();
+  await call('manual_fire', { reference });
+}
+
+/** Manual threshold override (Settings sliders). */
+export async function setThresholds(auto_fire, suggest) {
+  try {
+    const call = await invoke();
+    const thresholds = await call('set_thresholds', { thresholds: { auto_fire, suggest } });
+    capture.update((s) => ({ ...s, thresholds }));
+  } catch {
+    /* backend absent */
+  }
 }

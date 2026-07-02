@@ -147,6 +147,8 @@ body{ margin:0; background:var(--bg); color:var(--text); font-family:var(--f-bod
 .toggle.on{ background:var(--amber); }
 .toggle::after{ content:''; position:absolute; width:14px; height:14px; border-radius:50%; background:var(--text); top:2px; left:2px; }
 .toggle.on::after{ left:16px; background:#1b1204; }
+.range{ width:100%; margin:8px 0 2px; accent-color:var(--amber); cursor:pointer; height:5px; }
+.range:disabled{ opacity:.5; cursor:default; }
 .slider-mock{ height:5px; border-radius:3px; background:var(--surface3); position:relative; margin:10px 0 4px; }
 .slider-mock i{ display:block; height:100%; border-radius:3px; background:var(--amber); }
 .level-meter{ height:6px; border-radius:3px; background:var(--surface3); overflow:hidden; margin-top:8px; }

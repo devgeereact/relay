@@ -13,6 +13,7 @@ mod stt;
 
 use audio::AudioEngine;
 use detection::DetectionMethod;
+use router::{RouteDecision, Router, Thresholds};
 use rusqlite::Connection;
 use serde::Serialize;
 use std::sync::Mutex;
@@ -29,6 +30,11 @@ struct Audio(Mutex<Option<AudioEngine>>);
 
 /// The loaded STT engine, if a model was found at startup. None = audio-only.
 struct Stt(Mutex<Option<SttEngine>>);
+
+/// The content router — confidence gating, debounce, self-calibrating
+/// thresholds. Stateful, so guarded.
+#[derive(Default)]
+struct Routing(Mutex<Router>);
 
 /// Per-chunk metadata pushed to the frontend on `audio://chunk`. Deliberately
 /// does NOT carry the raw samples — the console only needs level + voicing to
@@ -50,6 +56,7 @@ fn main() {
     tauri::Builder::default()
         .manage(Db(Mutex::new(conn)))
         .manage(Audio::default())
+        .manage(Routing::default())
         .setup(|app| {
             // Load STT here (not before .run) because the worker needs an
             // AppHandle to emit transcript events. Missing model → audio-only,
@@ -58,10 +65,9 @@ fn main() {
             let engine = match stt::default_model_path() {
                 Some(path) => match SttEngine::try_load(path, move |update| {
                     let _ = handle.emit("stt://transcript", &update);
-                    // Phase 5: run direct detection on each transcript update and
-                    // emit resolved references. Debounce/gating is the router's
-                    // job (Phase 6) — here we just surface candidates.
-                    emit_detections(&handle, &update.text);
+                    // Phase 5/6: detect references, then route each through the
+                    // confidence gate + debounce before surfacing it.
+                    emit_detections(&handle, &update.text, update.timestamp_ms);
                 }) {
                     Ok(e) => {
                         println!("stt: model loaded from {}", e.model_path().display());
@@ -87,15 +93,20 @@ fn main() {
             list_audio_devices,
             start_capture,
             stop_capture,
-            stt_status
+            stt_status,
+            confirm_detection,
+            dismiss_detection,
+            get_thresholds,
+            set_thresholds,
+            manual_fire
         ])
         .run(tauri::generate_context!())
         .expect("error while running Relay");
 }
 
-/// A direct-match detection pushed to the console. `in_library` is false when
-/// the reference parsed cleanly but isn't in the seeded corpus yet (still worth
-/// showing the operator — they can pull it manually).
+/// A routed detection pushed to the console. `status` is the router's decision
+/// (auto / suggested / manual). `in_library` is false when the reference parsed
+/// cleanly but isn't in the seeded corpus yet.
 #[derive(Clone, Serialize)]
 struct DetectionEvent {
     reference: String,
@@ -104,34 +115,49 @@ struct DetectionEvent {
     verse: i64,
     confidence: f32,
     method: DetectionMethod,
+    status: &'static str,
     in_library: bool,
     text: Option<String>,
     translation: Option<String>,
 }
 
-/// Detect references in `text`, resolve each against the local corpus, and emit
-/// one `detection://match` per candidate. The frontend de-duplicates.
-fn emit_detections(handle: &tauri::AppHandle, text: &str) {
+/// Detect references in `text`, gate each through the router, resolve survivors
+/// against the local corpus, and emit one `detection://match` per fired/suggested
+/// candidate. Dropped (debounced or low-confidence) detections are silent.
+fn emit_detections(handle: &tauri::AppHandle, text: &str, now_ms: u64) {
     let matches = detection::detect_direct(text);
     if matches.is_empty() {
         return;
     }
     let db = handle.state::<Db>();
-    let Ok(conn) = db.0.lock() else { return };
+    let routing = handle.state::<Routing>();
+    let (Ok(conn), Ok(mut router)) = (db.0.lock(), routing.0.lock()) else {
+        return;
+    };
     for m in matches {
         let r = &m.reference;
+        let key = format!("{} {}:{}", r.book, r.chapter, r.verse);
+        // A high-confidence direct match counts as "explicit" — it overrides
+        // the repeat-debounce so a deliberate re-reference still fires.
+        let explicit = m.confidence >= 0.95;
+        let status = match router.decide(&key, m.confidence, explicit, now_ms) {
+            RouteDecision::AutoFire => "auto",
+            RouteDecision::Suggest => "suggested",
+            RouteDecision::Drop => continue,
+        };
         let looked = db::lookup_verse(&conn, &r.book, r.chapter, r.verse)
             .ok()
             .flatten();
         let _ = handle.emit(
             "detection://match",
             DetectionEvent {
-                reference: format!("{} {}:{}", r.book, r.chapter, r.verse),
+                reference: key,
                 book: r.book.clone(),
                 chapter: r.chapter,
                 verse: r.verse,
                 confidence: m.confidence,
                 method: m.method.clone(),
+                status,
                 in_library: looked.is_some(),
                 text: looked.as_ref().map(|v| v.text.clone()),
                 translation: looked.as_ref().map(|v| v.translation.clone()),
@@ -247,4 +273,84 @@ fn stt_status(stt: tauri::State<'_, Stt>) -> Result<StatusStt, String> {
 struct StatusStt {
     loaded: bool,
     model: Option<String>,
+}
+
+/// Operator confirmed a suggestion (it should fire). Feeds the self-calibrating
+/// gate and returns the updated thresholds so Settings can reflect the nudge.
+#[tauri::command]
+fn confirm_detection(routing: tauri::State<'_, Routing>) -> Result<Thresholds, String> {
+    let mut router = routing.0.lock().map_err(|e| e.to_string())?;
+    router.record_feedback(true);
+    Ok(router.thresholds())
+}
+
+/// Operator rejected an auto-fired detection (undo). Tightens the gate.
+#[tauri::command]
+fn dismiss_detection(routing: tauri::State<'_, Routing>) -> Result<Thresholds, String> {
+    let mut router = routing.0.lock().map_err(|e| e.to_string())?;
+    router.record_feedback(false);
+    Ok(router.thresholds())
+}
+
+/// Current gate thresholds — for the Settings sliders.
+#[tauri::command]
+fn get_thresholds(routing: tauri::State<'_, Routing>) -> Result<Thresholds, String> {
+    let router = routing.0.lock().map_err(|e| e.to_string())?;
+    Ok(router.thresholds())
+}
+
+/// Manual override of the thresholds (the always-available slider, DECISIONS.md).
+#[tauri::command]
+fn set_thresholds(
+    routing: tauri::State<'_, Routing>,
+    thresholds: Thresholds,
+) -> Result<Thresholds, String> {
+    let mut router = routing.0.lock().map_err(|e| e.to_string())?;
+    router.set_thresholds(thresholds);
+    Ok(router.thresholds())
+}
+
+/// Operator manual override: fire a free-text reference now, bypassing the gate.
+/// First-class control (CLAUDE.md) — parses the reference, resolves it, and
+/// emits a `detection://match` with status "manual".
+#[tauri::command]
+fn manual_fire(
+    app: tauri::AppHandle,
+    db: tauri::State<'_, Db>,
+    routing: tauri::State<'_, Routing>,
+    reference: String,
+) -> Result<(), String> {
+    let m = detection::detect_direct(&reference)
+        .into_iter()
+        .next()
+        .ok_or_else(|| format!("could not parse a reference from \"{reference}\""))?;
+    let r = &m.reference;
+    let key = format!("{} {}:{}", r.book, r.chapter, r.verse);
+
+    let looked = {
+        let conn = db.0.lock().map_err(|e| e.to_string())?;
+        db::lookup_verse(&conn, &r.book, r.chapter, r.verse)
+            .ok()
+            .flatten()
+    };
+    {
+        let mut router = routing.0.lock().map_err(|e| e.to_string())?;
+        router.manual_fire(&key, 0);
+    }
+    let _ = app.emit(
+        "detection://match",
+        DetectionEvent {
+            reference: key,
+            book: r.book.clone(),
+            chapter: r.chapter,
+            verse: r.verse,
+            confidence: 1.0,
+            method: m.method.clone(),
+            status: "manual",
+            in_library: looked.is_some(),
+            text: looked.as_ref().map(|v| v.text.clone()),
+            translation: looked.as_ref().map(|v| v.translation.clone()),
+        },
+    );
+    Ok(())
 }

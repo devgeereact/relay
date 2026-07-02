@@ -1,6 +1,16 @@
 <script>
   import { onMount, onDestroy } from 'svelte';
-  import { capture, initAudio, startCapture, stopCapture } from '../stores/capture.js';
+  import { capture, initAudio, startCapture, stopCapture, setThresholds } from '../stores/capture.js';
+
+  // Threshold sliders push to the router; keep the invariant auto_fire ≥ suggest.
+  function onAuto(v) {
+    const suggest = Math.min($capture.thresholds.suggest, v);
+    setThresholds(v, suggest);
+  }
+  function onSuggest(v) {
+    const suggest = Math.min(v, $capture.thresholds.auto_fire);
+    setThresholds($capture.thresholds.auto_fire, suggest);
+  }
 
   // --- Phase 3: live audio input (real cpal capture through the Rust engine) ---
   let selectedDevice = ''; // '' = default input
@@ -76,11 +86,22 @@
       {/if}
     </div>
 
-    <div class="panel-title" style="margin-top:18px;">AI detection thresholds</div>
-    <div style="font-family:var(--f-mono); font-size:11px; color:var(--text-faint);">Auto-fire above</div>
-    <div class="slider-mock"><i style="width:90%;"></i></div>
-    <div style="font-family:var(--f-mono); font-size:11px; color:var(--text-faint); margin-top:10px;">Suggest above</div>
-    <div class="slider-mock"><i style="width:65%;"></i></div>
+    <div class="panel-title" style="margin-top:18px;">
+      AI detection thresholds
+      <span class="count">self-calibrating</span>
+    </div>
+    <div style="font-family:var(--f-mono); font-size:11px; color:var(--text-faint); display:flex; justify-content:space-between;">
+      <span>Auto-fire above</span><span style="color:var(--green);">{$capture.thresholds.auto_fire.toFixed(2)}</span>
+    </div>
+    <input class="range" type="range" min="0.5" max="0.99" step="0.01"
+      value={$capture.thresholds.auto_fire}
+      on:input={(e) => onAuto(+e.target.value)} disabled={!$capture.available} />
+    <div style="font-family:var(--f-mono); font-size:11px; color:var(--text-faint); margin-top:10px; display:flex; justify-content:space-between;">
+      <span>Suggest above</span><span style="color:var(--amber);">{$capture.thresholds.suggest.toFixed(2)}</span>
+    </div>
+    <input class="range" type="range" min="0.3" max="0.9" step="0.01"
+      value={$capture.thresholds.suggest}
+      on:input={(e) => onSuggest(+e.target.value)} disabled={!$capture.available} />
   </div>
 
   <div class="panel">

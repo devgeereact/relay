@@ -1,5 +1,28 @@
 <script>
-  import { capture, transcript, detections } from '../stores/capture.js';
+  import {
+    capture,
+    transcript,
+    detections,
+    confirmDetection,
+    dismissDetection,
+    manualFire,
+  } from '../stores/capture.js';
+
+  let manualRef = '';
+  let manualError = '';
+  async function fireManual() {
+    const ref = manualRef.trim();
+    if (!ref) return;
+    try {
+      await manualFire(ref);
+      manualRef = '';
+      manualError = '';
+    } catch (e) {
+      manualError = String(e);
+    }
+  }
+  const isLive = (d) => d.status === 'auto' || d.status === 'manual';
+  const tagFor = (d) => (d.status === 'manual' ? 'Manual' : d.status === 'auto' ? 'Auto-fired' : 'Suggested');
 
   // Transcript + detection list are LIVE (Phase 4/5): transcript from the STT
   // engine, detections from direct-match over `detection://match`. Channel
@@ -55,18 +78,18 @@
     <div class="detect-list">
       {#if $detections.length}
         {#each $detections as d (d.reference + d.at)}
-          <div class="detect-card {d.confidence >= 0.9 ? 'is-live' : 'is-suggest'}">
+          <div class="detect-card {isLive(d) ? 'is-live' : 'is-suggest'}">
             <div class="detect-top">
               <div class="detect-ref">{d.reference}</div>
-              <div class="detect-tag">{d.confidence >= 0.9 ? 'High' : 'Suggested'}</div>
+              <div class="detect-tag">{tagFor(d)}</div>
             </div>
             <div class="detect-meter"><i style="width:{pct(d.confidence)}%;"></i></div>
             <div class="detect-bottom">
               <span class="detect-conf">{d.confidence.toFixed(2)} · {d.method}{d.in_library ? '' : ' · not in library'}</span>
-              {#if d.confidence >= 0.9}
-                <button class="btn-ghost">Undo</button>
+              {#if isLive(d)}
+                <button class="btn-ghost" on:click={() => dismissDetection(d.reference)}>Undo</button>
               {:else}
-                <button class="btn-confirm">Confirm</button>
+                <button class="btn-confirm" on:click={() => confirmDetection(d.reference)}>Confirm</button>
               {/if}
             </div>
             {#if d.text}
@@ -93,7 +116,15 @@
     </div>
 
     <div class="panel-title" style="margin-top:16px; margin-bottom:8px;">Manual override</div>
-    <input class="search-input" type="text" placeholder="Type a reference or search by phrase…  ( / )" />
+    <input
+      class="search-input"
+      type="text"
+      bind:value={manualRef}
+      on:keydown={(e) => e.key === 'Enter' && fireManual()}
+      placeholder="Type a reference, e.g. John 3:16 — Enter to fire"
+      disabled={!$capture.available}
+    />
+    {#if manualError}<div style="color:var(--red); font-size:11px; margin-top:6px;">{manualError}</div>{/if}
     <div class="kbd-row">
       <div class="kbd-hint"><span class="kbd">Space</span> confirm suggestion</div>
       <div class="kbd-hint"><span class="kbd">Esc</span> clear all screens</div>
