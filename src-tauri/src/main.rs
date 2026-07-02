@@ -12,6 +12,7 @@ mod router;
 mod stt;
 
 use audio::AudioEngine;
+use channels::OutputContent;
 use detection::DetectionMethod;
 use router::{RouteDecision, Router, Thresholds};
 use rusqlite::Connection;
@@ -36,6 +37,10 @@ struct Stt(Mutex<Option<SttEngine>>);
 #[derive(Default)]
 struct Routing(Mutex<Router>);
 
+/// Monotonic counter for output-window labels (output-1, output-2, …).
+#[derive(Default)]
+struct Outputs(Mutex<u32>);
+
 /// Per-chunk metadata pushed to the frontend on `audio://chunk`. Deliberately
 /// does NOT carry the raw samples — the console only needs level + voicing to
 /// drive the meter; STT (Phase 4) consumes the samples through a separate path.
@@ -57,6 +62,7 @@ fn main() {
         .manage(Db(Mutex::new(conn)))
         .manage(Audio::default())
         .manage(Routing::default())
+        .manage(Outputs::default())
         .setup(|app| {
             // Load STT here (not before .run) because the worker needs an
             // AppHandle to emit transcript events. Missing model → audio-only,
@@ -98,7 +104,11 @@ fn main() {
             dismiss_detection,
             get_thresholds,
             set_thresholds,
-            manual_fire
+            manual_fire,
+            open_output_window,
+            close_output_window,
+            list_output_windows,
+            clear_screens
         ])
         .run(tauri::generate_context!())
         .expect("error while running Relay");
@@ -148,6 +158,21 @@ fn emit_detections(handle: &tauri::AppHandle, text: &str, now_ms: u64) {
         let looked = db::lookup_verse(&conn, &r.book, r.chapter, r.verse)
             .ok()
             .flatten();
+        let text = looked.as_ref().map(|v| v.text.clone());
+        let translation = looked.as_ref().map(|v| v.translation.clone());
+
+        // Auto-fired content goes straight to the output channels; suggestions
+        // wait for the operator to confirm.
+        if status == "auto" {
+            channels::broadcast_content(
+                handle,
+                OutputContent {
+                    reference: key.clone(),
+                    text: text.clone(),
+                    translation: translation.clone(),
+                },
+            );
+        }
         let _ = handle.emit(
             "detection://match",
             DetectionEvent {
@@ -159,8 +184,8 @@ fn emit_detections(handle: &tauri::AppHandle, text: &str, now_ms: u64) {
                 method: m.method.clone(),
                 status,
                 in_library: looked.is_some(),
-                text: looked.as_ref().map(|v| v.text.clone()),
-                translation: looked.as_ref().map(|v| v.translation.clone()),
+                text,
+                translation,
             },
         );
     }
@@ -275,10 +300,30 @@ struct StatusStt {
     model: Option<String>,
 }
 
-/// Operator confirmed a suggestion (it should fire). Feeds the self-calibrating
-/// gate and returns the updated thresholds so Settings can reflect the nudge.
+/// Operator confirmed a suggestion — fire it to the output channels and feed the
+/// self-calibrating gate. Returns updated thresholds so Settings reflects the nudge.
 #[tauri::command]
-fn confirm_detection(routing: tauri::State<'_, Routing>) -> Result<Thresholds, String> {
+fn confirm_detection(
+    app: tauri::AppHandle,
+    db: tauri::State<'_, Db>,
+    routing: tauri::State<'_, Routing>,
+    reference: String,
+) -> Result<Thresholds, String> {
+    if let Some(m) = detection::detect_direct(&reference).into_iter().next() {
+        let r = &m.reference;
+        let conn = db.0.lock().map_err(|e| e.to_string())?;
+        let looked = db::lookup_verse(&conn, &r.book, r.chapter, r.verse)
+            .ok()
+            .flatten();
+        channels::broadcast_content(
+            &app,
+            OutputContent {
+                reference: format!("{} {}:{}", r.book, r.chapter, r.verse),
+                text: looked.as_ref().map(|v| v.text.clone()),
+                translation: looked.as_ref().map(|v| v.translation.clone()),
+            },
+        );
+    }
     let mut router = routing.0.lock().map_err(|e| e.to_string())?;
     router.record_feedback(true);
     Ok(router.thresholds())
@@ -337,6 +382,17 @@ fn manual_fire(
         let mut router = routing.0.lock().map_err(|e| e.to_string())?;
         router.manual_fire(&key, 0);
     }
+    let text = looked.as_ref().map(|v| v.text.clone());
+    let translation = looked.as_ref().map(|v| v.translation.clone());
+    // Manual override fires straight to output.
+    channels::broadcast_content(
+        &app,
+        OutputContent {
+            reference: key.clone(),
+            text: text.clone(),
+            translation: translation.clone(),
+        },
+    );
     let _ = app.emit(
         "detection://match",
         DetectionEvent {
@@ -348,9 +404,47 @@ fn manual_fire(
             method: m.method.clone(),
             status: "manual",
             in_library: looked.is_some(),
-            text: looked.as_ref().map(|v| v.text.clone()),
-            translation: looked.as_ref().map(|v| v.translation.clone()),
+            text,
+            translation,
         },
     );
     Ok(())
+}
+
+/// Open a native fullscreen output window rendering `template` (default "main").
+/// Returns the window's label. Multiple channels can be open at once.
+#[tauri::command]
+fn open_output_window(
+    app: tauri::AppHandle,
+    outputs: tauri::State<'_, Outputs>,
+    template: Option<String>,
+    name: Option<String>,
+) -> Result<String, String> {
+    let template = template.unwrap_or_else(|| "main".into());
+    let name = name.unwrap_or_else(|| "Output".into());
+    let label = {
+        let mut n = outputs.0.lock().map_err(|e| e.to_string())?;
+        *n += 1;
+        format!("output-{n}")
+    };
+    channels::open_native_window(&app, &label, &template, &name)?;
+    Ok(label)
+}
+
+/// Close an output window by label.
+#[tauri::command]
+fn close_output_window(app: tauri::AppHandle, label: String) -> Result<(), String> {
+    channels::close_window(&app, &label)
+}
+
+/// Labels of currently-open output windows.
+#[tauri::command]
+fn list_output_windows(app: tauri::AppHandle) -> Vec<String> {
+    channels::list_open(&app)
+}
+
+/// Operator "Clear all screens" — blank every output channel.
+#[tauri::command]
+fn clear_screens(app: tauri::AppHandle) {
+    channels::clear(&app);
 }

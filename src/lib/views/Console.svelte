@@ -1,4 +1,5 @@
 <script>
+  import { onMount, onDestroy } from 'svelte';
   import {
     capture,
     transcript,
@@ -6,7 +7,24 @@
     confirmDetection,
     dismissDetection,
     manualFire,
+    openOutput,
+    clearScreens,
   } from '../stores/capture.js';
+
+  // Esc = clear all screens, one of the always-reachable operator controls.
+  function onKey(e) {
+    if (e.key === 'Escape') clearScreens();
+  }
+  onMount(() => window.addEventListener('keydown', onKey));
+  onDestroy(() => window.removeEventListener('keydown', onKey));
+
+  async function openMainOutput() {
+    try {
+      await openOutput('main', 'Main screen');
+    } catch {
+      /* backend absent */
+    }
+  }
 
   let manualRef = '';
   let manualError = '';
@@ -157,8 +175,8 @@
     </div>
     <div class="controls">
       <button class="ctrl-btn primary"><span class="dot" style="background:#1b1204;"></span>AI detection: On</button>
-      <button class="ctrl-btn"><span class="dot" style="background:var(--text-faint);"></span>Clear all screens</button>
-      <button class="ctrl-btn">Manage channels</button>
+      <button class="ctrl-btn" on:click={clearScreens} disabled={!$capture.available}><span class="dot" style="background:var(--text-faint);"></span>Clear all screens <span style="color:var(--text-faint); font-family:var(--f-mono); font-size:10px;">Esc</span></button>
+      <button class="ctrl-btn" on:click={openMainOutput} disabled={!$capture.available}>Open output screen</button>
     </div>
   </div>
 </div>

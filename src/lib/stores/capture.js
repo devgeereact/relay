@@ -140,6 +140,22 @@ export async function manualFire(reference) {
   await call('manual_fire', { reference });
 }
 
+/** Open a native fullscreen output window for a template. Returns its label. */
+export async function openOutput(template, name) {
+  const call = await invoke(); // throws in browser
+  return call('open_output_window', { template, name });
+}
+
+/** Blank every output channel (operator "Clear all screens" / Esc). */
+export async function clearScreens() {
+  try {
+    const call = await invoke();
+    await call('clear_screens');
+  } catch {
+    /* backend absent */
+  }
+}
+
 /** Manual threshold override (Settings sliders). */
 export async function setThresholds(auto_fire, suggest) {
   try {

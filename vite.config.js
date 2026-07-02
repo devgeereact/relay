@@ -11,4 +11,14 @@ export default defineConfig({
     port: 5032,
     strictPort: true,
   },
+  build: {
+    // Two entries: the operator console (index.html) and the native output
+    // window (output.html) that channels.rs opens per output channel.
+    rollupOptions: {
+      input: {
+        main: 'index.html',
+        output: 'output.html',
+      },
+    },
+  },
 });
