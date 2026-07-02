@@ -171,6 +171,17 @@ pub fn verse_count(conn: &Connection) -> rusqlite::Result<i64> {
     conn.query_row("SELECT COUNT(*) FROM verses", [], |r| r.get(0))
 }
 
+/// Every verse, for building the semantic index (Phase 9).
+pub fn all_verses(conn: &Connection) -> rusqlite::Result<Vec<VerseRow>> {
+    let mut stmt = conn.prepare(
+        "SELECT v.id, v.book, v.chapter, v.verse, v.text, t.abbreviation
+           FROM verses v JOIN translations t ON t.id = v.translation_id
+          ORDER BY v.id",
+    )?;
+    let rows = stmt.query_map([], row_to_verse)?;
+    rows.collect()
+}
+
 fn row_to_verse(r: &rusqlite::Row) -> rusqlite::Result<VerseRow> {
     let book: String = r.get(1)?;
     let chapter: i64 = r.get(2)?;

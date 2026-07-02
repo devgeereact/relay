@@ -13,6 +13,7 @@
 //! ASR homophones ("free" → three). Semantic match + context memory are Phase 9.
 
 use serde::Serialize;
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -365,6 +366,177 @@ fn classify_num_word(w: &str) -> Option<NumWord> {
     Some(v)
 }
 
+// ===== Context memory (PROMPT.md Phase 9) =====
+
+/// Tracks the "current passage" so a bare "verse 4" resolves against the
+/// last-referenced book + chapter. Pure state — no IO. Fed by resolved direct
+/// matches; queried when a bare verse is heard.
+#[derive(Debug, Clone, Default)]
+pub struct ContextMemory {
+    current: Option<(String, i64)>, // (book, chapter)
+}
+
+impl ContextMemory {
+    /// Update the current passage from a freshly matched reference.
+    pub fn note(&mut self, r: &VerseRef) {
+        self.current = Some((r.book.clone(), r.chapter));
+    }
+
+    /// Resolve a bare verse number against the current passage, if any.
+    pub fn resolve_bare_verse(&self, verse: i64) -> Option<VerseRef> {
+        self.current.as_ref().map(|(book, chapter)| VerseRef {
+            book: book.clone(),
+            chapter: *chapter,
+            verse,
+        })
+    }
+
+    pub fn current(&self) -> Option<&(String, i64)> {
+        self.current.as_ref()
+    }
+}
+
+/// Find bare verse references ("verse 4", "verse twenty-eight") in `text`.
+/// Returns the verse numbers; the caller resolves them via ContextMemory.
+pub fn detect_bare_verses(text: &str) -> Vec<i64> {
+    let norm = normalize(text);
+    let tokens: Vec<&str> = norm.split_whitespace().collect();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < tokens.len() {
+        if matches!(tokens[i], "verse" | "verses") {
+            if let Some((n, _, _)) = parse_number(&tokens, i + 1) {
+                out.push(n);
+            }
+        }
+        i += 1;
+    }
+    out
+}
+
+// ===== Semantic match (PROMPT.md Phase 9) =====
+
+/// A vector-similarity index over the verse corpus. Phase 9 uses a TF-IDF
+/// bag-of-words embedding with cosine similarity — a genuine embedding+search
+/// that runs fully offline with no model. A neural sentence-embedder is a
+/// drop-in behind the same `top_k` seam (and the verses.embedding BLOB column)
+/// later; it improves synonym/paraphrase recall that lexical overlap misses.
+pub struct SemanticIndex {
+    idf: HashMap<String, f32>,
+    /// (reference, L2-normalized tf-idf vector) per verse.
+    docs: Vec<(VerseRef, HashMap<String, f32>)>,
+}
+
+impl SemanticIndex {
+    /// Build the index from the corpus: (reference, verse text).
+    pub fn build(corpus: &[(VerseRef, String)]) -> Self {
+        let n = corpus.len().max(1) as f32;
+        // Document frequency per term.
+        let mut df: HashMap<String, f32> = HashMap::new();
+        let tokenized: Vec<(VerseRef, Vec<String>)> = corpus
+            .iter()
+            .map(|(r, text)| (r.clone(), tokenize(text)))
+            .collect();
+        for (_, toks) in &tokenized {
+            let mut seen = std::collections::HashSet::new();
+            for t in toks {
+                if seen.insert(t.clone()) {
+                    *df.entry(t.clone()).or_insert(0.0) += 1.0;
+                }
+            }
+        }
+        let idf: HashMap<String, f32> = df
+            .into_iter()
+            .map(|(t, d)| (t, (n / d).ln() + 1.0))
+            .collect();
+
+        let docs = tokenized
+            .into_iter()
+            .map(|(r, toks)| (r, tfidf_vector(&toks, &idf)))
+            .collect();
+
+        SemanticIndex { idf, docs }
+    }
+
+    /// Top-k verses by cosine similarity to `query`, highest first. Scores are
+    /// in [0, 1]; the caller maps them to confidence and applies the gate.
+    pub fn top_k(&self, query: &str, k: usize) -> Vec<(VerseRef, f32)> {
+        let qvec = tfidf_vector(&tokenize(query), &self.idf);
+        if qvec.is_empty() {
+            return Vec::new();
+        }
+        let mut scored: Vec<(VerseRef, f32)> = self
+            .docs
+            .iter()
+            .map(|(r, dvec)| (r.clone(), cosine(&qvec, dvec)))
+            .filter(|(_, s)| *s > 0.0)
+            .collect();
+        scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        scored.truncate(k);
+        scored
+    }
+}
+
+/// Content-word tokenizer: lowercase, split on non-alphanumerics, drop short
+/// tokens and function words. KJV archaisms (thou/hath/…) are dropped as
+/// stopwords; scripture content words are kept.
+fn tokenize(text: &str) -> Vec<String> {
+    text.split(|c: char| !c.is_alphanumeric())
+        .filter_map(|w| {
+            let w = w.to_lowercase();
+            if w.len() >= 3 && !is_stopword(&w) {
+                Some(w)
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+fn is_stopword(w: &str) -> bool {
+    const STOP: &[&str] = &[
+        "the", "and", "that", "for", "his", "him", "her", "she", "you", "your", "our", "with",
+        "not", "but", "was", "were", "are", "this", "shall", "unto", "thou", "thy", "thee", "ye",
+        "hath", "have", "had", "which", "will", "them", "they", "their", "there", "then", "than",
+        "when", "who", "what", "all", "any", "from", "out", "into", "upon", "did", "does", "doth",
+    ];
+    STOP.contains(&w)
+}
+
+/// L2-normalized tf-idf vector for a token list, given a corpus idf map.
+fn tfidf_vector(tokens: &[String], idf: &HashMap<String, f32>) -> HashMap<String, f32> {
+    let mut tf: HashMap<String, f32> = HashMap::new();
+    for t in tokens {
+        if idf.contains_key(t) {
+            *tf.entry(t.clone()).or_insert(0.0) += 1.0;
+        }
+    }
+    let mut vec: HashMap<String, f32> = tf
+        .into_iter()
+        .map(|(t, f)| {
+            let w = f * idf.get(&t).copied().unwrap_or(0.0);
+            (t, w)
+        })
+        .collect();
+    let norm: f32 = vec.values().map(|v| v * v).sum::<f32>().sqrt();
+    if norm > 0.0 {
+        for v in vec.values_mut() {
+            *v /= norm;
+        }
+    }
+    vec
+}
+
+/// Cosine similarity of two L2-normalized sparse vectors (= dot product).
+fn cosine(a: &HashMap<String, f32>, b: &HashMap<String, f32>) -> f32 {
+    // Iterate the smaller map.
+    let (small, big) = if a.len() <= b.len() { (a, b) } else { (b, a) };
+    small
+        .iter()
+        .filter_map(|(t, av)| big.get(t).map(|bv| av * bv))
+        .sum()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -468,5 +640,86 @@ mod tests {
     fn matched_text_is_captured() {
         let m = one("see John 3:16 now");
         assert_eq!(m.matched_text, "john 3:16");
+    }
+
+    // --- context memory ---
+
+    #[test]
+    fn bare_verse_resolves_against_current_passage() {
+        let mut ctx = ContextMemory::default();
+        assert!(ctx.resolve_bare_verse(4).is_none()); // nothing yet
+        ctx.note(&VerseRef {
+            book: "Psalms".into(),
+            chapter: 23,
+            verse: 1,
+        });
+        assert_eq!(detect_bare_verses("now look at verse four"), vec![4]);
+        assert_eq!(
+            ctx.resolve_bare_verse(4).unwrap(),
+            VerseRef {
+                book: "Psalms".into(),
+                chapter: 23,
+                verse: 4
+            }
+        );
+    }
+
+    #[test]
+    fn detect_bare_verses_reads_digits_and_words() {
+        assert_eq!(
+            detect_bare_verses("verse 4 and verse twenty-eight"),
+            vec![4, 28]
+        );
+        assert!(detect_bare_verses("no reference here").is_empty());
+    }
+
+    // --- semantic match ---
+
+    fn seed_index() -> SemanticIndex {
+        let corpus = vec![
+            (
+                VerseRef { book: "John".into(), chapter: 3, verse: 16 },
+                "For God so loved the world, that he gave his only begotten Son, that whosoever believeth in him should not perish, but have everlasting life.".to_string(),
+            ),
+            (
+                VerseRef { book: "Psalms".into(), chapter: 23, verse: 1 },
+                "The LORD is my shepherd; I shall not want.".to_string(),
+            ),
+            (
+                VerseRef { book: "Romans".into(), chapter: 8, verse: 28 },
+                "And we know that all things work together for good to them that love God.".to_string(),
+            ),
+        ];
+        SemanticIndex::build(&corpus)
+    }
+
+    #[test]
+    fn semantic_matches_paraphrase_by_overlap() {
+        let idx = seed_index();
+        // Paraphrase of John 3:16 with shared content words.
+        let hits = idx.top_k("god loved the world and gave his son so we have life", 1);
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].0.book, "John");
+        assert!(hits[0].1 > 0.2, "similarity too low: {}", hits[0].1);
+    }
+
+    #[test]
+    fn semantic_picks_shepherd_for_shepherd_query() {
+        let idx = seed_index();
+        let hits = idx.top_k("the lord is my shepherd", 1);
+        assert_eq!(hits[0].0.reference_book_chapter_verse(), "Psalms 23:1");
+    }
+
+    #[test]
+    fn semantic_empty_on_no_content_overlap() {
+        let idx = seed_index();
+        assert!(idx.top_k("xyzzy plugh frobnicate", 1).is_empty());
+    }
+}
+
+impl VerseRef {
+    #[cfg(test)]
+    fn reference_book_chapter_verse(&self) -> String {
+        format!("{} {}:{}", self.book, self.chapter, self.verse)
     }
 }

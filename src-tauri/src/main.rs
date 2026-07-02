@@ -13,7 +13,7 @@ mod stt;
 
 use audio::AudioEngine;
 use channels::OutputContent;
-use detection::DetectionMethod;
+use detection::{ContextMemory, DetectionMethod, SemanticIndex, VerseRef};
 use router::{RouteDecision, Router, Thresholds};
 use rusqlite::Connection;
 use serde::Serialize;
@@ -41,6 +41,13 @@ struct Routing(Mutex<Router>);
 #[derive(Default)]
 struct Outputs(Mutex<u32>);
 
+/// The semantic (paraphrase) index, built once from the corpus at startup.
+struct Semantic(SemanticIndex);
+
+/// "Current passage" state for resolving bare verse references ("verse 4").
+#[derive(Default)]
+struct Context(Mutex<ContextMemory>);
+
 /// Per-chunk metadata pushed to the frontend on `audio://chunk`. Deliberately
 /// does NOT carry the raw samples — the console only needs level + voicing to
 /// drive the meter; STT (Phase 4) consumes the samples through a separate path.
@@ -64,6 +71,29 @@ fn main() {
         .manage(Routing::default())
         .manage(Outputs::default())
         .setup(|app| {
+            // Build the semantic index from the corpus once at startup, and set
+            // up context-memory state (Phase 9).
+            let corpus: Vec<(VerseRef, String)> = {
+                let db = app.state::<Db>();
+                let conn = db.0.lock().expect("db lock");
+                db::all_verses(&conn)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|v| {
+                        (
+                            VerseRef {
+                                book: v.book,
+                                chapter: v.chapter,
+                                verse: v.verse,
+                            },
+                            v.text,
+                        )
+                    })
+                    .collect()
+            };
+            app.manage(Semantic(SemanticIndex::build(&corpus)));
+            app.manage(Context(Mutex::new(ContextMemory::default())));
+
             // Load STT here (not before .run) because the worker needs an
             // AppHandle to emit transcript events. Missing model → audio-only,
             // logged but non-fatal: capture and manual override still work.
@@ -134,26 +164,65 @@ struct DetectionEvent {
     translation: Option<String>,
 }
 
-/// Detect references in `text`, gate each through the router, resolve survivors
-/// against the local corpus, and emit one `detection://match` per fired/suggested
-/// candidate. Dropped (debounced or low-confidence) detections are silent.
+/// Minimum semantic cosine to even consider a paraphrase candidate. Below this
+/// it's noise; above, the router's suggest/auto thresholds still apply.
+const SEMANTIC_FLOOR: f32 = 0.30;
+
+/// Detect references in `text` — direct, context-resolved bare verses, and
+/// semantic paraphrase — dedup them, gate each through the router, resolve
+/// against the corpus, and emit one `detection://match` per survivor. Dropped
+/// (debounced / low-confidence) detections are silent.
 fn emit_detections(handle: &tauri::AppHandle, text: &str, now_ms: u64) {
-    let matches = detection::detect_direct(text);
-    if matches.is_empty() {
-        return;
-    }
     let db = handle.state::<Db>();
     let routing = handle.state::<Routing>();
-    let (Ok(conn), Ok(mut router)) = (db.0.lock(), routing.0.lock()) else {
+    let ctx = handle.state::<Context>();
+    let sem = handle.state::<Semantic>();
+    let (Ok(conn), Ok(mut router), Ok(mut context)) = (db.0.lock(), routing.0.lock(), ctx.0.lock())
+    else {
         return;
     };
-    for m in matches {
-        let r = &m.reference;
-        let key = format!("{} {}:{}", r.book, r.chapter, r.verse);
-        // A high-confidence direct match counts as "explicit" — it overrides
-        // the repeat-debounce so a deliberate re-reference still fires.
+
+    // Gather candidates: (reference, confidence, method, explicit).
+    let mut candidates: Vec<(VerseRef, f32, DetectionMethod, bool)> = Vec::new();
+
+    // 1. Direct matches — also update the current passage (context memory).
+    for m in detection::detect_direct(text) {
+        context.note(&m.reference);
         let explicit = m.confidence >= 0.95;
-        let status = match router.decide(&key, m.confidence, explicit, now_ms) {
+        candidates.push((m.reference, m.confidence, DetectionMethod::Direct, explicit));
+    }
+    // 2. Bare verses resolved against the current passage.
+    for n in detection::detect_bare_verses(text) {
+        if let Some(r) = context.resolve_bare_verse(n) {
+            candidates.push((r, 0.88, DetectionMethod::Direct, false));
+        }
+    }
+    // 3. Best semantic (paraphrase) candidate.
+    if let Some((r, score)) = sem.0.top_k(text, 1).into_iter().next() {
+        if score >= SEMANTIC_FLOOR {
+            candidates.push((r, score.min(0.95), DetectionMethod::Semantic, false));
+        }
+    }
+    if candidates.is_empty() {
+        return;
+    }
+
+    // Dedup by reference, keeping the highest-confidence candidate (a direct
+    // match beats a weaker semantic hit for the same verse).
+    let mut best: std::collections::HashMap<String, (VerseRef, f32, DetectionMethod, bool)> =
+        std::collections::HashMap::new();
+    for c in candidates {
+        let key = format!("{} {}:{}", c.0.book, c.0.chapter, c.0.verse);
+        match best.get(&key) {
+            Some(existing) if existing.1 >= c.1 => {}
+            _ => {
+                best.insert(key, c);
+            }
+        }
+    }
+
+    for (key, (r, confidence, method, explicit)) in best {
+        let status = match router.decide(&key, confidence, explicit, now_ms) {
             RouteDecision::AutoFire => "auto",
             RouteDecision::Suggest => "suggested",
             RouteDecision::Drop => continue,
@@ -161,17 +230,17 @@ fn emit_detections(handle: &tauri::AppHandle, text: &str, now_ms: u64) {
         let looked = db::lookup_verse(&conn, &r.book, r.chapter, r.verse)
             .ok()
             .flatten();
-        let text = looked.as_ref().map(|v| v.text.clone());
+        let vtext = looked.as_ref().map(|v| v.text.clone());
         let translation = looked.as_ref().map(|v| v.translation.clone());
 
-        // Auto-fired content goes straight to the output channels; suggestions
-        // wait for the operator to confirm.
+        // Auto-fired content goes straight to output; suggestions wait for the
+        // operator to confirm.
         if status == "auto" {
             channels::broadcast_content(
                 handle,
                 OutputContent {
                     reference: key.clone(),
-                    text: text.clone(),
+                    text: vtext.clone(),
                     translation: translation.clone(),
                 },
             );
@@ -183,11 +252,11 @@ fn emit_detections(handle: &tauri::AppHandle, text: &str, now_ms: u64) {
                 book: r.book.clone(),
                 chapter: r.chapter,
                 verse: r.verse,
-                confidence: m.confidence,
-                method: m.method.clone(),
+                confidence,
+                method,
                 status,
                 in_library: looked.is_some(),
-                text,
+                text: vtext,
                 translation,
             },
         );
