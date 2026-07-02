@@ -108,7 +108,10 @@ fn main() {
             open_output_window,
             close_output_window,
             list_output_windows,
-            clear_screens
+            clear_screens,
+            list_templates,
+            get_template,
+            save_template
         ])
         .run(tauri::generate_context!())
         .expect("error while running Relay");
@@ -411,24 +414,53 @@ fn manual_fire(
     Ok(())
 }
 
-/// Open a native fullscreen output window rendering `template` (default "main").
+/// Open a native fullscreen output window rendering template `template_id`.
 /// Returns the window's label. Multiple channels can be open at once.
 #[tauri::command]
 fn open_output_window(
     app: tauri::AppHandle,
     outputs: tauri::State<'_, Outputs>,
-    template: Option<String>,
+    template_id: i64,
     name: Option<String>,
 ) -> Result<String, String> {
-    let template = template.unwrap_or_else(|| "main".into());
     let name = name.unwrap_or_else(|| "Output".into());
     let label = {
         let mut n = outputs.0.lock().map_err(|e| e.to_string())?;
         *n += 1;
         format!("output-{n}")
     };
-    channels::open_native_window(&app, &label, &template, &name)?;
+    channels::open_native_window(&app, &label, template_id, &name)?;
     Ok(label)
+}
+
+/// All output templates (Templates tab, Channels tab).
+#[tauri::command]
+fn list_templates(db: tauri::State<'_, Db>) -> Result<Vec<db::Template>, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    db::list_templates(&conn).map_err(|e| e.to_string())
+}
+
+/// A single template by id (fetched by each output window on load).
+#[tauri::command]
+fn get_template(db: tauri::State<'_, Db>, id: i64) -> Result<Option<db::Template>, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    db::get_template(&conn, id).map_err(|e| e.to_string())
+}
+
+/// Save a template (insert or update). Broadcasts `template://updated` so any
+/// open output window on that template re-renders live. Returns the id.
+#[tauri::command]
+fn save_template(
+    app: tauri::AppHandle,
+    db: tauri::State<'_, Db>,
+    template: db::Template,
+) -> Result<i64, String> {
+    let id = {
+        let conn = db.0.lock().map_err(|e| e.to_string())?;
+        db::upsert_template(&conn, &template).map_err(|e| e.to_string())?
+    };
+    let _ = app.emit("template://updated", id);
+    Ok(id)
 }
 
 /// Close an output window by label.

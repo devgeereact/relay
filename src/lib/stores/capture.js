@@ -26,6 +26,9 @@ export const transcript = writable({ partial: '', finals: [] });
 // reference. Gating/debounce is Phase 6 — for now every candidate lands here.
 export const detections = writable([]);
 
+// Output templates (Phase 8), loaded from the DB.
+export const templates = writable([]);
+
 const MAX_FINALS = 12;
 const MAX_DETECTIONS = 6;
 let unlistenAudio = null;
@@ -140,10 +143,30 @@ export async function manualFire(reference) {
   await call('manual_fire', { reference });
 }
 
-/** Open a native fullscreen output window for a template. Returns its label. */
-export async function openOutput(template, name) {
+/** Load all output templates from the DB into the store. */
+export async function loadTemplates() {
+  try {
+    const call = await invoke();
+    const list = await call('list_templates');
+    templates.set(list);
+    return list;
+  } catch {
+    return [];
+  }
+}
+
+/** Save a template (insert or update). Returns its id; reloads the store. */
+export async function saveTemplate(t) {
+  const call = await invoke();
+  const id = await call('save_template', { template: t });
+  await loadTemplates();
+  return id;
+}
+
+/** Open a native fullscreen output window for a template id. Returns its label. */
+export async function openOutput(templateId, name) {
   const call = await invoke(); // throws in browser
-  return call('open_output_window', { template, name });
+  return call('open_output_window', { templateId, name });
 }
 
 /** Blank every output channel (operator "Clear all screens" / Esc). */

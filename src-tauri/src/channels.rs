@@ -36,21 +36,22 @@ pub struct OutputContent {
 const OUTPUT_PREFIX: &str = "output-";
 
 /// Build the output view URL for a channel: the shared output.html plus the
-/// template id and a display name. Pure — unit-tested.
-pub fn output_url(template: &str, name: &str) -> String {
+/// template id (looked up from the DB by the window) and a display name.
+/// Pure — unit-tested.
+pub fn output_url(template_id: i64, name: &str) -> String {
     format!(
-        "output.html?template={}&name={}",
-        urlencode(template),
+        "output.html?template_id={}&name={}",
+        template_id,
         urlencode(name)
     )
 }
 
-/// Open a native fullscreen output window rendering `template`. Borderless and
-/// always-on-top-free so it behaves as a projector/second-screen surface.
+/// Open a native fullscreen output window rendering template `template_id`.
+/// Borderless so it behaves as a projector/second-screen surface.
 pub fn open_native_window(
     app: &tauri::AppHandle,
     label: &str,
-    template: &str,
+    template_id: i64,
     name: &str,
 ) -> Result<(), String> {
     if app.get_webview_window(label).is_some() {
@@ -59,7 +60,7 @@ pub fn open_native_window(
     WebviewWindowBuilder::new(
         app,
         label,
-        WebviewUrl::App(output_url(template, name).into()),
+        WebviewUrl::App(output_url(template_id, name).into()),
     )
     .title(format!("Relay — {name}"))
     .inner_size(1280.0, 720.0)
@@ -115,14 +116,14 @@ mod tests {
     #[test]
     fn output_url_carries_template_and_name() {
         assert_eq!(
-            output_url("main", "Main screen"),
-            "output.html?template=main&name=Main%20screen"
+            output_url(1, "Main screen"),
+            "output.html?template_id=1&name=Main%20screen"
         );
     }
 
     #[test]
     fn output_url_escapes_specials() {
-        let u = output_url("stage", "Stage/2");
+        let u = output_url(2, "Stage/2");
         assert!(u.contains("name=Stage%2F2"), "got {u}");
     }
 }

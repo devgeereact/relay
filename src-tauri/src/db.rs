@@ -8,7 +8,8 @@
 //! runtime dependency on the docs/ file being shipped alongside the binary.
 
 use rusqlite::{Connection, OptionalExtension};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::path::PathBuf;
 
 /// The canonical schema, baked into the binary at compile time.
@@ -27,6 +28,67 @@ pub struct VerseRow {
     pub translation: String,
 }
 
+/// An output template: layout (regions + alignment) and style (fonts, colors,
+/// sizes). `layout` and `style` are opaque JSON blobs interpreted by the shared
+/// renderer (Output.svelte) — the DB doesn't care about their internals, which
+/// keeps the template shape editable without a migration. See docs/SPEC.md §5.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Template {
+    #[serde(default)]
+    pub id: i64,
+    pub name: String,
+    pub layout: Value,
+    pub style: Value,
+}
+
+/// All templates, ordered by id.
+pub fn list_templates(conn: &Connection) -> rusqlite::Result<Vec<Template>> {
+    let mut stmt =
+        conn.prepare("SELECT id, name, region_config_json, style_json FROM templates ORDER BY id")?;
+    let rows = stmt.query_map([], row_to_template)?;
+    rows.collect()
+}
+
+/// A single template by id.
+pub fn get_template(conn: &Connection, id: i64) -> rusqlite::Result<Option<Template>> {
+    conn.query_row(
+        "SELECT id, name, region_config_json, style_json FROM templates WHERE id = ?1",
+        [id],
+        row_to_template,
+    )
+    .optional()
+}
+
+/// Insert (id <= 0) or update (id > 0) a template. Returns its id.
+pub fn upsert_template(conn: &Connection, t: &Template) -> rusqlite::Result<i64> {
+    let layout = t.layout.to_string();
+    let style = t.style.to_string();
+    if t.id > 0 {
+        conn.execute(
+            "UPDATE templates SET name = ?1, region_config_json = ?2, style_json = ?3 WHERE id = ?4",
+            (&t.name, &layout, &style, t.id),
+        )?;
+        Ok(t.id)
+    } else {
+        conn.execute(
+            "INSERT INTO templates (name, region_config_json, style_json) VALUES (?1, ?2, ?3)",
+            (&t.name, &layout, &style),
+        )?;
+        Ok(conn.last_insert_rowid())
+    }
+}
+
+fn row_to_template(r: &rusqlite::Row) -> rusqlite::Result<Template> {
+    let layout: String = r.get(2)?;
+    let style: String = r.get(3)?;
+    Ok(Template {
+        id: r.get(0)?,
+        name: r.get(1)?,
+        layout: serde_json::from_str(&layout).unwrap_or(Value::Null),
+        style: serde_json::from_str(&style).unwrap_or(Value::Null),
+    })
+}
+
 /// Open (or create) the on-device database at the default per-OS data path,
 /// applying the schema and dev seed on first creation.
 ///
@@ -43,6 +105,13 @@ pub fn open() -> rusqlite::Result<Connection> {
     conn.execute_batch("PRAGMA foreign_keys = ON;")?;
     if fresh {
         init_fresh(&conn)?;
+    } else {
+        // Forward-fill for DBs created before templates were seeded (Phase 8).
+        // Idempotent: only seeds when the table is empty.
+        let n: i64 = conn.query_row("SELECT COUNT(*) FROM templates", [], |r| r.get(0))?;
+        if n == 0 {
+            seed_templates(&conn)?;
+        }
     }
     Ok(conn)
 }
@@ -163,6 +232,44 @@ fn seed(conn: &Connection) -> rusqlite::Result<()> {
     for (book, chapter, verse, text) in verses {
         stmt.execute((translation_id, book, chapter, verse, text))?;
     }
+
+    seed_templates(conn)?;
+    Ok(())
+}
+
+/// The four built-in output templates (SPEC §5). These match the frontend
+/// defaults in src/lib/templates.js — kept as the seed source of truth so a
+/// fresh install has usable channels immediately. `layout`/`style` are the JSON
+/// the shared renderer interprets.
+fn seed_templates(conn: &Connection) -> rusqlite::Result<()> {
+    let templates: &[(&str, &str, &str)] = &[
+        (
+            "Classic Serif",
+            r##"{"regions":["verse_text","reference"],"align":"center","lowerThird":false,"refFirst":false}"##,
+            r##"{"font":"var(--f-serif)","background":"radial-gradient(120% 140% at 50% 30%, #2a2013, #0b0906)","accent":"var(--amber)","verseColor":"#f4e4c8","verseSize":"4.6vw","refSize":"1.9vw","italicRef":true}"##,
+        ),
+        (
+            "Stage Mono",
+            r##"{"regions":["reference","verse_text"],"align":"left","lowerThird":false,"refFirst":true}"##,
+            r##"{"font":"var(--f-display)","background":"#000000","accent":"var(--teal)","verseColor":"#f2f5f6","verseSize":"5vw","refSize":"2vw","italicRef":false}"##,
+        ),
+        (
+            "Lower Third",
+            r##"{"regions":["verse_text","reference"],"align":"left","lowerThird":true,"refFirst":false}"##,
+            r##"{"font":"var(--f-body)","background":"transparent","accent":"var(--violet)","verseColor":"#1c1224","verseSize":"2.4vw","refSize":"1.4vw","italicRef":false}"##,
+        ),
+        (
+            "Lobby Warm",
+            r##"{"regions":["reference","verse_text"],"align":"center","lowerThird":false,"refFirst":false}"##,
+            r##"{"font":"var(--f-serif)","background":"linear-gradient(160deg, #241419, #120a0e)","accent":"var(--rose)","verseColor":"#f0dfe3","verseSize":"3.2vw","refSize":"1.6vw","italicRef":false}"##,
+        ),
+    ];
+    let mut stmt = conn.prepare(
+        "INSERT INTO templates (name, region_config_json, style_json) VALUES (?1, ?2, ?3)",
+    )?;
+    for (name, layout, style) in templates {
+        stmt.execute((name, layout, style))?;
+    }
     Ok(())
 }
 
@@ -181,6 +288,43 @@ mod tests {
     fn seeds_expected_verse_count() {
         let conn = fresh_db();
         assert_eq!(verse_count(&conn).unwrap(), 15);
+    }
+
+    #[test]
+    fn seeds_four_templates() {
+        let conn = fresh_db();
+        let ts = list_templates(&conn).unwrap();
+        assert_eq!(ts.len(), 4);
+        assert_eq!(ts[0].name, "Classic Serif");
+        assert_eq!(ts[0].style["font"], "var(--f-serif)");
+        assert_eq!(ts[0].layout["align"], "center");
+    }
+
+    #[test]
+    fn upsert_updates_existing_template() {
+        let conn = fresh_db();
+        let mut t = get_template(&conn, 1).unwrap().unwrap();
+        t.name = "Classic Serif (edited)".into();
+        t.style["accent"] = serde_json::json!("#ffffff");
+        let id = upsert_template(&conn, &t).unwrap();
+        assert_eq!(id, 1);
+        let reloaded = get_template(&conn, 1).unwrap().unwrap();
+        assert_eq!(reloaded.name, "Classic Serif (edited)");
+        assert_eq!(reloaded.style["accent"], "#ffffff");
+    }
+
+    #[test]
+    fn upsert_inserts_new_template() {
+        let conn = fresh_db();
+        let t = Template {
+            id: 0,
+            name: "Custom".into(),
+            layout: serde_json::json!({ "regions": ["verse_text"] }),
+            style: serde_json::json!({ "font": "var(--f-body)" }),
+        };
+        let id = upsert_template(&conn, &t).unwrap();
+        assert_eq!(id, 5);
+        assert_eq!(list_templates(&conn).unwrap().len(), 5);
     }
 
     #[test]

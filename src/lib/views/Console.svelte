@@ -4,6 +4,8 @@
     capture,
     transcript,
     detections,
+    templates,
+    loadTemplates,
     confirmDetection,
     dismissDetection,
     manualFire,
@@ -15,12 +17,17 @@
   function onKey(e) {
     if (e.key === 'Escape') clearScreens();
   }
-  onMount(() => window.addEventListener('keydown', onKey));
+  onMount(() => {
+    loadTemplates();
+    window.addEventListener('keydown', onKey);
+  });
   onDestroy(() => window.removeEventListener('keydown', onKey));
 
   async function openMainOutput() {
+    const id = $templates.find((t) => t.name === 'Classic Serif')?.id ?? $templates[0]?.id;
+    if (!id) return;
     try {
-      await openOutput('main', 'Main screen');
+      await openOutput(id, 'Main screen');
     } catch {
       /* backend absent */
     }
