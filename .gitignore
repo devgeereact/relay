@@ -12,6 +12,10 @@ dist/
 *.sqlite
 *.sqlite3
 
+# STT models — large binaries, downloaded per-machine (see README dev setup)
+/models/
+*.bin
+
 # Env / secrets
 .env
 .env.local

@@ -15,9 +15,9 @@ rusqlite = { version = "0.31", features = ["bundled"] }
 tokio = { version = "1", features = ["full"] }
 tokio-tungstenite = "0.23"
 cpal = "0.15"                 # Phase 3 — cross-platform audio capture (Win + macOS)
+whisper-rs = "0.14"           # Phase 4 — local speech-to-text (whisper.cpp bindings; needs cmake to build)
 
 # Added in later build phases — uncomment as each phase lands (see PROMPT.md):
-# whisper-rs = "0.11"        # Phase 4 — local speech-to-text
 # ndi-sdk-sys or equivalent  # Phase 10 — NDI render target (evaluate available crates, may need custom FFI bindings)
 
 [[bin]]

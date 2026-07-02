@@ -1,7 +1,10 @@
 <script>
-  // Phase 1: static demo data straight from the design mockup. Phase 6 wires
-  // the detection list, transcript, and channel previews to live pipeline
-  // state via Tauri events — the markup shape is what those bindings target.
+  import { capture, transcript } from '../stores/capture.js';
+
+  // Transcript panel is LIVE (Phase 4): finals + in-progress partial come from
+  // the STT engine over `stt://transcript`. Detection cards + channel previews
+  // are still static demo data until Phase 5/6 wire the detection pipeline.
+  $: hasTranscript = $transcript.finals.length > 0 || $transcript.partial.length > 0;
 
   // Operator override (search box) is a first-class control per CLAUDE.md —
   // it stays here at the top of the console, always reachable, never a fallback.
@@ -20,11 +23,22 @@
 
 <div class="layout">
   <div class="panel">
-    <div class="panel-title">Live transcript</div>
+    <div class="panel-title">
+      Live transcript
+      {#if !$capture.stt.loaded}<span class="count">no model</span>
+      {:else if $capture.capturing}<span class="count">listening</span>{/if}
+    </div>
     <div class="transcript">
-      …and that is the promise we stand on this morning. Turn with me to Romans chapter eight, verse twenty-eight. But remember what Jesus said,
-      <mark>for God so loved the world that He gave His only Son</mark>
-      — that whoever believes in Him should not perish…
+      {#if hasTranscript}
+        {$transcript.finals.join(' ')}
+        {#if $transcript.partial}<mark>{$transcript.partial}</mark>{/if}
+      {:else if $capture.capturing}
+        <span style="color:var(--text-faint);">Waiting for speech…</span>
+      {:else if !$capture.stt.loaded}
+        <span style="color:var(--text-faint);">No speech model loaded — see Settings. Manual override still works.</span>
+      {:else}
+        <span style="color:var(--text-faint);">Start listening in Settings to transcribe live.</span>
+      {/if}
     </div>
 
     <div class="panel-title" style="margin-top:16px;">AI detection <span class="count">{detections.length} active</span></div>

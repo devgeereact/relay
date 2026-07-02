@@ -110,6 +110,11 @@
       </div>
     {/each}
     <div class="panel-title" style="margin-top:16px;">Offline speech model</div>
-    <div style="font-family:var(--f-mono); font-size:11.5px; color:var(--text-dim);">medium.en + yoruba-ft — 1.4GB — up to date</div>
+    {#if $capture.stt.loaded}
+      <div style="font-family:var(--f-mono); font-size:11.5px; color:var(--green);">● loaded</div>
+      <div style="font-family:var(--f-mono); font-size:10.5px; color:var(--text-faint); margin-top:4px; word-break:break-all;">{$capture.stt.model}</div>
+    {:else}
+      <div style="font-family:var(--f-mono); font-size:11.5px; color:var(--text-faint);">○ no model — audio-only (see README dev setup)</div>
+    {/if}
   </div>
 </div>
