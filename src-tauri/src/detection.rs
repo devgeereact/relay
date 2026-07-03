@@ -113,6 +113,15 @@ pub const CANONICAL_BOOKS: &[&str] = &[
     "Revelation",
 ];
 
+/// Books with a single chapter — referenced by bare verse ("Jude 4" = Jude
+/// 1:4, "Philemon verse 6" = Philemon 1:6). For these the first (or only)
+/// number is the verse and the chapter defaults to 1.
+const SINGLE_CHAPTER_BOOKS: &[&str] = &["Obadiah", "Philemon", "2 John", "3 John", "Jude"];
+
+fn is_single_chapter(book: &str) -> bool {
+    SINGLE_CHAPTER_BOOKS.contains(&book)
+}
+
 /// Alias → canonical-book map, built once. Covers the lowercase full name, the
 /// spoken/written forms of numbered books ("first"/"i"/"1", "1john"), plus a few
 /// common variants and ASR mishears. Multilingual-ready: add rows per language.
@@ -227,6 +236,68 @@ fn parse_reference(
                 canonical, ch, vs, tokens, book_start, next, 0.96, used_kw, false,
             ),
             next,
+        ));
+    }
+
+    // Single-chapter books: "Jude 4" / "Jude verse four" → Jude 1:4. A leading
+    // "verse" keyword, or a lone number, means the number is the verse (chapter
+    // 1). An explicit second number ("Jude 1 4") is still read as chapter:verse.
+    if is_single_chapter(canonical) {
+        let mut j = i;
+        let mut used_v = false;
+        while let Some(t) = tokens.get(j) {
+            if matches!(*t, "verse" | "verses" | "vs" | "v") {
+                used_v = true;
+                j += 1;
+            } else {
+                break;
+            }
+        }
+        if used_v {
+            let (verse, after, ph) = parse_number(tokens, j)?;
+            return Some((
+                make_match(
+                    canonical, 1, verse, tokens, book_start, after, 0.95, true, ph,
+                ),
+                after,
+            ));
+        }
+        let (n1, after1, ph1) = parse_number(tokens, i)?;
+        let mut k = after1;
+        let mut kw2 = used_kw;
+        while let Some(t) = tokens.get(k) {
+            if matches!(*t, "verse" | "verses" | "vs" | "v" | ":") {
+                if *t != ":" {
+                    kw2 = true;
+                }
+                k += 1;
+            } else {
+                break;
+            }
+        }
+        if let Some((n2, after2, ph2)) = parse_number(tokens, k) {
+            // Two numbers → treat as chapter:verse as spoken.
+            return Some((
+                make_match(
+                    canonical,
+                    n1,
+                    n2,
+                    tokens,
+                    book_start,
+                    after2,
+                    0.92,
+                    kw2,
+                    ph1 || ph2,
+                ),
+                after2,
+            ));
+        }
+        // Lone number → verse, chapter 1.
+        return Some((
+            make_match(
+                canonical, 1, n1, tokens, book_start, after1, 0.9, used_kw, ph1,
+            ),
+            after1,
         ));
     }
 
@@ -756,6 +827,23 @@ mod tests {
     fn multiword_and_variant_book_names() {
         refeq(&one("song of solomon two one"), "Song of Solomon", 2, 1);
         refeq(&one("revelations 22:21"), "Revelation", 22, 21);
+    }
+
+    #[test]
+    fn single_chapter_books_bare_verse() {
+        // Bare verse → chapter 1.
+        refeq(&one("look at jude four"), "Jude", 1, 4);
+        refeq(&one("jude 4"), "Jude", 1, 4);
+        refeq(&one("philemon verse six"), "Philemon", 1, 6);
+        refeq(&one("second john four"), "2 John", 1, 4);
+        // Explicit forms still respected.
+        refeq(&one("jude 1:4"), "Jude", 1, 4);
+        refeq(&one("obadiah verse twenty one"), "Obadiah", 1, 21);
+    }
+
+    #[test]
+    fn single_chapter_book_without_number_is_ignored() {
+        assert!(detect_direct("the epistle of jude warns us").is_empty());
     }
 
     // --- context memory ---
