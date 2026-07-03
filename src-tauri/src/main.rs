@@ -160,6 +160,7 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             greet,
+            log_frontend,
             lookup_verse,
             data_health,
             list_audio_devices,
@@ -482,6 +483,13 @@ fn persist_cue(handle: &tauri::AppHandle, cue_type: &str, payload: Option<&str>)
 #[tauri::command]
 fn greet(name: &str) -> String {
     format!("Relay is running. Hello, {name}.")
+}
+
+/// DEBUG: let the webview forward errors + heartbeats to the backend stdout, so
+/// a frontend freeze/exception is visible without devtools.
+#[tauri::command]
+fn log_frontend(level: String, msg: String) {
+    eprintln!("FE[{level}]: {msg}");
 }
 
 /// Look up a verse by canonical reference for the operator console / manual

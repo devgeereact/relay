@@ -194,6 +194,9 @@ fn normalize(text: &str) -> String {
         match ch {
             c if c.is_alphanumeric() => s.extend(c.to_lowercase()),
             ':' => s.push(':'),
+            // Apostrophes are DROPPED (not split) so ASR possessives stay one
+            // token: "Sam's" → "sams" (→ Psalms), "Isaiah's" → "isaiahs".
+            '\'' | '\u{2019}' => {}
             _ => s.push(' '), // hyphen, comma, period, etc. → separator
         }
     }
@@ -1058,6 +1061,14 @@ mod tests {
     #[test]
     fn phonetic_book_sam_is_psalms() {
         refeq(&one("sam twenty three verse one"), "Psalms", 23, 1);
+    }
+
+    #[test]
+    fn asr_possessive_book_name() {
+        // whisper often mishears "Psalms 23" as "Sam's 23"; the apostrophe must
+        // not split the token.
+        refeq(&one("read from Sam's 23, verse 1"), "Psalms", 23, 1);
+        refeq(&one("sam\u{2019}s 23 verse 1"), "Psalms", 23, 1);
     }
 
     // --- semantic match ---

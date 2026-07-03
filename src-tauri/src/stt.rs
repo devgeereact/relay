@@ -63,6 +63,13 @@ impl SttEngine {
         if !model_path.exists() {
             return Err(format!("STT model not found: {}", model_path.display()));
         }
+        // Silence whisper.cpp's very verbose per-token stderr logging once. Left
+        // unhooked, it prints thousands of lines per transcription, hammering
+        // I/O and making the app feel frozen. Routes logs to the `log` crate,
+        // which has no subscriber here → dropped.
+        static LOG_INIT: std::sync::Once = std::sync::Once::new();
+        LOG_INIT.call_once(whisper_rs::install_logging_hooks);
+
         let ctx = WhisperContext::new_with_params(
             &model_path.to_string_lossy(),
             WhisperContextParameters::default(),

@@ -185,6 +185,7 @@ fn build_and_run<F>(
 where
     F: Fn(&AudioChunk) + Send + 'static,
 {
+    eprintln!("audio: build_and_run start");
     let host = cpal::default_host();
     let device = match device_name {
         Some(name) => host
@@ -196,12 +197,14 @@ where
             .default_input_device()
             .ok_or_else(|| "no default input device".to_string())?,
     };
+    eprintln!("audio: device = {:?}", device.name());
 
     let supported = device.default_input_config().map_err(|e| e.to_string())?;
     let sample_format = supported.sample_format();
     let config: cpal::StreamConfig = supported.into();
     let channels = config.channels as usize;
     let sample_rate = config.sample_rate.0;
+    eprintln!("audio: config sr={sample_rate} ch={channels} fmt={sample_format:?}");
 
     let (tx, rx) = mpsc::channel::<Vec<f32>>();
     let err_fn = |e| eprintln!("audio stream error: {e}");
@@ -246,8 +249,10 @@ where
         other => return Err(format!("unsupported sample format: {other:?}")),
     }
     .map_err(|e| e.to_string())?;
+    eprintln!("audio: stream built");
 
     stream.play().map_err(|e| e.to_string())?;
+    eprintln!("audio: stream playing");
 
     let vad = Vad {
         threshold_rms: VAD_RMS_THRESHOLD,
@@ -366,5 +371,26 @@ mod tests {
         // interleaved L,R: (1.0,-1.0),(0.5,0.5) → 0.0, 0.5
         let mono = downmix_f32(&[1.0, -1.0, 0.5, 0.5], 2);
         assert_eq!(mono, vec![0.0, 0.5]);
+    }
+
+    // Hardware/permission-dependent — run manually:
+    //   cargo test smoke_capture -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn smoke_capture() {
+        use std::sync::atomic::AtomicUsize;
+        eprintln!("devices: {:?}", list_input_devices());
+        let count = Arc::new(AtomicUsize::new(0));
+        let c2 = count.clone();
+        let engine = AudioEngine::start(
+            None,
+            move |_chunk| {
+                c2.fetch_add(1, Ordering::Relaxed);
+            },
+            |e| eprintln!("audio error: {e}"),
+        );
+        std::thread::sleep(std::time::Duration::from_secs(3));
+        engine.stop();
+        eprintln!("chunks captured: {}", count.load(Ordering::Relaxed));
     }
 }
