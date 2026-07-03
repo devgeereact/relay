@@ -41,7 +41,7 @@ const HOP_MS: u32 = 200; // 50% overlap
 /// Seed RMS gate for voiced audio on f32 samples in [-1, 1]. Deliberately a
 /// plain energy gate for Phase 3 — a real VAD (webrtc/silero) slots in behind
 /// the same `Vad` seam later without touching capture or chunking.
-const VAD_RMS_THRESHOLD: f32 = 0.012;
+const VAD_RMS_THRESHOLD: f32 = 0.008;
 
 /// Enumerate input devices on the default host. Safe to call anytime; returns
 /// an empty list rather than erroring if the host has no inputs.

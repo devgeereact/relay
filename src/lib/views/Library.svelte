@@ -1,6 +1,17 @@
 <script>
   import { onMount } from 'svelte';
-  import { capture, listServices, serviceDetail, endService } from '../stores/capture.js';
+  import { capture, listServices, serviceDetail, endService, exportService } from '../stores/capture.js';
+
+  let exportMsg = '';
+  async function doExport() {
+    if (!selected) return;
+    try {
+      const path = await exportService(selected.id);
+      exportMsg = `Saved to ${path}`;
+    } catch (e) {
+      exportMsg = `Export failed: ${e}`;
+    }
+  }
 
   // Service history is local-first (CLAUDE.md) — transcripts, fired detections,
   // and operator overrides recorded to SQLite during a service, read back here.
@@ -26,6 +37,7 @@
   async function open(svc) {
     selected = svc;
     detail = null;
+    exportMsg = '';
     loading = true;
     try {
       detail = await serviceDetail(svc.id);
@@ -49,8 +61,12 @@
   <div class="panel">
     <div class="panel-title">
       <span><button class="btn-ghost" on:click={back}>← Library</button> &nbsp; {selected.title} · {selected.date}</span>
-      <span class="count">{selected.verses} verses · {selected.overrides} overrides · {fmtDur(selected.duration_secs)}</span>
+      <span style="display:flex; align-items:center; gap:10px;">
+        <span class="count">{selected.verses} verses · {selected.overrides} overrides · {fmtDur(selected.duration_secs)}</span>
+        <button class="btn-confirm" on:click={doExport}>Export .md</button>
+      </span>
     </div>
+    {#if exportMsg}<div style="font-family:var(--f-mono); font-size:11px; color:var(--green); margin-bottom:10px; word-break:break-all;">{exportMsg}</div>{/if}
 
     {#if loading}
       <div style="color:var(--text-faint); font-family:var(--f-mono); font-size:12px;">Loading…</div>

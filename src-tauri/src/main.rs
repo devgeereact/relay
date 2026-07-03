@@ -127,6 +127,9 @@ fn main() {
             let handle = app.handle().clone();
             let engine = match stt::default_model_path() {
                 Some(path) => match SttEngine::try_load(path, move |update| {
+                    if update.is_final {
+                        println!("stt[{}]: {}", update.language, update.text);
+                    }
                     let _ = handle.emit("stt://transcript", &update);
                     // Persist finalized utterances to the current service.
                     if update.is_final {
@@ -177,6 +180,7 @@ fn main() {
             current_service,
             list_services,
             service_detail,
+            export_service,
             list_templates,
             get_template,
             save_template,
@@ -777,6 +781,89 @@ fn service_detail(db: tauri::State<'_, Db>, id: i64) -> Result<ServiceDetail, St
         transcripts: db::service_transcripts(&conn, id).map_err(|e| e.to_string())?,
         detections: db::service_detections(&conn, id).map_err(|e| e.to_string())?,
     })
+}
+
+/// Export a service as a Markdown file (transcript + detected verses) to the
+/// user's Downloads folder. Returns the written path. Uses std::fs — no fs
+/// plugin needed; nothing leaves the device.
+#[tauri::command]
+fn export_service(db: tauri::State<'_, Db>, id: i64) -> Result<String, String> {
+    let (summary, transcripts, detections) = {
+        let conn = db.0.lock().map_err(|e| e.to_string())?;
+        let summary = db::list_services(&conn)
+            .map_err(|e| e.to_string())?
+            .into_iter()
+            .find(|s| s.id == id)
+            .ok_or_else(|| format!("service {id} not found"))?;
+        let transcripts = db::service_transcripts(&conn, id).map_err(|e| e.to_string())?;
+        let detections = db::service_detections(&conn, id).map_err(|e| e.to_string())?;
+        (summary, transcripts, detections)
+    };
+
+    let mut md = String::new();
+    md.push_str(&format!("# {}\n\n", summary.title));
+    md.push_str(&format!(
+        "{} · {} · {} verses · {} overrides\n\n",
+        summary.date,
+        fmt_secs(summary.duration_secs),
+        summary.verses,
+        summary.overrides
+    ));
+    md.push_str("## Detected verses\n\n");
+    if detections.is_empty() {
+        md.push_str("_None._\n\n");
+    } else {
+        for d in &detections {
+            md.push_str(&format!(
+                "- **{}** — {} {:.2} @ {}\n",
+                d.reference.as_deref().unwrap_or("unresolved"),
+                d.method,
+                d.confidence,
+                fmt_secs(d.fired_at)
+            ));
+        }
+        md.push('\n');
+    }
+    md.push_str("## Transcript\n\n");
+    if transcripts.is_empty() {
+        md.push_str("_No transcript recorded._\n");
+    } else {
+        for t in &transcripts {
+            md.push_str(&format!(
+                "`{}` ({}) {}\n\n",
+                fmt_secs(t.timestamp),
+                t.language,
+                t.text
+            ));
+        }
+    }
+
+    // Sanitize a filename and write to Downloads (fallback: app-data/exports).
+    let safe: String = summary
+        .title
+        .chars()
+        .map(|c| if c.is_alphanumeric() { c } else { '-' })
+        .collect();
+    let filename = format!("relay-{}-{}.md", safe, summary.date);
+    let home = std::env::var_os("HOME").ok_or("no HOME")?;
+    let downloads = std::path::PathBuf::from(&home).join("Downloads");
+    let dir = if downloads.is_dir() {
+        downloads
+    } else {
+        let d = std::path::PathBuf::from(&home)
+            .join("Library/Application Support/com.relay.app/exports");
+        std::fs::create_dir_all(&d).map_err(|e| e.to_string())?;
+        d
+    };
+    let path = dir.join(filename);
+    std::fs::write(&path, md).map_err(|e| e.to_string())?;
+    Ok(path.display().to_string())
+}
+
+/// Format seconds as m:ss.
+fn fmt_secs(secs: f64) -> String {
+    let s = secs.max(0.0) as i64;
+    format!("{}:{:02}", s / 60, s % 60)
 }
 
 #[derive(Clone, Serialize)]

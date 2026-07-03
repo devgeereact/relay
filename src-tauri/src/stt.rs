@@ -138,12 +138,31 @@ where
     let mut new_since_step = 0usize;
     let mut silence_run = 0u32;
     let mut last_ts_ms = 0u64;
+    // End (ms) of the audio already appended, so we only add the NON-overlapping
+    // tail of each chunk. The detection chunker emits 50%-overlapping chunks;
+    // feeding those to whisper verbatim duplicates every hop and garbles the
+    // transcript. Timestamps make this robust to any overlap ratio.
+    let mut appended_end_ms = 0u64;
 
     while let Ok(chunk) = rx.recv() {
         last_ts_ms = chunk.timestamp_ms;
         if chunk.is_voice {
             silence_run = 0;
-            let resampled = resample_linear(&chunk.samples, chunk.sample_rate, TARGET_RATE);
+            let sr = chunk.sample_rate as u64;
+            let chunk_len_ms = chunk.samples.len() as u64 * 1000 / sr.max(1);
+            let chunk_end_ms = chunk.timestamp_ms + chunk_len_ms;
+            // Skip the portion already covered by a previous (overlapping) chunk.
+            let new_slice: &[f32] = if chunk.timestamp_ms >= appended_end_ms {
+                &chunk.samples
+            } else {
+                let skip = ((appended_end_ms - chunk.timestamp_ms) * sr / 1000) as usize;
+                chunk.samples.get(skip..).unwrap_or(&[])
+            };
+            appended_end_ms = chunk_end_ms.max(appended_end_ms);
+            if new_slice.is_empty() {
+                continue; // fully overlapping — nothing new to transcribe
+            }
+            let resampled = resample_linear(new_slice, chunk.sample_rate, TARGET_RATE);
             window.extend_from_slice(&resampled);
             if window.len() > max_window {
                 let drop = window.len() - max_window;

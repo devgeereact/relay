@@ -116,6 +116,12 @@ export async function serviceDetail(id) {
   return call('service_detail', { id });
 }
 
+/** Export a service to a Markdown file. Returns the written path. */
+export async function exportService(id) {
+  const call = await invoke();
+  return call('export_service', { id });
+}
+
 /** Start capture from `device` (name string, or null for the default input). */
 export async function startCapture(device) {
   const call = await invoke();
