@@ -84,10 +84,48 @@ export async function setDetection(enabled) {
   }
 }
 
+/** Start (or resume) recording a service. Returns its id. */
+export async function startService(title, date) {
+  const call = await invoke();
+  return call('start_service', { title, date });
+}
+
+/** Stop recording the current service (history kept). */
+export async function endService() {
+  try {
+    const call = await invoke();
+    await call('end_service');
+  } catch {
+    /* backend absent */
+  }
+}
+
+/** All recorded services (Library list). */
+export async function listServices() {
+  try {
+    const call = await invoke();
+    return await call('list_services');
+  } catch {
+    return [];
+  }
+}
+
+/** Transcript + fired detections for one service. */
+export async function serviceDetail(id) {
+  const call = await invoke();
+  return call('service_detail', { id });
+}
+
 /** Start capture from `device` (name string, or null for the default input). */
 export async function startCapture(device) {
   const call = await invoke();
   const { listen } = await import('@tauri-apps/api/event');
+  // Begin (or resume) recording this service so transcripts + detections persist.
+  try {
+    await startService('Sunday Service', new Date().toISOString().slice(0, 10));
+  } catch {
+    /* recording is best-effort — capture proceeds regardless */
+  }
   await call('start_capture', { device: device ?? null });
 
   unlistenAudio = await listen('audio://chunk', (e) => {

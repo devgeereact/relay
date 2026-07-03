@@ -19,6 +19,7 @@ use rusqlite::Connection;
 use serde::Serialize;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
+use std::time::Instant;
 use stt::SttEngine;
 use tauri::{Emitter, Manager};
 
@@ -54,6 +55,17 @@ struct Context(Mutex<ContextMemory>);
 /// (it bypasses this entirely — a first-class control, CLAUDE.md).
 struct Detecting(AtomicBool);
 
+/// The in-progress service being recorded to local history, if any.
+struct SessionState {
+    id: i64,
+    started: Instant,
+    last_transcript: Option<i64>,
+}
+
+/// Current service-session state (None = not recording).
+#[derive(Default)]
+struct Session(Mutex<Option<SessionState>>);
+
 /// Per-chunk metadata pushed to the frontend on `audio://chunk`. Deliberately
 /// does NOT carry the raw samples — the console only needs level + voicing to
 /// drive the meter; STT (Phase 4) consumes the samples through a separate path.
@@ -77,6 +89,7 @@ fn main() {
         .manage(Routing::default())
         .manage(Outputs::default())
         .manage(Detecting(AtomicBool::new(true)))
+        .manage(Session::default())
         .setup(|app| {
             // Build the semantic index from the corpus once at startup, and set
             // up context-memory state (Phase 9).
@@ -115,6 +128,10 @@ fn main() {
             let engine = match stt::default_model_path() {
                 Some(path) => match SttEngine::try_load(path, move |update| {
                     let _ = handle.emit("stt://transcript", &update);
+                    // Persist finalized utterances to the current service.
+                    if update.is_final {
+                        persist_transcript(&handle, &update.text, &update.language);
+                    }
                     // Phase 5/6: detect references, then route each through the
                     // confidence gate + debounce before surfacing it.
                     emit_detections(&handle, &update.text, update.timestamp_ms);
@@ -155,6 +172,11 @@ fn main() {
             clear_screens,
             set_detection_enabled,
             get_detection_enabled,
+            start_service,
+            end_service,
+            current_service,
+            list_services,
+            service_detail,
             list_templates,
             get_template,
             save_template,
@@ -267,6 +289,18 @@ fn emit_detections(handle: &tauri::AppHandle, text: &str, now_ms: u64) {
                     translation: translation.clone(),
                 },
             );
+            let method_str = match method {
+                DetectionMethod::Direct => "direct",
+                DetectionMethod::Semantic => "semantic",
+            };
+            persist_fire(
+                &conn,
+                handle.state::<Session>(),
+                looked.as_ref().map(|v| v.id),
+                method_str,
+                confidence,
+                text,
+            );
         }
         let _ = handle.emit(
             "detection://match",
@@ -283,6 +317,69 @@ fn emit_detections(handle: &tauri::AppHandle, text: &str, now_ms: u64) {
                 translation,
             },
         );
+    }
+}
+
+/// Persist a finalized transcript line into the current service (if recording),
+/// updating the session's last-transcript id for detection linkage. Locks its
+/// own db handle — call OUTSIDE any held db lock.
+fn persist_transcript(handle: &tauri::AppHandle, text: &str, language: &str) {
+    let db = handle.state::<Db>();
+    let session = handle.state::<Session>();
+    // Consistent lock order everywhere: db before session (see persist_fire,
+    // which is called while db is already held) — avoids a lock-ordering deadlock.
+    let (Ok(conn), Ok(mut sess)) = (db.0.lock(), session.0.lock()) else {
+        return;
+    };
+    if let Some(st) = sess.as_mut() {
+        let ts = st.started.elapsed().as_secs_f64();
+        if let Ok(tid) = db::insert_transcript(&conn, st.id, ts, text, language, None) {
+            st.last_transcript = Some(tid);
+        }
+    }
+}
+
+/// Persist a fired detection into the current service, using an already-held db
+/// connection (avoids re-locking). Creates a transcript row if none exists yet.
+fn persist_fire(
+    conn: &Connection,
+    session: tauri::State<'_, Session>,
+    verse_id: Option<i64>,
+    method: &str,
+    confidence: f32,
+    window_text: &str,
+) {
+    let Ok(mut sess) = session.0.lock() else {
+        return;
+    };
+    let Some(st) = sess.as_mut() else {
+        return; // not recording
+    };
+    let ts = st.started.elapsed().as_secs_f64();
+    let tid = match st.last_transcript {
+        Some(t) => t,
+        None => match db::insert_transcript(conn, st.id, ts, window_text, "en", None) {
+            Ok(t) => {
+                st.last_transcript = Some(t);
+                t
+            }
+            Err(_) => return,
+        },
+    };
+    let _ = db::insert_detection(conn, tid, verse_id, method, confidence, "auto", Some(ts));
+}
+
+/// Record an operator cue (manual_override / clear_screens) into the current
+/// service. Locks its own db handle — call outside a held db lock.
+fn persist_cue(handle: &tauri::AppHandle, cue_type: &str, payload: Option<&str>) {
+    let db = handle.state::<Db>();
+    let session = handle.state::<Session>();
+    let (Ok(conn), Ok(sess)) = (db.0.lock(), session.0.lock()) else {
+        return;
+    };
+    if let Some(st) = sess.as_ref() {
+        let ts = st.started.elapsed().as_secs_f64();
+        let _ = db::insert_cue(&conn, st.id, cue_type, payload, ts);
     }
 }
 
@@ -488,6 +585,7 @@ fn manual_fire(
     app: tauri::AppHandle,
     db: tauri::State<'_, Db>,
     routing: tauri::State<'_, Routing>,
+    session: tauri::State<'_, Session>,
     reference: String,
 ) -> Result<(), String> {
     let m = detection::detect_direct(&reference)
@@ -521,7 +619,7 @@ fn manual_fire(
     let _ = app.emit(
         "detection://match",
         DetectionEvent {
-            reference: key,
+            reference: key.clone(),
             book: r.book.clone(),
             chapter: r.chapter,
             verse: r.verse,
@@ -533,6 +631,24 @@ fn manual_fire(
             translation,
         },
     );
+
+    // Record to the service: the fired verse (as a detection) + the override cue.
+    let method_str = match m.method {
+        DetectionMethod::Semantic => "semantic",
+        DetectionMethod::Direct => "direct",
+    };
+    {
+        let conn = db.0.lock().map_err(|e| e.to_string())?;
+        persist_fire(
+            &conn,
+            session,
+            looked.as_ref().map(|v| v.id),
+            method_str,
+            1.0,
+            &key,
+        );
+    }
+    persist_cue(&app, "manual_override", Some(&key));
     Ok(())
 }
 
@@ -601,6 +717,72 @@ fn list_output_windows(app: tauri::AppHandle) -> Vec<String> {
 #[tauri::command]
 fn clear_screens(app: tauri::AppHandle) {
     channels::clear(&app);
+    persist_cue(&app, "clear_screens", None);
+}
+
+/// Start (or resume) recording a service. If one is already active it's reused
+/// so pause/resume of capture doesn't fragment history. Returns the service id.
+#[tauri::command]
+fn start_service(
+    session: tauri::State<'_, Session>,
+    db: tauri::State<'_, Db>,
+    title: String,
+    date: String,
+) -> Result<i64, String> {
+    // db before session (consistent global lock order — see persist_transcript).
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    let mut sess = session.0.lock().map_err(|e| e.to_string())?;
+    if let Some(st) = sess.as_ref() {
+        return Ok(st.id);
+    }
+    let id = db::create_service(&conn, &date, &title).map_err(|e| e.to_string())?;
+    *sess = Some(SessionState {
+        id,
+        started: Instant::now(),
+        last_transcript: None,
+    });
+    Ok(id)
+}
+
+/// Stop recording the current service (history is kept).
+#[tauri::command]
+fn end_service(session: tauri::State<'_, Session>) -> Result<(), String> {
+    *session.0.lock().map_err(|e| e.to_string())? = None;
+    Ok(())
+}
+
+/// Id of the service currently being recorded, if any.
+#[tauri::command]
+fn current_service(session: tauri::State<'_, Session>) -> Result<Option<i64>, String> {
+    Ok(session
+        .0
+        .lock()
+        .map_err(|e| e.to_string())?
+        .as_ref()
+        .map(|s| s.id))
+}
+
+/// All services for the Library list, newest first.
+#[tauri::command]
+fn list_services(db: tauri::State<'_, Db>) -> Result<Vec<db::ServiceSummary>, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    db::list_services(&conn).map_err(|e| e.to_string())
+}
+
+/// Full transcript + fired detections for one service (Library detail view).
+#[tauri::command]
+fn service_detail(db: tauri::State<'_, Db>, id: i64) -> Result<ServiceDetail, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    Ok(ServiceDetail {
+        transcripts: db::service_transcripts(&conn, id).map_err(|e| e.to_string())?,
+        detections: db::service_detections(&conn, id).map_err(|e| e.to_string())?,
+    })
+}
+
+#[derive(Clone, Serialize)]
+struct ServiceDetail {
+    transcripts: Vec<db::TranscriptRow>,
+    detections: Vec<db::ServiceDetection>,
 }
 
 /// Arm/disarm automatic detection. Returns the new state.
