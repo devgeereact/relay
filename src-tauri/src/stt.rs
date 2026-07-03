@@ -378,9 +378,7 @@ mod tests {
         let tx = engine.sender();
         // ~6s of loud voiced audio in 0.4s chunks (RMS well above the VAD gate).
         for i in 0..30 {
-            let samples: Vec<f32> = (0..19200)
-                .map(|n| 0.3 * (n as f32 * 0.05).sin())
-                .collect();
+            let samples: Vec<f32> = (0..19200).map(|n| 0.3 * (n as f32 * 0.05).sin()).collect();
             tx.send(AudioChunk {
                 samples,
                 timestamp_ms: i * 400,

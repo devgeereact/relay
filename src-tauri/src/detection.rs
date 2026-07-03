@@ -147,6 +147,122 @@ fn alias_map() -> &'static HashMap<String, &'static str> {
                 }
             }
         }
+        // Common written abbreviations for fast manual-override typing
+        // ("ps 23 1", "rom 8 1", "1 jn 3 1"). Single-token ones here; numbered
+        // ones ("1 jn") are added in the loop below.
+        let abbr: &[(&str, &str)] = &[
+            ("gen", "Genesis"),
+            ("exo", "Exodus"),
+            ("ex", "Exodus"),
+            ("lev", "Leviticus"),
+            ("lv", "Leviticus"),
+            ("num", "Numbers"),
+            ("nm", "Numbers"),
+            ("deut", "Deuteronomy"),
+            ("deu", "Deuteronomy"),
+            ("dt", "Deuteronomy"),
+            ("josh", "Joshua"),
+            ("jos", "Joshua"),
+            ("judg", "Judges"),
+            ("jdg", "Judges"),
+            ("rth", "Ruth"),
+            ("ps", "Psalms"),
+            ("psa", "Psalms"),
+            ("pss", "Psalms"),
+            ("prov", "Proverbs"),
+            ("prv", "Proverbs"),
+            ("pro", "Proverbs"),
+            ("eccl", "Ecclesiastes"),
+            ("ecc", "Ecclesiastes"),
+            ("song", "Song of Solomon"),
+            ("sos", "Song of Solomon"),
+            ("isa", "Isaiah"),
+            ("jer", "Jeremiah"),
+            ("jr", "Jeremiah"),
+            ("lam", "Lamentations"),
+            ("ezek", "Ezekiel"),
+            ("eze", "Ezekiel"),
+            ("ezk", "Ezekiel"),
+            ("dan", "Daniel"),
+            ("dn", "Daniel"),
+            ("hos", "Hosea"),
+            ("jl", "Joel"),
+            ("amo", "Amos"),
+            ("obad", "Obadiah"),
+            ("oba", "Obadiah"),
+            ("jnh", "Jonah"),
+            ("mic", "Micah"),
+            ("nah", "Nahum"),
+            ("hab", "Habakkuk"),
+            ("zeph", "Zephaniah"),
+            ("zep", "Zephaniah"),
+            ("hag", "Haggai"),
+            ("zech", "Zechariah"),
+            ("zec", "Zechariah"),
+            ("mal", "Malachi"),
+            ("matt", "Matthew"),
+            ("mat", "Matthew"),
+            ("mt", "Matthew"),
+            ("mrk", "Mark"),
+            ("mk", "Mark"),
+            ("luk", "Luke"),
+            ("lk", "Luke"),
+            ("jhn", "John"),
+            ("jn", "John"),
+            ("acts", "Acts"),
+            ("ac", "Acts"),
+            ("rom", "Romans"),
+            ("rm", "Romans"),
+            ("gal", "Galatians"),
+            ("ga", "Galatians"),
+            ("eph", "Ephesians"),
+            ("phil", "Philippians"),
+            ("php", "Philippians"),
+            ("col", "Colossians"),
+            ("tit", "Titus"),
+            ("phm", "Philemon"),
+            ("heb", "Hebrews"),
+            ("jas", "James"),
+            ("jde", "Jude"),
+            ("rev", "Revelation"),
+            ("rv", "Revelation"),
+        ];
+        for (a, canon) in abbr {
+            m.insert((*a).into(), canon);
+        }
+        // Numbered-book abbreviations: "1 sa"/"1sa" → 1 Samuel, "1 jn"/"1jn" →
+        // 1 John, etc. Two-letter stems keep them short to type.
+        let numbered: &[(&str, &str)] = &[
+            ("sa", "Samuel"),
+            ("sm", "Samuel"),
+            ("ki", "Kings"),
+            ("kg", "Kings"),
+            ("ch", "Chronicles"),
+            ("chr", "Chronicles"),
+            ("co", "Corinthians"),
+            ("cor", "Corinthians"),
+            ("th", "Thessalonians"),
+            ("thess", "Thessalonians"),
+            ("ti", "Timothy"),
+            ("tim", "Timothy"),
+            ("pe", "Peter"),
+            ("pet", "Peter"),
+            ("jn", "John"),
+            ("jo", "John"),
+        ];
+        for d in ['1', '2', '3'] {
+            for (stem, word) in numbered {
+                let canon = CANONICAL_BOOKS
+                    .iter()
+                    .find(|b| b.starts_with(d) && b.ends_with(word))
+                    .copied();
+                if let Some(canon) = canon {
+                    m.insert(format!("{d} {stem}"), canon); // "1 jn"
+                    m.insert(format!("{d}{stem}"), canon); // "1jn"
+                }
+            }
+        }
+
         // Extra spoken variants + ASR/accent mishears. The silent "P" in Psalms
         // is frequently dropped by ASR on African-accented speech ("sam",
         // "salm"), so those map to Psalms.
@@ -1061,6 +1177,17 @@ mod tests {
     #[test]
     fn phonetic_book_sam_is_psalms() {
         refeq(&one("sam twenty three verse one"), "Psalms", 23, 1);
+    }
+
+    #[test]
+    fn fast_search_abbreviations() {
+        refeq(&one("ps 23 1"), "Psalms", 23, 1);
+        refeq(&one("rom 8 1"), "Romans", 8, 1);
+        refeq(&one("1 jn 3 1"), "1 John", 3, 1);
+        refeq(&one("1jn 3 1"), "1 John", 3, 1);
+        refeq(&one("mt 5 3"), "Matthew", 5, 3);
+        refeq(&one("rev 22 1"), "Revelation", 22, 1);
+        refeq(&one("2 co 5 17"), "2 Corinthians", 5, 17);
     }
 
     #[test]

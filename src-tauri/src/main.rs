@@ -160,7 +160,6 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             greet,
-            log_frontend,
             lookup_verse,
             data_health,
             list_audio_devices,
@@ -485,13 +484,6 @@ fn greet(name: &str) -> String {
     format!("Relay is running. Hello, {name}.")
 }
 
-/// DEBUG: let the webview forward errors + heartbeats to the backend stdout, so
-/// a frontend freeze/exception is visible without devtools.
-#[tauri::command]
-fn log_frontend(level: String, msg: String) {
-    eprintln!("FE[{level}]: {msg}");
-}
-
 /// Look up a verse by canonical reference for the operator console / manual
 /// override. Errors are returned as strings for the frontend to surface —
 /// no panics on a live path.
@@ -544,21 +536,28 @@ async fn start_capture(
         .map(|e| e.sender());
     let emitter = app.clone();
     let err_emitter = app.clone();
+    // Throttle the level-meter event: chunks arrive ~5/sec but the UI only needs
+    // a couple updates/sec. Flooding the webview with events is a real freeze
+    // risk. STT still gets EVERY chunk.
+    let chunk_n = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
     // Non-blocking: returns instantly, so the UI thread never stalls on device
     // init. Stream failures surface as `audio://error`.
     let engine = AudioEngine::start(
         device,
         move |chunk| {
-            let _ = emitter.emit(
-                "audio://chunk",
-                ChunkEvent {
-                    timestamp_ms: chunk.timestamp_ms,
-                    sample_rate: chunk.sample_rate,
-                    rms: chunk.rms,
-                    is_voice: chunk.is_voice,
-                    samples: chunk.samples.len(),
-                },
-            );
+            let n = chunk_n.fetch_add(1, Ordering::Relaxed);
+            if n.is_multiple_of(3) {
+                let _ = emitter.emit(
+                    "audio://chunk",
+                    ChunkEvent {
+                        timestamp_ms: chunk.timestamp_ms,
+                        sample_rate: chunk.sample_rate,
+                        rms: chunk.rms,
+                        is_voice: chunk.is_voice,
+                        samples: chunk.samples.len(),
+                    },
+                );
+            }
             if let Some(tx) = &stt_tx {
                 let _ = tx.send(chunk.clone());
             }

@@ -185,7 +185,6 @@ fn build_and_run<F>(
 where
     F: Fn(&AudioChunk) + Send + 'static,
 {
-    eprintln!("audio: build_and_run start");
     let host = cpal::default_host();
     let device = match device_name {
         Some(name) => host
@@ -197,14 +196,11 @@ where
             .default_input_device()
             .ok_or_else(|| "no default input device".to_string())?,
     };
-    eprintln!("audio: device = {:?}", device.name());
-
     let supported = device.default_input_config().map_err(|e| e.to_string())?;
     let sample_format = supported.sample_format();
     let config: cpal::StreamConfig = supported.into();
     let channels = config.channels as usize;
     let sample_rate = config.sample_rate.0;
-    eprintln!("audio: config sr={sample_rate} ch={channels} fmt={sample_format:?}");
 
     let (tx, rx) = mpsc::channel::<Vec<f32>>();
     let err_fn = |e| eprintln!("audio stream error: {e}");
@@ -249,10 +245,8 @@ where
         other => return Err(format!("unsupported sample format: {other:?}")),
     }
     .map_err(|e| e.to_string())?;
-    eprintln!("audio: stream built");
 
     stream.play().map_err(|e| e.to_string())?;
-    eprintln!("audio: stream playing");
 
     let vad = Vad {
         threshold_rms: VAD_RMS_THRESHOLD,

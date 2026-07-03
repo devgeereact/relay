@@ -1,5 +1,5 @@
 <script>
-  import { onMount, onDestroy, tick } from 'svelte';
+  import { onMount, onDestroy, afterUpdate } from 'svelte';
   import {
     capture,
     transcript,
@@ -35,12 +35,12 @@
   let transcriptEl;
   $: dets = $detections; // pending suggestions
 
-  // Auto-scroll the transcript to the latest word as it streams in.
-  $: if (transcriptEl && ($transcript.finals.length || $transcript.partial)) {
-    tick().then(() => {
-      transcriptEl.scrollTop = transcriptEl.scrollHeight;
-    });
-  }
+  // Auto-scroll the transcript to the latest word. afterUpdate is the correct
+  // Svelte hook for DOM side-effects — calling tick() inside a reactive `$:`
+  // block re-entrantly is a known infinite-loop trap (it froze the webview).
+  afterUpdate(() => {
+    if (transcriptEl) transcriptEl.scrollTop = transcriptEl.scrollHeight;
+  });
 
   // Operator keyboard controls — always reachable (CLAUDE.md). Esc works even
   // while typing; the rest yield to text fields.
