@@ -32,9 +32,21 @@ pub struct VerseRef {
 }
 
 /// A candidate detection found in a transcript span.
+///
+/// `reference` is the anchor — the first verse to display. A multi-verse passage
+/// is described by `verse_end` (explicit range, e.g. "John 3:16-18") or
+/// `whole_chapter` ("Psalm 23", no verse). The caller fires the anchor verse and
+/// stages the rest so "next" walks the passage (see ContextMemory). Keeping the
+/// output single-verse means the template engine never special-cases passages.
 #[derive(Debug, Clone)]
 pub struct RefMatch {
     pub reference: VerseRef,
+    /// Inclusive end verse of an explicit range; None for a single verse or a
+    /// whole-chapter reference (whose end is resolved from the corpus at fire).
+    pub verse_end: Option<i64>,
+    /// True when only a book + chapter was spoken ("Psalm 23") — display verse 1
+    /// and stage the whole chapter.
+    pub whole_chapter: bool,
     pub confidence: f32,
     pub method: DetectionMethod,
     pub matched_text: String,
@@ -291,7 +303,6 @@ fn alias_map() -> &'static HashMap<String, &'static str> {
         m.insert("thessalonians".into(), "1 Thessalonians"); // bare → most-common
         m.insert("galatia".into(), "Galatians");
         m
-
     })
 }
 
@@ -369,14 +380,17 @@ fn parse_reference(
         }
     }
 
-    // Combined "3:16" token.
+    // Combined "3:16" token, with optional "-18" range end.
     if let Some((ch, vs, next)) = try_colon_pair(tokens, i) {
-        return Some((
-            make_match(
-                canonical, ch, vs, tokens, book_start, next, 0.96, used_kw, false,
-            ),
-            next,
-        ));
+        let mut m = make_match(
+            canonical, ch, vs, tokens, book_start, next, 0.96, used_kw, false,
+        );
+        let mut end_idx = next;
+        if let Some((e, after)) = parse_range_end(tokens, next, vs) {
+            m.verse_end = Some(e);
+            end_idx = after;
+        }
+        return Some((m, end_idx));
     }
 
     // Single-chapter books: "Jude 4" / "Jude verse four" → Jude 1:4. A leading
@@ -432,13 +446,16 @@ fn parse_reference(
                 after2,
             ));
         }
-        // Lone number → verse, chapter 1.
-        return Some((
-            make_match(
-                canonical, 1, n1, tokens, book_start, after1, 0.9, used_kw, ph1,
-            ),
-            after1,
-        ));
+        // Lone number → verse, chapter 1, with optional range ("Jude 4-6").
+        let mut m = make_match(
+            canonical, 1, n1, tokens, book_start, after1, 0.9, used_kw, ph1,
+        );
+        let mut end_idx = after1;
+        if let Some((e, after)) = parse_range_end(tokens, after1, n1) {
+            m.verse_end = Some(e);
+            end_idx = after;
+        }
+        return Some((m, end_idx));
     }
 
     // Chapter number.
@@ -463,8 +480,18 @@ fn parse_reference(
         }
     }
 
-    // Verse number.
-    let (verse, after_vs, ph2) = parse_number(tokens, i)?;
+    // Verse number — if absent, this is a whole-chapter reference ("Psalm 23"):
+    // display verse 1, stage the chapter. Moderate confidence so live detection
+    // surfaces it as a suggestion (operator confirms) rather than auto-firing a
+    // whole chapter unbidden; a manual push fires it straight away.
+    let Some((verse, after_vs, ph2)) = parse_number(tokens, i) else {
+        let base = if used_kw { 0.88 } else { 0.83 };
+        let mut m = make_match(
+            canonical, chapter, 1, tokens, book_start, after_ch, base, false, phonetic,
+        );
+        m.whole_chapter = true;
+        return Some((m, after_ch));
+    };
     phonetic |= ph2;
     let verse_was_digit = tokens
         .get(after_vs - 1)
@@ -476,12 +503,16 @@ fn parse_reference(
     } else {
         0.90
     };
-    Some((
-        make_match(
-            canonical, chapter, verse, tokens, book_start, after_vs, base, used_kw, phonetic,
-        ),
-        after_vs,
-    ))
+    let mut m = make_match(
+        canonical, chapter, verse, tokens, book_start, after_vs, base, used_kw, phonetic,
+    );
+    // Optional range end ("John 3:16-18", "Psalm 23 verses 1 to 6").
+    let mut end_idx = after_vs;
+    if let Some((e, after)) = parse_range_end(tokens, after_vs, verse) {
+        m.verse_end = Some(e);
+        end_idx = after;
+    }
+    Some((m, end_idx))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -510,9 +541,39 @@ fn make_match(
             chapter,
             verse,
         },
+        verse_end: None,
+        whole_chapter: false,
         confidence: conf,
         method: DetectionMethod::Direct,
         matched_text: tokens[book_start..end].join(" "),
+    }
+}
+
+/// After a parsed verse at `idx`, look for an optional range end: an explicit
+/// connector ("John 3:16 to 18") or an immediate bare number (hyphen ranges like
+/// "3:16-18" tokenize to adjacent numbers, the hyphen becoming whitespace).
+/// Returns (end, next_index) only when the span is sane (`end >= start`).
+fn parse_range_end(tokens: &[&str], idx: usize, start: i64) -> Option<(i64, usize)> {
+    let mut j = idx;
+    let mut connector = false;
+    while let Some(t) = tokens.get(j) {
+        if matches!(*t, "to" | "through" | "thru" | "til" | "until") {
+            connector = true;
+            j += 1;
+        } else {
+            break;
+        }
+    }
+    // Without a connector word, only an IMMEDIATELY adjacent number counts (the
+    // hyphen-range case) — otherwise a following number is a separate reference.
+    if !connector && j != idx {
+        return None;
+    }
+    let (end, after, _) = parse_number(tokens, j)?;
+    if end >= start && end - start <= 200 {
+        Some((end, after))
+    } else {
+        None
     }
 }
 
@@ -683,11 +744,28 @@ fn classify_num_word(w: &str) -> Option<NumWord> {
 #[derive(Debug, Clone, Default)]
 pub struct ContextMemory {
     current: Option<VerseRef>,
+    /// Inclusive last verse of the passage being walked, if the current verse is
+    /// part of a multi-verse range or whole chapter. `next` stops here.
+    span_end: Option<i64>,
 }
 
 impl ContextMemory {
-    /// Record the verse currently shown.
+    /// Record a single verse currently shown (clears any active passage span).
     pub fn note(&mut self, r: &VerseRef) {
+        self.current = Some(r.clone());
+        self.span_end = None;
+    }
+
+    /// Record the anchor of a multi-verse passage (range or whole chapter). `end`
+    /// is the last verse to walk to; None means step until the chapter runs out.
+    pub fn note_passage(&mut self, r: &VerseRef, end: Option<i64>) {
+        self.current = Some(r.clone());
+        self.span_end = end;
+    }
+
+    /// Move the current verse within an active passage WITHOUT clearing the span
+    /// — used by "next"/"back" so the range end still bounds the walk.
+    pub fn advance(&mut self, r: &VerseRef) {
         self.current = Some(r.clone());
     }
 
@@ -704,12 +782,20 @@ impl ContextMemory {
         self.current.as_ref()
     }
 
-    /// The next verse in the current chapter (verse + 1), if a current exists.
+    /// The next verse in the passage (verse + 1), if a current exists and we
+    /// haven't reached an explicit range end.
     pub fn next_verse(&self) -> Option<VerseRef> {
-        self.current.as_ref().map(|c| VerseRef {
-            book: c.book.clone(),
-            chapter: c.chapter,
-            verse: c.verse + 1,
+        self.current.as_ref().and_then(|c| {
+            if let Some(end) = self.span_end {
+                if c.verse >= end {
+                    return None; // reached the end of an explicit range
+                }
+            }
+            Some(VerseRef {
+                book: c.book.clone(),
+                chapter: c.chapter,
+                verse: c.verse + 1,
+            })
         })
     }
 
@@ -721,6 +807,97 @@ impl ContextMemory {
                 chapter: c.chapter,
                 verse: c.verse - 1,
             })
+        })
+    }
+}
+
+// ===== Topical concordance & cross-references (Phase A: A3/A4) =============
+
+/// A topical theme: spoken trigger keywords → a ranked list of reference
+/// strings. Offline, curated. Surfaces related scripture by theme even when the
+/// preacher doesn't quote a verse directly (A4), and doubles as the cross-
+/// reference source for a fired verse's theme (A3).
+struct Theme {
+    name: &'static str,
+    keywords: &'static [&'static str],
+    refs: &'static [&'static str],
+}
+
+#[rustfmt::skip]
+const THEMES: &[Theme] = &[
+    Theme { name: "Fear & Anxiety", keywords: &["afraid","fear","fearful","anxious","anxiety","worry","worried","scared","terrified","nervous","panic","dread"], refs: &["Isaiah 41:10","Philippians 4:6-7","John 14:27","2 Timothy 1:7","Psalm 56:3","Joshua 1:9"] },
+    Theme { name: "Trouble & Storms", keywords: &["trouble","storm","storms","trial","trials","suffering","suffer","hardship","crisis","struggle","struggling","overwhelmed"], refs: &["Psalm 46:1","John 16:33","Romans 8:28","Isaiah 43:2","2 Corinthians 4:17","Psalm 34:18"] },
+    Theme { name: "Refuge & Protection", keywords: &["refuge","shelter","protect","protection","safe","safety","fortress","shield","stronghold"], refs: &["Psalm 46:1","Psalm 91:1-2","Psalm 18:2","Nahum 1:7","Proverbs 18:10","Psalm 27:5"] },
+    Theme { name: "Peace & Rest", keywords: &["peace","peaceful","rest","still","calm","quiet","weary","tired","burden","burdened"], refs: &["John 14:27","Matthew 11:28","Psalm 46:10","Isaiah 26:3","Philippians 4:7","Psalm 23:2"] },
+    Theme { name: "Strength & Endurance", keywords: &["strength","strong","strengthen","weak","weakness","power","endure","persevere","overcome"], refs: &["Isaiah 40:31","Philippians 4:13","2 Corinthians 12:9","Psalm 46:1","Nehemiah 8:10","Ephesians 6:10"] },
+    Theme { name: "Faith & Trust", keywords: &["faith","faithful","believe","believed","trust","trusting","doubt","doubting","confidence"], refs: &["Hebrews 11:1","Proverbs 3:5-6","Mark 11:24","2 Corinthians 5:7","Romans 10:17","Matthew 17:20"] },
+    Theme { name: "Hope & Future", keywords: &["hope","hopeful","future","plans","tomorrow","expectation","promise","promises"], refs: &["Jeremiah 29:11","Romans 15:13","Romans 8:24-25","Lamentations 3:22-23","Psalm 39:7","Hebrews 6:19"] },
+    Theme { name: "Love", keywords: &["love","loved","loves","loving","beloved","compassion","kindness"], refs: &["1 Corinthians 13:4-7","John 3:16","1 John 4:19","Romans 5:8","1 John 4:8","Romans 8:38-39"] },
+    Theme { name: "Joy & Praise", keywords: &["joy","joyful","rejoice","glad","gladness","celebrate","praise","worship","thanksgiving","thankful","grateful"], refs: &["Psalm 16:11","Nehemiah 8:10","Philippians 4:4","Psalm 100:4","James 1:2","Psalm 30:5"] },
+    Theme { name: "Forgiveness & Grace", keywords: &["forgive","forgiven","forgiveness","sin","sins","mercy","merciful","grace","guilt","repent","repentance"], refs: &["1 John 1:9","Ephesians 4:32","Psalm 103:12","Colossians 3:13","Romans 5:8","Micah 7:18"] },
+    Theme { name: "Salvation", keywords: &["salvation","saved","save","saviour","savior","eternal","cross","gospel","redeemed"], refs: &["Ephesians 2:8-9","Romans 10:9","John 3:16","Acts 4:12","Titus 3:5","Romans 6:23"] },
+    Theme { name: "Comfort & Grief", keywords: &["comfort","grief","grieve","grieving","mourn","mourning","sorrow","death","loss","brokenhearted","heartbroken","tears"], refs: &["Psalm 23:4","Matthew 5:4","Revelation 21:4","2 Corinthians 1:3-4","Psalm 34:18","Psalm 147:3"] },
+    Theme { name: "Provision & Needs", keywords: &["provide","provision","need","needs","supply","money","finances","lack","hunger"], refs: &["Philippians 4:19","Matthew 6:33","Psalm 23:1","Malachi 3:10","Matthew 6:26","2 Corinthians 9:8"] },
+    Theme { name: "Guidance & Direction", keywords: &["guide","guidance","direction","lead","leading","path","decision","wisdom","discern","purpose","calling"], refs: &["Proverbs 3:5-6","Psalm 119:105","Isaiah 30:21","Jeremiah 29:11","James 1:5","Psalm 32:8"] },
+    Theme { name: "Prayer", keywords: &["pray","prayer","praying","intercede","petition","seek","knock"], refs: &["Philippians 4:6","1 Thessalonians 5:17","James 5:16","Matthew 7:7","Jeremiah 33:3","Matthew 6:9"] },
+    Theme { name: "God's Faithfulness", keywords: &["faithfulness","forsake","unchanging","covenant","steadfast","forever","everlasting"], refs: &["Lamentations 3:22-23","Deuteronomy 31:6","Hebrews 13:5","Joshua 1:9","Psalm 100:5","2 Timothy 2:13"] },
+    Theme { name: "New Life & Identity", keywords: &["identity","created","creation","transform","transformed","chosen","fearfully","wonderfully"], refs: &["2 Corinthians 5:17","Ephesians 2:10","1 Peter 2:9","Psalm 139:14","Galatians 2:20","Romans 12:2"] },
+    Theme { name: "Light & Truth", keywords: &["light","darkness","dark","truth","lamp","shine","reveal"], refs: &["John 8:12","Psalm 119:105","John 1:5","Matthew 5:14","John 14:6","1 John 1:5"] },
+];
+
+/// A related-scripture suggestion: the matched theme and its references (already
+/// parsed, so ranges carry through), with the anchor verse removed.
+#[derive(Debug, Clone)]
+pub struct RelatedSuggestion {
+    pub theme: String,
+    pub refs: Vec<RefMatch>,
+}
+
+/// Suggest related scripture for a transcript window by topical keyword match
+/// (A4), also usable to cross-reference a fired verse's theme (A3). `exclude`
+/// drops the currently-shown verse. Returns at most `max` refs, or None when no
+/// theme is clearly indicated. Pure and offline.
+pub fn suggest_related(
+    text: &str,
+    exclude: Option<&VerseRef>,
+    max: usize,
+) -> Option<RelatedSuggestion> {
+    let norm = format!(" {} ", normalize(text));
+    let mut best: Option<(&Theme, u32)> = None;
+    for th in THEMES {
+        let mut score = 0u32;
+        for kw in th.keywords {
+            if norm.contains(&format!(" {kw} ")) {
+                // Multi-word keywords are stronger signal than single words.
+                score += if kw.contains(' ') { 2 } else { 1 };
+            }
+        }
+        if score > 0 && best.map(|(_, s)| score > s).unwrap_or(true) {
+            best = Some((th, score));
+        }
+    }
+    let (theme, _) = best?;
+    let ex = exclude.map(|e| (e.book.as_str(), e.chapter, e.verse));
+    let mut refs = Vec::new();
+    for r in theme.refs {
+        let Some(m) = detect_direct(r).into_iter().next() else {
+            continue; // spelling that doesn't resolve → skip, never break
+        };
+        let vr = &m.reference;
+        if Some((vr.book.as_str(), vr.chapter, vr.verse)) == ex {
+            continue;
+        }
+        refs.push(m);
+        if refs.len() >= max {
+            break;
+        }
+    }
+    if refs.is_empty() {
+        None
+    } else {
+        Some(RelatedSuggestion {
+            theme: theme.name.into(),
+            refs,
         })
     }
 }
@@ -749,6 +926,28 @@ pub fn detect_command(text: &str) -> Option<NavCommand> {
     } else {
         None
     }
+}
+
+/// Detect a spoken "clear / blackout the screen" command (Phase D3). Deliberately
+/// conservative — "clear" and "blank" alone are common sermon words, so they only
+/// fire when paired with a screen object; "blackout" is unambiguous on its own.
+/// Short-utterance guarded so it never triggers on prose.
+pub fn detect_clear(text: &str) -> bool {
+    let norm = normalize(text);
+    let tokens: Vec<&str> = norm.split_whitespace().collect();
+    if tokens.is_empty() || tokens.len() > 5 {
+        return false;
+    }
+    let joined = format!(" {} ", tokens.join(" "));
+    let has = |w: &str| tokens.contains(&w);
+    let screen = has("screen") || has("screens");
+    has("blackout")
+        || joined.contains(" black out ")
+        || (has("clear") && screen)
+        || (has("blank") && screen)
+        || joined.contains(" take it down ")
+        || joined.contains(" take that down ")
+        || joined.contains(" take it off ")
 }
 
 /// Find bare verse references ("verse 4", "verse twenty-eight") in `text`.
@@ -992,6 +1191,144 @@ mod tests {
     #[test]
     fn bare_digits_two_tokens() {
         refeq(&one("psalm 23 1"), "Psalms", 23, 1);
+    }
+
+    // ---- A1/A2: whole-chapter references and verse ranges ------------------
+
+    #[test]
+    fn whole_chapter_reference_anchors_verse_one() {
+        // "Psalm 23" (no verse) → display verse 1, flagged as a whole chapter.
+        let m = one("turn to psalm 23");
+        refeq(&m, "Psalms", 23, 1);
+        assert!(m.whole_chapter);
+        assert_eq!(m.verse_end, None);
+        // Moderate confidence → surfaces as a suggestion, not a forced auto-fire.
+        assert!(m.confidence < 0.90);
+    }
+
+    #[test]
+    fn whole_chapter_with_keyword_is_more_confident() {
+        let m = one("psalm chapter 23");
+        refeq(&m, "Psalms", 23, 1);
+        assert!(m.whole_chapter);
+    }
+
+    #[test]
+    fn hyphen_range_colon_form() {
+        // "Psalm 23:1-6" tokenizes to "23:1" + "6"; range end = 6.
+        let m = one("psalm 23:1-6");
+        refeq(&m, "Psalms", 23, 1);
+        assert_eq!(m.verse_end, Some(6));
+    }
+
+    #[test]
+    fn hyphen_range_bare_digits() {
+        let m = one("ps 23 1-6");
+        refeq(&m, "Psalms", 23, 1);
+        assert_eq!(m.verse_end, Some(6));
+    }
+
+    #[test]
+    fn spoken_range_with_connector() {
+        let m = one("john three sixteen to eighteen");
+        refeq(&m, "John", 3, 16);
+        assert_eq!(m.verse_end, Some(18));
+    }
+
+    #[test]
+    fn descending_range_is_rejected() {
+        // A trailing smaller number is not a valid range end (kept single).
+        let m = one("john 3:16 to 2");
+        refeq(&m, "John", 3, 16);
+        assert_eq!(m.verse_end, None);
+    }
+
+    #[test]
+    fn context_walks_whole_chapter_then_stops_at_span_end() {
+        let mut ctx = ContextMemory::default();
+        // Fire Psalm 23 as a whole chapter of 6 verses.
+        ctx.note_passage(
+            &VerseRef {
+                book: "Psalms".into(),
+                chapter: 23,
+                verse: 1,
+            },
+            Some(6),
+        );
+        // Walk 1→2→…→6, preserving the span at each step.
+        for expected in 2..=6 {
+            let n = ctx.next_verse().expect("should have a next verse");
+            assert_eq!(n.verse, expected);
+            ctx.advance(&n);
+        }
+        // At verse 6 (span end) → no further next.
+        assert!(ctx.next_verse().is_none());
+    }
+
+    // ---- A3/A4: topical / cross-reference suggestions ---------------------
+
+    #[test]
+    fn topical_theme_surfaces_related_scripture() {
+        let s = suggest_related("i have been so afraid and anxious lately", None, 4).unwrap();
+        assert_eq!(s.theme, "Fear & Anxiety");
+        assert!(!s.refs.is_empty());
+        // Ranges in the concordance carry through as verse_end.
+        assert!(s.refs.iter().any(|m| m.verse_end.is_some()));
+    }
+
+    #[test]
+    fn related_excludes_the_anchor_verse() {
+        let anchor = VerseRef {
+            book: "John".into(),
+            chapter: 3,
+            verse: 16,
+        };
+        let s = suggest_related("God's great love for us", Some(&anchor), 4).unwrap();
+        assert!(!s.refs.iter().any(|m| m.reference == anchor));
+    }
+
+    #[test]
+    fn no_theme_no_suggestion() {
+        assert!(suggest_related("the quarterly budget meeting is on tuesday", None, 4).is_none());
+    }
+
+    // ---- D3: spoken clear / blackout command ------------------------------
+
+    #[test]
+    fn detects_clear_and_blackout_commands() {
+        assert!(detect_clear("clear the screen"));
+        assert!(detect_clear("blank the screens"));
+        assert!(detect_clear("blackout"));
+        assert!(detect_clear("black out"));
+        assert!(detect_clear("take it down"));
+    }
+
+    #[test]
+    fn clear_command_ignores_prose() {
+        // "clear"/"blank" without a screen object must not fire mid-sermon.
+        assert!(!detect_clear("the gospel makes it very clear to us"));
+        assert!(!detect_clear("make it clear"));
+        assert!(!detect_clear("a blank page before creation"));
+    }
+
+    #[test]
+    fn single_verse_note_clears_any_prior_span() {
+        let mut ctx = ContextMemory::default();
+        ctx.note_passage(
+            &VerseRef {
+                book: "John".into(),
+                chapter: 3,
+                verse: 16,
+            },
+            Some(18),
+        );
+        // A fresh single-verse detection resets the passage — next is unbounded.
+        ctx.note(&VerseRef {
+            book: "Romans".into(),
+            chapter: 8,
+            verse: 28,
+        });
+        assert_eq!(ctx.next_verse().unwrap().verse, 29);
     }
 
     #[test]

@@ -7,10 +7,15 @@
 //!
 //! Design: one dedicated capture thread owns the (non-Send) cpal stream. The
 //! stream's realtime callback does the minimum — downmix to mono, forward
-//! samples over a channel — and the same thread runs chunking + VAD off the
-//! realtime path. Nothing here `unwrap()`s on a running path (CLAUDE.md); a
-//! device failure surfaces to the caller as an error string.
+//! samples over a channel — and the same thread runs the DSP front-end +
+//! chunking + VAD off the realtime path. Nothing here `unwrap()`s on a running
+//! path (CLAUDE.md); a device failure surfaces to the caller as an error string.
+//!
+//! The captured stream is cleaned by `dsp::FrontEnd` (noise suppression +
+//! auto-gain) before chunking, so VAD and STT see cleaner audio. Capture prefers
+//! a 48 kHz config so the RNNoise denoiser runs frame-aligned (see dsp.rs).
 
+use crate::dsp;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use serde::Serialize;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -137,16 +142,26 @@ impl AudioEngine {
     /// macOS mic-permission prompt) never stalls the caller — critical because
     /// this runs inside a synchronous Tauri command on the UI thread. Device
     /// errors are reported asynchronously via `on_error`.
-    pub fn start<F, E>(device_name: Option<String>, on_chunk: F, on_error: E) -> Self
+    ///
+    /// `on_quality` receives an audio-quality snapshot per processed block
+    /// (denoise/gain/SNR/warnings) — additive, and the caller may throttle or
+    /// ignore it.
+    pub fn start<F, Q, E>(
+        device_name: Option<String>,
+        on_chunk: F,
+        on_quality: Q,
+        on_error: E,
+    ) -> Self
     where
         F: Fn(&AudioChunk) + Send + 'static,
+        Q: Fn(&dsp::AudioQuality) + Send + 'static,
         E: Fn(String) + Send + 'static,
     {
         let stop = Arc::new(AtomicBool::new(false));
         let stop_thread = stop.clone();
 
         let handle = std::thread::spawn(move || {
-            if let Err(e) = build_and_run(device_name, stop_thread, on_chunk) {
+            if let Err(e) = build_and_run(device_name, stop_thread, on_chunk, on_quality) {
                 on_error(e);
             }
         });
@@ -177,13 +192,15 @@ impl Drop for AudioEngine {
 /// Resolve the device, build the cpal stream, then run the chunk/VAD loop until
 /// stopped. Everything touching the non-Send `Device`/`Stream` stays on this
 /// one thread.
-fn build_and_run<F>(
+fn build_and_run<F, Q>(
     device_name: Option<String>,
     stop: Arc<AtomicBool>,
     on_chunk: F,
+    on_quality: Q,
 ) -> Result<(), String>
 where
     F: Fn(&AudioChunk) + Send + 'static,
+    Q: Fn(&dsp::AudioQuality) + Send + 'static,
 {
     let host = cpal::default_host();
     let device = match device_name {
@@ -196,7 +213,7 @@ where
             .default_input_device()
             .ok_or_else(|| "no default input device".to_string())?,
     };
-    let supported = device.default_input_config().map_err(|e| e.to_string())?;
+    let supported = pick_input_config(&device)?;
     let sample_format = supported.sample_format();
     let config: cpal::StreamConfig = supported.into();
     let channels = config.channels as usize;
@@ -252,11 +269,25 @@ where
         threshold_rms: VAD_RMS_THRESHOLD,
     };
     let mut chunker = Chunker::new(sample_rate, CHUNK_MS, HOP_MS);
+    // Clean the stream (denoise + auto-gain) before chunking/VAD. Runs on this
+    // same off-realtime thread. Frame-aligned at 48 kHz; degrades to gain-only
+    // at other rates (see dsp.rs).
+    let mut frontend = dsp::FrontEnd::new(sample_rate);
+    eprintln!(
+        "audio: capture @ {sample_rate} Hz · denoise {}",
+        if frontend.denoise_active() {
+            "on (RNNoise)"
+        } else {
+            "off (device not 48 kHz — auto-gain only)"
+        }
+    );
 
     while !stop.load(Ordering::Relaxed) {
         match rx.recv_timeout(std::time::Duration::from_millis(100)) {
             Ok(samples) => {
-                for (chunk, ts_ms) in chunker.push(&samples) {
+                let cleaned = frontend.process(&samples);
+                on_quality(&cleaned.quality);
+                for (chunk, ts_ms) in chunker.push(&cleaned.samples) {
                     let level = rms(&chunk);
                     let ac = AudioChunk {
                         is_voice: vad.is_voice(level),
@@ -274,6 +305,28 @@ where
     }
     drop(stream);
     Ok(())
+}
+
+/// Choose a capture config, preferring 48 kHz so the RNNoise front-end runs
+/// frame-aligned with no resampling. Falls back to the device default when no
+/// 48 kHz config exists (denoise then self-disables — see dsp.rs).
+fn pick_input_config(device: &cpal::Device) -> Result<cpal::SupportedStreamConfig, String> {
+    let target = cpal::SampleRate(dsp::RNNOISE_RATE);
+    if let Ok(ranges) = device.supported_input_configs() {
+        let ranges: Vec<_> = ranges.collect();
+        // Prefer an f32 config at 48 kHz, then any config at 48 kHz.
+        for want_f32 in [true, false] {
+            for r in &ranges {
+                if want_f32 && r.sample_format() != cpal::SampleFormat::F32 {
+                    continue;
+                }
+                if r.min_sample_rate() <= target && target <= r.max_sample_rate() {
+                    return Ok((*r).with_sample_rate(target));
+                }
+            }
+        }
+    }
+    device.default_input_config().map_err(|e| e.to_string())
 }
 
 fn downmix_f32(data: &[f32], channels: usize) -> Vec<f32> {
@@ -381,6 +434,7 @@ mod tests {
             move |_chunk| {
                 c2.fetch_add(1, Ordering::Relaxed);
             },
+            |q| eprintln!("quality: {q:?}"),
             |e| eprintln!("audio error: {e}"),
         );
         std::thread::sleep(std::time::Duration::from_secs(3));

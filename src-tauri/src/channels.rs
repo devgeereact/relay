@@ -33,6 +33,57 @@ pub struct OutputContent {
     pub translation: Option<String>,
 }
 
+/// A connected physical display, shaped for the Channels UI. `index` is the
+/// position in the OS monitor list and is what a channel stores as its
+/// `display_target` for HDMI output.
+#[derive(Debug, Clone, Serialize)]
+pub struct MonitorInfo {
+    pub index: usize,
+    pub name: String,
+    pub width: u32,
+    pub height: u32,
+    pub x: i32,
+    pub y: i32,
+    pub scale: f64,
+    pub primary: bool,
+}
+
+/// Enumerate connected displays for screen assignment. HDMI output in Relay is
+/// simply a borderless fullscreen window pinned to one of these (docs/SPEC.md §9
+/// — no capture-card SDK). Returns an empty list rather than erroring.
+pub fn list_monitors(app: &tauri::AppHandle) -> Vec<MonitorInfo> {
+    let primary_name = app
+        .primary_monitor()
+        .ok()
+        .flatten()
+        .and_then(|m| m.name().cloned());
+    let Ok(monitors) = app.available_monitors() else {
+        return Vec::new();
+    };
+    monitors
+        .into_iter()
+        .enumerate()
+        .map(|(index, m)| {
+            let name = m
+                .name()
+                .cloned()
+                .unwrap_or_else(|| format!("Display {}", index + 1));
+            let size = m.size();
+            let pos = m.position();
+            MonitorInfo {
+                primary: primary_name.as_ref() == m.name(),
+                index,
+                name,
+                width: size.width,
+                height: size.height,
+                x: pos.x,
+                y: pos.y,
+                scale: m.scale_factor(),
+            }
+        })
+        .collect()
+}
+
 /// Prefix for programmatically-created output-window labels. Kept in sync with
 /// the capability glob (`output-*`) in capabilities/default.json.
 const OUTPUT_PREFIX: &str = "output-";
@@ -48,28 +99,51 @@ pub fn output_url(template_id: i64, name: &str) -> String {
     )
 }
 
-/// Open a native fullscreen output window rendering template `template_id`.
-/// Borderless so it behaves as a projector/second-screen surface.
+/// Open a native fullscreen output window rendering template `template_id`,
+/// pinned to the display at `monitor_index` when given (HDMI output). Borderless
+/// so it behaves as a projector/second-screen surface.
+///
+/// Targeting works by placing the window inside the chosen monitor's bounds
+/// first, then going fullscreen — the OS fullscreens on whichever monitor the
+/// window sits on. Falls back to the primary display if the index is stale.
 pub fn open_native_window(
     app: &tauri::AppHandle,
     label: &str,
     template_id: i64,
     name: &str,
+    monitor_index: Option<usize>,
 ) -> Result<(), String> {
     if app.get_webview_window(label).is_some() {
         return Err(format!("output window '{label}' already open"));
     }
-    WebviewWindowBuilder::new(
+    let mut builder = WebviewWindowBuilder::new(
         app,
         label,
         WebviewUrl::App(output_url(template_id, name).into()),
     )
     .title(format!("Relay — {name}"))
-    .inner_size(1280.0, 720.0)
     .decorations(false)
-    .fullscreen(true)
-    .build()
-    .map_err(|e| e.to_string())?;
+    .inner_size(1280.0, 720.0);
+
+    // Position within the target monitor (logical coords) before fullscreen.
+    if let Some(idx) = monitor_index {
+        if let Some(m) = app
+            .available_monitors()
+            .ok()
+            .and_then(|ms| ms.into_iter().nth(idx))
+        {
+            let scale = m.scale_factor().max(0.1);
+            let pos = m.position();
+            let size = m.size();
+            builder = builder
+                .position(pos.x as f64 / scale, pos.y as f64 / scale)
+                .inner_size(size.width as f64 / scale, size.height as f64 / scale);
+        }
+    }
+
+    let win = builder.build().map_err(|e| e.to_string())?;
+    // Fullscreen after placement so it lands on the targeted monitor.
+    let _ = win.set_fullscreen(true);
     Ok(())
 }
 

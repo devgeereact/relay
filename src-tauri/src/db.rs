@@ -117,6 +117,218 @@ pub fn set_channel_template(conn: &Connection, id: i64, template_id: i64) -> rus
     Ok(())
 }
 
+/// Assign a physical display to a channel (HDMI screen assignment). `display` is
+/// the monitor index as a string, or None to clear (use the primary display).
+pub fn set_channel_display(
+    conn: &Connection,
+    id: i64,
+    display: Option<&str>,
+) -> rusqlite::Result<()> {
+    conn.execute(
+        "UPDATE output_channels SET display_target = ?1 WHERE id = ?2",
+        (display, id),
+    )?;
+    Ok(())
+}
+
+/// Add a new output channel; returns its id. `render_target` must be one of
+/// native_window / ndi_encode / network_client (enforced by the schema CHECK).
+pub fn add_channel(
+    conn: &Connection,
+    name: &str,
+    render_target: &str,
+    template_id: i64,
+) -> rusqlite::Result<i64> {
+    conn.execute(
+        "INSERT INTO output_channels (name, render_target, template_id, status)
+         VALUES (?1, ?2, ?3, 'offline')",
+        (name, render_target, template_id),
+    )?;
+    Ok(conn.last_insert_rowid())
+}
+
+/// Delete an output channel.
+pub fn delete_channel(conn: &Connection, id: i64) -> rusqlite::Result<()> {
+    conn.execute("DELETE FROM output_channels WHERE id = ?1", [id])?;
+    Ok(())
+}
+
+// ===== Voice profiles (Phase B — accent & speaker calibration) ==============
+
+/// A per-preacher calibration profile. Bundles the STT language hint, decoder-
+/// bias vocabulary, the sensitivity dial, and the live feedback-adapted
+/// thresholds so accent + threshold learning persists per speaker across
+/// services and restarts. See docs/SPEC.md §4.6 and router.rs.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VoiceProfile {
+    #[serde(default)]
+    pub id: i64,
+    pub name: String,
+    /// None = auto-detect / code-switch; else an ISO code ("en"/"yo"/"sw"/"ha").
+    #[serde(default)]
+    pub language: Option<String>,
+    #[serde(default = "default_sensitivity")]
+    pub sensitivity: i64,
+    #[serde(default = "default_auto_fire")]
+    pub auto_fire: f64,
+    #[serde(default = "default_suggest")]
+    pub suggest: f64,
+    #[serde(default)]
+    pub bias_terms: String,
+    #[serde(default)]
+    pub is_active: bool,
+}
+
+fn default_sensitivity() -> i64 {
+    50
+}
+fn default_auto_fire() -> f64 {
+    0.90
+}
+fn default_suggest() -> f64 {
+    0.60
+}
+
+const PROFILE_COLS: &str =
+    "id, name, language, sensitivity, auto_fire, suggest, bias_terms, is_active";
+
+fn row_to_profile(r: &rusqlite::Row) -> rusqlite::Result<VoiceProfile> {
+    Ok(VoiceProfile {
+        id: r.get(0)?,
+        name: r.get(1)?,
+        language: r.get(2)?,
+        sensitivity: r.get(3)?,
+        auto_fire: r.get(4)?,
+        suggest: r.get(5)?,
+        bias_terms: r.get(6)?,
+        is_active: r.get::<_, i64>(7)? != 0,
+    })
+}
+
+/// Create the `voice_profiles` table if missing and guarantee exactly one active
+/// profile (seeding a "Default" if the table is empty). Idempotent — safe to run
+/// on every open, including DBs created before Phase B existed.
+pub fn ensure_voice_profiles(conn: &Connection) -> rusqlite::Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS voice_profiles (
+            id          INTEGER PRIMARY KEY,
+            name        TEXT NOT NULL,
+            language    TEXT,
+            sensitivity INTEGER NOT NULL DEFAULT 50,
+            auto_fire   REAL NOT NULL DEFAULT 0.90,
+            suggest     REAL NOT NULL DEFAULT 0.60,
+            bias_terms  TEXT NOT NULL DEFAULT '',
+            is_active   INTEGER NOT NULL DEFAULT 0
+        );",
+    )?;
+    let n: i64 = conn.query_row("SELECT COUNT(*) FROM voice_profiles", [], |r| r.get(0))?;
+    if n == 0 {
+        conn.execute(
+            "INSERT INTO voice_profiles (name, language, is_active) VALUES ('Default', NULL, 1)",
+            [],
+        )?;
+    } else {
+        ensure_one_active(conn)?;
+    }
+    Ok(())
+}
+
+/// Guarantee a single active profile: if none is active, promote the lowest id.
+fn ensure_one_active(conn: &Connection) -> rusqlite::Result<()> {
+    let active: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM voice_profiles WHERE is_active = 1",
+        [],
+        |r| r.get(0),
+    )?;
+    if active == 0 {
+        conn.execute(
+            "UPDATE voice_profiles SET is_active = 1
+               WHERE id = (SELECT MIN(id) FROM voice_profiles)",
+            [],
+        )?;
+    }
+    Ok(())
+}
+
+/// All voice profiles, ordered by id.
+pub fn list_voice_profiles(conn: &Connection) -> rusqlite::Result<Vec<VoiceProfile>> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {PROFILE_COLS} FROM voice_profiles ORDER BY id"
+    ))?;
+    let rows = stmt.query_map([], row_to_profile)?;
+    rows.collect()
+}
+
+/// The currently active profile, if any.
+pub fn active_voice_profile(conn: &Connection) -> rusqlite::Result<Option<VoiceProfile>> {
+    conn.query_row(
+        &format!("SELECT {PROFILE_COLS} FROM voice_profiles WHERE is_active = 1 LIMIT 1"),
+        [],
+        row_to_profile,
+    )
+    .optional()
+}
+
+/// Create a new profile (with default calibration) and return its id.
+pub fn create_voice_profile(
+    conn: &Connection,
+    name: &str,
+    language: Option<&str>,
+) -> rusqlite::Result<i64> {
+    conn.execute(
+        "INSERT INTO voice_profiles (name, language) VALUES (?1, ?2)",
+        (name, language),
+    )?;
+    Ok(conn.last_insert_rowid())
+}
+
+/// Persist editable fields of a profile (name, language, sensitivity, bias
+/// terms). Thresholds are saved separately via `save_profile_thresholds` because
+/// they are machine-adapted, not user-edited.
+pub fn update_voice_profile(conn: &Connection, p: &VoiceProfile) -> rusqlite::Result<()> {
+    conn.execute(
+        "UPDATE voice_profiles
+            SET name = ?1, language = ?2, sensitivity = ?3, bias_terms = ?4
+          WHERE id = ?5",
+        (&p.name, &p.language, p.sensitivity, &p.bias_terms, p.id),
+    )?;
+    Ok(())
+}
+
+/// Persist the live, feedback-adapted thresholds for a profile (the
+/// self-calibrating loop — router.rs `record_feedback`).
+pub fn save_profile_thresholds(
+    conn: &Connection,
+    id: i64,
+    auto_fire: f64,
+    suggest: f64,
+) -> rusqlite::Result<()> {
+    conn.execute(
+        "UPDATE voice_profiles SET auto_fire = ?1, suggest = ?2 WHERE id = ?3",
+        (auto_fire, suggest, id),
+    )?;
+    Ok(())
+}
+
+/// Make `id` the sole active profile.
+pub fn set_active_profile(conn: &Connection, id: i64) -> rusqlite::Result<()> {
+    conn.execute("UPDATE voice_profiles SET is_active = 0", [])?;
+    conn.execute(
+        "UPDATE voice_profiles SET is_active = 1 WHERE id = ?1",
+        [id],
+    )?;
+    ensure_one_active(conn)?;
+    Ok(())
+}
+
+/// Delete a profile, then guarantee a profile still exists and one is active
+/// (re-seeds a Default if the last one was removed).
+pub fn delete_voice_profile(conn: &Connection, id: i64) -> rusqlite::Result<()> {
+    conn.execute("DELETE FROM voice_profiles WHERE id = ?1", [id])?;
+    ensure_voice_profiles(conn)?;
+    Ok(())
+}
+
 /// Seed the default output channels (idempotent — only when empty). Template ids
 /// 1..4 match the seeded templates.
 fn seed_channels(conn: &Connection) -> rusqlite::Result<()> {
@@ -192,6 +404,9 @@ pub fn open() -> rusqlite::Result<Connection> {
             reimport_full_kjv(&conn)?;
         }
     }
+    // Phase B: voice-profiles table + a guaranteed active profile. Idempotent,
+    // and covers DBs created before this table existed.
+    ensure_voice_profiles(&conn)?;
     Ok(conn)
 }
 
@@ -200,6 +415,8 @@ pub fn open() -> rusqlite::Result<Connection> {
 pub fn init_fresh(conn: &Connection) -> rusqlite::Result<()> {
     conn.execute_batch(SCHEMA)?;
     seed(conn)?;
+    // Guarantee an active voice profile exists even on a bare in-memory DB.
+    ensure_voice_profiles(conn)?;
     Ok(())
 }
 
@@ -243,6 +460,20 @@ pub fn lookup_verse(
         row_to_verse,
     )
     .optional()
+}
+
+/// The highest verse number in a chapter — the end of a whole-chapter passage
+/// walk (Phase A). None when the book/chapter isn't in the corpus.
+pub fn chapter_last_verse(
+    conn: &Connection,
+    book: &str,
+    chapter: i64,
+) -> rusqlite::Result<Option<i64>> {
+    conn.query_row(
+        "SELECT MAX(verse) FROM verses WHERE book = ?1 AND chapter = ?2",
+        (book, chapter),
+        |r| r.get::<_, Option<i64>>(0),
+    )
 }
 
 /// Total verses currently seeded — a cheap health check for the data layer.
@@ -428,6 +659,23 @@ pub fn service_detections(
         })
     })?;
     rows.collect()
+}
+
+/// How many times a verse has already fired in a service (Phase A6 — the
+/// series/repeat tracker). Counts only detections that actually fired.
+pub fn count_verse_in_service(
+    conn: &Connection,
+    service_id: i64,
+    verse_id: i64,
+) -> rusqlite::Result<i64> {
+    conn.query_row(
+        "SELECT COUNT(*)
+           FROM detections d
+           JOIN transcripts t ON t.id = d.transcript_id
+          WHERE t.service_id = ?1 AND d.verse_id = ?2 AND d.fired_at IS NOT NULL",
+        (service_id, verse_id),
+        |r| r.get(0),
+    )
 }
 
 /// Every verse, for building the semantic index (Phase 9).
@@ -720,6 +968,111 @@ mod tests {
         assert_eq!(dets.len(), 2);
         assert_eq!(dets[0].reference.as_deref(), Some("John 3:16"));
         assert_eq!(dets[1].reference, None); // out-of-library verse
+    }
+
+    #[test]
+    fn fresh_db_has_one_active_default_profile() {
+        let conn = fresh_db();
+        let all = list_voice_profiles(&conn).unwrap();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].name, "Default");
+        assert!(all[0].language.is_none()); // auto-detect / code-switch
+        let active = active_voice_profile(&conn).unwrap().unwrap();
+        assert_eq!(active.id, all[0].id);
+    }
+
+    #[test]
+    fn create_select_and_single_active_invariant() {
+        let conn = fresh_db();
+        let default_id = active_voice_profile(&conn).unwrap().unwrap().id;
+        let pastor = create_voice_profile(&conn, "Pastor John", Some("yo")).unwrap();
+
+        // Creating doesn't steal active.
+        assert_eq!(active_voice_profile(&conn).unwrap().unwrap().id, default_id);
+
+        set_active_profile(&conn, pastor).unwrap();
+        let active = active_voice_profile(&conn).unwrap().unwrap();
+        assert_eq!(active.id, pastor);
+        assert_eq!(active.language.as_deref(), Some("yo"));
+        // Exactly one active row.
+        let n_active = list_voice_profiles(&conn)
+            .unwrap()
+            .iter()
+            .filter(|p| p.is_active)
+            .count();
+        assert_eq!(n_active, 1);
+    }
+
+    #[test]
+    fn threshold_calibration_persists_per_profile() {
+        let conn = fresh_db();
+        let id = active_voice_profile(&conn).unwrap().unwrap().id;
+        save_profile_thresholds(&conn, id, 0.93, 0.55).unwrap();
+        let p = active_voice_profile(&conn).unwrap().unwrap();
+        assert!((p.auto_fire - 0.93).abs() < 1e-9);
+        assert!((p.suggest - 0.55).abs() < 1e-9);
+    }
+
+    #[test]
+    fn deleting_active_promotes_another_and_last_reseeds() {
+        let conn = fresh_db();
+        let default_id = active_voice_profile(&conn).unwrap().unwrap().id;
+        let second = create_voice_profile(&conn, "Guest", None).unwrap();
+        set_active_profile(&conn, second).unwrap();
+
+        // Delete the active one → the remaining profile becomes active.
+        delete_voice_profile(&conn, second).unwrap();
+        let active = active_voice_profile(&conn).unwrap().unwrap();
+        assert_eq!(active.id, default_id);
+
+        // Delete the last one → a Default is re-seeded and made active.
+        delete_voice_profile(&conn, default_id).unwrap();
+        let all = list_voice_profiles(&conn).unwrap();
+        assert_eq!(all.len(), 1);
+        assert!(active_voice_profile(&conn).unwrap().is_some());
+    }
+
+    #[test]
+    fn ensure_voice_profiles_is_idempotent() {
+        let conn = fresh_db();
+        ensure_voice_profiles(&conn).unwrap();
+        ensure_voice_profiles(&conn).unwrap();
+        assert_eq!(list_voice_profiles(&conn).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn channel_add_assign_display_and_delete() {
+        let conn = fresh_db();
+        let before = list_output_channels(&conn).unwrap().len();
+
+        // Add a native-window channel.
+        let id = add_channel(&conn, "Balcony", "native_window", 1).unwrap();
+        let after = list_output_channels(&conn).unwrap();
+        assert_eq!(after.len(), before + 1);
+        let ch = after.iter().find(|c| c.id == id).unwrap();
+        assert_eq!(ch.render_target, "native_window");
+        assert!(ch.display_target.is_none());
+
+        // Assign it to display index 1, then clear.
+        set_channel_display(&conn, id, Some("1")).unwrap();
+        let ch = list_output_channels(&conn)
+            .unwrap()
+            .into_iter()
+            .find(|c| c.id == id)
+            .unwrap();
+        assert_eq!(ch.display_target.as_deref(), Some("1"));
+        set_channel_display(&conn, id, None).unwrap();
+        assert!(list_output_channels(&conn)
+            .unwrap()
+            .into_iter()
+            .find(|c| c.id == id)
+            .unwrap()
+            .display_target
+            .is_none());
+
+        // Delete it.
+        delete_channel(&conn, id).unwrap();
+        assert_eq!(list_output_channels(&conn).unwrap().len(), before);
     }
 
     #[test]

@@ -8,6 +8,7 @@ mod audio;
 mod channels;
 mod db;
 mod detection;
+mod dsp;
 mod router;
 mod stt;
 
@@ -136,6 +137,12 @@ fn main() {
                             handle_nav(&handle, cmd);
                             return;
                         }
+                        // Spoken "clear the screen" / "blackout" (Phase D3/D4).
+                        if detection::detect_clear(&update.text) {
+                            channels::clear(&handle);
+                            persist_cue(&handle, "clear_screens", None);
+                            return;
+                        }
                     }
                     // Detect references, then route each through the confidence
                     // gate + debounce before surfacing it.
@@ -155,6 +162,32 @@ fn main() {
                     None
                 }
             };
+            // Phase B: apply the active voice profile at startup — language +
+            // decoder-bias prompt to STT, calibrated thresholds to the router —
+            // so accent calibration is live from the first word, before any UI.
+            {
+                let profile = {
+                    let db = app.state::<Db>();
+                    let conn = db.0.lock().expect("db lock");
+                    db::active_voice_profile(&conn).ok().flatten()
+                };
+                if let Some(p) = profile {
+                    if let Some(e) = engine.as_ref() {
+                        apply_profile_to_stt(e, &p);
+                    }
+                    let routing = app.state::<Routing>();
+                    if let Ok(mut r) = routing.0.lock() {
+                        r.set_thresholds(Thresholds {
+                            auto_fire: p.auto_fire as f32,
+                            suggest: p.suggest as f32,
+                        });
+                    }
+                    println!(
+                        "profile: active '{}' · lang {:?} · sensitivity {}",
+                        p.name, p.language, p.sensitivity
+                    );
+                }
+            }
             app.manage(Stt(Mutex::new(engine)));
             Ok(())
         })
@@ -176,7 +209,13 @@ fn main() {
             list_output_windows,
             list_output_channels,
             set_channel_template,
+            list_monitors,
+            open_channel_output,
+            set_channel_display,
+            add_channel,
+            delete_channel,
             clear_screens,
+            push_announcement,
             set_detection_enabled,
             get_detection_enabled,
             nav,
@@ -190,6 +229,14 @@ fn main() {
             get_template,
             save_template,
             set_stt_language,
+            list_voice_profiles,
+            active_voice_profile,
+            create_voice_profile,
+            update_voice_profile,
+            select_voice_profile,
+            delete_voice_profile,
+            related_scripture,
+            verse_repeat_count,
             open_ndi_output
         ])
         .run(tauri::generate_context!())
@@ -216,6 +263,44 @@ struct DetectionEvent {
 /// Minimum semantic cosine to even consider a paraphrase candidate. Below this
 /// it's noise; above, the router's suggest/auto thresholds still apply.
 const SEMANTIC_FLOOR: f32 = 0.30;
+
+/// A gate candidate: the anchor verse plus how it should route and whether it is
+/// part of a multi-verse passage (range / whole chapter) to stage for "next".
+struct Cand {
+    r: VerseRef,
+    conf: f32,
+    method: DetectionMethod,
+    explicit: bool,
+    verse_end: Option<i64>,
+    whole_chapter: bool,
+}
+
+impl Cand {
+    /// A plain single-verse candidate (no passage span).
+    fn single(r: VerseRef, conf: f32, method: DetectionMethod) -> Self {
+        Cand {
+            r,
+            conf,
+            method,
+            explicit: false,
+            verse_end: None,
+            whole_chapter: false,
+        }
+    }
+}
+
+/// Resolve the inclusive last verse to stage for a candidate: the explicit range
+/// end, or the chapter's last verse for a whole-chapter reference, or None for a
+/// single verse (the walk then just steps until the chapter runs out).
+fn passage_end(conn: &Connection, c: &Cand) -> Option<i64> {
+    if c.whole_chapter {
+        db::chapter_last_verse(conn, &c.r.book, c.r.chapter)
+            .ok()
+            .flatten()
+    } else {
+        c.verse_end
+    }
+}
 
 /// Detect references in `text` — direct, context-resolved bare verses, and
 /// semantic paraphrase — dedup them, gate each through the router, resolve
@@ -245,28 +330,35 @@ fn emit_detections(handle: &tauri::AppHandle, text: &str, now_ms: u64) {
             return;
         };
 
-        // Gather candidates: (reference, confidence, method, explicit).
-        let mut candidates: Vec<(VerseRef, f32, DetectionMethod, bool)> = Vec::new();
+        // Gather candidates.
+        let mut candidates: Vec<Cand> = Vec::new();
 
         let directs = detection::detect_direct(text);
         let direct_empty = directs.is_empty();
         for m in directs {
             let explicit = m.confidence >= 0.95;
-            candidates.push((m.reference, m.confidence, DetectionMethod::Direct, explicit));
+            candidates.push(Cand {
+                r: m.reference,
+                conf: m.confidence,
+                method: DetectionMethod::Direct,
+                explicit,
+                verse_end: m.verse_end,
+                whole_chapter: m.whole_chapter,
+            });
         }
         for n in detection::detect_bare_verses(text) {
             if let Some(r) = context.resolve_bare_verse(n) {
-                candidates.push((r, 0.88, DetectionMethod::Direct, false));
+                candidates.push(Cand::single(r, 0.88, DetectionMethod::Direct));
             }
         }
         if let Some((r, score)) = sem.0.top_k(text, 1).into_iter().next() {
             if score >= SEMANTIC_FLOOR {
-                candidates.push((r, score.min(0.95), DetectionMethod::Semantic, false));
+                candidates.push(Cand::single(r, score.min(0.95), DetectionMethod::Semantic));
             }
         }
         if direct_empty {
             for r in detection::detect_ambiguous(text) {
-                candidates.push((r, 0.70, DetectionMethod::Direct, false));
+                candidates.push(Cand::single(r, 0.70, DetectionMethod::Direct));
             }
         }
         if candidates.is_empty() {
@@ -274,24 +366,24 @@ fn emit_detections(handle: &tauri::AppHandle, text: &str, now_ms: u64) {
         }
 
         // Dedup by reference, keeping the highest-confidence candidate.
-        let mut best: std::collections::HashMap<String, (VerseRef, f32, DetectionMethod, bool)> =
-            std::collections::HashMap::new();
+        let mut best: std::collections::HashMap<String, Cand> = std::collections::HashMap::new();
         for c in candidates {
-            let key = format!("{} {}:{}", c.0.book, c.0.chapter, c.0.verse);
+            let key = format!("{} {}:{}", c.r.book, c.r.chapter, c.r.verse);
             match best.get(&key) {
-                Some(existing) if existing.1 >= c.1 => {}
+                Some(existing) if existing.conf >= c.conf => {}
                 _ => {
                     best.insert(key, c);
                 }
             }
         }
 
-        for (key, (r, confidence, method, explicit)) in best {
-            let status = match router.decide(&key, confidence, explicit, now_ms) {
+        for (key, c) in best {
+            let status = match router.decide(&key, c.conf, c.explicit, now_ms) {
                 RouteDecision::AutoFire => "auto",
                 RouteDecision::Suggest => "suggested",
                 RouteDecision::Drop => continue,
             };
+            let r = &c.r;
             let looked = db::lookup_verse(&conn, &r.book, r.chapter, r.verse)
                 .ok()
                 .flatten();
@@ -299,8 +391,10 @@ fn emit_detections(handle: &tauri::AppHandle, text: &str, now_ms: u64) {
             let translation = looked.as_ref().map(|v| v.translation.clone());
 
             if status == "auto" {
-                context.note(&r);
-                let method_str = match method {
+                // Stage the passage so "next" walks a range / whole chapter.
+                let end = passage_end(&conn, &c);
+                context.note_passage(r, end);
+                let method_str = match c.method {
                     DetectionMethod::Direct => "direct",
                     DetectionMethod::Semantic => "semantic",
                 };
@@ -309,7 +403,7 @@ fn emit_detections(handle: &tauri::AppHandle, text: &str, now_ms: u64) {
                     handle.state::<Session>(),
                     looked.as_ref().map(|v| v.id),
                     method_str,
-                    confidence,
+                    c.conf,
                     text,
                 );
                 broadcasts.push(OutputContent {
@@ -323,8 +417,8 @@ fn emit_detections(handle: &tauri::AppHandle, text: &str, now_ms: u64) {
                 book: r.book.clone(),
                 chapter: r.chapter,
                 verse: r.verse,
-                confidence,
-                method,
+                confidence: c.conf,
+                method: c.method.clone(),
                 status,
                 in_library: looked.is_some(),
                 text: vtext,
@@ -372,7 +466,8 @@ fn handle_nav(handle: &tauri::AppHandle, dir: detection::NavCommand) {
         };
         let key = format!("{} {}:{}", r.book, r.chapter, r.verse);
         if let Ok(mut context) = ctx.0.lock() {
-            context.note(&r);
+            // Preserve the active passage span so a range/chapter walk stays bounded.
+            context.advance(&r);
         }
         if let Ok(mut router) = handle.state::<Routing>().0.lock() {
             router.manual_fire(&key, 0);
@@ -536,11 +631,15 @@ async fn start_capture(
         .as_ref()
         .map(|e| e.sender());
     let emitter = app.clone();
+    let quality_emitter = app.clone();
     let err_emitter = app.clone();
     // Throttle the level-meter event: chunks arrive ~5/sec but the UI only needs
     // a couple updates/sec. Flooding the webview with events is a real freeze
     // risk. STT still gets EVERY chunk.
     let chunk_n = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+    // Quality snapshots arrive per processed block (~many/sec) — throttle to a
+    // couple/sec on their own additive channel. Existing UI ignores it.
+    let quality_n = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
     // Non-blocking: returns instantly, so the UI thread never stalls on device
     // init. Stream failures surface as `audio://error`.
     let engine = AudioEngine::start(
@@ -561,6 +660,12 @@ async fn start_capture(
             }
             if let Some(tx) = &stt_tx {
                 let _ = tx.send(chunk.clone());
+            }
+        },
+        move |quality| {
+            let n = quality_n.fetch_add(1, Ordering::Relaxed);
+            if n.is_multiple_of(10) {
+                let _ = quality_emitter.emit("audio://quality", quality);
             }
         },
         move |err| {
@@ -661,7 +766,14 @@ fn confirm_detection(
             },
         );
         if let Ok(mut context) = ctx.0.lock() {
-            context.note(r);
+            let end = if m.whole_chapter {
+                db::chapter_last_verse(&conn, &r.book, r.chapter)
+                    .ok()
+                    .flatten()
+            } else {
+                m.verse_end
+            };
+            context.note_passage(r, end);
         }
         persist_fire(
             &conn,
@@ -672,17 +784,34 @@ fn confirm_detection(
             &key,
         );
     }
-    let mut router = routing.0.lock().map_err(|e| e.to_string())?;
-    router.record_feedback(true);
-    Ok(router.thresholds())
+    let t = {
+        let mut router = routing.0.lock().map_err(|e| e.to_string())?;
+        router.record_feedback(true);
+        router.thresholds()
+    };
+    // Persist the nudge onto the active profile (calibration survives restart).
+    if let Ok(conn) = db.0.lock() {
+        persist_active_thresholds(&conn, t);
+    }
+    Ok(t)
 }
 
-/// Operator rejected an auto-fired detection (undo). Tightens the gate.
+/// Operator rejected an auto-fired detection (undo). Tightens the gate and
+/// persists the nudge onto the active profile.
 #[tauri::command]
-fn dismiss_detection(routing: tauri::State<'_, Routing>) -> Result<Thresholds, String> {
-    let mut router = routing.0.lock().map_err(|e| e.to_string())?;
-    router.record_feedback(false);
-    Ok(router.thresholds())
+fn dismiss_detection(
+    routing: tauri::State<'_, Routing>,
+    db: tauri::State<'_, Db>,
+) -> Result<Thresholds, String> {
+    let t = {
+        let mut router = routing.0.lock().map_err(|e| e.to_string())?;
+        router.record_feedback(false);
+        router.thresholds()
+    };
+    if let Ok(conn) = db.0.lock() {
+        persist_active_thresholds(&conn, t);
+    }
+    Ok(t)
 }
 
 /// Current gate thresholds — for the Settings sliders.
@@ -690,6 +819,104 @@ fn dismiss_detection(routing: tauri::State<'_, Routing>) -> Result<Thresholds, S
 fn get_thresholds(routing: tauri::State<'_, Routing>) -> Result<Thresholds, String> {
     let router = routing.0.lock().map_err(|e| e.to_string())?;
     Ok(router.thresholds())
+}
+
+// ===== Related scripture & series tracker (Phase A: A3/A4/A6) ===============
+
+/// One related-scripture suggestion, resolved to verse text.
+#[derive(Serialize)]
+struct RelatedVerse {
+    reference: String,
+    book: String,
+    chapter: i64,
+    verse: i64,
+    verse_end: Option<i64>,
+    text: Option<String>,
+    translation: Option<String>,
+}
+
+/// A themed set of related references for a transcript window.
+#[derive(Serialize)]
+struct RelatedPayload {
+    theme: String,
+    refs: Vec<RelatedVerse>,
+}
+
+/// A3/A4: topical cross-references for a transcript window, each resolved to
+/// verse text. `exclude` drops the currently-shown verse. Pull-based, additive —
+/// the console can poll this to offer "related scripture" chips. Returns None
+/// when no theme is clearly indicated.
+#[tauri::command]
+fn related_scripture(
+    db: tauri::State<'_, Db>,
+    text: String,
+    exclude: Option<String>,
+) -> Result<Option<RelatedPayload>, String> {
+    let ex = exclude
+        .and_then(|s| detection::detect_direct(&s).into_iter().next())
+        .map(|m| m.reference);
+    let Some(sug) = detection::suggest_related(&text, ex.as_ref(), 4) else {
+        return Ok(None);
+    };
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    let refs = sug
+        .refs
+        .iter()
+        .map(|m| {
+            let r = &m.reference;
+            let looked = db::lookup_verse(&conn, &r.book, r.chapter, r.verse)
+                .ok()
+                .flatten();
+            let reference = match m.verse_end {
+                Some(e) => format!("{} {}:{}-{}", r.book, r.chapter, r.verse, e),
+                None => format!("{} {}:{}", r.book, r.chapter, r.verse),
+            };
+            RelatedVerse {
+                reference,
+                book: r.book.clone(),
+                chapter: r.chapter,
+                verse: r.verse,
+                verse_end: m.verse_end,
+                text: looked.as_ref().map(|v| v.text.clone()),
+                translation: looked.as_ref().map(|v| v.translation.clone()),
+            }
+        })
+        .collect();
+    Ok(Some(RelatedPayload {
+        theme: sug.theme,
+        refs,
+    }))
+}
+
+/// A6: how many times a verse has already fired in the current service — lets the
+/// console flag repeats ("shown earlier today"). 0 when not recording or unseen.
+#[tauri::command]
+fn verse_repeat_count(
+    db: tauri::State<'_, Db>,
+    session: tauri::State<'_, Session>,
+    reference: String,
+) -> Result<i64, String> {
+    let Some(m) = detection::detect_direct(&reference).into_iter().next() else {
+        return Ok(0);
+    };
+    let service_id = session
+        .0
+        .lock()
+        .map_err(|e| e.to_string())?
+        .as_ref()
+        .map(|s| s.id);
+    let Some(sid) = service_id else {
+        return Ok(0);
+    };
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    let r = &m.reference;
+    let Some(v) = db::lookup_verse(&conn, &r.book, r.chapter, r.verse)
+        .ok()
+        .flatten()
+    else {
+        return Ok(0);
+    };
+    db::count_verse_in_service(&conn, sid, v.id).map_err(|e| e.to_string())
 }
 
 /// Manual override of the thresholds (the always-available slider, DECISIONS.md).
@@ -701,6 +928,128 @@ fn set_thresholds(
     let mut router = routing.0.lock().map_err(|e| e.to_string())?;
     router.set_thresholds(thresholds);
     Ok(router.thresholds())
+}
+
+// ===== Voice profiles (Phase B — accent & speaker calibration) ==============
+
+/// Apply a profile's STT settings: language hint (code-switch when None) + the
+/// scripture decoder-bias prompt (book names + the profile's extra vocabulary).
+fn apply_profile_to_stt(engine: &SttEngine, p: &db::VoiceProfile) {
+    engine.set_language(p.language.clone());
+    engine.set_prompt(Some(stt::scripture_bias_prompt(&p.bias_terms)));
+}
+
+/// Apply a full profile live: STT language + bias prompt, and the profile's
+/// calibrated thresholds to the router.
+fn apply_profile(stt: &Stt, routing: &Routing, p: &db::VoiceProfile) -> Result<(), String> {
+    if let Some(e) = stt.0.lock().map_err(|e| e.to_string())?.as_ref() {
+        apply_profile_to_stt(e, p);
+    }
+    let mut router = routing.0.lock().map_err(|e| e.to_string())?;
+    router.set_thresholds(Thresholds {
+        auto_fire: p.auto_fire as f32,
+        suggest: p.suggest as f32,
+    });
+    Ok(())
+}
+
+/// Persist the router's freshly-adapted thresholds onto the active profile so
+/// per-speaker calibration survives a restart (the self-calibrating loop).
+fn persist_active_thresholds(conn: &Connection, t: Thresholds) {
+    if let Ok(Some(p)) = db::active_voice_profile(conn) {
+        let _ = db::save_profile_thresholds(conn, p.id, t.auto_fire as f64, t.suggest as f64);
+    }
+}
+
+/// All voice profiles (Settings → Voice profiles).
+#[tauri::command]
+fn list_voice_profiles(db: tauri::State<'_, Db>) -> Result<Vec<db::VoiceProfile>, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    db::list_voice_profiles(&conn).map_err(|e| e.to_string())
+}
+
+/// The currently active profile.
+#[tauri::command]
+fn active_voice_profile(db: tauri::State<'_, Db>) -> Result<Option<db::VoiceProfile>, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    db::active_voice_profile(&conn).map_err(|e| e.to_string())
+}
+
+/// Create a new profile (default calibration); returns its id.
+#[tauri::command]
+fn create_voice_profile(
+    db: tauri::State<'_, Db>,
+    name: String,
+    language: Option<String>,
+) -> Result<i64, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    db::create_voice_profile(&conn, &name, language.as_deref()).map_err(|e| e.to_string())
+}
+
+/// Save editable profile fields. The sensitivity dial resets the thresholds to
+/// its baseline (feedback nudges from there afterward). If the saved profile is
+/// the active one, the change is applied live to STT + router.
+#[tauri::command]
+fn update_voice_profile(
+    stt: tauri::State<'_, Stt>,
+    routing: tauri::State<'_, Routing>,
+    db: tauri::State<'_, Db>,
+    mut profile: db::VoiceProfile,
+) -> Result<db::VoiceProfile, String> {
+    let base = Thresholds::from_sensitivity(profile.sensitivity.clamp(0, 100) as u8);
+    profile.auto_fire = base.auto_fire as f64;
+    profile.suggest = base.suggest as f64;
+    let is_active = {
+        let conn = db.0.lock().map_err(|e| e.to_string())?;
+        db::update_voice_profile(&conn, &profile).map_err(|e| e.to_string())?;
+        db::save_profile_thresholds(&conn, profile.id, profile.auto_fire, profile.suggest)
+            .map_err(|e| e.to_string())?;
+        db::active_voice_profile(&conn).ok().flatten().map(|a| a.id) == Some(profile.id)
+    };
+    if is_active {
+        apply_profile(&stt, &routing, &profile)?;
+    }
+    Ok(profile)
+}
+
+/// Switch the active profile — applies its language + bias prompt + thresholds
+/// immediately, before the next transcript window.
+#[tauri::command]
+fn select_voice_profile(
+    stt: tauri::State<'_, Stt>,
+    routing: tauri::State<'_, Routing>,
+    db: tauri::State<'_, Db>,
+    id: i64,
+) -> Result<db::VoiceProfile, String> {
+    let profile = {
+        let conn = db.0.lock().map_err(|e| e.to_string())?;
+        db::set_active_profile(&conn, id).map_err(|e| e.to_string())?;
+        db::active_voice_profile(&conn)
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| "no active profile after select".to_string())?
+    };
+    apply_profile(&stt, &routing, &profile)?;
+    Ok(profile)
+}
+
+/// Delete a profile. If it was active, the next remaining profile becomes active
+/// (a Default is re-seeded if it was the last) and is applied live.
+#[tauri::command]
+fn delete_voice_profile(
+    stt: tauri::State<'_, Stt>,
+    routing: tauri::State<'_, Routing>,
+    db: tauri::State<'_, Db>,
+    id: i64,
+) -> Result<db::VoiceProfile, String> {
+    let profile = {
+        let conn = db.0.lock().map_err(|e| e.to_string())?;
+        db::delete_voice_profile(&conn, id).map_err(|e| e.to_string())?;
+        db::active_voice_profile(&conn)
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| "no active profile after delete".to_string())?
+    };
+    apply_profile(&stt, &routing, &profile)?;
+    Ok(profile)
 }
 
 /// Operator manual override: fire a free-text reference now, bypassing the gate.
@@ -722,18 +1071,27 @@ fn manual_fire(
     let r = &m.reference;
     let key = format!("{} {}:{}", r.book, r.chapter, r.verse);
 
-    let looked = {
+    let (looked, passage_end) = {
         let conn = db.0.lock().map_err(|e| e.to_string())?;
-        db::lookup_verse(&conn, &r.book, r.chapter, r.verse)
+        let looked = db::lookup_verse(&conn, &r.book, r.chapter, r.verse)
             .ok()
-            .flatten()
+            .flatten();
+        let end = if m.whole_chapter {
+            db::chapter_last_verse(&conn, &r.book, r.chapter)
+                .ok()
+                .flatten()
+        } else {
+            m.verse_end
+        };
+        (looked, end)
     };
     {
         let mut router = routing.0.lock().map_err(|e| e.to_string())?;
         router.manual_fire(&key, 0);
     }
     if let Ok(mut context) = ctx.0.lock() {
-        context.note(r);
+        // Manual push of "Psalm 23" / "John 3:16-18" stages the passage for "next".
+        context.note_passage(r, passage_end);
     }
     let text = looked.as_ref().map(|v| v.text.clone());
     let translation = looked.as_ref().map(|v| v.translation.clone());
@@ -790,6 +1148,7 @@ fn open_output_window(
     outputs: tauri::State<'_, Outputs>,
     template_id: i64,
     name: Option<String>,
+    monitor_index: Option<usize>,
 ) -> Result<String, String> {
     let name = name.unwrap_or_else(|| "Output".into());
     let label = {
@@ -797,8 +1156,85 @@ fn open_output_window(
         *n += 1;
         format!("output-{n}")
     };
-    channels::open_native_window(&app, &label, template_id, &name)?;
+    channels::open_native_window(&app, &label, template_id, &name, monitor_index)?;
     Ok(label)
+}
+
+/// Connected displays for HDMI screen assignment (Channels tab).
+#[tauri::command]
+fn list_monitors(app: tauri::AppHandle) -> Vec<channels::MonitorInfo> {
+    channels::list_monitors(&app)
+}
+
+/// Open a channel's native fullscreen output on its assigned display (HDMI). Uses
+/// the channel's template and `display_target` monitor index; falls back to the
+/// primary display when unassigned or the index is stale. Returns the label.
+#[tauri::command]
+fn open_channel_output(
+    app: tauri::AppHandle,
+    outputs: tauri::State<'_, Outputs>,
+    db: tauri::State<'_, Db>,
+    channel_id: i64,
+) -> Result<String, String> {
+    let channel = {
+        let conn = db.0.lock().map_err(|e| e.to_string())?;
+        db::list_output_channels(&conn)
+            .map_err(|e| e.to_string())?
+            .into_iter()
+            .find(|c| c.id == channel_id)
+            .ok_or_else(|| format!("channel {channel_id} not found"))?
+    };
+    let template_id = channel.template_id.unwrap_or(1);
+    let monitor_index = channel
+        .display_target
+        .as_deref()
+        .and_then(|s| s.parse::<usize>().ok());
+    let label = {
+        let mut n = outputs.0.lock().map_err(|e| e.to_string())?;
+        *n += 1;
+        format!("output-{n}")
+    };
+    channels::open_native_window(&app, &label, template_id, &channel.name, monitor_index)?;
+    Ok(label)
+}
+
+/// Assign a physical display to a channel (HDMI). `display` is the monitor index
+/// as a string, or null to use the primary display.
+#[tauri::command]
+fn set_channel_display(
+    db: tauri::State<'_, Db>,
+    id: i64,
+    display: Option<String>,
+) -> Result<(), String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    db::set_channel_display(&conn, id, display.as_deref()).map_err(|e| e.to_string())
+}
+
+/// Add an output channel. Returns its id.
+#[tauri::command]
+fn add_channel(
+    db: tauri::State<'_, Db>,
+    name: String,
+    render_target: Option<String>,
+    template_id: Option<i64>,
+) -> Result<i64, String> {
+    let target = render_target.unwrap_or_else(|| "native_window".into());
+    if !matches!(
+        target.as_str(),
+        "native_window" | "ndi_encode" | "network_client"
+    ) {
+        return Err(format!("invalid render target: {target}"));
+    }
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    db::add_channel(&conn, name.trim(), &target, template_id.unwrap_or(1))
+        .map_err(|e| e.to_string())
+}
+
+/// Delete an output channel.
+#[tauri::command]
+fn delete_channel(db: tauri::State<'_, Db>, id: i64) -> Result<(), String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    db::delete_channel(&conn, id).map_err(|e| e.to_string())
 }
 
 /// All output templates (Templates tab, Channels tab).
@@ -857,11 +1293,33 @@ fn set_channel_template(db: tauri::State<'_, Db>, id: i64, template_id: i64) -> 
     db::set_channel_template(&conn, id, template_id).map_err(|e| e.to_string())
 }
 
-/// Operator "Clear all screens" — blank every output channel.
+/// Operator "Clear all screens" / blackout — blank every output channel (D4).
+/// Instant, always available. Same effect the spoken "clear"/"blackout" reaches.
 #[tauri::command]
 fn clear_screens(app: tauri::AppHandle) {
     channels::clear(&app);
     persist_cue(&app, "clear_screens", None);
+}
+
+/// D5: push an emergency announcement over whatever is currently shown, on every
+/// output channel. Reuses the shared content broadcast (no per-channel special-
+/// casing) so it renders through the same template engine as any slide.
+#[tauri::command]
+fn push_announcement(app: tauri::AppHandle, message: String) -> Result<(), String> {
+    let message = message.trim().to_string();
+    if message.is_empty() {
+        return Err("empty announcement".into());
+    }
+    channels::broadcast_content(
+        &app,
+        OutputContent {
+            reference: "Announcement".into(),
+            text: Some(message.clone()),
+            translation: None,
+        },
+    );
+    persist_cue(&app, "announcement", Some(&message));
+    Ok(())
 }
 
 /// Manual next/previous verse (console buttons) — same path as the spoken
@@ -1024,7 +1482,12 @@ struct ServiceDetail {
     detections: Vec<db::ServiceDetection>,
 }
 
-/// Arm/disarm automatic detection. Returns the new state.
+/// Master AI switch (D1). ON = the AI drives output: high-confidence detections
+/// auto-fire, mid-confidence surface as one-tap suggestions. OFF = fully manual —
+/// the pipeline still transcribes, but nothing auto-reaches the screens. Operator
+/// override (manual push / next / clear) is a separate path and works in BOTH
+/// modes (CLAUDE.md: override is first-class, never gated by this). Returns the
+/// new state.
 #[tauri::command]
 fn set_detection_enabled(detecting: tauri::State<'_, Detecting>, enabled: bool) -> bool {
     detecting.0.store(enabled, Ordering::Relaxed);

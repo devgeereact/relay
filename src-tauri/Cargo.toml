@@ -17,6 +17,7 @@ tokio-tungstenite = "0.23"
 futures-util = "0.3"          # Phase 10 — WS sink/stream for kiosk clients
 cpal = "0.15"                 # Phase 3 — cross-platform audio capture (Win + macOS)
 whisper-rs = "0.14"           # Phase 4 — local speech-to-text (whisper.cpp bindings; needs cmake to build)
+nnnoiseless = { version = "0.5", default-features = false } # Phase C — offline RNNoise speech denoiser (pure Rust, bundled model, no build deps)
 
 # Added in later build phases — uncomment as each phase lands (see PROMPT.md):
 # ndi-sdk-sys or equivalent  # Phase 10 — NDI render target (evaluate available crates, may need custom FFI bindings)

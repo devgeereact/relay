@@ -23,6 +23,11 @@ use std::thread::JoinHandle;
 /// is how code-switching (English mixed with a local language) is handled — the
 /// normal case for the target market (CLAUDE.md), not an edge case.
 pub type LangSetting = Arc<Mutex<Option<String>>>;
+/// Shared, mutable decoder-bias prompt (whisper `initial_prompt`). Biases
+/// transcription toward scripture vocabulary — book names and church terms — so
+/// references survive ASR ("John free sixteen" → "John 3:16"). `None` = no bias.
+/// Read live by the worker, so a voice-profile change takes effect next window.
+pub type PromptSetting = Arc<Mutex<Option<String>>>;
 use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
 
 const TARGET_RATE: u32 = 16_000; // whisper input rate
@@ -49,6 +54,7 @@ pub struct SttEngine {
     handle: Option<JoinHandle<()>>,
     model_path: PathBuf,
     lang: LangSetting,
+    prompt: PromptSetting,
 }
 
 impl SttEngine {
@@ -77,8 +83,10 @@ impl SttEngine {
         .map_err(|e| format!("failed to load whisper model: {e}"))?;
 
         let lang: LangSetting = Arc::new(Mutex::new(None));
+        let prompt: PromptSetting = Arc::new(Mutex::new(None));
         let (tx, rx) = mpsc::channel::<AudioChunk>();
         let lang_worker = lang.clone();
+        let prompt_worker = prompt.clone();
         // whisper_full() is stack-hungry; running it and then serializing a
         // Tauri emit on the SAME thread overflowed the default 2MB stack and
         // silently SIGSEGV'd the app right after the first transcript. Give the
@@ -86,13 +94,14 @@ impl SttEngine {
         let handle = std::thread::Builder::new()
             .name("relay-stt".into())
             .stack_size(16 * 1024 * 1024)
-            .spawn(move || worker(ctx, rx, lang_worker, on_update))
+            .spawn(move || worker(ctx, rx, lang_worker, prompt_worker, on_update))
             .map_err(|e| format!("failed to spawn STT worker: {e}"))?;
         Ok(SttEngine {
             tx,
             handle: Some(handle),
             model_path,
             lang,
+            prompt,
         })
     }
 
@@ -118,6 +127,18 @@ impl SttEngine {
     pub fn language(&self) -> Option<String> {
         self.lang.lock().ok().and_then(|g| g.clone())
     }
+
+    /// Set the decoder-bias prompt (`None` clears it). Null bytes are stripped —
+    /// whisper's `set_initial_prompt` would otherwise panic on them. Takes effect
+    /// on the next window; the worker reads it live.
+    pub fn set_prompt(&self, prompt: Option<String>) {
+        let cleaned = prompt
+            .map(|p| p.replace('\0', " "))
+            .filter(|p| !p.is_empty());
+        if let Ok(mut g) = self.prompt.lock() {
+            *g = cleaned;
+        }
+    }
 }
 
 impl Drop for SttEngine {
@@ -134,8 +155,13 @@ impl Drop for SttEngine {
 /// The worker loop: accumulate voiced audio, emit partials on a cadence, and
 /// finalize on silence. Runs on its own thread; whisper's blocking `full()`
 /// never touches the audio or UI threads.
-fn worker<F>(ctx: WhisperContext, rx: Receiver<AudioChunk>, lang: LangSetting, on_update: F)
-where
+fn worker<F>(
+    ctx: WhisperContext,
+    rx: Receiver<AudioChunk>,
+    lang: LangSetting,
+    prompt: PromptSetting,
+    on_update: F,
+) where
     F: Fn(TranscriptUpdate) + Send + 'static,
 {
     let mut state = match ctx.create_state() {
@@ -192,9 +218,14 @@ where
 
             if new_since_step >= STEP_SAMPLES && window.len() >= MIN_SAMPLES {
                 let lang_opt = lang.lock().ok().and_then(|g| g.clone());
-                if let Some((text, detected)) =
-                    transcribe(&mut state, &window, threads, lang_opt.as_deref())
-                {
+                let prompt_opt = prompt.lock().ok().and_then(|g| g.clone());
+                if let Some((text, detected)) = transcribe(
+                    &mut state,
+                    &window,
+                    threads,
+                    lang_opt.as_deref(),
+                    prompt_opt.as_deref(),
+                ) {
                     on_update(TranscriptUpdate {
                         text,
                         language: detected,
@@ -209,9 +240,14 @@ where
             if silence_run == SILENCE_FINALIZE && !window.is_empty() {
                 if window.len() >= MIN_SAMPLES {
                     let lang_opt = lang.lock().ok().and_then(|g| g.clone());
-                    if let Some((text, detected)) =
-                        transcribe(&mut state, &window, threads, lang_opt.as_deref())
-                    {
+                    let prompt_opt = prompt.lock().ok().and_then(|g| g.clone());
+                    if let Some((text, detected)) = transcribe(
+                        &mut state,
+                        &window,
+                        threads,
+                        lang_opt.as_deref(),
+                        prompt_opt.as_deref(),
+                    ) {
                         on_update(TranscriptUpdate {
                             text,
                             language: detected,
@@ -235,9 +271,15 @@ fn transcribe(
     audio: &[f32],
     threads: i32,
     lang: Option<&str>,
+    prompt: Option<&str>,
 ) -> Option<(String, String)> {
     let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
     params.set_language(lang); // None → whisper auto-detects
+                               // Bias the decoder toward scripture vocabulary (book names + church terms)
+                               // when a voice profile supplies a prompt. Empty/absent → no bias.
+    if let Some(p) = prompt.filter(|p| !p.is_empty()) {
+        params.set_initial_prompt(p);
+    }
     params.set_n_threads(threads);
     params.set_translate(false);
     params.set_single_segment(true);
@@ -326,9 +368,36 @@ pub fn default_model_path() -> Option<PathBuf> {
     None
 }
 
+/// Build a whisper decoder-bias prompt that primes the model with scripture
+/// vocabulary: the 66 canonical book names (kept in sync with detection.rs so a
+/// biased spelling and a detected reference always agree) plus any per-profile
+/// `extra` terms (preacher's church name, recurring phrases). Biasing the
+/// decoder toward these tokens is what rescues references from accent/ASR error.
+pub fn scripture_bias_prompt(extra: &str) -> String {
+    let books = crate::detection::CANONICAL_BOOKS.join(", ");
+    let base = format!("Scripture reading from the Holy Bible. Books: {books}.");
+    let extra = extra.trim();
+    if extra.is_empty() {
+        base
+    } else {
+        format!("{base} {extra}")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bias_prompt_lists_books_and_appends_extra() {
+        let p = scripture_bias_prompt("Grace Chapel, hallelujah");
+        assert!(p.contains("Genesis"));
+        assert!(p.contains("Revelation"));
+        assert!(p.contains("Grace Chapel, hallelujah"));
+        // Empty extra → no trailing junk.
+        let base = scripture_bias_prompt("   ");
+        assert!(base.ends_with('.'));
+    }
 
     #[test]
     fn resample_passthrough_when_rates_match() {

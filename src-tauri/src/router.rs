@@ -28,6 +28,21 @@ impl Default for Thresholds {
     }
 }
 
+impl Thresholds {
+    /// Map a single operator "sensitivity" dial (0..=100) to the two-tier
+    /// thresholds. Higher sensitivity → lower bars → the AI fires/suggests more
+    /// readily (more catches, more noise). This sets the *baseline*; per-install
+    /// feedback (`record_feedback`) then nudges from here. The mid dial position
+    /// (50) reproduces the seed 0.90 / 0.60 defaults exactly.
+    pub fn from_sensitivity(sensitivity: u8) -> Self {
+        let s = (sensitivity.min(100) as f32) / 100.0;
+        // auto_fire: 0.97 (cautious) → 0.83 (eager); suggest: 0.70 → 0.50.
+        let auto_fire = 0.97 - 0.14 * s;
+        let suggest = (0.70 - 0.20 * s).min(auto_fire);
+        Thresholds { auto_fire, suggest }
+    }
+}
+
 /// What the router decided to do with a candidate detection.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -211,6 +226,29 @@ mod tests {
         assert!(r.thresholds().auto_fire <= 0.99);
         assert!(r.thresholds().suggest >= 0.40);
         assert!(r.thresholds().suggest <= r.thresholds().auto_fire);
+    }
+
+    #[test]
+    fn sensitivity_maps_and_stays_ordered() {
+        // Mid dial reproduces the seed defaults exactly.
+        let mid = Thresholds::from_sensitivity(50);
+        assert!((mid.auto_fire - 0.90).abs() < 1e-4);
+        assert!((mid.suggest - 0.60).abs() < 1e-4);
+        // Higher sensitivity lowers both bars; lower raises them.
+        let hi = Thresholds::from_sensitivity(100);
+        let lo = Thresholds::from_sensitivity(0);
+        assert!(hi.auto_fire < mid.auto_fire && mid.auto_fire < lo.auto_fire);
+        assert!(hi.suggest < mid.suggest && mid.suggest < lo.suggest);
+        // Invariant holds across the whole range.
+        for s in 0..=100u8 {
+            let t = Thresholds::from_sensitivity(s);
+            assert!(t.suggest <= t.auto_fire, "s={s}");
+        }
+        // Clamps above 100.
+        assert_eq!(
+            Thresholds::from_sensitivity(200).auto_fire,
+            Thresholds::from_sensitivity(100).auto_fire
+        );
     }
 
     #[test]

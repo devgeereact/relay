@@ -76,3 +76,18 @@ CREATE TABLE cues (
     payload_json TEXT,
     triggered_at REAL NOT NULL
 );
+
+-- ===== Accent & speaker calibration (Phase B) =====
+-- One row per preacher. Bundles the STT language hint, decoder-bias vocabulary,
+-- the sensitivity dial, and the self-calibrated confidence thresholds so that
+-- accent/threshold learning persists per speaker across services and restarts.
+CREATE TABLE voice_profiles (
+    id          INTEGER PRIMARY KEY,
+    name        TEXT NOT NULL,
+    language    TEXT,                                  -- null = auto-detect / code-switch; else "en"/"yo"/"sw"/"ha"
+    sensitivity INTEGER NOT NULL DEFAULT 50,           -- 0..100 dial → threshold baseline
+    auto_fire   REAL NOT NULL DEFAULT 0.90,            -- live, feedback-adapted
+    suggest     REAL NOT NULL DEFAULT 0.60,
+    bias_terms  TEXT NOT NULL DEFAULT '',              -- extra decoder-bias vocab (church name, phrases)
+    is_active   INTEGER NOT NULL DEFAULT 0             -- exactly one row is active at a time
+);

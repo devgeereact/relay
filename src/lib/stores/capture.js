@@ -274,9 +274,43 @@ export async function setChannelTemplate(id, templateId) {
 }
 
 /** Open a native fullscreen output window for a template id. Returns its label. */
-export async function openOutput(templateId, name) {
+export async function openOutput(templateId, name, monitorIndex) {
   const call = await invoke(); // throws in browser
-  return call('open_output_window', { templateId, name });
+  return call('open_output_window', { templateId, name, monitorIndex });
+}
+
+/** Connected physical displays for HDMI screen assignment. */
+export async function listMonitors() {
+  try {
+    const call = await invoke();
+    return await call('list_monitors');
+  } catch {
+    return [];
+  }
+}
+
+/** Open a channel's output on its assigned display (HDMI). Returns the label. */
+export async function openChannelOutput(channelId) {
+  const call = await invoke(); // throws in browser
+  return call('open_channel_output', { channelId });
+}
+
+/** Assign a physical display (monitor index string, or null) to a channel. */
+export async function setChannelDisplay(id, display) {
+  const call = await invoke();
+  await call('set_channel_display', { id, display });
+}
+
+/** Add a new output channel. Returns its id. */
+export async function addChannel(name, renderTarget, templateId) {
+  const call = await invoke();
+  return call('add_channel', { name, renderTarget, templateId });
+}
+
+/** Delete an output channel. */
+export async function deleteChannel(id) {
+  const call = await invoke();
+  await call('delete_channel', { id });
 }
 
 /** Manual next/previous verse (same as spoken "next"/"back"). */
