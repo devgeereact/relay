@@ -130,32 +130,30 @@ impl AudioEngine {
     /// Start capturing from `device_name` (or the default input when None),
     /// invoking `on_chunk` for every chunk produced (voiced and unvoiced — the
     /// `is_voice` flag lets upstream drop silence while the UI still meters
-    /// level). Blocks only until the stream is confirmed running.
-    pub fn start<F>(device_name: Option<String>, on_chunk: F) -> Result<Self, String>
+    /// level).
+    ///
+    /// NON-BLOCKING: returns immediately after spawning the capture thread. The
+    /// stream is built on that thread, so a slow/blocked device init (e.g. a
+    /// macOS mic-permission prompt) never stalls the caller — critical because
+    /// this runs inside a synchronous Tauri command on the UI thread. Device
+    /// errors are reported asynchronously via `on_error`.
+    pub fn start<F, E>(device_name: Option<String>, on_chunk: F, on_error: E) -> Self
     where
         F: Fn(&AudioChunk) + Send + 'static,
+        E: Fn(String) + Send + 'static,
     {
         let stop = Arc::new(AtomicBool::new(false));
         let stop_thread = stop.clone();
-        let (ready_tx, ready_rx) = mpsc::channel::<Result<(), String>>();
 
         let handle = std::thread::spawn(move || {
-            match build_and_run(device_name, stop_thread, &ready_tx, on_chunk) {
-                Ok(()) => {}
-                Err(e) => {
-                    // If we never signaled ready, report the failure to start().
-                    let _ = ready_tx.send(Err(e));
-                }
+            if let Err(e) = build_and_run(device_name, stop_thread, on_chunk) {
+                on_error(e);
             }
         });
 
-        match ready_rx.recv() {
-            Ok(Ok(())) => Ok(AudioEngine {
-                stop,
-                handle: Some(handle),
-            }),
-            Ok(Err(e)) => Err(e),
-            Err(_) => Err("audio capture thread exited before starting".into()),
+        AudioEngine {
+            stop,
+            handle: Some(handle),
         }
     }
 
@@ -182,7 +180,6 @@ impl Drop for AudioEngine {
 fn build_and_run<F>(
     device_name: Option<String>,
     stop: Arc<AtomicBool>,
-    ready_tx: &mpsc::Sender<Result<(), String>>,
     on_chunk: F,
 ) -> Result<(), String>
 where
@@ -251,8 +248,6 @@ where
     .map_err(|e| e.to_string())?;
 
     stream.play().map_err(|e| e.to_string())?;
-    // Stream is live — unblock start().
-    let _ = ready_tx.send(Ok(()));
 
     let vad = Vad {
         threshold_rms: VAD_RMS_THRESHOLD,

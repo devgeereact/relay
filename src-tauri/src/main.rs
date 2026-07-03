@@ -525,21 +525,31 @@ fn start_capture(
         .as_ref()
         .map(|e| e.sender());
     let emitter = app.clone();
-    let engine = AudioEngine::start(device, move |chunk| {
-        let _ = emitter.emit(
-            "audio://chunk",
-            ChunkEvent {
-                timestamp_ms: chunk.timestamp_ms,
-                sample_rate: chunk.sample_rate,
-                rms: chunk.rms,
-                is_voice: chunk.is_voice,
-                samples: chunk.samples.len(),
-            },
-        );
-        if let Some(tx) = &stt_tx {
-            let _ = tx.send(chunk.clone());
-        }
-    })?;
+    let err_emitter = app.clone();
+    // Non-blocking: returns instantly, so the UI thread never stalls on device
+    // init. Stream failures surface as `audio://error`.
+    let engine = AudioEngine::start(
+        device,
+        move |chunk| {
+            let _ = emitter.emit(
+                "audio://chunk",
+                ChunkEvent {
+                    timestamp_ms: chunk.timestamp_ms,
+                    sample_rate: chunk.sample_rate,
+                    rms: chunk.rms,
+                    is_voice: chunk.is_voice,
+                    samples: chunk.samples.len(),
+                },
+            );
+            if let Some(tx) = &stt_tx {
+                let _ = tx.send(chunk.clone());
+            }
+        },
+        move |err| {
+            eprintln!("audio: {err}");
+            let _ = err_emitter.emit("audio://error", err);
+        },
+    );
     *slot = Some(engine);
     Ok(())
 }

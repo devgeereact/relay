@@ -13,7 +13,23 @@
     openOutput,
     clearScreens,
     setDetection,
+    startCapture,
+    stopCapture,
   } from '../stores/capture.js';
+
+  // Operator drives detection from the console: Listen = mic on (auto-drive
+  // when AI detection is also armed). Errors surface, never freeze.
+  let listenBusy = false;
+  async function toggleListen() {
+    listenBusy = true;
+    try {
+      if ($capture.capturing) await stopCapture();
+      else await startCapture(null);
+    } catch {
+      /* surfaced via audioError */
+    }
+    listenBusy = false;
+  }
 
   let searchEl;
   let transcriptEl;
@@ -197,14 +213,30 @@
         </div>
       {/each}
     </div>
+    {#if $capture.audioError}
+      <div style="background:var(--red-soft); color:var(--red); border:1px solid rgba(217,105,95,0.3); border-radius:8px; padding:8px 11px; margin-bottom:10px; font-size:12px;">
+        Audio: {$capture.audioError}
+      </div>
+    {/if}
     <div class="controls">
       <button
         class="ctrl-btn"
-        class:primary={$capture.detectionOn}
+        class:primary={!$capture.capturing}
+        on:click={toggleListen}
+        disabled={!$capture.available || !$capture.stt.loaded || listenBusy}
+      >
+        {#if $capture.capturing}
+          <span class="dot" style="background:var(--red);"></span>Listening — Stop
+        {:else}
+          <span class="dot" style="background:#1b1204;"></span>{listenBusy ? 'Starting…' : 'Start listening'}
+        {/if}
+      </button>
+      <button
+        class="ctrl-btn"
         on:click={() => setDetection(!$capture.detectionOn)}
         disabled={!$capture.available}
       >
-        <span class="dot" style="background:{$capture.detectionOn ? '#1b1204' : 'var(--red)'};"></span>
+        <span class="dot" style="background:{$capture.detectionOn ? 'var(--green)' : 'var(--text-faint)'};"></span>
         AI detection: {$capture.detectionOn ? 'On' : 'Off'}
       </button>
       <button class="ctrl-btn" on:click={clearScreens} disabled={!$capture.available}>

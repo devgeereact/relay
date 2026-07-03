@@ -17,6 +17,7 @@ export const capture = writable({
   stt: { loaded: false, model: null, language: null }, // local STT model status (language null = auto)
   detectedLang: null, // language of the latest transcript window (code-switching)
   detectionOn: true, // is automatic detection armed?
+  audioError: null, // last audio device error (surfaced, not fatal)
   thresholds: { auto_fire: 0.9, suggest: 0.6 }, // router gate (self-calibrating)
 });
 
@@ -78,6 +79,11 @@ export async function initAudio() {
       const { listen } = await import('@tauri-apps/api/event');
       await listen('output://content', (e) => live.set(e.payload));
       await listen('output://clear', () => live.set(null));
+      // A device failure (permission denied, unplugged) is non-fatal: surface
+      // it and reflect that capture stopped, but never freeze.
+      await listen('audio://error', (e) =>
+        capture.update((s) => ({ ...s, audioError: e.payload, capturing: false }))
+      );
     } catch {
       /* events unavailable — previews just won't mirror; app still works */
     }
@@ -160,6 +166,7 @@ export async function startCapture(device) {
       return { ...t, partial: text };
     });
   });
+  capture.update((s) => ({ ...s, audioError: null }));
   unlistenDetect = await listen('detection://match', (e) => {
     const d = e.payload;
     detections.update((list) => {
