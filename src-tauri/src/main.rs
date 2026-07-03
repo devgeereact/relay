@@ -230,98 +230,94 @@ fn emit_detections(handle: &tauri::AppHandle, text: &str, now_ms: u64) {
     let routing = handle.state::<Routing>();
     let ctx = handle.state::<Context>();
     let sem = handle.state::<Semantic>();
-    let (Ok(conn), Ok(mut router), Ok(mut context)) = (db.0.lock(), routing.0.lock(), ctx.0.lock())
-    else {
-        return;
-    };
 
-    // Gather candidates: (reference, confidence, method, explicit).
-    let mut candidates: Vec<(VerseRef, f32, DetectionMethod, bool)> = Vec::new();
+    // Compute everything UNDER the locks, but collect the emits/broadcasts and
+    // fire them AFTER releasing — never hold a lock across handle.emit /
+    // broadcast_content, which can otherwise deadlock the main run loop with a
+    // command contending the same lock (this was the freeze on Start listening).
+    let mut events: Vec<DetectionEvent> = Vec::new();
+    let mut broadcasts: Vec<OutputContent> = Vec::new();
+    {
+        let (Ok(conn), Ok(mut router), Ok(mut context)) =
+            (db.0.lock(), routing.0.lock(), ctx.0.lock())
+        else {
+            return;
+        };
 
-    // 1. Direct matches.
-    let directs = detection::detect_direct(text);
-    let direct_empty = directs.is_empty();
-    for m in directs {
-        let explicit = m.confidence >= 0.95;
-        candidates.push((m.reference, m.confidence, DetectionMethod::Direct, explicit));
-    }
-    // 2. Bare verses resolved against the current passage.
-    for n in detection::detect_bare_verses(text) {
-        if let Some(r) = context.resolve_bare_verse(n) {
-            candidates.push((r, 0.88, DetectionMethod::Direct, false));
-        }
-    }
-    // 3. Best semantic (paraphrase) candidate.
-    if let Some((r, score)) = sem.0.top_k(text, 1).into_iter().next() {
-        if score >= SEMANTIC_FLOOR {
-            candidates.push((r, score.min(0.95), DetectionMethod::Semantic, false));
-        }
-    }
-    // 4. Ambiguous book+number (no verse) → operator-pickable suggestions, but
-    //    only when nothing direct matched (avoids clutter). Suggest tier.
-    if direct_empty {
-        for r in detection::detect_ambiguous(text) {
-            candidates.push((r, 0.70, DetectionMethod::Direct, false));
-        }
-    }
-    if candidates.is_empty() {
-        return;
-    }
+        // Gather candidates: (reference, confidence, method, explicit).
+        let mut candidates: Vec<(VerseRef, f32, DetectionMethod, bool)> = Vec::new();
 
-    // Dedup by reference, keeping the highest-confidence candidate (a direct
-    // match beats a weaker semantic hit for the same verse).
-    let mut best: std::collections::HashMap<String, (VerseRef, f32, DetectionMethod, bool)> =
-        std::collections::HashMap::new();
-    for c in candidates {
-        let key = format!("{} {}:{}", c.0.book, c.0.chapter, c.0.verse);
-        match best.get(&key) {
-            Some(existing) if existing.1 >= c.1 => {}
-            _ => {
-                best.insert(key, c);
+        let directs = detection::detect_direct(text);
+        let direct_empty = directs.is_empty();
+        for m in directs {
+            let explicit = m.confidence >= 0.95;
+            candidates.push((m.reference, m.confidence, DetectionMethod::Direct, explicit));
+        }
+        for n in detection::detect_bare_verses(text) {
+            if let Some(r) = context.resolve_bare_verse(n) {
+                candidates.push((r, 0.88, DetectionMethod::Direct, false));
             }
         }
-    }
+        if let Some((r, score)) = sem.0.top_k(text, 1).into_iter().next() {
+            if score >= SEMANTIC_FLOOR {
+                candidates.push((r, score.min(0.95), DetectionMethod::Semantic, false));
+            }
+        }
+        if direct_empty {
+            for r in detection::detect_ambiguous(text) {
+                candidates.push((r, 0.70, DetectionMethod::Direct, false));
+            }
+        }
+        if candidates.is_empty() {
+            return;
+        }
 
-    for (key, (r, confidence, method, explicit)) in best {
-        let status = match router.decide(&key, confidence, explicit, now_ms) {
-            RouteDecision::AutoFire => "auto",
-            RouteDecision::Suggest => "suggested",
-            RouteDecision::Drop => continue,
-        };
-        let looked = db::lookup_verse(&conn, &r.book, r.chapter, r.verse)
-            .ok()
-            .flatten();
-        let vtext = looked.as_ref().map(|v| v.text.clone());
-        let translation = looked.as_ref().map(|v| v.translation.clone());
+        // Dedup by reference, keeping the highest-confidence candidate.
+        let mut best: std::collections::HashMap<String, (VerseRef, f32, DetectionMethod, bool)> =
+            std::collections::HashMap::new();
+        for c in candidates {
+            let key = format!("{} {}:{}", c.0.book, c.0.chapter, c.0.verse);
+            match best.get(&key) {
+                Some(existing) if existing.1 >= c.1 => {}
+                _ => {
+                    best.insert(key, c);
+                }
+            }
+        }
 
-        // Auto-fired content goes straight to output; suggestions wait for the
-        // operator to confirm.
-        if status == "auto" {
-            context.note(&r); // current on-screen verse (for bare verse + next/back)
-            channels::broadcast_content(
-                handle,
-                OutputContent {
+        for (key, (r, confidence, method, explicit)) in best {
+            let status = match router.decide(&key, confidence, explicit, now_ms) {
+                RouteDecision::AutoFire => "auto",
+                RouteDecision::Suggest => "suggested",
+                RouteDecision::Drop => continue,
+            };
+            let looked = db::lookup_verse(&conn, &r.book, r.chapter, r.verse)
+                .ok()
+                .flatten();
+            let vtext = looked.as_ref().map(|v| v.text.clone());
+            let translation = looked.as_ref().map(|v| v.translation.clone());
+
+            if status == "auto" {
+                context.note(&r);
+                let method_str = match method {
+                    DetectionMethod::Direct => "direct",
+                    DetectionMethod::Semantic => "semantic",
+                };
+                persist_fire(
+                    &conn,
+                    handle.state::<Session>(),
+                    looked.as_ref().map(|v| v.id),
+                    method_str,
+                    confidence,
+                    text,
+                );
+                broadcasts.push(OutputContent {
                     reference: key.clone(),
                     text: vtext.clone(),
                     translation: translation.clone(),
-                },
-            );
-            let method_str = match method {
-                DetectionMethod::Direct => "direct",
-                DetectionMethod::Semantic => "semantic",
-            };
-            persist_fire(
-                &conn,
-                handle.state::<Session>(),
-                looked.as_ref().map(|v| v.id),
-                method_str,
-                confidence,
-                text,
-            );
-        }
-        let _ = handle.emit(
-            "detection://match",
-            DetectionEvent {
+                });
+            }
+            events.push(DetectionEvent {
                 reference: key,
                 book: r.book.clone(),
                 chapter: r.chapter,
@@ -332,8 +328,15 @@ fn emit_detections(handle: &tauri::AppHandle, text: &str, now_ms: u64) {
                 in_library: looked.is_some(),
                 text: vtext,
                 translation,
-            },
-        );
+            });
+        }
+    } // locks released here
+
+    for content in broadcasts {
+        channels::broadcast_content(handle, content);
+    }
+    for ev in events {
+        let _ = handle.emit("detection://match", ev);
     }
 }
 
@@ -342,66 +345,73 @@ fn emit_detections(handle: &tauri::AppHandle, text: &str, now_ms: u64) {
 /// intent), like a manual override. Locks db before ctx/router (global order).
 fn handle_nav(handle: &tauri::AppHandle, dir: detection::NavCommand) {
     let db = handle.state::<Db>();
-    let Ok(conn) = db.0.lock() else {
-        return;
-    };
     let ctx = handle.state::<Context>();
-    let target = {
-        let Ok(context) = ctx.0.lock() else {
+
+    // All lock work in one scope; broadcast/emit happen AFTER releasing (no
+    // lock held across emit — see emit_detections).
+    let fired: Option<(String, VerseRef, String, String)> = {
+        let Ok(conn) = db.0.lock() else {
             return;
         };
-        match dir {
-            detection::NavCommand::Next => context.next_verse(),
-            detection::NavCommand::Previous => context.prev_verse(),
+        let target = {
+            let Ok(context) = ctx.0.lock() else {
+                return;
+            };
+            match dir {
+                detection::NavCommand::Next => context.next_verse(),
+                detection::NavCommand::Previous => context.prev_verse(),
+            }
+        };
+        let Some(r) = target else { return };
+        let Some(v) = db::lookup_verse(&conn, &r.book, r.chapter, r.verse)
+            .ok()
+            .flatten()
+        else {
+            return; // stepped off the end of the chapter
+        };
+        let key = format!("{} {}:{}", r.book, r.chapter, r.verse);
+        if let Ok(mut context) = ctx.0.lock() {
+            context.note(&r);
         }
+        if let Ok(mut router) = handle.state::<Routing>().0.lock() {
+            router.manual_fire(&key, 0);
+        }
+        persist_fire(
+            &conn,
+            handle.state::<Session>(),
+            Some(v.id),
+            "direct",
+            1.0,
+            &key,
+        );
+        Some((key, r, v.text, v.translation))
     };
-    let Some(r) = target else {
-        return; // no current verse, or already at verse 1
-    };
-    let Some(v) = db::lookup_verse(&conn, &r.book, r.chapter, r.verse)
-        .ok()
-        .flatten()
-    else {
-        return; // stepped off the end of the chapter
-    };
-    let key = format!("{} {}:{}", r.book, r.chapter, r.verse);
-    if let Ok(mut context) = ctx.0.lock() {
-        context.note(&r);
+
+    if let Some((key, r, text, translation)) = fired {
+        channels::broadcast_content(
+            handle,
+            OutputContent {
+                reference: key.clone(),
+                text: Some(text.clone()),
+                translation: Some(translation.clone()),
+            },
+        );
+        let _ = handle.emit(
+            "detection://match",
+            DetectionEvent {
+                reference: key,
+                book: r.book,
+                chapter: r.chapter,
+                verse: r.verse,
+                confidence: 1.0,
+                method: DetectionMethod::Direct,
+                status: "auto",
+                in_library: true,
+                text: Some(text),
+                translation: Some(translation),
+            },
+        );
     }
-    if let Ok(mut router) = handle.state::<Routing>().0.lock() {
-        router.manual_fire(&key, 0);
-    }
-    channels::broadcast_content(
-        handle,
-        OutputContent {
-            reference: key.clone(),
-            text: Some(v.text.clone()),
-            translation: Some(v.translation.clone()),
-        },
-    );
-    persist_fire(
-        &conn,
-        handle.state::<Session>(),
-        Some(v.id),
-        "direct",
-        1.0,
-        &key,
-    );
-    let _ = handle.emit(
-        "detection://match",
-        DetectionEvent {
-            reference: key,
-            book: r.book.clone(),
-            chapter: r.chapter,
-            verse: r.verse,
-            confidence: 1.0,
-            method: DetectionMethod::Direct,
-            status: "auto",
-            in_library: true,
-            text: Some(v.text),
-            translation: Some(v.translation),
-        },
-    );
 }
 
 /// Persist a finalized transcript line into the current service (if recording),
@@ -506,7 +516,7 @@ fn list_audio_devices() -> Vec<audio::DeviceInfo> {
 /// is emitted to the frontend as `audio://chunk` (metadata only). Replaces any
 /// capture already running.
 #[tauri::command]
-fn start_capture(
+async fn start_capture(
     app: tauri::AppHandle,
     audio: tauri::State<'_, Audio>,
     stt: tauri::State<'_, Stt>,
@@ -556,7 +566,7 @@ fn start_capture(
 
 /// Stop the running capture, if any. Idempotent. Leaves the STT worker loaded.
 #[tauri::command]
-fn stop_capture(audio: tauri::State<'_, Audio>) -> Result<(), String> {
+async fn stop_capture(audio: tauri::State<'_, Audio>) -> Result<(), String> {
     let mut slot = audio.0.lock().map_err(|e| e.to_string())?;
     if let Some(engine) = slot.take() {
         engine.stop();

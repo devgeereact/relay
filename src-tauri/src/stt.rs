@@ -129,9 +129,13 @@ where
             return;
         }
     };
-    let threads = std::thread::available_parallelism()
-        .map(|n| n.get().min(8))
-        .unwrap_or(4) as i32;
+    // Leave headroom for the UI/audio threads — pegging every core makes the
+    // macOS main run loop unresponsive (looks like a freeze). Half the cores,
+    // capped, is plenty for the base model.
+    let cores = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4);
+    let threads = (cores / 2).clamp(1, 4) as i32;
 
     let mut window: Vec<f32> = Vec::with_capacity(TARGET_RATE as usize * WINDOW_SECS);
     let max_window = TARGET_RATE as usize * WINDOW_SECS;
