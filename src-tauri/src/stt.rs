@@ -79,7 +79,15 @@ impl SttEngine {
         let lang: LangSetting = Arc::new(Mutex::new(None));
         let (tx, rx) = mpsc::channel::<AudioChunk>();
         let lang_worker = lang.clone();
-        let handle = std::thread::spawn(move || worker(ctx, rx, lang_worker, on_update));
+        // whisper_full() is stack-hungry; running it and then serializing a
+        // Tauri emit on the SAME thread overflowed the default 2MB stack and
+        // silently SIGSEGV'd the app right after the first transcript. Give the
+        // worker a generous stack.
+        let handle = std::thread::Builder::new()
+            .name("relay-stt".into())
+            .stack_size(16 * 1024 * 1024)
+            .spawn(move || worker(ctx, rx, lang_worker, on_update))
+            .map_err(|e| format!("failed to spawn STT worker: {e}"))?;
         Ok(SttEngine {
             tx,
             handle: Some(handle),
@@ -114,11 +122,12 @@ impl SttEngine {
 
 impl Drop for SttEngine {
     fn drop(&mut self) {
-        // Dropping the canonical sender lets the worker's recv() error out and
-        // exit — but only once every clone (held by capture closures) is gone.
-        if let Some(h) = self.handle.take() {
-            let _ = h.join();
-        }
+        // Detach, don't join: the worker only exits once every sender clone is
+        // dropped, and drop() runs before this struct's own `tx` field is
+        // dropped — joining here would block forever. In the app the engine
+        // lives for the whole process, so letting the worker wind down on its
+        // own (or die at process exit) is correct.
+        self.handle.take();
     }
 }
 
@@ -348,5 +357,41 @@ mod tests {
     #[test]
     fn resample_handles_empty() {
         assert_eq!(resample_linear(&[], 48000, 16000), Vec::<f32>::new());
+    }
+
+    // Reproduce the runtime crash headlessly: load the model and push voiced
+    // synthetic audio so whisper actually transcribes (multiple times). Tests
+    // whisper + install_logging_hooks WITHOUT the Tauri emit path.
+    //   cargo test smoke_stt -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn smoke_stt() {
+        use crate::audio::AudioChunk;
+        let Some(model) = default_model_path() else {
+            eprintln!("no model — skipping");
+            return;
+        };
+        let engine = SttEngine::try_load(model, |u| {
+            eprintln!("TRANSCRIPT[{}]: {}", u.language, u.text);
+        })
+        .expect("load model");
+        let tx = engine.sender();
+        // ~6s of loud voiced audio in 0.4s chunks (RMS well above the VAD gate).
+        for i in 0..30 {
+            let samples: Vec<f32> = (0..19200)
+                .map(|n| 0.3 * (n as f32 * 0.05).sin())
+                .collect();
+            tx.send(AudioChunk {
+                samples,
+                timestamp_ms: i * 400,
+                sample_rate: 48000,
+                rms: 0.2,
+                is_voice: true,
+            })
+            .unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(200));
+        }
+        std::thread::sleep(std::time::Duration::from_secs(2));
+        eprintln!("SURVIVED — whisper + hooks did not crash");
     }
 }
