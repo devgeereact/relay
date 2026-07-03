@@ -41,9 +41,16 @@
 
   // Kiosk mode: no Tauri runtime → use the built-in template and stream state
   // from the WebSocket hub (channels.rs, port 8031 on the app host).
+  let kioskClosed = false;
   function startKiosk() {
     t = builtinById(templateId);
     const host = location.hostname || 'localhost';
+    connectKiosk(host);
+  }
+  // Persistent WS with auto-reconnect so an OBS/kiosk browser source survives
+  // app restarts without a manual refresh.
+  function connectKiosk(host) {
+    if (kioskClosed) return;
     try {
       ws = new WebSocket(`ws://${host}:8031`);
       ws.onmessage = (ev) => {
@@ -53,13 +60,18 @@
           /* ignore malformed */
         }
       };
-    } catch {
-      // No hub reachable — show a static placeholder so the screen isn't blank.
-      content = {
-        reference: 'John 3:16 · KJV',
-        text: 'For God so loved the world, that he gave his only begotten Son…',
+      ws.onclose = () => {
+        if (!kioskClosed) setTimeout(() => connectKiosk(host), 1500);
       };
-      visible = true;
+      ws.onerror = () => {
+        try {
+          ws.close();
+        } catch {
+          /* already closing → onclose handles the retry */
+        }
+      };
+    } catch {
+      if (!kioskClosed) setTimeout(() => connectKiosk(host), 1500);
     }
   }
 
@@ -85,6 +97,7 @@
   });
   onDestroy(() => {
     unlisten.forEach((u) => u());
+    kioskClosed = true;
     if (ws) ws.close();
   });
 </script>
