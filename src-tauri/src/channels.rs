@@ -217,4 +217,30 @@ mod tests {
         let u = output_url(2, "Stage/2");
         assert!(u.contains("name=Stage%2F2"), "got {u}");
     }
+
+    /// End-to-end kiosk path (what OBS/vMix uses): a WS client connects, a fire
+    /// is published, and the client receives it.
+    #[tokio::test]
+    async fn kiosk_ws_forwards_published_content() {
+        let hub = KioskHub::default();
+        let tx = hub.sender();
+        tokio::spawn(run_kiosk_server(tx, 8199));
+        // Give the listener a moment to bind.
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+
+        let (ws, _) = tokio_tungstenite::connect_async("ws://127.0.0.1:8199")
+            .await
+            .expect("connect");
+        let (_write, mut read) = ws.split();
+        // The client has completed the handshake (so it's subscribed); publish.
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        hub.publish(r#"{"kind":"content","reference":"John 3:16"}"#.to_string());
+
+        let msg = tokio::time::timeout(std::time::Duration::from_secs(2), read.next())
+            .await
+            .expect("no message within timeout")
+            .expect("stream ended")
+            .expect("ws error");
+        assert!(msg.into_text().unwrap().contains("John 3:16"));
+    }
 }
