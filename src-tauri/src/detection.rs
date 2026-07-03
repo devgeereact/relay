@@ -147,10 +147,19 @@ fn alias_map() -> &'static HashMap<String, &'static str> {
                 }
             }
         }
-        // Extra spoken variants + conservative ASR mishears.
+        // Extra spoken variants + ASR/accent mishears. The silent "P" in Psalms
+        // is frequently dropped by ASR on African-accented speech ("sam",
+        // "salm"), so those map to Psalms.
         m.insert("psalm".into(), "Psalms");
         m.insert("palms".into(), "Psalms");
+        m.insert("sam".into(), "Psalms");
+        m.insert("salm".into(), "Psalms");
+        m.insert("salms".into(), "Psalms");
+        m.insert("sams".into(), "Psalms");
         m.insert("jon".into(), "John");
+        m.insert("mathew".into(), "Matthew");
+        m.insert("mathews".into(), "Matthew");
+        m.insert("proverb".into(), "Proverbs");
         m.insert("song of songs".into(), "Song of Solomon");
         m.insert("canticles".into(), "Song of Solomon");
         m.insert("revelations".into(), "Revelation");
@@ -537,31 +546,77 @@ fn classify_num_word(w: &str) -> Option<NumWord> {
 
 // ===== Context memory (PROMPT.md Phase 9) =====
 
-/// Tracks the "current passage" so a bare "verse 4" resolves against the
-/// last-referenced book + chapter. Pure state — no IO. Fed by resolved direct
-/// matches; queried when a bare verse is heard.
+/// Tracks the current on-screen verse so a bare "verse 4" resolves against the
+/// last book+chapter, and "next"/"back" step from it. Pure state — no IO. Fed
+/// by whatever verse actually fires.
 #[derive(Debug, Clone, Default)]
 pub struct ContextMemory {
-    current: Option<(String, i64)>, // (book, chapter)
+    current: Option<VerseRef>,
 }
 
 impl ContextMemory {
-    /// Update the current passage from a freshly matched reference.
+    /// Record the verse currently shown.
     pub fn note(&mut self, r: &VerseRef) {
-        self.current = Some((r.book.clone(), r.chapter));
+        self.current = Some(r.clone());
     }
 
     /// Resolve a bare verse number against the current passage, if any.
     pub fn resolve_bare_verse(&self, verse: i64) -> Option<VerseRef> {
-        self.current.as_ref().map(|(book, chapter)| VerseRef {
-            book: book.clone(),
-            chapter: *chapter,
+        self.current.as_ref().map(|c| VerseRef {
+            book: c.book.clone(),
+            chapter: c.chapter,
             verse,
         })
     }
 
-    pub fn current(&self) -> Option<&(String, i64)> {
+    pub fn current(&self) -> Option<&VerseRef> {
         self.current.as_ref()
+    }
+
+    /// The next verse in the current chapter (verse + 1), if a current exists.
+    pub fn next_verse(&self) -> Option<VerseRef> {
+        self.current.as_ref().map(|c| VerseRef {
+            book: c.book.clone(),
+            chapter: c.chapter,
+            verse: c.verse + 1,
+        })
+    }
+
+    /// The previous verse (verse - 1), if a current exists and verse > 1.
+    pub fn prev_verse(&self) -> Option<VerseRef> {
+        self.current.as_ref().and_then(|c| {
+            (c.verse > 1).then(|| VerseRef {
+                book: c.book.clone(),
+                chapter: c.chapter,
+                verse: c.verse - 1,
+            })
+        })
+    }
+}
+
+/// Operator voice navigation commands.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum NavCommand {
+    Next,
+    Previous,
+}
+
+/// Detect a spoken navigation command in a short utterance ("next", "back",
+/// "previous", "next verse"). Only fires on short utterances so it doesn't
+/// trigger mid-sermon. Returns None for anything longer or unrelated.
+pub fn detect_command(text: &str) -> Option<NavCommand> {
+    let norm = normalize(text);
+    let tokens: Vec<&str> = norm.split_whitespace().collect();
+    if tokens.is_empty() || tokens.len() > 5 {
+        return None;
+    }
+    let has = |w: &str| tokens.iter().any(|t| *t == w);
+    if has("next") {
+        Some(NavCommand::Next)
+    } else if has("back") || has("previous") || has("prev") {
+        Some(NavCommand::Previous)
+    } else {
+        None
     }
 }
 
@@ -576,6 +631,62 @@ pub fn detect_bare_verses(text: &str) -> Vec<i64> {
         if matches!(tokens[i], "verse" | "verses") {
             if let Some((n, _, _)) = parse_number(&tokens, i + 1) {
                 out.push(n);
+            }
+        }
+        i += 1;
+    }
+    out
+}
+
+/// Generate candidate references for an AMBIGUOUS book+number with no verse,
+/// e.g. "revelation 22" → [Revelation 22:1, Revelation 2:2]. Used only when no
+/// full reference was detected, to surface operator-pickable suggestions. The
+/// caller filters these against the corpus and gates them as suggestions.
+pub fn detect_ambiguous(text: &str) -> Vec<VerseRef> {
+    let norm = normalize(text);
+    let tokens: Vec<&str> = norm.split_whitespace().collect();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < tokens.len() {
+        if let Some((canonical, book_end)) = match_book(&tokens, i) {
+            let mut j = book_end;
+            if let Some(t) = tokens.get(j) {
+                if matches!(*t, "chapter" | "chap" | "ch") {
+                    j += 1;
+                }
+            }
+            // A colon form is unambiguous — skip.
+            if try_colon_pair(&tokens, j).is_none() {
+                if let Some((n, after, _)) = parse_number(&tokens, j) {
+                    // Is a verse already present? Then it's not ambiguous.
+                    let mut k = after;
+                    while let Some(t) = tokens.get(k) {
+                        if matches!(*t, "verse" | "verses" | "vs" | "v" | ":") {
+                            k += 1;
+                        } else {
+                            break;
+                        }
+                    }
+                    let has_verse = parse_number(&tokens, k).is_some();
+                    if !has_verse && !is_single_chapter(canonical) {
+                        // chapter N, verse 1
+                        out.push(VerseRef {
+                            book: canonical.into(),
+                            chapter: n,
+                            verse: 1,
+                        });
+                        // two-digit split: 22 → 2:2, 21 → 2:1
+                        if (11..=99).contains(&n) && n % 10 >= 1 {
+                            out.push(VerseRef {
+                                book: canonical.into(),
+                                chapter: n / 10,
+                                verse: n % 10,
+                            });
+                        }
+                    }
+                    i = after;
+                    continue;
+                }
             }
         }
         i += 1;
@@ -875,6 +986,78 @@ mod tests {
             vec![4, 28]
         );
         assert!(detect_bare_verses("no reference here").is_empty());
+    }
+
+    #[test]
+    fn nav_commands() {
+        assert_eq!(detect_command("next"), Some(NavCommand::Next));
+        assert_eq!(detect_command("go to the next"), Some(NavCommand::Next));
+        assert_eq!(detect_command("back please"), Some(NavCommand::Previous));
+        assert_eq!(detect_command("previous verse"), Some(NavCommand::Previous));
+        // Long sentences are not treated as commands.
+        assert_eq!(
+            detect_command("and the next thing he said in his sermon"),
+            None
+        );
+    }
+
+    #[test]
+    fn context_next_prev() {
+        let mut ctx = ContextMemory::default();
+        assert!(ctx.next_verse().is_none());
+        ctx.note(&VerseRef {
+            book: "John".into(),
+            chapter: 3,
+            verse: 16,
+        });
+        assert_eq!(
+            ctx.next_verse().unwrap(),
+            VerseRef {
+                book: "John".into(),
+                chapter: 3,
+                verse: 17
+            }
+        );
+        assert_eq!(
+            ctx.prev_verse().unwrap(),
+            VerseRef {
+                book: "John".into(),
+                chapter: 3,
+                verse: 15
+            }
+        );
+        ctx.note(&VerseRef {
+            book: "Jude".into(),
+            chapter: 1,
+            verse: 1,
+        });
+        assert!(ctx.prev_verse().is_none()); // verse 1 → no previous
+    }
+
+    #[test]
+    fn ambiguous_two_digit_gives_candidates() {
+        let c = detect_ambiguous("turn to revelation twenty two");
+        assert!(c.contains(&VerseRef {
+            book: "Revelation".into(),
+            chapter: 22,
+            verse: 1
+        }));
+        assert!(c.contains(&VerseRef {
+            book: "Revelation".into(),
+            chapter: 2,
+            verse: 2
+        }));
+    }
+
+    #[test]
+    fn full_reference_is_not_ambiguous() {
+        assert!(detect_ambiguous("john 3:16").is_empty());
+        assert!(detect_ambiguous("romans eight twenty eight").is_empty());
+    }
+
+    #[test]
+    fn phonetic_book_sam_is_psalms() {
+        refeq(&one("sam twenty three verse one"), "Psalms", 23, 1);
     }
 
     // --- semantic match ---

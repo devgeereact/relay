@@ -127,16 +127,18 @@ fn main() {
             let handle = app.handle().clone();
             let engine = match stt::default_model_path() {
                 Some(path) => match SttEngine::try_load(path, move |update| {
+                    let _ = handle.emit("stt://transcript", &update);
                     if update.is_final {
                         println!("stt[{}]: {}", update.language, update.text);
-                    }
-                    let _ = handle.emit("stt://transcript", &update);
-                    // Persist finalized utterances to the current service.
-                    if update.is_final {
                         persist_transcript(&handle, &update.text, &update.language);
+                        // Spoken "next"/"back" navigates from the current verse.
+                        if let Some(cmd) = detection::detect_command(&update.text) {
+                            handle_nav(&handle, cmd);
+                            return;
+                        }
                     }
-                    // Phase 5/6: detect references, then route each through the
-                    // confidence gate + debounce before surfacing it.
+                    // Detect references, then route each through the confidence
+                    // gate + debounce before surfacing it.
                     emit_detections(&handle, &update.text, update.timestamp_ms);
                 }) {
                     Ok(e) => {
@@ -234,9 +236,10 @@ fn emit_detections(handle: &tauri::AppHandle, text: &str, now_ms: u64) {
     // Gather candidates: (reference, confidence, method, explicit).
     let mut candidates: Vec<(VerseRef, f32, DetectionMethod, bool)> = Vec::new();
 
-    // 1. Direct matches — also update the current passage (context memory).
-    for m in detection::detect_direct(text) {
-        context.note(&m.reference);
+    // 1. Direct matches.
+    let directs = detection::detect_direct(text);
+    let direct_empty = directs.is_empty();
+    for m in directs {
         let explicit = m.confidence >= 0.95;
         candidates.push((m.reference, m.confidence, DetectionMethod::Direct, explicit));
     }
@@ -250,6 +253,13 @@ fn emit_detections(handle: &tauri::AppHandle, text: &str, now_ms: u64) {
     if let Some((r, score)) = sem.0.top_k(text, 1).into_iter().next() {
         if score >= SEMANTIC_FLOOR {
             candidates.push((r, score.min(0.95), DetectionMethod::Semantic, false));
+        }
+    }
+    // 4. Ambiguous book+number (no verse) → operator-pickable suggestions, but
+    //    only when nothing direct matched (avoids clutter). Suggest tier.
+    if direct_empty {
+        for r in detection::detect_ambiguous(text) {
+            candidates.push((r, 0.70, DetectionMethod::Direct, false));
         }
     }
     if candidates.is_empty() {
@@ -285,6 +295,7 @@ fn emit_detections(handle: &tauri::AppHandle, text: &str, now_ms: u64) {
         // Auto-fired content goes straight to output; suggestions wait for the
         // operator to confirm.
         if status == "auto" {
+            context.note(&r); // current on-screen verse (for bare verse + next/back)
             channels::broadcast_content(
                 handle,
                 OutputContent {
@@ -322,6 +333,73 @@ fn emit_detections(handle: &tauri::AppHandle, text: &str, now_ms: u64) {
             },
         );
     }
+}
+
+/// Handle a spoken navigation command ("next" / "back"): fire the next/previous
+/// verse relative to the current on-screen verse. Bypasses the gate (operator
+/// intent), like a manual override. Locks db before ctx/router (global order).
+fn handle_nav(handle: &tauri::AppHandle, dir: detection::NavCommand) {
+    let db = handle.state::<Db>();
+    let Ok(conn) = db.0.lock() else {
+        return;
+    };
+    let ctx = handle.state::<Context>();
+    let target = {
+        let Ok(context) = ctx.0.lock() else {
+            return;
+        };
+        match dir {
+            detection::NavCommand::Next => context.next_verse(),
+            detection::NavCommand::Previous => context.prev_verse(),
+        }
+    };
+    let Some(r) = target else {
+        return; // no current verse, or already at verse 1
+    };
+    let Some(v) = db::lookup_verse(&conn, &r.book, r.chapter, r.verse)
+        .ok()
+        .flatten()
+    else {
+        return; // stepped off the end of the chapter
+    };
+    let key = format!("{} {}:{}", r.book, r.chapter, r.verse);
+    if let Ok(mut context) = ctx.0.lock() {
+        context.note(&r);
+    }
+    if let Ok(mut router) = handle.state::<Routing>().0.lock() {
+        router.manual_fire(&key, 0);
+    }
+    channels::broadcast_content(
+        handle,
+        OutputContent {
+            reference: key.clone(),
+            text: Some(v.text.clone()),
+            translation: Some(v.translation.clone()),
+        },
+    );
+    persist_fire(
+        &conn,
+        handle.state::<Session>(),
+        Some(v.id),
+        "direct",
+        1.0,
+        &key,
+    );
+    let _ = handle.emit(
+        "detection://match",
+        DetectionEvent {
+            reference: key,
+            book: r.book.clone(),
+            chapter: r.chapter,
+            verse: r.verse,
+            confidence: 1.0,
+            method: DetectionMethod::Direct,
+            status: "auto",
+            in_library: true,
+            text: Some(v.text),
+            translation: Some(v.translation),
+        },
+    );
 }
 
 /// Persist a finalized transcript line into the current service (if recording),
@@ -533,10 +611,13 @@ fn confirm_detection(
     app: tauri::AppHandle,
     db: tauri::State<'_, Db>,
     routing: tauri::State<'_, Routing>,
+    ctx: tauri::State<'_, Context>,
+    session: tauri::State<'_, Session>,
     reference: String,
 ) -> Result<Thresholds, String> {
     if let Some(m) = detection::detect_direct(&reference).into_iter().next() {
         let r = &m.reference;
+        let key = format!("{} {}:{}", r.book, r.chapter, r.verse);
         let conn = db.0.lock().map_err(|e| e.to_string())?;
         let looked = db::lookup_verse(&conn, &r.book, r.chapter, r.verse)
             .ok()
@@ -544,10 +625,21 @@ fn confirm_detection(
         channels::broadcast_content(
             &app,
             OutputContent {
-                reference: format!("{} {}:{}", r.book, r.chapter, r.verse),
+                reference: key.clone(),
                 text: looked.as_ref().map(|v| v.text.clone()),
                 translation: looked.as_ref().map(|v| v.translation.clone()),
             },
+        );
+        if let Ok(mut context) = ctx.0.lock() {
+            context.note(r);
+        }
+        persist_fire(
+            &conn,
+            session,
+            looked.as_ref().map(|v| v.id),
+            "direct",
+            m.confidence,
+            &key,
         );
     }
     let mut router = routing.0.lock().map_err(|e| e.to_string())?;
@@ -590,6 +682,7 @@ fn manual_fire(
     db: tauri::State<'_, Db>,
     routing: tauri::State<'_, Routing>,
     session: tauri::State<'_, Session>,
+    ctx: tauri::State<'_, Context>,
     reference: String,
 ) -> Result<(), String> {
     let m = detection::detect_direct(&reference)
@@ -608,6 +701,9 @@ fn manual_fire(
     {
         let mut router = routing.0.lock().map_err(|e| e.to_string())?;
         router.manual_fire(&key, 0);
+    }
+    if let Ok(mut context) = ctx.0.lock() {
+        context.note(r);
     }
     let text = looked.as_ref().map(|v| v.text.clone());
     let translation = looked.as_ref().map(|v| v.translation.clone());
