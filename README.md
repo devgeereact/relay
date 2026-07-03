@@ -2,7 +2,7 @@
 
 > AI-assisted live presentation software for churches — real-time scripture detection routed to independently-styled output screens, built to interoperate with OBS, ATEM, and ProPresenter rather than replace them.
 
-**Status:** builds and runs, full pipeline end to end. Phases 0–10 complete — shell + 5-screen console, SQLite data layer, audio capture + VAD, local STT (multilingual + code-switching), direct + semantic + context-memory detection, confidence-gating router with manual override, and output channels (native fullscreen + kiosk WebSocket; NDI parked on the external SDK). Next: full-Bible corpus import, African-language STT fine-tunes, real-service hardening. Working name — rename freely.
+**Status:** builds and runs, full pipeline end to end. Phases 0–10 complete — shell + 5-screen console, SQLite data layer, audio capture + VAD, local STT (multilingual + code-switching), direct + semantic + context-memory detection, confidence-gating router with manual override, output channels (native fullscreen + kiosk WebSocket; NDI parked on the external SDK), local service-session history, and the full KJV corpus (66 books, ~31k verses, bundled offline). Next: African-language STT fine-tunes, neural paraphrase embedder, real-service hardening. Working name — rename freely.
 
 ## Start here
 

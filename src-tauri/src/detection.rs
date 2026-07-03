@@ -14,6 +14,7 @@
 
 use serde::Serialize;
 use std::collections::HashMap;
+use std::sync::OnceLock;
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -39,16 +40,114 @@ pub struct RefMatch {
     pub matched_text: String,
 }
 
-/// Book alias table. Canonical name (DB spelling) → spoken/written variants,
-/// including common ASR mishears. English-first for Phase 5; the shape is ready
-/// for Yoruba/Swahili/Hausa alias rows (tier-1 languages) without code changes.
-/// Only the seeded books are listed — extend as the corpus grows.
-const BOOKS: &[(&str, &[&str])] = &[
-    ("Genesis", &["genesis", "gen"]),
-    ("Psalms", &["psalms", "psalm", "palms"]),
-    ("John", &["john", "jon"]),
-    ("Romans", &["romans", "roman"]),
+/// The 66 canonical books in standard Protestant order. This is the source of
+/// truth for both the direct-match alias table AND the full-Bible import
+/// (db.rs maps the KJV JSON's books to these names by index), so a detected
+/// reference and a stored verse always agree on spelling.
+pub const CANONICAL_BOOKS: &[&str] = &[
+    "Genesis",
+    "Exodus",
+    "Leviticus",
+    "Numbers",
+    "Deuteronomy",
+    "Joshua",
+    "Judges",
+    "Ruth",
+    "1 Samuel",
+    "2 Samuel",
+    "1 Kings",
+    "2 Kings",
+    "1 Chronicles",
+    "2 Chronicles",
+    "Ezra",
+    "Nehemiah",
+    "Esther",
+    "Job",
+    "Psalms",
+    "Proverbs",
+    "Ecclesiastes",
+    "Song of Solomon",
+    "Isaiah",
+    "Jeremiah",
+    "Lamentations",
+    "Ezekiel",
+    "Daniel",
+    "Hosea",
+    "Joel",
+    "Amos",
+    "Obadiah",
+    "Jonah",
+    "Micah",
+    "Nahum",
+    "Habakkuk",
+    "Zephaniah",
+    "Haggai",
+    "Zechariah",
+    "Malachi",
+    "Matthew",
+    "Mark",
+    "Luke",
+    "John",
+    "Acts",
+    "Romans",
+    "1 Corinthians",
+    "2 Corinthians",
+    "Galatians",
+    "Ephesians",
+    "Philippians",
+    "Colossians",
+    "1 Thessalonians",
+    "2 Thessalonians",
+    "1 Timothy",
+    "2 Timothy",
+    "Titus",
+    "Philemon",
+    "Hebrews",
+    "James",
+    "1 Peter",
+    "2 Peter",
+    "1 John",
+    "2 John",
+    "3 John",
+    "Jude",
+    "Revelation",
 ];
+
+/// Alias → canonical-book map, built once. Covers the lowercase full name, the
+/// spoken/written forms of numbered books ("first"/"i"/"1", "1john"), plus a few
+/// common variants and ASR mishears. Multilingual-ready: add rows per language.
+static ALIAS_MAP: OnceLock<HashMap<String, &'static str>> = OnceLock::new();
+
+fn alias_map() -> &'static HashMap<String, &'static str> {
+    ALIAS_MAP.get_or_init(|| {
+        let mut m: HashMap<String, &'static str> = HashMap::new();
+        for &book in CANONICAL_BOOKS {
+            let lower = book.to_lowercase();
+            m.insert(lower.clone(), book);
+            // Numbered books: "1 John" → "first john" / "i john" / "1john".
+            for (digit, words) in [
+                ("1", ["first", "i"]),
+                ("2", ["second", "ii"]),
+                ("3", ["third", "iii"]),
+            ] {
+                if let Some(rest) = lower.strip_prefix(&format!("{digit} ")) {
+                    for w in words {
+                        m.insert(format!("{w} {rest}"), book);
+                    }
+                    m.insert(format!("{digit}{rest}"), book); // "1john"
+                }
+            }
+        }
+        // Extra spoken variants + conservative ASR mishears.
+        m.insert("psalm".into(), "Psalms");
+        m.insert("palms".into(), "Psalms");
+        m.insert("jon".into(), "John");
+        m.insert("song of songs".into(), "Song of Solomon");
+        m.insert("canticles".into(), "Song of Solomon");
+        m.insert("revelations".into(), "Revelation");
+        m
+    })
+}
 
 /// Find all direct scripture references in `text`. Returns them left-to-right.
 pub fn detect_direct(text: &str) -> Vec<RefMatch> {
@@ -86,17 +185,16 @@ fn normalize(text: &str) -> String {
 /// Match the longest book alias starting at `start`. Returns (canonical, index
 /// just past the matched alias).
 fn match_book(tokens: &[&str], start: usize) -> Option<(&'static str, usize)> {
-    // Aliases are single-token for the seeded books, but scan up to 3 tokens so
-    // multi-word books ("song of solomon") work when added later.
+    // Scan longest-first (up to 3 tokens) so multi-word books ("song of
+    // solomon") and numbered forms ("first corinthians") match before a shorter
+    // prefix would.
     for len in (1..=3).rev() {
         if start + len > tokens.len() {
             continue;
         }
         let candidate = tokens[start..start + len].join(" ");
-        for (canonical, aliases) in BOOKS {
-            if aliases.iter().any(|a| *a == candidate) {
-                return Some((canonical, start + len));
-            }
+        if let Some(&canonical) = alias_map().get(&candidate) {
+            return Some((canonical, start + len));
         }
     }
     None
@@ -640,6 +738,24 @@ mod tests {
     fn matched_text_is_captured() {
         let m = one("see John 3:16 now");
         assert_eq!(m.matched_text, "john 3:16");
+    }
+
+    #[test]
+    fn numbered_books_spoken_and_written() {
+        refeq(
+            &one("turn to first corinthians thirteen four"),
+            "1 Corinthians",
+            13,
+            4,
+        );
+        refeq(&one("2 timothy 3:16"), "2 Timothy", 3, 16);
+        refeq(&one("second peter one twenty one"), "2 Peter", 1, 21);
+    }
+
+    #[test]
+    fn multiword_and_variant_book_names() {
+        refeq(&one("song of solomon two one"), "Song of Solomon", 2, 1);
+        refeq(&one("revelations 22:21"), "Revelation", 22, 21);
     }
 
     // --- context memory ---

@@ -1,5 +1,5 @@
 <script>
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount } from 'svelte';
   import { capture, initAudio, startCapture, stopCapture, setThresholds, setSttLanguage } from '../stores/capture.js';
 
   // Threshold sliders push to the router; keep the invariant auto_fire ≥ suggest.
@@ -15,7 +15,9 @@
   // --- Phase 3: live audio input (real cpal capture through the Rust engine) ---
   let selectedDevice = ''; // '' = default input
   onMount(initAudio);
-  onDestroy(stopCapture);
+  // NOTE: capture is app-level state, NOT tied to this view's lifetime — do not
+  // stop it on unmount, or switching to the Console tab would kill the mic
+  // mid-service. Capture stops only when the operator clicks Stop.
 
   async function toggleCapture() {
     if ($capture.capturing) await stopCapture();

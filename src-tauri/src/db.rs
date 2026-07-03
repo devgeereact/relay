@@ -112,6 +112,10 @@ pub fn open() -> rusqlite::Result<Connection> {
         if n == 0 {
             seed_templates(&conn)?;
         }
+        // Forward-fill the full Bible for DBs created with the old 15-verse seed.
+        if verse_count(&conn)? < 30_000 {
+            reimport_full_kjv(&conn)?;
+        }
     }
     Ok(conn)
 }
@@ -377,54 +381,96 @@ fn row_to_verse(r: &rusqlite::Row) -> rusqlite::Result<VerseRow> {
     })
 }
 
-/// Curated development seed — NOT the full Bible.
-///
-/// PROMPT.md Phase 2 asks only for enough data to develop the detection loop
-/// against. These are famous, public-domain KJV verses reproduced verbatim;
-/// Psalm 23 is seeded complete so context-memory ("...verse 4") can be tested
-/// against consecutive verses. Loading a full translation is a later, *sourced*
-/// import from a public-domain KJV data file — never hand-typed scripture,
-/// which risks silent transcription errors in a product whose whole job is
-/// showing the right verse.
+/// The full public-domain KJV, bundled at compile time (offline-first — no
+/// runtime file dependency). Structure: array of books in canonical order, each
+/// `{ "chapters": [[verse, …], …] }`. Book names come from CANONICAL_BOOKS by
+/// index, so a stored verse and a detected reference always agree on spelling.
+const KJV_JSON: &str = include_str!("../data/kjv.json");
+
+#[derive(serde::Deserialize)]
+struct KjvBook {
+    chapters: Vec<Vec<String>>,
+}
+
+/// Seed a fresh database: one KJV translation + the full Bible + templates.
 fn seed(conn: &Connection) -> rusqlite::Result<()> {
+    let translation_id = kjv_translation_id(conn)?;
+    import_full_kjv(conn, translation_id)?;
+    seed_templates(conn)?;
+    Ok(())
+}
+
+/// The KJV translation id, creating the row if absent.
+fn kjv_translation_id(conn: &Connection) -> rusqlite::Result<i64> {
+    if let Some(id) = conn
+        .query_row(
+            "SELECT id FROM translations WHERE abbreviation = 'KJV'",
+            [],
+            |r| r.get::<_, i64>(0),
+        )
+        .optional()?
+    {
+        return Ok(id);
+    }
     conn.execute(
         "INSERT INTO translations (name, abbreviation, language, license_type)
          VALUES (?1, ?2, ?3, ?4)",
         ("King James Version", "KJV", "en", "public domain"),
     )?;
-    let translation_id = conn.last_insert_rowid();
+    Ok(conn.last_insert_rowid())
+}
 
-    // (book, chapter, verse, text) — verbatim KJV.
-    let verses: &[(&str, i64, i64, &str)] = &[
-        ("Genesis", 1, 1, "In the beginning God created the heaven and the earth."),
-        ("Genesis", 1, 2, "And the earth was without form, and void; and darkness was upon the face of the deep. And the Spirit of God moved upon the face of the waters."),
-        ("Genesis", 1, 3, "And God said, Let there be light: and there was light."),
+/// Parse the bundled KJV and bulk-insert every verse (one transaction — 31k
+/// rows). Strips the `{…}` italic markers KJV uses for supplied words. Returns
+/// the verse count inserted.
+fn import_full_kjv(conn: &Connection, translation_id: i64) -> rusqlite::Result<usize> {
+    let raw = KJV_JSON.trim_start_matches('\u{feff}'); // strip UTF-8 BOM
+    let books: Vec<KjvBook> = serde_json::from_str(raw)
+        .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
 
-        ("Psalms", 23, 1, "The LORD is my shepherd; I shall not want."),
-        ("Psalms", 23, 2, "He maketh me to lie down in green pastures: he leadeth me beside the still waters."),
-        ("Psalms", 23, 3, "He restoreth my soul: he leadeth me in the paths of righteousness for his name's sake."),
-        ("Psalms", 23, 4, "Yea, though I walk through the valley of the shadow of death, I will fear no evil: for thou art with me; thy rod and thy staff they comfort me."),
-        ("Psalms", 23, 5, "Thou preparest a table before me in the presence of mine enemies: thou anointest my head with oil; my cup runneth over."),
-        ("Psalms", 23, 6, "Surely goodness and mercy shall follow me all the days of my life: and I will dwell in the house of the LORD for ever."),
-
-        ("John", 3, 16, "For God so loved the world, that he gave his only begotten Son, that whosoever believeth in him should not perish, but have everlasting life."),
-        ("John", 3, 17, "For God sent not his Son into the world to condemn the world; but that the world through him might be saved."),
-
-        ("Romans", 8, 28, "And we know that all things work together for good to them that love God, to them who are the called according to his purpose."),
-        ("Romans", 8, 31, "What shall we then say to these things? If God be for us, who can be against us?"),
-        ("Romans", 8, 38, "For I am persuaded, that neither death, nor life, nor angels, nor principalities, nor powers, nor things present, nor things to come,"),
-        ("Romans", 8, 39, "Nor height, nor depth, nor any other creature, shall be able to separate us from the love of God, which is in Christ Jesus our Lord."),
-    ];
-
-    let mut stmt = conn.prepare(
-        "INSERT INTO verses (translation_id, book, chapter, verse, text)
-         VALUES (?1, ?2, ?3, ?4, ?5)",
-    )?;
-    for (book, chapter, verse, text) in verses {
-        stmt.execute((translation_id, book, chapter, verse, text))?;
+    let tx = conn.unchecked_transaction()?;
+    let mut count = 0usize;
+    {
+        let mut stmt = tx.prepare(
+            "INSERT INTO verses (translation_id, book, chapter, verse, text)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+        )?;
+        for (bi, book) in books.iter().enumerate() {
+            let name = crate::detection::CANONICAL_BOOKS
+                .get(bi)
+                .copied()
+                .unwrap_or("Unknown");
+            for (ci, chapter) in book.chapters.iter().enumerate() {
+                for (vi, text) in chapter.iter().enumerate() {
+                    stmt.execute((
+                        translation_id,
+                        name,
+                        ci as i64 + 1,
+                        vi as i64 + 1,
+                        strip_italics(text),
+                    ))?;
+                    count += 1;
+                }
+            }
+        }
     }
+    tx.commit()?;
+    Ok(count)
+}
 
-    seed_templates(conn)?;
+/// Remove KJV supplied-word markers `{ }`, keeping the words themselves.
+fn strip_italics(text: &str) -> String {
+    text.chars().filter(|c| *c != '{' && *c != '}').collect()
+}
+
+/// Forward-fill the full corpus for DBs created before the full-Bible import
+/// (they hold only the old 15-verse dev seed). FK-safe: nulls any detection
+/// verse links first, then replaces the verses.
+fn reimport_full_kjv(conn: &Connection) -> rusqlite::Result<()> {
+    conn.execute("UPDATE detections SET verse_id = NULL", [])?;
+    conn.execute("DELETE FROM verses", [])?;
+    let tid = kjv_translation_id(conn)?;
+    import_full_kjv(conn, tid)?;
     Ok(())
 }
 
@@ -476,9 +522,10 @@ mod tests {
     }
 
     #[test]
-    fn seeds_expected_verse_count() {
+    fn seeds_full_kjv() {
         let conn = fresh_db();
-        assert_eq!(verse_count(&conn).unwrap(), 15);
+        // Full KJV is 31,102 verses; the bundled file has 31,100.
+        assert!(verse_count(&conn).unwrap() > 31_000);
     }
 
     #[test]
@@ -543,7 +590,8 @@ mod tests {
     #[test]
     fn missing_verse_returns_none() {
         let conn = fresh_db();
-        assert!(lookup_verse(&conn, "Obadiah", 1, 1).unwrap().is_none());
+        // Genesis has 50 chapters — 999 is safely out of range.
+        assert!(lookup_verse(&conn, "Genesis", 999, 1).unwrap().is_none());
     }
 
     #[test]
@@ -592,15 +640,16 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::env::set_var("RELAY_DB_PATH", &file);
 
-        {
+        let count = {
             let conn = open().unwrap();
-            assert_eq!(verse_count(&conn).unwrap(), 15);
-        }
+            verse_count(&conn).unwrap()
+        };
+        assert!(count > 31_000, "full corpus should be seeded");
         assert!(file.exists(), "db file should be created on disk");
         {
             // Reopen: not fresh, so no re-seed / no duplicate-key error.
             let conn = open().unwrap();
-            assert_eq!(verse_count(&conn).unwrap(), 15);
+            assert_eq!(verse_count(&conn).unwrap(), count);
         }
 
         std::env::remove_var("RELAY_DB_PATH");
