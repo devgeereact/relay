@@ -1,22 +1,27 @@
-import './lib/fonts.js';
-import './app.css';
-import App from './App.svelte';
-
-// DEBUG: forward frontend errors + a heartbeat to the backend log so a webview
-// freeze/exception is visible without devtools. Remove once diagnosed.
+// DEBUG: register error reporting FIRST, then log every boot milestone to the
+// backend so a blank/broken console is diagnosable without devtools.
 async function feLog(level, msg) {
   try {
     const { invoke } = await import('@tauri-apps/api/core');
-    await invoke('log_frontend', { level, msg: String(msg).slice(0, 300) });
+    await invoke('log_frontend', { level, msg: String(msg).slice(0, 400) });
   } catch {
     /* no backend */
   }
 }
 window.addEventListener('error', (e) => feLog('error', `${e.message} @ ${e.filename}:${e.lineno}`));
-window.addEventListener('unhandledrejection', (e) => feLog('reject', e.reason?.message ?? e.reason));
+window.addEventListener('unhandledrejection', (e) => feLog('reject', e.reason?.stack ?? e.reason));
+feLog('boot', 'main.js start');
 
-const app = new App({
-  target: document.getElementById('app'),
-});
+let app;
+try {
+  await import('./lib/fonts.js');
+  await import('./app.css');
+  const { default: App } = await import('./App.svelte');
+  feLog('boot', 'modules imported, mounting App');
+  app = new App({ target: document.getElementById('app') });
+  feLog('boot', 'App mounted OK');
+} catch (e) {
+  feLog('error', 'mount failed: ' + (e?.stack ?? e));
+}
 
 export default app;
