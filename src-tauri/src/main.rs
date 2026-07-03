@@ -17,6 +17,7 @@ use detection::{ContextMemory, DetectionMethod, SemanticIndex, VerseRef};
 use router::{RouteDecision, Router, Thresholds};
 use rusqlite::Connection;
 use serde::Serialize;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use stt::SttEngine;
 use tauri::{Emitter, Manager};
@@ -48,6 +49,11 @@ struct Semantic(SemanticIndex);
 #[derive(Default)]
 struct Context(Mutex<ContextMemory>);
 
+/// Whether automatic detection is armed. Off = the pipeline still transcribes,
+/// but no auto-fire/suggest reaches the console; manual override is unaffected
+/// (it bypasses this entirely — a first-class control, CLAUDE.md).
+struct Detecting(AtomicBool);
+
 /// Per-chunk metadata pushed to the frontend on `audio://chunk`. Deliberately
 /// does NOT carry the raw samples — the console only needs level + voicing to
 /// drive the meter; STT (Phase 4) consumes the samples through a separate path.
@@ -70,6 +76,7 @@ fn main() {
         .manage(Audio::default())
         .manage(Routing::default())
         .manage(Outputs::default())
+        .manage(Detecting(AtomicBool::new(true)))
         .setup(|app| {
             // Build the semantic index from the corpus once at startup, and set
             // up context-memory state (Phase 9).
@@ -146,6 +153,8 @@ fn main() {
             close_output_window,
             list_output_windows,
             clear_screens,
+            set_detection_enabled,
+            get_detection_enabled,
             list_templates,
             get_template,
             save_template,
@@ -182,6 +191,11 @@ const SEMANTIC_FLOOR: f32 = 0.30;
 /// against the corpus, and emit one `detection://match` per survivor. Dropped
 /// (debounced / low-confidence) detections are silent.
 fn emit_detections(handle: &tauri::AppHandle, text: &str, now_ms: u64) {
+    // Detection disarmed → transcribe but surface nothing. Manual override is a
+    // separate path and stays live.
+    if !handle.state::<Detecting>().0.load(Ordering::Relaxed) {
+        return;
+    }
     let db = handle.state::<Db>();
     let routing = handle.state::<Routing>();
     let ctx = handle.state::<Context>();
@@ -587,4 +601,17 @@ fn list_output_windows(app: tauri::AppHandle) -> Vec<String> {
 #[tauri::command]
 fn clear_screens(app: tauri::AppHandle) {
     channels::clear(&app);
+}
+
+/// Arm/disarm automatic detection. Returns the new state.
+#[tauri::command]
+fn set_detection_enabled(detecting: tauri::State<'_, Detecting>, enabled: bool) -> bool {
+    detecting.0.store(enabled, Ordering::Relaxed);
+    enabled
+}
+
+/// Whether automatic detection is currently armed.
+#[tauri::command]
+fn get_detection_enabled(detecting: tauri::State<'_, Detecting>) -> bool {
+    detecting.0.load(Ordering::Relaxed)
 }

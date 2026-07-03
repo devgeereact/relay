@@ -5,17 +5,45 @@
     transcript,
     detections,
     templates,
+    live,
     loadTemplates,
     confirmDetection,
     dismissDetection,
     manualFire,
     openOutput,
     clearScreens,
+    setDetection,
   } from '../stores/capture.js';
 
-  // Esc = clear all screens, one of the always-reachable operator controls.
+  let searchEl; // manual-override input, for the "/" shortcut
+  $: dets = $detections; // plain mirror so keyboard handlers can read it
+
+  // Operator keyboard controls — always reachable (CLAUDE.md). Esc works even
+  // while typing; the rest yield to text fields.
   function onKey(e) {
-    if (e.key === 'Escape') clearScreens();
+    const typing = e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA');
+    if (e.key === 'Escape') {
+      clearScreens();
+      if (typing) e.target.blur();
+      return;
+    }
+    if (typing) return;
+    if (e.key === '/') {
+      e.preventDefault();
+      searchEl?.focus();
+    } else if (e.key === ' ') {
+      const sug = dets.find((d) => d.status === 'suggested');
+      if (sug) {
+        e.preventDefault();
+        confirmDetection(sug.reference);
+      }
+    } else if (e.key === 'z' || e.key === 'Z') {
+      const fired = dets.find((d) => d.status === 'auto' || d.status === 'manual');
+      if (fired) {
+        e.preventDefault();
+        dismissDetection(fired.reference);
+      }
+    }
   }
   onMount(() => {
     loadTemplates();
@@ -46,20 +74,12 @@
       manualError = String(e);
     }
   }
+
   const isLive = (d) => d.status === 'auto' || d.status === 'manual';
   const tagFor = (d) => (d.status === 'manual' ? 'Manual' : d.status === 'auto' ? 'Auto-fired' : 'Suggested');
-
-  // Transcript + detection list are LIVE (Phase 4/5): transcript from the STT
-  // engine, detections from direct-match over `detection://match`. Channel
-  // previews are still static demo until the router/template phases.
-  $: hasTranscript = $transcript.finals.length > 0 || $transcript.partial.length > 0;
-
-  // Confidence styling previews the Phase 6 gate: ≥0.90 reads as live/high,
-  // below as a suggestion. Real auto-fire vs suggest gating lands in the router.
   const pct = (c) => Math.round(c * 100);
 
-  // Operator override (search box) is a first-class control per CLAUDE.md —
-  // it stays here at the top of the console, always reachable, never a fallback.
+  $: hasTranscript = $transcript.finals.length > 0 || $transcript.partial.length > 0;
 
   // Shown only when no live detections yet — keeps the console legible at rest.
   const demoDetections = [
@@ -97,7 +117,8 @@
 
     <div class="panel-title" style="margin-top:16px;">
       AI detection
-      {#if $detections.length}<span class="count">{$detections.length} recent</span>
+      {#if !$capture.detectionOn}<span class="count" style="color:var(--red);">disarmed</span>
+      {:else if $detections.length}<span class="count">{$detections.length} recent</span>
       {:else}<span class="count">2 demo</span>{/if}
     </div>
     <div class="detect-list">
@@ -144,6 +165,7 @@
     <input
       class="search-input"
       type="text"
+      bind:this={searchEl}
       bind:value={manualRef}
       on:keydown={(e) => e.key === 'Enter' && fireManual()}
       placeholder="Type a reference, e.g. John 3:16 — Enter to fire"
@@ -167,22 +189,37 @@
             <div class="channel-badge">{c.badge}</div>
           </div>
           <div class="channel-preview {c.prev}">
-            {#if c.prev === 'prev-main'}
-              <div><div class="verse">"For God so loved the world, that He gave His only begotten Son…"</div><div class="ref">John 3:16 · KJV</div></div>
-            {:else if c.prev === 'prev-stage'}
-              <div class="timer">SERMON · 24:10</div><div class="verse">John 3:16<br />"For God so loved…"</div>
-            {:else if c.prev === 'prev-stream'}
-              <div class="lower-third"><div class="verse">"For God so loved the world…"</div></div>
+            {#if $live}
+              {#if c.prev === 'prev-main'}
+                <div><div class="verse">"{$live.text}"</div><div class="ref">{$live.reference}{$live.translation ? ' · ' + $live.translation : ''}</div></div>
+              {:else if c.prev === 'prev-stage'}
+                <div class="timer">LIVE</div><div class="verse">{$live.reference}<br />"{$live.text}"</div>
+              {:else if c.prev === 'prev-stream'}
+                <div class="lower-third"><div class="verse">"{$live.text}"</div></div>
+              {:else}
+                <div class="mark">{$live.reference}</div><div class="verse">"{$live.text}"</div>
+              {/if}
             {:else}
-              <div class="mark">Grace Chapel</div><div class="verse">"For God so loved the world…"</div>
+              <div style="color:var(--text-faint); font-family:var(--f-mono); font-size:11px;">— cleared —</div>
             {/if}
           </div>
         </div>
       {/each}
     </div>
     <div class="controls">
-      <button class="ctrl-btn primary"><span class="dot" style="background:#1b1204;"></span>AI detection: On</button>
-      <button class="ctrl-btn" on:click={clearScreens} disabled={!$capture.available}><span class="dot" style="background:var(--text-faint);"></span>Clear all screens <span style="color:var(--text-faint); font-family:var(--f-mono); font-size:10px;">Esc</span></button>
+      <button
+        class="ctrl-btn"
+        class:primary={$capture.detectionOn}
+        on:click={() => setDetection(!$capture.detectionOn)}
+        disabled={!$capture.available}
+      >
+        <span class="dot" style="background:{$capture.detectionOn ? '#1b1204' : 'var(--red)'};"></span>
+        AI detection: {$capture.detectionOn ? 'On' : 'Off'}
+      </button>
+      <button class="ctrl-btn" on:click={clearScreens} disabled={!$capture.available}>
+        <span class="dot" style="background:var(--text-faint);"></span>Clear all screens
+        <span style="color:var(--text-faint); font-family:var(--f-mono); font-size:10px;">Esc</span>
+      </button>
       <button class="ctrl-btn" on:click={openMainOutput} disabled={!$capture.available}>Open output screen</button>
     </div>
   </div>

@@ -16,8 +16,14 @@ export const capture = writable({
   devices: [], // [{ name, is_default }]
   stt: { loaded: false, model: null, language: null }, // local STT model status (language null = auto)
   detectedLang: null, // language of the latest transcript window (code-switching)
+  detectionOn: true, // is automatic detection armed?
   thresholds: { auto_fire: 0.9, suggest: 0.6 }, // router gate (self-calibrating)
 });
+
+// What is currently ON the output screens (last fired content, null = cleared).
+// Mirrors the `output://content` / `output://clear` broadcast so the console
+// previews show what's actually live.
+export const live = writable(null);
 
 // Rolling transcript: `partial` is the in-progress line, `finals` are closed
 // utterances (silence-delimited). Kept across capture stop/start.
@@ -35,6 +41,7 @@ const MAX_DETECTIONS = 6;
 let unlistenAudio = null;
 let unlistenStt = null;
 let unlistenDetect = null;
+let outputListenersUp = false; // always-on output mirror (set once)
 
 async function invoke() {
   const core = await import('@tauri-apps/api/core'); // throws in a plain browser
@@ -45,14 +52,35 @@ async function invoke() {
 export async function initAudio() {
   try {
     const call = await invoke();
-    const [devices, stt, thresholds] = await Promise.all([
+    const [devices, stt, thresholds, detectionOn] = await Promise.all([
       call('list_audio_devices'),
       call('stt_status').catch(() => ({ loaded: false, model: null })),
       call('get_thresholds').catch(() => ({ auto_fire: 0.9, suggest: 0.6 })),
+      call('get_detection_enabled').catch(() => true),
     ]);
-    capture.update((s) => ({ ...s, available: true, devices, stt, thresholds }));
+    capture.update((s) => ({ ...s, available: true, devices, stt, thresholds, detectionOn }));
+
+    // Mirror output state into `live` so console previews reflect the screens.
+    // Set once, regardless of capture start/stop (manual fires happen anytime).
+    if (!outputListenersUp) {
+      outputListenersUp = true;
+      const { listen } = await import('@tauri-apps/api/event');
+      await listen('output://content', (e) => live.set(e.payload));
+      await listen('output://clear', () => live.set(null));
+    }
   } catch {
     capture.update((s) => ({ ...s, available: false }));
+  }
+}
+
+/** Arm/disarm automatic detection (manual override is unaffected). */
+export async function setDetection(enabled) {
+  try {
+    const call = await invoke();
+    const on = await call('set_detection_enabled', { enabled });
+    capture.update((s) => ({ ...s, detectionOn: on }));
+  } catch {
+    /* backend absent */
   }
 }
 
