@@ -50,28 +50,37 @@ async function invoke() {
   return core.invoke;
 }
 
-/** Probe the backend, load devices + STT status. Safe to call on mount. */
+/** Probe the backend, load devices + STT status. Safe to call on mount.
+ *  Resilient: as long as the Tauri bridge is present, `available` is true —
+ *  a single failing command (or the event listeners) never disables the app. */
 export async function initAudio() {
+  let call;
   try {
-    const call = await invoke();
-    const [devices, stt, thresholds, detectionOn] = await Promise.all([
-      call('list_audio_devices'),
-      call('stt_status').catch(() => ({ loaded: false, model: null })),
-      call('get_thresholds').catch(() => ({ auto_fire: 0.9, suggest: 0.6 })),
-      call('get_detection_enabled').catch(() => true),
-    ]);
-    capture.update((s) => ({ ...s, available: true, devices, stt, thresholds, detectionOn }));
+    call = await invoke(); // throws only in a plain browser (no Tauri)
+  } catch {
+    capture.update((s) => ({ ...s, available: false }));
+    return;
+  }
+  // Backend is attached. Load status pieces independently.
+  const [devices, stt, thresholds, detectionOn] = await Promise.all([
+    call('list_audio_devices').catch(() => []),
+    call('stt_status').catch(() => ({ loaded: false, model: null, language: null })),
+    call('get_thresholds').catch(() => ({ auto_fire: 0.9, suggest: 0.6 })),
+    call('get_detection_enabled').catch(() => true),
+  ]);
+  capture.update((s) => ({ ...s, available: true, devices, stt, thresholds, detectionOn }));
 
-    // Mirror output state into `live` so console previews reflect the screens.
-    // Set once, regardless of capture start/stop (manual fires happen anytime).
-    if (!outputListenersUp) {
-      outputListenersUp = true;
+  // Mirror output state into `live` (set once). A listener failure must NOT
+  // disable the app — hence a separate try that leaves `available` alone.
+  if (!outputListenersUp) {
+    outputListenersUp = true;
+    try {
       const { listen } = await import('@tauri-apps/api/event');
       await listen('output://content', (e) => live.set(e.payload));
       await listen('output://clear', () => live.set(null));
+    } catch {
+      /* events unavailable — previews just won't mirror; app still works */
     }
-  } catch {
-    capture.update((s) => ({ ...s, available: false }));
   }
 }
 

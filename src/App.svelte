@@ -1,6 +1,6 @@
 <script>
   import { onMount, onDestroy } from 'svelte';
-  import { capture } from './lib/stores/capture.js';
+  import { capture, initAudio } from './lib/stores/capture.js';
   import Console from './lib/views/Console.svelte';
   import Channels from './lib/views/Channels.svelte';
   import Templates from './lib/views/Templates.svelte';
@@ -34,6 +34,9 @@
   onMount(async () => {
     tick();
     timer = setInterval(tick, 1000);
+    // Attach the backend app-wide (sets $capture.available for every tab, not
+    // just Settings) so console/channel controls are enabled from the start.
+    await initAudio();
     try {
       const { invoke } = await import('@tauri-apps/api/core');
       await invoke('greet', { name: 'operator' });
