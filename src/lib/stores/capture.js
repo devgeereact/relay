@@ -29,8 +29,10 @@ export const live = writable(null);
 // utterances (silence-delimited). Kept across capture stop/start.
 export const transcript = writable({ partial: '', finals: [] });
 
-// Direct-match detections (Phase 5), most-recent first, de-duplicated by
-// reference. Gating/debounce is Phase 6 — for now every candidate lands here.
+// PENDING SUGGESTIONS awaiting an operator decision (status 'suggested'),
+// de-duplicated by reference. Auto/manual fires do NOT land here — they go
+// straight to the screens (see `live`). Keeps the console focused on what needs
+// a decision, not a history of recents.
 export const detections = writable([]);
 
 // Output templates (Phase 8), loaded from the DB.
@@ -152,9 +154,13 @@ export async function startCapture(device) {
   unlistenDetect = await listen('detection://match', (e) => {
     const d = e.payload;
     detections.update((list) => {
-      // De-dup by reference: drop any prior card for the same verse, prepend.
       const rest = list.filter((x) => x.reference !== d.reference);
-      return [{ ...d, at: Date.now() }, ...rest].slice(0, MAX_DETECTIONS);
+      // Only suggestions queue up; a fired verse resolves (removes) its pending
+      // suggestion since it's already on screen.
+      if (d.status === 'suggested') {
+        return [{ ...d, at: Date.now() }, ...rest].slice(0, MAX_DETECTIONS);
+      }
+      return rest;
     });
   });
 
@@ -185,21 +191,19 @@ export async function stopCapture() {
   transcript.update((t) => ({ ...t, partial: '' }));
 }
 
-/** Operator confirms a suggested detection → promote to fired, nudge the gate. */
+/** Operator confirms a suggestion → fire it to the screens + nudge the gate. */
 export async function confirmDetection(reference) {
-  detections.update((list) =>
-    list.map((d) => (d.reference === reference ? { ...d, status: 'auto' } : d))
-  );
+  detections.update((list) => list.filter((d) => d.reference !== reference));
   try {
     const call = await invoke();
-    const thresholds = await call('confirm_detection');
+    const thresholds = await call('confirm_detection', { reference });
     capture.update((s) => ({ ...s, thresholds }));
   } catch {
     /* backend absent */
   }
 }
 
-/** Operator dismisses/undoes a detection → remove card, tighten the gate. */
+/** Operator dismisses a suggestion → drop it + tighten the gate. */
 export async function dismissDetection(reference) {
   detections.update((list) => list.filter((d) => d.reference !== reference));
   try {
@@ -235,6 +239,22 @@ export async function saveTemplate(t) {
   const id = await call('save_template', { template: t });
   await loadTemplates();
   return id;
+}
+
+/** All configured output channels. */
+export async function listOutputChannels() {
+  try {
+    const call = await invoke();
+    return await call('list_output_channels');
+  } catch {
+    return [];
+  }
+}
+
+/** Assign a template to a channel. */
+export async function setChannelTemplate(id, templateId) {
+  const call = await invoke();
+  await call('set_channel_template', { id, templateId });
 }
 
 /** Open a native fullscreen output window for a template id. Returns its label. */

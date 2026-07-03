@@ -174,6 +174,8 @@ fn main() {
             open_output_window,
             close_output_window,
             list_output_windows,
+            list_output_channels,
+            set_channel_template,
             clear_screens,
             set_detection_enabled,
             get_detection_enabled,
@@ -811,6 +813,20 @@ fn close_output_window(app: tauri::AppHandle, label: String) -> Result<(), Strin
 #[tauri::command]
 fn list_output_windows(app: tauri::AppHandle) -> Vec<String> {
     channels::list_open(&app)
+}
+
+/// All configured output channels (Channels tab).
+#[tauri::command]
+fn list_output_channels(db: tauri::State<'_, Db>) -> Result<Vec<db::OutputChannel>, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    db::list_output_channels(&conn).map_err(|e| e.to_string())
+}
+
+/// Assign a template to a channel — outputs are freely assignable.
+#[tauri::command]
+fn set_channel_template(db: tauri::State<'_, Db>, id: i64, template_id: i64) -> Result<(), String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    db::set_channel_template(&conn, id, template_id).map_err(|e| e.to_string())
 }
 
 /// Operator "Clear all screens" — blank every output channel.

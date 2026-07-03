@@ -610,7 +610,7 @@ pub fn detect_command(text: &str) -> Option<NavCommand> {
     if tokens.is_empty() || tokens.len() > 5 {
         return None;
     }
-    let has = |w: &str| tokens.iter().any(|t| *t == w);
+    let has = |w: &str| tokens.contains(&w);
     if has("next") {
         Some(NavCommand::Next)
     } else if has("back") || has("previous") || has("prev") {
