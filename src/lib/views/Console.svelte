@@ -15,6 +15,7 @@
     setDetection,
     startCapture,
     stopCapture,
+    navVerse,
   } from '../stores/capture.js';
 
   // Operator drives detection from the console: Listen = mic on (auto-drive
@@ -130,7 +131,11 @@
       <div class="detect-card is-live">
         <div class="detect-top">
           <div class="detect-ref">{$live.reference}{$live.translation ? ' · ' + $live.translation : ''}</div>
-          <button class="btn-ghost" on:click={clearScreens}>Clear</button>
+          <span style="display:flex; gap:6px;">
+            <button class="btn-ghost" on:click={() => navVerse('previous')} title="Previous verse">◀ Prev</button>
+            <button class="btn-ghost" on:click={() => navVerse('next')} title="Next verse">Next ▶</button>
+            <button class="btn-ghost" on:click={clearScreens}>Clear</button>
+          </span>
         </div>
         {#if $live.text}<div class="detect-verse">"{$live.text}"</div>{/if}
       </div>

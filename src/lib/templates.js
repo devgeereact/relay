@@ -1,16 +1,8 @@
-// Template shape reference + browser fallback.
-//
-// Templates now live in SQLite (seeded by db.rs, edited in the Templates tab)
-// and are fetched by id. This module only provides the canonical shape and a
-// fallback used when there's no Tauri backend (plain-browser preview at
-// http://localhost:5032/output.html). See docs/SPEC.md §5.
-//
-// Shape: { id, name, layout: { regions, align, lowerThird, refFirst },
-//          style: { font, background, accent, verseColor, verseSize, refSize, italicRef } }
+// Built-in templates in seed order (== DB ids 1..4). Kiosk/OBS clients have no
+// DB access, so they resolve a template_id against this list; the desktop app
+// fetches the (editable) DB row instead. Sizes are in cqw (container-query
+// width %) so the same template scales identically at any output size.
 
-// Built-in templates in seed order (== DB ids 1..4). Kiosk clients have no DB
-// access, so they resolve a template_id against this list; the desktop app
-// fetches the (editable) DB row instead.
 export const BUILTINS = [
   {
     id: 1,
@@ -19,10 +11,10 @@ export const BUILTINS = [
     style: {
       font: 'var(--f-serif)',
       background: 'radial-gradient(120% 140% at 50% 30%, #2a2013, #0b0906)',
-      accent: 'var(--amber)',
+      accent: '#e8a33d',
       verseColor: '#f4e4c8',
-      verseSize: '4.6vw',
-      refSize: '1.9vw',
+      verseSize: '5.5',
+      refSize: '2.6',
       italicRef: true,
     },
   },
@@ -33,10 +25,10 @@ export const BUILTINS = [
     style: {
       font: 'var(--f-display)',
       background: '#000000',
-      accent: 'var(--teal)',
-      verseColor: '#f2f5f6',
-      verseSize: '5vw',
-      refSize: '2vw',
+      accent: '#4fa8c9',
+      verseColor: '#ffffff',
+      verseSize: '6',
+      refSize: '2.6',
       italicRef: false,
     },
   },
@@ -47,10 +39,10 @@ export const BUILTINS = [
     style: {
       font: 'var(--f-body)',
       background: 'transparent',
-      accent: 'var(--violet)',
+      accent: '#b080e0',
       verseColor: '#1c1224',
-      verseSize: '2.4vw',
-      refSize: '1.4vw',
+      verseSize: '2.6',
+      refSize: '1.7',
       italicRef: false,
     },
   },
@@ -61,10 +53,10 @@ export const BUILTINS = [
     style: {
       font: 'var(--f-serif)',
       background: 'linear-gradient(160deg, #241419, #120a0e)',
-      accent: 'var(--rose)',
+      accent: '#e27d93',
       verseColor: '#f0dfe3',
-      verseSize: '3.2vw',
-      refSize: '1.6vw',
+      verseSize: '4',
+      refSize: '2',
       italicRef: false,
     },
   },

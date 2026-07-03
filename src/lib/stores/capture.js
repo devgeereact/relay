@@ -279,6 +279,16 @@ export async function openOutput(templateId, name) {
   return call('open_output_window', { templateId, name });
 }
 
+/** Manual next/previous verse (same as spoken "next"/"back"). */
+export async function navVerse(direction) {
+  try {
+    const call = await invoke();
+    await call('nav', { direction });
+  } catch {
+    /* backend absent */
+  }
+}
+
 /** Blank every output channel (operator "Clear all screens" / Esc). */
 export async function clearScreens() {
   try {

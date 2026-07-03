@@ -179,6 +179,7 @@ fn main() {
             clear_screens,
             set_detection_enabled,
             get_detection_enabled,
+            nav,
             start_service,
             end_service,
             current_service,
@@ -861,6 +862,18 @@ fn set_channel_template(db: tauri::State<'_, Db>, id: i64, template_id: i64) -> 
 fn clear_screens(app: tauri::AppHandle) {
     channels::clear(&app);
     persist_cue(&app, "clear_screens", None);
+}
+
+/// Manual next/previous verse (console buttons) — same path as the spoken
+/// "next"/"back" command.
+#[tauri::command]
+fn nav(app: tauri::AppHandle, direction: String) {
+    let dir = if direction == "previous" || direction == "back" {
+        detection::NavCommand::Previous
+    } else {
+        detection::NavCommand::Next
+    };
+    handle_nav(&app, dir);
 }
 
 /// Start (or resume) recording a service. If one is already active it's reused

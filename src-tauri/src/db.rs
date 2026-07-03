@@ -169,6 +169,18 @@ pub fn open() -> rusqlite::Result<Connection> {
         let n: i64 = conn.query_row("SELECT COUNT(*) FROM templates", [], |r| r.get(0))?;
         if n == 0 {
             seed_templates(&conn)?;
+        } else {
+            // One-time migration: the old seed stored sizes as "4.6vw"; the new
+            // renderer uses cqw numbers. If any template still has the old "vw"
+            // format (i.e. untouched defaults), reset the built-ins.
+            let old: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM templates WHERE style_json LIKE '%vw%'",
+                [],
+                |r| r.get(0),
+            )?;
+            if old > 0 {
+                reset_builtin_templates(&conn)?;
+            }
         }
         // Forward-fill default output channels for pre-existing DBs.
         let cn: i64 = conn.query_row("SELECT COUNT(*) FROM output_channels", [], |r| r.get(0))?;
@@ -538,38 +550,53 @@ fn reimport_full_kjv(conn: &Connection) -> rusqlite::Result<()> {
     Ok(())
 }
 
-/// The four built-in output templates (SPEC §5). These match the frontend
-/// defaults in src/lib/templates.js — kept as the seed source of truth so a
-/// fresh install has usable channels immediately. `layout`/`style` are the JSON
-/// the shared renderer interprets.
-fn seed_templates(conn: &Connection) -> rusqlite::Result<()> {
-    let templates: &[(&str, &str, &str)] = &[
+/// The four built-in output templates (SPEC §5, cqw sizes). Match the frontend
+/// defaults in src/lib/templates.js. Source of truth for both fresh seed and
+/// the in-place migration.
+fn builtin_templates() -> &'static [(&'static str, &'static str, &'static str)] {
+    &[
         (
             "Classic Serif",
             r##"{"regions":["verse_text","reference"],"align":"center","lowerThird":false,"refFirst":false}"##,
-            r##"{"font":"var(--f-serif)","background":"radial-gradient(120% 140% at 50% 30%, #2a2013, #0b0906)","accent":"var(--amber)","verseColor":"#f4e4c8","verseSize":"4.6vw","refSize":"1.9vw","italicRef":true}"##,
+            r##"{"font":"var(--f-serif)","background":"radial-gradient(120% 140% at 50% 30%, #2a2013, #0b0906)","accent":"#e8a33d","verseColor":"#f4e4c8","verseSize":"5.5","refSize":"2.6","italicRef":true}"##,
         ),
         (
             "Stage Mono",
             r##"{"regions":["reference","verse_text"],"align":"left","lowerThird":false,"refFirst":true}"##,
-            r##"{"font":"var(--f-display)","background":"#000000","accent":"var(--teal)","verseColor":"#f2f5f6","verseSize":"5vw","refSize":"2vw","italicRef":false}"##,
+            r##"{"font":"var(--f-display)","background":"#000000","accent":"#4fa8c9","verseColor":"#ffffff","verseSize":"6","refSize":"2.6","italicRef":false}"##,
         ),
         (
             "Lower Third",
             r##"{"regions":["verse_text","reference"],"align":"left","lowerThird":true,"refFirst":false}"##,
-            r##"{"font":"var(--f-body)","background":"transparent","accent":"var(--violet)","verseColor":"#1c1224","verseSize":"2.4vw","refSize":"1.4vw","italicRef":false}"##,
+            r##"{"font":"var(--f-body)","background":"transparent","accent":"#b080e0","verseColor":"#1c1224","verseSize":"2.6","refSize":"1.7","italicRef":false}"##,
         ),
         (
             "Lobby Warm",
             r##"{"regions":["reference","verse_text"],"align":"center","lowerThird":false,"refFirst":false}"##,
-            r##"{"font":"var(--f-serif)","background":"linear-gradient(160deg, #241419, #120a0e)","accent":"var(--rose)","verseColor":"#f0dfe3","verseSize":"3.2vw","refSize":"1.6vw","italicRef":false}"##,
+            r##"{"font":"var(--f-serif)","background":"linear-gradient(160deg, #241419, #120a0e)","accent":"#e27d93","verseColor":"#f0dfe3","verseSize":"4","refSize":"2","italicRef":false}"##,
         ),
-    ];
+    ]
+}
+
+/// Seed the built-in templates into a fresh DB (ids 1..4).
+fn seed_templates(conn: &Connection) -> rusqlite::Result<()> {
     let mut stmt = conn.prepare(
         "INSERT INTO templates (name, region_config_json, style_json) VALUES (?1, ?2, ?3)",
     )?;
-    for (name, layout, style) in templates {
+    for (name, layout, style) in builtin_templates() {
         stmt.execute((name, layout, style))?;
+    }
+    Ok(())
+}
+
+/// Reset the built-in templates IN PLACE (ids 1..4) — keeps ids stable so
+/// output_channels FKs stay valid. Used by the vw→cqw migration.
+fn reset_builtin_templates(conn: &Connection) -> rusqlite::Result<()> {
+    for (i, (name, layout, style)) in builtin_templates().iter().enumerate() {
+        conn.execute(
+            "UPDATE templates SET name = ?1, region_config_json = ?2, style_json = ?3 WHERE id = ?4",
+            (name, layout, style, i as i64 + 1),
+        )?;
     }
     Ok(())
 }

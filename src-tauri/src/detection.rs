@@ -279,7 +279,19 @@ fn alias_map() -> &'static HashMap<String, &'static str> {
         m.insert("song of songs".into(), "Song of Solomon");
         m.insert("canticles".into(), "Song of Solomon");
         m.insert("revelations".into(), "Revelation");
+        // Common spelling/accent variants whisper emits.
+        m.insert("collosians".into(), "Colossians");
+        m.insert("colosians".into(), "Colossians");
+        m.insert("phillipians".into(), "Philippians");
+        m.insert("philipians".into(), "Philippians");
+        m.insert("efesians".into(), "Ephesians");
+        m.insert("ephesus".into(), "Ephesians");
+        m.insert("deutronomy".into(), "Deuteronomy");
+        m.insert("ecclesiastis".into(), "Ecclesiastes");
+        m.insert("thessalonians".into(), "1 Thessalonians"); // bare → most-common
+        m.insert("galatia".into(), "Galatians");
         m
+
     })
 }
 
