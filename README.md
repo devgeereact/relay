@@ -2,15 +2,18 @@
 
 > AI-assisted live presentation software for churches — real-time scripture detection routed to independently-styled output screens, built to interoperate with OBS, ATEM, and ProPresenter rather than replace them.
 
-**Status:** builds and runs, full pipeline end to end. Phases 0–10 complete — shell + 5-screen console, SQLite data layer, audio capture + VAD, local STT (multilingual + code-switching), direct + semantic + context-memory detection, confidence-gating router with manual override, output channels (native fullscreen + kiosk WebSocket; NDI parked on the external SDK), local service-session history, and the full KJV corpus (66 books, ~31k verses, bundled offline). Next: African-language STT fine-tunes, neural paraphrase embedder, real-service hardening. Working name — rename freely.
+**Status:** builds and runs, full pipeline end to end. Operator console, SQLite data layer, audio capture + VAD, local STT (multilingual + code-switching), direct + semantic + context-memory detection, confidence-gating router with first-class manual override, and output channels (native fullscreen + kiosk/OBS WebSocket + preacher stage remote; NDI parked on the external SDK).
+
+Built out into a lightweight presentation suite: a **Content Library** (saved scripture, songs with a slide-flow editor + named arrangements, media, announcements, service history), a **Service Planner** (Mission-Control run editor over a unified cue model — scripture, song, media, announcement, countdown — with drag-reorder, per-cue stage notes, and plan duplication), **FTS5 + semantic scripture search**, **per-content-type templates** with a WYSIWYG editor, verse **auto-fit**, crossfade transitions, blackout, a **pre-service countdown timer**, and the full KJV corpus (66 books, 31,100 verses, bundled offline, translator glosses stripped). Next: African-language STT fine-tunes, neural paraphrase embedder, NDI, document (PDF/PPTX) presentation, real-service hardening. Working name — rename freely.
 
 ## Start here
 
-1. `CLAUDE.md` — working conventions and non-negotiable constraints, read this first if you're using an AI coding agent in this repo.
-2. `PROMPT.md` — the full project brief and suggested build-phase order.
-3. `docs/SPEC.md` — canonical technical spec.
-4. `docs/DECISIONS.md` — every major decision, with reasoning.
-5. `docs/design/` — visual mockups. Open the `.html` files directly in a browser; no build step needed.
+1. **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — how the app works, in detail (process model, pipeline, cue model, rendering, data layer, command/event reference, invariants).
+2. **[docs/USER_GUIDE.md](docs/USER_GUIDE.md)** — how to operate it: every screen and the typical Sunday flow.
+3. `CLAUDE.md` — working conventions and non-negotiable constraints; read first if you're using an AI coding agent in this repo.
+4. `PROMPT.md` — the full project brief and suggested build-phase order.
+5. `docs/SPEC.md` — canonical technical spec (original brief). `docs/DECISIONS.md` — every major decision, with reasoning.
+6. `docs/design/` — visual mockups. Open the `.html` files directly in a browser; no build step needed.
 
 ## Tech stack
 
@@ -65,10 +68,15 @@ One shared template engine renders to three target types (docs/SPEC.md §5):
 
 - **Native window** — borderless fullscreen webview (HDMI). Open from the
   Channels tab. Live now.
-- **Kiosk / network client** — a LAN browser (e.g. a $50 Raspberry Pi) points at
-  `http://<app-host>:5032/output.html?template_id=<n>` and receives state over
-  the WebSocket hub on **port 8031**. Live now. (Serve the dev page to the LAN
-  with `vite --host`, or a static host of `dist/` in production.)
+- **Kiosk / network client** — a LAN browser (e.g. a $50 Raspberry Pi) or an
+  OBS/vMix **browser source** points at
+  `http://<app-host>:5032/output.html?template_id=<n>` and receives live state
+  over the WebSocket hub on **port 8031**. Add channels and copy the URL/QR from
+  the **Channels** tab. Live now.
+- **Preacher stage remote** — `http://<app-host>:5032/stage.html` on a phone or
+  iPad: the live verse large + "up next" + operator stage notes + countdown, kept
+  off the congregation screen. The output/stage HTML pages and uploaded media are
+  also served by the embedded HTTP server on **port 8032** (`/media/<id>`).
 - **NDI encode** — into OBS/vMix/ATEM/ProPresenter. **Not yet available:**
   requires the proprietary NDI SDK (native lib + FFI). The command returns a
   clear error; integration path is documented in `src-tauri/src/main.rs`
@@ -77,25 +85,32 @@ One shared template engine renders to three target types (docs/SPEC.md §5):
 ## Repo structure
 
 ```
-CLAUDE.md
-README.md
-PROMPT.md
-LICENSE
+CLAUDE.md  README.md  PROMPT.md  LICENSE
 docs/
-  SPEC.md
-  DECISIONS.md
+  ARCHITECTURE.md        -- how it works, in detail
+  USER_GUIDE.md          -- how to operate it
+  SPEC.md  DECISIONS.md  -- original brief + decision log
   data/schema.sql
-  design/               -- open the .html files in a browser
+  design/                -- open the .html files in a browser
 src-tauri/               -- Rust core + Tauri backend
   src/
-    main.rs
-    audio.rs
-    stt.rs
-    detection.rs
-    router.rs
-    channels.rs
-    db.rs
+    main.rs              -- Tauri commands, state, pipeline wiring (composition root)
+    audio.rs  dsp.rs     -- cpal capture + VAD + chunker; noise/gain/quality
+    stt.rs               -- whisper.cpp STT worker
+    detection.rs         -- direct + semantic (TF-IDF) + context memory (DB/IO-free, tested)
+    router.rs            -- confidence gating, debounce, self-calibrating thresholds
+    channels.rs          -- output render targets: native window + kiosk WS hub + HTTP server
+    db.rs                -- SQLite: KJV, FTS5, templates, plans, songs, library, history
+    proimport.rs songs.rs-- ProPresenter import; song lyric parsing
+data/kjv.json            -- bundled full KJV (include_str!, committed)
 src/                      -- Svelte frontend
+  Output.svelte Stage.svelte      -- fullscreen output + preacher stage remote pages
+  lib/
+    TemplateRender.svelte         -- THE one renderer (output + editor preview)
+    stores/capture.js             -- all stores + command wrappers + event listeners
+    views/  Console Library Planner Channels Templates Settings
+    views/library/  Scripture Lyrics Media Announcements History SongEditor ImportReview
+models/                   -- STT ggml models (gitignored, per-machine)
 ```
 
 ## Design principles worth re-reading before you build
