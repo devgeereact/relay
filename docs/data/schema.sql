@@ -30,7 +30,8 @@ CREATE TABLE templates (
     id                 INTEGER PRIMARY KEY,
     name               TEXT NOT NULL,
     region_config_json TEXT NOT NULL,     -- layout regions, see docs/SPEC.md §5
-    style_json         TEXT NOT NULL      -- fonts, colors, transitions
+    style_json         TEXT NOT NULL,     -- fonts, colors, transitions
+    console_active     INTEGER NOT NULL DEFAULT 0  -- one of the (max 4) styles shown on the console Output grid
 );
 
 CREATE TABLE output_channels (
@@ -77,6 +78,13 @@ CREATE TABLE cues (
     triggered_at REAL NOT NULL
 );
 
+-- ===== App settings (key/value) =====
+-- Small operator preferences (active Bible translation, …). Local-first.
+CREATE TABLE app_settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
 -- ===== Accent & speaker calibration (Phase B) =====
 -- One row per preacher. Bundles the STT language hint, decoder-bias vocabulary,
 -- the sensitivity dial, and the self-calibrated confidence thresholds so that
@@ -86,8 +94,8 @@ CREATE TABLE voice_profiles (
     name        TEXT NOT NULL,
     language    TEXT,                                  -- null = auto-detect / code-switch; else "en"/"yo"/"sw"/"ha"
     sensitivity INTEGER NOT NULL DEFAULT 50,           -- 0..100 dial → threshold baseline
-    auto_fire   REAL NOT NULL DEFAULT 0.90,            -- live, feedback-adapted
-    suggest     REAL NOT NULL DEFAULT 0.60,
+    auto_fire   REAL NOT NULL DEFAULT 0.50,            -- live, feedback-adapted (push above ~50%)
+    suggest     REAL NOT NULL DEFAULT 0.35,
     bias_terms  TEXT NOT NULL DEFAULT '',              -- extra decoder-bias vocab (church name, phrases)
     is_active   INTEGER NOT NULL DEFAULT 0             -- exactly one row is active at a time
 );

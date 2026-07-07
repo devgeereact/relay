@@ -1,141 +1,202 @@
 <script>
-  import { onMount } from 'svelte';
-  import { capture, listServices, serviceDetail, endService, exportService } from '../stores/capture.js';
+  // Library — the unified content catalog. Every content type lives behind a
+  // sub-tab: Scripture (verses the operator saved), Lyrics (songs), Media
+  // (images/video/documents), Announcements, and service History. One Import
+  // button ingests ANY file and auto-routes it by type; one New menu creates
+  // content by hand. Import/New are constant across the whole library.
+  import { tick } from 'svelte';
+  import Lyrics from './library/Lyrics.svelte';
+  import Scripture from './library/Scripture.svelte';
+  import Media from './library/Media.svelte';
+  import Announcements from './library/Announcements.svelte';
+  import ImportReview from './library/ImportReview.svelte';
+  import History from './library/History.svelte';
+  import {
+    capture,
+    parseImport,
+    importMedia,
+    fileToBase64,
+  } from '../stores/capture.js';
 
-  let exportMsg = '';
-  async function doExport() {
-    if (!selected) return;
+  const tabs = [
+    { key: 'scripture', label: 'Scripture', color: 'var(--v-amber)' },
+    { key: 'lyrics', label: 'Lyrics', color: 'var(--v-amber)' },
+    { key: 'media', label: 'Media', color: 'var(--v-amethyst)' },
+    { key: 'announcements', label: 'Announcements', color: 'var(--v-rose)' },
+    { key: 'history', label: 'History', color: 'var(--v-cyan)' },
+  ];
+  let active = 'scripture';
+  let reload = 0; // bump to remount the active pane after an import
+  let fileInput;
+  let importing = false;
+  let importMsg = '';
+  let showNew = false;
+
+  // pre-save review of parsed lyric files
+  let reviewSongs = [];
+  let reviewing = false;
+
+  // pane actions passed on (re)mount
+  let lyricAction = null; // 'paste' when New → paste/draft song
+  let scriptureAction = false; // true when New → save scripture
+  let announceAction = false; // true when New → draft announcement
+
+  function goTab(t) {
+    active = t;
+    reload += 1;
+  }
+
+  // File-type routing — the heart of "import anything, sorted automatically".
+  const IMG = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'avif', 'svg'];
+  const VID = ['mp4', 'mov', 'webm', 'mkv', 'm4v'];
+  const DOC = ['pdf', 'pptx', 'ppt', 'key'];
+  const TXT = ['txt', 'text', 'md', 'lyric', 'lyrics'];
+  const PRO = ['pro', 'pro6', 'pro5', 'proplaylist'];
+
+  async function onFiles(e) {
+    const files = Array.from(e.target.files || []);
+    if (!files.length) return;
+    importing = true;
+    importMsg = '';
+    const parsed = []; // lyric songs → pre-save review
+    let media = 0;
     try {
-      const path = await exportService(selected.id);
-      exportMsg = `Saved to ${path}`;
-    } catch (e) {
-      exportMsg = `Export failed: ${e}`;
+      for (const file of files) {
+        const ext = (file.name.split('.').pop() || '').toLowerCase();
+        if (PRO.includes(ext) || TXT.includes(ext)) {
+          const got = await parseImport(file.name, await fileToBase64(file));
+          parsed.push(...got);
+        } else if (IMG.includes(ext)) {
+          await importMedia('image', file.name, await fileToBase64(file));
+          media += 1;
+        } else if (VID.includes(ext)) {
+          await importMedia('video', file.name, await fileToBase64(file));
+          media += 1;
+        } else if (DOC.includes(ext)) {
+          await importMedia('document', file.name, await fileToBase64(file));
+          media += 1;
+        } else {
+          importMsg = `Skipped .${ext} (unsupported)`;
+        }
+      }
+      if (parsed.length) {
+        // Lyrics go through the pre-save review (edit before committing).
+        reviewSongs = parsed;
+        reviewing = true;
+      } else if (media) {
+        importMsg = `Imported ${media} to Media.`;
+        goTab('media');
+      }
+    } catch (err) {
+      importMsg = String(err);
     }
+    importing = false;
+    e.target.value = '';
   }
 
-  // Service history is local-first (CLAUDE.md) — transcripts, fired detections,
-  // and operator overrides recorded to SQLite during a service, read back here.
-  let services = [];
-  let selected = null; // { id, title } of the open detail
-  let detail = null; // { transcripts, detections }
-  let loading = false;
-
-  async function refresh() {
-    services = await listServices();
-  }
-  onMount(refresh);
-
-  function fmtDur(secs) {
-    const s = Math.round(secs || 0);
-    const m = Math.floor(s / 60);
-    return `${m}:${String(s % 60).padStart(2, '0')}`;
-  }
-  function fmtTs(secs) {
-    return fmtDur(secs);
+  function onReviewDone(ev) {
+    reviewing = false;
+    const res = ev.detail || {};
+    const a = res.added?.length || 0;
+    const r = res.replaced?.length || 0;
+    const parts = [];
+    if (a) parts.push(`${a} new`);
+    if (r) parts.push(`${r} replaced`);
+    importMsg = parts.length ? `Saved — ${parts.join(', ')}.` : 'Nothing saved.';
+    goTab('lyrics');
   }
 
-  async function open(svc) {
-    selected = svc;
-    detail = null;
-    exportMsg = '';
-    loading = true;
-    try {
-      detail = await serviceDetail(svc.id);
-    } catch (e) {
-      detail = { transcripts: [], detections: [], error: String(e) };
-    }
-    loading = false;
+  async function newPasteSong() {
+    showNew = false;
+    lyricAction = 'paste';
+    goTab('lyrics');
+    await tick();
+    lyricAction = null;
   }
-  function back() {
-    selected = null;
-    detail = null;
-    refresh();
+  async function newSaveScripture() {
+    showNew = false;
+    scriptureAction = true;
+    goTab('scripture');
+    await tick();
+    scriptureAction = false;
   }
-  async function stopRecording() {
-    await endService();
-    refresh();
+  async function newDraftAnnouncement() {
+    showNew = false;
+    announceAction = true;
+    goTab('announcements');
+    await tick();
+    announceAction = false;
   }
 </script>
 
-{#if selected}
-  <div class="panel">
-    <div class="panel-title">
-      <span><button class="btn-ghost" on:click={back}>← Library</button> &nbsp; {selected.title} · {selected.date}</span>
-      <span style="display:flex; align-items:center; gap:10px;">
-        <span class="count">{selected.verses} verses · {selected.overrides} overrides · {fmtDur(selected.duration_secs)}</span>
-        <button class="btn-confirm" on:click={doExport}>Export .md</button>
-      </span>
-    </div>
-    {#if exportMsg}<div style="font-family:var(--f-mono); font-size:11px; color:var(--green); margin-bottom:10px; word-break:break-all;">{exportMsg}</div>{/if}
-
-    {#if loading}
-      <div style="color:var(--text-faint); font-family:var(--f-mono); font-size:12px;">Loading…</div>
-    {:else if detail}
-      <div style="display:grid; grid-template-columns:1fr 320px; gap:16px; align-items:start;">
-        <div>
-          <div class="field-label">Transcript</div>
-          {#if detail.transcripts.length}
-            <div class="transcript" style="height:auto; max-height:360px; overflow:auto;">
-              {#each detail.transcripts as t}
-                <div style="margin-bottom:6px;">
-                  <span style="color:var(--text-faint); font-family:var(--f-mono); font-size:11px;">{fmtTs(t.timestamp)} · {t.language}</span><br />
-                  {t.text}
-                </div>
-              {/each}
-            </div>
-          {:else}
-            <div style="color:var(--text-faint); font-size:13px;">No transcript recorded.</div>
-          {/if}
-        </div>
-        <div>
-          <div class="field-label">Detected verses <span style="color:var(--text-faint);">({detail.detections.length})</span></div>
-          {#if detail.detections.length}
-            {#each detail.detections as d}
-              <div class="detect-card is-live" style="margin-bottom:7px;">
-                <div class="detect-top">
-                  <div class="detect-ref">{d.reference ?? 'unresolved'}</div>
-                  <div class="detect-tag">{d.method}</div>
-                </div>
-                <div class="detect-bottom">
-                  <span class="detect-conf">{d.confidence.toFixed(2)} · fired {fmtTs(d.fired_at)}</span>
-                </div>
-              </div>
-            {/each}
-          {:else}
-            <div style="color:var(--text-faint); font-size:13px;">No verses fired.</div>
-          {/if}
-        </div>
-      </div>
-    {/if}
-  </div>
+<div class="lib-shell">
+{#if reviewing}
+  <ImportReview songs={reviewSongs} on:done={onReviewDone} on:cancel={() => (reviewing = false)} />
 {:else}
-  <div class="panel">
-    <div class="panel-title">
-      Service library <span class="count">{services.length} service{services.length === 1 ? '' : 's'}</span>
+  <div class="lib-topline">
+    <div class="subtabs">
+      {#each tabs as t}
+        <button class="subtab r-focus" class:on={active === t.key} on:click={() => (active = t.key)}>
+          <span class="c" style="background:{t.color};"></span>{t.label}
+        </button>
+      {/each}
     </div>
-    {#if !$capture.available}
-      <div style="font-family:var(--f-mono); font-size:11px; color:var(--text-faint); margin-bottom:10px;">backend not attached</div>
-    {/if}
-    <table class="data-table">
-      <tr><th>Date</th><th>Title</th><th>Duration</th><th>Verses detected</th><th>Overrides</th><th></th></tr>
-      {#if services.length}
-        {#each services as s, i}
-          <tr>
-            <td class="mono" style={i === 0 ? 'color:var(--green);' : ''}>{s.date}</td>
-            <td>{s.title}</td>
-            <td class="mono">{fmtDur(s.duration_secs)}</td>
-            <td class="mono">{s.verses}</td>
-            <td class="mono">{s.overrides}</td>
-            <td><button class="btn-ghost" on:click={() => open(s)}>Open</button></td>
-          </tr>
-        {/each}
-      {:else}
-        <tr><td colspan="6" style="color:var(--text-faint); font-size:13px; padding:16px 10px;">No services yet — start listening in Settings to record one.</td></tr>
-      {/if}
-    </table>
-    <div class="controls">
-      <button class="ctrl-btn" on:click={refresh} disabled={!$capture.available}>Refresh</button>
-      <button class="ctrl-btn" on:click={stopRecording} disabled={!$capture.available}>End current service</button>
+
+    <div class="lib-topactions">
+      <button class="r-btn ghost sm" on:click={() => fileInput.click()} disabled={!$capture.available || importing}>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M8 11l4 4 4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
+        {importing ? 'Importing…' : 'Import'}
+      </button>
+      <div class="lib-newwrap">
+        <button class="r-btn amber sm" on:click={() => (showNew = !showNew)}>＋ New</button>
+        {#if showNew}
+          <button class="lib-newscrim" tabindex="-1" aria-label="Close menu" on:click={() => (showNew = false)}></button>
+          <div class="lib-newmenu">
+            <button class="lib-newitem" on:click={newPasteSong}>Paste / draft song</button>
+            <button class="lib-newitem" on:click={newSaveScripture}>Save scripture</button>
+            <button class="lib-newitem" on:click={newDraftAnnouncement}>Draft announcement</button>
+          </div>
+        {/if}
+      </div>
+      <input type="file" multiple accept=".pro,.pro6,.proplaylist,.txt,.md,.png,.jpg,.jpeg,.gif,.webp,.mp4,.mov,.webm,.pdf,.pptx,.ppt" bind:this={fileInput} on:change={onFiles} style="display:none" />
     </div>
   </div>
+
+  {#if importMsg}<div class="lib-importmsg r-mono">{importMsg}</div>{/if}
+
+  {#key active + '-' + reload}
+    {#if active === 'scripture'}
+      <Scripture startSave={scriptureAction} />
+    {:else if active === 'lyrics'}
+      <Lyrics startPaste={lyricAction === 'paste'} />
+    {:else if active === 'media'}
+      <Media />
+    {:else if active === 'announcements'}
+      <Announcements startDraft={announceAction} />
+    {:else}
+      <History />
+    {/if}
+  {/key}
 {/if}
+</div>
+
+<style>
+  .lib-shell{ display:flex; flex-direction:column; gap:16px; }
+  .lib-topline{ display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap; }
+  .lib-topactions{ display:flex; gap:8px; flex-shrink:0; align-items:center; }
+  .lib-importmsg{ font-size:11.5px; color:var(--v-emerald); margin-top:-6px; }
+
+  .lib-newwrap{ position:relative; }
+  .lib-newscrim{ position:fixed; inset:0; z-index:40; background:transparent; border:0; cursor:default; }
+  .lib-newmenu{ position:absolute; right:0; top:calc(100% + 6px); z-index:50; min-width:180px; padding:6px;
+    background:var(--v-surf2); border:1px solid var(--v-line2); border-radius:11px; box-shadow:0 18px 44px -18px #000;
+    display:flex; flex-direction:column; gap:2px; }
+  .lib-newitem{ text-align:left; padding:9px 11px; border-radius:8px; border:0; background:transparent; color:var(--v-txt);
+    font-family:var(--f-body); font-size:13px; cursor:pointer; }
+  .lib-newitem:hover{ background:var(--v-surf3); color:var(--v-amber); }
+
+  .lib-soon{ display:flex; flex-direction:column; align-items:center; text-align:center; gap:10px;
+    padding:56px 24px; border:1px dashed var(--v-line2); border-radius:16px; max-width:520px; margin:8px auto 0; }
+  .lib-soon-t{ font-family:var(--f-head); font-size:20px; font-weight:700; color:var(--v-txt); }
+  .lib-soon-d{ color:var(--v-dim); font-size:13.5px; line-height:1.6; margin:0; max-width:44ch; }
+</style>

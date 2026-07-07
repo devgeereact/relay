@@ -14,6 +14,20 @@
   let t = DEFAULT_TEMPLATE;
   let content = null;
   let visible = false;
+  let black = false; // opaque blackout overlay
+
+  // Per-content-type template: when the fired content carries a template
+  // override (its content type's default), render THAT; else the channel's own.
+  $: activeTemplate = (() => {
+    if (content && content.template_json) {
+      try {
+        return JSON.parse(content.template_json);
+      } catch {
+        /* fall through */
+      }
+    }
+    return t;
+  })();
   let unlisten = [];
   let ws = null;
   let kioskClosed = false;
@@ -30,10 +44,18 @@
 
   function applyMessage(m) {
     if (m.kind === 'content') {
-      content = { reference: m.reference, text: m.text, translation: m.translation };
+      content = { reference: m.reference, text: m.text, translation: m.translation, media_url: m.media_url, media_kind: m.media_kind, countdown_to: m.countdown_to, countdown_done: m.countdown_done };
       visible = true;
+      black = false;
     } else if (m.kind === 'clear') {
       visible = false;
+      black = false;
+    } else if (m.kind === 'black') {
+      black = true;
+    } else if (m.kind === 'template' && m.id === templateId && m.template) {
+      // The REAL saved template (with the operator's edits) — this is what makes
+      // OBS/kiosk match the console preview exactly, and updates live on save.
+      t = m.template;
     }
   }
 
@@ -41,6 +63,14 @@
     if (kioskClosed) return;
     try {
       ws = new WebSocket(`ws://${host}:8031`);
+      ws.onopen = () => {
+        // Ask the hub for this channel's real template.
+        try {
+          ws.send(JSON.stringify({ kind: 'hello', template_id: templateId }));
+        } catch {
+          /* ignore */
+        }
+      };
       ws.onmessage = (ev) => {
         try {
           applyMessage(JSON.parse(ev.data));
@@ -71,8 +101,9 @@
     try {
       await loadTemplate();
       const { listen } = await import('@tauri-apps/api/event');
-      unlisten.push(await listen('output://content', (e) => { content = e.payload; visible = true; }));
-      unlisten.push(await listen('output://clear', () => (visible = false)));
+      unlisten.push(await listen('output://content', (e) => { content = e.payload; visible = true; black = false; }));
+      unlisten.push(await listen('output://clear', () => { visible = false; black = false; }));
+      unlisten.push(await listen('output://black', () => (black = true)));
       unlisten.push(await listen('template://updated', (e) => { if (e.payload === templateId) loadTemplate(); }));
     } catch {
       startKiosk();
@@ -85,7 +116,8 @@
   });
 </script>
 
-<TemplateRender template={t} content={visible ? content : null} />
+<TemplateRender template={activeTemplate} content={visible ? content : null} />
+{#if black}<div class="blackout"></div>{/if}
 
 <style>
   /* Transparent by default — a template with a transparent background keys out
@@ -95,5 +127,12 @@
     height: 100%;
     background: transparent;
     overflow: hidden;
+  }
+  /* Blackout: opaque black over everything (kills the screen, unlike clear). */
+  .blackout {
+    position: fixed;
+    inset: 0;
+    background: #000;
+    z-index: 9999;
   }
 </style>

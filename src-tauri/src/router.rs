@@ -22,8 +22,11 @@ pub struct Thresholds {
 impl Default for Thresholds {
     fn default() -> Self {
         Thresholds {
-            auto_fire: 0.90,
-            suggest: 0.60,
+            // Operator preference: auto-push any match above ~50% straight to
+            // the screens; lower-confidence candidates surface as suggestions.
+            // (Overrides the conservative seed in DECISIONS.md by request.)
+            auto_fire: 0.50,
+            suggest: 0.35,
         }
     }
 }
@@ -118,10 +121,12 @@ impl Router {
     /// `auto_fire >= suggest` is preserved.
     pub fn record_feedback(&mut self, confirmed: bool) {
         if confirmed {
-            self.thresholds.suggest = (self.thresholds.suggest - FEEDBACK_STEP).clamp(0.40, 0.85);
+            self.thresholds.suggest = (self.thresholds.suggest - FEEDBACK_STEP).clamp(0.30, 0.85);
         } else {
+            // Floor at 0.50 so calibration nudges but never abandons the
+            // operator's "push above ~50%" preference.
             self.thresholds.auto_fire =
-                (self.thresholds.auto_fire + FEEDBACK_STEP).clamp(0.85, 0.99);
+                (self.thresholds.auto_fire + FEEDBACK_STEP).clamp(0.50, 0.99);
         }
         if self.thresholds.suggest > self.thresholds.auto_fire {
             self.thresholds.suggest = self.thresholds.auto_fire;
@@ -147,17 +152,20 @@ mod tests {
 
     #[test]
     fn gates_by_tier() {
-        let mut r = Router::default(); // 0.90 / 0.60
+        let mut r = Router::default(); // 0.50 / 0.35 (push above ~50%)
+                                       // Above auto-fire → straight to the screens.
         assert_eq!(
-            r.decide("John 3:16", 0.95, false, 0),
+            r.decide("John 3:16", 0.70, false, 0),
             RouteDecision::AutoFire
         );
+        // Between suggest and auto-fire → operator-confirmable suggestion.
         assert_eq!(
-            r.decide("Romans 8:28", 0.70, false, 100),
+            r.decide("Romans 8:28", 0.42, false, 100),
             RouteDecision::Suggest
         );
+        // Below suggest → dropped silently.
         assert_eq!(
-            r.decide("Psalms 23:1", 0.40, false, 200),
+            r.decide("Psalms 23:1", 0.30, false, 200),
             RouteDecision::Drop
         );
     }
@@ -224,7 +232,7 @@ mod tests {
             r.record_feedback(true);
         }
         assert!(r.thresholds().auto_fire <= 0.99);
-        assert!(r.thresholds().suggest >= 0.40);
+        assert!(r.thresholds().suggest >= 0.30);
         assert!(r.thresholds().suggest <= r.thresholds().auto_fire);
     }
 

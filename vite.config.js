@@ -10,6 +10,9 @@ export default defineConfig({
   server: {
     port: 5032,
     strictPort: true,
+    // Bind all interfaces so LAN devices (kiosk screens, OBS on another machine)
+    // can load the output page over http://<this-machine-ip>:5032 during dev.
+    host: true,
   },
   build: {
     // Two entries: the operator console (index.html) and the native output
@@ -18,6 +21,7 @@ export default defineConfig({
       input: {
         main: 'index.html',
         output: 'output.html',
+        stage: 'stage.html',
       },
     },
   },

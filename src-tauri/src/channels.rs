@@ -14,6 +14,8 @@
 
 use futures_util::{SinkExt, StreamExt};
 use serde::Serialize;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 use tauri::{Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 use tokio::sync::broadcast;
 
@@ -26,11 +28,32 @@ pub enum RenderTarget {
 
 /// The content pushed to every output channel. Templates bind these fields to
 /// their regions; the pipeline never formats per channel.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct OutputContent {
     pub reference: String,
     pub text: Option<String>,
     pub translation: Option<String>,
+    /// Absolute URL of a media asset to paint behind the text (image/video),
+    /// served by the embedded HTTP server. None for text-only cues.
+    pub media_url: Option<String>,
+    /// "image" | "video" — how the output page renders the media layer.
+    pub media_kind: Option<String>,
+    /// Per-content-type template override (ProPresenter-style: lyrics use the
+    /// lyric template, scripture the scripture template). When set, the output
+    /// renders THIS content with `template_json` instead of the channel's own
+    /// template; when None, the channel's assigned template is used (default).
+    pub template_id: Option<i64>,
+    pub template_json: Option<String>,
+    /// Operator's private note for this cue (e.g. "hold for prayer"). Rides with
+    /// the slide but is confidence-monitor only — the stage remote shows it, the
+    /// congregation output never does (no template region renders it).
+    pub stage_note: Option<String>,
+    /// Pre-service countdown: the target epoch (ms) to count down TO. When set,
+    /// the output renders a live MM:SS (ticked locally, so no per-second network
+    /// traffic) styled by the template; `reference` is the label above it.
+    pub countdown_to: Option<i64>,
+    /// Message shown in place of the timer when the countdown reaches zero.
+    pub countdown_done: Option<String>,
 }
 
 /// A connected physical display, shaped for the Channels UI. `index` is the
@@ -171,16 +194,40 @@ pub fn broadcast_content(app: &tauri::AppHandle, content: OutputContent) {
         "reference": content.reference,
         "text": content.text,
         "translation": content.translation,
+        "media_url": content.media_url,
+        "media_kind": content.media_kind,
+        "template_id": content.template_id,
+        "template_json": content.template_json,
+        "stage_note": content.stage_note,
+        "countdown_to": content.countdown_to,
+        "countdown_done": content.countdown_done,
     })
     .to_string();
     let _ = app.emit("output://content", content);
     publish_kiosk(app, json);
 }
 
-/// Clear all output channels (operator "Clear all screens" / Esc).
+/// Clear all output channels (operator "Clear all screens" / Esc). Clears to the
+/// template background — transparent templates key out for OBS/ATEM.
 pub fn clear(app: &tauri::AppHandle) {
     let _ = app.emit("output://clear", ());
     publish_kiosk(app, r#"{"kind":"clear"}"#.to_string());
+}
+
+/// Blackout: paint every output opaque black (kills the screen entirely, unlike
+/// a transparent clear). The next content/clear cancels it.
+pub fn black(app: &tauri::AppHandle) {
+    let _ = app.emit("output://black", ());
+    publish_kiosk(app, r#"{"kind":"black"}"#.to_string());
+}
+
+/// Push the "up next" preview to the stage/confidence monitor(s). Distinct from
+/// live content — it only reaches the stage view, never the main output. None
+/// clears the panel.
+pub fn stage_next(app: &tauri::AppHandle, label: Option<String>, text: Option<String>) {
+    let json =
+        serde_json::json!({ "kind": "stage_next", "label": label, "text": text }).to_string();
+    publish_kiosk(app, json);
 }
 
 fn publish_kiosk(app: &tauri::AppHandle, msg: String) {
@@ -197,12 +244,19 @@ fn publish_kiosk(app: &tauri::AppHandle, msg: String) {
 /// output-hardware path (docs/DECISIONS.md). Same content, its own template.
 pub struct KioskHub {
     tx: broadcast::Sender<String>,
+    /// Cache of template JSON by id, so a browser client (OBS/kiosk — no Tauri
+    /// runtime, can't call `get_template`) gets the REAL saved template, not a
+    /// built-in fallback. This is what makes OBS match the editor preview.
+    templates: Arc<Mutex<HashMap<i64, String>>>,
 }
 
 impl Default for KioskHub {
     fn default() -> Self {
         let (tx, _) = broadcast::channel(128);
-        KioskHub { tx }
+        KioskHub {
+            tx,
+            templates: Arc::new(Mutex::new(HashMap::new())),
+        }
     }
 }
 
@@ -213,12 +267,47 @@ impl KioskHub {
     pub fn sender(&self) -> broadcast::Sender<String> {
         self.tx.clone()
     }
+    /// Shared handle to the template cache, for the WS server task.
+    pub fn templates_handle(&self) -> Arc<Mutex<HashMap<i64, String>>> {
+        self.templates.clone()
+    }
+    /// Cache a template's JSON (no push). Used to warm the cache at startup.
+    pub fn cache_template(&self, id: i64, template_json: &str) {
+        if let Ok(mut m) = self.templates.lock() {
+            m.insert(id, template_json.to_string());
+        }
+    }
+    /// Update a template and push it live to any connected client showing it, so
+    /// an edit in the console re-renders OBS/kiosk in real time (WYSIWYG).
+    pub fn set_template(&self, id: i64, template_json: &str) {
+        self.cache_template(id, template_json);
+        self.publish(format!(
+            r#"{{"kind":"template","id":{id},"template":{template_json}}}"#
+        ));
+    }
 }
 
-/// Run the kiosk WebSocket server: accept LAN clients and forward every
-/// published message to each. Binds 0.0.0.0 so kiosks on the network can reach
-/// it. Runs for the app's lifetime; a bind failure is logged, not fatal.
-pub async fn run_kiosk_server(tx: broadcast::Sender<String>, port: u16) {
+/// The template id targeted by a `{"kind":"template","id":N,…}` message, if it is
+/// one. `None` for non-template messages (content/clear, forwarded to everyone).
+fn template_msg_id(msg: &str) -> Option<i64> {
+    let v: serde_json::Value = serde_json::from_str(msg).ok()?;
+    if v.get("kind").and_then(|k| k.as_str()) == Some("template") {
+        v.get("id").and_then(|i| i.as_i64())
+    } else {
+        None
+    }
+}
+
+/// Run the kiosk WebSocket server: accept LAN clients and forward published
+/// messages. On connect a client sends `{"kind":"hello","template_id":N}` and
+/// gets back its real template (`{"kind":"template",…}`); template updates are
+/// forwarded only to clients showing that template. Content/clear go to all.
+/// Binds 0.0.0.0. A bind failure is logged, not fatal.
+pub async fn run_kiosk_server(
+    tx: broadcast::Sender<String>,
+    templates: Arc<Mutex<HashMap<i64, String>>>,
+    port: u16,
+) {
     let listener = match tokio::net::TcpListener::bind(("0.0.0.0", port)).await {
         Ok(l) => l,
         Err(e) => {
@@ -232,16 +321,24 @@ pub async fn run_kiosk_server(tx: broadcast::Sender<String>, port: u16) {
             continue;
         };
         let mut rx = tx.subscribe();
+        let templates = templates.clone();
         tokio::spawn(async move {
             let ws = match tokio_tungstenite::accept_async(stream).await {
                 Ok(w) => w,
                 Err(_) => return,
             };
             let (mut write, mut read) = ws.split();
+            let mut my_template: Option<i64> = None;
             loop {
                 tokio::select! {
                     msg = rx.recv() => match msg {
                         Ok(m) => {
+                            // Template updates only go to the client showing them.
+                            if let Some(id) = template_msg_id(&m) {
+                                if Some(id) != my_template {
+                                    continue;
+                                }
+                            }
                             if write
                                 .send(tokio_tungstenite::tungstenite::Message::Text(m))
                                 .await
@@ -254,11 +351,191 @@ pub async fn run_kiosk_server(tx: broadcast::Sender<String>, port: u16) {
                         Err(_) => break,
                     },
                     incoming = read.next() => match incoming {
-                        Some(Ok(_)) => {} // ignore client → server messages
-                        _ => break,      // closed or errored
+                        Some(Ok(tokio_tungstenite::tungstenite::Message::Text(txt))) => {
+                            // Client hello → remember its template + send it now.
+                            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&txt) {
+                                if v.get("kind").and_then(|k| k.as_str()) == Some("hello") {
+                                    if let Some(id) = v.get("template_id").and_then(|i| i.as_i64()) {
+                                        my_template = Some(id);
+                                        let cached = templates.lock().ok().and_then(|m| m.get(&id).cloned());
+                                        if let Some(tpl) = cached {
+                                            let out = format!(
+                                                r#"{{"kind":"template","id":{id},"template":{tpl}}}"#
+                                            );
+                                            let _ = write
+                                                .send(tokio_tungstenite::tungstenite::Message::Text(out))
+                                                .await;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        Some(Ok(_)) => {} // other frames ignored
+                        _ => break,       // closed or errored
                     },
                 }
             }
+        });
+    }
+}
+
+// ===== Embedded LAN HTTP server for output/stage pages =====
+
+/// The built frontend, embedded into the binary at compile time. This lets a
+/// PACKAGED app serve output.html / stage.html (and their assets/fonts) to LAN
+/// devices — OBS on another machine, kiosk screens, the preacher's phone — with
+/// no dev server running. Requires `dist/` to exist at build time (the Tauri
+/// build runs `npm run build` first).
+static DIST: include_dir::Dir = include_dir::include_dir!("$CARGO_MANIFEST_DIR/../dist");
+
+fn mime_for(path: &str) -> &'static str {
+    match path.rsplit('.').next().unwrap_or("") {
+        "html" => "text/html; charset=utf-8",
+        "js" | "mjs" => "text/javascript; charset=utf-8",
+        "css" => "text/css; charset=utf-8",
+        "json" => "application/json",
+        "svg" => "image/svg+xml",
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "avif" => "image/avif",
+        "mp4" | "m4v" => "video/mp4",
+        "webm" => "video/webm",
+        "mov" => "video/quicktime",
+        "woff2" => "font/woff2",
+        "woff" => "font/woff",
+        "ico" => "image/x-icon",
+        "webmanifest" => "application/manifest+json",
+        _ => "application/octet-stream",
+    }
+}
+
+async fn serve_embedded<S>(request_path: &str, stream: &mut S)
+where
+    S: tokio::io::AsyncWrite + Unpin,
+{
+    use tokio::io::AsyncWriteExt;
+    // Strip the query string, normalise, default to output.html.
+    let clean = request_path
+        .split('?')
+        .next()
+        .unwrap_or("/")
+        .trim_start_matches('/');
+    let clean = if clean.is_empty() {
+        "output.html"
+    } else {
+        clean
+    };
+    // Media assets live on disk (imported files), not in the embedded bundle.
+    if let Some(rest) = clean.strip_prefix("media/") {
+        serve_media_file(rest, stream).await;
+        return;
+    }
+    match DIST.get_file(clean) {
+        Some(f) => {
+            let body = f.contents();
+            let header = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: {}\r\nContent-Length: {}\r\nAccess-Control-Allow-Origin: *\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n",
+                mime_for(clean),
+                body.len()
+            );
+            let _ = stream.write_all(header.as_bytes()).await;
+            let _ = stream.write_all(body).await;
+        }
+        None => {
+            let msg = b"Not found";
+            let header = format!(
+                "HTTP/1.1 404 Not Found\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                msg.len()
+            );
+            let _ = stream.write_all(header.as_bytes()).await;
+            let _ = stream.write_all(msg).await;
+        }
+    }
+}
+
+/// Serve an imported media/document file by its DB id from `media_dir()`. Files
+/// are stored as `{id}_{name}`; we take the leading digits of the request as the
+/// id (so `../` and other traversal can't escape the media dir) and stream the
+/// first matching file. Whole-file read — fine for images/short clips; large
+/// videos would want ranged streaming later.
+async fn serve_media_file<S>(id_part: &str, stream: &mut S)
+where
+    S: tokio::io::AsyncWrite + Unpin,
+{
+    use tokio::io::AsyncWriteExt;
+    let id: String = id_part.chars().take_while(|c| c.is_ascii_digit()).collect();
+    let found = if id.is_empty() {
+        None
+    } else {
+        let dir = crate::db::media_dir();
+        let prefix = format!("{id}_");
+        std::fs::read_dir(&dir).ok().and_then(|rd| {
+            rd.filter_map(|e| e.ok()).map(|e| e.path()).find(|p| {
+                p.file_name()
+                    .and_then(|n| n.to_str())
+                    .map(|n| n.starts_with(&prefix))
+                    .unwrap_or(false)
+            })
+        })
+    };
+    match found.and_then(|p| std::fs::read(&p).ok().map(|b| (p, b))) {
+        Some((path, body)) => {
+            let mime = mime_for(&path.to_string_lossy());
+            let header = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: {}\r\nContent-Length: {}\r\nAccess-Control-Allow-Origin: *\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n",
+                mime,
+                body.len()
+            );
+            let _ = stream.write_all(header.as_bytes()).await;
+            let _ = stream.write_all(&body).await;
+        }
+        None => {
+            let msg = b"Media not found";
+            let header = format!(
+                "HTTP/1.1 404 Not Found\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                msg.len()
+            );
+            let _ = stream.write_all(header.as_bytes()).await;
+            let _ = stream.write_all(msg).await;
+        }
+    }
+}
+
+/// Serve the embedded output/stage pages over HTTP on the LAN so other devices
+/// can load them in a packaged app (not just `tauri dev`). Binds 0.0.0.0. A bind
+/// failure is logged, not fatal. GET-only, one response per connection.
+pub async fn run_output_http_server(port: u16) {
+    let listener = match tokio::net::TcpListener::bind(("0.0.0.0", port)).await {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!("output http: failed to bind :{port}: {e}");
+            return;
+        }
+    };
+    println!("output http: serving output/stage pages on :{port}");
+    loop {
+        let Ok((mut stream, _addr)) = listener.accept().await else {
+            continue;
+        };
+        tokio::spawn(async move {
+            use tokio::io::AsyncReadExt;
+            let mut buf = [0u8; 8192];
+            let Ok(n) = stream.read(&mut buf).await else {
+                return;
+            };
+            if n == 0 {
+                return;
+            }
+            // Parse "GET /path HTTP/1.1" — a browser GET fits in one read.
+            let head = String::from_utf8_lossy(&buf[..n]);
+            let path = head
+                .lines()
+                .next()
+                .and_then(|l| l.split_whitespace().nth(1))
+                .unwrap_or("/");
+            serve_embedded(path, &mut stream).await;
         });
     }
 }
@@ -292,13 +569,84 @@ mod tests {
         assert!(u.contains("name=Stage%2F2"), "got {u}");
     }
 
+    /// The embedded LAN server serves the output/stage pages (200 + html) and
+    /// 404s the unknown — this is what makes a packaged app reachable by OBS/
+    /// kiosk/phone with no dev server.
+    #[tokio::test]
+    async fn output_http_serves_embedded_pages() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        tokio::spawn(run_output_http_server(8201));
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+
+        let mut s = tokio::net::TcpStream::connect("127.0.0.1:8201")
+            .await
+            .expect("connect");
+        s.write_all(b"GET /stage.html HTTP/1.1\r\nHost: x\r\n\r\n")
+            .await
+            .unwrap();
+        let mut buf = vec![0u8; 4096];
+        let n = s.read(&mut buf).await.unwrap();
+        let resp = String::from_utf8_lossy(&buf[..n]);
+        assert!(
+            resp.starts_with("HTTP/1.1 200"),
+            "got {}",
+            &resp[..resp.len().min(60)]
+        );
+        assert!(resp.contains("text/html"));
+
+        let mut s2 = tokio::net::TcpStream::connect("127.0.0.1:8201")
+            .await
+            .expect("connect");
+        s2.write_all(b"GET /nope.xyz HTTP/1.1\r\n\r\n")
+            .await
+            .unwrap();
+        let n2 = s2.read(&mut buf).await.unwrap();
+        assert!(String::from_utf8_lossy(&buf[..n2]).starts_with("HTTP/1.1 404"));
+    }
+
+    /// The #1 fix: a browser client (OBS/kiosk) says hello and gets back the REAL
+    /// cached template, so it renders exactly what the editor shows.
+    #[tokio::test]
+    async fn kiosk_hello_returns_cached_template() {
+        let hub = KioskHub::default();
+        hub.cache_template(
+            7,
+            r##"{"id":7,"name":"Custom","style":{"accent":"#f5a623"}}"##,
+        );
+        tokio::spawn(run_kiosk_server(hub.sender(), hub.templates_handle(), 8200));
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+
+        let (ws, _) = tokio_tungstenite::connect_async("ws://127.0.0.1:8200")
+            .await
+            .expect("connect");
+        let (mut write, mut read) = ws.split();
+        write
+            .send(tokio_tungstenite::tungstenite::Message::Text(
+                r#"{"kind":"hello","template_id":7}"#.to_string(),
+            ))
+            .await
+            .expect("send hello");
+
+        let msg = tokio::time::timeout(std::time::Duration::from_secs(2), read.next())
+            .await
+            .expect("no message within timeout")
+            .expect("stream ended")
+            .expect("ws error");
+        let text = msg.into_text().unwrap();
+        assert!(text.contains(r#""kind":"template""#), "got {text}");
+        assert!(
+            text.contains(r#""id":7"#) && text.contains(r#""name":"Custom""#),
+            "got {text}"
+        );
+    }
+
     /// End-to-end kiosk path (what OBS/vMix uses): a WS client connects, a fire
     /// is published, and the client receives it.
     #[tokio::test]
     async fn kiosk_ws_forwards_published_content() {
         let hub = KioskHub::default();
         let tx = hub.sender();
-        tokio::spawn(run_kiosk_server(tx, 8199));
+        tokio::spawn(run_kiosk_server(tx, hub.templates_handle(), 8199));
         // Give the listener a moment to bind.
         tokio::time::sleep(std::time::Duration::from_millis(150)).await;
 

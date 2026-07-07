@@ -958,7 +958,8 @@ pub fn detect_bare_verses(text: &str) -> Vec<i64> {
     let mut out = Vec::new();
     let mut i = 0;
     while i < tokens.len() {
-        if matches!(tokens[i], "verse" | "verses") {
+        // Both singular ("verse 1") and plural ("verses 1"), plus abbreviations.
+        if matches!(tokens[i], "verse" | "verses" | "vs" | "v") {
             if let Some((n, _, _)) = parse_number(&tokens, i + 1) {
                 out.push(n);
             }
@@ -966,6 +967,65 @@ pub fn detect_bare_verses(text: &str) -> Vec<i64> {
         i += 1;
     }
     out
+}
+
+/// A spoken jump WITHIN the current book — chapter and/or verse, no book name.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PassageNav {
+    pub chapter: Option<i64>,
+    pub verse: Option<i64>,
+}
+
+/// True if any book alias appears in the tokens.
+fn book_named(tokens: &[&str]) -> bool {
+    (0..tokens.len()).any(|i| match_book(tokens, i).is_some())
+}
+
+/// Detect a spoken jump within the CURRENT book — "chapter 5 verse 1",
+/// "chapter fifty verse two", "go to chapter 5", "verse 4" — WITHOUT naming a
+/// book (a named book goes through the normal reference path). The caller
+/// resolves the book from context (the last verse shown) and keeps the operator
+/// in the same passage. Requires a chapter/verse keyword and a short utterance
+/// so ordinary sermon prose with numbers never triggers.
+pub fn detect_passage_nav(text: &str) -> Option<PassageNav> {
+    let norm = normalize(text);
+    let tokens: Vec<&str> = norm.split_whitespace().collect();
+    if tokens.is_empty() || tokens.len() > 8 {
+        return None;
+    }
+    if book_named(&tokens) {
+        return None; // an explicit "Psalm 5:1" is a full reference, not a jump
+    }
+    let mut chapter = None;
+    let mut verse = None;
+    let mut saw_kw = false;
+    let mut i = 0;
+    while i < tokens.len() {
+        match tokens[i] {
+            "chapter" | "chapters" | "chap" | "ch" => {
+                saw_kw = true;
+                if let Some((n, next, _)) = parse_number(&tokens, i + 1) {
+                    chapter = Some(n);
+                    i = next;
+                    continue;
+                }
+            }
+            "verse" | "verses" | "vs" | "v" => {
+                saw_kw = true;
+                if let Some((n, next, _)) = parse_number(&tokens, i + 1) {
+                    verse = Some(n);
+                    i = next;
+                    continue;
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    if !saw_kw || (chapter.is_none() && verse.is_none()) {
+        return None;
+    }
+    Some(PassageNav { chapter, verse })
 }
 
 /// Generate candidate references for an AMBIGUOUS book+number with no verse,
@@ -1309,6 +1369,61 @@ mod tests {
         assert!(!detect_clear("the gospel makes it very clear to us"));
         assert!(!detect_clear("make it clear"));
         assert!(!detect_clear("a blank page before creation"));
+    }
+
+    // ---- In-passage voice jump: "chapter 5 verse 1" resolves in current book ----
+
+    #[test]
+    fn passage_nav_chapter_and_verse() {
+        assert_eq!(
+            detect_passage_nav("chapter 5 verse 1"),
+            Some(PassageNav {
+                chapter: Some(5),
+                verse: Some(1)
+            })
+        );
+        assert_eq!(
+            detect_passage_nav("let's go to chapter fifty verse two"),
+            Some(PassageNav {
+                chapter: Some(50),
+                verse: Some(2)
+            })
+        );
+        // Chapter only → the caller defaults to verse 1.
+        assert_eq!(
+            detect_passage_nav("go to chapter 5"),
+            Some(PassageNav {
+                chapter: Some(5),
+                verse: None
+            })
+        );
+    }
+
+    #[test]
+    fn passage_nav_bare_verse_singular_and_plural() {
+        // Both "verse" and "verses" — stay in the same chapter, change the verse.
+        assert_eq!(
+            detect_passage_nav("verse 4"),
+            Some(PassageNav {
+                chapter: None,
+                verse: Some(4)
+            })
+        );
+        assert_eq!(
+            detect_passage_nav("verses 4"),
+            Some(PassageNav {
+                chapter: None,
+                verse: Some(4)
+            })
+        );
+    }
+
+    #[test]
+    fn passage_nav_ignores_named_book_and_prose() {
+        assert!(detect_passage_nav("turn to psalm 5 verse 1").is_none()); // book named
+        assert!(detect_passage_nav("the fifth chapter of our lives").is_none()); // no number
+        assert!(detect_passage_nav("we had over five hundred members today").is_none());
+        // no keyword
     }
 
     #[test]

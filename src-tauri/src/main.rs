@@ -9,7 +9,9 @@ mod channels;
 mod db;
 mod detection;
 mod dsp;
+mod proimport;
 mod router;
+mod songs;
 mod stt;
 
 use audio::AudioEngine;
@@ -119,8 +121,31 @@ fn main() {
             // the reserved api port. Kiosks on the LAN connect here for state.
             let kiosk = channels::KioskHub::default();
             let kiosk_tx = kiosk.sender();
+            let kiosk_templates = kiosk.templates_handle();
+            // Warm the template cache so a browser client (OBS/kiosk) gets the
+            // REAL saved template immediately on connect (matches the editor).
+            {
+                let db = app.state::<Db>();
+                let tpls =
+                    db.0.lock()
+                        .ok()
+                        .and_then(|conn| db::list_templates(&conn).ok())
+                        .unwrap_or_default();
+                for t in &tpls {
+                    if let Ok(j) = serde_json::to_string(t) {
+                        kiosk.cache_template(t.id, &j);
+                    }
+                }
+            }
             app.manage(kiosk);
-            tauri::async_runtime::spawn(channels::run_kiosk_server(kiosk_tx, 8031));
+            tauri::async_runtime::spawn(channels::run_kiosk_server(
+                kiosk_tx,
+                kiosk_templates,
+                8031,
+            ));
+            // Serve the output/stage pages over LAN HTTP so other devices load
+            // them in a packaged app (not only in `tauri dev`). See channels.rs.
+            tauri::async_runtime::spawn(channels::run_output_http_server(8032));
 
             // Load STT here (not before .run) because the worker needs an
             // AppHandle to emit transcript events. Missing model → audio-only,
@@ -141,6 +166,11 @@ fn main() {
                         if detection::detect_clear(&update.text) {
                             channels::clear(&handle);
                             persist_cue(&handle, "clear_screens", None);
+                            return;
+                        }
+                        // Spoken in-passage jump — "chapter 5 verse 1", "verse 4"
+                        // — resolved against the current book (same passage).
+                        if handle_passage_nav(&handle, &update.text) {
                             return;
                         }
                     }
@@ -194,8 +224,46 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             greet,
             lookup_verse,
+            search_scripture,
+            list_plans,
+            create_plan,
+            delete_plan,
+            duplicate_plan,
+            plan_items,
+            add_plan_item,
+            remove_plan_item,
+            move_plan_item,
+            set_plan_note,
+            reorder_plan,
+            list_songs,
+            search_songs,
+            get_song,
+            import_song,
+            save_song,
+            delete_song,
+            start_countdown,
+            list_arrangements,
+            save_arrangement,
+            delete_arrangement,
+            import_pro,
+            parse_import,
+            save_reviewed_songs,
+            list_saved_scripture,
+            save_scripture,
+            delete_saved_scripture,
+            list_announcements,
+            save_announcement,
+            delete_announcement,
+            list_media,
+            import_media,
+            delete_media,
+            fire_content,
+            fire_media,
+            get_content_templates,
+            set_content_template,
             data_health,
             list_audio_devices,
+            local_ip,
             start_capture,
             stop_capture,
             stt_status,
@@ -215,6 +283,8 @@ fn main() {
             add_channel,
             delete_channel,
             clear_screens,
+            blackout,
+            set_stage_next,
             push_announcement,
             set_detection_enabled,
             get_detection_enabled,
@@ -226,9 +296,16 @@ fn main() {
             service_detail,
             export_service,
             list_templates,
+            list_active_templates,
+            set_template_active,
+            create_template,
+            delete_template,
             get_template,
             save_template,
             set_stt_language,
+            list_translations,
+            get_active_translation,
+            set_active_translation,
             list_voice_profiles,
             active_voice_profile,
             create_voice_profile,
@@ -406,10 +483,14 @@ fn emit_detections(handle: &tauri::AppHandle, text: &str, now_ms: u64) {
                     c.conf,
                     text,
                 );
+                let (tid, tjson) = content_tpl(&conn, "scripture");
                 broadcasts.push(OutputContent {
                     reference: key.clone(),
                     text: vtext.clone(),
                     translation: translation.clone(),
+                    template_id: tid,
+                    template_json: tjson,
+                    ..Default::default()
                 });
             }
             events.push(DetectionEvent {
@@ -490,6 +571,7 @@ fn handle_nav(handle: &tauri::AppHandle, dir: detection::NavCommand) {
                 reference: key.clone(),
                 text: Some(text.clone()),
                 translation: Some(translation.clone()),
+                ..Default::default()
             },
         );
         let _ = handle.emit(
@@ -508,6 +590,89 @@ fn handle_nav(handle: &tauri::AppHandle, dir: detection::NavCommand) {
             },
         );
     }
+}
+
+/// Handle a spoken in-passage jump ("chapter 5 verse 1", "verse 4"): resolve the
+/// BOOK from the current context and fire book chapter:verse, keeping the
+/// operator in the same passage. Chapter-only defaults to verse 1; verse-only
+/// keeps the current chapter. Bypasses the gate (operator intent). Returns true
+/// if it fired. Locks db before ctx/router (global order).
+fn handle_passage_nav(handle: &tauri::AppHandle, text: &str) -> bool {
+    let Some(nav) = detection::detect_passage_nav(text) else {
+        return false;
+    };
+    let db = handle.state::<Db>();
+    let ctx = handle.state::<Context>();
+
+    let fired: Option<(String, VerseRef, String, String)> = {
+        let Ok(conn) = db.0.lock() else {
+            return false;
+        };
+        let target = {
+            let Ok(context) = ctx.0.lock() else {
+                return false;
+            };
+            let Some(cur) = context.current() else {
+                return false; // no current passage → can't resolve the book yet
+            };
+            VerseRef {
+                book: cur.book.clone(),
+                chapter: nav.chapter.unwrap_or(cur.chapter),
+                verse: nav.verse.unwrap_or(1),
+            }
+        };
+        let Some(v) = db::lookup_verse(&conn, &target.book, target.chapter, target.verse)
+            .ok()
+            .flatten()
+        else {
+            return false; // that verse isn't in the corpus — leave the screen as-is
+        };
+        let key = format!("{} {}:{}", target.book, target.chapter, target.verse);
+        if let Ok(mut context) = ctx.0.lock() {
+            context.note(&target);
+        }
+        if let Ok(mut router) = handle.state::<Routing>().0.lock() {
+            router.manual_fire(&key, 0);
+        }
+        persist_fire(
+            &conn,
+            handle.state::<Session>(),
+            Some(v.id),
+            "direct",
+            1.0,
+            &key,
+        );
+        Some((key, target, v.text, v.translation))
+    };
+
+    if let Some((key, r, text, translation)) = fired {
+        channels::broadcast_content(
+            handle,
+            OutputContent {
+                reference: key.clone(),
+                text: Some(text.clone()),
+                translation: Some(translation.clone()),
+                ..Default::default()
+            },
+        );
+        let _ = handle.emit(
+            "detection://match",
+            DetectionEvent {
+                reference: key,
+                book: r.book,
+                chapter: r.chapter,
+                verse: r.verse,
+                confidence: 1.0,
+                method: DetectionMethod::Direct,
+                status: "manual",
+                in_library: true,
+                text: Some(text),
+                translation: Some(translation),
+            },
+        );
+        return true;
+    }
+    false
 }
 
 /// Persist a finalized transcript line into the current service (if recording),
@@ -594,6 +759,818 @@ fn lookup_verse(
     db::lookup_verse(&conn, &book, chapter, verse).map_err(|e| e.to_string())
 }
 
+/// Scripture search for the Planner — resolve a query to verses to add as cues.
+/// First tries to parse explicit references ("john 3:16", "ps 23", "rom 8 1")
+/// via the same detector the live pipeline uses; if none parse, falls back to a
+/// full-text corpus search ("shepherd"). Offline, corpus-only.
+#[tauri::command]
+fn search_scripture(
+    db: tauri::State<'_, Db>,
+    sem: tauri::State<'_, Semantic>,
+    query: String,
+) -> Result<Vec<db::VerseRow>, String> {
+    let q = query.trim();
+    if q.is_empty() {
+        return Ok(vec![]);
+    }
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+
+    // Score candidates and rank: exact reference > exact phrase > semantic
+    // paraphrase > loose text. Semantic is what turns a paraphrase ("there is
+    // therefore no condemnation in christ") into the real verse (Romans 8:1)
+    // plus suggestions — the same engine that drives live detection.
+    let mut scored: Vec<(f32, db::VerseRow)> = Vec::new();
+    let mut seen: std::collections::HashSet<i64> = std::collections::HashSet::new();
+
+    // 1) Explicit references ("john 3:16", "ps 23").
+    for m in detection::detect_direct(q) {
+        let r = &m.reference;
+        if let Ok(Some(v)) = db::lookup_verse(&conn, &r.book, r.chapter, r.verse) {
+            if seen.insert(v.id) {
+                scored.push((1.0, v));
+            }
+        }
+    }
+    // 2) Exact phrase (the whole query appears verbatim).
+    if q.split_whitespace().count() >= 2 {
+        if let Ok(hits) = db::search_verses_text(&conn, q, 12) {
+            for v in hits {
+                if seen.insert(v.id) {
+                    scored.push((0.95, v));
+                }
+            }
+        }
+    }
+    // 3) Semantic paraphrase — top matches by meaning, highest first.
+    for (r, score) in sem.0.top_k(q, 12) {
+        if score < 0.08 {
+            continue;
+        }
+        if let Ok(Some(v)) = db::lookup_verse(&conn, &r.book, r.chapter, r.verse) {
+            if seen.insert(v.id) {
+                scored.push((0.5 + score * 0.4, v)); // 0.5..0.9 band
+            }
+        }
+    }
+    // 4) Full-text word/phrase recall (FTS5, bm25-ranked). Catches loose,
+    //    non-contiguous word queries ("lord shepherd") a substring LIKE misses,
+    //    and ranks the best-matching verse first.
+    for (i, v) in db::search_verses_fts(&conn, q, 15)
+        .unwrap_or_default()
+        .into_iter()
+        .enumerate()
+    {
+        if seen.insert(v.id) {
+            scored.push((0.45 - (i as f32) * 0.008, v)); // 0.45..~0.33 band
+        }
+    }
+    // 4b) Last-ditch substring scan if FTS returned nothing (index still building).
+    if scored.is_empty() {
+        if let Ok(hits) = db::search_verses_text(&conn, q, 15) {
+            for v in hits {
+                if seen.insert(v.id) {
+                    scored.push((0.3, v));
+                }
+            }
+        }
+    }
+
+    scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+    Ok(scored.into_iter().take(25).map(|(_, v)| v).collect())
+}
+
+/// Planner: all service plans (newest first) with cue counts.
+#[tauri::command]
+fn list_plans(db: tauri::State<'_, Db>) -> Result<Vec<db::PlanSummary>, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    db::list_plans(&conn).map_err(|e| e.to_string())
+}
+
+/// Planner: create a plan.
+#[tauri::command]
+fn create_plan(db: tauri::State<'_, Db>, title: String, date: String) -> Result<i64, String> {
+    let title = title.trim();
+    if title.is_empty() {
+        return Err("plan needs a title".into());
+    }
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    db::create_plan(&conn, title, &date).map_err(|e| e.to_string())
+}
+
+/// Planner: delete a plan and its cues.
+#[tauri::command]
+fn delete_plan(db: tauri::State<'_, Db>, id: i64) -> Result<(), String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    db::delete_plan(&conn, id).map_err(|e| e.to_string())
+}
+
+/// Planner: duplicate a plan (with all its cues). Returns the new plan id.
+#[tauri::command]
+fn duplicate_plan(
+    db: tauri::State<'_, Db>,
+    id: i64,
+    title: String,
+    date: String,
+) -> Result<i64, String> {
+    let title = title.trim();
+    if title.is_empty() {
+        return Err("the copy needs a title".into());
+    }
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    db::duplicate_plan(&conn, id, title, &date).map_err(|e| e.to_string())
+}
+
+/// Planner: ordered cues of a plan.
+#[tauri::command]
+fn plan_items(db: tauri::State<'_, Db>, plan_id: i64) -> Result<Vec<db::PlanItem>, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    db::plan_items(&conn, plan_id).map_err(|e| e.to_string())
+}
+
+/// Planner: append a cue of any type to a plan.
+#[tauri::command]
+fn add_plan_item(
+    db: tauri::State<'_, Db>,
+    plan_id: i64,
+    cue_type: String,
+    label: String,
+    payload_json: String,
+    template_id: Option<i64>,
+) -> Result<i64, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    db::add_plan_item(
+        &conn,
+        plan_id,
+        &cue_type,
+        &label,
+        &payload_json,
+        template_id,
+    )
+    .map_err(|e| e.to_string())
+}
+
+/// Planner: remove a cue.
+#[tauri::command]
+fn remove_plan_item(db: tauri::State<'_, Db>, id: i64) -> Result<(), String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    db::remove_plan_item(&conn, id).map_err(|e| e.to_string())
+}
+
+/// Planner: reorder a cue up (-1) or down (+1).
+#[tauri::command]
+fn move_plan_item(db: tauri::State<'_, Db>, id: i64, direction: i64) -> Result<(), String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    db::move_plan_item(&conn, id, direction).map_err(|e| e.to_string())
+}
+
+/// Planner: set/clear a cue's operator stage note (confidence-monitor only).
+#[tauri::command]
+fn set_plan_note(db: tauri::State<'_, Db>, id: i64, note: String) -> Result<(), String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    db::set_plan_note(&conn, id, &note).map_err(|e| e.to_string())
+}
+
+/// Planner: apply a drag-reorder — the new ordered list of cue ids.
+#[tauri::command]
+fn reorder_plan(db: tauri::State<'_, Db>, plan_id: i64, ids: Vec<i64>) -> Result<(), String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    db::reorder_plan_items(&conn, plan_id, &ids).map_err(|e| e.to_string())
+}
+
+/// Lyrics: all songs (with section counts).
+#[tauri::command]
+fn list_songs(db: tauri::State<'_, Db>) -> Result<Vec<db::SongSummary>, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    db::list_songs(&conn).map_err(|e| e.to_string())
+}
+
+/// Lyrics: search songs by title or author (Planner add + Library browse).
+#[tauri::command]
+fn search_songs(db: tauri::State<'_, Db>, query: String) -> Result<Vec<db::SongSummary>, String> {
+    let q = query.trim();
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    if q.is_empty() {
+        db::list_songs(&conn).map_err(|e| e.to_string())
+    } else {
+        db::search_songs(&conn, q).map_err(|e| e.to_string())
+    }
+}
+
+/// Lyrics: a full song with ordered sections.
+#[tauri::command]
+fn get_song(db: tauri::State<'_, Db>, id: i64) -> Result<Option<db::Song>, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    db::get_song(&conn, id).map_err(|e| e.to_string())
+}
+
+/// Lyrics: import a song from pasted text. The pure `songs` parser splits the
+/// lyrics into sections; nothing leaves the device.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+fn import_song(
+    db: tauri::State<'_, Db>,
+    title: String,
+    author: String,
+    ccli: String,
+    song_key: String,
+    bpm: Option<i64>,
+    lyrics: String,
+    date: String,
+) -> Result<i64, String> {
+    let title = title.trim();
+    if title.is_empty() {
+        return Err("song needs a title".into());
+    }
+    let sections = songs::parse_song(&lyrics);
+    if sections.is_empty() {
+        return Err("no lyrics found to import".into());
+    }
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    // Dedupe by title: replace an existing song rather than duplicate it.
+    if let Some(id) = db::song_id_by_title(&conn, title).map_err(|e| e.to_string())? {
+        db::update_song(
+            &conn,
+            id,
+            title,
+            author.trim(),
+            ccli.trim(),
+            song_key.trim(),
+            bpm,
+            &sections,
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(id)
+    } else {
+        db::import_song(
+            &conn,
+            title,
+            author.trim(),
+            ccli.trim(),
+            song_key.trim(),
+            bpm,
+            &date,
+            &sections,
+        )
+        .map_err(|e| e.to_string())
+    }
+}
+
+/// Lyrics: save edits to a song — metadata + the full ordered section list.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+fn save_song(
+    db: tauri::State<'_, Db>,
+    id: i64,
+    title: String,
+    author: String,
+    ccli: String,
+    song_key: String,
+    bpm: Option<i64>,
+    sections: Vec<songs::ParsedSection>,
+) -> Result<(), String> {
+    let title = title.trim();
+    if title.is_empty() {
+        return Err("song needs a title".into());
+    }
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    db::update_song(
+        &conn,
+        id,
+        title,
+        author.trim(),
+        ccli.trim(),
+        song_key.trim(),
+        bpm,
+        &sections,
+    )
+    .map_err(|e| e.to_string())?;
+    // Propagate the edit to every plan that cues this song (real-time everywhere).
+    db::sync_song_in_plans(&conn, id, title, &sections).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Lyrics: delete a song and its sections.
+#[tauri::command]
+fn delete_song(db: tauri::State<'_, Db>, id: i64) -> Result<(), String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    db::delete_song(&conn, id).map_err(|e| e.to_string())
+}
+
+/// Arrangements: named play-orders of a song's sections.
+#[tauri::command]
+fn list_arrangements(
+    db: tauri::State<'_, Db>,
+    song_id: i64,
+) -> Result<Vec<db::Arrangement>, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    db::list_arrangements(&conn, song_id).map_err(|e| e.to_string())
+}
+
+/// Arrangements: create (id None) or update one. Returns its id.
+#[tauri::command]
+fn save_arrangement(
+    db: tauri::State<'_, Db>,
+    song_id: i64,
+    id: Option<i64>,
+    name: String,
+    sequence: Vec<i64>,
+) -> Result<i64, String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("arrangement needs a name".into());
+    }
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    db::save_arrangement(&conn, song_id, id, name, &sequence).map_err(|e| e.to_string())
+}
+
+/// Arrangements: delete one.
+#[tauri::command]
+fn delete_arrangement(db: tauri::State<'_, Db>, id: i64) -> Result<(), String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    db::delete_arrangement(&conn, id).map_err(|e| e.to_string())
+}
+
+/// Scripture (Library): verses the operator saved.
+#[tauri::command]
+fn list_saved_scripture(db: tauri::State<'_, Db>) -> Result<Vec<db::SavedScripture>, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    db::list_saved_scripture(&conn).map_err(|e| e.to_string())
+}
+
+/// Scripture (Library): resolve a reference and save it to the library.
+#[tauri::command]
+fn save_scripture(
+    db: tauri::State<'_, Db>,
+    book: String,
+    chapter: i64,
+    verse: i64,
+    date: String,
+) -> Result<db::SavedScripture, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    let v = db::lookup_verse(&conn, &book, chapter, verse)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("{book} {chapter}:{verse} not found"))?;
+    let id = db::save_scripture(&conn, &v, &date).map_err(|e| e.to_string())?;
+    Ok(db::SavedScripture {
+        id,
+        reference: v.reference,
+        book: v.book,
+        chapter: v.chapter,
+        verse: v.verse,
+        text: v.text,
+        translation: v.translation,
+    })
+}
+
+/// Scripture (Library): remove a saved verse.
+#[tauri::command]
+fn delete_saved_scripture(db: tauri::State<'_, Db>, id: i64) -> Result<(), String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    db::delete_saved_scripture(&conn, id).map_err(|e| e.to_string())
+}
+
+/// Announcements (Library): all saved notices, newest first.
+#[tauri::command]
+fn list_announcements(db: tauri::State<'_, Db>) -> Result<Vec<db::Announcement>, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    db::list_announcements(&conn).map_err(|e| e.to_string())
+}
+
+/// Announcements: create (id None) or update one. Returns its id.
+#[tauri::command]
+fn save_announcement(
+    db: tauri::State<'_, Db>,
+    id: Option<i64>,
+    title: String,
+    body: String,
+    date: String,
+) -> Result<i64, String> {
+    let title = title.trim();
+    let body = body.trim();
+    if title.is_empty() && body.is_empty() {
+        return Err("an announcement needs a title or body".into());
+    }
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    let saved = db::save_announcement(&conn, id, title, body, &date).map_err(|e| e.to_string())?;
+    // Editing an existing announcement propagates to any plan that cues it.
+    if id.is_some() {
+        let _ = db::sync_announcement_in_plans(&conn, saved, title, body);
+    }
+    Ok(saved)
+}
+
+/// Announcements: delete one.
+#[tauri::command]
+fn delete_announcement(db: tauri::State<'_, Db>, id: i64) -> Result<(), String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    db::delete_announcement(&conn, id).map_err(|e| e.to_string())
+}
+
+/// Media (Library): all imported media/document assets.
+#[tauri::command]
+fn list_media(db: tauri::State<'_, Db>) -> Result<Vec<db::MediaAsset>, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    db::list_media(&conn).map_err(|e| e.to_string())
+}
+
+/// Media (Library): import a file (image / video / document). The webview hands
+/// us the picked file's bytes (base64); we write it beside the DB and store a
+/// pointer — offline-first, nothing uploads.
+#[tauri::command]
+fn import_media(
+    db: tauri::State<'_, Db>,
+    kind: String,
+    filename: String,
+    data: String,
+    date: String,
+) -> Result<db::MediaAsset, String> {
+    use base64::Engine as _;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(data.as_bytes())
+        .map_err(|e| format!("could not read file data: {e}"))?;
+    let dir = db::media_dir();
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    let id = db::insert_media(&conn, &kind, &filename, &date).map_err(|e| e.to_string())?;
+    // Prefix with the row id to guarantee a unique on-disk name.
+    let safe: String = filename
+        .chars()
+        .map(|c| {
+            if c.is_alphanumeric() || matches!(c, '.' | '-' | '_') {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let path = dir.join(format!("{id}_{safe}"));
+    std::fs::write(&path, &bytes).map_err(|e| e.to_string())?;
+    let path_str = path.to_string_lossy().to_string();
+    db::set_media_path(&conn, id, &path_str).map_err(|e| e.to_string())?;
+    Ok(db::MediaAsset {
+        id,
+        kind,
+        filename,
+        path: path_str,
+        created_at: date,
+    })
+}
+
+/// Media (Library): delete an asset (row + file).
+#[tauri::command]
+fn delete_media(db: tauri::State<'_, Db>, id: i64) -> Result<(), String> {
+    let path = {
+        let conn = db.0.lock().map_err(|e| e.to_string())?;
+        db::delete_media(&conn, id).map_err(|e| e.to_string())?
+    };
+    if let Some(p) = path {
+        let _ = std::fs::remove_file(p); // best-effort
+    }
+    Ok(())
+}
+
+/// Lyrics: import songs from a ProPresenter file. The webview reads the picked
+/// file and hands us its bytes (base64) — a `.proplaylist` yields many songs,
+/// a single `.pro` yields one. Each slide becomes a section. Fully offline;
+/// nothing leaves the device. Returns the imported song titles.
+/// Result of a ProPresenter import — which songs were added new vs replaced
+/// (deduped by title).
+#[derive(serde::Serialize)]
+struct ImportResult {
+    added: Vec<String>,
+    replaced: Vec<String>,
+}
+
+/// A song parsed for the pre-save review step (not yet in the DB).
+#[derive(serde::Serialize, serde::Deserialize)]
+struct ReviewSong {
+    title: String,
+    sections: Vec<songs::ParsedSection>,
+}
+
+/// Parse a lyric file (ProPresenter / playlist / text) into songs WITHOUT
+/// saving — the operator reviews and edits before committing (avoids the
+/// import-then-fix-then-replace cycle). Offline.
+#[tauri::command]
+fn parse_import(filename: String, data: String) -> Result<Vec<ReviewSong>, String> {
+    use base64::Engine as _;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(data.as_bytes())
+        .map_err(|e| format!("could not read file data: {e}"))?;
+    let ext = filename.rsplit('.').next().unwrap_or("").to_lowercase();
+    let mut out = Vec::new();
+    if ["txt", "text", "md", "lyric", "lyrics"].contains(&ext.as_str()) {
+        let text = String::from_utf8_lossy(&bytes).to_string();
+        let sections = songs::parse_song(&text);
+        if !sections.is_empty() {
+            let title = filename
+                .rsplit(['/', '\\'])
+                .next()
+                .unwrap_or(&filename)
+                .rsplit_once('.')
+                .map(|(a, _)| a)
+                .unwrap_or(&filename)
+                .trim()
+                .to_string();
+            out.push(ReviewSong { title, sections });
+        }
+    } else {
+        for s in proimport::import_bytes(&filename, &bytes)? {
+            let sections = s
+                .slides
+                .iter()
+                .enumerate()
+                .map(|(i, t)| songs::ParsedSection {
+                    tag: format!("{}", i + 1),
+                    label: format!("Slide {}", i + 1),
+                    lyrics: t.clone(),
+                })
+                .collect();
+            out.push(ReviewSong {
+                title: s.title,
+                sections,
+            });
+        }
+    }
+    if out.is_empty() {
+        return Err("no lyrics found in this file".into());
+    }
+    Ok(out)
+}
+
+/// One reviewed song ready to save (edited by the operator).
+#[derive(serde::Deserialize)]
+struct SaveSong {
+    title: String,
+    #[serde(default)]
+    author: String,
+    #[serde(default)]
+    ccli: String,
+    #[serde(default)]
+    song_key: String,
+    #[serde(default)]
+    bpm: Option<i64>,
+    sections: Vec<songs::ParsedSection>,
+}
+
+/// Commit reviewed songs to the library (dedupe by title; propagate edits to
+/// any plans that already cue a replaced song).
+#[tauri::command]
+fn save_reviewed_songs(
+    db: tauri::State<'_, Db>,
+    songs: Vec<SaveSong>,
+    date: String,
+) -> Result<ImportResult, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    let mut added = Vec::new();
+    let mut replaced = Vec::new();
+    for s in songs {
+        let title = s.title.trim();
+        if title.is_empty() || s.sections.is_empty() {
+            continue;
+        }
+        if let Some(id) = db::song_id_by_title(&conn, title).map_err(|e| e.to_string())? {
+            db::update_song(
+                &conn,
+                id,
+                title,
+                s.author.trim(),
+                s.ccli.trim(),
+                s.song_key.trim(),
+                s.bpm,
+                &s.sections,
+            )
+            .map_err(|e| e.to_string())?;
+            db::sync_song_in_plans(&conn, id, title, &s.sections).map_err(|e| e.to_string())?;
+            replaced.push(title.to_string());
+        } else {
+            db::import_song(
+                &conn,
+                title,
+                s.author.trim(),
+                s.ccli.trim(),
+                s.song_key.trim(),
+                s.bpm,
+                &date,
+                &s.sections,
+            )
+            .map_err(|e| e.to_string())?;
+            added.push(title.to_string());
+        }
+    }
+    Ok(ImportResult { added, replaced })
+}
+
+#[tauri::command]
+fn import_pro(
+    db: tauri::State<'_, Db>,
+    filename: String,
+    data: String,
+    date: String,
+) -> Result<ImportResult, String> {
+    use base64::Engine as _;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(data.as_bytes())
+        .map_err(|e| format!("could not read file data: {e}"))?;
+    let songs = proimport::import_bytes(&filename, &bytes)?;
+    if songs.is_empty() {
+        return Err("no lyrics found in this file".into());
+    }
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    let mut added = Vec::new();
+    let mut replaced = Vec::new();
+    for song in songs {
+        let sections: Vec<songs::ParsedSection> = song
+            .slides
+            .iter()
+            .enumerate()
+            .map(|(i, t)| songs::ParsedSection {
+                // Sequential slide numbers — ProPresenter group names (Verse/
+                // Chorus) aren't reliably in the file, so keep tags clean and
+                // let the operator relabel in the slide-flow editor.
+                tag: format!("{}", i + 1),
+                label: format!("Slide {}", i + 1),
+                lyrics: t.clone(),
+            })
+            .collect();
+        if sections.is_empty() {
+            continue;
+        }
+        // Dedupe by title: replace an existing song's slides (keeping any
+        // metadata the operator set), otherwise add it fresh.
+        if let Some(id) = db::song_id_by_title(&conn, &song.title).map_err(|e| e.to_string())? {
+            db::replace_song_sections(&conn, id, &sections).map_err(|e| e.to_string())?;
+            replaced.push(song.title);
+        } else {
+            db::import_song(&conn, &song.title, "", "", "", None, &date, &sections)
+                .map_err(|e| e.to_string())?;
+            added.push(song.title);
+        }
+    }
+    Ok(ImportResult { added, replaced })
+}
+
+/// Normalize an operator stage note: trim, and treat blank as absent.
+fn clean_note(note: Option<String>) -> Option<String> {
+    note.map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
+}
+
+/// Start a pre-service countdown on every output. Broadcasts the target epoch
+/// (now + `minutes`), then each output ticks the MM:SS locally — no per-second
+/// network traffic. `label` shows above the timer; `done_msg` replaces it at 0.
+#[tauri::command]
+fn start_countdown(
+    app: tauri::AppHandle,
+    db: tauri::State<'_, Db>,
+    minutes: f64,
+    label: String,
+    done_msg: String,
+) -> Result<(), String> {
+    let mins = if minutes.is_finite() && minutes > 0.0 {
+        minutes
+    } else {
+        5.0
+    };
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
+    let target = now_ms + (mins * 60_000.0) as i64;
+    let (tid, tjson) = {
+        let conn = db.0.lock().map_err(|e| e.to_string())?;
+        content_tpl(&conn, "countdown")
+    };
+    channels::broadcast_content(
+        &app,
+        OutputContent {
+            reference: label.trim().to_string(),
+            countdown_to: Some(target),
+            countdown_done: clean_note(Some(done_msg)),
+            template_id: tid,
+            template_json: tjson,
+            ..Default::default()
+        },
+    );
+    persist_cue(&app, "countdown", None);
+    Ok(())
+}
+
+/// Fire arbitrary content straight to the output screens — the generic take for
+/// non-scripture cues (a song section, an announcement). Same broadcast path as
+/// a scripture manual fire; operator override, always. `label` is the on-screen
+/// citation, `text` the body. `stage_note` is the operator's confidence-monitor
+/// note for this cue, if any.
+#[tauri::command]
+fn fire_content(
+    app: tauri::AppHandle,
+    db: tauri::State<'_, Db>,
+    label: String,
+    text: String,
+    kind: String,
+    stage_note: Option<String>,
+) -> Result<(), String> {
+    let label = label.trim().to_string();
+    let (tid, tjson) = {
+        let conn = db.0.lock().map_err(|e| e.to_string())?;
+        content_tpl(&conn, &kind)
+    };
+    channels::broadcast_content(
+        &app,
+        OutputContent {
+            reference: label.clone(),
+            text: Some(text),
+            translation: None,
+            template_id: tid,
+            template_json: tjson,
+            stage_note: clean_note(stage_note),
+            ..Default::default()
+        },
+    );
+    persist_cue(&app, "manual_override", Some(&label));
+    Ok(())
+}
+
+/// Fire a media asset (image/video) to the output screens as a full-screen
+/// background. The file is served by the embedded HTTP server at
+/// `http://<lan-ip>:8032/media/<id>` so native windows AND kiosk/OBS clients
+/// load the same URL. Documents (pdf/pptx) aren't renderable as output yet.
+#[tauri::command]
+fn fire_media(app: tauri::AppHandle, db: tauri::State<'_, Db>, id: i64) -> Result<(), String> {
+    let (kind, filename, tid, tjson): (String, String, Option<i64>, Option<String>) = {
+        let conn = db.0.lock().map_err(|e| e.to_string())?;
+        let (k, f) = conn
+            .query_row(
+                "SELECT kind, filename FROM media_assets WHERE id = ?1",
+                [id],
+                |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
+            )
+            .map_err(|_| "media not found".to_string())?;
+        let (tid, tjson) = content_tpl(&conn, "media");
+        (k, f, tid, tjson)
+    };
+    let media_kind = match kind.as_str() {
+        "image" => "image",
+        "video" => "video",
+        _ => return Err("documents can't be shown as an output background yet".into()),
+    };
+    let ip = local_ip().unwrap_or_else(|| "127.0.0.1".to_string());
+    channels::broadcast_content(
+        &app,
+        OutputContent {
+            media_url: Some(format!("http://{ip}:8032/media/{id}")),
+            media_kind: Some(media_kind.to_string()),
+            template_id: tid,
+            template_json: tjson,
+            ..Default::default()
+        },
+    );
+    persist_cue(&app, "media", Some(&filename));
+    Ok(())
+}
+
+/// Resolve a content type's override template to (id, json) for the broadcast.
+/// A missing/unmapped type yields (None, None) → the channel template is used.
+fn content_tpl(conn: &rusqlite::Connection, kind: &str) -> (Option<i64>, Option<String>) {
+    match db::content_template(conn, kind) {
+        Ok(Some((id, j))) => (Some(id), Some(j)),
+        _ => (None, None),
+    }
+}
+
+/// The default template ids mapped to each content type.
+#[derive(serde::Serialize)]
+struct ContentTemplates {
+    scripture: Option<i64>,
+    song: Option<i64>,
+    media: Option<i64>,
+    announce: Option<i64>,
+}
+
+/// Read the content-type → template mapping (Templates screen defaults).
+#[tauri::command]
+fn get_content_templates(db: tauri::State<'_, Db>) -> Result<ContentTemplates, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    let id = |k: &str| db::content_template_id(&conn, k).ok().flatten();
+    Ok(ContentTemplates {
+        scripture: id("scripture"),
+        song: id("song"),
+        media: id("media"),
+        announce: id("announce"),
+    })
+}
+
+/// Map a content type to a template (None clears it → channel default).
+#[tauri::command]
+fn set_content_template(
+    db: tauri::State<'_, Db>,
+    kind: String,
+    template_id: Option<i64>,
+) -> Result<(), String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    db::set_content_template(&conn, &kind, template_id).map_err(|e| e.to_string())
+}
+
 /// Number of verses currently seeded — surfaced in Settings as a data-layer
 /// health indicator.
 #[tauri::command]
@@ -606,6 +1583,21 @@ fn data_health(db: tauri::State<'_, Db>) -> Result<i64, String> {
 #[tauri::command]
 fn list_audio_devices() -> Vec<audio::DeviceInfo> {
     audio::list_input_devices()
+}
+
+/// This machine's LAN IPv4, so output URLs point at a real address other devices
+/// can reach (not `localhost`). Uses the connect-a-UDP-socket trick — no packet
+/// is actually sent; the OS just picks the outbound interface. None if offline.
+#[tauri::command]
+fn local_ip() -> Option<String> {
+    let sock = std::net::UdpSocket::bind("0.0.0.0:0").ok()?;
+    sock.connect("8.8.8.8:80").ok()?;
+    let ip = sock.local_addr().ok()?.ip();
+    if ip.is_loopback() {
+        None
+    } else {
+        Some(ip.to_string())
+    }
 }
 
 /// Start capturing from `device` (default input when None). Each produced chunk
@@ -706,6 +1698,38 @@ fn stt_status(stt: tauri::State<'_, Stt>) -> Result<StatusStt, String> {
     })
 }
 
+/// Bible translations available in the corpus (Settings → Bible translations).
+#[tauri::command]
+fn list_translations(db: tauri::State<'_, Db>) -> Result<Vec<db::Translation>, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    db::list_translations(&conn).map_err(|e| e.to_string())
+}
+
+/// The active translation id used for verse lookups + output. Falls back to the
+/// first (KJV) when unset.
+#[tauri::command]
+fn get_active_translation(db: tauri::State<'_, Db>) -> Result<Option<i64>, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    let set = db::get_setting(&conn, "active_translation")
+        .map_err(|e| e.to_string())?
+        .and_then(|v| v.parse::<i64>().ok());
+    match set {
+        Some(id) => Ok(Some(id)),
+        None => Ok(db::list_translations(&conn)
+            .map_err(|e| e.to_string())?
+            .first()
+            .map(|t| t.id)),
+    }
+}
+
+/// Choose which translation to read from. Every verse lookup (detection, nav,
+/// manual, output) then prefers it, falling back to any that has the verse.
+#[tauri::command]
+fn set_active_translation(db: tauri::State<'_, Db>, id: i64) -> Result<(), String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    db::set_setting(&conn, "active_translation", &id.to_string()).map_err(|e| e.to_string())
+}
+
 /// Set the STT language: a code ("yo"/"sw"/"ha"/"en"/…) or null for auto-detect
 /// (code-switching). Tier-1 targets: Yoruba, Swahili, Hausa (CLAUDE.md).
 #[tauri::command]
@@ -753,19 +1777,14 @@ fn confirm_detection(
     if let Some(m) = detection::detect_direct(&reference).into_iter().next() {
         let r = &m.reference;
         let key = format!("{} {}:{}", r.book, r.chapter, r.verse);
-        let conn = db.0.lock().map_err(|e| e.to_string())?;
-        let looked = db::lookup_verse(&conn, &r.book, r.chapter, r.verse)
-            .ok()
-            .flatten();
-        channels::broadcast_content(
-            &app,
-            OutputContent {
-                reference: key.clone(),
-                text: looked.as_ref().map(|v| v.text.clone()),
-                translation: looked.as_ref().map(|v| v.translation.clone()),
-            },
-        );
-        if let Ok(mut context) = ctx.0.lock() {
+        // Read everything under the Db lock, then RELEASE it before emitting.
+        // Holding Db across broadcast_content (app.emit) is the documented
+        // deadlock against the macOS main run loop — CLAUDE.md rule #2.
+        let (text, translation, verse_id, end, tid, tjson) = {
+            let conn = db.0.lock().map_err(|e| e.to_string())?;
+            let looked = db::lookup_verse(&conn, &r.book, r.chapter, r.verse)
+                .ok()
+                .flatten();
             let end = if m.whole_chapter {
                 db::chapter_last_verse(&conn, &r.book, r.chapter)
                     .ok()
@@ -773,16 +1792,34 @@ fn confirm_detection(
             } else {
                 m.verse_end
             };
+            let (tid, tjson) = content_tpl(&conn, "scripture");
+            (
+                looked.as_ref().map(|v| v.text.clone()),
+                looked.as_ref().map(|v| v.translation.clone()),
+                looked.as_ref().map(|v| v.id),
+                end,
+                tid,
+                tjson,
+            )
+        };
+        channels::broadcast_content(
+            &app,
+            OutputContent {
+                reference: key.clone(),
+                text: text.clone(),
+                translation: translation.clone(),
+                template_id: tid,
+                template_json: tjson,
+                ..Default::default()
+            },
+        );
+        if let Ok(mut context) = ctx.0.lock() {
             context.note_passage(r, end);
         }
-        persist_fire(
-            &conn,
-            session,
-            looked.as_ref().map(|v| v.id),
-            "direct",
-            m.confidence,
-            &key,
-        );
+        {
+            let conn = db.0.lock().map_err(|e| e.to_string())?;
+            persist_fire(&conn, session, verse_id, "direct", m.confidence, &key);
+        }
     }
     let t = {
         let mut router = routing.0.lock().map_err(|e| e.to_string())?;
@@ -1063,6 +2100,7 @@ fn manual_fire(
     session: tauri::State<'_, Session>,
     ctx: tauri::State<'_, Context>,
     reference: String,
+    stage_note: Option<String>,
 ) -> Result<(), String> {
     let m = detection::detect_direct(&reference)
         .into_iter()
@@ -1071,7 +2109,7 @@ fn manual_fire(
     let r = &m.reference;
     let key = format!("{} {}:{}", r.book, r.chapter, r.verse);
 
-    let (looked, passage_end) = {
+    let (looked, passage_end, tid, tjson) = {
         let conn = db.0.lock().map_err(|e| e.to_string())?;
         let looked = db::lookup_verse(&conn, &r.book, r.chapter, r.verse)
             .ok()
@@ -1083,7 +2121,8 @@ fn manual_fire(
         } else {
             m.verse_end
         };
-        (looked, end)
+        let (tid, tjson) = content_tpl(&conn, "scripture");
+        (looked, end, tid, tjson)
     };
     {
         let mut router = routing.0.lock().map_err(|e| e.to_string())?;
@@ -1102,6 +2141,10 @@ fn manual_fire(
             reference: key.clone(),
             text: text.clone(),
             translation: translation.clone(),
+            template_id: tid,
+            template_json: tjson,
+            stage_note: clean_note(stage_note),
+            ..Default::default()
         },
     );
     let _ = app.emit(
@@ -1244,6 +2287,45 @@ fn list_templates(db: tauri::State<'_, Db>) -> Result<Vec<db::Template>, String>
     db::list_templates(&conn).map_err(|e| e.to_string())
 }
 
+/// The active templates (max 4) previewed on the console Output grid.
+#[tauri::command]
+fn list_active_templates(db: tauri::State<'_, Db>) -> Result<Vec<db::Template>, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    db::list_active_templates(&conn).map_err(|e| e.to_string())
+}
+
+/// Activate/deactivate a template on the console Output grid. Enforces the
+/// max-4 rule with a clear error the UI can show.
+#[tauri::command]
+fn set_template_active(db: tauri::State<'_, Db>, id: i64, active: bool) -> Result<(), String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    if active {
+        let others = db::active_template_count(&conn, id).map_err(|e| e.to_string())?;
+        if others >= 4 {
+            return Err(
+                "Only 4 templates can be active on the console at once — deactivate one first."
+                    .into(),
+            );
+        }
+    }
+    db::set_template_active(&conn, id, active).map_err(|e| e.to_string())
+}
+
+/// Create a new (blank-styled) template. Returns its id.
+#[tauri::command]
+fn create_template(db: tauri::State<'_, Db>, name: Option<String>) -> Result<i64, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    let name = name.unwrap_or_else(|| "New template".into());
+    db::create_template(&conn, name.trim()).map_err(|e| e.to_string())
+}
+
+/// Delete a template (unassigns it from any channel first).
+#[tauri::command]
+fn delete_template(db: tauri::State<'_, Db>, id: i64) -> Result<(), String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    db::delete_template(&conn, id).map_err(|e| e.to_string())
+}
+
 /// A single template by id (fetched by each output window on load).
 #[tauri::command]
 fn get_template(db: tauri::State<'_, Db>, id: i64) -> Result<Option<db::Template>, String> {
@@ -1263,6 +2345,15 @@ fn save_template(
         let conn = db.0.lock().map_err(|e| e.to_string())?;
         db::upsert_template(&conn, &template).map_err(|e| e.to_string())?
     };
+    // Push the fresh template live to any OBS/kiosk client showing it (WYSIWYG),
+    // and to native output windows via the event.
+    if let Ok(conn) = db.0.lock() {
+        if let Ok(Some(fresh)) = db::get_template(&conn, id) {
+            if let Ok(j) = serde_json::to_string(&fresh) {
+                app.state::<channels::KioskHub>().set_template(id, &j);
+            }
+        }
+    }
     let _ = app.emit("template://updated", id);
     Ok(id)
 }
@@ -1301,6 +2392,19 @@ fn clear_screens(app: tauri::AppHandle) {
     persist_cue(&app, "clear_screens", None);
 }
 
+/// Blackout every output (opaque black). The next fire/clear cancels it.
+#[tauri::command]
+fn blackout(app: tauri::AppHandle) {
+    channels::black(&app);
+    persist_cue(&app, "blackout", None);
+}
+
+/// Push the "up next" preview to the stage/confidence monitor. None clears it.
+#[tauri::command]
+fn set_stage_next(app: tauri::AppHandle, label: Option<String>, text: Option<String>) {
+    channels::stage_next(&app, label, text);
+}
+
 /// D5: push an emergency announcement over whatever is currently shown, on every
 /// output channel. Reuses the shared content broadcast (no per-channel special-
 /// casing) so it renders through the same template engine as any slide.
@@ -1316,6 +2420,7 @@ fn push_announcement(app: tauri::AppHandle, message: String) -> Result<(), Strin
             reference: "Announcement".into(),
             text: Some(message.clone()),
             translation: None,
+            ..Default::default()
         },
     );
     persist_cue(&app, "announcement", Some(&message));

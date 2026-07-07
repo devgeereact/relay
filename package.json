@@ -19,5 +19,9 @@
     "@tauri-apps/cli": "^2",
     "svelte": "^4",
     "vite": "^5"
+  },
+  "dependencies": {
+    "@fontsource/playfair-display": "^5.2.8",
+    "qrcode": "^1.5.4"
   }
 }

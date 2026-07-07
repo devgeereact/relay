@@ -213,56 +213,24 @@ where
             .default_input_device()
             .ok_or_else(|| "no default input device".to_string())?,
     };
-    let supported = pick_input_config(&device)?;
-    let sample_format = supported.sample_format();
-    let config: cpal::StreamConfig = supported.into();
-    let channels = config.channels as usize;
-    let sample_rate = config.sample_rate.0;
-
+    let preferred = pick_input_config(&device)?;
     let (tx, rx) = mpsc::channel::<Vec<f32>>();
-    let err_fn = |e| eprintln!("audio stream error: {e}");
 
-    // The realtime callback stays cheap: downmix to mono, forward. No DSP here.
-    let stream = match sample_format {
-        cpal::SampleFormat::F32 => {
-            let tx = tx.clone();
-            device.build_input_stream(
-                &config,
-                move |data: &[f32], _: &cpal::InputCallbackInfo| {
-                    let _ = tx.send(downmix_f32(data, channels));
-                },
-                err_fn,
-                None,
-            )
+    // Prefer the 48 kHz config (RNNoise runs frame-aligned), but if that exact
+    // config can't actually be opened on this device — common with USB mics,
+    // aggregate/virtual devices, or unusual channel layouts — fall back to the
+    // device's own default config so audio STILL flows (denoise self-disables).
+    // Without this, selecting a non-default device silently produced no audio.
+    let (stream, used) = match build_stream(&device, &preferred, &tx) {
+        Ok(s) => (s, preferred),
+        Err(e1) => {
+            eprintln!("audio: preferred 48 kHz config failed ({e1}); using device default");
+            let def = device.default_input_config().map_err(|e| e.to_string())?;
+            let s = build_stream(&device, &def, &tx)?;
+            (s, def)
         }
-        cpal::SampleFormat::I16 => {
-            let tx = tx.clone();
-            device.build_input_stream(
-                &config,
-                move |data: &[i16], _: &cpal::InputCallbackInfo| {
-                    let mono = downmix_i16(data, channels);
-                    let _ = tx.send(mono);
-                },
-                err_fn,
-                None,
-            )
-        }
-        cpal::SampleFormat::U16 => {
-            let tx = tx.clone();
-            device.build_input_stream(
-                &config,
-                move |data: &[u16], _: &cpal::InputCallbackInfo| {
-                    let mono = downmix_u16(data, channels);
-                    let _ = tx.send(mono);
-                },
-                err_fn,
-                None,
-            )
-        }
-        other => return Err(format!("unsupported sample format: {other:?}")),
-    }
-    .map_err(|e| e.to_string())?;
-
+    };
+    let sample_rate = used.sample_rate().0;
     stream.play().map_err(|e| e.to_string())?;
 
     let vad = Vad {
@@ -305,6 +273,58 @@ where
     }
     drop(stream);
     Ok(())
+}
+
+/// Build a cpal input stream for `supported`, downmixing to mono and forwarding
+/// samples over `tx`. Kept separate so the caller can try a preferred config and
+/// fall back to the device default if the preferred one won't open.
+fn build_stream(
+    device: &cpal::Device,
+    supported: &cpal::SupportedStreamConfig,
+    tx: &mpsc::Sender<Vec<f32>>,
+) -> Result<cpal::Stream, String> {
+    let sample_format = supported.sample_format();
+    let config: cpal::StreamConfig = supported.clone().into();
+    let channels = config.channels as usize;
+    let err_fn = |e| eprintln!("audio stream error: {e}");
+    let stream = match sample_format {
+        cpal::SampleFormat::F32 => {
+            let tx = tx.clone();
+            device.build_input_stream(
+                &config,
+                move |data: &[f32], _: &cpal::InputCallbackInfo| {
+                    let _ = tx.send(downmix_f32(data, channels));
+                },
+                err_fn,
+                None,
+            )
+        }
+        cpal::SampleFormat::I16 => {
+            let tx = tx.clone();
+            device.build_input_stream(
+                &config,
+                move |data: &[i16], _: &cpal::InputCallbackInfo| {
+                    let _ = tx.send(downmix_i16(data, channels));
+                },
+                err_fn,
+                None,
+            )
+        }
+        cpal::SampleFormat::U16 => {
+            let tx = tx.clone();
+            device.build_input_stream(
+                &config,
+                move |data: &[u16], _: &cpal::InputCallbackInfo| {
+                    let _ = tx.send(downmix_u16(data, channels));
+                },
+                err_fn,
+                None,
+            )
+        }
+        other => return Err(format!("unsupported sample format: {other:?}")),
+    }
+    .map_err(|e| e.to_string())?;
+    Ok(stream)
 }
 
 /// Choose a capture config, preferring 48 kHz so the RNNoise front-end runs
