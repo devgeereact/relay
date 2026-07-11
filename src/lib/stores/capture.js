@@ -136,7 +136,6 @@ export async function initAudio() {
   // Mirror output state into `live` (set once). A listener failure must NOT
   // disable the app — hence a separate try that leaves `available` alone.
   if (!outputListenersUp) {
-    outputListenersUp = true;
     try {
       const { listen } = await import('@tauri-apps/api/event');
       await listen('output://content', (e) => { live.set(e.payload); screenBlack.set(false); });
@@ -161,6 +160,11 @@ export async function initAudio() {
       await listen('audio://quality', (e) =>
         capture.update((s) => ({ ...s, quality: e.payload }))
       );
+      // Only NOW are they actually up. Setting this before registration meant a
+      // single failed `listen` latched the flag forever: the listeners were never
+      // registered and never retried, so the console silently stopped mirroring
+      // what was on the screens for the rest of the session.
+      outputListenersUp = true;
     } catch {
       /* events unavailable — previews just won't mirror; app still works */
     }

@@ -63,57 +63,60 @@ pub fn scrub(mut event: sentry::protocol::Event<'static>) -> sentry::protocol::E
     event.server_name = None;
     event.request = None;
 
-    // The message and exception values can quote the data that caused the crash —
-    // e.g. a panic formatting a verse, or a parse error echoing a transcript
-    // line. Keep the TYPE, drop the free text.
-    if let Some(msg) = event.message.take() {
-        event.message = Some(redact(&msg));
+    // Free text goes. All of it. See `REDACTED` below for why.
+    if event.message.is_some() {
+        event.message = Some(REDACTED.to_string());
     }
     for ex in event.exception.values.iter_mut() {
-        ex.value = ex.value.as_deref().map(redact);
+        // The exception TYPE stays — "PanicException", "std::io::Error". A type
+        // name is code, not content, and it is what Sentry groups on.
+        if ex.value.is_some() {
+            ex.value = Some(REDACTED.to_string());
+        }
+        // The stack trace stays: frames are function names, files and line numbers
+        // — code. But their captured LOCALS are not. A local variable at the moment
+        // of a crash is very often the exact verse or transcript line that caused
+        // it. Drop every one.
+        if let Some(st) = ex.stacktrace.as_mut() {
+            for frame in st.frames.iter_mut() {
+                frame.vars.clear();
+            }
+        }
     }
 
     event
 }
 
-/// Replace anything that looks like church content with a placeholder, keeping
-/// the shape of the message so a stack trace is still readable.
+/// What replaces every free-text field in a crash report.
 ///
-/// The rule is conservative: keep only characters that cannot spell a sentence.
-/// A crash message like `called \`Option::unwrap()\` on a \`None\` value` survives
-/// intact; `failed to render "For God so loved the world…"` does not.
-fn redact(s: &str) -> String {
-    // Quoted spans are where content ends up. Blank them, keep the rest.
-    let mut out = String::with_capacity(s.len());
-    let mut in_quote = false;
-    let mut quote_ch = '"';
-    let mut redacted_any = false;
-    for c in s.chars() {
-        match c {
-            '"' | '\'' | '“' | '”' if !in_quote => {
-                in_quote = true;
-                quote_ch = if c == '“' { '”' } else { c };
-                out.push('"');
-            }
-            _ if in_quote && c == quote_ch => {
-                in_quote = false;
-                if redacted_any {
-                    out.push_str("<redacted>");
-                    redacted_any = false;
-                }
-                out.push('"');
-            }
-            _ if in_quote => {
-                redacted_any = true;
-            }
-            _ => out.push(c),
-        }
-    }
-    if in_quote && redacted_any {
-        out.push_str("<redacted>");
-    }
-    out
-}
+/// ## Why the message is dropped entirely, rather than cleaned
+///
+/// The first version tried to be clever: find the quoted spans (where content
+/// usually ends up), blank those, and keep the rest so a panic stayed readable.
+/// That is a **blocklist** — it enumerates what to remove and ships everything
+/// else — and this module's own doc comment says, correctly, that a blocklist
+/// fails open, and that the cost of failing open here is publishing somebody's
+/// sermon.
+///
+/// It failed open immediately. An apostrophe is a quote character, and scripture
+/// is full of them:
+///
+/// ```text
+///   in:  no verse for 'God's word to the church'
+///   out: no verse for "<redacted>"s word to the church"
+///                                  ^^^^^^^^^^^^^^^^^^^ sent in the clear
+/// ```
+///
+/// The `'` in `God's` closed the span early and the rest went out verbatim. The
+/// tests passed, because I had tested the case I was thinking of and the leak was
+/// in the case I wasn't.
+///
+/// There is no safe way to sift content out of a free-text field that is *allowed*
+/// to contain content. So it isn't sifted — it's dropped. A crash stays fully
+/// actionable from what remains: exception type, stack trace, module, OS, app
+/// version. Which is exactly what this module always *claimed* it sent, and now
+/// actually does.
+const REDACTED: &str = "<redacted: Relay never sends message text>";
 
 /// Turn crash reporting ON. Idempotent; a second call replaces the client.
 ///
@@ -183,7 +186,7 @@ mod tests {
         let msg = out.message.unwrap();
         assert!(!msg.contains("God"), "{msg}");
         assert!(!msg.contains("begotten"), "{msg}");
-        assert!(msg.contains("<redacted>"), "{msg}");
+        assert_eq!(msg, REDACTED);
     }
 
     #[test]
@@ -204,14 +207,84 @@ mod tests {
         assert_eq!(out.exception.values[0].ty, "PanicException");
     }
 
-    /// A real Rust panic must still be readable, or the whole feature is useless.
+    /// THE test the original implementation would have failed.
+    ///
+    /// It tried to blank *quoted spans* and keep the rest. An apostrophe is a
+    /// quote character, and scripture is full of them — so `God's` closed the span
+    /// early and the remainder of the sermon text went out in the clear. The old
+    /// tests passed because they used text without apostrophes.
     #[test]
-    fn an_ordinary_panic_message_survives_intact() {
-        let e = event_with_message("called `Option::unwrap()` on a `None` value");
-        let msg = scrub(e).message.unwrap();
-        assert!(msg.contains("Option::unwrap()"), "{msg}");
-        assert!(msg.contains("None"), "{msg}");
-        assert!(!msg.contains("<redacted>"), "{msg}");
+    fn an_apostrophe_cannot_leak_the_rest_of_the_sentence() {
+        for msg in [
+            "no verse for 'God's word to the church'",
+            "panic at 'thou shalt not' in Moses' law about coveting",
+            "failed to render \"the Lord's prayer, our Father who art in heaven\"",
+            "assertion failed: verse == The Lord is my shepherd, I shall not want",
+        ] {
+            let out = scrub(event_with_message(msg)).message.unwrap();
+            for leaked in [
+                "God", "church", "Moses", "shepherd", "Lord", "prayer", "shalt",
+            ] {
+                assert!(
+                    !out.contains(leaked),
+                    "leaked {leaked:?} from {msg:?} -> {out:?}"
+                );
+            }
+        }
+    }
+
+    /// Nothing free-text survives, not even an innocuous-looking panic. A message
+    /// that is ALLOWED to contain content cannot be sifted safely, so it is not
+    /// sifted — the type and the stack trace are what make a crash actionable.
+    #[test]
+    fn no_free_text_survives_at_all() {
+        let msg = scrub(event_with_message(
+            "called `Option::unwrap()` on a `None` value",
+        ))
+        .message
+        .unwrap();
+        assert_eq!(msg, REDACTED);
+    }
+
+    /// Stack-frame LOCALS are dropped. A local at the moment of a crash is very
+    /// often the exact verse that caused it.
+    #[test]
+    fn stack_frame_locals_are_dropped_but_the_frames_remain() {
+        let mut frame = sentry::protocol::Frame {
+            function: Some("relay::pipeline::fire".into()),
+            lineno: Some(42),
+            ..Default::default()
+        };
+        frame
+            .vars
+            .insert("verse".into(), "For God so loved the world".into());
+
+        let e = Event {
+            exception: Values::from(vec![Exception {
+                ty: "PanicException".into(),
+                value: Some("boom".into()),
+                stacktrace: Some(sentry::protocol::Stacktrace {
+                    frames: vec![frame],
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }]),
+            ..Default::default()
+        };
+
+        let out = scrub(e);
+        let st = out.exception.values[0].stacktrace.as_ref().unwrap();
+        // The frame survives — it is code, and it is what makes the report useful.
+        assert_eq!(
+            st.frames[0].function.as_deref(),
+            Some("relay::pipeline::fire")
+        );
+        assert_eq!(st.frames[0].lineno, Some(42));
+        // Its locals do not.
+        assert!(
+            st.frames[0].vars.is_empty(),
+            "a local leaked the verse text"
+        );
     }
 
     #[test]

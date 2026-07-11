@@ -233,8 +233,15 @@ impl Router {
     /// clearing the screen and having the preacher immediately re-reference the
     /// same verse would leave the screen stubbornly blank for the rest of the
     /// cooldown — the debounce would suppress the one fire the operator wants.
+    ///
+    /// Clears the remembered CONFIDENCE too, not just the key. `record_feedback`
+    /// falls back to `last_fire_conf` when a dismiss arrives with no argument, so
+    /// leaving it set meant a dismiss *after* a clear would tune the gate using the
+    /// score of an auto-fire that is no longer on screen — correcting the router
+    /// for a decision the operator was not actually reacting to.
     pub fn forget_last_fire(&mut self) {
         self.last_fire = None;
+        self.last_fire_conf = None;
     }
 
     /// Operator manual override — always fires, bypassing thresholds and

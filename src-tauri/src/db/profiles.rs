@@ -33,16 +33,29 @@ pub struct VoiceProfile {
     pub is_active: bool,
 }
 
+// The gate baseline has exactly ONE definition, in router.rs. Everything here
+// derives from it.
+//
+// It used to be hardcoded in five places in this file — the serde defaults, the
+// table DDL, the seed row, the re-baseline UPDATE, and create_voice_profile. That
+// is precisely the drift that caused the original calibration bug: two copies of
+// the baseline disagreed (0.50/0.35 vs 0.90/0.60) and any profile save snapped
+// between them. Fixing the router while leaving five copies in the DB layer would
+// have set the same trap again, one release later.
 fn default_sensitivity() -> i64 {
-    50
+    crate::router::DEFAULT_SENSITIVITY as i64
+}
+
+fn baseline() -> crate::router::Thresholds {
+    crate::router::Thresholds::default()
 }
 
 fn default_auto_fire() -> f64 {
-    0.50
+    baseline().auto_fire as f64
 }
 
 fn default_suggest() -> f64 {
-    0.35
+    baseline().suggest as f64
 }
 
 const PROFILE_COLS: &str =
@@ -65,23 +78,30 @@ fn row_to_profile(r: &rusqlite::Row) -> rusqlite::Result<VoiceProfile> {
 /// profile (seeding a "Default" if the table is empty). Idempotent — safe to run
 /// on every open, including DBs created before Phase B existed.
 pub fn ensure_voice_profiles(conn: &Connection) -> rusqlite::Result<()> {
-    conn.execute_batch(
+    conn.execute_batch(&format!(
         "CREATE TABLE IF NOT EXISTS voice_profiles (
             id          INTEGER PRIMARY KEY,
             name        TEXT NOT NULL,
             language    TEXT,
-            sensitivity INTEGER NOT NULL DEFAULT 50,
-            auto_fire   REAL NOT NULL DEFAULT 0.50,
-            suggest     REAL NOT NULL DEFAULT 0.35,
+            sensitivity INTEGER NOT NULL DEFAULT {sens},
+            auto_fire   REAL NOT NULL DEFAULT {auto},
+            suggest     REAL NOT NULL DEFAULT {sugg},
             bias_terms  TEXT NOT NULL DEFAULT '',
             is_active   INTEGER NOT NULL DEFAULT 0
         );",
-    )?;
+        sens = default_sensitivity(),
+        auto = default_auto_fire(),
+        sugg = default_suggest(),
+    ))?;
     let n: i64 = conn.query_row("SELECT COUNT(*) FROM voice_profiles", [], |r| r.get(0))?;
     if n == 0 {
         conn.execute(
-            "INSERT INTO voice_profiles (name, language, auto_fire, suggest, is_active)
-             VALUES ('Default', NULL, 0.50, 0.35, 1)",
+            &format!(
+                "INSERT INTO voice_profiles (name, language, auto_fire, suggest, is_active)
+                 VALUES ('Default', NULL, {}, {}, 1)",
+                default_auto_fire(),
+                default_suggest()
+            ),
             [],
         )?;
     } else {
@@ -90,8 +110,12 @@ pub fn ensure_voice_profiles(conn: &Connection) -> rusqlite::Result<()> {
         // the new "push above ~50%" default. Only touches untouched seeds — a
         // profile the operator tuned won't match these exact values.
         conn.execute(
-            "UPDATE voice_profiles SET auto_fire = 0.50, suggest = 0.35
-               WHERE auto_fire = 0.90 AND suggest = 0.60",
+            &format!(
+                "UPDATE voice_profiles SET auto_fire = {}, suggest = {}
+                  WHERE auto_fire = 0.90 AND suggest = 0.60",
+                default_auto_fire(),
+                default_suggest()
+            ),
             [],
         )?;
     }
@@ -141,7 +165,11 @@ pub fn create_voice_profile(
     language: Option<&str>,
 ) -> rusqlite::Result<i64> {
     conn.execute(
-        "INSERT INTO voice_profiles (name, language, auto_fire, suggest) VALUES (?1, ?2, 0.50, 0.35)",
+        &format!(
+            "INSERT INTO voice_profiles (name, language, auto_fire, suggest) VALUES (?1, ?2, {}, {})",
+            default_auto_fire(),
+            default_suggest()
+        ),
         (name, language),
     )?;
     Ok(conn.last_insert_rowid())

@@ -1075,6 +1075,41 @@ mod tests {
 
     /// A fresh DB is stamped at the current version, so it is never mistaken for
     /// a pre-versioning one and dragged through the legacy sniffs.
+    /// The DB's profile defaults MUST equal the router's baseline. They were
+    /// hardcoded separately in five places in db/profiles.rs, which is exactly how
+    /// the original calibration bug happened: two copies of the baseline drifted
+    /// apart and a profile save snapped between them. This fails the moment a
+    /// sixth copy appears.
+    #[test]
+    fn the_db_profile_defaults_are_the_router_baseline() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_fresh(&conn).unwrap();
+        let p = active_voice_profile(&conn)
+            .unwrap()
+            .expect("an active profile");
+        let base = crate::router::Thresholds::default();
+
+        assert!((p.auto_fire - base.auto_fire as f64).abs() < 1e-6, "{p:?}");
+        assert!((p.suggest - base.suggest as f64).abs() < 1e-6, "{p:?}");
+        assert_eq!(p.sensitivity, crate::router::DEFAULT_SENSITIVITY as i64);
+
+        // ...and so does a newly created one.
+        let id = create_voice_profile(&conn, "Pastor Ade", Some("yo")).unwrap();
+        let made = list_voice_profiles(&conn)
+            .unwrap()
+            .into_iter()
+            .find(|x| x.id == id)
+            .unwrap();
+        assert!(
+            (made.auto_fire - base.auto_fire as f64).abs() < 1e-6,
+            "{made:?}"
+        );
+        assert!(
+            (made.suggest - base.suggest as f64).abs() < 1e-6,
+            "{made:?}"
+        );
+    }
+
     #[test]
     fn a_fresh_db_is_stamped_at_the_current_version() {
         let conn = Connection::open_in_memory().unwrap();

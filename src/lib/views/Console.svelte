@@ -176,6 +176,21 @@
 
   $: hasTranscript = $transcript.finals.length > 0 || $transcript.partial.length > 0;
 
+  // Look the warning up defensively. If dsp.rs ever gains a warning kind this map
+  // doesn't know, an unguarded QUALITY[kind].title would throw — and an exception
+  // here takes down the whole operator console, mid-service, over a mic warning.
+  // An unknown warning still surfaces, just without the tailored advice.
+  $: qualityWarning = (() => {
+    const kind = $capture.quality?.warning;
+    if (!kind) return null;
+    return (
+      QUALITY[kind] ?? {
+        title: 'There is a problem with the microphone input.',
+        fix: 'Detection accuracy may suffer. Check the mixer channel and the mic.',
+      }
+    );
+  })();
+
   // Console Output = the ACTIVE template STYLES (max 4), each previewing the
   // live content in its own style, through the SAME TemplateRender as the real
   // output = true WYSIWYG. Which 4 are active is chosen in the Templates tab.
@@ -361,10 +376,10 @@
 
   <!-- Mic quality. Only shown while actually listening, and only when something
        is genuinely wrong — a warning that is always on screen is wallpaper. -->
-  {#if $capture.capturing && $capture.quality?.warning}
+  {#if $capture.capturing && qualityWarning}
     <div class="sttwarn">
-      <b>{QUALITY[$capture.quality.warning].title}</b>
-      {QUALITY[$capture.quality.warning].fix}
+      <b>{qualityWarning.title}</b>
+      {qualityWarning.fix}
     </div>
   {/if}
 
@@ -492,7 +507,7 @@
   .mon.on.a-rose{border:1px solid rgba(255,157,148,.45);box-shadow:0 0 26px -8px var(--s-rose-glow)}
   .mon-badge{position:absolute;top:11px;left:11px;z-index:2;padding:3px 9px;border-radius:6px;
     font-family:var(--f-ui);font-size:9px;font-weight:700;letter-spacing:.09em;text-transform:uppercase}
-  .b-gold{background:var(--s-gold);color:var(--s-ongold)}
+  .b-amber{background:var(--s-gold);color:var(--s-ongold)}
   .b-cyan{background:var(--s-cyan);color:#06222e}
   .b-amethyst{background:var(--s-amethyst);color:#2a0d45}
   .b-rose{background:var(--s-rose);color:#3d0a08}

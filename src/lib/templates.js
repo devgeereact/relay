@@ -98,7 +98,12 @@ export function monitorAccent(i) {
 export function parseTemplateOverride(templateJson) {
   if (!templateJson) return null;
   try {
-    return JSON.parse(templateJson);
+    const parsed = JSON.parse(templateJson);
+    // JSON.parse("42") and JSON.parse("null") are both valid and both useless
+    // here — the renderer expects an object and would read .style/.layout off a
+    // number. Anything that isn't an object falls back to the channel template.
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+    return parsed;
   } catch {
     return null;
   }

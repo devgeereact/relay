@@ -30,6 +30,9 @@ jobs:
         os: [macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Don't leave GITHUB_TOKEN on disk for the rest of the job.
+          persist-credentials: false
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -72,9 +75,13 @@ jobs:
       # succeeded — Relay could not be packaged at all. That is also why the
       # Windows-only STT model-path bug survived: nobody could produce a bundle
       # to find it in. `tauri dev` does not catch this. This step does.
-      # `--no-bundle` compiles the release binary but skips installer packaging —
-      # the compile is the part that was broken, and it needs no signing identity.
-      - name: Package (release build)
+      # COMPILE-ONLY, deliberately. `--no-bundle` builds the release binary but
+      # does NOT produce or exercise the msi/dmg installers. The compile is the
+      # part that was broken (whisper.cpp needs std::filesystem, and Tauri's
+      # release profile was passing a 10.13 deployment target), and it needs no
+      # signing identity to prove. Installer/layout coverage is a separate job we
+      # don't have yet — don't read this step as "packaging works".
+      - name: Release build (compile only, no installer)
         run: npm run tauri build -- --no-bundle
 
   frontend:
@@ -82,6 +89,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Don't leave GITHUB_TOKEN on disk for the rest of the job.
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: 20
