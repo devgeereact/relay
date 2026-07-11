@@ -1,0 +1,93 @@
+name: CI
+
+# Nothing ran on push before this existed. Relay is software someone runs live,
+# once a week, in front of a congregation, with no second take — so the bar is
+# that main is always shippable, and that the specific defects we've already been
+# bitten by can never quietly come back.
+#
+# The Rust job runs on BOTH macOS and Windows deliberately. Windows is a day-one
+# platform (docs/DECISIONS.md) and the STT model-path bug — which left speech
+# recognition silently dead on every packaged Windows build — was invisible on a
+# Mac. A single-OS matrix would not have caught it, and would not catch the next
+# one either.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  rust:
+    name: Rust (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      # whisper-rs compiles whisper.cpp from source and needs CMake.
+      - name: Install CMake
+        uses: lukka/get-cmake@latest
+
+      # Tauri's Linux deps aren't needed (we build macOS + Windows only), but the
+      # frontend must exist: channels.rs `include_dir!`s ../dist at compile time,
+      # so the Rust build FAILS without a built frontend. Not optional.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Format
+        working-directory: src-tauri
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        working-directory: src-tauri
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Test
+        working-directory: src-tauri
+        run: cargo test --all-targets
+
+      # The release profile is a DIFFERENT build from `cargo test`, and it was
+      # broken: whisper.cpp needs std::filesystem (macOS 10.15+) while Tauri's
+      # default deployment target is 10.13, so `tauri build` had never once
+      # succeeded — Relay could not be packaged at all. That is also why the
+      # Windows-only STT model-path bug survived: nobody could produce a bundle
+      # to find it in. `tauri dev` does not catch this. This step does.
+      - name: Package (release bundle)
+        run: npm run tauri build -- --bundles none
+
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      # Includes the IPC contract test, which checks every Tauri command the
+      # frontend calls by string actually exists in Rust. Renaming a
+      # #[tauri::command] otherwise fails silently inside a `catch {}` — a button
+      # just quietly stops working, and you find out during a service.
+      - run: npm test

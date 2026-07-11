@@ -7,10 +7,16 @@
   // the same TemplateRender + active templates the Console and OBS clients use.
   import { onMount, onDestroy } from 'svelte';
   import TemplateRender from '../TemplateRender.svelte';
+  import { registerContext } from '../shortcuts.js';
+  import { monitorAccent } from '../templates.js';
+  import { songCue } from '../cues.js';
+  import { setSession } from '../session.js';
   import {
     capture,
     live,
     listActiveTemplates,
+    liveContent,
+    liveTemplateOverride,
     listPlans,
     createPlan,
     deletePlan,
@@ -25,7 +31,6 @@
     searchSongs,
     getSong,
     listArrangements,
-    expandSections,
     listMedia,
     fireMedia,
     listAnnouncements,
@@ -43,7 +48,6 @@
     announce: { label: 'NOTICE', color: 'var(--v-rose)', trig: 'MANUAL/TIMER' },
     countdown: { label: 'COUNTDOWN', color: 'var(--v-cyan)', trig: 'TIMER' },
   };
-  const MON_ACCENTS = ['amber', 'cyan', 'amethyst', 'rose'];
 
   // ── plans list ──
   let plans = [];
@@ -62,6 +66,11 @@
   let liveCueId = null;
   let liveSlide = 0;
 
+  // Mirror the live position into the persisted session, so a reload — or a
+  // crash followed by Recover — brings the operator back to the cue and slide
+  // they were actually on, mid-service, instead of to a blank Console tab.
+  $: setSession({ planId: openPlan?.id ?? null, liveCueId, liveSlide });
+
   // one search (add mode) — scripture + songs + media together
   let addQ = '';
   let addVerses = [];
@@ -72,27 +81,20 @@
   let allAnnounce = []; // full announcement list, filtered locally
   let addSearching = false;
 
-  // Keyboard transport — only in the run editor, never while typing. Arrow
-  // keys / space advance slides; Escape clears. What a live operator expects.
-  function onKey(e) {
-    if (!openPlan) return;
-    const typing = e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA');
-    if (typing) return;
-    if (e.key === 'ArrowRight' || e.key === 'PageDown' || e.key === ' ') {
-      e.preventDefault();
-      stepLive(1);
-    } else if (e.key === 'ArrowLeft' || e.key === 'PageUp') {
-      e.preventDefault();
-      stepLive(-1);
-    } else if (e.key === 'Escape') {
-      clearLive();
-    }
-  }
+  // Slide transport. Registered as CONTEXT actions with the app-shell shortcut
+  // registry (lib/shortcuts.js) rather than a private window listener — Escape
+  // (clear) and B (blackout) are global and owned by the shell, so they keep
+  // working on every tab. Only advance/back are ours, and only while a plan is
+  // actually open in the run editor.
+  let unregisterKeys;
   onMount(() => {
     refresh();
-    window.addEventListener('keydown', onKey);
+    unregisterKeys = registerContext({
+      next: () => openPlan && stepLive(1),
+      prev: () => openPlan && stepLive(-1),
+    });
   });
-  onDestroy(() => window.removeEventListener('keydown', onKey));
+  onDestroy(() => unregisterKeys?.());
   async function refresh() {
     plans = await listPlans();
   }
@@ -219,18 +221,7 @@
     arrPick = { song, arrangements };
   }
   async function commitSong(song, arr) {
-    const base = song.sections.map((s) => ({ tag: s.tag, label: s.label, lyrics: s.lyrics }));
-    const sections = arr ? expandSections(base, arr.sequence) : base;
-    const payload = {
-      song_id: song.id,
-      title: song.title,
-      author: song.author,
-      song_key: song.song_key,
-      sections,
-      arrangement_name: arr ? arr.name : 'Standard',
-      arrangement_seq: arr ? arr.sequence : null,
-    };
-    const label = arr ? `${song.title} · ${arr.name}` : song.title;
+    const { label, payload } = songCue(song, arr);
     await addPlanItem(openPlan.id, 'song', label, payload);
     arrPick = null;
     await loadItems();
@@ -433,8 +424,6 @@
   }
   $: selSlides = slidesOf(selCue);
   $: liveIndex = items.findIndex((i) => i.id === liveCueId);
-  $: liveContent = $live ? { reference: $live.reference, text: $live.text, translation: $live.translation, media_url: $live.media_url, media_kind: $live.media_kind, countdown_to: $live.countdown_to, countdown_done: $live.countdown_done } : null;
-  $: overrideTpl = (() => { if ($live && $live.template_json) { try { return JSON.parse($live.template_json); } catch { /* ignore */ } } return null; })();
   $: flowHeader = !selCue
     ? ''
     : selCue.cue_type === 'song'
@@ -692,7 +681,7 @@
         <div class="sp-monwrap r-scroll">
           {#if activeTpls.length}
             {#each activeTpls as tpl, i (tpl.id)}
-              {@const acc = MON_ACCENTS[i % MON_ACCENTS.length]}
+              {@const acc = monitorAccent(i)}
               <div class="sp-mon a-{acc}" class:on={$live}>
                 <div class="sp-monhead">
                   <span class="sp-monlbl">{$live ? 'LIVE' : 'IDLE'} · {tpl.name}</span>
@@ -703,7 +692,7 @@
                     </span>
                   {/if}
                 </div>
-                <div class="sp-moncanvas"><TemplateRender template={overrideTpl ?? tpl} content={liveContent} /></div>
+                <div class="sp-moncanvas"><TemplateRender template={$liveTemplateOverride ?? tpl} content={$liveContent} /></div>
                 <div class="sp-monfoot r-mono">{$live ? $live.reference + ($live.translation ? ' · ' + $live.translation : '') : '—'}</div>
               </div>
             {/each}

@@ -21,6 +21,11 @@ nnnoiseless = { version = "0.5", default-features = false } # Phase C — offlin
 include_dir = "0.7"           # Embed the built frontend (dist/) to serve output/stage pages over LAN HTTP in production
 zip = { version = "2", default-features = false, features = ["deflate"] } # Import — .proplaylist is a ZIP of .pro presentations
 base64 = "0.22"               # Import — receive the picked file's bytes from the webview (FileReader → base64)
+# Crash reporting. OPT-IN and OFF by default — see telemetry.rs. Deliberately no
+# default features: no `contexts`/`panic` auto-magic we haven't read, and above
+# all no HTTP transport we didn't choose. Nothing is sent unless the operator
+# turns it on, and content (transcripts, verse text, lyrics) is never sent at all.
+sentry = { version = "0.34", default-features = false, features = ["backtrace", "contexts", "panic", "reqwest", "rustls"] }
 
 # Added in later build phases — uncomment as each phase lands (see PROMPT.md):
 # ndi-sdk-sys or equivalent  # Phase 10 — NDI render target (evaluate available crates, may need custom FFI bindings)

@@ -66,7 +66,11 @@ CREATE TABLE detections (
     verse_id      INTEGER REFERENCES verses(id),
     method        TEXT NOT NULL CHECK (method IN ('direct', 'semantic')),
     confidence    REAL NOT NULL,
-    status        TEXT NOT NULL CHECK (status IN ('auto', 'suggested', 'dismissed')),
+    -- What actually happened. 'manual' means a HUMAN put this on screen (an
+    -- operator override, a confirmed suggestion, or a next/back nav) — it is not
+    -- an AI decision and must never be counted as one, because the
+    -- self-calibrating threshold loop learns from this column.
+    status        TEXT NOT NULL CHECK (status IN ('auto', 'suggested', 'dismissed', 'manual')),
     fired_at      REAL                    -- seconds since service start, null if never fired
 );
 

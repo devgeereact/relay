@@ -1,6 +1,8 @@
 <script>
   import { onMount, onDestroy, afterUpdate } from 'svelte';
   import TemplateRender from '../TemplateRender.svelte';
+  import { registerContext } from '../shortcuts.js';
+  import { monitorAccent } from '../templates.js';
   import {
     capture,
     transcript,
@@ -22,6 +24,8 @@
     startCapture,
     stopCapture,
     navVerse,
+    liveContent,
+    liveTemplateOverride,
   } from '../stores/capture.js';
 
   // Operator drives detection from the console: Listen = mic on (auto-drive
@@ -78,34 +82,55 @@
     if (transcriptEl) transcriptEl.scrollTop = transcriptEl.scrollHeight;
   });
 
-  // Operator keyboard controls — always reachable (CLAUDE.md). Esc works even
-  // while typing; the rest yield to text fields.
-  function onKey(e) {
-    const typing = e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA');
-    if (e.key === 'Escape') {
-      clearScreens();
-      flash('Screens cleared');
-      if (typing) e.target.blur();
-      return;
-    }
-    if (typing) return;
-    if (e.key === '/') {
-      e.preventDefault();
-      searchEl?.focus();
-    } else if (e.key === ' ') {
-      if (dets[0]) {
-        e.preventDefault();
-        confirmDetection(dets[0].reference);
-        flash(`Now live: ${dets[0].reference}`);
-      }
-    }
+  // Plain-language copy for the dsp.rs audio-quality warnings. The operator is a
+  // volunteer, not an audio engineer — "snr_db below 6.0" helps nobody, so every
+  // warning names the problem and the physical thing to go and do about it.
+  const QUALITY = {
+    clipping: {
+      title: 'The microphone is too loud — it’s distorting.',
+      fix: 'Turn the input gain down on the mixer. Detection accuracy drops badly on clipped audio.',
+    },
+    too_quiet: {
+      title: 'Almost no sound is reaching Relay.',
+      fix: 'The mic is probably muted, switched off, or too far away. Check the mixer channel and the mute switch.',
+    },
+    noisy: {
+      title: 'The room is drowning out the speech.',
+      fix: 'Detection will struggle. Move the mic closer to the preacher, or cut background noise.',
+    },
+  };
+
+  // Context shortcuts only. The panic keys (Esc = clear, B = blackout) are owned
+  // by the app shell (lib/shortcuts.js) so they work on EVERY tab — they used to
+  // be bound here, which meant Escape did nothing while the operator happened to
+  // be on Templates or Settings.
+  //
+  // Accepting a suggestion is now `A`, not Space. Space meant "next slide" in the
+  // Planner and "push the AI's guess to the congregation" here — the same key,
+  // two meanings, one of them irreversible in front of an audience.
+  function acceptTop() {
+    if (!dets[0]) return;
+    confirmDetection(dets[0].reference);
+    flash(`Now live: ${dets[0].reference}`);
   }
+  function dismissTop() {
+    if (!dets[0]) return;
+    dismissDetection(dets[0].reference);
+  }
+
+  let unregisterKeys;
   onMount(async () => {
     await loadTemplates();
     await loadActive();
-    window.addEventListener('keydown', onKey);
+    unregisterKeys = registerContext({
+      accept: acceptTop,
+      dismiss: dismissTop,
+      next: () => navVerse('next'),
+      prev: () => navVerse('back'),
+      search: () => searchEl?.focus(),
+    });
   });
-  onDestroy(() => window.removeEventListener('keydown', onKey));
+  onDestroy(() => unregisterKeys?.());
 
   async function openMainOutput() {
     const id = $templates.find((t) => t.name === 'Classic Serif')?.id ?? $templates[0]?.id;
@@ -162,22 +187,6 @@
       activeTpls = [];
     }
   }
-  const ACCENTS = ['gold', 'cyan', 'amethyst', 'rose'];
-  // What's currently on the screens, shaped for TemplateRender.
-  $: liveContent = $live
-    ? { reference: $live.reference, text: $live.text, translation: $live.translation, media_url: $live.media_url, media_kind: $live.media_kind, countdown_to: $live.countdown_to, countdown_done: $live.countdown_done }
-    : null;
-  // Per-content-type template override carried by the live content, if any.
-  $: overrideTpl = (() => {
-    if ($live && $live.template_json) {
-      try {
-        return JSON.parse($live.template_json);
-      } catch {
-        /* ignore */
-      }
-    }
-    return null;
-  })();
 </script>
 
 <div class="stx">
@@ -255,10 +264,10 @@
       <div class="chan-grid">
         {#if activeTpls.length}
           {#each activeTpls as tpl, i (tpl.id)}
-            {@const acc = ACCENTS[i % ACCENTS.length]}
+            {@const acc = monitorAccent(i)}
             <div class="mon a-{acc}" class:on={$live}>
               <!-- Each monitor = one active template style, live content -->
-              <div class="tpl"><TemplateRender template={overrideTpl ?? tpl} content={liveContent} /></div>
+              <div class="tpl"><TemplateRender template={$liveTemplateOverride ?? tpl} content={$liveContent} /></div>
               {#if $screenBlack}<div class="mon-black"></div>{/if}
 
               <span class="mon-badge b-{acc}">{$live ? 'Live' : 'Style'} · {tpl.name}</span>
@@ -334,14 +343,45 @@
           <span class="dot" style="background:var(--s-gold);"></span>Open output
         </button>
         <div class="hints">
-          <span class="hint"><kbd>Space</kbd> push top</span>
-          <span class="hint"><kbd>/</kbd> search</span>
+          <span class="hint"><kbd>A</kbd> accept top</span>
+          <span class="hint"><kbd>Esc</kbd> clear</span>
+          <span class="hint"><kbd>B</kbd> blackout</span>
+          <span class="hint"><kbd>?</kbd> keys</span>
         </div>
       </div>
     </section>
 
   {#if $capture.audioError}
     <div class="audioerr">Audio: {$capture.audioError}</div>
+  {/if}
+
+  {#if $capture.outputError}
+    <div class="audioerr">Output: {$capture.outputError}</div>
+  {/if}
+
+  <!-- Mic quality. Only shown while actually listening, and only when something
+       is genuinely wrong — a warning that is always on screen is wallpaper. -->
+  {#if $capture.capturing && $capture.quality?.warning}
+    <div class="sttwarn">
+      <b>{QUALITY[$capture.quality.warning].title}</b>
+      {QUALITY[$capture.quality.warning].fix}
+    </div>
+  {/if}
+
+  <!-- No STT model = the AI cannot listen. Relay must degrade to a fully working
+       MANUAL tool, never to a dead one — so say so plainly and point at the fix,
+       rather than looking identical to a working app that just never detects
+       anything. On Windows this state used to be reached silently, every time. -->
+  {#if $capture.available && !$capture.stt.loaded}
+    <div class="sttwarn">
+      <b>Speech recognition is off — no model found.</b>
+      Detection and the transcript are unavailable. Everything else still works:
+      you can fire any verse by typing a reference above, and run a service plan
+      as normal.
+      {#if $capture.stt.install_dir}
+        <span class="sttwarn-path">Put a <code>ggml-base.bin</code> model in <code>{$capture.stt.install_dir}</code>, then restart Relay.</span>
+      {/if}
+    </div>
   {/if}
 </div>
 
@@ -404,7 +444,6 @@
   .lbl-gold{font-family:var(--f-mono);font-size:10px;font-weight:600;letter-spacing:.16em;text-transform:uppercase;color:var(--s-gold)}
   .lbl-dim{font-family:var(--f-mono);font-size:9px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:var(--s-onvar)}
   .transcript{font-size:14px;line-height:1.6;color:var(--s-on);font-weight:500}
-  .transcript mark{background:rgba(255,185,95,.16);color:var(--s-gold);border-radius:3px;padding:0 2px}
   .caret{display:inline-block;width:2px;height:14px;background:var(--s-gold);vertical-align:-2px;margin-left:1px;animation:blink 1.05s steps(1) infinite}
   @keyframes blink{50%{opacity:0}}
 
@@ -447,7 +486,7 @@
     radial-gradient(120% 130% at 50% 12%,rgba(255,255,255,.03),transparent 60%),
     linear-gradient(to top,rgba(0,0,0,.85),transparent 55%),
     radial-gradient(130% 120% at 50% 30%,#1a1815,#0a0a0b)}
-  .mon.on.a-gold{border:2px solid var(--s-gold);box-shadow:0 0 26px -6px var(--s-gold-glow)}
+  .mon.on.a-amber{border:2px solid var(--s-gold);box-shadow:0 0 26px -6px var(--s-gold-glow)}
   .mon.on.a-cyan{border:1px solid rgba(63,182,230,.5);box-shadow:0 0 26px -8px var(--s-cyan-glow)}
   .mon.on.a-amethyst{border:1px solid rgba(192,139,255,.45);box-shadow:0 0 26px -8px var(--s-amethyst-glow)}
   .mon.on.a-rose{border:1px solid rgba(255,157,148,.45);box-shadow:0 0 26px -8px var(--s-rose-glow)}
@@ -514,6 +553,16 @@
 
   .audioerr{margin-top:12px;background:rgba(147,0,10,.18);color:var(--s-rose);
     border:1px solid rgba(255,157,148,.3);border-radius:9px;padding:9px 12px;font-size:12px}
+
+  /* Degraded, not broken: amber (a warning), never rose (an error) — the app is
+     still fully usable by hand, and the banner should read that way. */
+  .sttwarn{margin-top:12px;background:var(--v-amber-soft);color:var(--v-txt);
+    border:1px solid rgba(245,166,35,.34);border-radius:9px;padding:10px 12px;
+    font-size:12px;line-height:1.6}
+  .sttwarn b{display:block;margin-bottom:2px;color:var(--v-amber2)}
+  .sttwarn-path{display:block;margin-top:6px;color:var(--v-dim)}
+  .sttwarn code{font-family:var(--f-mono);font-size:11px;background:var(--v-surf3);
+    border:1px solid var(--v-line2);border-radius:4px;padding:1px 5px;color:var(--v-txt)}
 
   /* Footer */
   .stx-foot{display:flex;align-items:center;justify-content:space-between;margin-top:12px;

@@ -7,7 +7,9 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "devDependencies": {
     "@fontsource/fraunces": "^5.2.9",
@@ -17,8 +19,11 @@
     "@sveltejs/vite-plugin-svelte": "^3",
     "@tauri-apps/api": "^2",
     "@tauri-apps/cli": "^2",
+    "@testing-library/svelte": "^4.2.3",
+    "jsdom": "^29.1.1",
     "svelte": "^4",
-    "vite": "^5"
+    "vite": "^5",
+    "vitest": "^4.1.10"
   },
   "dependencies": {
     "@fontsource/playfair-display": "^5.2.8",

@@ -1,0 +1,15 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+language: en-GB
+
+reviews:
+  high_level_summary_in_walkthrough: true
+  auto_apply_labels: true
+  poem: true
+
+code_generation:
+  docstrings:
+    language: en-GB
+
+issue_enrichment:
+  auto_enrich:
+    enabled: true

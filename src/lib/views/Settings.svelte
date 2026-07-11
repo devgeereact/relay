@@ -1,6 +1,24 @@
 <script>
   import { onMount } from 'svelte';
-  import { capture, templates, initAudio, startCapture, stopCapture, setThresholds, setSttLanguage, setInputDevice, listTranslations, getActiveTranslation, setActiveTranslation, localIp, loadTemplates, getContentTemplates, setContentTemplate } from '../stores/capture.js';
+  import { capture, meter, templates, initAudio, startCapture, stopCapture, setThresholds, setSttLanguage, setInputDevice, listTranslations, getActiveTranslation, setActiveTranslation, localIp, loadTemplates, getContentTemplates, setContentTemplate, getCrashReporting, setCrashReporting } from '../stores/capture.js';
+
+  // Crash reporting — OFF by default. The only thing in Relay that can send
+  // anything off the device, so the UI states plainly what is and isn't sent.
+  let crash = { enabled: false, dsn: '' };
+  let crashMsg = '';
+  async function toggleCrash(enabled) {
+    crashMsg = '';
+    try {
+      crash = await setCrashReporting(enabled, crash.dsn);
+      crashMsg = crash.enabled
+        ? 'Crash reporting on.'
+        : enabled
+          ? 'Add a Sentry DSN above to turn this on.'
+          : 'Crash reporting off.';
+    } catch (e) {
+      crashMsg = String(e);
+    }
+  }
 
   // Per-content-type default templates (ProPresenter-style).
   const contentTypes = [
@@ -40,7 +58,7 @@
   }
 
   // RMS on speech sits well below 1.0; scale so normal talking fills the meter.
-  $: levelPct = Math.min(100, Math.round($capture.level * 320));
+  $: levelPct = Math.min(100, Math.round($meter.level * 320));
 
   // Real translations from the corpus + which one to read from.
   let translations = [];
@@ -49,6 +67,7 @@
   onMount(async () => {
     translations = await listTranslations();
     activeTranslation = await getActiveTranslation();
+    crash = await getCrashReporting();
     await loadTemplates();
     ctMap = await getContentTemplates();
     try {
@@ -103,9 +122,9 @@
         {/if}
       </button>
       {#if $capture.capturing}
-        <span class="s-rms" class:voice={$capture.isVoice}>
-          <span class="s-dot" class:on={$capture.isVoice}></span>
-          {$capture.isVoice ? 'voice' : 'silence'} · {$capture.level.toFixed(3)} rms
+        <span class="s-rms" class:voice={$meter.isVoice}>
+          <span class="s-dot" class:on={$meter.isVoice}></span>
+          {$meter.isVoice ? 'voice' : 'silence'} · {$meter.level.toFixed(3)} rms
         </span>
       {/if}
     </div>
@@ -238,6 +257,54 @@
       <div class="s-modelpath">{$capture.stt.model}</div>
     {:else}
       <div class="s-status off s-model"><span class="s-sdot"></span>no model — audio-only (see README dev setup)</div>
+      {#if $capture.stt.install_dir}
+        <div class="s-modelpath">Put a model here: {$capture.stt.install_dir}</div>
+      {/if}
+    {/if}
+  </section>
+
+  <!-- CRASH REPORTING — the only thing in Relay that sends anything anywhere. -->
+  <section class="r-tile s-card">
+    <header class="s-head">
+      <span class="s-head-l">
+        <svg class="s-ic" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l7 3v6c0 4-3 7-7 9-4-2-7-5-7-9V6l7-3Z"/></svg>
+        Crash Reporting
+      </span>
+      <span class="s-count">{crash.enabled ? 'on' : 'off'}</span>
+    </header>
+
+    <p class="s-tr-note">
+      Relay is offline software: nothing you do here leaves this computer. Crash
+      reporting is the one exception, and it is <b>off unless you turn it on</b>.
+      <br /><br />
+      If you turn it on, Relay sends only the technical details of a crash — the
+      error, where in the code it happened, and your operating system.
+      <b>Sermon transcripts, verse text, song lyrics, announcements and service
+      names are never sent</b>, and are stripped from every report before it
+      leaves. Reports are queued and sent later, so a bad network can never slow
+      down a live service.
+    </p>
+
+    <label class="r-lbl" for="crash-dsn">Sentry DSN (your own project)</label>
+    <input
+      id="crash-dsn"
+      class="r-input"
+      type="text"
+      placeholder="https://…@…ingest.sentry.io/…"
+      bind:value={crash.dsn}
+      disabled={!$capture.available} />
+
+    <button
+      class="r-btn"
+      class:danger={crash.enabled}
+      style="margin-top:10px;"
+      on:click={() => toggleCrash(!crash.enabled)}
+      disabled={!$capture.available}>
+      {crash.enabled ? 'Turn crash reporting off' : 'Turn crash reporting on'}
+    </button>
+
+    {#if crashMsg}
+      <div class="s-tr-note" style="margin-top:8px;">{crashMsg}</div>
     {/if}
   </section>
 </div>
@@ -289,8 +356,6 @@
 
   /* bible translations */
   .s-checklist{ display:flex; flex-direction:column; gap:2px; }
-  .s-check{ display:flex; align-items:center; gap:10px; padding:9px 4px; font-size:13px; color:var(--v-dim); cursor:pointer; }
-  .s-check input{ accent-color:var(--v-amber); width:15px; height:15px; cursor:pointer; }
   .s-check-code{ font-family:var(--f-mono); font-size:11px; font-weight:600; letter-spacing:.05em; color:var(--v-txt); }
 
   /* network info */

@@ -1,6 +1,9 @@
 <script>
   import { onMount, onDestroy } from 'svelte';
-  import { capture, initAudio, clearScreens } from './lib/stores/capture.js';
+  import { capturing, detectionOn, initAudio, clearScreens, blackScreen } from './lib/stores/capture.js';
+  import { installShortcuts, cheatsheet, SHORTCUTS } from './lib/shortcuts.js';
+  import { installLeaveGuard } from './lib/crash.js';
+  import { session, setSession } from './lib/session.js';
   import Console from './lib/views/Console.svelte';
   import Channels from './lib/views/Channels.svelte';
   import Templates from './lib/views/Templates.svelte';
@@ -16,8 +19,11 @@
     { key: 'planner',   label: 'Planner',   title: 'Service Planner',  view: ServicePlanner },
     { key: 'settings',  label: 'Settings',  title: 'System Settings',  view: Settings },
   ];
-  let active = 'console';
-  $: currentTab = tabs.find((t) => t.key === active);
+  // Restored from the persisted session, so a reload (or a crash + Recover)
+  // brings the operator back to the tab they were actually on.
+  let active = tabs.some((t) => t.key === $session.activeTab) ? $session.activeTab : 'console';
+  $: setSession({ activeTab: active });
+  $: currentTab = tabs.find((t) => t.key === active) ?? tabs[0];
   $: current = currentTab.view;
 
   // Inline icons keyed by tab (SVG so they stay crisp on retina, themeable).
@@ -37,9 +43,21 @@
   }
 
   let engineOnline = false;
+  let teardownKeys;
+  let teardownLeave;
+
+  // Read through a closure, so the beforeunload guard always sees the CURRENT
+  // value rather than the one captured at mount time.
+  let isCapturing = false;
+  $: isCapturing = $capturing;
+
   onMount(async () => {
     tick();
     timer = setInterval(tick, 1000);
+    // The panic keys are installed at the shell — never per-view — so Escape and
+    // B work on every tab, including one whose view is broken.
+    teardownKeys = installShortcuts({ clearScreens, blackScreen });
+    teardownLeave = installLeaveGuard(() => isCapturing);
     await initAudio();
     try {
       const { invoke } = await import('@tauri-apps/api/core');
@@ -49,7 +67,11 @@
       engineOnline = false;
     }
   });
-  onDestroy(() => clearInterval(timer));
+  onDestroy(() => {
+    clearInterval(timer);
+    teardownKeys?.();
+    teardownLeave?.();
+  });
 </script>
 
 <div class="shell">
@@ -78,7 +100,7 @@
         <span class="dot" style="background:{engineOnline ? 'var(--v-amber)' : 'var(--v-faint)'};"></span>
       </div>
       <div class="m">Engine {engineOnline ? 'online' : 'offline'}</div>
-      <div class="m">Detection {$capture.detectionOn ? 'active' : 'off'}</div>
+      <div class="m">Detection {$detectionOn ? 'active' : 'off'}</div>
     </div>
   </aside>
 
@@ -86,7 +108,7 @@
   <div class="main-v">
     <header class="topbar-v">
       <span class="topbar-title">{currentTab.title}</span>
-      {#if $capture.capturing}
+      {#if $capturing}
         <span class="r-badge rose pulse"><span class="bd"></span>On Air</span>
       {:else}
         <span class="r-badge amber"><span class="bd" style="box-shadow:none;"></span>Standby</span>
@@ -107,14 +129,43 @@
     <footer class="footer-v">
       <div class="fl">
         <b>Relay AI</b>
-        <span>Detection {$capture.detectionOn ? 'ACTIVE' : 'OFF'}</span>
+        <span>Detection {$detectionOn ? 'ACTIVE' : 'OFF'}</span>
       </div>
       <div style="display:flex;align-items:center;gap:8px;">
-        <span class="dot" style="width:6px;height:6px;border-radius:50%;background:{$capture.capturing ? 'var(--v-rose)' : 'var(--v-faint)'};"></span>
-        {$capture.capturing ? 'ON AIR' : 'SYSTEM STABLE'}
+        <span class="dot" style="width:6px;height:6px;border-radius:50%;background:{$capturing ? 'var(--v-rose)' : 'var(--v-faint)'};"></span>
+        {$capturing ? 'ON AIR' : 'SYSTEM STABLE'}
       </div>
     </footer>
   </div>
+
+  <!-- Shortcut cheatsheet (?) — the bindings are read from the same table the
+       handler uses, so help can never drift out of sync with reality. -->
+  {#if $cheatsheet}
+    <!-- Clicking the scrim closes it. That's a mouse convenience only — the
+         keyboard path is Escape, handled globally in lib/shortcuts.js — so there
+         is no keyboard trap here and no keyboard-only user is stranded. -->
+    <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-noninteractive-element-interactions -->
+    <div class="cheat-scrim" role="presentation" on:click={() => cheatsheet.set(false)}>
+      <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-noninteractive-element-interactions -->
+      <div class="cheat" role="dialog" aria-label="Keyboard shortcuts" on:click|stopPropagation>
+        <h2>Keyboard shortcuts</h2>
+        <table>
+          {#each SHORTCUTS as s}
+            <tr>
+              <td class="keys">
+                {#each s.keys as k}<kbd>{k}</kbd>{/each}
+              </td>
+              <td class="lbl">{s.label}</td>
+              <td class="scope">{s.scope}</td>
+            </tr>
+          {/each}
+        </table>
+        <p class="cheat-foot">
+          <kbd>Esc</kbd> and <kbd>B</kbd> work on every tab, even while typing.
+        </p>
+      </div>
+    </div>
+  {/if}
 
   <!-- Mobile bottom nav -->
   <nav class="botnav">

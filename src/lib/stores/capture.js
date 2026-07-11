@@ -6,20 +6,36 @@
 // Degrades gracefully in a plain browser (vite dev, no Tauri): `available`
 // stays false and controls disable, so the console still renders for design.
 
-import { writable, get } from 'svelte/store';
+import { writable, derived, get } from 'svelte/store';
+import { parseTemplateOverride } from '../templates.js';
+
+/**
+ * The audio meter — RMS level + voice-activity, arriving 10–50 times a second.
+ *
+ * Deliberately its OWN store, not fields on `capture`. When these lived on the
+ * `capture` mega-object, every audio frame notified every `$capture` subscriber
+ * in the app: `App.svelte` reads `$capture.detectionOn` to draw one dot in the
+ * sidebar and was re-rendering the entire shell dozens of times a second, for
+ * data it does not use. Only the Settings meter subscribes here.
+ */
+export const meter = writable({ level: 0, isVoice: false });
 
 export const capture = writable({
   available: false, // Tauri backend attached?
   capturing: false,
-  level: 0, // latest chunk RMS (0..~1)
-  isVoice: false, // VAD gate result for the latest chunk
   devices: [], // [{ name, is_default }]
   inputDevice: '', // operator-selected input device name ('' = default). Shared so Console + Settings agree.
   stt: { loaded: false, model: null, language: null }, // local STT model status (language null = auto)
   detectedLang: null, // language of the latest transcript window (code-switching)
   detectionOn: true, // is automatic detection armed?
   audioError: null, // last audio device error (surfaced, not fatal)
-  thresholds: { auto_fire: 0.9, suggest: 0.6 }, // router gate (self-calibrating)
+  outputError: null, // LAN output server failed to bind (OBS/kiosk/stage are dead)
+  quality: null, // AudioQuality from dsp.rs: { input_rms, clip_ratio, snr_db, denoise, warning }
+  // Router gate (self-calibrating). Placeholder only — the real values arrive
+  // from `get_thresholds` on init. Kept in step with Thresholds::default() in
+  // router.rs, which IS from_sensitivity(50); it used to say 0.9/0.6, which was
+  // the other, contradictory baseline.
+  thresholds: { auto_fire: 0.5, suggest: 0.35 },
 });
 
 // What is currently ON the output screens (last fired content, null = cleared).
@@ -43,6 +59,47 @@ export const detections = writable([]);
 
 // Output templates (Phase 8), loaded from the DB.
 export const templates = writable([]);
+
+// Narrow slices of `capture`. A component that only needs one flag should
+// subscribe to one flag — `derived` only notifies when the value it selects
+// actually changes, so the app shell no longer re-renders because a device list
+// was refreshed, or an error banner was cleared.
+export const capturing = derived(capture, ($c) => $c.capturing);
+export const detectionOn = derived(capture, ($c) => $c.detectionOn);
+export const backendUp = derived(capture, ($c) => $c.available);
+
+/**
+ * What's on the screens right now, shaped for `TemplateRender`.
+ *
+ * Derived once here rather than re-derived in each view. Console, Planner and
+ * Output.svelte each had their own copy of this reshape AND of the
+ * `template_json` parse below — three chances for the console preview to stop
+ * agreeing with what the congregation is actually seeing, which is the one thing
+ * the preview exists to guarantee.
+ */
+export const liveContent = derived(live, ($l) =>
+  $l
+    ? {
+        reference: $l.reference,
+        text: $l.text,
+        translation: $l.translation,
+        media_url: $l.media_url,
+        media_kind: $l.media_kind,
+        countdown_to: $l.countdown_to,
+        countdown_done: $l.countdown_done,
+      }
+    : null,
+);
+
+/**
+ * The per-content-type template override riding on the live content (lyrics
+ * render as lyrics, scripture as scripture), or null to use the channel's own
+ * template. Malformed JSON falls back to the channel template rather than
+ * throwing — a bad template must never take the screens down mid-service.
+ */
+export const liveTemplateOverride = derived(live, ($l) =>
+  parseTemplateOverride($l?.template_json),
+);
 
 const MAX_FINALS = 12;
 const MAX_DETECTIONS = 6;
@@ -71,7 +128,7 @@ export async function initAudio() {
   const [devices, stt, thresholds, detectionOn] = await Promise.all([
     call('list_audio_devices').catch(() => []),
     call('stt_status').catch(() => ({ loaded: false, model: null, language: null })),
-    call('get_thresholds').catch(() => ({ auto_fire: 0.9, suggest: 0.6 })),
+    call('get_thresholds').catch(() => ({ auto_fire: 0.5, suggest: 0.35 })),
     call('get_detection_enabled').catch(() => true),
   ]);
   capture.update((s) => ({ ...s, available: true, devices, stt, thresholds, detectionOn }));
@@ -89,6 +146,20 @@ export async function initAudio() {
       // it and reflect that capture stopped, but never freeze.
       await listen('audio://error', (e) =>
         capture.update((s) => ({ ...s, audioError: e.payload, capturing: false }))
+      );
+      // A LAN server failed to bind → every networked output (OBS, kiosk
+      // screens, the stage monitor) is dead. This used to be swallowed to
+      // stderr, so the operator's only symptom was screens that never came up.
+      await listen('output://error', (e) =>
+        capture.update((s) => ({ ...s, outputError: e.payload }))
+      );
+      // Audio-quality telemetry (clipping / mic muted / too noisy). dsp.rs has
+      // computed and emitted this all along and NOTHING was listening — so the
+      // one signal that tells an operator "your mic is muted" was dead. It is
+      // data, never a rendering decision: the console shows it, the pipeline
+      // keeps running regardless.
+      await listen('audio://quality', (e) =>
+        capture.update((s) => ({ ...s, quality: e.payload }))
       );
     } catch {
       /* events unavailable — previews just won't mirror; app still works */
@@ -162,9 +233,10 @@ export async function startCapture(device) {
   }
   await call('start_capture', { device: device ?? null });
 
+  // The hot path. Goes to `meter`, never to `capture` — see the note on `meter`.
   unlistenAudio = await listen('audio://chunk', (e) => {
     const { rms, is_voice } = e.payload;
-    capture.update((s) => ({ ...s, level: rms, isVoice: is_voice }));
+    meter.set({ level: rms, isVoice: is_voice });
   });
   unlistenStt = await listen('stt://transcript', (e) => {
     const { text, is_final, language } = e.payload;
@@ -787,4 +859,26 @@ export async function setThresholds(auto_fire, suggest) {
   } catch {
     /* backend absent */
   }
+}
+
+/**
+ * Crash reporting (opt-in, off by default).
+ *
+ * These are the ONLY two calls in this file that can cause anything to leave the
+ * device. Turning it on is an explicit operator action, and even then the Rust
+ * side scrubs every crash report of transcript, verse, lyric and announcement
+ * text before it is sent (see src-tauri/src/telemetry.rs).
+ */
+export async function getCrashReporting() {
+  try {
+    const call = await invoke();
+    return await call('get_crash_reporting');
+  } catch {
+    return { enabled: false, dsn: '' };
+  }
+}
+
+export async function setCrashReporting(enabled, dsn) {
+  const call = await invoke();
+  return await call('set_crash_reporting', { enabled, dsn: dsn ?? '' });
 }
