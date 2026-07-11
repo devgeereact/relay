@@ -72,8 +72,10 @@ jobs:
       # succeeded — Relay could not be packaged at all. That is also why the
       # Windows-only STT model-path bug survived: nobody could produce a bundle
       # to find it in. `tauri dev` does not catch this. This step does.
-      - name: Package (release bundle)
-        run: npm run tauri build -- --bundles none
+      # `--no-bundle` compiles the release binary but skips installer packaging —
+      # the compile is the part that was broken, and it needs no signing identity.
+      - name: Package (release build)
+        run: npm run tauri build -- --no-bundle
 
   frontend:
     name: Frontend
