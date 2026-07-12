@@ -31,6 +31,9 @@ sentry = { version = "0.34", default-features = false, features = ["backtrace", 
 # 148 MB fetch on a church's connection WILL be interrupted.
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream"] }
 sha2 = "0.10"                 # verify the model we downloaded is the model we meant
+# Fold tone marks and dots-below so "Jòhánù" and "Johanu" are the same token.
+# Whisper emits both, depending on the audio — see detection::normalize.
+unicode-normalization = "0.1"
 # Auto-update. Without this there is no way to deliver a fix to a church that has
 # already installed Relay — and this is software that fails LIVE, in front of a
 # congregation. Updates are signed; see docs/RELEASING.md.

@@ -1973,7 +1973,13 @@ fn set_thresholds(
 /// scripture decoder-bias prompt (book names + the profile's extra vocabulary).
 fn apply_profile_to_stt(engine: &SttEngine, p: &db::VoiceProfile) {
     engine.set_language(p.language.clone());
-    engine.set_prompt(Some(stt::scripture_bias_prompt(&p.bias_terms)));
+    // Bias the decoder in the language actually being preached — feeding it
+    // English book names during a Yorùbá sermon pushes whisper AWAY from the
+    // words we need it to hear.
+    engine.set_prompt(Some(stt::scripture_bias_prompt(
+        p.language.as_deref(),
+        &p.bias_terms,
+    )));
 }
 
 /// Apply a full profile live: STT language + bias prompt, and the profile's

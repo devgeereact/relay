@@ -360,8 +360,110 @@ fn alias_map() -> &'static HashMap<String, &'static str> {
         m.insert("ecclesiastis".into(), "Ecclesiastes");
         m.insert("thessalonians".into(), "1 Thessalonians"); // bare → most-common
         m.insert("galatia".into(), "Galatians");
+
+        // ── Tier-1 languages: Yorùbá, Kiswahili, Hausa ──────────────────────
+        //
+        // THE thing that was missing. Relay's stated differentiator is
+        // African-language speech, and until now the detector spoke only English:
+        // a preacher could say "Jòhánù orí kẹta" with a perfect Yorùbá model
+        // behind them and Relay would detect NOTHING, because the alias table had
+        // no idea what "Jòhánù" was. Fine-tuning the acoustic model would not have
+        // fixed that by a single verse — the moat was blocked on this table, not
+        // on the model.
+        //
+        // Loaded from data, not hardcoded here: see the _readme in the JSON.
+        for (alias, canonical) in language_aliases() {
+            m.insert(alias, canonical);
+        }
         m
     })
+}
+
+/// The book names Relay knows for a language, for biasing the STT decoder.
+///
+/// `lang` is a Whisper language code ("yo", "sw", "ha"); anything else (including
+/// None/auto) yields the English canon.
+///
+/// ALWAYS includes English alongside the local names, because code-switching is
+/// the normal case for this market, not an edge case (CLAUDE.md): a Yorùbá sermon
+/// routinely names the book in Yorùbá and the chapter and verse in English.
+pub fn bias_vocabulary(lang: Option<&str>) -> Vec<String> {
+    let mut out: Vec<String> = CANONICAL_BOOKS.iter().map(|b| b.to_string()).collect();
+    let Some(lang) = lang else { return out };
+    const RAW: &str = include_str!("../data/book_aliases.json");
+    let Ok(doc) = serde_json::from_str::<serde_json::Value>(RAW) else {
+        return out;
+    };
+    if let Some(books) = doc.get(lang).and_then(|v| v.as_object()) {
+        for (english, names) in books {
+            if english.starts_with('_') {
+                continue;
+            }
+            // Only the FIRST spelling — the properly-accented one. The prompt is a
+            // hint to the decoder, not a lookup table, and stuffing it with every
+            // ASCII fallback dilutes the signal.
+            if let Some(first) = names
+                .as_array()
+                .and_then(|a| a.first())
+                .and_then(|v| v.as_str())
+            {
+                out.push(first.to_string());
+            }
+        }
+    }
+    out
+}
+
+/// Book names in Relay's tier-1 languages, from `data/book_aliases.json`.
+///
+/// Data rather than code on purpose. The maintainer does not speak all three of
+/// these languages fluently, and a WRONG alias does not fail safely — it puts the
+/// wrong scripture on a wall. Keeping the names in JSON lets a native speaker fix
+/// them in a one-line pull request without touching Rust or knowing what a
+/// HashMap is. That is the only path by which this table ever becomes trustworthy.
+///
+/// Baked into the binary (`include_str!`), so it stays fully offline.
+fn language_aliases() -> Vec<(String, &'static str)> {
+    const RAW: &str = include_str!("../data/book_aliases.json");
+    let Ok(doc) = serde_json::from_str::<serde_json::Value>(RAW) else {
+        eprintln!("detection: book_aliases.json is not valid JSON — tier-1 languages disabled");
+        return Vec::new();
+    };
+    let Some(langs) = doc.as_object() else {
+        return Vec::new();
+    };
+
+    let mut out = Vec::new();
+    for (lang, books) in langs {
+        if lang.starts_with('_') {
+            continue; // _readme
+        }
+        let Some(books) = books.as_object() else {
+            continue;
+        };
+        for (english, names) in books {
+            if english.starts_with('_') {
+                continue; // _language, _complete, _todo
+            }
+            // Key against the canonical spelling, so a typo in the data file is a
+            // no-op rather than a phantom book that can never resolve to a verse.
+            let Some(canonical) = CANONICAL_BOOKS.iter().find(|b| *b == english).copied() else {
+                eprintln!("detection: book_aliases.json has unknown book {english:?} — ignored");
+                continue;
+            };
+            for n in names.as_array().into_iter().flatten() {
+                if let Some(n) = n.as_str() {
+                    // normalize() folds the tone marks and dots-below, so the
+                    // table is keyed on exactly what a transcript will produce.
+                    let key = normalize(n);
+                    if !key.is_empty() {
+                        out.push((key, canonical));
+                    }
+                }
+            }
+        }
+    }
+    out
 }
 
 /// Find all direct scripture references in `text`. Returns them left-to-right.
@@ -383,17 +485,48 @@ pub fn detect_direct(text: &str) -> Vec<RefMatch> {
     out
 }
 
-/// Lowercase, strip punctuation except the digit-pairing colon, split hyphens
-/// ("twenty-eight" → two tokens), collapse whitespace.
+/// Fold a character down to its plain-ASCII skeleton.
+///
+/// Yorùbá and Hausa orthography carries marks that ASR reproduces unreliably:
+/// tone marks (`ò á ń`), dots-below (`ẹ ọ ṣ`), and hooked consonants (`ɓ ɗ ƙ`).
+/// Whisper will emit `Jòhánù`, `Johánù` or `Johanu` for the same audio depending
+/// on the recording. If those are three different tokens, the alias table matches
+/// none of them and Relay detects nothing — which is precisely the state it was
+/// in before the multilingual table existed.
+///
+/// So all three fold to `johanu` and match once.
+///
+/// Deliberately lossy, and that is fine: this folds text for MATCHING, never for
+/// display. What the congregation sees is always the canonical corpus text.
+fn fold_char(c: char) -> Option<char> {
+    match c {
+        // Hausa hooked consonants are distinct letters, not accented ones, so NFD
+        // will not decompose them. They have to be mapped by hand.
+        'ɓ' | 'Ɓ' => Some('b'),
+        'ɗ' | 'Ɗ' => Some('d'),
+        'ƙ' | 'Ƙ' => Some('k'),
+        'ƴ' | 'Ƴ' => Some('y'),
+        // Combining marks left behind by NFD — tone marks, dots-below. Drop them.
+        c if ('\u{0300}'..='\u{036F}').contains(&c) => None,
+        c => Some(c),
+    }
+}
+
+/// Lowercase, fold diacritics, strip punctuation except the digit-pairing colon,
+/// split hyphens ("twenty-eight" → two tokens), collapse whitespace.
 fn normalize(text: &str) -> String {
+    use unicode_normalization::UnicodeNormalization;
     let mut s = String::with_capacity(text.len());
-    for ch in text.chars() {
+    // NFD first, so `ọ` becomes `o` + combining-dot-below and the mark can be
+    // dropped generically instead of via a 200-row lookup table.
+    for ch in text.nfd().filter_map(fold_char) {
         match ch {
             c if c.is_alphanumeric() => s.extend(c.to_lowercase()),
             ':' => s.push(':'),
             // Apostrophes are DROPPED (not split) so ASR possessives stay one
-            // token: "Sam's" → "sams" (→ Psalms), "Isaiah's" → "isaiahs".
-            '\'' | '\u{2019}' => {}
+            // token: "Sam's" → "sams" (→ Psalms). This also folds the Hausa
+            // glottal in "Ru'ya" → "ruya".
+            '\'' | '\u{2019}' | '\u{02BC}' => {}
             _ => s.push(' '), // hyphen, comma, period, etc. → separator
         }
     }
@@ -1826,5 +1959,106 @@ mod perf {
         println!("    build:     {build_ms:.0} ms (once, at startup)");
         println!("    top_k:     {per_query_ms:.2} ms per query (~1 query/sec live)");
         println!();
+    }
+}
+
+#[cfg(test)]
+mod tier1_languages {
+    use super::*;
+
+    fn refs(text: &str) -> Vec<String> {
+        detect_direct(text)
+            .iter()
+            .map(|m| {
+                format!(
+                    "{} {}:{}",
+                    m.reference.book, m.reference.chapter, m.reference.verse
+                )
+            })
+            .collect()
+    }
+
+    /// THE test. Before the tier-1 alias table existed, every one of these
+    /// returned NOTHING — a perfect Yorùbá acoustic model would have detected
+    /// zero verses, because the detector had never heard of "Jòhánù".
+    #[test]
+    fn detects_a_verse_spoken_in_yoruba() {
+        assert_eq!(refs("Jòhánù 3:16"), ["John 3:16"]);
+        assert_eq!(refs("Sáàmù 23:1"), ["Psalms 23:1"]);
+        assert_eq!(refs("Róòmù 8:28"), ["Romans 8:28"]);
+        assert_eq!(refs("Ìfihàn 22:1"), ["Revelation 22:1"]);
+    }
+
+    #[test]
+    fn detects_a_verse_spoken_in_swahili() {
+        assert_eq!(refs("Yohana 3:16"), ["John 3:16"]);
+        assert_eq!(refs("Zaburi 23:1"), ["Psalms 23:1"]);
+        assert_eq!(refs("Warumi 8:28"), ["Romans 8:28"]);
+        assert_eq!(refs("Mathayo 5:9"), ["Matthew 5:9"]);
+        assert_eq!(refs("Ufunuo 22:1"), ["Revelation 22:1"]);
+    }
+
+    #[test]
+    fn detects_a_verse_spoken_in_hausa() {
+        assert_eq!(refs("Yahaya 3:16"), ["John 3:16"]);
+        assert_eq!(refs("Zabura 23:1"), ["Psalms 23:1"]);
+        assert_eq!(refs("Romawa 8:28"), ["Romans 8:28"]);
+        assert_eq!(refs("Farawa 1:1"), ["Genesis 1:1"]);
+    }
+
+    /// Whisper emits tone marks unreliably — the same audio yields "Jòhánù",
+    /// "Johánù" or "Johanu" depending on the recording. All must land on the same
+    /// verse, or detection becomes a coin-flip on the quality of the microphone.
+    #[test]
+    fn tone_marks_and_dots_below_are_optional() {
+        for spelling in ["Jòhánù", "Johánù", "Johanu", "JOHANU", "jòhanù"] {
+            assert_eq!(
+                refs(&format!("{spelling} 3:16")),
+                ["John 3:16"],
+                "failed on {spelling:?}"
+            );
+        }
+        // Dots-below (Yorùbá) and the Hausa glottal both fold away.
+        assert_eq!(refs("Jẹ́nẹ́sísì 1:1"), ["Genesis 1:1"]);
+        assert_eq!(refs("Ru'ya ta Yohanna 22:1"), ["Revelation 22:1"]);
+    }
+
+    /// Multi-word book names must match as a unit — Swahili and Yorùbá are full
+    /// of them, and a greedy single-token match would find the wrong book.
+    #[test]
+    fn multi_word_book_names_match_as_a_unit() {
+        assert_eq!(refs("Matendo ya Mitume 2:38"), ["Acts 2:38"]);
+        assert_eq!(refs("Mambo ya Walawi 19:18"), ["Leviticus 19:18"]);
+        assert_eq!(refs("Ayyukan Manzanni 2:38"), ["Acts 2:38"]);
+    }
+
+    /// Numbered books, in-language.
+    #[test]
+    fn numbered_books_work_in_language() {
+        assert_eq!(refs("1 Yohana 4:8"), ["1 John 4:8"]);
+        assert_eq!(refs("2 Wakorintho 5:17"), ["2 Corinthians 5:17"]);
+        assert_eq!(refs("1 Jòhánù 4:8"), ["1 John 4:8"]);
+    }
+
+    /// Code-switching is the NORMAL case, not an edge case (CLAUDE.md): a Yorùbá
+    /// sermon routinely says the book in Yorùbá and the numbers in English.
+    #[test]
+    fn code_switching_mid_sentence_still_detects() {
+        assert_eq!(refs("E jọ̀wọ́, ẹ ṣí Jòhánù 3:16"), ["John 3:16"]);
+        assert_eq!(refs("Tugeukie Yohana sura ya tatu"), Vec::<String>::new()); // Swahili numerals: not yet
+        assert_eq!(
+            refs("Let us turn to Yohana chapter 3 verse 16"),
+            ["John 3:16"]
+        );
+    }
+
+    /// English must not regress. The whole table is shared.
+    #[test]
+    fn english_still_works() {
+        assert_eq!(refs("John 3:16"), ["John 3:16"]);
+        assert_eq!(
+            refs("turn to psalm twenty three verse one"),
+            ["Psalms 23:1"]
+        );
     }
 }

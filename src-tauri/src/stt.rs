@@ -387,8 +387,15 @@ pub fn model_install_dir() -> PathBuf {
 /// biased spelling and a detected reference always agree) plus any per-profile
 /// `extra` terms (preacher's church name, recurring phrases). Biasing the
 /// decoder toward these tokens is what rescues references from accent/ASR error.
-pub fn scripture_bias_prompt(extra: &str) -> String {
-    let books = crate::detection::CANONICAL_BOOKS.join(", ");
+/// `lang` is the profile's Whisper language code ("yo"/"sw"/"ha"/"en"), or None
+/// for auto-detect.
+///
+/// This used to prime the decoder with the ENGLISH book names no matter what
+/// language was being preached — so a Yorùbá sermon was actively pushed toward
+/// hearing "John" where the preacher said "Jòhánù". The bias was working against
+/// the very languages that are the product's differentiator.
+pub fn scripture_bias_prompt(lang: Option<&str>, extra: &str) -> String {
+    let books = crate::detection::bias_vocabulary(lang).join(", ");
     let base = format!("Scripture reading from the Holy Bible. Books: {books}.");
     let extra = extra.trim();
     if extra.is_empty() {
@@ -402,14 +409,37 @@ pub fn scripture_bias_prompt(extra: &str) -> String {
 mod tests {
     use super::*;
 
+    /// The decoder must be primed in the language being PREACHED. Feeding whisper
+    /// English book names during a Yorùbá sermon actively pushes it away from the
+    /// words we need it to hear — the bias was working against the differentiator.
+    #[test]
+    fn the_bias_prompt_speaks_the_language_being_preached() {
+        let yo = scripture_bias_prompt(Some("yo"), "");
+        assert!(yo.contains("Jòhánù"), "no Yorùbá book names in the prompt");
+        assert!(yo.contains("Sáàmù"));
+        // English stays too — code-switching is the normal case, not an edge case.
+        assert!(yo.contains("John"));
+
+        let sw = scripture_bias_prompt(Some("sw"), "");
+        assert!(sw.contains("Yohana") && sw.contains("Zaburi"));
+
+        let ha = scripture_bias_prompt(Some("ha"), "");
+        assert!(ha.contains("Yahaya") && ha.contains("Zabura"));
+
+        // Auto-detect / unknown → the English canon, as before.
+        let auto = scripture_bias_prompt(None, "");
+        assert!(auto.contains("John"));
+        assert!(!auto.contains("Jòhánù"));
+    }
+
     #[test]
     fn bias_prompt_lists_books_and_appends_extra() {
-        let p = scripture_bias_prompt("Grace Chapel, hallelujah");
+        let p = scripture_bias_prompt(None, "Grace Chapel, hallelujah");
         assert!(p.contains("Genesis"));
         assert!(p.contains("Revelation"));
         assert!(p.contains("Grace Chapel, hallelujah"));
         // Empty extra → no trailing junk.
-        let base = scripture_bias_prompt("   ");
+        let base = scripture_bias_prompt(None, "   ");
         assert!(base.ends_with('.'));
     }
 
