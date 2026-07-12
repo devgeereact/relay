@@ -80,39 +80,151 @@ jobs:
       # v0.1.0-rc1, v0.2.0-beta2). A plain version tag with no certificate FAILS, loudly.
       # You cannot ship an unsigned build to a church without first typing a tag that
       # says, in the tag itself, that it is not a real release.
+        #
+      # THE GATE IS PER-PLATFORM, and it has to be. It used to test one secret —
+      # APPLE_CERTIFICATE — and call the whole release "signed". So a real tag with the
+      # Apple secrets set sailed through the gate, shipped a correctly notarized .dmg,
+      # and shipped an MSI that was never signed at all: there was no Windows signing
+      # config anywhere in the repo, and the WINDOWS_CERTIFICATE secrets below were read
+      # by nothing. The "⚠️ unsigned build" warning in the release notes was keyed off
+      # the same single flag, so it did not fire either. Windows is the target market's
+      # dominant platform on cost grounds. It shipped unsigned, silently, and the release
+      # notes said everything was fine.
+      #
+      # Two platforms, two certificates, two independent verdicts. A release is only
+      # "signed" if BOTH are.
       - name: Pre-flight — what kind of release is this?
         id: mode
         shell: bash
         env:
+          # macOS: signing AND notarization. Signing alone is not enough — Gatekeeper
+          # still blocks a signed-but-un-notarized app, so a build that has the cert but
+          # not the notary credentials is, from a church's point of view, unsigned.
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # Windows: either scheme is accepted. Azure Trusted Signing is the cheap one
+          # (~$10/mo, no HSM, no shipping a .pfx around); a classic OV/EV .pfx also works.
+          AZURE_ENDPOINT: ${{ secrets.AZURE_ENDPOINT }}
+          AZURE_CODE_SIGNING_ACCOUNT: ${{ secrets.AZURE_CODE_SIGNING_ACCOUNT }}
+          AZURE_CERT_PROFILE: ${{ secrets.AZURE_CERT_PROFILE }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
         run: |
-          if grep -q "PASTE_YOUR_TAURI_UPDATER_PUBLIC_KEY_HERE" src-tauri/tauri.updater.conf.json; then
-            echo "::error::The updater public key has not been set."
+          set -euo pipefail
+
+          # The updater is signed with a minisign key. Without it, an update cannot be
+          # verified, and Relay would either refuse every update or — worse, if we
+          # loosened it — accept one from anybody who can MITM the endpoint.
+          # node, not python3 — this step also runs on the Windows runner, where python3
+          # is not guaranteed to be on PATH. setup-node ran immediately above.
+          PUBKEY=$(node -p "require('./src-tauri/tauri.updater.conf.json').plugins.updater.pubkey || ''")
+          if [ -z "$PUBKEY" ]; then
+            echo "::error::The updater public key in src-tauri/tauri.updater.conf.json is empty."
             echo "Run 'npm run tauri signer generate -- -w ~/.relay/updater.key' and follow docs/RELEASING.md."
             exit 1
           fi
 
+          # ── The tag must match the version in the repo ────────────────────
+          #
+          # This is not bookkeeping. The version in tauri.conf.json is what the updater
+          # manifest advertises, and Tauri decides "is there an update?" by comparing it
+          # as semver against the version the church is running.
+          #
+          # It used to be hard-coded to 0.1.0 in THREE files, none of which the release
+          # workflow read, and none of which were compared to the tag. So `git tag v0.2.0`
+          # built the new binaries, published latest.json advertising them — and stamped
+          # it *version 0.1.0*. Every existing install compared that to its own 0.1.0,
+          # decided it was already current, and never updated. No error. No symptom. Just
+          # a fix that never arrives at the church that needed it.
+          #
+          # An updater that silently never updates is worse than no updater, because you
+          # believe you have one. So: fail here, before building anything.
+          # workflow_dispatch can be fired from a branch, where there is no version to
+          # match. Refuse rather than release something stamped "main".
+          if [ "${{ github.ref_type }}" != "tag" ]; then
+            echo "::error::Releases are cut from a tag, not from '${GITHUB_REF_NAME}'."
+            echo "Run: npm run version:set -- 0.2.0 && git commit -am 'chore(release): 0.2.0'"
+            echo "     git tag v0.2.0 && git push origin v0.2.0"
+            exit 1
+          fi
+
+          VERSION="${GITHUB_REF_NAME#v}"
+          node scripts/version.mjs --check "$VERSION"
+
           # A hyphen in the tag = a pre-release. v0.1.0-rc1 → yes. v0.1.0 → no.
-          case "${{ github.ref_name }}" in
+          case "$GITHUB_REF_NAME" in
             *-*) PRE=true  ;;
             *)   PRE=false ;;
           esac
 
-          if [ -n "$APPLE_CERTIFICATE" ]; then SIGNED=true; else SIGNED=false; fi
+          # ── macOS verdict ────────────────────────────────────────────────
+          MAC_SIGNED=true
+          MAC_MISSING=""
+          for v in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY \
+                   APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+            if [ -z "${!v:-}" ]; then MAC_SIGNED=false; MAC_MISSING="$MAC_MISSING $v"; fi
+          done
 
+          # ── Windows verdict ──────────────────────────────────────────────
+          # Method is decided here and honoured by the signing step below, so there is
+          # exactly one place that knows how this release gets signed.
+          WIN_SIGNED=true
+          WIN_METHOD=none
+          WIN_MISSING=""
+          if [ -n "$AZURE_ENDPOINT" ] || [ -n "$AZURE_CODE_SIGNING_ACCOUNT" ] || [ -n "$AZURE_CERT_PROFILE" ]; then
+            WIN_METHOD=azure
+            for v in AZURE_ENDPOINT AZURE_CODE_SIGNING_ACCOUNT AZURE_CERT_PROFILE \
+                     AZURE_CLIENT_ID AZURE_CLIENT_SECRET AZURE_TENANT_ID; do
+              if [ -z "${!v:-}" ]; then WIN_SIGNED=false; WIN_MISSING="$WIN_MISSING $v"; fi
+            done
+          elif [ -n "$WINDOWS_CERTIFICATE" ]; then
+            WIN_METHOD=pfx
+            if [ -z "$WINDOWS_CERTIFICATE_PASSWORD" ]; then
+              WIN_SIGNED=false; WIN_MISSING=" WINDOWS_CERTIFICATE_PASSWORD"
+            fi
+          else
+            WIN_SIGNED=false
+            WIN_MISSING=" AZURE_* (recommended) or WINDOWS_CERTIFICATE"
+          fi
+
+          if [ "$MAC_SIGNED" = "true" ] && [ "$WIN_SIGNED" = "true" ]; then SIGNED=true; else SIGNED=false; fi
+
+          # A real tag may not ship an unsigned build on EITHER platform.
           if [ "$SIGNED" = "false" ] && [ "$PRE" = "false" ]; then
-            echo "::error::No APPLE_CERTIFICATE, and '${{ github.ref_name }}' is not a pre-release tag."
-            echo "An unsigned build cannot be opened by a church: Gatekeeper says 'Relay is damaged'."
-            echo "Either set the signing secrets (docs/RELEASING.md), or tag a pre-release: v0.1.0-rc1"
+            echo "::error::'${{ github.ref_name }}' is a real release tag, but signing is not fully configured."
+            if [ "$MAC_SIGNED" = "false" ]; then echo "::error::macOS is UNSIGNED — missing:$MAC_MISSING"; fi
+            if [ "$WIN_SIGNED" = "false" ]; then echo "::error::Windows is UNSIGNED — missing:$WIN_MISSING"; fi
+            echo "An unsigned build cannot be opened by a church: Gatekeeper says 'Relay is damaged',"
+            echo "and SmartScreen warns on the installer. Set the secrets (docs/RELEASING.md),"
+            echo "or tag a pre-release instead: v0.1.0-rc1"
             exit 1
           fi
 
-          echo "signed=$SIGNED" >> "$GITHUB_OUTPUT"
-          echo "prerelease=$PRE" >> "$GITHUB_OUTPUT"
-          echo "Release ${{ github.ref_name }}: signed=$SIGNED prerelease=$PRE"
+          # NOTE: there is deliberately no combined `signed` output. A single global
+          # "is this signed?" flag is exactly what caused the bug this gate exists to
+          # prevent — one flag, keyed off one platform's secret, standing in for two
+          # independent certificates. Every consumer must ask about a specific platform.
+          {
+            echo "mac_signed=$MAC_SIGNED"
+            echo "win_signed=$WIN_SIGNED"
+            echo "win_method=$WIN_METHOD"
+            echo "prerelease=$PRE"
+          } >> "$GITHUB_OUTPUT"
+          echo "Release ${{ github.ref_name }}: prerelease=$PRE macOS=$MAC_SIGNED windows=$WIN_SIGNED ($WIN_METHOD)"
 
+      # Keyed on mac_signed, NOT the combined `signed` — they are different questions.
+      # `signed` means "both platforms are covered"; a pre-release may legitimately have
+      # the Apple certificate and no Windows one, and that build should still be signed
+      # on macOS. Keying this on `signed` would silently drop macOS back to ad-hoc.
       - name: Import the Apple signing certificate
-        if: matrix.os == 'macos-latest' && steps.mode.outputs.signed == 'true'
+        if: matrix.os == 'macos-latest' && steps.mode.outputs.mac_signed == 'true'
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -126,6 +238,67 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple:,codesign: \
             -s -k actions build.keychain
           rm cert.p12
+
+      # ── Windows signing ────────────────────────────────────────────────────
+      #
+      # Tauri signs the Windows binaries DURING bundling (the .exe is signed before
+      # NSIS/WiX wraps it), so this cannot be a post-hoc "sign the artifacts" step —
+      # it has to be configuration the bundler reads. That configuration cannot live in
+      # tauri.conf.json either: a certificate thumbprint or a signCommand sitting in the
+      # committed config would make `npm run tauri build` fail on every contributor's
+      # Windows machine, because they don't have the certificate.
+      #
+      # So it is generated here, for this build only, and merged over the base config by
+      # a second `--config` (the CLI merges them in order — same mechanism the updater
+      # config already uses). The file is gitignored; nothing about it is committed.
+      #
+      # Two schemes, decided in pre-flight:
+      #   azure — Azure Trusted Signing. ~$10/mo, no HSM, no .pfx to leak. RECOMMENDED.
+      #           Auth comes from AZURE_CLIENT_ID/SECRET/TENANT_ID in the env, which
+      #           trusted-signing-cli reads itself.
+      #   pfx   — a classic OV/EV .pfx, base64'd into a secret. Imported into the
+      #           runner's cert store; Tauri then finds it by SHA-1 thumbprint.
+      - name: Prepare Windows code signing
+        id: winsign
+        if: matrix.os == 'windows-latest' && steps.mode.outputs.win_signed == 'true'
+        shell: pwsh
+        env:
+          WIN_METHOD: ${{ steps.mode.outputs.win_method }}
+          AZURE_ENDPOINT: ${{ secrets.AZURE_ENDPOINT }}
+          AZURE_CODE_SIGNING_ACCOUNT: ${{ secrets.AZURE_CODE_SIGNING_ACCOUNT }}
+          AZURE_CERT_PROFILE: ${{ secrets.AZURE_CERT_PROFILE }}
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $conf = 'src-tauri/tauri.winsign.conf.json'
+
+          if ($env:WIN_METHOD -eq 'azure') {
+            cargo install trusted-signing-cli --locked
+            # %1 is the file Tauri wants signed. Endpoint/account/profile are baked in
+            # here rather than passed as %VARS%, because Tauri does not run signCommand
+            # through a shell and would not expand them.
+            $cmd = "trusted-signing-cli -e $($env:AZURE_ENDPOINT) -a $($env:AZURE_CODE_SIGNING_ACCOUNT) -c $($env:AZURE_CERT_PROFILE) %1"
+            $json = @{ bundle = @{ windows = @{ signCommand = $cmd } } }
+          }
+          else {
+            [IO.File]::WriteAllBytes('cert.pfx', [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE))
+            $pw = ConvertTo-SecureString -String $env:WINDOWS_CERTIFICATE_PASSWORD -Force -AsPlainText
+            $cert = Import-PfxCertificate -FilePath cert.pfx `
+                      -CertStoreLocation Cert:\CurrentUser\My -Password $pw
+            Remove-Item cert.pfx -Force
+            $json = @{ bundle = @{ windows = @{
+              certificateThumbprint = $cert.Thumbprint
+              digestAlgorithm       = 'sha256'
+              timestampUrl          = 'http://timestamp.digicert.com'
+            } } }
+            # A thumbprint is a public hash, not a secret — but the log is public and
+            # there is no reason to print it.
+            Write-Output "Imported signing certificate: $($cert.Subject)"
+          }
+
+          $json | ConvertTo-Json -Depth 6 | Set-Content -Path $conf -Encoding utf8
+          "config_arg=--config $conf" >> $env:GITHUB_OUTPUT
 
       - name: Build, sign, notarize and publish
         uses: tauri-apps/tauri-action@v0
@@ -157,17 +330,20 @@ jobs:
           #
           # Ad-hoc still gives no Gatekeeper trust — the build remains unopenable
           # without `xattr -cr`, exactly as an unsigned pre-release should be.
-          APPLE_SIGNING_IDENTITY: ${{ steps.mode.outputs.signed == 'true' && secrets.APPLE_SIGNING_IDENTITY || '-' }}
+          APPLE_SIGNING_IDENTITY: ${{ steps.mode.outputs.mac_signed == 'true' && secrets.APPLE_SIGNING_IDENTITY || '-' }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }} # app-specific password
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
 
           # ── Windows: code signing ────────────────────────────────────────
-          # Tauri reads these from tauri.conf/bundle.windows, or via a
-          # signCommand. See docs/RELEASING.md — Windows certificates are more
-          # varied than Apple's and the right answer depends on which you buy.
-          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
-          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+          # The certificate itself is wired up in the "Prepare Windows code signing"
+          # step above, which writes a bundle.windows config fragment. These three are
+          # here because trusted-signing-cli — invoked BY the bundler, as signCommand —
+          # reads them from its own environment to authenticate to Azure. They are
+          # ignored by the .pfx scheme, and by macOS.
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
 
           # whisper.cpp needs std::filesystem (macOS 10.15+). Tauri's release
           # profile otherwise passes 10.13 and ggml fails to compile — this is
@@ -182,8 +358,13 @@ jobs:
             **First run:** Relay will offer to download the speech model
             (~148 MB, one time). Everything else works immediately.
 
-            ${{ steps.mode.outputs.signed == 'false' && '> ⚠️ **UNSIGNED TEST BUILD — not for a live service.** macOS will say *"Relay is damaged and can''t be opened"* and Windows SmartScreen will warn. That is expected: this build carries no Apple/Windows code-signing certificate. Do not hand it to a church. On macOS you can open it anyway with `xattr -cr /Applications/Relay.app`, but only do that because *you* built it.' || '' }}
+            ${{ steps.mode.outputs.mac_signed == 'false' && '> ⚠️ **The macOS build is UNSIGNED — not for a live service.** macOS will say *"Relay is damaged and can''t be opened"*. That is expected: this build carries no Apple Developer ID certificate and was not notarized. Do not hand it to a church. You can open it anyway with `xattr -cr /Applications/Relay.app`, but only do that because *you* built it.' || '' }}
+
+            ${{ steps.mode.outputs.win_signed == 'false' && '> ⚠️ **The Windows build is UNSIGNED — not for a live service.** SmartScreen will warn (*"Windows protected your PC"*) and most volunteers will stop there. That is expected: this build carries no Windows code-signing certificate. Do not hand it to a church.' || '' }}
           releaseDraft: true # you approve it before churches see it
           prerelease: ${{ steps.mode.outputs.prerelease }}
           includeUpdaterJson: true # publishes latest.json for the auto-updater
-          args: ${{ matrix.args }} --config src-tauri/tauri.updater.conf.json
+          # The Windows signing fragment MUST come last: configs are merged in order, so
+          # whatever it sets for bundle.windows wins. It is empty on macOS and on any
+          # build where Windows signing is not configured.
+          args: ${{ matrix.args }} --config src-tauri/tauri.updater.conf.json ${{ steps.winsign.outputs.config_arg }}
