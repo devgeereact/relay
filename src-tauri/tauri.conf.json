@@ -40,5 +40,13 @@
       "icons/icon.ico"
     ],
     "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "",
+      "endpoints": [
+        "https://github.com/devgeereact/relay/releases/latest/download/latest.json"
+      ]
+    }
   }
 }

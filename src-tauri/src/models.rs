@@ -336,3 +336,44 @@ mod tests {
         assert!(models_dir().ends_with("models"));
     }
 }
+
+/// Config invariants that are only discovered at RUNTIME, and would otherwise
+/// ship. `cargo test` and `tauri build` both pass on a config that panics the app
+/// on startup — a compile is not a boot.
+#[cfg(test)]
+mod config_boots {
+    /// Registering the updater plugin with a null `plugins.updater` PANICS the app
+    /// at startup:
+    ///
+    /// ```text
+    ///   PluginInitialization("updater", "invalid type: null, expected struct Config")
+    /// ```
+    ///
+    /// It did exactly that. The config lived only in the release-only overlay, so
+    /// `tauri dev` died on boot — and the PACKAGED app would have too, because CI
+    /// only ever compiles the release build and never launches it.
+    ///
+    /// The base config must therefore always carry an updater block, even an inert
+    /// one (empty pubkey). The real key is injected at release time.
+    #[test]
+    fn the_base_config_has_an_updater_block_or_the_app_panics_on_startup() {
+        const CONF: &str = include_str!("../tauri.conf.json");
+        let c: serde_json::Value = serde_json::from_str(CONF).expect("tauri.conf.json");
+        let updater = &c["plugins"]["updater"];
+        assert!(
+            updater.is_object(),
+            "plugins.updater is missing from tauri.conf.json — the app will PANIC on \
+             startup. It must exist even with an empty pubkey."
+        );
+        assert!(
+            updater["pubkey"].is_string(),
+            "plugins.updater.pubkey must be a string (may be empty)"
+        );
+        assert!(
+            updater["endpoints"]
+                .as_array()
+                .is_some_and(|a| !a.is_empty()),
+            "plugins.updater.endpoints must be non-empty"
+        );
+    }
+}

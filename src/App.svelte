@@ -1,9 +1,10 @@
 <script>
   import { onMount, onDestroy } from 'svelte';
-  import { capturing, detectionOn, initAudio, clearScreens, blackScreen } from './lib/stores/capture.js';
+  import { capture, capturing, detectionOn, initAudio, clearScreens, blackScreen } from './lib/stores/capture.js';
   import { installShortcuts, cheatsheet, SHORTCUTS } from './lib/shortcuts.js';
   import { installLeaveGuard } from './lib/crash.js';
   import { session, setSession } from './lib/session.js';
+  import FirstRun from './lib/FirstRun.svelte';
   import {
     checkForUpdate,
     installUpdate,
@@ -83,6 +84,12 @@
     teardownLeave?.();
   });
 </script>
+
+<!-- First run. Only ever on a genuinely fresh install, and only once the backend
+     is attached (in a plain browser there is nothing to configure). -->
+{#if $capture.available && !$session.setupDone}
+  <FirstRun />
+{/if}
 
 <div class="shell">
   <!-- Sidebar -->

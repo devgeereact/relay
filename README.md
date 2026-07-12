@@ -28,12 +28,23 @@ Rust core · Tauri v2 shell · Svelte + Vite frontend · SQLite (`rusqlite`) · 
 - **CMake** — required to build `whisper-rs` (compiles whisper.cpp). `brew install cmake`, or download from [cmake.org](https://cmake.org/download/) and put it on your PATH.
 - NDI SDK (for NDI render-target work, later phase)
 
+## Privacy, security, and what the AI does
+
+- **[PRIVACY.md](PRIVACY.md)** — *nothing you say, sing or show leaves your computer.* No accounts, no cloud, no server. The audio is never even saved.
+- **[SECURITY.md](SECURITY.md)** — how to report a vulnerability, and what we consider most serious (anything that leaks sermon content, or puts content on a screen the operator didn't choose).
+- **[docs/AI_DISCLOSURE.md](docs/AI_DISCLOSURE.md)** — what the AI decides by itself, what it will **never** do (a paraphrase never reaches a congregation without a human agreeing), and where it is honestly weak.
+- **[docs/LANGUAGES.md](docs/LANGUAGES.md)** — Yorùbá / Kiswahili / Hausa. Fix a book name in a one-line PR, no Rust required.
+
 ## STT model (offline speech-to-text)
 
-The local speech model is a large binary and is **not** committed. Download a
-model into `models/` before running (auto-detected there; the **multilingual**
-`ggml-base.bin` is preferred so Yoruba/Swahili/Hausa + code-switching work,
-falling back to `ggml-base.en.bin`; override with `RELAY_MODEL_PATH`):
+**Users don't need this section — Relay downloads the model for you, with one
+button, on first run.** This is for developers running from source.
+
+The local speech model is a large binary and is **not** committed. Either let the
+app fetch it, or download one into `models/` yourself (auto-detected there; the
+**multilingual** `ggml-base.bin` is preferred so Yoruba/Swahili/Hausa +
+code-switching work, falling back to `ggml-base.en.bin`; override with
+`RELAY_MODEL_PATH`):
 
 ```bash
 mkdir -p models

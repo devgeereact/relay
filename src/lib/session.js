@@ -16,6 +16,10 @@ import { writable } from 'svelte/store';
 const KEY = 'relay.session.v1';
 
 const EMPTY = {
+  // Has the operator been through (or skipped) first-run setup? Once true it
+  // NEVER shows again — a wizard that reappears is a wizard that gets clicked
+  // through blindly, and everything it configures also lives in Settings.
+  setupDone: false,
   activeTab: 'console',
   planId: null,
   liveCueId: null,
