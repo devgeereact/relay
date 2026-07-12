@@ -119,6 +119,13 @@ jobs:
         run: |
           set -euo pipefail
 
+          # A tag name is attacker-influenceable in principle, so it is read from the
+          # ENVIRONMENT ($GITHUB_REF_NAME) and never interpolated as ${{ }} into this
+          # shell. A `${{ github.ref_name }}` inside a run: block is substituted before
+          # bash ever sees it, so a tag containing shell metacharacters would be parsed
+          # as code. `github.ref_type` below is safe — it can only ever be "tag" or
+          # "branch" — but the tag name itself is not.
+
           # The updater is signed with a minisign key. Without it, an update cannot be
           # verified, and Relay would either refuse every update or — worse, if we
           # loosened it — accept one from anybody who can MITM the endpoint.
@@ -198,7 +205,7 @@ jobs:
 
           # A real tag may not ship an unsigned build on EITHER platform.
           if [ "$SIGNED" = "false" ] && [ "$PRE" = "false" ]; then
-            echo "::error::'${{ github.ref_name }}' is a real release tag, but signing is not fully configured."
+            echo "::error::'${GITHUB_REF_NAME}' is a real release tag, but signing is not fully configured."
             if [ "$MAC_SIGNED" = "false" ]; then echo "::error::macOS is UNSIGNED — missing:$MAC_MISSING"; fi
             if [ "$WIN_SIGNED" = "false" ]; then echo "::error::Windows is UNSIGNED — missing:$WIN_MISSING"; fi
             echo "An unsigned build cannot be opened by a church: Gatekeeper says 'Relay is damaged',"
@@ -217,7 +224,7 @@ jobs:
             echo "win_method=$WIN_METHOD"
             echo "prerelease=$PRE"
           } >> "$GITHUB_OUTPUT"
-          echo "Release ${{ github.ref_name }}: prerelease=$PRE macOS=$MAC_SIGNED windows=$WIN_SIGNED ($WIN_METHOD)"
+          echo "Release ${GITHUB_REF_NAME}: prerelease=$PRE macOS=$MAC_SIGNED windows=$WIN_SIGNED ($WIN_METHOD)"
 
       # Keyed on mac_signed, NOT the combined `signed` — they are different questions.
       # `signed` means "both platforms are covered"; a pre-release may legitimately have

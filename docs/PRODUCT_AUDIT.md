@@ -56,11 +56,10 @@ So the honest position is:
 > **Relay is one careful week from being genuinely shippable, and that week is now about honesty, not features: sign Windows, derive the version from the tag, stop lying on the panic path, and show the operator which kind of match they are being offered.**
 
 > **Update, 2026-07-12 — that week was done.** All five criticals (D1–D5) are fixed and
-> tested; see each entry in §5 and the roadmap in §15. What remains before a church can
-> use this is no longer engineering: **buy a Windows certificate**, **add the macOS
-> microphone entitlement** (without it, the first *correctly notarized* build is the
-> first one where the mic is dead — and it cannot reproduce in dev), **watch one update
-> install end to end**, and **put a name in `LICENSE`**. Then run a real service with an
+> tested, along with the macOS microphone entitlement, the silent-no-op in the `nav`
+> transport, and the unnamed licensor; see each entry in §5 and the roadmap in §15.
+> What remains before a church can use this is no longer engineering: **buy a Windows
+> certificate** and **watch one update install end to end**. Then run a real service with an
 > operator who is not the author. The scorecard below is pre-fix and is kept as the
 > baseline those changes are measured against.
 
@@ -90,7 +89,7 @@ Scored against the stated bar (*first 10 churches*), not against Stripe. Δ is t
 | **Brand** | **4 / 10** | — | Still no logo, no tagline, no positioning line. README **still says "Working name — rename freely."** The in-app header still says **"Relay Console"** — a tab that no longer exists. |
 | **Business model** | **N/A** | — | Deliberately free/MIT. Sustainability parked, not decided. Correct at this stage. |
 | **Documentation** | **5 / 10** | — | ARCHITECTURE.md and DECISIONS.md remain excellent for engineers, and LANGUAGES.md is the most honest artifact in the repo. But the *operator* guide still opens by explaining `localhost:5032`, still says "the five screens" and lists six (there are seven), still names a **Console** tab that does not exist — and **never once mentions the speech model**. The in-app Help is now better than the written guide. |
-| **Legal compliance** | **6 / 10** | ▲ +3 | PRIVACY, SECURITY, AI_DISCLOSURE all shipped and accurate. KJV-only, public domain, and there is **no import path for any other translation** — so there is no licensing exposure today. Two defects: **`LICENSE:3` still reads `Copyright (c) 2026 [Your name / organization]`**, and WCAG would still not pass. |
+| **Legal compliance** | **6 / 10** | ▲ +3 | PRIVACY, SECURITY, AI_DISCLOSURE all shipped and accurate. KJV-only, public domain, and there is **no import path for any other translation** — so there is no licensing exposure today. Two defects at the time of scoring: **`LICENSE:3` read `Copyright (c) 2026 [Your name / organization]`** (fixed — see §14), and WCAG would still not pass (open). |
 | **Enterprise readiness** | **N/A** | — | Explicitly out of scope. See §13. |
 | **Overall maturity** | **6.5 / 10** | ▲ **+1.5** | *Shippable-pending-honesty.* The install problem is solved. The remaining work is making the product tell the truth about its own state. |
 
@@ -135,8 +134,8 @@ Scored against the stated bar (*first 10 churches*), not against Stripe. Δ is t
 > 2. **Watch an update actually install**, once, on a real machine. The path is capable
 >    of it now; nobody has seen it happen.
 >
-> The **macOS microphone entitlement** — the sixth issue, below — is also fixed. The only
-> Phase 1 item left in code is `LICENSE:3`, which still says `[Your name / organization]`.
+> The **macOS microphone entitlement** — the sixth issue, below — is also fixed, as is
+> `LICENSE`, which now names its copyright holder. Phase 1 is complete in code.
 
 ### ✅ D1 — A real release tag publishes an unsigned Windows installer, silently
 *Fixed 2026-07-12. The gate is now per-platform and the Windows secrets are actually consumed. Ships as soon as a certificate is bought — see the note at the end of this section.*
@@ -331,7 +330,7 @@ What genuinely needs work:
 | NDI | **DEFER** | Honestly parked. Leave it parked. |
 | **Windows code signing** | **ADD — P0** | See D1. |
 | **Tag-derived version + CI assertion** | **ADD — P0** | See D2. |
-| **macOS mic entitlement** | **ADD — P0** | Invisible until the first notarized build. |
+| **macOS mic entitlement** | ✅ **DONE** | Invisible until the first notarized build — which is exactly why it needed an assertion, not a test run. |
 | **Method badge + `matched_text`** | **ADD — P0** | See D4. Cheapest high-value change available. |
 | **Service plan → STT `initial_prompt`** | **ADD — P1** | The plan names the passages; the decoder is never told. Cheap accuracy win from data we already have. |
 | **Sermon audio corpus (30 min)** | **ADD — P1** | Unblocks WER, unblocks the dormant STT bench, unblocks the entire moat. |
@@ -430,7 +429,7 @@ Genuinely weak, and cheap to fix.
 
 | Item | Status |
 |---|---|
-| LICENSE (MIT) | ⚠️ **Present but defective.** `LICENSE:3` still reads `Copyright (c) 2026 [Your name / organization]`. An MIT grant with no named licensor. **One-line fix; do it today.** |
+| LICENSE (MIT) | ✅ **Fixed 2026-07-12.** It read `Copyright (c) 2026 [Your name / organization]` — an MIT grant with no named licensor, and the one outright legal defect in the repo. It now names one. |
 | PRIVACY.md | ✅ **Shipped, and excellent.** Accurate against `telemetry.rs` and `channels.rs`. Crucially, it **discloses the unauthenticated LAN broadcast** (`PRIVACY.md:74-89`) rather than hiding it, and flags the café-wifi media-serving risk. |
 | SECURITY.md | ✅ Shipped. Private reporting, 72h SLA, threat model ranked by content leakage first. |
 | AI transparency | ✅ `docs/AI_DISCLOSURE.md` — plain-language, states its own weaknesses. Rare. |
@@ -452,7 +451,7 @@ Genuinely weak, and cheap to fix.
 3. ~~**D3** — panic path tells the truth: await + surface failures; `Esc` guards on the cheatsheet; fix the `B`-while-typing line~~ ✅ **done**
 4. ~~**D5** — model download: read timeout, real cancel, clear `running`, delete a bricked `.part`~~ ✅ **done**
 5. ~~**macOS mic entitlement** — before the first notarized build, not after a church reports a dead mic~~ ✅ **done**
-6. **`LICENSE:3`** — put a name in it
+6. ~~**`LICENSE:3`** — put a name in it~~ ✅ **done**
 
 **Exit criterion: a volunteer installs Relay on Windows *and* macOS, the OS does not warn, the microphone works, they get a verse on a projector, and when we ship a fix next week their machine actually receives it.** Until that is true, nothing else ships.
 
@@ -492,7 +491,7 @@ Genuinely weak, and cheap to fix.
 **Blocking a first church:**
 - [x] In-app model download — *shipped, needs D5*
 - [x] Signed + notarized macOS build
-- [ ] **macOS microphone entitlement** *(without it, the notarized build has a dead mic)*
+- [x] **macOS microphone entitlement** *(without it, the notarized build has a dead mic)*
 - [ ] **Signed Windows build**
 - [x] Auto-updater — *shipped, needs D2 to function*
 - [ ] **An update actually delivered end-to-end to an installed build**
@@ -504,7 +503,7 @@ Genuinely weak, and cheap to fix.
 
 **Before public release:**
 - [ ] Method + `matched_text` visible live
-- [ ] `LICENSE` names a copyright holder
+- [x] `LICENSE` names a copyright holder
 - [ ] WCAG: focus traps, operable controls, `<h1>`, `Stage.svelte` contrast
 - [ ] Rename decided
 - [ ] CONTRIBUTING + CODE_OF_CONDUCT + CHANGELOG
