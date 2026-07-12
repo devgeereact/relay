@@ -10,6 +10,7 @@
     listModels,
     downloadModel,
     cancelModelDownload,
+    dismissModelError,
     modelProgress,
     modelError,
   } from './stores/capture.js';
@@ -95,7 +96,13 @@
   {/if}
 
   {#if $modelError}
-    <div class="ms-err">{$modelError}</div>
+    <!-- Dismissable. It used to have no way out, so a stale failure (or, before the
+         fix, the operator's own Cancel) sat in a red box until the component
+         remounted — with a working Try again button sitting right underneath it. -->
+    <div class="ms-err" role="alert">
+      <span>{$modelError}</span>
+      <button class="r-btn ghost sm" on:click={dismissModelError}>Dismiss</button>
+    </div>
   {/if}
 </div>
 
@@ -144,5 +151,7 @@
     margin-top: 10px; padding: 8px 10px; border-radius: 8px;
     background: rgba(147, 0, 10, 0.18); border: 1px solid rgba(255, 157, 148, 0.3);
     color: var(--s-rose, #f4718b); font-size: 12px; line-height: 1.55;
+    display: flex; align-items: center; gap: 10px;
   }
+  .ms-err span { flex: 1; min-width: 0; }
 </style>

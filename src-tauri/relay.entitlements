@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  macOS entitlements.
+
+  WHY THIS FILE EXISTS, and why its absence was invisible:
+
+  Notarization REQUIRES the hardened runtime, and Tauri turns it on by default
+  (`bundle.macOS.hardenedRuntime` defaults to true). Under the hardened runtime, a
+  process may not open an audio input device unless it carries the
+  `com.apple.security.device.audio-input` entitlement — the request is killed by TCC,
+  not refused politely.
+
+  So Relay would have shipped like this:
+
+    tauri dev            → microphone works   (no hardened runtime)
+    unsigned pre-release → microphone works   (ad-hoc signed, no hardened runtime)
+    SIGNED + NOTARIZED   → microphone DEAD
+
+  In other words, the FIRST build that is correct enough to hand to a church is the
+  first one where Relay cannot hear the preacher — and no amount of testing the
+  builds we could actually make would have revealed it. The app would have looked
+  perfect, started listening, and transcribed nothing, forever.
+
+  Relay is an app whose entire reason to exist is that it hears the sermon. This one
+  key is the difference between that being true and being false.
+
+  Nothing else is granted. Relay is not sandboxed, so no network or file entitlements
+  are needed, and library validation stays ON (whisper.cpp is statically linked — we
+  load no unsigned dylibs and must not weaken the hardening to pretend otherwise).
+-->
+<plist version="1.0">
+<dict>
+	<key>com.apple.security.device.audio-input</key>
+	<true/>
+</dict>
+</plist>
