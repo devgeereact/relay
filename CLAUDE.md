@@ -57,7 +57,8 @@ Rust (**prefix with the cmake path — this machine has no Homebrew**):
 ```bash
 export PATH="/Users/gideonakinlotan/.local/bin:$PATH"   # cmake 3.31.6, needed by whisper-rs
 cd src-tauri
-cargo test                                   # 228 tests
+cargo test                                   # 240 tests
+cargo test e2e                               # the fire → nav → clear path (7 tests)
 cargo test detection::                       # one module
 cargo test the_macos_build -- --nocapture    # one test
 cargo fmt --all && cargo clippy --all-targets -- -D warnings   # CI enforces both
@@ -93,7 +94,9 @@ Every audio bug so far was invisible in the code and reproducible only with a sp
 │   ├── relay.entitlements   — com.apple.security.device.audio-input. See §17.
 │   ├── tauri.conf.json      — base; tauri.updater.conf.json overlays it at release
 │   └── src/
-│       ├── main.rs          — Tauri commands + the live-fire engine (2.9k lines, 101 cmds, 0 tests)
+│       ├── main.rs          — Tauri commands + the live-fire engine (2.9k lines, 101 cmds)
+│       ├── e2e.rs           — TEST-ONLY. Drives the real fire → nav → clear commands
+│       │                      against a real in-memory DB via tauri::test::mock_builder
 │       ├── audio.rs · dsp.rs · stt.rs      — capture · denoise/gain · whisper worker
 │       ├── detection.rs     — direct + semantic (TF-IDF) + context memory. DB/IO-free, heavily tested
 │       ├── router.rs        — THE GATE: per-method routing, debounce, self-calibrating thresholds
@@ -164,6 +167,8 @@ These caused real crashes, freezes, or silent failures in front of people. Keep 
 21. **An empty env var is not an absent env var.** Passing `APPLE_ID`/`APPLE_TEAM_ID` as `''` on an unsigned build makes Tauri believe notarization was requested, and it dies on `Team ID must be at least 3 characters`. There is no way to conditionally omit a key from an Actions `env:` block, so they are exported to `$GITHUB_ENV` only when actually signing. (Same trap as the signing identity, one level deeper.)
 22. **GitHub Actions evaluates `${{ }}` EVERYWHERE — including inside comments in a `run:` block.** An empty one is a parse error that invalidates the whole workflow, so GitHub can't even apply the `on:` filter and every push gets a zero-job "startup failure". Never write an Actions expression in a workflow comment, even to illustrate one.
 23. **A release is signed per-platform, or not at all.** One global "is it signed?" flag *is* the bug: it tested `APPLE_CERTIFICATE` and shipped an unsigned Windows MSI in silence. Two certificates, two independent verdicts, and the gate fails loud on a real tag.
+24. **The fire engine is generic over `tauri::Runtime`** (`fire_manual`, `handle_nav`, `clear_or_report`, `persist_cue`, and `channels::{broadcast_content, clear, black, stage_next}`). That is what makes `e2e.rs` possible: welded to the concrete desktop runtime, the one path that puts scripture on a wall could not be driven without a window, and so was never tested. **Keep new fire-path code generic** — a concrete `AppHandle` quietly re-welds it.
+25. **A migration must be RETRYABLE.** `ensure_manual_detection_status` rebuilds a table (SQLite cannot `ALTER` a `CHECK`). It had no `ROLLBACK`, so a mid-batch failure left the transaction open — the following `PRAGMA foreign_keys = ON` then ran *inside* it, where the pragma is a documented no-op, and the error panicked the app at startup with FKs off. The leftover `detections_new` scratch table then made **every subsequent boot** fail with "table already exists", forever, before the window is even shown. Always `DROP TABLE IF EXISTS` the scratch table first, and roll back on failure.
 
 ## Frontend shape
 
@@ -191,10 +196,14 @@ These caused real crashes, freezes, or silent failures in front of people. Keep 
 
 ## Testing
 
-228 Rust + 92 frontend. CI runs both on **macOS and Windows**, plus `fmt`, `clippy -D warnings`, the detection scorecard, and a release build.
+240 Rust + 92 frontend. CI runs both on **macOS and Windows**, plus `fmt`, `clippy -D warnings`, the detection scorecard, and a release build.
+
+- **`e2e.rs` is the one test that exercises what a congregation actually sees.** It drives the real commands (`manual_fire`, `nav`, `clear_screens`, `blackout`, `set_rehearsal`) against a real in-memory DB, through the real router and pipeline, and asserts on the events that leave the machine. Nothing is mocked but the window (`tauri::test::mock_builder`, dev-dependency `tauri/test`). **Add a test here whenever you touch the fire path.**
+  - Use `mock_context(noop_assets())`, **not** `generate_context!()` — the real macro embeds `Info.plist` as a link symbol and expanding it twice fails with `_EMBED_INFO_PLIST is already defined`.
+  - A fresh install does **not** seed `tpl_scripture`: the per-content-type template is an *override* the operator sets, and without it the channel's own template is used. Set one in the fixture, or the "every fire carries its template" assertion is vacuous.
 
 - **`eval.rs` is a CI build gate**, not shipped code: a 50-case labelled corpus scored **through the real router**, failing the build above SPEC's 5% wrong-verse rate. It measures detection over TEXT, not accuracy over AUDIO — WER has never been measured, in any language.
 - **`ipc.test.js` is the contract test**: every Tauri command the frontend calls by string must exist in Rust. Renaming a `#[tauri::command]` otherwise fails silently inside a `catch {}` and a button just quietly stops working.
 - **Test the bug, not the fix.** When fixing something, verify the new test FAILS if you reintroduce the original defect. Several tests in this repo were written that way on purpose; one entitlement test initially passed on a broken file because it grepped a comment.
-- **`main.rs` has zero tests** and there is no e2e — the fire → nav → clear path is verified only by hand. This is the largest known gap.
+- **Largest remaining gaps:** 88 × `Result<_, String>` (no typed error, so the frontend cannot tell "not found" from "DB locked" from "disk full"), and `capture.js`'s throw-vs-swallow contract is stated in a comment and applied ad hoc.
 - Vitest gotcha: `beforeEach(() => invoke.mockReset())` returns the mock, and vitest treats a value returned from a hook as a **teardown function** — so it calls `invoke()` after every test. Use a block body.
