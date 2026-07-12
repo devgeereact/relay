@@ -68,6 +68,17 @@
       ],
     },
     {
+      id: 'practice',
+      icon: '🎬',
+      title: 'I want to practise without anyone seeing',
+      body: [
+        ['Press <b>Rehearse</b> on the Live tab.', 'Everything works exactly as it will on Sunday — the AI listens, suggestions appear, the plan runs, the arrow keys move — but <b>nothing reaches the projector, the stage monitor, OBS, or any other screen</b>. You can practise in the middle of a service if you want to.'],
+        ['You cannot miss it.', 'A purple band sits across the top of the app the whole time it is on, and the top bar says <b>REHEARSAL</b> instead of <b>On Air</b> on every tab.'],
+        ['It does not count.', 'A rehearsal is not saved to your service history, and the AI does not learn from it — otherwise practising would train it on things that never really happened.'],
+        ['Going live clears the screens.', 'When you end the rehearsal, Relay blanks every output. The projector had been sitting on whatever was there before you started, and you have not looked at it in twenty minutes — so you put the next thing up deliberately, rather than being handed a wall you have forgotten about.'],
+      ],
+    },
+    {
       id: 'privacy',
       icon: '🔒',
       title: 'Does anything leave this computer?',

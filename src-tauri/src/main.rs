@@ -106,6 +106,7 @@ fn main() {
         .manage(Routing::default())
         .manage(Outputs::default())
         .manage(Detecting(AtomicBool::new(true)))
+        .manage(channels::Rehearsal::default())
         .manage(Session::default())
         .manage(models::DownloadState::default())
         .setup(|app| {
@@ -277,6 +278,8 @@ fn main() {
             dismiss_detection,
             get_thresholds,
             set_thresholds,
+            get_rehearsal,
+            set_rehearsal,
             get_crash_reporting,
             set_crash_reporting,
             list_models,
@@ -1745,6 +1748,7 @@ fn confirm_detection(
     app: tauri::AppHandle,
     db: tauri::State<'_, Db>,
     routing: tauri::State<'_, Routing>,
+    rehearsal: tauri::State<'_, channels::Rehearsal>,
     reference: String,
 ) -> Result<Thresholds, String> {
     // The confidence of the suggestion the operator just accepted — this is the
@@ -1776,12 +1780,21 @@ fn confirm_detection(
     }
     let t = {
         let mut router = routing.0.lock().map_err(|e| e.to_string())?;
-        router.record_feedback(true, confirmed_conf);
+        // A rehearsal is not evidence. The volunteer is practising — clicking
+        // accept on a verse they picked themselves, against speech that may be
+        // them reading aloud from a phone. Feeding that to the self-calibrating
+        // gate trains it on a fiction, and the fiction persists onto the profile
+        // and into the real service on Sunday.
+        if !rehearsal.on() {
+            router.record_feedback(true, confirmed_conf);
+        }
         router.thresholds()
     };
     // Persist the nudge onto the active profile (calibration survives restart).
-    if let Ok(conn) = db.0.lock() {
-        persist_active_thresholds(&conn, t);
+    if !rehearsal.on() {
+        if let Ok(conn) = db.0.lock() {
+            persist_active_thresholds(&conn, t);
+        }
     }
     Ok(t)
 }
@@ -1792,18 +1805,72 @@ fn confirm_detection(
 fn dismiss_detection(
     routing: tauri::State<'_, Routing>,
     db: tauri::State<'_, Db>,
+    rehearsal: tauri::State<'_, channels::Rehearsal>,
 ) -> Result<Thresholds, String> {
     let t = {
         let mut router = routing.0.lock().map_err(|e| e.to_string())?;
         // No argument: the router remembers what it last auto-fired, so the
         // correction is proportional to what was actually wrong.
-        router.record_feedback(false, None);
+        // Not in rehearsal — see confirm_detection.
+        if !rehearsal.on() {
+            router.record_feedback(false, None);
+        }
         router.thresholds()
     };
-    if let Ok(conn) = db.0.lock() {
-        persist_active_thresholds(&conn, t);
+    if !rehearsal.on() {
+        if let Ok(conn) = db.0.lock() {
+            persist_active_thresholds(&conn, t);
+        }
     }
     Ok(t)
+}
+
+/// Is rehearsal mode on?
+#[tauri::command]
+fn get_rehearsal(rehearsal: tauri::State<'_, channels::Rehearsal>) -> bool {
+    rehearsal.on()
+}
+
+/// Turn rehearsal mode on or off.
+///
+/// Leaving rehearsal CLEARS the screens. The outputs have been showing whatever
+/// they were showing before the rehearsal began — a countdown, the last verse of
+/// the previous service, nothing at all — while the operator has spent twenty
+/// minutes watching a console preview that says something else entirely. Handing
+/// them back a live wall whose contents they have not looked at in twenty minutes,
+/// silently, is how the wrong thing ends up in front of a congregation.
+///
+/// So the wall is cleared, and the operator puts the next thing up deliberately.
+#[tauri::command]
+fn set_rehearsal(
+    app: tauri::AppHandle,
+    session: tauri::State<'_, Session>,
+    rehearsal: tauri::State<'_, channels::Rehearsal>,
+    on: bool,
+) -> Result<(), String> {
+    // The other half of the same rule. Mid-service is not when you practise, and
+    // an operator who flips this by accident during the sermon would silently cut
+    // every screen off from the console with no visible cause on the wall.
+    if on {
+        let recording = session
+            .0
+            .lock()
+            .map(|s| s.is_some())
+            .map_err(|e| e.to_string())?;
+        if recording {
+            return Err("A service is being recorded. End it before rehearsing.".into());
+        }
+    }
+    let was = rehearsal.on();
+    rehearsal.set(on);
+    if was != on {
+        // Clear AFTER flipping the flag, so it lands on the right side: entering
+        // rehearsal clears the console preview only (the wall is untouched, as it
+        // must be — the service may be running); leaving it clears the real wall.
+        channels::clear(&app);
+        let _ = app.emit("rehearsal://changed", on);
+    }
+    Ok(())
 }
 
 /// Crash-reporting status for the Settings toggle.
@@ -2558,9 +2625,19 @@ fn nav(app: tauri::AppHandle, direction: String) {
 fn start_service(
     session: tauri::State<'_, Session>,
     db: tauri::State<'_, Db>,
+    rehearsal: tauri::State<'_, channels::Rehearsal>,
     title: String,
     date: String,
 ) -> Result<i64, String> {
+    // A rehearsal is not a service and must never be written into the church's
+    // history as one. They are mutually exclusive, and this is refused loudly
+    // rather than quietly recorded — a practice run filed under last Sunday is a
+    // record nobody can trust afterwards.
+    if rehearsal.on() {
+        return Err(
+            "Relay is in rehearsal mode. Turn rehearsal off to record a real service.".into(),
+        );
+    }
     // db before session (consistent global lock order — see persist_transcript).
     let conn = db.0.lock().map_err(|e| e.to_string())?;
     let mut sess = session.0.lock().map_err(|e| e.to_string())?;

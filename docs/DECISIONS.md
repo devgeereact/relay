@@ -56,3 +56,41 @@ Made while hardening for the first real service. Same rule: if the code contradi
 ## Competitive framing (why this exists)
 
 Pewbeam is a live, funded competitor with paying churches in 30 countries and a stated roadmap toward a full presentation suite. This project is a deliberate bet on out-executing a moving target on two specific axes — independent multi-screen templating, and African-language speech understanding as a first-class priority rather than an English-first afterthought — not an attempt to fill an empty market.
+
+## 18. Rehearsal mode gates at the broadcast, not at the caller
+
+**Decision.** Rehearsal is a single flag (`channels::Rehearsal`) read inside
+`channels::broadcast_content` / `clear` / `black` — the three functions content
+leaves the machine through. In rehearsal they emit to the operator console window
+(`main`) only: no output window, no kiosk WebSocket, no LAN HTTP.
+
+**Why not gate at the fire sites.** There are seven of them and there will be more.
+A rehearsal that a new fire path can forget about is not a sandbox — it is a
+promise that will be broken by the next feature. Gating at the choke point makes
+every future caller sandboxed by construction.
+
+**Why nothing upstream changes.** Detection, the router, the pipeline and the plan
+transport all run exactly as they do live. A rehearsal that behaves differently
+from a service does not rehearse the service.
+
+**It fails OPEN.** `rehearsing()` returns false wherever the state is not
+registered. The dangerous failure is silently swallowing content the operator
+believes is live — not the reverse.
+
+**Mutually exclusive with a recorded service.** `start_service` refuses while
+rehearsing and `set_rehearsal` refuses while a service is recording. A practice run
+filed under last Sunday is a record nobody can trust afterwards.
+
+**The router does not learn from it.** `record_feedback` is skipped in rehearsal.
+The volunteer is accepting verses they chose themselves, against speech that may be
+them reading aloud from a phone. That is not evidence, and the self-calibrating gate
+would carry the fiction into the real service.
+
+**Leaving rehearsal CLEARS the screens.** The outputs have been showing whatever
+they were showing before the rehearsal began, while the operator watched a console
+preview saying something else. Handing back a live wall they have not looked at in
+twenty minutes, silently, is how the wrong thing ends up in front of a congregation.
+
+**Amber is not used for it.** Amber means ON AIR. A rehearsal is not on air, so it
+is amethyst — in the top bar, on the output wall tally, and in a permanent band
+across the console. A tally light that lies is worse than no tally light.

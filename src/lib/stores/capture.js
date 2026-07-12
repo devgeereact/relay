@@ -47,6 +47,21 @@ export const live = writable(null);
 // clear). Reset by the next fire/clear. Mirrors the output://black broadcast.
 export const screenBlack = writable(false);
 
+/**
+ * REHEARSAL — the operator is practising, and nothing reaches the congregation.
+ *
+ * Backed by Rust (channels.rs) rather than by a flag in this file, because the
+ * sandbox has to hold at the point content leaves the machine, not at the point a
+ * button was clicked. This store only MIRRORS it, for the UI.
+ *
+ * It has to be impossible to be wrong about. Both mistakes are bad and they are
+ * bad in opposite directions: rehearsing while you think you're live means the
+ * projector stays blank all through the sermon; being live while you think you're
+ * rehearsing means your practice run is on the wall in front of everyone. So the
+ * app says so, loudly and constantly, whenever it is on.
+ */
+export const rehearsing = writable(false);
+
 // Rolling transcript: `partial` is the in-progress line, `finals` are closed
 // utterances (silence-delimited). Kept across capture stop/start.
 export const transcript = writable({ partial: '', finals: [] });
@@ -173,6 +188,7 @@ export async function initAudio() {
       await listen('output://content', (e) => { live.set(e.payload); screenBlack.set(false); });
       await listen('output://clear', () => { live.set(null); screenBlack.set(false); });
       await listen('output://black', () => screenBlack.set(true));
+      await listen('rehearsal://changed', (e) => rehearsing.set(e.payload === true));
       // A device failure (permission denied, unplugged) is non-fatal: surface
       // it and reflect that capture stopped, but never freeze.
       await listen('audio://error', (e) =>
@@ -212,6 +228,31 @@ export async function setDetection(enabled) {
   } catch {
     /* backend absent */
   }
+}
+
+/** Read rehearsal state from the backend (which owns it). */
+export async function loadRehearsal() {
+  try {
+    const call = await invoke();
+    rehearsing.set((await call('get_rehearsal')) === true);
+  } catch {
+    /* backend absent */
+  }
+}
+
+/**
+ * Enter or leave rehearsal.
+ *
+ * This THROWS on refusal, and the caller must show the message. Rust refuses to
+ * rehearse while a service is being recorded, and refuses to record a service while
+ * rehearsing — and a refusal that is swallowed into a `catch {}` (as most wrappers
+ * here do) would leave the operator believing they had flipped a switch that had
+ * not moved. That is the one thing this feature cannot afford.
+ */
+export async function setRehearsal(on) {
+  const call = await invoke();
+  await call('set_rehearsal', { on });
+  rehearsing.set(on);
 }
 
 /** Start (or resume) recording a service. Returns its id. */

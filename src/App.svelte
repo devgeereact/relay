@@ -1,6 +1,6 @@
 <script>
   import { onMount, onDestroy } from 'svelte';
-  import { capture, capturing, detectionOn, live, screenBlack, initAudio, clearScreens, blackScreen } from './lib/stores/capture.js';
+  import { capture, capturing, detectionOn, live, screenBlack, rehearsing, initAudio, clearScreens, blackScreen } from './lib/stores/capture.js';
   import { installShortcuts, cheatsheet, liveShortcuts } from './lib/shortcuts.js';
   import { installLeaveGuard } from './lib/crash.js';
   import { session, setSession } from './lib/session.js';
@@ -103,7 +103,9 @@
      "polite", not "assertive": it announces after whatever the operator is
      already reading, never over the top of it. -->
 <div class="sr-only" role="status" aria-live="polite" aria-atomic="true">
-  {#if $screenBlack}
+  {#if $rehearsing}
+    Rehearsal mode. Nothing is reaching the congregation's screens.
+  {:else if $screenBlack}
     Screens blacked out.
   {:else if $live}
     Now on screen: {$live.reference || 'content'}{$live.translation
@@ -161,7 +163,13 @@
 
            Now: what is on the wall, right now, named. The microphone gets its own
            quieter indicator, because it is a different fact. -->
-      {#if $screenBlack}
+      <!-- Rehearsal outranks everything else here. Nothing is reaching the
+           congregation, so the app must not say "On Air" — on ANY tab, not just
+           Live. The one indicator the operator glances at cannot be tab-specific. -->
+      {#if $rehearsing}
+        <span class="r-badge amethyst pulse"><span class="bd"></span>Rehearsal</span>
+        <span class="topbar-live r-mono">nothing is reaching the screens</span>
+      {:else if $screenBlack}
         <span class="r-badge" style="border-color:var(--v-line2);color:var(--v-dim);">
           <span class="bd" style="background:var(--v-faint);box-shadow:none;"></span>Blackout
         </span>
@@ -195,8 +203,8 @@
         <span>Detection {$detectionOn ? 'ACTIVE' : 'OFF'}</span>
       </div>
       <div style="display:flex;align-items:center;gap:8px;">
-        <span class="dot" style="width:6px;height:6px;border-radius:50%;background:{$live && !$screenBlack ? 'var(--v-rose)' : 'var(--v-faint)'};"></span>
-        {$screenBlack ? 'BLACKOUT' : $live ? 'ON AIR' : 'SCREENS CLEAR'}
+        <span class="dot" style="width:6px;height:6px;border-radius:50%;background:{$rehearsing ? 'var(--v-amethyst)' : $live && !$screenBlack ? 'var(--v-rose)' : 'var(--v-faint)'};"></span>
+        {$rehearsing ? 'REHEARSAL' : $screenBlack ? 'BLACKOUT' : $live ? 'ON AIR' : 'SCREENS CLEAR'}
       </div>
     </footer>
   </div>

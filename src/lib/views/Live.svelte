@@ -61,6 +61,9 @@
     listPlans,
     planItems,
     setStageNext,
+    rehearsing,
+    loadRehearsal,
+    setRehearsal,
   } from '../stores/capture.js';
 
   // ── the plan being RUN (not edited) ──────────────────────────────────────
@@ -106,7 +109,25 @@
     setSession({ planId: null, liveCueId: null, liveSlide: 0, liveOnAir: false });
   }
 
+  // ── rehearsal ────────────────────────────────────────────────────────────
+  // Rust owns the flag (channels.rs gates the one function content leaves through);
+  // this only drives the UI. It THROWS on refusal — Rust will not let you rehearse
+  // while a service is recording — and the operator is told why.
+  let rehBusy = false;
+  async function toggleRehearsal() {
+    rehBusy = true;
+    try {
+      await setRehearsal(!$rehearsing);
+      flash($rehearsing ? 'Rehearsal — nothing reaches the screens' : 'Live. Screens cleared.');
+      errMsg = '';
+    } catch (e) {
+      errMsg = humanError(e);
+    }
+    rehBusy = false;
+  }
+
   onMount(async () => {
+    await loadRehearsal();
     activeTpls = await listActiveTemplates().catch(() => []);
     plans = await listPlans().catch(() => []);
 
@@ -367,245 +388,271 @@
   $: selNote = selCue ? payloadOf(selCue).stage_note || '' : '';
 </script>
 
-<div class="lv">
-  <!-- ══ TRANSPORT ══ Always at the top, always the same shape, plan or no plan. -->
+<div class="stx">
+  <!-- ══ REHEARSAL ══
+       Unmissable, or it is worse than useless. Both ways of being wrong about this
+       are bad, in opposite directions: rehearsing when you think you are live means
+       the projector stays dark through the whole sermon; live when you think you are
+       rehearsing means your practice run is on the wall in front of everyone. So it
+       is stated in a full-width band, at the top, permanently, in a colour that is
+       not amber — because amber means ON AIR and is never allowed to lie. -->
+  {#if $rehearsing}
+    <div class="reh" role="status">
+      <span class="reh-dot"></span>
+      <b>REHEARSAL</b>
+      <span>Nothing is reaching the congregation's screens. Practise freely — the AI, the plan and the arrow keys all behave exactly as they will on Sunday.</span>
+      <button class="reh-end" on:click={toggleRehearsal} disabled={rehBusy}>End rehearsal</button>
+    </div>
+  {/if}
+
+  <!-- ══ TRANSPORT ══ -->
   <div class="tbar">
-    <span class="t-state r-mono" class:on={$live} class:blk={$screenBlack}>
-      <span class="t-dot"></span>
-      {#if $screenBlack}BLACKOUT{:else if $live}ON AIR{:else}STANDBY{/if}
+    <span class="sys" class:live={$live && !$rehearsing} class:reh={$rehearsing} class:blk={$screenBlack}>
+      <span class="sys-dot"></span>
+      {#if $rehearsing}REHEARSAL{:else if $screenBlack}BLACKOUT{:else if $live}ON AIR{:else}STANDBY{/if}
     </span>
 
     {#if openPlan}
-      <button class="t-plan r-focus" on:click={leave} title="Close this plan">
+      <button class="t-plan" on:click={leave} title="Close this plan">
         {openPlan.title}
-        <span class="r-mono t-pos">
+        <span class="mono t-pos">
           {liveIndex >= 0 ? `${liveIndex + 1}/${items.length}` : `· ${items.length} cues`}
         </span>
       </button>
     {/if}
 
-    <span class="t-spring"></span>
+    <span class="spring"></span>
+    {#if liveMsg}<span class="livemsg"><span class="lm-dot"></span>{liveMsg}</span>{/if}
 
-    {#if liveMsg}<span class="t-msg r-mono">{liveMsg}</span>{/if}
-
-    <!-- The mode indicator. `→` is the most-pressed key in the product and it did
-         two different things with no way to tell which. Now it says so. -->
-    <span class="t-mode r-mono" class:slide={mode === 'slide'} title={mode === 'slide' ? 'Arrow keys step through the service plan' : 'Arrow keys walk through the passage on screen'}>
+    <!-- `→` is the most-pressed key in the product and it used to do two different
+         things with no way to tell which. Now it says which. -->
+    <span
+      class="t-mode mono"
+      class:slide={mode === 'slide'}
+      title={mode === 'slide'
+        ? 'Arrow keys step through the service plan'
+        : 'Arrow keys walk through the passage on screen'}>
       → steps <b>{mode === 'slide' ? 'SLIDE' : 'VERSE'}</b>
     </span>
 
     <div class="t-nav">
-      <button class="r-iconbtn" title="Previous (←)" aria-label="Previous" on:click={() => step(-1)}>‹</button>
-      <button class="r-btn amber sm" on:click={() => step(1)}>Next ›</button>
-      <button class="r-iconbtn" title="Clear all screens (Esc)" aria-label="Clear all screens" on:click={clearAll}>◼</button>
+      <button class="nav-sq" title="Previous (←)" aria-label="Previous" on:click={() => step(-1)}>‹</button>
+      <button class="btn-gold" on:click={() => step(1)}>Next ›</button>
+      <button class="nav-sq" title="Clear all screens (Esc)" aria-label="Clear all screens" on:click={clearAll}>◼</button>
     </div>
   </div>
 
-  <!-- ══ THE WALL ══ One copy, shared with nothing else to drift against. -->
-  <OutputWall templates={activeTpls} verseNav={mode === 'verse'} />
-
-  <div class="lv-grid">
-    <!-- ══ PLAN ══ -->
-    <aside class="col plan">
-      <div class="col-head">
-        <h3>Service plan</h3>
-        {#if openPlan}<span class="r-mono dim">{items.length}</span>{/if}
+  <div class="stx-top">
+    <!-- ══ INTELLIGENCE FEED ══ Visible while the plan is running. That is the
+         entire reason the Console and the Planner became one screen. -->
+    <section class="tile feed">
+      <div class="tile-head">
+        <h3>Intelligence Feed</h3>
+        <svg class="ic dim" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 3v18h18"/><path d="M18 17V9M13 17V5M8 17v-3"/></svg>
       </div>
 
-      {#if openPlan}
-        <div class="cues r-scroll">
-          {#each items as c, i (c.id)}
-            {@const ty = TYPE[c.cue_type] || TYPE.scripture}
-            <button
-              class="cue r-focus"
-              class:sel={c.id === selId}
-              class:islive={planOnAir && c.id === liveCueId}
-              class:cued={!planOnAir && c.id === liveCueId}
-              on:click={() => (selId = c.id)}>
-              <span class="cue-stripe" style="background:{ty.color};"></span>
-              <span class="cue-num r-mono">{String(i + 1).padStart(2, '0')}</span>
-              <span class="cue-body">
-                <span class="cue-title">{c.label}</span>
-                <span class="cue-meta r-mono">{cueSub(c)}</span>
-              </span>
-              {#if c.id === liveCueId}
-                <span class="cue-live r-mono" class:cued={!planOnAir}>{planOnAir ? 'LIVE' : 'CUED'}</span>
-              {/if}
-            </button>
-          {/each}
-          {#if !items.length}
-            <div class="col-empty">This plan has no cues. Add them in <b>Planner</b>.</div>
+      <div class="tx-box">
+        <div class="seg-top">
+          <span class="lbl-gold">Live transcript</span>
+          <span class="mono dim">{$capture.capturing ? ($capture.detectedLang ?? 'listening') : 'standby'}</span>
+        </div>
+        <div class="tx-stream" bind:this={transcriptEl}>
+          {#if hasTranscript}
+            {$transcript.finals.join(' ')}
+            {#if $transcript.partial}<mark>{$transcript.partial}</mark><i class="caret"></i>{/if}
+          {:else if $capture.capturing}
+            <span class="dim">Waiting for speech…</span>
+          {:else if !$capture.stt.loaded}
+            <span class="dim">No speech model loaded — see Settings. Manual override still works.</span>
+          {:else}
+            <span class="dim">Start listening to transcribe live.</span>
           {/if}
         </div>
-      {:else}
-        <!-- No plan loaded. Not an error — plenty of services are run entirely from
-             the AI and the manual box. Offer the plans, don't demand one. -->
-        <div class="cues r-scroll">
-          {#each plans as p (p.id)}
-            <button class="cue pick r-focus" on:click={() => loadPlan(p)}>
-              <span class="cue-body">
-                <span class="cue-title">{p.title}</span>
-                <span class="cue-meta r-mono">{p.plan_date} · {p.cue_count} cues</span>
-              </span>
-              <span class="cue-go r-mono">RUN</span>
-            </button>
-          {/each}
-          {#if !plans.length}
-            <div class="col-empty">
-              No service plans yet. Build one in <b>Planner</b> — or just run the
-              service from the AI and the manual box below.
-            </div>
-          {/if}
-        </div>
-      {/if}
-    </aside>
-
-    <!-- ══ SLIDES ══ -->
-    <section class="col flow">
-      <div class="col-head">
-        <h3>{selCue ? selCue.label : 'Slides'}</h3>
-        {#if selSlides.length}<span class="r-mono dim">{selSlides.length}</span>{/if}
       </div>
 
-      {#if selNote}
-        <!-- The preacher's stage note. Confidence-monitor only — never on the main
-             output. -->
-        <div class="note">
-          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
-          {selNote}
-        </div>
-      {/if}
-
-      <div class="slides r-scroll">
-        {#if selCue}
-          {#each selSlides as s, i}
-            <button
-              class="slide r-focus"
-              class:islive={planOnAir && selCue.id === liveCueId && i === liveSlide}
-              style="--acc:{slideAccent(s.tag)}"
-              on:click={() => fireSlide(selCue, i)}>
-              <span class="slide-stripe"></span>
-              <span class="slide-tag r-mono">{s.tag}</span>
-              <span class="slide-text">{s.text || s.label}</span>
-              {#if planOnAir && selCue.id === liveCueId && i === liveSlide}
-                <span class="slide-live r-mono">LIVE</span>
-              {/if}
-              {#if !planOnAir && selCue.id === liveCueId && i === liveSlide}
-                <!-- Not on air, but this is where → will resume from. The operator
-                     must be able to see that without having to fire it to find out. -->
-                <span class="slide-cued r-mono">CUED</span>
-              {/if}
-            </button>
-          {/each}
-        {:else}
-          <div class="col-empty">Pick a cue to see its slides. Click any slide to put it on screen.</div>
-        {/if}
-      </div>
-    </section>
-
-    <!-- ══ INTELLIGENCE ══ The reason the merge exists: this is now VISIBLE while
-         the operator is running the plan. -->
-    <section class="col feed">
-      <div class="col-head">
-        <h3>Intelligence</h3>
-        <span class="r-mono dim">
-          {$capture.capturing ? ($capture.detectedLang ?? 'listening') : 'standby'}
-        </span>
-      </div>
-
-      <div class="tx" bind:this={transcriptEl}>
-        {#if hasTranscript}
-          {$transcript.finals.join(' ')}
-          {#if $transcript.partial}<mark>{$transcript.partial}</mark><i class="caret"></i>{/if}
-        {:else if $capture.capturing}
-          <span class="dim">Waiting for speech…</span>
-        {:else if !$capture.stt.loaded}
-          <span class="dim">No speech model loaded. Manual override still works.</span>
-        {:else}
-          <span class="dim">Start listening to transcribe live.</span>
-        {/if}
-      </div>
-
-      <div class="sugs r-scroll">
+      <div class="feed-body">
         {#if dets.length}
           {@const d = dets[0]}
-          <div class="sug">
-            <div class="sug-top">
-              <span class="r-lbl">AI suggestion</span>
-              <span class="r-mono amber">{Math.round(d.confidence * 100)}%</span>
+          <div class="ai-card">
+            <div class="ai-top">
+              <span class="lbl-gold">AI suggestion</span>
+              <span class="mono gold">{Math.round(d.confidence * 100)}% match</span>
             </div>
-            <div class="sug-ref">{d.reference}</div>
-            {#if d.text}<div class="sug-verse">“{d.text}”</div>{/if}
-            <div class="sug-acts">
-              <button class="r-btn amber sm" on:click={acceptTop}>Push to stage <kbd>A</kbd></button>
-              <button class="r-btn ghost sm" on:click={dismissTop}>Dismiss <kbd>D</kbd></button>
+            <div class="ai-ref">{d.reference}</div>
+            {#if d.text}<div class="ai-verse">“{d.text}”</div>{/if}
+            <div class="ai-acts">
+              <button class="btn-gold" on:click={acceptTop}>Push to stage</button>
+              <button class="btn-x" on:click={dismissTop}>Dismiss</button>
+              <span class="hint"><kbd>A</kbd> accept · <kbd>D</kbd> dismiss</span>
             </div>
           </div>
 
           {#each dets.slice(1) as x (x.reference + x.at)}
             <div class="xref">
-              <div class="sug-top">
-                <span class="r-lbl">Cross reference</span>
-                <span class="r-mono dim">{Math.round(x.confidence * 100)}%</span>
+              <div class="xref-top">
+                <span class="lbl-dim">Cross reference</span>
+                <span class="mono dim">{Math.round(x.confidence * 100)}%</span>
               </div>
               <div class="xref-ref">{x.reference}</div>
-              {#if x.text}<div class="sug-verse">“{x.text}”</div>{/if}
-              <div class="sug-acts">
-                <button class="r-btn ghost sm" on:click={() => confirmDetection(x.reference)}>Push</button>
-                <button class="r-btn ghost sm" on:click={() => dismissDetection(x.reference)}>Dismiss</button>
+              {#if x.text}<div class="xref-verse">“{x.text}”</div>{/if}
+              <div class="xref-acts">
+                <button class="btn-mini" on:click={() => confirmDetection(x.reference)}>Push</button>
+                <button class="btn-mini ghost" on:click={() => dismissDetection(x.reference)}>Dismiss</button>
               </div>
             </div>
           {/each}
         {:else}
-          <div class="col-empty">
-            {#if !$capture.detectionOn}
-              Detection is off — manual override still fires.
-            {:else}
-              No suggestions yet.
-            {/if}
+          <div class="empty">
+            {#if !$capture.detectionOn}Detection is off — manual override still fires.{:else}No suggestions yet.{/if}
           </div>
         {/if}
       </div>
     </section>
+
+    <!-- ══ RIGHT: the wall, then the plan being run ══ -->
+    <div class="rightcol">
+      <section class="tile channels">
+        <div class="tile-head">
+          <h2>Output</h2>
+          <span class="mono dim">
+            {activeTpls.length}/4 styles{$rehearsing ? ' · rehearsal' : $live ? ' · live' : ''}
+          </span>
+        </div>
+        <div class="chan-wrap">
+          <OutputWall templates={activeTpls} verseNav={mode === 'verse'} />
+        </div>
+      </section>
+
+      <div class="runrow">
+        <!-- PLAN -->
+        <section class="tile">
+          <div class="tile-head">
+            <h3>Service Plan</h3>
+            <span class="mono dim">{openPlan ? items.length : plans.length}</span>
+          </div>
+          <div class="listbody">
+            {#if openPlan}
+              {#each items as c, i (c.id)}
+                {@const ty = TYPE[c.cue_type] || TYPE.scripture}
+                <button
+                  class="cue"
+                  class:sel={c.id === selId}
+                  class:islive={planOnAir && c.id === liveCueId}
+                  class:cued={!planOnAir && c.id === liveCueId}
+                  on:click={() => (selId = c.id)}>
+                  <span class="cue-stripe" style="background:{ty.color}"></span>
+                  <span class="cue-num mono">{String(i + 1).padStart(2, '0')}</span>
+                  <span class="cue-body">
+                    <span class="cue-title">{c.label}</span>
+                    <span class="cue-meta mono">{cueSub(c)}</span>
+                  </span>
+                  {#if c.id === liveCueId}
+                    <span class="cue-tag mono" class:cued={!planOnAir}>{planOnAir ? 'LIVE' : 'CUED'}</span>
+                  {/if}
+                </button>
+              {/each}
+              {#if !items.length}
+                <div class="empty">This plan has no cues. Add them in <b>Planner</b>.</div>
+              {/if}
+            {:else}
+              <!-- No plan loaded. Not an error — plenty of services run entirely on
+                   the AI and the manual box. Offer the plans, don't demand one. -->
+              {#each plans as p (p.id)}
+                <button class="cue pick" on:click={() => loadPlan(p)}>
+                  <span class="cue-body">
+                    <span class="cue-title">{p.title}</span>
+                    <span class="cue-meta mono">{p.plan_date} · {p.cue_count} cues</span>
+                  </span>
+                  <span class="cue-tag mono go">RUN</span>
+                </button>
+              {/each}
+              {#if !plans.length}
+                <div class="empty">
+                  No service plans yet. Build one in <b>Planner</b> — or run the service
+                  from the AI and the manual box below.
+                </div>
+              {/if}
+            {/if}
+          </div>
+        </section>
+
+        <!-- SLIDES -->
+        <section class="tile">
+          <div class="tile-head">
+            <h3>{selCue ? selCue.label : 'Slides'}</h3>
+            {#if selSlides.length}<span class="mono dim">{selSlides.length}</span>{/if}
+          </div>
+          <div class="listbody">
+            {#if selNote}
+              <!-- The preacher's stage note. Confidence monitor only — never on the
+                   main output. -->
+              <div class="note">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+                {selNote}
+              </div>
+            {/if}
+            {#if selCue}
+              {#each selSlides as s, i}
+                <button
+                  class="slide"
+                  class:islive={planOnAir && selCue.id === liveCueId && i === liveSlide}
+                  class:cued={!planOnAir && selCue.id === liveCueId && i === liveSlide}
+                  style="--acc:{slideAccent(s.tag)}"
+                  on:click={() => fireSlide(selCue, i)}>
+                  <span class="slide-stripe"></span>
+                  <span class="slide-tag mono">{s.tag}</span>
+                  <span class="slide-text">{s.text || s.label}</span>
+                  {#if selCue.id === liveCueId && i === liveSlide}
+                    <span class="cue-tag mono" class:cued={!planOnAir}>{planOnAir ? 'LIVE' : 'CUED'}</span>
+                  {/if}
+                </button>
+              {/each}
+            {:else}
+              <div class="empty">Pick a cue to see its slides. Click a slide to put it on screen.</div>
+            {/if}
+          </div>
+        </section>
+      </div>
+    </div>
   </div>
 
   <!-- ══ COMMAND BAR ══ -->
-  <section class="cmd">
-    <div class="cmd-row">
-      <div class="cmd-search">
-        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+  <section class="tile entry">
+    <div class="entry-row">
+      <div class="search">
+        <svg class="ic dim" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
         <input
           bind:this={searchEl}
           bind:value={manualRef}
           on:keydown={(e) => e.key === 'Enter' && fireManual()}
-          placeholder="Type any reference and press Enter — ps 23, John 3:16-18"
+          placeholder="Search scripture or commands — ps 23, John 3:16-18"
           aria-label="Manual scripture reference"
           disabled={!$capture.available} />
       </div>
-      <button class="r-btn amber" on:click={fireManual} disabled={!$capture.available}>Push to stage</button>
+      <button class="btn-gold lg" on:click={fireManual} disabled={!$capture.available}>Push to stage</button>
     </div>
-    {#if errMsg}<div class="cmd-err">{errMsg}</div>{/if}
+    {#if errMsg}<div class="err">{errMsg}</div>{/if}
 
-    <div class="cmd-ctls">
+    <div class="entry-controls">
       <button class="ctl" class:rec={$capture.capturing} on:click={toggleListen}
         disabled={!$capture.available || !$capture.stt.loaded || listenBusy}>
         <span class="dot" style="background:{$capture.capturing ? 'var(--v-rose)' : 'var(--v-amber)'}"></span>
         {$capture.capturing ? 'Listening — Stop' : listenBusy ? 'Starting…' : 'Start listening'}
       </button>
       <button class="ctl" on:click={() => setDetection(!$capture.detectionOn)} disabled={!$capture.available}>
-        <span class="dot" style="background:{$capture.detectionOn ? 'var(--v-emerald)' : 'var(--v-faint)'}"></span>
+        <span class="dot" style="background:{$capture.detectionOn ? 'var(--v-emerald)' : '#47464a'}"></span>
         Detection {$capture.detectionOn ? 'active' : 'off'}
       </button>
       <button class="ctl" on:click={clearAll} disabled={!$capture.available}>
-        <span class="dot" style="background:var(--v-faint)"></span>Clear all<kbd>Esc</kbd>
+        <span class="dot" style="background:#47464a"></span>Clear all<span class="ctl-k">Esc</span>
       </button>
       <button class="ctl" class:rec={$screenBlack} on:click={() => { blackScreen(); flash('Blackout'); }} disabled={!$capture.available}>
-        <span class="dot" style="background:#000;border:1px solid var(--v-line2)"></span>Black<kbd>B</kbd>
+        <span class="dot" style="background:#000;border:1px solid #47464a"></span>Black<span class="ctl-k">B</span>
       </button>
-      <div class="ctl cd">
+      <div class="ctl cd-ctl">
         <span class="dot" style="background:var(--v-cyan)"></span>Countdown
         <input class="cd-min" type="number" min="1" max="120" bind:value={cdMin} aria-label="Countdown minutes" disabled={!$capture.available} />
-        <span class="r-mono dim">min</span>
+        <span class="cd-unit mono">min</span>
         <button class="cd-go" class:armed={cdArmed} on:click={beginCountdown} disabled={!$capture.available}>
           {cdArmed ? 'Confirm?' : 'Start'}
         </button>
@@ -613,496 +660,251 @@
       <button class="ctl" on:click={openMainOutput} disabled={!$capture.available}>
         <span class="dot" style="background:var(--v-amber)"></span>Open output
       </button>
+      <!-- Rehearsal sits with the other transport controls, not buried in Settings.
+           Practising is part of running the service, not configuring the app. -->
+      <button class="ctl reh-ctl" class:on={$rehearsing} on:click={toggleRehearsal}
+        disabled={!$capture.available || rehBusy}>
+        <span class="dot" style="background:{$rehearsing ? 'var(--v-amethyst)' : '#47464a'}"></span>
+        {$rehearsing ? 'Rehearsing — go live' : 'Rehearse'}
+      </button>
+      <div class="hints">
+        <span class="hint"><kbd>?</kbd> keys</span>
+      </div>
     </div>
   </section>
 
-  {#if $capture.audioError}<div class="banner">Audio: {$capture.audioError}</div>{/if}
-  {#if $capture.outputError}<div class="banner">Output: {$capture.outputError}</div>{/if}
+  {#if $capture.audioError}<div class="audioerr">Audio: {$capture.audioError}</div>{/if}
+  {#if $capture.outputError}<div class="audioerr">Output: {$capture.outputError}</div>{/if}
 
   <!-- Only while listening, and only when something is genuinely wrong. A warning
        that is always on screen is wallpaper. -->
   {#if $capture.capturing && qualityWarning}
-    <div class="banner warn"><b>{qualityWarning.title}</b> {qualityWarning.fix}</div>
+    <div class="sttwarn"><b>{qualityWarning.title}</b>{qualityWarning.fix}</div>
   {/if}
 
-  <!-- No STT model = the AI cannot listen. Relay degrades to a fully working
-       MANUAL tool, never a dead one — and it can fix itself in one click. -->
+  <!-- No STT model = the AI cannot listen. Relay degrades to a fully working MANUAL
+       tool, never a dead one — and it can fix itself in one click. -->
   {#if $capture.available && !$capture.stt.loaded}
     <ModelSetup compact />
   {/if}
 </div>
 
 <style>
-  .lv {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
+  /* LIVE — the Console's original "Spiritual High-Tech" language, now covering the
+     merged surface. The --s-* names alias the global --v-* design tokens (app.css)
+     wherever they match; a few Console-specific tones (elevation steps above surf3,
+     glows with no --v- equivalent) stay as literals. */
+  .stx{
+    --s-bg:var(--v-surf); --s-lowest:var(--v-bg); --s-low:var(--v-surf2); --s-cont:var(--v-surf3);
+    --s-high:#2a2a2b; --s-on:var(--v-txt); --s-onvar:#c8c6ca; --s-outline:#8b8a8e; --s-outvar:#47464a;
+    --s-gold:var(--v-amber); --s-ongold:var(--v-amber-ink); --s-gold-glow:var(--v-amber-glow);
+    --s-cyan:var(--v-cyan); --s-amethyst:var(--v-amethyst); --s-rose:var(--v-rose);
+    --hair:rgba(255,255,255,.08); --hair2:rgba(255,255,255,.12);
+    color:var(--s-on);font-family:var(--f-body);
+    /* Fill the scroll area exactly — the console stays fixed on screen; only the
+       feed and the two run columns scroll internally. */
+    height:100%;display:flex;flex-direction:column;gap:14px;min-height:0;
   }
+  .stx .mono{font-family:var(--f-mono);font-variant-numeric:tabular-nums;letter-spacing:.04em}
+  .stx .dim{color:var(--s-onvar)}
+  .stx .gold{color:var(--s-gold)}
+  .ic{display:block}
+
+  /* ── rehearsal band ── amethyst, never amber. Amber means ON AIR. */
+  .reh{flex:0 0 auto;display:flex;align-items:center;gap:11px;padding:11px 15px;border-radius:11px;
+    background:rgba(192,139,255,.12);border:1px solid rgba(192,139,255,.42);
+    font-size:12.5px;line-height:1.5;color:var(--s-onvar)}
+  .reh b{font-family:var(--f-mono);font-size:11px;font-weight:700;letter-spacing:.14em;color:var(--s-amethyst);flex:0 0 auto}
+  .reh span:not(.reh-dot){flex:1}
+  .reh-dot{width:8px;height:8px;border-radius:50%;flex:0 0 auto;background:var(--s-amethyst);
+    box-shadow:0 0 9px var(--s-amethyst);animation:pulse 1.7s ease-in-out infinite}
+  .reh-end{flex:0 0 auto;padding:7px 14px;border-radius:8px;cursor:pointer;font-family:var(--f-body);
+    font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;
+    background:var(--s-amethyst);border:0;color:#2a0d45}
+  .reh-end:disabled{opacity:.5;cursor:not-allowed}
 
   /* ── transport ── */
-  .tbar {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 8px 10px;
-    background: var(--v-surf);
-    border: 1px solid var(--v-line2);
-    border-radius: 11px;
-  }
-  .t-spring { flex: 1; }
-  .t-state {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 10px;
-    letter-spacing: 0.08em;
-    padding: 5px 9px;
-    border-radius: 99px;
-    background: var(--v-surf3);
-    border: 1px solid var(--v-line2);
-    color: var(--v-dim);
-    flex: none;
-  }
-  .t-dot {
-    width: 6px;
-    height: 6px;
-    border-radius: 99px;
-    background: var(--v-faint);
-  }
-  .t-state.on {
-    color: var(--v-amber2);
-    border-color: var(--v-amber);
-    background: var(--v-amber-soft);
-  }
-  .t-state.on .t-dot {
-    background: var(--v-amber);
-    box-shadow: 0 0 7px var(--v-amber-glow);
-  }
-  .t-state.blk {
-    color: var(--v-rose);
-    border-color: rgba(244, 113, 139, 0.45);
-    background: rgba(244, 113, 139, 0.12);
-  }
-  .t-state.blk .t-dot { background: var(--v-rose); }
-  .t-plan {
-    display: inline-flex;
-    align-items: baseline;
-    gap: 7px;
-    background: none;
-    border: 0;
-    padding: 4px 6px;
-    border-radius: 7px;
-    color: var(--v-txt);
-    font: inherit;
-    font-size: 12.5px;
-    font-weight: 600;
-    cursor: pointer;
-  }
-  .t-plan:hover { background: var(--v-surf2); }
-  .t-pos { font-size: 10px; color: var(--v-dim); font-weight: 400; }
-  .t-msg { font-size: 11px; color: var(--v-emerald); }
-  .t-mode {
-    font-size: 10px;
-    letter-spacing: 0.05em;
-    color: var(--v-dim);
-    padding: 5px 8px;
-    border-radius: 6px;
-    background: var(--v-surf2);
-    border: 1px solid var(--v-line);
-    flex: none;
-  }
-  .t-mode b { color: var(--v-cyan); font-weight: 600; }
-  .t-mode.slide b { color: var(--v-amber2); }
-  .t-nav { display: flex; gap: 6px; flex: none; }
+  .tbar{flex:0 0 auto;display:flex;align-items:center;gap:12px;padding:10px 14px;
+    background:var(--s-low);border:1px solid var(--hair2);border-radius:12px}
+  .spring{flex:1}
+  .sys{display:flex;align-items:center;gap:8px;flex:0 0 auto;font-family:var(--f-mono);font-size:10px;
+    font-weight:700;letter-spacing:.12em;color:var(--s-outline);padding:6px 12px;border-radius:99px;
+    background:var(--s-cont);border:1px solid var(--hair)}
+  .sys-dot{width:7px;height:7px;border-radius:50%;background:currentColor}
+  .sys.live{color:var(--s-gold);border-color:rgba(255,185,95,.4);background:rgba(245,166,35,.13)}
+  .sys.live .sys-dot{box-shadow:0 0 9px currentColor;animation:pulse 1.7s ease-in-out infinite}
+  .sys.reh{color:var(--s-amethyst);border-color:rgba(192,139,255,.42);background:rgba(192,139,255,.12)}
+  .sys.blk{color:var(--s-rose);border-color:rgba(244,113,139,.42);background:rgba(244,113,139,.12)}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+  .t-plan{display:flex;align-items:baseline;gap:8px;background:none;border:0;padding:5px 8px;border-radius:8px;
+    color:var(--s-on);font-family:var(--f-body);font-size:13px;font-weight:600;cursor:pointer}
+  .t-plan:hover{background:var(--s-cont)}
+  .t-pos{font-size:10px;color:var(--s-outline);font-weight:400}
+  .t-mode{flex:0 0 auto;font-size:10px;letter-spacing:.06em;color:var(--s-outline);padding:6px 10px;
+    border-radius:7px;background:var(--s-cont);border:1px solid var(--hair)}
+  .t-mode b{color:var(--s-cyan);font-weight:700}
+  .t-mode.slide b{color:var(--s-gold)}
+  @media (max-width:1240px){.t-mode{display:none}}
+  .t-nav{display:flex;align-items:center;gap:7px;flex:0 0 auto}
+  .nav-sq{width:32px;height:32px;border-radius:8px;display:grid;place-items:center;cursor:pointer;
+    background:var(--s-cont);border:1px solid var(--hair);color:var(--s-onvar);font-size:13px;transition:.14s}
+  .nav-sq:hover{background:var(--s-high);color:var(--s-on)}
 
-  /* ── three columns ── */
-  .lv-grid {
-    display: grid;
-    grid-template-columns: minmax(210px, 1fr) minmax(240px, 1.3fr) minmax(260px, 1.4fr);
-    gap: 10px;
-    align-items: stretch;
-  }
-  @media (max-width: 1100px) {
-    .lv-grid { grid-template-columns: 1fr; }
-  }
-  .col {
-    display: flex;
-    flex-direction: column;
-    min-height: 0;
-    background: var(--v-surf);
-    border: 1px solid var(--v-line);
-    border-radius: 11px;
-    padding: 11px 12px 12px;
-  }
-  .col-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-    margin-bottom: 9px;
-  }
-  .col-head h3 {
-    margin: 0;
-    font-family: var(--f-display);
-    font-size: 12px;
-    font-weight: 600;
-    letter-spacing: 0.02em;
-    color: var(--v-txt);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .col-head .dim { font-size: 10px; color: var(--v-dim); }
-  .col-empty {
-    padding: 16px 12px;
-    font-size: 12px;
-    line-height: 1.6;
-    color: var(--v-dim);
-    text-align: center;
+  /* ── layout ── feed on the left, wall + run columns on the right */
+  .stx-top{flex:1;min-height:0;display:grid;grid-template-columns:360px minmax(0,1fr);gap:14px}
+  .rightcol{min-height:0;display:flex;flex-direction:column;gap:14px}
+  .runrow{flex:1;min-height:0;display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  @media (max-width:1180px){
+    .stx{height:auto}
+    .stx-top{grid-template-columns:1fr}
+    .runrow{grid-template-columns:1fr}
   }
 
-  /* ── plan rail ── */
-  .cues {
-    display: flex;
-    flex-direction: column;
-    gap: 5px;
-    overflow-y: auto;
-    max-height: 300px;
-  }
-  .cue {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    width: 100%;
-    padding: 8px 9px;
-    background: var(--v-surf2);
-    border: 1px solid var(--v-line);
-    border-radius: 8px;
-    color: var(--v-txt);
-    font: inherit;
-    text-align: left;
-    cursor: pointer;
-    flex: none;
-  }
-  .cue:hover { border-color: var(--v-line2); }
-  .cue.sel { border-color: var(--v-cyan); }
-  .cue.islive {
-    border-color: var(--v-amber);
-    background: var(--v-amber-soft);
-  }
-  /* Cued, not live. A dashed ring, never amber — amber means ON AIR and nothing
-     else, anywhere in this product. */
-  .cue.cued { border-style: dashed; border-color: var(--v-faint); }
-  .cue-stripe {
-    width: 3px;
-    align-self: stretch;
-    border-radius: 99px;
-    flex: none;
-  }
-  .cue-num { font-size: 10px; color: var(--v-dim); flex: none; }
-  .cue-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-  .cue-title {
-    font-size: 12.5px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .cue-meta { font-size: 9px; letter-spacing: 0.04em; color: var(--v-dim); }
-  .cue-live, .cue-go {
-    font-size: 9px;
-    letter-spacing: 0.06em;
-    color: var(--v-amber2);
-    flex: none;
-  }
-  .cue-live.cued { color: var(--v-dim); }
-  .cue-go { color: var(--v-dim); }
-  .cue.pick:hover .cue-go { color: var(--v-amber2); }
+  .tile{background:var(--s-low);border:1px solid var(--hair2);border-radius:12px;overflow:hidden;
+    display:flex;flex-direction:column;min-height:0}
+  .tile.feed{background:var(--s-lowest)}
+  .tile.entry{flex:0 0 auto}
+  .tile.channels{flex:0 0 auto}
+  .chan-wrap{padding:18px}
+  .tile-head{display:flex;align-items:center;justify-content:space-between;padding:13px 16px;
+    border-bottom:1px solid var(--hair);flex:0 0 auto;gap:10px}
+  .tile-head h2,.tile-head h3{margin:0;font-family:var(--f-body);font-size:11px;font-weight:700;
+    letter-spacing:.16em;text-transform:uppercase;color:var(--s-on);
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .tile-head h3{color:var(--s-onvar)}
+  .tile-head .mono{font-size:10px;flex:0 0 auto}
 
-  /* ── slides ── */
-  .note {
-    display: flex;
-    align-items: flex-start;
-    gap: 6px;
-    padding: 7px 9px;
-    margin-bottom: 8px;
-    border-radius: 7px;
-    background: rgba(192, 139, 255, 0.1);
-    border: 1px solid rgba(192, 139, 255, 0.3);
-    color: var(--v-amethyst);
-    font-size: 11.5px;
-    line-height: 1.5;
-  }
-  .note svg { flex: none; margin-top: 2px; }
-  .slides {
-    display: flex;
-    flex-direction: column;
-    gap: 5px;
-    overflow-y: auto;
-    max-height: 300px;
-  }
-  .slide {
-    position: relative;
-    display: flex;
-    align-items: flex-start;
-    gap: 9px;
-    width: 100%;
-    padding: 9px 10px;
-    background: var(--v-surf2);
-    border: 1px solid var(--v-line);
-    border-radius: 8px;
-    color: var(--v-txt);
-    font: inherit;
-    text-align: left;
-    cursor: pointer;
-    flex: none;
-  }
-  /* Same stripe idiom as the cue rail, so a chorus reads the same in both columns. */
-  .slide-stripe {
-    width: 3px;
-    align-self: stretch;
-    border-radius: 99px;
-    background: var(--acc);
-    flex: none;
-  }
-  .slide:hover { border-color: var(--v-line2); }
-  .slide.islive {
-    border-color: var(--v-amber);
-    background: var(--v-amber-soft);
-  }
-  .slide-tag {
-    font-size: 9px;
-    letter-spacing: 0.05em;
-    color: var(--acc);
-    flex: none;
-    padding-top: 2px;
-    min-width: 26px;
-  }
-  .slide-text {
-    flex: 1;
-    min-width: 0;
-    font-size: 12px;
-    line-height: 1.55;
-    color: var(--v-dim);
-    white-space: pre-wrap;
-    /* Four lines is enough to recognise a slide; more turns the grid into a wall
-       of lyrics you have to scroll past to find the one you want. */
-    display: -webkit-box;
-    -webkit-line-clamp: 4;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
-  }
-  .slide.islive .slide-text { color: var(--v-txt); }
-  .slide-live, .slide-cued {
-    font-size: 8.5px;
-    letter-spacing: 0.06em;
-    color: var(--v-amber2);
-    flex: none;
-  }
-  .slide-cued { color: var(--v-dim); }
+  /* ── feed ── */
+  .tx-box{flex:0 0 auto;padding:14px 16px 12px;border-bottom:1px solid var(--hair);background:var(--s-lowest)}
+  .tx-stream{height:92px;overflow-y:auto;margin-top:9px;font-size:14px;line-height:1.6;color:var(--s-on);
+    font-weight:500;scrollbar-width:thin;scrollbar-color:var(--s-high) transparent}
+  .tx-stream::-webkit-scrollbar{width:6px}
+  .tx-stream::-webkit-scrollbar-thumb{background:var(--s-high);border-radius:99px}
+  .tx-stream mark{background:rgba(255,185,95,.16);color:var(--s-gold);border-radius:3px;padding:0 2px}
+  .caret{display:inline-block;width:2px;height:14px;background:var(--s-gold);vertical-align:-2px;
+    margin-left:1px;animation:blink 1.05s steps(1) infinite}
+  @keyframes blink{50%{opacity:0}}
+  .feed-body{flex:1;min-height:0;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:16px}
+  .seg-top{display:flex;align-items:center;justify-content:space-between}
+  .lbl-gold{font-family:var(--f-mono);font-size:10px;font-weight:600;letter-spacing:.16em;
+    text-transform:uppercase;color:var(--s-gold)}
+  .lbl-dim{font-family:var(--f-mono);font-size:9px;font-weight:700;letter-spacing:.16em;
+    text-transform:uppercase;color:var(--s-onvar)}
+  .ai-card{background:var(--s-low);border:1px solid rgba(255,185,95,.28);border-radius:10px;padding:14px;
+    box-shadow:0 0 20px -5px var(--s-gold-glow)}
+  .ai-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+  .ai-ref{font-family:var(--f-serif);font-size:19px;font-weight:600;letter-spacing:-.01em;color:var(--s-on)}
+  .ai-verse{font-family:var(--f-serif);font-style:italic;font-size:13.5px;line-height:1.5;
+    color:var(--s-onvar);margin:6px 0 13px}
+  .ai-acts{display:flex;gap:8px;align-items:center}
+  .xref{background:rgba(28,27,28,.6);border:1px solid var(--hair);border-radius:10px;padding:13px}
+  .xref-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:7px}
+  .xref-ref{font-family:var(--f-serif);font-size:15px;font-weight:600;color:var(--s-on)}
+  .xref-verse{font-family:var(--f-serif);font-style:italic;font-size:12.5px;color:var(--s-onvar);
+    margin-top:4px;line-height:1.5}
+  .xref-acts{display:flex;gap:7px;margin-top:11px}
+  .empty{color:var(--s-outline);font-size:12.5px;line-height:1.6;padding:10px 2px}
+  .empty b{color:var(--s-onvar)}
 
-  /* ── intelligence ── */
-  .tx {
-    height: 96px;
-    overflow-y: auto;
-    padding: 9px 10px;
-    margin-bottom: 8px;
-    border-radius: 8px;
-    background: var(--v-bg);
-    border: 1px solid var(--v-line);
-    font-size: 12.5px;
-    line-height: 1.65;
-    color: var(--v-txt);
-  }
-  .tx .dim { color: var(--v-dim); }
-  .tx mark {
-    background: none;
-    color: var(--v-amber2);
-  }
-  .caret {
-    display: inline-block;
-    width: 6px;
-    height: 12px;
-    margin-left: 2px;
-    background: var(--v-amber);
-    vertical-align: -1px;
-    animation: blink 1.05s steps(2, start) infinite;
-  }
-  @keyframes blink {
-    to { visibility: hidden; }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .caret { animation: none; }
-  }
-  .sugs {
-    display: flex;
-    flex-direction: column;
-    gap: 7px;
-    overflow-y: auto;
-    max-height: 260px;
-  }
-  .sug, .xref {
-    padding: 10px 11px;
-    border-radius: 9px;
-    background: var(--v-surf2);
-    border: 1px solid var(--v-line);
-    flex: none;
-  }
-  .sug {
-    border-color: var(--v-amber);
-    background: var(--v-amber-soft);
-  }
-  .sug-top {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 5px;
-  }
-  .sug-top .amber { font-size: 10px; color: var(--v-amber2); }
-  .sug-top .dim { font-size: 10px; color: var(--v-dim); }
-  .sug-ref {
-    font-family: var(--f-display);
-    font-size: 15px;
-    font-weight: 600;
-    color: var(--v-txt);
-  }
-  .xref-ref { font-size: 13px; font-weight: 600; color: var(--v-txt); }
-  .sug-verse {
-    margin: 5px 0 9px;
-    font-family: var(--f-serif);
-    font-size: 12.5px;
-    line-height: 1.6;
-    color: var(--v-dim);
-    display: -webkit-box;
-    -webkit-line-clamp: 3;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
-  }
-  .sug-acts { display: flex; gap: 6px; }
+  /* ── the run columns ── */
+  .listbody{flex:1;min-height:0;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:7px;
+    scrollbar-width:thin;scrollbar-color:var(--s-high) transparent}
+  .cue,.slide{display:flex;align-items:center;gap:9px;width:100%;flex:0 0 auto;text-align:left;cursor:pointer;
+    padding:9px 10px;border-radius:9px;background:var(--s-cont);border:1px solid var(--hair);
+    color:var(--s-on);font-family:var(--f-body);transition:.14s}
+  .cue:hover,.slide:hover{border-color:var(--hair2);background:var(--s-high)}
+  .cue.sel{border-color:rgba(63,182,230,.5)}
+  /* Amber = it is in front of the congregation. Nothing else in this app may use it. */
+  .cue.islive,.slide.islive{border-color:var(--s-gold);background:rgba(245,166,35,.12)}
+  /* CUED = where → will resume from, but NOT on screen. Deliberately not amber. */
+  .cue.cued,.slide.cued{border-style:dashed;border-color:var(--s-outline)}
+  .cue-stripe,.slide-stripe{width:3px;align-self:stretch;border-radius:99px;flex:0 0 auto}
+  .slide-stripe{background:var(--acc)}
+  .cue-num{font-size:10px;color:var(--s-outline);flex:0 0 auto}
+  .cue-body{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+  .cue-title{font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .cue-meta{font-size:9px;letter-spacing:.05em;color:var(--s-outline)}
+  .cue-tag{flex:0 0 auto;font-size:8.5px;font-weight:700;letter-spacing:.09em;color:var(--s-gold)}
+  .cue-tag.cued,.cue-tag.go{color:var(--s-outline)}
+  .cue.pick:hover .cue-tag.go{color:var(--s-gold)}
+  .slide{align-items:flex-start}
+  .slide-tag{flex:0 0 auto;min-width:26px;padding-top:2px;font-size:9px;font-weight:700;
+    letter-spacing:.05em;color:var(--acc)}
+  .slide-text{flex:1;min-width:0;font-family:var(--f-serif);font-size:12.5px;line-height:1.5;
+    color:var(--s-onvar);white-space:pre-wrap;
+    display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden}
+  .slide.islive .slide-text{color:var(--s-on)}
+  .note{flex:0 0 auto;display:flex;align-items:flex-start;gap:7px;padding:8px 10px;border-radius:8px;
+    background:rgba(192,139,255,.1);border:1px solid rgba(192,139,255,.3);
+    color:var(--s-amethyst);font-size:11.5px;line-height:1.5}
+  .note svg{flex:0 0 auto;margin-top:2px}
+
+  /* ── buttons ── */
+  .btn-gold{padding:9px 16px;border-radius:8px;border:0;cursor:pointer;font-family:var(--f-body);
+    font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--s-ongold);
+    background:var(--s-gold);transition:.14s}
+  .btn-gold:hover:not(:disabled){filter:brightness(1.06)}
+  .btn-gold.lg{padding:0 22px;height:42px;font-size:12px;flex:0 0 auto}
+  .btn-gold:disabled{opacity:.45;cursor:not-allowed}
+  .btn-x{padding:8px 13px;border-radius:8px;background:transparent;border:1px solid var(--hair2);
+    color:var(--s-onvar);font-family:var(--f-body);font-size:11px;cursor:pointer;transition:.14s}
+  .btn-x:hover{border-color:var(--s-rose);color:var(--s-rose)}
+  .btn-mini{padding:5px 11px;border-radius:6px;border:0;cursor:pointer;font-family:var(--f-body);
+    font-size:11px;font-weight:600;color:var(--s-ongold);background:var(--s-gold);transition:.14s}
+  .btn-mini:hover{filter:brightness(1.06)}
+  .btn-mini.ghost{background:transparent;border:1px solid var(--hair2);color:var(--s-onvar)}
+  .btn-mini.ghost:hover{border-color:var(--s-outline);color:var(--s-on)}
 
   /* ── command bar ── */
-  .cmd {
-    background: var(--v-surf);
-    border: 1px solid var(--v-line2);
-    border-radius: 11px;
-    padding: 11px 12px;
-  }
-  .cmd-row { display: flex; gap: 8px; }
-  .cmd-search {
-    flex: 1;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 0 11px;
-    border-radius: 8px;
-    background: var(--v-bg);
-    border: 1px solid var(--v-line2);
-    color: var(--v-dim);
-  }
-  .cmd-search input {
-    flex: 1;
-    background: none;
-    border: 0;
-    outline: none;
-    padding: 10px 0;
-    color: var(--v-txt);
-    font: inherit;
-    font-size: 13px;
-  }
-  .cmd-search:focus-within { border-color: var(--v-amber); }
-  .cmd-err {
-    margin-top: 8px;
-    padding: 7px 10px;
-    border-radius: 7px;
-    background: rgba(244, 113, 139, 0.12);
-    border: 1px solid rgba(244, 113, 139, 0.32);
-    color: var(--v-txt);
-    font-size: 12px;
-  }
-  .cmd-ctls {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-    margin-top: 9px;
-  }
-  .ctl {
-    display: inline-flex;
-    align-items: center;
-    gap: 7px;
-    padding: 7px 10px;
-    border-radius: 8px;
-    background: var(--v-surf2);
-    border: 1px solid var(--v-line);
-    color: var(--v-txt);
-    font: inherit;
-    font-size: 11.5px;
-    cursor: pointer;
-  }
-  .ctl:hover:not(:disabled) { border-color: var(--v-line2); }
-  .ctl:disabled { opacity: 0.45; cursor: not-allowed; }
-  .ctl.rec { border-color: var(--v-rose); }
-  .ctl .dot {
-    width: 7px;
-    height: 7px;
-    border-radius: 99px;
-    flex: none;
-  }
-  .ctl kbd {
-    font-family: var(--f-mono);
-    font-size: 9px;
-    padding: 2px 4px;
-    border-radius: 4px;
-    background: var(--v-surf3);
-    border: 1px solid var(--v-line2);
-    color: var(--v-dim);
-  }
-  .cd { cursor: default; }
-  .cd-min {
-    width: 44px;
-    padding: 4px 5px;
-    border-radius: 5px;
-    background: var(--v-bg);
-    border: 1px solid var(--v-line2);
-    color: var(--v-txt);
-    font: inherit;
-    font-size: 11px;
-  }
-  .cd .dim { font-size: 10px; color: var(--v-dim); }
-  .cd-go {
-    padding: 4px 9px;
-    border-radius: 6px;
-    background: var(--v-surf3);
-    border: 1px solid var(--v-line2);
-    color: var(--v-txt);
-    font: inherit;
-    font-size: 11px;
-    cursor: pointer;
-  }
-  .cd-go.armed {
-    background: var(--v-amber);
-    border-color: var(--v-amber);
-    color: var(--v-amber-ink);
-    font-weight: 600;
-  }
-  .sug-acts kbd {
-    font-family: var(--f-mono);
-    font-size: 9px;
-    margin-left: 4px;
-    opacity: 0.7;
-  }
+  .entry-row{display:flex;gap:12px;padding:14px 16px;border-bottom:1px solid var(--hair)}
+  .search{flex:1;display:flex;align-items:center;gap:11px;background:var(--s-lowest);
+    border:1px solid var(--hair);border-radius:10px;padding:0 14px;height:42px}
+  .search input{flex:1;min-width:0;background:transparent;border:0;outline:none;color:var(--s-on);
+    font-family:var(--f-mono);font-size:12.5px}
+  .search input::placeholder{color:var(--s-outline)}
+  .search:focus-within{border-color:rgba(255,185,95,.4);box-shadow:0 0 0 3px rgba(255,185,95,.08)}
+  .err{color:var(--s-rose);font-size:11.5px;padding:0 16px;margin-top:8px}
+  .livemsg{display:flex;align-items:center;gap:8px;color:var(--v-emerald);font-size:11.5px;font-weight:500}
+  .lm-dot{width:7px;height:7px;border-radius:50%;background:var(--v-emerald);box-shadow:0 0 8px var(--v-emerald)}
+  .entry-controls{display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:12px 16px}
+  .ctl{display:flex;align-items:center;gap:9px;padding:9px 13px;border-radius:9px;background:var(--s-cont);
+    border:1px solid var(--hair);color:var(--s-on);font-family:var(--f-body);font-size:12px;
+    cursor:pointer;transition:.14s}
+  .ctl:hover:not(:disabled){background:var(--s-high);border-color:var(--hair2)}
+  .ctl:disabled{opacity:.45;cursor:not-allowed}
+  .ctl.rec{background:rgba(255,120,110,.12);border-color:rgba(255,120,110,.35);color:var(--s-rose)}
+  .reh-ctl.on{background:rgba(192,139,255,.14);border-color:rgba(192,139,255,.42);color:var(--s-amethyst)}
+  .dot{width:8px;height:8px;border-radius:50%;flex:0 0 auto}
+  .cd-ctl{cursor:default;gap:7px}
+  .cd-min{width:46px;padding:3px 6px;border-radius:6px;border:1px solid var(--hair2);background:var(--s-bg);
+    color:var(--s-on);font-family:var(--f-mono);font-size:12px;text-align:center}
+  .cd-unit{font-size:9px;color:var(--s-outline);margin-left:-3px}
+  .cd-go{padding:4px 11px;border-radius:6px;border:1px solid rgba(63,182,230,.4);
+    background:rgba(63,182,230,.14);color:var(--s-cyan);font-family:var(--f-mono);font-size:10px;
+    font-weight:700;letter-spacing:.04em;cursor:pointer;transition:.12s}
+  .cd-go:hover:not(:disabled){background:rgba(63,182,230,.26)}
+  .cd-go:disabled{opacity:.45;cursor:not-allowed}
+  .cd-go.armed{background:rgba(245,166,35,.2);border-color:rgba(245,166,35,.5);color:var(--s-gold)}
+  .ctl-k{font-family:var(--f-mono);font-size:9px;color:var(--s-outline);margin-left:2px}
+  .hints{display:flex;gap:14px;margin-left:auto}
+  .hint{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--s-outline)}
+  .hint kbd{font-family:var(--f-mono);font-size:9px;color:var(--s-onvar);background:var(--s-high);
+    border:1px solid var(--hair2);border-bottom-width:2px;border-radius:4px;padding:2px 6px}
 
   /* ── banners ── */
-  .banner {
-    padding: 9px 12px;
-    border-radius: 9px;
-    background: rgba(244, 113, 139, 0.12);
-    border: 1px solid rgba(244, 113, 139, 0.32);
-    color: var(--v-txt);
-    font-size: 12px;
-    line-height: 1.55;
+  .audioerr{flex:0 0 auto;background:rgba(147,0,10,.18);color:var(--s-rose);
+    border:1px solid rgba(255,157,148,.3);border-radius:9px;padding:9px 12px;font-size:12px}
+  /* Degraded, not broken: amber (a warning), never rose (an error) — the app is
+     still fully usable by hand, and the banner should read that way. */
+  .sttwarn{flex:0 0 auto;background:var(--v-amber-soft);color:var(--v-txt);
+    border:1px solid rgba(245,166,35,.34);border-radius:9px;padding:10px 12px;font-size:12px;line-height:1.6}
+  .sttwarn b{display:block;margin-bottom:2px;color:var(--v-amber2)}
+
+  /* ── accessibility ── */
+  .btn-gold:focus-visible,.btn-x:focus-visible,.btn-mini:focus-visible,.ctl:focus-visible,
+  .nav-sq:focus-visible,.cue:focus-visible,.slide:focus-visible,.reh-end:focus-visible,
+  .t-plan:focus-visible{outline:2px solid var(--s-gold);outline-offset:2px}
+  @media (prefers-reduced-motion:reduce){
+    .caret,.sys.live .sys-dot,.reh-dot{animation:none}
   }
-  .banner.warn {
-    background: var(--v-amber-soft);
-    border-color: var(--v-amber);
-  }
-  .banner b { display: block; margin-bottom: 2px; }
 </style>

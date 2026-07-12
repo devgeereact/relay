@@ -11,7 +11,7 @@
   // the operator sees here IS what the congregation sees.
   import TemplateRender from './TemplateRender.svelte';
   import { monitorAccent } from './templates.js';
-  import { live, screenBlack, liveContent, liveTemplateOverride, navVerse } from './stores/capture.js';
+  import { live, screenBlack, liveContent, liveTemplateOverride, navVerse, rehearsing } from './stores/capture.js';
 
   /** Active templates (max 4), from listActiveTemplates(). */
   export let templates = [];
@@ -19,23 +19,28 @@
   export let verseNav = false;
 </script>
 
-<div class="wall">
+<div class="chan-grid">
   {#if templates.length}
     {#each templates as tpl, i (tpl.id)}
       {@const acc = monitorAccent(i)}
-      <div class="mon a-{acc}" class:on={$live}>
+      <!-- In rehearsal the tally does NOT light. Amber means it is in front of the
+           congregation; during a rehearsal it isn't, and a tally light that lies is
+           worse than no tally light. -->
+      <div class="mon a-{acc}" class:on={$live && !$rehearsing} class:reh={$live && $rehearsing}>
         <div class="tpl">
           <TemplateRender template={$liveTemplateOverride ?? tpl} content={$liveContent} />
         </div>
         {#if $screenBlack}<div class="mon-black"></div>{/if}
 
-        <span class="mon-badge b-{acc}">{$live ? 'Live' : 'Style'} · {tpl.name}</span>
+        <span class="mon-badge b-{acc}" class:b-reh={$rehearsing}>
+          {#if $rehearsing}Rehearsal{:else if $live}Live{:else}Style{/if} · {tpl.name}
+        </span>
 
         <div class="mon-foot">
           {#if $live}
-            <span class="r-mono">{$live.reference}{$live.translation ? ' · ' + $live.translation : ''}</span>
+            <span class="mono">{$live.reference}{$live.translation ? ' · ' + $live.translation : ''}</span>
           {:else}
-            <span class="r-mono tiny dim">{tpl.name}</span>
+            <span class="mono tiny off">{tpl.name}</span>
           {/if}
           {#if i === 0 && verseNav && $live}
             <span class="mon-nav">
@@ -51,106 +56,49 @@
       </div>
     {/each}
   {:else}
-    <div class="wall-empty">
+    <div class="chan-empty">
       No active styles — activate up to 4 templates in the <b>Templates</b> tab.
     </div>
   {/if}
 </div>
 
 <style>
-  .wall {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-    gap: 10px;
-  }
-  .mon {
-    position: relative;
-    border-radius: 10px;
-    overflow: hidden;
-    background: #000;
-    border: 1px solid var(--v-line2);
-    aspect-ratio: 16 / 9;
-    display: flex;
-    flex-direction: column;
-  }
-  /* Amber = on air. The only place in the app it is allowed to mean anything else
-     is nowhere. A monitor is ringed ONLY when content is genuinely live. */
-  .mon.on {
-    border-color: var(--v-amber);
-    box-shadow: 0 0 0 1px var(--v-amber-soft);
-  }
-  .tpl {
-    position: absolute;
-    inset: 0;
-  }
-  .mon-black {
-    position: absolute;
-    inset: 0;
-    background: #000;
-  }
-  .mon-badge {
-    position: absolute;
-    top: 7px;
-    left: 7px;
-    z-index: 2;
-    font-family: var(--f-mono);
-    font-size: 8.5px;
-    letter-spacing: 0.05em;
-    text-transform: uppercase;
-    padding: 3px 6px;
-    border-radius: 4px;
-    background: rgba(0, 0, 0, 0.62);
-    border: 1px solid var(--v-line2);
-    color: var(--v-dim);
-    max-width: calc(100% - 14px);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .b-amber { color: var(--v-amber2); border-color: var(--v-amber); }
-  .b-cyan { color: var(--v-cyan); border-color: rgba(63, 182, 230, 0.5); }
-  .b-amethyst { color: var(--v-amethyst); border-color: rgba(192, 139, 255, 0.5); }
-  .b-emerald { color: var(--v-emerald); border-color: rgba(16, 185, 129, 0.5); }
-  .mon-foot {
-    position: absolute;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    z-index: 2;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 6px;
-    padding: 5px 7px;
-    background: linear-gradient(transparent, rgba(0, 0, 0, 0.78));
-    font-size: 9.5px;
-    color: var(--v-txt);
-  }
-  .mon-foot .tiny { font-size: 9px; }
-  .mon-foot .dim { color: var(--v-dim); }
-  .mon-nav { display: flex; gap: 3px; flex: none; }
-  .nav-btn {
-    display: grid;
-    place-items: center;
-    width: 20px;
-    height: 20px;
-    border-radius: 5px;
-    background: rgba(0, 0, 0, 0.55);
-    border: 1px solid var(--v-line2);
-    color: var(--v-dim);
-    cursor: pointer;
-  }
-  .nav-btn:hover {
-    color: var(--v-txt);
-    border-color: var(--v-amber);
-  }
-  .wall-empty {
-    grid-column: 1 / -1;
-    padding: 22px 16px;
-    text-align: center;
-    border: 1px dashed var(--v-line2);
-    border-radius: 10px;
-    font-size: 12px;
-    color: var(--v-dim);
-  }
+  /* The Console's original "Spiritual High-Tech" monitor. Kept verbatim: it reads
+     as broadcast equipment, which is the point — a tally border and a hard badge,
+     glanceable across a dark booth. */
+  .chan-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;align-content:start}
+  .mon{position:relative;aspect-ratio:16/9;border-radius:14px;overflow:hidden;background:#000;
+    border:1px solid rgba(255,255,255,.12);transition:.18s}
+  .mon.on.a-amber{border:2px solid var(--v-amber);box-shadow:0 0 26px -6px var(--v-amber-glow)}
+  .mon.on.a-cyan{border:1px solid rgba(63,182,230,.5);box-shadow:0 0 26px -8px rgba(0,133,190,.42)}
+  .mon.on.a-amethyst{border:1px solid rgba(192,139,255,.45);box-shadow:0 0 26px -8px rgba(168,85,247,.38)}
+  .mon.on.a-emerald{border:1px solid rgba(16,185,129,.45);box-shadow:0 0 26px -8px rgba(16,185,129,.4)}
+  /* Rehearsal: a dashed ring, never a lit one. */
+  .mon.reh{border:1px dashed var(--v-amethyst);box-shadow:none}
+  .mon-badge{position:absolute;top:11px;left:11px;z-index:2;padding:3px 9px;border-radius:6px;
+    font-family:var(--f-body);font-size:9px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;
+    max-width:calc(100% - 22px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .b-amber{background:var(--v-amber);color:var(--v-amber-ink)}
+  .b-cyan{background:var(--v-cyan);color:#06222e}
+  .b-amethyst{background:var(--v-amethyst);color:#2a0d45}
+  .b-emerald{background:var(--v-emerald);color:#04291d}
+  .mon:not(.on):not(.reh) .mon-badge{background:#2a2a2b;color:#c8c6ca}
+  .mon-badge.b-reh{background:var(--v-amethyst);color:#2a0d45}
+  .tpl{position:absolute;inset:0;overflow:hidden;background:#0a0a0b;border-radius:inherit}
+  .mon-black{position:absolute;inset:0;z-index:3;background:#000;border-radius:inherit}
+  .mon-foot{position:absolute;left:0;right:0;bottom:0;z-index:2;display:flex;align-items:center;
+    justify-content:space-between;gap:8px;padding:9px 11px;
+    background:linear-gradient(to top,rgba(0,0,0,.72),transparent)}
+  .mon-foot .mono{font-family:var(--f-mono);font-variant-numeric:tabular-nums;letter-spacing:.04em;
+    font-size:10px;color:#fff;text-shadow:0 1px 3px rgba(0,0,0,.7)}
+  .mon-foot .tiny{font-size:9px}
+  .mon-foot .off{color:#8b8a8e;text-shadow:none}
+  .mon-nav{display:flex;gap:6px}
+  .nav-btn{width:24px;height:24px;border-radius:6px;display:grid;place-items:center;cursor:pointer;
+    background:rgba(0,0,0,.5);border:1px solid rgba(255,255,255,.12);color:#fff;transition:.14s}
+  .nav-btn:hover{background:rgba(0,0,0,.7);border-color:var(--v-amber);color:var(--v-amber)}
+  .nav-btn:focus-visible{outline:2px solid var(--v-amber);outline-offset:2px}
+  .chan-empty{grid-column:1 / -1;color:#8b8a8e;font-size:13px;line-height:1.6;padding:22px;text-align:center;
+    border:1px dashed rgba(255,255,255,.12);border-radius:12px}
+  .chan-empty b{color:#c8c6ca}
 </style>

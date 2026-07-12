@@ -282,6 +282,9 @@ body{ overflow:hidden; text-rendering:optimizeLegibility; -moz-osx-font-smoothin
 .r-badge.amber{ background:var(--v-amber-soft); border:1px solid rgba(245,166,35,.32); color:var(--v-amber); }
 .r-badge.cyan{ background:var(--v-cyan-soft); border:1px solid rgba(63,182,230,.32); color:var(--v-cyan); }
 .r-badge.rose{ background:var(--v-rose-soft); border:1px solid rgba(244,113,139,.32); color:var(--v-rose); }
+/* Rehearsal. Deliberately NOT amber and NOT rose: amber means the congregation is
+   looking at it, rose means something is wrong. A rehearsal is neither. */
+.r-badge.amethyst{ background:rgba(192,139,255,.12); border:1px solid rgba(192,139,255,.42); color:var(--v-amethyst); }
 .r-badge .bd{ width:6px; height:6px; border-radius:50%; background:currentColor; }
 .r-badge.pulse .bd{ box-shadow:0 0 7px currentColor; animation:vpulse 1.7s ease-in-out infinite; }
 @keyframes vpulse{ 0%,100%{opacity:1} 50%{opacity:.4} }
