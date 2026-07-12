@@ -175,6 +175,29 @@ describe('cheatsheet', () => {
     stop();
   });
 
+  // The cheatsheet was guarded; the arrangement pickers were not. Escape inside one
+  // of those wiped the congregation's screens AND left the picker open — its Escape
+  // handler was bound to the backdrop element, which does not hold focus, so it never
+  // fired. The operator got the outcome they did not want and none of the one they did.
+  it('Escape inside ANY open dialog does not clear the screens', () => {
+    const clearScreens = vi.fn();
+    const stop = installShortcuts({ clearScreens, blackScreen: () => {} });
+    cheatsheet.set(false);
+
+    const modal = document.createElement('div');
+    modal.setAttribute('role', 'dialog');
+    document.body.appendChild(modal);
+
+    press('Escape');
+    expect(clearScreens).not.toHaveBeenCalled();
+
+    // ...and once the dialog is gone, Escape is the panic key again.
+    modal.remove();
+    press('Escape');
+    expect(clearScreens).toHaveBeenCalledTimes(1);
+    stop();
+  });
+
   it('but Escape with NO cheatsheet open is still the panic key', () => {
     // The guard above must not cost the operator their panic key.
     const clearScreens = vi.fn();

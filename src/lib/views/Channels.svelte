@@ -1,6 +1,9 @@
 <script>
   import { onMount } from 'svelte';
   import QRCode from 'qrcode';
+  // Was: `error = String(err)`, rendered in a MONOSPACE font, five times over — a raw
+  // Rust Err string shown to a church volunteer who has never seen one.
+  import { humanError } from '../errors.js';
   import {
     capture,
     templates,
@@ -79,7 +82,7 @@
       await setChannelTemplate(c.id, parseInt(e.target.value, 10));
       await refresh();
       error = '';
-    } catch (err) { error = String(err); }
+    } catch (err) { error = humanError(err); }
   }
 
   async function assignDisplay(c, e) {
@@ -88,14 +91,14 @@
       await setChannelDisplay(c.id, v === '' ? null : v);
       await refresh();
       error = '';
-    } catch (err) { error = String(err); }
+    } catch (err) { error = humanError(err); }
   }
 
   async function openNative(c) {
     try {
       await openChannelOutput(c.id);
       error = '';
-    } catch (err) { error = String(err); }
+    } catch (err) { error = humanError(err); }
   }
 
   async function add() {
@@ -107,7 +110,7 @@
       newTarget = 'native_window';
       await refresh();
       error = '';
-    } catch (err) { error = String(err); }
+    } catch (err) { error = humanError(err); }
   }
 
   // Two-step delete (no native confirm — Tauri's webview doesn't implement it).
@@ -127,7 +130,7 @@
       await deleteChannel(c.id);
       await refresh();
       error = '';
-    } catch (err) { error = String(err); }
+    } catch (err) { error = humanError(err); }
   }
 
   async function copyUrl(c) {
@@ -261,7 +264,7 @@
     </div>
   </div>
 
-  {#if error}<div class="ch-error r-mono">{error}</div>{/if}
+  {#if error}<div class="ch-error" role="alert">{error}</div>{/if}
 
   <!-- Preacher's stage remote -->
   <div class="r-tile ch-stage">

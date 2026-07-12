@@ -76,6 +76,16 @@
   let selId = null;
   let activeTpls = [];
 
+  // "Have we actually asked the database yet?" — NOT the same question as "is the
+  // list empty", and conflating them is a lie the operator sees every single mount.
+  //
+  // These lists start as `[]` and are filled by an await. The empty states rendered
+  // off `.length` alone, so for the first frames of every visit to Live, an operator
+  // with a full plan library was told "No service plans yet" — the one message that
+  // makes a new operator think they have lost their work.
+  let plansLoaded = false;
+  let itemsLoaded = false;
+
   // The playhead lives in the store (see capture.js). `onAir` — is plan content
   // what the congregation is looking at right now — is a separate fact from the
   // position, and the panic keys clear only the former.
@@ -98,7 +108,9 @@
 
   async function loadPlan(p) {
     openPlan = p;
+    itemsLoaded = false;
     items = await planItems(p.id);
+    itemsLoaded = true;
     selId = items[0]?.id ?? null;
     // A playhead from a DIFFERENT plan is meaningless here, and worse than
     // meaningless: its cue id could collide with one in this plan and light up an
@@ -133,6 +145,7 @@
     await loadRehearsal();
     activeTpls = await listActiveTemplates().catch(() => []);
     plans = await listPlans().catch(() => []);
+    plansLoaded = true;
 
     // Resume where the operator actually was. The output windows are separate
     // webviews and survive a console crash, so the verse is still on the wall —
@@ -640,7 +653,7 @@
                   {/if}
                 </button>
               {/each}
-              {#if !items.length}
+              {#if itemsLoaded && !items.length}
                 <div class="empty">This plan has no cues. Add them in <b>Planner</b>.</div>
               {/if}
             {:else}
@@ -655,7 +668,9 @@
                   <span class="cue-tag mono go">RUN</span>
                 </button>
               {/each}
-              {#if !plans.length}
+              <!-- `plansLoaded &&`, not just `!plans.length`. Until the query comes
+                   back, "no plans" is not a fact — it is the absence of one. -->
+              {#if plansLoaded && !plans.length}
                 <div class="empty">
                   No service plans yet. Build one in <b>Planner</b> — or run the service
                   from the AI and the manual box below.

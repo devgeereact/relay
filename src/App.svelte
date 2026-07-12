@@ -285,7 +285,13 @@
   <!-- Mobile bottom nav -->
   <nav class="botnav">
     {#each tabs as t}
-      <button class="bn r-focus" class:active={t.key === active} on:click={() => (active = t.key)}>
+      <!-- go(), NOT `active = t.key`. `active` is a DERIVATION of $session (see the
+           reactive statement above), so assigning to it writes to a value that is
+           immediately recomputed. The tab change was never persisted, and the next
+           setSession() from anywhere — Live writes one on every slide — recomputed
+           `active` from the store and yanked the operator back to the previous tab
+           mid-service. The desktop sidebar always called go(); the bottom nav didn't. -->
+      <button class="bn r-focus" class:active={t.key === active} on:click={() => go(t.key)}>
         <span class="ic">{@html icons[t.key]}</span>
         {t.label}
       </button>

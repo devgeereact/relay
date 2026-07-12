@@ -118,7 +118,17 @@
   }
   header { display: flex; align-items: center; gap: 12px; padding: 14px 18px; border-bottom: 1px solid rgba(255,255,255,.08); flex: 0 0 auto; }
   .brand { font-family: 'Playfair Display', Georgia, serif; font-weight: 700; font-size: 16px; color: #f5a623; }
-  .status { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #6c6b71; }
+  /* CONTRAST. This page is read on a phone, at arm's length, in a lit auditorium —
+     by the preacher, mid-sermon. It is the least forgiving reading condition in the
+     whole product, and it had the worst text in it.
+
+     These were #6c6b71 (3.75:1) and, for .idle, #4a4a50 (2.25:1) — both below the
+     WCAG AA floor of 4.5:1 on this background. #6c6b71 is the exact value app.css
+     documents as REMOVED for failing AA; the console was fixed and the phone was
+     left behind, because it hardcodes hexes instead of using the --v-* tokens.
+
+     #88888d is --v-faint: 5.61:1 here. Still quiet, and actually readable. */
+  .status { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #88888d; }
   .status.on { color: #10b981; }
   .status i { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
   .status.on i { box-shadow: 0 0 8px currentColor; animation: p 1.7s ease-in-out infinite; }
@@ -127,7 +137,10 @@
   main { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 24px; gap: 18px; min-height: 0; }
   .ref { font-family: 'JetBrains Mono', monospace; font-size: clamp(13px, 3.5vw, 20px); letter-spacing: .18em; text-transform: uppercase; color: #f5a623; }
   .verse { font-family: 'Playfair Display', 'Fraunces', Georgia, serif; font-size: clamp(26px, 7vw, 64px); line-height: 1.28; color: #efe9df; max-width: 16ch; }
-  .idle { font-family: 'JetBrains Mono', monospace; color: #4a4a50; font-size: 14px; letter-spacing: .1em; }
+  /* The DEFAULT resting state of the preacher's phone — the thing on screen before
+     anything is fired, and therefore the text most likely to be looked at. It was
+     2.25:1: the worst contrast in the product, in its least forgiving location. */
+  .idle { font-family: 'JetBrains Mono', monospace; color: #88888d; font-size: 14px; letter-spacing: .1em; }
   .countdown { font-family: 'JetBrains Mono', monospace; font-variant-numeric: tabular-nums; font-weight: 700;
     font-size: clamp(56px, 20vw, 160px); color: #f5a623; line-height: 1; letter-spacing: .02em; max-width: none; }
   /* Operator's cue note — confidence-monitor only, never on the main output. */

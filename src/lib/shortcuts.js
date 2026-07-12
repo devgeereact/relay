@@ -128,6 +128,20 @@ export function installShortcuts({ clearScreens, blackScreen }) {
         return;
       }
 
+      // ANY modal is open → Escape belongs to that modal, and to nothing else.
+      //
+      // The cheatsheet was guarded above and the arrangement pickers were not, so
+      // Escape inside one of those wiped the congregation's screens — and did not even
+      // close the picker, because its Escape handler is bound to the backdrop element
+      // and only fires when the backdrop happens to hold focus, which it usually does
+      // not. The operator got the one outcome they did not ask for and none of the one
+      // they did.
+      //
+      // Read from the DOM rather than a registry of open overlays: a registry is a
+      // list somebody has to remember to add the next dialog to, and the whole point
+      // is that this must not depend on anybody remembering.
+      if (document.querySelector('[role="dialog"]')) return;
+
       clearScreens();
       return;
     }

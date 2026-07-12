@@ -113,6 +113,11 @@
   }
 </script>
 
+<!-- Escape closes the arrangement picker — see ServicePlanner. Bound at the window,
+     because the backdrop it used to be bound to never holds focus, so Escape fell
+     through to the global panic key and cleared the congregation's screens. -->
+<svelte:window on:keydown={(e) => arrPick && e.key === 'Escape' && (arrPick = null)} />
+
 {#if openSongId}
   <SongEditor songId={openSongId} on:back={() => { openSongId = null; refresh(); }} on:saved={refresh} />
 {:else}
@@ -195,8 +200,10 @@
 
   <!-- arrangement picker — a song with saved arrangements added to a plan -->
   {#if arrPick}
-    <div class="ly-arrback" role="button" tabindex="0" on:click={() => (arrPick = null)}
-      on:keydown={(e) => e.key === 'Escape' && (arrPick = null)}>
+    <!-- Mouse convenience only; not focusable, not claiming to be a button. The
+         keyboard path is Escape, handled at the window (top of this file). -->
+    <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-noninteractive-element-interactions -->
+    <div class="ly-arrback" role="presentation" on:click={() => (arrPick = null)}>
       <div class="ly-arrsheet" role="dialog" aria-label="Choose arrangement"
         on:click|stopPropagation on:keydown|stopPropagation>
         <div class="ly-arrtitle">Add “{arrPick.song.title}” to {arrPick.plan.title}</div>

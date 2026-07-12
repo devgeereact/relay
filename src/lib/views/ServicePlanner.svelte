@@ -243,6 +243,13 @@
       : `${selCue.label} · ${(TYPE[selCue.cue_type] || {}).label || ''}`;
 </script>
 
+<!-- Escape closes the arrangement picker, from anywhere — bound at the window rather
+     than on the backdrop, which never holds focus. Without this, Escape inside the
+     picker fell through to the global panic key: it cleared the congregation's screens
+     and left the picker open. (shortcuts.js now also refuses to clear while any
+     [role="dialog"] is mounted, so the two halves cannot disagree.) -->
+<svelte:window on:keydown={(e) => arrPick && e.key === 'Escape' && (arrPick = null)} />
+
 {#if !openPlan}
   <!-- ══ PLANS LIST ══ -->
   <div class="sp-view">
@@ -339,7 +346,15 @@
                   on:dragleave={() => { if (dragOverId === c.id) dragOverId = null; }}
                   on:drop|preventDefault={() => onDropCue(c.id)}
                   on:click={() => (selId = c.id)} role="button" tabindex="0"
-                  on:keydown={(e) => (e.key === 'Enter' ? (selId = c.id) : null)}>
+                  on:keydown={(e) => {
+                    // A role="button" must answer to Enter AND Space; this one only
+                    // took Enter, so it was focusable but half-operable. preventDefault
+                    // on Space, or the page scrolls under the operator instead.
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      selId = c.id;
+                    }
+                  }}>
                   <span class="sp-bar" style="background:{ty.color};"></span>
                   <span class="sp-num r-mono">{String(i + 1).padStart(2, '0')}</span>
                   <span class="sp-cuebody">
@@ -425,8 +440,13 @@
 
       <!-- arrangement picker — shown when a song with saved arrangements is added -->
       {#if arrPick}
-        <div class="sp-arrback" role="button" tabindex="0" on:click={() => (arrPick = null)}
-          on:keydown={(e) => e.key === 'Escape' && (arrPick = null)}>
+        <!-- The backdrop is a mouse convenience, not a control: it is not focusable and
+             does not claim to be a button. The keyboard path is Escape, handled at the
+             window (top of this file) — bound to this element it only fired when the
+             backdrop held focus, which it does not, so Escape fell through to the
+             global panic key and cleared the congregation's screens instead. -->
+        <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-noninteractive-element-interactions -->
+        <div class="sp-arrback" role="presentation" on:click={() => (arrPick = null)}>
           <div class="sp-arrsheet" role="dialog" aria-label="Choose arrangement"
             on:click|stopPropagation on:keydown|stopPropagation>
             <div class="sp-arrtitle">Add “{arrPick.song.title}”</div>

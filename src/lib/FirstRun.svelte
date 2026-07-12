@@ -16,7 +16,7 @@
   // It can be skipped, and it never comes back uninvited. An operator who dismisses
   // a wizard and then cannot find the setting again has been actively harmed by it —
   // everything here also lives in Settings, permanently.
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import ModelSetup from './ModelSetup.svelte';
   import {
     capture,
@@ -26,6 +26,9 @@
     setChannelDisplay,
     openChannelOutput,
     setInputDevice,
+    startCapture,
+    stopCapture,
+    setDetection,
     manualFire,
   } from './stores/capture.js';
   import { setSession } from './session.js';
@@ -60,10 +63,66 @@
       await setChannelDisplay(channel.id, String(chosenMonitor));
       await openChannelOutput(channel.id);
       step = 2;
+      startMicTest();
     } catch (e) {
       error = String(e);
     }
     busy = false;
+  }
+
+  // ── the microphone test ──────────────────────────────────────────────────
+  //
+  // The meter WAS DEAD. `$meter` is only fed by the `audio://chunk` listener, which
+  // is registered inside startCapture() — and FirstRun never called it. So on the one
+  // screen whose entire stated purpose is "a moving bar proves the microphone is
+  // actually hearing something", `$capture.capturing` was false, the bar never moved,
+  // and the hint fell through to "You can test this from the Live tab".
+  //
+  // The step that exists to PROVE the microphone works, proved nothing.
+  //
+  // Detection is disarmed for the duration. If the operator already has a speech
+  // model installed, a live microphone during setup could auto-fire a detected verse
+  // onto the projector we have just this second taught them to open — while they are
+  // saying "testing, testing" into it. The wizard must not put scripture on a wall by
+  // accident. The previous value is restored on the way out.
+  let micOn = false;
+  let detectionWas = true;
+
+  async function startMicTest() {
+    if (micOn) return;
+    detectionWas = $capture.detectionOn;
+    try {
+      await setDetection(false);
+      await startCapture($capture.inputDevice || undefined);
+      micOn = true;
+    } catch (e) {
+      // Not fatal: the mic step is a convenience, not a gate. Say so and move on.
+      error = String(e);
+    }
+  }
+
+  async function stopMicTest() {
+    if (!micOn) return;
+    micOn = false;
+    try {
+      await stopCapture();
+    } catch {
+      /* already stopped */
+    }
+    await setDetection(detectionWas);
+  }
+
+  // Changing the device mid-test must re-open the stream, or the meter keeps
+  // showing the OLD microphone — which is worse than showing nothing, because it
+  // looks like proof of a device that is not the one selected.
+  async function chooseDevice(name) {
+    await setInputDevice(name);
+    if (micOn) {
+      await stopCapture().catch(() => {});
+      micOn = false;
+      await startCapture(name || undefined).catch((e) => (error = String(e)));
+      micOn = true;
+    }
   }
 
   // Prove it. Not "setup complete" — an actual verse, on the actual screen.
@@ -79,9 +138,18 @@
     busy = false;
   }
 
-  function done() {
+  async function done() {
+    // Never leave the wizard's microphone running behind it, and never leave
+    // detection disarmed — an operator whose AI is silently off, because a wizard
+    // they skipped turned it off, would have no way of knowing why.
+    await stopMicTest();
     setSession({ setupDone: true });
   }
+
+  // Covers the paths `done()` does not: a crash, a reload, a recover.
+  onDestroy(() => {
+    stopMicTest();
+  });
 </script>
 
 <div class="fr-scrim">
@@ -142,7 +210,7 @@
       <select
         class="r-select"
         value={$capture.inputDevice}
-        on:change={(e) => setInputDevice(e.target.value)}>
+        on:change={(e) => chooseDevice(e.target.value)}>
         <option value="">Default input</option>
         {#each $capture.devices as d}
           <option value={d.name}>{d.name}{d.is_default ? ' — default' : ''}</option>
@@ -158,7 +226,7 @@
         {#if $capture.capturing}
           {level > 4 ? '✓ Relay can hear that.' : 'Say something — the bar should move.'}
         {:else}
-          You can test this from the Live tab, and change it in Settings at any time.
+          Starting the microphone…
         {/if}
       </p>
 
@@ -166,7 +234,7 @@
         <ModelSetup compact />
       {/if}
 
-      <button class="r-btn amber fr-go" on:click={() => (step = 3)}>Next</button>
+      <button class="r-btn amber fr-go" on:click={() => { stopMicTest(); step = 3; }}>Next</button>
     {:else}
       <h2>Let's put something on the screen.</h2>
       <p class="fr-p">
