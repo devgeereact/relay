@@ -208,3 +208,32 @@ anyone. Delete the throwaway key afterwards.
 > Leave it. It is cosmetic, and the identifier is the name of the app-data directory —
 > changing it would orphan every existing church's database, service history and
 > downloaded model.
+
+## Unsigned pre-releases (before you have certificates)
+
+Code-signing certificates take days to buy, and Windows SmartScreen reputation takes
+*weeks* of downloads to earn. Waiting for them before ever exercising the release path
+means the pipeline is first tested on the day it matters — which is how release
+pipelines break.
+
+So: **an unsigned build is allowed, but only on a pre-release tag.**
+
+```bash
+git tag v0.1.0-rc1 && git push origin v0.1.0-rc1      # unsigned, allowed
+git tag v0.1.0     && git push origin v0.1.0          # FAILS without certificates
+```
+
+The rule is enforced in `release.yml`: a tag containing a hyphen is a pre-release and
+may go unsigned; a plain version tag with no `APPLE_CERTIFICATE` fails loudly. **You
+cannot ship an unsigned build to a church by accident** — you would have to type a tag
+that says, in the tag itself, that it is not a real release.
+
+An unsigned pre-release still gives you the two things worth testing:
+
+- **real installers** (.dmg, .msi) built exactly as a real release builds them
+- **a signed update bundle** (`.app.tar.gz` + `.sig`) — updater signing is a *different*
+  key from OS code signing, and it is already configured. So the auto-updater can be
+  tested end to end today.
+
+What it does not give you is the ability to hand it to a volunteer: macOS says *"Relay
+is damaged and can't be opened"*, Windows SmartScreen warns. The release notes say so.

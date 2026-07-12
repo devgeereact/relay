@@ -64,17 +64,55 @@ jobs:
 
       - run: npm ci
 
-      - name: Fail early if the updater key is missing
+      # Decide, ONCE, what kind of release this is — and refuse the dangerous one.
+      #
+      # An unsigned build is stopped dead by macOS Gatekeeper ("Relay is damaged and
+      # can't be opened") and warned about by Windows SmartScreen. A church volunteer
+      # does not push past those screens. So an unsigned build must NEVER be able to
+      # reach a church by accident.
+      #
+      # But an unsigned build IS useful — to the maintainer, to test the pipeline and
+      # the auto-updater before certificates exist (they take days to buy and weeks to
+      # earn SmartScreen reputation). Forbidding it outright means the release path
+      # cannot be tested until the day it matters, which is how release pipelines break.
+      #
+      # The rule: unsigned is allowed ONLY on a PRE-RELEASE tag (one with a hyphen —
+      # v0.1.0-rc1, v0.2.0-beta2). A plain version tag with no certificate FAILS, loudly.
+      # You cannot ship an unsigned build to a church without first typing a tag that
+      # says, in the tag itself, that it is not a real release.
+      - name: Pre-flight — what kind of release is this?
+        id: mode
         shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
         run: |
           if grep -q "PASTE_YOUR_TAURI_UPDATER_PUBLIC_KEY_HERE" src-tauri/tauri.updater.conf.json; then
             echo "::error::The updater public key has not been set."
-            echo "Run 'npm run tauri signer generate -- -w ~/.tauri/relay.key' and follow docs/RELEASING.md."
+            echo "Run 'npm run tauri signer generate -- -w ~/.relay/updater.key' and follow docs/RELEASING.md."
             exit 1
           fi
 
+          # A hyphen in the tag = a pre-release. v0.1.0-rc1 → yes. v0.1.0 → no.
+          case "${{ github.ref_name }}" in
+            *-*) PRE=true  ;;
+            *)   PRE=false ;;
+          esac
+
+          if [ -n "$APPLE_CERTIFICATE" ]; then SIGNED=true; else SIGNED=false; fi
+
+          if [ "$SIGNED" = "false" ] && [ "$PRE" = "false" ]; then
+            echo "::error::No APPLE_CERTIFICATE, and '${{ github.ref_name }}' is not a pre-release tag."
+            echo "An unsigned build cannot be opened by a church: Gatekeeper says 'Relay is damaged'."
+            echo "Either set the signing secrets (docs/RELEASING.md), or tag a pre-release: v0.1.0-rc1"
+            exit 1
+          fi
+
+          echo "signed=$SIGNED" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$PRE" >> "$GITHUB_OUTPUT"
+          echo "Release ${{ github.ref_name }}: signed=$SIGNED prerelease=$PRE"
+
       - name: Import the Apple signing certificate
-        if: matrix.os == 'macos-latest'
+        if: matrix.os == 'macos-latest' && steps.mode.outputs.signed == 'true'
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -126,7 +164,9 @@ jobs:
 
             **First run:** Relay will offer to download the speech model
             (~148 MB, one time). Everything else works immediately.
+
+            ${{ steps.mode.outputs.signed == 'false' && '> ⚠️ **UNSIGNED TEST BUILD — not for a live service.** macOS will say *"Relay is damaged and can''t be opened"* and Windows SmartScreen will warn. That is expected: this build carries no Apple/Windows code-signing certificate. Do not hand it to a church. On macOS you can open it anyway with `xattr -cr /Applications/Relay.app`, but only do that because *you* built it.' || '' }}
           releaseDraft: true # you approve it before churches see it
-          prerelease: false
+          prerelease: ${{ steps.mode.outputs.prerelease }}
           includeUpdaterJson: true # publishes latest.json for the auto-updater
           args: ${{ matrix.args }} --config src-tauri/tauri.updater.conf.json
