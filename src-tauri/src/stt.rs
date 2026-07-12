@@ -38,9 +38,14 @@ const TARGET_RATE: u32 = 16_000; // whisper input rate
 pub const WINDOW_SECS: usize = 8;
 const STEP_SAMPLES: usize = TARGET_RATE as usize; // re-transcribe every ~1s of new voice
 const MIN_SAMPLES: usize = TARGET_RATE as usize / 2; // don't run whisper on <0.5s
-/// Consecutive silent chunks that end an utterance. Chunks hop ~200ms, so
-/// ~5 ≈ 1s of silence — matches natural sentence pauses.
-const SILENCE_FINALIZE: u32 = 5;
+/// Consecutive silent chunks that end an utterance. Chunks hop ~200ms, so 7 ≈ 1.4s.
+///
+/// Raised from 5 (~1s). A preacher pausing for breath, or for effect, mid-sentence
+/// comfortably clears a second — and finalizing there CLEARS the rolling window, so
+/// the second half of "Romans chapter eight … verse twenty-eight" was being decoded
+/// with no memory of the first half. The end of a sentence is a longer silence than
+/// the middle of one.
+const SILENCE_FINALIZE: u32 = 7;
 
 /// A transcript update pushed to the UI. `is_final` marks an utterance closed
 /// by a silence gap; partials update the same in-progress line.
@@ -187,23 +192,112 @@ fn worker<F>(
     let max_window = TARGET_RATE as usize * WINDOW_SECS;
     let mut new_since_step = 0usize;
     let mut silence_run = 0u32;
-    // Assigned from the chunk at the top of every loop iteration, before any
-    // read — so no initial value is needed (and a dead `= 0` here was a warning).
-    let mut last_ts_ms: u64;
+    // Timestamp of the newest chunk seen. Now that a batch is drained before any
+    // decode, this must persist ACROSS batches — a batch of purely-overlapping
+    // chunks assigns nothing, and the last real timestamp is still the right one.
+    let mut last_ts_ms: u64 = 0;
     // End (ms) of the audio already appended, so we only add the NON-overlapping
     // tail of each chunk. The detection chunker emits 50%-overlapping chunks;
     // feeding those to whisper verbatim duplicates every hop and garbles the
     // transcript. Timestamps make this robust to any overlap ratio.
     let mut appended_end_ms = 0u64;
 
-    while let Ok(chunk) = rx.recv() {
-        last_ts_ms = chunk.timestamp_ms;
-        if chunk.is_voice {
-            silence_run = 0;
+    // How far behind real time we have been running. Only used to warn.
+    let mut lag_warned = false;
+    let mut voiced = 0u64;
+    let mut silent = 0u64;
+    let mut last_emit = std::time::Instant::now();
+
+    // ── THE LOOP ──
+    //
+    // Read the batch of chunks that is ALREADY WAITING, append all of it, and only
+    // then run whisper — ONCE — on the freshest window.
+    //
+    // It used to `recv()` one chunk at a time and decode whenever a second of new
+    // speech had accumulated. That is fine while whisper keeps up, and it degrades
+    // catastrophically the moment it doesn't:
+    //
+    //   The channel is UNBOUNDED. Audio arrives every 200 ms, forever. If one
+    //   decode of the 8-second window takes longer than the 1 second of speech that
+    //   triggered it, chunks queue up behind it. The worker then drains that queue
+    //   the only way it knew how — a second of audio, decode, a second of audio,
+    //   decode — so catching up on a 3-second backlog cost THREE more full decodes,
+    //   each one on a window that was already stale, each one putting it further
+    //   behind. The lag never recovers. It grows for the whole sermon, which is
+    //   exactly what it feels like: the transcript falls further behind the preacher
+    //   the longer he talks, and by the second and third reference it is hopeless.
+    //
+    // Appending is cheap (a resample and a memcpy). Whisper is not. So the cost of
+    // catching up is now ONE decode no matter how far behind we are, and the loop is
+    // self-healing: the deeper the backlog, the more audio each decode consumes. The
+    // 8-second window cap does the rest — genuinely old audio falls off the front
+    // rather than being decoded again.
+    //
+    // No audio is dropped. Every sample still reaches the window; we simply stop
+    // paying whisper to re-read the same window on the way there.
+    while let Ok(first) = rx.recv() {
+        let batch_at = std::time::Instant::now();
+        let mut want_step = false;
+        let mut want_final = false;
+        let mut drained = 0usize;
+
+        for chunk in std::iter::once(first).chain(rx.try_iter()) {
+            drained += 1;
+            last_ts_ms = chunk.timestamp_ms;
+
+            if chunk.is_voice {
+                voiced += 1;
+                silence_run = 0;
+            } else {
+                silent += 1;
+                silence_run += 1;
+            }
+
+            // End of utterance: a real run of silence, with something to close. Tested
+            // here — before any `continue` below — so a chunk that happens to be fully
+            // overlapping cannot skip past the check and swallow the finalize.
+            if silence_run >= SILENCE_FINALIZE && !window.is_empty() {
+                want_final = true;
+            }
+
+            // ── WHICH SAMPLES WHISPER SEES ──
+            //
+            // All of them, once the speaker has started. This used to append ONLY
+            // chunks that passed the VAD, and that was the bug behind "the transcript
+            // can't keep up".
+            //
+            // The VAD is a plain RMS energy gate (audio.rs, 0.008 over a 400 ms
+            // chunk). Ordinary speech drops under that line BETWEEN WORDS — stops,
+            // breaths, the gap before a stressed syllable. So two thirds of a
+            // continuously-speaking preacher's audio was being classified as silence
+            // and THROWN AWAY, and whisper was handed the surviving fragments spliced
+            // end to end, with the gaps cut out. Measured on real speech: voiced=119,
+            // silent=242, and an 8-second window that never once held more than 4.8
+            // seconds of audio.
+            //
+            // Whisper is not a word detector being fed words. It is an acoustic model
+            // that needs a CONTIGUOUS signal — the pauses are part of the signal, and
+            // splicing them out destroys exactly the prosody it uses. The measured
+            // result was mangled text ("John, 3, 6, Linn."), the language detector
+            // flipping to Russian and German mid-sermon, and — because the window was
+            // starved and cleared constantly — updates arriving 1 to 8 seconds apart.
+            //
+            // So: append every chunk. Silence inside an utterance is audio. The VAD's
+            // job is to find the EDGES of an utterance, not to censor its middle.
+            //
+            // The one thing still skipped is silence before anything has been said —
+            // an empty window plus a silent room is just room tone, and there is no
+            // reason to pay whisper to transcribe it.
+            if window.is_empty() && !chunk.is_voice {
+                continue;
+            }
+
             let sr = chunk.sample_rate as u64;
             let chunk_len_ms = chunk.samples.len() as u64 * 1000 / sr.max(1);
             let chunk_end_ms = chunk.timestamp_ms + chunk_len_ms;
             // Skip the portion already covered by a previous (overlapping) chunk.
+            // The detection chunker emits 50%-overlapping chunks; feeding those to
+            // whisper verbatim duplicates every hop and garbles the transcript.
             let new_slice: &[f32] = if chunk.timestamp_ms >= appended_end_ms {
                 &chunk.samples
             } else {
@@ -212,7 +306,7 @@ fn worker<F>(
             };
             appended_end_ms = chunk_end_ms.max(appended_end_ms);
             if new_slice.is_empty() {
-                continue; // fully overlapping — nothing new to transcribe
+                continue; // fully overlapping — nothing new
             }
             let resampled = resample_linear(new_slice, chunk.sample_rate, TARGET_RATE);
             window.extend_from_slice(&resampled);
@@ -222,50 +316,76 @@ fn worker<F>(
             }
             new_since_step += resampled.len();
 
+            // Cadence is now measured in AUDIO, not in voiced audio, so a partial
+            // lands about once a second of wall time. Before, a step needed a second
+            // of samples that had passed the VAD — which, at a third of them passing,
+            // took three seconds of real time to accumulate, and longer for a softer
+            // speaker. That gap IS the lag the operator felt.
             if new_since_step >= STEP_SAMPLES && window.len() >= MIN_SAMPLES {
-                let lang_opt = lang.lock().ok().and_then(|g| g.clone());
-                let prompt_opt = prompt.lock().ok().and_then(|g| g.clone());
-                if let Some((text, detected)) = transcribe(
-                    &mut state,
-                    &window,
-                    threads,
-                    lang_opt.as_deref(),
-                    prompt_opt.as_deref(),
-                ) {
-                    on_update(TranscriptUpdate {
-                        text,
-                        language: detected,
-                        is_final: false,
-                        timestamp_ms: last_ts_ms,
-                    });
-                }
-                new_since_step = 0;
-            }
-        } else {
-            silence_run += 1;
-            if silence_run == SILENCE_FINALIZE && !window.is_empty() {
-                if window.len() >= MIN_SAMPLES {
-                    let lang_opt = lang.lock().ok().and_then(|g| g.clone());
-                    let prompt_opt = prompt.lock().ok().and_then(|g| g.clone());
-                    if let Some((text, detected)) = transcribe(
-                        &mut state,
-                        &window,
-                        threads,
-                        lang_opt.as_deref(),
-                        prompt_opt.as_deref(),
-                    ) {
-                        on_update(TranscriptUpdate {
-                            text,
-                            language: detected,
-                            is_final: true,
-                            timestamp_ms: last_ts_ms,
-                        });
-                    }
-                }
-                window.clear();
-                new_since_step = 0;
+                want_step = true;
             }
         }
+
+        // ONE decode per batch. `final` wins: the speaker has stopped, and the
+        // finalized text is what the console keeps.
+        if !want_final && !want_step {
+            continue;
+        }
+        let is_final = want_final;
+        let started = std::time::Instant::now();
+        let window_ms = window.len() as u64 * 1000 / TARGET_RATE as u64;
+
+        if window.len() >= MIN_SAMPLES {
+            let lang_opt = lang.lock().ok().and_then(|g| g.clone());
+            let prompt_opt = prompt.lock().ok().and_then(|g| g.clone());
+            if let Some((text, detected)) = transcribe(
+                &mut state,
+                &window,
+                threads,
+                lang_opt.as_deref(),
+                prompt_opt.as_deref(),
+            ) {
+                on_update(TranscriptUpdate {
+                    text,
+                    language: detected,
+                    is_final,
+                    timestamp_ms: last_ts_ms,
+                });
+            }
+        }
+        new_since_step = 0;
+        if is_final {
+            window.clear();
+        }
+
+        // Whisper cannot keep up with the preacher on this machine. Say so ONCE,
+        // with the numbers — a transcript that silently runs late is the hardest
+        // possible thing for a volunteer to diagnose ("it just feels slow"), and the
+        // fix is a real-world one: a smaller window, or a smaller model.
+        let decode_ms = started.elapsed().as_millis() as u64;
+        let realtime_budget_ms = STEP_SAMPLES as u64 * 1000 / TARGET_RATE as u64;
+        if decode_ms > realtime_budget_ms && !lag_warned {
+            lag_warned = true;
+            eprintln!(
+                "stt: decode {decode_ms}ms for a {window_ms}ms window on {threads} threads — \
+                 slower than real time (budget {realtime_budget_ms}ms). The transcript will \
+                 run behind live speech. Consider a shorter window or a smaller model."
+            );
+        }
+        // Content-free. The transcript is sermon data and must never be logged.
+        if std::env::var_os("RELAY_STT_TIMING").is_some() {
+            // Wall time from the newest chunk landing in this worker to the transcript
+            // being emitted. `gap` is the cadence — how long the operator waits between
+            // one transcript update and the next, which is the thing they actually feel.
+            let lag_ms = batch_at.elapsed().as_millis() as u64;
+            let gap_ms = last_emit.elapsed().as_millis() as u64;
+            eprintln!(
+                "stt: LAG={lag_ms}ms decode={decode_ms}ms gap_since_last_emit={gap_ms}ms \
+                 window={window_ms}ms drained={drained} voiced={voiced} silent={silent} \
+                 final={is_final}"
+            );
+        }
+        last_emit = std::time::Instant::now();
     }
 }
 
@@ -504,5 +624,94 @@ mod tests {
         }
         std::thread::sleep(std::time::Duration::from_secs(2));
         eprintln!("SURVIVED — whisper + hooks did not crash");
+    }
+}
+
+/// Whisper decode-latency benchmark. `#[ignore]`d — needs a real model and a real
+/// speech file, so it never runs in CI.
+///
+/// ```text
+/// RELAY_BENCH_WAV=/path/speech.f32 \
+///   cargo test --release stt::bench -- --ignored --nocapture
+/// ```
+///
+/// This exists because the STT latency question is not answerable by reading the
+/// code. The worker decodes the whole rolling window every step, so the ONLY thing
+/// that matters is whether one decode of a WINDOW_SECS window finishes inside the
+/// second of speech that triggered it. If it doesn't, the transcript runs late and
+/// keeps falling further behind for the rest of the sermon.
+///
+/// The input is raw f32 mono @16 kHz — the exact format the worker feeds whisper,
+/// so the numbers are the real ones, not a proxy.
+#[cfg(test)]
+mod bench {
+    use super::*;
+
+    fn load_f32(path: &str) -> Vec<f32> {
+        let bytes = std::fs::read(path).expect("read wav");
+        // Skip a 44-byte RIFF header if present; the payload is little-endian f32.
+        let start = if bytes.starts_with(b"RIFF") { 44 } else { 0 };
+        bytes[start..]
+            .chunks_exact(4)
+            .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+            .collect()
+    }
+
+    #[test]
+    #[ignore]
+    fn decode_latency() {
+        let Some(wav) = std::env::var_os("RELAY_BENCH_WAV") else {
+            eprintln!("set RELAY_BENCH_WAV to a raw/RIFF f32 mono 16k file");
+            return;
+        };
+        let model = default_model_path().expect("no STT model found");
+        let audio = load_f32(wav.to_str().unwrap());
+        println!(
+            "\n  model: {}\n  audio: {:.1}s @16k\n",
+            model.display(),
+            audio.len() as f32 / TARGET_RATE as f32
+        );
+
+        let ctx = WhisperContext::new_with_params(
+            model.to_str().unwrap(),
+            WhisperContextParameters::default(),
+        )
+        .expect("load model");
+        let mut state = ctx.create_state().expect("state");
+
+        let cores = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(4);
+        println!("  cores: {cores}   (shipping default = (cores/2).clamp(1,4))\n");
+        println!("   window  threads     decode  real-time  verdict");
+        println!("  ------------------------------------------------------------");
+
+        // The budget: one decode must finish inside STEP_SAMPLES of speech (1s), or
+        // the worker cannot keep up with a continuously-talking preacher.
+        let budget_ms = STEP_SAMPLES as f64 * 1000.0 / TARGET_RATE as f64;
+
+        for window_secs in [4usize, 5, 6, 8] {
+            for threads in [4i32, 6, 8] {
+                let n = (TARGET_RATE as usize * window_secs).min(audio.len());
+                let win = &audio[audio.len() - n..]; // the freshest window, as live
+                let t = std::time::Instant::now();
+                let _ = transcribe(&mut state, win, threads, Some("en"), None);
+                let ms = t.elapsed().as_millis() as f64;
+                let rtf = ms / (window_secs as f64 * 1000.0);
+                let ok = ms <= budget_ms;
+                println!(
+                    "  {:>6}s {:>8} {:>9.0}ms {:>8.2}x  {}",
+                    window_secs,
+                    threads,
+                    ms,
+                    rtf,
+                    if ok { "keeps up" } else { "RUNS LATE" }
+                );
+            }
+        }
+        println!(
+            "\n  budget = {budget_ms:.0}ms (one decode per {:.0}s of new speech)\n",
+            STEP_SAMPLES as f64 / TARGET_RATE as f64
+        );
     }
 }

@@ -260,8 +260,13 @@ pub fn broadcast_content(app: &tauri::AppHandle, content: OutputContent) {
     })
     .to_string();
     if rehearsing(app) {
+        // Content-free by design: the reference is congregation/sermon data and this
+        // log is written to disk. What matters operationally is only that the
+        // broadcast was suppressed, which is what an operator (or a bug report)
+        // needs to know.
+        println!("rehearsal: broadcast SUPPRESSED — nothing left the machine");
         let _ = app.emit_to(CONSOLE, "output://content", content);
-        return; // no output window, no kiosk, no LAN. Nothing leaves.
+        return; // no output window, no kiosk, no LAN.
     }
     let _ = app.emit("output://content", content);
     publish_kiosk(app, json);

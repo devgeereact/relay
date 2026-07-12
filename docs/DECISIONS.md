@@ -94,3 +94,47 @@ twenty minutes, silently, is how the wrong thing ends up in front of a congregat
 **Amber is not used for it.** Amber means ON AIR. A rehearsal is not on air, so it
 is amethyst — in the top bar, on the output wall tally, and in a permanent band
 across the console. A tally light that lies is worse than no tally light.
+
+## 19. Audio levels are learned, never assumed
+
+**Decision.** Nothing in the audio path may compare a signal against an absolute
+level. The voice gate (`audio::Vad`) and the auto-gain (`dsp::FrontEnd`) both track
+the room's noise floor and gate *relative* to it, with hysteresis.
+
+**What went wrong.** Three absolute thresholds, each individually reasonable, each
+tuned on a developer's machine:
+
+- `VAD_RMS_THRESHOLD = 0.008` — "this is speech"
+- `energy_prob = rms / TARGET_RMS` with `SPEECH_PROB = 0.55` — i.e. speech must
+  reach RMS 0.066 before the auto-gain will believe in it
+- `MAX_GAIN = 6.0` — +16 dB
+
+Together they made Relay **deaf to a quiet preacher, silently**. A church laptop mic
+sitting at RMS 0.005 was never recognised as speech, so the auto-gain never lifted
+it — a deadlock in which you had to already be loud enough not to need gain in order
+to be granted any. And the VAD then discarded two thirds of the sermon as "silence".
+
+Measured, same words, real speech through the real front-end:
+
+```text
+   studio level   94% voiced        looks perfect on the developer's machine
+   ×0.2           17% voiced        a church laptop. Most of the sermon deleted.
+   ×0.05           2% voiced        a lightly-driven desk feed. Effectively deaf.
+```
+
+Nothing errored. The level meter still moved. The transcript just quietly turned to
+nonsense — `John, 3, 6, Linn.`, the language detector flipping to Russian mid-sermon
+— and the operator would conclude the AI "isn't very good".
+
+**The rule.** Speech is a *rise above the room*, and it is *contrast*, not volume. A
+steady tone is room tone however loud it is; a quiet voice over a quiet room is a
+voice. Any future tuning knob that hard-codes "this many dB = speech" is the same bug
+again, and is wrong on a microphone nobody in this repo has ever heard.
+
+**Consequence, and the reason to hold this line:** it fails on exactly the churches we
+built this for — the ones with a cheap mic at the back of a hall — and it fails
+invisibly, so they will never report it as a bug. They will just stop using Relay.
+
+Verify with `cargo test audio::gate -- --ignored --nocapture` (`RELAY_BENCH_WAV`,
+`RELAY_BENCH_SCALE`): the voiced ratio must stay flat across a 100× range of input
+level. It now runs 39–55%; it used to collapse to 0%.

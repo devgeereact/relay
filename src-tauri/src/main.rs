@@ -1864,6 +1864,15 @@ fn set_rehearsal(
     let was = rehearsal.on();
     rehearsal.set(on);
     if was != on {
+        println!(
+            "rehearsal: {} — outputs are {}",
+            if on { "ON" } else { "OFF" },
+            if on {
+                "SANDBOXED (console preview only)"
+            } else {
+                "LIVE"
+            }
+        );
         // Clear AFTER flipping the flag, so it lands on the right side: entering
         // rehearsal clears the console preview only (the wall is untouched, as it
         // must be — the service may be running); leaving it clears the real wall.

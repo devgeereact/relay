@@ -43,10 +43,14 @@ pub struct DeviceInfo {
 // --- chunking parameters (see docs/SPEC.md §4 step 1: 200-500ms overlapping) ---
 const CHUNK_MS: u32 = 400;
 const HOP_MS: u32 = 200; // 50% overlap
-/// Seed RMS gate for voiced audio on f32 samples in [-1, 1]. Deliberately a
-/// plain energy gate for Phase 3 — a real VAD (webrtc/silero) slots in behind
-/// the same `Vad` seam later without touching capture or chunking.
-const VAD_RMS_THRESHOLD: f32 = 0.008;
+/// ABSOLUTE floor for the voice gate, on f32 samples in [-1, 1]. This is NOT the
+/// speech threshold — the real threshold is learned from the room's noise floor (see
+/// `Vad`). This only stops a dead or unplugged microphone from having its own dither
+/// tracked down to zero and then reported as speech.
+///
+/// It was previously the speech threshold itself, and it silently deleted most of a
+/// quiet preacher's sermon — see the doc comment on `Vad`.
+const VAD_RMS_THRESHOLD: f32 = 0.0015;
 
 /// Enumerate input devices on the default host. Safe to call anytime; returns
 /// an empty list rather than erroring if the host has no inputs.
@@ -74,14 +78,112 @@ pub fn rms(samples: &[f32]) -> f32 {
     (sum_sq / samples.len() as f32).sqrt()
 }
 
-/// Energy-based voice-activity gate.
+/// Voice-activity gate that learns the room.
+///
+/// ## Why this is not a fixed threshold any more
+///
+/// It used to be `rms >= 0.008`. That is a guess about a microphone and a room the
+/// developer never heard, and it fails in exactly the way that is hardest to
+/// diagnose: **silently, and only for quiet people.**
+///
+/// The gate decides which audio whisper is allowed to hear. Measured on real speech
+/// pushed through the real front-end (see the `gate` tests below), the same words,
+/// differing only in level:
+///
+/// ```text
+///   studio level   94% voiced      the developer's machine. Looks perfect.
+///   ×0.2           17% voiced      a church laptop mic. Most of the sermon deleted.
+///   ×0.05           2% voiced      a lightly-driven desk feed. Effectively deaf.
+/// ```
+///
+/// The auto-gain (dsp.rs) caps at ×6, so a feed sitting at RMS 0.001 lifts to 0.006
+/// and never reaches the 0.008 line at all. Nothing errors. The level meter moves.
+/// The transcript just quietly turns to nonsense, and the operator is told the AI
+/// "isn't very good".
+///
+/// ## What it does instead
+///
+/// Track the noise floor and gate RELATIVE to it. Silence is not an absolute level;
+/// it is whatever this room is doing when nobody is talking.
+///
+/// * The floor falls fast and rises slowly, so it settles onto the quiet parts and
+///   is not dragged up by speech.
+/// * **Hysteresis**: it takes more energy to open the gate than to hold it open. A
+///   dip between two words — a stop consonant, a breath — must not slam it shut, and
+///   that is precisely what the old gate did, chopping a sentence into fragments.
+/// * An absolute floor remains, but only to stop the gate chasing digital silence
+///   into infinite sensitivity when the microphone is unplugged.
+///
+/// This is deliberately still a plain energy gate, not a neural VAD (silero/webrtc)
+/// — it just no longer assumes it knows how loud the preacher is. A real VAD slots
+/// in behind the same seam.
 #[derive(Debug, Clone, Copy)]
 pub struct Vad {
+    /// Absolute floor. Not the speech threshold — only a guard against tracking a
+    /// dead microphone's noise floor down to zero and then calling hiss "speech".
     pub threshold_rms: f32,
+    noise: f32,
+    speaking: bool,
 }
+
+/// Speech must exceed the noise floor by this much to OPEN the gate.
+const VAD_OPEN_RATIO: f32 = 3.0;
+/// …and only fall below this much to CLOSE it. The gap is the hysteresis that keeps
+/// a sentence intact across the pauses inside it.
+const VAD_CLOSE_RATIO: f32 = 1.7;
+/// Noise floor tracking. Falls quickly onto quiet passages, rises slowly so a long
+/// loud passage cannot teach the gate that the room is loud and go deaf.
+const VAD_FLOOR_DOWN: f32 = 0.30;
+const VAD_FLOOR_UP: f32 = 0.005;
+
 impl Vad {
-    pub fn is_voice(&self, rms: f32) -> bool {
-        rms >= self.threshold_rms
+    pub fn new(threshold_rms: f32) -> Self {
+        Self {
+            threshold_rms,
+            noise: -1.0, // unseeded — see is_voice
+            speaking: false,
+        }
+    }
+
+    /// Feed one chunk's RMS. Stateful — call once per chunk, in order.
+    pub fn is_voice(&mut self, rms: f32) -> bool {
+        // SEED the floor from the first chunk.
+        //
+        // Without this the floor starts at the absolute minimum, so in a merely NOISY
+        // room the very first chunk already clears `open`, the gate latches open, and
+        // — because the floor only learns while not speaking — it then never learns
+        // anything at all. It would sit wide open on room tone for the whole service.
+        //
+        // Assuming the first chunk is not speech is safe in practice: the operator
+        // presses Start Listening before the preacher begins. And it self-heals if they
+        // don't — a too-high floor holds the gate shut, which is exactly the state in
+        // which the floor tracks downward (fast), so it recovers in about two seconds.
+        if self.noise < 0.0 {
+            self.noise = rms.max(1e-5);
+        }
+
+        let open = (self.noise * VAD_OPEN_RATIO).max(self.threshold_rms);
+        let close = (self.noise * VAD_CLOSE_RATIO).max(self.threshold_rms * 0.6);
+
+        self.speaking = if self.speaking {
+            rms >= close
+        } else {
+            rms >= open
+        };
+
+        // The floor may ALWAYS fall, but it may only RISE while we believe nobody is
+        // speaking. Otherwise a long passage teaches the gate that the preacher IS the
+        // background, and it goes deaf to him halfway through the sermon.
+        if rms < self.noise {
+            self.noise += VAD_FLOOR_DOWN * (rms - self.noise);
+        } else if !self.speaking {
+            self.noise += VAD_FLOOR_UP * (rms - self.noise);
+        }
+        // Never track all the way to zero: a silent (or unplugged) input would drive
+        // `open` to 0 and then classify its own dither as speech.
+        self.noise = self.noise.max(1e-5);
+
+        self.speaking
     }
 }
 
@@ -233,9 +335,13 @@ where
     let sample_rate = used.sample_rate().0;
     stream.play().map_err(|e| e.to_string())?;
 
-    let vad = Vad {
-        threshold_rms: VAD_RMS_THRESHOLD,
-    };
+    let dbg_rms = std::env::var_os("RELAY_AUDIO_RMS").is_some();
+    let mut dbg_seen = 0u32;
+    let mut dbg_voiced = 0u32;
+    let mut dbg_min = f32::MAX;
+    let mut dbg_max = 0.0f32;
+    let mut dbg_sum = 0.0f32;
+    let mut vad = Vad::new(VAD_RMS_THRESHOLD);
     let mut chunker = Chunker::new(sample_rate, CHUNK_MS, HOP_MS);
     // Clean the stream (denoise + auto-gain) before chunking/VAD. Runs on this
     // same off-realtime thread. Frame-aligned at 48 kHz; degrades to gain-only
@@ -257,6 +363,31 @@ where
                 on_quality(&cleaned.quality);
                 for (chunk, ts_ms) in chunker.push(&cleaned.samples) {
                     let level = rms(&chunk);
+                    // Measure, don't guess: what does the VAD actually see?
+                    if dbg_rms {
+                        dbg_seen += 1;
+                        if level >= VAD_RMS_THRESHOLD {
+                            dbg_voiced += 1;
+                        }
+                        dbg_min = dbg_min.min(level);
+                        dbg_max = dbg_max.max(level);
+                        dbg_sum += level;
+                        if dbg_seen.is_multiple_of(25) {
+                            eprintln!(
+                                "audio: chunk rms min={dbg_min:.4} mean={:.4} max={dbg_max:.4} \
+                                 gate={VAD_RMS_THRESHOLD:.4} voiced={}/{} denoise={}",
+                                dbg_sum / dbg_seen as f32,
+                                dbg_voiced,
+                                dbg_seen,
+                                frontend.denoise_active()
+                            );
+                            dbg_min = f32::MAX;
+                            dbg_max = 0.0;
+                            dbg_sum = 0.0;
+                            dbg_seen = 0;
+                            dbg_voiced = 0;
+                        }
+                    }
                     let ac = AudioChunk {
                         is_voice: vad.is_voice(level),
                         rms: level,
@@ -396,15 +527,73 @@ mod tests {
         assert!((rms(&sig) - 1.0).abs() < 1e-6);
     }
 
+    /// Feed a level for `n` chunks, return the last verdict.
+    fn hold(vad: &mut Vad, level: f32, n: usize) -> bool {
+        let mut v = false;
+        for _ in 0..n {
+            v = vad.is_voice(level);
+        }
+        v
+    }
+
     #[test]
-    fn vad_gates_on_threshold() {
-        let vad = Vad {
-            threshold_rms: 0.01,
-        };
+    fn vad_ignores_a_steady_room() {
+        // Room tone, whatever its level, is not speech. The gate learns it.
+        let mut vad = Vad::new(VAD_RMS_THRESHOLD);
+        assert!(!hold(&mut vad, 0.004, 40));
         assert!(!vad.is_voice(0.0));
-        assert!(!vad.is_voice(0.009));
-        assert!(vad.is_voice(0.01));
-        assert!(vad.is_voice(0.5));
+    }
+
+    #[test]
+    fn vad_hears_a_quiet_preacher_over_a_quiet_room() {
+        // THE BUG. A feed sitting at 0.004 with speech peaking at 0.02 never once
+        // crossed the old fixed 0.008 line often enough to be heard — 90% of a real
+        // sermon was classified as silence and thrown away. Speech is not a level; it
+        // is a RISE above whatever the room is doing.
+        let mut vad = Vad::new(VAD_RMS_THRESHOLD);
+        hold(&mut vad, 0.004, 40); // settle on the room
+        assert!(
+            vad.is_voice(0.02),
+            "quiet speech over a quiet room is speech"
+        );
+    }
+
+    #[test]
+    fn vad_is_not_deafened_by_a_loud_room() {
+        // And the converse: a loud room (a fan, a band packing down) must not become
+        // the new "speech". Same 5x rise, ten times the noise floor.
+        let mut vad = Vad::new(VAD_RMS_THRESHOLD);
+        hold(&mut vad, 0.04, 40);
+        assert!(!vad.is_voice(0.05), "room tone is not speech, however loud");
+        assert!(
+            vad.is_voice(0.20),
+            "speech above a loud room still reads as speech"
+        );
+    }
+
+    #[test]
+    fn vad_holds_through_a_dip_between_words() {
+        // Hysteresis. The gap between two words, or a stop consonant, dips the energy
+        // for a chunk or two. Slamming the gate shut there is what chopped sentences
+        // into fragments and made whisper transcribe "John, 3, 6, Linn."
+        let mut vad = Vad::new(VAD_RMS_THRESHOLD);
+        hold(&mut vad, 0.004, 40);
+        assert!(vad.is_voice(0.05)); // speaking
+        assert!(
+            vad.is_voice(0.012),
+            "a dip mid-sentence must not close the gate"
+        );
+        // But a real pause, well down toward the floor, does close it.
+        assert!(!vad.is_voice(0.005));
+    }
+
+    #[test]
+    fn vad_does_not_hallucinate_speech_from_a_dead_mic() {
+        // An unplugged input tracks its noise floor toward zero. Without the absolute
+        // floor, the gate's own ratios would then treat dither as a sermon.
+        let mut vad = Vad::new(VAD_RMS_THRESHOLD);
+        assert!(!hold(&mut vad, 0.0, 60));
+        assert!(!vad.is_voice(0.0002), "dither on a dead mic is not speech");
     }
 
     #[test]
@@ -460,5 +649,126 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_secs(3));
         engine.stop();
         eprintln!("chunks captured: {}", count.load(Ordering::Relaxed));
+    }
+}
+
+/// What the VAD actually sees, measured on real speech.
+///
+/// ```text
+/// RELAY_BENCH_WAV=/path/speech.f32 \
+///   cargo test audio::gate -- --ignored --nocapture
+/// ```
+///
+/// The energy gate decides which audio whisper is allowed to hear, and getting it
+/// wrong is invisible from the code — the threshold is just a number, and whether
+/// speech clears it depends entirely on the microphone in the room. So it gets
+/// measured against a real waveform, pushed through the REAL front-end, the REAL
+/// chunker and the REAL `Vad`, exactly as the capture thread does it.
+#[cfg(test)]
+mod gate {
+    use super::*;
+    use crate::dsp::FrontEnd;
+
+    /// Locate the real `data` chunk. A fixed 44-byte skip is wrong for any WAV with
+    /// extra chunks, and the header bytes then arrive as absurd float samples — which
+    /// is not merely noisy, it poisons the level trackers on the very first frame.
+    fn load_f32(path: &str) -> Vec<f32> {
+        let bytes = std::fs::read(path).expect("read wav");
+        let mut start = 0usize;
+        if bytes.starts_with(b"RIFF") {
+            let mut i = 12;
+            while i + 8 <= bytes.len() {
+                let id = &bytes[i..i + 4];
+                let sz =
+                    u32::from_le_bytes([bytes[i + 4], bytes[i + 5], bytes[i + 6], bytes[i + 7]])
+                        as usize;
+                if id == b"data" {
+                    start = i + 8;
+                    break;
+                }
+                i += 8 + sz + (sz & 1);
+            }
+        }
+        bytes[start..]
+            .chunks_exact(4)
+            .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+            .filter(|v| v.is_finite())
+            .collect()
+    }
+
+    #[test]
+    #[ignore]
+    fn voiced_ratio_on_real_speech() {
+        let Some(wav) = std::env::var_os("RELAY_BENCH_WAV") else {
+            eprintln!("set RELAY_BENCH_WAV");
+            return;
+        };
+        let sr = 16_000u32;
+        let mut audio = load_f32(wav.to_str().unwrap());
+        // Simulate the microphone actually in the room. A church laptop's built-in
+        // mic, or a lightly-driven feed off the desk, is many times quieter than a
+        // clean studio waveform — and that is the input the gate has to survive.
+        let scale: f32 = std::env::var("RELAY_BENCH_SCALE")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(1.0);
+        for s in audio.iter_mut() {
+            *s *= scale;
+        }
+
+        let mut frontend = FrontEnd::new(sr);
+        let mut chunker = Chunker::new(sr, CHUNK_MS, HOP_MS);
+        let mut vad = Vad::new(VAD_RMS_THRESHOLD);
+
+        let mut levels: Vec<f32> = Vec::new();
+        let mut probs: Vec<f32> = Vec::new();
+        let mut noises: Vec<f32> = Vec::new();
+        let mut peaks: Vec<f32> = Vec::new();
+        // Feed it the way cpal does: in small blocks, not one giant slice.
+        for block in audio.chunks(1024) {
+            let cleaned = frontend.process(block);
+            probs.push(cleaned.quality.speech_prob);
+            noises.push(cleaned.quality.noise_level);
+            peaks.push(cleaned.quality.peak_level);
+            for (chunk, _ts) in chunker.push(&cleaned.samples) {
+                levels.push(rms(&chunk));
+            }
+        }
+        let maxp = probs.iter().cloned().fold(0.0f32, f32::max);
+        let hi = probs.iter().filter(|&&p| p >= 0.55).count();
+        println!(
+            "  agc: speech_prob max={maxp:.2}  frames>=0.55: {hi}/{}  noise[first={:.5} last={:.5} min={:.5}]  peak[max={:.5} last={:.5}]",
+            probs.len(),
+            noises.first().copied().unwrap_or(0.0),
+            noises.last().copied().unwrap_or(0.0),
+            noises.iter().cloned().fold(f32::MAX, f32::min),
+            peaks.iter().cloned().fold(0.0f32, f32::max),
+            peaks.last().copied().unwrap_or(0.0),
+        );
+
+        let voiced = levels.iter().filter(|&&l| vad.is_voice(l)).count();
+        let mut sorted = levels.clone();
+        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        let pct = |p: f32| sorted[((sorted.len() - 1) as f32 * p) as usize];
+
+        println!(
+            "\n  CONTINUOUS SPEECH — {} chunks · input scaled ×{scale}\n",
+            levels.len()
+        );
+        println!("  gate (VAD_RMS_THRESHOLD) = {VAD_RMS_THRESHOLD:.4}");
+        println!(
+            "  chunk rms   p05={:.4}  p25={:.4}  p50={:.4}  p75={:.4}  p95={:.4}",
+            pct(0.05),
+            pct(0.25),
+            pct(0.50),
+            pct(0.75),
+            pct(0.95)
+        );
+        println!(
+            "\n  VOICED: {}/{}  ({:.0}%)   <-- this is speech, end to end. It should be high.\n",
+            voiced,
+            levels.len(),
+            voiced as f32 / levels.len() as f32 * 100.0
+        );
     }
 }
