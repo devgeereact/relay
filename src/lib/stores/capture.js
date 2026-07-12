@@ -47,6 +47,10 @@ export const live = writable(null);
 // clear). Reset by the next fire/clear. Mirrors the output://black broadcast.
 export const screenBlack = writable(false);
 
+// The last SPOKEN next/back that did nothing, and why (a NavResult). The console
+// consumes it, shows it, and clears it. Null when there is nothing to say.
+export const navBlocked = writable(null);
+
 /**
  * REHEARSAL — the operator is practising, and nothing reaches the congregation.
  *
@@ -188,6 +192,14 @@ export async function initAudio() {
       await listen('output://content', (e) => { live.set(e.payload); screenBlack.set(false); });
       await listen('output://clear', () => { live.set(null); screenBlack.set(false); });
       await listen('output://black', () => screenBlack.set(true));
+      // A SPOKEN "next"/"back" that did nothing. The STT thread has no caller to
+      // return a NavResult to, so it pushes it here — the preacher says "next", the
+      // wall does not move, and the console explains why instead of staying silent.
+      await listen('nav://blocked', (e) => navBlocked.set(e.payload));
+      // A clear that failed on a path with nobody to return an error to — the
+      // spoken "clear the screen", and the exit from rehearsal (which hands the
+      // wall back to the congregation). Same banner as a failed key or button.
+      await listen('output://panic_failed', (e) => panicError.set(String(e.payload)));
       await listen('rehearsal://changed', (e) => rehearsing.set(e.payload === true));
       // A device failure (permission denied, unplugged) is non-fatal: surface
       // it and reflect that capture stopped, but never freeze.
@@ -883,38 +895,104 @@ export async function deleteChannel(id) {
   await call('delete_channel', { id });
 }
 
-/** Manual next/previous verse (same as spoken "next"/"back"). */
+/**
+ * Manual next/previous verse (same as spoken "next"/"back").
+ *
+ * Returns a NavResult — `{kind}` is one of `fired` / `end_of_passage` /
+ * `no_passage` / `not_in_library`. The caller MUST tell the operator which.
+ *
+ * This used to return nothing and swallow every error. `nav` was a `()` command
+ * wrapping a `()` function with three silent bail-outs inside it, so the operator
+ * pressed Next mid-sermon, the wall did not change, and there was no error, no toast
+ * and no log — on the key they press more than any other. Same silent-no-op class as
+ * the "Screens cleared" lie (docs/DECISIONS.md §20).
+ */
 export async function navVerse(direction) {
-  try {
-    const call = await invoke();
-    await call('nav', { direction });
-  } catch {
-    /* backend absent */
+  const call = await invoke();
+  return call('nav', { direction });
+}
+
+/**
+ * Turn a NavResult into the sentence the operator gets.
+ *
+ * Not every outcome is a failure, and flattening them is what hid this bug for
+ * months: reaching the end of a passage is a normal boundary and the operator just
+ * needs to know that is why nothing moved. A verse missing from the corpus is a real
+ * fault. `null` means it worked and the screens changed — the wall is the feedback.
+ */
+export function navNotice(r) {
+  switch (r?.kind) {
+    case 'fired':
+      return null;
+    case 'end_of_passage':
+      return 'End of the passage — nothing further to show.';
+    case 'no_passage':
+      return 'No passage on screen yet. Fire a verse first, then use ← →.';
+    case 'not_in_library':
+      return `${r.reference} isn't in your Bible, so the screen was left as it is.`;
+    default:
+      return null;
   }
 }
 
 /** Blank every output channel (operator "Clear all screens" / Esc). */
 export async function clearScreens() {
+  return panicRun('clear_screens', 'Clear screens');
+}
+
+/** Blackout every output (opaque). Next fire/clear cancels it. Returns true on success. */
+export async function blackScreen() {
+  return panicRun('blackout', 'Blackout');
+}
+
+/**
+ * A panic control (clear / blackout) FAILED, and the congregation may still be
+ * looking at whatever was on the wall. Null when the last one worked.
+ *
+ * This is a STORE and not a thrown error on purpose. The panic controls are fired
+ * from places that cannot catch: a global keydown handler, and a button on a shell
+ * that must keep working even when the current view has crashed. A `throw` there is
+ * an unhandled rejection in the console — which is to say, silence.
+ */
+export const panicError = writable(null);
+
+/**
+ * Run a panic control and tell the truth about whether it worked.
+ *
+ * Both of these used to swallow every error into a `catch {}` and return void, so
+ * `clearScreens()` resolved identically whether it had cleared the wall or not —
+ * and Live.svelte flashed "Screens cleared" on the strength of that. The operator
+ * was told the screens were clean while the verse was still up. In live software
+ * that is the worst class of bug there is: the operator stops looking at the screen
+ * and starts trusting the toast.
+ *
+ * Returns true on success. Callers that report success to the operator MUST check it.
+ */
+async function panicRun(cmd, label) {
   // Reset the transport FIRST, so it happens even if the backend call fails. A
   // panic key that half-works is worse than one that doesn't.
   leavePlan();
   try {
     const call = await invoke();
-    await call('clear_screens');
-  } catch {
-    /* backend absent */
+    await call(cmd);
+    panicError.set(null);
+    return true;
+  } catch (e) {
+    // In a plain browser there is no backend AND no output screen, so there is
+    // nothing to warn about — don't cry wolf in a dev tab.
+    if (get(capture).available) {
+      panicError.set(
+        `${label} FAILED — the congregation may still be seeing the last thing you put up. ` +
+          `Check the output screen and clear it there. (${String(e).replace(/^Error:\s*/, '')})`,
+      );
+    }
+    return false;
   }
 }
 
-/** Blackout every output (opaque). Next fire/clear cancels it. */
-export async function blackScreen() {
-  leavePlan();
-  try {
-    const call = await invoke();
-    await call('blackout');
-  } catch {
-    /* backend absent */
-  }
+/** Operator has read the panic warning (or a later panic control succeeded). */
+export function dismissPanicError() {
+  panicError.set(null);
 }
 
 /** Push the "up next" preview to the stage/confidence monitor (null clears). */
@@ -1005,12 +1083,24 @@ export async function downloadModel(id) {
   modelError.set(null);
   modelProgress.set({ id, downloaded: 0, total: 0 });
 
+  let cancelled = false;
   const stop = [
     await listen('model://progress', (e) => modelProgress.set(e.payload)),
     await listen('model://error', (e) => modelError.set(e.payload)),
+    // Cancelling is something the operator CHOSE. It used to come down the error
+    // channel, so stopping your own download painted a red failure box — which had
+    // no dismiss, so it sat there until the component remounted.
+    await listen('model://cancelled', () => {
+      cancelled = true;
+      modelError.set(null);
+    }),
   ];
   try {
     await call('download_model', { id });
+    // A cancelled download resolves normally — the operator got what they asked
+    // for. But there is no model on disk, so loading it would fail and report an
+    // error for something that is not one.
+    if (cancelled) return false;
     // Bring STT up in-place. A 148 MB download that ends in "now quit and
     // reopen the app" is a miserable last step for a first-time user.
     const loaded = await call('load_stt_model');
@@ -1021,6 +1111,11 @@ export async function downloadModel(id) {
     stop.forEach((fn) => fn());
     modelProgress.set(null);
   }
+}
+
+/** Operator has read the download error. */
+export function dismissModelError() {
+  modelError.set(null);
 }
 
 export async function cancelModelDownload() {

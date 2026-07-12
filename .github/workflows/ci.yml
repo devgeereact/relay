@@ -133,6 +133,14 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm ci
+      # Relay's version lives in three files (tauri.conf.json, package.json,
+      # Cargo.toml). tauri.conf.json's copy is what the updater manifest advertises,
+      # and Tauri decides whether an update exists by comparing it as semver against
+      # what the church is running. If they drift, the release stamps the wrong number
+      # and every install silently decides it is already up to date. Catch it on the
+      # PR that causes it, not on the tag that ships it.
+      - name: Version files agree
+        run: npm run version:check
       - run: npm run build
       # Includes the IPC contract test, which checks every Tauri command the
       # frontend calls by string actually exists in Rust. Renaming a

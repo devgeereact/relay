@@ -274,24 +274,37 @@ pub fn broadcast_content(app: &tauri::AppHandle, content: OutputContent) {
 
 /// Clear all output channels (operator "Clear all screens" / Esc). Clears to the
 /// template background — transparent templates key out for OBS/ATEM.
-pub fn clear(app: &tauri::AppHandle) {
+///
+/// Returns Err if the clear could not be delivered to the output webviews. It used
+/// to `let _ =` the emit and return `()`, so a failed clear was indistinguishable
+/// from a successful one all the way up the stack — and the console cheerfully told
+/// the operator "Screens cleared" over a wall that still had scripture on it. A
+/// panic control that reports a success it did not achieve is worse than one that
+/// is missing: the operator stops looking at the screen and trusts the toast.
+pub fn clear(app: &tauri::AppHandle) -> Result<(), String> {
     if rehearsing(app) {
-        let _ = app.emit_to(CONSOLE, "output://clear", ());
-        return;
+        return app
+            .emit_to(CONSOLE, "output://clear", ())
+            .map_err(|e| e.to_string());
     }
-    let _ = app.emit("output://clear", ());
+    app.emit("output://clear", ()).map_err(|e| e.to_string())?;
     publish_kiosk(app, r#"{"kind":"clear"}"#.to_string());
+    Ok(())
 }
 
 /// Blackout: paint every output opaque black (kills the screen entirely, unlike
 /// a transparent clear). The next content/clear cancels it.
-pub fn black(app: &tauri::AppHandle) {
+///
+/// Returns Err for the same reason `clear` does — see above.
+pub fn black(app: &tauri::AppHandle) -> Result<(), String> {
     if rehearsing(app) {
-        let _ = app.emit_to(CONSOLE, "output://black", ());
-        return;
+        return app
+            .emit_to(CONSOLE, "output://black", ())
+            .map_err(|e| e.to_string());
     }
-    let _ = app.emit("output://black", ());
+    app.emit("output://black", ()).map_err(|e| e.to_string())?;
     publish_kiosk(app, r#"{"kind":"black"}"#.to_string());
+    Ok(())
 }
 
 /// Push the "up next" preview to the stage/confidence monitor(s). Distinct from

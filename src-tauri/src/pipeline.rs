@@ -85,6 +85,15 @@ pub struct Fire {
     /// forgetting it is the bug this module exists to make impossible.
     pub template_id: Option<i64>,
     pub template_json: Option<String>,
+    /// WHY the machine thinks this verse. The transcript span a direct reference was
+    /// parsed from ("john three sixteen"), or the overlapping words that produced a
+    /// paraphrase's cosine ("grace · saved · faith"). `None` for a human's own fire —
+    /// the operator does not need to be told why they did something.
+    ///
+    /// This rides to the console and is shown. It was captured for months and thrown
+    /// away at the IPC boundary, which meant the operator was asked to accept or
+    /// reject the AI's judgement while being shown nothing but a percentage.
+    pub matched_text: Option<String>,
 }
 
 impl Fire {
@@ -136,6 +145,7 @@ impl Fire {
             in_library: self.verse_id.is_some(),
             text: self.text.clone(),
             translation: self.translation.clone(),
+            matched_text: self.matched_text.clone(),
         }
     }
 }
@@ -145,6 +155,13 @@ impl Fire {
 /// `in_library` is false when the reference parsed cleanly but isn't in the
 /// seeded corpus — the console still shows it, so the operator sees that Relay
 /// *heard* it and can act, rather than silently swallowing a real reference.
+///
+/// `method` and `matched_text` are the two fields the operator is actually being
+/// asked to judge, and the console used to render neither. Relay's entire safety
+/// story is that a *heard reference* and a *paraphrase guess* are different kinds of
+/// claim on incomparable scales — and both arrived on screen as an identical
+/// "AI suggestion — 92% match". The distinction the whole gate is built on was
+/// invisible to the one person who can overrule it.
 #[derive(Clone, Serialize)]
 pub struct DetectionEvent {
     pub reference: String,
@@ -157,6 +174,8 @@ pub struct DetectionEvent {
     pub in_library: bool,
     pub text: Option<String>,
     pub translation: Option<String>,
+    /// The evidence. See `Fire::matched_text`.
+    pub matched_text: Option<String>,
 }
 
 /// A gate candidate: the anchor verse plus how it should route, and whether it is
@@ -167,17 +186,26 @@ pub struct Cand {
     pub method: DetectionMethod,
     pub verse_end: Option<i64>,
     pub whole_chapter: bool,
+    /// Why this candidate exists — carried through the gate to the console. See
+    /// `Fire::matched_text`.
+    pub matched: Option<String>,
 }
 
 impl Cand {
     /// A plain single-verse candidate (no passage span).
-    pub fn single(r: VerseRef, conf: f32, method: DetectionMethod) -> Self {
+    pub fn single(
+        r: VerseRef,
+        conf: f32,
+        method: DetectionMethod,
+        matched: Option<String>,
+    ) -> Self {
         Cand {
             r,
             conf,
             method,
             verse_end: None,
             whole_chapter: false,
+            matched,
         }
     }
 }
@@ -220,6 +248,7 @@ mod tests {
             stage_note: None,
             template_id: Some(7),
             template_json: Some(r#"{"style":{}}"#.into()),
+            matched_text: Some("john three sixteen".into()),
         }
     }
 
@@ -308,17 +337,40 @@ mod tests {
     /// paraphrase's raw cosine is the bigger number.
     #[test]
     fn a_direct_hit_outranks_a_higher_scoring_paraphrase() {
-        let direct = Cand::single(vref("John", 3, 16), 0.70, DetectionMethod::Direct);
-        let semantic = Cand::single(vref("John", 3, 16), 0.95, DetectionMethod::Semantic);
+        let direct = Cand::single(vref("John", 3, 16), 0.70, DetectionMethod::Direct, None);
+        let semantic = Cand::single(vref("John", 3, 16), 0.95, DetectionMethod::Semantic, None);
         assert!(better(&direct, &semantic));
         assert!(!better(&semantic, &direct));
     }
 
     #[test]
     fn between_two_direct_hits_the_more_confident_one_wins() {
-        let lo = Cand::single(vref("John", 3, 16), 0.70, DetectionMethod::Direct);
-        let hi = Cand::single(vref("John", 3, 16), 0.90, DetectionMethod::Direct);
+        let lo = Cand::single(vref("John", 3, 16), 0.70, DetectionMethod::Direct, None);
+        let hi = Cand::single(vref("John", 3, 16), 0.90, DetectionMethod::Direct, None);
         assert!(better(&hi, &lo));
         assert!(!better(&lo, &hi));
+    }
+
+    /// The operator is asked to accept or reject the machine's judgement. Both of
+    /// the things they need in order to do that — WHAT KIND of claim this is, and
+    /// WHAT WORDS produced it — must survive the trip to the console.
+    ///
+    /// `matched_text` was captured in the detector for months and dropped at this
+    /// exact boundary: it was not a field on `DetectionEvent`, so it never crossed
+    /// the IPC bridge. A paraphrase guess and a heard reference reached the console
+    /// as the same sentence.
+    #[test]
+    fn the_event_carries_the_evidence_the_operator_must_judge() {
+        let e = fire(FireStatus::Suggested).event();
+        assert_eq!(e.matched_text.as_deref(), Some("john three sixteen"));
+        assert_eq!(e.method, DetectionMethod::Direct);
+    }
+
+    /// A human's own fire needs no explanation — they are the reason it is on screen.
+    #[test]
+    fn a_manual_fire_carries_no_evidence_line() {
+        let mut f = fire(FireStatus::Manual);
+        f.matched_text = None;
+        assert_eq!(f.event().matched_text, None);
     }
 }

@@ -55,6 +55,14 @@ So the honest position is:
 
 > **Relay is one careful week from being genuinely shippable, and that week is now about honesty, not features: sign Windows, derive the version from the tag, stop lying on the panic path, and show the operator which kind of match they are being offered.**
 
+> **Update, 2026-07-12 — that week was done.** All five criticals (D1–D5) are fixed and
+> tested, along with the macOS microphone entitlement, the silent-no-op in the `nav`
+> transport, and the unnamed licensor; see each entry in §5 and the roadmap in §15.
+> What remains before a church can use this is no longer engineering: **buy a Windows
+> certificate** and **watch one update install end to end**. Then run a real service with an
+> operator who is not the author. The scorecard below is pre-fix and is kept as the
+> baseline those changes are measured against.
+
 The competitive bet in DECISIONS.md still holds. But the moat needs restating truthfully, because the repo's own `LANGUAGES.md` does so and the audit should not soften it: **Relay's African-language differentiator today is a hand-curated multilingual reference-parsing table sitting on top of stock Whisper base — not African-language speech recognition.** That table is real, tested, and more valuable than it sounds (`LANGUAGES.md:22`: *"The moat was blocked on a lookup table, not on machine learning"*). But no fine-tuned acoustic model ships, no native speaker has reviewed the book names, Yoruba numerals are not parsed, and word error rate has never been measured in any language, because no sermon audio exists.
 
 ---
@@ -81,7 +89,7 @@ Scored against the stated bar (*first 10 churches*), not against Stripe. Δ is t
 | **Brand** | **4 / 10** | — | Still no logo, no tagline, no positioning line. README **still says "Working name — rename freely."** The in-app header still says **"Relay Console"** — a tab that no longer exists. |
 | **Business model** | **N/A** | — | Deliberately free/MIT. Sustainability parked, not decided. Correct at this stage. |
 | **Documentation** | **5 / 10** | — | ARCHITECTURE.md and DECISIONS.md remain excellent for engineers, and LANGUAGES.md is the most honest artifact in the repo. But the *operator* guide still opens by explaining `localhost:5032`, still says "the five screens" and lists six (there are seven), still names a **Console** tab that does not exist — and **never once mentions the speech model**. The in-app Help is now better than the written guide. |
-| **Legal compliance** | **6 / 10** | ▲ +3 | PRIVACY, SECURITY, AI_DISCLOSURE all shipped and accurate. KJV-only, public domain, and there is **no import path for any other translation** — so there is no licensing exposure today. Two defects: **`LICENSE:3` still reads `Copyright (c) 2026 [Your name / organization]`**, and WCAG would still not pass. |
+| **Legal compliance** | **6 / 10** | ▲ +3 | PRIVACY, SECURITY, AI_DISCLOSURE all shipped and accurate. KJV-only, public domain, and there is **no import path for any other translation** — so there is no licensing exposure today. Two defects at the time of scoring: **`LICENSE:3` read `Copyright (c) 2026 [Your name / organization]`** (fixed — see §14), and WCAG would still not pass (open). |
 | **Enterprise readiness** | **N/A** | — | Explicitly out of scope. See §13. |
 | **Overall maturity** | **6.5 / 10** | ▲ **+1.5** | *Shippable-pending-honesty.* The install problem is solved. The remaining work is making the product tell the truth about its own state. |
 
@@ -116,15 +124,37 @@ Scored against the stated bar (*first 10 churches*), not against Stripe. Δ is t
 
 ## 5. Critical Issues — the five that decide whether Relay survives contact with a church
 
-### 🔴 D1 — A real release tag publishes an unsigned Windows installer, silently
+> **Status, 2026-07-12: all five are fixed in code.** Each is kept below with its
+> original diagnosis intact — a fixed bug whose reasoning is deleted is a bug that gets
+> rewritten. Two things still need a **human**, not a commit:
+>
+> 1. **Buy a Windows code-signing certificate** (Azure Trusted Signing, ~$10/mo). The gate
+>    now *refuses* to ship an unsigned Windows build on a real tag rather than doing it
+>    silently — but it cannot buy the certificate for you.
+> 2. **Watch an update actually install**, once, on a real machine. The path is capable
+>    of it now; nobody has seen it happen.
+>
+> The **macOS microphone entitlement** — the sixth issue, below — is also fixed, as is
+> `LICENSE`, which now names its copyright holder. Phase 1 is complete in code.
+
+### ✅ D1 — A real release tag publishes an unsigned Windows installer, silently
+*Fixed 2026-07-12. The gate is now per-platform and the Windows secrets are actually consumed. Ships as soon as a certificate is bought — see the note at the end of this section.*
 
 The pre-flight gate (`release.yml:101`) sets `signed=true` on the presence of **`APPLE_CERTIFICATE` alone**. There is **no `bundle.windows` block in `tauri.conf.json`**, no `certificateThumbprint`, no `signCommand`, and no Windows cert-import step. The two `WINDOWS_CERTIFICATE*` env vars at `release.yml:169-170` are consumed by nothing.
 
 Tag `v0.2.0` with all six Apple secrets set → the gate passes → macOS is signed and notarized → **the Windows `.msi` ships unsigned**, and the ⚠️ unsigned-build banner in the release notes (`release.yml:185`) is keyed on `signed == 'false'`, which is now `true`. Nothing tells the maintainer. Nothing tells the church. Windows is the target market's dominant platform on cost grounds (DECISIONS.md).
 
-**Fix:** make the gate platform-aware and fail loud on a non-prerelease tag with no Windows certificate. Then buy the certificate (Azure Trusted Signing, ~$10/mo, no HSM needed).
+**Fixed.** Three changes, in `release.yml`:
+- **The gate is per-platform.** macOS and Windows are two certificates and now get two independent verdicts. A real tag requires both and fails before it builds anything, naming the exact missing secrets. macOS additionally requires the *notarization* credentials, not just the certificate — a signed-but-un-notarized app is still blocked by Gatekeeper, so from a church's point of view it is unsigned.
+- **The Windows secrets are now consumed by something.** Two schemes, chosen by which secrets are set: Azure Trusted Signing (via a `signCommand` calling `trusted-signing-cli`) or a classic OV/EV `.pfx` (imported to the runner's store, found by thumbprint). The signing config is *generated per build* and merged over `tauri.conf.json` with a second `--config` — it cannot be committed, because a thumbprint in the base config would break `tauri build` for every contributor on Windows who doesn't hold the certificate.
+- **There is deliberately no combined `signed` flag any more.** One global "is it signed?" boolean, standing in for two independent certificates, *is* the bug. Every consumer now has to ask about a specific platform. The release notes carry a separate per-platform warning.
 
-### 🔴 D2 — The updater cannot deliver an update, and will not say so
+Verified by executing the gate against all nine secret combinations: a real tag with only the Apple secrets — the exact shipped bug — now refuses with `Windows is UNSIGNED — missing: AZURE_* (recommended) or WINDOWS_CERTIFICATE`. A pre-release with the Apple secrets still signs macOS.
+
+**Still required from a human:** buy the certificate. Azure Trusted Signing, ~$10/mo, no HSM. Until then, every Windows release must be a pre-release tag — which the gate now enforces rather than assumes. And the signing step itself (PowerShell, needs a real certificate and a Windows runner) has **not** been executed — it cannot be, locally. The first real tag is its first run.
+
+### ✅ D2 — The updater cannot deliver an update, and will not say so
+*Fixed 2026-07-12.*
 
 Two independent faults, either one sufficient:
 
@@ -133,9 +163,16 @@ Two independent faults, either one sufficient:
 
 **This is the exact failure the updater exists to prevent.** We fixed six screen-facing bugs and built the mechanism to ship them; the mechanism is currently a no-op.
 
-**Fix:** derive the version from the tag in CI and assert it matches both config files. Publish (not draft) the release. Then actually perform an end-to-end update from an installed build before calling it done.
+**Fixed.**
 
-### 🔴 D3 — The panic path tells the operator it worked when it didn't
+*The version.* It turned out to live in **three** files, not two — `src-tauri/Cargo.toml` carries it as well. `scripts/version.mjs` now owns all three (`npm run version:set -- 0.2.0`), CI asserts they agree on **every PR**, and the release gate asserts they also equal the tag **before it builds anything**. A `v0.2.0` tag against a repo that still says `0.1.0` now refuses with the reason, not a green build. It also rejects a version Tauri cannot parse as semver — an unparseable version is a version no church ever updates past — and refuses a `workflow_dispatch` fired from a branch, which would otherwise stamp a release `main`.
+
+*The endpoint.* Re-examined, and the original finding was **half wrong** — worth recording, because the half that is right is the dangerous half. The *production* path is fine: a plain tag builds a non-prerelease draft, and the moment you publish that draft `/releases/latest/download/latest.json` resolves and every install offers the update. Draft-by-default is deliberate and stays. What is genuinely broken is the *testing* path, and `RELEASING.md` asserted the opposite (*"the auto-updater can be tested end to end today"*): `/releases/latest/` skips prereleases by design, and a pre-release tag is the **only** kind you can cut before you own certificates. So the updater could not be exercised until the day it mattered. `RELEASING.md` now says so, and gives a real recipe — build a local app stamped `0.0.1` pointed at a specific RC tag's manifest by exact URL, and watch it offer the update.
+
+**Still required from a human:** perform that end-to-end update once, on a real machine. The code path is now capable of it; nobody has watched it happen.
+
+### ✅ D3 — The panic path tells the operator it worked when it didn't
+*Fixed 2026-07-12.*
 
 ```js
 // src/lib/views/Live.svelte:221-231
@@ -156,7 +193,19 @@ Two related lies, same family:
 
 Partial credit, and it matters: the `aria-live` region and the ON AIR badge both key off `$live` (backend truth), so they stay honest. **It is the visual toast that lies — and the toast is what the operator is looking at.**
 
-### 🔴 D4 — The safety architecture is invisible at the moment of decision
+**Fixed, from the Rust up.** The root cause was that a failed clear was *unrepresentable*: `channels::clear` discarded the emit error with `let _ =`, `clear_screens` returned `()`, and `clearScreens()` swallowed whatever was left. Nothing in the stack could express "this did not work", so the toast had nothing to check.
+
+- **Rust:** `channels::clear` / `black` now return `Result`, and `clear_screens` / `blackout` are `Result` commands. The debounce is forgotten and the cue recorded **only on success** — if the screens did not clear, the verse *is* still up, and "forget what's on screen" would have been a lie told to the router as well as to the operator.
+- **The two fire-and-forget paths got a voice.** The spoken *"clear the screen"* and the exit from rehearsal (which hands the wall back to the congregation) have no caller to return an error to, and both used to `let _ =` it. They now raise `output://panic_failed`. The **spoken** clear is a panic control too, and it was as silent as the keyed one.
+- **Frontend:** `clearScreens()` / `blackScreen()` return a boolean **and** set a global `panicError` store. Both, deliberately — the panic controls are fired from a global keydown handler and from a shell button that must work even when the current view has crashed, and a `throw` in those places is an unhandled rejection, which is to say silence. A silent failure is now unrepresentable, whichever way the control is triggered.
+- **The banner is unlike every other message in Relay:** top of screen, `role="alert"` / `aria-live="assertive"` (the one message allowed to interrupt a screen reader), rose — never amber, because amber is a tally light and is never allowed to lie — and it **does not auto-dismiss**. A toast that fades after 2.6 seconds is precisely how the operator misses it.
+- **`Esc` no longer wipes the wall to close the help overlay.** It closes the overlay and does nothing else. With no overlay open it is still the panic key, unchanged.
+- **The cheatsheet stops teaching a false fact about a panic key.** `B` cannot fire from inside a text field — an operator typing "Habakkuk" into the reference box must not black out the room on the `b` — so the *behaviour* was right and the *promise* was wrong. The footer now says what is actually true.
+
+**Verified, and the tests were checked against the bug rather than the fix.** 10 new tests (`panic.test.js`, plus three in `shortcuts.test.js`). Reintroducing each original bug was confirmed to fail them: removing the `Esc` guard fails 1, restoring the error-swallowing `clearScreens` fails 3. Full suite: 214 Rust + 69 frontend, `clippy -D warnings` clean.
+
+### ✅ D4 — The safety architecture is invisible at the moment of decision
+*Fixed 2026-07-12.*
 
 `pipeline.rs:155` already ships `method` (`"direct"` / `"semantic"`) across the IPC bridge. `Live.svelte:478-482` throws it away and renders every candidate identically:
 
@@ -166,21 +215,51 @@ A 92% *heard reference* and a 92% *TF-IDF cosine against a bag of words* are not
 
 And `matched_text` — the actual words that triggered the match, the clearest possible explanation of an AI decision — is captured at `detection.rs:779`, marked `#[allow(dead_code)]`, and **never leaves Rust**. It isn't even a field on `DetectionEvent`.
 
-**Fix (cheapest high-value change in this document):** add `matched_text` to `DetectionEvent`, render the method as a distinct badge (amethyst for paraphrase — the rehearsal precedent is already set), show the matched words, and show confidence as a bar for `direct` and *no number at all* for `semantic`, because the number is not meaningful. Trust, not magic.
+**Fixed.** The operator can now see both things they are being asked to judge.
 
-### 🔴 D5 — The model download hangs forever on a church's flaky wifi, and Cancel does nothing
+- **`matched_text` crosses the bridge.** It rides `Cand` → `Fire` → `DetectionEvent`, through the one pipeline a verse already takes, so a sixth fire path gets it by construction. The console shows the words: *Heard — "john three sixteen"*. An operator can tell at a glance whether Relay heard the reference or misheard "gone free sixty".
+- **A paraphrase can now explain itself,** which turned out to be the real work. A TF-IDF match has no transcript span — its evidence is *which rare words overlapped*. `SemanticIndex::top_k_explained` returns the terms that actually produced the cosine (ranked by their contribution to it, so it is the true reason and not a plausible-looking one). The card reads *Matched on — "shepherd · lord"*, which a human can agree or disagree with. `0.61` is not.
+- **The card is visibly a different kind of claim.** Heard: gold, a confidence bar, a percentage. Guess: cyan, no glow, **no number at all** — printing "61%" beside a cosine invites the operator to read it as "61% likely to be right", which is exactly what it is not. A number that lies is worse than no number, because it looks like information and gets acted on.
+- **Not amethyst, contrary to this audit's own recommendation.** Amethyst already means REHEARSAL (DECISIONS §18). A colour that means *"nothing is reaching the congregation"* cannot also mean *"this guess is shaky"* — on the day both are true, the operator reads the wrong one. Cyan instead.
+- **The presentation rule is now pure and tested** (`src/lib/detect.js` + 8 tests), not buried in a `.svelte` file where it could not be pinned. The key test asserts a paraphrase never shows a percentage *at any score* — the frontend mirror of `router.rs`'s property test that a paraphrase never auto-fires at any score.
+
+**Also found while wiring it:** a `#[test]` I wrote asserting "the rarest shared word leads the explanation" failed — correctly. In a 3-verse fixture "lord" and "shepherd" each appear once, so their IDF is identical and the ranking ties. The claim is only true at corpus scale. The test now builds a corpus where "lord" is actually common. The assumption was wrong, not the code.
+
+220 Rust + 77 frontend tests, `clippy -D warnings` clean.
+
+### ✅ D5 — The model download hangs forever on a church's flaky wifi, and Cancel does nothing
+*Fixed 2026-07-12.*
 
 `models.rs:184-187` builds a `reqwest::Client` with **no `timeout` and no `read_timeout`**, and the cancel flag is checked only *after* `stream.next().await` yields (`models.rs:219-222`). A half-open TCP connection — a dropped wifi, the single most likely real-world church-network event — means `stream.next()` never returns. Progress freezes at N%. No error is emitted. **Cancel is inert.** And `running` is never cleared (`models.rs:152` is unreachable), so every subsequent attempt returns *"A model download is already running"* **until the app is restarted**.
 
 Adjacent: a `.part` file that is exactly `model.bytes` long (crashed on the final chunk) sends `Range: bytes=<len>-`, the server answers **416**, `models.rs:198` hard-errors, and the `.part` is never deleted — **permanently bricked** until the user finds and deletes a file they don't know exists.
 
-**Fix:** set a read timeout, select on the cancel flag, clear `running` in a guard, and delete the `.part` on a 416.
+**Fixed.** The failure this module has to survive is not "the download fails" — it is *"the download neither succeeds nor fails, forever, and the operator cannot get out of it"*: a volunteer, an hour before the service, with no terminal.
+
+- **The stall is now owned by us, not by the HTTP client.** The read loop waits on `tokio::time::timeout(CANCEL_POLL, stream.next())` and gives up only after `STALL_TIMEOUT` (45s) with no byte at all. Deliberately **not** a whole-request `reqwest .timeout()` — that would abort a legitimately slow 148 MB download on exactly the connections this feature exists for. A stall is measured as *the gap between bytes*, not the length of the download.
+- **Cancel works when the network is dead**, which is the only time it matters. It is checked on every 400 ms tick, not only after a chunk arrives. A cancelled download **keeps its `.part`** — cancelling means "stop", not "throw away my 90 MB".
+- **Cancel is no longer an error.** It emits `model://cancelled`, not `model://error`. Stopping your own download used to paint a red failure box — one with no dismiss, so it sat there until the component remounted, directly above a working *Try again* button. The error box is now dismissable too.
+- **`running` clears via a `Drop` guard**, so it releases however we leave — including a panic or a dropped future. The old bare `store(false)` after the await was never reached by the infinite hang, so the flag stayed set for the life of the process and every retry — *even after the wifi came back* — was refused with "A model download is already running" until Relay was quit and reopened. A recoverable blip became a dead feature.
+- **The 416 brick is gone.** A `.part` of *exactly* `model.bytes` is now settled by **checksum**, never by asking the server to resume from the end of it. The guard was `> model.bytes`, so an exactly-full part file sent `Range: bytes=147951465-`, got **416**, hard-errored, and *did not delete the file* — so every retry hit the same 416, forever. If the checksum passes we rename it into place (the download was actually complete); if not, we delete it and start clean. A 416 from the server also now deletes the `.part` rather than leaving it to poison future attempts.
+
+**Verified.** The resume decision was extracted into a pure `resume_plan()` precisely so the bug that bricked it is testable without a network, and reintroducing the original `>` makes `a_full_size_part_file_is_verified_never_resumed` fail. 6 new tests (226 Rust total), `clippy -D warnings` clean.
+
+**Not fixed, and deliberately:** there is still no free-disk-space precheck before starting a 148 MB fetch. A write failure is surfaced and the `.part` is kept for resume, which is the right behaviour; a precheck needs a new crate for a marginal gain.
 
 ---
 
-### 🟠 One more, held just below the line because it cannot be seen until it happens
+### ✅ One more, held just below the line because it cannot be seen until it happens
+*Fixed 2026-07-12.*
 
 **There is no macOS microphone entitlement.** No `.entitlements`, no `Info.plist`, no `NSMicrophoneUsageDescription` anywhere under `src-tauri/`. Notarization *requires* the hardened runtime, and under the hardened runtime `cpal` opening the input device is TCC-killed without that entitlement. This will not reproduce in `tauri dev` and will not reproduce in an ad-hoc-signed pre-release. **The first correctly-signed, notarized macOS build — the one built specifically to hand to a church — is the first one where the microphone is dead.**
+
+**Fixed.** `src-tauri/relay.entitlements` grants `com.apple.security.device.audio-input` (and nothing else — Relay is not sandboxed, and library validation stays on because whisper.cpp is statically linked; we must not weaken the hardening to pretend otherwise). `src-tauri/Info.plist` carries `NSMicrophoneUsageDescription`. Both are wired in `tauri.conf.json` under `bundle.macOS`.
+
+Worth being precise about the failure, because it is not "permission denied": without the usage string macOS does not show a dialog the user declines — **the process is terminated the instant it asks**. And that string *is* the dialog, so it is the only explanation a church ever gets for why this software wants to listen to their service. It is written for them, and it answers the question they are actually asking: the audio is transcribed on this computer and is never sent anywhere. That claim matches PRIVACY.md, and if it ever stops being true, that string must change first.
+
+**Pinned by two tests in `models::config_boots`** — the module that exists precisely for invariants a compile cannot catch. They assert the entitlement is present *and* `<true/>` (present-but-`false` is worse than absent: it reads as deliberate), that the config points at both files, and that the usage string is a real sentence that says where the audio goes.
+
+**A note on the tests, because it is the whole lesson of this fix.** My first version of them passed on a *broken* file. Both plists explain themselves at length, and those comments naturally quote the very keys being asserted on — so a grep of the raw text matched the **prose** and would have happily green-lit an empty `<dict>`. They now strip XML comments first, and that is mutation-verified: emptying the `<dict>` while leaving the comment intact fails the test. A config bug that only appears on the one build you cannot test locally deserves an assertion that cannot pass by accident.
 
 ---
 
@@ -251,7 +330,7 @@ What genuinely needs work:
 | NDI | **DEFER** | Honestly parked. Leave it parked. |
 | **Windows code signing** | **ADD — P0** | See D1. |
 | **Tag-derived version + CI assertion** | **ADD — P0** | See D2. |
-| **macOS mic entitlement** | **ADD — P0** | Invisible until the first notarized build. |
+| **macOS mic entitlement** | ✅ **DONE** | Invisible until the first notarized build — which is exactly why it needed an assertion, not a test run. |
 | **Method badge + `matched_text`** | **ADD — P0** | See D4. Cheapest high-value change available. |
 | **Service plan → STT `initial_prompt`** | **ADD — P1** | The plan names the passages; the decoder is never told. Cheap accuracy win from data we already have. |
 | **Sermon audio corpus (30 min)** | **ADD — P1** | Unblocks WER, unblocks the dormant STT bench, unblocks the entire moat. |
@@ -350,7 +429,7 @@ Genuinely weak, and cheap to fix.
 
 | Item | Status |
 |---|---|
-| LICENSE (MIT) | ⚠️ **Present but defective.** `LICENSE:3` still reads `Copyright (c) 2026 [Your name / organization]`. An MIT grant with no named licensor. **One-line fix; do it today.** |
+| LICENSE (MIT) | ✅ **Fixed 2026-07-12.** It read `Copyright (c) 2026 [Your name / organization]` — an MIT grant with no named licensor, and the one outright legal defect in the repo. It now names one. |
 | PRIVACY.md | ✅ **Shipped, and excellent.** Accurate against `telemetry.rs` and `channels.rs`. Crucially, it **discloses the unauthenticated LAN broadcast** (`PRIVACY.md:74-89`) rather than hiding it, and flags the café-wifi media-serving risk. |
 | SECURITY.md | ✅ Shipped. Private reporting, 72h SLA, threat model ranked by content leakage first. |
 | AI transparency | ✅ `docs/AI_DISCLOSURE.md` — plain-language, states its own weaknesses. Rare. |
@@ -367,17 +446,17 @@ Genuinely weak, and cheap to fix.
 ## 15. Prioritised Roadmap
 
 ### Phase 1 — **Stop lying** *(this week — the only thing that matters)*
-1. **D1** — Windows signing + a platform-aware release gate that fails loud
-2. **D2** — tag-derived version, CI assertion, non-draft release; then *actually perform an update* from an installed build
-3. **D3** — panic path tells the truth: await + surface failures; `Esc` guards on the cheatsheet; fix the `B`-while-typing line
-4. **D5** — model download: read timeout, real cancel, clear `running`, delete a bricked `.part`
-5. **macOS mic entitlement** — before the first notarized build, not after a church reports a dead mic
-6. **`LICENSE:3`** — put a name in it
+1. ~~**D1** — Windows signing + a platform-aware release gate that fails loud~~ ✅ **done** *(code side; still needs a certificate bought)*
+2. ~~**D2** — tag-derived version, CI assertion~~ ✅ **done** — still owed: *actually perform an update* from an installed build, once
+3. ~~**D3** — panic path tells the truth: await + surface failures; `Esc` guards on the cheatsheet; fix the `B`-while-typing line~~ ✅ **done**
+4. ~~**D5** — model download: read timeout, real cancel, clear `running`, delete a bricked `.part`~~ ✅ **done**
+5. ~~**macOS mic entitlement** — before the first notarized build, not after a church reports a dead mic~~ ✅ **done**
+6. ~~**`LICENSE:3`** — put a name in it~~ ✅ **done**
 
 **Exit criterion: a volunteer installs Relay on Windows *and* macOS, the OS does not warn, the microphone works, they get a verse on a projector, and when we ship a fix next week their machine actually receives it.** Until that is true, nothing else ships.
 
 ### Phase 2 — **Be honest about the AI** *(the trust layer)*
-7. **D4** — method badge + `matched_text` + confidence-as-a-bar-for-direct-only
+7. ~~**D4** — method badge + `matched_text` + confidence-as-a-bar-for-direct-only~~ ✅ **done**
 8. First-run mic meter actually moves
 9. Live's flash-of-false-empty-state; mobile bottom nav; `Stage.svelte` contrast; the three inoperable `role="button"` divs
 10. Surface or delete `related_scripture`
@@ -412,7 +491,7 @@ Genuinely weak, and cheap to fix.
 **Blocking a first church:**
 - [x] In-app model download — *shipped, needs D5*
 - [x] Signed + notarized macOS build
-- [ ] **macOS microphone entitlement** *(without it, the notarized build has a dead mic)*
+- [x] **macOS microphone entitlement** *(without it, the notarized build has a dead mic)*
 - [ ] **Signed Windows build**
 - [x] Auto-updater — *shipped, needs D2 to function*
 - [ ] **An update actually delivered end-to-end to an installed build**
@@ -424,7 +503,7 @@ Genuinely weak, and cheap to fix.
 
 **Before public release:**
 - [ ] Method + `matched_text` visible live
-- [ ] `LICENSE` names a copyright holder
+- [x] `LICENSE` names a copyright holder
 - [ ] WCAG: focus traps, operable controls, `<h1>`, `Stage.svelte` contrast
 - [ ] Rename decided
 - [ ] CONTRIBUTING + CODE_OF_CONDUCT + CHANGELOG

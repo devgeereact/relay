@@ -32,7 +32,9 @@
       "msi"
     ],
     "macOS": {
-      "minimumSystemVersion": "11.0"
+      "minimumSystemVersion": "11.0",
+      "entitlements": "relay.entitlements",
+      "infoPlist": "Info.plist"
     },
     "icon": [
       "icons/32x32.png",

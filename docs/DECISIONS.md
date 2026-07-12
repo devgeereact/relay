@@ -138,3 +138,88 @@ invisibly, so they will never report it as a bug. They will just stop using Rela
 Verify with `cargo test audio::gate -- --ignored --nocapture` (`RELAY_BENCH_WAV`,
 `RELAY_BENCH_SCALE`): the voiced ratio must stay flat across a 100× range of input
 level. It now runs 39–55%; it used to collapse to 0%.
+
+## 20. A panic control may never report a success it did not achieve
+
+**Decision.** Clear and blackout must be *incapable* of silent failure. `clear_screens`
+and `blackout` return `Result`; `channels::clear`/`black` propagate the emit error
+instead of `let _ =`; the frontend wrappers return a boolean **and** raise a global
+`panicError` banner. No caller may announce success without checking.
+
+**What went wrong.** A failed clear was structurally unrepresentable. `channels::clear`
+discarded the emit error, `clear_screens` returned `()`, `clearScreens()` swallowed
+what was left — so `Live.svelte` flashed **"Screens cleared"** over a `catch {}` that
+could not even fire. If the clear failed, the operator was told the wall was clean
+while the verse was still in front of the congregation.
+
+**Why that is the worst class of bug we can ship.** A control that *fails* is survivable
+— the operator looks at the screen, sees the verse, presses it again. A control that
+*lies* is not: it teaches the operator to stop looking at the screen and trust the
+toast. Every subsequent failure is then invisible, by their own trained habit.
+
+**Both a return value AND a store, deliberately.** The panic controls are fired from a
+global keydown handler and from a shell button that must keep working when the current
+view has crashed. Neither can `catch`. A thrown error there is an unhandled rejection —
+silence with extra steps. The store means the failure surfaces no matter who pulled the
+trigger; the boolean means a caller that wants to flash success has to ask.
+
+**The fire-and-forget paths get a voice too.** The spoken "clear the screen" and the exit
+from rehearsal (which hands the wall back to the congregation) have no caller to return
+an error to. They emit `output://panic_failed`, which raises the same banner. A spoken
+panic control that fails silently is exactly as dangerous as a keyed one.
+
+**The banner is not a toast.** Top of screen, `role="alert"`, rose (never amber — amber
+is a tally light and is never allowed to lie), and it **does not auto-dismiss**. A
+message that fades after 2.6 seconds is how the operator misses it.
+
+**Escape does not clear the screens as a side-effect of closing the help overlay.** It
+used to. An operator checking a binding mid-service, then dismissing the cheatsheet,
+wiped the wall. Dismissing a read-only overlay is not a live action.
+
+**And `B` does not work while typing — so the help must not say it does.** Typing
+"Habakkuk" into the reference box cannot be allowed to black out the room on the `b`.
+The behaviour was right; the cheatsheet's promise was wrong. Help text about a panic
+key is read only under pressure, and a false line there is worse than no line.
+
+Pinned by `src/lib/panic.test.js` and the cheatsheet tests in `src/lib/shortcuts.test.js`
+— both verified to fail if the original bugs are reintroduced.
+
+## 21. The operator must be shown WHICH KIND of claim the AI is making
+
+**Decision.** A detection carries its evidence to the console and the console renders
+it. `DetectionEvent` gained `matched_text`; a heard reference shows the transcript span
+it was parsed from, a paraphrase shows the overlapping words that produced its cosine.
+Confidence is shown as a percentage **only** for a `Direct` match. A paraphrase shows
+**no number at all**, at any score.
+
+**Why this is a safety decision and not a UI one.** Relay's entire correctness story is
+§ "only `Direct` may auto-fire" — a rule the router enforces at any score, at any
+sensitivity, and which is property-tested. It exists because a TF-IDF cosine is not a
+probability and the two confidences are on incomparable scales.
+
+And the console rendered both as **"AI suggestion — 92% match"**. The gate was airtight
+in Rust and invisible in the one place a human could act on it. We built a careful
+machine for keeping a human in the loop, then showed the human nothing to be in the loop
+*with*: they were asked to accept or reject the AI's judgement on the strength of a
+number that means one thing for one kind of match and nothing whatsoever for the other.
+
+**No number is better than a misleading number.** "61%" beside a cosine invites the
+operator to read it as "61% likely to be right". A number that lies is worse than no
+number, because it looks like information and therefore gets acted on. The words —
+`shepherd · lord` — are something a volunteer can actually judge in the second they
+have to judge it.
+
+**A paraphrase's evidence is its overlapping terms, ranked by contribution.**
+`SemanticIndex::top_k_explained` returns the terms that genuinely produced the score
+(each term's `q_weight * d_weight`, the summands of the cosine itself), not words that
+merely appear in both. An explanation that is not the real reason is worse than none.
+
+**Cyan, not amethyst — even though amethyst is the obvious colour for "uncertain".**
+Amethyst already means REHEARSAL (§18), and a tally colour must mean exactly one thing.
+A colour that means "nothing is reaching the congregation" cannot also mean "this guess
+is shaky", or on the day both are true the operator reads the wrong one. Amber remains
+ON AIR, and is never allowed to lie.
+
+Pinned by `src/lib/detect.test.js` (a paraphrase never shows a percentage, at any score
+— the frontend mirror of `router.rs::semantic_can_never_auto_fire`) and by
+`pipeline.rs::the_event_carries_the_evidence_the_operator_must_judge`.

@@ -102,11 +102,12 @@ pub struct RefMatch {
     /// trusting this field, which is why nothing reads it today.
     #[allow(dead_code)]
     pub method: DetectionMethod,
-    /// The exact span of transcript this reference was parsed from. Populated and
-    /// asserted on in the detection tests; not yet surfaced in the UI, where it
-    /// belongs (showing the operator *what words* triggered a match is the
-    /// clearest possible explanation of an AI decision). Kept for that.
-    #[allow(dead_code)]
+    /// The exact span of transcript this reference was parsed from.
+    ///
+    /// This reaches the operator console (`DetectionEvent::matched_text`). Showing
+    /// *what words* triggered a match is the clearest possible explanation of an AI
+    /// decision: an operator can tell in a glance whether Relay heard "John three
+    /// sixteen" or misheard "gone free sixty".
     pub matched_text: String,
 }
 
@@ -1578,20 +1579,71 @@ impl SemanticIndex {
     /// Top-k verses by cosine similarity to `query`, highest first. Scores are
     /// in [0, 1]; the caller maps them to confidence and applies the gate.
     pub fn top_k(&self, query: &str, k: usize) -> Vec<(VerseRef, f32)> {
+        self.top_k_explained(query, k)
+            .into_iter()
+            .map(|(r, s, _)| (r, s))
+            .collect()
+    }
+
+    /// `top_k`, plus the words that actually drove each match — strongest first.
+    ///
+    /// This is the paraphrase counterpart of `RefMatch::matched_text`, and the
+    /// operator console needs it for the same reason. For a spoken reference, "what
+    /// triggered this" is a span of transcript the parser read. A TF-IDF match has
+    /// no span: its evidence is a handful of shared, rare words, and its score is a
+    /// cosine — a distance in an arbitrary vector space, not a probability (see
+    /// `DetectionMethod::Semantic`).
+    ///
+    /// So the operator is being asked to trust a machine's guess about *meaning*, on
+    /// the strength of a number that does not mean what it looks like it means. The
+    /// words it keyed on are the only thing that makes that judgeable in the second
+    /// they have to judge it — "grace · saved · faith" is something a human can
+    /// agree or disagree with. "0.61" is not.
+    pub fn top_k_explained(&self, query: &str, k: usize) -> Vec<(VerseRef, f32, Vec<String>)> {
         let qvec = tfidf_vector(&tokenize(query), &self.idf);
         if qvec.is_empty() {
             return Vec::new();
         }
-        let mut scored: Vec<(VerseRef, f32)> = self
+        let mut scored: Vec<(usize, f32)> = self
             .docs
             .iter()
-            .map(|(r, dvec)| (r.clone(), cosine(&qvec, dvec)))
+            .enumerate()
+            .map(|(i, (_, dvec))| (i, cosine(&qvec, dvec)))
             .filter(|(_, s)| *s > 0.0)
             .collect();
         scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
         scored.truncate(k);
         scored
+            .into_iter()
+            .map(|(i, s)| {
+                let (r, dvec) = &self.docs[i];
+                (r.clone(), s, top_terms(&qvec, dvec, EXPLAIN_TERMS))
+            })
+            .collect()
     }
+}
+
+/// How many overlapping words to show as the reason for a paraphrase match. Four
+/// is enough to judge it and few enough to read at a glance, in the dark.
+const EXPLAIN_TERMS: usize = 4;
+
+/// The shared terms that contributed most to a cosine — the "why" of a paraphrase.
+///
+/// Contribution is `q_weight * d_weight` per term, which is exactly the summand in
+/// `cosine`. So these are not "words that happen to appear in both"; they are, in
+/// order, the terms that actually produced the score.
+fn top_terms(q: &HashMap<String, f32>, d: &HashMap<String, f32>, n: usize) -> Vec<String> {
+    let mut terms: Vec<(&String, f32)> = q
+        .iter()
+        .filter_map(|(t, qw)| d.get(t).map(|dw| (t, qw * dw)))
+        .collect();
+    terms.sort_by(|a, b| {
+        b.1.partial_cmp(&a.1)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.0.cmp(b.0)) // stable, so the UI does not flicker
+    });
+    terms.truncate(n);
+    terms.into_iter().map(|(t, _)| t.clone()).collect()
 }
 
 /// Content-word tokenizer: lowercase, split on non-alphanumerics, drop short
@@ -2150,6 +2202,114 @@ mod tests {
     fn semantic_empty_on_no_content_overlap() {
         let idx = seed_index();
         assert!(idx.top_k("xyzzy plugh frobnicate", 1).is_empty());
+    }
+
+    /// A paraphrase match must be able to SAY WHY.
+    ///
+    /// Its score is a cosine, not a probability, so "61%" tells the operator nothing
+    /// they can act on. The overlapping words do: an operator who sees
+    /// `shepherd · lord` can agree or disagree with that in the second they have.
+    #[test]
+    fn a_paraphrase_can_explain_itself_in_words() {
+        let idx = seed_index();
+        let hits = idx.top_k_explained("the lord is my shepherd", 1);
+        let (r, _score, terms) = &hits[0];
+        assert_eq!(r.reference_book_chapter_verse(), "Psalms 23:1");
+        assert!(
+            terms.contains(&"shepherd".to_string()),
+            "the rarest shared word must be shown: {terms:?}"
+        );
+        // Only words the query and the verse actually SHARE — an "explanation"
+        // listing words that were not in the sermon would be a fabricated one.
+        for t in terms {
+            assert!(
+                "the lord is my shepherd".contains(t.as_str()),
+                "{t:?} was never spoken"
+            );
+        }
+    }
+
+    /// The strongest evidence comes first, and it is the word that most narrows the
+    /// corpus down — not the one the operator happens to say most often. "shepherd"
+    /// identifies Psalm 23; "lord" is in half the Bible and identifies nothing.
+    ///
+    /// This needs a corpus where "lord" is actually common, which the 3-verse
+    /// `seed_index` is not: there, both words appear exactly once, their idf is
+    /// identical, and the ranking is a tie broken alphabetically. The distinction
+    /// being asserted here only exists at corpus scale — so build one.
+    #[test]
+    fn the_explanation_is_ranked_by_evidence_not_by_frequency() {
+        let corpus = vec![
+            (
+                VerseRef {
+                    book: "Psalms".into(),
+                    chapter: 23,
+                    verse: 1,
+                },
+                "The LORD is my shepherd; I shall not want.".to_string(),
+            ),
+            (
+                VerseRef {
+                    book: "Psalms".into(),
+                    chapter: 24,
+                    verse: 1,
+                },
+                "The earth is the LORD's, and the fulness thereof.".to_string(),
+            ),
+            (
+                VerseRef {
+                    book: "Psalms".into(),
+                    chapter: 27,
+                    verse: 1,
+                },
+                "The LORD is my light and my salvation; whom shall I fear?".to_string(),
+            ),
+            (
+                VerseRef {
+                    book: "Psalms".into(),
+                    chapter: 100,
+                    verse: 2,
+                },
+                "Serve the LORD with gladness: come before his presence with singing.".to_string(),
+            ),
+        ];
+        let idx = SemanticIndex::build(&corpus);
+        let hits = idx.top_k_explained("lord shepherd", 1);
+        assert_eq!(hits[0].0.reference_book_chapter_verse(), "Psalms 23:1");
+        assert_eq!(
+            hits[0].2.first().map(String::as_str),
+            Some("shepherd"),
+            "the rare word must lead the explanation: {:?}",
+            hits[0].2
+        );
+    }
+
+    /// The explanation is capped, so it stays readable in a dark booth.
+    #[test]
+    fn the_explanation_is_short_enough_to_read_at_a_glance() {
+        let idx = seed_index();
+        let hits =
+            idx.top_k_explained("god loved the world and gave his only begotten son life", 1);
+        assert!(hits[0].2.len() <= EXPLAIN_TERMS, "{:?}", hits[0].2);
+    }
+
+    /// `top_k` must keep agreeing with `top_k_explained` — it now delegates to it,
+    /// and a divergence would mean the console explains a different verse than the
+    /// one the gate actually routed.
+    #[test]
+    fn the_explained_and_plain_rankings_cannot_diverge() {
+        let idx = seed_index();
+        let q = "god loved the world and gave his son";
+        let plain = idx.top_k(q, 3);
+        let explained = idx.top_k_explained(q, 3);
+        assert_eq!(plain.len(), explained.len());
+        for (p, e) in plain.iter().zip(explained.iter()) {
+            assert_eq!(
+                p.0.reference_book_chapter_verse(),
+                e.0.reference_book_chapter_verse()
+            );
+            assert_eq!(p.1, e.1);
+        }
     }
 }
 

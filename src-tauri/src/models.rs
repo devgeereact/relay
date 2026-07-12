@@ -32,7 +32,18 @@
 //!   loads garbage and transcribes nonsense, which is far worse than not working.
 //! - **Atomic.** Downloads land in `<name>.part` and are renamed into place only
 //!   after the checksum passes. Relay can never see a half-written model.
-//! - **Cancellable**, and never blocking the UI thread.
+//! - **Cancellable — including when the network has silently died**, which is the
+//!   only time it matters. Cancel used to be checked only after a chunk arrived, so
+//!   on a half-open TCP connection (a dropped wifi: the single most likely event in a
+//!   church hall) the check was never reached. The bar froze, Cancel did nothing, and
+//!   the `running` flag stayed set for the rest of the process — so even after the
+//!   wifi came back, every retry was refused with "A model download is already
+//!   running" until Relay was quit and reopened.
+//! - **Never blocking the UI thread.**
+//!
+//! The failure mode this module must survive is not "the download fails". It is
+//! "the download neither succeeds nor fails, forever, and the operator cannot get
+//! out of it" — a volunteer, an hour before the service, with no terminal.
 
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -40,6 +51,7 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tauri::{Emitter, Manager};
 
 /// One downloadable speech model.
@@ -133,10 +145,83 @@ pub struct DownloadState {
     pub running: Arc<AtomicBool>,
 }
 
-/// Download `id` into the models dir: resumable, checksummed, atomic.
+/// How long to wait for the next byte before declaring the connection dead.
 ///
-/// Emits `model://progress` throughout, then exactly one of `model://done` or
-/// `model://error`. Runs on the async runtime; never blocks the UI thread.
+/// This is NOT an overall deadline — a 148 MB model on a slow church connection can
+/// legitimately take an hour, and `reqwest`'s whole-request `.timeout()` would abort
+/// exactly the download this module exists to make possible. What must never happen
+/// is waiting FOREVER for a connection that has silently gone away.
+const STALL_TIMEOUT: Duration = Duration::from_secs(45);
+
+/// How often to wake up while waiting for data, to notice a cancel.
+///
+/// The cancel flag used to be checked only *after* `stream.next()` produced a chunk.
+/// On a half-open TCP connection — a dropped wifi, which is the single most likely
+/// thing to happen in a church hall — no chunk ever arrives, so the check was never
+/// reached and **Cancel did nothing at all**. The operator watched a frozen progress
+/// bar and a dead button. Waking on a tick makes cancel responsive whether or not the
+/// network is delivering anything.
+const CANCEL_POLL: Duration = Duration::from_millis(400);
+
+/// Clears the `running` flag no matter how we leave `download` — including a panic
+/// or a dropped future.
+///
+/// It used to be a bare `store(false)` after the await. When the download hung
+/// forever (see `STALL_TIMEOUT`), that line was never reached, so `running` stayed
+/// `true` for the rest of the process — and every subsequent attempt, including after
+/// the operator reconnected the wifi, was refused with "A model download is already
+/// running." until they quit and reopened Relay. A stuck flag turned a recoverable
+/// network blip into a dead feature.
+struct RunningGuard(Arc<AtomicBool>);
+impl Drop for RunningGuard {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
+    }
+}
+
+/// How a download ended. Cancelling is not an error — see `download`.
+enum Outcome {
+    Done,
+    Cancelled,
+}
+
+/// What to do with whatever a previous attempt left in `<name>.part`.
+#[derive(Debug, PartialEq, Eq)]
+enum Resume {
+    /// Nothing usable on disk — fetch the whole file.
+    Fresh,
+    /// Continue from byte N with a `Range` header.
+    From(u64),
+    /// The `.part` is ALREADY the full size. Settle it by checksum.
+    Verify,
+}
+
+/// Decide how to resume, from the size of the partial file alone.
+///
+/// Pure, so the case that actually bit us is testable without a network: a `.part`
+/// of *exactly* `model.bytes` (we died on the final chunk, or on the rename). The
+/// old code guarded with `already > model.bytes`, so this fell into the `From` arm
+/// and asked the server for `Range: bytes=<total>-`. The server answered **416 Range
+/// Not Satisfiable**, the code hard-errored — and did not delete the file. Every
+/// retry produced the same 416, forever. The download was permanently bricked, and
+/// the only fix was deleting a file the user did not know existed.
+///
+/// A full-size `.part` is never a resume point. It is a question — "is this the
+/// model?" — and the answer is a checksum, not an HTTP request.
+fn resume_plan(part_len: u64, model_bytes: u64) -> Resume {
+    match part_len {
+        0 => Resume::Fresh,
+        n if n >= model_bytes => Resume::Verify,
+        n => Resume::From(n),
+    }
+}
+
+/// Download `id` into the models dir: resumable, checksummed, atomic, and
+/// genuinely cancellable.
+///
+/// Emits `model://progress` throughout, then exactly one of `model://done`,
+/// `model://cancelled` or `model://error`. Runs on the async runtime; never blocks
+/// the UI thread.
 pub async fn download(app: tauri::AppHandle, id: String) -> Result<(), String> {
     let model = find(&id).ok_or_else(|| format!("unknown model '{id}'"))?;
     let state = app.state::<DownloadState>();
@@ -146,43 +231,69 @@ pub async fn download(app: tauri::AppHandle, id: String) -> Result<(), String> {
     }
     state.cancel.store(false, Ordering::SeqCst);
     let cancel = state.cancel.clone();
-    let running = state.running.clone();
+    let _guard = RunningGuard(state.running.clone());
 
     let result = download_inner(&app, model, cancel).await;
-    running.store(false, Ordering::SeqCst);
 
     match &result {
-        Ok(()) => {
+        Ok(Outcome::Done) => {
             let _ = app.emit("model://done", &id);
+        }
+        // Cancelling is a thing the operator CHOSE. It used to be emitted down the
+        // error channel, so deliberately stopping a download painted a red failure
+        // box that could not even be dismissed.
+        Ok(Outcome::Cancelled) => {
+            let _ = app.emit("model://cancelled", &id);
         }
         Err(e) => {
             let _ = app.emit("model://error", e);
         }
     }
-    result
+    result.map(|_| ())
 }
 
 async fn download_inner(
     app: &tauri::AppHandle,
     model: &'static ModelInfo,
     cancel: Arc<AtomicBool>,
-) -> Result<(), String> {
+) -> Result<Outcome, String> {
     use futures_util::StreamExt;
 
     let dir = models_dir();
     std::fs::create_dir_all(&dir).map_err(|e| format!("Could not create {dir:?}: {e}"))?;
     let final_path = dir.join(model.filename);
     if final_path.exists() {
-        return Ok(()); // already have it
+        return Ok(Outcome::Done); // already have it
     }
     let part_path = dir.join(format!("{}.part", model.filename));
 
-    // Resume from whatever a previous attempt managed to fetch.
-    let already = std::fs::metadata(&part_path).map(|m| m.len()).unwrap_or(0);
-    let already = if already > model.bytes { 0 } else { already };
+    // Resume from whatever a previous attempt managed to fetch. See `resume_plan`.
+    let part_len = std::fs::metadata(&part_path).map(|m| m.len()).unwrap_or(0);
+    let already = match resume_plan(part_len, model.bytes) {
+        Resume::Fresh => 0,
+        Resume::From(n) => n,
+        // A full-size .part is either a complete download whose checksum we never got
+        // to run, or garbage. Hash it — do NOT ask the server to resume from the end
+        // of it, which is a 416 and used to brick the download permanently.
+        Resume::Verify => {
+            if sha256_file(&part_path)?.eq_ignore_ascii_case(model.sha256) {
+                std::fs::rename(&part_path, &final_path)
+                    .map_err(|e| format!("Could not finish installing the model: {e}"))?;
+                println!("models: installed {} (recovered)", final_path.display());
+                return Ok(Outcome::Done);
+            }
+            let _ = std::fs::remove_file(&part_path);
+            0
+        }
+    };
 
     let client = reqwest::Client::builder()
         .user_agent("relay-church/0.1")
+        // Fail fast when the server is simply unreachable. Deliberately NOT a
+        // whole-request `.timeout()` — that would abort a legitimately slow 148 MB
+        // download. Stalls are handled by STALL_TIMEOUT below, which measures the gap
+        // between bytes rather than the length of the download.
+        .connect_timeout(Duration::from_secs(20))
         .build()
         .map_err(|e| e.to_string())?;
 
@@ -191,6 +302,17 @@ async fn download_inner(
         req = req.header(reqwest::header::RANGE, format!("bytes={already}-"));
     }
     let resp = req.send().await.map_err(friendly_net_error)?;
+
+    // The server rejected our resume point. Throw the partial file away rather than
+    // leaving it to poison every future attempt.
+    if resp.status() == reqwest::StatusCode::RANGE_NOT_SATISFIABLE {
+        let _ = std::fs::remove_file(&part_path);
+        return Err(
+            "The part-finished download couldn't be resumed, so it was discarded. \
+                    Please try again — it will start from the beginning."
+                .into(),
+        );
+    }
 
     // If the server ignored our Range header, start over rather than append into
     // the middle of the file and silently produce a corrupt model.
@@ -214,28 +336,52 @@ async fn download_inner(
     let mut downloaded = start;
     let mut stream = resp.bytes_stream();
     let mut last_emit = 0u64;
+    let mut last_byte_at = Instant::now();
 
-    while let Some(chunk) = stream.next().await {
+    loop {
+        // Checked BEFORE waiting, and again on every tick below — so Cancel works
+        // whether the connection is fast, slow, or silently dead.
         if cancel.load(Ordering::SeqCst) {
             let _ = file.flush();
-            return Err("Download cancelled.".into());
+            // The .part file is KEPT. Cancelling is not "throw away my 90 MB"; the
+            // next attempt resumes from here.
+            return Ok(Outcome::Cancelled);
         }
-        let chunk = chunk.map_err(friendly_net_error)?;
-        file.write_all(&chunk)
-            .map_err(|e| format!("Could not write the model to disk: {e}"))?;
-        downloaded += chunk.len() as u64;
 
-        // Throttle: one event per ~1 MB, not per TCP chunk.
-        if downloaded - last_emit > 1_000_000 {
-            last_emit = downloaded;
-            let _ = app.emit(
-                "model://progress",
-                Progress {
-                    id: model.id.to_string(),
-                    downloaded,
-                    total: model.bytes,
-                },
-            );
+        match tokio::time::timeout(CANCEL_POLL, stream.next()).await {
+            // No byte arrived within the tick. Normal on a slow connection — go round
+            // again, re-check cancel, and only give up once nothing has arrived for
+            // STALL_TIMEOUT.
+            Err(_tick) => {
+                if last_byte_at.elapsed() >= STALL_TIMEOUT {
+                    let _ = file.flush();
+                    return Err("The download stopped responding. Check the internet \
+                                connection and try again — it will pick up where it left off."
+                        .into());
+                }
+                continue;
+            }
+            Ok(None) => break, // stream finished
+            Ok(Some(chunk)) => {
+                let chunk = chunk.map_err(friendly_net_error)?;
+                file.write_all(&chunk)
+                    .map_err(|e| format!("Could not write the model to disk: {e}"))?;
+                downloaded += chunk.len() as u64;
+                last_byte_at = Instant::now();
+
+                // Throttle: one event per ~1 MB, not per TCP chunk.
+                if downloaded - last_emit > 1_000_000 {
+                    last_emit = downloaded;
+                    let _ = app.emit(
+                        "model://progress",
+                        Progress {
+                            id: model.id.to_string(),
+                            downloaded,
+                            total: model.bytes,
+                        },
+                    );
+                }
+            }
         }
     }
     file.flush().map_err(|e| e.to_string())?;
@@ -265,7 +411,7 @@ async fn download_inner(
         },
     );
     println!("models: installed {}", final_path.display());
-    Ok(())
+    Ok(Outcome::Done)
 }
 
 /// Turn a network error into something a volunteer can act on.
@@ -335,6 +481,80 @@ mod tests {
         assert!(models_dir().starts_with(crate::db::app_data_dir()));
         assert!(models_dir().ends_with("models"));
     }
+
+    /// THE BRICK. A `.part` of exactly the model's size must never be used as a
+    /// resume point.
+    ///
+    /// It used to be: the guard was `> model.bytes`, so an exactly-full `.part` sent
+    /// `Range: bytes=147951465-`, got **416 Range Not Satisfiable**, and hard-errored
+    /// WITHOUT deleting the file. Every retry hit the same 416 forever. The only
+    /// escape was deleting a file the user did not know existed — which, for a church
+    /// volunteer, means the model simply never installs, ever.
+    #[test]
+    fn a_full_size_part_file_is_verified_never_resumed() {
+        let total = CATALOG[0].bytes;
+        assert_eq!(resume_plan(total, total), Resume::Verify);
+        // ...and anything larger is likewise not a resume point (corrupt/garbage).
+        assert_eq!(resume_plan(total + 1, total), Resume::Verify);
+    }
+
+    #[test]
+    fn a_partial_file_resumes_from_where_it_stopped() {
+        let total = CATALOG[0].bytes;
+        assert_eq!(resume_plan(90_000_000, total), Resume::From(90_000_000));
+        assert_eq!(resume_plan(1, total), Resume::From(1));
+    }
+
+    #[test]
+    fn nothing_on_disk_starts_from_the_beginning() {
+        assert_eq!(resume_plan(0, CATALOG[0].bytes), Resume::Fresh);
+    }
+
+    /// A stalled download must be given up on, not waited on forever — but the poll
+    /// that notices a cancel has to be much shorter than the stall deadline, or
+    /// pressing Cancel appears to do nothing for most of a minute.
+    #[test]
+    fn cancel_is_noticed_long_before_a_stall_is_declared() {
+        assert!(CANCEL_POLL < STALL_TIMEOUT);
+        assert!(
+            CANCEL_POLL <= Duration::from_secs(1),
+            "Cancel must feel instant"
+        );
+        // And the stall deadline must be generous enough that a slow church
+        // connection is not mistaken for a dead one.
+        assert!(STALL_TIMEOUT >= Duration::from_secs(30));
+    }
+
+    /// `running` must clear however we leave the download — including a panic.
+    ///
+    /// It used to be a bare `store(false)` after the await, which the infinite hang
+    /// never reached. The flag stayed set for the life of the process, so every later
+    /// attempt — even after the wifi came back — was refused with "A model download is
+    /// already running." A network blip became a dead feature until Relay was
+    /// restarted.
+    #[test]
+    fn the_running_flag_clears_even_if_the_download_panics() {
+        let running = Arc::new(AtomicBool::new(true));
+        let flag = running.clone();
+        let hit = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+            let _guard = RunningGuard(flag);
+            panic!("network exploded");
+        }));
+        assert!(hit.is_err());
+        assert!(
+            !running.load(Ordering::SeqCst),
+            "a panicking download left `running` set — every retry would be refused"
+        );
+    }
+
+    #[test]
+    fn the_running_flag_clears_on_a_normal_return() {
+        let running = Arc::new(AtomicBool::new(true));
+        {
+            let _guard = RunningGuard(running.clone());
+        }
+        assert!(!running.load(Ordering::SeqCst));
+    }
 }
 
 /// Config invariants that are only discovered at RUNTIME, and would otherwise
@@ -342,6 +562,27 @@ mod tests {
 /// on startup — a compile is not a boot.
 #[cfg(test)]
 mod config_boots {
+    /// Strip XML comments before asserting on a plist.
+    ///
+    /// Both of these files explain themselves at length, and those explanations
+    /// naturally quote the very keys being asserted on. Without this, a test that
+    /// greps the raw text happily matches the COMMENT and passes on a file whose
+    /// `<dict>` is empty — the exact class of vacuous test that lets the real bug
+    /// through. (It did: the first version of these tests read the prose.)
+    fn strip_comments(xml: &str) -> String {
+        let mut out = String::with_capacity(xml.len());
+        let mut rest = xml;
+        while let Some(start) = rest.find("<!--") {
+            out.push_str(&rest[..start]);
+            match rest[start..].find("-->") {
+                Some(end) => rest = &rest[start + end + 3..],
+                None => return out, // unterminated comment: nothing real can follow
+            }
+        }
+        out.push_str(rest);
+        out
+    }
+
     /// Registering the updater plugin with a null `plugins.updater` PANICS the app
     /// at startup:
     ///
@@ -374,6 +615,107 @@ mod config_boots {
                 .as_array()
                 .is_some_and(|a| !a.is_empty()),
             "plugins.updater.endpoints must be non-empty"
+        );
+    }
+
+    /// THE MICROPHONE, ON THE ONLY BUILD THAT COUNTS.
+    ///
+    /// Notarization requires the hardened runtime (Tauri enables it by default), and
+    /// under the hardened runtime a process that opens an audio input device WITHOUT
+    /// the `com.apple.security.device.audio-input` entitlement is killed by TCC.
+    ///
+    /// Which means:
+    ///
+    /// ```text
+    ///   tauri dev             microphone works    (no hardened runtime)
+    ///   unsigned pre-release  microphone works    (ad-hoc signed, no hardened runtime)
+    ///   SIGNED + NOTARIZED    microphone DEAD
+    /// ```
+    ///
+    /// The first build correct enough to give to a church is the first one where Relay
+    /// cannot hear the preacher — and every build we are able to test locally would
+    /// have looked perfect. This cannot be caught by compiling, by `cargo test`, or by
+    /// running the app. It can only be caught by an assertion, so here it is.
+    #[test]
+    fn the_macos_build_can_actually_open_a_microphone() {
+        const CONF: &str = include_str!("../tauri.conf.json");
+        const ENTITLEMENTS: &str = include_str!("../relay.entitlements");
+
+        let c: serde_json::Value = serde_json::from_str(CONF).expect("tauri.conf.json");
+        let mac = &c["bundle"]["macOS"];
+
+        assert_eq!(
+            mac["entitlements"].as_str(),
+            Some("relay.entitlements"),
+            "bundle.macOS.entitlements is not set — a notarized build's microphone is DEAD, \
+             and no build you can test locally will show it"
+        );
+        // The real <dict> — NOT the comment above it, which quotes this same key.
+        let plist = strip_comments(ENTITLEMENTS);
+        let after = plist
+            .split("com.apple.security.device.audio-input")
+            .nth(1)
+            .expect(
+                "the audio-input entitlement is missing — Relay cannot hear anything under \
+                 the hardened runtime, which notarization requires",
+            );
+
+        // Present-but-`<false/>` is worse than absent: it reads as a deliberate choice.
+        let value = after
+            .split_whitespace()
+            .find(|t| t.starts_with("<true/>") || t.starts_with("<false/>"))
+            .unwrap_or("");
+        assert!(
+            value.starts_with("<true/>"),
+            "the audio-input entitlement must be <true/>, found {value:?}"
+        );
+    }
+
+    /// The permission dialog macOS shows the volunteer.
+    ///
+    /// Without `NSMicrophoneUsageDescription` the app is not "denied the microphone" —
+    /// it is TERMINATED the instant it asks. And the string is not boilerplate: it is
+    /// the only explanation a church ever gets for why this software wants to listen to
+    /// their service, so it must actually answer that.
+    #[test]
+    fn the_microphone_permission_dialog_explains_itself_to_a_volunteer() {
+        const CONF: &str = include_str!("../tauri.conf.json");
+        const PLIST: &str = include_str!("../Info.plist");
+
+        let c: serde_json::Value = serde_json::from_str(CONF).expect("tauri.conf.json");
+        assert_eq!(
+            c["bundle"]["macOS"]["infoPlist"].as_str(),
+            Some("Info.plist"),
+            "bundle.macOS.infoPlist is not set"
+        );
+        // Strip the comments first — they quote this key while explaining it, and a
+        // grep of the raw text would match the prose and pass on an empty <dict>.
+        let plist = strip_comments(PLIST);
+
+        // A non-empty sentence, not a placeholder. Apple rejects empty/absent strings,
+        // and a volunteer deserves better than "Relay needs the microphone."
+        let body = plist
+            .split("NSMicrophoneUsageDescription")
+            .nth(1)
+            .expect(
+                "no NSMicrophoneUsageDescription — macOS KILLS the app when it asks for the mic",
+            )
+            .split("<string>")
+            .nth(1)
+            .and_then(|s| s.split("</string>").next())
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        assert!(
+            body.len() > 40,
+            "the microphone usage string is missing or too thin to explain anything: {body:?}"
+        );
+        // It must say where the audio goes. That is the question being asked.
+        assert!(
+            body.to_lowercase().contains("never sent")
+                || body.to_lowercase().contains("this computer"),
+            "the usage string must say what happens to the audio — it is the one thing \
+             a church actually wants to know: {body:?}"
         );
     }
 }
