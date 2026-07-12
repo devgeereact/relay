@@ -109,7 +109,13 @@
     } catch {
       /* already stopped */
     }
-    await setDetection(detectionWas);
+    // Restoring detection MUST NOT throw out of here — this also runs from onDestroy,
+    // where a rejection is an unhandled promise and nobody is left to catch it.
+    try {
+      await setDetection(detectionWas);
+    } catch (e) {
+      error = String(e?.message ?? e);
+    }
   }
 
   // Changing the device mid-test must re-open the stream, or the meter keeps

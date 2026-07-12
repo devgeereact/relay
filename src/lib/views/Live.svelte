@@ -31,6 +31,7 @@
   import ModelSetup from '../ModelSetup.svelte';
   import { registerContext } from '../shortcuts.js';
   import { heard, methodLabel } from '../detect.js';
+  import { humanError as humanErrorBase } from '../errors.js';
   import { TYPE, payloadOf, slidesOf, slideAccent, cueSub, nextOf, stepFrom } from '../plan.js';
   import { session, setSession } from '../session.js';
   import { get } from 'svelte/store';
@@ -283,11 +284,39 @@
 
   // heard() / methodLabel() live in lib/detect.js — pure, and unit-tested there,
   // because they are the frontend half of the auto-fire safety rule (see that file).
-  function acceptTop() {
-    if (!dets[0]) return;
-    confirmDetection(dets[0].reference);
-    flash(`Now live: ${dets[0].reference}`);
+  // Await it, and flash ONLY if the verse actually went up. This used to fire and
+  // forget, then say "Now live: John 3:16" regardless — while confirmDetection
+  // swallowed the failure and removed the suggestion card. The operator pressed A, the
+  // card vanished, the toast said it was live, and the wall was unchanged.
+  async function acceptTop() {
+    const d = dets[0];
+    if (!d) return;
+    try {
+      await confirmDetection(d.reference);
+      flash(`Now live: ${d.reference}`);
+    } catch (e) {
+      flash(humanError(e));
+    }
   }
+  /** Push a cross-reference. Same contract as acceptTop: say nothing unless it worked. */
+  async function pushRef(reference) {
+    try {
+      await confirmDetection(reference);
+      flash(`Now live: ${reference}`);
+    } catch (e) {
+      flash(humanError(e));
+    }
+  }
+
+  /** Arming/disarming the AI must not silently fail — the dot would lie about it. */
+  async function toggleDetection() {
+    try {
+      await setDetection(!$capture.detectionOn);
+    } catch (e) {
+      flash(humanError(e));
+    }
+  }
+
   function dismissTop() {
     if (!dets[0]) return;
     dismissDetection(dets[0].reference);
@@ -313,10 +342,17 @@
     clearTimeout(liveMsgT);
     liveMsgT = setTimeout(() => (liveMsg = ''), 2600);
   }
-  /** Turn a raw backend error into a plain sentence for a live operator. */
+  /**
+   * A plain sentence for a live operator.
+   *
+   * Delegates to lib/errors.js — the ONE humaniser — and only adds the thing that
+   * view knows and it doesn't: what the operator actually typed. It used to be
+   * `String(e)`, which now that the backend sends a typed `{kind, message}` would
+   * render literally as "[object Object]".
+   */
   function humanError(e) {
-    const s = String(e).replace(/^Error:\s*/, '');
-    if (/could not parse|parse a reference/i.test(s))
+    const s = humanErrorBase(e);
+    if (/could not parse|parse a reference|isn't in the Bible/i.test(s) && manualRef.trim())
       return `Couldn't read "${manualRef.trim()}" as a scripture reference.`;
     return s;
   }
@@ -598,7 +634,7 @@
               {/if}
               {#if x.text}<div class="xref-verse">“{x.text}”</div>{/if}
               <div class="xref-acts">
-                <button class="btn-mini" on:click={() => confirmDetection(x.reference)}>Push</button>
+                <button class="btn-mini" on:click={() => pushRef(x.reference)}>Push</button>
                 <button class="btn-mini ghost" on:click={() => dismissDetection(x.reference)}>Dismiss</button>
               </div>
             </div>
@@ -743,7 +779,7 @@
         <span class="dot" style="background:{$capture.capturing ? 'var(--v-rose)' : 'var(--v-amber)'}"></span>
         {$capture.capturing ? 'Listening — Stop' : listenBusy ? 'Starting…' : 'Start listening'}
       </button>
-      <button class="ctl" on:click={() => setDetection(!$capture.detectionOn)} disabled={!$capture.available}>
+      <button class="ctl" on:click={toggleDetection} disabled={!$capture.available}>
         <span class="dot" style="background:{$capture.detectionOn ? 'var(--v-emerald)' : '#47464a'}"></span>
         Detection {$capture.detectionOn ? 'active' : 'off'}
       </button>

@@ -45,13 +45,41 @@ const KNOWN = [
 ];
 
 /**
+ * Is retrying this worth the operator's time?
+ *
+ * The ONE question a live operator actually has, and for months the answer was
+ * unknowable: every command returned `Result<_, String>`, so "the database is busy"
+ * and "the disk is full" arrived as indistinguishable sentences. `error.rs` now sends
+ * `{ kind, message }`.
+ */
+export const isRetryable = (e) => e?.kind === 'busy';
+
+/** A deliberate refusal — nothing is broken, and the operator can fix it. */
+export const isRefusal = (e) => e?.kind === 'refused' || e?.kind === 'not_found';
+
+/**
  * A plain-language sentence for an error from the backend.
  *
  * Always returns something showable. Never returns an empty string, and never
  * returns a bare Rust `Err(...)` — an operator mid-service needs an instruction,
  * not a diagnosis.
+ *
+ * Handles BOTH shapes: the typed `{ kind, message }` from a Tauri command, and a
+ * plain string (thrown by the bridge itself when there is no backend, and by the
+ * modules that still speak `Result<_, String>` internally).
  */
 export function humanError(e) {
+  // Typed. The backend has already classified it, and for two kinds it has also
+  // already written the sentence — trust it rather than re-guessing from a regex.
+  if (e && typeof e === 'object' && typeof e.kind === 'string') {
+    if (e.kind === 'refused' || e.kind === 'not_found') return e.message;
+    if (e.kind === 'busy') return e.message; // "…try that again in a moment."
+    // 'io' and 'internal' are unclassified as far as the OPERATOR is concerned, so
+    // they fall through to the pattern table below, which knows how to turn a few of
+    // them ("address already in use") into something actionable.
+    return humanError(e.message);
+  }
+
   const raw = String(e ?? '')
     .replace(/^Error:\s*/i, '')
     .trim();

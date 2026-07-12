@@ -5,6 +5,38 @@
 // stt_status) and the `audio://chunk` + `stt://transcript` event streams.
 // Degrades gracefully in a plain browser (vite dev, no Tauri): `available`
 // stays false and controls disable, so the console still renders for design.
+//
+// ── THE THROW-vs-SWALLOW CONTRACT ───────────────────────────────────────────────
+//
+// This file is the ONLY place the frontend talks to Rust, and for months it had no
+// contract at all: ~34 `catch {}` blocks against exactly ONE `throw` in the whole of
+// src/. Half the wrappers swallowed and returned `[]`, half threw, and a caller could
+// not tell which — so a button could quietly do nothing, forever, with no error and
+// no log. That is how `clearScreens` came to flash "Screens cleared" over a wall that
+// still had scripture on it.
+//
+// The rule is ONE question: **can the congregation see the difference?**
+//
+//   GROUP 1 — THROWS. Anything that changes what is on the screens, what the AI is
+//   allowed to do, or whether the microphone is live. `manualFire`, `confirmDetection`,
+//   `setDetection`, `setRehearsal`, `navVerse`, `startCapture`, `stopCapture`,
+//   `fireContent`, `startCountdown`. The caller MUST handle it and tell the operator.
+//   A silent failure here is a lie told to someone standing in front of a congregation.
+//
+//   GROUP 2 — SWALLOWS, and returns a safe default. Reads: `listPlans`, `listSongs`,
+//   `listMonitors`, `searchScripture`, `loadTemplates`, … A backend that is absent
+//   (a plain browser) or a list that fails to load costs the operator nothing they
+//   cannot see for themselves — the list is visibly empty. Nothing on any screen
+//   changes, so nothing is being hidden from them.
+//
+//   GROUP 3 — REPORTS VIA A STORE, never throws. The panic controls (`clearScreens`,
+//   `blackScreen`): they are fired from a global keydown handler and from a shell
+//   button that must survive a crashed view, and NEITHER CAN CATCH. A throw there is
+//   an unhandled rejection — silence with extra steps. They return a boolean and set
+//   `panicError`, so a failure surfaces however the control was triggered.
+//
+// If you add a wrapper, put it in a group deliberately. "It seemed fine" is how a
+// panic key came to do nothing.
 
 import { writable, derived, get } from 'svelte/store';
 import { parseTemplateOverride } from '../templates.js';
@@ -231,15 +263,17 @@ export async function initAudio() {
   }
 }
 
-/** Arm/disarm automatic detection (manual override is unaffected). */
+/**
+ * Arm/disarm automatic detection (manual override is unaffected).
+ *
+ * THROWS (contract group 1). The store is updated from the value the BACKEND returns,
+ * never from what we asked for — and a failure must not leave the dot saying "off"
+ * while the AI is still armed and firing verses at the congregation.
+ */
 export async function setDetection(enabled) {
-  try {
-    const call = await invoke();
-    const on = await call('set_detection_enabled', { enabled });
-    capture.update((s) => ({ ...s, detectionOn: on }));
-  } catch {
-    /* backend absent */
-  }
+  const call = await invoke();
+  const on = await call('set_detection_enabled', { enabled });
+  capture.update((s) => ({ ...s, detectionOn: on }));
 }
 
 /** Read rehearsal state from the backend (which owns it). */
@@ -379,19 +413,25 @@ export async function stopCapture() {
   transcript.update((t) => ({ ...t, partial: '' }));
 }
 
-/** Operator confirms a suggestion → fire it to the screens + nudge the gate. */
+/**
+ * Operator confirms a suggestion → fire it to the screens + nudge the gate.
+ *
+ * THROWS (contract group 1). This puts scripture in front of a congregation.
+ *
+ * And note the ORDER. It used to drop the suggestion from the list and call
+ * `leavePlan()` FIRST, then swallow any failure — so a fire that never happened still
+ * removed the suggestion from the operator's screen. They pressed A, the card
+ * vanished, and nothing went up. Everything now happens only once the backend has
+ * confirmed the verse is actually live.
+ */
 export async function confirmDetection(reference) {
+  const call = await invoke();
+  const thresholds = await call('confirm_detection', { reference });
   // Accepting an AI suggestion also takes us out of the plan — same reason as
   // manualFire.
   leavePlan();
   detections.update((list) => list.filter((d) => d.reference !== reference));
-  try {
-    const call = await invoke();
-    const thresholds = await call('confirm_detection', { reference });
-    capture.update((s) => ({ ...s, thresholds }));
-  } catch {
-    /* backend absent */
-  }
+  capture.update((s) => ({ ...s, thresholds }));
 }
 
 /** Operator dismisses a suggestion → drop it + tighten the gate. */
@@ -409,12 +449,22 @@ export async function dismissDetection(reference) {
 /** Manual override: fire a free-text reference now (throws if unparseable).
  *  `stageNote` is an optional confidence-monitor note for this cue. */
 export async function manualFire(reference, stageNote = null) {
+  const call = await invoke();
+  await call('manual_fire', { reference, stageNote });
   // A hand-typed verse is not a plan cue. If the arrows still thought we were in
   // the plan, the next → would jump back to a slide the congregation has moved on
   // from.
+  //
+  // AFTER the call, not before. The transport must follow what is ACTUALLY on the
+  // wall. If the fire failed — an unparseable reference, a verse outside the corpus —
+  // then nothing changed, the plan slide is still up there, and taking the plan "off
+  // air" would leave `→` walking a verse passage that the congregation cannot see,
+  // firing content they did not ask for. Nothing moved, so nothing here moves either.
+  //
+  // (The panic controls are the deliberate exception: `clearScreens`/`blackScreen`
+  // reset the cursor FIRST, because a panic key that half-works is worse than one
+  // that does not work at all — and they now report their own failure loudly.)
   leavePlan();
-  const call = await invoke();
-  await call('manual_fire', { reference, stageNote });
 }
 
 // ── Service Planner ──────────────────────────────────────────────────────────
