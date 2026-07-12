@@ -30,6 +30,7 @@
   import OutputWall from '../OutputWall.svelte';
   import ModelSetup from '../ModelSetup.svelte';
   import { registerContext } from '../shortcuts.js';
+  import { heard, methodLabel } from '../detect.js';
   import { TYPE, payloadOf, slidesOf, slideAccent, cueSub, nextOf, stepFrom } from '../plan.js';
   import { session, setSession } from '../session.js';
   import { get } from 'svelte/store';
@@ -221,17 +222,27 @@
   async function clearAll() {
     // clearScreens() resets the transport cursor at the store, so the plan does
     // not fire straight back in on the next →.
-    try {
-      await clearScreens();
-    } catch {
-      /* backend absent */
-    }
+    //
+    // Flash ONLY if it actually worked. This used to say "Screens cleared"
+    // unconditionally, over a `catch {}` that could never even fire (clearScreens
+    // swallowed its own errors) — so a failed clear told the operator the wall was
+    // clean while the verse was still on it. On failure the panic banner in the app
+    // shell says so; adding a second, softer message here would only dilute it.
+    const ok = await clearScreens();
     setStageNext(null, null);
-    flash('Screens cleared');
+    if (ok) flash('Screens cleared');
+  }
+
+  async function blackAll() {
+    const ok = await blackScreen();
+    if (ok) flash('Blackout');
   }
 
   // ── AI suggestions ───────────────────────────────────────────────────────
   $: dets = $detections;
+
+  // heard() / methodLabel() live in lib/detect.js — pure, and unit-tested there,
+  // because they are the frontend half of the auto-fire safety rule (see that file).
   function acceptTop() {
     if (!dets[0]) return;
     confirmDetection(dets[0].reference);
@@ -473,12 +484,55 @@
       <div class="feed-body">
         {#if dets.length}
           {@const d = dets[0]}
-          <div class="ai-card">
+          <!-- HEARD vs GUESSED. These are not two flavours of the same thing, and
+               they must not look like it. A direct hit is a reference the parser
+               actually heard, and its confidence is a real parse confidence. A
+               paraphrase is a TF-IDF cosine — a distance in an arbitrary vector
+               space, NOT a probability (docs/DECISIONS.md; router.rs forbids it from
+               ever auto-firing at ANY score, for exactly this reason).
+
+               Both used to render as "AI suggestion — 92% match". The operator was
+               shown a number that means one thing for one kind of match and nothing
+               at all for the other, with no way to tell which they were looking at —
+               while being asked to be the human in the loop. -->
+          <div class="ai-card" class:guess={!heard(d)}>
             <div class="ai-top">
-              <span class="lbl-gold">AI suggestion</span>
-              <span class="mono gold">{Math.round(d.confidence * 100)}% match</span>
+              <span class="lbl-method" class:guess={!heard(d)}>{methodLabel(d)}</span>
+              {#if heard(d)}
+                <span class="mono gold">{Math.round(d.confidence * 100)}% match</span>
+              {:else}
+                <!-- Deliberately NO percentage. Printing "61%" next to a cosine
+                     invites the operator to read it as "61% likely to be right",
+                     which is precisely what it is not. -->
+                <span class="mono guess-note">not a spoken reference</span>
+              {/if}
             </div>
+            {#if heard(d)}
+              <!-- A bar, not just a number: "0.92" means nothing to a volunteer. -->
+              <div
+                class="conf"
+                role="meter"
+                aria-valuemin="0"
+                aria-valuemax="100"
+                aria-valuenow={Math.round(d.confidence * 100)}
+                aria-label="Detection confidence"
+              >
+                <i style="width:{Math.round(d.confidence * 100)}%"></i>
+              </div>
+            {/if}
             <div class="ai-ref">{d.reference}</div>
+            {#if d.matched_text}
+              <!-- THE EVIDENCE. Captured in Rust for months and dropped at the IPC
+                   boundary. Showing the words that triggered a match is the clearest
+                   possible explanation of an AI decision: an operator can tell at a
+                   glance whether Relay heard "john three sixteen" or misheard
+                   "gone free sixty" — and can judge a paraphrase by the words it
+                   actually keyed on, which is something a human can agree with. -->
+              <div class="why">
+                <span class="why-lbl">{heard(d) ? 'Heard' : 'Matched on'}</span>
+                <span class="why-txt">{d.matched_text}</span>
+              </div>
+            {/if}
             {#if d.text}<div class="ai-verse">“{d.text}”</div>{/if}
             <div class="ai-acts">
               <button class="btn-gold" on:click={acceptTop}>Push to stage</button>
@@ -488,12 +542,20 @@
           </div>
 
           {#each dets.slice(1) as x (x.reference + x.at)}
-            <div class="xref">
+            <div class="xref" class:guess={!heard(x)}>
               <div class="xref-top">
-                <span class="lbl-dim">Cross reference</span>
-                <span class="mono dim">{Math.round(x.confidence * 100)}%</span>
+                <span class="lbl-method sm" class:guess={!heard(x)}>{methodLabel(x)}</span>
+                {#if heard(x)}
+                  <span class="mono dim">{Math.round(x.confidence * 100)}%</span>
+                {/if}
               </div>
               <div class="xref-ref">{x.reference}</div>
+              {#if x.matched_text}
+                <div class="why sm">
+                  <span class="why-lbl">{heard(x) ? 'Heard' : 'Matched on'}</span>
+                  <span class="why-txt">{x.matched_text}</span>
+                </div>
+              {/if}
               {#if x.text}<div class="xref-verse">“{x.text}”</div>{/if}
               <div class="xref-acts">
                 <button class="btn-mini" on:click={() => confirmDetection(x.reference)}>Push</button>
@@ -646,7 +708,7 @@
       <button class="ctl" on:click={clearAll} disabled={!$capture.available}>
         <span class="dot" style="background:#47464a"></span>Clear all<span class="ctl-k">Esc</span>
       </button>
-      <button class="ctl" class:rec={$screenBlack} on:click={() => { blackScreen(); flash('Blackout'); }} disabled={!$capture.available}>
+      <button class="ctl" class:rec={$screenBlack} on:click={blackAll} disabled={!$capture.available}>
         <span class="dot" style="background:#000;border:1px solid #47464a"></span>Black<span class="ctl-k">B</span>
       </button>
       <div class="ctl cd-ctl">
@@ -793,6 +855,40 @@
   .ai-card{background:var(--s-low);border:1px solid rgba(255,185,95,.28);border-radius:10px;padding:14px;
     box-shadow:0 0 20px -5px var(--s-gold-glow)}
   .ai-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+
+  /* A GUESS MUST LOOK LIKE A GUESS.
+     Gold in this app reads as "Relay is confident" — it is the colour of the accept
+     button and of a heard reference. A paraphrase has not earned it: its score is a
+     cosine, not a probability, and router.rs will not let it auto-fire at ANY value.
+     So it loses the gold border, the glow, and the number.
+
+     Cyan, NOT amethyst — even though amethyst is the obvious "uncertain" colour and
+     was the original suggestion. Amethyst already means REHEARSAL (docs/DECISIONS.md
+     §18: amber means ON AIR and a tally light that lies is worse than none). A colour
+     that means "nothing is reaching the congregation" cannot also mean "this guess is
+     shaky", or on the day both are true the operator reads the wrong one. */
+  .ai-card.guess{border-color:rgba(63,182,230,.30);box-shadow:none}
+  .lbl-method{font-family:var(--f-mono);font-size:10px;font-weight:600;letter-spacing:.16em;
+    text-transform:uppercase;color:var(--s-gold)}
+  .lbl-method.guess{color:var(--v-cyan)}
+  .lbl-method.sm{font-size:9px;font-weight:700}
+  .guess-note{font-size:10.5px;color:var(--v-cyan);opacity:.85}
+  .xref.guess{border-color:rgba(63,182,230,.22)}
+
+  /* Confidence as a BAR, not a bare number — "0.92" means nothing to a volunteer.
+     Only ever drawn for a heard reference, because it is the only one whose number
+     means what it appears to mean. */
+  .conf{height:3px;border-radius:2px;background:rgba(255,255,255,.07);margin:0 0 11px;overflow:hidden}
+  .conf i{display:block;height:100%;background:var(--s-gold);border-radius:2px}
+
+  /* THE EVIDENCE — the words that actually triggered the match. */
+  .why{display:flex;align-items:baseline;gap:8px;margin-top:7px;flex-wrap:wrap}
+  .why-lbl{font-family:var(--f-mono);font-size:9px;font-weight:700;letter-spacing:.14em;
+    text-transform:uppercase;color:var(--s-outline);flex:none}
+  .why-txt{font-family:var(--f-mono);font-size:11.5px;color:var(--s-onvar);
+    background:rgba(255,255,255,.04);border-radius:5px;padding:2px 7px;
+    overflow-wrap:anywhere}
+  .why.sm .why-txt{font-size:10.5px}
   .ai-ref{font-family:var(--f-serif);font-size:19px;font-weight:600;letter-spacing:-.01em;color:var(--s-on)}
   .ai-verse{font-family:var(--f-serif);font-style:italic;font-size:13.5px;line-height:1.5;
     color:var(--s-onvar);margin:6px 0 13px}

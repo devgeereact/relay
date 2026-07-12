@@ -1,6 +1,6 @@
 <script>
   import { onMount, onDestroy } from 'svelte';
-  import { capture, capturing, detectionOn, live, screenBlack, rehearsing, initAudio, clearScreens, blackScreen } from './lib/stores/capture.js';
+  import { capture, capturing, detectionOn, live, screenBlack, rehearsing, initAudio, clearScreens, blackScreen, panicError, dismissPanicError } from './lib/stores/capture.js';
   import { installShortcuts, cheatsheet, liveShortcuts } from './lib/shortcuts.js';
   import { installLeaveGuard } from './lib/crash.js';
   import { session, setSession } from './lib/session.js';
@@ -209,6 +209,22 @@
     </footer>
   </div>
 
+  <!-- A panic control FAILED. Clear or blackout did not reach the outputs, so the
+       congregation may still be seeing the last thing that went up.
+
+       `assertive`, not `polite` — this is the one message in Relay that is allowed
+       to interrupt whatever a screen reader is currently saying. And it does not
+       auto-dismiss: the operator closes it, having looked at the actual screen. -->
+  {#if $panicError}
+    <div class="panicbar" role="alert" aria-live="assertive">
+      <div class="panic-t">
+        <b>The screens may still be live.</b>
+        <span>{$panicError}</span>
+      </div>
+      <button class="r-btn ghost sm" on:click={dismissPanicError}>Dismiss</button>
+    </div>
+  {/if}
+
   <!-- Update banner. Only ever appears at rest — updater.js refuses to even look
        while the microphone is live, and refuses to install if it becomes live. -->
   {#if $updateAvailable && !$capturing}
@@ -251,8 +267,16 @@
             </tr>
           {/each}
         </table>
+        <!-- This used to read "Esc and B work on every tab, even while typing."
+             The B half was false: shortcuts.js yields to text entry before it
+             reaches B, because an operator typing "Habakkuk" into the reference
+             box must not black out the congregation on the second keystroke. A
+             help screen that teaches a false fact about a PANIC key, to someone
+             who will only read it under pressure, is the worst line in the app. -->
         <p class="cheat-foot">
-          <kbd>Esc</kbd> and <kbd>B</kbd> work on every tab, even while typing.
+          <kbd>Esc</kbd> works on every tab, even while typing — it clears the screens
+          and leaves the box you were in. <kbd>B</kbd> works on every tab too, but not
+          while your cursor is in a text field.
         </p>
       </div>
     </div>

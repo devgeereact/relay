@@ -159,6 +159,51 @@ describe('cheatsheet', () => {
     stop();
   });
 
+  // THE BUG: Escape ran clearScreens() unconditionally and *also* closed the
+  // overlay. So an operator who pressed `?` mid-service to check a binding, then
+  // pressed Escape to put the help away, wiped the congregation's screens — with no
+  // idea they had done it. Closing a read-only help panel is not a live action.
+  it('Escape closes the cheatsheet WITHOUT clearing the congregation’s screens', () => {
+    const clearScreens = vi.fn();
+    const stop = installShortcuts({ clearScreens, blackScreen: () => {} });
+    cheatsheet.set(true);
+
+    press('Escape');
+
+    expect(get(cheatsheet)).toBe(false);
+    expect(clearScreens).not.toHaveBeenCalled();
+    stop();
+  });
+
+  it('but Escape with NO cheatsheet open is still the panic key', () => {
+    // The guard above must not cost the operator their panic key.
+    const clearScreens = vi.fn();
+    const stop = installShortcuts({ clearScreens, blackScreen: () => {} });
+    cheatsheet.set(false);
+
+    press('Escape');
+
+    expect(clearScreens).toHaveBeenCalledTimes(1);
+    stop();
+  });
+
+  // The cheatsheet footer used to read "Esc and B work on every tab, even while
+  // typing." The B half was false — and it is help text about a PANIC key, read
+  // only under pressure. The behaviour is correct (typing "Habakkuk" must not black
+  // out the room on the 'b'); it was the promise that was wrong. Pinned here so the
+  // copy in App.svelte cannot quietly drift back.
+  it('B does NOT fire while typing — the help must not claim otherwise', () => {
+    const blackScreen = vi.fn();
+    const stop = installShortcuts({ clearScreens: () => {}, blackScreen });
+    const input = document.createElement('input');
+    document.body.appendChild(input);
+
+    press('b', input);
+
+    expect(blackScreen).not.toHaveBeenCalled();
+    stop();
+  });
+
   it('documents the panic keys, so the help cannot drift from the bindings', () => {
     const labels = SHORTCUTS.flatMap((s) => s.keys);
     expect(labels).toContain('Esc');

@@ -17,7 +17,7 @@
 // It must always be reachable in one action from the main console, at every
 // stage." Global keys are how that promise is kept for the keyboard.
 
-import { writable, derived } from 'svelte/store';
+import { writable, derived, get } from 'svelte/store';
 
 /** Are we inside a text field? Typing must never trigger a live action. */
 function isTyping(e) {
@@ -109,18 +109,37 @@ export function installShortcuts({ clearScreens, blackScreen }) {
 
     const typing = isTyping(e);
 
-    // ---- ALWAYS-ON. These fire even mid-typing: if the wrong thing is on the
-    // screen in front of a congregation, the operator must not first have to
-    // work out which field their cursor is in.
+    // ---- ALWAYS-ON.
+    //
+    // Escape fires even mid-typing: if the wrong thing is on the screen in front of
+    // a congregation, the operator must not first have to work out which field their
+    // cursor is in. (`B` cannot do the same — see below.)
     if (e.key === 'Escape') {
       e.preventDefault();
-      clearScreens();
       if (typing && e.target.blur) e.target.blur();
-      cheatsheet.set(false);
+
+      // If the help overlay is open, Escape CLOSES THE OVERLAY — and does nothing
+      // else. It used to close the overlay *and* clear the screens, unconditionally,
+      // because there was no guard here at all. So an operator who hit `?` mid-service
+      // to check a binding, then hit Escape to put the help away, wiped the wall. The
+      // cheatsheet is a read-only overlay; dismissing it is not a live action.
+      if (get(cheatsheet)) {
+        cheatsheet.set(false);
+        return;
+      }
+
+      clearScreens();
       return;
     }
 
-    // Everything below yields to text entry.
+    // Everything below yields to text entry — including `B`.
+    //
+    // This is deliberate, and it is why the cheatsheet must NOT claim that `B` works
+    // while typing (it said exactly that). `B` cannot fire from inside a text field:
+    // an operator typing "Habakkuk" into the reference box would black out the
+    // congregation's screens on the second keystroke. Escape is the panic key that
+    // survives a focused input — one press blurs the field AND clears the screens.
+    // That is the honest instruction, and it is what App.svelte now prints.
     if (typing) return;
 
     if (e.key === 'b' || e.key === 'B') {

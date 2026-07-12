@@ -368,6 +368,7 @@ fn resolve_fire(
     method: DetectionMethod,
     status: FireStatus,
     stage_note: Option<String>,
+    matched_text: Option<String>,
 ) -> Fire {
     let looked = db::lookup_verse(conn, &r.book, r.chapter, r.verse)
         .ok()
@@ -385,6 +386,7 @@ fn resolve_fire(
         stage_note,
         template_id,
         template_json,
+        matched_text,
     }
 }
 
@@ -428,6 +430,11 @@ fn fire_manual(
             DetectionMethod::Direct,
             FireStatus::Manual,
             stage_note,
+            // No evidence line for a human's own decision. "Why is this on screen?"
+            // — because you put it there. Explaining that back to the operator would
+            // be noise, and worse, would dilute the badge that matters: the one on
+            // the AI's guesses.
+            None,
         );
         // Not in the corpus → leave the screen exactly as it is. Better to show
         // the previous verse than to blank the wall mid-sentence. Same rule the
@@ -490,7 +497,9 @@ fn emit_detections(handle: &tauri::AppHandle, text: &str, now_ms: u64) {
             return;
         };
 
-        // Gather candidates.
+        // Gather candidates. Each one carries the EVIDENCE for itself — the words
+        // that produced it — so the console can show the operator why, and not just
+        // a number (see pipeline::DetectionEvent).
         let mut candidates: Vec<Cand> = Vec::new();
 
         let directs = detection::detect_direct(text);
@@ -502,21 +511,35 @@ fn emit_detections(handle: &tauri::AppHandle, text: &str, now_ms: u64) {
                 method: DetectionMethod::Direct,
                 verse_end: m.verse_end,
                 whole_chapter: m.whole_chapter,
+                matched: Some(m.matched_text),
             });
         }
         for n in detection::detect_bare_verses(text) {
             if let Some(r) = context.resolve_bare_verse(n) {
-                candidates.push(Cand::single(r, 0.88, DetectionMethod::Direct));
+                // "…and verse eighteen", resolved against the passage already on
+                // screen. The operator needs to see that this came from CONTEXT, not
+                // from a book name they never heard the preacher say.
+                candidates.push(Cand::single(
+                    r,
+                    0.88,
+                    DetectionMethod::Direct,
+                    Some(format!("verse {n}")),
+                ));
             }
         }
-        if let Some((r, score)) = sem.0.top_k(text, 1).into_iter().next() {
+        if let Some((r, score, terms)) = sem.0.top_k_explained(text, 1).into_iter().next() {
             if score >= SEMANTIC_FLOOR {
-                candidates.push(Cand::single(r, score.min(0.95), DetectionMethod::Semantic));
+                candidates.push(Cand::single(
+                    r,
+                    score.min(0.95),
+                    DetectionMethod::Semantic,
+                    Some(terms.join(" · ")),
+                ));
             }
         }
         if direct_empty {
             for r in detection::detect_ambiguous(text) {
-                candidates.push(Cand::single(r, 0.70, DetectionMethod::Ambiguous));
+                candidates.push(Cand::single(r, 0.70, DetectionMethod::Ambiguous, None));
             }
         }
         if candidates.is_empty() {
@@ -543,7 +566,7 @@ fn emit_detections(handle: &tauri::AppHandle, text: &str, now_ms: u64) {
                 RouteDecision::Drop => continue,
             };
             let end = passage_end(&conn, &c);
-            let mut fire = resolve_fire(&conn, c.r, c.conf, c.method, status, None);
+            let mut fire = resolve_fire(&conn, c.r, c.conf, c.method, status, None, c.matched);
 
             // Parsed, but the verse doesn't exist (garbled speech readily yields
             // "Psalms 23:99"). Demote to a suggestion rather than broadcasting a
@@ -1876,7 +1899,12 @@ fn set_rehearsal(
         // Clear AFTER flipping the flag, so it lands on the right side: entering
         // rehearsal clears the console preview only (the wall is untouched, as it
         // must be — the service may be running); leaving it clears the real wall.
-        channels::clear(&app);
+        //
+        // Reported, not propagated: the flag has already flipped, so returning Err
+        // here would leave the frontend's rehearsal store disagreeing with the
+        // backend's actual mode — a worse lie than the one being fixed. The operator
+        // is told the clear failed via the panic banner instead.
+        clear_or_report(&app);
         let _ = app.emit("rehearsal://changed", on);
     }
     Ok(())
@@ -2108,9 +2136,7 @@ fn build_stt(handle: &tauri::AppHandle) -> Option<SttEngine> {
             }
             // Spoken "clear the screen" / "blackout".
             if detection::detect_clear(&update.text) {
-                channels::clear(&handle);
-                forget_debounce(&handle);
-                persist_cue(&handle, "clear_screens", None);
+                clear_or_report(&handle);
                 return;
             }
             // Spoken in-passage jump — "chapter 5 verse 1", "verse 4".
@@ -2563,19 +2589,54 @@ fn set_channel_template(db: tauri::State<'_, Db>, id: i64, template_id: i64) -> 
 
 /// Operator "Clear all screens" / blackout — blank every output channel (D4).
 /// Instant, always available. Same effect the spoken "clear"/"blackout" reaches.
+///
+/// This RETURNS A RESULT, and the console must not claim the screens are clear
+/// unless it resolves Ok. It used to return `()`, which made a failed clear look
+/// exactly like a successful one — and the operator was shown "Screens cleared"
+/// while the verse was still in front of the congregation.
+///
+/// The debounce is forgotten and the cue recorded ONLY on success: if the screens
+/// did not actually clear, then the verse IS still showing, and "forget what is on
+/// screen" would be a lie told to the router as well as to the operator.
 #[tauri::command]
-fn clear_screens(app: tauri::AppHandle) {
-    channels::clear(&app);
+fn clear_screens(app: tauri::AppHandle) -> Result<(), String> {
+    channels::clear(&app)?;
     forget_debounce(&app);
     persist_cue(&app, "clear_screens", None);
+    Ok(())
 }
 
 /// Blackout every output (opaque black). The next fire/clear cancels it.
+/// Returns a Result for the same reason `clear_screens` does — see above.
 #[tauri::command]
-fn blackout(app: tauri::AppHandle) {
-    channels::black(&app);
+fn blackout(app: tauri::AppHandle) -> Result<(), String> {
+    channels::black(&app)?;
     forget_debounce(&app);
     persist_cue(&app, "blackout", None);
+    Ok(())
+}
+
+/// Clear the wall from a path that has nobody to return an error to — the STT
+/// thread acting on a spoken "clear the screen", and the exit from rehearsal.
+///
+/// Those are panic controls too, and they used to `let _ =` the clear. A spoken
+/// clear that failed was as silent as a keyed one that failed. There is no caller
+/// to hand a Result to here, so the failure is pushed to the operator instead:
+/// `output://panic_failed` raises the same banner the buttons and keys raise.
+fn clear_or_report(app: &tauri::AppHandle) {
+    match channels::clear(app) {
+        Ok(()) => {
+            forget_debounce(app);
+            persist_cue(app, "clear_screens", None);
+        }
+        Err(e) => {
+            eprintln!("clear failed: {e}");
+            let _ = app.emit(
+                "output://panic_failed",
+                format!("Clear screens failed: {e}"),
+            );
+        }
+    }
 }
 
 /// The screens are empty, so nothing is "already showing" any more — drop the
