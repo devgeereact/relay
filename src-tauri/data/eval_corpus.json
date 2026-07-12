@@ -329,6 +329,109 @@
       "text": "Ẹ jẹ́ ká kọ orin 3 pẹ̀lú ayọ̀",
       "expect": [],
       "note": "'Orin' means 'song'. In a church. Must never be an alias for Song of Solomon."
+    },
+    {
+      "id": "sw-num-chapter-verse",
+      "lang": "sw",
+      "text": "Yohana sura ya tatu, mstari wa kumi na sita",
+      "expect": [
+        "John 3:16"
+      ],
+      "note": "Fully in-language: 'chapter three, verse sixteen'. kumi na sita = 10+6."
+    },
+    {
+      "id": "sw-num-ordinal-first",
+      "lang": "sw",
+      "text": "Zaburi sura ya ishirini na tatu, mstari wa kwanza",
+      "expect": [
+        "Psalms 23:1"
+      ],
+      "note": "ishirini na tatu = 23. 'kwanza' is the ORDINAL 'first' — how a verse is actually said."
+    },
+    {
+      "id": "sw-num-aya",
+      "lang": "sw",
+      "text": "Warumi sura ya nane, aya ya ishirini na nane",
+      "expect": [
+        "Romans 8:28"
+      ]
+    },
+    {
+      "id": "sw-num-hundred-multiplier",
+      "lang": "sw",
+      "text": "Zaburi sura ya mia moja na kumi na tatu, mstari wa kwanza",
+      "expect": [
+        "Psalms 113:1"
+      ],
+      "note": "THE TRAP. 'mia moja' = 100 (hundred-one), NOT 101. The multiplier comes AFTER."
+    },
+    {
+      "id": "sw-num-two-hundred",
+      "lang": "sw",
+      "text": "Zaburi sura ya mia mbili, mstari wa kwanza",
+      "expect": [
+        "Psalms 200:1"
+      ],
+      "note": "'mia mbili' = 200. The English parser would have read 100+2 = 102 and shown the wrong psalm."
+    },
+    {
+      "id": "ha-num-chapter-verse",
+      "lang": "ha",
+      "text": "Yahaya sura ta uku, aya ta goma sha shida",
+      "expect": [
+        "John 3:16"
+      ],
+      "note": "goma sha shida = 10 sha 6 = 16."
+    },
+    {
+      "id": "ha-num-tens",
+      "lang": "ha",
+      "text": "Zabura sura ta ashirin da uku, aya ta farko",
+      "expect": [
+        "Psalms 23:1"
+      ],
+      "note": "ashirin da uku = 23. 'farko' = first."
+    },
+    {
+      "id": "ha-num-hundred",
+      "lang": "ha",
+      "text": "Zabura sura ta dari da goma sha uku, aya ta farko",
+      "expect": [
+        "Psalms 113:1"
+      ],
+      "note": "dari da goma sha uku = 100 + 13."
+    },
+    {
+      "id": "ha-num-two-hundred",
+      "lang": "ha",
+      "text": "Zabura sura ta dari biyu, aya ta farko",
+      "expect": [
+        "Psalms 200:1"
+      ],
+      "note": "'dari biyu' = 200, not 102. Multiplier after the hundred word."
+    },
+    {
+      "id": "ha-num-hooked",
+      "lang": "ha",
+      "text": "Yahaya sura ta huɗu, aya ta ɗaya",
+      "expect": [
+        "John 4:1"
+      ],
+      "note": "Hooked ɗ folds to d — ɗaya = 1."
+    },
+    {
+      "id": "neg-sw-common-words",
+      "lang": "sw",
+      "text": "Tunashukuru Mungu na familia yetu ya kanisa",
+      "expect": [],
+      "note": "'na' and 'ya' are everywhere in Swahili. They must never manufacture a reference."
+    },
+    {
+      "id": "neg-ha-common-words",
+      "lang": "ha",
+      "text": "Muna godiya ga Allah da iyalinmu na coci",
+      "expect": [],
+      "note": "'da' and 'na' are everywhere in Hausa."
     }
   ]
 }

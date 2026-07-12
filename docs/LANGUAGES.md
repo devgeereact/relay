@@ -103,22 +103,47 @@ book?**
 
 ---
 
-## Numbers are the next gap
+## Numbers
 
-Chapter and verse numbers spoken **in-language** are not yet parsed:
+**Swahili and Hausa now work fully in-language.** A preacher can say the book, the
+chapter and the verse without a word of English:
 
-> "Yohana **sura ya tatu**" (Swahili: John chapter three) → not detected.
+> ✅ "Yohana **sura ya tatu**, **mstari wa kumi na sita**" → John 3:16
+> ✅ "Zabura **sura ta ashirin da uku**, **aya ta farko**" → Psalms 23:1
 
-In practice this matters less than it sounds, because **code-switching is the
-normal case, not an edge case** (`CLAUDE.md`): a Yorùbá sermon routinely names the
-book in Yorùbá and the numbers in English, which already works:
+The words live in [`src-tauri/data/numerals.json`](../src-tauri/data/numerals.json)
+— data, not Rust, for the same reason as the book names. **A wrong numeral does not
+fail safely: it silently shows a different verse.** If `tisa` were mapped to 8
+instead of 9, nobody would find out until a service.
+
+### The one thing that is not like English
+
+**The hundred multiplier comes AFTER the hundred word.**
+
+```
+  mia moja  = 100   (literally "hundred one")   NOT 101
+  mia mbili = 200                               NOT 102
+  ɗari biyu = 200                               NOT 102
+```
+
+English puts it first ("two hundred"). So the English parser, run on Swahili, would
+read **"mia mbili" as 100 + 2 = 102** — and put **Psalm 102 on the wall when the
+preacher said Psalm 200.** There is a test that asserts exactly this, by name.
+
+A connector disambiguates: `mia moja` (no connector) is 1×100, while `mia na tatu`
+(connector) is 100+3. Both are handled.
+
+### Yorùbá numerals are still to do
+
+**Yorùbá is subtractive**, and genuinely hard: 16 is *ẹrìndínlógún* — literally
+*"four less than twenty"*. It is a real parsing problem, not a lookup table, and it
+is a great first contribution for a Yorùbá speaker.
+
+Until then Yorùbá relies on code-switching, which is **the normal case rather than
+an edge case** (`CLAUDE.md`) — a Yorùbá sermon routinely names the book in Yorùbá
+and the numbers in English, and that already works:
 
 > ✅ "Ẹ ṣí **Jòhánù** chapter **three** verse **sixteen**" → John 3:16
-
-Swahili and Hausa numerals are regular and would be straightforward. **Yorùbá
-numerals are subtractive** (16 = *ẹrìndínlógún*, literally "four less than
-twenty"), which is a genuinely interesting parsing problem and a great first
-contribution for a Yorùbá speaker.
 
 ---
 
@@ -153,7 +178,8 @@ In order of value:
    Relay's African-language accuracy is currently **unmeasured**, and you cannot
    improve what you have never baselined. This is the single most useful thing
    anyone can contribute.
-3. **In-language numerals**, starting with Swahili and Hausa.
+3. **Yorùbá numerals** — subtractive, and the last piece of in-language parsing.
+   (Swahili and Hausa are done.)
 4. **A verified fine-tune**, once (2) exists to measure it against.
 
 ---

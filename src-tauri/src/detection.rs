@@ -13,7 +13,7 @@
 //! ASR homophones ("free" → three). Semantic match + context memory are Phase 9.
 
 use serde::Serialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
 
 /// How a candidate was detected. This is NOT cosmetic metadata — the router
@@ -563,11 +563,12 @@ fn parse_reference(
     let mut used_kw = false;
     let mut phonetic = false;
 
-    // optional "chapter" / "chap" / "ch"
+    // optional "chapter" — in English or a tier-1 language ("sura ya tatu").
     if let Some(t) = tokens.get(i) {
-        if matches!(*t, "chapter" | "chap" | "ch") {
+        if is_chapter_word(t) {
             used_kw = true;
             i += 1;
+            i = skip_linkers(tokens, i); // "sura YA tatu"
         }
     }
 
@@ -591,7 +592,7 @@ fn parse_reference(
         let mut j = i;
         let mut used_v = false;
         while let Some(t) = tokens.get(j) {
-            if matches!(*t, "verse" | "verses" | "vs" | "v") {
+            if is_verse_word(t) {
                 used_v = true;
                 j += 1;
             } else {
@@ -611,11 +612,12 @@ fn parse_reference(
         let mut k = after1;
         let mut kw2 = used_kw;
         while let Some(t) = tokens.get(k) {
-            if matches!(*t, "verse" | "verses" | "vs" | "v" | ":") {
+            if is_verse_word(t) || *t == ":" {
                 if *t != ":" {
                     kw2 = true;
                 }
                 k += 1;
+                k = skip_linkers(tokens, k); // "mstari WA kwanza"
             } else {
                 break;
             }
@@ -677,11 +679,12 @@ fn parse_reference(
     // Colon-combined right after chapter? (e.g. tokens were "3" ":" "16" — rare)
     // optional "verse" / "verses" / "vs" / "v" / ":" separators
     while let Some(t) = tokens.get(i) {
-        if matches!(*t, "verse" | "verses" | "vs" | "v" | ":") {
+        if is_verse_word(t) || *t == ":" {
             if *t != ":" {
                 used_kw = true;
             }
             i += 1;
+            i = skip_linkers(tokens, i); // "aya TA farko"
         } else {
             break;
         }
@@ -820,19 +823,151 @@ enum NumWord {
     Teen(i64), // 10-19
     Ten(i64),  // 20,30,...,90
     Hundred,
+    /// Swahili "mia", Hausa "ɗari" — the multiplier comes AFTER ("mia mbili" =
+    /// 200, not 102). See parse_number.
+    HundredPost,
+}
+
+/// Spoken numbers in the tier-1 languages, from `data/numerals.json`.
+///
+/// Data, not Rust, for the same reason as the book names: a wrong numeral does
+/// not fail safely — it silently shows a DIFFERENT VERSE. If `tisa` were mapped
+/// to 8 instead of 9, nobody would find out until a service. A native speaker can
+/// fix a number in a one-line pull request without touching this file.
+///
+/// The GRAMMAR stays here; only the WORDS live in the data.
+pub struct Numerals {
+    pub ones: HashMap<String, i64>,
+    pub tens: HashMap<String, i64>,
+    pub hundred_post: HashSet<String>,
+    pub connectors: HashSet<String>,
+    pub chapter_words: HashSet<String>,
+    pub verse_words: HashSet<String>,
+    pub linkers: HashSet<String>,
+}
+
+static NUMERALS: OnceLock<Numerals> = OnceLock::new();
+
+fn numerals() -> &'static Numerals {
+    NUMERALS.get_or_init(|| {
+        const RAW: &str = include_str!("../data/numerals.json");
+        let mut n = Numerals {
+            ones: HashMap::new(),
+            tens: HashMap::new(),
+            hundred_post: HashSet::new(),
+            connectors: HashSet::new(),
+            chapter_words: HashSet::new(),
+            verse_words: HashSet::new(),
+            linkers: HashSet::new(),
+        };
+        let Ok(doc) = serde_json::from_str::<serde_json::Value>(RAW) else {
+            eprintln!("detection: numerals.json is not valid JSON — in-language numbers disabled");
+            return n;
+        };
+        let Some(langs) = doc.as_object() else {
+            return n;
+        };
+        for (lang, spec) in langs {
+            if lang.starts_with('_') {
+                continue;
+            }
+            let Some(spec) = spec.as_object() else {
+                continue;
+            };
+            let nums = |key: &str, into: &mut HashMap<String, i64>| {
+                if let Some(m) = spec.get(key).and_then(|v| v.as_object()) {
+                    for (w, v) in m {
+                        if let Some(v) = v.as_i64() {
+                            // normalize() folds the hooked letters and diacritics,
+                            // so `ɗaya` and `daya` become one key.
+                            into.insert(normalize(w), v);
+                        }
+                    }
+                }
+            };
+            nums("ones", &mut n.ones);
+            nums("tens", &mut n.tens);
+            let words = |key: &str, into: &mut HashSet<String>| {
+                for w in spec
+                    .get(key)
+                    .and_then(|v| v.as_array())
+                    .into_iter()
+                    .flatten()
+                {
+                    if let Some(w) = w.as_str() {
+                        into.insert(normalize(w));
+                    }
+                }
+            };
+            words("hundred_post", &mut n.hundred_post);
+            words("connectors", &mut n.connectors);
+            words("chapter_words", &mut n.chapter_words);
+            words("verse_words", &mut n.verse_words);
+            words("linkers", &mut n.linkers);
+        }
+        n
+    })
+}
+
+/// "chapter" in any tier-1 language: Swahili "sura", Hausa "sura"/"babi".
+fn is_chapter_word(t: &str) -> bool {
+    matches!(t, "chapter" | "chap" | "ch") || numerals().chapter_words.contains(t)
+}
+
+/// "verse" in any tier-1 language: Swahili "mstari"/"aya", Hausa "aya".
+fn is_verse_word(t: &str) -> bool {
+    matches!(t, "verse" | "verses" | "vs" | "v") || numerals().verse_words.contains(t)
+}
+
+/// Grammatical glue between a keyword and its number — "sura YA tatu", "mstari WA
+/// kwanza", "aya TA farko". Carries no meaning; skipped only when it sits directly
+/// between a chapter/verse word and its number, never anywhere else, because "ya"
+/// and "na" are among the most common words in Swahili and would otherwise swallow
+/// half a sentence.
+fn skip_linkers(tokens: &[&str], mut i: usize) -> usize {
+    while let Some(t) = tokens.get(i) {
+        if numerals().linkers.contains(*t) {
+            i += 1;
+        } else {
+            break;
+        }
+    }
+    i
+}
+
+/// Connectors that glue a spoken number together without carrying a value.
+///
+/// English "and" ("one hundred AND thirteen"), Swahili "na" ("kumi NA tatu"),
+/// Hausa "sha" (teens: "goma SHA uku") and "da" ("ashirin DA uku").
+///
+/// Only ever skipped when a number word genuinely follows, so "one hundred and
+/// God is good" does not silently swallow the "and".
+fn word_is_and(t: &str) -> bool {
+    t == "and" || numerals().connectors.contains(t)
 }
 
 /// Parse a spoken/written number starting at `start`. Returns
 /// (value, next_index, phonetic_correction_applied) or None.
 ///
-/// A finite state walk so that "three sixteen" parses as 3 (stopping before
+/// A finite state walk, so "three sixteen" parses as 3 (stopping before
 /// "sixteen", which is a separate verse) while "twenty eight" → 28 and
-/// Is this the filler "and" inside a spoken number ("one hundred and thirteen")?
-fn word_is_and(t: &str) -> bool {
-    t == "and"
-}
-
 /// "one hundred nineteen" → 119.
+///
+/// ## Swahili and Hausa put the hundred MULTIPLIER AFTER the hundred word
+///
+/// This is the one place their grammar diverges from English, and it is not
+/// cosmetic:
+///
+/// ```text
+///   mia moja  = 100   (literally "hundred one")   NOT 101
+///   ɗari biyu = 200                               NOT 102
+/// ```
+///
+/// English puts the multiplier first ("two hundred"). So the English parser, run
+/// on Swahili, would read "mia mbili" as 100 + 2 = **102** — and put Psalm 102 on
+/// the wall when the preacher said Psalm 200. `HundredPost` exists for exactly
+/// that, and a connector disambiguates the two readings: "mia moja" (no connector)
+/// is 1×100, while "mia na tatu" (connector) is 100+3.
 fn parse_number(tokens: &[&str], start: usize) -> Option<(i64, usize, bool)> {
     // Bare digits: take one token.
     if let Some(t) = tokens.get(start) {
@@ -847,6 +982,9 @@ fn parse_number(tokens: &[&str], start: usize) -> Option<(i64, usize, bool)> {
         AfterTen,
         AfterHundred,
         AfterHundredTen,
+        /// Just saw a Swahili/Hausa hundred word ("mia", "ɗari"). The MULTIPLIER
+        /// may still be coming — "mia mbili" is 200, not 102.
+        AfterHundredPost,
         Complete,
     }
     let mut state = St::Start;
@@ -854,6 +992,9 @@ fn parse_number(tokens: &[&str], start: usize) -> Option<(i64, usize, bool)> {
     let mut idx = start;
     let mut consumed = 0;
     let mut phonetic = false;
+    // Did a connector immediately precede this word? It is what tells "mia moja"
+    // (1×100) apart from "mia na tatu" (100+3) — see the fn doc.
+    let mut saw_connector = false;
 
     while let Some(&raw) = tokens.get(idx) {
         if tokens[idx].parse::<i64>().is_ok() {
@@ -869,8 +1010,19 @@ fn parse_number(tokens: &[&str], start: usize) -> Option<(i64, usize, bool)> {
         //
         // Only skipped when a number word genuinely follows, so "one hundred and
         // God is good" doesn't silently swallow the "and".
+        // Connectors carry no value, they just glue: English "one hundred AND
+        // thirteen", Swahili "kumi NA tatu", Hausa "goma SHA uku" / "ashirin DA
+        // uku". The FSM used to BREAK on "and" and return what it had, so "sam one
+        // hundred and thirteen verse one" auto-fired PSALM 100:1 — a wrong verse,
+        // on the wall, at full confidence. (Nigerian, Kenyan and British English
+        // all say "a hundred AND thirteen" by default. American English drops it,
+        // which is presumably why it was never noticed.)
+        //
+        // Only skipped when a number word genuinely follows, so "one hundred and
+        // God is good" doesn't silently swallow the "and". And never from Start —
+        // a bare "na"/"da" is an ordinary word, not the beginning of a number.
         if word_is_and(raw)
-            && matches!(state, St::AfterHundred)
+            && !matches!(state, St::Start)
             && tokens
                 .get(idx + 1)
                 .map(|t| classify_num_word(correct_homophone(t).0).is_some())
@@ -878,6 +1030,7 @@ fn parse_number(tokens: &[&str], start: usize) -> Option<(i64, usize, bool)> {
         {
             idx += 1;
             consumed += 1;
+            saw_connector = true;
             continue;
         }
         let (word, ph) = correct_homophone(raw);
@@ -900,6 +1053,31 @@ fn parse_number(tokens: &[&str], start: usize) -> Option<(i64, usize, bool)> {
             (St::Start, NumWord::Hundred) => {
                 value = 100;
                 St::AfterHundred
+            }
+            // "mia" / "ɗari" alone is 100; a multiplier may follow.
+            (St::Start, NumWord::HundredPost) => {
+                value = 100;
+                St::AfterHundredPost
+            }
+            // "mia MBILI" = 200. No connector → this is the multiplier, not an
+            // addend. Getting this wrong shows Psalm 102 for Psalm 200.
+            (St::AfterHundredPost, NumWord::Ones(v)) if !saw_connector => {
+                value = v * 100;
+                St::AfterHundred
+            }
+            // "mia NA tatu" = 103. A connector means it is an addend after all.
+            (St::AfterHundredPost, NumWord::Ones(v)) => {
+                value += v;
+                St::Complete
+            }
+            (St::AfterHundredPost, NumWord::Teen(v)) => {
+                value += v;
+                St::Complete
+            }
+            // "ɗari da GOMA sha uku" = 113.
+            (St::AfterHundredPost, NumWord::Ten(v)) => {
+                value += v;
+                St::AfterHundredTen
             }
             (St::AfterTen, NumWord::Ones(v)) => {
                 value += v;
@@ -931,6 +1109,7 @@ fn parse_number(tokens: &[&str], start: usize) -> Option<(i64, usize, bool)> {
         consumed += 1;
         idx += 1;
         state = next;
+        saw_connector = false; // only ever applies to the word directly after it
         if matches!(state, St::Complete) {
             break;
         }
@@ -985,7 +1164,21 @@ fn classify_num_word(w: &str) -> Option<NumWord> {
         "eighty" => NumWord::Ten(80),
         "ninety" => NumWord::Ten(90),
         "hundred" => NumWord::Hundred,
-        _ => return None,
+        // Tier-1 languages. Words come from data/numerals.json so a native
+        // speaker can correct a number without touching Rust — a wrong numeral
+        // does not fail safely, it silently shows a different verse.
+        w => {
+            let n = numerals();
+            if let Some(&v) = n.ones.get(w) {
+                NumWord::Ones(v)
+            } else if let Some(&v) = n.tens.get(w) {
+                NumWord::Ten(v)
+            } else if n.hundred_post.contains(w) {
+                NumWord::HundredPost
+            } else {
+                return None;
+            }
+        }
     };
     Some(v)
 }
@@ -2108,7 +2301,8 @@ mod tier1_languages {
     #[test]
     fn code_switching_mid_sentence_still_detects() {
         assert_eq!(refs("E jọ̀wọ́, ẹ ṣí Jòhánù 3:16"), ["John 3:16"]);
-        assert_eq!(refs("Tugeukie Yohana sura ya tatu"), Vec::<String>::new()); // Swahili numerals: not yet
+        // In-language numerals now work: "chapter three" in Swahili.
+        assert_eq!(refs("Tugeukie Yohana sura ya tatu"), ["John 3:1"]);
         assert_eq!(
             refs("Let us turn to Yohana chapter 3 verse 16"),
             ["John 3:16"]
@@ -2276,6 +2470,106 @@ mod alias_table_integrity {
                 "{text:?} should resolve to {want}, got {:?}",
                 got.first().map(|m| &m.reference.book)
             );
+        }
+    }
+}
+
+#[cfg(test)]
+mod numeral_table_integrity {
+    use super::*;
+
+    /// A wrong numeral does not fail safely — it silently shows a DIFFERENT VERSE.
+    /// If "tisa" were mapped to 8 instead of 9, nobody would find out until a
+    /// service. These are the cheap structural checks that catch a fat-finger.
+    #[test]
+    fn numeral_values_are_sane() {
+        let n = numerals();
+        assert!(!n.ones.is_empty() && !n.tens.is_empty());
+        for (w, v) in &n.ones {
+            assert!((1..=9).contains(v), "ones {w:?} = {v}, must be 1-9");
+        }
+        for (w, v) in &n.tens {
+            assert!(
+                (10..=90).contains(v) && v % 10 == 0,
+                "tens {w:?} = {v}, must be a multiple of 10 in 10..=90"
+            );
+        }
+    }
+
+    /// A word cannot be both a number and the glue between numbers, or it would
+    /// be consumed twice and change the value.
+    #[test]
+    fn no_word_is_both_a_number_and_a_connector() {
+        let n = numerals();
+        for c in &n.connectors {
+            assert!(
+                !n.ones.contains_key(c),
+                "{c:?} is both a connector and a one"
+            );
+            assert!(
+                !n.tens.contains_key(c),
+                "{c:?} is both a connector and a ten"
+            );
+            assert!(!n.hundred_post.contains(c));
+        }
+        for l in &n.linkers {
+            assert!(!n.ones.contains_key(l), "{l:?} is both a linker and a one");
+            assert!(!n.tens.contains_key(l), "{l:?} is both a linker and a ten");
+        }
+    }
+
+    /// The whole point of `hundred_post`. English puts the multiplier BEFORE the
+    /// hundred word; Swahili and Hausa put it AFTER. Read the wrong way, "mia
+    /// mbili" (200) becomes 102 — and Psalm 102 goes on the wall instead of 200.
+    #[test]
+    fn the_hundred_multiplier_comes_after_not_before() {
+        let n = |t: &str| {
+            let norm = normalize(t);
+            let toks: Vec<&str> = norm.split_whitespace().collect();
+            parse_number(&toks, 0).map(|(v, _, _)| v)
+        };
+        // Swahili
+        assert_eq!(n("mia moja"), Some(100), "mia moja is 100, not 101");
+        assert_eq!(n("mia mbili"), Some(200), "mia mbili is 200, NOT 102");
+        assert_eq!(n("mia tano"), Some(500));
+        assert_eq!(n("mia moja na kumi na tatu"), Some(113));
+        // Hausa
+        assert_eq!(n("dari"), Some(100));
+        assert_eq!(n("dari biyu"), Some(200), "dari biyu is 200, NOT 102");
+        assert_eq!(n("ɗari biyu"), Some(200), "hooked ɗ must fold");
+        assert_eq!(n("dari da goma sha uku"), Some(113));
+        // English is unchanged — multiplier BEFORE.
+        assert_eq!(n("two hundred"), Some(200));
+        assert_eq!(n("one hundred and thirteen"), Some(113));
+    }
+
+    #[test]
+    fn tens_and_units_join_correctly() {
+        let n = |t: &str| {
+            let norm = normalize(t);
+            let toks: Vec<&str> = norm.split_whitespace().collect();
+            parse_number(&toks, 0).map(|(v, _, _)| v)
+        };
+        assert_eq!(n("kumi na tatu"), Some(13)); // sw teens
+        assert_eq!(n("ishirini na tatu"), Some(23)); // sw tens
+        assert_eq!(n("themanini na mbili"), Some(82));
+        assert_eq!(n("goma sha uku"), Some(13)); // ha teens
+        assert_eq!(n("ashirin da uku"), Some(23)); // ha tens
+        assert_eq!(n("tis'in da tara"), Some(99));
+    }
+
+    /// The connectors and linkers ("na", "ya", "da", "ta") are among the most
+    /// common words in these languages. A bare one must never start a number, or
+    /// ordinary speech would manufacture verse references.
+    #[test]
+    fn a_bare_connector_is_not_a_number() {
+        let n = |t: &str| {
+            let norm = normalize(t);
+            let toks: Vec<&str> = norm.split_whitespace().collect();
+            parse_number(&toks, 0).map(|(v, _, _)| v)
+        };
+        for w in ["na", "da", "ya", "wa", "ta", "sha", "and"] {
+            assert_eq!(n(w), None, "{w:?} alone must not parse as a number");
         }
     }
 }
