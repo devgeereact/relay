@@ -47,6 +47,21 @@ export const live = writable(null);
 // clear). Reset by the next fire/clear. Mirrors the output://black broadcast.
 export const screenBlack = writable(false);
 
+/**
+ * REHEARSAL — the operator is practising, and nothing reaches the congregation.
+ *
+ * Backed by Rust (channels.rs) rather than by a flag in this file, because the
+ * sandbox has to hold at the point content leaves the machine, not at the point a
+ * button was clicked. This store only MIRRORS it, for the UI.
+ *
+ * It has to be impossible to be wrong about. Both mistakes are bad and they are
+ * bad in opposite directions: rehearsing while you think you're live means the
+ * projector stays blank all through the sermon; being live while you think you're
+ * rehearsing means your practice run is on the wall in front of everyone. So the
+ * app says so, loudly and constantly, whenever it is on.
+ */
+export const rehearsing = writable(false);
+
 // Rolling transcript: `partial` is the in-progress line, `finals` are closed
 // utterances (silence-delimited). Kept across capture stop/start.
 export const transcript = writable({ partial: '', finals: [] });
@@ -59,6 +74,38 @@ export const detections = writable([]);
 
 // Output templates (Phase 8), loaded from the DB.
 export const templates = writable([]);
+
+/**
+ * THE PLAYHEAD — where the operator is in the service plan, and whether that is
+ * what the congregation is actually looking at.
+ *
+ * Two separate facts, and conflating them causes real damage in both directions:
+ *
+ *   { cueId, slide }  the position. SURVIVES everything. It is where → resumes
+ *                     from. Wiping it on Esc would mean the next → restarts the
+ *                     plan at cue 1 — putting the opening countdown back on the
+ *                     wall at the end of the service.
+ *
+ *   onAir             is plan content on the screens RIGHT NOW. Cleared the moment
+ *                     anything else takes the screen (a cleared screen, a blackout,
+ *                     a manual fire, an accepted AI suggestion).
+ *
+ * `onAir` is what the transport mode reads. With a plan cue live, → steps the
+ * plan; once the preacher goes off-script and the operator accepts a suggested
+ * verse, → walks that passage instead — and Esc hands the transport back to the
+ * plan, at the position it was already at.
+ *
+ * This lives in the store, not in a view, because EVERY path that takes plan
+ * content off the screen has to clear `onAir`, and a view will eventually forget.
+ * One did: only the Planner's own ◼ button reset it, and the panic keys — which
+ * are owned by the app shell — did not.
+ */
+export const liveCue = writable({ cueId: null, slide: 0, onAir: false });
+
+/** Plan content is no longer what the congregation is looking at. Keeps the position. */
+function leavePlan() {
+  liveCue.update((c) => (c.onAir ? { ...c, onAir: false } : c));
+}
 
 // Narrow slices of `capture`. A component that only needs one flag should
 // subscribe to one flag — `derived` only notifies when the value it selects
@@ -141,6 +188,7 @@ export async function initAudio() {
       await listen('output://content', (e) => { live.set(e.payload); screenBlack.set(false); });
       await listen('output://clear', () => { live.set(null); screenBlack.set(false); });
       await listen('output://black', () => screenBlack.set(true));
+      await listen('rehearsal://changed', (e) => rehearsing.set(e.payload === true));
       // A device failure (permission denied, unplugged) is non-fatal: surface
       // it and reflect that capture stopped, but never freeze.
       await listen('audio://error', (e) =>
@@ -180,6 +228,31 @@ export async function setDetection(enabled) {
   } catch {
     /* backend absent */
   }
+}
+
+/** Read rehearsal state from the backend (which owns it). */
+export async function loadRehearsal() {
+  try {
+    const call = await invoke();
+    rehearsing.set((await call('get_rehearsal')) === true);
+  } catch {
+    /* backend absent */
+  }
+}
+
+/**
+ * Enter or leave rehearsal.
+ *
+ * This THROWS on refusal, and the caller must show the message. Rust refuses to
+ * rehearse while a service is being recorded, and refuses to record a service while
+ * rehearsing — and a refusal that is swallowed into a `catch {}` (as most wrappers
+ * here do) would leave the operator believing they had flipped a switch that had
+ * not moved. That is the one thing this feature cannot afford.
+ */
+export async function setRehearsal(on) {
+  const call = await invoke();
+  await call('set_rehearsal', { on });
+  rehearsing.set(on);
 }
 
 /** Start (or resume) recording a service. Returns its id. */
@@ -296,6 +369,9 @@ export async function stopCapture() {
 
 /** Operator confirms a suggestion → fire it to the screens + nudge the gate. */
 export async function confirmDetection(reference) {
+  // Accepting an AI suggestion also takes us out of the plan — same reason as
+  // manualFire.
+  leavePlan();
   detections.update((list) => list.filter((d) => d.reference !== reference));
   try {
     const call = await invoke();
@@ -321,6 +397,10 @@ export async function dismissDetection(reference) {
 /** Manual override: fire a free-text reference now (throws if unparseable).
  *  `stageNote` is an optional confidence-monitor note for this cue. */
 export async function manualFire(reference, stageNote = null) {
+  // A hand-typed verse is not a plan cue. If the arrows still thought we were in
+  // the plan, the next → would jump back to a slide the congregation has moved on
+  // from.
+  leavePlan();
   const call = await invoke();
   await call('manual_fire', { reference, stageNote });
 }
@@ -815,6 +895,9 @@ export async function navVerse(direction) {
 
 /** Blank every output channel (operator "Clear all screens" / Esc). */
 export async function clearScreens() {
+  // Reset the transport FIRST, so it happens even if the backend call fails. A
+  // panic key that half-works is worse than one that doesn't.
+  leavePlan();
   try {
     const call = await invoke();
     await call('clear_screens');
@@ -825,6 +908,7 @@ export async function clearScreens() {
 
 /** Blackout every output (opaque). Next fire/clear cancels it. */
 export async function blackScreen() {
+  leavePlan();
   try {
     const call = await invoke();
     await call('blackout');
@@ -885,4 +969,65 @@ export async function getCrashReporting() {
 export async function setCrashReporting(enabled, dsn) {
   const call = await invoke();
   return await call('set_crash_reporting', { enabled, dsn: dsn ?? '' });
+}
+
+// ── Speech model acquisition ────────────────────────────────────────────────
+//
+// The single most important flow in the product for a new user. Until this
+// existed, turning the AI on meant opening a terminal and running `curl` to
+// fetch a 148 MB file into a folder that doesn't exist in a packaged app — so
+// for an actual church volunteer, Relay's whole reason to exist silently did
+// not work.
+
+/** { id, downloaded, total } while a model download is in flight, else null. */
+export const modelProgress = writable(null);
+/** Last download error, in plain language. */
+export const modelError = writable(null);
+
+/** The catalogue, with `installed` resolved for this machine. */
+export async function listModels() {
+  try {
+    const call = await invoke();
+    return await call('list_models');
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Download a model. Resolves when it is installed AND speech recognition has
+ * been brought up — no restart. Rejects with a sentence a volunteer can act on.
+ */
+export async function downloadModel(id) {
+  const call = await invoke();
+  const { listen } = await import('@tauri-apps/api/event');
+
+  modelError.set(null);
+  modelProgress.set({ id, downloaded: 0, total: 0 });
+
+  const stop = [
+    await listen('model://progress', (e) => modelProgress.set(e.payload)),
+    await listen('model://error', (e) => modelError.set(e.payload)),
+  ];
+  try {
+    await call('download_model', { id });
+    // Bring STT up in-place. A 148 MB download that ends in "now quit and
+    // reopen the app" is a miserable last step for a first-time user.
+    const loaded = await call('load_stt_model');
+    const stt = await call('stt_status');
+    capture.update((s) => ({ ...s, stt }));
+    return loaded;
+  } finally {
+    stop.forEach((fn) => fn());
+    modelProgress.set(null);
+  }
+}
+
+export async function cancelModelDownload() {
+  try {
+    const call = await invoke();
+    await call('cancel_model_download');
+  } catch {
+    /* nothing running */
+  }
 }

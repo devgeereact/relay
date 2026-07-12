@@ -1,0 +1,132 @@
+name: Release
+
+# Build, SIGN, notarize and publish Relay for macOS and Windows.
+#
+# Why signing is not optional: an unsigned build is stopped dead by macOS
+# Gatekeeper ("Relay is damaged and can't be opened") and warned about by Windows
+# SmartScreen. A church volunteer does not push past those screens — they close
+# the tab and go back to typing verses into PowerPoint. Signing is the price of
+# admission, and there is no way around it.
+#
+# This workflow will FAIL LOUDLY until the secrets in docs/RELEASING.md are set.
+# That is deliberate. A release that silently produces unsigned artifacts is worse
+# than no release, because you don't find out until a user can't open it.
+#
+# Trigger: push a tag, e.g.  git tag v0.2.0 && git push origin v0.2.0
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write # create the release and upload artifacts
+
+jobs:
+  release:
+    name: ${{ matrix.label }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Universal binary — one download that works on both Apple Silicon and
+          # Intel. Churches run whatever laptop they were donated.
+          - os: macos-latest
+            label: macOS (universal)
+            args: --target universal-apple-darwin
+          - os: windows-latest
+            label: Windows
+            args: ''
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.os == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      # whisper-rs compiles whisper.cpp from source.
+      - name: Install CMake
+        uses: lukka/get-cmake@latest
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - run: npm ci
+
+      - name: Fail early if the updater key is missing
+        shell: bash
+        run: |
+          if grep -q "PASTE_YOUR_TAURI_UPDATER_PUBLIC_KEY_HERE" src-tauri/tauri.updater.conf.json; then
+            echo "::error::The updater public key has not been set."
+            echo "Run 'npm run tauri signer generate -- -w ~/.tauri/relay.key' and follow docs/RELEASING.md."
+            exit 1
+          fi
+
+      - name: Import the Apple signing certificate
+        if: matrix.os == 'macos-latest'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          echo "$APPLE_CERTIFICATE" | base64 --decode > cert.p12
+          security create-keychain -p actions build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p actions build.keychain
+          security import cert.p12 -k build.keychain -P "$APPLE_CERTIFICATE_PASSWORD" \
+            -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k actions build.keychain
+          rm cert.p12
+
+      - name: Build, sign, notarize and publish
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+          # ── Update signing (both platforms) ──────────────────────────────
+          # Signs the update bundle so Relay will only ever install an update
+          # that WE published. Without this, anyone who can MITM the update
+          # endpoint can push code to a church's machine.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+          # ── macOS: code signing + notarization ───────────────────────────
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }} # app-specific password
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+          # ── Windows: code signing ────────────────────────────────────────
+          # Tauri reads these from tauri.conf/bundle.windows, or via a
+          # signCommand. See docs/RELEASING.md — Windows certificates are more
+          # varied than Apple's and the right answer depends on which you buy.
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+
+          # whisper.cpp needs std::filesystem (macOS 10.15+). Tauri's release
+          # profile otherwise passes 10.13 and ggml fails to compile — this is
+          # why `tauri build` never once succeeded before it was fixed.
+          MACOSX_DEPLOYMENT_TARGET: '11.0'
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: 'Relay ${{ github.ref_name }}'
+          releaseBody: |
+            Download the installer for your machine below.
+
+            **First run:** Relay will offer to download the speech model
+            (~148 MB, one time). Everything else works immediately.
+          releaseDraft: true # you approve it before churches see it
+          prerelease: false
+          includeUpdaterJson: true # publishes latest.json for the auto-updater
+          args: ${{ matrix.args }} --config src-tauri/tauri.updater.conf.json

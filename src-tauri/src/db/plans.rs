@@ -190,32 +190,52 @@ pub fn remove_plan_item(conn: &Connection, id: i64) -> rusqlite::Result<()> {
 }
 
 /// Swap a cue with its neighbor in `direction` (-1 up, +1 down). No-op at ends.
+/// Move a cue one place up or down the plan.
+///
+/// Finds the ADJACENT cue by order, not by position arithmetic.
+///
+/// It used to look for a neighbour at exactly `position + direction`. But deleting
+/// a cue leaves a gap — positions become 0, 1, 3 — and then moving the cue at 3
+/// looked for position 2, found nothing, and **silently did nothing at all.** The
+/// operator drags a cue and it just doesn't move, with no error and no explanation.
+/// Rebuilding the plan was the only way out.
 pub fn move_plan_item(conn: &Connection, id: i64, direction: i64) -> rusqlite::Result<()> {
     let (plan_id, pos): (i64, i64) = conn.query_row(
         "SELECT plan_id, position FROM plan_items WHERE id = ?1",
         [id],
         |r| Ok((r.get(0)?, r.get(1)?)),
     )?;
-    let target = pos + direction;
-    let neighbor: Option<i64> = conn
-        .query_row(
-            "SELECT id FROM plan_items WHERE plan_id = ?1 AND position = ?2",
-            (plan_id, target),
-            |r| r.get(0),
-        )
+
+    // The nearest cue in that direction — whatever its position number happens to
+    // be. Gaps are irrelevant.
+    let sql = if direction < 0 {
+        "SELECT id, position FROM plan_items
+          WHERE plan_id = ?1 AND position < ?2
+          ORDER BY position DESC LIMIT 1"
+    } else {
+        "SELECT id, position FROM plan_items
+          WHERE plan_id = ?1 AND position > ?2
+          ORDER BY position ASC LIMIT 1"
+    };
+    let neighbor: Option<(i64, i64)> = conn
+        .query_row(sql, (plan_id, pos), |r| Ok((r.get(0)?, r.get(1)?)))
         .optional()?;
-    if let Some(nid) = neighbor {
-        let tx = conn.unchecked_transaction()?;
-        tx.execute(
-            "UPDATE plan_items SET position = ?1 WHERE id = ?2",
-            (target, id),
-        )?;
-        tx.execute(
-            "UPDATE plan_items SET position = ?1 WHERE id = ?2",
-            (pos, nid),
-        )?;
-        tx.commit()?;
-    }
+
+    // None = already at the top or bottom. Correctly a no-op.
+    let Some((nid, npos)) = neighbor else {
+        return Ok(());
+    };
+
+    let tx = conn.unchecked_transaction()?;
+    tx.execute(
+        "UPDATE plan_items SET position = ?1 WHERE id = ?2",
+        (npos, id),
+    )?;
+    tx.execute(
+        "UPDATE plan_items SET position = ?1 WHERE id = ?2",
+        (pos, nid),
+    )?;
+    tx.commit()?;
     Ok(())
 }
 

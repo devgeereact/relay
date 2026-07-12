@@ -64,6 +64,10 @@ relay-project/
 │           ├── mod.rs      — open/migrate (user_version ladder), per-OS paths, re-exports
 │           └── templates · channels · profiles · verses · settings · plans · songs · library · services
 ├── src/                    — Svelte frontend
+│   ├── lib/views/Live.svelte  — THE run surface (Console + Planner-run, merged)
+│   ├── lib/views/ServicePlanner.svelte — BUILD a plan. Cannot fire to an output.
+│   ├── lib/OutputWall.svelte  — the 4-monitor wall. ONE copy; both views had drifted.
+│   ├── lib/plan.js         — cue/slide logic + the transport (pure, tested)
 │   ├── lib/stores/capture.js — Tauri commands + event listeners + stores
 │   ├── lib/shortcuts.js    — the ONE global keydown listener (panic keys live here)
 │   ├── lib/crash.js        — crash boundary + recovery panel (plain DOM, not Svelte)
@@ -89,7 +93,7 @@ relay-project/
 
 Full pipeline works end to end: **listen → transcribe (local whisper) → detect (direct + semantic + context memory) → gate (router) → render on independently-templated output screens (native window + kiosk/OBS over WebSocket)**, fully offline. All `src-tauri/src/*.rs` are implemented.
 
-Done: Phases 0–10 + service-session persistence + full KJV corpus + template engine + console UX. Parked (honest limits, not faked): **NDI** (needs proprietary SDK — `open_ndi_output` returns a clear error), **neural paraphrase embedder** (TF-IDF is the current seam behind `SemanticIndex::top_k`), **African-language STT fine-tunes** (base multilingual is weak on Yoruba/Hausa), and writing full detection history is service-scoped only.
+Done: Phases 0–10 + service-session persistence + full KJV corpus + template engine + console UX + **rehearsal mode** (practise a whole service with nothing reaching the congregation — gated in `channels::broadcast_content`, the one function content leaves the machine through; see `docs/DECISIONS.md` §18). Parked (honest limits, not faked): **NDI** (needs proprietary SDK — `open_ndi_output` returns a clear error), **neural paraphrase embedder** (TF-IDF is the current seam behind `SemanticIndex::top_k`), **African-language STT fine-tunes** (base multilingual is weak on Yoruba/Hausa), and writing full detection history is service-scoped only.
 
 ## Run / build
 
@@ -102,13 +106,22 @@ npm run tauri dev        # desktop app + dev server on :5032, kiosk WS on :8031
 - **CMake is required** to build `whisper-rs` (compiles whisper.cpp). This machine has **no Homebrew**; cmake 3.31.6 is installed at `~/.local/bin/cmake`. Prefix cargo with `PATH="/Users/gideonakinlotan/.local/bin:$PATH"` for any build/test/clippy. `rustfmt`+`clippy` added via `rustup component add`. (See global memory `relay-build-toolchain`.)
 - **This machine cannot screenshot the app** (Chrome ext account mismatch + no Screen Recording perm). Verify via `cargo test`, `vite build`, backend stdout, and — for the webview — the **boot heartbeat**: `App.svelte` calls `greet` on mount and `main.rs` prints `console: webview up (operator)`. That line in the log is the proof the webview loaded, ran its JS, and reached the Tauri bridge. **No line = blank/broken console.** (Global memory `relay-no-screenshot-path`.)
 - **`tauri dev` does NOT exercise the CSP.** In dev, Tauri loads the Vite `devUrl`; the `app.security.csp` policy only applies when Tauri serves the bundled assets. **Any CSP change must be verified with `npm run tauri build`** and by launching the packaged binary — a policy that blocks media, fonts or the IPC bridge looks completely fine in `tauri dev`.
+- **Debugging audio / STT without a human at the mic.** Every audio bug so far was invisible in the code and reproducible only with a specific microphone in a specific room. The tools:
+  - `RELAY_RECORD_WAV=/path/x.wav` — write the CLEANED stream (exactly what the VAD and whisper see) to a WAV on Stop. Sermon audio: off by default, no UI, never uploaded (PRIVACY.md).
+  - `RELAY_STT_TIMING=1` — per-decode lag / decode ms / gap between updates / window size / voiced-vs-silent counts. Content-free.
+  - `RELAY_AUDIO_RMS=1` — what the voice gate actually sees (rms distribution, voiced ratio, denoise on/off).
+  - `RELAY_BENCH_WAV=… cargo test audio::gate stt::bench -- --ignored --nocapture` — replay real speech through the real front-end at any mic level (`RELAY_BENCH_SCALE`) and noise (`RELAY_BENCH_NOISE`). This is how the "deaf to a quiet preacher" bug was found and proved.
 - **STT models** live in `/models/` (gitignored). `ggml-base.bin` (multilingual, preferred) and `ggml-base.en.bin`. Resolved via `RELAY_MODEL_PATH` → repo `models/` → app-data. See README.
 - **Full KJV** is bundled at `src-tauri/data/kjv.json` (`include_str!`, ~4.5MB, committed — required for build). 66 books, 31,100 verses.
 - **SQLite** dev DB: `~/Library/Application Support/com.relay.app/relay.db`. `open()` runs forward-fill migrations (templates, channels, full-Bible reimport, vw→cqw template reset).
 
 ## Ports (global registry, NN=03)
 
-`5032` = operator console (app surface, Vite strictPort) · `8031` = kiosk/OBS WebSocket hub. OBS/vMix: add a **Browser Source** → `http://localhost:5032/output.html?template_id=<n>` (live over WS, no NDI). Same URL for a Raspberry-Pi kiosk (swap `localhost` for the host IP).
+`5032` = operator console (Vite dev server, strictPort) · `8031` = kiosk/OBS WebSocket hub · `8032` = embedded HTTP server (output/stage pages + `/media/<id>`).
+
+**OBS/vMix/kiosk browser source → `http://<host>:8032/output.html?template_id=<n>`.**
+
+**NOT 5032.** `5032` is Vite. It exists ONLY under `npm run tauri dev`; in the packaged app there is no server on it at all, so a browser source pointed there shows a blank screen with no error and nothing in any log. The docs said 5032 for months and were only caught by launching the actual release binary. `Channels.svelte` has always emitted 8032 correctly, so the Copy-URL button was right while every doc was wrong.
 
 ## Architecture rules learned the HARD WAY — do not regress these
 
@@ -125,10 +138,16 @@ These caused real, hours-long crashes/freezes. Keep them.
 9. **Never hand-roll an app-data path.** Use `db::app_data_dir()`. `stt.rs` once had its own macOS-only `$HOME/Library/Application Support` variant, so on packaged **Windows** the STT model was never found and Relay ran with speech recognition silently dead. Windows has no `HOME`.
 10. **Only `DetectionMethod::Direct` may auto-fire.** A TF-IDF cosine is not a probability — gating it with a threshold gates it against noise. Semantic/Ambiguous candidates are capped at `Suggest` in `router.rs::decide`, at any score. Do not "fix" this by raising a number.
 11. **Panic keys live in `lib/shortcuts.js`, mounted once at `App.svelte`** — never per-view. When they were per-view, Escape did nothing on the Templates/Library/Settings tabs. And `Space` means *advance* app-wide, nothing else.
-12. **`persist_fire` takes the real `status`.** Manual/confirmed fires are `'manual'`, not `'auto'` — the self-calibrating router learns from that column, so mislabelling human decisions as machine ones trains it on a falsified log.
+12. **Audio levels are LEARNED, never assumed** (`docs/DECISIONS.md` §19). Nothing in the audio path may compare a signal to an absolute level. Three thresholds that each looked reasonable (`VAD_RMS_THRESHOLD = 0.008`; `energy_prob = rms / 0.12` needing 0.066 to register as speech; `MAX_GAIN = 6`) together made Relay **deaf to a quiet preacher, silently** — the auto-gain would not lift him because it did not believe he was speaking, and it did not believe he was speaking because he had not been lifted. Measured, same words: 94% voiced at studio level, **2% at a church-laptop level**. Nothing errored; the meter still moved; the transcript just turned to nonsense. Speech is a *rise above the room*, and it is **contrast, not volume**. Verify with `cargo test audio::gate -- --ignored` — the voiced ratio must stay flat across a 100× range of input level.
+13. **Score STT changes through the DETECTOR, never by reading the transcript.** A grep-the-text scorer rated a hallucinated `Peter 8 verse 28` a success (wrong book, right number) and a correct `chapter eight verse twenty-eight` a failure (spelled out — which `detection.rs` parses fine). It flattered the option that hallucinated. The only question is *which verse would Relay put on the screen*. (`stt::bench::prompt_sweep`.)
+14. **Measure the decoder before "improving" it.** Whisper decodes the 8s window in ~207 ms against a 1000 ms budget, and beam-5 recovers exactly the same references as greedy for ~50% more time. `Decode::Beam` exists, is benchmarked, and is deliberately NOT used.
+15. **`persist_fire` takes the real `status`.** Manual/confirmed fires are `'manual'`, not `'auto'` — the self-calibrating router learns from that column, so mislabelling human decisions as machine ones trains it on a falsified log.
 
 ## Frontend shape
 
+- **Tabs: Live · Channels · Templates · Library · Planner · Settings · Help.** There is no Console tab any more — `Live` IS the console. **Build** a plan in Planner (a Tuesday job; nothing there can reach an output). **Run** it in Live (a Sunday job). The merge exists because an operator running a plan on a separate tab could not see the AI's suggestions — and the preacher going off-script is the entire product.
+- **The transport is MODE-AWARE and says so.** `→` steps a plan SLIDE when plan content is on air, and walks the passage (VERSE) when a detected/manual verse is. The mode is printed in the transport bar; the same key silently meaning two things is how the wrong thing reaches a congregation.
+- **`liveCue` = `{ cueId, slide, onAir }` — position and on-air-ness are SEPARATE facts.** The panic keys clear only `onAir`. Wiping the position would make the next `→` restart the plan at cue 1 — the opening countdown, back on the wall, at the end of the service. A cue that is where `→` resumes but is NOT on screen reads **CUED**, in grey. Never amber. Amber means live and is never allowed to lie.
 - One store: `src/lib/stores/capture.js` (writables: `capture`, `transcript`, `detections` = pending suggestions only, `live` = what's on screen, `templates`). All Tauri command wrappers + event listeners live here.
 - **`src/lib/TemplateRender.svelte` is the ONE renderer** for both the fullscreen output and the Templates editor preview → WYSIWYG. Sizes are **cqw** (container-query %) so a template scales identically at any output size. Output page is **transparent** so a Transparent-background template keys out for OBS/ATEM.
 - Tauri events: `audio://chunk` (throttled level meter), `stt://transcript`, `detection://match`, `output://content`, `output://clear`, `template://updated`, `audio://error`.

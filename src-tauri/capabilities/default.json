@@ -2,6 +2,13 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Core permissions for the Relay main window and native output windows (output-*). Add capabilities here as real backend commands land (see PROMPT.md build phases).",
-  "windows": ["main", "output-*"],
-  "permissions": ["core:default"]
+  "windows": [
+    "main",
+    "output-*"
+  ],
+  "permissions": [
+    "core:default",
+    "updater:default",
+    "process:allow-restart"
+  ]
 }

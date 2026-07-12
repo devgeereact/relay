@@ -1,0 +1,76 @@
+{
+  "_readme": [
+    "Spoken numbers in Relay's tier-1 languages, so a preacher can say the chapter",
+    "and verse in their own language: 'Yohana sura ya tatu, mstari wa kumi na sita'.",
+    "",
+    "DATA, NOT RUST — same reason as book_aliases.json. A wrong numeral does not",
+    "fail safely: it silently shows a DIFFERENT VERSE. If 'tisa' were mapped to 8",
+    "instead of 9, nobody would notice until a service. A native speaker can correct",
+    "a number here in a one-line pull request without touching Rust.",
+    "",
+    "THE GRAMMAR IS IN THE CODE; ONLY THE WORDS ARE HERE. The shape of these two",
+    "languages happens to be the same, which is why one state machine handles both:",
+    "",
+    "  tens + connector + ones     ishirini na tatu = 23   ashirin da uku = 23",
+    "  ten  + connector + ones     kumi na tatu     = 13   goma sha uku   = 13",
+    "",
+    "THE ONE THING THAT IS NOT LIKE ENGLISH, and it matters:",
+    "",
+    "  The hundred MULTIPLIER COMES AFTER the hundred word.",
+    "",
+    "      mia moja  = 100   (literally 'hundred one')   NOT 101",
+    "      mia mbili = 200                               NOT 102",
+    "      ɗari biyu = 200                               NOT 102",
+    "",
+    "  English puts it before ('two hundred'), so the English parser would have read",
+    "  'mia mbili' as 100 + 2 = 102 and shown Psalm 102 when the preacher said 200.",
+    "  `hundred_post` marks the words that behave this way.",
+    "",
+    "  A connector disambiguates: 'mia moja' (no connector) is 1×100, while",
+    "  'mia na tatu' (connector) is 100+3. Both are handled.",
+    "",
+    "Sources: Swahili — Omniglot / Languages and Numbers. Hausa — Omniglot /",
+    "Languages and Numbers / teachyourselfhausa.com."
+  ],
+
+  "sw": {
+    "_language": "Kiswahili (Swahili)",
+    "ones": {
+      "moja": 1, "mbili": 2, "tatu": 3, "nne": 4, "tano": 5,
+      "sita": 6, "saba": 7, "nane": 8, "tisa": 9,
+      "kwanza": 1, "pili": 2
+    },
+    "_ones_note": "kwanza/pili are the ORDINALS (first/second). 'mstari wa kwanza' = verse one — how a preacher actually says it. From 3 up, the ordinal and cardinal are the same word.",
+    "tens": {
+      "kumi": 10, "ishirini": 20, "thelathini": 30, "arobaini": 40,
+      "hamsini": 50, "sitini": 60, "sabini": 70, "themanini": 80, "tisini": 90
+    },
+    "hundred_post": ["mia"],
+    "connectors": ["na"],
+    "chapter_words": ["sura"],
+    "verse_words": ["mstari", "aya"],
+    "linkers": ["ya", "wa", "cha", "la"],
+    "_linkers_note": "Grammatical glue: 'sura YA tatu', 'mstari WA kwanza'. Skipped between a keyword and its number — never treated as numbers themselves."
+  },
+
+  "ha": {
+    "_language": "Hausa",
+    "ones": {
+      "daya": 1, "ɗaya": 1, "biyu": 2, "uku": 3, "hudu": 4, "huɗu": 4,
+      "biyar": 5, "shida": 6, "bakwai": 7, "takwas": 8, "tara": 9,
+      "farko": 1, "fari": 1
+    },
+    "_ones_note": "farko/fari = 'first'. 'aya ta farko' = verse one. Hooked ɗ and ƙ fold to d and k automatically, so both spellings are safe to list.",
+    "tens": {
+      "goma": 10, "ashirin": 20, "talatin": 30, "arba'in": 40,
+      "hamsin": 50, "sittin": 60, "saba'in": 70, "tamanin": 80, "tis'in": 90
+    },
+    "hundred_post": ["dari", "ɗari"],
+    "connectors": ["da", "sha"],
+    "_connectors_note": "'sha' builds the teens (goma sha uku = 13); 'da' joins tens and units (ashirin da uku = 23).",
+    "chapter_words": ["sura", "babi"],
+    "verse_words": ["aya"],
+    "linkers": ["ta", "na"],
+    "_linkers_note": "'sura TA uku', 'aya TA farko'."
+  }
+}

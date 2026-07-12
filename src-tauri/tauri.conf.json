@@ -25,7 +25,12 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["msi", "dmg"],
+    "targets": [
+      "app",
+      "dmg",
+      "nsis",
+      "msi"
+    ],
     "macOS": {
       "minimumSystemVersion": "11.0"
     },
@@ -35,6 +40,15 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "createUpdaterArtifacts": false
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "",
+      "endpoints": [
+        "https://github.com/devgeereact/relay/releases/latest/download/latest.json"
+      ]
+    }
   }
 }

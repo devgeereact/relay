@@ -308,9 +308,18 @@ fn is_gloss(inner: &str) -> bool {
 /// (they hold only the old 15-verse dev seed). FK-safe: nulls any detection
 /// verse links first, then replaces the verses.
 pub(super) fn reimport_full_kjv(conn: &Connection) -> rusqlite::Result<()> {
-    conn.execute("UPDATE detections SET verse_id = NULL", [])?;
-    conn.execute("DELETE FROM verses", [])?;
-    let tid = kjv_translation_id(conn)?;
-    import_full_kjv(conn, tid)?;
+    // ATOMIC. This DELETES EVERY VERSE and then re-imports 31,100 of them, and it
+    // runs during a migration on app start. Without a transaction, a crash — or a
+    // power cut, in a market where power cuts are ordinary — leaves the church with
+    // an EMPTY BIBLE and an app that can no longer show a single verse.
+    //
+    // A transaction makes the whole thing all-or-nothing: either the new corpus
+    // lands, or the old one is still there. There is no state in between.
+    let tx = conn.unchecked_transaction()?;
+    tx.execute("UPDATE detections SET verse_id = NULL", [])?;
+    tx.execute("DELETE FROM verses", [])?;
+    let tid = kjv_translation_id(&tx)?;
+    import_full_kjv(&tx, tid)?;
+    tx.commit()?;
     Ok(())
 }

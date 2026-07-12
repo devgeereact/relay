@@ -1,22 +1,23 @@
 <script>
-  // Service Planner — build a plan from Library content, then RUN it. The editor
-  // is a Mission-Control surface: the plan's cues (left), the selected cue's full
-  // slide flow (centre), and the live OUTPUT on every styled screen (right).
-  // Each cue is { cue_type, label, payload }; firing a slide broadcasts through
-  // the one shared pipeline, so the output monitors here are the real thing —
-  // the same TemplateRender + active templates the Console and OBS clients use.
-  import { onMount, onDestroy } from 'svelte';
-  import TemplateRender from '../TemplateRender.svelte';
-  import { registerContext } from '../shortcuts.js';
-  import { monitorAccent } from '../templates.js';
+  // Service Planner — BUILD a plan. Running it is not this screen's job.
+  //
+  // It used to be both, and that was the mistake: the operator ran the service
+  // from here, which meant they were sitting on a tab that could not show them an
+  // AI suggestion. The preacher would go off-script, Relay would detect the verse,
+  // and the suggestion would appear on a tab nobody was looking at.
+  //
+  // So the two jobs are split along the line that actually exists in the church's
+  // week. Building a plan is a Tuesday task: unhurried, fiddly, lots of searching
+  // and reordering. Running it is a Sunday task: one screen, big targets, no
+  // typing, nothing that can be dragged by accident. They want opposite designs.
+  //
+  // Build here. Run in LIVE.
+  import { onMount } from 'svelte';
   import { songCue } from '../cues.js';
   import { setSession } from '../session.js';
+  import { TYPE, payloadOf, slidesOf, slideAccent, cueSub } from '../plan.js';
   import {
     capture,
-    live,
-    listActiveTemplates,
-    liveContent,
-    liveTemplateOverride,
     listPlans,
     createPlan,
     deletePlan,
@@ -32,22 +33,8 @@
     getSong,
     listArrangements,
     listMedia,
-    fireMedia,
     listAnnouncements,
-    startCountdown,
-    manualFire,
-    fireContent,
-    clearScreens,
-    setStageNext,
   } from '../stores/capture.js';
-
-  const TYPE = {
-    scripture: { label: 'SCRIPTURE', color: 'var(--v-cyan)', trig: 'AUTO-DETECT' },
-    song: { label: 'SONG', color: 'var(--v-amber)', trig: 'SUGGEST-ONLY' },
-    media: { label: 'MEDIA', color: 'var(--v-amethyst)', trig: 'MANUAL/LOOP' },
-    announce: { label: 'NOTICE', color: 'var(--v-rose)', trig: 'MANUAL/TIMER' },
-    countdown: { label: 'COUNTDOWN', color: 'var(--v-cyan)', trig: 'TIMER' },
-  };
 
   // ── plans list ──
   let plans = [];
@@ -60,16 +47,6 @@
   let selId = null; // cue loaded in the centre slide flow
   let msg = '';
   let leftMode = 'cues'; // 'cues' | 'add'
-  let activeTpls = [];
-
-  // live state (what's on the screens)
-  let liveCueId = null;
-  let liveSlide = 0;
-
-  // Mirror the live position into the persisted session, so a reload — or a
-  // crash followed by Recover — brings the operator back to the cue and slide
-  // they were actually on, mid-service, instead of to a blank Console tab.
-  $: setSession({ planId: openPlan?.id ?? null, liveCueId, liveSlide });
 
   // one search (add mode) — scripture + songs + media together
   let addQ = '';
@@ -81,20 +58,8 @@
   let allAnnounce = []; // full announcement list, filtered locally
   let addSearching = false;
 
-  // Slide transport. Registered as CONTEXT actions with the app-shell shortcut
-  // registry (lib/shortcuts.js) rather than a private window listener — Escape
-  // (clear) and B (blackout) are global and owned by the shell, so they keep
-  // working on every tab. Only advance/back are ours, and only while a plan is
-  // actually open in the run editor.
-  let unregisterKeys;
-  onMount(() => {
-    refresh();
-    unregisterKeys = registerContext({
-      next: () => openPlan && stepLive(1),
-      prev: () => openPlan && stepLive(-1),
-    });
-  });
-  onDestroy(() => unregisterKeys?.());
+  onMount(refresh);
+
   async function refresh() {
     plans = await listPlans();
   }
@@ -126,11 +91,8 @@
   async function open(p) {
     openPlan = p;
     selId = null;
-    liveCueId = null;
-    liveSlide = 0;
     leftMode = 'cues';
     msg = '';
-    activeTpls = await safeActive();
     allMedia = await listMedia().catch(() => []);
     allAnnounce = await listAnnouncements().catch(() => []);
     await loadItems();
@@ -140,13 +102,6 @@
     openPlan = null;
     items = [];
     refresh();
-  }
-  async function safeActive() {
-    try {
-      return await listActiveTemplates();
-    } catch {
-      return [];
-    }
   }
   async function loadItems() {
     items = await planItems(openPlan.id);
@@ -259,149 +214,9 @@
     reorderPlan(openPlan.id, arr.map((i) => i.id));
   }
 
-  function payloadOf(item) {
-    try {
-      return JSON.parse(item.payload_json || '{}');
-    } catch {
-      return {};
-    }
-  }
-
-  // The slides of a cue, normalized for the centre grid. Every content type
-  // reduces to { tag, label, text } — no per-type branch downstream.
-  function slidesOf(item) {
-    if (!item) return [];
-    const p = payloadOf(item);
-    if (item.cue_type === 'song') {
-      return (p.sections || []).map((s) => ({ tag: s.tag, label: s.label, text: s.lyrics }));
-    }
-    if (item.cue_type === 'scripture') {
-      return [{ tag: p.verse != null ? String(p.verse) : 'SCR', label: p.reference || item.label, text: p.text || '' }];
-    }
-    if (item.cue_type === 'announce') {
-      return [{ tag: 'NOTE', label: item.label, text: p.body || p.text || '' }];
-    }
-    if (item.cue_type === 'media') {
-      return [{ tag: 'BG', label: item.label, text: '' }];
-    }
-    if (item.cue_type === 'countdown') {
-      const m = Number(p.minutes) || 5;
-      return [{ tag: '⏱', label: p.label || item.label, text: `${m}:00` }];
-    }
-    return [];
-  }
-
-  // Group colour — matches the Song Editor (Verse→cyan, Chorus→gold, Bridge→
-  // amethyst, Pre-Chorus/Intro→emerald, Outro/Tag→rose, else neutral).
-  function slideAccent(tag) {
-    const t = (tag || '').toUpperCase();
-    if (/^\d+$/.test(t)) return 'var(--v-faint)';
-    if (t.startsWith('V')) return 'var(--v-cyan)';
-    if (t.startsWith('PC')) return 'var(--v-emerald)';
-    if (t.startsWith('C')) return 'var(--v-amber)';
-    if (t.startsWith('BR') || /^B\d?$/.test(t)) return 'var(--v-amethyst)';
-    if (t.startsWith('INT') || t.startsWith('IL')) return 'var(--v-emerald)';
-    if (t.startsWith('OUT') || t.startsWith('END') || t.startsWith('TAG') || t.startsWith('REF')) return 'var(--v-rose)';
-    if (t === 'NOTE') return 'var(--v-rose)';
-    if (t === 'BG') return 'var(--v-amethyst)';
-    return 'var(--v-cyan)';
-  }
-
-  // Fire slide `i` of `item` to every screen. This is the take.
-  async function fireSlide(item, i) {
-    const p = payloadOf(item);
-    const slides = slidesOf(item);
-    const s = slides[i] || slides[0];
-    if (!s) return;
-    liveCueId = item.id;
-    liveSlide = i;
-    selId = item.id;
-    const stageNote = p.stage_note || null; // operator's confidence-monitor note
-    try {
-      if (item.cue_type === 'scripture') {
-        await manualFire(p.reference || item.label, stageNote);
-      } else if (item.cue_type === 'media') {
-        if (!p.media_id) {
-          msg = 'Media asset missing — re-add it from the Library.';
-          return;
-        }
-        await fireMedia(p.media_id);
-      } else if (item.cue_type === 'countdown') {
-        await startCountdown(Number(p.minutes) || 5, p.label || 'Service begins in', p.done || 'Welcome');
-      } else if (item.cue_type === 'song') {
-        // Lyrics carry NO title/section on the live screen — that stays in the
-        // operator UI. Only the lyric lines go out (centered by the template).
-        await fireContent('', s.text, 'song', stageNote);
-      } else {
-        await fireContent(item.label, s.text, 'announce', stageNote);
-      }
-      msg = `Live: ${s.label}`;
-      pushNext(item.id, i);
-    } catch (e) {
-      msg = String(e);
-    }
-  }
-
-  // Compute what comes after (cueId, slideIdx) and push it to the stage monitor:
-  // the next slide in the same cue, else the first slide of the next cue.
-  function nextOf(cueId, slideIdx) {
-    const idx = items.findIndex((it) => it.id === cueId);
-    if (idx < 0) return null;
-    const here = items[idx];
-    const slides = slidesOf(here);
-    if (slideIdx + 1 < slides.length) return labelled(here, slides[slideIdx + 1]);
-    const nx = items[idx + 1];
-    if (nx) {
-      const ns = slidesOf(nx)[0];
-      return ns ? labelled(nx, ns) : { label: nx.label, text: '' };
-    }
-    return null;
-  }
-  function labelled(item, slide) {
-    const p = payloadOf(item);
-    const label = item.cue_type === 'song' ? `${p.title} · ${slide.label}` : slide.label || item.label;
-    return { label, text: slide.text || slide.label };
-  }
-  function pushNext(cueId, slideIdx) {
-    const n = nextOf(cueId, slideIdx);
-    setStageNext(n?.label ?? null, n?.text ?? null);
-  }
-
-  async function stepLive(dir) {
-    const idx = items.findIndex((i) => i.id === liveCueId);
-    if (idx < 0) {
-      if (items[0]) await fireSlide(items[0], 0);
-      return;
-    }
-    const item = items[idx];
-    const n = slidesOf(item).length;
-    const ns = liveSlide + dir;
-    if (ns >= 0 && ns < n) {
-      await fireSlide(item, ns);
-      return;
-    }
-    const ni = idx + dir;
-    if (ni >= 0 && ni < items.length) {
-      const next = items[ni];
-      const last = dir > 0 ? 0 : Math.max(0, slidesOf(next).length - 1);
-      await fireSlide(next, last);
-    }
-  }
-  async function clearLive() {
-    try {
-      await clearScreens();
-    } catch {
-      /* backend absent */
-    }
-    liveCueId = null;
-    liveSlide = 0;
-    setStageNext(null, null);
-    msg = 'Cleared';
-  }
-
-  function cueSub(c) {
-    const ty = TYPE[c.cue_type] || TYPE.scripture;
-    return c.cue_type === 'song' ? `SONG · ${slidesOf(c).length} SLIDES` : `${ty.label} · ${ty.trig}`;
+  /** Hand this plan to the LIVE tab and go there. The one path from build to run. */
+  function runPlan() {
+    setSession({ planId: openPlan.id, liveCueId: null, liveSlide: 0, activeTab: 'live' });
   }
 
   $: selCue = items.find((i) => i.id === selId) || null;
@@ -419,11 +234,8 @@
     const id = selCue.id;
     await setPlanNote(id, noteDraft);
     await loadItems();
-    // If this cue is live, re-push so the stage monitor picks up the new note.
-    if (liveCueId === id) await fireSlide(items.find((i) => i.id === id), liveSlide);
   }
   $: selSlides = slidesOf(selCue);
-  $: liveIndex = items.findIndex((i) => i.id === liveCueId);
   $: flowHeader = !selCue
     ? ''
     : selCue.cue_type === 'song'
@@ -484,27 +296,27 @@
 {:else}
   <!-- ══ RUN EDITOR (Mission-Control layout) ══ -->
   <div class="sp-run">
-    <!-- transport bar -->
-    <div class="sp-bar">
+    <!-- build bar -->
+    <div class="sp-bldbar">
       <button class="r-btn ghost sm" on:click={back}>
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
         Plans
       </button>
       <span class="sp-plantitle">{openPlan.title}</span>
+      <span class="r-mono sp-cuecount">{items.length} cues</span>
       {#if msg}<span class="sp-msg r-mono">{msg}</span>{/if}
       <span class="sp-spring"></span>
-      <span class="sp-livecount r-mono" class:on={liveIndex >= 0}>
-        {#if liveIndex >= 0}<span class="sp-livedot"></span>LIVE {liveIndex + 1}/{items.length}{:else}STANDBY · {items.length}{/if}
-      </span>
-      <span class="sp-kbd r-mono" title="Arrow keys / Space advance · Esc clears">←/→ · Space</span>
-      <div class="sp-transport">
-        <button class="r-iconbtn" title="Previous slide (←)" on:click={() => stepLive(-1)} disabled={!items.length}>‹</button>
-        <button class="r-btn amber sm" on:click={() => stepLive(1)} disabled={!items.length}>Next ›</button>
-        <button class="r-iconbtn sp-del" title="Clear output (Esc)" on:click={clearLive}>◼</button>
-      </div>
+      <!-- The only path from build to run. Nothing on this screen goes to the
+           congregation's wall — that is deliberate. An operator arranging next
+           Sunday's songs on a Tuesday must not be able to fire one onto a screen
+           by clicking the wrong thing. -->
+      <button class="r-btn amber sm" on:click={runPlan} disabled={!items.length}>
+        Run this plan
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>
+      </button>
     </div>
 
-    <div class="sp-grid3">
+    <div class="sp-grid2">
       <!-- LEFT: service plan / add -->
       <div class="sp-col sp-plan">
         <div class="sp-colhead">
@@ -520,7 +332,7 @@
             {#if items.length}
               {#each items as c, i (c.id)}
                 {@const ty = TYPE[c.cue_type] || TYPE.scripture}
-                <div class="sp-cue" class:sel={c.id === selId} class:islive={c.id === liveCueId} class:dragover={dragOverId === c.id}
+                <div class="sp-cue" class:sel={c.id === selId} class:dragover={dragOverId === c.id}
                   draggable={true}
                   on:dragstart={(e) => onDragStart(c.id, e)}
                   on:dragover|preventDefault={() => (dragOverId = c.id)}
@@ -540,15 +352,11 @@
                       </span>
                     {/if}
                   </span>
-                  {#if c.id === liveCueId}
-                    <span class="r-badge emerald sp-livebadge"><span class="bd"></span>LIVE</span>
-                  {:else}
-                    <span class="sp-cuebtns">
-                      <button class="sp-mini" title="Up" disabled={i === 0} on:click={(e) => move(c.id, -1, e)}>↑</button>
-                      <button class="sp-mini" title="Down" disabled={i === items.length - 1} on:click={(e) => move(c.id, 1, e)}>↓</button>
-                      <button class="sp-mini danger" title="Remove" on:click={(e) => remove(c.id, e)}>✕</button>
-                    </span>
-                  {/if}
+                  <span class="sp-cuebtns">
+                    <button class="sp-mini" title="Up" disabled={i === 0} on:click={(e) => move(c.id, -1, e)}>↑</button>
+                    <button class="sp-mini" title="Down" disabled={i === items.length - 1} on:click={(e) => move(c.id, 1, e)}>↓</button>
+                    <button class="sp-mini danger" title="Remove" on:click={(e) => remove(c.id, e)}>✕</button>
+                  </span>
                 </div>
               {/each}
             {:else}
@@ -661,12 +469,11 @@
           {#if selCue}
             <div class="sp-slides">
               {#each selSlides as s, i}
-                <button class="sp-slide r-focus" class:islive={selCue.id === liveCueId && i === liveSlide} on:click={() => fireSlide(selCue, i)}>
+                <div class="sp-slide">
                   <span class="sp-slidetag" style="color:{slideAccent(s.tag)};border-color:{slideAccent(s.tag)}">{s.tag}</span>
                   <span class="sp-slidetext">{s.text || s.label}</span>
                   <span class="sp-slideidx r-mono">{String(i + 1).padStart(2, '0')}</span>
-                  {#if selCue.id === liveCueId && i === liveSlide}<span class="sp-slidelive r-mono">◉ LIVE</span>{/if}
-                </button>
+                </div>
               {/each}
             </div>
           {:else}
@@ -675,32 +482,6 @@
         </div>
       </div>
 
-      <!-- RIGHT: live output on every screen -->
-      <div class="sp-col sp-outcol">
-        <div class="sp-colhead"><span class="r-mono sp-outtitle">Output</span><span class="r-mono sp-colcount">{$live ? 'LIVE' : 'STANDBY'}</span></div>
-        <div class="sp-monwrap r-scroll">
-          {#if activeTpls.length}
-            {#each activeTpls as tpl, i (tpl.id)}
-              {@const acc = monitorAccent(i)}
-              <div class="sp-mon a-{acc}" class:on={$live}>
-                <div class="sp-monhead">
-                  <span class="sp-monlbl">{$live ? 'LIVE' : 'IDLE'} · {tpl.name}</span>
-                  {#if i === 0}
-                    <span class="sp-monnav">
-                      <button class="sp-navbtn" title="Previous" on:click={() => stepLive(-1)}>‹</button>
-                      <button class="sp-navbtn" title="Next" on:click={() => stepLive(1)}>›</button>
-                    </span>
-                  {/if}
-                </div>
-                <div class="sp-moncanvas"><TemplateRender template={$liveTemplateOverride ?? tpl} content={$liveContent} /></div>
-                <div class="sp-monfoot r-mono">{$live ? $live.reference + ($live.translation ? ' · ' + $live.translation : '') : '—'}</div>
-              </div>
-            {/each}
-          {:else}
-            <div class="sp-empty r-empty">No active output styles — activate up to 4 in the <b>Templates</b> tab.</div>
-          {/if}
-        </div>
-      </div>
     </div>
   </div>
 {/if}
@@ -737,24 +518,15 @@
 
   /* run editor — fill the scroll area; each column scrolls internally */
   .sp-run{ display:flex; flex-direction:column; gap:12px; height:100%; min-height:0; }
-  .sp-bar{ display:flex; align-items:center; gap:12px; flex:0 0 auto; }
+  .sp-bldbar{ display:flex; align-items:center; gap:12px; flex:0 0 auto; }
   .sp-plantitle{ font-family:var(--f-head); font-size:20px; font-weight:700; color:var(--v-txt); }
+  .sp-cuecount{ font-size:10px; letter-spacing:.06em; color:var(--v-dim); padding:5px 10px; border-radius:99px;
+    background:var(--v-surf2); border:1px solid var(--v-line2); }
   .sp-spring{ flex:1; }
   .sp-msg{ font-size:11px; color:var(--v-emerald); max-width:240px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .sp-livecount{ display:inline-flex; align-items:center; gap:7px; font-size:10px; letter-spacing:.08em; color:var(--v-dim);
-    padding:6px 11px; border-radius:99px; background:var(--v-surf2); border:1px solid var(--v-line2); }
-  .sp-livecount.on{ color:var(--v-emerald); border-color:rgba(16,185,129,.35); background:var(--v-emerald-soft); }
-  .sp-livedot{ width:6px; height:6px; border-radius:50%; background:var(--v-emerald); box-shadow:0 0 7px var(--v-emerald);
-    animation:sp-pulse 1.6s ease-in-out infinite; }
-  @keyframes sp-pulse{ 0%,100%{opacity:1} 50%{opacity:.4} }
-  .sp-transport{ display:flex; align-items:center; gap:6px; }
-  .sp-kbd{ font-size:9px; letter-spacing:.06em; color:var(--v-faint); padding:5px 9px; border-radius:7px;
-    background:var(--v-surf2); border:1px solid var(--v-line); }
-  @media (max-width:1100px){ .sp-kbd{ display:none; } }
 
-  .sp-grid3{ flex:1; min-height:0; display:grid; grid-template-columns:264px minmax(0,1fr) 340px; gap:12px; }
-  @media (max-width:1200px){ .sp-grid3{ grid-template-columns:230px minmax(0,1fr) 280px; } }
-  @media (max-width:980px){ .sp-run{ height:auto; } .sp-grid3{ grid-template-columns:1fr; } }
+  .sp-grid2{ flex:1; min-height:0; display:grid; grid-template-columns:300px minmax(0,1fr); gap:12px; }
+  @media (max-width:980px){ .sp-run{ height:auto; } .sp-grid2{ grid-template-columns:1fr; } }
 
   .sp-col{ background:var(--v-surf); border:1px solid var(--v-line); border-radius:13px; display:flex; flex-direction:column;
     min-height:0; overflow:hidden; }
@@ -775,16 +547,12 @@
     background:var(--v-surf2); cursor:pointer; text-align:left; transition:border-color .12s, background .12s; }
   .sp-cue:hover{ border-color:var(--v-line2); }
   .sp-cue.sel{ border-color:rgba(245,166,35,.4); }
-  .sp-cue.islive{ border-color:var(--v-emerald); background:var(--v-emerald-soft); }
-  .sp-cue.dragover{ border-color:var(--v-amber); box-shadow:inset 0 2px 0 var(--v-amber); }
   .sp-cue :global(.sp-num){ cursor:grab; }
   .sp-bar{ width:3px; align-self:stretch; min-height:24px; border-radius:3px; flex:0 0 auto; }
   .sp-num{ font-size:9.5px; color:var(--v-faint); width:16px; flex:0 0 auto; }
   .sp-cuebody{ flex:1; min-width:0; }
   .sp-cuetitle{ display:block; font-weight:600; font-size:12.5px; color:var(--v-txt); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .sp-cuemeta{ display:block; font-size:8px; color:var(--v-faint); margin-top:2px; letter-spacing:.03em; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .sp-livebadge{ padding:3px 8px; flex:0 0 auto; }
-  .sp-cuebtns{ display:flex; gap:3px; flex:0 0 auto; }
   .sp-mini{ width:22px; height:22px; border-radius:6px; display:grid; place-items:center; cursor:pointer; font-size:11px;
     background:var(--v-surf3); border:1px solid var(--v-line); color:var(--v-dim); }
   .sp-mini:hover:not(:disabled){ color:var(--v-amber); border-color:var(--v-line2); }
@@ -802,8 +570,6 @@
     font-family:var(--f-body); font-size:12.5px; }
   .sp-addsearch input::placeholder{ color:var(--v-faint); }
   .sp-reslbl{ margin:10px 0 2px; }
-  .sp-collabel{ margin-bottom:8px; }
-  .sp-soon{ margin-top:18px; }
   .sp-hint{ font-size:11px; color:var(--v-faint); padding:4px 0; }
 
   /* countdown quick-add */
@@ -866,33 +632,9 @@
   @media (max-width:980px){ .sp-slides{ grid-template-columns:repeat(3, 1fr); } }
   @media (max-width:640px){ .sp-slides{ grid-template-columns:repeat(2, 1fr); } }
   .sp-slide{ position:relative; aspect-ratio:16/9; border-radius:12px; border:1px solid var(--v-line); background:var(--v-surf2);
-    padding:16px; display:flex; align-items:center; justify-content:center; text-align:center; cursor:pointer; overflow:hidden;
-    transition:border-color .12s, box-shadow .12s; }
-  .sp-slide:hover{ border-color:var(--v-amber); }
-  .sp-slide.islive{ border-color:var(--v-emerald); box-shadow:0 0 0 1px var(--v-emerald), 0 10px 28px -12px rgba(16,185,129,.5); }
-  .sp-slidetag{ position:absolute; top:11px; left:11px; font-family:var(--f-mono); font-size:9.5px; font-weight:700;
-    letter-spacing:.04em; padding:3px 8px; border-radius:6px; border:1px solid currentColor; }
+    padding:16px; display:flex; align-items:center; justify-content:center; text-align:center; overflow:hidden; }
   .sp-slidetext{ font-family:var(--f-serif); font-size:14px; line-height:1.4; color:#f4e4c8; white-space:pre-line;
     display:-webkit-box; -webkit-line-clamp:4; -webkit-box-orient:vertical; overflow:hidden; }
   .sp-slideidx{ position:absolute; left:12px; bottom:9px; font-size:10px; color:var(--v-faint); }
-  .sp-slidelive{ position:absolute; right:11px; bottom:9px; font-size:8.5px; color:var(--v-emerald); }
-  .sp-empty{ padding:26px 18px; text-align:center; }
 
-  /* right output monitors */
-  .sp-outtitle{ font-size:11px; letter-spacing:.13em; text-transform:uppercase; color:var(--v-dim); }
-  .sp-monwrap{ flex:1; overflow-y:auto; padding:12px; display:flex; flex-direction:column; gap:12px;
-    scrollbar-width:thin; scrollbar-color:var(--v-surf3) transparent; }
-  .sp-mon{ border:1px solid var(--v-line); border-radius:12px; overflow:hidden; background:#050506; --c:var(--v-amber); }
-  .sp-mon.a-amber{ --c:var(--v-amber); } .sp-mon.a-cyan{ --c:var(--v-cyan); }
-  .sp-mon.a-amethyst{ --c:var(--v-amethyst); } .sp-mon.a-rose{ --c:var(--v-rose); }
-  .sp-mon.on{ border-color:transparent; box-shadow:0 0 0 1px var(--c), 0 10px 26px -14px var(--c); }
-  .sp-monhead{ display:flex; align-items:center; justify-content:space-between; padding:7px 11px; }
-  .sp-monlbl{ font-family:var(--f-mono); font-size:8.5px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; color:var(--c); }
-  .sp-monnav{ display:flex; gap:5px; }
-  .sp-navbtn{ width:22px; height:22px; border-radius:6px; display:grid; place-items:center; cursor:pointer;
-    background:var(--v-surf2); border:1px solid var(--v-line); color:var(--v-dim); font-size:12px; }
-  .sp-navbtn:hover{ color:var(--c); border-color:var(--v-line2); }
-  .sp-moncanvas{ position:relative; aspect-ratio:16/9; overflow:hidden; background:#0a0a0b; }
-  .sp-monfoot{ padding:6px 11px; border-top:1px solid var(--v-line); font-size:8.5px; color:var(--v-faint);
-    letter-spacing:.04em; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 </style>

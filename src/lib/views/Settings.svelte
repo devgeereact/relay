@@ -1,5 +1,6 @@
 <script>
   import { onMount } from 'svelte';
+  import ModelSetup from '../ModelSetup.svelte';
   import { capture, meter, templates, initAudio, startCapture, stopCapture, setThresholds, setSttLanguage, setInputDevice, listTranslations, getActiveTranslation, setActiveTranslation, localIp, loadTemplates, getContentTemplates, setContentTemplate, getCrashReporting, setCrashReporting } from '../stores/capture.js';
 
   // Crash reporting — OFF by default. The only thing in Relay that can send
@@ -256,10 +257,10 @@
       <div class="s-status ok s-model"><span class="s-sdot"></span>loaded</div>
       <div class="s-modelpath">{$capture.stt.model}</div>
     {:else}
-      <div class="s-status off s-model"><span class="s-sdot"></span>no model — audio-only (see README dev setup)</div>
-      {#if $capture.stt.install_dir}
-        <div class="s-modelpath">Put a model here: {$capture.stt.install_dir}</div>
-      {/if}
+      <!-- This used to read "no model — audio-only (see README dev setup)", i.e.
+           the product told a church volunteer to go and read a developer README.
+           Now it just installs it. -->
+      <ModelSetup />
     {/if}
   </section>
 
@@ -368,10 +369,8 @@
   .s-status{ display:inline-flex; align-items:center; gap:7px;
     font-family:var(--f-mono); font-size:11px; letter-spacing:.04em; }
   .s-status.ok{ color:var(--v-emerald); }
-  .s-status.off{ color:var(--v-faint); }
   .s-sdot{ width:7px; height:7px; border-radius:50%; background:currentColor; }
   .s-status.ok .s-sdot{ box-shadow:0 0 7px var(--v-emerald); }
-  .s-status.off .s-sdot{ background:transparent; border:1.5px solid currentColor; width:7px; height:7px; }
   .s-model{ margin-top:2px; }
   .s-modelpath{ margin-top:6px; font-family:var(--f-mono); font-size:10px; line-height:1.5;
     color:var(--v-faint); word-break:break-all; }

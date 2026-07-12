@@ -28,12 +28,23 @@ Rust core · Tauri v2 shell · Svelte + Vite frontend · SQLite (`rusqlite`) · 
 - **CMake** — required to build `whisper-rs` (compiles whisper.cpp). `brew install cmake`, or download from [cmake.org](https://cmake.org/download/) and put it on your PATH.
 - NDI SDK (for NDI render-target work, later phase)
 
+## Privacy, security, and what the AI does
+
+- **[PRIVACY.md](PRIVACY.md)** — *nothing you say, sing or show leaves your computer.* No accounts, no cloud, no server. The audio is never even saved.
+- **[SECURITY.md](SECURITY.md)** — how to report a vulnerability, and what we consider most serious (anything that leaks sermon content, or puts content on a screen the operator didn't choose).
+- **[docs/AI_DISCLOSURE.md](docs/AI_DISCLOSURE.md)** — what the AI decides by itself, what it will **never** do (a paraphrase never reaches a congregation without a human agreeing), and where it is honestly weak.
+- **[docs/LANGUAGES.md](docs/LANGUAGES.md)** — Yorùbá / Kiswahili / Hausa. Fix a book name in a one-line PR, no Rust required.
+
 ## STT model (offline speech-to-text)
 
-The local speech model is a large binary and is **not** committed. Download a
-model into `models/` before running (auto-detected there; the **multilingual**
-`ggml-base.bin` is preferred so Yoruba/Swahili/Hausa + code-switching work,
-falling back to `ggml-base.en.bin`; override with `RELAY_MODEL_PATH`):
+**Users don't need this section — Relay downloads the model for you, with one
+button, on first run.** This is for developers running from source.
+
+The local speech model is a large binary and is **not** committed. Either let the
+app fetch it, or download one into `models/` yourself (auto-detected there; the
+**multilingual** `ggml-base.bin` is preferred so Yoruba/Swahili/Hausa +
+code-switching work, falling back to `ggml-base.en.bin`; override with
+`RELAY_MODEL_PATH`):
 
 ```bash
 mkdir -p models
@@ -70,13 +81,26 @@ One shared template engine renders to three target types (docs/SPEC.md §5):
   Channels tab. Live now.
 - **Kiosk / network client** — a LAN browser (e.g. a $50 Raspberry Pi) or an
   OBS/vMix **browser source** points at
-  `http://<app-host>:5032/output.html?template_id=<n>` and receives live state
+  `http://<app-host>:8032/output.html?template_id=<n>` and receives live state
   over the WebSocket hub on **port 8031**. Add channels and copy the URL/QR from
   the **Channels** tab. Live now.
-- **Preacher stage remote** — `http://<app-host>:5032/stage.html` on a phone or
+- **Preacher stage remote** — `http://<app-host>:8032/stage.html` on a phone or
   iPad: the live verse large + "up next" + operator stage notes + countdown, kept
-  off the congregation screen. The output/stage HTML pages and uploaded media are
-  also served by the embedded HTTP server on **port 8032** (`/media/<id>`).
+  off the congregation screen. Uploaded media is served from the same port
+  (`/media/<id>`).
+
+> **Windows:** allow Relay through the firewall when Windows asks (tick *Private
+> networks*). If you decline, HDMI output still works but **no networked output ever
+> can** — and Relay cannot detect this or warn you, because the firewall blocks other
+> machines from reaching Relay's servers rather than stopping Relay from starting
+> them. See `docs/USER_GUIDE.md`.
+
+> **The output port is 8032, not 5032.** `5032` is the Vite dev server and exists
+> **only** while a developer is running `npm run tauri dev`. In the installed app it
+> does not exist at all, so an OBS browser source pointed at `:5032` shows a blank
+> screen with no error. The embedded HTTP server on **`8032`** serves the output and
+> stage pages in both dev and production — and it is what the **Channels** tab's
+> Copy URL / QR actually hand you, so prefer those over typing a URL by hand.
 - **NDI encode** — into OBS/vMix/ATEM/ProPresenter. **Not yet available:**
   requires the proprietary NDI SDK (native lib + FFI). The command returns a
   clear error; integration path is documented in `src-tauri/src/main.rs`

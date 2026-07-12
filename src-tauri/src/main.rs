@@ -9,6 +9,11 @@ mod channels;
 mod db;
 mod detection;
 mod dsp;
+/// Detection benchmark. Test-only — it exists to FAIL THE BUILD when detection
+/// regresses, not to ship. `cargo test eval -- --nocapture` prints the scorecard.
+#[cfg(test)]
+mod eval;
+mod models;
 mod pipeline;
 mod proimport;
 mod router;
@@ -90,12 +95,20 @@ fn main() {
     let conn = db::open().expect("failed to open Relay database");
 
     tauri::Builder::default()
+        // Auto-update. Without it there is no way to deliver a fix to a church
+        // that already installed Relay — and this is software that fails LIVE.
+        // Update checks are driven from the frontend and are NEVER run during a
+        // service (see src/lib/updater.js).
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .manage(Db(Mutex::new(conn)))
         .manage(Audio::default())
         .manage(Routing::default())
         .manage(Outputs::default())
         .manage(Detecting(AtomicBool::new(true)))
+        .manage(channels::Rehearsal::default())
         .manage(Session::default())
+        .manage(models::DownloadState::default())
         .setup(|app| {
             // Crash reporting: OFF unless the operator previously opted in. This
             // runs before anything else can panic, but deliberately after the DB
@@ -180,49 +193,7 @@ fn main() {
             // Load STT here (not before .run) because the worker needs an
             // AppHandle to emit transcript events. Missing model → audio-only,
             // logged but non-fatal: capture and manual override still work.
-            let handle = app.handle().clone();
-            let engine = match stt::default_model_path() {
-                Some(path) => match SttEngine::try_load(path, move |update| {
-                    let _ = handle.emit("stt://transcript", &update);
-                    if update.is_final {
-                        println!("stt[{}]: {}", update.language, update.text);
-                        persist_transcript(&handle, &update.text, &update.language);
-                        // Spoken "next"/"back" navigates from the current verse.
-                        if let Some(cmd) = detection::detect_command(&update.text) {
-                            handle_nav(&handle, cmd);
-                            return;
-                        }
-                        // Spoken "clear the screen" / "blackout" (Phase D3/D4).
-                        if detection::detect_clear(&update.text) {
-                            channels::clear(&handle);
-                            forget_debounce(&handle);
-                            persist_cue(&handle, "clear_screens", None);
-                            return;
-                        }
-                        // Spoken in-passage jump — "chapter 5 verse 1", "verse 4"
-                        // — resolved against the current book (same passage).
-                        if handle_passage_nav(&handle, &update.text) {
-                            return;
-                        }
-                    }
-                    // Detect references, then route each through the confidence
-                    // gate + debounce before surfacing it.
-                    emit_detections(&handle, &update.text, update.timestamp_ms);
-                }) {
-                    Ok(e) => {
-                        println!("stt: model loaded from {}", e.model_path().display());
-                        Some(e)
-                    }
-                    Err(e) => {
-                        eprintln!("stt: {e} — running audio-only");
-                        None
-                    }
-                },
-                None => {
-                    eprintln!("stt: no model found — running audio-only");
-                    None
-                }
-            };
+            let engine = build_stt(app.handle());
             // Phase B: apply the active voice profile at startup — language +
             // decoder-bias prompt to STT, calibrated thresholds to the router —
             // so accent calibration is live from the first word, before any UI.
@@ -307,8 +278,14 @@ fn main() {
             dismiss_detection,
             get_thresholds,
             set_thresholds,
+            get_rehearsal,
+            set_rehearsal,
             get_crash_reporting,
             set_crash_reporting,
+            list_models,
+            download_model,
+            cancel_model_download,
+            load_stt_model,
             manual_fire,
             open_output_window,
             close_output_window,
@@ -1771,6 +1748,7 @@ fn confirm_detection(
     app: tauri::AppHandle,
     db: tauri::State<'_, Db>,
     routing: tauri::State<'_, Routing>,
+    rehearsal: tauri::State<'_, channels::Rehearsal>,
     reference: String,
 ) -> Result<Thresholds, String> {
     // The confidence of the suggestion the operator just accepted — this is the
@@ -1802,12 +1780,21 @@ fn confirm_detection(
     }
     let t = {
         let mut router = routing.0.lock().map_err(|e| e.to_string())?;
-        router.record_feedback(true, confirmed_conf);
+        // A rehearsal is not evidence. The volunteer is practising — clicking
+        // accept on a verse they picked themselves, against speech that may be
+        // them reading aloud from a phone. Feeding that to the self-calibrating
+        // gate trains it on a fiction, and the fiction persists onto the profile
+        // and into the real service on Sunday.
+        if !rehearsal.on() {
+            router.record_feedback(true, confirmed_conf);
+        }
         router.thresholds()
     };
     // Persist the nudge onto the active profile (calibration survives restart).
-    if let Ok(conn) = db.0.lock() {
-        persist_active_thresholds(&conn, t);
+    if !rehearsal.on() {
+        if let Ok(conn) = db.0.lock() {
+            persist_active_thresholds(&conn, t);
+        }
     }
     Ok(t)
 }
@@ -1818,18 +1805,81 @@ fn confirm_detection(
 fn dismiss_detection(
     routing: tauri::State<'_, Routing>,
     db: tauri::State<'_, Db>,
+    rehearsal: tauri::State<'_, channels::Rehearsal>,
 ) -> Result<Thresholds, String> {
     let t = {
         let mut router = routing.0.lock().map_err(|e| e.to_string())?;
         // No argument: the router remembers what it last auto-fired, so the
         // correction is proportional to what was actually wrong.
-        router.record_feedback(false, None);
+        // Not in rehearsal — see confirm_detection.
+        if !rehearsal.on() {
+            router.record_feedback(false, None);
+        }
         router.thresholds()
     };
-    if let Ok(conn) = db.0.lock() {
-        persist_active_thresholds(&conn, t);
+    if !rehearsal.on() {
+        if let Ok(conn) = db.0.lock() {
+            persist_active_thresholds(&conn, t);
+        }
     }
     Ok(t)
+}
+
+/// Is rehearsal mode on?
+#[tauri::command]
+fn get_rehearsal(rehearsal: tauri::State<'_, channels::Rehearsal>) -> bool {
+    rehearsal.on()
+}
+
+/// Turn rehearsal mode on or off.
+///
+/// Leaving rehearsal CLEARS the screens. The outputs have been showing whatever
+/// they were showing before the rehearsal began — a countdown, the last verse of
+/// the previous service, nothing at all — while the operator has spent twenty
+/// minutes watching a console preview that says something else entirely. Handing
+/// them back a live wall whose contents they have not looked at in twenty minutes,
+/// silently, is how the wrong thing ends up in front of a congregation.
+///
+/// So the wall is cleared, and the operator puts the next thing up deliberately.
+#[tauri::command]
+fn set_rehearsal(
+    app: tauri::AppHandle,
+    session: tauri::State<'_, Session>,
+    rehearsal: tauri::State<'_, channels::Rehearsal>,
+    on: bool,
+) -> Result<(), String> {
+    // The other half of the same rule. Mid-service is not when you practise, and
+    // an operator who flips this by accident during the sermon would silently cut
+    // every screen off from the console with no visible cause on the wall.
+    if on {
+        let recording = session
+            .0
+            .lock()
+            .map(|s| s.is_some())
+            .map_err(|e| e.to_string())?;
+        if recording {
+            return Err("A service is being recorded. End it before rehearsing.".into());
+        }
+    }
+    let was = rehearsal.on();
+    rehearsal.set(on);
+    if was != on {
+        println!(
+            "rehearsal: {} — outputs are {}",
+            if on { "ON" } else { "OFF" },
+            if on {
+                "SANDBOXED (console preview only)"
+            } else {
+                "LIVE"
+            }
+        );
+        // Clear AFTER flipping the flag, so it lands on the right side: entering
+        // rehearsal clears the console preview only (the wall is untouched, as it
+        // must be — the service may be running); leaving it clears the real wall.
+        channels::clear(&app);
+        let _ = app.emit("rehearsal://changed", on);
+    }
+    Ok(())
 }
 
 /// Crash-reporting status for the Settings toggle.
@@ -2003,7 +2053,13 @@ fn set_thresholds(
 /// scripture decoder-bias prompt (book names + the profile's extra vocabulary).
 fn apply_profile_to_stt(engine: &SttEngine, p: &db::VoiceProfile) {
     engine.set_language(p.language.clone());
-    engine.set_prompt(Some(stt::scripture_bias_prompt(&p.bias_terms)));
+    // Bias the decoder in the language actually being preached — feeding it
+    // English book names during a Yorùbá sermon pushes whisper AWAY from the
+    // words we need it to hear.
+    engine.set_prompt(Some(stt::scripture_bias_prompt(
+        p.language.as_deref(),
+        &p.bias_terms,
+    )));
 }
 
 /// Apply a full profile live: STT language + bias prompt, and the profile's
@@ -2026,6 +2082,105 @@ fn apply_profile(stt: &Stt, routing: &Routing, p: &db::VoiceProfile) -> Result<(
         p.sensitivity.clamp(0, 100) as u8
     ));
     Ok(())
+}
+
+/// Build the STT engine and wire its transcript callback into the pipeline.
+///
+/// Extracted from `setup` so it can be run AGAIN, at runtime, the moment the
+/// operator finishes downloading a model. Without this, a 148 MB download would
+/// end with "now quit and reopen Relay" — a miserable last step for the very
+/// first thing a new user does.
+///
+/// Returns None (audio-only) when no model is installed. That is a supported
+/// state, not a failure: manual fire and plan playback still work.
+fn build_stt(handle: &tauri::AppHandle) -> Option<SttEngine> {
+    let path = stt::default_model_path()?;
+    let handle = handle.clone();
+    match SttEngine::try_load(path, move |update| {
+        let _ = handle.emit("stt://transcript", &update);
+        if update.is_final {
+            println!("stt[{}]: {}", update.language, update.text);
+            persist_transcript(&handle, &update.text, &update.language);
+            // Spoken "next"/"back" navigates from the current verse.
+            if let Some(cmd) = detection::detect_command(&update.text) {
+                handle_nav(&handle, cmd);
+                return;
+            }
+            // Spoken "clear the screen" / "blackout".
+            if detection::detect_clear(&update.text) {
+                channels::clear(&handle);
+                forget_debounce(&handle);
+                persist_cue(&handle, "clear_screens", None);
+                return;
+            }
+            // Spoken in-passage jump — "chapter 5 verse 1", "verse 4".
+            if handle_passage_nav(&handle, &update.text) {
+                return;
+            }
+        }
+        // Detect references, then route each through the confidence gate.
+        emit_detections(&handle, &update.text, update.timestamp_ms);
+    }) {
+        Ok(e) => {
+            println!("stt: model loaded from {}", e.model_path().display());
+            Some(e)
+        }
+        Err(e) => {
+            eprintln!("stt: {e} — running audio-only");
+            None
+        }
+    }
+}
+
+/// Bring speech recognition up after a model has just been installed, without a
+/// restart. Re-applies the active voice profile so language + decoder bias are
+/// live from the first word.
+#[tauri::command]
+fn load_stt_model(app: tauri::AppHandle) -> Result<bool, String> {
+    let engine = build_stt(&app);
+    let loaded = engine.is_some();
+    {
+        let stt_state = app.state::<Stt>();
+        let mut slot = stt_state.0.lock().map_err(|e| e.to_string())?;
+        *slot = engine;
+    }
+    if loaded {
+        let profile = {
+            let db = app.state::<Db>();
+            let conn = db.0.lock().map_err(|e| e.to_string())?;
+            db::active_voice_profile(&conn).ok().flatten()
+        };
+        if let Some(p) = profile {
+            let stt_state = app.state::<Stt>();
+            let slot = stt_state.0.lock().map_err(|e| e.to_string())?;
+            if let Some(e) = slot.as_ref() {
+                apply_profile_to_stt(e, &p);
+            }
+        }
+    }
+    Ok(loaded)
+}
+
+/// The speech models Relay can install, and whether each is already on this
+/// machine.
+#[tauri::command]
+fn list_models() -> Vec<models::ModelInfo> {
+    models::catalog()
+}
+
+/// Download a speech model. Resumable, checksummed, atomic — see models.rs.
+/// Progress arrives as `model://progress`; completion as `model://done`.
+#[tauri::command]
+async fn download_model(app: tauri::AppHandle, id: String) -> Result<(), String> {
+    models::download(app, id).await
+}
+
+/// Cancel an in-flight model download.
+#[tauri::command]
+fn cancel_model_download(state: tauri::State<'_, models::DownloadState>) {
+    state
+        .cancel
+        .store(true, std::sync::atomic::Ordering::SeqCst);
 }
 
 /// Persist the router's freshly-adapted thresholds onto the active profile so
@@ -2479,9 +2634,19 @@ fn nav(app: tauri::AppHandle, direction: String) {
 fn start_service(
     session: tauri::State<'_, Session>,
     db: tauri::State<'_, Db>,
+    rehearsal: tauri::State<'_, channels::Rehearsal>,
     title: String,
     date: String,
 ) -> Result<i64, String> {
+    // A rehearsal is not a service and must never be written into the church's
+    // history as one. They are mutually exclusive, and this is refused loudly
+    // rather than quietly recorded — a practice run filed under last Sunday is a
+    // record nobody can trust afterwards.
+    if rehearsal.on() {
+        return Err(
+            "Relay is in rehearsal mode. Turn rehearsal off to record a real service.".into(),
+        );
+    }
     // db before session (consistent global lock order — see persist_transcript).
     let conn = db.0.lock().map_err(|e| e.to_string())?;
     let mut sess = session.0.lock().map_err(|e| e.to_string())?;
@@ -2595,13 +2760,10 @@ fn export_service(db: tauri::State<'_, Db>, id: i64) -> Result<String, String> {
         .collect();
     let filename = format!("relay-{}-{}.md", safe, summary.date);
     // Prefer the user's Downloads folder; fall back to app-data/exports. Both
-    // resolved per-OS — this used to demand $HOME and hardcode a macOS path, so
-    // exporting a service failed outright on Windows with "no HOME".
-    let downloads = std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .map(|h| std::path::PathBuf::from(h).join("Downloads"))
-        .filter(|d| d.is_dir());
-    let dir = match downloads {
+    // resolved per-OS by db::, which is the ONLY module allowed to read HOME/APPDATA —
+    // exporting a service used to demand $HOME and hardcode a macOS path, so it failed
+    // outright on Windows with "no HOME".
+    let dir = match db::downloads_dir() {
         Some(d) => d,
         None => {
             let d = db::app_data_dir().join("exports");

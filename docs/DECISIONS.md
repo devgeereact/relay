@@ -56,3 +56,85 @@ Made while hardening for the first real service. Same rule: if the code contradi
 ## Competitive framing (why this exists)
 
 Pewbeam is a live, funded competitor with paying churches in 30 countries and a stated roadmap toward a full presentation suite. This project is a deliberate bet on out-executing a moving target on two specific axes — independent multi-screen templating, and African-language speech understanding as a first-class priority rather than an English-first afterthought — not an attempt to fill an empty market.
+
+## 18. Rehearsal mode gates at the broadcast, not at the caller
+
+**Decision.** Rehearsal is a single flag (`channels::Rehearsal`) read inside
+`channels::broadcast_content` / `clear` / `black` — the three functions content
+leaves the machine through. In rehearsal they emit to the operator console window
+(`main`) only: no output window, no kiosk WebSocket, no LAN HTTP.
+
+**Why not gate at the fire sites.** There are seven of them and there will be more.
+A rehearsal that a new fire path can forget about is not a sandbox — it is a
+promise that will be broken by the next feature. Gating at the choke point makes
+every future caller sandboxed by construction.
+
+**Why nothing upstream changes.** Detection, the router, the pipeline and the plan
+transport all run exactly as they do live. A rehearsal that behaves differently
+from a service does not rehearse the service.
+
+**It fails OPEN.** `rehearsing()` returns false wherever the state is not
+registered. The dangerous failure is silently swallowing content the operator
+believes is live — not the reverse.
+
+**Mutually exclusive with a recorded service.** `start_service` refuses while
+rehearsing and `set_rehearsal` refuses while a service is recording. A practice run
+filed under last Sunday is a record nobody can trust afterwards.
+
+**The router does not learn from it.** `record_feedback` is skipped in rehearsal.
+The volunteer is accepting verses they chose themselves, against speech that may be
+them reading aloud from a phone. That is not evidence, and the self-calibrating gate
+would carry the fiction into the real service.
+
+**Leaving rehearsal CLEARS the screens.** The outputs have been showing whatever
+they were showing before the rehearsal began, while the operator watched a console
+preview saying something else. Handing back a live wall they have not looked at in
+twenty minutes, silently, is how the wrong thing ends up in front of a congregation.
+
+**Amber is not used for it.** Amber means ON AIR. A rehearsal is not on air, so it
+is amethyst — in the top bar, on the output wall tally, and in a permanent band
+across the console. A tally light that lies is worse than no tally light.
+
+## 19. Audio levels are learned, never assumed
+
+**Decision.** Nothing in the audio path may compare a signal against an absolute
+level. The voice gate (`audio::Vad`) and the auto-gain (`dsp::FrontEnd`) both track
+the room's noise floor and gate *relative* to it, with hysteresis.
+
+**What went wrong.** Three absolute thresholds, each individually reasonable, each
+tuned on a developer's machine:
+
+- `VAD_RMS_THRESHOLD = 0.008` — "this is speech"
+- `energy_prob = rms / TARGET_RMS` with `SPEECH_PROB = 0.55` — i.e. speech must
+  reach RMS 0.066 before the auto-gain will believe in it
+- `MAX_GAIN = 6.0` — +16 dB
+
+Together they made Relay **deaf to a quiet preacher, silently**. A church laptop mic
+sitting at RMS 0.005 was never recognised as speech, so the auto-gain never lifted
+it — a deadlock in which you had to already be loud enough not to need gain in order
+to be granted any. And the VAD then discarded two thirds of the sermon as "silence".
+
+Measured, same words, real speech through the real front-end:
+
+```text
+   studio level   94% voiced        looks perfect on the developer's machine
+   ×0.2           17% voiced        a church laptop. Most of the sermon deleted.
+   ×0.05           2% voiced        a lightly-driven desk feed. Effectively deaf.
+```
+
+Nothing errored. The level meter still moved. The transcript just quietly turned to
+nonsense — `John, 3, 6, Linn.`, the language detector flipping to Russian mid-sermon
+— and the operator would conclude the AI "isn't very good".
+
+**The rule.** Speech is a *rise above the room*, and it is *contrast*, not volume. A
+steady tone is room tone however loud it is; a quiet voice over a quiet room is a
+voice. Any future tuning knob that hard-codes "this many dB = speech" is the same bug
+again, and is wrong on a microphone nobody in this repo has ever heard.
+
+**Consequence, and the reason to hold this line:** it fails on exactly the churches we
+built this for — the ones with a cheap mic at the back of a hall — and it fails
+invisibly, so they will never report it as a bug. They will just stop using Relay.
+
+Verify with `cargo test audio::gate -- --ignored --nocapture` (`RELAY_BENCH_WAV`,
+`RELAY_BENCH_SCALE`): the voiced ratio must stay flat across a 100× range of input
+level. It now runs 39–55%; it used to collapse to 0%.

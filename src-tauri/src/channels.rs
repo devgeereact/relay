@@ -15,6 +15,7 @@
 use futures_util::{SinkExt, StreamExt};
 use serde::Serialize;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use tauri::{Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 use tokio::sync::broadcast;
@@ -192,8 +193,57 @@ pub fn list_open(app: &tauri::AppHandle) -> Vec<String> {
         .collect()
 }
 
+/// The label of the operator console window. Tauri gives the window declared in
+/// `tauri.conf.json` the default label "main".
+const CONSOLE: &str = "main";
+
+/// REHEARSAL MODE — practise a whole service with nothing reaching the congregation.
+///
+/// A volunteer has to be able to learn this software, and the only realistic place
+/// to practise is the room it runs in: the real projector, the real sound desk, the
+/// real plan. Which is also a room where a stray verse on the wall in the middle of
+/// the 9am service is exactly the thing we cannot allow.
+///
+/// So rehearsal is gated HERE, in the one function content leaves the machine
+/// through, rather than in each of the (currently seven) call sites that fire.
+/// Everything upstream — detection, the router, the pipeline, the plan transport —
+/// runs completely unchanged, because a rehearsal that behaves differently from a
+/// service is not a rehearsal. Only the last hop is cut:
+///
+///   real:      emit to every window  +  publish to kiosk/OBS/LAN clients
+///   rehearsal: emit to the CONSOLE only. Nothing else. No window, no socket.
+///
+/// The operator sees the output wall preview exactly as they would live. The
+/// projector on the wall behind them keeps showing whatever it was showing.
+///
+/// Gating at the choke point, not at the callers, is also what makes it honest: a
+/// new fire path added tomorrow is sandboxed by construction and cannot forget.
+#[derive(Default)]
+pub struct Rehearsal(pub AtomicBool);
+
+impl Rehearsal {
+    pub fn on(&self) -> bool {
+        self.0.load(Ordering::Relaxed)
+    }
+    pub fn set(&self, v: bool) {
+        self.0.store(v, Ordering::Relaxed);
+    }
+}
+
+/// Is the app currently rehearsing? Reads managed state, so it is false anywhere
+/// the state has not been registered (tests, early boot) — failing OPEN to a real
+/// broadcast. That is the correct default: the dangerous mistake is silently
+/// swallowing content the operator believes is live, not the reverse.
+fn rehearsing(app: &tauri::AppHandle) -> bool {
+    app.try_state::<Rehearsal>()
+        .map(|r| r.on())
+        .unwrap_or(false)
+}
+
 /// Push content to every output channel. One broadcast, N independently-styled
 /// renders — native windows (Tauri event) AND networked kiosk clients (WS).
+///
+/// In rehearsal this reaches the operator console and NOTHING else.
 pub fn broadcast_content(app: &tauri::AppHandle, content: OutputContent) {
     let json = serde_json::json!({
         "kind": "content",
@@ -209,6 +259,15 @@ pub fn broadcast_content(app: &tauri::AppHandle, content: OutputContent) {
         "countdown_done": content.countdown_done,
     })
     .to_string();
+    if rehearsing(app) {
+        // Content-free by design: the reference is congregation/sermon data and this
+        // log is written to disk. What matters operationally is only that the
+        // broadcast was suppressed, which is what an operator (or a bug report)
+        // needs to know.
+        println!("rehearsal: broadcast SUPPRESSED — nothing left the machine");
+        let _ = app.emit_to(CONSOLE, "output://content", content);
+        return; // no output window, no kiosk, no LAN.
+    }
     let _ = app.emit("output://content", content);
     publish_kiosk(app, json);
 }
@@ -216,6 +275,10 @@ pub fn broadcast_content(app: &tauri::AppHandle, content: OutputContent) {
 /// Clear all output channels (operator "Clear all screens" / Esc). Clears to the
 /// template background — transparent templates key out for OBS/ATEM.
 pub fn clear(app: &tauri::AppHandle) {
+    if rehearsing(app) {
+        let _ = app.emit_to(CONSOLE, "output://clear", ());
+        return;
+    }
     let _ = app.emit("output://clear", ());
     publish_kiosk(app, r#"{"kind":"clear"}"#.to_string());
 }
@@ -223,6 +286,10 @@ pub fn clear(app: &tauri::AppHandle) {
 /// Blackout: paint every output opaque black (kills the screen entirely, unlike
 /// a transparent clear). The next content/clear cancels it.
 pub fn black(app: &tauri::AppHandle) {
+    if rehearsing(app) {
+        let _ = app.emit_to(CONSOLE, "output://black", ());
+        return;
+    }
     let _ = app.emit("output://black", ());
     publish_kiosk(app, r#"{"kind":"black"}"#.to_string());
 }
@@ -332,10 +399,16 @@ fn log_only() -> ErrorSink {
 }
 
 fn bind_failure_message(what: &str, port: u16, e: &std::io::Error) -> String {
+    let hint = if cfg!(target_os = "windows") {
+        "Another program may already be using that port, or Windows Defender Firewall \
+         blocked it — if Windows asked whether to allow Relay on your network and you \
+         chose Cancel, allow it in Windows Firewall settings."
+    } else {
+        "Another program is probably already using that port."
+    };
     format!(
         "{what} could not start on port {port} ({e}). \
-         Networked outputs (OBS, kiosk screens, the stage monitor) will not work. \
-         Another program is probably already using that port."
+         Networked outputs (OBS, kiosk screens, the stage monitor) will not work. {hint}"
     )
 }
 
@@ -724,5 +797,39 @@ mod tests {
             .expect("stream ended")
             .expect("ws error");
         assert!(msg.into_text().unwrap().contains("John 3:16"));
+    }
+}
+
+#[cfg(test)]
+mod rehearsal_tests {
+    use super::*;
+
+    #[test]
+    fn defaults_to_off() {
+        // A brand-new install must broadcast for real. If the default were ON, an
+        // operator's very first service would show nothing on the projector and
+        // there would be no obvious reason why.
+        assert!(!Rehearsal::default().on());
+    }
+
+    #[test]
+    fn toggles() {
+        let r = Rehearsal::default();
+        r.set(true);
+        assert!(r.on());
+        r.set(false);
+        assert!(!r.on());
+    }
+
+    #[test]
+    fn console_label_is_the_tauri_default() {
+        // The whole sandbox rests on emit_to(CONSOLE, ..) reaching the operator
+        // window and nothing else. Tauri labels the window declared in
+        // tauri.conf.json "main"; if that ever changes, rehearsal silently stops
+        // showing the operator ANY preview and looks completely broken.
+        assert_eq!(CONSOLE, "main");
+        // And the console must never collide with an output window's label, or a
+        // rehearsal would emit straight onto a projector.
+        assert!(!CONSOLE.starts_with(OUTPUT_PREFIX));
     }
 }
