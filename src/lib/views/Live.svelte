@@ -59,6 +59,8 @@
     startCapture,
     stopCapture,
     navVerse,
+    navNotice,
+    navBlocked,
     listPlans,
     planItems,
     setStageNext,
@@ -165,18 +167,43 @@
       prev: () => step(-1),
       search: () => searchEl?.focus(),
     });
+
+    // A SPOKEN "next"/"back" that did nothing. It comes from the STT thread, which
+    // has no caller to hand a result back to, so it arrives as an event. The
+    // preacher says "next", the wall does not move — and now the console says why
+    // instead of leaving the operator to wonder whether Relay even heard it.
+    unsubNav = navBlocked.subscribe((r) => {
+      const notice = navNotice(r);
+      if (notice) {
+        flash(notice);
+        navBlocked.set(null);
+      }
+    });
   });
   let unregisterKeys;
+  let unsubNav;
   onDestroy(() => {
     unregisterKeys?.();
+    unsubNav?.();
     clearTimeout(cdArmT);
     clearTimeout(liveMsgT);
   });
 
   // ── the transport ────────────────────────────────────────────────────────
-  function step(dir) {
+  //
+  // `→` in VERSE mode used to be fire-and-forget into a command that returned
+  // nothing. Three things inside it could silently do nothing — a poisoned lock, the
+  // end of the passage, a verse missing from the corpus — and the operator got no
+  // error, no toast and no log. On the key they press more than any other, in the
+  // middle of a sermon. It now always says what happened.
+  async function step(dir) {
     if (mode === 'slide') return stepLive(dir);
-    navVerse(dir > 0 ? 'next' : 'back');
+    try {
+      const notice = navNotice(await navVerse(dir > 0 ? 'next' : 'back'));
+      if (notice) flash(notice);
+    } catch (e) {
+      flash(humanError(e));
+    }
   }
 
   async function stepLive(dir) {

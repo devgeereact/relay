@@ -602,25 +602,74 @@ fn emit_detections(handle: &tauri::AppHandle, text: &str, now_ms: u64) {
     }
 }
 
+/// What a next/back actually did. The operator is told, every time.
+///
+/// `nav` used to return `()` and `handle_nav` used to return `()` — and inside it
+/// were THREE separate silent bail-outs: a poisoned lock, stepping off the end of
+/// the passage, and `fire_manual`'s `bool` being discarded outright. So the operator
+/// pressed **Next** mid-sermon, the wall did not change, and there was no error, no
+/// toast and no log. Nothing anywhere said why.
+///
+/// It is the same silent-no-op class as the "Screens cleared" lie (DECISIONS §20),
+/// living on the key an operator presses more than any other.
+///
+/// These are NOT all failures, and flattening them into a bool is what hid them.
+/// Reaching the end of a passage is a normal, correct boundary; the operator simply
+/// needs to know that is why nothing moved. A verse that is missing from the corpus
+/// is a real fault. They deserve different sentences.
+#[derive(Clone, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum NavResult {
+    /// It moved. This is the only outcome that changes the screens.
+    Fired { reference: String },
+    /// The passage has an end and we are standing on it.
+    EndOfPassage,
+    /// Nothing is staged, so there is nothing to step through.
+    NoPassage,
+    /// The next verse parsed but is not in the corpus — firing it would blank the
+    /// wall (`Fire::may_broadcast`), so we left the screen alone and say so.
+    NotInLibrary { reference: String },
+}
+
 /// Spoken "next" / "back": step to the adjacent verse in the staged passage.
 ///
 /// Operator intent, so it bypasses the gate — see `fire_manual`, which owns the
 /// whole sequence. This and `handle_passage_nav` were previously two ~70-line
 /// near-identical functions; all that actually differs between them is how the
 /// target verse is chosen, which is the four lines below.
-fn handle_nav(handle: &tauri::AppHandle, dir: detection::NavCommand) {
-    let target = {
+fn handle_nav(handle: &tauri::AppHandle, dir: detection::NavCommand) -> Result<NavResult, String> {
+    let (target, staged) = {
         let ctx = handle.state::<Context>();
-        let Ok(context) = ctx.0.lock() else { return };
-        match dir {
+        let context = ctx
+            .0
+            .lock()
+            .map_err(|_| "Relay lost track of the passage it was reading.".to_string())?;
+        // Distinguish "there is a passage and we are at its end" from "there is no
+        // passage at all" — from the operator's seat those look identical (the screen
+        // does not change) and mean completely different things.
+        let staged = context.current().is_some();
+        let t = match dir {
             detection::NavCommand::Next => context.next_verse(),
             detection::NavCommand::Previous => context.prev_verse(),
-        }
+        };
+        (t, staged)
     };
-    // None = we stepped off the end of the chapter. Nothing to do.
-    let Some(r) = target else { return };
+
+    let Some(r) = target else {
+        return Ok(if staged {
+            NavResult::EndOfPassage
+        } else {
+            NavResult::NoPassage
+        });
+    };
+
+    let reference = Fire::key_for(&r);
     // Advance keeps the staged passage span, so a range/chapter walk stays bounded.
-    fire_manual(handle, r, 1.0, PassageUpdate::Advance, None);
+    if fire_manual(handle, r, 1.0, PassageUpdate::Advance, None) {
+        Ok(NavResult::Fired { reference })
+    } else {
+        Ok(NavResult::NotInLibrary { reference })
+    }
 }
 
 /// Spoken in-passage jump ("chapter 5 verse 1", "verse 4"): resolve the BOOK from
@@ -2130,8 +2179,22 @@ fn build_stt(handle: &tauri::AppHandle) -> Option<SttEngine> {
             println!("stt[{}]: {}", update.language, update.text);
             persist_transcript(&handle, &update.text, &update.language);
             // Spoken "next"/"back" navigates from the current verse.
+            //
+            // This runs on the STT thread, which has nobody to return a result to —
+            // exactly like the spoken "clear the screen" below. So a nav that did
+            // nothing is PUSHED to the operator rather than swallowed: the preacher
+            // says "next", the wall does not move, and the console says why.
             if let Some(cmd) = detection::detect_command(&update.text) {
-                handle_nav(&handle, cmd);
+                match handle_nav(&handle, cmd) {
+                    Ok(NavResult::Fired { .. }) => {}
+                    Ok(blocked) => {
+                        let _ = handle.emit("nav://blocked", blocked);
+                    }
+                    Err(e) => {
+                        eprintln!("nav failed: {e}");
+                        let _ = handle.emit("output://panic_failed", e);
+                    }
+                }
                 return;
             }
             // Spoken "clear the screen" / "blackout".
@@ -2677,16 +2740,20 @@ fn push_announcement(app: tauri::AppHandle, message: String) -> Result<(), Strin
     Ok(())
 }
 
-/// Manual next/previous verse (console buttons) — same path as the spoken
-/// "next"/"back" command.
+/// Manual next/previous verse (console buttons, and the `→`/`←` transport keys) —
+/// same path as the spoken "next"/"back" command.
+///
+/// Returns what it DID (see `NavResult`). It used to return `()`, so the single most
+/// pressed key in a live service had no way to tell the operator that it had done
+/// nothing, or why.
 #[tauri::command]
-fn nav(app: tauri::AppHandle, direction: String) {
+fn nav(app: tauri::AppHandle, direction: String) -> Result<NavResult, String> {
     let dir = if direction == "previous" || direction == "back" {
         detection::NavCommand::Previous
     } else {
         detection::NavCommand::Next
     };
-    handle_nav(&app, dir);
+    handle_nav(&app, dir)
 }
 
 /// Start (or resume) recording a service. If one is already active it's reused

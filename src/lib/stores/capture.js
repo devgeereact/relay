@@ -47,6 +47,10 @@ export const live = writable(null);
 // clear). Reset by the next fire/clear. Mirrors the output://black broadcast.
 export const screenBlack = writable(false);
 
+// The last SPOKEN next/back that did nothing, and why (a NavResult). The console
+// consumes it, shows it, and clears it. Null when there is nothing to say.
+export const navBlocked = writable(null);
+
 /**
  * REHEARSAL — the operator is practising, and nothing reaches the congregation.
  *
@@ -188,6 +192,10 @@ export async function initAudio() {
       await listen('output://content', (e) => { live.set(e.payload); screenBlack.set(false); });
       await listen('output://clear', () => { live.set(null); screenBlack.set(false); });
       await listen('output://black', () => screenBlack.set(true));
+      // A SPOKEN "next"/"back" that did nothing. The STT thread has no caller to
+      // return a NavResult to, so it pushes it here — the preacher says "next", the
+      // wall does not move, and the console explains why instead of staying silent.
+      await listen('nav://blocked', (e) => navBlocked.set(e.payload));
       // A clear that failed on a path with nobody to return an error to — the
       // spoken "clear the screen", and the exit from rehearsal (which hands the
       // wall back to the congregation). Same banner as a failed key or button.
@@ -887,13 +895,43 @@ export async function deleteChannel(id) {
   await call('delete_channel', { id });
 }
 
-/** Manual next/previous verse (same as spoken "next"/"back"). */
+/**
+ * Manual next/previous verse (same as spoken "next"/"back").
+ *
+ * Returns a NavResult — `{kind}` is one of `fired` / `end_of_passage` /
+ * `no_passage` / `not_in_library`. The caller MUST tell the operator which.
+ *
+ * This used to return nothing and swallow every error. `nav` was a `()` command
+ * wrapping a `()` function with three silent bail-outs inside it, so the operator
+ * pressed Next mid-sermon, the wall did not change, and there was no error, no toast
+ * and no log — on the key they press more than any other. Same silent-no-op class as
+ * the "Screens cleared" lie (docs/DECISIONS.md §20).
+ */
 export async function navVerse(direction) {
-  try {
-    const call = await invoke();
-    await call('nav', { direction });
-  } catch {
-    /* backend absent */
+  const call = await invoke();
+  return call('nav', { direction });
+}
+
+/**
+ * Turn a NavResult into the sentence the operator gets.
+ *
+ * Not every outcome is a failure, and flattening them is what hid this bug for
+ * months: reaching the end of a passage is a normal boundary and the operator just
+ * needs to know that is why nothing moved. A verse missing from the corpus is a real
+ * fault. `null` means it worked and the screens changed — the wall is the feedback.
+ */
+export function navNotice(r) {
+  switch (r?.kind) {
+    case 'fired':
+      return null;
+    case 'end_of_passage':
+      return 'End of the passage — nothing further to show.';
+    case 'no_passage':
+      return 'No passage on screen yet. Fire a verse first, then use ← →.';
+    case 'not_in_library':
+      return `${r.reference} isn't in your Bible, so the screen was left as it is.`;
+    default:
+      return null;
   }
 }
 
