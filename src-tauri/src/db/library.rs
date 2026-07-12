@@ -253,12 +253,33 @@ pub fn set_media_path(conn: &Connection, id: i64, path: &str) -> rusqlite::Resul
 }
 
 /// Remove a media row and return its path (so the command can delete the file).
+/// Delete a media asset — and every plan cue that pointed at it.
+///
+/// It used to delete only the asset row and the file, leaving `plan_items` cues
+/// with the same `media_id` behind. Those cues then sat in a service plan looking
+/// perfectly fine, and failed with "media not found" **at the moment the operator
+/// fired them, live**. A broken cue that looks healthy until you press it is worse
+/// than one that is visibly gone.
+///
+/// Songs and announcements already propagate their edits into plans
+/// (`sync_*_in_plans`); media was the one that didn't.
 pub fn delete_media(conn: &Connection, id: i64) -> rusqlite::Result<Option<String>> {
-    let path: Option<String> = conn
+    let tx = conn.unchecked_transaction()?;
+    let path: Option<String> = tx
         .query_row("SELECT path FROM media_assets WHERE id = ?1", [id], |r| {
             r.get(0)
         })
         .optional()?;
-    conn.execute("DELETE FROM media_assets WHERE id = ?1", [id])?;
+
+    // Drop any cue that referenced this asset. json_extract is available in the
+    // bundled SQLite (JSON1 is compiled in).
+    tx.execute(
+        "DELETE FROM plan_items
+          WHERE cue_type = 'media'
+            AND CAST(json_extract(payload_json, '$.media_id') AS INTEGER) = ?1",
+        [id],
+    )?;
+    tx.execute("DELETE FROM media_assets WHERE id = ?1", [id])?;
+    tx.commit()?;
     Ok(path)
 }

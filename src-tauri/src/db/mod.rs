@@ -105,10 +105,16 @@ fn baseline_forward_fill(conn: &Connection) -> rusqlite::Result<()> {
             // "Lower 3rd Lyrics"). Forward-fill the built-in "Lower Third"
             // template from its old left-aligned default → centred. Only touches
             // the unedited built-in (still left + lowerThird), never a custom one.
+            // ID-SCOPED, like its sibling check above. Matching on the NAME alone
+            // would rewrite a template the OPERATOR made and happened to call
+            // "Lower Third" — silently changing the look of their congregation's
+            // screen during a migration they never asked for. Only the built-ins
+            // (ids 1-4) are ours to fix.
             conn.execute(
                 "UPDATE templates
                     SET region_config_json = '{\"regions\":[\"verse_text\",\"reference\"],\"align\":\"center\",\"lowerThird\":true,\"refFirst\":false}'
-                  WHERE name = 'Lower Third'
+                  WHERE id IN (1,2,3,4)
+                    AND name = 'Lower Third'
                     AND region_config_json LIKE '%\"align\":\"left\"%'
                     AND region_config_json LIKE '%\"lowerThird\":true%'",
                 [],
@@ -1108,6 +1114,100 @@ mod tests {
             (made.suggest - base.suggest as f64).abs() < 1e-6,
             "{made:?}"
         );
+    }
+
+    /// A cue dragged after a delete must actually MOVE.
+    ///
+    /// Deleting a cue leaves a gap in the positions (0, 1, 3). move_plan_item used
+    /// to look for a neighbour at exactly position±1, find nothing, and silently do
+    /// nothing — the operator drags a cue and it doesn't budge, with no error.
+    #[test]
+    fn a_cue_still_moves_after_a_delete_leaves_a_position_gap() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_fresh(&conn).unwrap();
+        let plan = create_plan(&conn, "Sunday", "2026-07-12").unwrap();
+        let a = add_plan_item(&conn, plan, "announce", "A", "{}", None).unwrap();
+        let b = add_plan_item(&conn, plan, "announce", "B", "{}", None).unwrap();
+        let c = add_plan_item(&conn, plan, "announce", "C", "{}", None).unwrap();
+        let d = add_plan_item(&conn, plan, "announce", "D", "{}", None).unwrap();
+
+        // Delete C -> positions are now 0, 1, 3. A gap.
+        remove_plan_item(&conn, c).unwrap();
+
+        // Move D up. Under the old arithmetic this looked for position 2 and gave up.
+        move_plan_item(&conn, d, -1).unwrap();
+
+        let order: Vec<String> = plan_items(&conn, plan)
+            .unwrap()
+            .into_iter()
+            .map(|i| i.label)
+            .collect();
+        assert_eq!(
+            order,
+            ["A", "D", "B"],
+            "the cue did not move across the gap"
+        );
+        let _ = (a, b);
+    }
+
+    /// Deleting media must not leave a cue that looks fine and explodes when fired.
+    #[test]
+    fn deleting_media_removes_the_plan_cues_that_pointed_at_it() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_fresh(&conn).unwrap();
+        let plan = create_plan(&conn, "Sunday", "2026-07-12").unwrap();
+        let m = insert_media(&conn, "image", "slide.png", "2026-07-12").unwrap();
+        add_plan_item(
+            &conn,
+            plan,
+            "media",
+            "slide.png",
+            &format!(r#"{{"media_id":{m},"kind":"image"}}"#),
+            None,
+        )
+        .unwrap();
+        add_plan_item(&conn, plan, "announce", "Notices", "{}", None).unwrap();
+        assert_eq!(plan_items(&conn, plan).unwrap().len(), 2);
+
+        delete_media(&conn, m).unwrap();
+
+        let left = plan_items(&conn, plan).unwrap();
+        assert_eq!(left.len(), 1, "the orphaned media cue survived the delete");
+        assert_eq!(left[0].label, "Notices");
+    }
+
+    /// A song and its sections are ONE thing. A half-imported song is a song whose
+    /// second chorus is missing — discovered mid-song, on a Sunday.
+    #[test]
+    fn importing_a_song_is_all_or_nothing() {
+        use crate::songs::ParsedSection;
+        let conn = Connection::open_in_memory().unwrap();
+        init_fresh(&conn).unwrap();
+        let sections = vec![
+            ParsedSection {
+                tag: "v1".into(),
+                label: "Verse 1".into(),
+                lyrics: "a".into(),
+            },
+            ParsedSection {
+                tag: "c".into(),
+                label: "Chorus".into(),
+                lyrics: "b".into(),
+            },
+        ];
+        let id = import_song(
+            &conn,
+            "Amazing Grace",
+            "Newton",
+            "",
+            "",
+            None,
+            "2026-07-12",
+            &sections,
+        )
+        .unwrap();
+        let song = get_song(&conn, id).unwrap().expect("song");
+        assert_eq!(song.sections.len(), 2, "sections were lost");
     }
 
     #[test]

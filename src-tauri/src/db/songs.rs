@@ -232,19 +232,24 @@ pub fn import_song(
     date: &str,
     sections: &[crate::songs::ParsedSection],
 ) -> rusqlite::Result<i64> {
-    conn.execute(
+    // ATOMIC: a song and its sections are one thing. Without a transaction, a
+    // failure partway through leaves a song row with SOME of its verses — and the
+    // operator finds out when the second chorus isn't there, mid-song, on a Sunday.
+    let tx = conn.unchecked_transaction()?;
+    tx.execute(
         "INSERT INTO songs (title, author, ccli, song_key, bpm, created_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
         (title, author, ccli, song_key, bpm, date),
     )?;
-    let song_id = conn.last_insert_rowid();
+    let song_id = tx.last_insert_rowid();
     for (i, s) in sections.iter().enumerate() {
-        conn.execute(
+        tx.execute(
             "INSERT INTO song_sections (song_id, position, tag, label, lyrics)
              VALUES (?1, ?2, ?3, ?4, ?5)",
             (song_id, i as i64, &s.tag, &s.label, &s.lyrics),
         )?;
     }
+    tx.commit()?;
     Ok(song_id)
 }
 
