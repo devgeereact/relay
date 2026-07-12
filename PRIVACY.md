@@ -118,3 +118,21 @@ Open an issue: <https://github.com/devgeereact/relay/issues>
 If you think Relay is sending something it shouldn't be, **that is a security
 issue** — please read [`SECURITY.md`](SECURITY.md) and report it privately first.
 We will treat it as the most serious kind of bug there is.
+
+## Debug audio recording (off by default)
+
+Relay can write the microphone audio it hears to a local file, for diagnosing a
+setup where the transcript is wrong. It is **off unless you explicitly turn it on**,
+and there is deliberately no button for it in the app:
+
+```bash
+RELAY_RECORD_WAV=/path/to/session.wav npm run tauri dev
+```
+
+While that is set, the cleaned audio stream is buffered in memory and written to the
+path you named when capture stops. It is never uploaded, never sent with a crash
+report, and never enabled by anything you click.
+
+This is sermon audio. Treat the file as you would a recording of the service —
+because that is what it is. Delete it when you are done, and do not enable this
+during a service you have not told people is being recorded.

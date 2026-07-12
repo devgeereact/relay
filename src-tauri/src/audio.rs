@@ -335,6 +335,25 @@ where
     let sample_rate = used.sample_rate().0;
     stream.play().map_err(|e| e.to_string())?;
 
+    // ── DEBUG RECORDER ──
+    //
+    // Off unless RELAY_RECORD_WAV names a path. Writes the CLEANED mono stream — the
+    // exact samples the VAD and whisper see — as a 32-bit-float WAV.
+    //
+    // This exists because every audio bug so far has been invisible from the code and
+    // only reproducible with a specific microphone in a specific room. Synthetic speech
+    // is too clean to trigger them; the developer's laptop is too loud. Without a
+    // recording of the audio that actually failed, the only debugging tool is asking a
+    // human to say the same sentence over and over.
+    //
+    // PRIVACY: this is sermon audio. It is off by default, writes only to a local path
+    // the operator names explicitly, is never uploaded, and is never enabled by any UI —
+    // it exists for someone diagnosing their own installation. See PRIVACY.md.
+    let mut rec = std::env::var_os("RELAY_RECORD_WAV").map(|p| {
+        println!("audio: RECORDING cleaned input to {}", p.to_string_lossy());
+        (std::path::PathBuf::from(p), Vec::<f32>::new())
+    });
+
     let dbg_rms = std::env::var_os("RELAY_AUDIO_RMS").is_some();
     let mut dbg_seen = 0u32;
     let mut dbg_voiced = 0u32;
@@ -360,6 +379,9 @@ where
         match rx.recv_timeout(std::time::Duration::from_millis(100)) {
             Ok(samples) => {
                 let cleaned = frontend.process(&samples);
+                if let Some((_, buf)) = rec.as_mut() {
+                    buf.extend_from_slice(&cleaned.samples);
+                }
                 on_quality(&cleaned.quality);
                 for (chunk, ts_ms) in chunker.push(&cleaned.samples) {
                     let level = rms(&chunk);
@@ -403,7 +425,40 @@ where
         }
     }
     drop(stream);
+    if let Some((path, buf)) = rec {
+        match write_wav_f32(&path, &buf, sample_rate) {
+            Ok(()) => println!(
+                "audio: wrote {:.1}s to {}",
+                buf.len() as f32 / sample_rate as f32,
+                path.display()
+            ),
+            Err(e) => eprintln!("audio: could not write recording: {e}"),
+        }
+    }
     Ok(())
+}
+
+/// Minimal 32-bit-float mono WAV writer, for the debug recorder only.
+fn write_wav_f32(path: &std::path::Path, samples: &[f32], rate: u32) -> std::io::Result<()> {
+    use std::io::Write;
+    let data_len = (samples.len() * 4) as u32;
+    let mut f = std::io::BufWriter::new(std::fs::File::create(path)?);
+    f.write_all(b"RIFF")?;
+    f.write_all(&(36 + data_len).to_le_bytes())?;
+    f.write_all(b"WAVEfmt ")?;
+    f.write_all(&16u32.to_le_bytes())?; // fmt chunk size
+    f.write_all(&3u16.to_le_bytes())?; // format 3 = IEEE float
+    f.write_all(&1u16.to_le_bytes())?; // mono
+    f.write_all(&rate.to_le_bytes())?;
+    f.write_all(&(rate * 4).to_le_bytes())?; // byte rate
+    f.write_all(&4u16.to_le_bytes())?; // block align
+    f.write_all(&32u16.to_le_bytes())?; // bits per sample
+    f.write_all(b"data")?;
+    f.write_all(&data_len.to_le_bytes())?;
+    for s in samples {
+        f.write_all(&s.to_le_bytes())?;
+    }
+    f.flush()
 }
 
 /// Build a cpal input stream for `supported`, downmixing to mono and forwarding

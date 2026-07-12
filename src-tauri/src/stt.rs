@@ -344,6 +344,7 @@ fn worker<F>(
                 threads,
                 lang_opt.as_deref(),
                 prompt_opt.as_deref(),
+                DECODE,
             ) {
                 on_update(TranscriptUpdate {
                     text,
@@ -392,14 +393,61 @@ fn worker<F>(
 /// Run whisper over the window. `lang` = Some(code) forces a language, None
 /// auto-detects (code-switching). Returns (text, detected-language) or None if
 /// blank. Detected language is what enables per-window code-switch reporting.
+/// How hard the decoder works.
+///
+/// Whisper's cheapest setting is `Greedy { best_of: 1 }`: take the single
+/// highest-probability token at every step and never reconsider. It is the fastest
+/// thing whisper can do and the worst at exactly the tokens Relay lives or dies on —
+/// NUMBERS. "verse twenty-eight" has to survive as `28`, and a greedy decoder that
+/// commits to `2` cannot take it back once the next token disagrees.
+///
+/// Measured (stt::bench::decode_quality, on real speech): the 8-second window decodes
+/// in ~207 ms against a 1000 ms budget, so four fifths of the latency budget was
+/// simply going unspent. Beam search buys accuracy with time we already have.
+#[derive(Debug, Clone, Copy)]
+pub enum Decode {
+    Fast,
+    /// Benchmarked and deliberately NOT shipped — see `DECODE`. Kept so the next
+    /// person tempted by "just turn on beam search" can re-run the numbers rather
+    /// than re-derive the option.
+    #[allow(dead_code)]
+    Beam(i32),
+}
+
+impl Decode {
+    fn strategy(self) -> SamplingStrategy {
+        match self {
+            Decode::Fast => SamplingStrategy::Greedy { best_of: 1 },
+            Decode::Beam(n) => SamplingStrategy::BeamSearch {
+                beam_size: n,
+                patience: 0.0,
+            },
+        }
+    }
+}
+
+/// The shipping decoder.
+///
+/// Greedy, and it STAYS greedy — this is the conclusion of `bench::prompt_sweep`, not
+/// an accident. Scored through the real detector (which verse would Relay put on the
+/// screen?) across clean / quiet / noisy / very-quiet audio, greedy recovers 20/20
+/// references with zero wrong verses. Beam-5 recovers exactly the same 20 and costs
+/// ~50% more time.
+///
+/// Beam search is the obvious thing to reach for when the transcript looks wrong. The
+/// numbers say it would buy nothing, so `Decode::Beam` exists, is benchmarked, and is
+/// not used. Re-run the bench before changing this.
+const DECODE: Decode = Decode::Fast;
+
 fn transcribe(
     state: &mut whisper_rs::WhisperState,
     audio: &[f32],
     threads: i32,
     lang: Option<&str>,
     prompt: Option<&str>,
+    decode: Decode,
 ) -> Option<(String, String)> {
-    let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
+    let mut params = FullParams::new(decode.strategy());
     params.set_language(lang); // None → whisper auto-detects
                                // Bias the decoder toward scripture vocabulary (book names + church terms)
                                // when a voice profile supplies a prompt. Empty/absent → no bias.
@@ -657,6 +705,212 @@ mod bench {
             .collect()
     }
 
+    /// Does the decoder get the NUMBERS right, and what does it cost?
+    ///
+    /// This is the benchmark that matters most in this file. Relay's whole job is
+    /// "Romans chapter eight verse twenty-eight" → Romans 8:28. Every other word in
+    /// the sermon can be wrong and the product still works; get the number wrong and
+    /// it puts the WRONG SCRIPTURE in front of a congregation.
+    /// Load, degrade, and clean a file exactly as the live path would.
+    fn church_signal(path: &str, scale: f32, noise: f32, seed0: u32) -> Vec<f32> {
+        let mut audio = load_f32(path);
+        let mut seed = seed0;
+        for s in audio.iter_mut() {
+            seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            let r = (seed >> 8) as f32 / 8_388_608.0 - 1.0;
+            *s = *s * scale + r * noise;
+        }
+        let mut fe = crate::dsp::FrontEnd::new(TARGET_RATE);
+        let mut out = Vec::with_capacity(audio.len());
+        for block in audio.chunks(1024) {
+            out.extend_from_slice(&fe.process(block).samples);
+        }
+        out
+    }
+
+    /// Score through the REAL detector, not by grepping the transcript.
+    ///
+    /// The first version of this checked for the digits "28" and "16" in the text, and
+    /// it was worse than useless — it scored `Peter 8 verse 28` as a SUCCESS (whisper
+    /// hallucinated the wrong book, and the number matched) while scoring the correct
+    /// "chapter eight verse twenty-eight" as a FAILURE (spelled out, and detection.rs
+    /// parses spoken numbers perfectly well).
+    ///
+    /// It flattered the option that hallucinated and punished the option that worked.
+    /// What matters is not what the transcript LOOKS like — it is which verse Relay
+    /// would put on the screen.
+    fn refs_found(text: &str) -> Vec<String> {
+        let mut v: Vec<String> = crate::detection::detect_direct(text)
+            .into_iter()
+            .map(|m| {
+                format!(
+                    "{} {}:{}",
+                    m.reference.book, m.reference.chapter, m.reference.verse
+                )
+            })
+            .collect();
+        v.sort();
+        v.dedup();
+        v
+    }
+
+    /// WHICH PROMPT? Whisper's `initial_prompt` is PRIOR CONTEXT — text the decoder
+    /// should read as if it had just transcribed it, and continue in the style of. It
+    /// is not a vocabulary list, and treating it as one actively harms accuracy: a
+    /// dump of 66 book names drags the decoder toward emitting nouns, and it starts
+    /// hallucinating them ("Verse 8, Verse 28") or dropping the sentence around them.
+    #[test]
+    #[ignore]
+    fn prompt_sweep() {
+        let Some(wav) = std::env::var_os("RELAY_BENCH_WAV") else {
+            return;
+        };
+        let wav = wav.to_str().unwrap();
+        let model = default_model_path().expect("no model");
+        let ctx = WhisperContext::new_with_params(
+            model.to_str().unwrap(),
+            WhisperContextParameters::default(),
+        )
+        .expect("load");
+        let mut state = ctx.create_state().expect("state");
+
+        let dump = scripture_bias_prompt(Some("en"), "");
+        // Prose, not a word list — whisper's initial_prompt is PRIOR CONTEXT.
+        let context = "Turn with me in your Bibles to Romans chapter eight verse \
+                       twenty-eight. And we read in John 3:16, and again in Psalm 23:1."
+            .to_string();
+        let prompts: [(&str, Option<&str>); 3] = [
+            ("none         ", None),
+            ("66-book dump ", Some(dump.as_str())),
+            ("style context", Some(context.as_str())),
+        ];
+
+        // A spread of real-world conditions, not one lucky sample.
+        let conds = [
+            ("clean       ", 1.0f32, 0.0f32),
+            ("quiet       ", 0.08, 0.0),
+            ("noisy       ", 1.0, 0.02),
+            ("quiet+noisy ", 0.08, 0.004),
+            ("very quiet  ", 0.03, 0.002),
+        ];
+
+        // The audio contains exactly these two, and NOTHING else. A wrong verse is not
+        // a near-miss — it is the failure this whole product exists to avoid — so it is
+        // scored separately and harshly.
+        let want = ["Romans 8:28", "John 3:16"];
+
+        for (plabel, prompt) in prompts {
+            let (mut right, mut wrong) = (0usize, 0usize);
+            println!("\n  ── prompt: {plabel} ──");
+            for (clabel, scale, noise) in conds {
+                for seed in [0x1234_5678u32, 0x9E37_79B9] {
+                    let audio = church_signal(wav, scale, noise, seed);
+                    // The worker decodes a ROLLING window, so a 10s utterance is seen as
+                    // several. Simulate that: every reference in the audio must be
+                    // recoverable from the window it falls in.
+                    let wlen = TARGET_RATE as usize * WINDOW_SECS;
+                    let mut found: Vec<String> = Vec::new();
+                    for start in (0..audio.len()).step_by(wlen / 2) {
+                        let end = (start + wlen).min(audio.len());
+                        if end - start < TARGET_RATE as usize {
+                            break;
+                        }
+                        let out = transcribe(
+                            &mut state,
+                            &audio[start..end],
+                            4,
+                            Some("en"),
+                            prompt,
+                            Decode::Fast,
+                        )
+                        .map(|(t, _)| t)
+                        .unwrap_or_default();
+                        found.extend(refs_found(&out));
+                    }
+                    found.sort();
+                    found.dedup();
+                    right += want
+                        .iter()
+                        .filter(|w| found.iter().any(|f| f == *w))
+                        .count();
+                    wrong += found.iter().filter(|f| !want.contains(&f.as_str())).count();
+                    if seed == 0x1234_5678 {
+                        println!("    {clabel} → {found:?}");
+                    }
+                }
+            }
+            println!("    ── correct: {right}/20   WRONG VERSES: {wrong}");
+        }
+        println!();
+    }
+
+    #[test]
+    #[ignore]
+    fn decode_quality() {
+        let Some(wav) = std::env::var_os("RELAY_BENCH_WAV") else {
+            eprintln!("set RELAY_BENCH_WAV");
+            return;
+        };
+        let model = default_model_path().expect("no STT model found");
+        let mut audio = load_f32(wav.to_str().unwrap());
+
+        // Make it a CHURCH signal, not a studio one: quiet, and sitting in room noise.
+        // A decoder that only wins on clean audio wins nothing — clean audio is the one
+        // case Relay already handles.
+        let scale: f32 = std::env::var("RELAY_BENCH_SCALE")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(1.0);
+        let noise: f32 = std::env::var("RELAY_BENCH_NOISE")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0.0);
+        // Deterministic pseudo-noise — a fixed LCG, so the benchmark is reproducible.
+        let mut seed: u32 = 0x1234_5678;
+        for s in audio.iter_mut() {
+            seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            let r = (seed >> 8) as f32 / 8_388_608.0 - 1.0; // ~[-1,1)
+            *s = *s * scale + r * noise;
+        }
+        // Through the REAL front-end (denoise self-disables at 16 kHz → auto-gain), so
+        // the decoder sees exactly what the worker would hand it.
+        let mut fe = crate::dsp::FrontEnd::new(TARGET_RATE);
+        let mut cleaned: Vec<f32> = Vec::with_capacity(audio.len());
+        for block in audio.chunks(1024) {
+            cleaned.extend_from_slice(&fe.process(block).samples);
+        }
+        let audio = cleaned;
+
+        let ctx = WhisperContext::new_with_params(
+            model.to_str().unwrap(),
+            WhisperContextParameters::default(),
+        )
+        .expect("load model");
+        let mut state = ctx.create_state().expect("state");
+
+        // The window the worker actually decodes: the freshest WINDOW_SECS.
+        let n = (TARGET_RATE as usize * WINDOW_SECS).min(audio.len());
+        let win = &audio[audio.len() - n..];
+        let bias = scripture_bias_prompt(Some("en"), "");
+        println!("\n  input: ×{scale} + noise {noise}");
+
+        for (label, decode, prompt) in [
+            ("greedy, no bias", Decode::Fast, None),
+            ("greedy + bias  ", Decode::Fast, Some(bias.as_str())),
+            ("beam 5, no bias", Decode::Beam(5), None),
+            ("beam 5 + bias  ", Decode::Beam(5), Some(bias.as_str())),
+        ] {
+            let t = std::time::Instant::now();
+            let out = transcribe(&mut state, win, 4, Some("en"), prompt, decode);
+            let ms = t.elapsed().as_millis();
+            println!(
+                "\n  {label}  [{ms} ms]\n    {}",
+                out.map(|(t, _)| t).unwrap_or_else(|| "<blank>".into())
+            );
+        }
+        println!("\n  budget: 1000 ms per decode\n");
+    }
+
     #[test]
     #[ignore]
     fn decode_latency() {
@@ -695,7 +949,7 @@ mod bench {
                 let n = (TARGET_RATE as usize * window_secs).min(audio.len());
                 let win = &audio[audio.len() - n..]; // the freshest window, as live
                 let t = std::time::Instant::now();
-                let _ = transcribe(&mut state, win, threads, Some("en"), None);
+                let _ = transcribe(&mut state, win, threads, Some("en"), None, Decode::Fast);
                 let ms = t.elapsed().as_millis() as f64;
                 let rtf = ms / (window_secs as f64 * 1000.0);
                 let ok = ms <= budget_ms;
