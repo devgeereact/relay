@@ -5,7 +5,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "PASTE_YOUR_TAURI_UPDATER_PUBLIC_KEY_HERE",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEE4MjlCODlCRUYxRjJDQkQKUldTOUxCL3ZtN2dwcUlTYW9MLzY4RW5hUEYyUnYyaWNHcU5EeFUyOTlROE9rY1F0RjZsK2kwVTcK",
       "endpoints": [
         "https://github.com/devgeereact/relay/releases/latest/download/latest.json"
       ]
