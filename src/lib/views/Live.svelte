@@ -30,9 +30,10 @@
   import OutputWall from '../OutputWall.svelte';
   import ModelSetup from '../ModelSetup.svelte';
   import { registerContext } from '../shortcuts.js';
+  import { t } from '../i18n.js';
   import EmptyState from '../ui/EmptyState.svelte';
   import Loading from '../ui/Loading.svelte';
-  import { heard, methodLabel } from '../detect.js';
+  import { heard, methodKey } from '../detect.js';
   import { humanError as humanErrorBase } from '../errors.js';
   import { TYPE, payloadOf, slidesOf, slideAccent, cueSub, nextOf, stepFrom } from '../plan.js';
   import { session, setSession } from '../session.js';
@@ -137,7 +138,7 @@
     rehBusy = true;
     try {
       await setRehearsal(!$rehearsing);
-      flash($rehearsing ? 'Rehearsal — nothing reaches the screens' : 'Live. Screens cleared.');
+      flash($rehearsing ? $t('live.rehearsal_on') : $t('live.rehearsal_off'));
       errMsg = '';
     } catch (e) {
       errMsg = humanError(e);
@@ -275,7 +276,7 @@
     // shell says so; adding a second, softer message here would only dilute it.
     const ok = await clearScreens();
     setStageNext(null, null);
-    if (ok) flash('Screens cleared');
+    if (ok) flash($t('live.screens_cleared'));
   }
 
   async function blackAll() {
@@ -297,7 +298,7 @@
     if (!d) return;
     try {
       await confirmDetection(d.reference);
-      flash(`Now live: ${d.reference}`);
+      flash($t('live.now_live', { reference: d.reference }));
     } catch (e) {
       flash(humanError(e));
     }
@@ -306,7 +307,7 @@
   async function pushRef(reference) {
     try {
       await confirmDetection(reference);
-      flash(`Now live: ${reference}`);
+      flash($t('live.now_live', { reference }));
     } catch (e) {
       flash(humanError(e));
     }
@@ -375,7 +376,7 @@
   async function pushRelated(reference) {
     try {
       await manualFire(reference);
-      flash(`Now live: ${reference}`);
+      flash($t('live.now_live', { reference }));
     } catch (e) {
       flash(humanError(e));
     }
@@ -411,7 +412,7 @@
     if (!ref) return;
     try {
       await manualFire(ref);
-      flash(`Now live: ${ref}`);
+      flash($t('live.now_live', { reference: ref }));
       manualRef = '';
       errMsg = '';
     } catch (e) {
@@ -588,13 +589,13 @@
          entire reason the Console and the Planner became one screen. -->
     <section class="tile feed">
       <div class="tile-head">
-        <h2 class="sub">Intelligence Feed</h2>
+        <h2 class="sub">{$t('live.intelligence_feed')}</h2>
         <svg class="ic dim" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 3v18h18"/><path d="M18 17V9M13 17V5M8 17v-3"/></svg>
       </div>
 
       <div class="tx-box">
         <div class="seg-top">
-          <span class="lbl-gold">Live transcript</span>
+          <span class="lbl-gold">{$t('live.live_transcript')}</span>
           <span class="mono dim">{$capture.capturing ? ($capture.detectedLang ?? 'listening') : 'standby'}</span>
         </div>
         <div class="tx-stream" bind:this={transcriptEl}>
@@ -602,11 +603,11 @@
             {$transcript.finals.join(' ')}
             {#if $transcript.partial}<mark>{$transcript.partial}</mark><i class="caret"></i>{/if}
           {:else if $capture.capturing}
-            <span class="dim">Waiting for speech…</span>
+            <span class="dim">{$t('live.waiting_for_speech')}</span>
           {:else if !$capture.stt.loaded}
-            <span class="dim">No speech model loaded — see Settings. Manual override still works.</span>
+            <span class="dim">{$t('live.no_model')}</span>
           {:else}
-            <span class="dim">Start listening to transcribe live.</span>
+            <span class="dim">{$t('live.start_listening_to_transcribe')}</span>
           {/if}
         </div>
       </div>
@@ -638,14 +639,14 @@
                while being asked to be the human in the loop. -->
           <div class="ai-card" class:guess={!heard(d)}>
             <div class="ai-top">
-              <span class="lbl-method" class:guess={!heard(d)}>{methodLabel(d)}</span>
+              <span class="lbl-method" class:guess={!heard(d)}>{$t(methodKey(d))}</span>
               {#if heard(d)}
-                <span class="mono gold">{Math.round(d.confidence * 100)}% match</span>
+                <span class="mono gold">{$t('live.match_percent', { percent: Math.round(d.confidence * 100) })}</span>
               {:else}
                 <!-- Deliberately NO percentage. Printing "61%" next to a cosine
                      invites the operator to read it as "61% likely to be right",
                      which is precisely what it is not. -->
-                <span class="mono guess-note">not a spoken reference</span>
+                <span class="mono guess-note">{$t('live.not_a_spoken_reference')}</span>
               {/if}
             </div>
             {#if heard(d)}
@@ -670,14 +671,14 @@
                    "gone free sixty" — and can judge a paraphrase by the words it
                    actually keyed on, which is something a human can agree with. -->
               <div class="why">
-                <span class="why-lbl">{heard(d) ? 'Heard' : 'Matched on'}</span>
+                <span class="why-lbl">{heard(d) ? $t('live.heard') : $t('live.matched_on')}</span>
                 <span class="why-txt">{d.matched_text}</span>
               </div>
             {/if}
             {#if d.text}<div class="ai-verse">“{d.text}”</div>{/if}
             <div class="ai-acts">
-              <button class="btn-gold" on:click={acceptTop}>Push to stage</button>
-              <button class="btn-x" on:click={dismissTop}>Dismiss</button>
+              <button class="btn-gold" on:click={acceptTop}>{$t('live.push_to_stage')}</button>
+              <button class="btn-x" on:click={dismissTop}>{$t('live.dismiss')}</button>
               <span class="hint"><kbd>A</kbd> accept · <kbd>D</kbd> dismiss</span>
             </div>
           </div>
@@ -685,7 +686,7 @@
           {#each dets.slice(1) as x (x.reference + x.at)}
             <div class="xref" class:guess={!heard(x)}>
               <div class="xref-top">
-                <span class="lbl-method sm" class:guess={!heard(x)}>{methodLabel(x)}</span>
+                <span class="lbl-method sm" class:guess={!heard(x)}>{$t(methodKey(x))}</span>
                 {#if heard(x)}
                   <span class="mono dim">{Math.round(x.confidence * 100)}%</span>
                 {/if}
@@ -693,7 +694,7 @@
               <div class="xref-ref">{x.reference}</div>
               {#if x.matched_text}
                 <div class="why sm">
-                  <span class="why-lbl">{heard(x) ? 'Heard' : 'Matched on'}</span>
+                  <span class="why-lbl">{heard(x) ? $t('live.heard') : $t('live.matched_on')}</span>
                   <span class="why-txt">{x.matched_text}</span>
                 </div>
               {/if}
@@ -707,8 +708,8 @@
         {:else}
           <EmptyState
             message={$capture.detectionOn
-              ? 'No suggestions yet.'
-              : 'Detection is off — manual override still fires.'}
+              ? $t('live.no_suggestions')
+              : $t('live.detection_off')}
           />
         {/if}
 
@@ -726,8 +727,8 @@
         {#if related?.refs?.length}
           <div class="rel">
             <div class="rel-top">
-              <span class="rel-lbl">Related · {related.theme}</span>
-              <span class="rel-note">nobody said these — a topical suggestion</span>
+              <span class="rel-lbl">{$t('live.related', { theme: related.theme })}</span>
+              <span class="rel-note">{$t('live.related_note')}</span>
             </div>
             <div class="rel-chips">
               {#each related.refs as r (r.reference)}
@@ -750,7 +751,7 @@
     <div class="rightcol">
       <section class="tile channels">
         <div class="tile-head">
-          <h2>Output</h2>
+          <h2>{$t('live.output')}</h2>
           <span class="mono dim">
             {activeTpls.length}/4 styles{$rehearsing ? ' · rehearsal' : $live ? ' · live' : ''}
           </span>
@@ -764,7 +765,7 @@
         <!-- PLAN -->
         <section class="tile">
           <div class="tile-head">
-            <h2 class="sub">Service Plan</h2>
+            <h2 class="sub">{$t('live.service_plan')}</h2>
             <span class="mono dim">{openPlan ? items.length : plans.length}</span>
           </div>
           <div class="listbody">
@@ -791,7 +792,7 @@
               {#if !itemsLoaded}
                 <Loading what="cues" compact />
               {:else if !items.length}
-                <EmptyState message="This plan has no cues. Add them in Planner." />
+                <EmptyState message={$t('live.plan_no_cues')} />
               {/if}
             {:else}
               <!-- No plan loaded. Not an error — plenty of services run entirely on
@@ -811,9 +812,7 @@
               {#if !plansLoaded}
                 <Loading what="plans" compact />
               {:else if !plans.length}
-                <EmptyState
-                  message="No service plans yet. Build one in Planner — or run the service from the AI and the manual box below."
-                />
+                <EmptyState message={$t('live.no_plans')} />
               {/if}
             {/if}
           </div>
@@ -851,7 +850,7 @@
                 </button>
               {/each}
             {:else}
-              <EmptyState message="Pick a cue to see its slides. Click a slide to put it on screen." />
+              <EmptyState message={$t('live.pick_a_cue')} />
             {/if}
           </div>
         </section>

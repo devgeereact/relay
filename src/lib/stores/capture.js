@@ -40,6 +40,7 @@
 
 import { writable, derived, get } from 'svelte/store';
 import { parseTemplateOverride } from '../templates.js';
+import { tNow } from '../i18n.js';
 
 /**
  * The audio meter — RMS level + voice-activity, arriving 10–50 times a second.
@@ -996,11 +997,11 @@ export function navNotice(r) {
     case 'fired':
       return null;
     case 'end_of_passage':
-      return 'End of the passage — nothing further to show.';
+      return tNow('nav.end_of_passage');
     case 'no_passage':
-      return 'No passage on screen yet. Fire a verse first, then use ← →.';
+      return tNow('nav.no_passage');
     case 'not_in_library':
-      return `${r.reference} isn't in your Bible, so the screen was left as it is.`;
+      return tNow('nav.not_in_library', { reference: r.reference });
     default:
       return null;
   }

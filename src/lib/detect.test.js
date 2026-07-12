@@ -9,7 +9,7 @@
 // whole time; Live.svelte rendered both kinds as "AI suggestion — 92% match". The
 // human in the loop was shown nothing to be a human in the loop WITH.
 import { describe, it, expect } from 'vitest';
-import { heard, methodLabel, showsConfidence } from './detect.js';
+import { heard, methodKey, showsConfidence } from './detect.js';
 
 const direct = { method: 'direct', confidence: 0.92 };
 const semantic = { method: 'semantic', confidence: 0.61 };
@@ -29,11 +29,11 @@ describe('heard vs guessed', () => {
     expect(heard(ambiguous)).toBe(false);
   });
 
-  it('the three methods get three visibly different labels', () => {
-    const labels = [direct, semantic, ambiguous].map(methodLabel);
-    expect(new Set(labels).size).toBe(3);
-    expect(methodLabel(semantic)).toMatch(/guess/i);
-    expect(methodLabel(direct)).toMatch(/heard/i);
+  it('the three methods get three DIFFERENT keys — the operator must be able to tell them apart', () => {
+    const keys = [direct, semantic, ambiguous].map(methodKey);
+    expect(new Set(keys).size).toBe(3);
+    expect(methodKey(semantic)).toBe('live.paraphrase_a_guess');
+    expect(methodKey(direct)).toBe('live.heard_the_reference');
   });
 });
 
@@ -64,7 +64,7 @@ describe('nothing crashes on a malformed payload', () => {
   // cautious reading instead — but note that an unknown method reads as "heard",
   // matching the Rust default, so a future method must be added in BOTH places.
   it('survives undefined', () => {
-    expect(() => methodLabel(undefined)).not.toThrow();
+    expect(() => methodKey(undefined)).not.toThrow();
     expect(heard(undefined)).toBe(false);
   });
 });

@@ -1,6 +1,24 @@
 <script>
   import { onMount } from 'svelte';
   import ModelSetup from '../ModelSetup.svelte';
+  import { locale, setLocale, LOCALES, t } from '../i18n.js';
+  import en from '../locales/en.json';
+  import yo from '../locales/yo.json';
+  import sw from '../locales/sw.json';
+  import ha from '../locales/ha.json';
+
+  // How much of the console each language actually covers, computed from the catalogues
+  // themselves rather than claimed.
+  //
+  // It is shown because it is TRUE. An operator who picks Yorùbá today and gets an
+  // English console would otherwise conclude the feature is broken. It is not broken —
+  // it is unwritten. The number says so, and invites them to be the one who writes it.
+  const CATALOGUES = { en, yo, sw, ha };
+  const TOTAL = Object.keys(en).filter((k) => !k.startsWith('_')).length;
+  const coverage = (code) =>
+    Math.round(
+      (Object.keys(CATALOGUES[code] ?? {}).filter((k) => !k.startsWith('_')).length / TOTAL) * 100,
+    );
   import { capture, meter, templates, initAudio, startCapture, stopCapture, setThresholds, setSttLanguage, setInputDevice, listTranslations, getActiveTranslation, setActiveTranslation, localIp, loadTemplates, getContentTemplates, setContentTemplate, getCrashReporting, setCrashReporting } from '../stores/capture.js';
 
   // Crash reporting — OFF by default. The only thing in Relay that can send
@@ -86,6 +104,42 @@
 <p class="r-lead s-lead">Configure AI recognition parameters, hardware routing, and network visibility for the live broadcasting environment.</p>
 
 <div class="s-grid">
+  <!-- CONSOLE LANGUAGE.
+       Relay listens to a sermon in Yorùbá, detects the verse, and then talks to the
+       volunteer running it in English. It understands three African languages and
+       cannot speak a word of any of them to its own operator. -->
+  <section class="r-tile s-card">
+    <header class="s-head">
+      <span class="s-head-l">
+        <svg class="s-ic" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18"/></svg>
+        {$t('settings.language')}
+      </span>
+    </header>
+    <p class="s-note">{$t('settings.language_hint')}</p>
+    <div class="lang-list">
+        {#each LOCALES as l}
+          {@const pct = coverage(l.code)}
+          <button
+            class="lang r-focus"
+            class:on={$locale === l.code}
+            aria-pressed={$locale === l.code}
+            on:click={() => setLocale(l.code)}
+          >
+            <span class="lang-name">{l.label}</span>
+            <!-- The honest number. 0% is not a failure to hide; it is an invitation. -->
+            <span class="lang-pct r-mono" class:none={pct === 0}>
+              {pct === 100 ? '✓' : $t('settings.translated_percent', { percent: pct })}
+            </span>
+          </button>
+      {/each}
+    </div>
+    <p class="s-note lang-foot">
+      Missing words stay in English, so a part-translated console still works. A
+      translation is a data file — <code class="r-mono">src/lib/locales/</code> — not
+      code: no Rust, no Svelte, no build. One word is a useful contribution.
+    </p>
+  </section>
+
   <!-- AUDIO INPUT -->
   <section class="r-tile s-card">
     <header class="s-head">
@@ -314,6 +368,21 @@
   .s-lead{ margin:0 0 20px; }
 
   .s-grid{ display:grid; grid-template-columns:1fr 1fr; gap:16px; align-items:start; }
+
+  /* Console language */
+  .lang-list{ display:flex; flex-direction:column; gap:6px; margin-top:10px; }
+  .lang{ display:flex; align-items:center; justify-content:space-between; gap:12px;
+    padding:9px 12px; border-radius:9px; cursor:pointer; text-align:left;
+    background:rgba(255,255,255,.03); border:1px solid var(--v-line); color:var(--v-txt); }
+  .lang:hover{ background:rgba(255,255,255,.06); }
+  /* Amber = ON AIR everywhere else in this app, so the SELECTED language is marked with
+     a border and weight, not with the tally colour. A settings row is not a tally light. */
+  .lang.on{ border-color:var(--v-dim); background:rgba(255,255,255,.07); font-weight:600; }
+  .lang-name{ font-size:13.5px; }
+  .lang-pct{ font-size:10.5px; color:var(--v-dim); flex:0 0 auto; }
+  .lang-pct.none{ color:var(--v-faint); }
+  .lang-foot{ margin-top:11px; }
+  .lang-foot code{ font-size:11px; color:var(--v-dim); }
 
   .s-card{ padding:20px 22px; display:flex; flex-direction:column; }
 

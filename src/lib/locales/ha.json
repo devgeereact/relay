@@ -1,0 +1,24 @@
+{
+  "_readme": [
+    "Hausa — the operator's console language.",
+    "",
+    "THIS FILE IS EMPTY ON PURPOSE. It was NOT written by an AI or by a non-speaker.",
+    "",
+    "A wrong translation in a church tool is not a cosmetic bug: the volunteer running the",
+    "service reads these words under pressure, in a dark booth, with a congregation waiting.",
+    "The same rule applies here as to book_aliases.json and numerals.json — the words come",
+    "from someone who speaks the language.",
+    "",
+    "TO CONTRIBUTE (no Rust, no Svelte, no build):",
+    "  1. Open src/lib/locales/en.json and copy any key you want to translate.",
+    "  2. Paste it here and translate the VALUE only. Leave the key exactly as it is.",
+    "  3. Keep every {placeholder} — word order may change, the placeholder must survive.",
+    "  4. Open a pull request. One key is a useful pull request.",
+    "",
+    "Anything you leave out simply stays English, so a partial translation is a WORKING",
+    "translation and ships the day it lands. Start with the live.* keys — that is the screen",
+    "a volunteer actually uses on a Sunday.",
+    "",
+    "_review: NOT YET REVIEWED BY A Hausa SPEAKER."
+  ]
+}

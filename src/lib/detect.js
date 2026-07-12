@@ -23,11 +23,16 @@
  */
 export const heard = (d) => d?.method === 'direct';
 
-/** What KIND of claim the machine is making, in words a volunteer can act on. */
-export function methodLabel(d) {
-  if (d?.method === 'semantic') return 'Paraphrase — a guess';
-  if (d?.method === 'ambiguous') return 'Ambiguous reference';
-  return 'Heard the reference';
+/**
+ * What KIND of claim the machine is making — as an i18n KEY, not a sentence.
+ *
+ * This module stays pure and testable; it simply is not the place that decides which
+ * language the operator reads. `Live.svelte` renders `$t(methodKey(d))`.
+ */
+export function methodKey(d) {
+  if (d?.method === 'semantic') return 'live.paraphrase_a_guess';
+  if (d?.method === 'ambiguous') return 'live.ambiguous_reference';
+  return 'live.heard_the_reference';
 }
 
 /**

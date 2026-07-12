@@ -1,6 +1,7 @@
 <script>
   import { onMount, onDestroy } from 'svelte';
   import { trapFocus } from './lib/focus.js';
+  import { t } from './lib/i18n.js';
   import { capture, capturing, detectionOn, live, screenBlack, rehearsing, initAudio, clearScreens, blackScreen, panicError, dismissPanicError } from './lib/stores/capture.js';
   import { installShortcuts, cheatsheet, liveShortcuts } from './lib/shortcuts.js';
   import { installLeaveGuard } from './lib/crash.js';
@@ -22,26 +23,28 @@
   import Settings from './lib/views/Settings.svelte';
   import Help from './lib/views/Help.svelte';
 
+  // `label` is an i18n KEY. The tab strip is the first thing a volunteer looks at and
+  // the last thing they should have to read in a second language.
   const tabs = [
-    { key: 'live',      label: 'Live',      title: 'Live Service',     view: Live },
-    { key: 'channels',  label: 'Channels',  title: 'Output Channels',  view: Channels },
-    { key: 'templates', label: 'Templates', title: 'Template Editor',  view: Templates },
-    { key: 'library',   label: 'Library',   title: 'Content Library',  view: Library },
-    { key: 'planner',   label: 'Planner',   title: 'Service Planner',  view: ServicePlanner },
-    { key: 'settings',  label: 'Settings',  title: 'System Settings',  view: Settings },
+    { key: 'live',      label: 'tab.live',      title: 'Live Service',     view: Live },
+    { key: 'channels',  label: 'tab.channels',  title: 'Output Channels',  view: Channels },
+    { key: 'templates', label: 'tab.templates', title: 'Template Editor',  view: Templates },
+    { key: 'library',   label: 'tab.library',   title: 'Content Library',  view: Library },
+    { key: 'planner',   label: 'tab.planner',   title: 'Service Planner',  view: ServicePlanner },
+    { key: 'settings',  label: 'tab.settings',  title: 'System Settings',  view: Settings },
     // In-app help. There was NONE — the operator guide was a markdown file on
     // GitHub, which is exactly no use to a volunteer in a dark booth on a Sunday
     // with no internet. Help that needs a network is missing when Relay is most
     // useful: offline.
-    { key: 'help',      label: 'Help',      title: 'Help',             view: Help },
+    { key: 'help',      label: 'tab.help',      title: 'Help',             view: Help },
   ];
   // The active tab IS the session — not a local copy of it that happens to be
   // written back. One direction, one source of truth, so anything can navigate:
   // the Planner's "Run this plan" hands the operator to LIVE by setting it, and a
   // reload (or a crash + Recover) puts them back on the tab they were on.
-  $: active = tabs.some((t) => t.key === $session.activeTab) ? $session.activeTab : 'live';
+  $: active = tabs.some((x) => x.key === $session.activeTab) ? $session.activeTab : 'live';
   const go = (key) => setSession({ activeTab: key });
-  $: currentTab = tabs.find((t) => t.key === active) ?? tabs[0];
+  $: currentTab = tabs.find((x) => x.key === active) ?? tabs[0];
   $: current = currentTab.view;
 
   // Inline icons keyed by tab (SVG so they stay crisp on retina, themeable).
@@ -135,10 +138,10 @@
     </div>
 
     <nav class="nav">
-      {#each tabs as t}
-        <button class="nav-item r-focus" class:active={t.key === active} on:click={() => go(t.key)}>
-          <span class="ic">{@html icons[t.key]}</span>
-          <span class="nav-label">{t.label}</span>
+      {#each tabs as tab}
+        <button class="nav-item r-focus" class:active={tab.key === active} on:click={() => go(tab.key)}>
+          <span class="ic">{@html icons[tab.key]}</span>
+          <span class="nav-label">{$t(tab.label)}</span>
         </button>
       {/each}
     </nav>
@@ -285,16 +288,16 @@
 
   <!-- Mobile bottom nav -->
   <nav class="botnav">
-    {#each tabs as t}
-      <!-- go(), NOT `active = t.key`. `active` is a DERIVATION of $session (see the
+    {#each tabs as tab}
+      <!-- go(), NOT `active = tab.key`. `active` is a DERIVATION of $session (see the
            reactive statement above), so assigning to it writes to a value that is
            immediately recomputed. The tab change was never persisted, and the next
            setSession() from anywhere — Live writes one on every slide — recomputed
            `active` from the store and yanked the operator back to the previous tab
            mid-service. The desktop sidebar always called go(); the bottom nav didn't. -->
-      <button class="bn r-focus" class:active={t.key === active} on:click={() => go(t.key)}>
-        <span class="ic">{@html icons[t.key]}</span>
-        {t.label}
+      <button class="bn r-focus" class:active={tab.key === active} on:click={() => go(tab.key)}>
+        <span class="ic">{@html icons[tab.key]}</span>
+        {$t(tab.label)}
       </button>
     {/each}
   </nav>

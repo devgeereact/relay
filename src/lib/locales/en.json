@@ -1,0 +1,85 @@
+{
+  "_readme": [
+    "The operator's language. English is the SOURCE — every other locale falls back to it,",
+    "key by key, so a partial translation is a working translation.",
+    "",
+    "TO TRANSLATE: copy the keys you want into yo.json / sw.json / ha.json and translate the",
+    "VALUES. Leave a key out and it simply stays English. You never touch a .svelte file.",
+    "",
+    "{braces} are placeholders and must survive translation — {reference} becomes 'John 3:16'.",
+    "Word order may change freely; the placeholder just has to still be there.",
+    "",
+    "This is the LIVE surface first: the screens a volunteer uses under pressure, in a dark",
+    "booth, with a congregation waiting. Settings and the Library are still English and that",
+    "is a deliberate order, not an oversight — a half-translated app that covers the Sunday",
+    "path beats a complete one that ships next year."
+  ],
+
+  "app.on_air": "On Air",
+  "app.screens_clear": "Screens clear",
+  "app.blackout": "Blackout",
+  "app.rehearsal": "Rehearsal",
+  "app.listening": "Listening",
+  "app.emergency_stop": "Emergency Stop",
+  "app.detection": "Detection",
+  "app.active": "ACTIVE",
+  "app.off": "OFF",
+
+  "tab.live": "Live",
+  "tab.channels": "Channels",
+  "tab.templates": "Templates",
+  "tab.library": "Library",
+  "tab.planner": "Planner",
+  "tab.settings": "Settings",
+  "tab.help": "Help",
+
+  "panic.title": "The screens may still be live.",
+  "panic.dismiss": "Dismiss",
+
+  "live.intelligence_feed": "Intelligence Feed",
+  "live.live_transcript": "Live transcript",
+  "live.output": "Output",
+  "live.service_plan": "Service Plan",
+  "live.slides": "Slides",
+
+  "live.heard_the_reference": "Heard the reference",
+  "live.paraphrase_a_guess": "Paraphrase — a guess",
+  "live.ambiguous_reference": "Ambiguous reference",
+  "live.not_a_spoken_reference": "not a spoken reference",
+  "live.match_percent": "{percent}% match",
+  "live.heard": "Heard",
+  "live.matched_on": "Matched on",
+  "live.push_to_stage": "Push to stage",
+  "live.dismiss": "Dismiss",
+  "live.accept_hint": "{a} accept · {d} dismiss",
+
+  "live.related": "Related · {theme}",
+  "live.related_note": "nobody said these — a topical suggestion",
+
+  "live.no_suggestions": "No suggestions yet.",
+  "live.detection_off": "Detection is off — manual override still fires.",
+  "live.no_plans": "No service plans yet. Build one in Planner — or run the service from the AI and the manual box below.",
+  "live.plan_no_cues": "This plan has no cues. Add them in Planner.",
+  "live.pick_a_cue": "Pick a cue to see its slides. Click a slide to put it on screen.",
+  "live.waiting_for_speech": "Waiting for speech…",
+  "live.start_listening_to_transcribe": "Start listening to transcribe live.",
+  "live.no_model": "No speech model loaded — see Settings. Manual override still works.",
+
+  "live.now_live": "Now live: {reference}",
+  "live.screens_cleared": "Screens cleared",
+  "live.rehearsal_on": "Rehearsal — nothing reaches the screens",
+  "live.rehearsal_off": "Live. Screens cleared.",
+
+  "nav.end_of_passage": "End of the passage — nothing further to show.",
+  "nav.no_passage": "No passage on screen yet. Fire a verse first, then use ← →.",
+  "nav.not_in_library": "{reference} isn't in your Bible, so the screen was left as it is.",
+
+  "common.loading": "Loading{what}…",
+  "common.try_again": "Try again",
+  "common.cancel": "Cancel",
+
+  "settings.language": "Console language",
+  "settings.language_hint": "The language Relay speaks to YOU. It listens to the preacher in whatever language they use, regardless of this.",
+  "settings.translated_percent": "{percent}% translated",
+  "settings.help_translate": "Help translate"
+}
