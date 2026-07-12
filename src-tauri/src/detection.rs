@@ -2125,3 +2125,157 @@ mod tier1_languages {
         );
     }
 }
+
+#[cfg(test)]
+mod alias_table_integrity {
+    use super::*;
+    use std::collections::HashMap;
+
+    fn table() -> serde_json::Value {
+        serde_json::from_str(include_str!("../data/book_aliases.json")).unwrap()
+    }
+
+    /// All three tier-1 languages must cover all 66 books. If a book is missing,
+    /// Relay simply cannot hear it in that language.
+    #[test]
+    fn every_tier1_language_covers_all_66_books() {
+        let t = table();
+        for lang in ["yo", "sw", "ha"] {
+            let books = t[lang].as_object().unwrap();
+            let named: Vec<&str> = books
+                .keys()
+                .filter(|k| !k.starts_with('_'))
+                .map(|s| s.as_str())
+                .collect();
+            let missing: Vec<&&str> = CANONICAL_BOOKS
+                .iter()
+                .filter(|b| !named.contains(*b))
+                .collect();
+            assert!(
+                missing.is_empty(),
+                "{lang}: {} books missing: {missing:?}",
+                missing.len()
+            );
+            assert_eq!(named.len(), 66, "{lang} has {} books", named.len());
+        }
+    }
+
+    /// THE safety test. If two different books share an alias, one of them wins
+    /// arbitrarily and the other silently puts the WRONG SCRIPTURE on a wall.
+    ///
+    /// Cross-language collisions are the real hazard: Hausa "Mika" is Micah, and
+    /// so is Swahili "Mika" — harmless, same book. But if Hausa "Luka" (Luke)
+    /// collided with some other language's Luke-that-isn't, nobody would notice
+    /// until a service.
+    #[test]
+    fn no_alias_maps_to_two_different_books() {
+        let t = table();
+        let mut seen: HashMap<String, (String, String)> = HashMap::new(); // alias -> (book, lang)
+        for lang in ["yo", "sw", "ha"] {
+            for (book, names) in t[lang].as_object().unwrap() {
+                if book.starts_with('_') {
+                    continue;
+                }
+                for n in names.as_array().unwrap() {
+                    let key = normalize(n.as_str().unwrap());
+                    if let Some((other_book, other_lang)) = seen.get(&key) {
+                        assert_eq!(
+                            other_book, book,
+                            "alias {key:?} maps to BOTH {other_book} ({other_lang}) and \
+                             {book} ({lang}) — one of them would put the wrong verse on a wall"
+                        );
+                    }
+                    seen.insert(key, (book.clone(), lang.to_string()));
+                }
+            }
+        }
+    }
+
+    /// An alias must not collide with an ENGLISH book that isn't the same book —
+    /// the English table is merged into the same map.
+    #[test]
+    fn no_alias_hijacks_an_english_book() {
+        let t = table();
+        for lang in ["yo", "sw", "ha"] {
+            for (book, names) in t[lang].as_object().unwrap() {
+                if book.starts_with('_') {
+                    continue;
+                }
+                for n in names.as_array().unwrap() {
+                    let key = normalize(n.as_str().unwrap());
+                    // If this alias is ALSO an English book name, it must be the
+                    // same book. ("Amos" = "Amos" is fine. "Mark" = Luke is not.)
+                    if let Some(english) = CANONICAL_BOOKS.iter().find(|b| normalize(b) == key) {
+                        assert_eq!(
+                            *english, book,
+                            "{lang}: {key:?} is the English book {english} but is listed under {book}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// Words that are also ORDINARY words must not be aliases. Yorùbá "iṣẹ́" means
+    /// "work" and "orin" means "song" — in a church. An alias like that fires
+    /// scripture off normal speech.
+    #[test]
+    fn no_alias_is_a_bare_everyday_word() {
+        let t = table();
+        // Known traps, deliberately excluded from the table.
+        let banned = ["ise", "orin", "aiye", "oro"];
+        for lang in ["yo", "sw", "ha"] {
+            for (book, names) in t[lang].as_object().unwrap() {
+                if book.starts_with('_') {
+                    continue;
+                }
+                for n in names.as_array().unwrap() {
+                    let key = normalize(n.as_str().unwrap());
+                    assert!(
+                        !banned.contains(&key.as_str()),
+                        "{lang}: {key:?} (under {book}) is an everyday word — it would fire \
+                         scripture off ordinary speech. Use the full book name instead."
+                    );
+                }
+            }
+        }
+    }
+
+    /// Spot-check the books a church actually reads, in every language.
+    #[test]
+    fn the_books_churches_actually_read_resolve() {
+        let cases: &[(&str, &str)] = &[
+            // Yorùbá — both translations in common use.
+            ("Sáàmù 23:1", "Psalms"),
+            ("Psalmu 23:1", "Psalms"),
+            ("Orin Dafidi 23:1", "Psalms"),
+            ("Jẹ́nẹ́sísì 1:1", "Genesis"),
+            ("Genesisi 1:1", "Genesis"),
+            ("Òwe 3:5", "Proverbs"),
+            ("Aísáyà 40:31", "Isaiah"),
+            ("Ìṣe àwọn Àpọ́sítélì 2:38", "Acts"),
+            // Hausa
+            ("Farawa 1:1", "Genesis"),
+            ("Zabura 23:1", "Psalms"),
+            ("Karin Magana 3:5", "Proverbs"),
+            ("Ishaya 40:31", "Isaiah"),
+            ("Ibraniyawa 11:1", "Hebrews"),
+            ("Wahayin Yahaya 22:1", "Revelation"),
+            ("Ru'ya ta Yohanna 22:1", "Revelation"),
+            // Swahili
+            ("Zaburi 23:1", "Psalms"),
+            ("Mithali 3:5", "Proverbs"),
+            ("Isaya 40:31", "Isaiah"),
+            ("Waebrania 11:1", "Hebrews"),
+        ];
+        for (text, want) in cases {
+            let got = detect_direct(text);
+            assert_eq!(
+                got.first().map(|m| m.reference.book.as_str()),
+                Some(*want),
+                "{text:?} should resolve to {want}, got {:?}",
+                got.first().map(|m| &m.reference.book)
+            );
+        }
+    }
+}

@@ -68,15 +68,38 @@ add it.
 
 ## Current state
 
-| Language | Books covered | Status |
-|---|---|---|
-| **Kiswahili** (`sw`) | **66 / 66** | ✅ Complete — Biblia Takatifu / Neno |
-| **Yorùbá** (`yo`) | 29 / 66 | ⚠️ **New Testament only.** The Old Testament is missing. |
-| **Hausa** (`ha`) | 11 / 66 | ⚠️ **Gospels + a few.** Most books are missing. |
+| Language | Books | Sourced from | Native-speaker reviewed? |
+|---|---|---|---|
+| **Kiswahili** (`sw`) | **66 / 66** | Biblia Takatifu / Neno (Biblica) | ❌ not yet |
+| **Yorùbá** (`yo`) | **66 / 66** | Yoruba Contemporary Bible + Bibeli Mímọ́ | ❌ **not yet** |
+| **Hausa** (`ha`) | **66 / 66** | Bible Society of Nigeria 1932/2010 + HCB | ❌ **not yet** |
 
-**Yorùbá and Hausa need a native speaker.** The Swahili list was verifiable from
-published Bible-society translations; the other two were only partially so, and
-the maintainer chose to leave gaps rather than invent names.
+All three are complete and every name came from a published translation — **but
+none has been checked by someone who actually speaks the language.** That is the
+gap that matters now, and it is the one thing no amount of engineering closes.
+
+**Yorùbá carries two translations at once.** Biblica's *Yoruba Contemporary Bible*
+calls Psalms **Sáàmù**; the older *Bibeli Mímọ́* calls it **Psalmu**; many churches
+say **Orin Dáfídì**. A preacher says whatever their own Bible says, so all three
+are listed. Add more — there is no cost to an extra alias that is correct.
+
+### The trap that nearly got in
+
+Some book names are also **ordinary words**:
+
+| Word | "Means" | Actually means |
+|---|---|---|
+| `Iṣẹ́` (yo) | Acts | **work** |
+| `Orin` (yo) | Song of Solomon | **song** — in a church |
+
+Listing those bare would fire scripture off normal speech: *"Iṣẹ́ wa ni lati sin
+Ọlọrun"* ("our work is to serve God") would have put the book of Acts on the wall.
+So only the full forms are in the table — **`Ìṣe àwọn Àpọ́sítélì`**, **`Orin
+Solomoni`** — and there is a test that fails the build if a bare everyday word is
+ever added.
+
+**Before you add a name, ask: could a preacher say this word without meaning the
+book?**
 
 ---
 
@@ -123,8 +146,9 @@ feature would be a marketing claim, not an engineering one.
 
 In order of value:
 
-1. **Finish the Yorùbá and Hausa book names.** Pure data. Ten minutes. Unblocks
-   detection entirely for those languages.
+1. **Review the Yorùbá and Hausa names.** They are complete and sourced, but not
+   verified by a speaker. If one is wrong, Relay will confidently show the wrong
+   scripture — that is the failure this whole project exists to prevent.
 2. **Record real sermon audio** with a known transcript — even 30 minutes.
    Relay's African-language accuracy is currently **unmeasured**, and you cannot
    improve what you have never baselined. This is the single most useful thing

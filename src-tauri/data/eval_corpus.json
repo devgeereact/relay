@@ -25,120 +25,149 @@
     "lines in Yorùbá, Kiswahili and Hausa, and real ASR mistakes. A case that",
     "fails is not a problem — it is the point. See docs/LANGUAGES.md."
   ],
-
   "cases": [
     {
       "id": "en-plain",
       "lang": "en",
       "text": "Let us turn together to John chapter three verse sixteen.",
-      "expect": ["John 3:16"]
+      "expect": [
+        "John 3:16"
+      ]
     },
     {
       "id": "en-colon",
       "lang": "en",
       "text": "Our text this morning is Romans 8:28.",
-      "expect": ["Romans 8:28"]
+      "expect": [
+        "Romans 8:28"
+      ]
     },
     {
       "id": "en-spoken-number",
       "lang": "en",
       "text": "Turn with me to psalm twenty three verse one.",
-      "expect": ["Psalms 23:1"]
+      "expect": [
+        "Psalms 23:1"
+      ]
     },
     {
       "id": "en-asr-mishear-psalms",
       "lang": "en",
       "text": "open your bibles to sam one hundred and thirteen verse one",
-      "expect": ["Psalms 113:1"],
+      "expect": [
+        "Psalms 113:1"
+      ],
       "note": "ASR routinely drops the silent P in Psalms on African-accented speech."
     },
     {
       "id": "en-abbrev-typed",
       "lang": "en",
       "text": "rom 8 1",
-      "expect": ["Romans 8:1"],
+      "expect": [
+        "Romans 8:1"
+      ],
       "note": "The manual-override box. An operator types shorthand under pressure."
     },
     {
       "id": "en-single-chapter-book",
       "lang": "en",
       "text": "Jude verse four tells us plainly.",
-      "expect": ["Jude 1:4"]
+      "expect": [
+        "Jude 1:4"
+      ]
     },
-
     {
       "id": "yo-john",
       "lang": "yo",
       "text": "Ẹ ṣí Jòhánù 3:16",
-      "expect": ["John 3:16"]
+      "expect": [
+        "John 3:16"
+      ]
     },
     {
       "id": "yo-tone-marks-dropped",
       "lang": "yo",
       "text": "E si Johanu 3:16",
-      "expect": ["John 3:16"],
+      "expect": [
+        "John 3:16"
+      ],
       "note": "Whisper drops tone marks depending on the recording. Must still match."
     },
     {
       "id": "yo-code-switch",
       "lang": "yo",
       "text": "Ẹ jọ̀wọ́, ẹ ṣí Sáàmù chapter twenty three verse one.",
-      "expect": ["Psalms 23:1"],
+      "expect": [
+        "Psalms 23:1"
+      ],
       "note": "Code-switching is the NORMAL case: book in Yorùbá, numbers in English."
     },
     {
       "id": "yo-revelation",
       "lang": "yo",
       "text": "Ìfihàn 22:1",
-      "expect": ["Revelation 22:1"]
+      "expect": [
+        "Revelation 22:1"
+      ]
     },
-
     {
       "id": "sw-john",
       "lang": "sw",
       "text": "Tugeukie Yohana 3:16",
-      "expect": ["John 3:16"]
+      "expect": [
+        "John 3:16"
+      ]
     },
     {
       "id": "sw-psalms",
       "lang": "sw",
       "text": "Zaburi 23:1 inasema",
-      "expect": ["Psalms 23:1"]
+      "expect": [
+        "Psalms 23:1"
+      ]
     },
     {
       "id": "sw-multiword-book",
       "lang": "sw",
       "text": "Matendo ya Mitume 2:38",
-      "expect": ["Acts 2:38"],
+      "expect": [
+        "Acts 2:38"
+      ],
       "note": "Multi-word book name — must match as a unit, not greedily on one token."
     },
     {
       "id": "sw-code-switch",
       "lang": "sw",
       "text": "Let us read Warumi chapter eight verse twenty eight.",
-      "expect": ["Romans 8:28"]
+      "expect": [
+        "Romans 8:28"
+      ]
     },
-
     {
       "id": "ha-john",
       "lang": "ha",
       "text": "Yahaya 3:16",
-      "expect": ["John 3:16"]
+      "expect": [
+        "John 3:16"
+      ]
     },
     {
       "id": "ha-psalms",
       "lang": "ha",
       "text": "Zabura 23:1",
-      "expect": ["Psalms 23:1"]
+      "expect": [
+        "Psalms 23:1"
+      ]
     },
     {
       "id": "ha-glottal",
       "lang": "ha",
       "text": "Ru'ya ta Yohanna 22:1",
-      "expect": ["Revelation 22:1"],
+      "expect": [
+        "Revelation 22:1"
+      ],
       "note": "The Hausa glottal apostrophe must fold away."
     },
-
     {
       "id": "neg-no-reference",
       "lang": "en",
@@ -165,7 +194,6 @@
       "expect": [],
       "note": "A person named Mark is not the Gospel of Mark."
     },
-
     {
       "id": "para-john-316",
       "lang": "en",
@@ -180,6 +208,127 @@
       "text": "The Lord is my shepherd, I shall not want. He makes me lie down in green pastures.",
       "expect": [],
       "must_not_fire": true
+    },
+    {
+      "id": "yo-psalms-ycb",
+      "lang": "yo",
+      "text": "Sáàmù 23:1",
+      "expect": [
+        "Psalms 23:1"
+      ]
+    },
+    {
+      "id": "yo-psalms-bibeli-mimo",
+      "lang": "yo",
+      "text": "Psalmu 23:1",
+      "expect": [
+        "Psalms 23:1"
+      ],
+      "note": "Older Bibeli Mímọ́ translation. A preacher says whatever their own Bible says."
+    },
+    {
+      "id": "yo-psalms-orin-dafidi",
+      "lang": "yo",
+      "text": "Orin Dafidi 23:1",
+      "expect": [
+        "Psalms 23:1"
+      ]
+    },
+    {
+      "id": "yo-proverbs",
+      "lang": "yo",
+      "text": "Òwe 3:5",
+      "expect": [
+        "Proverbs 3:5"
+      ]
+    },
+    {
+      "id": "yo-isaiah",
+      "lang": "yo",
+      "text": "Aísáyà 40:31",
+      "expect": [
+        "Isaiah 40:31"
+      ]
+    },
+    {
+      "id": "yo-acts-full-form",
+      "lang": "yo",
+      "text": "Ìṣe àwọn Àpọ́sítélì 2:38",
+      "expect": [
+        "Acts 2:38"
+      ],
+      "note": "Full form only. Bare 'Iṣẹ́' means 'work' and must never be an alias."
+    },
+    {
+      "id": "ha-proverbs",
+      "lang": "ha",
+      "text": "Karin Magana 3:5",
+      "expect": [
+        "Proverbs 3:5"
+      ]
+    },
+    {
+      "id": "ha-isaiah",
+      "lang": "ha",
+      "text": "Ishaya 40:31",
+      "expect": [
+        "Isaiah 40:31"
+      ]
+    },
+    {
+      "id": "ha-hebrews",
+      "lang": "ha",
+      "text": "Ibraniyawa 11:1",
+      "expect": [
+        "Hebrews 11:1"
+      ]
+    },
+    {
+      "id": "ha-revelation-bsn",
+      "lang": "ha",
+      "text": "Wahayin Yahaya 22:1",
+      "expect": [
+        "Revelation 22:1"
+      ]
+    },
+    {
+      "id": "ha-hooked-letter",
+      "lang": "ha",
+      "text": "Littafin Ƙidaya 6:24",
+      "expect": [
+        "Numbers 6:24"
+      ],
+      "note": "Hooked ƙ must fold to k."
+    },
+    {
+      "id": "sw-proverbs",
+      "lang": "sw",
+      "text": "Mithali 3:5",
+      "expect": [
+        "Proverbs 3:5"
+      ]
+    },
+    {
+      "id": "sw-hebrews",
+      "lang": "sw",
+      "text": "Waebrania 11:1",
+      "expect": [
+        "Hebrews 11:1"
+      ]
+    },
+    {
+      "id": "neg-yo-everyday-work",
+      "lang": "yo",
+      "text": "Iṣẹ́ wa ni lati sin Ọlọrun ni gbogbo ọjọ́ 7",
+      "expect": [],
+      "note": "'Iṣẹ́' means 'work'. If it were an alias for Acts, this would fire scripture off normal speech."
+    },
+    {
+      "id": "neg-yo-everyday-song",
+      "lang": "yo",
+      "text": "Ẹ jẹ́ ká kọ orin 3 pẹ̀lú ayọ̀",
+      "expect": [],
+      "note": "'Orin' means 'song'. In a church. Must never be an alias for Song of Solomon."
     }
   ]
 }
