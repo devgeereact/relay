@@ -1,0 +1,185 @@
+{
+  "_readme": [
+    "Relay's detection benchmark. Every case is a line of sermon speech as an ASR",
+    "system would transcribe it, plus the verses that SHOULD reach the screen.",
+    "",
+    "This exists because the moat was unmeasured. docs/SPEC.md sets a target of a",
+    "<5% wrong-verse rate and nothing anywhere checked it. You cannot improve what",
+    "you have never baselined.",
+    "",
+    "Run it:  cargo test eval -- --nocapture",
+    "It also runs in CI, so detection quality is a GATE and not a vibe.",
+    "",
+    "THREE KINDS OF CASE, and the negatives matter most:",
+    "",
+    "  expect: [refs]  — these verses must be found.",
+    "  expect: []      — a NEGATIVE. Nothing may fire. Most of these are real",
+    "                    failures pulled out of a live rehearsal: garbled speech",
+    "                    that made Relay put the wrong scripture on a wall.",
+    "  must_not_fire   — the verse may be SUGGESTED, but must never auto-fire.",
+    "                    Paraphrases live here: an uncalibrated TF-IDF score is",
+    "                    not a probability and must never reach a congregation",
+    "                    without a human agreeing first.",
+    "",
+    "ADDING CASES IS THE MOST USEFUL THING YOU CAN DO. Especially: real sermon",
+    "lines in Yorùbá, Kiswahili and Hausa, and real ASR mistakes. A case that",
+    "fails is not a problem — it is the point. See docs/LANGUAGES.md."
+  ],
+
+  "cases": [
+    {
+      "id": "en-plain",
+      "lang": "en",
+      "text": "Let us turn together to John chapter three verse sixteen.",
+      "expect": ["John 3:16"]
+    },
+    {
+      "id": "en-colon",
+      "lang": "en",
+      "text": "Our text this morning is Romans 8:28.",
+      "expect": ["Romans 8:28"]
+    },
+    {
+      "id": "en-spoken-number",
+      "lang": "en",
+      "text": "Turn with me to psalm twenty three verse one.",
+      "expect": ["Psalms 23:1"]
+    },
+    {
+      "id": "en-asr-mishear-psalms",
+      "lang": "en",
+      "text": "open your bibles to sam one hundred and thirteen verse one",
+      "expect": ["Psalms 113:1"],
+      "note": "ASR routinely drops the silent P in Psalms on African-accented speech."
+    },
+    {
+      "id": "en-abbrev-typed",
+      "lang": "en",
+      "text": "rom 8 1",
+      "expect": ["Romans 8:1"],
+      "note": "The manual-override box. An operator types shorthand under pressure."
+    },
+    {
+      "id": "en-single-chapter-book",
+      "lang": "en",
+      "text": "Jude verse four tells us plainly.",
+      "expect": ["Jude 1:4"]
+    },
+
+    {
+      "id": "yo-john",
+      "lang": "yo",
+      "text": "Ẹ ṣí Jòhánù 3:16",
+      "expect": ["John 3:16"]
+    },
+    {
+      "id": "yo-tone-marks-dropped",
+      "lang": "yo",
+      "text": "E si Johanu 3:16",
+      "expect": ["John 3:16"],
+      "note": "Whisper drops tone marks depending on the recording. Must still match."
+    },
+    {
+      "id": "yo-code-switch",
+      "lang": "yo",
+      "text": "Ẹ jọ̀wọ́, ẹ ṣí Sáàmù chapter twenty three verse one.",
+      "expect": ["Psalms 23:1"],
+      "note": "Code-switching is the NORMAL case: book in Yorùbá, numbers in English."
+    },
+    {
+      "id": "yo-revelation",
+      "lang": "yo",
+      "text": "Ìfihàn 22:1",
+      "expect": ["Revelation 22:1"]
+    },
+
+    {
+      "id": "sw-john",
+      "lang": "sw",
+      "text": "Tugeukie Yohana 3:16",
+      "expect": ["John 3:16"]
+    },
+    {
+      "id": "sw-psalms",
+      "lang": "sw",
+      "text": "Zaburi 23:1 inasema",
+      "expect": ["Psalms 23:1"]
+    },
+    {
+      "id": "sw-multiword-book",
+      "lang": "sw",
+      "text": "Matendo ya Mitume 2:38",
+      "expect": ["Acts 2:38"],
+      "note": "Multi-word book name — must match as a unit, not greedily on one token."
+    },
+    {
+      "id": "sw-code-switch",
+      "lang": "sw",
+      "text": "Let us read Warumi chapter eight verse twenty eight.",
+      "expect": ["Romans 8:28"]
+    },
+
+    {
+      "id": "ha-john",
+      "lang": "ha",
+      "text": "Yahaya 3:16",
+      "expect": ["John 3:16"]
+    },
+    {
+      "id": "ha-psalms",
+      "lang": "ha",
+      "text": "Zabura 23:1",
+      "expect": ["Psalms 23:1"]
+    },
+    {
+      "id": "ha-glottal",
+      "lang": "ha",
+      "text": "Ru'ya ta Yohanna 22:1",
+      "expect": ["Revelation 22:1"],
+      "note": "The Hausa glottal apostrophe must fold away."
+    },
+
+    {
+      "id": "neg-no-reference",
+      "lang": "en",
+      "text": "Good morning church, it is wonderful to see you all here today.",
+      "expect": []
+    },
+    {
+      "id": "neg-number-not-a-verse",
+      "lang": "en",
+      "text": "We had about two hundred and fifty people here last Sunday.",
+      "expect": []
+    },
+    {
+      "id": "neg-rehearsal-garble-1",
+      "lang": "en",
+      "text": "Verse 1, Psalms 2, 3, 1, Next verse, chapter 2,",
+      "expect": [],
+      "note": "REAL transcript from a live rehearsal. Garbled fragments must not fire."
+    },
+    {
+      "id": "neg-name-not-book",
+      "lang": "en",
+      "text": "My friend Mark called me on Tuesday about the mission trip.",
+      "expect": [],
+      "note": "A person named Mark is not the Gospel of Mark."
+    },
+
+    {
+      "id": "para-john-316",
+      "lang": "en",
+      "text": "For God loved the world so much that he gave his only son, that whoever believes in him should not perish but have everlasting life.",
+      "expect": [],
+      "must_not_fire": true,
+      "note": "A quoted paraphrase. May be SUGGESTED, must never auto-fire — a TF-IDF cosine is not a probability."
+    },
+    {
+      "id": "para-psalm-23",
+      "lang": "en",
+      "text": "The Lord is my shepherd, I shall not want. He makes me lie down in green pastures.",
+      "expect": [],
+      "must_not_fire": true
+    }
+  ]
+}

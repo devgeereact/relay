@@ -621,7 +621,23 @@ fn parse_reference(
             }
         }
         if let Some((n2, after2, ph2)) = parse_number(tokens, k) {
-            // Two numbers → treat as chapter:verse as spoken.
+            // Two numbers → chapter:verse.
+            //
+            // But BARE digits, with no "chapter"/"verse" keyword and no colon, are a
+            // different animal from "Psalm 23 verse 1" and must not be trusted the
+            // same way. That form exists for TYPED shorthand ("ps 23 1") — and typed
+            // input goes through `manual_fire`, which bypasses the gate entirely, so
+            // demoting it here costs the operator nothing.
+            //
+            // What it fixes is garbled speech. This is a real transcript, from a live
+            // rehearsal:
+            //
+            //     "Verse 1, Psalms 2, 3, 1, Next verse, chapter 2,"
+            //
+            // It used to score 0.92 and put Psalms 2:3 on the wall, unasked. Nobody
+            // SAYS "Psalms two three" — they say "Psalms two verse three". So a bare
+            // pair now suggests, and a human decides.
+            let base = if kw2 { 0.92 } else { 0.45 };
             return Some((
                 make_match(
                     canonical,
@@ -630,7 +646,7 @@ fn parse_reference(
                     tokens,
                     book_start,
                     after2,
-                    0.92,
+                    base,
                     kw2,
                     ph1 || ph2,
                 ),
@@ -689,7 +705,23 @@ fn parse_reference(
         .map(|t| t.parse::<i64>().is_ok())
         .unwrap_or(false);
 
-    let base = if chapter_was_digit && verse_was_digit {
+    // BARE DIGITS with no "chapter"/"verse" keyword ("psalms 2 3") are a different
+    // animal from "Psalm 23 verse 1", and must not be trusted the same way.
+    //
+    // That form exists for TYPED shorthand ("ps 23 1") — and typed input goes
+    // through `manual_fire`, which bypasses the gate entirely. So demoting it here
+    // costs the operator nothing, and it fixes garbled speech. A real transcript,
+    // from a live rehearsal:
+    //
+    //     "Verse 1, Psalms 2, 3, 1, Next verse, chapter 2,"
+    //
+    // scored 0.92 and put Psalms 2:3 on the wall, unasked. Nobody SAYS "Psalms two
+    // three" — they say "Psalms two verse three". A bare digit pair now reaches the
+    // operator, not the congregation, and a human decides.
+    let bare_digits = chapter_was_digit && verse_was_digit && !used_kw;
+    let base = if bare_digits {
+        0.45 // below auto-fire, above suggest
+    } else if chapter_was_digit && verse_was_digit {
         0.92
     } else {
         0.90
@@ -725,7 +757,12 @@ fn make_match(
     if phonetic {
         conf -= 0.06;
     }
-    let conf = conf.clamp(0.5, 0.99);
+    // Floor is 0.30, NOT 0.50. It used to be 0.50 — which is exactly the
+    // auto-fire threshold — so the weakest possible direct match still went
+    // straight to the congregation's screen. Nothing could be demoted to a
+    // suggestion even when the parser was barely confident, which made the whole
+    // confidence scale decorative below that line.
+    let conf = conf.clamp(0.30, 0.99);
     RefMatch {
         reference: VerseRef {
             book: canonical.to_string(),
@@ -790,6 +827,11 @@ enum NumWord {
 ///
 /// A finite state walk so that "three sixteen" parses as 3 (stopping before
 /// "sixteen", which is a separate verse) while "twenty eight" → 28 and
+/// Is this the filler "and" inside a spoken number ("one hundred and thirteen")?
+fn word_is_and(t: &str) -> bool {
+    t == "and"
+}
+
 /// "one hundred nineteen" → 119.
 fn parse_number(tokens: &[&str], start: usize) -> Option<(i64, usize, bool)> {
     // Bare digits: take one token.
@@ -816,6 +858,27 @@ fn parse_number(tokens: &[&str], start: usize) -> Option<(i64, usize, bool)> {
     while let Some(&raw) = tokens.get(idx) {
         if tokens[idx].parse::<i64>().is_ok() {
             break; // a digit doesn't extend a spoken number
+        }
+        // "one hundred AND thirteen" = 113. The FSM used to break on "and" and
+        // return 100 — so "sam one hundred and thirteen verse one" auto-fired
+        // PSALM 100:1. A wrong verse, on the wall, at full confidence.
+        //
+        // This is not an edge case for this market: Nigerian, Kenyan and British
+        // English all say "a hundred AND thirteen" as the default form. American
+        // English drops it, which is presumably why it was never noticed.
+        //
+        // Only skipped when a number word genuinely follows, so "one hundred and
+        // God is good" doesn't silently swallow the "and".
+        if word_is_and(raw)
+            && matches!(state, St::AfterHundred)
+            && tokens
+                .get(idx + 1)
+                .map(|t| classify_num_word(correct_homophone(t).0).is_some())
+                .unwrap_or(false)
+        {
+            idx += 1;
+            consumed += 1;
+            continue;
         }
         let (word, ph) = correct_homophone(raw);
         let Some(nw) = classify_num_word(word) else {

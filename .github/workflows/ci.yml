@@ -69,6 +69,15 @@ jobs:
         working-directory: src-tauri
         run: cargo test --all-targets
 
+      # Detection benchmark. Already gated by `cargo test` above — these tests
+      # FAIL the build if the wrong-verse rate exceeds the SPEC target, if a
+      # paraphrase ever auto-fires, or if recall drops. This step just prints the
+      # scorecard so a regression is readable in the log rather than merely red.
+      - name: Detection scorecard
+        if: matrix.os == 'macos-latest'
+        working-directory: src-tauri
+        run: cargo test eval::tests::print_scorecard -- --nocapture
+
       # The release profile is a DIFFERENT build from `cargo test`, and it was
       # broken: whisper.cpp needs std::filesystem (macOS 10.15+) while Tauri's
       # default deployment target is 10.13, so `tauri build` had never once

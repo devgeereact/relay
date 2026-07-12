@@ -9,6 +9,10 @@ mod channels;
 mod db;
 mod detection;
 mod dsp;
+/// Detection benchmark. Test-only — it exists to FAIL THE BUILD when detection
+/// regresses, not to ship. `cargo test eval -- --nocapture` prints the scorecard.
+#[cfg(test)]
+mod eval;
 mod models;
 mod pipeline;
 mod proimport;
