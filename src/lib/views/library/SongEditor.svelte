@@ -6,6 +6,7 @@
   // Save replaces the song's sections wholesale. This is the "TITLE · SLIDE FLOW"
   // surface — the same grid the Console program pane and Planner reference.
   import { onMount, tick, createEventDispatcher } from 'svelte';
+  import Loading from '../../ui/Loading.svelte';
   import {
     getSong,
     saveSong,
@@ -241,7 +242,7 @@
 </script>
 
 {#if loading}
-  <div class="r-empty se-loading r-mono">Loading…</div>
+  <Loading what="song" />
 {:else if !song}
   <div class="r-empty">Song not found.</div>
 {:else}
@@ -389,7 +390,6 @@
 {/if}
 
 <style>
-  .se-loading{ padding:10px 0; }
   .se{ display:flex; flex-direction:column; gap:14px; }
 
   .se-top{ display:flex; align-items:center; gap:14px; flex-wrap:wrap; padding-bottom:2px; }

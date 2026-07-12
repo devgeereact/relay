@@ -4,6 +4,7 @@
   // song's slide flow, add a song straight to a service plan, delete. File
   // import (.pro / text) is handled by the Library's shared Import button.
   import { onMount } from 'svelte';
+  import EmptyState from '../../ui/EmptyState.svelte';
   import { trapFocus } from '../../focus.js';
   import { capture, listSongs, searchSongs, importSong, deleteSong, getSong, listPlans, addPlanItem, listArrangements } from '../../stores/capture.js';
   import SongEditor from './SongEditor.svelte';
@@ -195,7 +196,7 @@
         {/each}
       </div>
     {:else}
-      <div class="cat-empty"><span class="r-empty">{q.trim() ? 'No songs match.' : 'No songs yet — Import a .pro playlist or paste one with ＋ New.'}</span></div>
+      <EmptyState>{q.trim() ? 'No songs match.' : 'No songs yet — Import a .pro playlist or paste one with ＋ New.'}</EmptyState>
     {/if}
   </div>
 

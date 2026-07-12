@@ -4,6 +4,8 @@
   // Was: `error = String(err)`, rendered in a MONOSPACE font, five times over — a raw
   // Rust Err string shown to a church volunteer who has never seen one.
   import { humanError } from '../errors.js';
+  import ErrorState from '../ui/ErrorState.svelte';
+  import EmptyState from '../ui/EmptyState.svelte';
   import {
     capture,
     templates,
@@ -24,7 +26,7 @@
   // channel URL; it live-updates over the kiosk WebSocket (:8031). NDI is parked.
   let channels = [];
   let monitors = [];
-  let error = '';
+  let error = null; // the TYPED error from Rust — ErrorState decides what to show
   let copiedId = null;
   // LAN address so the output URL/QR points at a real IP other devices can reach.
   let lanIp = 'localhost';
@@ -81,8 +83,8 @@
     try {
       await setChannelTemplate(c.id, parseInt(e.target.value, 10));
       await refresh();
-      error = '';
-    } catch (err) { error = humanError(err); }
+      error = null;
+    } catch (err) { error = err; }
   }
 
   async function assignDisplay(c, e) {
@@ -90,15 +92,15 @@
     try {
       await setChannelDisplay(c.id, v === '' ? null : v);
       await refresh();
-      error = '';
-    } catch (err) { error = humanError(err); }
+      error = null;
+    } catch (err) { error = err; }
   }
 
   async function openNative(c) {
     try {
       await openChannelOutput(c.id);
-      error = '';
-    } catch (err) { error = humanError(err); }
+      error = null;
+    } catch (err) { error = err; }
   }
 
   async function add() {
@@ -109,8 +111,8 @@
       newName = '';
       newTarget = 'native_window';
       await refresh();
-      error = '';
-    } catch (err) { error = humanError(err); }
+      error = null;
+    } catch (err) { error = err; }
   }
 
   // Two-step delete (no native confirm — Tauri's webview doesn't implement it).
@@ -129,8 +131,8 @@
     try {
       await deleteChannel(c.id);
       await refresh();
-      error = '';
-    } catch (err) { error = humanError(err); }
+      error = null;
+    } catch (err) { error = err; }
   }
 
   async function copyUrl(c) {
@@ -243,7 +245,7 @@
     {/each}
 
     {#if channels.length === 0}
-      <div class="r-row"><span class="r-empty">No output channels yet — add one below.</span></div>
+      <div class="r-row"><EmptyState message="No output channels yet — add one below." /></div>
     {/if}
   </div>
 
@@ -264,7 +266,7 @@
     </div>
   </div>
 
-  {#if error}<div class="ch-error" role="alert">{error}</div>{/if}
+  <ErrorState {error} />
 
   <!-- Preacher's stage remote -->
   <div class="r-tile ch-stage">
@@ -384,7 +386,6 @@
   .ch-add-form :global(.r-input){ flex:1 1 200px; min-width:160px; }
   .ch-add-form :global(.r-select){ flex:0 1 210px; }
 
-  .ch-error{ color:var(--v-rose); font-size:12px; }
 
   /* Footer stat strip */
   .ch-foot{ display:flex; align-items:flex-start; justify-content:space-between; gap:24px;

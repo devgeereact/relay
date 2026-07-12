@@ -30,6 +30,8 @@
   import OutputWall from '../OutputWall.svelte';
   import ModelSetup from '../ModelSetup.svelte';
   import { registerContext } from '../shortcuts.js';
+  import EmptyState from '../ui/EmptyState.svelte';
+  import Loading from '../ui/Loading.svelte';
   import { heard, methodLabel } from '../detect.js';
   import { humanError as humanErrorBase } from '../errors.js';
   import { TYPE, payloadOf, slidesOf, slideAccent, cueSub, nextOf, stepFrom } from '../plan.js';
@@ -703,9 +705,11 @@
             </div>
           {/each}
         {:else}
-          <div class="empty">
-            {#if !$capture.detectionOn}Detection is off — manual override still fires.{:else}No suggestions yet.{/if}
-          </div>
+          <EmptyState
+            message={$capture.detectionOn
+              ? 'No suggestions yet.'
+              : 'Detection is off — manual override still fires.'}
+          />
         {/if}
 
         <!-- RELATED SCRIPTURE. Deliberately the quietest thing in this feed.
@@ -784,8 +788,10 @@
                   {/if}
                 </button>
               {/each}
-              {#if itemsLoaded && !items.length}
-                <div class="empty">This plan has no cues. Add them in <b>Planner</b>.</div>
+              {#if !itemsLoaded}
+                <Loading what="cues" compact />
+              {:else if !items.length}
+                <EmptyState message="This plan has no cues. Add them in Planner." />
               {/if}
             {:else}
               <!-- No plan loaded. Not an error — plenty of services run entirely on
@@ -799,13 +805,15 @@
                   <span class="cue-tag mono go">RUN</span>
                 </button>
               {/each}
-              <!-- `plansLoaded &&`, not just `!plans.length`. Until the query comes
-                   back, "no plans" is not a fact — it is the absence of one. -->
-              {#if plansLoaded && !plans.length}
-                <div class="empty">
-                  No service plans yet. Build one in <b>Planner</b> — or run the service
-                  from the AI and the manual box below.
-                </div>
+              <!-- Loading is NOT Empty. Until the query comes back, "no plans" is not
+                   a fact — it is the absence of one, and rendering it told an operator
+                   with a full library that they had lost their work. -->
+              {#if !plansLoaded}
+                <Loading what="plans" compact />
+              {:else if !plans.length}
+                <EmptyState
+                  message="No service plans yet. Build one in Planner — or run the service from the AI and the manual box below."
+                />
               {/if}
             {/if}
           </div>
@@ -843,7 +851,7 @@
                 </button>
               {/each}
             {:else}
-              <div class="empty">Pick a cue to see its slides. Click a slide to put it on screen.</div>
+              <EmptyState message="Pick a cue to see its slides. Click a slide to put it on screen." />
             {/if}
           </div>
         </section>
@@ -1003,7 +1011,7 @@
   .chan-wrap{padding:18px}
   .tile-head{display:flex;align-items:center;justify-content:space-between;padding:13px 16px;
     border-bottom:1px solid var(--hair);flex:0 0 auto;gap:10px}
-  .tile-head h2,.tile-head h3{margin:0;font-family:var(--f-body);font-size:11px;font-weight:700;
+  .tile-head h2{margin:0;font-family:var(--f-body);font-size:11px;font-weight:700;
     letter-spacing:.16em;text-transform:uppercase;color:var(--s-on);
     overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   /* Secondary tile headings. They used to be <h3> — which is how the page ended up
@@ -1027,8 +1035,6 @@
   .seg-top{display:flex;align-items:center;justify-content:space-between}
   .lbl-gold{font-family:var(--f-mono);font-size:10px;font-weight:600;letter-spacing:.16em;
     text-transform:uppercase;color:var(--s-gold)}
-  .lbl-dim{font-family:var(--f-mono);font-size:9px;font-weight:700;letter-spacing:.16em;
-    text-transform:uppercase;color:var(--s-onvar)}
   .ai-card{background:var(--s-low);border:1px solid rgba(255,185,95,.28);border-radius:10px;padding:14px;
     box-shadow:0 0 20px -5px var(--s-gold-glow)}
   .ai-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
@@ -1091,8 +1097,6 @@
     background:rgba(255,255,255,.07)}
   .rel-chip:disabled{opacity:.45;cursor:default}
 
-  .empty{color:var(--s-outline);font-size:12.5px;line-height:1.6;padding:10px 2px}
-  .empty b{color:var(--s-onvar)}
 
   /* ── the run columns ── */
   .listbody{flex:1;min-height:0;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:7px;

@@ -3,6 +3,7 @@
   // Search a reference or phrase, save what you want; saved verses render here
   // and are cue sources for the Planner.
   import { onMount, tick } from 'svelte';
+  import EmptyState from '../../ui/EmptyState.svelte';
   import { searchScripture, listSavedScripture, saveScripture, deleteSavedScripture } from '../../stores/capture.js';
 
   export let startSave = false;
@@ -119,7 +120,7 @@
       {/each}
     </div>
   {:else}
-    <div class="cat-empty"><span class="r-empty">No saved verses yet — search above and hit Save.</span></div>
+    <EmptyState message="No saved verses yet — search above and hit Save." />
   {/if}
 </div>
 

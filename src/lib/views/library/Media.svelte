@@ -3,6 +3,7 @@
   // live on disk; the catalog holds pointers (offline-first). Import happens via
   // the Library's shared Import button, which routes files here by type.
   import { onMount } from 'svelte';
+  import EmptyState from '../../ui/EmptyState.svelte';
   import { listMedia, deleteMedia, fireMedia } from '../../stores/capture.js';
 
   let items = [];
@@ -70,7 +71,7 @@
       {/each}
     </div>
   {:else}
-    <div class="cat-empty"><span class="r-empty">No media yet — use <b>Import</b> above. Images &amp; video go here; PDF/PPTX import as documents.</span></div>
+    <EmptyState>No media yet — use <b>Import</b> above. Images &amp; video go here; PDF/PPTX import as documents.</EmptyState>
   {/if}
 </div>
 

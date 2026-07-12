@@ -13,6 +13,7 @@
   //
   // Build here. Run in LIVE.
   import { onMount } from 'svelte';
+  import EmptyState from '../ui/EmptyState.svelte';
   import { trapFocus } from '../focus.js';
   import { songCue } from '../cues.js';
   import { setSession } from '../session.js';
@@ -298,7 +299,7 @@
         {/each}
       </div>
     {:else}
-      <div class="cat-empty"><span class="r-empty">No plans yet — create one to start building a service.</span></div>
+      <EmptyState message="No plans yet — create one to start building a service." />
     {/if}
   </div>
 {:else}

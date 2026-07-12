@@ -1,5 +1,6 @@
 <script>
   import { onMount } from 'svelte';
+  import Loading from '../../ui/Loading.svelte';
   import { capture, listServices, serviceDetail, endService, exportService } from '../../stores/capture.js';
 
   let exportMsg = '';
@@ -89,7 +90,7 @@
     {#if exportMsg}<div class="lib-exportmsg r-mono">{exportMsg}</div>{/if}
 
     {#if loading}
-      <div class="r-empty lib-loading r-mono">Loading…</div>
+      <Loading what="services" />
     {:else if detail}
       <div class="lib-detail-grid">
         <div class="lib-transcript-col">
@@ -199,7 +200,7 @@
           </div>
         {/each}
       {:else}
-        <div class="r-row"><span class="r-empty">No services yet — start listening in Settings to record one.</span></div>
+        <div class="r-row"><span class="r-empty">No services yet — press Start listening on the Live tab to record one.</span></div>
       {/if}
     </div>
 
@@ -270,7 +271,6 @@
   .lib-detail-count{ font-size:11px; color:var(--v-dim); }
 
   .lib-exportmsg{ font-size:11px; color:var(--v-emerald); word-break:break-all; margin-top:-8px; }
-  .lib-loading{ padding:8px 0; }
 
   .lib-detail-grid{ display:grid; grid-template-columns:1fr 340px; gap:16px; align-items:start; }
   .lib-collabel{ margin-bottom:10px; }
