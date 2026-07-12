@@ -9,7 +9,9 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "version:check": "node scripts/version.mjs --check",
+    "version:set": "node scripts/version.mjs --set"
   },
   "devDependencies": {
     "@fontsource/fraunces": "^5.2.9",
