@@ -60,6 +60,30 @@ export const detections = writable([]);
 // Output templates (Phase 8), loaded from the DB.
 export const templates = writable([]);
 
+/**
+ * WHERE THE OPERATOR IS IN THE PLAN — which cue is live, and which of its slides.
+ *
+ * This lives in the store, not in the Planner view, because it must be reset by
+ * every path that takes plan content OFF the screen. It used to be view-local, and
+ * only the Planner's own ◼ button reset it. The panic keys did not:
+ *
+ *   1. Slide 2 of cue 7 is on the wall.
+ *   2. The operator panics and presses Esc. The screens clear. ✓
+ *   3. But liveCue still says cue 7, slide 2.
+ *   4. They press → … and slide 3 fires STRAIGHT BACK onto the congregation's
+ *      screen.
+ *
+ * The panic key cleared the screens but not the transport. Owning this in the
+ * store means clearScreens / blackScreen / manualFire / confirmDetection all reset
+ * it, and no view can forget to.
+ */
+export const liveCue = writable({ cueId: null, slide: 0 });
+
+/** Plan content is no longer what the congregation is looking at. */
+function leavePlan() {
+  liveCue.set({ cueId: null, slide: 0 });
+}
+
 // Narrow slices of `capture`. A component that only needs one flag should
 // subscribe to one flag — `derived` only notifies when the value it selects
 // actually changes, so the app shell no longer re-renders because a device list
@@ -296,6 +320,9 @@ export async function stopCapture() {
 
 /** Operator confirms a suggestion → fire it to the screens + nudge the gate. */
 export async function confirmDetection(reference) {
+  // Accepting an AI suggestion also takes us out of the plan — same reason as
+  // manualFire.
+  leavePlan();
   detections.update((list) => list.filter((d) => d.reference !== reference));
   try {
     const call = await invoke();
@@ -321,6 +348,10 @@ export async function dismissDetection(reference) {
 /** Manual override: fire a free-text reference now (throws if unparseable).
  *  `stageNote` is an optional confidence-monitor note for this cue. */
 export async function manualFire(reference, stageNote = null) {
+  // A hand-typed verse is not a plan cue. If the arrows still thought we were in
+  // the plan, the next → would jump back to a slide the congregation has moved on
+  // from.
+  leavePlan();
   const call = await invoke();
   await call('manual_fire', { reference, stageNote });
 }
@@ -815,6 +846,9 @@ export async function navVerse(direction) {
 
 /** Blank every output channel (operator "Clear all screens" / Esc). */
 export async function clearScreens() {
+  // Reset the transport FIRST, so it happens even if the backend call fails. A
+  // panic key that half-works is worse than one that doesn't.
+  leavePlan();
   try {
     const call = await invoke();
     await call('clear_screens');
@@ -825,6 +859,7 @@ export async function clearScreens() {
 
 /** Blackout every output (opaque). Next fire/clear cancels it. */
 export async function blackScreen() {
+  leavePlan();
   try {
     const call = await invoke();
     await call('blackout');

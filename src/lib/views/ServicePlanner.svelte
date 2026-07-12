@@ -10,13 +10,15 @@
   import { registerContext } from '../shortcuts.js';
   import { monitorAccent } from '../templates.js';
   import { songCue } from '../cues.js';
-  import { setSession } from '../session.js';
+  import { session, setSession } from '../session.js';
+  import { get } from 'svelte/store';
   import {
     capture,
     live,
     listActiveTemplates,
     liveContent,
     liveTemplateOverride,
+    liveCue,
     listPlans,
     createPlan,
     deletePlan,
@@ -62,14 +64,27 @@
   let leftMode = 'cues'; // 'cues' | 'add'
   let activeTpls = [];
 
-  // live state (what's on the screens)
-  let liveCueId = null;
-  let liveSlide = 0;
+  // Where we are in the plan. Owned by the STORE (capture.js `liveCue`), not by
+  // this view — because every path that takes plan content off the screen must
+  // reset it, and the panic keys live in the app shell. When this was view-local,
+  // Esc cleared the screens but NOT the transport, so the next → fired the plan
+  // straight back onto the congregation's wall.
+  $: liveCueId = $liveCue.cueId;
+  $: liveSlide = $liveCue.slide;
+  const setLive = (cueId, slide) => liveCue.set({ cueId, slide });
 
   // Mirror the live position into the persisted session, so a reload — or a
   // crash followed by Recover — brings the operator back to the cue and slide
   // they were actually on, mid-service, instead of to a blank Console tab.
-  $: setSession({ planId: openPlan?.id ?? null, liveCueId, liveSlide });
+  // Persist where we are, so a crash + Recover comes back to the same cue.
+  //
+  // GUARDED. This used to write unconditionally, and it is a REACTIVE statement —
+  // so it fired on mount with openPlan === null and immediately overwrote the saved
+  // plan id with null. The crash panel would then cheerfully tell the operator
+  // "you'll come back to plan #7, cue #3, slide 2", and the app had already thrown
+  // that away. It promised a resume point it could not honour, at the exact moment
+  // the operator most needed to be told the truth.
+  $: if (openPlan) setSession({ planId: openPlan.id, liveCueId, liveSlide });
 
   // one search (add mode) — scripture + songs + media together
   let addQ = '';
@@ -87,8 +102,26 @@
   // working on every tab. Only advance/back are ours, and only while a plan is
   // actually open in the run editor.
   let unregisterKeys;
-  onMount(() => {
-    refresh();
+  onMount(async () => {
+    await refresh();
+    // Resume. Nothing read this back before, so the persisted position was write-
+    // only — the operator was told they'd return to their place and then landed on
+    // an empty plan list.
+    const saved = get(session);
+    if (saved.planId) {
+      const plan = plans.find((p) => p.id === saved.planId);
+      if (plan) {
+        await open(plan); // this resets the transport…
+        // …so put it back. NOT a re-fire: the output windows are separate webviews
+        // and survive a console crash, so the verse is still on the congregation's
+        // screen. The transport must match what they are ACTUALLY looking at, or
+        // the next → would jump somewhere else entirely.
+        if (saved.liveCueId && items.some((i) => i.id === saved.liveCueId)) {
+          setLive(saved.liveCueId, saved.liveSlide ?? 0);
+          selId = saved.liveCueId;
+        }
+      }
+    }
     unregisterKeys = registerContext({
       next: () => openPlan && stepLive(1),
       prev: () => openPlan && stepLive(-1),
@@ -126,8 +159,7 @@
   async function open(p) {
     openPlan = p;
     selId = null;
-    liveCueId = null;
-    liveSlide = 0;
+    setLive(null, 0);
     leftMode = 'cues';
     msg = '';
     activeTpls = await safeActive();
@@ -313,8 +345,7 @@
     const slides = slidesOf(item);
     const s = slides[i] || slides[0];
     if (!s) return;
-    liveCueId = item.id;
-    liveSlide = i;
+    setLive(item.id, i);
     selId = item.id;
     const stageNote = p.stage_note || null; // operator's confidence-monitor note
     try {
@@ -393,8 +424,7 @@
     } catch {
       /* backend absent */
     }
-    liveCueId = null;
-    liveSlide = 0;
+    setLive(null, 0);
     setStageNext(null, null);
     msg = 'Cleared';
   }
