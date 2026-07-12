@@ -13,6 +13,7 @@
   //
   // Build here. Run in LIVE.
   import { onMount } from 'svelte';
+  import { trapFocus } from '../focus.js';
   import { songCue } from '../cues.js';
   import { setSession } from '../session.js';
   import { TYPE, payloadOf, slidesOf, slideAccent, cueSub } from '../plan.js';
@@ -447,7 +448,7 @@
              global panic key and cleared the congregation's screens instead. -->
         <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-noninteractive-element-interactions -->
         <div class="sp-arrback" role="presentation" on:click={() => (arrPick = null)}>
-          <div class="sp-arrsheet" role="dialog" aria-label="Choose arrangement"
+          <div class="sp-arrsheet" role="dialog" aria-modal="true" aria-label="Choose arrangement" use:trapFocus
             on:click|stopPropagation on:keydown|stopPropagation>
             <div class="sp-arrtitle">Add “{arrPick.song.title}”</div>
             <div class="r-lbl sp-arrsub">Choose an arrangement</div>

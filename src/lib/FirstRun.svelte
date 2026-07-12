@@ -17,6 +17,7 @@
   // a wizard and then cannot find the setting again has been actively harmed by it —
   // everything here also lives in Settings, permanently.
   import { onMount, onDestroy } from 'svelte';
+  import { trapFocus } from './focus.js';
   import ModelSetup from './ModelSetup.svelte';
   import {
     capture,
@@ -159,7 +160,7 @@
 </script>
 
 <div class="fr-scrim">
-  <div class="fr" role="dialog" aria-modal="true" aria-labelledby="fr-title">
+  <div class="fr" role="dialog" aria-modal="true" aria-labelledby="fr-title" use:trapFocus>
     <div class="fr-head">
       <div>
         <h1 id="fr-title">Let's get a verse on the screen.</h1>

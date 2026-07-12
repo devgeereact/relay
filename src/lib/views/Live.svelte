@@ -509,7 +509,11 @@
     {/if}
 
     <span class="spring"></span>
-    {#if liveMsg}<span class="livemsg"><span class="lm-dot"></span>{liveMsg}</span>{/if}
+    <!-- role="status" so every flash is announced. These sentences ARE the feedback
+         for the transport keys — a sighted operator reads them; a screen-reader
+         operator was told nothing at all. -->
+    <span class="livemsg-live sr-only" role="status" aria-live="polite" aria-atomic="true">{liveMsg}</span>
+    {#if liveMsg}<span class="livemsg" aria-hidden="true"><span class="lm-dot"></span>{liveMsg}</span>{/if}
 
     <!-- `→` is the most-pressed key in the product and it used to do two different
          things with no way to tell which. Now it says which. -->
@@ -534,7 +538,7 @@
          entire reason the Console and the Planner became one screen. -->
     <section class="tile feed">
       <div class="tile-head">
-        <h3>Intelligence Feed</h3>
+        <h2 class="sub">Intelligence Feed</h2>
         <svg class="ic dim" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 3v18h18"/><path d="M18 17V9M13 17V5M8 17v-3"/></svg>
       </div>
 
@@ -556,6 +560,17 @@
           {/if}
         </div>
       </div>
+
+      <!-- The AI has heard something. This is the product's whole reason to exist, and
+           it arrived in total silence for a screen-reader operator. "polite", not
+           "assertive": a suggestion is an offer, not an emergency — it must not talk
+           over the operator mid-sentence. -->
+      <span class="sr-only" role="status" aria-live="polite" aria-atomic="true">
+        {#if dets.length}
+          {heard(dets[0]) ? 'Heard' : 'Possible paraphrase'}: {dets[0].reference}.
+          Press A to put it on screen, D to dismiss.
+        {/if}
+      </span>
 
       <div class="feed-body">
         {#if dets.length}
@@ -665,7 +680,7 @@
         <!-- PLAN -->
         <section class="tile">
           <div class="tile-head">
-            <h3>Service Plan</h3>
+            <h2 class="sub">Service Plan</h2>
             <span class="mono dim">{openPlan ? items.length : plans.length}</span>
           </div>
           <div class="listbody">
@@ -719,7 +734,7 @@
         <!-- SLIDES -->
         <section class="tile">
           <div class="tile-head">
-            <h3>{selCue ? selCue.label : 'Slides'}</h3>
+            <h2 class="sub">{selCue ? selCue.label : 'Slides'}</h2>
             {#if selSlides.length}<span class="mono dim">{selSlides.length}</span>{/if}
           </div>
           <div class="listbody">
@@ -771,7 +786,7 @@
       </div>
       <button class="btn-gold lg" on:click={fireManual} disabled={!$capture.available}>Push to stage</button>
     </div>
-    {#if errMsg}<div class="err">{errMsg}</div>{/if}
+    {#if errMsg}<div class="err" role="alert">{errMsg}</div>{/if}
 
     <div class="entry-controls">
       <button class="ctl" class:rec={$capture.capturing} on:click={toggleListen}
@@ -911,7 +926,11 @@
   .tile-head h2,.tile-head h3{margin:0;font-family:var(--f-body);font-size:11px;font-weight:700;
     letter-spacing:.16em;text-transform:uppercase;color:var(--s-on);
     overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .tile-head h3{color:var(--s-onvar)}
+  /* Secondary tile headings. They used to be <h3> — which is how the page ended up
+     running h3 → h2 → h3, with no <h1> at all, making heading navigation (a screen
+     reader's primary way of skimming a page) useless. They are all PEER sections of
+     one page, so they are all <h2>; the visual step down is a class, not a tag. */
+  .tile-head h2.sub{color:var(--s-onvar)}
   .tile-head .mono{font-size:10px;flex:0 0 auto}
 
   /* ── feed ── */

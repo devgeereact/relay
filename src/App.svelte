@@ -1,5 +1,6 @@
 <script>
   import { onMount, onDestroy } from 'svelte';
+  import { trapFocus } from './lib/focus.js';
   import { capture, capturing, detectionOn, live, screenBlack, rehearsing, initAudio, clearScreens, blackScreen, panicError, dismissPanicError } from './lib/stores/capture.js';
   import { installShortcuts, cheatsheet, liveShortcuts } from './lib/shortcuts.js';
   import { installLeaveGuard } from './lib/crash.js';
@@ -155,7 +156,7 @@
   <!-- Main -->
   <div class="main-v">
     <header class="topbar-v">
-      <span class="topbar-title">{currentTab.title}</span>
+      <h1 class="topbar-title">{currentTab.title}</h1>
       <!-- ON AIR must mean "the congregation is looking at something" — NOT "the
            microphone is on". It used to key off $capturing, so Relay would sit
            there pulsing ON AIR at an operator whose screens were completely blank.
@@ -254,7 +255,7 @@
     <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-noninteractive-element-interactions -->
     <div class="cheat-scrim" role="presentation" on:click={() => cheatsheet.set(false)}>
       <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-noninteractive-element-interactions -->
-      <div class="cheat" role="dialog" aria-label="Keyboard shortcuts" on:click|stopPropagation>
+      <div class="cheat" role="dialog" aria-modal="true" aria-label="Keyboard shortcuts" use:trapFocus on:click|stopPropagation>
         <h2>Keyboard shortcuts</h2>
         <table>
           {#each $liveShortcuts as s}

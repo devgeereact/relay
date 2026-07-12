@@ -4,6 +4,7 @@
   // song's slide flow, add a song straight to a service plan, delete. File
   // import (.pro / text) is handled by the Library's shared Import button.
   import { onMount } from 'svelte';
+  import { trapFocus } from '../../focus.js';
   import { capture, listSongs, searchSongs, importSong, deleteSong, getSong, listPlans, addPlanItem, listArrangements } from '../../stores/capture.js';
   import SongEditor from './SongEditor.svelte';
 
@@ -204,7 +205,7 @@
          keyboard path is Escape, handled at the window (top of this file). -->
     <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-noninteractive-element-interactions -->
     <div class="ly-arrback" role="presentation" on:click={() => (arrPick = null)}>
-      <div class="ly-arrsheet" role="dialog" aria-label="Choose arrangement"
+      <div class="ly-arrsheet" role="dialog" aria-modal="true" aria-label="Choose arrangement" use:trapFocus
         on:click|stopPropagation on:keydown|stopPropagation>
         <div class="ly-arrtitle">Add “{arrPick.song.title}” to {arrPick.plan.title}</div>
         <div class="r-lbl ly-arrsub">Choose an arrangement</div>

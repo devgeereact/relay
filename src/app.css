@@ -13,7 +13,15 @@
 :root{
   --bg:#14161a; --surface:#1b1e24; --surface2:#22262e; --surface3:#2a2f38;
   --border:#31363f; --border-soft:#282c34;
-  --text:#edeef0; --text-dim:#9ba0ac; --text-faint:#5f6470;
+  --text:#edeef0; --text-dim:#9ba0ac;
+  /* #5f6470 failed WCAG AA on every surface it sits on — 2.27:1 at worst.
+     This is the LEGACY palette (the app moved to --v-*), and the rules below it are
+     mostly orphaned — but Svelte does NOT scope a global stylesheet, so deleting them
+     wholesale could silently restyle any component using a generic class name (.tab,
+     .dot, .live, .chip all still exist somewhere). That needs eyes on a running app,
+     and this machine cannot screenshot one. So the gun is unloaded rather than
+     removed: 4.54:1 at worst now. Delete the dead rules when someone can look. */
+  --text-faint:#9296a0;
   --amber:#e8a33d; --amber-soft:rgba(232,163,61,0.14);
   --green:#4caf7d; --green-soft:rgba(76,175,125,0.14);
   --teal:#4fa8c9; --teal-soft:rgba(79,168,201,0.14);
@@ -234,7 +242,7 @@ body{ overflow:hidden; text-rendering:optimizeLegibility; -moz-osx-font-smoothin
 .main-v{ flex:1; min-width:0; display:flex; flex-direction:column; overflow:hidden; background:var(--v-void); }
 .topbar-v{ height:62px; flex:0 0 auto; display:flex; align-items:center; gap:16px;
   padding:0 22px; border-bottom:1px solid var(--v-line); }
-.topbar-title{ font-family:var(--f-head); font-size:25px; font-weight:700; letter-spacing:-.005em; color:var(--v-txt); }
+.topbar-title{ margin:0; font-family:var(--f-head); font-size:25px; font-weight:700; letter-spacing:-.005em; color:var(--v-txt); }
 .topbar-spring{ flex:1; }
 .topbar-icons{ display:flex; align-items:center; gap:16px; color:var(--v-dim); }
 .topbar-icons .ib{ cursor:pointer; transition:color .15s; }
