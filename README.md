@@ -89,6 +89,12 @@ One shared template engine renders to three target types (docs/SPEC.md §5):
   off the congregation screen. Uploaded media is served from the same port
   (`/media/<id>`).
 
+> **Windows:** allow Relay through the firewall when Windows asks (tick *Private
+> networks*). If you decline, HDMI output still works but **no networked output ever
+> can** — and Relay cannot detect this or warn you, because the firewall blocks other
+> machines from reaching Relay's servers rather than stopping Relay from starting
+> them. See `docs/USER_GUIDE.md`.
+
 > **The output port is 8032, not 5032.** `5032` is the Vite dev server and exists
 > **only** while a developer is running `npm run tauri dev`. In the installed app it
 > does not exist at all, so an OBS browser source pointed at `:5032` shows a blank

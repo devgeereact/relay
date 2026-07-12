@@ -291,23 +291,60 @@ pub fn init_fresh(conn: &Connection) -> rusqlite::Result<()> {
 /// the STT model was never found and Relay silently ran with no speech
 /// recognition at all. Don't re-derive this path anywhere else.
 pub fn app_data_dir() -> PathBuf {
-    let base = if cfg!(target_os = "macos") {
-        std::env::var("HOME")
+    app_data_root(std::env::consts::OS, |k| std::env::var(k).ok()).join("com.relay.app")
+}
+
+/// The OS app-data root, as a PURE function of the OS name and the environment.
+///
+/// Pure on purpose. The Windows path bug (STT silently dead on every packaged
+/// Windows build) could not be caught by any test, on any machine, because the
+/// behaviour was welded to `cfg!(target_os)` — so a Mac could only ever test the Mac
+/// branch, and CI's Windows runner had no test to run. The bug was found by a human
+/// reading the code, which is not a strategy.
+///
+/// Taking the OS and the environment as arguments means **every platform's behaviour
+/// is testable from every platform**, including the ones nobody here owns.
+fn app_data_root(os: &str, env: impl Fn(&str) -> Option<String>) -> PathBuf {
+    match os {
+        "macos" => env("HOME")
             .map(|h| PathBuf::from(h).join("Library/Application Support"))
-            .unwrap_or_else(|_| PathBuf::from("."))
-    } else if cfg!(target_os = "windows") {
-        // Windows has no HOME; APPDATA is the roaming app-data root.
-        std::env::var("APPDATA")
-            .or_else(|_| std::env::var("USERPROFILE").map(|p| format!("{p}\\AppData\\Roaming")))
+            .unwrap_or_else(|| PathBuf::from(".")),
+
+        // Windows has no HOME — except when it does, and that is the trap. Git Bash,
+        // MSYS2 and Cygwin all set HOME to a Unix-shaped path, so a Windows build that
+        // reaches for HOME "because it works on my machine" writes the database and the
+        // 148 MB STT model somewhere no packaged app will ever look. APPDATA is the
+        // roaming app-data root; USERPROFILE is the fallback. HOME is never consulted.
+        "windows" => env("APPDATA")
+            .or_else(|| env("USERPROFILE").map(|p| format!("{p}\\AppData\\Roaming")))
             .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from("."))
+            .unwrap_or_else(|| PathBuf::from(".")),
+
+        _ => env("XDG_DATA_HOME")
+            .map(PathBuf::from)
+            .or_else(|| env("HOME").map(|h| PathBuf::from(h).join(".local/share")))
+            .unwrap_or_else(|| PathBuf::from(".")),
+    }
+}
+
+/// The user's Downloads folder, if it exists. `None` → the caller should fall back
+/// to app-data (never fail outright: exporting a service must not depend on the shape
+/// of someone's home directory).
+pub fn downloads_dir() -> Option<PathBuf> {
+    downloads_root(std::env::consts::OS, |k| std::env::var(k).ok()).filter(|d| d.is_dir())
+}
+
+/// Pure, for the same reason as `app_data_root`.
+fn downloads_root(os: &str, env: impl Fn(&str) -> Option<String>) -> Option<PathBuf> {
+    // USERPROFILE FIRST on Windows. Git Bash sets HOME to a Unix-shaped path
+    // (`/c/Users/Ada`), which is not a path Windows can open — so reaching for HOME
+    // first means the export lands nowhere, or in a directory the user cannot find.
+    let home = if os == "windows" {
+        env("USERPROFILE").or_else(|| env("HOME"))
     } else {
-        std::env::var("XDG_DATA_HOME")
-            .map(PathBuf::from)
-            .or_else(|_| std::env::var("HOME").map(|h| PathBuf::from(h).join(".local/share")))
-            .unwrap_or_else(|_| PathBuf::from("."))
-    };
-    base.join("com.relay.app")
+        env("HOME")
+    }?;
+    Some(PathBuf::from(home).join("Downloads"))
 }
 
 /// Resolve the default database file path per OS, honoring a RELAY_DB_PATH
@@ -1293,5 +1330,181 @@ mod tests {
 
         std::env::remove_var("RELAY_DB_PATH");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+/// Windows is a day-one platform (docs/DECISIONS.md) that nobody in this repo can
+/// actually run. These tests are how it gets defended anyway: `app_data_root` is a
+/// pure function of (OS, environment), so every platform's behaviour is exercised
+/// from whatever machine happens to be running the suite.
+#[cfg(test)]
+mod platform_paths {
+    use super::app_data_root;
+    use std::path::PathBuf;
+
+    /// A fake environment. `None` = variable not set.
+    fn env<'a>(pairs: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<String> + 'a {
+        move |k| {
+            pairs
+                .iter()
+                .find(|(name, _)| *name == k)
+                .map(|(_, v)| v.to_string())
+        }
+    }
+
+    #[test]
+    fn windows_uses_appdata() {
+        let p = app_data_root(
+            "windows",
+            env(&[("APPDATA", r"C:\Users\Ada\AppData\Roaming")]),
+        );
+        assert_eq!(p, PathBuf::from(r"C:\Users\Ada\AppData\Roaming"));
+    }
+
+    #[test]
+    fn windows_falls_back_to_userprofile() {
+        let p = app_data_root("windows", env(&[("USERPROFILE", r"C:\Users\Ada")]));
+        assert_eq!(p, PathBuf::from(r"C:\Users\Ada\AppData\Roaming"));
+    }
+
+    /// THE TRAP. "Windows has no HOME" is what everybody believes, and it is false.
+    /// Git Bash, MSYS2 and Cygwin all set HOME to a Unix-shaped path. A Windows build
+    /// that reaches for HOME because "it works on my machine" would then write the
+    /// database and the 148 MB STT model into a directory that the packaged app never
+    /// looks in — and the app would come up with speech recognition silently dead,
+    /// exactly as it once did.
+    ///
+    /// So: on Windows, HOME is not merely deprioritised. It is never read at all.
+    #[test]
+    fn windows_ignores_home_even_when_git_bash_sets_it() {
+        let p = app_data_root(
+            "windows",
+            env(&[
+                ("HOME", "/c/Users/Ada"), // what Git Bash exports
+                ("APPDATA", r"C:\Users\Ada\AppData\Roaming"),
+            ]),
+        );
+        assert_eq!(p, PathBuf::from(r"C:\Users\Ada\AppData\Roaming"));
+
+        // …and with no APPDATA, it must fall to USERPROFILE, NOT to that HOME.
+        let p = app_data_root(
+            "windows",
+            env(&[("HOME", "/c/Users/Ada"), ("USERPROFILE", r"C:\Users\Ada")]),
+        );
+        assert_eq!(p, PathBuf::from(r"C:\Users\Ada\AppData\Roaming"));
+    }
+
+    #[test]
+    fn macos_uses_library_application_support() {
+        let p = app_data_root("macos", env(&[("HOME", "/Users/ada")]));
+        assert_eq!(p, PathBuf::from("/Users/ada/Library/Application Support"));
+    }
+
+    #[test]
+    fn linux_prefers_xdg_then_home() {
+        assert_eq!(
+            app_data_root("linux", env(&[("XDG_DATA_HOME", "/x")])),
+            PathBuf::from("/x")
+        );
+        assert_eq!(
+            app_data_root("linux", env(&[("HOME", "/home/ada")])),
+            PathBuf::from("/home/ada/.local/share")
+        );
+    }
+
+    /// An empty environment must not panic and must not produce an absolute path into
+    /// somewhere surprising. "." is a poor location, but it is a SAFE one — and the
+    /// alternative (unwrap) is a panic on startup, which is the worst failure this app
+    /// can have.
+    #[test]
+    fn no_environment_at_all_is_survivable_everywhere() {
+        for os in ["windows", "macos", "linux"] {
+            assert_eq!(app_data_root(os, env(&[])), PathBuf::from("."), "{os}");
+        }
+    }
+
+    /// Everything that persists must live under the ONE app-data root — the model
+    /// downloader and the model loader especially, because if those two disagree the
+    /// operator downloads 148 MB into a folder nothing ever reads and is told only
+    /// that speech recognition is unavailable.
+    #[test]
+    fn every_persistent_path_hangs_off_app_data_dir() {
+        let root = super::app_data_dir();
+        assert!(root.ends_with("com.relay.app"));
+        assert!(crate::models::models_dir().starts_with(&root));
+        assert!(super::media_dir().starts_with(&root));
+        // The downloader writes where the loader reads. Same dir, by construction.
+        assert_eq!(crate::models::models_dir(), root.join("models"));
+    }
+}
+
+/// Enforces the rule, rather than trusting a doc comment to be read.
+///
+/// `stt.rs` once hand-rolled its own `$HOME/Library/Application Support/…`, which
+/// compiled, passed every test, ran perfectly on the author's Mac, and shipped a
+/// Windows build with speech recognition **silently dead** — because Windows has no
+/// HOME and the model was never found. A comment saying "don't re-derive this path"
+/// was already there. It did not help.
+///
+/// So the rule is now a test. There is exactly one module allowed to know where an OS
+/// keeps its files.
+#[cfg(test)]
+mod path_rule {
+    /// Reading any of these outside `db/mod.rs` means re-deriving an OS path by hand.
+    const FORBIDDEN: [&str; 4] = ["APPDATA", "USERPROFILE", "XDG_DATA_HOME", "\"HOME\""];
+
+    #[test]
+    fn only_db_knows_where_the_os_keeps_its_files() {
+        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut offenders: Vec<String> = Vec::new();
+
+        let mut stack = vec![src.clone()];
+        while let Some(dir) = stack.pop() {
+            let Ok(rd) = std::fs::read_dir(&dir) else {
+                continue;
+            };
+            for entry in rd.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    stack.push(path);
+                    continue;
+                }
+                if path.extension().is_none_or(|e| e != "rs") {
+                    continue;
+                }
+                // db/mod.rs IS the sanctioned place.
+                if path.ends_with("db/mod.rs") {
+                    continue;
+                }
+                let Ok(text) = std::fs::read_to_string(&path) else {
+                    continue;
+                };
+                for (i, line) in text.lines().enumerate() {
+                    // Only actual env reads — not prose in a comment about them.
+                    let code = line.split("//").next().unwrap_or("");
+                    if !code.contains("env::var") {
+                        continue;
+                    }
+                    for needle in FORBIDDEN {
+                        if code.contains(needle) {
+                            offenders.push(format!(
+                                "{}:{} — {}",
+                                path.strip_prefix(&src).unwrap_or(&path).display(),
+                                i + 1,
+                                code.trim()
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+
+        assert!(
+            offenders.is_empty(),
+            "OS paths must be resolved by db::app_data_dir() / db::downloads_dir(), \
+             never re-derived. Windows has no HOME, and a build that assumes it does \
+             ships with STT silently dead.\n  {}",
+            offenders.join("\n  ")
+        );
     }
 }

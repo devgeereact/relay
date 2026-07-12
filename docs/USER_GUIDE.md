@@ -116,3 +116,26 @@ Long verses **auto-fit** — they shrink to fit, never clip or spill off screen.
 5. Anything unexpected: **Clear** or **Black** in one tap.
 
 Everything works with **zero internet**. Nothing leaves the device without an explicit, visible reason.
+
+## Windows: the firewall prompt (read this before your first service)
+
+The first time Relay runs, **Windows will ask whether to allow it on your network.**
+Click **Allow**, and tick **Private networks**.
+
+If you click Cancel, this is what happens:
+
+- The app itself works perfectly. Scripture still goes to the projector over HDMI.
+- But **nothing on the network can ever connect** — no OBS browser source, no kiosk
+  screen, no stage monitor on the preacher's phone.
+- And **Relay will not tell you.** It cannot. The firewall does not stop Relay from
+  starting its servers; it stops other machines from reaching them. From Relay's side
+  everything looks healthy, the Channels tab looks normal, and nothing appears in any
+  log. The kiosk simply sits there showing nothing, forever.
+
+If your networked screens are blank and the HDMI output is fine, this is almost
+certainly why. Fix it in **Windows Security → Firewall & network protection → Allow
+an app through firewall** → find **Relay** → tick **Private**.
+
+To check whether it is working: open the Channels tab, copy the output URL, and paste
+it into a browser **on another device on the same Wi-Fi**. If it loads there, the
+network side is fine.

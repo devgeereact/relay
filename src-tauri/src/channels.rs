@@ -399,10 +399,16 @@ fn log_only() -> ErrorSink {
 }
 
 fn bind_failure_message(what: &str, port: u16, e: &std::io::Error) -> String {
+    let hint = if cfg!(target_os = "windows") {
+        "Another program may already be using that port, or Windows Defender Firewall \
+         blocked it — if Windows asked whether to allow Relay on your network and you \
+         chose Cancel, allow it in Windows Firewall settings."
+    } else {
+        "Another program is probably already using that port."
+    };
     format!(
         "{what} could not start on port {port} ({e}). \
-         Networked outputs (OBS, kiosk screens, the stage monitor) will not work. \
-         Another program is probably already using that port."
+         Networked outputs (OBS, kiosk screens, the stage monitor) will not work. {hint}"
     )
 }
 

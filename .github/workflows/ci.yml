@@ -91,7 +91,34 @@ jobs:
       # signing identity to prove. Installer/layout coverage is a separate job we
       # don't have yet — don't read this step as "packaging works".
       - name: Release build (compile only, no installer)
+        if: matrix.os != 'windows-latest'
         run: npm run tauri build -- --no-bundle
+
+      # WINDOWS GETS THE FULL BUNDLE, every push.
+      #
+      # Windows is a day-one platform that nobody on this project can run, and the
+      # .msi is the artifact a church actually installs — and it had NEVER ONCE BEEN
+      # BUILT. It was produced for the first time only when a release tag was pushed,
+      # which is the worst possible moment to discover that WiX is unhappy.
+      #
+      # Every Windows-specific bug in this repo's history has had the same shape: it
+      # compiled, every test passed, and the failure only existed in a bundle nobody
+      # made. So we make the bundle.
+      #
+      # macOS stays compile-only: the DMG bundling is proven, and `bundle_dmg.sh`
+      # drives Finder over AppleScript (see docs/RELEASING.md), which is a poor thing
+      # to put on the critical path of every push.
+      - name: Release build + INSTALLER (Windows — the thing churches install)
+        if: matrix.os == 'windows-latest'
+        run: npm run tauri build
+
+      - name: Upload the Windows installer
+        if: matrix.os == 'windows-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: relay-windows-msi
+          path: src-tauri/target/release/bundle/msi/*.msi
+          if-no-files-found: error
 
   frontend:
     name: Frontend

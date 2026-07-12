@@ -2760,13 +2760,10 @@ fn export_service(db: tauri::State<'_, Db>, id: i64) -> Result<String, String> {
         .collect();
     let filename = format!("relay-{}-{}.md", safe, summary.date);
     // Prefer the user's Downloads folder; fall back to app-data/exports. Both
-    // resolved per-OS — this used to demand $HOME and hardcode a macOS path, so
-    // exporting a service failed outright on Windows with "no HOME".
-    let downloads = std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .map(|h| std::path::PathBuf::from(h).join("Downloads"))
-        .filter(|d| d.is_dir());
-    let dir = match downloads {
+    // resolved per-OS by db::, which is the ONLY module allowed to read HOME/APPDATA —
+    // exporting a service used to demand $HOME and hardcode a macOS path, so it failed
+    // outright on Windows with "no HOME".
+    let dir = match db::downloads_dir() {
         Some(d) => d,
         None => {
             let d = db::app_data_dir().join("exports");
