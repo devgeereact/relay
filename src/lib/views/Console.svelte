@@ -3,6 +3,7 @@
   import TemplateRender from '../TemplateRender.svelte';
   import { registerContext } from '../shortcuts.js';
   import { monitorAccent } from '../templates.js';
+  import ModelSetup from '../ModelSetup.svelte';
   import {
     capture,
     transcript,
@@ -14,7 +15,10 @@
     confirmDetection,
     dismissDetection,
     manualFire,
-    openOutput,
+    listOutputChannels,
+    openChannelOutput,
+    listMonitors,
+    setChannelDisplay,
     clearScreens,
     blackScreen,
     screenBlack,
@@ -132,17 +136,44 @@
   });
   onDestroy(() => unregisterKeys?.());
 
+  // Open the CONGREGATION screen.
+  //
+  // This used to build an ad-hoc window with a hardcoded "Classic Serif" template
+  // and call openOutput(id, name) — two arguments to a THREE-argument signature,
+  // so `monitorIndex` arrived as undefined and the window always opened on the
+  // primary display. A projector is, by definition, the second display. So the
+  // first button an operator ever presses could not do the one thing they needed,
+  // and the only workaround (Channels tab → set the display → a *different* Open
+  // button) is undiscoverable.
+  //
+  // Now it opens the real Main-screen CHANNEL, honouring the template and display
+  // the operator configured. And when no display has been chosen yet it picks the
+  // first non-primary monitor — a second screen plugged into a church laptop is a
+  // projector essentially every time.
   async function openMainOutput() {
-    const id = $templates.find((t) => t.name === 'Classic Serif')?.id ?? $templates[0]?.id;
-    if (!id) {
-      manualError = 'No templates yet — create one in the Templates tab first.';
-      return;
-    }
     try {
-      await openOutput(id, 'Main screen');
-      flash(`Output window opened`);
-    } catch {
-      manualError = 'Could not open the output window (needs the desktop app).';
+      const channels = await listOutputChannels();
+      const main =
+        channels.find((c) => c.render_target === 'native_window' && c.name === 'Main screen') ??
+        channels.find((c) => c.render_target === 'native_window');
+
+      if (!main) {
+        manualError = 'No output channel yet — add one in the Channels tab.';
+        return;
+      }
+
+      if (!main.display_target) {
+        const projector = (await listMonitors()).find((m) => !m.primary);
+        if (projector) {
+          await setChannelDisplay(main.id, String(projector.index));
+          flash(`Sending to ${projector.name}`);
+        }
+      }
+
+      await openChannelOutput(main.id);
+      flash('Output window opened');
+    } catch (e) {
+      manualError = humanError(e);
     }
   }
 
@@ -383,20 +414,11 @@
     </div>
   {/if}
 
-  <!-- No STT model = the AI cannot listen. Relay must degrade to a fully working
-       MANUAL tool, never to a dead one — so say so plainly and point at the fix,
-       rather than looking identical to a working app that just never detects
-       anything. On Windows this state used to be reached silently, every time. -->
+  <!-- No STT model = the AI cannot listen. Relay degrades to a fully working
+       MANUAL tool, never a dead one — and now it can FIX itself, in one click,
+       instead of telling a church volunteer to go and find a folder. -->
   {#if $capture.available && !$capture.stt.loaded}
-    <div class="sttwarn">
-      <b>Speech recognition is off — no model found.</b>
-      Detection and the transcript are unavailable. Everything else still works:
-      you can fire any verse by typing a reference above, and run a service plan
-      as normal.
-      {#if $capture.stt.install_dir}
-        <span class="sttwarn-path">Put a <code>ggml-base.bin</code> model in <code>{$capture.stt.install_dir}</code>, then restart Relay.</span>
-      {/if}
-    </div>
+    <ModelSetup compact />
   {/if}
 </div>
 
@@ -576,8 +598,6 @@
     font-size:12px;line-height:1.6}
   .sttwarn b{display:block;margin-bottom:2px;color:var(--v-amber2)}
   .sttwarn-path{display:block;margin-top:6px;color:var(--v-dim)}
-  .sttwarn code{font-family:var(--f-mono);font-size:11px;background:var(--v-surf3);
-    border:1px solid var(--v-line2);border-radius:4px;padding:1px 5px;color:var(--v-txt)}
 
   /* Footer */
   .stx-foot{display:flex;align-items:center;justify-content:space-between;margin-top:12px;

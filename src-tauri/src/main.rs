@@ -9,6 +9,7 @@ mod channels;
 mod db;
 mod detection;
 mod dsp;
+mod models;
 mod pipeline;
 mod proimport;
 mod router;
@@ -96,6 +97,7 @@ fn main() {
         .manage(Outputs::default())
         .manage(Detecting(AtomicBool::new(true)))
         .manage(Session::default())
+        .manage(models::DownloadState::default())
         .setup(|app| {
             // Crash reporting: OFF unless the operator previously opted in. This
             // runs before anything else can panic, but deliberately after the DB
@@ -180,49 +182,7 @@ fn main() {
             // Load STT here (not before .run) because the worker needs an
             // AppHandle to emit transcript events. Missing model → audio-only,
             // logged but non-fatal: capture and manual override still work.
-            let handle = app.handle().clone();
-            let engine = match stt::default_model_path() {
-                Some(path) => match SttEngine::try_load(path, move |update| {
-                    let _ = handle.emit("stt://transcript", &update);
-                    if update.is_final {
-                        println!("stt[{}]: {}", update.language, update.text);
-                        persist_transcript(&handle, &update.text, &update.language);
-                        // Spoken "next"/"back" navigates from the current verse.
-                        if let Some(cmd) = detection::detect_command(&update.text) {
-                            handle_nav(&handle, cmd);
-                            return;
-                        }
-                        // Spoken "clear the screen" / "blackout" (Phase D3/D4).
-                        if detection::detect_clear(&update.text) {
-                            channels::clear(&handle);
-                            forget_debounce(&handle);
-                            persist_cue(&handle, "clear_screens", None);
-                            return;
-                        }
-                        // Spoken in-passage jump — "chapter 5 verse 1", "verse 4"
-                        // — resolved against the current book (same passage).
-                        if handle_passage_nav(&handle, &update.text) {
-                            return;
-                        }
-                    }
-                    // Detect references, then route each through the confidence
-                    // gate + debounce before surfacing it.
-                    emit_detections(&handle, &update.text, update.timestamp_ms);
-                }) {
-                    Ok(e) => {
-                        println!("stt: model loaded from {}", e.model_path().display());
-                        Some(e)
-                    }
-                    Err(e) => {
-                        eprintln!("stt: {e} — running audio-only");
-                        None
-                    }
-                },
-                None => {
-                    eprintln!("stt: no model found — running audio-only");
-                    None
-                }
-            };
+            let engine = build_stt(app.handle());
             // Phase B: apply the active voice profile at startup — language +
             // decoder-bias prompt to STT, calibrated thresholds to the router —
             // so accent calibration is live from the first word, before any UI.
@@ -309,6 +269,10 @@ fn main() {
             set_thresholds,
             get_crash_reporting,
             set_crash_reporting,
+            list_models,
+            download_model,
+            cancel_model_download,
+            load_stt_model,
             manual_fire,
             open_output_window,
             close_output_window,
@@ -2026,6 +1990,105 @@ fn apply_profile(stt: &Stt, routing: &Routing, p: &db::VoiceProfile) -> Result<(
         p.sensitivity.clamp(0, 100) as u8
     ));
     Ok(())
+}
+
+/// Build the STT engine and wire its transcript callback into the pipeline.
+///
+/// Extracted from `setup` so it can be run AGAIN, at runtime, the moment the
+/// operator finishes downloading a model. Without this, a 148 MB download would
+/// end with "now quit and reopen Relay" — a miserable last step for the very
+/// first thing a new user does.
+///
+/// Returns None (audio-only) when no model is installed. That is a supported
+/// state, not a failure: manual fire and plan playback still work.
+fn build_stt(handle: &tauri::AppHandle) -> Option<SttEngine> {
+    let path = stt::default_model_path()?;
+    let handle = handle.clone();
+    match SttEngine::try_load(path, move |update| {
+        let _ = handle.emit("stt://transcript", &update);
+        if update.is_final {
+            println!("stt[{}]: {}", update.language, update.text);
+            persist_transcript(&handle, &update.text, &update.language);
+            // Spoken "next"/"back" navigates from the current verse.
+            if let Some(cmd) = detection::detect_command(&update.text) {
+                handle_nav(&handle, cmd);
+                return;
+            }
+            // Spoken "clear the screen" / "blackout".
+            if detection::detect_clear(&update.text) {
+                channels::clear(&handle);
+                forget_debounce(&handle);
+                persist_cue(&handle, "clear_screens", None);
+                return;
+            }
+            // Spoken in-passage jump — "chapter 5 verse 1", "verse 4".
+            if handle_passage_nav(&handle, &update.text) {
+                return;
+            }
+        }
+        // Detect references, then route each through the confidence gate.
+        emit_detections(&handle, &update.text, update.timestamp_ms);
+    }) {
+        Ok(e) => {
+            println!("stt: model loaded from {}", e.model_path().display());
+            Some(e)
+        }
+        Err(e) => {
+            eprintln!("stt: {e} — running audio-only");
+            None
+        }
+    }
+}
+
+/// Bring speech recognition up after a model has just been installed, without a
+/// restart. Re-applies the active voice profile so language + decoder bias are
+/// live from the first word.
+#[tauri::command]
+fn load_stt_model(app: tauri::AppHandle) -> Result<bool, String> {
+    let engine = build_stt(&app);
+    let loaded = engine.is_some();
+    {
+        let stt_state = app.state::<Stt>();
+        let mut slot = stt_state.0.lock().map_err(|e| e.to_string())?;
+        *slot = engine;
+    }
+    if loaded {
+        let profile = {
+            let db = app.state::<Db>();
+            let conn = db.0.lock().map_err(|e| e.to_string())?;
+            db::active_voice_profile(&conn).ok().flatten()
+        };
+        if let Some(p) = profile {
+            let stt_state = app.state::<Stt>();
+            let slot = stt_state.0.lock().map_err(|e| e.to_string())?;
+            if let Some(e) = slot.as_ref() {
+                apply_profile_to_stt(e, &p);
+            }
+        }
+    }
+    Ok(loaded)
+}
+
+/// The speech models Relay can install, and whether each is already on this
+/// machine.
+#[tauri::command]
+fn list_models() -> Vec<models::ModelInfo> {
+    models::catalog()
+}
+
+/// Download a speech model. Resumable, checksummed, atomic — see models.rs.
+/// Progress arrives as `model://progress`; completion as `model://done`.
+#[tauri::command]
+async fn download_model(app: tauri::AppHandle, id: String) -> Result<(), String> {
+    models::download(app, id).await
+}
+
+/// Cancel an in-flight model download.
+#[tauri::command]
+fn cancel_model_download(state: tauri::State<'_, models::DownloadState>) {
+    state
+        .cancel
+        .store(true, std::sync::atomic::Ordering::SeqCst);
 }
 
 /// Persist the router's freshly-adapted thresholds onto the active profile so

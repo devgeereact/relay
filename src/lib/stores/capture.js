@@ -886,3 +886,64 @@ export async function setCrashReporting(enabled, dsn) {
   const call = await invoke();
   return await call('set_crash_reporting', { enabled, dsn: dsn ?? '' });
 }
+
+// ── Speech model acquisition ────────────────────────────────────────────────
+//
+// The single most important flow in the product for a new user. Until this
+// existed, turning the AI on meant opening a terminal and running `curl` to
+// fetch a 148 MB file into a folder that doesn't exist in a packaged app — so
+// for an actual church volunteer, Relay's whole reason to exist silently did
+// not work.
+
+/** { id, downloaded, total } while a model download is in flight, else null. */
+export const modelProgress = writable(null);
+/** Last download error, in plain language. */
+export const modelError = writable(null);
+
+/** The catalogue, with `installed` resolved for this machine. */
+export async function listModels() {
+  try {
+    const call = await invoke();
+    return await call('list_models');
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Download a model. Resolves when it is installed AND speech recognition has
+ * been brought up — no restart. Rejects with a sentence a volunteer can act on.
+ */
+export async function downloadModel(id) {
+  const call = await invoke();
+  const { listen } = await import('@tauri-apps/api/event');
+
+  modelError.set(null);
+  modelProgress.set({ id, downloaded: 0, total: 0 });
+
+  const stop = [
+    await listen('model://progress', (e) => modelProgress.set(e.payload)),
+    await listen('model://error', (e) => modelError.set(e.payload)),
+  ];
+  try {
+    await call('download_model', { id });
+    // Bring STT up in-place. A 148 MB download that ends in "now quit and
+    // reopen the app" is a miserable last step for a first-time user.
+    const loaded = await call('load_stt_model');
+    const stt = await call('stt_status');
+    capture.update((s) => ({ ...s, stt }));
+    return loaded;
+  } finally {
+    stop.forEach((fn) => fn());
+    modelProgress.set(null);
+  }
+}
+
+export async function cancelModelDownload() {
+  try {
+    const call = await invoke();
+    await call('cancel_model_download');
+  } catch {
+    /* nothing running */
+  }
+}

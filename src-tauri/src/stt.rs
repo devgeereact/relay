@@ -344,7 +344,7 @@ pub fn resample_linear(input: &[f32], src_rate: u32, dst_rate: u32) -> Vec<f32> 
 /// Candidate model filenames, most-preferred first. The multilingual model
 /// (ggml-base.bin) is preferred so Yoruba/Swahili/Hausa + code-switching work;
 /// the English-only model is the fallback. Swap in a fine-tuned model by name.
-const MODEL_CANDIDATES: &[&str] = &["ggml-base.bin", "ggml-base.en.bin"];
+pub const MODEL_CANDIDATES: &[&str] = &["ggml-base.bin", "ggml-base.en.bin"];
 
 /// Resolve the default model path: RELAY_MODEL_PATH override, then the first
 /// existing candidate in the repo-local dev dir, then the per-OS app-data dir.
