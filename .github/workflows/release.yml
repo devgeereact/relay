@@ -140,7 +140,24 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
           # ── macOS: code signing + notarization ───────────────────────────
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          #
+          # `-` is AD-HOC signing, and it is what an unsigned build must use.
+          #
+          # Not passing an identity at all is not the same as not having one: the
+          # action sets APPLE_SIGNING_IDENTITY to the EMPTY STRING when the secret is
+          # absent, and an empty-but-SET identity still sends Tauri down the signing
+          # path — with nothing to sign with. The bundle then dies on
+          #
+          #     failed codesign application: failed to run command codesign
+          #
+          # which looks like a certificate problem and is actually an empty-variable
+          # problem. Building on a laptop works precisely because the variable is
+          # absent there rather than empty. Skipping the cert-import step was not
+          # enough; the identity has to say what it is.
+          #
+          # Ad-hoc still gives no Gatekeeper trust — the build remains unopenable
+          # without `xattr -cr`, exactly as an unsigned pre-release should be.
+          APPLE_SIGNING_IDENTITY: ${{ steps.mode.outputs.signed == 'true' && secrets.APPLE_SIGNING_IDENTITY || '-' }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }} # app-specific password
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
