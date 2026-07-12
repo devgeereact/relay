@@ -142,3 +142,28 @@ Relay checks for updates **once, on launch, and only when the microphone is off.
 - [ ] **Downloaded the artifact on a machine that has never seen Relay, and opened it without a single OS warning**
 
 That last one is the only test that counts.
+
+
+## Building the DMG locally fails without `CI=1`
+
+`npm run tauri build` bundles the `.app` fine and then dies:
+
+```
+failed to bundle project: error running bundle_dmg.sh
+  ... execution error: Finder got an error: AppleEvent timed out. (-1712)
+```
+
+That is `bundle_dmg.sh` driving **Finder over AppleScript** to make the disk-image
+window pretty (icon positions, background). It needs Automation permission to
+control Finder, and it hangs on a machine that will not grant it.
+
+It is cosmetic. Skip it:
+
+```bash
+CI=1 npm run tauri build
+```
+
+Tauri passes `--skip-jenkins` when `CI` is set, which skips the AppleScript and
+produces a plain, perfectly functional DMG. **CI already sets `CI=true`, so the
+release workflow is unaffected** — this bites only someone building on their own Mac,
+where it looks like a broken release pipeline and is not one.

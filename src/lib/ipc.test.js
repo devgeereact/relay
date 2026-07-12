@@ -76,3 +76,37 @@ describe('Tauri event contract', () => {
     expect(unheard, `backend emits events nobody listens to: ${unheard.join(', ')}`).toEqual([]);
   });
 });
+
+// ── The output port ──
+//
+// `5032` is the Vite dev server. It exists ONLY under `npm run tauri dev`. In the
+// packaged app there is no server on that port at all — so an OBS browser source
+// pointed at `http://host:5032/output.html` shows a blank screen, with no error in
+// the app, nothing in any log, and no way for a volunteer to work out why.
+//
+// The README, the user guide and CLAUDE.md all said 5032 for months. Channels.svelte
+// always emitted 8032 correctly, so the Copy-URL button in the app was right while
+// every document telling a human what to type was wrong — and nothing could catch it,
+// because `tauri dev` HAS a server on 5032 and everything looks fine.
+//
+// It was found by launching the actual release binary. This keeps it found.
+describe('the output URL handed to OBS / kiosks', () => {
+  const channels = read('src/lib/views/Channels.svelte');
+  const docs = ['README.md', 'docs/USER_GUIDE.md', 'CLAUDE.md'].map((f) => [f, read(f)]);
+
+  it('is served from the embedded HTTP server (8032), not the dev server (5032)', () => {
+    expect(channels).toMatch(/:8032\/output\.html/);
+    expect(channels).not.toMatch(/:5032\/output\.html/);
+  });
+
+  it('is not misdocumented anywhere a human would read it', () => {
+    for (const [file, text] of docs) {
+      const bad = text
+        .split('\n')
+        .filter((l) => /5032\/(output|stage)\.html/.test(l))
+        // The warnings that exist precisely to say "not 5032" are allowed to name it.
+        .filter((l) => !/NOT 5032|not 5032|does not exist|blank screen/.test(l));
+      expect(bad, `${file} points an operator at the dev server`).toEqual([]);
+    }
+  });
+});

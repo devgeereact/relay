@@ -81,13 +81,20 @@ One shared template engine renders to three target types (docs/SPEC.md §5):
   Channels tab. Live now.
 - **Kiosk / network client** — a LAN browser (e.g. a $50 Raspberry Pi) or an
   OBS/vMix **browser source** points at
-  `http://<app-host>:5032/output.html?template_id=<n>` and receives live state
+  `http://<app-host>:8032/output.html?template_id=<n>` and receives live state
   over the WebSocket hub on **port 8031**. Add channels and copy the URL/QR from
   the **Channels** tab. Live now.
-- **Preacher stage remote** — `http://<app-host>:5032/stage.html` on a phone or
+- **Preacher stage remote** — `http://<app-host>:8032/stage.html` on a phone or
   iPad: the live verse large + "up next" + operator stage notes + countdown, kept
-  off the congregation screen. The output/stage HTML pages and uploaded media are
-  also served by the embedded HTTP server on **port 8032** (`/media/<id>`).
+  off the congregation screen. Uploaded media is served from the same port
+  (`/media/<id>`).
+
+> **The output port is 8032, not 5032.** `5032` is the Vite dev server and exists
+> **only** while a developer is running `npm run tauri dev`. In the installed app it
+> does not exist at all, so an OBS browser source pointed at `:5032` shows a blank
+> screen with no error. The embedded HTTP server on **`8032`** serves the output and
+> stage pages in both dev and production — and it is what the **Channels** tab's
+> Copy URL / QR actually hand you, so prefer those over typing a URL by hand.
 - **NDI encode** — into OBS/vMix/ATEM/ProPresenter. **Not yet available:**
   requires the proprietary NDI SDK (native lib + FFI). The command returns a
   clear error; integration path is documented in `src-tauri/src/main.rs`

@@ -117,7 +117,11 @@ npm run tauri dev        # desktop app + dev server on :5032, kiosk WS on :8031
 
 ## Ports (global registry, NN=03)
 
-`5032` = operator console (app surface, Vite strictPort) · `8031` = kiosk/OBS WebSocket hub. OBS/vMix: add a **Browser Source** → `http://localhost:5032/output.html?template_id=<n>` (live over WS, no NDI). Same URL for a Raspberry-Pi kiosk (swap `localhost` for the host IP).
+`5032` = operator console (Vite dev server, strictPort) · `8031` = kiosk/OBS WebSocket hub · `8032` = embedded HTTP server (output/stage pages + `/media/<id>`).
+
+**OBS/vMix/kiosk browser source → `http://<host>:8032/output.html?template_id=<n>`.**
+
+**NOT 5032.** `5032` is Vite. It exists ONLY under `npm run tauri dev`; in the packaged app there is no server on it at all, so a browser source pointed there shows a blank screen with no error and nothing in any log. The docs said 5032 for months and were only caught by launching the actual release binary. `Channels.svelte` has always emitted 8032 correctly, so the Copy-URL button was right while every doc was wrong.
 
 ## Architecture rules learned the HARD WAY — do not regress these
 

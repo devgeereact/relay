@@ -77,9 +77,9 @@ Every output is a render target of one shared template engine — main screen, s
 - **Add a channel** — name it, pick **native window (HDMI)** or **network client (OBS/kiosk)**.
 - **Assign a template** per channel.
 - **Native** → pick which HDMI display, then **Open**.
-- **Network** → **Copy URL** or show a **QR** for a browser source / kiosk / phone (same Wi-Fi). Point OBS/vMix at `http://<host>:5032/output.html?template_id=<n>`.
+- **Network** → **Copy URL** or show a **QR** for a browser source / kiosk / phone (same Wi-Fi). Point OBS/vMix at `http://<host>:8032/output.html?template_id=<n>` — but prefer **Copy URL**, which always gives you the right one.
 - Two-step **delete** (first click arms → "Sure?" → confirm).
-- **Preacher's stage remote** — open `http://<host>:5032/stage.html` (or scan the QR) on a phone/iPad: big live verse, "up next", your stage notes, and the countdown — the confidence view, kept off the main output.
+- **Preacher's stage remote** — open `http://<host>:8032/stage.html` (or scan the QR) on a phone/iPad: big live verse, "up next", your stage notes, and the countdown — the confidence view, kept off the main output.
 
 ---
 
