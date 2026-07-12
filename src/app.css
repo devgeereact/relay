@@ -386,3 +386,26 @@ body{ overflow:hidden; text-rendering:optimizeLegibility; -moz-osx-font-smoothin
 .cat-sketch{ font-family:var(--f-mono); font-size:10px; letter-spacing:.1em; text-transform:uppercase;
   color:var(--v-faint); display:inline-flex; align-items:center; gap:7px; }
 .cat-sketch::before{ content:""; width:6px; height:6px; border-radius:50%; background:var(--v-amber); box-shadow:0 0 7px var(--v-amber); }
+
+/* ===== Keyboard cheatsheet (?) =====================================
+   Bindings come from lib/shortcuts.js SHORTCUTS — the same table the handler
+   reads — so the help can never drift out of sync with the real bindings. */
+.cheat-scrim{ position:fixed; inset:0; z-index:900; display:grid; place-items:center;
+  background:rgba(0,0,0,.62); padding:24px; cursor:default; }
+.cheat{ width:100%; max-width:520px; background:var(--v-surf); border:1px solid var(--v-line2);
+  border-radius:14px; padding:22px 24px; box-shadow:0 18px 50px rgba(0,0,0,.5); }
+.cheat h2{ margin:0 0 16px; font-family:var(--f-display); font-size:17px; font-weight:600; color:var(--v-txt); }
+.cheat table{ width:100%; border-collapse:collapse; }
+.cheat tr{ border-bottom:1px solid var(--v-line); }
+.cheat tr:last-child{ border-bottom:0; }
+.cheat td{ padding:9px 0; vertical-align:middle; }
+.cheat .keys{ white-space:nowrap; width:1%; padding-right:14px; }
+.cheat .lbl{ font-size:13.5px; color:var(--v-txt); }
+.cheat .scope{ text-align:right; font-family:var(--f-mono); font-size:9.5px; letter-spacing:.05em;
+  text-transform:uppercase; color:var(--v-faint); white-space:nowrap; padding-left:12px; }
+.cheat kbd{ display:inline-block; font-family:var(--f-mono); font-size:10.5px; line-height:1;
+  padding:5px 7px; margin-right:4px; border-radius:5px; background:var(--v-surf3);
+  border:1px solid var(--v-line2); color:var(--v-txt); }
+.cheat-foot{ margin:16px 0 0; font-size:12px; color:var(--v-dim); line-height:1.6; }
+.cheat-foot kbd{ display:inline-block; font-family:var(--f-mono); font-size:10px; padding:3px 5px;
+  border-radius:4px; background:var(--v-surf3); border:1px solid var(--v-line2); color:var(--v-txt); }

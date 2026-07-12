@@ -68,3 +68,43 @@ export const DEFAULT_TEMPLATE = BUILTINS[0];
 export function builtinById(id) {
   return BUILTINS.find((t) => t.id === id) || DEFAULT_TEMPLATE;
 }
+
+/**
+ * Accent colours for the output-monitor wall, in order.
+ *
+ * One list, so the Console wall and the Planner's monitor column colour the same
+ * channel the same way. They previously kept private arrays that had drifted
+ * (`'gold'` vs `'amber'`), so monitor #1 was a different colour depending on
+ * which tab you were looking at — for the same physical screen.
+ */
+export const MONITOR_ACCENTS = ['amber', 'cyan', 'amethyst', 'rose'];
+
+/** The accent for the Nth monitor. */
+export function monitorAccent(i) {
+  return MONITOR_ACCENTS[i % MONITOR_ACCENTS.length];
+}
+
+/**
+ * The per-content-type template override carried on fired content, or null.
+ *
+ * Malformed JSON falls back to null (= use the channel's own template) rather
+ * than throwing. A bad template must never take the output screens down in front
+ * of a congregation — degrade to the default look, don't blank the wall.
+ *
+ * Shared by the console preview, the Planner monitors and the real output page,
+ * so what the operator previews is parsed by the exact same code as what the
+ * congregation sees. It used to be reimplemented in all three.
+ */
+export function parseTemplateOverride(templateJson) {
+  if (!templateJson) return null;
+  try {
+    const parsed = JSON.parse(templateJson);
+    // JSON.parse("42") and JSON.parse("null") are both valid and both useless
+    // here — the renderer expects an object and would read .style/.layout off a
+    // number. Anything that isn't an object falls back to the channel template.
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}

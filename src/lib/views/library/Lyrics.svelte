@@ -1,9 +1,10 @@
 <script>
+  import { songCue } from '../../cues.js';
   // Library → Lyrics: the song catalog. Search, paste/draft new songs, open a
   // song's slide flow, add a song straight to a service plan, delete. File
   // import (.pro / text) is handled by the Library's shared Import button.
   import { onMount } from 'svelte';
-  import { capture, listSongs, searchSongs, importSong, deleteSong, getSong, listPlans, addPlanItem, listArrangements, expandSections } from '../../stores/capture.js';
+  import { capture, listSongs, searchSongs, importSong, deleteSong, getSong, listPlans, addPlanItem, listArrangements } from '../../stores/capture.js';
   import SongEditor from './SongEditor.svelte';
 
   export let startPaste = false;
@@ -99,18 +100,7 @@
     arrPick = { song: full, plan, arrangements };
   }
   async function commitToPlan(full, plan, arr) {
-    const base = full.sections.map((x) => ({ tag: x.tag, label: x.label, lyrics: x.lyrics }));
-    const sections = arr ? expandSections(base, arr.sequence) : base;
-    const payload = {
-      song_id: full.id,
-      title: full.title,
-      author: full.author,
-      song_key: full.song_key,
-      sections,
-      arrangement_name: arr ? arr.name : 'Standard',
-      arrangement_seq: arr ? arr.sequence : null,
-    };
-    const label = arr ? `${full.title} · ${arr.name}` : full.title;
+    const { label, payload } = songCue(full, arr);
     await addPlanItem(plan.id, 'song', label, payload);
     planMenuFor = null;
     arrPick = null;

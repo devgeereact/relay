@@ -1,0 +1,16 @@
+# macOS deployment target.
+#
+# whisper.cpp (via whisper-rs-sys) uses std::filesystem, which Apple marks as
+# available only from macOS 10.15. Tauri's release build otherwise ends up
+# passing `-mmacosx-version-min=10.13`, and because that flag lands AFTER the one
+# derived from `bundle.macOS.minimumSystemVersion`, it wins — so every
+# `tauri build` failed to compile ggml, and Relay could not be packaged at all.
+# `cargo test` and `tauri dev` were unaffected, which is why it went unnoticed:
+# the release profile was the only thing that was broken, and nobody ran it.
+#
+# Setting it here makes it durable — it applies to every cargo invocation
+# (build, test, clippy, and `tauri build`) without anyone having to remember an
+# environment variable. Keep it in step with `minimumSystemVersion` in
+# tauri.conf.json.
+[env]
+MACOSX_DEPLOYMENT_TARGET = "11.0"

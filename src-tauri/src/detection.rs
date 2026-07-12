@@ -16,11 +16,51 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+/// How a candidate was detected. This is NOT cosmetic metadata — the router
+/// gates on it (see `router::Router::decide`), because confidences from these
+/// three sources live on *incomparable scales* and a single scalar threshold
+/// cannot safely gate all of them.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum DetectionMethod {
+    /// A spoken reference the parser actually heard ("John three sixteen").
+    /// Confidence is a real parse confidence. May auto-fire.
     Direct,
+    /// A TF-IDF paraphrase match. Its "confidence" is a raw cosine similarity —
+    /// a distance in an arbitrary vector space, NOT a probability. May never
+    /// auto-fire; see `router.rs`.
     Semantic,
+    /// A reference that parsed but is genuinely ambiguous ("Revelation 22"
+    /// → 22:1 or 2:2). Confidence is a hardcoded placeholder, not measured.
+    /// May never auto-fire.
+    Ambiguous,
+}
+
+impl DetectionMethod {
+    /// Whether a candidate detected this way is ever allowed onto the
+    /// congregation's screen without a human confirming it first.
+    ///
+    /// Only `Direct` is. `Semantic` and `Ambiguous` carry confidences that are
+    /// not calibrated probabilities, so no threshold on them is meaningful —
+    /// gating them by number would be gating them by noise.
+    pub fn may_auto_fire(&self) -> bool {
+        matches!(self, DetectionMethod::Direct)
+    }
+
+    /// The value written to `detections.method`, which is constrained to
+    /// `('direct','semantic')` (docs/data/schema.sql).
+    ///
+    /// `Ambiguous` persists as `direct` — and that is honest, not a fudge: the
+    /// reference genuinely *was* parsed from spoken words ("Revelation 22"). What
+    /// is ambiguous is *which verse* it resolves to, not how it was found. The
+    /// routing distinction (never auto-fire) is enforced in the router, which is
+    /// where it belongs; it isn't a property of the historical record.
+    pub fn db_method(&self) -> &'static str {
+        match self {
+            DetectionMethod::Direct | DetectionMethod::Ambiguous => "direct",
+            DetectionMethod::Semantic => "semantic",
+        }
+    }
 }
 
 /// A resolved scripture reference (canonical book name as stored in the DB).
@@ -29,6 +69,13 @@ pub struct VerseRef {
     pub book: String,
     pub chapter: i64,
     pub verse: i64,
+}
+
+impl VerseRef {
+    #[cfg(test)]
+    fn reference_book_chapter_verse(&self) -> String {
+        format!("{} {}:{}", self.book, self.chapter, self.verse)
+    }
 }
 
 /// A candidate detection found in a transcript span.
@@ -48,7 +95,18 @@ pub struct RefMatch {
     /// and stage the whole chapter.
     pub whole_chapter: bool,
     pub confidence: f32,
+    /// Always `Direct` — `detect_direct` is, by definition, the direct matcher.
+    /// Kept because a `RefMatch` without its provenance is a footgun waiting for
+    /// the day a second matcher produces one, and the routing gate keys on method
+    /// (see `router::decide`). Callers state the method themselves rather than
+    /// trusting this field, which is why nothing reads it today.
+    #[allow(dead_code)]
     pub method: DetectionMethod,
+    /// The exact span of transcript this reference was parsed from. Populated and
+    /// asserted on in the detection tests; not yet surfaced in the UI, where it
+    /// belongs (showing the operator *what words* triggered a match is the
+    /// clearest possible explanation of an AI decision). Kept for that.
+    #[allow(dead_code)]
     pub matched_text: String,
 }
 
@@ -1706,9 +1764,67 @@ mod tests {
     }
 }
 
-impl VerseRef {
-    #[cfg(test)]
-    fn reference_book_chapter_verse(&self) -> String {
-        format!("{} {}:{}", self.book, self.chapter, self.verse)
+#[cfg(test)]
+mod perf {
+    use super::*;
+    use std::time::Instant;
+
+    /// Not an assertion — a measurement, printed with `--nocapture`.
+    ///
+    /// SPEC's success criterion is "runs smoothly on an 8GB Windows laptop", and
+    /// `top_k` is a full linear scan over ~31k verses that runs on EVERY
+    /// transcript partial (roughly once a second, while a sermon is in progress).
+    /// That *looks* like something to optimise, so it was measured before anyone
+    /// did.
+    ///
+    /// Result (release, Apple silicon):
+    ///   build  ≈ 112 ms — once, at startup, off the live path
+    ///   top_k  ≈ 2.6 ms per query, at ~1 query/sec
+    ///
+    /// That is roughly a quarter of one percent of a core. Even several times
+    /// slower on a weak Windows laptop it stays around 1%. **So the linear scan
+    /// stays.** An inverted index would be real complexity bought with no
+    /// measurable win — the scan is not the bottleneck, and this test exists so
+    /// that claim can be re-checked rather than believed.
+    ///
+    /// (If the corpus ever grows well beyond one translation, re-run this first.)
+    #[test]
+    #[ignore = "measurement, not a test — run with --ignored --nocapture"]
+    fn measure_semantic_top_k() {
+        // A corpus the size of the real one.
+        let corpus: Vec<(VerseRef, String)> = (0..31_100)
+            .map(|i| {
+                (
+                    VerseRef {
+                        book: "John".into(),
+                        chapter: (i / 100) as i64 + 1,
+                        verse: (i % 100) as i64 + 1,
+                    },
+                    format!(
+                        "for god so loved the world that he gave his only begotten son {i} \
+                         whosoever believeth in him should not perish everlasting life"
+                    ),
+                )
+            })
+            .collect();
+
+        let t0 = Instant::now();
+        let idx = SemanticIndex::build(&corpus);
+        let build_ms = t0.elapsed().as_secs_f64() * 1000.0;
+
+        let query = "god loved the world and gave his son so we would not perish";
+        // Warm, then time a realistic number of queries (one per transcript partial).
+        let _ = idx.top_k(query, 1);
+        let t1 = Instant::now();
+        const N: usize = 100;
+        for _ in 0..N {
+            let _ = idx.top_k(query, 1);
+        }
+        let per_query_ms = t1.elapsed().as_secs_f64() * 1000.0 / N as f64;
+
+        println!("\n  SemanticIndex over {} verses:", corpus.len());
+        println!("    build:     {build_ms:.0} ms (once, at startup)");
+        println!("    top_k:     {per_query_ms:.2} ms per query (~1 query/sec live)");
+        println!();
     }
 }

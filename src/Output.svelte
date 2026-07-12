@@ -2,6 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { DEFAULT_TEMPLATE, builtinById } from './lib/templates.js';
   import TemplateRender from './lib/TemplateRender.svelte';
+  import { parseTemplateOverride } from './lib/templates.js';
 
   // Two modes, ONE renderer (TemplateRender): desktop (Tauri — DB template,
   // live edits over events) and kiosk/OBS (plain browser — built-in template by
@@ -18,16 +19,7 @@
 
   // Per-content-type template: when the fired content carries a template
   // override (its content type's default), render THAT; else the channel's own.
-  $: activeTemplate = (() => {
-    if (content && content.template_json) {
-      try {
-        return JSON.parse(content.template_json);
-      } catch {
-        /* fall through */
-      }
-    }
-    return t;
-  })();
+  $: activeTemplate = parseTemplateOverride(content?.template_json) ?? t;
   let unlisten = [];
   let ws = null;
   let kioskClosed = false;

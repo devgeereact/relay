@@ -194,9 +194,4 @@
   .lib-newitem{ text-align:left; padding:9px 11px; border-radius:8px; border:0; background:transparent; color:var(--v-txt);
     font-family:var(--f-body); font-size:13px; cursor:pointer; }
   .lib-newitem:hover{ background:var(--v-surf3); color:var(--v-amber); }
-
-  .lib-soon{ display:flex; flex-direction:column; align-items:center; text-align:center; gap:10px;
-    padding:56px 24px; border:1px dashed var(--v-line2); border-radius:16px; max-width:520px; margin:8px auto 0; }
-  .lib-soon-t{ font-family:var(--f-head); font-size:20px; font-weight:700; color:var(--v-txt); }
-  .lib-soon-d{ color:var(--v-dim); font-size:13.5px; line-height:1.6; margin:0; max-width:44ch; }
 </style>

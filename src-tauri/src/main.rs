@@ -9,14 +9,17 @@ mod channels;
 mod db;
 mod detection;
 mod dsp;
+mod pipeline;
 mod proimport;
 mod router;
 mod songs;
 mod stt;
+mod telemetry;
 
 use audio::AudioEngine;
 use channels::OutputContent;
 use detection::{ContextMemory, DetectionMethod, SemanticIndex, VerseRef};
+use pipeline::{Cand, DetectionEvent, Fire, FireStatus};
 use router::{RouteDecision, Router, Thresholds};
 use rusqlite::Connection;
 use serde::Serialize;
@@ -94,6 +97,29 @@ fn main() {
         .manage(Detecting(AtomicBool::new(true)))
         .manage(Session::default())
         .setup(|app| {
+            // Crash reporting: OFF unless the operator previously opted in. This
+            // runs before anything else can panic, but deliberately after the DB
+            // is open, because the consent lives in the DB. No consent → no DSN,
+            // no client, no network stack at all.
+            {
+                let consent = {
+                    let db = app.state::<Db>();
+                    let conn = db.0.lock().expect("db lock");
+                    let on = db::get_setting(&conn, telemetry::ENABLED_KEY)
+                        .ok()
+                        .flatten()
+                        .as_deref()
+                        == Some("1");
+                    let dsn = db::get_setting(&conn, telemetry::DSN_KEY)
+                        .ok()
+                        .flatten()
+                        .unwrap_or_default();
+                    on.then_some(dsn)
+                };
+                if let Some(dsn) = consent {
+                    telemetry::enable(&dsn, env!("CARGO_PKG_VERSION"));
+                }
+            }
             // Build the semantic index from the corpus once at startup, and set
             // up context-memory state (Phase 9).
             let corpus: Vec<(VerseRef, String)> = {
@@ -139,13 +165,17 @@ fn main() {
             }
             app.manage(kiosk);
             tauri::async_runtime::spawn(channels::run_kiosk_server(
+                channels::report_to(app.handle()),
                 kiosk_tx,
                 kiosk_templates,
                 8031,
             ));
             // Serve the output/stage pages over LAN HTTP so other devices load
             // them in a packaged app (not only in `tauri dev`). See channels.rs.
-            tauri::async_runtime::spawn(channels::run_output_http_server(8032));
+            tauri::async_runtime::spawn(channels::run_output_http_server(
+                channels::report_to(app.handle()),
+                8032,
+            ));
 
             // Load STT here (not before .run) because the worker needs an
             // AppHandle to emit transcript events. Missing model → audio-only,
@@ -165,6 +195,7 @@ fn main() {
                         // Spoken "clear the screen" / "blackout" (Phase D3/D4).
                         if detection::detect_clear(&update.text) {
                             channels::clear(&handle);
+                            forget_debounce(&handle);
                             persist_cue(&handle, "clear_screens", None);
                             return;
                         }
@@ -207,10 +238,15 @@ fn main() {
                     }
                     let routing = app.state::<Routing>();
                     if let Ok(mut r) = routing.0.lock() {
+                        // Learned thresholds, then re-anchor the decay baseline to
+                        // the dial (see apply_profile — same two-step, same reason).
                         r.set_thresholds(Thresholds {
                             auto_fire: p.auto_fire as f32,
                             suggest: p.suggest as f32,
                         });
+                        r.set_baseline(Thresholds::from_sensitivity(
+                            p.sensitivity.clamp(0, 100) as u8
+                        ));
                     }
                     println!(
                         "profile: active '{}' · lang {:?} · sensitivity {}",
@@ -271,6 +307,8 @@ fn main() {
             dismiss_detection,
             get_thresholds,
             set_thresholds,
+            get_crash_reporting,
+            set_crash_reporting,
             manual_fire,
             open_output_window,
             close_output_window,
@@ -320,51 +358,9 @@ fn main() {
         .expect("error while running Relay");
 }
 
-/// A routed detection pushed to the console. `status` is the router's decision
-/// (auto / suggested / manual). `in_library` is false when the reference parsed
-/// cleanly but isn't in the seeded corpus yet.
-#[derive(Clone, Serialize)]
-struct DetectionEvent {
-    reference: String,
-    book: String,
-    chapter: i64,
-    verse: i64,
-    confidence: f32,
-    method: DetectionMethod,
-    status: &'static str,
-    in_library: bool,
-    text: Option<String>,
-    translation: Option<String>,
-}
-
 /// Minimum semantic cosine to even consider a paraphrase candidate. Below this
 /// it's noise; above, the router's suggest/auto thresholds still apply.
 const SEMANTIC_FLOOR: f32 = 0.30;
-
-/// A gate candidate: the anchor verse plus how it should route and whether it is
-/// part of a multi-verse passage (range / whole chapter) to stage for "next".
-struct Cand {
-    r: VerseRef,
-    conf: f32,
-    method: DetectionMethod,
-    explicit: bool,
-    verse_end: Option<i64>,
-    whole_chapter: bool,
-}
-
-impl Cand {
-    /// A plain single-verse candidate (no passage span).
-    fn single(r: VerseRef, conf: f32, method: DetectionMethod) -> Self {
-        Cand {
-            r,
-            conf,
-            method,
-            explicit: false,
-            verse_end: None,
-            whole_chapter: false,
-        }
-    }
-}
 
 /// Resolve the inclusive last verse to stage for a candidate: the explicit range
 /// end, or the chapter's last verse for a whole-chapter reference, or None for a
@@ -377,6 +373,116 @@ fn passage_end(conn: &Connection, c: &Cand) -> Option<i64> {
     } else {
         c.verse_end
     }
+}
+
+/// Look up a verse and its scripture template, and assemble the `Fire` that
+/// describes what the screens will show.
+///
+/// THE single place a verse becomes screen content. Every fire path goes through
+/// here, which is what guarantees they all carry the scripture template — the nav
+/// paths used to build their broadcast by hand and forget it, so a verse reached
+/// by saying "next" rendered differently from the same verse reached by saying
+/// its reference. Caller holds the Db lock; this does no locking of its own.
+#[allow(clippy::too_many_arguments)]
+fn resolve_fire(
+    conn: &Connection,
+    r: VerseRef,
+    confidence: f32,
+    method: DetectionMethod,
+    status: FireStatus,
+    stage_note: Option<String>,
+) -> Fire {
+    let looked = db::lookup_verse(conn, &r.book, r.chapter, r.verse)
+        .ok()
+        .flatten();
+    let (template_id, template_json) = content_tpl(conn, "scripture");
+    Fire {
+        key: Fire::key_for(&r),
+        reference: r,
+        verse_id: looked.as_ref().map(|v| v.id),
+        text: looked.as_ref().map(|v| v.text.clone()),
+        translation: looked.as_ref().map(|v| v.translation.clone()),
+        confidence,
+        method,
+        status,
+        stage_note,
+        template_id,
+        template_json,
+    }
+}
+
+/// How a fire updates the passage context (what "next" will walk to).
+enum PassageUpdate {
+    /// A fresh reference — stage its passage span ("Psalm 23" → the whole chapter).
+    Note(Option<i64>),
+    /// A step within the passage already staged — keep the span, move the cursor.
+    Advance,
+    /// A jump inside the current book — new position, no new span.
+    Jump,
+}
+
+/// Put a verse on the screens because a HUMAN said so.
+///
+/// Shared by every operator-driven path — the manual reference box, a spoken
+/// "next"/"back", and a spoken in-passage jump. Those three were three separate
+/// ~70-line functions that did the same six things in the same order; two of them
+/// (`handle_nav` / `handle_passage_nav`) were near-identical twins that had
+/// already drifted apart from the third.
+///
+/// Bypasses the gate entirely: operator override is a first-class control and
+/// must always win (CLAUDE.md). Follows the lock rules — all DB work under the
+/// lock, then RELEASE, then broadcast/emit. Never hold a lock across `emit`.
+fn fire_manual(
+    handle: &tauri::AppHandle,
+    r: VerseRef,
+    confidence: f32,
+    update: PassageUpdate,
+    stage_note: Option<String>,
+) -> bool {
+    let db = handle.state::<Db>();
+    let ctx = handle.state::<Context>();
+
+    let fire = {
+        let Ok(conn) = db.0.lock() else { return false };
+        let f = resolve_fire(
+            &conn,
+            r,
+            confidence,
+            DetectionMethod::Direct,
+            FireStatus::Manual,
+            stage_note,
+        );
+        // Not in the corpus → leave the screen exactly as it is. Better to show
+        // the previous verse than to blank the wall mid-sentence. Same rule the
+        // AI path uses (`Fire::may_broadcast`).
+        if !f.may_broadcast() {
+            return false;
+        }
+        if let Ok(mut context) = ctx.0.lock() {
+            match update {
+                PassageUpdate::Note(end) => context.note_passage(&f.reference, end),
+                PassageUpdate::Advance => context.advance(&f.reference),
+                PassageUpdate::Jump => context.note(&f.reference),
+            }
+        }
+        if let Ok(mut router) = handle.state::<Routing>().0.lock() {
+            router.manual_fire(&f.key, 0);
+        }
+        persist_fire(
+            &conn,
+            handle.state::<Session>(),
+            f.verse_id,
+            f.method.db_method(),
+            f.confidence,
+            f.status.as_str(),
+            &f.key,
+        );
+        f
+    }; // locks released BEFORE the emit below — CLAUDE.md rule #2.
+
+    channels::broadcast_content(handle, fire.output());
+    let _ = handle.emit("detection://match", fire.event());
+    true
 }
 
 /// Detect references in `text` — direct, context-resolved bare verses, and
@@ -413,12 +519,10 @@ fn emit_detections(handle: &tauri::AppHandle, text: &str, now_ms: u64) {
         let directs = detection::detect_direct(text);
         let direct_empty = directs.is_empty();
         for m in directs {
-            let explicit = m.confidence >= 0.95;
             candidates.push(Cand {
                 r: m.reference,
                 conf: m.confidence,
                 method: DetectionMethod::Direct,
-                explicit,
                 verse_end: m.verse_end,
                 whole_chapter: m.whole_chapter,
             });
@@ -435,19 +539,20 @@ fn emit_detections(handle: &tauri::AppHandle, text: &str, now_ms: u64) {
         }
         if direct_empty {
             for r in detection::detect_ambiguous(text) {
-                candidates.push(Cand::single(r, 0.70, DetectionMethod::Direct));
+                candidates.push(Cand::single(r, 0.70, DetectionMethod::Ambiguous));
             }
         }
         if candidates.is_empty() {
             return;
         }
 
-        // Dedup by reference, keeping the highest-confidence candidate.
+        // Dedup by reference, keeping the strongest evidence per verse — see
+        // pipeline::better for why this is NOT simply the highest confidence.
         let mut best: std::collections::HashMap<String, Cand> = std::collections::HashMap::new();
         for c in candidates {
-            let key = format!("{} {}:{}", c.r.book, c.r.chapter, c.r.verse);
+            let key = Fire::key_for(&c.r);
             match best.get(&key) {
-                Some(existing) if existing.conf >= c.conf => {}
+                Some(existing) if pipeline::better(existing, &c) => {}
                 _ => {
                     best.insert(key, c);
                 }
@@ -455,56 +560,37 @@ fn emit_detections(handle: &tauri::AppHandle, text: &str, now_ms: u64) {
         }
 
         for (key, c) in best {
-            let status = match router.decide(&key, c.conf, c.explicit, now_ms) {
-                RouteDecision::AutoFire => "auto",
-                RouteDecision::Suggest => "suggested",
+            let status = match router.decide(&key, c.conf, c.method, now_ms) {
+                RouteDecision::AutoFire => FireStatus::Auto,
+                RouteDecision::Suggest => FireStatus::Suggested,
                 RouteDecision::Drop => continue,
             };
-            let r = &c.r;
-            let looked = db::lookup_verse(&conn, &r.book, r.chapter, r.verse)
-                .ok()
-                .flatten();
-            let vtext = looked.as_ref().map(|v| v.text.clone());
-            let translation = looked.as_ref().map(|v| v.translation.clone());
+            let end = passage_end(&conn, &c);
+            let mut fire = resolve_fire(&conn, c.r, c.conf, c.method, status, None);
 
-            if status == "auto" {
+            // Parsed, but the verse doesn't exist (garbled speech readily yields
+            // "Psalms 23:99"). Demote to a suggestion rather than broadcasting a
+            // verse with no text, which would blank the projector. See
+            // `Fire::may_broadcast`.
+            if fire.status.goes_to_screen() && fire.verse_id.is_none() {
+                fire.status = FireStatus::Suggested;
+            }
+
+            if fire.may_broadcast() {
                 // Stage the passage so "next" walks a range / whole chapter.
-                let end = passage_end(&conn, &c);
-                context.note_passage(r, end);
-                let method_str = match c.method {
-                    DetectionMethod::Direct => "direct",
-                    DetectionMethod::Semantic => "semantic",
-                };
+                context.note_passage(&fire.reference, end);
                 persist_fire(
                     &conn,
                     handle.state::<Session>(),
-                    looked.as_ref().map(|v| v.id),
-                    method_str,
-                    c.conf,
+                    fire.verse_id,
+                    fire.method.db_method(),
+                    fire.confidence,
+                    fire.status.as_str(),
                     text,
                 );
-                let (tid, tjson) = content_tpl(&conn, "scripture");
-                broadcasts.push(OutputContent {
-                    reference: key.clone(),
-                    text: vtext.clone(),
-                    translation: translation.clone(),
-                    template_id: tid,
-                    template_json: tjson,
-                    ..Default::default()
-                });
+                broadcasts.push(fire.output());
             }
-            events.push(DetectionEvent {
-                reference: key,
-                book: r.book.clone(),
-                chapter: r.chapter,
-                verse: r.verse,
-                confidence: c.conf,
-                method: c.method.clone(),
-                status,
-                in_library: looked.is_some(),
-                text: vtext,
-                translation,
-            });
+            events.push(fire.event());
         }
     } // locks released here
 
@@ -516,163 +602,51 @@ fn emit_detections(handle: &tauri::AppHandle, text: &str, now_ms: u64) {
     }
 }
 
-/// Handle a spoken navigation command ("next" / "back"): fire the next/previous
-/// verse relative to the current on-screen verse. Bypasses the gate (operator
-/// intent), like a manual override. Locks db before ctx/router (global order).
+/// Spoken "next" / "back": step to the adjacent verse in the staged passage.
+///
+/// Operator intent, so it bypasses the gate — see `fire_manual`, which owns the
+/// whole sequence. This and `handle_passage_nav` were previously two ~70-line
+/// near-identical functions; all that actually differs between them is how the
+/// target verse is chosen, which is the four lines below.
 fn handle_nav(handle: &tauri::AppHandle, dir: detection::NavCommand) {
-    let db = handle.state::<Db>();
-    let ctx = handle.state::<Context>();
-
-    // All lock work in one scope; broadcast/emit happen AFTER releasing (no
-    // lock held across emit — see emit_detections).
-    let fired: Option<(String, VerseRef, String, String)> = {
-        let Ok(conn) = db.0.lock() else {
-            return;
-        };
-        let target = {
-            let Ok(context) = ctx.0.lock() else {
-                return;
-            };
-            match dir {
-                detection::NavCommand::Next => context.next_verse(),
-                detection::NavCommand::Previous => context.prev_verse(),
-            }
-        };
-        let Some(r) = target else { return };
-        let Some(v) = db::lookup_verse(&conn, &r.book, r.chapter, r.verse)
-            .ok()
-            .flatten()
-        else {
-            return; // stepped off the end of the chapter
-        };
-        let key = format!("{} {}:{}", r.book, r.chapter, r.verse);
-        if let Ok(mut context) = ctx.0.lock() {
-            // Preserve the active passage span so a range/chapter walk stays bounded.
-            context.advance(&r);
+    let target = {
+        let ctx = handle.state::<Context>();
+        let Ok(context) = ctx.0.lock() else { return };
+        match dir {
+            detection::NavCommand::Next => context.next_verse(),
+            detection::NavCommand::Previous => context.prev_verse(),
         }
-        if let Ok(mut router) = handle.state::<Routing>().0.lock() {
-            router.manual_fire(&key, 0);
-        }
-        persist_fire(
-            &conn,
-            handle.state::<Session>(),
-            Some(v.id),
-            "direct",
-            1.0,
-            &key,
-        );
-        Some((key, r, v.text, v.translation))
     };
-
-    if let Some((key, r, text, translation)) = fired {
-        channels::broadcast_content(
-            handle,
-            OutputContent {
-                reference: key.clone(),
-                text: Some(text.clone()),
-                translation: Some(translation.clone()),
-                ..Default::default()
-            },
-        );
-        let _ = handle.emit(
-            "detection://match",
-            DetectionEvent {
-                reference: key,
-                book: r.book,
-                chapter: r.chapter,
-                verse: r.verse,
-                confidence: 1.0,
-                method: DetectionMethod::Direct,
-                status: "auto",
-                in_library: true,
-                text: Some(text),
-                translation: Some(translation),
-            },
-        );
-    }
+    // None = we stepped off the end of the chapter. Nothing to do.
+    let Some(r) = target else { return };
+    // Advance keeps the staged passage span, so a range/chapter walk stays bounded.
+    fire_manual(handle, r, 1.0, PassageUpdate::Advance, None);
 }
 
-/// Handle a spoken in-passage jump ("chapter 5 verse 1", "verse 4"): resolve the
-/// BOOK from the current context and fire book chapter:verse, keeping the
-/// operator in the same passage. Chapter-only defaults to verse 1; verse-only
-/// keeps the current chapter. Bypasses the gate (operator intent). Returns true
-/// if it fired. Locks db before ctx/router (global order).
+/// Spoken in-passage jump ("chapter 5 verse 1", "verse 4"): resolve the BOOK from
+/// the current context and fire book chapter:verse, keeping the operator inside
+/// the same passage. Chapter-only defaults to verse 1; verse-only keeps the
+/// current chapter. Returns true if it fired.
 fn handle_passage_nav(handle: &tauri::AppHandle, text: &str) -> bool {
     let Some(nav) = detection::detect_passage_nav(text) else {
         return false;
     };
-    let db = handle.state::<Db>();
-    let ctx = handle.state::<Context>();
-
-    let fired: Option<(String, VerseRef, String, String)> = {
-        let Ok(conn) = db.0.lock() else {
+    let target = {
+        let ctx = handle.state::<Context>();
+        let Ok(context) = ctx.0.lock() else {
             return false;
         };
-        let target = {
-            let Ok(context) = ctx.0.lock() else {
-                return false;
-            };
-            let Some(cur) = context.current() else {
-                return false; // no current passage → can't resolve the book yet
-            };
-            VerseRef {
-                book: cur.book.clone(),
-                chapter: nav.chapter.unwrap_or(cur.chapter),
-                verse: nav.verse.unwrap_or(1),
-            }
+        // No current passage → there is no book to resolve the jump against.
+        let Some(cur) = context.current() else {
+            return false;
         };
-        let Some(v) = db::lookup_verse(&conn, &target.book, target.chapter, target.verse)
-            .ok()
-            .flatten()
-        else {
-            return false; // that verse isn't in the corpus — leave the screen as-is
-        };
-        let key = format!("{} {}:{}", target.book, target.chapter, target.verse);
-        if let Ok(mut context) = ctx.0.lock() {
-            context.note(&target);
+        VerseRef {
+            book: cur.book.clone(),
+            chapter: nav.chapter.unwrap_or(cur.chapter),
+            verse: nav.verse.unwrap_or(1),
         }
-        if let Ok(mut router) = handle.state::<Routing>().0.lock() {
-            router.manual_fire(&key, 0);
-        }
-        persist_fire(
-            &conn,
-            handle.state::<Session>(),
-            Some(v.id),
-            "direct",
-            1.0,
-            &key,
-        );
-        Some((key, target, v.text, v.translation))
     };
-
-    if let Some((key, r, text, translation)) = fired {
-        channels::broadcast_content(
-            handle,
-            OutputContent {
-                reference: key.clone(),
-                text: Some(text.clone()),
-                translation: Some(translation.clone()),
-                ..Default::default()
-            },
-        );
-        let _ = handle.emit(
-            "detection://match",
-            DetectionEvent {
-                reference: key,
-                book: r.book,
-                chapter: r.chapter,
-                verse: r.verse,
-                confidence: 1.0,
-                method: DetectionMethod::Direct,
-                status: "manual",
-                in_library: true,
-                text: Some(text),
-                translation: Some(translation),
-            },
-        );
-        return true;
-    }
-    false
+    fire_manual(handle, target, 1.0, PassageUpdate::Jump, None)
 }
 
 /// Persist a finalized transcript line into the current service (if recording),
@@ -696,12 +670,23 @@ fn persist_transcript(handle: &tauri::AppHandle, text: &str, language: &str) {
 
 /// Persist a fired detection into the current service, using an already-held db
 /// connection (avoids re-locking). Creates a transcript row if none exists yet.
+/// `status` is what ACTUALLY happened — `"auto"` (the AI fired it unprompted),
+/// `"suggested"` (offered to the operator), or `"dismissed"`. It used to be
+/// hardcoded to `"auto"` at the insert, so an operator's manual override was
+/// recorded in `detections` as if the AI had decided it.
+///
+/// That is not a cosmetic bug: the self-calibrating threshold loop
+/// (`router::record_feedback`, docs/DECISIONS.md) learns from precisely this
+/// confirm/reject signal. Logging every human decision as a machine decision
+/// means the router is being trained on a record that cannot tell the two apart.
+#[allow(clippy::too_many_arguments)]
 fn persist_fire(
     conn: &Connection,
     session: tauri::State<'_, Session>,
     verse_id: Option<i64>,
     method: &str,
     confidence: f32,
+    status: &str,
     window_text: &str,
 ) {
     let Ok(mut sess) = session.0.lock() else {
@@ -721,7 +706,7 @@ fn persist_fire(
             Err(_) => return,
         },
     };
-    let _ = db::insert_detection(conn, tid, verse_id, method, confidence, "auto", Some(ts));
+    let _ = db::insert_detection(conn, tid, verse_id, method, confidence, status, Some(ts));
 }
 
 /// Record an operator cue (manual_override / clear_screens) into the current
@@ -742,6 +727,12 @@ fn persist_cue(handle: &tauri::AppHandle, cue_type: &str, payload: Option<&str>)
 // Rust core is attached (see App.svelte). Cheap, no side effects.
 #[tauri::command]
 fn greet(name: &str) -> String {
+    // Called once from App.svelte's onMount. It is the console's boot heartbeat:
+    // this line appearing in the log is the proof that the webview loaded, ran its
+    // JavaScript, and reached the Tauri bridge. This machine cannot screenshot the
+    // GUI (see CLAUDE.md), so this is how a rendering/CSP regression is caught —
+    // a blank webview prints nothing here.
+    println!("console: webview up ({name})");
     format!("Relay is running. Hello, {name}.")
 }
 
@@ -1681,6 +1672,11 @@ async fn stop_capture(audio: tauri::State<'_, Audio>) -> Result<(), String> {
 
 /// Whether a local STT model is loaded, its path, and the current language
 /// setting (None = auto-detect / code-switching) — surfaced in Settings.
+///
+/// When no model loads, Relay must degrade to a fully working MANUAL tool, never
+/// to a dead one — so this reports the failure loudly enough for the UI to put a
+/// banner up. It used to fail silently, which on Windows (where the model lookup
+/// was broken outright) meant the operator had no idea the AI was never running.
 #[tauri::command]
 fn stt_status(stt: tauri::State<'_, Stt>) -> Result<StatusStt, String> {
     let slot = stt.0.lock().map_err(|e| e.to_string())?;
@@ -1689,11 +1685,13 @@ fn stt_status(stt: tauri::State<'_, Stt>) -> Result<StatusStt, String> {
             loaded: true,
             model: Some(e.model_path().display().to_string()),
             language: e.language(),
+            install_dir: None,
         },
         None => StatusStt {
             loaded: false,
             model: None,
             language: None,
+            install_dir: Some(stt::model_install_dir().display().to_string()),
         },
     })
 }
@@ -1746,6 +1744,9 @@ struct StatusStt {
     loaded: bool,
     model: Option<String>,
     language: Option<String>,
+    /// Where the operator should put a model file when none was found. Resolved
+    /// per-OS, so the message shows the real path on *their* machine.
+    install_dir: Option<String>,
 }
 
 /// NDI render target — not yet available. Honest seam: NDI needs the
@@ -1770,60 +1771,38 @@ fn confirm_detection(
     app: tauri::AppHandle,
     db: tauri::State<'_, Db>,
     routing: tauri::State<'_, Routing>,
-    ctx: tauri::State<'_, Context>,
-    session: tauri::State<'_, Session>,
     reference: String,
 ) -> Result<Thresholds, String> {
+    // The confidence of the suggestion the operator just accepted — this is the
+    // evidence the self-calibrating gate learns from, so it has to outlive the
+    // `if let` that parses the reference.
+    let mut confirmed_conf: Option<f32> = None;
     if let Some(m) = detection::detect_direct(&reference).into_iter().next() {
-        let r = &m.reference;
-        let key = format!("{} {}:{}", r.book, r.chapter, r.verse);
-        // Read everything under the Db lock, then RELEASE it before emitting.
-        // Holding Db across broadcast_content (app.emit) is the documented
-        // deadlock against the macOS main run loop — CLAUDE.md rule #2.
-        let (text, translation, verse_id, end, tid, tjson) = {
+        confirmed_conf = Some(m.confidence);
+        // Stage the passage span, then fire through the one shared manual path —
+        // the operator accepting a suggestion IS a human decision, so it records
+        // as "manual" and carries the scripture template like every other fire.
+        let end = {
             let conn = db.0.lock().map_err(|e| e.to_string())?;
-            let looked = db::lookup_verse(&conn, &r.book, r.chapter, r.verse)
-                .ok()
-                .flatten();
-            let end = if m.whole_chapter {
-                db::chapter_last_verse(&conn, &r.book, r.chapter)
+            if m.whole_chapter {
+                db::chapter_last_verse(&conn, &m.reference.book, m.reference.chapter)
                     .ok()
                     .flatten()
             } else {
                 m.verse_end
-            };
-            let (tid, tjson) = content_tpl(&conn, "scripture");
-            (
-                looked.as_ref().map(|v| v.text.clone()),
-                looked.as_ref().map(|v| v.translation.clone()),
-                looked.as_ref().map(|v| v.id),
-                end,
-                tid,
-                tjson,
-            )
+            }
         };
-        channels::broadcast_content(
+        fire_manual(
             &app,
-            OutputContent {
-                reference: key.clone(),
-                text: text.clone(),
-                translation: translation.clone(),
-                template_id: tid,
-                template_json: tjson,
-                ..Default::default()
-            },
+            m.reference,
+            m.confidence,
+            PassageUpdate::Note(end),
+            None,
         );
-        if let Ok(mut context) = ctx.0.lock() {
-            context.note_passage(r, end);
-        }
-        {
-            let conn = db.0.lock().map_err(|e| e.to_string())?;
-            persist_fire(&conn, session, verse_id, "direct", m.confidence, &key);
-        }
     }
     let t = {
         let mut router = routing.0.lock().map_err(|e| e.to_string())?;
-        router.record_feedback(true);
+        router.record_feedback(true, confirmed_conf);
         router.thresholds()
     };
     // Persist the nudge onto the active profile (calibration survives restart).
@@ -1842,13 +1821,64 @@ fn dismiss_detection(
 ) -> Result<Thresholds, String> {
     let t = {
         let mut router = routing.0.lock().map_err(|e| e.to_string())?;
-        router.record_feedback(false);
+        // No argument: the router remembers what it last auto-fired, so the
+        // correction is proportional to what was actually wrong.
+        router.record_feedback(false, None);
         router.thresholds()
     };
     if let Ok(conn) = db.0.lock() {
         persist_active_thresholds(&conn, t);
     }
     Ok(t)
+}
+
+/// Crash-reporting status for the Settings toggle.
+#[derive(Serialize)]
+struct CrashReportingStatus {
+    enabled: bool,
+    dsn: String,
+}
+
+#[tauri::command]
+fn get_crash_reporting(db: tauri::State<'_, Db>) -> Result<CrashReportingStatus, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    let dsn = db::get_setting(&conn, telemetry::DSN_KEY)
+        .map_err(|e| e.to_string())?
+        .unwrap_or_default();
+    Ok(CrashReportingStatus {
+        enabled: telemetry::is_enabled(),
+        dsn,
+    })
+}
+
+/// Turn crash reporting on/off. OFF is the default and requires no consent;
+/// turning it ON is an explicit, visible operator action (CLAUDE.md: nothing
+/// leaves the device without one).
+#[tauri::command]
+fn set_crash_reporting(
+    db: tauri::State<'_, Db>,
+    enabled: bool,
+    dsn: String,
+) -> Result<CrashReportingStatus, String> {
+    {
+        let conn = db.0.lock().map_err(|e| e.to_string())?;
+        db::set_setting(
+            &conn,
+            telemetry::ENABLED_KEY,
+            if enabled { "1" } else { "0" },
+        )
+        .map_err(|e| e.to_string())?;
+        db::set_setting(&conn, telemetry::DSN_KEY, dsn.trim()).map_err(|e| e.to_string())?;
+    }
+    if enabled {
+        telemetry::enable(dsn.trim(), env!("CARGO_PKG_VERSION"));
+    } else {
+        telemetry::disable();
+    }
+    Ok(CrashReportingStatus {
+        enabled: telemetry::is_enabled(),
+        dsn: dsn.trim().to_string(),
+    })
 }
 
 /// Current gate thresholds — for the Settings sliders.
@@ -1983,10 +2013,18 @@ fn apply_profile(stt: &Stt, routing: &Routing, p: &db::VoiceProfile) -> Result<(
         apply_profile_to_stt(e, p);
     }
     let mut router = routing.0.lock().map_err(|e| e.to_string())?;
+    // Two DIFFERENT things, and conflating them is what made calibration a
+    // one-way ratchet:
+    //   • the profile's stored thresholds are what the router has LEARNED so far,
+    //   • the sensitivity dial is the baseline that learning decays back toward.
+    // Restore the learned gate, then re-anchor the baseline to the dial.
     router.set_thresholds(Thresholds {
         auto_fire: p.auto_fire as f32,
         suggest: p.suggest as f32,
     });
+    router.set_baseline(Thresholds::from_sensitivity(
+        p.sensitivity.clamp(0, 100) as u8
+    ));
     Ok(())
 }
 
@@ -2023,9 +2061,16 @@ fn create_voice_profile(
     db::create_voice_profile(&conn, &name, language.as_deref()).map_err(|e| e.to_string())
 }
 
-/// Save editable profile fields. The sensitivity dial resets the thresholds to
-/// its baseline (feedback nudges from there afterward). If the saved profile is
-/// the active one, the change is applied live to STT + router.
+/// Save editable profile fields (name, language, bias terms, sensitivity).
+///
+/// Thresholds are re-derived from the sensitivity dial ONLY when the operator
+/// actually moved that dial. Every other edit — renaming the profile, switching
+/// language, adding a bias term — leaves the live thresholds untouched.
+///
+/// This used to reset them unconditionally, which meant that renaming a profile
+/// silently discarded every confirm/reject nudge the self-calibrating router had
+/// accumulated (docs/DECISIONS.md) and snapped `auto_fire` back to the baseline
+/// mid-preparation. The operator saw the AI "just stop working", with no error.
 #[tauri::command]
 fn update_voice_profile(
     stt: tauri::State<'_, Stt>,
@@ -2033,11 +2078,34 @@ fn update_voice_profile(
     db: tauri::State<'_, Db>,
     mut profile: db::VoiceProfile,
 ) -> Result<db::VoiceProfile, String> {
-    let base = Thresholds::from_sensitivity(profile.sensitivity.clamp(0, 100) as u8);
-    profile.auto_fire = base.auto_fire as f64;
-    profile.suggest = base.suggest as f64;
     let is_active = {
         let conn = db.0.lock().map_err(|e| e.to_string())?;
+
+        // Did the sensitivity dial actually move? Compare against what's stored.
+        let stored = db::list_voice_profiles(&conn)
+            .map_err(|e| e.to_string())?
+            .into_iter()
+            .find(|p| p.id == profile.id);
+        let sensitivity_changed = stored
+            .as_ref()
+            .map(|s| s.sensitivity != profile.sensitivity)
+            .unwrap_or(true);
+
+        let current = stored
+            .as_ref()
+            .map(|s| Thresholds {
+                auto_fire: s.auto_fire as f32,
+                suggest: s.suggest as f32,
+            })
+            .unwrap_or_default();
+        let next = router::thresholds_on_profile_save(
+            sensitivity_changed,
+            profile.sensitivity.clamp(0, 100) as u8,
+            current,
+        );
+        profile.auto_fire = next.auto_fire as f64;
+        profile.suggest = next.suggest as f64;
+
         db::update_voice_profile(&conn, &profile).map_err(|e| e.to_string())?;
         db::save_profile_thresholds(&conn, profile.id, profile.auto_fire, profile.suggest)
             .map_err(|e| e.to_string())?;
@@ -2096,9 +2164,6 @@ fn delete_voice_profile(
 fn manual_fire(
     app: tauri::AppHandle,
     db: tauri::State<'_, Db>,
-    routing: tauri::State<'_, Routing>,
-    session: tauri::State<'_, Session>,
-    ctx: tauri::State<'_, Context>,
     reference: String,
     stage_note: Option<String>,
 ) -> Result<(), String> {
@@ -2106,78 +2171,35 @@ fn manual_fire(
         .into_iter()
         .next()
         .ok_or_else(|| format!("could not parse a reference from \"{reference}\""))?;
-    let r = &m.reference;
-    let key = format!("{} {}:{}", r.book, r.chapter, r.verse);
 
-    let (looked, passage_end, tid, tjson) = {
+    // Stage the passage span so a later "next" walks "Psalm 23" / "John 3:16-18"
+    // rather than stopping dead after the anchor verse. Short lock, released
+    // before fire_manual takes its own — sequential, never nested.
+    let end = {
         let conn = db.0.lock().map_err(|e| e.to_string())?;
-        let looked = db::lookup_verse(&conn, &r.book, r.chapter, r.verse)
-            .ok()
-            .flatten();
-        let end = if m.whole_chapter {
-            db::chapter_last_verse(&conn, &r.book, r.chapter)
+        if m.whole_chapter {
+            db::chapter_last_verse(&conn, &m.reference.book, m.reference.chapter)
                 .ok()
                 .flatten()
         } else {
             m.verse_end
-        };
-        let (tid, tjson) = content_tpl(&conn, "scripture");
-        (looked, end, tid, tjson)
+        }
     };
-    {
-        let mut router = routing.0.lock().map_err(|e| e.to_string())?;
-        router.manual_fire(&key, 0);
-    }
-    if let Ok(mut context) = ctx.0.lock() {
-        // Manual push of "Psalm 23" / "John 3:16-18" stages the passage for "next".
-        context.note_passage(r, passage_end);
-    }
-    let text = looked.as_ref().map(|v| v.text.clone());
-    let translation = looked.as_ref().map(|v| v.translation.clone());
-    // Manual override fires straight to output.
-    channels::broadcast_content(
-        &app,
-        OutputContent {
-            reference: key.clone(),
-            text: text.clone(),
-            translation: translation.clone(),
-            template_id: tid,
-            template_json: tjson,
-            stage_note: clean_note(stage_note),
-            ..Default::default()
-        },
-    );
-    let _ = app.emit(
-        "detection://match",
-        DetectionEvent {
-            reference: key.clone(),
-            book: r.book.clone(),
-            chapter: r.chapter,
-            verse: r.verse,
-            confidence: 1.0,
-            method: m.method.clone(),
-            status: "manual",
-            in_library: looked.is_some(),
-            text,
-            translation,
-        },
-    );
 
-    // Record to the service: the fired verse (as a detection) + the override cue.
-    let method_str = match m.method {
-        DetectionMethod::Semantic => "semantic",
-        DetectionMethod::Direct => "direct",
-    };
-    {
-        let conn = db.0.lock().map_err(|e| e.to_string())?;
-        persist_fire(
-            &conn,
-            session,
-            looked.as_ref().map(|v| v.id),
-            method_str,
-            1.0,
-            &key,
-        );
+    let key = pipeline::Fire::key_for(&m.reference);
+    if !fire_manual(
+        &app,
+        m.reference,
+        1.0,
+        PassageUpdate::Note(end),
+        clean_note(stage_note),
+    ) {
+        // Parsed fine, but that verse doesn't exist (e.g. "John 3:99"). Say so.
+        // This used to broadcast an EMPTY verse instead — blanking the wall
+        // mid-service and leaving the operator with no idea why.
+        return Err(format!(
+            "{key} isn't in the Bible text — check the reference"
+        ));
     }
     persist_cue(&app, "manual_override", Some(&key));
     Ok(())
@@ -2389,6 +2411,7 @@ fn set_channel_template(db: tauri::State<'_, Db>, id: i64, template_id: i64) -> 
 #[tauri::command]
 fn clear_screens(app: tauri::AppHandle) {
     channels::clear(&app);
+    forget_debounce(&app);
     persist_cue(&app, "clear_screens", None);
 }
 
@@ -2396,7 +2419,18 @@ fn clear_screens(app: tauri::AppHandle) {
 #[tauri::command]
 fn blackout(app: tauri::AppHandle) {
     channels::black(&app);
+    forget_debounce(&app);
     persist_cue(&app, "blackout", None);
+}
+
+/// The screens are empty, so nothing is "already showing" any more — drop the
+/// repeat-cooldown memory. Otherwise, clearing the screen and having the preacher
+/// immediately re-reference the same verse would leave it blank for the rest of
+/// the cooldown: the debounce would suppress the one fire the operator wants.
+fn forget_debounce(app: &tauri::AppHandle) {
+    if let Ok(mut r) = app.state::<Routing>().0.lock() {
+        r.forget_last_fire();
+    }
 }
 
 /// Push the "up next" preview to the stage/confidence monitor. None clears it.
@@ -2560,15 +2594,20 @@ fn export_service(db: tauri::State<'_, Db>, id: i64) -> Result<String, String> {
         .map(|c| if c.is_alphanumeric() { c } else { '-' })
         .collect();
     let filename = format!("relay-{}-{}.md", safe, summary.date);
-    let home = std::env::var_os("HOME").ok_or("no HOME")?;
-    let downloads = std::path::PathBuf::from(&home).join("Downloads");
-    let dir = if downloads.is_dir() {
-        downloads
-    } else {
-        let d = std::path::PathBuf::from(&home)
-            .join("Library/Application Support/com.relay.app/exports");
-        std::fs::create_dir_all(&d).map_err(|e| e.to_string())?;
-        d
+    // Prefer the user's Downloads folder; fall back to app-data/exports. Both
+    // resolved per-OS — this used to demand $HOME and hardcode a macOS path, so
+    // exporting a service failed outright on Windows with "no HOME".
+    let downloads = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(|h| std::path::PathBuf::from(h).join("Downloads"))
+        .filter(|d| d.is_dir());
+    let dir = match downloads {
+        Some(d) => d,
+        None => {
+            let d = db::app_data_dir().join("exports");
+            std::fs::create_dir_all(&d).map_err(|e| e.to_string())?;
+            d
+        }
     };
     let path = dir.join(filename);
     std::fs::write(&path, md).map_err(|e| e.to_string())?;

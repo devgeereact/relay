@@ -31,7 +31,11 @@ pub type PromptSetting = Arc<Mutex<Option<String>>>;
 use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
 
 const TARGET_RATE: u32 = 16_000; // whisper input rate
-const WINDOW_SECS: usize = 8; // max rolling context re-fed to whisper
+/// Max rolling context re-fed to whisper. The SAME audio stays in this window and
+/// is re-transcribed roughly once a second, so any reference spoken inside it is
+/// re-detected on every pass — which is why `router::DEFAULT_DEBOUNCE_MS` is
+/// derived from this value rather than picked independently. Keep them coupled.
+pub const WINDOW_SECS: usize = 8;
 const STEP_SAMPLES: usize = TARGET_RATE as usize; // re-transcribe every ~1s of new voice
 const MIN_SAMPLES: usize = TARGET_RATE as usize / 2; // don't run whisper on <0.5s
 /// Consecutive silent chunks that end an utterance. Chunks hop ~200ms, so
@@ -183,7 +187,9 @@ fn worker<F>(
     let max_window = TARGET_RATE as usize * WINDOW_SECS;
     let mut new_since_step = 0usize;
     let mut silence_run = 0u32;
-    let mut last_ts_ms = 0u64;
+    // Assigned from the chunk at the top of every loop iteration, before any
+    // read — so no initial value is needed (and a dead `= 0` here was a warning).
+    let mut last_ts_ms: u64;
     // End (ms) of the audio already appended, so we only add the NON-overlapping
     // tail of each chunk. The detection chunker emits 50%-overlapping chunks;
     // feeding those to whisper verbatim duplicates every hop and garbles the
@@ -355,17 +361,25 @@ pub fn default_model_path() -> Option<PathBuf> {
             return Some(p);
         }
     }
-    // Prod: alongside the SQLite DB in the app-data dir.
-    if let Some(home) = std::env::var_os("HOME") {
-        let dir = PathBuf::from(home).join("Library/Application Support/com.relay.app/models");
-        for name in MODEL_CANDIDATES {
-            let p = dir.join(name);
-            if p.exists() {
-                return Some(p);
-            }
+    // Prod: alongside the SQLite DB in the per-OS app-data dir. MUST go through
+    // db::app_data_dir() — this branch was once hardcoded to the macOS
+    // `$HOME/Library/Application Support` layout, so on a packaged Windows build
+    // it never resolved and Relay came up with speech recognition silently dead.
+    let dir = crate::db::app_data_dir().join("models");
+    for name in MODEL_CANDIDATES {
+        let p = dir.join(name);
+        if p.exists() {
+            return Some(p);
         }
     }
     None
+}
+
+/// Where an operator should put a model file if none was found — used verbatim
+/// in the "no STT model" error surfaced to the UI, so the message can tell them
+/// the real path on *their* OS rather than a macOS one.
+pub fn model_install_dir() -> PathBuf {
+    crate::db::app_data_dir().join("models")
 }
 
 /// Build a whisper decoder-bias prompt that primes the model with scripture

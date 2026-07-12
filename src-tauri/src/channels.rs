@@ -20,6 +20,12 @@ use tauri::{Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 use tokio::sync::broadcast;
 
 /// How a channel's template is actually output.
+///
+/// Not yet constructed in code: channels currently resolve their target from the
+/// DB string. Kept as the declared seam for the NDI / network-client targets
+/// (PROMPT.md Phase 10) rather than deleted, so the shape of the extension point
+/// stays visible — NDI is parked, not abandoned (docs/DECISIONS.md).
+#[allow(dead_code)]
 pub enum RenderTarget {
     NativeWindow,
     NdiEncode,
@@ -298,12 +304,55 @@ fn template_msg_id(msg: &str) -> Option<i64> {
     }
 }
 
+/// How a LAN server reports a fatal bind failure.
+///
+/// A bind failure means every networked output — OBS browser sources, kiosk
+/// screens, the preacher's stage monitor — is dead. It used to be `eprintln!`'d
+/// and swallowed, so the operator's only clue was that the screens they set up
+/// last week simply never came up. That is exactly the kind of silent failure
+/// this app cannot afford.
+///
+/// Taken as a closure rather than an `AppHandle` so the servers stay unit-testable
+/// (tests can't build a real Tauri app handle); `report_to` wires it to the UI.
+pub type ErrorSink = Box<dyn Fn(String) + Send + Sync + 'static>;
+
+/// The production sink: surface the failure to the operator's console.
+pub fn report_to(handle: &tauri::AppHandle) -> ErrorSink {
+    let handle = handle.clone();
+    Box::new(move |msg: String| {
+        eprintln!("channels: {msg}");
+        let _ = handle.emit("output://error", &msg);
+    })
+}
+
+/// A sink that only logs — for tests, where there is no UI to tell.
+#[cfg(test)]
+fn log_only() -> ErrorSink {
+    Box::new(|msg: String| eprintln!("channels: {msg}"))
+}
+
+fn bind_failure_message(what: &str, port: u16, e: &std::io::Error) -> String {
+    format!(
+        "{what} could not start on port {port} ({e}). \
+         Networked outputs (OBS, kiosk screens, the stage monitor) will not work. \
+         Another program is probably already using that port."
+    )
+}
+
 /// Run the kiosk WebSocket server: accept LAN clients and forward published
 /// messages. On connect a client sends `{"kind":"hello","template_id":N}` and
 /// gets back its real template (`{"kind":"template",…}`); template updates are
 /// forwarded only to clients showing that template. Content/clear go to all.
-/// Binds 0.0.0.0. A bind failure is logged, not fatal.
+///
+/// Binds `0.0.0.0` — every interface. This is a RECORDED tradeoff, not an
+/// oversight (docs/DECISIONS.md): kiosk screens, OBS machines and the preacher's
+/// phone are all other devices on the church LAN, so a loopback bind would defeat
+/// the entire feature. The hub is broadcast-only — the sole inbound message it
+/// honours is `hello` — so a stranger on the network can *read* the live content
+/// feed but can never push to the screens. Accepted for a LAN appliance;
+/// revisit if Relay ever runs somewhere the network isn't trusted.
 pub async fn run_kiosk_server(
+    on_error: ErrorSink,
     tx: broadcast::Sender<String>,
     templates: Arc<Mutex<HashMap<i64, String>>>,
     port: u16,
@@ -311,7 +360,7 @@ pub async fn run_kiosk_server(
     let listener = match tokio::net::TcpListener::bind(("0.0.0.0", port)).await {
         Ok(l) => l,
         Err(e) => {
-            eprintln!("kiosk: failed to bind WS server on :{port}: {e}");
+            on_error(bind_failure_message("The kiosk output server", port, &e));
             return;
         }
     };
@@ -504,13 +553,14 @@ where
 }
 
 /// Serve the embedded output/stage pages over HTTP on the LAN so other devices
-/// can load them in a packaged app (not just `tauri dev`). Binds 0.0.0.0. A bind
-/// failure is logged, not fatal. GET-only, one response per connection.
-pub async fn run_output_http_server(port: u16) {
+/// can load them in a packaged app (not just `tauri dev`). GET-only, one response
+/// per connection. Binds `0.0.0.0` for the same recorded reason as the kiosk WS
+/// server above — see that doc comment and docs/DECISIONS.md.
+pub async fn run_output_http_server(on_error: ErrorSink, port: u16) {
     let listener = match tokio::net::TcpListener::bind(("0.0.0.0", port)).await {
         Ok(l) => l,
         Err(e) => {
-            eprintln!("output http: failed to bind :{port}: {e}");
+            on_error(bind_failure_message("The LAN output page server", port, &e));
             return;
         }
     };
@@ -575,7 +625,7 @@ mod tests {
     #[tokio::test]
     async fn output_http_serves_embedded_pages() {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
-        tokio::spawn(run_output_http_server(8201));
+        tokio::spawn(run_output_http_server(log_only(), 8201));
         tokio::time::sleep(std::time::Duration::from_millis(150)).await;
 
         let mut s = tokio::net::TcpStream::connect("127.0.0.1:8201")
@@ -613,7 +663,12 @@ mod tests {
             7,
             r##"{"id":7,"name":"Custom","style":{"accent":"#f5a623"}}"##,
         );
-        tokio::spawn(run_kiosk_server(hub.sender(), hub.templates_handle(), 8200));
+        tokio::spawn(run_kiosk_server(
+            log_only(),
+            hub.sender(),
+            hub.templates_handle(),
+            8200,
+        ));
         tokio::time::sleep(std::time::Duration::from_millis(150)).await;
 
         let (ws, _) = tokio_tungstenite::connect_async("ws://127.0.0.1:8200")
@@ -646,7 +701,12 @@ mod tests {
     async fn kiosk_ws_forwards_published_content() {
         let hub = KioskHub::default();
         let tx = hub.sender();
-        tokio::spawn(run_kiosk_server(tx, hub.templates_handle(), 8199));
+        tokio::spawn(run_kiosk_server(
+            log_only(),
+            tx,
+            hub.templates_handle(),
+            8199,
+        ));
         // Give the listener a moment to bind.
         tokio::time::sleep(std::time::Duration::from_millis(150)).await;
 

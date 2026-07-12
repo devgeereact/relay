@@ -117,7 +117,18 @@ Stage display and lobby templates use the same shape with different region sets 
 
 ## 6. Data model
 
-See `docs/data/schema.sql` for the actual DDL. Tables: `translations`, `verses`, `templates`, `output_channels`, `services`, `transcripts`, `detections` (`method`: direct/semantic; `status`: auto/suggested/dismissed), `cues`. Local-first, matching the offline-first / local-trust posture.
+See `docs/data/schema.sql` for the DDL, and `src-tauri/src/db/` for the queries — one module per aggregate. Local-first throughout, matching the offline-first / local-trust posture.
+
+**Corpus + output**
+`translations`, `verses` (+ `verses_fts`, the FTS5 index), `templates`, `output_channels`
+
+**Detection + history**
+`services`, `transcripts`, `cues`, `voice_profiles` (per-preacher accent + learned gate calibration), and `detections` — `method`: direct/semantic, `status`: **auto / suggested / dismissed / manual**. `manual` means a *human* put it on screen (an override, a confirmed suggestion, a next/back nav). The self-calibrating router learns from that column, so the distinction is load-bearing rather than archival.
+
+**Library + Planner** (the presentation suite, added after v0.1)
+`service_plans`, `plan_items` (the unified cue: `cue_type` + `payload_json`), `songs`, `song_sections`, `song_arrangements`, `saved_scripture`, `announcements`, `media_assets`, `app_settings`
+
+**Migrations.** `PRAGMA user_version` ladder (`db::SCHEMA_VERSION`). Databases created before versioning existed are brought to the baseline once by `baseline_forward_fill` — a set of sniff-based checks kept only for them — and then stamped, after which the ladder takes over.
 
 ## 7. Platform & tech stack
 
