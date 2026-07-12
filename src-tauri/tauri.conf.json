@@ -26,8 +26,10 @@
   "bundle": {
     "active": true,
     "targets": [
-      "msi",
-      "dmg"
+      "app",
+      "dmg",
+      "nsis",
+      "msi"
     ],
     "macOS": {
       "minimumSystemVersion": "11.0"
@@ -39,7 +41,7 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "createUpdaterArtifacts": true
+    "createUpdaterArtifacts": false
   },
   "plugins": {
     "updater": {

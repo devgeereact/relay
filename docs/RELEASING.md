@@ -167,3 +167,44 @@ Tauri passes `--skip-jenkins` when `CI` is set, which skips the AppleScript and
 produces a plain, perfectly functional DMG. **CI already sets `CI=true`, so the
 release workflow is unaffected** — this bites only someone building on their own Mac,
 where it looks like a broken release pipeline and is not one.
+
+## Verifying that a release can actually UPDATE anyone
+
+A release that installs fine and cannot update is the failure this whole feature
+exists to prevent, and it is **completely silent**: the DMG works, the MSI works, the
+app runs, and every existing installation is simply stranded on the version it first
+installed, forever. Nothing errors. There is nothing in any log.
+
+Two ways it happened here, both found by actually running the build:
+
+1. **`bundle.targets` did not include `app`.** Tauri's macOS update bundle is
+   `Relay.app.tar.gz`, and it is derived from the `app` target. With targets set to
+   `["msi", "dmg"]`, `tauri build` cheerfully produced a DMG, exited 0 — and created
+   **no update bundle and no signature at all**. Targets are now
+   `["app", "dmg", "nsis", "msi"]`.
+
+2. **`createUpdaterArtifacts` was `true` in the BASE config**, which meant any plain
+   `tauri build` (a contributor's, CI's) died with *"a public key has been found, but
+   no private key"*. It is now `false` in the base config and `true` only in the
+   release overlay. Releases sign updates; nothing else should be trying to.
+
+**Check it before you trust a tag.** With a throwaway key (never your real one):
+
+```bash
+npm run tauri signer generate -- -w /tmp/test.key -f --password ""
+# put the .pub into a COPY of tauri.updater.conf.json, then:
+TAURI_SIGNING_PRIVATE_KEY="$(cat /tmp/test.key)" \
+TAURI_SIGNING_PRIVATE_KEY_PASSWORD="" \
+CI=true npm run tauri build -- --config /tmp/updater.test.json
+
+find src-tauri/target/release/bundle -name '*.sig' -o -name '*.tar.gz'
+```
+
+You must see **`Relay.app.tar.gz` AND `Relay.app.tar.gz.sig`** (and on Windows, the
+`.nsis.zip` + `.sig`). If you see only a DMG or an MSI, the release cannot update
+anyone. Delete the throwaway key afterwards.
+
+> Note: `tauri build` warns that the identifier `com.relay.app` ends in `.app`.
+> Leave it. It is cosmetic, and the identifier is the name of the app-data directory —
+> changing it would orphan every existing church's database, service history and
+> downloaded model.
