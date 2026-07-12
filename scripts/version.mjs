@@ -45,10 +45,32 @@ function current() {
   };
 }
 
-// Semver, with an optional pre-release tail (0.2.0-rc1). Tauri compares versions
-// as semver to decide whether an update is newer, so a version it cannot parse is
-// a version no church ever updates past.
-const SEMVER = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
+// Semver, with an optional pre-release tail — and the tail must be NUMERIC.
+//
+// Tauri compares versions as semver to decide whether an update is newer, so a
+// version it cannot parse is a version no church ever updates past. But the Windows
+// MSI target is stricter than semver, and it does not tell you so until it has
+// compiled the whole application:
+//
+//   failed to bundle project: `optional pre-release identifier in app version must
+//   be numeric-only and cannot be greater than 65535 for msi target`
+//
+// So `0.1.0-rc4` builds a perfectly good .dmg and then dies on the MSI, fifteen
+// minutes into a release, on the platform most of our churches are on. And it cannot
+// be avoided by simply not using pre-releases: release.yml REQUIRES a hyphenated
+// (pre-release) tag for any unsigned build, and the tag must equal this version.
+//
+// Pre-releases are therefore numbered, not named: 0.1.0-1, 0.1.0-2. Uglier than
+// "rc4", and it fails here in a second rather than there in a quarter of an hour.
+const SEMVER = /^\d+\.\d+\.\d+(?:-\d+)?$/;
+const MSI_MAX_PRERELEASE = 65535;
+
+const BAD_VERSION_HELP =
+  'Use 1.2.3, or 1.2.3-4 for a pre-release.\n\n' +
+  '      The pre-release identifier must be a NUMBER, not a name. "0.1.0-rc4" is valid\n' +
+  '      semver and builds a working .dmg — and then the Windows MSI bundler rejects it,\n' +
+  '      fifteen minutes into the release, with "pre-release identifier ... must be\n' +
+  '      numeric-only". Windows is the platform most of our churches are on.';
 
 function fail(msg, hint) {
   console.error(`\n  ✗ ${msg}`);
@@ -63,7 +85,7 @@ function check(expected) {
 
   for (const [file, v] of Object.entries(found)) {
     if (!v) fail(`No version found in ${file}.`);
-    if (!SEMVER.test(v)) fail(`${file} has a version Tauri cannot compare as semver: "${v}"`);
+    if (!SEMVER.test(v)) fail(`${file} has an unusable version: "${v}"`, BAD_VERSION_HELP);
   }
 
   if (new Set(values).size !== 1) {
@@ -92,7 +114,11 @@ function check(expected) {
 }
 
 function set(v) {
-  if (!SEMVER.test(v)) fail(`"${v}" is not a semver version (expected e.g. 0.2.0 or 0.2.0-rc1).`);
+  if (!SEMVER.test(v)) fail(`"${v}" is not a usable version.`, BAD_VERSION_HELP);
+  const pre = v.split('-')[1];
+  if (pre && Number(pre) > MSI_MAX_PRERELEASE) {
+    fail(`pre-release number ${pre} is above the MSI limit of ${MSI_MAX_PRERELEASE}.`);
+  }
 
   const tauri = JSON.parse(read(TAURI));
   tauri.version = v;

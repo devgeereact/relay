@@ -314,6 +314,26 @@ jobs:
           $json | ConvertTo-Json -Depth 6 | Set-Content -Path $conf -Encoding utf8
           "config_arg=--config $conf" >> $env:GITHUB_OUTPUT
 
+      # Notarization credentials, exported ONLY for a genuinely signed macOS build.
+      #
+      # They cannot live in the build step's `env:` block, because an `env:` value that
+      # evaluates to '' is still SET — and Tauri treats "APPLE_ID is present" as "please
+      # notarize", then dies on the empty Team ID. $GITHUB_ENV is the only way to make a
+      # variable genuinely ABSENT on the unsigned path.
+      - name: Export Apple notarization credentials
+        if: matrix.os == 'macos-latest' && steps.mode.outputs.mac_signed == 'true'
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }} # app-specific password
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          {
+            echo "APPLE_ID=$APPLE_ID"
+            echo "APPLE_PASSWORD=$APPLE_PASSWORD"
+            echo "APPLE_TEAM_ID=$APPLE_TEAM_ID"
+          } >> "$GITHUB_ENV"
+
       - name: Build, sign, notarize and publish
         uses: tauri-apps/tauri-action@v0
         env:
@@ -345,9 +365,20 @@ jobs:
           # Ad-hoc still gives no Gatekeeper trust — the build remains unopenable
           # without `xattr -cr`, exactly as an unsigned pre-release should be.
           APPLE_SIGNING_IDENTITY: ${{ steps.mode.outputs.mac_signed == 'true' && secrets.APPLE_SIGNING_IDENTITY || '-' }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }} # app-specific password
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          #
+          # APPLE_ID / APPLE_PASSWORD / APPLE_TEAM_ID are deliberately NOT here.
+          #
+          # They are exported to $GITHUB_ENV by the step above, and ONLY when this is
+          # actually a signed build. It is the same trap as the identity, one level
+          # deeper: setting them here would define them as EMPTY STRINGS on an unsigned
+          # build, Tauri reads "the notarization variables are present" and tries to
+          # notarize, and the bundle dies on
+          #
+          #     failed to notarize app: Error: Team ID must be at least 3 characters
+          #
+          # An empty variable is not an absent variable. There is no way to conditionally
+          # OMIT a key from an `env:` block — an expression yielding '' still sets it —
+          # so the only way to have them truly absent is to not write them here at all.
 
           # ── Windows: code signing ────────────────────────────────────────
           # The certificate itself is wired up in the "Prepare Windows code signing"
