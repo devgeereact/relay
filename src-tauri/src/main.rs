@@ -9,6 +9,11 @@ mod channels;
 mod db;
 mod detection;
 mod dsp;
+/// End-to-end tests for the fire → nav → clear path. Test-only. `main.rs` had zero
+/// tests, so the one path that actually puts scripture on a wall was verified only
+/// by hand — see the module doc.
+#[cfg(test)]
+mod e2e;
 /// Detection benchmark. Test-only — it exists to FAIL THE BUILD when detection
 /// regresses, not to ship. `cargo test eval -- --nocapture` prints the scorecard.
 #[cfg(test)]
@@ -411,8 +416,8 @@ enum PassageUpdate {
 /// Bypasses the gate entirely: operator override is a first-class control and
 /// must always win (CLAUDE.md). Follows the lock rules — all DB work under the
 /// lock, then RELEASE, then broadcast/emit. Never hold a lock across `emit`.
-fn fire_manual(
-    handle: &tauri::AppHandle,
+fn fire_manual<R: tauri::Runtime>(
+    handle: &tauri::AppHandle<R>,
     r: VerseRef,
     confidence: f32,
     update: PassageUpdate,
@@ -637,7 +642,10 @@ enum NavResult {
 /// whole sequence. This and `handle_passage_nav` were previously two ~70-line
 /// near-identical functions; all that actually differs between them is how the
 /// target verse is chosen, which is the four lines below.
-fn handle_nav(handle: &tauri::AppHandle, dir: detection::NavCommand) -> Result<NavResult, String> {
+fn handle_nav<R: tauri::Runtime>(
+    handle: &tauri::AppHandle<R>,
+    dir: detection::NavCommand,
+) -> Result<NavResult, String> {
     let (target, staged) = {
         let ctx = handle.state::<Context>();
         let context = ctx
@@ -676,7 +684,7 @@ fn handle_nav(handle: &tauri::AppHandle, dir: detection::NavCommand) -> Result<N
 /// the current context and fire book chapter:verse, keeping the operator inside
 /// the same passage. Chapter-only defaults to verse 1; verse-only keeps the
 /// current chapter. Returns true if it fired.
-fn handle_passage_nav(handle: &tauri::AppHandle, text: &str) -> bool {
+fn handle_passage_nav<R: tauri::Runtime>(handle: &tauri::AppHandle<R>, text: &str) -> bool {
     let Some(nav) = detection::detect_passage_nav(text) else {
         return false;
     };
@@ -760,7 +768,11 @@ fn persist_fire(
 
 /// Record an operator cue (manual_override / clear_screens) into the current
 /// service. Locks its own db handle — call outside a held db lock.
-fn persist_cue(handle: &tauri::AppHandle, cue_type: &str, payload: Option<&str>) {
+fn persist_cue<R: tauri::Runtime>(
+    handle: &tauri::AppHandle<R>,
+    cue_type: &str,
+    payload: Option<&str>,
+) {
     let db = handle.state::<Db>();
     let session = handle.state::<Session>();
     let (Ok(conn), Ok(sess)) = (db.0.lock(), session.0.lock()) else {
@@ -1914,8 +1926,8 @@ fn get_rehearsal(rehearsal: tauri::State<'_, channels::Rehearsal>) -> bool {
 ///
 /// So the wall is cleared, and the operator puts the next thing up deliberately.
 #[tauri::command]
-fn set_rehearsal(
-    app: tauri::AppHandle,
+fn set_rehearsal<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     session: tauri::State<'_, Session>,
     rehearsal: tauri::State<'_, channels::Rehearsal>,
     on: bool,
@@ -2405,8 +2417,8 @@ fn delete_voice_profile(
 /// First-class control (CLAUDE.md) — parses the reference, resolves it, and
 /// emits a `detection://match` with status "manual".
 #[tauri::command]
-fn manual_fire(
-    app: tauri::AppHandle,
+fn manual_fire<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     db: tauri::State<'_, Db>,
     reference: String,
     stage_note: Option<String>,
@@ -2662,7 +2674,7 @@ fn set_channel_template(db: tauri::State<'_, Db>, id: i64, template_id: i64) -> 
 /// did not actually clear, then the verse IS still showing, and "forget what is on
 /// screen" would be a lie told to the router as well as to the operator.
 #[tauri::command]
-fn clear_screens(app: tauri::AppHandle) -> Result<(), String> {
+fn clear_screens<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<(), String> {
     channels::clear(&app)?;
     forget_debounce(&app);
     persist_cue(&app, "clear_screens", None);
@@ -2672,7 +2684,7 @@ fn clear_screens(app: tauri::AppHandle) -> Result<(), String> {
 /// Blackout every output (opaque black). The next fire/clear cancels it.
 /// Returns a Result for the same reason `clear_screens` does — see above.
 #[tauri::command]
-fn blackout(app: tauri::AppHandle) -> Result<(), String> {
+fn blackout<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<(), String> {
     channels::black(&app)?;
     forget_debounce(&app);
     persist_cue(&app, "blackout", None);
@@ -2686,7 +2698,7 @@ fn blackout(app: tauri::AppHandle) -> Result<(), String> {
 /// clear that failed was as silent as a keyed one that failed. There is no caller
 /// to hand a Result to here, so the failure is pushed to the operator instead:
 /// `output://panic_failed` raises the same banner the buttons and keys raise.
-fn clear_or_report(app: &tauri::AppHandle) {
+fn clear_or_report<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     match channels::clear(app) {
         Ok(()) => {
             forget_debounce(app);
@@ -2706,7 +2718,7 @@ fn clear_or_report(app: &tauri::AppHandle) {
 /// repeat-cooldown memory. Otherwise, clearing the screen and having the preacher
 /// immediately re-reference the same verse would leave it blank for the rest of
 /// the cooldown: the debounce would suppress the one fire the operator wants.
-fn forget_debounce(app: &tauri::AppHandle) {
+fn forget_debounce<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     if let Ok(mut r) = app.state::<Routing>().0.lock() {
         r.forget_last_fire();
     }
@@ -2714,7 +2726,11 @@ fn forget_debounce(app: &tauri::AppHandle) {
 
 /// Push the "up next" preview to the stage/confidence monitor. None clears it.
 #[tauri::command]
-fn set_stage_next(app: tauri::AppHandle, label: Option<String>, text: Option<String>) {
+fn set_stage_next<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    label: Option<String>,
+    text: Option<String>,
+) {
     channels::stage_next(&app, label, text);
 }
 
@@ -2747,7 +2763,10 @@ fn push_announcement(app: tauri::AppHandle, message: String) -> Result<(), Strin
 /// pressed key in a live service had no way to tell the operator that it had done
 /// nothing, or why.
 #[tauri::command]
-fn nav(app: tauri::AppHandle, direction: String) -> Result<NavResult, String> {
+fn nav<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    direction: String,
+) -> Result<NavResult, String> {
     let dir = if direction == "previous" || direction == "back" {
         detection::NavCommand::Previous
     } else {

@@ -245,8 +245,15 @@ fn ensure_manual_detection_status(conn: &Connection) -> rusqlite::Result<()> {
     }
     // foreign_keys must be toggled OUTSIDE a transaction to take effect.
     conn.execute_batch("PRAGMA foreign_keys = OFF;")?;
+
+    // `DROP TABLE IF EXISTS detections_new` first: a previous attempt that died
+    // mid-rebuild can leave the scratch table behind, and a bare CREATE would then
+    // fail with "table detections_new already exists" — on EVERY subsequent boot.
+    // A migration that cannot be retried is a brick, and this one runs before the
+    // window is even shown.
     let res = conn.execute_batch(
         "BEGIN;
+         DROP TABLE IF EXISTS detections_new;
          CREATE TABLE detections_new (
              id            INTEGER PRIMARY KEY,
              transcript_id INTEGER NOT NULL REFERENCES transcripts(id),
@@ -262,6 +269,22 @@ fn ensure_manual_detection_status(conn: &Connection) -> rusqlite::Result<()> {
          ALTER TABLE detections_new RENAME TO detections;
          COMMIT;",
     );
+
+    // ROLLBACK on failure — this was missing, and its absence was the nastiest part.
+    //
+    // `execute_batch` stops at the first failing statement, so a failure anywhere in
+    // the batch left the transaction OPEN on this connection. The `PRAGMA
+    // foreign_keys = ON` below then executed *inside* that open transaction, where the
+    // pragma is a documented no-op. The Err propagated up to `open()`'s `expect` and
+    // panicked the app at startup — with foreign keys off and a transaction dangling.
+    //
+    // Both cleanup statements are best-effort: if the COMMIT itself is what failed,
+    // there may be no transaction left to roll back, and that is fine.
+    if res.is_err() {
+        let _ = conn.execute_batch("ROLLBACK;");
+        let _ = conn.execute_batch("DROP TABLE IF EXISTS detections_new;");
+    }
+
     conn.execute_batch("PRAGMA foreign_keys = ON;")?;
     res
 }
@@ -373,6 +396,109 @@ mod tests {
         conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
         init_fresh(&conn).unwrap();
         conn
+    }
+
+    /// A database with the OLD `detections` table — the one whose CHECK constraint
+    /// could not express `'manual'`, so a human's fire was logged as the AI's.
+    fn db_with_old_detections() -> Connection {
+        let conn = fresh_db();
+        conn.execute_batch(
+            "DROP TABLE detections;
+             CREATE TABLE detections (
+                 id            INTEGER PRIMARY KEY,
+                 transcript_id INTEGER NOT NULL REFERENCES transcripts(id),
+                 verse_id      INTEGER REFERENCES verses(id),
+                 method        TEXT NOT NULL CHECK (method IN ('direct', 'semantic')),
+                 confidence    REAL NOT NULL,
+                 status        TEXT NOT NULL CHECK (status IN ('auto', 'suggested', 'dismissed')),
+                 fired_at      REAL
+             );",
+        )
+        .unwrap();
+        conn
+    }
+
+    fn manual_is_allowed(conn: &Connection) -> bool {
+        let ddl: String = conn
+            .query_row(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='detections'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        ddl.contains("'manual'")
+    }
+
+    #[test]
+    fn the_detections_rebuild_widens_the_check_constraint() {
+        let conn = db_with_old_detections();
+        assert!(!manual_is_allowed(&conn));
+        ensure_manual_detection_status(&conn).unwrap();
+        assert!(manual_is_allowed(&conn));
+    }
+
+    #[test]
+    fn the_detections_rebuild_is_idempotent() {
+        let conn = db_with_old_detections();
+        ensure_manual_detection_status(&conn).unwrap();
+        ensure_manual_detection_status(&conn).unwrap(); // must be a no-op, not an error
+        assert!(manual_is_allowed(&conn));
+    }
+
+    /// THE BRICK. A previous attempt that died mid-rebuild leaves the scratch table
+    /// behind. A bare `CREATE TABLE detections_new` then fails with "already exists"
+    /// — forever, on every subsequent boot, before the window is even shown. A
+    /// migration that cannot be retried is not a migration; it is a brick.
+    #[test]
+    fn a_leftover_scratch_table_does_not_brick_every_future_boot() {
+        let conn = db_with_old_detections();
+        conn.execute_batch("CREATE TABLE detections_new (id INTEGER PRIMARY KEY);")
+            .unwrap();
+
+        ensure_manual_detection_status(&conn)
+            .expect("a crashed previous attempt must be retryable");
+
+        assert!(manual_is_allowed(&conn));
+    }
+
+    /// Foreign keys must be back ON when the migration returns, and no transaction
+    /// may be left dangling. The pragma is a no-op inside an open transaction, so a
+    /// migration that failed without rolling back used to return with FKs silently
+    /// OFF — every later write in that session unchecked.
+    #[test]
+    fn foreign_keys_are_on_again_afterwards_and_no_transaction_is_left_open() {
+        let conn = db_with_old_detections();
+        ensure_manual_detection_status(&conn).unwrap();
+
+        let fk: i64 = conn
+            .query_row("PRAGMA foreign_keys", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(fk, 1, "foreign keys were left OFF");
+
+        // If a transaction were still open, BEGIN would fail with "cannot start a
+        // transaction within a transaction".
+        conn.execute_batch("BEGIN; COMMIT;")
+            .expect("a transaction was left dangling");
+    }
+
+    /// The whole point of the rebuild: a human's decision must be recordable as a
+    /// human's. The self-calibrating router learns from this column.
+    #[test]
+    fn a_manual_fire_can_actually_be_written_after_the_migration() {
+        let conn = db_with_old_detections();
+        ensure_manual_detection_status(&conn).unwrap();
+        conn.execute_batch(
+            "INSERT INTO services (id, date, title) VALUES (1, '2026-07-12', 'Sunday');
+             INSERT INTO transcripts (id, service_id, timestamp, text, language)
+                 VALUES (1, 1, 0.0, 'john three sixteen', 'en');",
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO detections (transcript_id, verse_id, method, confidence, status, fired_at)
+             VALUES (1, NULL, 'direct', 1.0, 'manual', 0.0)",
+            [],
+        )
+        .expect("'manual' must be a legal status after the migration");
     }
 
     #[test]

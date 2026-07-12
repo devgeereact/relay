@@ -7,6 +7,16 @@ edition = "2021"
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
+# The fire → nav → clear path — the one that actually puts scripture in front of a
+# congregation — lived entirely in main.rs, which had ZERO tests and no integration
+# test anywhere. It was verified only by a human driving the app by hand.
+#
+# `tauri/test` gives a headless mock app with real managed state, so the real commands
+# can be driven against a real (in-memory) database and the events they emit asserted.
+# It is a dev-dependency: nothing here ships.
+[dev-dependencies]
+tauri = { version = "2", features = ["test"] }
+
 [dependencies]
 tauri = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }

@@ -234,7 +234,7 @@ impl Rehearsal {
 /// the state has not been registered (tests, early boot) — failing OPEN to a real
 /// broadcast. That is the correct default: the dangerous mistake is silently
 /// swallowing content the operator believes is live, not the reverse.
-fn rehearsing(app: &tauri::AppHandle) -> bool {
+fn rehearsing<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> bool {
     app.try_state::<Rehearsal>()
         .map(|r| r.on())
         .unwrap_or(false)
@@ -244,7 +244,7 @@ fn rehearsing(app: &tauri::AppHandle) -> bool {
 /// renders — native windows (Tauri event) AND networked kiosk clients (WS).
 ///
 /// In rehearsal this reaches the operator console and NOTHING else.
-pub fn broadcast_content(app: &tauri::AppHandle, content: OutputContent) {
+pub fn broadcast_content<R: tauri::Runtime>(app: &tauri::AppHandle<R>, content: OutputContent) {
     let json = serde_json::json!({
         "kind": "content",
         "reference": content.reference,
@@ -281,7 +281,7 @@ pub fn broadcast_content(app: &tauri::AppHandle, content: OutputContent) {
 /// the operator "Screens cleared" over a wall that still had scripture on it. A
 /// panic control that reports a success it did not achieve is worse than one that
 /// is missing: the operator stops looking at the screen and trusts the toast.
-pub fn clear(app: &tauri::AppHandle) -> Result<(), String> {
+pub fn clear<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<(), String> {
     if rehearsing(app) {
         return app
             .emit_to(CONSOLE, "output://clear", ())
@@ -296,7 +296,7 @@ pub fn clear(app: &tauri::AppHandle) -> Result<(), String> {
 /// a transparent clear). The next content/clear cancels it.
 ///
 /// Returns Err for the same reason `clear` does — see above.
-pub fn black(app: &tauri::AppHandle) -> Result<(), String> {
+pub fn black<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<(), String> {
     if rehearsing(app) {
         return app
             .emit_to(CONSOLE, "output://black", ())
@@ -310,13 +310,17 @@ pub fn black(app: &tauri::AppHandle) -> Result<(), String> {
 /// Push the "up next" preview to the stage/confidence monitor(s). Distinct from
 /// live content — it only reaches the stage view, never the main output. None
 /// clears the panel.
-pub fn stage_next(app: &tauri::AppHandle, label: Option<String>, text: Option<String>) {
+pub fn stage_next<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    label: Option<String>,
+    text: Option<String>,
+) {
     let json =
         serde_json::json!({ "kind": "stage_next", "label": label, "text": text }).to_string();
     publish_kiosk(app, json);
 }
 
-fn publish_kiosk(app: &tauri::AppHandle, msg: String) {
+fn publish_kiosk<R: tauri::Runtime>(app: &tauri::AppHandle<R>, msg: String) {
     if let Some(hub) = app.try_state::<KioskHub>() {
         hub.publish(msg);
     }
