@@ -26,7 +26,7 @@ through the update endpoint. Relay will only ever install an update signed with
 your private key.
 
 ```bash
-npm run tauri signer generate -- -w ~/.tauri/relay.key
+npm run tauri signer generate -- -w ~/.relay/updater.key
 ```
 
 It prints a **private key** and a **public key**.
@@ -36,8 +36,10 @@ It prints a **private key** and a **public key**.
 
 Then:
 
-1. **Public key** → paste into `src-tauri/tauri.updater.conf.json`, replacing
-   `PASTE_YOUR_TAURI_UPDATER_PUBLIC_KEY_HERE`. **This is public and safe to commit.**
+1. **Public key** → paste into `src-tauri/tauri.updater.conf.json` as `plugins.updater.pubkey`.
+   **This is public and safe to commit** — and it is already committed, so you only do
+   this if you are regenerating the key. (Regenerating it means no *existing* install can
+   ever be updated again — they only trust the old key. Back the private key up instead.)
 2. **Private key** → GitHub → Settings → Secrets and variables → Actions:
    - `TAURI_SIGNING_PRIVATE_KEY` — the private key's *contents*
    - `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` — the password you chose (empty string if none)
@@ -78,6 +80,28 @@ a few minutes and the workflow waits for it. **Without it, Gatekeeper still bloc
 the app even if it is signed** — signing and notarizing are two separate steps and
 you need both.
 
+> ### Why the signed build is the one where the microphone works — and the unsigned one is a lie
+>
+> Notarization **requires the hardened runtime**, and Tauri enables it by default.
+> Under the hardened runtime, opening an audio input device without the
+> `com.apple.security.device.audio-input` entitlement is not "denied" — the process is
+> killed by TCC. And without `NSMicrophoneUsageDescription`, macOS terminates the app
+> the instant it *asks*.
+>
+> So before this was fixed, Relay behaved like this:
+>
+> | Build | Microphone |
+> |---|---|
+> | `tauri dev` | works (no hardened runtime) |
+> | unsigned pre-release | works (ad-hoc signed, no hardened runtime) |
+> | **signed + notarized** | **dead** |
+>
+> The first build correct enough to hand to a church would have been the first one
+> that could not hear the preacher — and no build you can make locally would have
+> shown it. `src-tauri/relay.entitlements` and `src-tauri/Info.plist` now carry both
+> keys, and `models::config_boots` fails the build if either goes missing. **Do not
+> "clean up" those files.**
+
 ---
 
 ## 3. Windows — a code-signing certificate
@@ -95,24 +119,92 @@ For a free, open-source church tool, **Azure Trusted Signing** is almost certain
 the right answer: it's cheap, it's monthly, and it clears SmartScreen without a
 hardware token in a drawer.
 
-Set `WINDOWS_CERTIFICATE` (base64 `.pfx`) and `WINDOWS_CERTIFICATE_PASSWORD`, or
-switch the workflow to Azure's signing action — the step is already stubbed.
+The workflow supports **either** scheme and picks between them by looking at which
+secrets you set. You do not configure anything else.
+
+**Azure Trusted Signing (recommended).** Create a Trusted Signing account and a
+certificate profile in Azure, then register an app (service principal) and give it
+the *Trusted Signing Certificate Profile Signer* role.
+
+| Secret | Value |
+|---|---|
+| `AZURE_ENDPOINT` | e.g. `https://weu.codesigning.azure.net` |
+| `AZURE_CODE_SIGNING_ACCOUNT` | your Trusted Signing account name |
+| `AZURE_CERT_PROFILE` | the certificate profile name |
+| `AZURE_CLIENT_ID` | service-principal app ID |
+| `AZURE_CLIENT_SECRET` | service-principal secret |
+| `AZURE_TENANT_ID` | your Azure tenant ID |
+
+**Or a classic OV/EV `.pfx`:**
+
+```bash
+base64 -i certificate.pfx | pbcopy
+```
+
+| Secret | Value |
+|---|---|
+| `WINDOWS_CERTIFICATE` | the base64 `.pfx` blob |
+| `WINDOWS_CERTIFICATE_PASSWORD` | the `.pfx` password |
+
+> **Why signing is not in `tauri.conf.json`.** Tauri signs the Windows binaries
+> *during* bundling — the `.exe` is signed before NSIS/WiX wraps it — so signing has
+> to be configuration the bundler reads, not a post-build step. But a thumbprint or a
+> `signCommand` committed to `tauri.conf.json` would break `npm run tauri build` for
+> every contributor on Windows, because they don't hold the certificate. So the
+> release workflow *generates* a `tauri.winsign.conf.json` for that build only and
+> merges it over the base config with a second `--config` (the CLI merges configs in
+> order). It is gitignored. Nothing about your certificate is ever committed.
 
 ---
 
 ## 4. Cut a release
 
 ```bash
-# bump the version in src-tauri/tauri.conf.json and package.json first
+npm run version:set -- 0.2.0          # writes all THREE version files
+git commit -am "chore(release): 0.2.0"
+git push
 git tag v0.2.0
 git push origin v0.2.0
 ```
 
+> **Bump the version with the script, and commit it before you tag.** The version lives
+> in three files — `src-tauri/tauri.conf.json`, `package.json`, `src-tauri/Cargo.toml` —
+> and the one in `tauri.conf.json` is what the update manifest advertises. Tauri decides
+> "is there an update?" by comparing that number, as semver, against what the church is
+> running.
+>
+> It used to say `0.1.0` in all three, forever, and nothing in the release workflow ever
+> read it. So a `v0.2.0` tag built the new binaries and published a `latest.json` that
+> stamped them **version 0.1.0** — every existing install compared it to its own `0.1.0`,
+> concluded it was already up to date, and never updated. No error, no warning, no
+> symptom: just a fix that never arrives.
+>
+> The release gate now refuses to build if the tag and the repo disagree, and CI checks
+> the three files agree on every PR. `npm run version:check` runs it yourself.
+
 The workflow builds macOS (universal — one download for both Apple Silicon and
-Intel) and Windows, signs and notarizes both, and opens a **draft** release with
-`latest.json` attached. **Draft, on purpose:** you look at it before a church does.
+Intel) and Windows, signs each with that platform's certificate — and notarizes the
+macOS build with Apple — then opens a **draft** release with `latest.json` attached.
+**Draft, on purpose:** you look at it before a church does.
 
 Publish the draft, and every existing install will offer the update on next launch.
+
+### The gate is per-platform, and it will refuse the dangerous release
+
+A plain version tag (`v0.2.0`) requires **both** certificates. If either platform is
+unconfigured, the workflow fails before it builds anything and tells you exactly
+which secrets are missing.
+
+This is not paranoia — it is a bug we shipped. The gate used to test a single secret,
+`APPLE_CERTIFICATE`, and call the whole release "signed". There was no Windows signing
+config anywhere in the repo, so a real tag with the Apple secrets set produced a
+correctly notarized `.dmg` **and an MSI that was never signed at all** — and the
+"⚠️ unsigned build" warning in the release notes was keyed off the same single flag,
+so it stayed silent too. Windows is the platform most of our churches are on.
+
+An unsigned build is still allowed on a **pre-release** tag (one with a hyphen —
+`v0.2.0-rc1`), because you need some way to exercise the pipeline before you own a
+certificate. The release notes then say, per platform, which half is unsigned.
 
 ---
 
@@ -232,8 +324,58 @@ An unsigned pre-release still gives you the two things worth testing:
 
 - **real installers** (.dmg, .msi) built exactly as a real release builds them
 - **a signed update bundle** (`.app.tar.gz` + `.sig`) — updater signing is a *different*
-  key from OS code signing, and it is already configured. So the auto-updater can be
-  tested end to end today.
+  key from OS code signing, and it is already configured
 
 What it does not give you is the ability to hand it to a volunteer: macOS says *"Relay
 is damaged and can't be opened"*, Windows SmartScreen warns. The release notes say so.
+
+### What a pre-release does NOT give you: a live updater endpoint
+
+This page used to claim the auto-updater "can be tested end to end today". **It cannot,
+not from a pre-release**, and believing otherwise is how you find out the updater is
+broken on the day you need it.
+
+Relay's endpoint is:
+
+```
+https://github.com/devgeereact/relay/releases/latest/download/latest.json
+```
+
+GitHub's `/releases/latest/` resolves **only to a published, non-draft, non-prerelease
+release**. So:
+
+| Release | Served to installed apps? |
+|---|---|
+| draft (what the workflow opens) | **No** — assets aren't public until you publish |
+| pre-release (`v0.2.0-rc1`) | **No** — `/latest/` skips prereleases, by design |
+| published, plain tag (`v0.2.0`) | **Yes** |
+
+That behaviour is *correct* — a church must never be auto-updated onto an unsigned
+release candidate. But it means the endpoint stays dark until you publish a real
+release, so the happy path is:
+
+**tag `v0.2.0` → workflow opens a draft → you check it → you publish it → every install
+offers the update on next launch.**
+
+### How to actually test the updater before you own certificates
+
+Build a local app that is *older* than the pre-release and point it at that
+pre-release's manifest by its exact tag (not `/latest/`):
+
+```bash
+# 1. Cut an unsigned pre-release and let the workflow publish it (as a prerelease).
+npm run version:set -- 0.2.0-rc1
+git commit -am "chore(release): 0.2.0-rc1" && git push
+git tag v0.2.0-rc1 && git push origin v0.2.0-rc1
+
+# 2. Build a LOCAL app claiming to be 0.0.1, pointed at that tag's manifest.
+#    The updater config comes first (it carries the pubkey); the override comes
+#    second, because configs merge in order and the last value wins.
+npm run tauri build -- \
+  --config src-tauri/tauri.updater.conf.json \
+  --config '{"version":"0.0.1","plugins":{"updater":{"endpoints":["https://github.com/devgeereact/relay/releases/download/v0.2.0-rc1/latest.json"]}}}'
+```
+
+Install that build, launch it, and it should offer 0.2.0-rc1. If it doesn't, the
+updater is broken **now**, on your machine, where you can fix it — instead of on a tag
+that a church is waiting on.
