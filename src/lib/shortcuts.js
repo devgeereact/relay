@@ -80,9 +80,13 @@ export const SHORTCUTS = [
   // claim otherwise.
   { keys: ['A'], label: 'Accept the top AI suggestion', needs: 'accept' },
   { keys: ['D'], label: 'Dismiss the top AI suggestion', needs: 'dismiss' },
-  { keys: ['→', 'PgDn', 'Space'], label: 'Next', needs: 'next' },
-  { keys: ['←', 'PgUp'], label: 'Previous', needs: 'prev' },
-  { keys: ['/'], label: 'Focus search', needs: 'search' },
+  // Advance/back are MODE-DEPENDENT — they step the service plan when a plan cue
+  // is live, and walk the passage when a detected or manually-fired verse is. The
+  // Live transport bar always says which, because the same key doing two things
+  // silently is how an operator puts the wrong thing in front of a congregation.
+  { keys: ['→', 'PgDn', 'Space'], label: 'Next slide / next verse', needs: 'next' },
+  { keys: ['←', 'PgUp'], label: 'Previous slide / previous verse', needs: 'prev' },
+  { keys: ['/'], label: 'Jump to the manual reference box', needs: 'search' },
 ];
 
 /** The shortcuts that actually work on the surface the operator is looking at. */

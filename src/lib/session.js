@@ -20,10 +20,15 @@ const EMPTY = {
   // NEVER shows again — a wizard that reappears is a wizard that gets clicked
   // through blindly, and everything it configures also lives in Settings.
   setupDone: false,
-  activeTab: 'console',
+  activeTab: 'live',
   planId: null,
   liveCueId: null,
   liveSlide: 0,
+  // Whether the plan was actually ON AIR, not just where the playhead was. Without
+  // this, leaving the Live tab and coming back would restore the position AND
+  // claim it was on the congregation's screen — lighting the amber ON AIR ring for
+  // content that had been cleared. Amber means live. It is never allowed to lie.
+  liveOnAir: false,
   serviceId: null,
 };
 

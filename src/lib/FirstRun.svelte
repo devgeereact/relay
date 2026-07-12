@@ -158,7 +158,7 @@
         {#if $capture.capturing}
           {level > 4 ? '✓ Relay can hear that.' : 'Say something — the bar should move.'}
         {:else}
-          You can test this from the Console, and change it in Settings at any time.
+          You can test this from the Live tab, and change it in Settings at any time.
         {/if}
       </p>
 

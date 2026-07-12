@@ -1,45 +1,68 @@
-// The panic keys must reset the TRANSPORT, not just the screens.
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+// The playhead: where → resumes from, and whether the plan is ON AIR.
+//
+// These are two different facts and every path that takes plan content off the
+// screen must clear the second WITHOUT destroying the first. Getting either half
+// wrong puts the wrong thing in front of a congregation:
+//
+//   forget to clear onAir  → the operator accepts an AI-suggested verse, presses
+//                            → to read on, and jumps back into the song instead.
+//   destroy the position   → the operator presses Esc at cue 9, presses →, and the
+//                            plan RESTARTS at cue 1 — the opening countdown, back
+//                            on the wall, at the end of the service.
+import { describe, it, expect, beforeEach } from 'vitest';
 import { get } from 'svelte/store';
 
 // No Tauri in the test env — every wrapper falls into its catch and is a no-op,
-// which is exactly the path we want: the transport reset must happen REGARDLESS of
-// whether the backend call succeeds. A panic key that half-works is worse than one
-// that doesn't work at all.
-import { liveCue, clearScreens, blackScreen, manualFire, confirmDetection } from './stores/capture.js';
+// which is exactly the path we want: the reset must happen REGARDLESS of whether
+// the backend call succeeds. A panic key that half-works is worse than one that
+// doesn't work at all.
+import {
+  liveCue,
+  clearScreens,
+  blackScreen,
+  manualFire,
+  confirmDetection,
+} from './stores/capture.js';
 
-describe('the panic keys reset where we are in the plan', () => {
-  beforeEach(() => liveCue.set({ cueId: 7, slide: 2 }));
+describe('taking plan content off the screen', () => {
+  // Cue 7, slide 2, on the congregation's wall.
+  beforeEach(() => liveCue.set({ cueId: 7, slide: 2, onAir: true }));
 
-  /// THE bug. Before this, `Esc` cleared the screens but left liveCue pointing at
-  /// cue 7 / slide 2 — so the very next → fired slide 3 STRAIGHT BACK onto the
-  /// congregation's screen, moments after the operator had panicked and cleared it.
-  it('Esc / clear leaves us nowhere in the plan', async () => {
+  it('Esc / clear takes the plan off air but REMEMBERS the position', async () => {
     await clearScreens();
-    expect(get(liveCue)).toEqual({ cueId: null, slide: 0 });
+    expect(get(liveCue)).toEqual({ cueId: 7, slide: 2, onAir: false });
   });
 
-  it('blackout also leaves us nowhere in the plan', async () => {
+  it('blackout does the same', async () => {
     await blackScreen();
-    expect(get(liveCue)).toEqual({ cueId: null, slide: 0 });
+    expect(get(liveCue)).toEqual({ cueId: 7, slide: 2, onAir: false });
   });
 
-  /// A hand-typed verse is not a plan cue. If the arrows still thought we were in
-  /// the plan, the next → would jump back to a slide the service has moved past.
-  it('firing a verse by hand takes us out of the plan', async () => {
+  /// A hand-typed verse is not a plan cue. If the transport still thought the plan
+  /// was on air, → would jump back into the plan instead of walking the passage
+  /// the operator just put up.
+  it('firing a verse by hand takes the plan off air', async () => {
     await manualFire('John 3:16').catch(() => {});
-    expect(get(liveCue).cueId).toBe(null);
+    expect(get(liveCue).onAir).toBe(false);
+    expect(get(liveCue).cueId).toBe(7); // still where we were
   });
 
-  it('accepting an AI suggestion takes us out of the plan', async () => {
+  it('accepting an AI suggestion takes the plan off air', async () => {
     await confirmDetection('John 3:16');
-    expect(get(liveCue).cueId).toBe(null);
+    expect(get(liveCue).onAir).toBe(false);
+    expect(get(liveCue).cueId).toBe(7);
   });
 
-  /// The reset must survive a backend failure — it happens before the call, not
-  /// after it.
-  it('resets even when the backend call fails', async () => {
+  /// It happens BEFORE the backend call, not after — so a failed call cannot leave
+  /// the transport claiming the plan is on air when it isn't.
+  it('holds even when the backend call fails', async () => {
     await clearScreens(); // no Tauri here: the invoke throws and is caught
-    expect(get(liveCue).cueId).toBe(null);
+    expect(get(liveCue).onAir).toBe(false);
+  });
+
+  it('is idempotent — clearing twice does not lose the position', async () => {
+    await clearScreens();
+    await clearScreens();
+    expect(get(liveCue)).toEqual({ cueId: 7, slide: 2, onAir: false });
   });
 });

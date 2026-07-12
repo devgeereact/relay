@@ -17,7 +17,7 @@ describe('first-run gating', () => {
   it('setup never reappears once completed or skipped', async () => {
     localStorage.setItem(
       'relay.session.v1',
-      JSON.stringify({ setupDone: true, activeTab: 'console' }),
+      JSON.stringify({ setupDone: true, activeTab: 'live' }),
     );
     const { session } = await import('./session.js?fresh2');
     let v;
@@ -33,6 +33,6 @@ describe('first-run gating', () => {
     let v;
     session.subscribe((s) => (v = s))();
     expect(v.setupDone).toBe(false);
-    expect(v.activeTab).toBe('console');
+    expect(v.activeTab).toBe('live');
   });
 });

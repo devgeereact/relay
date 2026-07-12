@@ -13,7 +13,7 @@
     updateProgress,
     updateError,
   } from './lib/updater.js';
-  import Console from './lib/views/Console.svelte';
+  import Live from './lib/views/Live.svelte';
   import Channels from './lib/views/Channels.svelte';
   import Templates from './lib/views/Templates.svelte';
   import Library from './lib/views/Library.svelte';
@@ -22,7 +22,7 @@
   import Help from './lib/views/Help.svelte';
 
   const tabs = [
-    { key: 'console',   label: 'Console',   title: 'Mission Control',  view: Console },
+    { key: 'live',      label: 'Live',      title: 'Live Service',     view: Live },
     { key: 'channels',  label: 'Channels',  title: 'Output Channels',  view: Channels },
     { key: 'templates', label: 'Templates', title: 'Template Editor',  view: Templates },
     { key: 'library',   label: 'Library',   title: 'Content Library',  view: Library },
@@ -34,16 +34,18 @@
     // useful: offline.
     { key: 'help',      label: 'Help',      title: 'Help',             view: Help },
   ];
-  // Restored from the persisted session, so a reload (or a crash + Recover)
-  // brings the operator back to the tab they were actually on.
-  let active = tabs.some((t) => t.key === $session.activeTab) ? $session.activeTab : 'console';
-  $: setSession({ activeTab: active });
+  // The active tab IS the session — not a local copy of it that happens to be
+  // written back. One direction, one source of truth, so anything can navigate:
+  // the Planner's "Run this plan" hands the operator to LIVE by setting it, and a
+  // reload (or a crash + Recover) puts them back on the tab they were on.
+  $: active = tabs.some((t) => t.key === $session.activeTab) ? $session.activeTab : 'live';
+  const go = (key) => setSession({ activeTab: key });
   $: currentTab = tabs.find((t) => t.key === active) ?? tabs[0];
   $: current = currentTab.view;
 
   // Inline icons keyed by tab (SVG so they stay crisp on retina, themeable).
   const icons = {
-    console: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>',
+    live: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="2.5" y="4.5" width="19" height="13" rx="2"/><path d="M8 21h8M12 17.5V21" stroke-linecap="round"/><circle cx="12" cy="11" r="2.6" fill="currentColor" stroke="none"/></svg>',
     channels: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3"/><circle cx="4" cy="12" r="2"/><circle cx="12" cy="6" r="2"/><circle cx="20" cy="14" r="2"/></svg>',
     templates: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="m12 2 9 5-9 5-9-5 9-5Z"/><path d="m3 12 9 5 9-5M3 17l9 5 9-5"/></svg>',
     library: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M4 5a2 2 0 0 1 2-2h13v16H6a2 2 0 0 0-2 2V5Z"/><path d="M9 3v14"/></svg>',
@@ -131,7 +133,7 @@
 
     <nav class="nav">
       {#each tabs as t}
-        <button class="nav-item r-focus" class:active={t.key === active} on:click={() => (active = t.key)}>
+        <button class="nav-item r-focus" class:active={t.key === active} on:click={() => go(t.key)}>
           <span class="ic">{@html icons[t.key]}</span>
           <span class="nav-label">{t.label}</span>
         </button>

@@ -28,7 +28,7 @@
       icon: '📽️',
       title: 'Nothing appears on the projector',
       body: [
-        ['Is the output window open?', 'On the Console, click <b>Open output</b>. It opens on the projector — the screen that is <i>not</i> this laptop.'],
+        ['Is the output window open?', 'On the <b>Live</b> tab, click <b>Open output</b>. It opens on the projector — the screen that is <i>not</i> this laptop.'],
         ['Is it on the right screen?', 'Go to <b>Channels</b> and set the display for “Main screen”. Relay lists every screen it can see.'],
         ['Still nothing?', 'Some projectors take a few seconds to wake. If Relay shows the verse in its own preview but the projector is dark, the problem is the cable or the projector input, not Relay.'],
       ],
@@ -39,7 +39,7 @@
       title: 'The AI is not detecting verses',
       body: [
         ['Is the speech model installed?', 'If Relay says it cannot hear the sermon, there is a <b>Download</b> button. It is a one-time download and takes a few minutes.'],
-        ['Is Relay listening?', 'Press <b>Start Listening</b> on the Console. The transcript should start filling up as the preacher speaks.'],
+        ['Is Relay listening?', 'Press <b>Start listening</b> on the <b>Live</b> tab. The transcript should start filling up as the preacher speaks.'],
         ['Can it actually hear?', 'Go to <b>Settings</b> and watch the microphone meter while someone speaks. If the bar does not move, Relay is listening to the wrong microphone — usually it should be the feed from the sound desk, not the laptop’s own mic.'],
         ['It hears, but finds no verses.', 'It only detects a verse when the preacher <i>says the reference</i> — “John chapter three verse sixteen”. If they only quote the words, Relay will <i>offer</i> it as a suggestion, and wait for you. It will never put a guess on the screen by itself.'],
       ],
@@ -60,9 +60,10 @@
       icon: '📋',
       title: 'Running a service',
       body: [
-        ['Build the plan first.', '<b>Planner</b> → create a plan → add songs, scripture, media, announcements and a countdown, in the order they happen.'],
-        ['Run it with the arrow keys.', 'Open the plan and use <kbd>→</kbd> / <kbd>←</kbd> to move through the slides. The output screens follow you.'],
-        ['Watch for suggestions.', 'When the preacher goes off-script and quotes a verse, the AI will offer it.'],
+        ['Build the plan first.', 'Go to <b>Planner</b>, create a plan, and add songs, scripture, media, announcements and a countdown in the order they happen. Nothing you do here reaches a screen — it is safe to build in the middle of a service.'],
+        ['Run it on the Live tab.', 'Press <b>Run this plan</b>. Then use <kbd>→</kbd> / <kbd>←</kbd> to move through the slides. The output screens follow you.'],
+        ['Watch the arrow key.', 'The bar tells you what <kbd>→</kbd> will do: <b>steps SLIDE</b> means it moves through your plan; <b>steps VERSE</b> means it walks through the passage on screen. It switches by itself when you accept a verse the AI suggested — accept it, read on with <kbd>→</kbd>, then press <kbd>Esc</kbd> to return to the plan.'],
+        ['Suggestions are right there.', 'When the preacher goes off-script and quotes a verse, the AI offers it on the same screen you are running the plan from. You never change tabs mid-sermon.'],
         ['Nothing is lost if Relay crashes.', 'The output screens keep showing the last thing you fired, and Relay comes back to the same place in the plan.'],
       ],
     },

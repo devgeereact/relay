@@ -61,27 +61,35 @@ export const detections = writable([]);
 export const templates = writable([]);
 
 /**
- * WHERE THE OPERATOR IS IN THE PLAN — which cue is live, and which of its slides.
+ * THE PLAYHEAD — where the operator is in the service plan, and whether that is
+ * what the congregation is actually looking at.
  *
- * This lives in the store, not in the Planner view, because it must be reset by
- * every path that takes plan content OFF the screen. It used to be view-local, and
- * only the Planner's own ◼ button reset it. The panic keys did not:
+ * Two separate facts, and conflating them causes real damage in both directions:
  *
- *   1. Slide 2 of cue 7 is on the wall.
- *   2. The operator panics and presses Esc. The screens clear. ✓
- *   3. But liveCue still says cue 7, slide 2.
- *   4. They press → … and slide 3 fires STRAIGHT BACK onto the congregation's
- *      screen.
+ *   { cueId, slide }  the position. SURVIVES everything. It is where → resumes
+ *                     from. Wiping it on Esc would mean the next → restarts the
+ *                     plan at cue 1 — putting the opening countdown back on the
+ *                     wall at the end of the service.
  *
- * The panic key cleared the screens but not the transport. Owning this in the
- * store means clearScreens / blackScreen / manualFire / confirmDetection all reset
- * it, and no view can forget to.
+ *   onAir             is plan content on the screens RIGHT NOW. Cleared the moment
+ *                     anything else takes the screen (a cleared screen, a blackout,
+ *                     a manual fire, an accepted AI suggestion).
+ *
+ * `onAir` is what the transport mode reads. With a plan cue live, → steps the
+ * plan; once the preacher goes off-script and the operator accepts a suggested
+ * verse, → walks that passage instead — and Esc hands the transport back to the
+ * plan, at the position it was already at.
+ *
+ * This lives in the store, not in a view, because EVERY path that takes plan
+ * content off the screen has to clear `onAir`, and a view will eventually forget.
+ * One did: only the Planner's own ◼ button reset it, and the panic keys — which
+ * are owned by the app shell — did not.
  */
-export const liveCue = writable({ cueId: null, slide: 0 });
+export const liveCue = writable({ cueId: null, slide: 0, onAir: false });
 
-/** Plan content is no longer what the congregation is looking at. */
+/** Plan content is no longer what the congregation is looking at. Keeps the position. */
 function leavePlan() {
-  liveCue.set({ cueId: null, slide: 0 });
+  liveCue.update((c) => (c.onAir ? { ...c, onAir: false } : c));
 }
 
 // Narrow slices of `capture`. A component that only needs one flag should
