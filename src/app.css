@@ -170,7 +170,13 @@ body{ margin:0; background:var(--bg); color:var(--text); font-family:var(--f-bod
 :root{
   --v-void:#0a0a0b; --v-bg:#0e0e0f; --v-surf:#141416; --v-surf2:#1a1a1d; --v-surf3:#212125;
   --v-line:rgba(255,255,255,.075); --v-line2:rgba(255,255,255,.13);
-  --v-txt:#e8e6e7; --v-dim:#a4a2a7; --v-faint:#6c6b71;
+  --v-txt:#e8e6e7; --v-dim:#a4a2a7;
+  /* --v-faint was #6c6b71 — 3.49:1 on --v-surf, which FAILS WCAG AA (4.5:1).
+     And it is the colour of EVERY EMPTY STATE (.r-empty) and every placeholder —
+     i.e. precisely the text a brand-new operator most needs to be able to read.
+     #88888d is solved against the LIGHTEST surface (--v-surf3), so it passes on
+     all four: 5.47 / 5.22 / 4.92 / 4.55. Still unmistakably the quietest token. */
+  --v-faint:#88888d;
   --v-amber:#f5a623; --v-amber2:#ffb95f; --v-amber-ink:#3a2500;
   --v-amber-soft:rgba(245,166,35,.13); --v-amber-glow:rgba(245,166,35,.42);
   --v-cyan:#3fb6e6; --v-cyan-soft:rgba(63,182,230,.14);
@@ -422,3 +428,26 @@ body{ overflow:hidden; text-rendering:optimizeLegibility; -moz-osx-font-smoothin
 .upd-t span{ font-size:12px; color:var(--v-dim); line-height:1.5; }
 .upd-pct{ font-size:12px; color:var(--v-txt); }
 .upd.err{ border-color:rgba(255,157,148,.35); color:var(--v-txt); font-size:12.5px; line-height:1.55; }
+
+/* What is ACTUALLY on the congregation's screen — the reference, named, next to
+   the On Air badge. The operator should never have to hunt a 10px monospace
+   footer inside a monitor tile to answer "what are they looking at?". */
+.topbar-live{ font-size:12px; color:var(--v-txt); background:var(--v-surf2);
+  border:1px solid var(--v-line2); border-radius:6px; padding:3px 8px;
+  max-width:280px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+/* The microphone is a SEPARATE fact from what's on screen, and quieter. */
+.topbar-mic{ display:inline-flex; align-items:center; gap:6px; font-size:11px;
+  letter-spacing:.05em; text-transform:uppercase; color:var(--v-dim); }
+.mic-dot{ width:6px; height:6px; border-radius:50%; background:var(--v-emerald);
+  box-shadow:0 0 6px var(--v-emerald); }
+@media (prefers-reduced-motion: no-preference){
+  .mic-dot{ animation:micpulse 1.8s ease-in-out infinite; }
+  @keyframes micpulse{ 0%,100%{opacity:1} 50%{opacity:.45} }
+}
+
+/* Visible to screen readers, invisible to everyone else. Deliberately NOT
+   display:none — that would hide it from assistive tech too, which is the entire
+   population this exists for. */
+.sr-only{ position:absolute; width:1px; height:1px; padding:0; margin:-1px;
+  overflow:hidden; clip:rect(0 0 0 0); clip-path:inset(50%); white-space:nowrap;
+  border:0; }

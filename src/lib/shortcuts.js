@@ -17,7 +17,7 @@
 // It must always be reachable in one action from the main console, at every
 // stage." Global keys are how that promise is kept for the keyboard.
 
-import { writable } from 'svelte/store';
+import { writable, derived } from 'svelte/store';
 
 /** Are we inside a text field? Typing must never trigger a live action. */
 function isTyping(e) {
@@ -40,11 +40,27 @@ function isTyping(e) {
  */
 let ctx = {};
 
+/**
+ * Which context actions are live RIGHT NOW. The cheatsheet reads this, so it can
+ * only ever advertise keys that actually do something.
+ *
+ * It used to lie. The Planner registers only `next`/`prev`, so on that tab `A`
+ * (accept), `D` (dismiss) and `/` (search) were DEAD KEYS — while the cheatsheet
+ * cheerfully listed all three. An operator pressing `A` mid-service to put the
+ * AI's suggestion on screen would have got nothing, and no explanation.
+ *
+ * A help screen that lists a key which does nothing is worse than no help screen:
+ * it teaches the operator something false, under pressure.
+ */
+export const activeActions = writable([]);
+
 /** Called by a view on mount. Returns an unregister fn for onDestroy. */
 export function registerContext(handlers) {
   ctx = handlers ?? {};
+  activeActions.set(Object.keys(ctx).filter((k) => typeof ctx[k] === 'function'));
   return () => {
     ctx = {};
+    activeActions.set([]);
   };
 }
 
@@ -56,15 +72,23 @@ export const cheatsheet = writable(false);
  * can never drift out of sync with the actual bindings.
  */
 export const SHORTCUTS = [
-  { keys: ['Esc'], label: 'Clear all screens', scope: 'Always' },
-  { keys: ['B'], label: 'Blackout — kill every output', scope: 'Always' },
-  { keys: ['A'], label: 'Accept the top AI suggestion', scope: 'Console' },
-  { keys: ['D'], label: 'Dismiss the top AI suggestion', scope: 'Console' },
-  { keys: ['→', 'PgDn', 'Space'], label: 'Next', scope: 'Console · Planner' },
-  { keys: ['←', 'PgUp'], label: 'Previous', scope: 'Console · Planner' },
-  { keys: ['/'], label: 'Focus search', scope: 'Console' },
-  { keys: ['?'], label: 'Show this cheatsheet', scope: 'Always' },
+  { keys: ['Esc'], label: 'Clear all screens', always: true },
+  { keys: ['B'], label: 'Blackout — kill every output', always: true },
+  { keys: ['?'], label: 'Show this cheatsheet', always: true },
+  // `needs` names the context action a key depends on. If the current surface has
+  // not registered that action, the key does nothing — and the cheatsheet does not
+  // claim otherwise.
+  { keys: ['A'], label: 'Accept the top AI suggestion', needs: 'accept' },
+  { keys: ['D'], label: 'Dismiss the top AI suggestion', needs: 'dismiss' },
+  { keys: ['→', 'PgDn', 'Space'], label: 'Next', needs: 'next' },
+  { keys: ['←', 'PgUp'], label: 'Previous', needs: 'prev' },
+  { keys: ['/'], label: 'Focus search', needs: 'search' },
 ];
+
+/** The shortcuts that actually work on the surface the operator is looking at. */
+export const liveShortcuts = derived(activeActions, ($active) =>
+  SHORTCUTS.filter((s) => s.always || $active.includes(s.needs)),
+);
 
 /**
  * Install the single global keydown listener.

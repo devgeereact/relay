@@ -1,6 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { get } from 'svelte/store';
-import { installShortcuts, registerContext, cheatsheet, SHORTCUTS } from './shortcuts.js';
+import {
+  installShortcuts,
+  registerContext,
+  cheatsheet,
+  SHORTCUTS,
+  liveShortcuts,
+} from './shortcuts.js';
 
 function press(key, target = document.body) {
   const e = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true });
@@ -157,7 +163,78 @@ describe('cheatsheet', () => {
     const labels = SHORTCUTS.flatMap((s) => s.keys);
     expect(labels).toContain('Esc');
     expect(labels).toContain('B');
-    // And they are documented as always-on, which is the whole promise.
-    expect(SHORTCUTS.find((s) => s.keys.includes('Esc')).scope).toBe('Always');
+    // And they are marked always-on, which is the whole promise: the panic keys
+    // work on every surface, so they are listed on every surface.
+    expect(SHORTCUTS.find((s) => s.keys.includes('Esc')).always).toBe(true);
+    expect(SHORTCUTS.find((s) => s.keys.includes('B')).always).toBe(true);
+  });
+});
+
+describe('the cheatsheet must not lie', () => {
+  let teardown, unregister;
+
+  beforeEach(() => {
+    teardown = installShortcuts({ clearScreens: () => {}, blackScreen: () => {} });
+  });
+  afterEach(() => {
+    unregister?.();
+    teardown?.();
+  });
+
+  const keysIn = (list) => list.flatMap((s) => s.keys);
+
+  // THE bug. The Planner registers only next/prev, so `A`, `D` and `/` were DEAD
+  // KEYS on that tab — while the cheatsheet cheerfully listed all three. An
+  // operator pressing `A` mid-service to push the AI's suggestion would have got
+  // nothing, and no explanation.
+  //
+  // A help screen that lists a key which does nothing is worse than no help
+  // screen: it teaches the operator something false, under pressure.
+  it('does not advertise a key the current surface cannot handle', () => {
+    unregister = registerContext({ next: () => {}, prev: () => {} }); // the Planner
+    let shown;
+    liveShortcuts.subscribe((v) => (shown = v))();
+
+    const keys = keysIn(shown);
+    expect(keys).not.toContain('A'); // no accept handler here
+    expect(keys).not.toContain('D');
+    expect(keys).not.toContain('/');
+    expect(keys).toContain('→'); // next IS registered
+  });
+
+  it('advertises the keys a surface DOES handle', () => {
+    unregister = registerContext({
+      accept: () => {},
+      dismiss: () => {},
+      next: () => {},
+      prev: () => {},
+      search: () => {},
+    }); // the Console
+    let shown;
+    liveShortcuts.subscribe((v) => (shown = v))();
+
+    const keys = keysIn(shown);
+    for (const k of ['A', 'D', '/', '→', '←']) expect(keys).toContain(k);
+  });
+
+  // The panic keys must be listed on EVERY surface, always — including one with
+  // no context at all.
+  it('always lists the panic keys, even with nothing registered', () => {
+    unregister = registerContext({});
+    let shown;
+    liveShortcuts.subscribe((v) => (shown = v))();
+
+    const keys = keysIn(shown);
+    expect(keys).toContain('Esc');
+    expect(keys).toContain('B');
+    expect(keys).toContain('?');
+  });
+
+  it('every non-always shortcut declares which action it needs', () => {
+    for (const s of SHORTCUTS) {
+      if (!s.always) {
+        expect(typeof s.needs).toBe('string');
+      }
+    }
   });
 });

@@ -1,7 +1,7 @@
 <script>
   import { onMount, onDestroy } from 'svelte';
-  import { capture, capturing, detectionOn, initAudio, clearScreens, blackScreen } from './lib/stores/capture.js';
-  import { installShortcuts, cheatsheet, SHORTCUTS } from './lib/shortcuts.js';
+  import { capture, capturing, detectionOn, live, screenBlack, initAudio, clearScreens, blackScreen } from './lib/stores/capture.js';
+  import { installShortcuts, cheatsheet, liveShortcuts } from './lib/shortcuts.js';
   import { installLeaveGuard } from './lib/crash.js';
   import { session, setSession } from './lib/session.js';
   import FirstRun from './lib/FirstRun.svelte';
@@ -85,6 +85,26 @@
   });
 </script>
 
+<!-- The live region.
+     The `aria-live` count in this entire app was ZERO. A screen-reader operator
+     was told NOTHING when scripture went onto the wall, or when the screens were
+     cleared — the single thing they most need to know was the one thing the app
+     never said out loud.
+
+     "polite", not "assertive": it announces after whatever the operator is
+     already reading, never over the top of it. -->
+<div class="sr-only" role="status" aria-live="polite" aria-atomic="true">
+  {#if $screenBlack}
+    Screens blacked out.
+  {:else if $live}
+    Now on screen: {$live.reference || 'content'}{$live.translation
+      ? `, ${$live.translation}`
+      : ''}
+  {:else}
+    Screens cleared.
+  {/if}
+</div>
+
 <!-- First run. Only ever on a genuinely fresh install, and only once the backend
      is attached (in a plain browser there is nothing to configure). -->
 {#if $capture.available && !$session.setupDone}
@@ -125,10 +145,27 @@
   <div class="main-v">
     <header class="topbar-v">
       <span class="topbar-title">{currentTab.title}</span>
-      {#if $capturing}
+      <!-- ON AIR must mean "the congregation is looking at something" — NOT "the
+           microphone is on". It used to key off $capturing, so Relay would sit
+           there pulsing ON AIR at an operator whose screens were completely blank.
+           The loudest indicator in the product was answering the wrong question.
+
+           Now: what is on the wall, right now, named. The microphone gets its own
+           quieter indicator, because it is a different fact. -->
+      {#if $screenBlack}
+        <span class="r-badge" style="border-color:var(--v-line2);color:var(--v-dim);">
+          <span class="bd" style="background:var(--v-faint);box-shadow:none;"></span>Blackout
+        </span>
+      {:else if $live}
         <span class="r-badge rose pulse"><span class="bd"></span>On Air</span>
+        <span class="topbar-live r-mono">{$live.reference || 'content'}</span>
       {:else}
-        <span class="r-badge amber"><span class="bd" style="box-shadow:none;"></span>Standby</span>
+        <span class="r-badge amber"><span class="bd" style="box-shadow:none;"></span>Screens clear</span>
+      {/if}
+      {#if $capturing}
+        <span class="topbar-mic" title="Microphone is live">
+          <span class="mic-dot"></span>Listening
+        </span>
       {/if}
       <span class="topbar-spring"></span>
       <div class="topbar-icons">
@@ -149,8 +186,8 @@
         <span>Detection {$detectionOn ? 'ACTIVE' : 'OFF'}</span>
       </div>
       <div style="display:flex;align-items:center;gap:8px;">
-        <span class="dot" style="width:6px;height:6px;border-radius:50%;background:{$capturing ? 'var(--v-rose)' : 'var(--v-faint)'};"></span>
-        {$capturing ? 'ON AIR' : 'SYSTEM STABLE'}
+        <span class="dot" style="width:6px;height:6px;border-radius:50%;background:{$live && !$screenBlack ? 'var(--v-rose)' : 'var(--v-faint)'};"></span>
+        {$screenBlack ? 'BLACKOUT' : $live ? 'ON AIR' : 'SCREENS CLEAR'}
       </div>
     </footer>
   </div>
@@ -187,13 +224,13 @@
       <div class="cheat" role="dialog" aria-label="Keyboard shortcuts" on:click|stopPropagation>
         <h2>Keyboard shortcuts</h2>
         <table>
-          {#each SHORTCUTS as s}
+          {#each $liveShortcuts as s}
             <tr>
               <td class="keys">
                 {#each s.keys as k}<kbd>{k}</kbd>{/each}
               </td>
               <td class="lbl">{s.label}</td>
-              <td class="scope">{s.scope}</td>
+              <td class="scope">{s.always ? 'Always' : 'Here'}</td>
             </tr>
           {/each}
         </table>
