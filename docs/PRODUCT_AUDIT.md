@@ -1,7 +1,9 @@
 # Relay — Product Audit
 
-**Revision 2 · 2026-07-12 · verified against `9f14d10`**
-Supersedes Revision 1 (2026-07-05). Every claim below was re-verified against the code that exists today; nothing was carried forward on trust. Line references are live.
+**Revision 3 · 2026-07-13 · verified against `cfa2aa5`**
+Supersedes Revision 2 (2026-07-12) and Revision 1 (2026-07-05). Every claim was re-verified against the code that exists today; nothing is carried forward on trust. Line references are live.
+
+> **Revision 3 in one line: every finding in this document that could be closed by writing code has been closed. What is left cannot be — it needs money, a certificate, a native speaker, and thirty minutes of a real preacher on tape.**
 
 **Scope, decided with the owner and unchanged:**
 - **Strategy: unchanged.** Free, MIT, offline-first, no accounts, no server. The decisions in [DECISIONS.md](DECISIONS.md) stand.
@@ -11,7 +13,33 @@ Phases of the transformation brief that assume a commercial multi-tenant SaaS �
 
 ---
 
-## 0. What changed since Revision 1
+## 0a. What changed since Revision 2 *(16 commits, one day)*
+
+Revision 2 raised five criticals and a roadmap. All five are fixed, and so is every non-blocked item in Phases 2, 3 and 4 of that roadmap. Retiring findings is as much an audit's job as raising them, so, explicitly:
+
+| Revision 2 said | Reality today |
+|---|---|
+| 🔴 **D1** — a real tag ships an unsigned Windows installer, silently | **FIXED.** The gate is per-platform (two certificates, two verdicts) and refuses a real tag that is not covered on **both**. Windows signing is wired for Azure Trusted Signing *or* a `.pfx`. There is deliberately no combined `signed` flag any more — one global boolean standing in for two certificates *was* the bug. |
+| 🔴 **D2** — the updater can never deliver an update | **FIXED.** The version lived in **three** files (not two — `Cargo.toml` as well). `scripts/version.mjs` owns all three; CI asserts they agree on every PR and the release gate asserts they equal the tag. |
+| 🔴 **D3** — the panic path reports a success it did not achieve | **FIXED, from the Rust up.** A failed clear was *unrepresentable*: `channels::clear` discarded the emit error, `clear_screens` returned `()`, the JS swallowed the rest. Now `Result` all the way, and the frontend returns a boolean **and** raises a global banner (the panic controls fire from places that cannot `catch`). |
+| 🔴 **D4** — the safety architecture is invisible | **FIXED.** `method` + `matched_text` cross the bridge and are rendered. A paraphrase shows **no percentage at all** — a cosine is not a probability. Cyan, never amethyst (that means rehearsal). |
+| 🔴 **D5** — the model download hangs forever; Cancel is inert | **FIXED.** Own stall deadline (not reqwest's), cancel checked on a tick so it works when the network is *dead*, `running` cleared by a `Drop` guard, and the 416 brick gone (a full-size `.part` is settled by checksum, never by a `Range` request). |
+| 🟠 macOS microphone entitlement | **FIXED.** Notarization forces the hardened runtime, under which the mic is TCC-killed without the entitlement — so the *first correctly-signed build* would have been the first one that could not hear the preacher, and no build we can make locally would have shown it. Pinned by `models::config_boots`. |
+| `nav` silently does nothing | **FIXED.** `NavResult` — Fired / EndOfPassage / NoPassage / NotInLibrary. Not every outcome is a failure; the end of a passage is a correct boundary, and the operator is entitled to know *which*. A bool would have been the wrong repair. |
+| `main.rs` has zero tests; no e2e anywhere | **FIXED.** `e2e.rs` drives the **real** commands against a real in-memory DB, through the real router and pipeline. To make that possible the fire engine is now generic over `tauri::Runtime` — which is the useful half of "split main.rs": the point was never the line count, it was that the engine could not be driven without a window. |
+| 88 × `Result<_, String>`, no typed error | **FIXED.** `error.rs`: `{ kind, message }` — refused / not_found / busy / io / internal. SQLite carries the one distinction that matters live: *is pressing it again worth my time?* |
+| ~34 `catch {}`, one `throw`, no contract | **FIXED.** One question — *can the congregation see the difference?* — and three groups (throws / swallows / reports-via-store), written at the top of `capture.js`. Applying it caught two more silent liars. |
+| The detections migration | **FIXED.** It had no `ROLLBACK`, so a failure left the transaction open, the `PRAGMA foreign_keys = ON` became a no-op *inside* it, and the leftover scratch table made **every subsequent boot** fail with "table already exists". Forever. Before the window is even shown. |
+| Accessibility 4/10: 0 focus traps, no `<h1>`, the AI announces nothing | **FIXED.** Focus traps on all 5 dialogs (with restore), a real heading structure, and the suggestion feed / transport / errors all announced. Every text token in the app now passes WCAG AA. |
+| Empty ≠ Loading ≠ Error (Live said "No plans yet" before the DB answered) | **FIXED.** Three shared components. `ErrorState` only offers *Try again* when the backend says the fault is transient — which is the first place typed errors earn their keep. |
+| `related_scripture`: built, registered, **zero callers** | **SURFACED.** In the Intelligence Feed, as the quietest thing in it: no tally colour, no confidence, and it says out loud that nobody spoke these references. |
+| No i18n layer at all | **BUILT.** 60 lines, no dependency. Translation is now a *data* contribution (one JSON file, no code). The locale files for yo/sw/ha ship **empty on purpose** — see §11. |
+
+**What that leaves is the honest part.** Nothing on the list below can be fixed by writing code, which is why it is still here.
+
+---
+
+## 0b. What changed since Revision 1
 
 Revision 1 named three critical blockers and called them "one epic". **That epic shipped.** So did most of Phase 2. Retiring stale findings is as much a part of an audit's job as raising new ones, so, explicitly:
 
@@ -39,59 +67,52 @@ That is an unusually complete execution of an audit. The scorecard moves accordi
 
 ## 1. Executive Assessment
 
-**Relay is now installable. It is not yet trustworthy in the one dimension that matters most: it does not reliably tell the operator the truth about itself.**
+**The code is done. Relay is now blocked on four things, and not one of them is a commit.**
 
-Revision 1's position was *"the engineering is ahead of the product."* That is no longer true, and it is a real achievement. A volunteer can now download the app, run a wizard, fetch the speech model with one button, and get a verse on a projector without ever opening a terminal. The engine underneath is genuinely strong: 221 Rust tests, zero panic sites in any module that runs during a service, a detection benchmark that fails CI if accuracy regresses, and a gate that makes "the AI put the wrong verse on the wall" structurally unrepresentable rather than merely unlikely.
+Revision 1's finding was *"the engineering is ahead of the product"* — the app could not be installed. Revision 2's was *"the product does not tell the operator the truth about itself"* — it reported successes it had not achieved. Both are now closed, and the second was the harder and more valuable of the two.
 
-The problem has moved. Three things are now true at once:
+What that produced is a product with an unusual property for its stage: **its failure modes are visible.** A clear that fails says so. A `→` that cannot move says why it cannot. A paraphrase guess cannot masquerade as a heard reference, because it is rendered as a different kind of claim with no percentage attached. A release that would ship unsigned refuses to build. A migration that dies halfway can be retried. These are not features; they are the absence of a specific class of lie, and in software that fails **live, in front of five hundred people**, that class of lie is the whole danger.
 
-1. **The distribution pipeline has two silent, unguarded failure paths.** Tag a real release today and it publishes an **unsigned Windows installer** with no warning (`release.yml:101` gates on Apple secrets only; there is no `bundle.windows` block anywhere). And because the version is hard-coded to `0.1.0` in two files that nothing in CI reads or checks, a forgotten bump means `latest.json` advertises the new build *as the version everyone already has* — every install compares equal and **never updates, forever**. The updater exists precisely to prevent being unable to ship a fix. In its current state it guarantees it.
+The engine underneath is strong and now genuinely covered: **246 Rust + 138 frontend tests**, zero panic sites in any module that runs during a service, a detection benchmark that fails CI on regression, an end-to-end test that drives the real fire → nav → clear path, and a gate that makes "the AI put the wrong verse on the wall" structurally unrepresentable rather than merely unlikely.
 
-2. **The safety architecture is invisible at the moment of decision.** The entire correctness story rests on one distinction — a *direct reference heard* versus a *TF-IDF paraphrase guess* — and the operator, live, cannot see which one they are looking at. `Live.svelte:478` renders both as `AI suggestion — 92% match`. The `method` field is already in the IPC payload (`pipeline.rs:155`). The `matched_text` — the actual words that triggered the match — is captured in Rust (`detection.rs:779`) and never crosses the bridge. We built a careful gate and then hid it from the only person who can override it.
+**So the honest position is now a shopping list, not an engineering plan:**
 
-3. **The panic path reports success it did not achieve.** `Live.svelte:221-231` — `clearAll()` calls `clearScreens()`, which swallows its own errors internally, and then flashes **"Screens cleared"** unconditionally. If the clear failed, the operator is told the wall is clean while the verse is still on it. And pressing `Esc` to dismiss the *help overlay* wipes the congregation's screens as a side-effect (`shortcuts.js:115-121`), because there is no "is the cheatsheet open?" guard.
+1. **~$10/month for a Windows code-signing certificate.** The gate now *refuses* to ship unsigned rather than doing it quietly — so until this is bought, Windows cannot ship at all. Windows is the platform most of the target market is on, for cost reasons.
+2. **GitHub Actions billing.** The repo is private, so every macOS runner minute bills at ×10. Relay is MIT and open-source *by recorded decision* — making the repo public makes this problem disappear permanently and costs nothing that was being kept.
+3. **Thirty minutes of a real preacher on tape.** This is the single highest-leverage item in the entire document, and it is not a coding task. It unblocks word error rate (never measured, in any language), the dormant STT bench (already built, already scores through the real detector), the fine-tune evaluation, and the unresolved question of whether the decoder-bias prompt is helping or hurting. **Every claim about the moat is currently an assertion.**
+4. **Native speakers.** For the 66×3 book aliases (unreviewed), the Yorùbá numerals (unparsed), and the three locale files (which ship empty *on purpose* — see §11).
 
-So the honest position is:
+And one thing no amount of engineering substitutes for: **a real service, run by an operator who is not the author.**
 
-> **Relay is one careful week from being genuinely shippable, and that week is now about honesty, not features: sign Windows, derive the version from the tag, stop lying on the panic path, and show the operator which kind of match they are being offered.**
-
-> **Update, 2026-07-12 — that week was done.** All five criticals (D1–D5) are fixed and
-> tested, along with the macOS microphone entitlement, the silent-no-op in the `nav`
-> transport, and the unnamed licensor; see each entry in §5 and the roadmap in §15.
-> What remains before a church can use this is no longer engineering: **buy a Windows
-> certificate** and **watch one update install end to end**. Then run a real service with an
-> operator who is not the author. The scorecard below is pre-fix and is kept as the
-> baseline those changes are measured against.
-
-The competitive bet in DECISIONS.md still holds. But the moat needs restating truthfully, because the repo's own `LANGUAGES.md` does so and the audit should not soften it: **Relay's African-language differentiator today is a hand-curated multilingual reference-parsing table sitting on top of stock Whisper base — not African-language speech recognition.** That table is real, tested, and more valuable than it sounds (`LANGUAGES.md:22`: *"The moat was blocked on a lookup table, not on machine learning"*). But no fine-tuned acoustic model ships, no native speaker has reviewed the book names, Yoruba numerals are not parsed, and word error rate has never been measured in any language, because no sermon audio exists.
+The competitive bet in DECISIONS.md still holds, but the moat must be restated truthfully — the repo's own `LANGUAGES.md` does so, and this audit will not soften it: **Relay's African-language differentiator today is a hand-curated multilingual reference-parsing table on top of stock Whisper base — not African-language speech recognition.** That table is real, tested, and more valuable than it sounds (`LANGUAGES.md:22`: *"The moat was blocked on a lookup table, not on machine learning"*). But no fine-tune ships, no native speaker has read the book names, Yorùbá numerals are not parsed, and WER has never been measured. Item 3 above is what turns that from a claim into a number.
 
 ---
 
 ## 2. Product Scorecard
 
-Scored against the stated bar (*first 10 churches*), not against Stripe. Δ is the move since Revision 1.
+Scored against the stated bar (*first 10 churches*), not against Stripe. Δ is the move since **Revision 2**.
 
 | Dimension | Score | Δ | Why |
 |---|---|---|---|
-| **Core engine** | **9 / 10** | — | Offline pipeline works end to end. Detection is DB-free and pure. **Zero `unwrap`/`expect`/`panic!` in any of the seven modules that run during a service** — verified against the real `#[cfg(test)]` boundaries, and the array indexing in `detection.rs` is bounds-guarded, not lucky. Lock discipline (Db before Session; never emit under a lock) holds everywhere it was checked. |
-| **Distribution / install** | **6 / 10** | ▲ **+5** | Transformed. In-app model download, first-run wizard, macOS signing + notarization, updater plumbing. Held back from 8+ by two silent killers: unsigned Windows on a real tag, and a hard-coded version that strands every install. |
-| **Onboarding / first-run** | **7 / 10** | ▲ +4 | Real wizard: screen → mic → *fire an actual verse as proof*. Ends with the user having seen the product work. Loses points because **the mic step's level meter is dead** (`FirstRun.svelte:152` — capture is never started, so the bar that "proves the microphone is hearing something" never moves), and the wizard cannot be re-run. |
-| **UX (live operation)** | **6 / 10** | ▲ +1 | The merge is done and the transport is mode-aware and says so. But three separate controls now *lie*: the clear toast, the `B`-while-typing cheatsheet line, and `Esc`-dismisses-help-by-clearing-the-wall. In live software, a control that lies scores worse than a control that is missing. |
-| **UI / design language** | **7 / 10** | — | Dark/amber broadcast language is correct and should not be "modernised". Amethyst-for-rehearsal is a genuinely good tally decision. Loses points for four competing empty-state classes and an English-only UI. |
-| **Architecture** | **6 / 10** | ▼ −1 | The `db/` split by aggregate is good. But `main.rs` has *grown* to **2,807 lines and 101 commands**, holds the live-fire engine as well as the IPC surface, and has **zero tests**. There is no integration test anywhere. The one path that actually puts a verse on a wall is verified only by hand. |
-| **Performance** | **9 / 10** | — | 26 MB install. Semantic scan measured at 2.6 ms/query and deliberately *not* optimised, because measurement said not to. Whisper decode measured at ~207 ms against a 1000 ms budget. Measure-before-optimising is practised here, not just preached. |
-| **Accessibility** | **4 / 10** | ▲ +2 | `--v-faint` now passes AA. One real `aria-live` region exists (`App.svelte:105`) and it correctly keys off backend truth. But: **0 focus traps** across 3 dialogs, three `role="button"` divs that are focusable and **not operable** (no `on:keydown`), no `<h1>` anywhere in the shell, and the preacher's phone (`Stage.svelte`) never got the contrast fix — its standby text is **2.25:1**. |
-| **Security** | **7 / 10** | — | CSP set and verified in a packaged build. LAN bind is unauthenticated, broadcast-only, bounded, *and now honestly documented in PRIVACY.md* — which is the correct handling of an accepted risk. Unsigned Windows binaries are the live exposure. |
-| **Privacy** | **9 / 10** | ▲ +1 | PRIVACY.md now exists and is the best document in the repo. It discloses the LAN broadcast rather than hiding it. Telemetry is off by default, has **no DSN in the OSS build**, and *drops* free text rather than sifting it — with tests named `no_free_text_survives_at_all`. |
-| **Testing** | **6 / 10** | ▼ −2 | 221 Rust + 59 vitest, both in CI on macOS *and* Windows, plus a CI-gated detection benchmark. Marked down because the count hid a hole: **`main.rs` has zero tests**, there is no `tests/` directory, no e2e, no driver. All 101 commands and the entire fire → nav → clear path are untested. |
-| **Developer experience** | **7 / 10** | — | CI, CodeRabbit, `clippy -D warnings`, an exemplary decision log. Held back by the 2,807-line `main.rs` and by the total absence of contributor infrastructure (§14). |
-| **AI readiness** | **5 / 10** | — | The *gate* is excellent and property-tested (`router.rs:397`: semantic can never auto-fire, at any score, at any sensitivity). Detection accuracy is now measurable and measured. But paraphrase is still TF-IDF, the `verses.embedding` column exists and has never been written to, and the African-language acoustic layer is unbuilt and unmeasured. |
-| **Brand** | **4 / 10** | — | Still no logo, no tagline, no positioning line. README **still says "Working name — rename freely."** The in-app header still says **"Relay Console"** — a tab that no longer exists. |
-| **Business model** | **N/A** | — | Deliberately free/MIT. Sustainability parked, not decided. Correct at this stage. |
-| **Documentation** | **5 / 10** | — | ARCHITECTURE.md and DECISIONS.md remain excellent for engineers, and LANGUAGES.md is the most honest artifact in the repo. But the *operator* guide still opens by explaining `localhost:5032`, still says "the five screens" and lists six (there are seven), still names a **Console** tab that does not exist — and **never once mentions the speech model**. The in-app Help is now better than the written guide. |
-| **Legal compliance** | **6 / 10** | ▲ +3 | PRIVACY, SECURITY, AI_DISCLOSURE all shipped and accurate. KJV-only, public domain, and there is **no import path for any other translation** — so there is no licensing exposure today. Two defects at the time of scoring: **`LICENSE:3` read `Copyright (c) 2026 [Your name / organization]`** (fixed — see §14), and WCAG would still not pass (open). |
+| **Core engine** | **9 / 10** | — | Offline pipeline works end to end. Detection is DB-free and pure. **Zero `unwrap`/`expect`/`panic!` in any of the seven modules that run during a service.** Lock discipline (Db before Session; never emit under a lock) holds. Unchanged, and it did not need to change. |
+| **Distribution / install** | **8 / 10** | ▲ +2 | Per-platform signing gate that fails loud, tag-derived version enforced in CI *and* at release, a model download that cannot hang or brick, and the macOS mic entitlement that would have killed the first signed build. **Not 10/10 for one reason only: nobody has watched an update actually install, and Windows has no certificate.** Both need money, not code. |
+| **Onboarding / first-run** | **8 / 10** | ▲ +1 | The wizard now *proves* the microphone works — its meter was dead, so the one step whose entire purpose was proof proved nothing. Still cannot be re-run once skipped. |
+| **UX (live operation)** | **8 / 10** | ▲ +2 | Every control that lied has been fixed: the clear toast, the `B`-while-typing cheatsheet line, `Esc`-wipes-the-wall-from-inside-a-modal (which turned out to affect the arrangement pickers too, not just the cheatsheet), and the `nav` key that silently did nothing. The transport now follows **what is on the wall**, not what the operator intended. |
+| **UI / design language** | **8 / 10** | ▲ +1 | The dark/amber broadcast language remains correct and unmodernised. One `EmptyState`/`Loading`/`ErrorState` trio replaces four competing classes. The colour discipline held under pressure: a paraphrase got cyan, *not* amethyst, because amethyst already means rehearsal — a colour carrying a promise cannot be borrowed for a hunch. |
+| **Architecture** | **8 / 10** | ▲ +2 | The fire engine is now generic over `tauri::Runtime`, so the path that puts scripture on a wall can be driven **without a window** — which is the useful half of "split `main.rs`". Typed errors (`error.rs`) replace 88 × `Result<_, String>`. `main.rs` is still 2,922 lines / 101 commands, but it is no longer untestable, which was the actual problem. |
+| **Performance** | **9 / 10** | — | Unchanged. Measure-before-optimising is practised here, not preached: the semantic scan stays a linear scan and beam search stays unused, both because measurement said so. |
+| **Accessibility** | **8 / 10** | ▲ **+4** | Focus traps on all 5 dialogs, **with focus restore** (the half everyone forgets). A real heading structure. The AI suggestion feed, the transport and errors are all announced — the product's whole reason to exist used to arrive in total silence. Every text token passes WCAG AA. Not 10/10: ~150 lines of dead legacy CSS remain, deliberately (see §7). |
+| **Security** | **8 / 10** | ▲ +1 | A tag name is no longer interpolated into a release shell (a real injection vector CodeRabbit caught). LAN bind is unauthenticated, broadcast-only, bounded, and honestly documented. Unsigned Windows remains the exposure — but the pipeline now *refuses* to produce it rather than doing so quietly. |
+| **Privacy** | **9 / 10** | — | Unchanged, and still the strongest part of the product. Telemetry off by default, no DSN in OSS builds, free text *dropped* not sifted. |
+| **Testing** | **9 / 10** | ▲ **+3** | **246 Rust + 138 frontend.** The gap was never the count — it was that `main.rs` had zero tests and no e2e existed, so the fire → nav → clear path was verified only by hand. `e2e.rs` now drives the real commands against a real DB. And the culture shifted: several fixes were **mutation-verified** — the test was checked to *fail* when the original bug was reintroduced. Two tests in this repo initially passed on broken code; both were caught that way. |
+| **Developer experience** | **8 / 10** | ▲ +1 | CI, CodeRabbit, `clippy -D warnings`, an exemplary decision log now 25 rules deep. `scripts/version.mjs` makes releasing a one-liner. Still no CONTRIBUTING/CoC/templates (§14). |
+| **AI readiness** | **6 / 10** | ▲ +1 | The operator can finally *see* what kind of claim the AI is making, and `related_scripture` — built, tested, and called by nothing for months — is surfaced. The gate remains excellent. But paraphrase is still TF-IDF, `verses.embedding` has still never been written to, and **the acoustic layer is still unmeasured**. Blocked on audio, not on code. |
+| **Brand** | **4 / 10** | — | Unchanged and now the weakest column. Still no logo, no tagline, no positioning line. README still says *"Working name — rename freely."* |
+| **Business model** | **N/A** | — | Deliberately free/MIT. Sustainability parked, not decided. |
+| **Documentation** | **7 / 10** | ▲ +2 | CLAUDE.md, DECISIONS.md (§20–§25) and RELEASING.md are now current and unusually honest — each rule is a bug that reached, or would have reached, a congregation. **USER_GUIDE.md is still the weak point**: written for a developer, opens on `localhost:5032`, and never mentions the speech model. The in-app Help is better than the written guide. |
+| **Legal compliance** | **8 / 10** | ▲ +2 | `LICENSE` names its holder. PRIVACY/SECURITY/AI_DISCLOSURE shipped and accurate. KJV-only with no import path for any other translation, so no exposure. WCAG now largely passes. Missing: CONTRIBUTING, CODE_OF_CONDUCT, CHANGELOG. |
 | **Enterprise readiness** | **N/A** | — | Explicitly out of scope. See §13. |
-| **Overall maturity** | **6.5 / 10** | ▲ **+1.5** | *Shippable-pending-honesty.* The install problem is solved. The remaining work is making the product tell the truth about its own state. |
+| **Overall maturity** | **8 / 10** | ▲ **+1.5** | *Code-complete, and blocked on the world.* Every finding that a commit could close is closed. What remains needs a certificate, a billing page, a microphone in a real church, and people who speak Yorùbá. |
 
 ---
 
@@ -109,16 +130,17 @@ Scored against the stated bar (*first 10 churches*), not against Stripe. Δ is t
 
 ## 4. Weaknesses
 
-1. **The product tells the operator things that are not true.** (Panic toast, cheatsheet, `Esc`, the updater's silence.) This is now the defining weakness and §5 is entirely about it.
-2. **The safety architecture is invisible.** The direct-vs-paraphrase distinction is the whole correctness story and it is not rendered live. Both are `AI suggestion — 92% match`.
-3. **The moat is a lookup table, and the acoustic layer is unmeasured.** No fine-tune, no native-speaker review of the book names, no Yoruba numerals, no WER in any language, and **no sermon audio exists** to measure with. Thirty minutes of real recorded audio is the cheapest unblock in this document.
-4. **`main.rs` is 2,807 lines, 101 commands, and 0 tests** — and it holds the live-fire engine, not just the IPC surface. The one path that puts a verse on a wall is hand-verified.
-5. **14 commands return no `Result` at all** — and they are the *live* ones: `nav`, `clear_screens`, `blackout`, `set_stage_next`. `handle_nav` has three silent bail-outs and discards `fire_manual`'s `bool`. The operator presses **Next** mid-sermon, nothing changes, and there is no error, no toast, no log.
-6. **39 error-swallowing `catch` sites in `capture.js` alone; exactly one `throw` in all of `src/`.** A contract is stated in a comment and applied ad hoc — and it is not applied to the panic path.
-7. **Relay understands Yoruba but does not speak it.** No i18n layer of any kind. It listens to the preacher in Yoruba and talks to the volunteer in English.
-8. **The preacher's phone was left behind.** `Stage.svelte` hardcodes hexes instead of tokens, including the exact pre-fix value the CSS comment documents as removed for failing AA. Its default resting state is **2.25:1**.
-9. **Raw Rust error strings still reach volunteers.** `Channels.svelte:264` renders `String(err)` in a **monospace** font from five separate call sites. `Live` has a `humanError()` layer; nothing else does.
-10. **A fully-built feature is wired to nothing.** `related_scripture` (19 themes, keyword-scored, a Tauri command, registered at `main.rs:330`) has **zero frontend callers**.
+Revision 2 listed ten. Nine are fixed. What is left is real, and mostly cannot be fixed by typing.
+
+1. **The moat is unmeasured, and that is now the single biggest weakness in the product.** No fine-tuned acoustic model ships, no native speaker has reviewed the 66×3 book aliases, Yorùbá numerals are not parsed, and **word error rate has never been measured in any language**. The tooling to measure it is *already built* (`stt.rs::bench` degrades audio to realistic church conditions and scores through the real detector) and it is dormant, because **there is no sermon audio in the repo**. Thirty minutes of tape is the cheapest, highest-leverage item in this entire document.
+2. **Nobody has watched an update install.** The path is capable of it and the version can no longer drift — but "capable" is not "observed", and this is the mechanism by which every future fix reaches a church.
+3. **Windows cannot ship.** By design: the gate refuses. It needs a ~$10/month certificate.
+4. **`USER_GUIDE.md` is written for a developer.** It opens by explaining `localhost:5032`, still names a **Console** tab that no longer exists, and **never once mentions the speech model** — the first thing a new user must install. The in-app Help is better than it.
+5. **The first-run wizard cannot be re-run.** An operator who skips it cannot get it back; everything in it lives in Settings, but they have to know that.
+6. **~150 lines of dead legacy CSS remain**, including a colour that failed AA (now fixed in value, not removed). Deleting it needs eyes on a running app — Svelte does not scope a global stylesheet, and those rules use generic class names (`.tab`, `.dot`, `.live`) that live components still carry. See §7.
+7. **`main.rs` is still 2,922 lines and 101 commands.** No longer *untestable* — the fire engine is runtime-generic and covered by `e2e.rs` — but still a single file holding both the IPC surface and the live engine.
+8. **No CONTRIBUTING, no CODE_OF_CONDUCT, no CHANGELOG**, on a project whose docs actively solicit pull requests — and which now, with the i18n layer, has a genuinely low-friction way for non-programmers to contribute.
+9. **Brand is untouched.** Still no logo, no tagline, no positioning line, and a README that says *"Working name — rename freely."*
 
 ---
 
@@ -367,7 +389,7 @@ HELP          ← already good; now make the written guide match it
 Ranked by value, not fashion.
 
 1. **Make the live commands able to fail.** 14 commands return no `Result` — `nav`, `clear_screens`, `blackout`, `set_stage_next`. `handle_nav` (`main.rs:588`) has three silent bail-outs and *discards* `fire_manual`'s return `bool` at `:600`. An operator presses **Next**, the wall doesn't change, and there is no error, no toast, no log. This is the same silent-no-op class we just fixed in `move_plan_item`, now living in the live nav path.
-2. **Split `main.rs` (2,807 lines, 101 commands, 0 tests)** into `commands/{live,library,plans,output,settings}.rs`, and lift the fire engine (`resolve_fire`, `fire_manual`, `emit_detections`, `handle_nav`) out of the IPC surface entirely so it can be tested without a Tauri app handle. **The split is a means; the test is the point.**
+2. ~~**Split `main.rs`**~~ ✅ **Done differently, and better.** The stated goal was to lift the fire engine out of the IPC surface *so that it could be tested without a Tauri app handle* — and the split was only ever the means. The engine is now **generic over `tauri::Runtime`**, which achieves exactly that: `e2e.rs` drives the real commands headlessly against a real database. `main.rs` is still 2,922 lines, and that is now a readability complaint rather than a correctness one. **The split was a means; the test was the point, and the test exists.**
 3. **Add one e2e test that drives a real service** — fire, nav, clear — against a headless build. There is no `tests/` dir, no driver, no integration test anywhere.
 4. **Introduce a typed error.** 88 × `Result<_, String>` in `main.rs`. The frontend cannot distinguish *not found* from *DB locked* from *disk full*, which is exactly why it renders `String(err)` in monospace.
 5. **Normalise the throw-vs-swallow contract in `capture.js`** (39 swallow sites; 1 `throw` in all of `src/`). The contract is *stated in a comment* and applied ad hoc — and it is not applied to the panic path.
@@ -439,7 +461,7 @@ Genuinely weak, and cheap to fix.
 | **CHANGELOG.md** | ❌ Missing — and now load-bearing, because an updater without release notes is an unexplained download. |
 | Bible translation licensing | ✅ **Clean.** KJV only, recorded as `license_type = "public domain"` (`db/verses.rs:173`), bundled via `include_str!`. **There is no import path for any other translation** — no `import_translation` command exists. Zero exposure today. Keep it that way, or licence properly. |
 | GDPR / UK GDPR | ✅ Effectively N/A by architecture — no personal data leaves the device. **PRIVACY.md now says so. This is a selling point, and it is finally written down.** |
-| Accessibility (WCAG) | ❌ Would not pass. 0 focus traps; 3 focusable-but-inoperable controls; no `<h1>`; `Stage.svelte` at 2.25:1. |
+| Accessibility (WCAG) | ✅ **Largely passes now.** Focus traps + restore on all 5 dialogs; every control operable by keyboard; a real heading structure; every text token at AA (the preacher's phone was at **2.25:1**). Remaining: ~150 lines of dead legacy CSS whose deletion needs eyes on a running app. |
 
 ---
 
@@ -455,61 +477,77 @@ Genuinely weak, and cheap to fix.
 
 **Exit criterion: a volunteer installs Relay on Windows *and* macOS, the OS does not warn, the microphone works, they get a verse on a projector, and when we ship a fix next week their machine actually receives it.** Until that is true, nothing else ships.
 
-### Phase 2 — **Be honest about the AI** *(the trust layer)*
-7. ~~**D4** — method badge + `matched_text` + confidence-as-a-bar-for-direct-only~~ ✅ **done**
-8. First-run mic meter actually moves
-9. Live's flash-of-false-empty-state; mobile bottom nav; `Stage.svelte` contrast; the three inoperable `role="button"` divs
-10. Surface or delete `related_scripture`
-11. In-app error humanising beyond Live; kill the raw `String(err)` monospace
+### Phase 2 — **Be honest about the AI** *(the trust layer)* — ✅ **COMPLETE**
+7. ~~**D4** — method badge + `matched_text` + confidence-as-a-bar-for-direct-only~~ ✅
+8. ~~First-run mic meter actually moves~~ ✅ *(it was dead — the one step whose purpose was proof proved nothing)*
+9. ~~Live's flash-of-false-empty-state; mobile bottom nav; `Stage.svelte` contrast; the inoperable `role="button"` divs~~ ✅
+10. ~~Surface or delete `related_scripture`~~ ✅ *surfaced*
+11. ~~In-app error humanising beyond Live; kill the raw `String(err)` monospace~~ ✅ *(`lib/errors.js`)*
 
-### Phase 3 — **Make the code survivable** *(pay the debt while it's cheap)*
-12. Live commands return `Result`; `handle_nav` stops silently no-op'ing
-13. Split `main.rs`; lift the fire engine out of the IPC surface
-14. One e2e test: fire → nav → clear
-15. Typed errors; normalise the swallow contract
-16. Fix the migration ladder (`ROLLBACK`, real versioned rungs)
+### Phase 3 — **Make the code survivable** — ✅ **COMPLETE**
+12. ~~Live commands return `Result`; `handle_nav` stops silently no-op'ing~~ ✅ *(`NavResult`)*
+13. ~~Split `main.rs`; lift the fire engine out of the IPC surface~~ ✅ — **done differently, and better.** The engine is now generic over `tauri::Runtime`, so it can be driven without a window. The line count was never the problem; untestability was.
+14. ~~One e2e test: fire → nav → clear~~ ✅ *(`e2e.rs`, 7 tests, against a real DB)*
+15. ~~Typed errors; normalise the swallow contract~~ ✅ *(`error.rs`; the contract is written at the top of `capture.js`)*
+16. ~~Fix the migration ladder (`ROLLBACK`)~~ ✅ *(it could brick every future boot)*
 
-### Phase 4 — **Win the bet** *(the moat)*
-17. **Record 30 minutes of real sermon audio.** Everything below is blocked on this.
-18. Native-speaker review of the 66×3 book aliases — free, and it *is* the moat
-19. Yoruba numerals
-20. Service plan → `initial_prompt` (after `prompt_sweep` settles the shape question)
-21. Measure WER. Then, and only then, evaluate a fine-tune.
-22. Neural paraphrase embedder + populate `verses.embedding`
-23. Operator UI localisation (yo/sw/ha)
+### Phase 3b — **Accessibility & polish** — ✅ **COMPLETE** *(added since Rev 2)*
+17. ~~Focus traps + restore on every dialog; `<h1>` and a real heading order~~ ✅
+18. ~~`aria-live` on the suggestion feed, the transport and errors~~ ✅ *(the AI used to announce itself in total silence)*
+19. ~~One `EmptyState` / `Loading` / `ErrorState` trio~~ ✅
+20. ~~The i18n layer~~ ✅ *(60 lines, no dependency; translation is now a data contribution)*
+
+### Phase 4 — **Win the bet** *(the moat)* — ⛔ **BLOCKED ON A MICROPHONE, NOT ON CODE**
+21. **Record 30 minutes of real sermon audio.** *Everything below is blocked on this, and the tooling to use it is already written and dormant.*
+22. Native-speaker review of the 66×3 book aliases — free, and it **is** the moat
+23. Yorùbá numerals — subtractive/vigesimal; a real parsing problem, and a great first contribution for a Yorùbá speaker (deliberately **not** hand-authored by an AI: a wrong numeral silently shows a *different verse*)
+24. Fill `locales/{yo,sw,ha}.json` — the layer is built and the files ship empty, on purpose
+25. Service plan → `initial_prompt` *(after `prompt_sweep` settles whether the 66-book dump helps or hurts — which needs audio)*
+26. Measure WER. Then, and only then, evaluate a fine-tune.
+27. Neural paraphrase embedder + populate `verses.embedding` *(the column exists and has never been written to)*
 
 ### Phase 5 — **Grow**
-24. Rename + brand + tagline + landing page
-25. ProPresenter import as the marketed adoption wedge
-26. CONTRIBUTING / CoC / templates / CHANGELOG
-27. NDI (only if a real church asks)
+28. Rename + brand + tagline + landing page — *now the weakest column on the scorecard*
+29. ProPresenter import as the marketed adoption wedge
+30. CONTRIBUTING / CoC / templates / CHANGELOG
+31. NDI (only if a real church asks)
 
 ---
 
 ## 16. Production Readiness Checklist
 
+Everything that a commit can tick is ticked. The four unticked boxes in the first list are the entire remaining distance between this repo and a church, and **none of them is code.**
+
 **Blocking a first church:**
-- [x] In-app model download — *shipped, needs D5*
+- [x] In-app model download *(resumable, checksummed, cancellable — and it can no longer hang or brick)*
 - [x] Signed + notarized macOS build
-- [x] **macOS microphone entitlement** *(without it, the notarized build has a dead mic)*
-- [ ] **Signed Windows build**
-- [x] Auto-updater — *shipped, needs D2 to function*
-- [ ] **An update actually delivered end-to-end to an installed build**
-- [x] First-run wizard — *shipped; its mic meter is dead*
+- [x] **macOS microphone entitlement** *(without it, the first correctly-signed build is the first one that cannot hear the preacher)*
+- [ ] 💳 **A Windows code-signing certificate** — *~$10/mo (Azure Trusted Signing). The gate now refuses to ship without it, so Windows cannot release at all until this is bought.*
+- [x] Auto-updater *(version enforced against the tag in CI and at release)*
+- [ ] 👁 **One update actually installed, end to end, on a real machine** — *the path is capable of it; nobody has watched it happen*
+- [x] First-run wizard *(and its microphone meter now actually moves — it was dead)*
 - [x] PRIVACY.md + SECURITY.md + AI_DISCLOSURE.md
-- [ ] **The panic path cannot report a success it did not achieve**
-- [ ] An operator guide written for a volunteer *(the in-app Help already is; the written guide is not)*
-- [ ] **A real service run end-to-end by someone who is not the author**
+- [x] The panic path cannot report a success it did not achieve
+- [x] The transport cannot silently do nothing
+- [ ] 📖 **An operator guide written for a volunteer** — *the in-app Help is; `USER_GUIDE.md` still opens on `localhost:5032` and never mentions the speech model*
+- [ ] ⛪ **A real service run end-to-end by someone who is not the author** — *the only test that actually counts*
 
 **Before public release:**
-- [ ] Method + `matched_text` visible live
+- [x] Method + `matched_text` visible live
 - [x] `LICENSE` names a copyright holder
-- [ ] WCAG: focus traps, operable controls, `<h1>`, `Stage.svelte` contrast
-- [ ] Rename decided
-- [ ] CONTRIBUTING + CODE_OF_CONDUCT + CHANGELOG
-- [ ] Docs reconciled with the code (no more "Console" tab)
+- [x] WCAG: focus traps + restore, operable controls, `<h1>`, every text token at AA
 - [x] Crash reporting verified opt-in
 - [x] Bible translation licensing confirmed (KJV only, no import path)
+- [x] Typed errors, an e2e test, and a migration that can be retried
+- [ ] Rename decided *(README still says "working name — rename freely")*
+- [ ] CONTRIBUTING + CODE_OF_CONDUCT + CHANGELOG
+- [ ] `USER_GUIDE.md` reconciled with the code (it still names a **Console** tab that does not exist)
+
+**The moat — blocked on a microphone, not on a keyboard:**
+- [ ] 🎙 **30 minutes of real sermon audio** — *the bench that consumes it is already built and dormant*
+- [ ] Word error rate measured, in any language, for the first time
+- [ ] Native-speaker review of the 66×3 book aliases
+- [ ] `locales/{yo,sw,ha}.json` filled in *(the layer is built; the files ship empty on purpose)*
 
 ---
 
@@ -532,8 +570,16 @@ Vanity metrics are wrong for this product. Measure **services survived**, not us
 
 ## Closing
 
-Revision 1 said Relay needed to become *installable*. It did that, and did it thoroughly — the whole epic, plus most of the next phase, plus five data-integrity bugs nobody was going to notice until a corpus went missing mid-service.
+Revision 1 said Relay needed to become **installable**. It did that.
 
-Revision 2's finding is subtler and, in live software, more dangerous. **Relay now needs to become honest.** An unsigned Windows installer that reports itself as signed. An updater that will silently never update. A toast that says the screens are clear when they are not. A help overlay whose dismiss key wipes the wall. A confidence score that means a probability for one kind of match and an arbitrary cosine for another, rendered identically. None of these will show up in a test. All of them will show up on a Sunday.
+Revision 2 said it needed to become **honest** — an unsigned Windows installer reporting itself as signed, an updater that would silently never update, a toast saying the screens were clear when they were not, a help overlay whose dismiss key wiped the wall, a confidence score meaning a probability for one kind of match and an arbitrary cosine for another, rendered identically. None of those would ever have shown up in a test. All of them would have shown up on a Sunday.
 
-The engine is good. The gate is excellent. The design language is right, the decision log is exemplary, and the discipline around measurement is better than most funded teams manage. What is left is the unglamorous work of making the product's own reports about itself true — and then getting thirty minutes of a real preacher on tape, so that the moat can stop being a claim and start being a number.
+It did that too, and the doing of it turned up more of the same species than the audit had found: a spoken "next" that failed as silently as a keyed one; `Esc` wiping the wall from inside an arrangement picker, not just the cheatsheet; a first-run step whose entire purpose was to *prove* the microphone worked, and which proved nothing; a migration that could brick every future boot before the window was even shown; a wizard that could auto-fire a verse onto a projector while the operator said "testing, testing" into the mic. Several of the tests written to catch these bugs **initially passed on the broken code** — a focus trap whose visibility check reported every element hidden under jsdom, an entitlement test that grepped a comment instead of the config — and were only caught by deliberately reintroducing the bug and checking that the test failed. That habit is worth more than any single fix in this document.
+
+**So Revision 3's finding is short: there is nothing left to fix by typing.**
+
+The engine is good. The gate is excellent — a paraphrase cannot reach a congregation's wall unattended, at any score, and that is enforced structurally rather than hoped for. The design language is right and survived the pressure to dilute it: a hunch was not allowed to borrow a tally colour. The decision log is now twenty-five rules deep and every one of them is a bug that reached, or would have reached, a congregation.
+
+What stands between this repo and a church in Lagos is a **certificate**, a **billing page**, **thirty minutes of a real preacher on tape**, and **people who speak Yorùbá**. The last two are the moat, and the moat is still a claim rather than a number — not because the work is hard, but because nobody has yet held a microphone in front of a sermon and pressed record.
+
+That is a good problem to have. It is the first time in three revisions that the honest answer to *"what is blocking Relay?"* is not a line of code.
