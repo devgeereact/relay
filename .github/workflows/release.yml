@@ -120,11 +120,18 @@ jobs:
           set -euo pipefail
 
           # A tag name is attacker-influenceable in principle, so it is read from the
-          # ENVIRONMENT ($GITHUB_REF_NAME) and never interpolated as ${{ }} into this
-          # shell. A `${{ github.ref_name }}` inside a run: block is substituted before
-          # bash ever sees it, so a tag containing shell metacharacters would be parsed
-          # as code. `github.ref_type` below is safe — it can only ever be "tag" or
-          # "branch" — but the tag name itself is not.
+          # ENVIRONMENT ($GITHUB_REF_NAME) and never through an Actions expression.
+          # An expression inside a run: block is substituted before bash ever sees it,
+          # so a tag containing shell metacharacters would be parsed as code.
+          # github.ref_type below is safe — it can only ever be "tag" or "branch" —
+          # but the tag name itself is not.
+          #
+          # NOTE: do not write an Actions expression in these comments, even to
+          # illustrate one. Actions evaluates expressions EVERYWHERE in the file,
+          # comments inside run: blocks included, so an empty one is a parse error —
+          # the whole workflow becomes invalid, GitHub cannot even apply the `on:`
+          # filter, and every push gets a zero-job "startup failure" instead. This
+          # comment did exactly that.
 
           # The updater is signed with a minisign key. Without it, an update cannot be
           # verified, and Relay would either refuse every update or — worse, if we
