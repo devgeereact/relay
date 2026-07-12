@@ -482,6 +482,27 @@ export async function searchScripture(query) {
   }
 }
 
+/**
+ * Topical cross-references for what is being preached right now.
+ *
+ * `{ theme, refs: [...] }`, or null when no theme is clearly indicated — which is most
+ * of the time, and is the correct answer. Group 2 (swallows): this is an OFFER, not a
+ * detection. If it fails, the operator loses nothing they can see.
+ *
+ * The backend for this (19 themes, keyword-scored, a registered Tauri command) has
+ * existed and been fully tested for months with ZERO frontend callers. Built code that
+ * nothing calls rots: it drifts out of step with the payloads around it and nobody
+ * finds out, because nothing exercises it.
+ */
+export async function relatedScripture(text, exclude = null) {
+  try {
+    const call = await invoke();
+    return await call('related_scripture', { text, exclude });
+  } catch {
+    return null;
+  }
+}
+
 /** All service plans, newest first. */
 export async function listPlans() {
   try {

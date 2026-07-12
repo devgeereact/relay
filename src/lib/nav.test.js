@@ -19,7 +19,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 const invoke = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...a) => invoke(...a) }));
 
-const { navVerse, navNotice } = await import('./stores/capture.js');
+const { navVerse, navNotice, relatedScripture } = await import('./stores/capture.js');
 
 describe('nav reports what it actually did', () => {
   // Block body, NOT `beforeEach(() => invoke.mockReset())`. mockReset() returns the
@@ -94,5 +94,43 @@ describe('every outcome gets the right sentence', () => {
     // A detection card that throws takes the console down mid-service.
     expect(() => navNotice(undefined)).not.toThrow();
     expect(navNotice({ kind: 'something_new' })).toBe(null);
+  });
+});
+
+// ── related scripture ────────────────────────────────────────────────────────
+//
+// 19 themes, keyword-scored, a registered Tauri command — and for months, ZERO
+// frontend callers. Built code that nothing calls rots: it drifts out of step with the
+// payloads around it and nobody finds out, because nothing exercises it.
+//
+// It is now in the Intelligence Feed, and it is GROUP 2 of the throw-vs-swallow
+// contract: an offer, not a detection. Nobody said these references out loud.
+describe('related scripture', () => {
+  beforeEach(() => {
+    invoke.mockReset();
+  });
+
+  it('asks the backend with the text and the verse to exclude', async () => {
+    invoke.mockResolvedValue({ theme: 'Fear & Anxiety', refs: [] });
+    await relatedScripture('do not be afraid', 'John 3:16');
+    expect(invoke).toHaveBeenCalledWith('related_scripture', {
+      text: 'do not be afraid',
+      exclude: 'John 3:16',
+    });
+  });
+
+  // "No theme is clearly indicated" is the correct answer most of the time, and it
+  // must be indistinguishable from a quiet success — not an error the operator sees.
+  it('null means "nothing to suggest", which is the usual case', async () => {
+    invoke.mockResolvedValue(null);
+    expect(await relatedScripture('the weather today')).toBe(null);
+  });
+
+  // Group 2: it SWALLOWS. This is an offer. If it fails, the operator loses nothing
+  // they can see, and an error box for a suggestion nobody asked for is noise in the
+  // one place that must stay readable.
+  it('swallows a failure rather than shouting about a suggestion nobody asked for', async () => {
+    invoke.mockRejectedValue(new Error('db locked'));
+    expect(await relatedScripture('grace')).toBe(null);
   });
 });

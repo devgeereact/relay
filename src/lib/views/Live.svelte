@@ -59,6 +59,7 @@
     setDetection,
     startCapture,
     stopCapture,
+    relatedScripture,
     navVerse,
     navNotice,
     navBlocked,
@@ -201,6 +202,7 @@
     unsubNav?.();
     clearTimeout(cdArmT);
     clearTimeout(liveMsgT);
+    clearTimeout(relatedT); // a pending poll must not fire into a destroyed view
   });
 
   // ── the transport ────────────────────────────────────────────────────────
@@ -330,6 +332,52 @@
     if (transcriptEl) transcriptEl.scrollTop = transcriptEl.scrollHeight;
   });
   $: hasTranscript = $transcript.finals.length > 0 || $transcript.partial.length > 0;
+
+  // ── related scripture ────────────────────────────────────────────────────
+  //
+  // Topical cross-references for what is being preached. NOT a detection — nobody said
+  // these references out loud. It is a keyword match against 19 themes, which is the
+  // weakest evidence anywhere in this product, and it is offered on that basis: the
+  // operator may find it useful, and it never touches a screen unless they choose it.
+  //
+  // Pull-based and debounced. The transcript updates several times a second and each
+  // call does a DB lookup per reference; polling it on every keystroke of speech would
+  // be a database query storm for a feature nobody asked for.
+  let related = null;
+  let relatedT;
+  let lastRelatedFor = '';
+
+  // The window we ask about: the tail of the sermon, not the whole thing. A theme is
+  // about what is being said NOW, and an hour of transcript matches everything.
+  $: relatedWindow = $transcript.finals.slice(-3).join(' ').slice(-400);
+
+  $: {
+    const w = relatedWindow;
+    const ex = $live?.reference ?? null;
+    clearTimeout(relatedT);
+    if (w.length > 40 && $capture.detectionOn) {
+      relatedT = setTimeout(async () => {
+        const key = w + '|' + (ex ?? '');
+        if (key === lastRelatedFor) return; // nothing new was said
+        lastRelatedFor = key;
+        related = await relatedScripture(w, ex);
+      }, 1500);
+    } else {
+      related = null;
+    }
+  }
+
+  /** Related refs are an OFFER. Putting one on screen is the operator's decision, and
+   *  it goes through the same manual path — recorded as a human's fire, never the AI's
+   *  (the self-calibrating router learns from that column). */
+  async function pushRelated(reference) {
+    try {
+      await manualFire(reference);
+      flash(`Now live: ${reference}`);
+    } catch (e) {
+      flash(humanError(e));
+    }
+  }
 
   // ── manual fire + messages ───────────────────────────────────────────────
   let searchEl;
@@ -657,6 +705,38 @@
         {:else}
           <div class="empty">
             {#if !$capture.detectionOn}Detection is off — manual override still fires.{:else}No suggestions yet.{/if}
+          </div>
+        {/if}
+
+        <!-- RELATED SCRIPTURE. Deliberately the quietest thing in this feed.
+             ────────────────────────────────────────────────────────────────
+             Nobody SAID these references. They are a keyword match against 19 themes
+             — the weakest evidence anywhere in the product, weaker even than the
+             TF-IDF paraphrase above, which at least keys on the preacher's own words.
+
+             So it gets no tally colour and no confidence of any kind. Amber means ON
+             AIR, cyan means "a paraphrase guess", amethyst means rehearsal — a colour
+             that already carries a promise cannot be borrowed for a hunch. This is
+             grey, it says out loud that nobody said it, and it does nothing until the
+             operator clicks it. -->
+        {#if related?.refs?.length}
+          <div class="rel">
+            <div class="rel-top">
+              <span class="rel-lbl">Related · {related.theme}</span>
+              <span class="rel-note">nobody said these — a topical suggestion</span>
+            </div>
+            <div class="rel-chips">
+              {#each related.refs as r (r.reference)}
+                <button
+                  class="rel-chip r-focus"
+                  on:click={() => pushRelated(r.reference)}
+                  disabled={!$capture.available || !r.text}
+                  title={r.text ?? 'Not in your Bible text'}
+                >
+                  {r.reference}
+                </button>
+              {/each}
+            </div>
           </div>
         {/if}
       </div>
@@ -996,6 +1076,21 @@
   .xref-verse{font-family:var(--f-serif);font-style:italic;font-size:12.5px;color:var(--s-onvar);
     margin-top:4px;line-height:1.5}
   .xref-acts{display:flex;gap:7px;margin-top:11px}
+  /* Related scripture — the quietest block in the feed, on purpose. No tally colour,
+     no glow, no confidence: nobody said these references out loud. */
+  .rel{border-top:1px solid var(--hair);padding-top:13px;margin-top:2px}
+  .rel-top{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;margin-bottom:9px}
+  .rel-lbl{font-family:var(--f-mono);font-size:9px;font-weight:700;letter-spacing:.16em;
+    text-transform:uppercase;color:var(--s-onvar)}
+  .rel-note{font-size:10.5px;color:var(--s-outline)}
+  .rel-chips{display:flex;flex-wrap:wrap;gap:7px}
+  .rel-chip{font-family:var(--f-mono);font-size:11.5px;color:var(--s-onvar);
+    background:rgba(255,255,255,.04);border:1px solid var(--hair);border-radius:999px;
+    padding:5px 11px;cursor:pointer}
+  .rel-chip:hover:not(:disabled){color:var(--s-on);border-color:var(--s-outline);
+    background:rgba(255,255,255,.07)}
+  .rel-chip:disabled{opacity:.45;cursor:default}
+
   .empty{color:var(--s-outline);font-size:12.5px;line-height:1.6;padding:10px 2px}
   .empty b{color:var(--s-onvar)}
 
