@@ -409,3 +409,16 @@ body{ overflow:hidden; text-rendering:optimizeLegibility; -moz-osx-font-smoothin
 .cheat-foot{ margin:16px 0 0; font-size:12px; color:var(--v-dim); line-height:1.6; }
 .cheat-foot kbd{ display:inline-block; font-family:var(--f-mono); font-size:10px; padding:3px 5px;
   border-radius:4px; background:var(--v-surf3); border:1px solid var(--v-line2); color:var(--v-txt); }
+
+/* ===== Update banner =================================================
+   Sits at rest only. updater.js will not even check while the mic is live —
+   an updater that interrupts a sermon is worse than no updater at all. */
+.upd{ position:fixed; left:50%; transform:translateX(-50%); bottom:18px; z-index:800;
+  display:flex; align-items:center; gap:14px; max-width:min(760px,calc(100vw - 32px));
+  background:var(--v-surf); border:1px solid rgba(245,166,35,.34); border-radius:12px;
+  padding:12px 16px; box-shadow:0 14px 40px rgba(0,0,0,.45); }
+.upd-t{ display:flex; flex-direction:column; gap:2px; }
+.upd-t b{ font-size:13px; color:var(--v-amber2); }
+.upd-t span{ font-size:12px; color:var(--v-dim); line-height:1.5; }
+.upd-pct{ font-size:12px; color:var(--v-txt); }
+.upd.err{ border-color:rgba(255,157,148,.35); color:var(--v-txt); font-size:12.5px; line-height:1.55; }

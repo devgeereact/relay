@@ -31,6 +31,11 @@ sentry = { version = "0.34", default-features = false, features = ["backtrace", 
 # 148 MB fetch on a church's connection WILL be interrupted.
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream"] }
 sha2 = "0.10"                 # verify the model we downloaded is the model we meant
+# Auto-update. Without this there is no way to deliver a fix to a church that has
+# already installed Relay — and this is software that fails LIVE, in front of a
+# congregation. Updates are signed; see docs/RELEASING.md.
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"   # relaunch after an update is installed
 
 # Added in later build phases — uncomment as each phase lands (see PROMPT.md):
 # ndi-sdk-sys or equivalent  # Phase 10 — NDI render target (evaluate available crates, may need custom FFI bindings)

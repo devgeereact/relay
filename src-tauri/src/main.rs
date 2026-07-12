@@ -91,6 +91,12 @@ fn main() {
     let conn = db::open().expect("failed to open Relay database");
 
     tauri::Builder::default()
+        // Auto-update. Without it there is no way to deliver a fix to a church
+        // that already installed Relay — and this is software that fails LIVE.
+        // Update checks are driven from the frontend and are NEVER run during a
+        // service (see src/lib/updater.js).
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .manage(Db(Mutex::new(conn)))
         .manage(Audio::default())
         .manage(Routing::default())

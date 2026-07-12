@@ -4,6 +4,14 @@
   import { installShortcuts, cheatsheet, SHORTCUTS } from './lib/shortcuts.js';
   import { installLeaveGuard } from './lib/crash.js';
   import { session, setSession } from './lib/session.js';
+  import {
+    checkForUpdate,
+    installUpdate,
+    dismissUpdate,
+    updateAvailable,
+    updateProgress,
+    updateError,
+  } from './lib/updater.js';
   import Console from './lib/views/Console.svelte';
   import Channels from './lib/views/Channels.svelte';
   import Templates from './lib/views/Templates.svelte';
@@ -66,6 +74,8 @@
     } catch {
       engineOnline = false;
     }
+    // Check once, on launch, while nothing is live. Never during a service.
+    checkForUpdate();
   });
   onDestroy(() => {
     clearInterval(timer);
@@ -137,6 +147,26 @@
       </div>
     </footer>
   </div>
+
+  <!-- Update banner. Only ever appears at rest — updater.js refuses to even look
+       while the microphone is live, and refuses to install if it becomes live. -->
+  {#if $updateAvailable && !$capturing}
+    <div class="upd">
+      <div class="upd-t">
+        <b>Relay {$updateAvailable.version} is available.</b>
+        <span>Installing restarts the app, so do it before the service — not during.</span>
+      </div>
+      {#if $updateProgress !== null}
+        <span class="r-mono upd-pct">{$updateProgress}%</span>
+      {:else}
+        <button class="r-btn amber sm" on:click={installUpdate}>Update now</button>
+        <button class="r-btn ghost sm" on:click={dismissUpdate}>Not now</button>
+      {/if}
+    </div>
+  {/if}
+  {#if $updateError}
+    <div class="upd err">{$updateError}</div>
+  {/if}
 
   <!-- Shortcut cheatsheet (?) — the bindings are read from the same table the
        handler uses, so help can never drift out of sync with reality. -->
