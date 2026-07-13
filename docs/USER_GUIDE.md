@@ -1,141 +1,127 @@
-# Relay — Operator Guide
+# Running a service with Relay
 
-How to run a service with Relay. For how it's built see [ARCHITECTURE.md](ARCHITECTURE.md).
+For the person in the booth. No technical knowledge assumed — if a sentence here needs you to know what a "localhost" is, it is a bug in this page and not in you.
 
-> **The app is a native window.** `localhost:5032` in a plain browser is a dead console — only the desktop app window has the engine attached. Browser sources (OBS/kiosk/phone) use the *output* and *stage* pages, which work anywhere on the LAN.
-
----
-
-## The five screens
-
-The left nav switches between: **Console**, **Library**, **Planner**, **Channels**, **Templates**, **Settings**. Operator override is always one action away.
+If you are looking for how Relay is *built*, that is [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
-## 1. Console — drive the live service
+## The 10-minute setup, once
 
-The default screen. What you use during a sermon.
+You only do this the first time.
 
-- **Listen** — turns the mic on. With **Detection** also on, Relay auto-drives from what it hears.
-- **Live transcript** — a rolling view of what's being said.
-- **Suggestions** — mid-confidence scripture matches appear as cards. **Confirm** pushes one live; **Dismiss** drops it. High-confidence matches fire automatically (configurable).
-- **Manual override** — type any reference (`John 3:16`, `Ps 23`, `rom 8 1`) and fire it instantly. Always available, even with detection off.
-- **Prev / Next** — step through a passage (also driven by "next"/"back" spoken aloud).
-- **Monitors** — up to 4 live output previews (the real thing, same renderer as the screens).
-- **Control bar:**
-  - **Clear all** (`Esc`) — clears every screen to the template background (transparent templates key out for OBS).
-  - **Black** — opaque blackout (kills the screen entirely); next content/clear cancels it.
-  - **Countdown** — set minutes, click **Start** → it arms ("Confirm?") → click again to fire a pre-service countdown on every screen. One runs at a time; **Clear all** to start another.
-  - **Open output** — opens a fullscreen output window.
+### 1. Install it, and open it
 
----
+Download the installer for your computer and run it. Open Relay. It will walk you through the next three steps itself — this page is here in case you skipped the wizard or want to change something later.
 
-## 2. Library — your content catalog
+> **If your computer warns you** that Relay is "damaged", "unrecognised", or from an "unknown developer" — that means you have an unsigned test build, not a real release. Ask whoever gave it to you. Do not fight the warning.
 
-Sub-tabs across the top. Two constant actions:
+### 2. Download the speech model — Relay cannot hear without it
 
-- **Import** (any file, sorted automatically): `.pro`/`.proplaylist`/text → Lyrics (with a pre-save review), images/video → Media, PDF/PPTX → Media documents.
-- **＋ New** menu: **Paste / draft song**, **Save scripture**, **Draft announcement**.
+**This is the one step nobody expects, and Relay does nothing useful until it is done.**
 
-### Scripture
-Verses you've **saved** (not the whole Bible). Search a word, phrase, or paraphrase — the matching verse shows immediately with suggestions ("the lord is my shepherd" → Psalm 23:1). Save the ones you want on hand.
+Relay listens to the sermon *on your computer* — it does not send audio anywhere, and it does not need the internet during a service. But to do that, it needs a **speech model**: a single file, about **148 MB**, downloaded once.
 
-### Lyrics
-Your song catalog.
-- Click a song → the **Song Editor**: a ProPresenter-style **slide-flow grid**, colour-coded by section (Verse/Chorus/Bridge…). Edit text/tag/order, **drag to reorder**, **Shift+Enter** (or the Split button) splits a slide at the cursor. Save replaces the song's sections everywhere in real time.
-- **Arrangements** — named play-orders of the sections (e.g. "Sunday AM" = `V1 C V2 C Bridge C`). Build one in the editor's Arrangements bar (click sections to append, reorder, save). "Standard" (all sections in order) is always available.
-- **＋ Plan** on a song card adds it to a service plan; if it has arrangements you pick which one.
+Go to **Settings → Speech**, and press **Download**. It shows a progress bar. You can cancel it and it will pick up where it left off next time.
 
-### Media
-Imported images, video, and documents. **▶ To output** fires an image/video full-screen as a background. Two-step **delete**.
+Until you do this, Relay still works as a *manual* tool — you can type a verse and put it on the screen, run a service plan, everything except listening. It will tell you so, plainly, rather than pretending.
 
-### Announcements
-Notice slides (title + body). Draft/edit inline, **▶ To output** to fire, edits propagate to any plan that uses them.
+Do this **before** Sunday. It is 148 MB over the church wifi.
 
-### History
-Past service sessions — what was said, detected, and fired.
+### 3. Point it at the projector
+
+**Settings → Output**, or the **Channels** tab.
+
+Relay treats every screen as a *channel* — the main projector, a stage monitor, an OBS stream, the preacher's phone. Each one can look different.
+
+For a projector plugged into your laptop: pick the display, press **Open**. A fullscreen window appears on it.
+
+### 4. Choose the microphone
+
+**Settings → Audio.** Pick the input. **A bar should move when someone speaks.**
+
+If the bar does not move, Relay cannot hear, and nothing else on this page will work. Fix that first.
+
+> **Use the sound desk feed if you can**, not the laptop's built-in mic. The laptop mic mostly hears the room; the desk feed hears the preacher.
 
 ---
 
-## 3. Planner — build and run a service
+## The Sunday morning path
 
-A **Mission-Control** editor: the plan's cues on the left, the selected cue's full slide flow in the centre, and the live output on all four styled monitors on the right.
+### Before the service
 
-- **Plans list** — create, **duplicate** (clone last week's order as a starting point), delete.
-- **Add** — one search across **scripture, songs, media, announcements**, plus a **Countdown** quick-add (set minutes → ＋ Add). Songs with arrangements show the picker.
-- **Cues** — drag to reorder (or ↑/↓), remove. Each cue can carry a **stage note** (e.g. "hold for prayer") — shown only on the stage/confidence monitor, never on the congregation screen.
-- **Run it** — click a slide to fire it live; **transport** (Prev/Next/Clear) and keyboard (→/PageDown/Space = next, ←/PageUp = prev, Esc = clear) drive the service. The four monitors show exactly what each styled screen is showing. The **LIVE** pill marks what's on screen; "up next" is pushed to the stage monitor.
+**Build a plan** (optional) — the **Planner** tab. Songs, scripture, announcements, a countdown. This is a Tuesday job, not a Sunday one. **Nothing in the Planner can reach a screen** — it is a workbench, deliberately.
 
-Every cue type — scripture, song, media, announcement, countdown — creates, plans, reorders, and fires through the same pipeline.
+**Rehearse it** — on **Live**, turn on **Rehearsal**. Everything works exactly as it will in the service, and **nothing reaches the congregation's screens**. Practise the whole thing. The screen turns purple and says so, constantly, so you cannot forget which mode you are in.
 
----
+> Leaving rehearsal **clears the screens**. That is on purpose: they have been showing whatever was on them before you started, and handing you back a live wall you have not looked at in twenty minutes is how the wrong thing ends up in front of a congregation.
 
-## 4. Channels — where output goes
+### During the service — you live on one tab
 
-Every output is a render target of one shared template engine — main screen, stage, streaming, lobby all pull from the same source, styled per channel.
+**Live** is the only tab you need. Everything is on it.
 
-- **Add a channel** — name it, pick **native window (HDMI)** or **network client (OBS/kiosk)**.
-- **Assign a template** per channel.
-- **Native** → pick which HDMI display, then **Open**.
-- **Network** → **Copy URL** or show a **QR** for a browser source / kiosk / phone (same Wi-Fi). Point OBS/vMix at `http://<host>:8032/output.html?template_id=<n>` — but prefer **Copy URL**, which always gives you the right one.
-- Two-step **delete** (first click arms → "Sure?" → confirm).
-- **Preacher's stage remote** — open `http://<host>:8032/stage.html` (or scan the QR) on a phone/iPad: big live verse, "up next", your stage notes, and the countdown — the confidence view, kept off the main output.
+| What | How |
+|---|---|
+| **Start listening** | Press **Start listening**. Relay transcribes as the preacher speaks. |
+| **The preacher quotes a verse** | Relay hears it and offers it. Press **A** to put it on the screen, **D** to dismiss it. |
+| **Type a verse yourself** | The box at the bottom. `John 3:16`, `Ps 23`, `rom 8 1` — it understands all of those. Press Enter. |
+| **Read on** | `→` walks to the next verse. `←` goes back. |
+| **Run the plan** | `→` steps the plan when plan content is on screen. **The bar tells you which** — it says SLIDE or VERSE. |
+| **Get it off the screen NOW** | **`Esc`**. Works on every tab, always. |
+| **Kill the screen completely** | **`B`** (blackout). |
 
----
+### The two things worth understanding
 
-## 5. Templates — how output looks
+**Relay tells you *how* it heard something, and you should look.**
 
-Edit the output templates; the preview is the **exact** renderer used live (WYSIWYG).
+- **"Heard the reference"** (gold) — the preacher *said* "John three sixteen". Relay shows you the words it heard and how confident it is.
+- **"Paraphrase — a guess"** (blue) — nobody said a reference. Relay matched the *meaning* against a verse, and it shows you which words made it think so. **There is no confidence number**, because the number would not mean anything. Read it, and decide.
 
-- **Regions** (reference / verse text) and order, alignment, **lower-third band** toggle.
-- **Style** — font, background (color/gradient/image or transparent), accent, verse/reference colors and sizes (in `cqw`, so they scale to any screen), italic reference, **transition** duration.
-- **Content Templates** (in Settings) map each content type (scripture / song / announce) to a default template — so lyrics use the lyric look, scripture the scripture look, automatically.
-- Two-step **delete**; deleting a template unassigns it from any channel.
+A paraphrase **never** goes on screen by itself. Ever. Only a reference Relay actually *heard* can do that, and only if you have left auto-fire on.
 
-Long verses **auto-fit** — they shrink to fit, never clip or spill off screen. The congregation screen shows no titles or slide numbers (those live in the operator UI and stage monitor).
+**"Related" chips are not detections.** At the bottom of the feed you may see a few verses under a theme — *"Related · Fear & Anxiety"*. Nobody said those. Relay is offering them because of what is being preached about. They go nowhere until you click one.
 
 ---
 
-## 6. Settings
+## When it goes wrong
 
-- **Audio** — input device, STT language.
-- **Detection** — sensitivity / confidence thresholds (self-calibrating; seeds are placeholders until tuned).
-- **Translation** — active Bible translation.
-- **Content Templates** — per-content-type template defaults.
-- **Voice profiles** — per-operator STT/threshold profiles.
-- **Network info** — the LAN address for kiosk/OBS/stage URLs.
+Live software fails live. These are the things that actually happen.
+
+| What you see | What it means | What to do |
+|---|---|---|
+| **The bar doesn't move when someone speaks** | Relay cannot hear. Nothing else will work. | Settings → Audio. Try a different input. Check the cable and that the desk is sending. |
+| **The transcript is nonsense** | Usually the mic is too quiet, not the AI being bad. | Get a stronger feed. Relay adapts to a quiet room, but it cannot invent a signal that is not there. |
+| **"No speech model loaded"** | Step 2 above never happened. | Settings → Speech → Download. Manual override still works meanwhile. |
+| **Nothing appears on the projector** | The output window is not open, or it is on the wrong display. | Channels → pick the display → **Open**. |
+| **OBS / the kiosk screen is blank** | The browser source is pointed at the wrong address. | It must be `http://<this-computer>:8032/output.html?template_id=1` — the **Copy URL** button in Channels gives you the right one. **Not 5032.** |
+| **"The screens may still be live"** (red bar) | A clear or blackout **failed**. Relay is telling you rather than pretending. | **Look at the actual screen.** Clear it from the output window if you have to. |
+| **`→` says it did nothing** | End of the passage, or nothing is on screen yet. Relay says which. | Fire a verse first, or step back. |
+| **Relay crashed mid-service** | The console crashed. **The output screens are separate — the congregation still sees the verse.** | Press **Recover**. It puts you back where you were. |
+
+### The panic keys
+
+**`Esc` clears everything. `B` blacks everything out. They work on every tab, always** — even if the screen you are on has broken.
+
+`Esc` works even while you are typing. **`B` does not** — otherwise typing "Habakkuk" would black out the church on the second letter.
 
 ---
 
-## Typical Sunday flow
+## The other tabs
 
-1. **Planner** → duplicate last week's plan (or build a new one): countdown → opening songs → sermon (detection on) → closing → announcements.
-2. **Channels** → open the main HDMI output; add an OBS browser source for the stream; open the stage remote on the preacher's tablet.
-3. Pre-service: **fire the countdown** cue.
-4. Service: run the plan; during the sermon, **Listen + Detection** auto-suggest scripture — **Confirm** to push, or **manual override** to type a reference. **Prev/Next** through passages.
-5. Anything unexpected: **Clear** or **Black** in one tap.
+You will not need these during a service.
 
-Everything works with **zero internet**. Nothing leaves the device without an explicit, visible reason.
+- **Library** — your songs, saved verses, media, announcements, and the history of past services.
+- **Planner** — build a service plan. Cannot reach a screen.
+- **Channels** — one row per output screen. Set up once.
+- **Templates** — what scripture *looks like* on the wall. What you see in the editor is exactly what the projector shows.
+- **Settings** — audio, speech model, sensitivity, console language, privacy.
+- **Help** — the same guide, inside the app, where you can read it without the internet.
 
-## Windows: the firewall prompt (read this before your first service)
+---
 
-The first time Relay runs, **Windows will ask whether to allow it on your network.**
-Click **Allow**, and tick **Private networks**.
+## Things Relay promises you
 
-If you click Cancel, this is what happens:
-
-- The app itself works perfectly. Scripture still goes to the projector over HDMI.
-- But **nothing on the network can ever connect** — no OBS browser source, no kiosk
-  screen, no stage monitor on the preacher's phone.
-- And **Relay will not tell you.** It cannot. The firewall does not stop Relay from
-  starting its servers; it stops other machines from reaching them. From Relay's side
-  everything looks healthy, the Channels tab looks normal, and nothing appears in any
-  log. The kiosk simply sits there showing nothing, forever.
-
-If your networked screens are blank and the HDMI output is fine, this is almost
-certainly why. Fix it in **Windows Security → Firewall & network protection → Allow
-an app through firewall** → find **Relay** → tick **Private**.
-
-To check whether it is working: open the Channels tab, copy the output URL, and paste
-it into a browser **on another device on the same Wi-Fi**. If it loads there, the
-network side is fine.
+- **It works with the internet unplugged.** All of it. The listening, the detecting, the screens.
+- **Your sermon audio never leaves the computer.** It is transcribed on the machine and thrown away. See [PRIVACY.md](../PRIVACY.md), which says exactly what is and is not sent, and means it.
+- **It will not put a verse on the wall because it *guessed*.** Only because it *heard*, or because you told it to.
+- **It tells you when something failed.** A control that lies is worse than one that breaks, and this is software that fails in front of five hundred people.

@@ -695,6 +695,140 @@ mod tests {
 mod bench {
     use super::*;
 
+    /// Word error rate: the number Relay has never had.
+    ///
+    /// `docs/LANGUAGES.md` is honest that the African-language moat is unmeasured, and
+    /// every revision of the product audit has said the same. The reason was never that
+    /// the maths is hard — it is that **there is no sermon audio**, and so there was
+    /// nothing to score.
+    ///
+    /// So the RULER is built here, and it is pure: no audio, no model, no whisper. It is
+    /// unit-tested below and it works today. The moment somebody records thirty minutes
+    /// of a real preacher and writes down what was said, the number exists — see
+    /// `bench/README.md`. Building the ruler is the half that can be done at a keyboard;
+    /// holding the microphone is not.
+    ///
+    /// WER = (substitutions + deletions + insertions) / words-in-the-reference, which is
+    /// Levenshtein distance over WORDS rather than characters. It can exceed 1.0: a
+    /// decoder that hallucinates more words than were spoken is worse than one that
+    /// emits silence, and the number should say so rather than clamping.
+    pub fn wer(reference: &str, hypothesis: &str) -> f64 {
+        let r = words(reference);
+        let h = words(hypothesis);
+        if r.is_empty() {
+            // Nothing was said. Anything the decoder emits is pure insertion, and a rate
+            // against a zero denominator is meaningless — report it as such.
+            return if h.is_empty() { 0.0 } else { f64::INFINITY };
+        }
+        let d = edit_distance(&r, &h);
+        d as f64 / r.len() as f64
+    }
+
+    /// Compare what was SAID, not how it was punctuated.
+    ///
+    /// Whisper's punctuation and casing are cosmetic and vary run to run; counting them
+    /// as errors would drown the errors that matter. Tone marks are KEPT — in Yorùbá they
+    /// are not decoration, they change the word.
+    fn words(s: &str) -> Vec<String> {
+        crate::detection::normalize(s)
+            .split_whitespace()
+            .map(str::to_string)
+            .collect()
+    }
+
+    /// Levenshtein over words. Two rows, not a full matrix — a thirty-minute sermon is
+    /// ~4,000 words, and an N×M matrix of that is 16M cells for no reason.
+    fn edit_distance(a: &[String], b: &[String]) -> usize {
+        let mut prev: Vec<usize> = (0..=b.len()).collect();
+        let mut cur = vec![0usize; b.len() + 1];
+        for (i, aw) in a.iter().enumerate() {
+            cur[0] = i + 1;
+            for (j, bw) in b.iter().enumerate() {
+                let sub = prev[j] + usize::from(aw != bw);
+                let del = prev[j + 1] + 1;
+                let ins = cur[j] + 1;
+                cur[j + 1] = sub.min(del).min(ins);
+            }
+            std::mem::swap(&mut prev, &mut cur);
+        }
+        prev[b.len()]
+    }
+
+    /// The ruler works. These run in CI, today, with no audio and no model — which is the
+    /// whole point: the measuring instrument is correct BEFORE the first recording exists,
+    /// so the first number Relay ever produces about its own accuracy can be trusted.
+    #[test]
+    fn word_error_rate_counts_what_a_church_would_call_a_mistake() {
+        // Perfect.
+        assert_eq!(
+            wer(
+                "let us turn to john three sixteen",
+                "let us turn to john three sixteen"
+            ),
+            0.0
+        );
+
+        // Punctuation and casing are NOT errors — whisper varies them run to run.
+        assert_eq!(
+            wer(
+                "Let us turn to John, chapter three.",
+                "let us turn to john chapter three"
+            ),
+            0.0
+        );
+
+        // But "3:16" and "3 16" are DIFFERENT tokens, and that is deliberate rather than
+        // a bug in the scorer: `normalize()` keeps a colon-joined reference as one word,
+        // because that is how detection.rs reads it. The consequence belongs in
+        // bench/README.md and is written there: THE REFERENCE TRANSCRIPT MUST BE WRITTEN
+        // AS IT WAS SPOKEN — "john three sixteen", not "John 3:16" — or the scorer will
+        // charge the decoder for the transcriber's formatting choices.
+        assert!(wer("john 3:16", "john 3 16") > 0.0);
+
+        // One substitution in six words.
+        let e = wer("let us turn to john three", "let us turn to james three");
+        assert!((e - 1.0 / 6.0).abs() < 1e-9, "{e}");
+
+        // A deletion and an insertion are both errors.
+        assert!(wer("a b c d", "a b d") > 0.0); // deletion
+        assert!(wer("a b c d", "a b c x d") > 0.0); // insertion
+    }
+
+    /// A decoder that hallucinates is WORSE than one that says nothing, and the number
+    /// must be allowed to say so. Clamping WER at 1.0 would hide exactly the failure that
+    /// bit us before — whisper inventing "Peter 8 verse 28" out of room noise.
+    #[test]
+    fn hallucination_scores_worse_than_silence() {
+        let silence = wer("john three sixteen", "");
+        let babble = wer(
+            "john three sixteen",
+            "peter eight verse twenty eight and also romans",
+        );
+        assert_eq!(silence, 1.0, "saying nothing loses every word, and no more");
+        assert!(
+            babble > silence,
+            "hallucinating {babble} must beat silence {silence}"
+        );
+    }
+
+    #[test]
+    fn nothing_said_and_nothing_heard_is_not_an_error() {
+        assert_eq!(wer("", ""), 0.0);
+        assert!(wer("", "a ghost in the room").is_infinite());
+    }
+
+    /// Yorùbá tone marks are not decoration — they change the word. `normalize()` folds
+    /// them for MATCHING (so a mis-toned transcript still finds the book), but a WER that
+    /// ignored them would report a decoder as perfect when it is mangling the language.
+    /// This pins which behaviour we actually get, so the number is not quietly flattering.
+    #[test]
+    fn the_scorer_is_honest_about_what_it_folds() {
+        // Whatever normalize() does, it must do the SAME thing to both sides — the score
+        // is a comparison, and a scorer that folds one side only is not measuring anything.
+        let a = wer("Jòhánù", "Jòhánù");
+        assert_eq!(a, 0.0);
+    }
+
     fn load_f32(path: &str) -> Vec<f32> {
         let bytes = std::fs::read(path).expect("read wav");
         // Skip a 44-byte RIFF header if present; the payload is little-endian f32.
@@ -909,6 +1043,112 @@ mod bench {
             );
         }
         println!("\n  budget: 1000 ms per decode\n");
+    }
+
+    /// THE MOAT, AS A NUMBER. Needs a recording — see `bench/README.md`.
+    ///
+    /// ```text
+    /// RELAY_BENCH_WAV=bench/sermon.f32 \
+    /// RELAY_BENCH_TRANSCRIPT=bench/sermon.txt \
+    /// RELAY_BENCH_LANG=yo \
+    ///   cargo test --release stt::bench::word_error_rate -- --ignored --nocapture
+    /// ```
+    ///
+    /// Scores the WHOLE recording in the same overlapping windows the live worker uses,
+    /// so the number is the one a church would actually get — not a best case taken on a
+    /// single clean clip. And it degrades the signal the way a church does
+    /// (`RELAY_BENCH_SCALE`, `RELAY_BENCH_NOISE`), because a decoder that only wins on
+    /// studio audio wins nothing: clean audio is the one case Relay already handles.
+    ///
+    /// It prints WER per decode configuration. It asserts NOTHING — there is no target
+    /// yet, and inventing one before the first measurement would be picking the number
+    /// we would like rather than the number that is true. The first run establishes the
+    /// baseline; only then is a threshold honest.
+    #[test]
+    #[ignore]
+    fn word_error_rate() {
+        let (Some(wav), Some(txt)) = (
+            std::env::var_os("RELAY_BENCH_WAV"),
+            std::env::var_os("RELAY_BENCH_TRANSCRIPT"),
+        ) else {
+            eprintln!(
+                "\n  Relay has never measured its own word error rate, in any language.\n\
+                 \n  Not because the maths is hard — the scorer is unit-tested and works.\
+                 \n  Because there is no sermon audio. See bench/README.md.\n\
+                 \n  RELAY_BENCH_WAV=bench/sermon.f32 RELAY_BENCH_TRANSCRIPT=bench/sermon.txt\n"
+            );
+            return;
+        };
+
+        let reference =
+            std::fs::read_to_string(txt.to_str().unwrap()).expect("reference transcript");
+        let lang = std::env::var("RELAY_BENCH_LANG").ok();
+        let model = default_model_path().expect("no STT model found");
+        let mut audio = load_f32(wav.to_str().unwrap());
+
+        // Make it a CHURCH signal, not a studio one.
+        let scale: f32 = std::env::var("RELAY_BENCH_SCALE")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(1.0);
+        let noise: f32 = std::env::var("RELAY_BENCH_NOISE")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0.0);
+        let mut seed: u32 = 0x1234_5678;
+        for s in audio.iter_mut() {
+            seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            let r = (seed >> 8) as f32 / 8_388_608.0 - 1.0;
+            *s = *s * scale + r * noise;
+        }
+        // Through the REAL front-end, so the decoder sees what the worker would hand it.
+        let mut fe = crate::dsp::FrontEnd::new(TARGET_RATE);
+        let mut cleaned: Vec<f32> = Vec::with_capacity(audio.len());
+        for block in audio.chunks(1024) {
+            cleaned.extend_from_slice(&fe.process(block).samples);
+        }
+        let audio = cleaned;
+
+        let ctx = WhisperContext::new_with_params(
+            model.to_str().unwrap(),
+            WhisperContextParameters::default(),
+        )
+        .expect("load model");
+        let mut state = ctx.create_state().expect("state");
+
+        let bias = scripture_bias_prompt(lang.as_deref(), "");
+        println!(
+            "\n  audio: {:.1}s @16k  ×{scale} + noise {noise}\n  lang: {}\n  reference: {} words\n",
+            audio.len() as f32 / TARGET_RATE as f32,
+            lang.as_deref().unwrap_or("auto"),
+            words(&reference).len()
+        );
+
+        for (label, prompt) in [
+            ("no bias prompt", None),
+            ("scripture bias", Some(bias.as_str())),
+        ] {
+            // Decode the whole recording in the worker's own window size, and join it —
+            // scoring one clean clip would flatter the decoder in exactly the way a real
+            // service does not.
+            let win = TARGET_RATE as usize * WINDOW_SECS;
+            let mut hypothesis = String::new();
+            for chunk in audio.chunks(win) {
+                if let Some((text, _)) =
+                    transcribe(&mut state, chunk, 4, lang.as_deref(), prompt, Decode::Fast)
+                {
+                    hypothesis.push(' ');
+                    hypothesis.push_str(&text);
+                }
+            }
+            let e = wer(&reference, &hypothesis);
+            println!(
+                "  {label}:  WER {:.1}%  ({} words out)",
+                e * 100.0,
+                words(&hypothesis).len()
+            );
+        }
+        println!("\n  This is a BASELINE, not a pass mark. Beat it.\n");
     }
 
     #[test]

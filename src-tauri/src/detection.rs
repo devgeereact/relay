@@ -515,7 +515,10 @@ fn fold_char(c: char) -> Option<char> {
 
 /// Lowercase, fold diacritics, strip punctuation except the digit-pairing colon,
 /// split hyphens ("twenty-eight" → two tokens), collapse whitespace.
-fn normalize(text: &str) -> String {
+/// `pub(crate)` so the WER bench can fold a reference transcript EXACTLY the way the
+/// detector folds a hypothesis. A scorer that normalises the two sides differently is
+/// not measuring anything.
+pub(crate) fn normalize(text: &str) -> String {
     use unicode_normalization::UnicodeNormalization;
     let mut s = String::with_capacity(text.len());
     // NFD first, so `ọ` becomes `o` + combining-dot-below and the mark can be

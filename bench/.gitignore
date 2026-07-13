@@ -1,0 +1,23 @@
+# SERMON AUDIO NEVER ENTERS THIS REPOSITORY.
+#
+# PRIVACY.md promises a church that their audio never leaves their device. That promise
+# is not conditional on the device belonging to a church — it IS the promise. A recording
+# of a real congregation in a public git history breaks it in the most literal way there
+# is, and "it was only for testing" repairs nothing: git remembers, and mirrors keep
+# copies of what you delete.
+#
+# Keep the recording locally. Point the bench at it. Commit the NUMBER, never the audio.
+*.wav
+*.f32
+*.raw
+*.mp3
+*.m4a
+*.ogg
+*.flac
+
+# Reference transcripts are what was SAID in a real service — a sermon in plain text is
+# still a recording of a congregation, and it is still theirs.
+*.txt
+
+# ...except this one.
+!README.md

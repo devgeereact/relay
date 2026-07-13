@@ -73,7 +73,7 @@ Revision 1's finding was *"the engineering is ahead of the product"* — the app
 
 What that produced is a product with an unusual property for its stage: **its failure modes are visible.** A clear that fails says so. A `→` that cannot move says why it cannot. A paraphrase guess cannot masquerade as a heard reference, because it is rendered as a different kind of claim with no percentage attached. A release that would ship unsigned refuses to build. A migration that dies halfway can be retried. These are not features; they are the absence of a specific class of lie, and in software that fails **live, in front of five hundred people**, that class of lie is the whole danger.
 
-The engine underneath is strong and now genuinely covered: **246 Rust + 138 frontend tests**, zero panic sites in any module that runs during a service, a detection benchmark that fails CI on regression, an end-to-end test that drives the real fire → nav → clear path, and a gate that makes "the AI put the wrong verse on the wall" structurally unrepresentable rather than merely unlikely.
+The engine underneath is strong and now genuinely covered: **250 Rust + 138 frontend tests**, zero panic sites in any module that runs during a service, a detection benchmark that fails CI on regression, an end-to-end test that drives the real fire → nav → clear path, and a gate that makes "the AI put the wrong verse on the wall" structurally unrepresentable rather than merely unlikely.
 
 **So the honest position is now a shopping list, not an engineering plan:**
 
@@ -104,7 +104,7 @@ Scored against the stated bar (*first 10 churches*), not against Stripe. Δ is t
 | **Accessibility** | **8 / 10** | ▲ **+4** | Focus traps on all 5 dialogs, **with focus restore** (the half everyone forgets). A real heading structure. The AI suggestion feed, the transport and errors are all announced — the product's whole reason to exist used to arrive in total silence. Every text token passes WCAG AA. Not 10/10: ~150 lines of dead legacy CSS remain, deliberately (see §7). |
 | **Security** | **8 / 10** | ▲ +1 | A tag name is no longer interpolated into a release shell (a real injection vector CodeRabbit caught). LAN bind is unauthenticated, broadcast-only, bounded, and honestly documented. Unsigned Windows remains the exposure — but the pipeline now *refuses* to produce it rather than doing so quietly. |
 | **Privacy** | **9 / 10** | — | Unchanged, and still the strongest part of the product. Telemetry off by default, no DSN in OSS builds, free text *dropped* not sifted. |
-| **Testing** | **9 / 10** | ▲ **+3** | **246 Rust + 138 frontend.** The gap was never the count — it was that `main.rs` had zero tests and no e2e existed, so the fire → nav → clear path was verified only by hand. `e2e.rs` now drives the real commands against a real DB. And the culture shifted: several fixes were **mutation-verified** — the test was checked to *fail* when the original bug was reintroduced. Two tests in this repo initially passed on broken code; both were caught that way. |
+| **Testing** | **9 / 10** | ▲ **+3** | **250 Rust + 138 frontend.** The gap was never the count — it was that `main.rs` had zero tests and no e2e existed, so the fire → nav → clear path was verified only by hand. `e2e.rs` now drives the real commands against a real DB. And the culture shifted: several fixes were **mutation-verified** — the test was checked to *fail* when the original bug was reintroduced. Two tests in this repo initially passed on broken code; both were caught that way. |
 | **Developer experience** | **8 / 10** | ▲ +1 | CI, CodeRabbit, `clippy -D warnings`, an exemplary decision log now 25 rules deep. `scripts/version.mjs` makes releasing a one-liner. Still no CONTRIBUTING/CoC/templates (§14). |
 | **AI readiness** | **6 / 10** | ▲ +1 | The operator can finally *see* what kind of claim the AI is making, and `related_scripture` — built, tested, and called by nothing for months — is surfaced. The gate remains excellent. But paraphrase is still TF-IDF, `verses.embedding` has still never been written to, and **the acoustic layer is still unmeasured**. Blocked on audio, not on code. |
 | **Brand** | **4 / 10** | — | Unchanged and now the weakest column. Still no logo, no tagline, no positioning line. README still says *"Working name — rename freely."* |
@@ -132,14 +132,16 @@ Scored against the stated bar (*first 10 churches*), not against Stripe. Δ is t
 
 Revision 2 listed ten. Nine are fixed. What is left is real, and mostly cannot be fixed by typing.
 
-1. **The moat is unmeasured, and that is now the single biggest weakness in the product.** No fine-tuned acoustic model ships, no native speaker has reviewed the 66×3 book aliases, Yorùbá numerals are not parsed, and **word error rate has never been measured in any language**. The tooling to measure it is *already built* (`stt.rs::bench` degrades audio to realistic church conditions and scores through the real detector) and it is dormant, because **there is no sermon audio in the repo**. Thirty minutes of tape is the cheapest, highest-leverage item in this entire document.
+1. **The moat is unmeasured, and that is now the single biggest weakness in the product.** No fine-tuned acoustic model ships, no native speaker has reviewed the 66×3 book aliases, Yorùbá numerals are not parsed, and **word error rate has never been measured in any language**.
+   **The ruler now exists.** `stt::bench::wer` is written, unit-tested and runs in CI *today* — Levenshtein over words, folding punctuation the same way the detector does, and deliberately **not** clamped at 1.0 so a hallucinating decoder scores *worse* than a silent one. `bench/README.md` says exactly what to record and how to run it, and `bench/.gitignore` refuses to let sermon audio into the repository at all (PRIVACY.md's promise is not conditional on the device belonging to a church).
+   So the blocker is now precisely one thing, and it is not a keyboard: **thirty minutes of a real preacher on tape.** The instrument is calibrated and pointed at nothing.
 2. **Nobody has watched an update install.** The path is capable of it and the version can no longer drift — but "capable" is not "observed", and this is the mechanism by which every future fix reaches a church.
 3. **Windows cannot ship.** By design: the gate refuses. It needs a ~$10/month certificate.
-4. **`USER_GUIDE.md` is written for a developer.** It opens by explaining `localhost:5032`, still names a **Console** tab that no longer exists, and **never once mentions the speech model** — the first thing a new user must install. The in-app Help is better than it.
+4. ~~**`USER_GUIDE.md` is written for a developer.**~~ ✅ **Rewritten for a volunteer.** It now opens on the 10-minute setup, leads with the speech model (the one step nobody expects and without which Relay does nothing useful), names no tab that does not exist, and has a real troubleshooting table — *the bar doesn't move*, *the transcript is nonsense*, *"the screens may still be live"*, *Relay crashed mid-service*. It explains the one thing an operator must understand: **heard vs guessed**, and that a paraphrase can never reach the wall by itself.
 5. **The first-run wizard cannot be re-run.** An operator who skips it cannot get it back; everything in it lives in Settings, but they have to know that.
 6. **~150 lines of dead legacy CSS remain**, including a colour that failed AA (now fixed in value, not removed). Deleting it needs eyes on a running app — Svelte does not scope a global stylesheet, and those rules use generic class names (`.tab`, `.dot`, `.live`) that live components still carry. See §7.
 7. **`main.rs` is still 2,922 lines and 101 commands.** No longer *untestable* — the fire engine is runtime-generic and covered by `e2e.rs` — but still a single file holding both the IPC surface and the live engine.
-8. **No CONTRIBUTING, no CODE_OF_CONDUCT, no CHANGELOG**, on a project whose docs actively solicit pull requests — and which now, with the i18n layer, has a genuinely low-friction way for non-programmers to contribute.
+8. **CONTRIBUTING.md exists now** — and leads with the two contributions that need **no code at all**: a native speaker for the locales, the 66×3 book aliases and the Yorùbá numerals; and thirty minutes of sermon audio. Still missing: **CODE_OF_CONDUCT.md** and **CHANGELOG.md** (the latter is load-bearing now that an updater ships — an update with no release notes is an unexplained download).
 9. **Brand is untouched.** Still no logo, no tagline, no positioning line, and a README that says *"Working name — rename freely."*
 
 ---
@@ -455,7 +457,7 @@ Genuinely weak, and cheap to fix.
 | PRIVACY.md | ✅ **Shipped, and excellent.** Accurate against `telemetry.rs` and `channels.rs`. Crucially, it **discloses the unauthenticated LAN broadcast** (`PRIVACY.md:74-89`) rather than hiding it, and flags the café-wifi media-serving risk. |
 | SECURITY.md | ✅ Shipped. Private reporting, 72h SLA, threat model ranked by content leakage first. |
 | AI transparency | ✅ `docs/AI_DISCLOSURE.md` — plain-language, states its own weaknesses. Rare. |
-| **CONTRIBUTING.md** | ❌ **Missing** — and `LANGUAGES.md:53` actively solicits PRs (*"Edit, open a pull request, done"*). |
+| **CONTRIBUTING.md** | ✅ **Shipped.** Leads with the two highest-value contributions, both of which need no code: a native speaker (locales, book aliases, Yorùbá numerals) and sermon audio. |
 | **CODE_OF_CONDUCT.md** | ❌ Missing. |
 | **Issue / PR templates** | ❌ Missing. `.github/` contains only the two workflows. |
 | **CHANGELOG.md** | ❌ Missing — and now load-bearing, because an updater without release notes is an unexplained download. |
@@ -529,7 +531,7 @@ Everything that a commit can tick is ticked. The four unticked boxes in the firs
 - [x] PRIVACY.md + SECURITY.md + AI_DISCLOSURE.md
 - [x] The panic path cannot report a success it did not achieve
 - [x] The transport cannot silently do nothing
-- [ ] 📖 **An operator guide written for a volunteer** — *the in-app Help is; `USER_GUIDE.md` still opens on `localhost:5032` and never mentions the speech model*
+- [x] 📖 **An operator guide written for a volunteer** *(rewritten: setup, the Sunday path, and a troubleshooting table for what actually goes wrong)*
 - [ ] ⛪ **A real service run end-to-end by someone who is not the author** — *the only test that actually counts*
 
 **Before public release:**
@@ -540,11 +542,12 @@ Everything that a commit can tick is ticked. The four unticked boxes in the firs
 - [x] Bible translation licensing confirmed (KJV only, no import path)
 - [x] Typed errors, an e2e test, and a migration that can be retried
 - [ ] Rename decided *(README still says "working name — rename freely")*
-- [ ] CONTRIBUTING + CODE_OF_CONDUCT + CHANGELOG
-- [ ] `USER_GUIDE.md` reconciled with the code (it still names a **Console** tab that does not exist)
+- [x] CONTRIBUTING.md *(leads with the two contributions that need no code)*
+- [ ] CODE_OF_CONDUCT + CHANGELOG
+- [x] `USER_GUIDE.md` reconciled with the code
 
 **The moat — blocked on a microphone, not on a keyboard:**
-- [ ] 🎙 **30 minutes of real sermon audio** — *the bench that consumes it is already built and dormant*
+- [ ] 🎙 **30 minutes of real sermon audio** — *the bench AND the WER scorer are now built, tested, and pointed at nothing. See `bench/README.md`.*
 - [ ] Word error rate measured, in any language, for the first time
 - [ ] Native-speaker review of the 66×3 book aliases
 - [ ] `locales/{yo,sw,ha}.json` filled in *(the layer is built; the files ship empty on purpose)*
