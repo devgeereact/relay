@@ -110,7 +110,7 @@ Scored against the stated bar (*first 10 churches*), not against Stripe. Δ is t
 | **Brand** | **4 / 10** | — | Unchanged and now the weakest column. Still no logo, no tagline, no positioning line. README still says *"Working name — rename freely."* |
 | **Business model** | **N/A** | — | Deliberately free/MIT. Sustainability parked, not decided. |
 | **Documentation** | **7 / 10** | ▲ +2 | CLAUDE.md, DECISIONS.md (§20–§25) and RELEASING.md are now current and unusually honest — each rule is a bug that reached, or would have reached, a congregation. **USER_GUIDE.md is still the weak point**: written for a developer, opens on `localhost:5032`, and never mentions the speech model. The in-app Help is better than the written guide. |
-| **Legal compliance** | **8 / 10** | ▲ +2 | `LICENSE` names its holder. PRIVACY/SECURITY/AI_DISCLOSURE shipped and accurate. KJV-only with no import path for any other translation, so no exposure. WCAG now largely passes. Missing: CONTRIBUTING, CODE_OF_CONDUCT, CHANGELOG. |
+| **Legal compliance** | **9 / 10** | ▲ +3 | `LICENSE` names its holder. PRIVACY / SECURITY / AI_DISCLOSURE / CONTRIBUTING / CODE_OF_CONDUCT / CHANGELOG all ship and are accurate. KJV-only with no import path for any other translation, so no exposure. WCAG now largely passes. Only GitHub issue/PR templates remain. |
 | **Enterprise readiness** | **N/A** | — | Explicitly out of scope. See §13. |
 | **Overall maturity** | **8 / 10** | ▲ **+1.5** | *Code-complete, and blocked on the world.* Every finding that a commit could close is closed. What remains needs a certificate, a billing page, a microphone in a real church, and people who speak Yorùbá. |
 
@@ -141,7 +141,7 @@ Revision 2 listed ten. Nine are fixed. What is left is real, and mostly cannot b
 5. **The first-run wizard cannot be re-run.** An operator who skips it cannot get it back; everything in it lives in Settings, but they have to know that.
 6. **~150 lines of dead legacy CSS remain**, including a colour that failed AA (now fixed in value, not removed). Deleting it needs eyes on a running app — Svelte does not scope a global stylesheet, and those rules use generic class names (`.tab`, `.dot`, `.live`) that live components still carry. See §7.
 7. **`main.rs` is still 2,922 lines and 101 commands.** No longer *untestable* — the fire engine is runtime-generic and covered by `e2e.rs` — but still a single file holding both the IPC surface and the live engine.
-8. **CONTRIBUTING.md exists now** — and leads with the two contributions that need **no code at all**: a native speaker for the locales, the 66×3 book aliases and the Yorùbá numerals; and thirty minutes of sermon audio. Still missing: **CODE_OF_CONDUCT.md** and **CHANGELOG.md** (the latter is load-bearing now that an updater ships — an update with no release notes is an unexplained download).
+8. ~~**No contributor infrastructure.**~~ ✅ **CONTRIBUTING.md, CODE_OF_CONDUCT.md and CHANGELOG.md all ship.** CONTRIBUTING leads with the two contributions that need **no code at all** (a native speaker; thirty minutes of sermon audio). The CHANGELOG is written for the *operator*, not the developer — it is what a volunteer reads in the update banner twenty minutes before a service, and an update with no explanation is asking them to gamble. Still missing: GitHub issue/PR templates (minor).
 9. **Brand is untouched.** Still no logo, no tagline, no positioning line, and a README that says *"Working name — rename freely."*
 
 ---
@@ -458,9 +458,9 @@ Genuinely weak, and cheap to fix.
 | SECURITY.md | ✅ Shipped. Private reporting, 72h SLA, threat model ranked by content leakage first. |
 | AI transparency | ✅ `docs/AI_DISCLOSURE.md` — plain-language, states its own weaknesses. Rare. |
 | **CONTRIBUTING.md** | ✅ **Shipped.** Leads with the two highest-value contributions, both of which need no code: a native speaker (locales, book aliases, Yorùbá numerals) and sermon audio. |
-| **CODE_OF_CONDUCT.md** | ❌ Missing. |
-| **Issue / PR templates** | ❌ Missing. `.github/` contains only the two workflows. |
-| **CHANGELOG.md** | ❌ Missing — and now load-bearing, because an updater without release notes is an unexplained download. |
+| **CODE_OF_CONDUCT.md** | ✅ Contributor Covenant 2.1, unmodified — the standard text on purpose, because a code of conduct someone invented themselves is one nobody has read. |
+| **Issue / PR templates** | ❌ Still missing. Minor. |
+| **CHANGELOG.md** | ✅ Shipped, and written for the **operator**: it is what a volunteer reads in the update banner before deciding whether to restart the app twenty minutes before a service. |
 | Bible translation licensing | ✅ **Clean.** KJV only, recorded as `license_type = "public domain"` (`db/verses.rs:173`), bundled via `include_str!`. **There is no import path for any other translation** — no `import_translation` command exists. Zero exposure today. Keep it that way, or licence properly. |
 | GDPR / UK GDPR | ✅ Effectively N/A by architecture — no personal data leaves the device. **PRIVACY.md now says so. This is a selling point, and it is finally written down.** |
 | Accessibility (WCAG) | ✅ **Largely passes now.** Focus traps + restore on all 5 dialogs; every control operable by keyboard; a real heading structure; every text token at AA (the preacher's phone was at **2.25:1**). Remaining: ~150 lines of dead legacy CSS whose deletion needs eyes on a running app. |
@@ -511,7 +511,7 @@ Genuinely weak, and cheap to fix.
 ### Phase 5 — **Grow**
 28. Rename + brand + tagline + landing page — *now the weakest column on the scorecard*
 29. ProPresenter import as the marketed adoption wedge
-30. CONTRIBUTING / CoC / templates / CHANGELOG
+30. ~~CONTRIBUTING / CoC / CHANGELOG~~ ✅ — only GitHub issue/PR templates remain
 31. NDI (only if a real church asks)
 
 ---
@@ -543,7 +543,8 @@ Everything that a commit can tick is ticked. The four unticked boxes in the firs
 - [x] Typed errors, an e2e test, and a migration that can be retried
 - [ ] Rename decided *(README still says "working name — rename freely")*
 - [x] CONTRIBUTING.md *(leads with the two contributions that need no code)*
-- [ ] CODE_OF_CONDUCT + CHANGELOG
+- [x] CODE_OF_CONDUCT.md *(Contributor Covenant 2.1, unmodified)*
+- [x] CHANGELOG.md *(written for the operator — it is what the update banner shows)*
 - [x] `USER_GUIDE.md` reconciled with the code
 
 **The moat — blocked on a microphone, not on a keyboard:**

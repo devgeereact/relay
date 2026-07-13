@@ -101,6 +101,12 @@ Beyond green:
 
 ---
 
+## How we treat each other
+
+[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) — the standard Contributor Covenant, plus one line that matters here: much of Relay's most important work will come from people who are **not programmers**, and who are often new to GitHub. *"Did you even read the docs"* is never the answer. If someone had to ask, the docs failed, not the person.
+
+---
+
 ## Reporting a bug
 
 If it happened **during a live service**, say so — that moves it to the front of the queue, every time.
