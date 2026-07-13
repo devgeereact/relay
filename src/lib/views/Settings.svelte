@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import ModelSetup from '../ModelSetup.svelte';
   import { locale, setLocale, LOCALES, t } from '../i18n.js';
+  import { restartSetup } from '../session.js';
   import en from '../locales/en.json';
   import yo from '../locales/yo.json';
   import sw from '../locales/sw.json';
@@ -138,6 +139,20 @@
       translation is a data file — <code class="r-mono">src/lib/locales/</code> — not
       code: no Rust, no Svelte, no build. One word is a useful contribution.
     </p>
+
+    <!-- The wizard never appears uninvited (see session.js). But an operator who skipped
+         it, or who inherited this laptop from whoever ran the desk last year, could not
+         get it back AT ALL — and it is the only place that walks you through the
+         projector, the microphone and a real verse on a real screen, in one go. -->
+    <hr class="s-rule" />
+    <p class="s-note">
+      <b>New here?</b> The setup walk-through picks your projector, checks the microphone
+      is actually hearing something, and ends by putting a real verse on your real screen
+      — so you have <i>seen</i> it work before Sunday.
+    </p>
+    <button class="r-btn ghost sm setup-again" on:click={restartSetup}>
+      Run the setup walk-through
+    </button>
   </section>
 
   <!-- AUDIO INPUT -->
@@ -382,6 +397,8 @@
   .lang-pct{ font-size:10.5px; color:var(--v-dim); flex:0 0 auto; }
   .lang-pct.none{ color:var(--v-faint); }
   .lang-foot{ margin-top:11px; }
+  .s-rule{ border:0; border-top:1px solid var(--v-line); margin:16px 0 0; }
+  .setup-again{ margin-top:10px; }
   .lang-foot code{ font-size:11px; color:var(--v-dim); }
 
   .s-card{ padding:20px 22px; display:flex; flex-direction:column; }

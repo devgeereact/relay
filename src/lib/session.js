@@ -17,8 +17,15 @@ const KEY = 'relay.session.v1';
 
 const EMPTY = {
   // Has the operator been through (or skipped) first-run setup? Once true it
-  // NEVER shows again — a wizard that reappears is a wizard that gets clicked
-  // through blindly, and everything it configures also lives in Settings.
+  // NEVER shows again BY ITSELF — a wizard that reappears is a wizard that gets
+  // clicked through blindly, and everything it configures also lives in Settings.
+  //
+  // But it can be ASKED for: `restartSetup()`, from a button in Settings. An operator
+  // who skipped the wizard (or inherited the laptop from the last volunteer) could not
+  // get it back at all, and it is the only place that walks them through the projector,
+  // the microphone and a proof verse in one go — ending with them having SEEN it work.
+  // Never showing up uninvited and never being reachable are two different things, and
+  // only the first one is the good idea.
   setupDone: false,
   activeTab: 'live',
   planId: null,
@@ -64,4 +71,19 @@ export function setSession(patch) {
 /** Forget the resume point — call when a service is properly finished. */
 export function clearSession() {
   session.set({ ...EMPTY });
+}
+
+/**
+ * Show the first-run wizard again, because the operator asked for it.
+ *
+ * ONLY from an explicit click in Settings. The wizard still never appears uninvited —
+ * see `setupDone` above. This just means a volunteer who skipped it, or who took over a
+ * laptop from whoever ran the desk last year, can get it back.
+ *
+ * It deliberately touches nothing else: not the playhead, not the open plan, not the
+ * active tab. Re-running setup is not a reset, and it must not lose the operator's place
+ * in a service that may be running while they poke at Settings.
+ */
+export function restartSetup() {
+  setSession({ setupDone: false });
 }
