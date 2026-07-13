@@ -1,0 +1,45 @@
+name: 💡 Idea or feature request
+description: Something Relay should do, or should do better.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before you write this: **[docs/DECISIONS.md](https://github.com/devgeereact/relay/blob/main/docs/DECISIONS.md) records what has already been decided, and why.** If your idea is already in there as a non-goal, the reasoning will explain it better than we can in a reply — and if you think that reasoning is wrong, say so, because that is a genuinely useful issue.
+
+        A few things Relay has deliberately decided *not* to be:
+
+        - **not a replacement for OBS** (it works alongside it)
+        - **not a general AI assistant** (it is one live workflow, done properly)
+        - **not cloud-dependent** (every core feature must work with the internet unplugged — this is not a preference, it is the product)
+        - **not multi-tenant / accounts / billing** (one church, one machine, no server)
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What's the problem?
+      description: Describe the situation, not the solution. What happens today that shouldn't, or doesn't happen that should?
+      placeholder: |
+        Our preacher often quotes a verse and then keeps reading for another five or six
+        verses. Every time, the operator has to press → for each one, and they lose their
+        place in the plan.
+    validations:
+      required: true
+
+  - type: textarea
+    id: idea
+    attributes:
+      label: What do you think should happen instead?
+      description: If you don't know, that's fine — leave it blank. A well-described problem is more useful than a half-designed solution.
+
+  - type: dropdown
+    id: live
+    attributes:
+      label: Would this matter during a live service?
+      description: Relay's bar for adding anything is whether it helps a volunteer, in a dark booth, with a congregation waiting. Things that only help on a Tuesday are still worth doing — but they queue differently.
+      options:
+        - "Yes — it would change what happens on a Sunday"
+        - "No — it would help while preparing, not while running"
+        - "Not sure"
+    validations:
+      required: true

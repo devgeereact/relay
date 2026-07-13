@@ -1,0 +1,98 @@
+name: 🐛 Bug report
+description: Something went wrong. If it went wrong during a live service, say so — that moves it to the front of the queue.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for reporting this.
+
+        **You do not need to be a programmer to file a useful bug.** "The screen went blank when the preacher said John 3:16" is a better report than most stack traces. Tell us what you saw.
+
+        ⚠️ **Security issues do not go here.** Report those privately — see [SECURITY.md](https://github.com/devgeereact/relay/blob/main/SECURITY.md).
+
+  - type: dropdown
+    id: live
+    attributes:
+      label: Did this happen during a live service?
+      description: This is the first question because it is the one that decides how fast we act. Relay fails in front of a congregation; nothing else it does matters more.
+      options:
+        - "Yes — during a real service, with a congregation"
+        - "Yes — during a rehearsal"
+        - "No — while setting up or testing"
+    validations:
+      required: true
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What was on the screen? What did you press? What did Relay tell you — or not tell you?
+      placeholder: |
+        I pressed Esc to clear the screens. The message said "Screens cleared",
+        but the verse was still on the projector.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect instead?
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which part?
+      options:
+        - "Listening / the transcript (it can't hear, or hears nonsense)"
+        - "Detection (it missed a verse, or showed the wrong one)"
+        - "The screens (projector, OBS, stage monitor, the preacher's phone)"
+        - "The service plan / Planner"
+        - "Installing, updating, or the speech-model download"
+        - "The Library (songs, media, announcements, history)"
+        - "Something else / not sure"
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Relay version
+      description: Settings → the version is at the bottom. If you're not sure, say so.
+      placeholder: "0.1.0"
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Which computer?
+      options:
+        - Windows
+        - macOS (Apple Silicon)
+        - macOS (Intel)
+        - Not sure
+
+  - type: textarea
+    id: audio
+    attributes:
+      label: If it's an audio or detection problem — the microphone and the room
+      description: |
+        This is the single most useful thing you can tell us, and it is the hardest for us to guess.
+
+        Every audio bug in Relay so far was invisible in the code and reproducible only with a *specific microphone in a specific room*. Relay was once **silently deaf to a quiet preacher** — 94% of speech detected at studio level, 2% on a real church laptop, with no error and no warning.
+      placeholder: |
+        Mic: feed from the sound desk (Behringer X32) into a USB interface
+        Room: 200-seat hall, ceiling fans running, PA hum
+        Preacher: quiet, moves away from the mic when he turns to the screen
+        Language: Yorùbá, switching into English for the references
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Anything else
+      description: |
+        Optional, and only if you're comfortable with a terminal. `CLAUDE.md` documents environment variables (`RELAY_STT_TIMING`, `RELAY_AUDIO_RMS`) that make audio problems reproducible without a human at the microphone.
+
+        **Do not attach sermon audio.** We can't accept it — [PRIVACY.md](https://github.com/devgeereact/relay/blob/main/PRIVACY.md) promises a church their audio never leaves their device, and that promise is not conditional. If you have a recording you *want* analysed, see [bench/README.md](https://github.com/devgeereact/relay/blob/main/bench/README.md): you run the measurement locally and send us the number.
+      render: shell

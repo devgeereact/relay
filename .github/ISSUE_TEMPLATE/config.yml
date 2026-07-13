@@ -1,0 +1,23 @@
+# Blank issues stay ENABLED.
+#
+# A volunteer who cannot make their problem fit one of our forms should not be turned
+# away at the door — that is our failure of imagination, not theirs. The forms are there
+# to help people say more, not to stop them speaking.
+blank_issues_enabled: true
+
+contact_links:
+  - name: 🔒 Security vulnerability
+    url: https://github.com/devgeereact/relay/security/advisories/new
+    about: Report privately, never in a public issue. Relay runs a LAN server and installs signed updates on church machines — please give us the chance to fix it first.
+
+  - name: 🎙️ You have a recording of a real sermon
+    url: https://github.com/devgeereact/relay/blob/main/bench/README.md
+    about: Relay's word error rate has never been measured, in any language. The measuring tool is built and tested — there has simply never been a recording to point it at. You run it locally; the audio never leaves your machine.
+
+  - name: 🗣️ You want to translate Relay
+    url: https://github.com/devgeereact/relay/blob/main/CONTRIBUTING.md
+    about: It's a JSON file. No code, no build, no development environment — edit it in your browser. One word is a useful contribution.
+
+  - name: 📖 How do I run a service with this?
+    url: https://github.com/devgeereact/relay/blob/main/docs/USER_GUIDE.md
+    about: The operator guide — setup, the Sunday path, and what to do when it goes wrong.

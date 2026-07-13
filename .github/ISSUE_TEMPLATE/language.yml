@@ -1,0 +1,57 @@
+name: 🗣️ Language — a wrong word, a missing word, or an offer to translate
+description: You speak Yorùbá, Swahili, Hausa (or another language) and something is wrong, missing, or you want to help. This is the most valuable issue you can open.
+labels: ["language", "help wanted"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **This is the most valuable thing anyone can contribute to Relay, and you do not need to write any code to do it.**
+
+        Relay listens to a sermon in Yorùbá, finds the verse — and then talks to the volunteer running it *in English*. It understands three African languages and cannot say a word of any of them to its own operator.
+
+        And the book names it listens for — 66 books × 3 languages — **have never been checked by anyone who actually speaks those languages.** They were assembled from public sources. Some of them are probably wrong, and a wrong one fails *silently*: the preacher says the name, Relay hears it perfectly, matches nothing, and no verse ever reaches the screen. Nobody ever finds out why.
+
+        If you can tell us one word is wrong, that is a real contribution. If you would rather open a pull request directly, [CONTRIBUTING.md](https://github.com/devgeereact/relay/blob/main/CONTRIBUTING.md) shows you exactly which file — they are all plain JSON, editable in your browser.
+
+  - type: input
+    id: language
+    attributes:
+      label: Which language?
+      placeholder: "Yorùbá"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What kind of thing?
+      options:
+        - "A Bible book name is wrong or missing (Relay doesn't recognise it when spoken)"
+        - "A number is wrong (it shows the wrong verse)"
+        - "I want to translate the console (the buttons and messages the operator reads)"
+        - "The transcription itself is bad in this language"
+        - "Something else"
+    validations:
+      required: true
+
+  - type: textarea
+    id: detail
+    attributes:
+      label: Tell us
+      description: |
+        Whatever you can. A single wrong word is enough — you do not need to fix everything.
+      placeholder: |
+        The preacher says "Jòhánù" for John, but Relay also needs "Jòhánù Mímọ́" —
+        that is how it is said in our church, and Relay never picks it up.
+
+        Also: Ìṣe (Acts) is spelled wrong in the list — it should be Ìṣe Àwọn Àpọ́sítélì.
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: speaker
+    attributes:
+      label: One thing we have to ask
+      options:
+        - label: "I speak this language (or I'm checking with someone who does). We don't accept guesses on language data — a wrong numeral silently shows a *different verse*, and nobody finds out until a Sunday."
+          required: true
