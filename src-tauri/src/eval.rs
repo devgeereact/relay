@@ -314,3 +314,178 @@ mod tests {
         }
     }
 }
+
+// ── Paraphrase RETRIEVAL benchmark ──────────────────────────────────────────
+//
+// The corpus above answers "does the right verse reach the screen". It cannot
+// answer "when a preacher TELLS a story instead of quoting it, do we find the
+// story", because it holds exactly two paraphrase cases and both are near-
+// verbatim famous verses. A 100% scorecard therefore says nothing at all about
+// paraphrase quality — which is precisely the claim the product makes.
+//
+// This measures retrieval directly against the real index: given a retelling,
+// does a verse FROM THE RIGHT PASSAGE come back in the top-k? Nothing here is a
+// build gate yet — the baseline has to exist before a floor can be argued for.
+
+/// One narrative retelling and the passage it belongs to.
+#[derive(Debug, Deserialize)]
+pub struct ParaCase {
+    pub id: String,
+    pub text: String,
+    pub book: String,
+    pub chapter: i64,
+    pub verse_start: i64,
+    pub verse_end: i64,
+    /// "kjv" (words present but spread across verses) or "modern" (synonymy —
+    /// unfixable by any lexical method, tracked so the limit stays honest).
+    pub vocab: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ParaCorpus {
+    cases: Vec<ParaCase>,
+}
+
+pub fn para_cases() -> Vec<ParaCase> {
+    const RAW: &str = include_str!("../data/paraphrase_corpus.json");
+    let c: ParaCorpus = serde_json::from_str(RAW).expect("paraphrase_corpus.json");
+    c.cases
+}
+
+/// The bundled KJV as (reference, text) — the same corpus `main` indexes at
+/// startup, but read straight from the JSON so this needs no database.
+pub fn kjv_corpus() -> Vec<(detection::VerseRef, String)> {
+    #[derive(Deserialize)]
+    struct KjvBook {
+        chapters: Vec<Vec<String>>,
+    }
+    const RAW: &str = include_str!("../data/kjv.json");
+    let books: Vec<KjvBook> =
+        serde_json::from_str(RAW.trim_start_matches('\u{feff}')).expect("kjv.json");
+    let mut out = Vec::with_capacity(31_200);
+    for (bi, book) in books.iter().enumerate() {
+        let name = detection::CANONICAL_BOOKS.get(bi).copied().unwrap_or("?");
+        for (ci, chapter) in book.chapters.iter().enumerate() {
+            for (vi, text) in chapter.iter().enumerate() {
+                out.push((
+                    detection::VerseRef {
+                        book: name.to_string(),
+                        chapter: ci as i64 + 1,
+                        verse: vi as i64 + 1,
+                    },
+                    text.replace(['{', '}'], ""),
+                ));
+            }
+        }
+    }
+    out
+}
+
+impl ParaCase {
+    /// Is `r` inside the passage this retelling came from?
+    pub fn contains(&self, r: &detection::VerseRef) -> bool {
+        r.book == self.book
+            && r.chapter == self.chapter
+            && r.verse >= self.verse_start
+            && r.verse <= self.verse_end
+    }
+}
+
+/// Scorecard: top-1 and top-5 in-passage rate, split by vocabulary type.
+pub fn paraphrase_scorecard() -> String {
+    use detection::SemanticIndex;
+    let index = SemanticIndex::build(&kjv_corpus());
+    let cases = para_cases();
+
+    // (hits@1, hits@5, total) per vocab bucket, plus the overall row.
+    let mut buckets: BTreeMap<String, (usize, usize, usize)> = BTreeMap::new();
+    let mut misses: Vec<String> = Vec::new();
+
+    for case in &cases {
+        let hits = index.top_k(&case.text, 5);
+        let at1 = hits.first().map(|(r, _)| case.contains(r)).unwrap_or(false);
+        let at5 = hits.iter().any(|(r, _)| case.contains(r));
+        let e = buckets.entry(case.vocab.clone()).or_insert((0, 0, 0));
+        e.0 += at1 as usize;
+        e.1 += at5 as usize;
+        e.2 += 1;
+        let t = buckets.entry("TOTAL".into()).or_insert((0, 0, 0));
+        t.0 += at1 as usize;
+        t.1 += at5 as usize;
+        t.2 += 1;
+        if !at5 {
+            let got = hits
+                .first()
+                .map(|(r, s)| format!("{} {}:{} @{:.2}", r.book, r.chapter, r.verse, s))
+                .unwrap_or_else(|| "nothing".into());
+            misses.push(format!(
+                "    {:<24} want {} {}:{}-{}  got {}",
+                case.id, case.book, case.chapter, case.verse_start, case.verse_end, got
+            ));
+        }
+    }
+
+    let pct = |a: usize, b: usize| {
+        if b == 0 {
+            0.0
+        } else {
+            a as f32 * 100.0 / b as f32
+        }
+    };
+    let mut out = String::from("\n  Relay — paraphrase RETRIEVAL benchmark\n");
+    out.push_str("  ─────────────────────────────────────────────────────────────\n");
+    out.push_str("  vocab    cases   in-passage@1   in-passage@5\n");
+    for (k, (a1, a5, n)) in &buckets {
+        if k == "TOTAL" {
+            continue;
+        }
+        out.push_str(&format!(
+            "  {k:<8} {n:>5}   {:>10.0}%   {:>12.0}%\n",
+            pct(*a1, *n),
+            pct(*a5, *n)
+        ));
+    }
+    if let Some((a1, a5, n)) = buckets.get("TOTAL") {
+        out.push_str("  ─────────────────────────────────────────────────────────────\n");
+        out.push_str(&format!(
+            "  {:<8} {n:>5}   {:>10.0}%   {:>12.0}%\n",
+            "TOTAL",
+            pct(*a1, *n),
+            pct(*a5, *n)
+        ));
+    }
+    if !misses.is_empty() {
+        out.push_str("\n  missed entirely (not in top 5):\n");
+        for m in &misses {
+            out.push_str(m);
+            out.push('\n');
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod para_tests {
+    use super::*;
+
+    /// `cargo test eval::para_tests::print_paraphrase_scorecard -- --nocapture`
+    #[test]
+    fn print_paraphrase_scorecard() {
+        println!("{}", paraphrase_scorecard());
+    }
+
+    /// Every labelled passage must actually exist in the bundled KJV — a typo in
+    /// a reference would silently score as a miss forever.
+    #[test]
+    fn every_labelled_passage_exists() {
+        let corpus = kjv_corpus();
+        for case in para_cases() {
+            let found = corpus.iter().any(|(r, _)| case.contains(r));
+            assert!(
+                found,
+                "[{}] {} {}:{}-{} is not in the bundled KJV",
+                case.id, case.book, case.chapter, case.verse_start, case.verse_end
+            );
+        }
+    }
+}

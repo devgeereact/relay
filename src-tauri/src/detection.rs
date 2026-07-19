@@ -1548,6 +1548,41 @@ pub struct SemanticIndex {
     docs: Vec<(VerseRef, HashMap<String, f32>)>,
 }
 
+/// Modern English → KJV vocabulary, baked in (`include_str!`) so it stays
+/// offline. See `data/kjv_gloss.json` for why this exists and what it is not.
+fn kjv_gloss() -> &'static HashMap<String, Vec<String>> {
+    static GLOSS: std::sync::OnceLock<HashMap<String, Vec<String>>> = std::sync::OnceLock::new();
+    GLOSS.get_or_init(|| {
+        #[derive(serde::Deserialize)]
+        struct Raw {
+            gloss: HashMap<String, Vec<String>>,
+        }
+        const RAW: &str = include_str!("../data/kjv_gloss.json");
+        serde_json::from_str::<Raw>(RAW)
+            .map(|r| r.gloss)
+            .unwrap_or_default()
+    })
+}
+
+/// Expand a QUERY's tokens with their KJV equivalents.
+///
+/// Applied to the query only, never when building the index: glossing the corpus
+/// would change the document frequencies, and it is exactly those frequencies
+/// (how rare "Meribah" or "husks" is) that make biblical nouns such strong
+/// signals. The original token is kept — a retelling that already uses the KJV
+/// word must not get worse — so this can only ever ADD evidence.
+fn expand_with_gloss(tokens: Vec<String>) -> Vec<String> {
+    let gloss = kjv_gloss();
+    let mut out = Vec::with_capacity(tokens.len() * 2);
+    for t in tokens {
+        if let Some(alts) = gloss.get(&t) {
+            out.extend(alts.iter().cloned());
+        }
+        out.push(t);
+    }
+    out
+}
+
 impl SemanticIndex {
     /// Build the index from the corpus: (reference, verse text).
     pub fn build(corpus: &[(VerseRef, String)]) -> Self {
@@ -1603,7 +1638,7 @@ impl SemanticIndex {
     /// they have to judge it — "grace · saved · faith" is something a human can
     /// agree or disagree with. "0.61" is not.
     pub fn top_k_explained(&self, query: &str, k: usize) -> Vec<(VerseRef, f32, Vec<String>)> {
-        let qvec = tfidf_vector(&tokenize(query), &self.idf);
+        let qvec = tfidf_vector(&expand_with_gloss(tokenize(query)), &self.idf);
         if qvec.is_empty() {
             return Vec::new();
         }
@@ -2205,6 +2240,76 @@ mod tests {
     fn semantic_empty_on_no_content_overlap() {
         let idx = seed_index();
         assert!(idx.top_k("xyzzy plugh frobnicate", 1).is_empty());
+    }
+
+    // ── KJV gloss: modern speech against a 1611 text ────────────────────────
+
+    /// The whole point: a word that appears NOWHERE in the KJV still finds the
+    /// verse. Reintroduce the un-glossed query path and this fails — "pigs" and
+    /// "dad" share not one token with the text.
+    #[test]
+    fn gloss_finds_the_verse_through_modern_words() {
+        let corpus =
+            vec![
+            (
+                VerseRef { book: "Luke".into(), chapter: 15, verse: 16 },
+                "And he would fain have filled his belly with the husks that the swine did eat."
+                    .to_string(),
+            ),
+            (
+                VerseRef { book: "Genesis".into(), chapter: 1, verse: 1 },
+                "In the beginning God created the heaven and the earth.".to_string(),
+            ),
+        ];
+        let idx = SemanticIndex::build(&corpus);
+        let hits = idx.top_k("he ended up feeding pigs", 1);
+        assert_eq!(hits.len(), 1, "modern wording found nothing");
+        assert_eq!(hits[0].0.reference_book_chapter_verse(), "Luke 15:16");
+    }
+
+    /// The gloss ADDS evidence, never replaces it: a retelling that already uses
+    /// the KJV word must not be made worse by glossing something else in it.
+    #[test]
+    fn gloss_keeps_the_original_token() {
+        let expanded = expand_with_gloss(vec!["swine".into(), "pigs".into()]);
+        assert!(expanded.contains(&"swine".to_string()));
+        assert!(expanded.contains(&"pigs".to_string()));
+    }
+
+    /// THE architectural invariant. The gloss is a QUERY-time expansion only.
+    /// Glossing the corpus would change document frequencies, and it is exactly
+    /// how rare a word like "husks" is that makes it such a strong signal —
+    /// inflating those counts would quietly degrade every other match.
+    #[test]
+    fn gloss_never_touches_the_index() {
+        // "boat" is modern; the corpus keeps it verbatim, so a KJV-word query
+        // ("ship") must NOT reach it — expansion runs one way, on the query.
+        let corpus = vec![(
+            VerseRef {
+                book: "Mark".into(),
+                chapter: 4,
+                verse: 37,
+            },
+            "the waves beat into the boat".to_string(),
+        )];
+        let idx = SemanticIndex::build(&corpus);
+        assert!(
+            idx.top_k("ship", 1).is_empty(),
+            "the index was glossed — document frequencies are now wrong"
+        );
+        // ...while the modern query still finds the modern text unaided.
+        assert!(!idx.top_k("boat", 1).is_empty());
+    }
+
+    /// A gloss that names an answer is a cheat, not a gloss. Story-specific
+    /// proper nouns must never appear as keys, or the benchmark measures itself.
+    #[test]
+    fn gloss_contains_no_story_specific_giveaways() {
+        for key in kjv_gloss().keys() {
+            for banned in ["samaritan", "sycomore", "zacchaeus", "lazarus", "goliath"] {
+                assert_ne!(key.as_str(), banned, "gloss key '{key}' names an answer");
+            }
+        }
     }
 
     /// A paraphrase match must be able to SAY WHY.
