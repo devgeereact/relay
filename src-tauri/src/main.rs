@@ -276,6 +276,8 @@ fn main() {
             get_content_templates,
             set_content_template,
             data_health,
+            list_books,
+            chapter_verses,
             system_hardware,
             probe_integrations,
             migration_status,
@@ -1626,6 +1628,26 @@ fn set_content_template(
 ) -> error::Result<()> {
     let conn = db.0.lock()?;
     db::set_content_template(&conn, &kind, template_id).map_err(Into::into)
+}
+
+/// Books available to browse, in canonical order — Library (§7).
+#[tauri::command]
+fn list_books(db: tauri::State<'_, Db>) -> error::Result<Vec<db::BookSummary>> {
+    let conn = db.0.lock()?;
+    let tid = db::active_translation_id(&conn)?;
+    db::list_books(&conn, tid).map_err(Into::into)
+}
+
+/// One chapter's verses, in order — the Library's reading pane.
+#[tauri::command]
+fn chapter_verses(
+    db: tauri::State<'_, Db>,
+    book: String,
+    chapter: i64,
+) -> error::Result<Vec<db::VerseRow>> {
+    let conn = db.0.lock()?;
+    let tid = db::active_translation_id(&conn)?;
+    db::chapter_verses(&conn, tid, &book, chapter).map_err(Into::into)
 }
 
 /// Number of verses currently seeded — surfaced in Settings as a data-layer

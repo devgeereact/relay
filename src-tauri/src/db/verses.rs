@@ -792,3 +792,147 @@ mod fts_real_corpus {
         );
     }
 }
+
+/// One book, and how many chapters it has, for the Library's browse tree.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct BookSummary {
+    pub book: String,
+    pub chapters: i64,
+}
+
+/// Books present in a translation, IN CANONICAL ORDER.
+///
+/// Ordered by `detection::CANONICAL_BOOKS`, not alphabetically. A Bible that
+/// opens with Amos, Acts, Chronicles is not a Bible anyone can navigate — the
+/// order is part of what the book IS, and every reader's muscle memory depends
+/// on it. Books the corpus does not contain are simply absent.
+pub fn list_books(conn: &Connection, translation_id: i64) -> rusqlite::Result<Vec<BookSummary>> {
+    let mut stmt = conn
+        .prepare("SELECT book, MAX(chapter) FROM verses WHERE translation_id = ?1 GROUP BY book")?;
+    let rows = stmt.query_map([translation_id], |r| {
+        Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
+    })?;
+    let mut found: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+    for row in rows {
+        let (b, c) = row?;
+        found.insert(b, c);
+    }
+    Ok(crate::detection::CANONICAL_BOOKS
+        .iter()
+        .filter_map(|b| {
+            found.get(*b).map(|&chapters| BookSummary {
+                book: (*b).to_string(),
+                chapters,
+            })
+        })
+        .collect())
+}
+
+/// Every verse of one chapter, in order — the Library's reading pane.
+pub fn chapter_verses(
+    conn: &Connection,
+    translation_id: i64,
+    book: &str,
+    chapter: i64,
+) -> rusqlite::Result<Vec<VerseRow>> {
+    let mut stmt = conn.prepare(
+        "SELECT v.id, v.book, v.chapter, v.verse, v.text, t.abbreviation
+           FROM verses v JOIN translations t ON t.id = v.translation_id
+          WHERE v.translation_id = ?1 AND v.book = ?2 AND v.chapter = ?3
+          ORDER BY v.verse",
+    )?;
+    let rows = stmt.query_map((translation_id, book, chapter), row_to_verse)?;
+    rows.collect()
+}
+
+#[cfg(test)]
+mod browse_tests {
+    use super::*;
+
+    fn corpus_db() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        crate::db::migrate(&conn, true).unwrap();
+        conn
+    }
+
+    #[test]
+    fn books_come_back_in_canonical_order_not_alphabetical() {
+        // THE POINT OF THE WHOLE FUNCTION. A Bible whose contents page opens
+        // "Acts, Amos, Chronicles" is not a Bible anyone can navigate — the
+        // order is part of what the book IS, and every reader's muscle memory
+        // depends on it. `GROUP BY book` returns alphabetical; this must not.
+        let conn = corpus_db();
+        let tid = crate::db::active_translation_id(&conn).unwrap();
+        let books = list_books(&conn, tid).unwrap();
+        assert!(
+            books.len() > 60,
+            "expected a whole Bible, got {}",
+            books.len()
+        );
+        assert_eq!(books[0].book, "Genesis");
+        assert_eq!(books[1].book, "Exodus");
+        assert_eq!(books.last().unwrap().book, "Revelation");
+
+        let alphabetical = {
+            let mut v: Vec<String> = books.iter().map(|b| b.book.clone()).collect();
+            v.sort();
+            v
+        };
+        let actual: Vec<String> = books.iter().map(|b| b.book.clone()).collect();
+        assert_ne!(actual, alphabetical, "books came back alphabetical");
+    }
+
+    #[test]
+    fn chapter_counts_are_real() {
+        let conn = corpus_db();
+        let tid = crate::db::active_translation_id(&conn).unwrap();
+        let books = list_books(&conn, tid).unwrap();
+        let find = |n: &str| books.iter().find(|b| b.book == n).unwrap().chapters;
+        assert_eq!(find("Genesis"), 50);
+        assert_eq!(find("Psalms"), 150);
+        assert_eq!(find("Jude"), 1);
+        assert_eq!(find("Revelation"), 22);
+    }
+
+    #[test]
+    fn a_chapter_reads_in_verse_order() {
+        let conn = corpus_db();
+        let tid = crate::db::active_translation_id(&conn).unwrap();
+        let v = chapter_verses(&conn, tid, "Genesis", 1).unwrap();
+        assert_eq!(v.len(), 31, "Genesis 1 has 31 verses");
+        assert_eq!(v[0].verse, 1);
+        assert!(v[0].text.starts_with("In the beginning"));
+        // Ordering is explicit in SQL; prove it rather than trust insertion order.
+        assert!(v.windows(2).all(|w| w[0].verse < w[1].verse));
+    }
+
+    #[test]
+    fn a_chapter_that_does_not_exist_is_empty_not_an_error() {
+        // Psalm 151 is not in the KJV. The Library must show an empty chapter,
+        // never fail to open.
+        let conn = corpus_db();
+        let tid = crate::db::active_translation_id(&conn).unwrap();
+        assert!(chapter_verses(&conn, tid, "Psalms", 151)
+            .unwrap()
+            .is_empty());
+        assert!(chapter_verses(&conn, tid, "Nonesuch", 1)
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn a_fresh_install_that_never_chose_a_translation_still_opens() {
+        // `active_translation_id` falls back rather than erroring — a Library
+        // that refuses to open because nobody has picked a Bible yet is absurd.
+        let conn = corpus_db();
+        assert!(crate::db::get_setting(&conn, "active_translation")
+            .unwrap()
+            .is_none());
+        assert!(crate::db::active_translation_id(&conn).is_ok());
+        assert!(
+            !list_books(&conn, crate::db::active_translation_id(&conn).unwrap())
+                .unwrap()
+                .is_empty()
+        );
+    }
+}

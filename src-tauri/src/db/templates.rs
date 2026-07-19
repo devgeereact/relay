@@ -175,6 +175,31 @@ fn builtin_templates() -> &'static [(&'static str, &'static str, &'static str)] 
             r##"{"font":"var(--f-body)","background":"transparent","accent":"#b080e0","verseColor":"#1c1224","verseSize":"2.6","refSize":"1.7","italicRef":false}"##,
         ),
         (
+            // WORSHIP LYRICS — the fifth built-in, and the one every previous
+            // template was wrong for.
+            //
+            // Until now every built-in was SCRIPTURE-shaped: a `reference` region
+            // and verse text sized around 5cqw, because a verse is a paragraph
+            // with a citation. A lyric is neither. It is three or four short
+            // lines that a room full of people has to read while singing, from
+            // the back, often over a lit stage — and it has no reference at all.
+            // Rendering lyrics through a scripture template put a large gold
+            // "Song Title · Slide 7" where the words should be and shrank the
+            // words to a caption.
+            //
+            //   · NO reference region. The congregation is not singing the title.
+            //   · Large (9cqw) — roughly twice the scripture size. Short lines can
+            //     afford it, and TemplateRender auto-shrinks anything that would
+            //     overflow, so a long line is safe.
+            //   · White on near-black: the highest contrast available, which is
+            //     what a projector in a lit room actually needs.
+            //   · Sans, not serif. Serifs are for reading a paragraph; a lyric is
+            //     scanned in a second and a half between breaths.
+            "Worship Lyrics",
+            r##"{"regions":["verse_text"],"align":"center","lowerThird":false,"refFirst":false}"##,
+            r##"{"font":"var(--f-body)","background":"#07070a","accent":"#ffffff","verseColor":"#ffffff","verseSize":"9","refSize":"2","italicRef":false}"##,
+        ),
+        (
             "Lobby Warm",
             r##"{"regions":["reference","verse_text"],"align":"center","lowerThird":false,"refFirst":false}"##,
             r##"{"font":"var(--f-serif)","background":"linear-gradient(160deg, #241419, #120a0e)","accent":"#e27d93","verseColor":"#f0dfe3","verseSize":"4","refSize":"2","italicRef":false}"##,
@@ -193,8 +218,14 @@ pub(super) fn seed_templates(conn: &Connection) -> rusqlite::Result<()> {
     Ok(())
 }
 
-/// Reset the built-in templates IN PLACE (ids 1..4) — keeps ids stable so
-/// output_channels FKs stay valid. Used by the vw→cqw migration.
+/// Reset the built-in templates IN PLACE — keeps ids stable so output_channels
+/// FKs stay valid. Used by the vw→cqw migration.
+///
+/// NOTE: this rewrites ids 1..N positionally. "Worship Lyrics" was added as the
+/// FOURTH entry, so on an existing database this renames whatever sat at id 4
+/// (Lobby Warm) — which is why `ensure_lyrics_template` appends instead of
+/// relying on this, and why this is only called by the one migration that
+/// already intended a full rewrite.
 pub(super) fn reset_builtin_templates(conn: &Connection) -> rusqlite::Result<()> {
     for (i, (name, layout, style)) in builtin_templates().iter().enumerate() {
         conn.execute(

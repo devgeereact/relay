@@ -221,6 +221,20 @@ pub fn migrate(conn: &Connection, fresh: bool) -> rusqlite::Result<()> {
     Ok(())
 }
 
+/// The translation the operator is reading, for browse queries.
+///
+/// Falls back to the lowest translation id rather than erroring: a fresh install
+/// has never chosen one, and a Library that refuses to open because nobody has
+/// picked a Bible yet would be absurd.
+pub fn active_translation_id(conn: &Connection) -> rusqlite::Result<i64> {
+    if let Some(v) = get_setting(conn, "active_translation")? {
+        if let Ok(id) = v.parse::<i64>() {
+            return Ok(id);
+        }
+    }
+    conn.query_row("SELECT MIN(id) FROM translations", [], |r| r.get(0))
+}
+
 /// The tables the Database Migration screen verifies, with the rung that owns
 /// each one. Kept next to `ensure_tables` so adding a rung without adding it
 /// here is an obvious omission rather than a silent one.

@@ -1,4 +1,5 @@
 <script>
+  import { onMount } from 'svelte';
   // Library — the unified content catalog. Every content type lives behind a
   // sub-tab: Scripture (verses the operator saved), Lyrics (songs), Media
   // (images/video/documents), Announcements, and service History. One Import
@@ -7,10 +8,14 @@
   import { tick } from 'svelte';
   import Lyrics from './library/Lyrics.svelte';
   import Scripture from './library/Scripture.svelte';
+  import Browse from './library/Browse.svelte';
+  import LyricSlides from './library/LyricSlides.svelte';
+  import ContentSlides from './library/ContentSlides.svelte';
+  import LiveStrip from './library/LiveStrip.svelte';
+  import { listActiveTemplates } from '../stores/capture.js';
   import Media from './library/Media.svelte';
   import Announcements from './library/Announcements.svelte';
   import ImportReview from './library/ImportReview.svelte';
-  import History from './library/History.svelte';
   import {
     capture,
     parseImport,
@@ -19,13 +24,39 @@
   } from '../stores/capture.js';
 
   const tabs = [
-    { key: 'scripture', label: 'Scripture', color: 'var(--v-accent)' },
+    // BROWSE is first: the Library could search, and could list what had been
+    // saved, but could not open a Bible and read it — which is the thing the
+    // word "library" promises.
+    { key: 'browse', label: 'Bible', color: 'var(--v-accent)' },
+    { key: 'scripture', label: 'Saved', color: 'var(--v-accent)' },
     { key: 'lyrics', label: 'Lyrics', color: 'var(--v-accent)' },
     { key: 'media', label: 'Media', color: 'var(--v-amethyst)' },
     { key: 'announcements', label: 'Announcements', color: 'var(--v-rose)' },
-    { key: 'history', label: 'History', color: 'var(--v-cyan)' },
   ];
-  let active = 'scripture';
+  let active = 'browse';
+  // The template the OUTPUT actually uses, so the live strip is the real thing.
+  let liveTemplate = null;
+  // ONE search box for the whole Library. Each pane decides what the words mean
+  // for its own content — a reference or a phrase in scripture, a title or a
+  // line in a song — but the operator only has to find one box.
+  let query = '';
+  let debounced = '';
+  let searchTimer;
+  function onSearch() {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => (debounced = query), 200);
+  }
+  $: placeholder =
+    active === 'browse' || active === 'scripture'
+      ? 'Search scripture — a reference or a phrase'
+      : active === 'lyrics'
+        ? 'Search songs — title, author or a line'
+        : active === 'media'
+          ? 'Search media by filename'
+          : 'Search announcements';
+  onMount(async () => {
+    liveTemplate = (await listActiveTemplates().catch(() => []))[0] ?? null;
+  });
   let reload = 0; // bump to remount the active pane after an import
   let fileInput;
   let importing = false;
@@ -134,6 +165,26 @@
   <ImportReview songs={reviewSongs} on:done={onReviewDone} on:cancel={() => (reviewing = false)} />
 {:else}
   <div class="lib-topline">
+    <!-- WHAT IS ON THE WALL, from inside the Library. The console's program
+         monitor lives on the Live tab; an operator browsing the Bible mid-service
+         should not have to leave what they are doing to answer the one question
+         that matters most. -->
+    <LiveStrip template={liveTemplate} />
+
+    <div class="lib-search">
+      <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"
+        stroke-width="2" stroke-linecap="round" aria-hidden="true">
+        <circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" />
+      </svg>
+      <input
+        class="r-input"
+        type="search"
+        bind:value={query}
+        on:input={onSearch}
+        {placeholder}
+        aria-label={placeholder} />
+    </div>
+
     <div class="subtabs">
       {#each tabs as t}
         <button class="subtab r-focus" class:on={active === t.key} on:click={() => (active = t.key)}>
@@ -165,22 +216,26 @@
   {#if importMsg}<div class="lib-importmsg r-mono">{importMsg}</div>{/if}
 
   {#key active + '-' + reload}
-    {#if active === 'scripture'}
+    {#if active === 'browse'}
+      <Browse query={debounced} />
+    {:else if active === 'scripture'}
       <Scripture startSave={scriptureAction} />
     {:else if active === 'lyrics'}
-      <Lyrics startPaste={lyricAction === 'paste'} />
+      <LyricSlides query={debounced} />
     {:else if active === 'media'}
-      <Media />
-    {:else if active === 'announcements'}
-      <Announcements startDraft={announceAction} />
+      <ContentSlides kind="media" query={debounced} />
     {:else}
-      <History />
+      <ContentSlides kind="announce" query={debounced} />
     {/if}
   {/key}
 {/if}
 </div>
 
 <style>
+  .lib-search{ position:relative; display:flex; align-items:center; margin-bottom:12px; }
+  .lib-search svg{ position:absolute; left:12px; color:var(--v-faint); pointer-events:none; }
+  .lib-search input{ padding-left:34px; max-width:520px; }
+
   .lib-shell{ display:flex; flex-direction:column; gap:16px; }
   .lib-topline{ display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap; }
   .lib-topactions{ display:flex; gap:8px; flex-shrink:0; align-items:center; }

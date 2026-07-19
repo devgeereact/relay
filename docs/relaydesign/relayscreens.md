@@ -19,8 +19,32 @@ compared against its reference, and logged in `docs/relaydesign/.loop/<screen>-l
 Where a screen is marked done from a **code-level** compare rather than a pixel one,
 its log says so — this machine cannot capture the Tauri console webview.
 
+## Progress
+
+| § | Section | State |
+|---|---|---|
+| 1 | Launch & Startup | **✅ complete** — 8 screens · `.loop/launch-log.md` |
+| 2 | First Run | **✅ complete** — one 6-step wizard · `.loop/firstrun-log.md` |
+| 3 | Dashboard | **✅ complete** — `.loop/dashboard-log.md` |
+| 4 | Live Production | **✅ resolved** — 2 built, rest already existed or refused · `.loop/liveproduction-log.md` |
+| 5 | AI Detection | **✅ resolved** — Inspector built · `.loop/aidetection-log.md` |
+| 6 | Transcript | **✅ resolved** — search built; the real work was the audio fix (DECISIONS §23) |
+| 7 | Scripture Library | **✅ resolved** — Bible browser built · `.loop/scripturelibrary-log.md` |
+| 8+ | Planner onward | not started |
+
+Also done outside the numbered sections: the app-wide token and mode-colour
+rebrand, the application icon and brand mark (`.loop/rebrand-log.md`,
+DECISIONS §22), and the Live Surface / Template Designer / Help screens.
+
+**A note on what "resolved" means.** Several sections list screens Relay cannot
+honestly build — a licence activation screen for MIT software, OBS/ATEM setup for
+protocols it does not speak, a speaker timeline with no diarization, a translation
+downloader with no translations to download. Those are marked NOT BUILT with the
+reason, rather than shipped as UI that implies a capability. Each section's log
+records which, and why.
+
 **Done so far:** all of **§1 Launch & Startup** (`.loop/launch-log.md`) ·
-**§2 First Run** (`.loop/firstrun-log.md`) · **§3 Dashboard** (`.loop/dashboard-log.md`) · **§4 Live Production** (`.loop/liveproduction-log.md`) · **§5 AI Detection** (`.loop/aidetection-log.md`) ·
+**§2 First Run** (`.loop/firstrun-log.md`) · **§3 Dashboard** (`.loop/dashboard-log.md`) · **§4 Live Production** (`.loop/liveproduction-log.md`) · **§5 AI Detection** (`.loop/aidetection-log.md`) · **§6 Transcript** · **§7 Scripture Library** (`.loop/scripturelibrary-log.md`) ·
 Live Surface (the operator console) · Template Designer · Help / Shortcuts ·
 the app-wide token and mode-colour rebrand (`.loop/rebrand-log.md`).
 
@@ -174,27 +198,77 @@ proved by reverting the guard and watching two tests fail.
 
 # 6. Transcript
 
-* Live Transcript
-* Search Transcript
-* Transcript Editor
-* Transcript Export
-* Speaker Timeline
-* Timestamp Editor
+**Section resolved.** The transcript work in this section became mostly an AUDIO
+fix rather than a UI one — see `docs/DECISIONS.md` §23.
+
+* Live Transcript — **✅ ALREADY BUILT** — panel 1 of the Live surface
+* Search Transcript — **✅ DONE** — search within the open service's transcript
+  in Library → History, with match highlighting and a count. It says plainly that
+  it searches **that service only**; there is no backend cross-service transcript
+  search, and a box that silently covers less than the operator assumes is worse
+  than no box
+* Transcript Export — **✅ ALREADY BUILT** — `export_service` writes the
+  transcript and fired detections to Markdown
+* Transcript Editor · Timestamp Editor — **NOT BUILT.** No backend exists to
+  update a transcript row, and editing one is not a neutral feature: the
+  transcript is the RECORD of what a person said from a pulpit. Making it
+  editable is a decision about that record, and `docs/DECISIONS.md` contains no
+  such decision
+* Speaker Timeline — **NOT BUILT, and it cannot be faked.** It needs speaker
+  diarization. There is **zero** diarization anywhere in the codebase (grepped);
+  whisper.cpp does not provide it and `voice_profiles` is per-preacher
+  calibration, not "who is talking now". A timeline drawn without it would be
+  invented data about who said what
+
+**Also fixed here, from a live report:** the transcript was emitting Chinese and
+other unspoken languages. That is whisper hallucinating on non-speech — see
+DECISIONS §23 for the three-layer fix (a neural speech-probability veto on the
+gate, whisper's own suppression parameters which were never switched on, and a
+script check). Service History was additionally showing `conf 0.61` on
+paraphrases — the forbidden number, decimal-formatted.
 
 ---
 
 # 7. Scripture Library
 
-* Library
-* Translation Manager
-* Download Translations
-* Verse Comparison
-* Favourite Scriptures
-* Recent Scriptures
-* Search History
-* Offline Packages
-* Translation Import
-* Bible Metadata
+**Section resolved** — log: `.loop/scripturelibrary-log.md`. Built against panel
+6. The Library could search and could list what was saved, but could not **open a
+Bible and read it** — which is what the word promises.
+
+* Library — **✅ REBUILT, ProPresenter-style** — a **slide grid of real rendered
+  thumbnails** (same `TemplateRender` the projector uses, so WYSIWYG by
+  construction), click-to-fire, and a **live strip showing what is on the wall
+  right now** without leaving the tab. The on-air slide carries the amber ring;
+  in rehearsal it goes amethyst, because nothing is reaching anyone.
+  Book tree in canonical order, chapter list, Read view alongside Slides
+  (`list_books`, `chapter_verses`).
+  **Canonical order is the substantive part**: `GROUP BY book` returns
+  alphabetical, and a Bible opening "Acts, Amos, Chronicles" is unnavigable.
+  Pinned by a test against the real 31,100-verse corpus
+* Favourite Scriptures — **✅ ALREADY BUILT** (the Saved tab), now reachable
+  per-verse from the browser
+* Recent Scriptures — **✅ ALREADY BUILT** — Service History lists every fired verse
+* Verse Comparison — **✅ as far as the data allows.** Comparing translations
+  needs ≥2; there is 1. The picker appears the moment a second exists
+* Translation Manager — **✅ partly.** The active translation is chosen in
+  Settings and honoured here; there is nothing to *manage* with one translation
+* Bible Metadata — **✅ partly.** Book and chapter counts are real and shown. The
+  corpus carries no author/date metadata and none is invented
+* Search History — **NOT BUILT.** Nothing persists queries. Reconstructing it
+  from the detection log would show fired verses, not searches
+* ~~Download Translations~~ · ~~Offline Packages~~ · ~~Translation Import~~ —
+  **NOT BUILT: one blocked problem, not three screens.** All three are the same
+  missing capability — getting a second Bible onto the machine — which needs a
+  source, a licence and a format decision that `docs/DECISIONS.md` does not
+  record. A downloader pointed at nothing is three screens pretending
+
+> **Relay ships the KJV only.** Verified against the live database: one
+> translation row. Detection already *recognises* spoken Yorùbá, Kiswahili and
+> Hausa references — that alias table is real — what is missing is verse TEXT in
+> those languages. The reference's four language tabs are therefore **not** drawn;
+> the picker is built from translations that exist, and the gap is stated in
+> words. Showing three empty tabs would make exactly the claim
+> `docs/LANGUAGES.md` is careful not to make.
 
 ---
 

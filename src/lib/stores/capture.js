@@ -907,6 +907,26 @@ export async function listMonitors() {
   }
 }
 
+/** Books available to browse, in canonical order (Library §7). */
+export async function listBooks() {
+  try {
+    const call = await invoke();
+    return await call('list_books');
+  } catch {
+    return [];
+  }
+}
+
+/** One chapter's verses, in order. */
+export async function chapterVerses(book, chapter) {
+  try {
+    const call = await invoke();
+    return await call('chapter_verses', { book, chapter });
+  } catch {
+    return [];
+  }
+}
+
 /** This machine's LAN IP so output URLs work on other devices. Null if offline. */
 export async function localIp() {
   try {
