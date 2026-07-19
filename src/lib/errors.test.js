@@ -98,3 +98,17 @@ describe('typed errors', () => {
     }
   });
 });
+
+describe('no engine behind the page', () => {
+  it('does not show a volunteer a raw JS TypeError from the Tauri bridge', () => {
+    // The bug: this exact string reached the FIRST-RUN WIZARD — the first thirty
+    // seconds a new operator ever spends in Relay — as
+    // "That didn't work: TypeError: Cannot read properties of undefined (reading 'invoke')".
+    const msg = humanError(
+      new TypeError("Cannot read properties of undefined (reading 'invoke')"),
+    );
+    expect(msg).not.toMatch(/TypeError/);
+    expect(msg).not.toMatch(/undefined/);
+    expect(msg).toMatch(/engine is not running/i);
+  });
+});

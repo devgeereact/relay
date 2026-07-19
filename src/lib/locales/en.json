@@ -14,7 +14,6 @@
     "is a deliberate order, not an oversight — a half-translated app that covers the Sunday",
     "path beats a complete one that ships next year."
   ],
-
   "app.on_air": "On Air",
   "app.screens_clear": "Screens clear",
   "app.blackout": "Blackout",
@@ -24,7 +23,6 @@
   "app.detection": "Detection",
   "app.active": "ACTIVE",
   "app.off": "OFF",
-
   "tab.live": "Live",
   "tab.channels": "Channels",
   "tab.templates": "Templates",
@@ -32,16 +30,13 @@
   "tab.planner": "Planner",
   "tab.settings": "Settings",
   "tab.help": "Help",
-
   "panic.title": "The screens may still be live.",
   "panic.dismiss": "Dismiss",
-
   "live.intelligence_feed": "Intelligence Feed",
   "live.live_transcript": "Live transcript",
   "live.output": "Output",
   "live.service_plan": "Service Plan",
   "live.slides": "Slides",
-
   "live.heard_the_reference": "Heard the reference",
   "live.paraphrase_a_guess": "Paraphrase — a guess",
   "live.ambiguous_reference": "Ambiguous reference",
@@ -52,10 +47,8 @@
   "live.push_to_stage": "Push to stage",
   "live.dismiss": "Dismiss",
   "live.accept_hint": "{a} accept · {d} dismiss",
-
   "live.related": "Related · {theme}",
   "live.related_note": "nobody said these — a topical suggestion",
-
   "live.no_suggestions": "No suggestions yet.",
   "live.detection_off": "Detection is off — manual override still fires.",
   "live.no_plans": "No service plans yet. Build one in Planner — or run the service from the AI and the manual box below.",
@@ -64,22 +57,19 @@
   "live.waiting_for_speech": "Waiting for speech…",
   "live.start_listening_to_transcribe": "Start listening to transcribe live.",
   "live.no_model": "No speech model loaded — see Settings. Manual override still works.",
-
   "live.now_live": "Now live: {reference}",
   "live.screens_cleared": "Screens cleared",
   "live.rehearsal_on": "Rehearsal — nothing reaches the screens",
   "live.rehearsal_off": "Live. Screens cleared.",
-
   "nav.end_of_passage": "End of the passage — nothing further to show.",
   "nav.no_passage": "No passage on screen yet. Fire a verse first, then use ← →.",
   "nav.not_in_library": "{reference} isn't in your Bible, so the screen was left as it is.",
-
   "common.loading": "Loading{what}…",
   "common.try_again": "Try again",
   "common.cancel": "Cancel",
-
   "settings.language": "Console language",
   "settings.language_hint": "The language Relay speaks to YOU. It listens to the preacher in whatever language they use, regardless of this.",
   "settings.translated_percent": "{percent}% translated",
-  "settings.help_translate": "Help translate"
+  "settings.help_translate": "Help translate",
+  "tab.dashboard": "Dashboard"
 }

@@ -90,3 +90,28 @@ describe('re-running first-run setup', () => {
     stop();
   });
 });
+
+describe('where a session lands', () => {
+  beforeEach(() => localStorage.clear());
+
+  it('sends a genuinely fresh install to the Dashboard', async () => {
+    // Nothing has ever been saved: nobody has run a service on this machine, and
+    // "is this going to work?" is the only question they have.
+    const { session } = await import('./session.js?land1');
+    let v;
+    session.subscribe((s) => (v = s))();
+    expect(v.activeTab).toBe('dashboard');
+  });
+
+  it('sends a CORRUPT session to the run surface, not the Dashboard', async () => {
+    // The distinction this exists for: a corrupt payload is not a fresh install.
+    // There WAS a session — possibly mid-service thirty seconds ago — and it is
+    // simply unreadable. That operator needs the console, not a readiness report
+    // about a service that is already happening.
+    localStorage.setItem('relay.session.v1', '{not json');
+    const { session } = await import('./session.js?land2');
+    let v;
+    session.subscribe((s) => (v = s))();
+    expect(v.activeTab).toBe('live');
+  });
+});

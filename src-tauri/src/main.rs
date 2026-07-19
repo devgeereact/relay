@@ -25,6 +25,7 @@ mod proimport;
 mod router;
 mod songs;
 mod stt;
+mod sysprobe;
 mod telemetry;
 
 use audio::AudioEngine;
@@ -275,6 +276,9 @@ fn main() {
             get_content_templates,
             set_content_template,
             data_health,
+            system_hardware,
+            probe_integrations,
+            migration_status,
             list_audio_devices,
             local_ip,
             start_capture,
@@ -1636,6 +1640,76 @@ fn data_health(db: tauri::State<'_, Db>) -> error::Result<i64> {
 #[tauri::command]
 fn list_audio_devices() -> Vec<audio::DeviceInfo> {
     audio::list_input_devices()
+}
+
+/// What this machine and this build can do — Hardware Check (Launch & Startup).
+///
+/// Measures the volume holding APP-DATA, not the boot volume: models, media and
+/// the database all land there, and it is the one that fills up.
+#[tauri::command]
+fn system_hardware() -> sysprobe::Hardware {
+    sysprobe::read(&db::app_data_dir())
+}
+
+/// Is something listening on the default OBS / ATEM ports — Plugin Loading.
+///
+/// A TCP connect and nothing more. Relay implements neither control protocol, so
+/// it may not claim the app is running; the screen words it as "something is
+/// listening on the port a default install would use".
+#[tauri::command]
+async fn probe_integrations() -> Vec<sysprobe::PortProbe> {
+    // Two 300 ms connects worst case, off the main thread — a boot screen must
+    // never be held behind a firewall prompt.
+    tauri::async_runtime::spawn_blocking(sysprobe::probe_integrations)
+        .await
+        .unwrap_or_default()
+}
+
+/// One row of the Database Migration screen.
+#[derive(serde::Serialize)]
+struct MigrationRow {
+    label: String,
+    table: String,
+    present: bool,
+}
+
+/// What the schema actually looks like — Database Migration (Launch & Startup).
+#[derive(serde::Serialize)]
+struct MigrationStatus {
+    version: i64,
+    expected: i64,
+    tables: Vec<MigrationRow>,
+    /// Did the `detections.status` rebuild land? (CLAUDE.md §25)
+    manual_status: bool,
+    /// A leftover `detections_new` — the fingerprint of the §25 failure.
+    scratch_table: bool,
+}
+
+/// Report the schema by ASKING THE DATABASE.
+///
+/// The migration runner finishes before the webview exists, so there is nothing
+/// to stream — but "already applied" was previously asserted from a hard-coded
+/// list and would have drawn six green ticks over a database missing every one
+/// of those tables. This queries `sqlite_master`.
+#[tauri::command]
+fn migration_status(db: tauri::State<'_, Db>) -> error::Result<MigrationStatus> {
+    let conn = db.0.lock()?;
+    let (version, expected, rows) = db::schema_report(&conn)?;
+    let (manual_status, scratch_table) = db::manual_status_report(&conn)?;
+    Ok(MigrationStatus {
+        version,
+        expected,
+        tables: rows
+            .into_iter()
+            .map(|(label, table, present)| MigrationRow {
+                label: label.to_string(),
+                table: table.to_string(),
+                present,
+            })
+            .collect(),
+        manual_status,
+        scratch_table,
+    })
 }
 
 /// This machine's LAN IPv4, so output URLs point at a real address other devices

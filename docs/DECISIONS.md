@@ -223,3 +223,124 @@ ON AIR, and is never allowed to lie.
 Pinned by `src/lib/detect.test.js` (a paraphrase never shows a percentage, at any score
 — the frontend mirror of `router.rs::semantic_can_never_auto_fire`) and by
 `pipeline.rs::the_event_carries_the_evidence_the_operator_must_judge`.
+
+---
+
+## 22. Chrome is amethyst; amber is spent only on air
+
+**Decision:** the interactive accent of the whole application — the selected nav
+item, focus rings, switches, sliders, hovers, and the ordinary primary button —
+is **amethyst**, exposed as one token, `--v-accent`. **Amber survives only where
+something is, or is about to be, in front of a congregation.**
+
+Before this, amber *was* the chrome accent. The active tab was amber. The focus
+ring was amber. Twenty-three ordinary buttons — Save song, Add channel, Import,
+Continue, Run the setup walk-through — were amber. So was the sidebar avatar, the
+Settings section headings, the threshold sliders, every hover state, and the
+`file paths in Channels`.
+
+**That is a colour that is always on.** And a colour that is always on cannot also
+be a warning. §18, §20 and §21 all lean on the same premise — that amber means one
+thing, *the congregation is looking at something*, and is never allowed to lie —
+while the application itself was lighting the tally colour on every screen, at
+rest, permanently. The one rule the product's safety story depends on was being
+broken by its own Save buttons.
+
+The design system settles it in two places: the USAGE GUIDE says amber is
+"anything that is live/on the wall", and `relay-production-interface.png` draws
+the active sidebar item **amethyst-tinted, not amber**.
+
+**Why amethyst and not a new neutral accent.** Amethyst already means "not
+reaching the screens" (§18, rehearsal). For chrome — a tab, a text field, a
+toggle — that is exactly right: touching it does not put anything on a wall.
+The two readings agree rather than compete.
+
+**The token, not the hex, is the rule.** `--v-accent` exists so this is
+enforceable: chrome points at the accent, and reaching past it to `--v-amber`
+is a visible, reviewable act at the call site. `.r-btn.primary` is the default
+button; `.r-btn.amber` is documented as ON AIR ACTION and is deliberately not
+the easy choice.
+
+**Kept amber, deliberately:** the On Air badge (`App.svelte`, `Live.svelte`), the
+TAKE and Fire controls, and the on-air plan-position chip. **Moved off amber:**
+"Engine ready" in Channels → green, the design sheet's connected colour; and the
+detection-method badge in Service History → grey, because nothing in a record of
+last Sunday is on air.
+
+The application icon changed for the same reason: it was an amber "R", sitting in
+the Dock in the tally colour whether or not Relay was even running. It is now the
+design sheet's amethyst waveform (`src-tauri/icons/relay-mark.svg`, the source of
+truth for every generated size), and `src/lib/ui/BrandMark.svelte` is the one
+copy of that mark inside the app.
+
+---
+
+## 23. A voice gate, not a sound gate — and whisper is never asked to transcribe silence
+
+**Reported from a real service:** *"the transcript is getting Chinese words and
+other languages that aren't heard."*
+
+That symptom is not a language bug. It is what a sequence model does when it is
+handed audio containing no words.
+
+**Whisper has no way to say "nothing was said."** Fed a door, a chair, an
+air-conditioner surge or a music bed, it emits the most likely continuation — and
+its training data is full of subtitle boilerplate, much of it Chinese, Korean and
+Russian. The model is completing a subtitle file. Relay was asking it to.
+
+Three things were true at once, and each one is fixed:
+
+**1. The gate could not tell a voice from a sound.** It was an energy gate —
+adaptive and hysteretic (§19), but energy nonetheless, and a slammed door has
+plenty of energy. Meanwhile `dsp.rs` was already computing RNNoise's per-frame
+**speech probability** and using it only for auto-gain and the level meter. That
+number now vetoes OPENING the gate.
+
+The asymmetry is load-bearing: **the probability may veto opening an utterance;
+it may never close one.** Once the preacher is speaking, only energy and its
+hysteresis decide when they stop. If an unsure model could shut the gate, every
+shout, whisper, sung line and heavy accent would chop the sentence — the exact
+failure `stt.rs`'s "append every chunk, silence inside an utterance is audio"
+rule exists to prevent. Being wrong about the START of an utterance costs one
+late word. Being wrong about the MIDDLE mangles the transcript.
+
+The bar (`SPEECH_OPEN_MIN = 0.30`) is deliberately low. It asks "is this
+definitely *not* speech?", never "is this definitely speech?" — because §19 is
+the scar from a gate that went silently deaf to a quiet preacher, and a confident
+threshold here would rebuild it in a new place. It applies only when the real
+neural VAD is running; below 48 kHz `speech_prob` is an energy proxy and judging
+energy by energy is circular, so the gate behaves exactly as before.
+
+**2. Whisper's own hallucination guards were never switched on.**
+`FullParams::new` does not apply whisper.cpp's defaults, so `suppress_blank`,
+`suppress_nst` (the "♪ / [Music] / 字幕" token family), `no_speech_thold`, the
+temperature fallback, `logprob_thold` and `entropy_thold` were all unset. They
+are now at whisper.cpp's own defaults.
+
+**3. Nothing checked the output was even in the right script.**
+
+**The last one is a script check, not a phrase blocklist, and that is the whole
+point.** Blocklisting the Chinese strings whisper happens to emit fails the moment
+it emits a different one, and encodes the false assumption that Chinese is the
+only wrong answer. The invariant is the script: every language Relay ships
+recognition for — English and Tier-1 Yoruba, Kiswahili, Hausa — is written in
+**Latin**. A CJK, Hangul, Kana, Cyrillic, Arabic, Hebrew, Thai or Devanagari
+letter in the output is not a mis-hearing of a word; it is the model completing a
+subtitle file. One such character condemns the line.
+
+Two things this must never break, both pinned by tests:
+
+- **Yoruba and Hausa are Latin.** `ẹ ọ ṣ` live in Latin Extended Additional and
+  `ɓ ɗ ƙ` in the IPA range. A naive `is_ascii_alphabetic` check would discard
+  every Tier-1 transcript as "foreign" — silently making Relay deaf to the
+  languages it exists to serve.
+- **Code-switching mid-sentence is normal here, not an edge case.** A line that
+  mixes English and Yoruba must survive.
+
+An explicitly chosen non-Latin language is respected: the guard exists because
+AUTO-DETECT picks badly on short, quiet or noisy audio, not to refuse languages.
+
+**Not verified with real audio.** Every test here is a unit test over strings and
+levels. Per §13, an STT change is scored through the DETECTOR, not by reading the
+transcript — and that requires a real recording through `RELAY_BENCH_WAV`, which
+has not been run for this change.

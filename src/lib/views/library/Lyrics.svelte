@@ -156,7 +156,7 @@
             {#if msg}<span class="ly-msg r-mono">{msg}</span>{/if}
             <span class="spring"></span>
             <button class="r-btn ghost sm" on:click={() => { showForm = false; msg = ''; }}>Cancel</button>
-            <button class="r-btn amber sm" on:click={saveForm} disabled={saving}>{saving ? 'Saving…' : 'Save to Library'}</button>
+            <button class="r-btn primary sm" on:click={saveForm} disabled={saving}>{saving ? 'Saving…' : 'Save to Library'}</button>
           </div>
         </div>
       </div>
@@ -250,7 +250,7 @@
   .ly-arrsub{ margin:2px 0 6px; }
   .ly-arropt{ display:flex; flex-direction:column; gap:3px; width:100%; text-align:left; padding:10px 12px;
     border-radius:10px; background:var(--v-surf2); border:1px solid var(--v-line); color:var(--v-txt); cursor:pointer; transition:.12s; }
-  .ly-arropt:hover{ border-color:var(--v-amber); background:var(--v-amber-soft); }
+  .ly-arropt:hover{ border-color:var(--v-accent); background:var(--v-accent-soft); }
   .ly-arroptname{ font-weight:600; font-size:13px; }
   .ly-arroptseq{ font-size:9.5px; letter-spacing:.03em; color:var(--v-faint); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .ly-arrcancel{ align-self:flex-end; margin-top:4px; }
@@ -260,25 +260,25 @@
   .song-card{ position:relative; display:flex; flex-direction:column; background:var(--v-surf); border:1px solid var(--v-line);
     border-radius:13px; padding:14px 15px 11px; overflow:visible; transition:border-color .14s, background .14s; }
   .song-card:hover{ border-color:var(--v-line2); background:var(--v-surf2); }
-  .song-card::before{ content:""; position:absolute; left:0; top:14px; bottom:14px; width:3px; border-radius:0 3px 3px 0; background:var(--v-amber); }
+  .song-card::before{ content:""; position:absolute; left:0; top:14px; bottom:14px; width:3px; border-radius:0 3px 3px 0; background:var(--v-accent); }
   .song-hit{ display:block; width:100%; text-align:left; background:none; border:0; padding:0 0 0 7px; cursor:pointer; color:inherit; }
   .song-head{ display:flex; align-items:center; justify-content:space-between; margin-bottom:11px; }
-  .song-badge{ font-family:var(--f-mono); font-size:8.5px; font-weight:700; letter-spacing:.14em; color:var(--v-amber);
-    background:var(--v-amber-soft); border:1px solid rgba(245,166,35,.3); padding:3px 8px; border-radius:6px; }
+  .song-badge{ font-family:var(--f-mono); font-size:8.5px; font-weight:700; letter-spacing:.14em; color:var(--v-accent);
+    background:var(--v-accent-soft); border:1px solid var(--v-accent-line); padding:3px 8px; border-radius:6px; }
   .song-slides{ font-size:15px; font-weight:600; color:var(--v-txt); display:inline-flex; align-items:baseline; gap:5px; }
   .song-slides i{ font-style:normal; font-size:8.5px; font-weight:500; letter-spacing:.1em; text-transform:uppercase; color:var(--v-faint); }
   .song-title{ font-family:var(--f-head); font-size:15px; font-weight:600; line-height:1.28; color:var(--v-txt);
     display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; min-height:38px; }
   .song-meta{ font-size:9.5px; color:var(--v-faint); margin-top:6px; letter-spacing:.02em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .song-foot{ display:flex; align-items:center; justify-content:space-between; margin:11px 0 0 7px; padding-top:10px; border-top:1px solid var(--v-line); }
-  .song-addplan{ font-family:var(--f-mono); font-size:9px; font-weight:700; letter-spacing:.06em; color:var(--v-amber);
-    background:var(--v-amber-soft); border:1px solid rgba(245,166,35,.3); padding:4px 9px; border-radius:7px; cursor:pointer; }
-  .song-addplan:hover{ background:rgba(245,166,35,.2); }
+  .song-addplan{ font-family:var(--f-mono); font-size:9px; font-weight:700; letter-spacing:.06em; color:var(--v-accent);
+    background:var(--v-accent-soft); border:1px solid var(--v-accent-line); padding:4px 9px; border-radius:7px; cursor:pointer; }
+  .song-addplan:hover{ background:var(--v-accent-line); }
   .song-foot-r{ display:flex; align-items:center; gap:9px; }
   .song-open{ font-size:8.5px; letter-spacing:.06em; color:var(--v-faint); transition:color .14s; }
-  .song-card:hover .song-open{ color:var(--v-amber); }
+  .song-card:hover .song-open{ color:var(--v-accent); }
   .song-del{ width:28px; height:28px; }
-  .song-del:hover{ color:var(--v-rose); border-color:rgba(244,113,139,.4); }
+  .song-del:hover{ color:var(--v-rose); border-color:rgba(239,68,68,.4); }
 
   .song-planscrim{ position:fixed; inset:0; z-index:40; background:transparent; border:0; }
   .song-planmenu{ position:absolute; left:15px; right:15px; bottom:52px; z-index:50; padding:6px; max-height:180px; overflow-y:auto;
@@ -286,6 +286,6 @@
   .song-planlbl{ font-size:8px; letter-spacing:.14em; text-transform:uppercase; color:var(--v-faint); padding:4px 8px 6px; }
   .song-planitem{ display:flex; align-items:center; justify-content:space-between; gap:10px; width:100%; text-align:left;
     padding:8px 9px; border-radius:7px; border:0; background:transparent; color:var(--v-txt); font-size:12px; cursor:pointer; }
-  .song-planitem:hover{ background:var(--v-surf3); color:var(--v-amber); }
+  .song-planitem:hover{ background:var(--v-surf3); color:var(--v-accent); }
   .song-planitem .r-mono{ font-size:9px; color:var(--v-faint); }
 </style>

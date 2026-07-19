@@ -82,7 +82,7 @@
     <span class="ir-spring"></span>
     {#if msg}<span class="ir-msg r-mono">{msg}</span>{/if}
     <button class="r-btn ghost sm" on:click={() => dispatch('cancel')}>Cancel</button>
-    <button class="r-btn amber sm" on:click={save} disabled={saving || !keepCount}>{saving ? 'Saving…' : `Save ${keepCount} to Library`}</button>
+    <button class="r-btn primary sm" on:click={save} disabled={saving || !keepCount}>{saving ? 'Saving…' : `Save ${keepCount} to Library`}</button>
   </div>
 
   <div class="ir-list">
@@ -136,31 +136,31 @@
   .ir-song.skip{ opacity:.5; }
   .ir-songhead{ display:flex; align-items:center; gap:11px; padding:11px 14px; }
   .ir-exp{ width:26px; height:26px; flex:0 0 auto; display:grid; place-items:center; border:0; background:none; color:var(--v-dim); cursor:pointer; border-radius:6px; }
-  .ir-exp:hover{ color:var(--v-amber); }
+  .ir-exp:hover{ color:var(--v-accent); }
   .ir-titleinput{ flex:1; min-width:0; height:34px; padding:0 11px; border-radius:8px; background:var(--v-bg);
     border:1px solid var(--v-line2); color:var(--v-txt); font-family:var(--f-head); font-weight:600; font-size:15px; outline:none; }
-  .ir-titleinput:focus{ border-color:rgba(245,166,35,.45); }
+  .ir-titleinput:focus{ border-color:var(--v-accent-line); }
   .ir-slidecount{ font-size:10px; color:var(--v-faint); flex:0 0 auto; }
   .ir-skip{ flex:0 0 auto; font-family:var(--f-mono); font-size:9px; font-weight:700; letter-spacing:.08em; text-transform:uppercase;
     padding:5px 10px; border-radius:7px; border:1px solid var(--v-line2); background:var(--v-surf2); color:var(--v-dim); cursor:pointer; }
-  .ir-skip:hover{ color:var(--v-rose); border-color:rgba(244,113,139,.4); }
-  .ir-skip.on{ color:var(--v-rose); border-color:rgba(244,113,139,.4); background:var(--v-rose-soft); }
+  .ir-skip:hover{ color:var(--v-rose); border-color:rgba(239,68,68,.4); }
+  .ir-skip.on{ color:var(--v-rose); border-color:rgba(239,68,68,.4); background:var(--v-rose-soft); }
 
   .ir-slides{ display:grid; grid-template-columns:repeat(auto-fill, minmax(240px, 1fr)); gap:10px; padding:0 14px 14px; }
   .ir-slide{ border:1px solid var(--v-line); border-radius:10px; background:var(--v-surf2); padding:9px; }
   .ir-slidetop{ display:flex; align-items:center; gap:6px; margin-bottom:7px; }
   .ir-tag{ width:52px; height:26px; padding:0 8px; border-radius:6px; background:var(--v-bg); border:1px solid var(--v-line2);
-    color:var(--v-amber); font-size:11px; font-weight:700; outline:none; }
+    color:var(--v-accent); font-size:11px; font-weight:700; outline:none; }
   .ir-idx{ font-size:9px; color:var(--v-faint); }
   .ir-mini{ width:24px; height:24px; border-radius:6px; display:grid; place-items:center; cursor:pointer; font-size:11px;
     background:var(--v-surf3); border:1px solid var(--v-line); color:var(--v-dim); }
-  .ir-mini:hover:not(:disabled){ color:var(--v-amber); border-color:var(--v-line2); }
-  .ir-mini.danger:hover:not(:disabled){ color:var(--v-rose); border-color:rgba(244,113,139,.4); }
+  .ir-mini:hover:not(:disabled){ color:var(--v-accent); border-color:var(--v-line2); }
+  .ir-mini.danger:hover:not(:disabled){ color:var(--v-rose); border-color:rgba(239,68,68,.4); }
   .ir-mini:disabled{ opacity:.3; cursor:not-allowed; }
   .ir-lyrics{ width:100%; padding:9px 11px; border-radius:8px; background:var(--v-bg); border:1px solid var(--v-line2);
     color:var(--v-txt); font-family:var(--f-serif); font-size:13px; line-height:1.4; resize:vertical; outline:none; }
-  .ir-lyrics:focus{ border-color:rgba(245,166,35,.4); }
+  .ir-lyrics:focus{ border-color:var(--v-accent-line); }
   .ir-addslide{ grid-column:1 / -1; padding:11px; border:1.5px dashed var(--v-line2); border-radius:10px; background:transparent;
     color:var(--v-faint); font-family:var(--f-mono); font-size:11px; letter-spacing:.06em; cursor:pointer; }
-  .ir-addslide:hover{ color:var(--v-amber); border-color:rgba(245,166,35,.4); }
+  .ir-addslide:hover{ color:var(--v-accent); border-color:var(--v-accent-line); }
 </style>

@@ -27,19 +27,23 @@
   // BUILDING a plan is not this screen's job. That is the Planner: a different
   // task, done on a Tuesday, not with a congregation waiting.
   import { onMount, onDestroy, afterUpdate } from 'svelte';
-  import OutputWall from '../OutputWall.svelte';
+  import TemplateRender from '../TemplateRender.svelte';
   import ModelSetup from '../ModelSetup.svelte';
   import { registerContext } from '../shortcuts.js';
   import { t } from '../i18n.js';
   import EmptyState from '../ui/EmptyState.svelte';
   import Loading from '../ui/Loading.svelte';
   import { heard, methodKey } from '../detect.js';
+  import DetectionInspector from '../DetectionInspector.svelte';
   import { humanError as humanErrorBase } from '../errors.js';
   import { TYPE, payloadOf, slidesOf, slideAccent, cueSub, nextOf, stepFrom } from '../plan.js';
   import { session, setSession } from '../session.js';
   import { get } from 'svelte/store';
   import {
     capture,
+    meter,
+    liveContent,
+    liveTemplateOverride,
     transcript,
     detections,
     live,
@@ -149,6 +153,7 @@
   onMount(async () => {
     await loadRehearsal();
     activeTpls = await listActiveTemplates().catch(() => []);
+    channels = await listOutputChannels().catch(() => []);
     plans = await listPlans().catch(() => []);
     plansLoaded = true;
 
@@ -524,9 +529,140 @@
   $: selSlides = slidesOf(selCue);
   $: liveIndex = items.findIndex((i) => i.id === liveCueId);
   $: selNote = selCue ? payloadOf(selCue).stage_note || '' : '';
+
+  // ── PREVIEW / PROGRAM ────────────────────────────────────────────────────
+  //
+  // The design reference draws a broadcast preview/program pair with a transition
+  // rack (Cut / Fade / Wipe / Stinger) between them. Relay has no transition
+  // engine and no preview bus, and inventing one is a feature, not a rebrand — so
+  // the PAIR is reproduced from facts Relay already has, and the transition rack
+  // is not drawn (see the loop log).
+  //
+  //   PROGRAM = `$liveContent` — literally what is on the congregation's screen,
+  //             through the same TemplateRender the output window uses.
+  //   PREVIEW = what the next TAKE would put there: the AI's top pending claim if
+  //             there is one, otherwise the slide `→` would fire.
+  //
+  // TAKE is therefore not a new command. It is exactly acceptTop() or fireSlide(),
+  // whichever the preview is showing — the same two paths the keyboard already uses.
+  $: previewNext = openPlan ? stepFrom(items, liveCueId, liveSlide, 1) : null;
+  $: previewCue = previewNext ?? (selCue ? { item: selCue, slide: 0 } : null);
+  $: previewSlide = previewCue ? slidesOf(previewCue.item)[previewCue.slide] : null;
+  $: previewContent = dets[0]
+    ? { reference: dets[0].reference, text: dets[0].text ?? '', translation: null }
+    : previewSlide
+      ? { reference: previewCue.item.label, text: previewSlide.text || previewSlide.label, translation: null }
+      : null;
+  $: previewLabel = dets[0]
+    ? dets[0].reference
+    : previewCue
+      ? `${previewCue.item.label} · ${previewSlide?.label ?? ''}`.trim()
+      : '';
+  /** The take. Never a new code path — the same accept/fire the keys already run. */
+  async function take() {
+    if (dets[0]) return acceptTop();
+    if (previewCue) return fireSlide(previewCue.item, previewCue.slide);
+  }
+
+  // The preview and program panes render through the FIRST active template, the
+  // same component the real output window uses, so the pair is WYSIWYG by
+  // construction rather than a second drawing of the same thing.
+  $: previewTpl = activeTpls[0] ?? null;
+
+  // ── output status ────────────────────────────────────────────────────────
+  // The configured render targets, read-only here. Editing them is the Channels
+  // tab's job; this panel answers "is it up?" during a service and nothing else.
+  let channels = [];
+
+  // ── transcript arrival times ─────────────────────────────────────────────
+  // The reference stamps each transcript line. The store keeps no times (it is a
+  // rolling `{partial, finals[]}`), so rather than change the store — or, worse,
+  // print an invented time — the view notes when each final ARRIVED in front of
+  // this operator. It is a display fact about this session, not data.
+  let finalTimes = [];
+  let lastFinals = 0;
+  $: {
+    const n = $transcript.finals.length;
+    if (n > lastFinals) {
+      const now = new Date();
+      const hhmmss = now.toLocaleTimeString('en-GB');
+      for (let i = lastFinals; i < n; i++) finalTimes[i] = hhmmss;
+      finalTimes = finalTimes;
+    } else if (n < lastFinals) {
+      finalTimes = finalTimes.slice(-n); // the store trims to MAX_FINALS
+    }
+    lastFinals = n;
+  }
+  // Newest last, and the LAST one is the one the AI is currently working on — that
+  // is the line the reference highlights.
+  $: tLines = $transcript.finals.map((text, i) => ({ text, at: finalTimes[i] ?? '' }));
+
+  // ── audio meter ──────────────────────────────────────────────────────────
+  // Segment count is fixed; which segments light is the LEARNED level, never an
+  // absolute threshold (DECISIONS §19 — nothing here compares a signal to a fixed
+  // level; it only draws the one the engine already computed).
+  const SEGS = 24;
+  $: lvl = Math.max(0, Math.min(1, $meter.level ?? 0));
+  // ── §4 presentation modes ────────────────────────────────────────────────
+  // COMPACT is a density change, not a different screen: the same panels, the
+  // same controls, tighter. It exists because the reference console assumes a
+  // wide desk monitor and a great many church booths are a 13" laptop, where the
+  // bottom row scrolls out of sight — and the bottom row is where the transport
+  // and the panic controls live.
+  //
+  // Nothing is REMOVED in compact. A run surface that hides a control at small
+  // sizes hides it at exactly the moment the operator is most cramped and most
+  // rushed; this only tightens spacing and type.
+  $: compact = $session.liveDensity === 'compact';
+  $: fullscreen = !!$session.liveFullscreen;
+  const setDensity = (d) => setSession({ liveDensity: d });
+  const setFullscreen = (v) => setSession({ liveFullscreen: v });
+
+  // §5 INSPECTOR. The claim panel has room for the verdict; the reasoning needs
+  // a surface of its own. Opened per-detection, never a tab: an operator does not
+  // browse detections, they interrogate the one in front of them.
+  let inspecting = null;
+  $: inspectAlts = inspecting
+    ? dets.filter((d) => d.reference !== inspecting.reference).slice(0, 4)
+    : [];
+  function inspectTop() {
+    inspecting = dets[0] ?? null;
+  }
+  async function inspectAccept() {
+    inspecting = null;
+    await acceptTop();
+  }
+  async function inspectDismiss() {
+    inspecting = null;
+    await dismissTop();
+  }
+
+  $: litSegs = Math.round(lvl * SEGS);
+  $: dbLabel = lvl > 0.0001 ? `${Math.round(20 * Math.log10(lvl))} dB` : '−∞ dB';
 </script>
 
-<div class="stx">
+
+<!-- LIVE — laid out to docs/relaydesign/relay-console-screen.png.
+     Row A: PREVIEW · take rack · PROGRAM · OUTPUT STATUS
+     Row B: 1 Live Transcript · 2 AI Detection · 3 Service Plan · 4 Quick Controls
+     Everything below is a re-dressing of the controls that were already here — no
+     command was added, removed or rewired. Where the reference draws a control
+     Relay has no backend for (a transition rack, Fit/Safe-Area, Hold Outputs,
+     Override Mode, ±5s audio scrub, a monitor bus), it is NOT drawn: a dead
+     button in a live console is the exact failure this codebase keeps fixing. -->
+<div class="con" class:compact class:fullscreen>
+  <!-- View controls. Deliberately at the TOP-RIGHT and deliberately small: they
+       change how the console looks, never what reaches a screen, and must not
+       compete with the transport for an operator's attention. -->
+  <div class="view-ctl">
+    <div class="seg" role="group" aria-label="Console density">
+      <button class:on={!compact} on:click={() => setDensity('normal')}>Normal</button>
+      <button class:on={compact} on:click={() => setDensity('compact')}>Compact</button>
+    </div>
+    <button class="view-fs" on:click={() => setFullscreen(!fullscreen)}>
+      {fullscreen ? 'Show tabs' : 'Full screen'}
+    </button>
+  </div>
   <!-- ══ REHEARSAL ══
        Unmissable, or it is worse than useless. Both ways of being wrong about this
        are bad, in opposite directions: rehearsing when you think you are live means
@@ -543,79 +679,192 @@
     </div>
   {/if}
 
-  <!-- ══ TRANSPORT ══ -->
-  <div class="tbar">
-    <span class="sys" class:live={$live && !$rehearsing} class:reh={$rehearsing} class:blk={$screenBlack}>
-      <span class="sys-dot"></span>
-      {#if $rehearsing}REHEARSAL{:else if $screenBlack}BLACKOUT{:else if $live}ON AIR{:else}STANDBY{/if}
-    </span>
+  <!-- ══════ ROW A — the pair, the rack, and the outputs ══════ -->
+  <div class="con-top">
+    <!-- PREVIEW — what the next TAKE would put on the wall. Amethyst, because it
+         is by definition NOT on air; amber is reserved for the pane on the right. -->
+    <section class="pane">
+      <header class="mon-bar">
+        <span class="tag preview">Preview</span>
+        <span class="spring"></span>
+        <span class="mon-name">{previewLabel || 'Nothing cued'}</span>
+      </header>
+      <div class="screen">
+        {#if previewTpl && previewContent}
+          <TemplateRender template={previewTpl} content={previewContent} />
+        {:else}
+          <div class="screen-empty">
+            {previewTpl ? 'Nothing cued' : 'No active template — activate one in Templates'}
+          </div>
+        {/if}
+      </div>
+    </section>
 
-    {#if openPlan}
-      <button class="t-plan" on:click={leave} title="Close this plan">
-        {openPlan.title}
-        <span class="mono t-pos">
-          {liveIndex >= 0 ? `${liveIndex + 1}/${items.length}` : `· ${items.length} cues`}
-        </span>
-      </button>
-    {/if}
+    <!-- THE RACK. The reference's transition list (Cut / Fade / Wipe / Stinger /
+         Duration) is not drawn — Relay has no transition engine, and drawing five
+         buttons that do nothing would be inventing a feature. What is here is the
+         real take path: the same accept/fire and the same nav the keys already run,
+         plus the transport MODE, which is the one thing about `→` an operator must
+         never have to guess (CLAUDE.md — same key, two meanings, is how the wrong
+         thing reaches a congregation). -->
+    <aside class="rack">
+      <span class="rack-lbl">Take</span>
+      <button
+        class="take"
+        on:click={take}
+        disabled={!previewContent || !$capture.available}
+        title="Put the previewed content on the outputs">TAKE</button>
+      <div class="rack-nav">
+        <button class="rk" title="Previous (←)" aria-label="Previous" on:click={() => step(-1)}>‹</button>
+        <button class="rk" title="Next (→)" aria-label="Next" on:click={() => step(1)}>›</button>
+      </div>
+      <button class="rk wide" on:click={dismissTop} disabled={!dets.length}>Dismiss</button>
+      <span class="rack-lbl push">Mode</span>
+      <span
+        class="rack-mode r-mono"
+        class:slide={mode === 'slide'}
+        title={mode === 'slide'
+          ? 'Arrow keys step through the service plan'
+          : 'Arrow keys walk through the passage on screen'}>
+        {mode === 'slide' ? 'SLIDE' : 'VERSE'}
+      </span>
+    </aside>
 
-    <span class="spring"></span>
-    <!-- role="status" so every flash is announced. These sentences ARE the feedback
-         for the transport keys — a sighted operator reads them; a screen-reader
-         operator was told nothing at all. -->
-    <span class="livemsg-live sr-only" role="status" aria-live="polite" aria-atomic="true">{liveMsg}</span>
-    {#if liveMsg}<span class="livemsg" aria-hidden="true"><span class="lm-dot"></span>{liveMsg}</span>{/if}
+    <!-- PROGRAM — literally what the congregation is looking at, rendered through
+         the SAME TemplateRender as the real output window, so the pane cannot
+         disagree with the wall. -->
+    <section class="pane">
+      <header class="mon-bar">
+        {#if $rehearsing}
+          <span class="tag reh">Rehearsal</span>
+        {:else if $screenBlack}
+          <span class="tag off">Blackout</span>
+        {:else if $live}
+          <span class="tag onair">Program · On Air</span>
+        {:else}
+          <span class="tag off">Program · Clear</span>
+        {/if}
+        <span class="spring"></span>
+        <span class="mon-name">{$live ? ($live.reference || 'content') : '—'}</span>
+      </header>
+      <div class="screen" class:lit={$live && !$rehearsing && !$screenBlack}>
+        {#if $live}
+          <TemplateRender template={$liveTemplateOverride ?? previewTpl} content={$liveContent} />
+        {:else}
+          <!-- Nothing is on the wall. Say so in words — a blank rectangle and a
+               black-out look identical, and they are not the same fact. -->
+          <div class="screen-empty">Screens clear</div>
+        {/if}
+        {#if $screenBlack}<div class="blk"></div>{/if}
+      </div>
+    </section>
 
-    <!-- `→` is the most-pressed key in the product and it used to do two different
-         things with no way to tell which. Now it says which. -->
-    <span
-      class="t-mode mono"
-      class:slide={mode === 'slide'}
-      title={mode === 'slide'
-        ? 'Arrow keys step through the service plan'
-        : 'Arrow keys walk through the passage on screen'}>
-      → steps <b>{mode === 'slide' ? 'SLIDE' : 'VERSE'}</b>
-    </span>
-
-    <div class="t-nav">
-      <button class="nav-sq" title="Previous (←)" aria-label="Previous" on:click={() => step(-1)}>‹</button>
-      <button class="btn-gold" on:click={() => step(1)}>Next ›</button>
-      <button class="nav-sq" title="Clear all screens (Esc)" aria-label="Clear all screens" on:click={clearAll}>◼</button>
-    </div>
+    <!-- OUTPUT STATUS. Read-only on purpose: during a service the only question is
+         "is it up?". Changing a target is the Channels tab's job. -->
+    <section class="pane">
+      <header class="pane-head">
+        <h2>Output Status</h2>
+        <span class="spring"></span>
+        <span class="r-mono cnt">{channels.length}</span>
+      </header>
+      <div class="pane-body outs">
+        {#each channels as c (c.id)}
+          <div class="out">
+            <span class="out-ic" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+            </span>
+            <span class="out-t">
+              <b>{c.name}</b>
+              <span class="r-mono">{c.render_target}</span>
+            </span>
+            {#if $live && !$rehearsing && !$screenBlack}
+              <span class="r-badge amber sm-badge"><span class="bd"></span>On Air</span>
+            {:else if $rehearsing}
+              <span class="r-badge amethyst sm-badge"><span class="bd"></span>Rehearsal</span>
+            {:else}
+              <span class="r-badge grey sm-badge"><span class="bd"></span>Ready</span>
+            {/if}
+          </div>
+        {:else}
+          <EmptyState message="No output channels yet — add one in the Channels tab." />
+        {/each}
+      </div>
+      <footer class="pane-foot">
+        <button class="wide" on:click={openMainOutput} disabled={!$capture.available}>Open main output</button>
+      </footer>
+    </section>
   </div>
 
-  <div class="stx-top">
-    <!-- ══ INTELLIGENCE FEED ══ Visible while the plan is running. That is the
-         entire reason the Console and the Planner became one screen. -->
-    <section class="tile feed">
-      <div class="tile-head">
-        <h2 class="sub">{$t('live.intelligence_feed')}</h2>
-        <svg class="ic dim" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 3v18h18"/><path d="M18 17V9M13 17V5M8 17v-3"/></svg>
+  <!-- ══════ ROW B — the four working panels ══════ -->
+  <div class="con-bot">
+    <!-- ── 1 · LIVE TRANSCRIPT ── -->
+    <section class="pane">
+      <header class="pane-head">
+        <span class="pn">1</span>
+        <h2>Live Transcript</h2>
+        <span class="spring"></span>
+        <span class="chip" class:ok={$capture.capturing}>
+          <i class="bd"></i>{$capture.stt.loaded ? 'STT Local' : 'No model'}
+        </span>
+      </header>
+
+      <div class="pane-body tx" bind:this={transcriptEl}>
+        {#if hasTranscript}
+          {#each tLines as l, i (i)}
+            <div class="txl" class:cur={i === tLines.length - 1 && !$transcript.partial}>
+              <span class="txl-at r-mono">{l.at}</span>
+              <span class="txl-b">{l.text}</span>
+            </div>
+          {/each}
+          {#if $transcript.partial}
+            <div class="txl cur">
+              <span class="txl-at r-mono">now</span>
+              <span class="txl-b"><mark>{$transcript.partial}</mark><i class="caret"></i></span>
+            </div>
+          {/if}
+        {:else if $capture.capturing}
+          <EmptyState message={$t('live.waiting_for_speech')} />
+        {:else if !$capture.stt.loaded}
+          <EmptyState message={$t('live.no_model')} />
+        {:else}
+          <EmptyState message={$t('live.start_listening_to_transcribe')} />
+        {/if}
       </div>
 
-      <div class="tx-box">
-        <div class="seg-top">
-          <span class="lbl-gold">{$t('live.live_transcript')}</span>
-          <span class="mono dim">{$capture.capturing ? ($capture.detectedLang ?? 'listening') : 'standby'}</span>
-        </div>
-        <div class="tx-stream" bind:this={transcriptEl}>
-          {#if hasTranscript}
-            {$transcript.finals.join(' ')}
-            {#if $transcript.partial}<mark>{$transcript.partial}</mark><i class="caret"></i>{/if}
-          {:else if $capture.capturing}
-            <span class="dim">{$t('live.waiting_for_speech')}</span>
-          {:else if !$capture.stt.loaded}
-            <span class="dim">{$t('live.no_model')}</span>
-          {:else}
-            <span class="dim">{$t('live.start_listening_to_transcribe')}</span>
-          {/if}
-        </div>
-      </div>
+      <footer class="pane-foot mic">
+        <!-- The DETECTED language, not a chosen one. Code-switching is the normal
+             case for the priority languages, so this changes mid-sermon. -->
+        <span class="mic-lbl r-mono">{$capture.capturing ? ($capture.detectedLang ?? 'listening') : 'standby'}</span>
+        <span class="meter" role="meter" aria-valuemin="0" aria-valuemax="100"
+          aria-valuenow={Math.round(lvl * 100)} aria-label="Microphone input level">
+          {#each Array.from({ length: SEGS }) as _, i}
+            <i class="sg" class:on={i < litSegs} class:mid={i >= 15 && i < 20} class:hot={i >= 20}></i>
+          {/each}
+        </span>
+        <span class="r-mono db">{dbLabel}</span>
+        <button class="ibtn" on:click={toggleListen} title={$capture.capturing ? 'Stop listening' : 'Start listening'}
+          aria-label={$capture.capturing ? 'Stop listening' : 'Start listening'}
+          disabled={!$capture.available || !$capture.stt.loaded || listenBusy}>
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v4"/></svg>
+        </button>
+      </footer>
+    </section>
+
+    <!-- ── 2 · AI DETECTION — CURRENT CLAIM ── -->
+    <section class="pane">
+      <header class="pane-head">
+        <span class="pn">2</span>
+        <h2>AI Detection — Current Claim</h2>
+        <span class="spring"></span>
+        <button class="chip btnchip" class:ok={$capture.detectionOn} on:click={toggleDetection}
+          disabled={!$capture.available} title="Arm or disarm automatic detection">
+          <i class="bd"></i>{$capture.detectionOn ? 'Armed' : 'Off'}
+        </button>
+      </header>
 
       <!-- The AI has heard something. This is the product's whole reason to exist, and
            it arrived in total silence for a screen-reader operator. "polite", not
-           "assertive": a suggestion is an offer, not an emergency — it must not talk
-           over the operator mid-sentence. -->
+           "assertive": a suggestion is an offer, not an emergency. -->
       <span class="sr-only" role="status" aria-live="polite" aria-atomic="true">
         {#if dets.length}
           {heard(dets[0]) ? 'Heard' : 'Possible paraphrase'}: {dets[0].reference}.
@@ -623,297 +872,305 @@
         {/if}
       </span>
 
-      <div class="feed-body">
+      <div class="pane-body det">
         {#if dets.length}
           {@const d = dets[0]}
-          <!-- HEARD vs GUESSED. These are not two flavours of the same thing, and
-               they must not look like it. A direct hit is a reference the parser
-               actually heard, and its confidence is a real parse confidence. A
-               paraphrase is a TF-IDF cosine — a distance in an arbitrary vector
-               space, NOT a probability (docs/DECISIONS.md; router.rs forbids it from
-               ever auto-firing at ANY score, for exactly this reason).
-
-               Both used to render as "AI suggestion — 92% match". The operator was
-               shown a number that means one thing for one kind of match and nothing
-               at all for the other, with no way to tell which they were looking at —
-               while being asked to be the human in the loop. -->
-          <div class="ai-card" class:guess={!heard(d)}>
-            <div class="ai-top">
-              <span class="lbl-method" class:guess={!heard(d)}>{$t(methodKey(d))}</span>
+          <!-- HEARD vs GUESSED. Not two flavours of one thing, and they must not look
+               like it. A direct hit's number is a real parse confidence. A paraphrase
+               is a TF-IDF cosine — a distance, NOT a probability (router.rs forbids it
+               from ever auto-firing at ANY score). So the guess gets cyan, and gets no
+               number at all: a number that lies is worse than no number. -->
+          <div class="claim" class:guess={!heard(d)}>
+            <div class="claim-top">
+              <span class="claim-ref">{d.reference}</span>
               {#if heard(d)}
-                <span class="mono gold">{$t('live.match_percent', { percent: Math.round(d.confidence * 100) })}</span>
+                <span class="mchip">{$t(methodKey(d))} {Math.round(d.confidence * 100)}%</span>
               {:else}
-                <!-- Deliberately NO percentage. Printing "61%" next to a cosine
-                     invites the operator to read it as "61% likely to be right",
-                     which is precisely what it is not. -->
-                <span class="mono guess-note">{$t('live.not_a_spoken_reference')}</span>
+                <span class="mchip guess">{$t(methodKey(d))}</span>
               {/if}
             </div>
+
             {#if heard(d)}
               <!-- A bar, not just a number: "0.92" means nothing to a volunteer. -->
-              <div
-                class="conf"
-                role="meter"
-                aria-valuemin="0"
-                aria-valuemax="100"
-                aria-valuenow={Math.round(d.confidence * 100)}
-                aria-label="Detection confidence"
-              >
+              <div class="conf" role="meter" aria-valuemin="0" aria-valuemax="100"
+                aria-valuenow={Math.round(d.confidence * 100)} aria-label="Detection confidence">
                 <i style="width:{Math.round(d.confidence * 100)}%"></i>
               </div>
+            {:else}
+              <p class="guess-note">{$t('live.not_a_spoken_reference')}</p>
             {/if}
-            <div class="ai-ref">{d.reference}</div>
-            {#if d.matched_text}
-              <!-- THE EVIDENCE. Captured in Rust for months and dropped at the IPC
-                   boundary. Showing the words that triggered a match is the clearest
-                   possible explanation of an AI decision: an operator can tell at a
-                   glance whether Relay heard "john three sixteen" or misheard
-                   "gone free sixty" — and can judge a paraphrase by the words it
-                   actually keyed on, which is something a human can agree with. -->
-              <div class="why">
-                <span class="why-lbl">{heard(d) ? $t('live.heard') : $t('live.matched_on')}</span>
-                <span class="why-txt">{d.matched_text}</span>
-              </div>
-            {/if}
-            {#if d.text}<div class="ai-verse">“{d.text}”</div>{/if}
-            <div class="ai-acts">
-              <button class="btn-gold" on:click={acceptTop}>{$t('live.push_to_stage')}</button>
-              <button class="btn-x" on:click={dismissTop}>{$t('live.dismiss')}</button>
-              <span class="hint"><kbd>A</kbd> accept · <kbd>D</kbd> dismiss</span>
-            </div>
-          </div>
 
-          {#each dets.slice(1) as x (x.reference + x.at)}
-            <div class="xref" class:guess={!heard(x)}>
-              <div class="xref-top">
-                <span class="lbl-method sm" class:guess={!heard(x)}>{$t(methodKey(x))}</span>
-                {#if heard(x)}
-                  <span class="mono dim">{Math.round(x.confidence * 100)}%</span>
-                {/if}
+            {#if d.matched_text}
+              <!-- THE EVIDENCE — the words that actually triggered the match. Captured
+                   in Rust for months and dropped at the IPC boundary. -->
+              <div class="mt">
+                <span class="klbl">{heard(d) ? $t('live.heard') : $t('live.matched_on')} (from transcript)</span>
+                <p class="mt-q">“{d.matched_text}”</p>
               </div>
-              <div class="xref-ref">{x.reference}</div>
-              {#if x.matched_text}
-                <div class="why sm">
-                  <span class="why-lbl">{heard(x) ? $t('live.heard') : $t('live.matched_on')}</span>
-                  <span class="why-txt">{x.matched_text}</span>
-                </div>
-              {/if}
-              {#if x.text}<div class="xref-verse">“{x.text}”</div>{/if}
-              <div class="xref-acts">
-                <button class="btn-mini" on:click={() => pushRef(x.reference)}>Push</button>
-                <button class="btn-mini ghost" on:click={() => dismissDetection(x.reference)}>Dismiss</button>
-              </div>
+            {/if}
+
+            {#if d.text}<p class="claim-verse">“{d.text}”</p>{/if}
+
+            <div class="meta2">
+              <div><span class="klbl">Method</span><b>{$t(methodKey(d))}</b></div>
+              <div><span class="klbl">Reference</span><b>{d.reference}</b></div>
             </div>
-          {/each}
+
+            <div class="acts">
+              <button class="act go" on:click={acceptTop}>
+                <b>Accept &amp; fire</b><span>Send to outputs</span>
+              </button>
+              <button class="act no" on:click={dismissTop}>
+                <b>Dismiss</b><span>Not this verse</span>
+              </button>
+            </div>
+
+            <!-- WHY did it say that? The evidence chip above is the short answer;
+                 this is the long one, including what accepting or dismissing does
+                 to the gate. -->
+            <button class="inspect-link" on:click={inspectTop}>
+              Why this match?
+            </button>
+            <p class="khint"><kbd>A</kbd> accept · <kbd>D</kbd> dismiss</p>
+          </div>
         {:else}
           <EmptyState
-            message={$capture.detectionOn
-              ? $t('live.no_suggestions')
-              : $t('live.detection_off')}
-          />
+            message={$capture.detectionOn ? $t('live.no_suggestions') : $t('live.detection_off')} />
         {/if}
 
-        <!-- RELATED SCRIPTURE. Deliberately the quietest thing in this feed.
-             ────────────────────────────────────────────────────────────────
-             Nobody SAID these references. They are a keyword match against 19 themes
-             — the weakest evidence anywhere in the product, weaker even than the
-             TF-IDF paraphrase above, which at least keys on the preacher's own words.
+        <!-- OTHER PENDING CLAIMS. The reference calls this strip "Recent Claims";
+             Relay's store holds only what is still AWAITING A DECISION (accepted and
+             dismissed claims leave it), so it is labelled for what it actually is. -->
+        {#if dets.length > 1}
+          <div class="sub">
+            <span class="klbl">Also pending</span>
+            <span class="r-mono cnt">{dets.length - 1}</span>
+          </div>
+          {#each dets.slice(1) as x (x.reference + x.at)}
+            <div class="rc">
+              <span class="rc-ref">{x.reference}</span>
+              <span class="mchip sm" class:guess={!heard(x)}>
+                {$t(methodKey(x))}{#if heard(x)} {Math.round(x.confidence * 100)}%{/if}
+              </span>
+              <span class="spring"></span>
+              <button class="mini" on:click={() => pushRef(x.reference)}>Fire</button>
+              <button class="mini ghost" on:click={() => dismissDetection(x.reference)}>Dismiss</button>
+            </div>
+          {/each}
+        {/if}
 
-             So it gets no tally colour and no confidence of any kind. Amber means ON
-             AIR, cyan means "a paraphrase guess", amethyst means rehearsal — a colour
-             that already carries a promise cannot be borrowed for a hunch. This is
-             grey, it says out loud that nobody said it, and it does nothing until the
-             operator clicks it. -->
+        <!-- RELATED SCRIPTURE. Deliberately the quietest thing on this panel.
+             Nobody SAID these references — it is a keyword match against 19 themes,
+             the weakest evidence in the product. So: no tally colour, no confidence,
+             and it does nothing until the operator clicks it. -->
         {#if related?.refs?.length}
-          <div class="rel">
-            <div class="rel-top">
-              <span class="rel-lbl">{$t('live.related', { theme: related.theme })}</span>
-              <span class="rel-note">{$t('live.related_note')}</span>
-            </div>
-            <div class="rel-chips">
-              {#each related.refs as r (r.reference)}
-                <button
-                  class="rel-chip r-focus"
-                  on:click={() => pushRelated(r.reference)}
-                  disabled={!$capture.available || !r.text}
-                  title={r.text ?? 'Not in your Bible text'}
-                >
-                  {r.reference}
-                </button>
-              {/each}
-            </div>
+          <div class="sub"><span class="klbl">{$t('live.related', { theme: related.theme })}</span></div>
+          <p class="rel-note">{$t('live.related_note')}</p>
+          <div class="rel-chips">
+            {#each related.refs as r (r.reference)}
+              <button class="rel-chip r-focus" on:click={() => pushRelated(r.reference)}
+                disabled={!$capture.available || !r.text}
+                title={r.text ?? 'Not in your Bible text'}>{r.reference}</button>
+            {/each}
           </div>
         {/if}
       </div>
+
+      <!-- Manual fire. NOT in the reference mockup, and kept anyway: it is the one
+           path that works when the AI is wrong, the model is missing, or the plan
+           has run out — removing it to match a picture would remove the product's
+           floor. -->
+      <footer class="pane-foot entry">
+        <div class="search">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3" stroke-linecap="round"/></svg>
+          <input
+            bind:this={searchEl}
+            bind:value={manualRef}
+            on:keydown={(e) => e.key === 'Enter' && fireManual()}
+            placeholder="Search verses — ps 23, John 3:16-18"
+            aria-label="Manual scripture reference"
+            disabled={!$capture.available} />
+        </div>
+        <button class="wide amber" on:click={fireManual} disabled={!$capture.available}>Fire</button>
+      </footer>
+      {#if errMsg}<div class="err" role="alert">{errMsg}</div>{/if}
     </section>
 
-    <!-- ══ RIGHT: the wall, then the plan being run ══ -->
-    <div class="rightcol">
-      <section class="tile channels">
-        <div class="tile-head">
-          <h2>{$t('live.output')}</h2>
-          <span class="mono dim">
-            {activeTpls.length}/4 styles{$rehearsing ? ' · rehearsal' : $live ? ' · live' : ''}
-          </span>
-        </div>
-        <div class="chan-wrap">
-          <OutputWall templates={activeTpls} verseNav={mode === 'verse'} />
-        </div>
-      </section>
+    <!-- ── 3 · SERVICE PLAN — RUNNING ── -->
+    <section class="pane">
+      <header class="pane-head">
+        <span class="pn">3</span>
+        <h2>{openPlan ? 'Service Plan — Running' : 'Service Plan'}</h2>
+        <span class="spring"></span>
+        {#if openPlan}
+          <span class="r-mono cnt">{liveIndex >= 0 ? `${liveIndex + 1}/${items.length}` : `${items.length}`}</span>
+          <button class="mini ghost" on:click={leave}>Close</button>
+        {:else}
+          <span class="r-mono cnt">{plans.length}</span>
+        {/if}
+      </header>
 
-      <div class="runrow">
-        <!-- PLAN -->
-        <section class="tile">
-          <div class="tile-head">
-            <h2 class="sub">{$t('live.service_plan')}</h2>
-            <span class="mono dim">{openPlan ? items.length : plans.length}</span>
-          </div>
-          <div class="listbody">
-            {#if openPlan}
-              {#each items as c, i (c.id)}
-                {@const ty = TYPE[c.cue_type] || TYPE.scripture}
-                <button
-                  class="cue"
-                  class:sel={c.id === selId}
-                  class:islive={planOnAir && c.id === liveCueId}
-                  class:cued={!planOnAir && c.id === liveCueId}
-                  on:click={() => (selId = c.id)}>
-                  <span class="cue-stripe" style="background:{ty.color}"></span>
-                  <span class="cue-num mono">{String(i + 1).padStart(2, '0')}</span>
-                  <span class="cue-body">
-                    <span class="cue-title">{c.label}</span>
-                    <span class="cue-meta mono">{cueSub(c)}</span>
+      <div class="pane-body plan">
+        {#if openPlan}
+          {#each items as c, i (c.id)}
+            {@const ty = TYPE[c.cue_type] || TYPE.scripture}
+            <div class="rail">
+              <span class="rail-dot" class:on={planOnAir && c.id === liveCueId} class:cued={!planOnAir && c.id === liveCueId}></span>
+              <button
+                class="cue"
+                class:sel={c.id === selId}
+                class:islive={planOnAir && c.id === liveCueId}
+                class:cued={!planOnAir && c.id === liveCueId}
+                on:click={() => (selId = c.id)}>
+                <span class="cue-stripe" style="background:{ty.color}"></span>
+                <span class="cue-num r-mono">{String(i + 1).padStart(2, '0')}</span>
+                <span class="cue-body">
+                  <span class="cue-title">{c.label}</span>
+                  <span class="cue-meta r-mono">{cueSub(c)}</span>
+                </span>
+                {#if c.id === liveCueId}
+                  <!-- Amber = the congregation is looking at it. CUED = where `→`
+                       resumes from, and NOT on screen — grey, never amber. -->
+                  <span class="r-badge sm-badge" class:amber={planOnAir} class:grey={!planOnAir}>
+                    <span class="bd"></span>{planOnAir ? 'On Air' : 'Cued'}
                   </span>
-                  {#if c.id === liveCueId}
-                    <span class="cue-tag mono" class:cued={!planOnAir}>{planOnAir ? 'LIVE' : 'CUED'}</span>
-                  {/if}
-                </button>
-              {/each}
-              {#if !itemsLoaded}
-                <Loading what="cues" compact />
-              {:else if !items.length}
-                <EmptyState message={$t('live.plan_no_cues')} />
-              {/if}
-            {:else}
-              <!-- No plan loaded. Not an error — plenty of services run entirely on
-                   the AI and the manual box. Offer the plans, don't demand one. -->
-              {#each plans as p (p.id)}
-                <button class="cue pick" on:click={() => loadPlan(p)}>
-                  <span class="cue-body">
-                    <span class="cue-title">{p.title}</span>
-                    <span class="cue-meta mono">{p.plan_date} · {p.cue_count} cues</span>
-                  </span>
-                  <span class="cue-tag mono go">RUN</span>
-                </button>
-              {/each}
-              <!-- Loading is NOT Empty. Until the query comes back, "no plans" is not
-                   a fact — it is the absence of one, and rendering it told an operator
-                   with a full library that they had lost their work. -->
-              {#if !plansLoaded}
-                <Loading what="plans" compact />
-              {:else if !plans.length}
-                <EmptyState message={$t('live.no_plans')} />
-              {/if}
-            {/if}
-          </div>
-        </section>
+                {/if}
+              </button>
+            </div>
 
-        <!-- SLIDES -->
-        <section class="tile">
-          <div class="tile-head">
-            <h2 class="sub">{selCue ? selCue.label : 'Slides'}</h2>
-            {#if selSlides.length}<span class="mono dim">{selSlides.length}</span>{/if}
-          </div>
-          <div class="listbody">
-            {#if selNote}
-              <!-- The preacher's stage note. Confidence monitor only — never on the
-                   main output. -->
-              <div class="note">
-                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
-                {selNote}
-              </div>
-            {/if}
-            {#if selCue}
-              {#each selSlides as s, i}
+            <!-- The live cue opens into its slides, in place. That is the reference's
+                 "Now Playing" block, and it is where the take actually happens. -->
+            {#if c.id === selId}
+              {#if payloadOf(c).stage_note}
+                <!-- The preacher's stage note. Confidence monitor only — never on the
+                     main output. -->
+                <div class="note">
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+                  {payloadOf(c).stage_note}
+                </div>
+              {/if}
+              {#each slidesOf(c) as s, si}
                 <button
                   class="slide"
-                  class:islive={planOnAir && selCue.id === liveCueId && i === liveSlide}
-                  class:cued={!planOnAir && selCue.id === liveCueId && i === liveSlide}
+                  class:islive={planOnAir && c.id === liveCueId && si === liveSlide}
+                  class:cued={!planOnAir && c.id === liveCueId && si === liveSlide}
                   style="--acc:{slideAccent(s.tag)}"
-                  on:click={() => fireSlide(selCue, i)}>
+                  on:click={() => fireSlide(c, si)}>
                   <span class="slide-stripe"></span>
-                  <span class="slide-tag mono">{s.tag}</span>
+                  <span class="slide-tag r-mono">{s.tag}</span>
                   <span class="slide-text">{s.text || s.label}</span>
-                  {#if selCue.id === liveCueId && i === liveSlide}
-                    <span class="cue-tag mono" class:cued={!planOnAir}>{planOnAir ? 'LIVE' : 'CUED'}</span>
-                  {/if}
                 </button>
               {/each}
-            {:else}
-              <EmptyState message={$t('live.pick_a_cue')} />
             {/if}
-          </div>
-        </section>
+          {/each}
+          {#if !itemsLoaded}
+            <Loading what="cues" compact />
+          {:else if !items.length}
+            <EmptyState message={$t('live.plan_no_cues')} />
+          {/if}
+        {:else}
+          <!-- No plan loaded. Not an error — plenty of services run entirely on the
+               AI and the manual box. Offer the plans, don't demand one. -->
+          {#each plans as p (p.id)}
+            <button class="cue pick" on:click={() => loadPlan(p)}>
+              <span class="cue-body">
+                <span class="cue-title">{p.title}</span>
+                <span class="cue-meta r-mono">{p.plan_date} · {p.cue_count} cues</span>
+              </span>
+              <span class="r-badge grey sm-badge">Run</span>
+            </button>
+          {/each}
+          <!-- Loading is NOT Empty. Until the query comes back, "no plans" is not a
+               fact — it is the absence of one, and rendering it told an operator with
+               a full library that they had lost their work. -->
+          {#if !plansLoaded}
+            <Loading what="plans" compact />
+          {:else if !plans.length}
+            <EmptyState message={$t('live.no_plans')} />
+          {/if}
+        {/if}
       </div>
-    </div>
-  </div>
 
-  <!-- ══ COMMAND BAR ══ -->
-  <section class="tile entry">
-    <div class="entry-row">
-      <div class="search">
-        <svg class="ic dim" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
-        <input
-          bind:this={searchEl}
-          bind:value={manualRef}
-          on:keydown={(e) => e.key === 'Enter' && fireManual()}
-          placeholder="Search scripture or commands — ps 23, John 3:16-18"
-          aria-label="Manual scripture reference"
-          disabled={!$capture.available} />
-      </div>
-      <button class="btn-gold lg" on:click={fireManual} disabled={!$capture.available}>Push to stage</button>
-    </div>
-    {#if errMsg}<div class="err" role="alert">{errMsg}</div>{/if}
+      <footer class="pane-foot">
+        <!-- role="status" so every flash is announced. These sentences ARE the
+             feedback for the transport keys. -->
+        <span class="sr-only" role="status" aria-live="polite" aria-atomic="true">{liveMsg}</span>
+        {#if liveMsg}
+          <span class="flash" aria-hidden="true"><i class="fd"></i>{liveMsg}</span>
+        {:else}
+          <span class="flash idle" aria-hidden="true">{openPlan ? openPlan.title : 'No plan loaded'}</span>
+        {/if}
+      </footer>
+    </section>
 
-    <div class="entry-controls">
-      <button class="ctl" class:rec={$capture.capturing} on:click={toggleListen}
-        disabled={!$capture.available || !$capture.stt.loaded || listenBusy}>
-        <span class="dot" style="background:{$capture.capturing ? 'var(--v-rose)' : 'var(--v-amber)'}"></span>
-        {$capture.capturing ? 'Listening — Stop' : listenBusy ? 'Starting…' : 'Start listening'}
-      </button>
-      <button class="ctl" on:click={toggleDetection} disabled={!$capture.available}>
-        <span class="dot" style="background:{$capture.detectionOn ? 'var(--v-emerald)' : '#47464a'}"></span>
-        Detection {$capture.detectionOn ? 'active' : 'off'}
-      </button>
-      <button class="ctl" on:click={clearAll} disabled={!$capture.available}>
-        <span class="dot" style="background:#47464a"></span>Clear all<span class="ctl-k">Esc</span>
-      </button>
-      <button class="ctl" class:rec={$screenBlack} on:click={blackAll} disabled={!$capture.available}>
-        <span class="dot" style="background:#000;border:1px solid #47464a"></span>Black<span class="ctl-k">B</span>
-      </button>
-      <div class="ctl cd-ctl">
-        <span class="dot" style="background:var(--v-cyan)"></span>Countdown
-        <input class="cd-min" type="number" min="1" max="120" bind:value={cdMin} aria-label="Countdown minutes" disabled={!$capture.available} />
-        <span class="cd-unit mono">min</span>
-        <button class="cd-go" class:armed={cdArmed} on:click={beginCountdown} disabled={!$capture.available}>
-          {cdArmed ? 'Confirm?' : 'Start'}
+    <!-- ── 4 · QUICK CONTROLS ── -->
+    <section class="pane">
+      <header class="pane-head">
+        <span class="pn">4</span>
+        <h2>Quick Controls</h2>
+      </header>
+
+      <div class="pane-body quick">
+        <div class="q4">
+          <button class="qb red" on:click={clearAll} disabled={!$capture.available}>
+            <b>Clear screens</b><span>Stop all outputs · Esc</span>
+          </button>
+          <button class="qb grey" class:on={$screenBlack} on:click={blackAll} disabled={!$capture.available}>
+            <b>Blackout</b><span>Go to black · B</span>
+          </button>
+          <button class="qb amethyst" class:on={$rehearsing} on:click={toggleRehearsal}
+            disabled={!$capture.available || rehBusy}>
+            <b>{$rehearsing ? 'Rehearsing' : 'Rehearse'}</b>
+            <span>{$rehearsing ? 'Go live' : 'Nothing goes live'}</span>
+          </button>
+          <button class="qb cyan" class:on={$capture.detectionOn} on:click={toggleDetection}
+            disabled={!$capture.available}>
+            <b>Detection {$capture.detectionOn ? 'on' : 'off'}</b><span>AI listening</span>
+          </button>
+        </div>
+
+        <!-- TRANSPORT MODE is DERIVED from what is on the wall, never a switch the
+             operator has to remember to set — so these read out, they do not choose. -->
+        <span class="klbl sec">Transport mode</span>
+        <div class="modes" role="status" aria-label="Transport mode">
+          <span class="md" class:on={mode === 'verse'}><i></i>Verse mode <em>(step verses)</em></span>
+          <span class="md" class:on={mode === 'slide'}><i></i>Slide mode <em>(step plan slides)</em></span>
+        </div>
+
+        <span class="klbl sec">Step controls</span>
+        <div class="q4 tight">
+          <button class="sb" on:click={() => step(-1)}><span>Previous</span><i>←</i></button>
+          <button class="sb" on:click={() => step(1)}><span>Next</span><i>→</i></button>
+        </div>
+        <!-- Countdown gets its own row: it carries an input and a two-step arm, so it
+             does not fit a half-width cell without truncating its own name. -->
+        <div class="sb cd">
+          <span>Countdown</span>
+          <input class="cd-min r-mono" type="number" min="1" max="120" bind:value={cdMin}
+            aria-label="Countdown minutes" disabled={!$capture.available} />
+          <span class="cd-unit r-mono">min</span>
+          <button class="cd-go" class:armed={cdArmed} on:click={beginCountdown} disabled={!$capture.available}>
+            {cdArmed ? 'Confirm?' : 'Start'}
+          </button>
+        </div>
+
+        <span class="klbl sec">Audio monitor</span>
+        <div class="amon">
+          <span class="amon-k">Input level</span>
+          <span class="meter" aria-hidden="true">
+            {#each Array.from({ length: SEGS }) as _, i}
+              <i class="sg" class:on={i < litSegs} class:mid={i >= 15 && i < 20} class:hot={i >= 20}></i>
+            {/each}
+          </span>
+          <span class="r-mono db">{dbLabel}</span>
+        </div>
+        <button class="wide" on:click={toggleListen}
+          disabled={!$capture.available || !$capture.stt.loaded || listenBusy}>
+          {$capture.capturing ? 'Stop listening' : listenBusy ? 'Starting…' : 'Start listening'}
         </button>
       </div>
-      <button class="ctl" on:click={openMainOutput} disabled={!$capture.available}>
-        <span class="dot" style="background:var(--v-amber)"></span>Open output
-      </button>
-      <!-- Rehearsal sits with the other transport controls, not buried in Settings.
-           Practising is part of running the service, not configuring the app. -->
-      <button class="ctl reh-ctl" class:on={$rehearsing} on:click={toggleRehearsal}
-        disabled={!$capture.available || rehBusy}>
-        <span class="dot" style="background:{$rehearsing ? 'var(--v-amethyst)' : '#47464a'}"></span>
-        {$rehearsing ? 'Rehearsing — go live' : 'Rehearse'}
-      </button>
-      <div class="hints">
-        <span class="hint"><kbd>?</kbd> keys</span>
-      </div>
-    </div>
-  </section>
+    </section>
+  </div>
 
   {#if $capture.audioError}<div class="audioerr">Audio: {$capture.audioError}</div>{/if}
   {#if $capture.outputError}<div class="audioerr">Output: {$capture.outputError}</div>{/if}
@@ -929,273 +1186,414 @@
   {#if $capture.available && !$capture.stt.loaded}
     <ModelSetup compact />
   {/if}
+  <!-- §5 INSPECTOR. Mounted at the console root so it overlays the whole surface
+       rather than being clipped inside a panel. It is a dialog, so shortcuts.js's
+       Escape guard already refuses to clear the screens while it is open. -->
+  <DetectionInspector
+    detection={inspecting}
+    alternatives={inspectAlts}
+    onClose={() => (inspecting = null)}
+    onAccept={inspectAccept}
+    onDismiss={inspectDismiss}
+    onTuning={() => { inspecting = null; setSession({ activeTab: 'settings' }); }}
+  />
 </div>
 
 <style>
-  /* LIVE — the Console's original "Spiritual High-Tech" language, now covering the
-     merged surface. The --s-* names alias the global --v-* design tokens (app.css)
-     wherever they match; a few Console-specific tones (elevation steps above surf3,
-     glows with no --v- equivalent) stay as literals. */
-  .stx{
-    --s-bg:var(--v-surf); --s-lowest:var(--v-bg); --s-low:var(--v-surf2); --s-cont:var(--v-surf3);
-    --s-high:#2a2a2b; --s-on:var(--v-txt); --s-onvar:#c8c6ca; --s-outline:#8b8a8e; --s-outvar:#47464a;
-    --s-gold:var(--v-amber); --s-ongold:var(--v-amber-ink); --s-gold-glow:var(--v-amber-glow);
-    --s-cyan:var(--v-cyan); --s-amethyst:var(--v-amethyst); --s-rose:var(--v-rose);
-    --hair:rgba(255,255,255,.08); --hair2:rgba(255,255,255,.12);
-    color:var(--s-on);font-family:var(--f-body);
-    /* Fill the scroll area exactly — the console stays fixed on screen; only the
-       feed and the two run columns scroll internally. */
-    height:100%;display:flex;flex-direction:column;gap:14px;min-height:0;
+  /* LIVE — laid out to docs/relaydesign/relay-console-screen.png, styled entirely
+     from the --v-* design tokens in app.css. No raw hex, no arbitrary px: every
+     colour is a token and every gap comes off the 8pt scale. */
+  .inspect-link{ align-self:flex-start; margin-top:9px; background:none; border:0; padding:0;
+    font-family:var(--f-body); font-size:12px; color:var(--v-cyan); cursor:pointer;
+    text-decoration:underline; }
+  .inspect-link:hover{ filter:brightness(1.15); }
+
+  /* ── §4 view controls + compact density ── */
+  .view-ctl{ display:flex; align-items:center; justify-content:flex-end; gap:8px; margin-bottom:10px; }
+  .seg{ display:flex; border:1px solid var(--v-line2); border-radius:8px; overflow:hidden; }
+  .seg button{ padding:5px 11px; background:var(--v-surf); border:0; cursor:pointer;
+    font-family:var(--f-body); font-size:11.5px; font-weight:600; color:var(--v-faint); }
+  .seg button.on{ background:var(--v-accent-soft); color:var(--v-accent2); }
+  .seg button:not(.on):hover{ color:var(--v-dim); }
+  .view-fs{ height:26px; padding:0 11px; border-radius:8px; cursor:pointer;
+    background:var(--v-surf); border:1px solid var(--v-line2); color:var(--v-faint);
+    font-family:var(--f-body); font-size:11.5px; font-weight:600; }
+  .view-fs:hover{ color:var(--v-txt); border-color:var(--v-accent-line); }
+
+  /* COMPACT — spacing and type only. Nothing is hidden: see the note in the
+     script block. Panels keep every control they have at normal density. */
+  .con.compact{ gap:9px; }
+  /* The actual density win: give the BOTTOM row its space back. The top row is a
+     fixed clamp, so on a 13" booth laptop it eats a third of the window and the
+     bottom row — transcript, detections, plan, and the transport — is squeezed
+     into whatever is left. Panels scroll internally (.pane-body), so nothing was
+     ever unreachable; compact just stops making the operator scroll for the
+     controls they use most. */
+  .con.compact :global(.con-top){ height:clamp(196px,24vh,268px); }
+  /* Full screen has already reclaimed the chrome, so the exit affordance sits
+     where the view controls would be. Keep clear of it rather than under it. */
+  .con.fullscreen .view-ctl{ padding-right:132px; }
+  .con.compact :global(.pane){ border-radius:10px; }
+  .con.compact :global(.pane-head){ padding:8px 11px; }
+  .con.compact :global(.pane-head h2){ font-size:11px; }
+  .con.compact :global(.pane-body){ padding:10px 11px; }
+  .con.compact .view-ctl{ margin-bottom:7px; }
+
+  .con{
+    height:100%; min-height:0; display:flex; flex-direction:column;
+    gap:var(--v-sp-sm); color:var(--v-txt); font-family:var(--f-body);
   }
-  .stx .mono{font-family:var(--f-mono);font-variant-numeric:tabular-nums;letter-spacing:.04em}
-  .stx .dim{color:var(--s-onvar)}
-  .stx .gold{color:var(--s-gold)}
-  .ic{display:block}
+  .spring{flex:1}
+  .cnt{font-size:var(--v-fs-cap); color:var(--v-faint)}
 
   /* ── rehearsal band ── amethyst, never amber. Amber means ON AIR. */
-  .reh{flex:0 0 auto;display:flex;align-items:center;gap:11px;padding:11px 15px;border-radius:11px;
-    background:rgba(192,139,255,.12);border:1px solid rgba(192,139,255,.42);
-    font-size:12.5px;line-height:1.5;color:var(--s-onvar)}
-  .reh b{font-family:var(--f-mono);font-size:11px;font-weight:700;letter-spacing:.14em;color:var(--s-amethyst);flex:0 0 auto}
+  .reh{flex:0 0 auto; display:flex; align-items:center; gap:var(--v-sp-sm);
+    padding:10px var(--v-sp-md); border-radius:var(--v-r-lg);
+    background:var(--v-amethyst-soft); border:1px solid rgba(139,92,246,.42);
+    font-size:var(--v-fs-b2); line-height:var(--v-lh-b2); color:var(--v-dim)}
+  .reh b{font-family:var(--f-mono); font-size:var(--v-fs-cap); font-weight:700;
+    letter-spacing:.14em; color:var(--v-amethyst); flex:0 0 auto}
   .reh span:not(.reh-dot){flex:1}
-  .reh-dot{width:8px;height:8px;border-radius:50%;flex:0 0 auto;background:var(--s-amethyst);
-    box-shadow:0 0 9px var(--s-amethyst);animation:pulse 1.7s ease-in-out infinite}
-  .reh-end{flex:0 0 auto;padding:7px 14px;border-radius:8px;cursor:pointer;font-family:var(--f-body);
-    font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;
-    background:var(--s-amethyst);border:0;color:#2a0d45}
-  .reh-end:disabled{opacity:.5;cursor:not-allowed}
-
-  /* ── transport ── */
-  .tbar{flex:0 0 auto;display:flex;align-items:center;gap:12px;padding:10px 14px;
-    background:var(--s-low);border:1px solid var(--hair2);border-radius:12px}
-  .spring{flex:1}
-  .sys{display:flex;align-items:center;gap:8px;flex:0 0 auto;font-family:var(--f-mono);font-size:10px;
-    font-weight:700;letter-spacing:.12em;color:var(--s-outline);padding:6px 12px;border-radius:99px;
-    background:var(--s-cont);border:1px solid var(--hair)}
-  .sys-dot{width:7px;height:7px;border-radius:50%;background:currentColor}
-  .sys.live{color:var(--s-gold);border-color:rgba(255,185,95,.4);background:rgba(245,166,35,.13)}
-  .sys.live .sys-dot{box-shadow:0 0 9px currentColor;animation:pulse 1.7s ease-in-out infinite}
-  .sys.reh{color:var(--s-amethyst);border-color:rgba(192,139,255,.42);background:rgba(192,139,255,.12)}
-  .sys.blk{color:var(--s-rose);border-color:rgba(244,113,139,.42);background:rgba(244,113,139,.12)}
+  .reh-dot{width:8px; height:8px; border-radius:50%; flex:0 0 auto; background:var(--v-amethyst);
+    box-shadow:0 0 9px var(--v-amethyst); animation:pulse 1.7s ease-in-out infinite}
+  .reh-end{flex:0 0 auto; padding:7px 14px; border-radius:var(--v-r-md); cursor:pointer;
+    font-family:var(--f-body); font-size:var(--v-fs-cap); font-weight:700; letter-spacing:.06em;
+    text-transform:uppercase; background:var(--v-amethyst); border:0; color:var(--v-void)}
+  .reh-end:disabled{opacity:.5; cursor:not-allowed}
   @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
-  .t-plan{display:flex;align-items:baseline;gap:8px;background:none;border:0;padding:5px 8px;border-radius:8px;
-    color:var(--s-on);font-family:var(--f-body);font-size:13px;font-weight:600;cursor:pointer}
-  .t-plan:hover{background:var(--s-cont)}
-  .t-pos{font-size:10px;color:var(--s-outline);font-weight:400}
-  .t-mode{flex:0 0 auto;font-size:10px;letter-spacing:.06em;color:var(--s-outline);padding:6px 10px;
-    border-radius:7px;background:var(--s-cont);border:1px solid var(--hair)}
-  .t-mode b{color:var(--s-cyan);font-weight:700}
-  .t-mode.slide b{color:var(--s-gold)}
-  @media (max-width:1240px){.t-mode{display:none}}
-  .t-nav{display:flex;align-items:center;gap:7px;flex:0 0 auto}
-  .nav-sq{width:32px;height:32px;border-radius:8px;display:grid;place-items:center;cursor:pointer;
-    background:var(--s-cont);border:1px solid var(--hair);color:var(--s-onvar);font-size:13px;transition:.14s}
-  .nav-sq:hover{background:var(--s-high);color:var(--s-on)}
 
-  /* ── layout ── feed on the left, wall + run columns on the right */
-  .stx-top{flex:1;min-height:0;display:grid;grid-template-columns:360px minmax(0,1fr);gap:14px}
-  .rightcol{min-height:0;display:flex;flex-direction:column;gap:14px}
-  .runrow{flex:1;min-height:0;display:grid;grid-template-columns:1fr 1fr;gap:14px}
-  @media (max-width:1180px){
-    .stx{height:auto}
-    .stx-top{grid-template-columns:1fr}
-    .runrow{grid-template-columns:1fr}
+  /* ── the two rows ──────────────────────────────────────────────────────── */
+  .con-top{flex:0 0 auto; height:clamp(268px,33vh,364px);
+    display:grid; grid-template-columns:1.19fr 92px 1fr 300px; gap:var(--v-sp-sm); min-height:0}
+  .con-bot{flex:1; min-height:0;
+    display:grid; grid-template-columns:1fr 1.21fr 1fr 300px; gap:var(--v-sp-sm)}
+
+  .pane{display:flex; flex-direction:column; min-height:0; overflow:hidden;
+    background:var(--v-surf); border:1px solid var(--v-line); border-radius:var(--v-r-lg);
+    box-shadow:var(--v-shadow-sm)}
+
+  .pane-head{flex:0 0 auto; display:flex; align-items:center; gap:var(--v-sp-sm);
+    padding:10px 12px; border-bottom:1px solid var(--v-line)}
+  /* The reference console has no sidebar, so its panels are ~25% wider than they can
+     be here. The heading is therefore set a touch tighter than the design sheet's
+     Label spec so the full panel name still fits rather than truncating. */
+  .pane-head h2{margin:0; min-width:0; font-family:var(--f-head); font-size:var(--v-fs-cap);
+    line-height:var(--v-lh-lbl); font-weight:600; letter-spacing:.06em; text-transform:uppercase;
+    color:var(--v-txt); overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  /* The numbered panel chips from the reference. Ordinals, not status — grey. */
+  .pn{flex:0 0 auto; width:18px; height:18px; border-radius:var(--v-r-sm); display:grid;
+    place-items:center; background:var(--v-surf3); border:1px solid var(--v-line2);
+    font-family:var(--f-mono); font-size:10px; font-weight:700; color:var(--v-dim)}
+  .pane-body{flex:1; min-height:0; overflow-y:auto; padding:var(--v-sp-sm) 12px;
+    display:flex; flex-direction:column; gap:var(--v-sp-sm);
+    scrollbar-width:thin; scrollbar-color:var(--v-surf3) transparent}
+  .pane-body::-webkit-scrollbar{width:6px}
+  .pane-body::-webkit-scrollbar-thumb{background:var(--v-surf3); border-radius:99px}
+  .pane-foot{flex:0 0 auto; display:flex; align-items:center; gap:var(--v-sp-sm);
+    padding:var(--v-sp-sm) 12px; border-top:1px solid var(--v-line)}
+
+  /* ── PREVIEW / PROGRAM ─────────────────────────────────────────────────── */
+  .mon-bar{flex:0 0 auto; display:flex; align-items:center; gap:var(--v-sp-sm);
+    padding:8px 10px; border-bottom:1px solid var(--v-line)}
+  .tag{flex:0 0 auto; padding:4px 10px; border-radius:var(--v-r-sm);
+    font-size:var(--v-fs-cap); font-weight:700; letter-spacing:.09em; text-transform:uppercase}
+  .tag.preview{background:var(--v-amethyst); color:var(--v-void)}
+  /* Amber, and only when the congregation is genuinely looking at it. */
+  .tag.onair{background:var(--v-amber); color:var(--v-amber-ink)}
+  .tag.reh{background:var(--v-amethyst-soft); border:1px solid rgba(139,92,246,.45); color:var(--v-amethyst)}
+  .tag.off{background:var(--v-grey-soft); border:1px solid var(--v-line2); color:var(--v-dim)}
+  .mon-name{min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+    font-size:var(--v-fs-cap); color:var(--v-faint)}
+  .screen{flex:1; min-height:0; position:relative; overflow:hidden; background:#000;
+    border-top:1px solid var(--v-line)}
+  .screen.lit{box-shadow:inset 0 0 0 2px var(--v-amber)}
+  .screen-empty{position:absolute; inset:0; display:grid; place-items:center; padding:var(--v-sp-md);
+    text-align:center; font-size:var(--v-fs-b2); color:var(--v-faint)}
+  .blk{position:absolute; inset:0; background:#000}
+
+  /* ── the take rack ─────────────────────────────────────────────────────── */
+  .rack{display:flex; flex-direction:column; gap:6px; min-height:0; padding:10px 8px;
+    background:var(--v-surf); border:1px solid var(--v-line); border-radius:var(--v-r-lg)}
+  .rack-lbl{font-family:var(--f-mono); font-size:9px; font-weight:700; letter-spacing:.14em;
+    text-transform:uppercase; color:var(--v-faint); text-align:center}
+  .take{height:44px; border-radius:var(--v-r-md); border:0; cursor:pointer;
+    background:var(--v-amber); color:var(--v-amber-ink); font-family:var(--f-body);
+    font-size:var(--v-fs-lbl); font-weight:700; letter-spacing:.1em;
+    box-shadow:0 6px 18px -6px var(--v-amber-glow); transition:filter .14s}
+  .take:hover:not(:disabled){filter:brightness(1.06)}
+  .take:disabled{opacity:.4; cursor:not-allowed; box-shadow:none}
+  .rack-nav{display:grid; grid-template-columns:1fr 1fr; gap:6px}
+  .rk{height:30px; border-radius:var(--v-r-md); cursor:pointer; background:var(--v-surf2);
+    border:1px solid var(--v-line2); color:var(--v-dim); font-family:var(--f-body);
+    font-size:var(--v-fs-cap); transition:.14s}
+  .rk:hover:not(:disabled){background:var(--v-surf3); color:var(--v-txt)}
+  .rk:disabled{opacity:.4; cursor:not-allowed}
+  .rk.wide{width:100%}
+  .rack-lbl.push{margin-top:auto}
+  .rack-mode{text-align:center; padding:7px 0; border-radius:var(--v-r-md);
+    background:var(--v-surf2); border:1px solid var(--v-line2);
+    font-size:var(--v-fs-cap); font-weight:700; letter-spacing:.1em; color:var(--v-cyan)}
+  .rack-mode.slide{color:var(--v-amber)}
+
+  /* ── output status ─────────────────────────────────────────────────────── */
+  .out{display:flex; align-items:center; gap:10px; padding:9px 10px; border-radius:var(--v-r-md);
+    background:var(--v-surf2); border:1px solid var(--v-line)}
+  .out-ic{flex:0 0 auto; width:28px; height:28px; border-radius:var(--v-r-sm); display:grid;
+    place-items:center; background:var(--v-surf3); color:var(--v-dim)}
+  .out-t{flex:1; min-width:0; display:flex; flex-direction:column; gap:2px}
+  .out-t b{font-size:var(--v-fs-b2); font-weight:600; color:var(--v-txt);
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  .out-t span{font-size:9px; letter-spacing:.05em; color:var(--v-faint)}
+  .sm-badge{padding:3px 8px; font-size:9px; letter-spacing:.07em; flex:0 0 auto}
+  .sm-badge .bd{width:5px; height:5px}
+
+  /* ── 1 · transcript ────────────────────────────────────────────────────── */
+  .tx{gap:2px; padding-top:10px}
+  .txl{display:flex; gap:10px; padding:7px 8px; border-radius:var(--v-r-md);
+    border-left:2px solid transparent}
+  /* The line the AI is working on right now. Amethyst: it is being considered, not
+     fired — amber would claim it is on the wall. */
+  .txl.cur{background:var(--v-amethyst-soft); border-left-color:var(--v-amethyst)}
+  .txl-at{flex:0 0 auto; width:56px; font-size:var(--v-fs-cap); color:var(--v-faint)}
+  .txl-b{flex:1; min-width:0; font-size:var(--v-fs-b2); line-height:1.55; color:var(--v-dim)}
+  .txl.cur .txl-b{color:var(--v-txt)}
+  .txl-b mark{background:transparent; color:var(--v-txt)}
+  .caret{display:inline-block; width:2px; height:13px; background:var(--v-amethyst);
+    vertical-align:-2px; margin-left:2px; animation:blink 1.05s steps(1) infinite}
+  @keyframes blink{50%{opacity:0}}
+
+  .mic{gap:10px}
+  .mic-lbl{flex:0 0 auto; font-size:var(--v-fs-cap); color:var(--v-faint)}
+  .meter{flex:1; min-width:0; display:flex; gap:2px; align-items:center; height:12px}
+  .sg{flex:1; height:100%; border-radius:1px; background:var(--v-surf3)}
+  .sg.on{background:var(--v-emerald)}
+  .sg.on.mid{background:var(--v-amber)}
+  .sg.on.hot{background:var(--v-red)}
+  .db{flex:0 0 auto; font-size:var(--v-fs-cap); color:var(--v-dim)}
+  .ibtn{flex:0 0 auto; width:26px; height:26px; border-radius:var(--v-r-sm); display:grid;
+    place-items:center; cursor:pointer; background:var(--v-surf2); border:1px solid var(--v-line2);
+    color:var(--v-dim); transition:.14s}
+  .ibtn:hover:not(:disabled){color:var(--v-amber)}
+  .ibtn:disabled{opacity:.4; cursor:not-allowed}
+
+  /* ── 2 · detection ─────────────────────────────────────────────────────── */
+  .chip{display:inline-flex; align-items:center; gap:6px; flex:0 0 auto; padding:4px 9px;
+    border-radius:99px; background:var(--v-surf2); border:1px solid var(--v-line2);
+    font-size:var(--v-fs-cap); color:var(--v-faint)}
+  .chip .bd{width:6px; height:6px; border-radius:50%; background:var(--v-faint)}
+  .chip.ok{color:var(--v-emerald); border-color:rgba(34,197,94,.32); background:var(--v-emerald-soft)}
+  .chip.ok .bd{background:var(--v-emerald); box-shadow:0 0 6px var(--v-emerald)}
+  .btnchip{cursor:pointer; font-family:var(--f-body)}
+  .btnchip:disabled{opacity:.5; cursor:not-allowed}
+
+  .claim{background:var(--v-surf2); border:1px solid rgba(255,176,0,.28);
+    border-radius:var(--v-r-lg); padding:14px; box-shadow:0 0 20px -6px var(--v-amber-glow)}
+  /* A GUESS MUST LOOK LIKE A GUESS. Amber reads as "Relay is confident" and a
+     paraphrase has not earned it — its score is a cosine, and router.rs will not let
+     it auto-fire at ANY value. Cyan, NOT amethyst: amethyst already means REHEARSAL,
+     and a colour that means "nothing is reaching the congregation" cannot also mean
+     "this guess is shaky", or on the day both are true the operator reads the wrong one. */
+  .claim.guess{border-color:var(--v-cyan-soft); box-shadow:none}
+  .claim-top{display:flex; align-items:center; justify-content:space-between; gap:var(--v-sp-sm)}
+  .claim-ref{font-family:var(--f-head); font-size:var(--v-fs-h1); line-height:var(--v-lh-h1);
+    font-weight:600; letter-spacing:var(--v-tr-tight); color:var(--v-txt)}
+  .mchip{flex:0 0 auto; padding:4px 10px; border-radius:99px; font-family:var(--f-mono);
+    font-size:var(--v-fs-cap); font-weight:600; background:var(--v-amber-soft);
+    border:1px solid rgba(255,176,0,.32); color:var(--v-amber)}
+  .mchip.guess{background:var(--v-cyan-soft); border-color:rgba(34,211,238,.32); color:var(--v-cyan)}
+  .mchip.sm{padding:3px 8px; font-size:10px}
+  /* Confidence as a BAR — "0.92" means nothing to a volunteer. Only ever drawn for a
+     heard reference, the only one whose number means what it appears to mean. */
+  .conf{height:3px; border-radius:2px; background:var(--v-surf3); margin:10px 0 0; overflow:hidden}
+  .conf i{display:block; height:100%; background:var(--v-amber); border-radius:2px}
+  .guess-note{margin:8px 0 0; font-size:var(--v-fs-cap); color:var(--v-cyan)}
+  .klbl{font-family:var(--f-mono); font-size:9px; font-weight:700; letter-spacing:.14em;
+    text-transform:uppercase; color:var(--v-faint)}
+  .klbl.sec{margin-top:var(--v-sp-sm)}
+  .mt{margin-top:12px}
+  .mt-q{margin:5px 0 0; font-size:var(--v-fs-b1); line-height:1.55; color:var(--v-txt)}
+  .claim-verse{margin:10px 0 0; font-family:var(--f-serif); font-style:italic;
+    font-size:var(--v-fs-b2); line-height:1.55; color:var(--v-dim)}
+  .meta2{display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:14px;
+    padding-top:12px; border-top:1px solid var(--v-line)}
+  .meta2 b{display:block; margin-top:3px; font-size:var(--v-fs-b2); font-weight:500; color:var(--v-txt)}
+  .acts{display:grid; grid-template-columns:1fr 1fr; gap:var(--v-sp-sm); margin-top:14px}
+  .act{display:flex; flex-direction:column; gap:2px; align-items:center; padding:9px 10px;
+    border-radius:var(--v-r-md); cursor:pointer; border:1px solid transparent;
+    font-family:var(--f-body); transition:filter .14s}
+  .act b{font-size:var(--v-fs-b2); font-weight:600}
+  .act span{font-size:10px; opacity:.8}
+  .act:hover{filter:brightness(1.08)}
+  .act.go{background:var(--v-emerald); color:var(--v-void)}
+  .act.no{background:var(--v-red); color:#fff}
+  .khint{margin:10px 0 0; text-align:center; font-size:10px; color:var(--v-faint)}
+  .khint kbd{font-family:var(--f-mono); font-size:9px; color:var(--v-dim);
+    background:var(--v-surf3); border:1px solid var(--v-line2); border-radius:var(--v-r-sm); padding:2px 5px}
+
+  .sub{display:flex; align-items:center; gap:var(--v-sp-sm); margin-top:var(--v-sp-sm);
+    padding-top:var(--v-sp-sm); border-top:1px solid var(--v-line)}
+  .rc{display:flex; align-items:center; gap:var(--v-sp-sm); padding:7px 10px;
+    border-radius:var(--v-r-md); background:var(--v-surf2); border:1px solid var(--v-line)}
+  .rc-ref{font-size:var(--v-fs-b2); font-weight:600; color:var(--v-txt)}
+  .mini{padding:4px 10px; border-radius:var(--v-r-sm); border:0; cursor:pointer;
+    font-family:var(--f-body); font-size:var(--v-fs-cap); font-weight:600;
+    background:var(--v-amber); color:var(--v-amber-ink)}
+  .mini.ghost{background:transparent; border:1px solid var(--v-line2); color:var(--v-dim)}
+  .mini:hover{filter:brightness(1.08)}
+  .rel-note{margin:0; font-size:10px; color:var(--v-faint)}
+  .rel-chips{display:flex; flex-wrap:wrap; gap:6px}
+  .rel-chip{font-family:var(--f-mono); font-size:var(--v-fs-cap); color:var(--v-dim);
+    background:var(--v-surf2); border:1px solid var(--v-line2); border-radius:99px;
+    padding:5px 11px; cursor:pointer}
+  .rel-chip:hover:not(:disabled){color:var(--v-txt); background:var(--v-surf3)}
+  .rel-chip:disabled{opacity:.45; cursor:default}
+
+  .entry{gap:var(--v-sp-sm)}
+  .search{flex:1; min-width:0; display:flex; align-items:center; gap:9px; height:34px;
+    padding:0 11px; border-radius:var(--v-r-md); background:var(--v-bg);
+    border:1px solid var(--v-line2); color:var(--v-faint)}
+  .search input{flex:1; min-width:0; background:transparent; border:0; outline:none;
+    color:var(--v-txt); font-family:var(--f-mono); font-size:var(--v-fs-mono)}
+  .search input::placeholder{color:var(--v-faint)}
+  .search:focus-within{border-color:rgba(255,176,0,.45); box-shadow:0 0 0 3px rgba(255,176,0,.1)}
+  .err{padding:0 12px 10px; color:var(--v-red); font-size:var(--v-fs-cap)}
+
+  .wide{width:100%; height:32px; border-radius:var(--v-r-md); cursor:pointer;
+    background:var(--v-surf2); border:1px solid var(--v-line2); color:var(--v-txt);
+    font-family:var(--f-body); font-size:var(--v-fs-lbl); font-weight:600; transition:.14s}
+  .wide:hover:not(:disabled){background:var(--v-surf3)}
+  .wide:disabled{opacity:.45; cursor:not-allowed}
+  .wide.amber{flex:0 0 auto; width:auto; padding:0 18px; background:var(--v-amber);
+    border-color:transparent; color:var(--v-amber-ink)}
+
+  /* ── 3 · plan ──────────────────────────────────────────────────────────── */
+  .plan{gap:6px}
+  .rail{display:flex; align-items:stretch; gap:10px}
+  .rail-dot{flex:0 0 auto; align-self:center; width:9px; height:9px; border-radius:50%;
+    background:var(--v-surf3); border:1px solid var(--v-line2)}
+  .rail-dot.on{background:var(--v-amber); border-color:var(--v-amber); box-shadow:0 0 8px var(--v-amber-glow)}
+  .rail-dot.cued{background:var(--v-grey); border-color:var(--v-grey)}
+  .cue,.slide{display:flex; align-items:center; gap:9px; width:100%; flex:1; text-align:left;
+    cursor:pointer; padding:9px 10px; border-radius:var(--v-r-md); background:var(--v-surf2);
+    border:1px solid var(--v-line); color:var(--v-txt); font-family:var(--f-body); transition:.14s}
+  .cue:hover,.slide:hover{border-color:var(--v-line2); background:var(--v-surf3)}
+  .cue.sel{border-color:rgba(34,211,238,.45)}
+  /* Amber = it is in front of the congregation. Nothing else may use it. */
+  .cue.islive,.slide.islive{border-color:var(--v-amber); background:var(--v-amber-soft)}
+  /* CUED = where → will resume from, but NOT on screen. Deliberately not amber. */
+  .cue.cued,.slide.cued{border-style:dashed; border-color:var(--v-grey)}
+  .cue-stripe,.slide-stripe{width:3px; align-self:stretch; border-radius:99px; flex:0 0 auto}
+  .slide-stripe{background:var(--acc)}
+  .cue-num{flex:0 0 auto; font-size:10px; color:var(--v-faint)}
+  .cue-body{flex:1; min-width:0; display:flex; flex-direction:column; gap:2px}
+  .cue-title{font-size:var(--v-fs-b2); overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  .cue-meta{font-size:9px; letter-spacing:.05em; color:var(--v-faint)}
+  .slide{align-items:flex-start; margin-left:19px; background:var(--v-bg)}
+  .slide-tag{flex:0 0 auto; min-width:26px; padding-top:2px; font-size:9px; font-weight:700;
+    letter-spacing:.05em; color:var(--acc)}
+  .slide-text{flex:1; min-width:0; font-family:var(--f-serif); font-size:var(--v-fs-b2);
+    line-height:1.5; color:var(--v-dim); white-space:pre-wrap;
+    display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden}
+  .slide.islive .slide-text{color:var(--v-txt)}
+  .note{margin-left:19px; display:flex; align-items:flex-start; gap:7px; padding:8px 10px;
+    border-radius:var(--v-r-md); background:var(--v-amethyst-soft);
+    border:1px solid rgba(139,92,246,.3); color:var(--v-amethyst);
+    font-size:var(--v-fs-cap); line-height:1.5}
+  .note svg{flex:0 0 auto; margin-top:2px}
+  .flash{display:flex; align-items:center; gap:8px; min-width:0; overflow:hidden;
+    text-overflow:ellipsis; white-space:nowrap; font-size:var(--v-fs-cap); color:var(--v-emerald)}
+  .flash.idle{color:var(--v-faint)}
+  .fd{width:6px; height:6px; border-radius:50%; background:var(--v-emerald);
+    box-shadow:0 0 8px var(--v-emerald); flex:0 0 auto}
+
+  /* ── 4 · quick controls ────────────────────────────────────────────────── */
+  .quick{gap:5px}
+  .q4{display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:var(--v-sp-sm)}
+  .q4.tight{gap:6px}
+  .qb{display:flex; flex-direction:column; gap:2px; align-items:flex-start; text-align:left;
+    padding:10px 11px; border-radius:var(--v-r-md); cursor:pointer;
+    background:var(--v-surf2); border:1px solid var(--v-line2); color:var(--v-txt);
+    font-family:var(--f-body); transition:.14s}
+  .qb{min-width:0; padding:8px 10px}
+  .qb b{font-size:var(--v-fs-b2); font-weight:600; max-width:100%;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  .qb span{font-size:10px; color:var(--v-faint); max-width:100%;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  .qb:disabled{opacity:.45; cursor:not-allowed}
+  .qb.red{background:var(--v-red-soft); border-color:rgba(239,68,68,.4); color:var(--v-red)}
+  .qb.grey.on{background:var(--v-grey-soft); border-color:var(--v-grey); color:var(--v-txt)}
+  .qb.amethyst.on{background:var(--v-amethyst-soft); border-color:rgba(139,92,246,.45); color:var(--v-amethyst)}
+  .qb.cyan.on{background:var(--v-cyan-soft); border-color:rgba(34,211,238,.4); color:var(--v-cyan)}
+  .qb:hover:not(:disabled){filter:brightness(1.12)}
+
+  .modes{display:flex; flex-direction:column; gap:5px}
+  .md{display:flex; align-items:center; gap:9px; padding:6px 10px; border-radius:var(--v-r-md);
+    background:var(--v-surf2); border:1px solid var(--v-line);
+    font-size:var(--v-fs-b2); color:var(--v-faint)}
+  .md i{width:11px; height:11px; border-radius:50%; flex:0 0 auto;
+    border:1px solid var(--v-line2); background:transparent}
+  .md em{font-style:normal; font-size:10px; opacity:.8}
+  .md.on{background:var(--v-amethyst-soft); border-color:rgba(139,92,246,.45); color:var(--v-txt)}
+  .md.on i{background:var(--v-amethyst); border-color:var(--v-amethyst)}
+
+  .sb{display:flex; align-items:center; justify-content:space-between; gap:7px; min-width:0;
+    padding:7px 10px; border-radius:var(--v-r-md); cursor:pointer; background:var(--v-surf2);
+    border:1px solid var(--v-line2); color:var(--v-txt); font-family:var(--f-body);
+    font-size:var(--v-fs-cap); transition:.14s}
+  .sb>span{min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  .sb:hover:not(:disabled){background:var(--v-surf3)}
+  .sb:disabled{opacity:.45; cursor:not-allowed}
+  .sb i{font-style:normal; color:var(--v-faint)}
+  .sb.cd{cursor:default; gap:6px; justify-content:flex-start}
+  .sb.cd>span:first-child{flex:1}
+  .cd-unit{flex:0 0 auto; font-size:9px; color:var(--v-faint)}
+  .cd-min{width:40px; padding:3px 5px; border-radius:var(--v-r-sm); border:1px solid var(--v-line2);
+    background:var(--v-bg); color:var(--v-txt); font-size:var(--v-fs-cap); text-align:center}
+  .cd-go{padding:4px 9px; border-radius:var(--v-r-sm); border:1px solid rgba(34,211,238,.4);
+    background:var(--v-cyan-soft); color:var(--v-cyan); font-family:var(--f-mono);
+    font-size:10px; font-weight:700; cursor:pointer}
+  .cd-go:hover:not(:disabled){filter:brightness(1.2)}
+  .cd-go:disabled{opacity:.45; cursor:not-allowed}
+  .cd-go.armed{background:var(--v-amber-soft); border-color:rgba(255,176,0,.5); color:var(--v-amber)}
+
+  .amon{display:flex; align-items:center; gap:var(--v-sp-sm); padding:7px 10px;
+    border-radius:var(--v-r-md); background:var(--v-surf2); border:1px solid var(--v-line)}
+  .amon-k{flex:0 0 auto; font-size:var(--v-fs-cap); color:var(--v-faint)}
+
+  /* ── banners ───────────────────────────────────────────────────────────── */
+  .audioerr{flex:0 0 auto; background:var(--v-red-soft); color:var(--v-red);
+    border:1px solid rgba(239,68,68,.3); border-radius:var(--v-r-md);
+    padding:9px 12px; font-size:var(--v-fs-lbl)}
+  /* Degraded, not broken: amber (a warning), never red (an error) — the app is still
+     fully usable by hand, and the banner should read that way. */
+  .sttwarn{flex:0 0 auto; background:var(--v-amber-soft); color:var(--v-txt);
+    border:1px solid rgba(255,176,0,.34); border-radius:var(--v-r-md);
+    padding:10px 12px; font-size:var(--v-fs-lbl); line-height:1.6}
+  .sttwarn b{display:block; margin-bottom:2px; color:var(--v-amber2)}
+
+  /* ── accessibility ─────────────────────────────────────────────────────── */
+  .take:focus-visible,.rk:focus-visible,.cue:focus-visible,.slide:focus-visible,
+  .act:focus-visible,.qb:focus-visible,.sb:focus-visible,.wide:focus-visible,
+  .mini:focus-visible,.ibtn:focus-visible,.btnchip:focus-visible,.cd-go:focus-visible,
+  .reh-end:focus-visible{outline:2px solid var(--v-amber); outline-offset:2px}
+  @media (prefers-reduced-motion:reduce){
+    .caret,.reh-dot{animation:none}
   }
 
-  .tile{background:var(--s-low);border:1px solid var(--hair2);border-radius:12px;overflow:hidden;
-    display:flex;flex-direction:column;min-height:0}
-  .tile.feed{background:var(--s-lowest)}
-  .tile.entry{flex:0 0 auto}
-  .tile.channels{flex:0 0 auto}
-  .chan-wrap{padding:18px}
-  .tile-head{display:flex;align-items:center;justify-content:space-between;padding:13px 16px;
-    border-bottom:1px solid var(--hair);flex:0 0 auto;gap:10px}
-  .tile-head h2{margin:0;font-family:var(--f-body);font-size:11px;font-weight:700;
-    letter-spacing:.16em;text-transform:uppercase;color:var(--s-on);
-    overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  /* Secondary tile headings. They used to be <h3> — which is how the page ended up
-     running h3 → h2 → h3, with no <h1> at all, making heading navigation (a screen
-     reader's primary way of skimming a page) useless. They are all PEER sections of
-     one page, so they are all <h2>; the visual step down is a class, not a tag. */
-  .tile-head h2.sub{color:var(--s-onvar)}
-  .tile-head .mono{font-size:10px;flex:0 0 auto}
-
-  /* ── feed ── */
-  .tx-box{flex:0 0 auto;padding:14px 16px 12px;border-bottom:1px solid var(--hair);background:var(--s-lowest)}
-  .tx-stream{height:92px;overflow-y:auto;margin-top:9px;font-size:14px;line-height:1.6;color:var(--s-on);
-    font-weight:500;scrollbar-width:thin;scrollbar-color:var(--s-high) transparent}
-  .tx-stream::-webkit-scrollbar{width:6px}
-  .tx-stream::-webkit-scrollbar-thumb{background:var(--s-high);border-radius:99px}
-  .tx-stream mark{background:rgba(255,185,95,.16);color:var(--s-gold);border-radius:3px;padding:0 2px}
-  .caret{display:inline-block;width:2px;height:14px;background:var(--s-gold);vertical-align:-2px;
-    margin-left:1px;animation:blink 1.05s steps(1) infinite}
-  @keyframes blink{50%{opacity:0}}
-  .feed-body{flex:1;min-height:0;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:16px}
-  .seg-top{display:flex;align-items:center;justify-content:space-between}
-  .lbl-gold{font-family:var(--f-mono);font-size:10px;font-weight:600;letter-spacing:.16em;
-    text-transform:uppercase;color:var(--s-gold)}
-  .ai-card{background:var(--s-low);border:1px solid rgba(255,185,95,.28);border-radius:10px;padding:14px;
-    box-shadow:0 0 20px -5px var(--s-gold-glow)}
-  .ai-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
-
-  /* A GUESS MUST LOOK LIKE A GUESS.
-     Gold in this app reads as "Relay is confident" — it is the colour of the accept
-     button and of a heard reference. A paraphrase has not earned it: its score is a
-     cosine, not a probability, and router.rs will not let it auto-fire at ANY value.
-     So it loses the gold border, the glow, and the number.
-
-     Cyan, NOT amethyst — even though amethyst is the obvious "uncertain" colour and
-     was the original suggestion. Amethyst already means REHEARSAL (docs/DECISIONS.md
-     §18: amber means ON AIR and a tally light that lies is worse than none). A colour
-     that means "nothing is reaching the congregation" cannot also mean "this guess is
-     shaky", or on the day both are true the operator reads the wrong one. */
-  .ai-card.guess{border-color:rgba(63,182,230,.30);box-shadow:none}
-  .lbl-method{font-family:var(--f-mono);font-size:10px;font-weight:600;letter-spacing:.16em;
-    text-transform:uppercase;color:var(--s-gold)}
-  .lbl-method.guess{color:var(--v-cyan)}
-  .lbl-method.sm{font-size:9px;font-weight:700}
-  .guess-note{font-size:10.5px;color:var(--v-cyan);opacity:.85}
-  .xref.guess{border-color:rgba(63,182,230,.22)}
-
-  /* Confidence as a BAR, not a bare number — "0.92" means nothing to a volunteer.
-     Only ever drawn for a heard reference, because it is the only one whose number
-     means what it appears to mean. */
-  .conf{height:3px;border-radius:2px;background:rgba(255,255,255,.07);margin:0 0 11px;overflow:hidden}
-  .conf i{display:block;height:100%;background:var(--s-gold);border-radius:2px}
-
-  /* THE EVIDENCE — the words that actually triggered the match. */
-  .why{display:flex;align-items:baseline;gap:8px;margin-top:7px;flex-wrap:wrap}
-  .why-lbl{font-family:var(--f-mono);font-size:9px;font-weight:700;letter-spacing:.14em;
-    text-transform:uppercase;color:var(--s-outline);flex:none}
-  .why-txt{font-family:var(--f-mono);font-size:11.5px;color:var(--s-onvar);
-    background:rgba(255,255,255,.04);border-radius:5px;padding:2px 7px;
-    overflow-wrap:anywhere}
-  .why.sm .why-txt{font-size:10.5px}
-  .ai-ref{font-family:var(--f-serif);font-size:19px;font-weight:600;letter-spacing:-.01em;color:var(--s-on)}
-  .ai-verse{font-family:var(--f-serif);font-style:italic;font-size:13.5px;line-height:1.5;
-    color:var(--s-onvar);margin:6px 0 13px}
-  .ai-acts{display:flex;gap:8px;align-items:center}
-  .xref{background:rgba(28,27,28,.6);border:1px solid var(--hair);border-radius:10px;padding:13px}
-  .xref-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:7px}
-  .xref-ref{font-family:var(--f-serif);font-size:15px;font-weight:600;color:var(--s-on)}
-  .xref-verse{font-family:var(--f-serif);font-style:italic;font-size:12.5px;color:var(--s-onvar);
-    margin-top:4px;line-height:1.5}
-  .xref-acts{display:flex;gap:7px;margin-top:11px}
-  /* Related scripture — the quietest block in the feed, on purpose. No tally colour,
-     no glow, no confidence: nobody said these references out loud. */
-  .rel{border-top:1px solid var(--hair);padding-top:13px;margin-top:2px}
-  .rel-top{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;margin-bottom:9px}
-  .rel-lbl{font-family:var(--f-mono);font-size:9px;font-weight:700;letter-spacing:.16em;
-    text-transform:uppercase;color:var(--s-onvar)}
-  .rel-note{font-size:10.5px;color:var(--s-outline)}
-  .rel-chips{display:flex;flex-wrap:wrap;gap:7px}
-  .rel-chip{font-family:var(--f-mono);font-size:11.5px;color:var(--s-onvar);
-    background:rgba(255,255,255,.04);border:1px solid var(--hair);border-radius:999px;
-    padding:5px 11px;cursor:pointer}
-  .rel-chip:hover:not(:disabled){color:var(--s-on);border-color:var(--s-outline);
-    background:rgba(255,255,255,.07)}
-  .rel-chip:disabled{opacity:.45;cursor:default}
-
-
-  /* ── the run columns ── */
-  .listbody{flex:1;min-height:0;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:7px;
-    scrollbar-width:thin;scrollbar-color:var(--s-high) transparent}
-  .cue,.slide{display:flex;align-items:center;gap:9px;width:100%;flex:0 0 auto;text-align:left;cursor:pointer;
-    padding:9px 10px;border-radius:9px;background:var(--s-cont);border:1px solid var(--hair);
-    color:var(--s-on);font-family:var(--f-body);transition:.14s}
-  .cue:hover,.slide:hover{border-color:var(--hair2);background:var(--s-high)}
-  .cue.sel{border-color:rgba(63,182,230,.5)}
-  /* Amber = it is in front of the congregation. Nothing else in this app may use it. */
-  .cue.islive,.slide.islive{border-color:var(--s-gold);background:rgba(245,166,35,.12)}
-  /* CUED = where → will resume from, but NOT on screen. Deliberately not amber. */
-  .cue.cued,.slide.cued{border-style:dashed;border-color:var(--s-outline)}
-  .cue-stripe,.slide-stripe{width:3px;align-self:stretch;border-radius:99px;flex:0 0 auto}
-  .slide-stripe{background:var(--acc)}
-  .cue-num{font-size:10px;color:var(--s-outline);flex:0 0 auto}
-  .cue-body{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
-  .cue-title{font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .cue-meta{font-size:9px;letter-spacing:.05em;color:var(--s-outline)}
-  .cue-tag{flex:0 0 auto;font-size:8.5px;font-weight:700;letter-spacing:.09em;color:var(--s-gold)}
-  .cue-tag.cued,.cue-tag.go{color:var(--s-outline)}
-  .cue.pick:hover .cue-tag.go{color:var(--s-gold)}
-  .slide{align-items:flex-start}
-  .slide-tag{flex:0 0 auto;min-width:26px;padding-top:2px;font-size:9px;font-weight:700;
-    letter-spacing:.05em;color:var(--acc)}
-  .slide-text{flex:1;min-width:0;font-family:var(--f-serif);font-size:12.5px;line-height:1.5;
-    color:var(--s-onvar);white-space:pre-wrap;
-    display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden}
-  .slide.islive .slide-text{color:var(--s-on)}
-  .note{flex:0 0 auto;display:flex;align-items:flex-start;gap:7px;padding:8px 10px;border-radius:8px;
-    background:rgba(192,139,255,.1);border:1px solid rgba(192,139,255,.3);
-    color:var(--s-amethyst);font-size:11.5px;line-height:1.5}
-  .note svg{flex:0 0 auto;margin-top:2px}
-
-  /* ── buttons ── */
-  .btn-gold{padding:9px 16px;border-radius:8px;border:0;cursor:pointer;font-family:var(--f-body);
-    font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--s-ongold);
-    background:var(--s-gold);transition:.14s}
-  .btn-gold:hover:not(:disabled){filter:brightness(1.06)}
-  .btn-gold.lg{padding:0 22px;height:42px;font-size:12px;flex:0 0 auto}
-  .btn-gold:disabled{opacity:.45;cursor:not-allowed}
-  .btn-x{padding:8px 13px;border-radius:8px;background:transparent;border:1px solid var(--hair2);
-    color:var(--s-onvar);font-family:var(--f-body);font-size:11px;cursor:pointer;transition:.14s}
-  .btn-x:hover{border-color:var(--s-rose);color:var(--s-rose)}
-  .btn-mini{padding:5px 11px;border-radius:6px;border:0;cursor:pointer;font-family:var(--f-body);
-    font-size:11px;font-weight:600;color:var(--s-ongold);background:var(--s-gold);transition:.14s}
-  .btn-mini:hover{filter:brightness(1.06)}
-  .btn-mini.ghost{background:transparent;border:1px solid var(--hair2);color:var(--s-onvar)}
-  .btn-mini.ghost:hover{border-color:var(--s-outline);color:var(--s-on)}
-
-  /* ── command bar ── */
-  .entry-row{display:flex;gap:12px;padding:14px 16px;border-bottom:1px solid var(--hair)}
-  .search{flex:1;display:flex;align-items:center;gap:11px;background:var(--s-lowest);
-    border:1px solid var(--hair);border-radius:10px;padding:0 14px;height:42px}
-  .search input{flex:1;min-width:0;background:transparent;border:0;outline:none;color:var(--s-on);
-    font-family:var(--f-mono);font-size:12.5px}
-  .search input::placeholder{color:var(--s-outline)}
-  .search:focus-within{border-color:rgba(255,185,95,.4);box-shadow:0 0 0 3px rgba(255,185,95,.08)}
-  .err{color:var(--s-rose);font-size:11.5px;padding:0 16px;margin-top:8px}
-  .livemsg{display:flex;align-items:center;gap:8px;color:var(--v-emerald);font-size:11.5px;font-weight:500}
-  .lm-dot{width:7px;height:7px;border-radius:50%;background:var(--v-emerald);box-shadow:0 0 8px var(--v-emerald)}
-  .entry-controls{display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:12px 16px}
-  .ctl{display:flex;align-items:center;gap:9px;padding:9px 13px;border-radius:9px;background:var(--s-cont);
-    border:1px solid var(--hair);color:var(--s-on);font-family:var(--f-body);font-size:12px;
-    cursor:pointer;transition:.14s}
-  .ctl:hover:not(:disabled){background:var(--s-high);border-color:var(--hair2)}
-  .ctl:disabled{opacity:.45;cursor:not-allowed}
-  .ctl.rec{background:rgba(255,120,110,.12);border-color:rgba(255,120,110,.35);color:var(--s-rose)}
-  .reh-ctl.on{background:rgba(192,139,255,.14);border-color:rgba(192,139,255,.42);color:var(--s-amethyst)}
-  .dot{width:8px;height:8px;border-radius:50%;flex:0 0 auto}
-  .cd-ctl{cursor:default;gap:7px}
-  .cd-min{width:46px;padding:3px 6px;border-radius:6px;border:1px solid var(--hair2);background:var(--s-bg);
-    color:var(--s-on);font-family:var(--f-mono);font-size:12px;text-align:center}
-  .cd-unit{font-size:9px;color:var(--s-outline);margin-left:-3px}
-  .cd-go{padding:4px 11px;border-radius:6px;border:1px solid rgba(63,182,230,.4);
-    background:rgba(63,182,230,.14);color:var(--s-cyan);font-family:var(--f-mono);font-size:10px;
-    font-weight:700;letter-spacing:.04em;cursor:pointer;transition:.12s}
-  .cd-go:hover:not(:disabled){background:rgba(63,182,230,.26)}
-  .cd-go:disabled{opacity:.45;cursor:not-allowed}
-  .cd-go.armed{background:rgba(245,166,35,.2);border-color:rgba(245,166,35,.5);color:var(--s-gold)}
-  .ctl-k{font-family:var(--f-mono);font-size:9px;color:var(--s-outline);margin-left:2px}
-  .hints{display:flex;gap:14px;margin-left:auto}
-  .hint{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--s-outline)}
-  .hint kbd{font-family:var(--f-mono);font-size:9px;color:var(--s-onvar);background:var(--s-high);
-    border:1px solid var(--hair2);border-bottom-width:2px;border-radius:4px;padding:2px 6px}
-
-  /* ── banners ── */
-  .audioerr{flex:0 0 auto;background:rgba(147,0,10,.18);color:var(--s-rose);
-    border:1px solid rgba(255,157,148,.3);border-radius:9px;padding:9px 12px;font-size:12px}
-  /* Degraded, not broken: amber (a warning), never rose (an error) — the app is
-     still fully usable by hand, and the banner should read that way. */
-  .sttwarn{flex:0 0 auto;background:var(--v-amber-soft);color:var(--v-txt);
-    border:1px solid rgba(245,166,35,.34);border-radius:9px;padding:10px 12px;font-size:12px;line-height:1.6}
-  .sttwarn b{display:block;margin-bottom:2px;color:var(--v-amber2)}
-
-  /* ── accessibility ── */
-  .btn-gold:focus-visible,.btn-x:focus-visible,.btn-mini:focus-visible,.ctl:focus-visible,
-  .nav-sq:focus-visible,.cue:focus-visible,.slide:focus-visible,.reh-end:focus-visible,
-  .t-plan:focus-visible{outline:2px solid var(--s-gold);outline-offset:2px}
-  @media (prefers-reduced-motion:reduce){
-    .caret,.sys.live .sys-dot,.reh-dot{animation:none}
+  /* ── responsive ────────────────────────────────────────────────────────── */
+  @media (max-width:1400px){
+    .con-top{grid-template-columns:1.1fr 84px 1fr 250px}
+    .con-bot{grid-template-columns:1fr 1.2fr 1fr 250px}
+  }
+  @media (max-width:1180px){
+    .con{height:auto}
+    .con-top{height:auto; grid-template-columns:1fr 84px 1fr; grid-auto-rows:minmax(230px,auto)}
+    .con-bot{grid-template-columns:1fr 1fr; grid-auto-rows:minmax(320px,auto)}
+  }
+  @media (max-width:760px){
+    .con-top{grid-template-columns:1fr}
+    .con-bot{grid-template-columns:1fr}
+    .rack{flex-direction:row; align-items:center; flex-wrap:wrap}
+    .rack-mode{margin-top:0; flex:1}
   }
 </style>

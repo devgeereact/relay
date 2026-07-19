@@ -75,7 +75,7 @@ Audio input           Manual control
 3. **Direct pattern match** — regex for `<book> <chapter>:<verse>` shapes, multilingual book-name alias tables per priority language, phonetic-ASR-error tolerance (e.g. "John free sixteen" → John 3:16).
 4. **Semantic match** — embed the rolling window, vector-similarity search against a pre-embedded verse corpus, top-k candidates with confidence score. Catches paraphrase and topical reference.
 5. **Context memory** — track "current passage" state; a bare "verse 4" resolves against the last active book/chapter rather than requiring a fresh full reference.
-6. **Confidence gating, two-tier, self-calibrating** — seed defaults: auto-fire ≥0.90, suggest ≥0.60 (mid confidence surfaces as a one-tap operator-confirmable chip, never auto-touches output; low confidence dropped silently). Thresholds nudge per install based on operator confirm/reject signal over the first few live services. Manual override slider always available.
+6. **Confidence gating, two-tier, self-calibrating** — seed defaults: auto-fire ≥0.50, suggest ≥0.35 (the sensitivity-50 baseline; see [DECISIONS.md](DECISIONS.md) §16 for why the originally-logged 0.90/0.60 was amended). Mid confidence surfaces as a one-tap operator-confirmable chip, never auto-touches output; low confidence dropped silently. Thresholds nudge per install based on operator confirm/reject signal over the first few live services. Manual override slider always available.
 7. **Debounce** — ~4–6s cooldown on repeat auto-fire of the same verse, overridden instantly by any new explicit direct-quote match.
 8. **Operator override** — first-class, top-of-UI, one tap.
 
@@ -164,6 +164,9 @@ Community datasets to evaluate: Masakhane (African NLP research), Mozilla Common
 
 ## 10. Roadmap & open items
 
+> This is the *original brief's* roadmap. The current, authoritative deferral +
+> technical-debt register is [ROADMAP.md](ROADMAP.md); where the two differ, ROADMAP.md wins.
+
 ### Parked, not eliminated
 - Native SDI hardware output — revisit only if a real target segment has SDI gear with no ATEM/converter at all
 - Recording / full scene compositing — not a differentiation target, OBS already does this well
@@ -171,8 +174,8 @@ Community datasets to evaluate: Masakhane (African NLP research), Mozilla Common
 - Sustainability path for the free/open-source model (donations, grants, optional paid add-on)
 
 ### Still needs real data, not guessable in a spec
-- Exact confidence-score seed numbers
-- Book-name alias tables + phonetic-error tolerance lists for the three tier-1 languages
+- ~~Exact confidence-score seed numbers~~ — **decided**: auto-fire 0.50 / suggest 0.35 at the sensitivity-50 baseline ([DECISIONS.md](DECISIONS.md) §16).
+- Book-name alias tables + phonetic-error tolerance lists for the three tier-1 languages (shipped and hand-curated; native-speaker review still pending — see [LANGUAGES.md](LANGUAGES.md), [ROADMAP.md](ROADMAP.md))
 
 ## Glossary
 

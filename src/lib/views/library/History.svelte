@@ -1,5 +1,6 @@
 <script>
   import { onMount } from 'svelte';
+  import { showsConfidence } from '../../detect.js';
   import Loading from '../../ui/Loading.svelte';
   import { capture, listServices, serviceDetail, endService, exportService } from '../../stores/capture.js';
 
@@ -43,10 +44,49 @@
     return fmtDur(secs);
   }
 
+  // ── SEARCH TRANSCRIPT (§6) ────────────────────────────────────────────────
+  //
+  // Client-side, over the transcript already loaded for the open service. There
+  // is no backend transcript search, so this deliberately does NOT pretend to
+  // search every service — it says which service it is searching, and the empty
+  // result says so too. A search box that silently covers less than the operator
+  // assumes is worse than no search box.
+  //
+  // Case-insensitive substring. Not fuzzy, not stemmed: a volunteer looking for
+  // what the preacher said about "covenant" wants the lines containing that word,
+  // and a near-miss engine here would quietly hide the line they remember.
+  let q = '';
+  const norm = (v) => (v ?? '').toLowerCase();
+  $: hits = detail?.transcripts && q.trim()
+    ? detail.transcripts.filter((t) => norm(t.text).includes(norm(q).trim()))
+    : (detail?.transcripts ?? []);
+  $: searching = !!q.trim();
+
+  /** Split a line into [before, match, after] runs so the hit can be marked. */
+  function runs(text, needle) {
+    const n = norm(needle).trim();
+    if (!n) return [{ t: text, hit: false }];
+    const out = [];
+    let i = 0;
+    const hay = norm(text);
+    while (i < text.length) {
+      const at = hay.indexOf(n, i);
+      if (at === -1) {
+        out.push({ t: text.slice(i), hit: false });
+        break;
+      }
+      if (at > i) out.push({ t: text.slice(i, at), hit: false });
+      out.push({ t: text.slice(at, at + n.length), hit: true });
+      i = at + n.length;
+    }
+    return out;
+  }
+
   async function open(svc) {
     selected = svc;
     detail = null;
     exportMsg = '';
+    q = '';
     loading = true;
     try {
       detail = await serviceDetail(svc.id);
@@ -80,7 +120,7 @@
       </div>
       <div class="lib-detail-actions">
         <span class="lib-detail-count r-mono">{selected.verses} verses · {selected.overrides} overrides · {fmtDur(selected.duration_secs)}</span>
-        <button class="r-btn amber sm" on:click={doExport}>
+        <button class="r-btn primary sm" on:click={doExport}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
           Export .md
         </button>
@@ -94,16 +134,47 @@
     {:else if detail}
       <div class="lib-detail-grid">
         <div class="lib-transcript-col">
-          <div class="r-lbl lib-collabel">Transcript</div>
+          <div class="lib-collabel-row">
+            <div class="r-lbl lib-collabel">Transcript</div>
+            <span class="spring"></span>
+            {#if searching}
+              <span class="lib-hits r-mono">{hits.length} of {detail.transcripts.length}</span>
+            {/if}
+          </div>
+
           {#if detail.transcripts.length}
-            <div class="r-tile lib-transcript r-scroll">
-              {#each detail.transcripts as t}
-                <div class="lib-tline">
-                  <span class="lib-tmeta r-mono">{fmtTs(t.timestamp)} · {t.language}</span>
-                  <span class="lib-ttext">{t.text}</span>
-                </div>
-              {/each}
-            </div>
+            <input
+              class="r-input lib-tsearch"
+              type="search"
+              bind:value={q}
+              placeholder="Search this service's transcript…"
+              aria-label="Search this service's transcript" />
+
+            {#if hits.length}
+              <div class="r-tile lib-transcript r-scroll">
+                {#each hits as t}
+                  <div class="lib-tline">
+                    <span class="lib-tmeta r-mono">{fmtTs(t.timestamp)} · {t.language}</span>
+                    <span class="lib-ttext">
+                      {#if searching}
+                        {#each runs(t.text, q) as r}{#if r.hit}<mark>{r.t}</mark>{:else}{r.t}{/if}{/each}
+                      {:else}{t.text}{/if}
+                    </span>
+                  </div>
+                {/each}
+              </div>
+            {:else}
+              <!-- Says WHAT was searched. This searches the open service only —
+                   there is no backend transcript search across services, and an
+                   operator must not read "no results" as "he never said it". -->
+              <div class="r-tile lib-emptytile">
+                <span class="r-empty">
+                  Nothing matching “{q.trim()}” in this service. Only
+                  <b>{selected?.title || 'this service'}</b> is searched — other services
+                  are not.
+                </span>
+              </div>
+            {/if}
           {:else}
             <div class="r-tile lib-emptytile"><span class="r-empty">No transcript recorded.</span></div>
           {/if}
@@ -117,10 +188,27 @@
                 <div class="r-tile lib-detect">
                   <div class="lib-detect-top">
                     <div class="lib-detect-ref">{d.reference ?? 'unresolved'}</div>
-                    <span class="r-badge amber lib-detect-method">{d.method}</span>
+                    <!-- GREY. This is service HISTORY — nothing on this screen is on air,
+                         and the method of a detection that happened last Sunday is a
+                         label, not a tally light. -->
+                    <span class="r-badge grey lib-detect-method">{d.method}</span>
                   </div>
                   <div class="lib-detect-bottom r-mono">
-                    <span class="lib-detect-conf">conf {d.confidence.toFixed(2)}</span>
+                    <!-- THE NUMBER RULE APPLIES TO THE ARCHIVE TOO.
+                         This printed `conf 0.61` for every method, including
+                         paraphrases — the exact number CLAUDE.md §18 and
+                         DECISIONS §21 forbid showing, just formatted as a raw
+                         decimal instead of a percentage, which if anything reads
+                         MORE authoritative. A TF-IDF cosine does not become a
+                         probability by being a week old.
+
+                         `showsConfidence` is the same tested helper the Live
+                         panel and the Inspector use. -->
+                    {#if showsConfidence(d)}
+                      <span class="lib-detect-conf">conf {d.confidence.toFixed(2)}</span>
+                    {:else}
+                      <span class="lib-detect-conf muted">no score — a guess</span>
+                    {/if}
                     <span class="lib-detect-fired">fired {fmtTs(d.fired_at)}</span>
                   </div>
                 </div>
@@ -186,7 +274,7 @@
         {#each pageServices as s, i}
           {@const gi = page * PER + i}
           <div class="r-row lib-row">
-            <span class="bar" style="background:{gi === 0 ? 'var(--v-amber)' : 'var(--v-line2)'};"></span>
+            <span class="bar" style="background:{gi === 0 ? 'var(--v-accent)' : 'var(--v-line2)'};"></span>
             <span class="c-date r-mono" class:is-latest={gi === 0}>{s.date}</span>
             <span class="c-title lib-svctitle">{s.title}</span>
             <span class="c-dur r-mono">{fmtDur(s.duration_secs)}</span>
@@ -249,16 +337,16 @@
   .c-open{ display:flex; justify-content:flex-end; }
 
   .c-date{ color:var(--v-dim); font-size:12px; }
-  .c-date.is-latest{ color:var(--v-amber); }
+  .c-date.is-latest{ color:var(--v-accent); }
   .lib-svctitle{ font-weight:600; color:var(--v-txt); font-size:14px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .c-dur{ color:var(--v-dim); font-size:12px; }
   .c-over{ color:var(--v-dim); font-size:12px; }
   .lib-pill{
     display:inline-block; min-width:30px; text-align:center; padding:3px 9px; border-radius:99px;
-    background:var(--v-cyan-soft); border:1px solid rgba(63,182,230,.32); color:var(--v-cyan); font-size:11px;
+    background:var(--v-cyan-soft); border:1px solid rgba(34,211,238,.32); color:var(--v-cyan); font-size:11px;
   }
   .lib-openbtn svg{ transition:transform .15s; }
-  .lib-row:hover .lib-openbtn{ color:var(--v-amber); border-color:var(--v-line2); }
+  .lib-row:hover .lib-openbtn{ color:var(--v-accent); border-color:var(--v-line2); }
   .lib-row:hover .lib-openbtn svg{ transform:translateX(2px); }
 
   /* ── Detail ── */
@@ -277,6 +365,14 @@
   .lib-collabel-n{ color:var(--v-faint); letter-spacing:0; }
 
   .lib-transcript{ padding:14px 16px; max-height:420px; overflow:auto; font-size:13px; line-height:1.6; }
+  .lib-collabel-row{ display:flex; align-items:baseline; gap:8px; }
+  .lib-collabel-row .spring{ flex:1; }
+  .lib-hits{ font-size:10px; color:var(--v-faint); }
+  .lib-tsearch{ margin:8px 0 10px; height:34px; font-size:12.5px; }
+  .lib-ttext :global(mark){ background:var(--v-accent-soft); color:var(--v-accent2);
+    border-radius:3px; padding:0 2px; }
+  .lib-detect-conf.muted{ color:var(--v-faint); }
+
   .lib-tline{ margin-bottom:12px; }
   .lib-tline:last-child{ margin-bottom:0; }
   .lib-tmeta{ display:block; font-size:10px; color:var(--v-faint); margin-bottom:3px; }
@@ -288,7 +384,7 @@
   .lib-detect-ref{ font-family:var(--f-head); font-weight:700; font-size:15px; color:var(--v-txt); }
   .lib-detect-method{ text-transform:uppercase; }
   .lib-detect-bottom{ display:flex; align-items:center; justify-content:space-between; font-size:10px; color:var(--v-faint); }
-  .lib-detect-conf{ color:var(--v-amber); }
+  .lib-detect-conf{ color:var(--v-accent); }
 
   .lib-emptytile{ padding:18px 16px; }
 
@@ -299,7 +395,7 @@
   .pgnum{ font-size:11px; color:var(--v-dim); }
   .pgbtn{ width:32px; height:32px; display:grid; place-items:center; border-radius:8px; cursor:pointer;
     background:var(--v-surf2); border:1px solid var(--v-line); color:var(--v-dim); }
-  .pgbtn:hover:not(:disabled){ color:var(--v-amber); border-color:var(--v-line2); }
+  .pgbtn:hover:not(:disabled){ color:var(--v-accent); border-color:var(--v-line2); }
   .pgbtn:disabled{ opacity:.35; cursor:not-allowed; }
 
   /* ── Responsive ── */

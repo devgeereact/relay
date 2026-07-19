@@ -42,6 +42,19 @@ const KNOWN = [
     match: /database is locked|sqlite/i,
     say: () => 'Relay could not save that just now. Try once more — if it keeps happening, restart Relay.',
   },
+  {
+    // THE ENGINE IS NOT THERE. This is what the Tauri bridge throws when the page
+    // is open without a backend behind it — a browser pointed at the dev server,
+    // or a webview that came up before the Rust side did.
+    //
+    // It surfaced verbatim on the FIRST-RUN WIZARD, which is the worst possible
+    // place for `Cannot read properties of undefined (reading 'invoke')`: the
+    // reader is a volunteer, on their first thirty seconds in the product, and
+    // the words tell them nothing about what to do.
+    match: /reading 'invoke'|reading "invoke"|__TAURI__|is not a function.*invoke/i,
+    say: () =>
+      "Relay's engine is not running, so nothing on this screen can work yet. If you opened this in a web browser, use the Relay app instead — the browser page has no engine behind it.",
+  },
 ];
 
 /**

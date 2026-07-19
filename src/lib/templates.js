@@ -11,7 +11,7 @@ export const BUILTINS = [
     style: {
       font: 'var(--f-serif)',
       background: 'radial-gradient(120% 140% at 50% 30%, #2a2013, #0b0906)',
-      accent: '#e8a33d',
+      accent: '#ffb000',
       verseColor: '#f4e4c8',
       verseSize: '5.5',
       refSize: '2.6',
@@ -25,7 +25,7 @@ export const BUILTINS = [
     style: {
       font: 'var(--f-display)',
       background: '#000000',
-      accent: '#4fa8c9',
+      accent: '#22d3ee',
       verseColor: '#ffffff',
       verseSize: '6',
       refSize: '2.6',
@@ -39,7 +39,7 @@ export const BUILTINS = [
     style: {
       font: 'var(--f-body)',
       background: 'transparent',
-      accent: '#b080e0',
+      accent: '#8b5cf6',
       verseColor: '#1c1224',
       verseSize: '2.6',
       refSize: '1.7',
@@ -53,7 +53,7 @@ export const BUILTINS = [
     style: {
       font: 'var(--f-serif)',
       background: 'linear-gradient(160deg, #241419, #120a0e)',
-      accent: '#e27d93',
+      accent: '#22c55e',
       verseColor: '#f0dfe3',
       verseSize: '4',
       refSize: '2',

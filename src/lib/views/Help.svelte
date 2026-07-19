@@ -95,178 +95,327 @@
         return hay.includes(q.trim().toLowerCase());
       })
     : TOPICS;
+
+  // ── THE SHORTCUT BOARD ────────────────────────────────────────────────────
+  //
+  // Laid out to docs/relaydesign/relay-helpandshortcut-screen.png. The LAYOUT is
+  // the reference's. The KEYS are not, and must never be: every row below is
+  // generated from `SHORTCUTS` in lib/shortcuts.js — the same table the keydown
+  // handler reads — so this screen cannot drift from the real bindings.
+  //
+  // The reference mockup prints bindings this app does not have, and some that
+  // contradict it outright:
+  //
+  //   Ctrl+Shift+C for Clear Screens   — it is Esc
+  //   Ctrl+Shift+B for Blackout        — it is B
+  //   Space as Play / Pause            — Space means ADVANCE, app-wide, and
+  //                                      nothing else (CLAUDE.md)
+  //   Enter as Confirm & Fire          — accepting the AI's suggestion is A
+  //   S / M / I / L / P                — no such bindings exist
+  //
+  // Copying those would put a false fact about a PANIC key in front of someone
+  // who will only ever read this screen under pressure. So the visual grammar is
+  // reproduced exactly and the content comes from the source of truth.
+  //
+  // Grouping is by KEY, with a safe default: anything not named here that is
+  // `always` lands in "Other", never in Panic. A binding added to shortcuts.js
+  // therefore still appears on this screen, but can never silently claim to be a
+  // panic control.
+  const PANIC_KEYS = { Esc: true, B: true };
+
+  // View copy only — an icon and a plain-language line per binding. A key with no
+  // entry still renders, using its own label from the table.
+  const DETAIL = {
+    Esc: { icon: 'monitor', sub: 'Blank every output screen, from any tab — even mid-typing.' },
+    B: { icon: 'moon', sub: 'Go further: every output goes completely black.' },
+    '?': { icon: 'keyboard', sub: 'Show the quick cheatsheet over whatever you are on.' },
+    A: { icon: 'flame', sub: 'Put the AI’s top suggestion on the screens.' },
+    D: { icon: 'x', sub: 'Reject it. Nothing reaches the congregation.' },
+    '→': { icon: 'next', sub: 'Next plan slide, or next verse of the passage.' },
+    '←': { icon: 'prev', sub: 'Previous plan slide, or previous verse.' },
+    '/': { icon: 'search', sub: 'Type any reference and it goes up, whatever the AI thinks.' },
+  };
+  const detailOf = (s) => DETAIL[s.keys[0]] ?? { icon: 'key', sub: '' };
+
+  $: panic = SHORTCUTS.filter((s) => s.always && s.keys.some((k) => PANIC_KEYS[k]));
+  const ORDER = ['→', '←', 'A', 'D', '/'];
+  const rank = (s) => {
+    const i = ORDER.indexOf(s.keys[0]);
+    return i === -1 ? ORDER.length : i;
+  };
+  $: transport = SHORTCUTS.filter((s) => !s.always).sort((a, b) => rank(a) - rank(b));
+  $: other = SHORTCUTS.filter((s) => s.always && !s.keys.some((k) => PANIC_KEYS[k]));
 </script>
 
-<p class="r-lead">
-  Written for whoever is running the service — not for a programmer. Everything here
-  works offline, because that is when you need it most.
-</p>
+<!-- HELP / SHORTCUTS — laid out to docs/relaydesign/relay-helpandshortcut-screen.png.
+     Board first (Panic · Transport · Other), then the troubleshooting topics, which
+     the reference does not show but which are this tab's other half. -->
+<div class="help">
+  <div class="board">
+    <!-- ══ PANIC ══ Red, per the design system's Error/Panic. These are the only
+         two controls in Relay that are wired straight to the store rather than
+         through a view's context, so they still work on a tab whose view has
+         crashed — which is exactly when someone reads this. -->
+    <section class="pane">
+      <header class="pane-head"><h2>Panic controls</h2></header>
+      <div class="pane-body">
+        {#each panic as s (s.keys[0])}
+          <div class="panic-card">
+            <span class="panic-ic" aria-hidden="true">
+              {#if detailOf(s).icon === 'moon'}
+                <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5Z"/></svg>
+              {:else}
+                <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+              {/if}
+            </span>
+            <b class="panic-t">{s.label}</b>
+            <span class="keys">{#each s.keys as k}<kbd>{k}</kbd>{/each}</span>
+          </div>
+        {/each}
+        <p class="panic-note">These work in any mode.</p>
 
-<input
-  class="r-input h-search"
-  type="search"
-  placeholder="What's going wrong?"
-  bind:value={q}
-  aria-label="Search help" />
+        <div class="callout">
+          <span class="callout-ic" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M12 3 4 6v6c0 4.4 3.2 7.9 8 9 4.8-1.1 8-4.6 8-9V6l-8-3Z"/><path d="m9 12 2 2 4-4" stroke-linecap="round"/></svg>
+          </span>
+          <p>Panic controls are always live and take priority over every other action.</p>
+        </div>
 
-{#if hits.length === 0}
-  <div class="r-empty h-none">
-    Nothing matches “{q}”. Try <b>screen</b>, <b>microphone</b>, or <b>suggestion</b>.
-  </div>
-{/if}
-
-<div class="h-grid">
-  {#each hits as t (t.id)}
-    <section class="r-tile h-card">
-      <button
-        class="h-head"
-        aria-expanded={open === t.id}
-        on:click={() => (open = open === t.id ? null : t.id)}>
-        <span class="h-ic" aria-hidden="true">{t.icon}</span>
-        <b>{t.title}</b>
-        <span class="h-chev">{open === t.id ? '−' : '+'}</span>
-      </button>
-      {#if open === t.id || q.trim()}
-        <dl class="h-body">
-          {#each t.body as [step, detail]}
-            <dt>{@html step}</dt>
-            <dd>{@html detail}</dd>
-          {/each}
-        </dl>
-      {/if}
+        <!-- The one exception, and it is the one people get wrong. Stated here
+             rather than left to be discovered while a help overlay is open. -->
+        <p class="panic-fine">
+          <kbd>Esc</kbd> closes an open dialog instead of clearing, when one is open —
+          dismissing a help overlay is not a live action.
+          <b>{panic.find((s) => s.keys.includes('B')) ? 'B' : ''}</b>
+          does not fire while your cursor is in a text box, so typing “Habakkuk” cannot
+          black out the congregation.
+        </p>
+      </div>
     </section>
-  {/each}
+
+    <!-- ══ TRANSPORT ══ The context keys. Each is `needs`-gated in shortcuts.js, so
+         it works only where the surface registered that action — the board says so
+         rather than implying they are global. -->
+    <section class="pane">
+      <header class="pane-head">
+        <h2>Transport <span class="head-sub">(Live)</span></h2>
+        <span class="spring"></span>
+        <span class="chip ok"><i class="bd"></i>Live shortcuts</span>
+      </header>
+      <div class="pane-body">
+        {#each transport as s (s.keys[0])}
+          <div class="row">
+            <span class="row-ic" aria-hidden="true">
+              {#if detailOf(s).icon === 'next'}
+                <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="6 4 16 12 6 20 6 4"/><path d="M19 4v16"/></svg>
+              {:else if detailOf(s).icon === 'prev'}
+                <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="18 4 8 12 18 20 18 4"/><path d="M5 4v16"/></svg>
+              {:else if detailOf(s).icon === 'flame'}
+                <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M12 2s5 5 5 9a5 5 0 0 1-10 0c0-1.5.8-2.8.8-2.8S9 11 10 11c0-3 2-6 2-9Z"/></svg>
+              {:else if detailOf(s).icon === 'x'}
+                <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>
+              {:else}
+                <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+              {/if}
+            </span>
+            <span class="row-t">
+              <b>{s.label}</b>
+              {#if detailOf(s).sub}<span>{detailOf(s).sub}</span>{/if}
+            </span>
+            <span class="keys">{#each s.keys as k}<kbd>{k}</kbd>{/each}</span>
+          </div>
+        {/each}
+
+        <!-- MODE. `→` genuinely does two different things, and the whole reason the
+             transport bar prints its mode is that a key silently meaning two things
+             is how the wrong thing reaches a congregation. Neither mode gets a
+             semantic colour: amber means ON AIR and amethyst means REHEARSAL, and a
+             transport mode is neither. -->
+        <div class="mode">
+          <span class="mode-ic" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 10v4M8 6v12M12 3v18M16 7v10M20 11v2"/></svg>
+          </span>
+          <p>
+            <b>→ steps VERSE</b> when a detected or manually-fired verse is on screen —
+            it walks the passage. <b>→ steps SLIDE</b> when plan content is on air — it
+            moves through your plan. The Live transport bar always prints which one you
+            are about to get.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ══ OTHER ══ Everything global that is not a panic control. -->
+    <section class="pane">
+      <header class="pane-head"><h2>Other shortcuts</h2></header>
+      <div class="pane-body">
+        {#each other as s (s.keys[0])}
+          <div class="row compact">
+            <span class="row-ic" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/></svg>
+            </span>
+            <span class="row-t"><b>{s.label}</b></span>
+            <span class="keys">{#each s.keys as k}<kbd>{k}</kbd>{/each}</span>
+          </div>
+        {/each}
+
+        <div class="row compact">
+          <span class="row-ic" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="m12 2 9 5-9 5-9-5 9-5Z"/><path d="m3 12 9 5 9-5"/></svg>
+          </span>
+          <span class="row-t"><b>Close an open overlay</b></span>
+          <span class="keys"><kbd>Esc</kbd></span>
+        </div>
+
+        <p class="esc-note">
+          <kbd class="ok">Esc</kbd> closes this kind of overlay. It will <b>not</b> clear
+          the wall while a dialog is open.
+        </p>
+
+        <p class="src-note">
+          Every key on this board is read from the same table the keyboard handler
+          uses, so it cannot fall out of step with the app.
+        </p>
+      </div>
+    </section>
+  </div>
+
+  <!-- ── Troubleshooting. Not in the reference; this tab's other half, and the
+       reason it exists offline at all. ── -->
+  <p class="r-lead">
+    Written for whoever is running the service — not for a programmer. Everything here
+    works offline, because that is when you need it most.
+  </p>
+
+  <input
+    class="r-input h-search"
+    type="search"
+    placeholder="What's going wrong?"
+    bind:value={q}
+    aria-label="Search help" />
+
+  {#if hits.length === 0}
+    <div class="r-empty h-none">
+      Nothing matches “{q}”. Try <b>screen</b>, <b>microphone</b>, or <b>suggestion</b>.
+    </div>
+  {/if}
+
+  <div class="h-grid">
+    {#each hits as t (t.id)}
+      <section class="r-tile h-card">
+        <button
+          class="h-head"
+          aria-expanded={open === t.id}
+          on:click={() => (open = open === t.id ? null : t.id)}>
+          <span class="h-ic" aria-hidden="true">{t.icon}</span>
+          <b>{t.title}</b>
+          <span class="h-chev">{open === t.id ? '−' : '+'}</span>
+        </button>
+        {#if open === t.id || q.trim()}
+          <dl class="h-body">
+            {#each t.body as [step, detail]}
+              <dt>{@html step}</dt>
+              <dd>{@html detail}</dd>
+            {/each}
+          </dl>
+        {/if}
+      </section>
+    {/each}
+  </div>
 </div>
 
-<section class="r-tile h-card h-keys">
-  <div class="h-head static"><span class="h-ic" aria-hidden="true">⌨️</span><b>Every shortcut</b></div>
-  <table>
-    {#each SHORTCUTS as s}
-      <tr>
-        <td class="k">{#each s.keys as k}<kbd>{k}</kbd>{/each}</td>
-        <td>{s.label}</td>
-        <td class="sc">{s.always ? 'Everywhere' : 'Where it applies'}</td>
-      </tr>
-    {/each}
-  </table>
-  <p class="h-note">
-    <kbd>Esc</kbd> and <kbd>B</kbd> work on every tab, always — even while you are typing.
-    Press <kbd>?</kbd> anywhere for a quick reminder.
-  </p>
-</section>
-
 <style>
-  .h-search {
-    max-width: 340px;
-    margin-bottom: 16px;
+  /* HELP / SHORTCUTS — the reference's three-column board, styled only from the
+     --v-* design tokens. */
+  .help{display:flex;flex-direction:column;gap:var(--v-sp-md)}
+  .spring{flex:1}
+
+  .board{display:grid;grid-template-columns:1fr 1.25fr 1fr;gap:var(--v-sp-sm);align-items:start}
+  .pane{display:flex;flex-direction:column;background:var(--v-surf);
+    border:1px solid var(--v-line);border-radius:var(--v-r-lg);box-shadow:var(--v-shadow-sm)}
+  .pane-head{display:flex;align-items:center;gap:var(--v-sp-sm);padding:14px 16px;
+    border-bottom:1px solid var(--v-line)}
+  .pane-head h2{margin:0;font-family:var(--f-head);font-size:var(--v-fs-h2);
+    line-height:var(--v-lh-h2);font-weight:600;letter-spacing:var(--v-tr-h2);color:var(--v-txt)}
+  .head-sub{color:var(--v-faint);font-weight:400}
+  .pane-body{padding:14px;display:flex;flex-direction:column;gap:10px}
+
+  .chip{display:inline-flex;align-items:center;gap:7px;flex:0 0 auto;padding:4px 10px;
+    border-radius:99px;font-size:var(--v-fs-cap);background:var(--v-surf2);
+    border:1px solid var(--v-line2);color:var(--v-faint)}
+  .chip.ok{color:var(--v-emerald);border-color:rgba(34,197,94,.32);background:var(--v-emerald-soft)}
+  .chip .bd{width:6px;height:6px;border-radius:50%;background:currentColor;
+    box-shadow:0 0 6px currentColor}
+
+  /* ── panic ── Red is the design system's Error/Panic. Never amber (that means the
+     congregation is looking at it) and never amethyst (rehearsal). */
+  .panic-card{display:flex;align-items:center;gap:14px;padding:22px 16px;
+    border-radius:var(--v-r-lg);background:linear-gradient(100deg,var(--v-red),#c8302f);
+    border:1px solid var(--v-red);box-shadow:0 8px 24px -10px var(--v-red)}
+  .panic-ic{flex:0 0 auto;color:#fff;opacity:.95}
+  .panic-t{flex:1;min-width:0;font-size:var(--v-fs-h3);line-height:var(--v-lh-h3);
+    font-weight:700;color:#fff}
+  .panic-card .keys kbd{background:rgba(0,0,0,.32);border-color:rgba(255,255,255,.28);color:#fff}
+  .panic-note{margin:2px 0 0;font-style:italic;font-size:var(--v-fs-b2);color:var(--v-faint)}
+
+  .callout{display:flex;align-items:flex-start;gap:12px;margin-top:4px;padding:13px 14px;
+    border-radius:var(--v-r-lg);background:var(--v-amethyst-soft);
+    border:1px solid rgba(139,92,246,.32)}
+  .callout-ic{flex:0 0 auto;width:32px;height:32px;display:grid;place-items:center;
+    border-radius:50%;background:rgba(139,92,246,.18);color:var(--v-amethyst)}
+  .callout p{margin:0;font-size:var(--v-fs-b2);line-height:1.55;color:var(--v-dim)}
+  .panic-fine{margin:0;font-size:var(--v-fs-cap);line-height:1.7;color:var(--v-faint)}
+  .panic-fine b{color:var(--v-dim)}
+
+  /* ── rows ── */
+  .row{display:flex;align-items:center;gap:12px;padding:12px 13px;
+    border-radius:var(--v-r-md);background:var(--v-surf2);border:1px solid var(--v-line)}
+  .row.compact{padding:10px 13px}
+  .row-ic{flex:0 0 auto;width:34px;height:34px;display:grid;place-items:center;
+    border-radius:var(--v-r-md);background:var(--v-surf3);color:var(--v-dim)}
+  .row.compact .row-ic{width:30px;height:30px}
+  .row-t{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+  .row-t b{font-size:var(--v-fs-b1);font-weight:600;color:var(--v-txt)}
+  .row-t span{font-size:var(--v-fs-cap);line-height:1.5;color:var(--v-faint)}
+  .keys{flex:0 0 auto;display:flex;gap:4px;white-space:nowrap}
+
+  .mode{display:flex;align-items:flex-start;gap:12px;margin-top:4px;padding:13px 14px;
+    border-radius:var(--v-r-lg);background:var(--v-bg);border:1px solid var(--v-line2)}
+  .mode-ic{flex:0 0 auto;color:var(--v-faint)}
+  .mode p{margin:0;font-size:var(--v-fs-b2);line-height:1.6;color:var(--v-dim)}
+  .mode b{color:var(--v-txt);font-family:var(--f-mono);font-size:var(--v-fs-cap);
+    letter-spacing:.04em}
+
+  .esc-note{margin:4px 0 0;font-size:var(--v-fs-b2);line-height:1.6;color:var(--v-dim)}
+  .esc-note b{color:var(--v-txt)}
+  .src-note{margin:0;font-size:var(--v-fs-cap);line-height:1.6;color:var(--v-faint)}
+
+  kbd{display:inline-block;font-family:var(--f-mono);font-size:var(--v-fs-cap);line-height:1;
+    padding:6px 9px;border-radius:var(--v-r-sm);background:var(--v-surf3);
+    border:1px solid var(--v-line2);color:var(--v-txt)}
+  kbd.ok{background:var(--v-emerald-soft);border-color:rgba(34,197,94,.32);color:var(--v-emerald)}
+
+  /* ── troubleshooting (unchanged behaviour, tokenised) ── */
+  .h-search{max-width:340px}
+  .h-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:var(--v-sp-sm)}
+  .h-card{padding:0;overflow:hidden}
+  .h-head{display:flex;align-items:center;gap:11px;width:100%;padding:14px 16px;
+    background:none;border:0;color:var(--v-txt);font:inherit;text-align:left;cursor:pointer}
+  .h-head b{flex:1;font-size:var(--v-fs-b2)}
+  .h-ic{font-size:16px;flex:none}
+  .h-chev{color:var(--v-dim);font-size:15px}
+  .h-body{margin:0;padding:12px 16px 14px;border-top:1px solid var(--v-line)}
+  .h-body dt{font-size:var(--v-fs-b2);font-weight:600;color:var(--v-txt);margin-top:11px}
+  .h-body dt:first-child{margin-top:0}
+  .h-body dd{margin:3px 0 0;font-size:var(--v-fs-b2);line-height:1.65;color:var(--v-dim)}
+  .h-none{margin-bottom:0}
+
+  .h-head:focus-visible{outline:2px solid var(--v-accent);outline-offset:-2px}
+
+  @media (max-width:1180px){
+    .board{grid-template-columns:1fr 1fr}
   }
-  .h-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-    gap: 12px;
-  }
-  .h-card {
-    padding: 0;
-    overflow: hidden;
-  }
-  .h-head {
-    display: flex;
-    align-items: center;
-    gap: 11px;
-    width: 100%;
-    padding: 14px 16px;
-    background: none;
-    border: 0;
-    color: var(--v-txt);
-    font: inherit;
-    text-align: left;
-    cursor: pointer;
-  }
-  .h-head.static {
-    cursor: default;
-  }
-  .h-head b {
-    flex: 1;
-    font-size: 13.5px;
-  }
-  .h-ic {
-    font-size: 16px;
-    flex: none;
-  }
-  .h-chev {
-    color: var(--v-dim);
-    font-size: 15px;
-  }
-  .h-body {
-    margin: 0;
-    padding: 0 16px 14px;
-    border-top: 1px solid var(--v-line);
-    padding-top: 12px;
-  }
-  .h-body dt {
-    font-size: 12.5px;
-    font-weight: 600;
-    color: var(--v-txt);
-    margin-top: 11px;
-  }
-  .h-body dt:first-child {
-    margin-top: 0;
-  }
-  .h-body dd {
-    margin: 3px 0 0;
-    font-size: 12.5px;
-    line-height: 1.65;
-    color: var(--v-dim);
-  }
-  .h-keys {
-    margin-top: 12px;
-    padding: 0 0 14px;
-  }
-  .h-keys table {
-    width: 100%;
-    border-collapse: collapse;
-    padding: 0 16px;
-  }
-  .h-keys tr {
-    border-top: 1px solid var(--v-line);
-  }
-  .h-keys td {
-    padding: 9px 16px;
-    font-size: 12.5px;
-    color: var(--v-txt);
-  }
-  .h-keys td.k {
-    width: 1%;
-    white-space: nowrap;
-  }
-  .h-keys td.sc {
-    text-align: right;
-    font-family: var(--f-mono);
-    font-size: 9.5px;
-    letter-spacing: 0.05em;
-    text-transform: uppercase;
-    color: var(--v-dim);
-    white-space: nowrap;
-  }
-  .h-note {
-    margin: 12px 16px 0;
-    font-size: 12px;
-    color: var(--v-dim);
-    line-height: 1.6;
-  }
-  .h-none {
-    margin-bottom: 14px;
-  }
-  kbd {
-    display: inline-block;
-    font-family: var(--f-mono);
-    font-size: 10.5px;
-    line-height: 1;
-    padding: 4px 6px;
-    margin-right: 4px;
-    border-radius: 5px;
-    background: var(--v-surf3);
-    border: 1px solid var(--v-line2);
-    color: var(--v-txt);
+  @media (max-width:760px){
+    .board{grid-template-columns:1fr}
   }
 </style>

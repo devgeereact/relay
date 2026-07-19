@@ -1,0 +1,80 @@
+<!--
+  Relay — the application mark. THE SOURCE OF TRUTH for every app icon.
+
+  Traced from the BRAND block of docs/relaydesign/relay-designsystem.png v1.0:
+  a dark rounded tile carrying a seven-bar amethyst waveform, centre bar tallest,
+  rounded caps, symmetric.
+
+  ── Why it is amethyst and not amber ──────────────────────────────────────────
+  The icon this replaced was an amber "R". Amber is the tally light in this app —
+  it means the congregation is looking at something (CLAUDE.md, and the design
+  sheet's MODE INDICATORS). An icon sitting in the Dock in the tally colour, at
+  all times, whether or not anything is live, is that colour telling its first
+  lie before the app has even opened. The brand is amethyst.
+
+  ── Regenerating the raster icons ─────────────────────────────────────────────
+  Render this to a 1024×1024 PNG, then:
+
+      npx tauri icon src-tauri/icons/relay-icon-1024.png
+
+  which rewrites every size in this directory (.icns, .ico, Square*Logo.png,
+  android/). Edit THIS FILE, never the PNGs — they are build output.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <!-- The tile: a very dark neutral, lifted a little at the top-left so the
+         icon reads as a physical object rather than a hole. Sampled from the
+         design sheet (#101114 centre, #1a1e22 edge). -->
+    <linearGradient id="tile" x1="0" y1="0" x2="0.55" y2="1">
+      <stop offset="0%" stop-color="#23262c" />
+      <stop offset="42%" stop-color="#16181c" />
+      <stop offset="100%" stop-color="#0f1013" />
+    </linearGradient>
+
+    <!-- The bars. --v-amethyst2 (#a78bfa) down to --v-amethyst (#8b5cf6),
+         exactly the two tokens in src/app.css. -->
+    <linearGradient id="bar" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#b9a4ff" />
+      <stop offset="45%" stop-color="#a78bfa" />
+      <stop offset="100%" stop-color="#7c4ef4" />
+    </linearGradient>
+    <!-- The outer pair sit back, as on the design sheet. -->
+    <linearGradient id="barMute" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#9b83f0" />
+      <stop offset="100%" stop-color="#7048d8" />
+    </linearGradient>
+
+    <!-- A soft amethyst bloom behind the waveform — the sheet lights the mark
+         from within rather than dropping a shadow under it. -->
+    <radialGradient id="bloom" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0%" stop-color="#8b5cf6" stop-opacity="0.34" />
+      <stop offset="60%" stop-color="#8b5cf6" stop-opacity="0.10" />
+      <stop offset="100%" stop-color="#8b5cf6" stop-opacity="0" />
+    </radialGradient>
+
+    <!-- Hairline top edge, so the tile has a lit rim like the reference. -->
+    <linearGradient id="rim" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.10" />
+      <stop offset="55%" stop-color="#ffffff" stop-opacity="0" />
+    </linearGradient>
+  </defs>
+
+  <!-- The tile. 22.5% corner radius — the design sheet's 2xl radius, scaled. -->
+  <rect x="0" y="0" width="1024" height="1024" rx="230" ry="230" fill="url(#tile)" />
+  <rect x="0" y="0" width="1024" height="1024" rx="230" ry="230" fill="url(#rim)" />
+
+  <ellipse cx="512" cy="512" rx="330" ry="290" fill="url(#bloom)" />
+
+  <!-- Seven bars, centre tallest, rounded caps (rx = half width).
+       Bar width 54, gap 34 → group width 7·54 + 6·34 = 582, centred on 512,
+       so the first bar starts at 512 − 291 = 221. -->
+  <g>
+    <rect x="221" y="454" width="54" height="116" rx="27" fill="url(#barMute)" />
+    <rect x="309" y="386" width="54" height="252" rx="27" fill="url(#bar)" />
+    <rect x="397" y="306" width="54" height="412" rx="27" fill="url(#bar)" />
+    <rect x="485" y="242" width="54" height="540" rx="27" fill="url(#bar)" />
+    <rect x="573" y="306" width="54" height="412" rx="27" fill="url(#bar)" />
+    <rect x="661" y="386" width="54" height="252" rx="27" fill="url(#bar)" />
+    <rect x="749" y="454" width="54" height="116" rx="27" fill="url(#barMute)" />
+  </g>
+</svg>

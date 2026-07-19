@@ -108,15 +108,15 @@
 
 <style>
   .ms {
-    background: var(--v-amber-soft);
-    border: 1px solid rgba(245, 166, 35, 0.34);
+    background: var(--v-accent-soft);
+    border: 1px solid var(--v-accent-line);
     border-radius: 11px;
     padding: 14px 16px;
     margin-top: 12px;
   }
   .ms.compact { padding: 12px 14px; }
   .ms-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-  .ms-head b { color: var(--v-amber2); font-size: 13.5px; }
+  .ms-head b { color: var(--v-accent2); font-size: 13.5px; }
   .ms-head b.ok { color: var(--v-emerald); }
   .ms-pct { font-size: 12px; color: var(--v-txt); }
   /* --v-dim, not --v-faint: faint is ~3.4:1 and fails WCAG AA, and this is the
@@ -131,7 +131,7 @@
     display: block;
     height: 100%;
     width: 100%;
-    background: var(--v-amber);
+    background: var(--v-accent);
     transform-origin: left center;
     transform: scaleX(0);
     transition: transform 0.25s ease-out;
@@ -149,8 +149,8 @@
   .ms-opt-d { font-size: 12px; color: var(--v-dim); line-height: 1.55; margin: 3px 0 8px; }
   .ms-err {
     margin-top: 10px; padding: 8px 10px; border-radius: 8px;
-    background: rgba(147, 0, 10, 0.18); border: 1px solid rgba(255, 157, 148, 0.3);
-    color: var(--s-rose, #f4718b); font-size: 12px; line-height: 1.55;
+    background: rgba(239,68,68, 0.18); border: 1px solid rgba(239,68,68, 0.3);
+    color: var(--v-red); font-size: 12px; line-height: 1.55;
     display: flex; align-items: center; gap: 10px;
   }
   .ms-err span { flex: 1; min-width: 0; }

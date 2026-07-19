@@ -266,8 +266,12 @@ fn worker<F>(
             // chunks that passed the VAD, and that was the bug behind "the transcript
             // can't keep up".
             //
-            // The VAD is a plain RMS energy gate (audio.rs, 0.008 over a 400 ms
-            // chunk). Ordinary speech drops under that line BETWEEN WORDS — stops,
+            // The VAD (audio.rs) is an energy gate RELATIVE to a learned noise
+            // floor, with hysteresis, plus an RNNoise speech-probability veto on
+            // OPENING an utterance. (It was once a fixed `rms >= 0.008`, which is
+            // what the numbers below were measured against.) Whichever gate is in
+            // use, the point stands: ordinary speech drops under the line BETWEEN
+            // WORDS — stops,
             // breaths, the gap before a stressed syllable. So two thirds of a
             // continuously-speaking preacher's audio was being classified as silence
             // and THROWN AWAY, and whisper was handed the surviving fragments spliced
@@ -439,6 +443,75 @@ impl Decode {
 /// not used. Re-run the bench before changing this.
 const DECODE: Decode = Decode::Fast;
 
+/// Relay's supported recognition languages, and the script each is written in.
+///
+/// Every Tier-1 language (CLAUDE.md: Yoruba, Swahili, Hausa, plus English) is
+/// written in the LATIN script — including the Yoruba diacritics `ẹ ọ ṣ` and its
+/// tone marks, which are Latin Extended and pass this check unharmed.
+fn expects_latin_script(lang: Option<&str>) -> bool {
+    match lang {
+        // An explicitly chosen language is respected: if someone selects a
+        // language Relay does not ship, we do not second-guess their script.
+        Some(l) => matches!(l, "en" | "yo" | "sw" | "ha"),
+        // AUTO-DETECT. This is the risky mode and the one the symptom came from:
+        // whisper picks a language per chunk, and on a short, quiet or noisy
+        // chunk it picks badly. Relay only offers Latin-script languages, so in
+        // auto mode a non-Latin transcript is by definition not what was said.
+        None => true,
+    }
+}
+
+/// Is this transcript something nobody in the room said?
+///
+/// ── Why a SCRIPT check, and not a phrase blocklist ─────────────────────────
+///
+/// The obvious fix for "the transcript has Chinese in it" is to blocklist the
+/// specific strings whisper hallucinates (subtitle credits, "请不吝点赞"). That
+/// fails the moment the model emits a different one, and it silently encodes the
+/// assumption that Chinese is the only wrong answer — it is not; Korean, Russian
+/// and Japanese subtitle boilerplate are all in the same training data.
+///
+/// The script is the invariant. A service Relay is configured to hear is in a
+/// Latin-script language, so a CJK / Hangul / Kana / Cyrillic / Arabic / Hebrew /
+/// Thai / Devanagari letter in the output is not a mis-hearing of a word — it is
+/// the model completing a subtitle file. One such character condemns the line.
+///
+/// Punctuation, digits and symbols are ignored: `—`, `…` and `♪` are script-less
+/// and appear in legitimate output. A line with NO letters at all is also
+/// rejected — "♪♪♪" is not a sermon.
+fn is_hallucination(text: &str, lang: Option<&str>) -> bool {
+    let mut letters = 0usize;
+    let mut foreign = 0usize;
+    for c in text.chars() {
+        if !c.is_alphabetic() {
+            continue;
+        }
+        letters += 1;
+        if !is_latin_letter(c) {
+            foreign += 1;
+        }
+    }
+    // Nothing but punctuation or symbols: "♪♪♪", "...", "[ Silence ]".
+    if letters == 0 {
+        return true;
+    }
+    if expects_latin_script(lang) && foreign > 0 {
+        return true;
+    }
+    false
+}
+
+/// Is this alphabetic char part of the Latin script (including the extended
+/// ranges Yoruba, Hausa and Swahili need)?
+fn is_latin_letter(c: char) -> bool {
+    matches!(c,
+        'A'..='Z' | 'a'..='z'
+        | '\u{00C0}'..='\u{024F}'   // Latin-1 Supplement, Extended-A, Extended-B
+        | '\u{1E00}'..='\u{1EFF}'   // Latin Extended Additional — Yoruba ẹ ọ ṣ
+        | '\u{0250}'..='\u{02AF}'   // IPA extensions (ɓ ɗ ƙ — Hausa hooked letters)
+    )
+}
+
 fn transcribe(
     state: &mut whisper_rs::WhisperState,
     audio: &[f32],
@@ -457,6 +530,34 @@ fn transcribe(
     params.set_n_threads(threads);
     params.set_translate(false);
     params.set_single_segment(true);
+
+    // ── HALLUCINATION GUARDS ────────────────────────────────────────────────
+    //
+    // None of these were set, which is why a quiet church produced confident
+    // nonsense — including transcripts in languages nobody in the room spoke.
+    //
+    // Whisper is a sequence model with no notion of "nothing was said". Fed
+    // silence, room tone, an air-conditioner or a music bed, it does not emit
+    // nothing: it emits the most likely token sequence, and its training data is
+    // full of subtitle boilerplate. That is where the Chinese comes from — the
+    // model is completing a subtitle file, not transcribing a sermon.
+    //
+    // These are whisper.cpp's own defaults, which `FullParams::new` does NOT
+    // apply. Each one rejects garbage at a different stage:
+    params.set_suppress_blank(true);
+    // Non-speech tokens: the "♪", "[Music]", "(applause)", 字幕 family.
+    params.set_suppress_nst(true);
+    // "Probably nobody was talking" — the single most effective guard against a
+    // silent room being transcribed as speech.
+    params.set_no_speech_thold(0.6);
+    // Temperature fallback: if a decode comes out incoherent, re-roll it hotter
+    // rather than shipping it. Without an increment there is no fallback at all.
+    params.set_temperature(0.0);
+    params.set_temperature_inc(0.2);
+    // Reject decodes that are too uncertain (logprob) or too chaotic (entropy) —
+    // hallucinated runs score badly on both.
+    params.set_logprob_thold(-1.0);
+    params.set_entropy_thold(2.4);
     params.set_print_special(false);
     params.set_print_progress(false);
     params.set_print_realtime(false);
@@ -474,6 +575,11 @@ fn transcribe(
     }
     let text = text.trim().to_string();
     if text.is_empty() || text == "[BLANK_AUDIO]" {
+        return None;
+    }
+    // The last line of defence, and the decisive one for the symptom that
+    // prompted it: a transcript in a script nobody was speaking.
+    if is_hallucination(&text, lang) {
         return None;
     }
     let detected = lang
@@ -570,6 +676,105 @@ pub fn scripture_bias_prompt(lang: Option<&str>, extra: &str) -> String {
         base
     } else {
         format!("{base} {extra}")
+    }
+}
+
+#[cfg(test)]
+mod hallucination_tests {
+    use super::*;
+
+    // THE SYMPTOM THIS EXISTS FOR, reported from a real service:
+    // "Transcript is getting chinese words and other languages that's not heard."
+    //
+    // Whisper fed a quiet or noisy room does not emit nothing — it emits the most
+    // likely continuation, and its training data is full of subtitle boilerplate.
+
+    #[test]
+    fn rejects_chinese_subtitle_boilerplate() {
+        // Real examples of what whisper.cpp emits on silence.
+        assert!(is_hallucination("请不吝点赞 订阅 转发 打赏", None));
+        assert!(is_hallucination("字幕由Amara.org社群提供", None));
+        assert!(is_hallucination("小编推荐", Some("en")));
+    }
+
+    #[test]
+    fn rejects_other_non_latin_scripts_too() {
+        // The bug is not "Chinese" — it is "a script nobody was speaking". A
+        // blocklist of Chinese phrases would pass this suite and still fail the
+        // next service.
+        assert!(is_hallucination("Спасибо за просмотр!", None));
+        assert!(is_hallucination("ご視聴ありがとうございました", None));
+        assert!(is_hallucination("시청해주셔서 감사합니다", None));
+        assert!(is_hallucination("ترجمة نانسي قنقر", None));
+    }
+
+    #[test]
+    fn rejects_a_line_with_no_letters_at_all() {
+        assert!(is_hallucination("♪♪♪", None));
+        assert!(is_hallucination("...", None));
+    }
+
+    #[test]
+    fn keeps_ordinary_english_speech() {
+        assert!(!is_hallucination(
+            "In the beginning God created the heaven and the earth.",
+            None
+        ));
+        assert!(!is_hallucination(
+            "Turn with me to John chapter three verse sixteen.",
+            Some("en")
+        ));
+    }
+
+    #[test]
+    fn keeps_yoruba_diacritics() {
+        // THE REGRESSION THIS GUARDS: Yoruba is Latin script, but its letters sit
+        // in Latin Extended Additional. A naive `is_ascii_alphabetic` check would
+        // throw away every Yoruba transcript as a "foreign script" hallucination —
+        // silently making Relay deaf to a Tier-1 language.
+        assert!(!is_hallucination(
+            "Ẹ jẹ́ kí a ka Jòhánù orí kẹta",
+            Some("yo")
+        ));
+        assert!(!is_hallucination("Ọlọ́run fẹ́ràn ayé tó bẹ́ẹ̀", None));
+    }
+
+    #[test]
+    fn keeps_hausa_hooked_letters() {
+        // ɓ ɗ ƙ are IPA-range Latin. Same trap as Yoruba.
+        assert!(!is_hallucination(
+            "Allah ya ƙaunaci duniya haka",
+            Some("ha")
+        ));
+        assert!(!is_hallucination("ɓangare na farko", None));
+    }
+
+    #[test]
+    fn keeps_swahili() {
+        assert!(!is_hallucination(
+            "Kwa maana Mungu aliupenda ulimwengu",
+            Some("sw")
+        ));
+    }
+
+    #[test]
+    fn keeps_code_switched_speech() {
+        // CLAUDE.md: code-switching mid-sentence is the NORMAL case here, not an
+        // edge case. A guard that rejected mixed lines would break the Tier-1
+        // promise.
+        assert!(!is_hallucination(
+            "So Ọlọ́run loves the world so much that he gave",
+            None
+        ));
+    }
+
+    #[test]
+    fn does_not_second_guess_an_explicitly_chosen_non_latin_language() {
+        // If an operator deliberately selects a language Relay does not ship, we
+        // are not entitled to overrule its script. The guard is about AUTO-DETECT
+        // picking badly, not about refusing languages.
+        assert!(!expects_latin_script(Some("zh")));
+        assert!(!is_hallucination("请不吝点赞", Some("zh")));
     }
 }
 

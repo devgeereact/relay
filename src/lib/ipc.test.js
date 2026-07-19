@@ -18,12 +18,22 @@ const root = resolve(__dirname, '../..');
 const read = (p) => readFileSync(resolve(root, p), 'utf8');
 
 const captureJs = read('src/lib/stores/capture.js');
+// The launch checks (LAUNCH & STARTUP) call Tauri DIRECTLY rather than through
+// the store, because a boot probe wants the raw result — not a wrapper that
+// swallows the failure it is trying to measure. That put them outside this
+// contract entirely: a renamed command would have made a boot check report
+// `fail` with a Tauri "command not found" string, on the first screen an
+// operator ever sees, and nothing would have caught it. Now it is covered.
+const probesJs = read('src/lib/boot/probes.js');
 const mainRs = read('src-tauri/src/main.rs');
 
-/** Every `call('name', …)` in the store. */
+/** Every `call('name', …)` in the store, and every `invoke('name', …)` in the probes. */
 function commandsCalledByFrontend() {
   const names = new Set();
   for (const m of captureJs.matchAll(/\bcall\(\s*['"]([a-z0-9_]+)['"]/g)) {
+    names.add(m[1]);
+  }
+  for (const m of probesJs.matchAll(/\binvoke\(\s*['"]([a-z0-9_]+)['"]/g)) {
     names.add(m[1]);
   }
   return [...names].sort();
@@ -46,6 +56,13 @@ describe('Tauri IPC contract', () => {
     // the call shape and both sets became empty.
     expect(commandsCalledByFrontend().length).toBeGreaterThan(50);
     expect(commandsRegisteredInRust().length).toBeGreaterThan(50);
+  });
+
+  it('still sees the launch probes (the regex covers invoke(), not just call())', () => {
+    // Guards the guard: if probes.js is refactored to a different call shape,
+    // this test must fail loudly rather than start covering nothing.
+    expect(commandsCalledByFrontend()).toContain('data_health');
+    expect(probesJs).toMatch(/invoke\(\s*['"]stt_status['"]/);
   });
 
   it('every command the frontend calls is registered in Rust', () => {
