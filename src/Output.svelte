@@ -23,6 +23,11 @@
   let unlisten = [];
   let ws = null;
   let kioskClosed = false;
+  // Video sound is enabled on the NATIVE output window only (the one running on
+  // the operator's machine, wired to the house speakers). The kiosk/OBS page is
+  // a browser source: OBS captures and mixes its audio itself, so unmuting there
+  // would push unexpected audio into a stream the operator did not ask for.
+  let isDesktop = false;
 
   async function invoke() {
     const core = await import('@tauri-apps/api/core');
@@ -97,6 +102,7 @@
       unlisten.push(await listen('output://clear', () => { visible = false; black = false; }));
       unlisten.push(await listen('output://black', () => (black = true)));
       unlisten.push(await listen('template://updated', (e) => { if (e.payload === templateId) loadTemplate(); }));
+      isDesktop = true;
     } catch {
       startKiosk();
     }
@@ -108,7 +114,7 @@
   });
 </script>
 
-<TemplateRender template={activeTemplate} content={visible ? content : null} />
+<TemplateRender template={activeTemplate} content={visible ? content : null} audio={isDesktop} />
 {#if black}<div class="blackout"></div>{/if}
 
 <style>

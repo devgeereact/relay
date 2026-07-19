@@ -6,9 +6,14 @@
   // small preview box.
   import { fade } from 'svelte/transition';
   import { afterUpdate, onMount, onDestroy } from 'svelte';
+  import { applySink, getAudioOutput, onAudioOutputChange } from './audioOutput.js';
 
   export let template = {};
   export let content = null; // { reference, text, translation }
+  // Sound is OPT-IN per surface. This same renderer draws the Templates editor
+  // preview, and editing a template must not blast video audio across the room —
+  // so only a real output surface passes audio={true}.
+  export let audio = false;
 
   $: layout = template?.layout ?? {};
   $: style = template?.style ?? {};
@@ -60,6 +65,42 @@
     }
   });
   onDestroy(() => ro?.disconnect());
+
+  // --- Video sound: the operator's chosen speaker, applied to the clip ---
+  // The <video> lives inside {#key slideKey}, so a new clip is a NEW element:
+  // routing is (re)applied on each element's loadedmetadata, not once on mount.
+  let videoEl;
+  let sink = getAudioOutput();
+  let unsubSink;
+  onMount(() => {
+    unsubSink = onAudioOutputChange((id) => {
+      sink = id;
+      routeAudio();
+    });
+  });
+  onDestroy(() => unsubSink?.());
+
+  // Apply the speaker choice, then play WITH sound. If the webview refuses
+  // unmuted autoplay (no user gesture in this window yet), fall back to muted
+  // playback rather than letting the clip not play at all — the picture is the
+  // primary job in front of a congregation; sound is the bonus. Never let an
+  // audio problem become a blank screen.
+  async function routeAudio() {
+    const el = videoEl;
+    if (!el || !audio) return;
+    await applySink(el, sink);
+    try {
+      el.muted = false;
+      await el.play();
+    } catch {
+      el.muted = true;
+      try {
+        await el.play();
+      } catch {
+        /* autoplay blocked entirely; the element keeps its own autoplay attempt */
+      }
+    }
+  }
 
   // On a lower-third band the accent IS the background, so the reference uses
   // the verse (readable) color; elsewhere the accent tints the reference.
@@ -136,7 +177,16 @@
         {#if content.media_url}
           {#if content.media_kind === 'video'}
             <!-- svelte-ignore a11y-media-has-caption -->
-            <video class="media" src={content.media_url} autoplay loop muted playsinline></video>
+            <video
+              class="media"
+              src={content.media_url}
+              bind:this={videoEl}
+              autoplay
+              loop
+              muted={!audio}
+              playsinline
+              on:loadedmetadata={routeAudio}
+            ></video>
           {:else}
             <img class="media" src={content.media_url} alt="" />
           {/if}
