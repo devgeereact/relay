@@ -1,6 +1,13 @@
 <script>
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import ModelSetup from '../ModelSetup.svelte';
+  import {
+    listOutputDevices,
+    getAudioOutput,
+    setAudioOutput,
+    supportsSinkId,
+    ensureDeviceAccess,
+  } from '../audioOutput.js';
   import { locale, setLocale, LOCALES, t } from '../i18n.js';
   import { restartSetup } from '../session.js';
   import en from '../locales/en.json';
@@ -80,6 +87,46 @@
   // RMS on speech sits well below 1.0; scale so normal talking fills the meter.
   $: levelPct = Math.min(100, Math.round($meter.level * 320));
 
+  // --- Audio output (speakers for video sound) ---
+  // Enumerated from the WEBVIEW, not cpal: routing a <video>'s sound needs
+  // setSinkId(deviceId), and cpal's device names are a different namespace that
+  // setSinkId can never accept. See lib/audioOutput.js.
+  let outDevices = [];
+  let outDevice = getAudioOutput();
+  let sinkOk = true;
+  let outBusy = false;
+  // The webview hides the speaker list until a media permission has been granted
+  // (measured: no audiooutput entries at all before that). So an empty list is
+  // "not unlocked yet", NOT "this machine has no speakers" — the default output
+  // always exists and always works, and stays selectable either way.
+  $: outLocked = sinkOk && outDevices.length === 0;
+  onMount(async () => {
+    sinkOk = supportsSinkId();
+    await refreshOutputs();
+    // Devices change when a monitor/USB/Bluetooth speaker comes or goes.
+    navigator.mediaDevices?.addEventListener?.('devicechange', refreshOutputs);
+  });
+  onDestroy(() => {
+    navigator.mediaDevices?.removeEventListener?.('devicechange', refreshOutputs);
+  });
+  async function refreshOutputs() {
+    outDevices = await listOutputDevices();
+  }
+  /** Unlock real speaker names by tripping the media permission once. */
+  async function detectSpeakers() {
+    outBusy = true;
+    try {
+      await ensureDeviceAccess();
+      await refreshOutputs();
+    } finally {
+      outBusy = false;
+    }
+  }
+  function pickOutput(id) {
+    outDevice = id;
+    setAudioOutput(id); // reaches the open output window via localStorage + event
+  }
+
   // Real translations from the corpus + which one to read from.
   let translations = [];
   let activeTranslation = null;
@@ -155,6 +202,10 @@
     </button>
   </section>
 
+  <!-- AUDIO: input and output, stacked as ONE grid cell so the speaker picker
+       always sits directly under the mic picker. Without the wrapper the 2-column
+       grid flows them side by side, which reads as two unrelated cards. -->
+  <div class="s-stack">
   <!-- AUDIO INPUT -->
   <section class="r-tile s-card">
     <header class="s-head">
@@ -199,6 +250,59 @@
       {/if}
     </div>
   </section>
+
+  <!-- AUDIO OUTPUT (speakers for video sound) -->
+  <section class="r-tile s-card">
+    <header class="s-head">
+      <span class="s-head-l">
+        <svg class="s-ic" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 5 6 9H2v6h4l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M19 5a9 9 0 0 1 0 14"/></svg>
+        Audio Output
+      </span>
+      {#if !sinkOk}
+        <span class="s-count">system default only</span>
+      {:else if outLocked}
+        <span class="s-count">system default</span>
+      {:else}
+        <span class="s-count">{outDevices.length + 1} device{outDevices.length === 0 ? '' : 's'}</span>
+      {/if}
+    </header>
+
+    <!-- Never disabled: "System default" is always a real, working choice — it is
+         where video sound already plays. A greyed-out picker would read as "no
+         speakers found", which is never true. -->
+    <select class="r-select" value={outDevice} on:change={(e) => pickOutput(e.target.value)}>
+      <option value="">System default — computer speakers</option>
+      {#each outDevices as d}
+        <option value={d.id}>{d.label || 'Speaker'}{d.is_default ? ' — default' : ''}</option>
+      {/each}
+    </select>
+
+    {#if !sinkOk}
+      <p class="s-note">
+        This webview can't switch speakers, so video sound plays on whatever macOS
+        has selected. Change it in <b>System Settings → Sound → Output</b>.
+      </p>
+    {:else if outLocked}
+      <div class="s-listen">
+        <button class="r-btn" on:click={detectSpeakers} disabled={outBusy}>
+          {outBusy ? 'Detecting…' : 'Detect speakers'}
+        </button>
+        <span class="s-rms">names need mic permission once</span>
+      </div>
+      <p class="s-note">
+        Sound plays on your <b>system default</b> speakers right now. macOS hides
+        the list of other outputs until this app has been granted the microphone
+        once — <b>Detect speakers</b> asks for it, then releases the mic straight
+        away (capture still runs through the audio engine, not the browser).
+      </p>
+    {:else}
+      <p class="s-note">
+        Where video sound plays on the <b>fullscreen output window</b>. OBS/kiosk
+        browser sources are left muted — OBS mixes their audio itself.
+      </p>
+    {/if}
+  </section>
+  </div>
 
   <!-- AI DETECTION THRESHOLDS -->
   <section class="r-tile s-card">
@@ -383,6 +487,9 @@
   .s-lead{ margin:0 0 20px; }
 
   .s-grid{ display:grid; grid-template-columns:1fr 1fr; gap:16px; align-items:start; }
+  /* One grid cell holding the two audio cards, so output stays directly under
+     input at every breakpoint instead of flowing into the next column. */
+  .s-stack{ display:grid; gap:16px; align-content:start; }
 
   /* Console language */
   .lang-list{ display:flex; flex-direction:column; gap:6px; margin-top:10px; }
