@@ -75,6 +75,7 @@ tauri-plugin-process = "2"   # relaunch after an update is installed
 # Caught by `sysprobe::tests::print_hardware`, which is exactly why that test
 # exists. Do not relax this bound without re-running it on macOS.
 sysinfo = { version = "0.39", default-features = false, features = ["system", "disk"] }
+rust-stemmers = "1.2.0"
 
 # Added in later build phases — uncomment as each phase lands (see PROMPT.md):
 # ndi-sdk-sys or equivalent  # Phase 10 — NDI render target (evaluate available crates, may need custom FFI bindings)
