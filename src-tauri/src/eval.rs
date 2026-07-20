@@ -397,22 +397,25 @@ pub fn paraphrase_scorecard() -> String {
     let index = SemanticIndex::build(&kjv_corpus());
     let cases = para_cases();
 
-    // (hits@1, hits@5, total) per vocab bucket, plus the overall row.
-    let mut buckets: BTreeMap<String, (usize, usize, usize)> = BTreeMap::new();
+    // hits@[1,2,3,5] and total, per vocab bucket, plus the overall row. The
+    // cutoffs exist to CHOOSE how many suggestions production should surface:
+    // every extra one costs the operator attention, so the gain has to be shown.
+    const KS: [usize; 4] = [1, 2, 3, 5];
+    let mut buckets: BTreeMap<String, ([usize; 4], usize)> = BTreeMap::new();
     let mut misses: Vec<String> = Vec::new();
 
     for case in &cases {
         let hits = index.top_k(&case.text, 5);
-        let at1 = hits.first().map(|(r, _)| case.contains(r)).unwrap_or(false);
-        let at5 = hits.iter().any(|(r, _)| case.contains(r));
-        let e = buckets.entry(case.vocab.clone()).or_insert((0, 0, 0));
-        e.0 += at1 as usize;
-        e.1 += at5 as usize;
-        e.2 += 1;
-        let t = buckets.entry("TOTAL".into()).or_insert((0, 0, 0));
-        t.0 += at1 as usize;
-        t.1 += at5 as usize;
-        t.2 += 1;
+        let at: [usize; 4] =
+            KS.map(|k| hits.iter().take(k).any(|(r, _)| case.contains(r)) as usize);
+        for key in [case.vocab.clone(), "TOTAL".to_string()] {
+            let e = buckets.entry(key).or_insert(([0; 4], 0));
+            for (slot, hit) in e.0.iter_mut().zip(at.iter()) {
+                *slot += hit;
+            }
+            e.1 += 1;
+        }
+        let at5 = at[3] == 1;
         if !at5 {
             let got = hits
                 .first()
@@ -432,27 +435,26 @@ pub fn paraphrase_scorecard() -> String {
             a as f32 * 100.0 / b as f32
         }
     };
+    let row = |label: &str, hits: &[usize; 4], n: usize| {
+        format!(
+            "  {label:<10} {n:>5}   {:>5.0}%  {:>5.0}%  {:>5.0}%  {:>5.0}%\n",
+            pct(hits[0], n),
+            pct(hits[1], n),
+            pct(hits[2], n),
+            pct(hits[3], n)
+        )
+    };
     let mut out = String::from("\n  Relay — paraphrase RETRIEVAL benchmark\n");
     out.push_str("  ─────────────────────────────────────────────────────────────\n");
-    out.push_str("  vocab    cases   in-passage@1   in-passage@5\n");
-    for (k, (a1, a5, n)) in &buckets {
-        if k == "TOTAL" {
-            continue;
+    out.push_str("  vocab      cases      @1     @2     @3     @5\n");
+    for (k, (hits, n)) in &buckets {
+        if k != "TOTAL" {
+            out.push_str(&row(k, hits, *n));
         }
-        out.push_str(&format!(
-            "  {k:<8} {n:>5}   {:>10.0}%   {:>12.0}%\n",
-            pct(*a1, *n),
-            pct(*a5, *n)
-        ));
     }
-    if let Some((a1, a5, n)) = buckets.get("TOTAL") {
+    if let Some((hits, n)) = buckets.get("TOTAL") {
         out.push_str("  ─────────────────────────────────────────────────────────────\n");
-        out.push_str(&format!(
-            "  {:<8} {n:>5}   {:>10.0}%   {:>12.0}%\n",
-            "TOTAL",
-            pct(*a1, *n),
-            pct(*a5, *n)
-        ));
+        out.push_str(&row("TOTAL", hits, *n));
     }
     if !misses.is_empty() {
         out.push_str("\n  missed entirely (not in top 5):\n");
@@ -464,9 +466,68 @@ pub fn paraphrase_scorecard() -> String {
     out
 }
 
+/// How many suggestions to surface, and what it costs the operator.
+///
+/// A fixed top-N is the wrong shape. When one verse clearly wins, showing five
+/// is noise; when four score alike, showing one is a coin toss presented as an
+/// answer. So production keeps every hit within `ratio` of the best score — the
+/// list widens exactly when Relay is genuinely unsure.
+///
+/// This sweeps that ratio so the choice is made on evidence: recall is what the
+/// operator can reach, "avg shown" is what it costs them to read.
+pub fn suggestion_policy_scorecard() -> String {
+    use detection::SemanticIndex;
+    let index = SemanticIndex::build(&kjv_corpus());
+    let cases = para_cases();
+    const FLOOR: f32 = 0.30; // SEMANTIC_FLOOR in main.rs
+    const CAP: usize = 5; // never more than this, however flat the scores
+
+    let mut out = String::from("\n  Suggestion policy — how many paraphrase hits to show\n");
+    out.push_str("  ─────────────────────────────────────────────────────────────\n");
+    out.push_str("  keep within   ALL recall  avg shown | MODERN recall  avg shown\n");
+    for ratio in [1.00_f32, 0.90, 0.80, 0.70, 0.60, 0.50] {
+        let (mut reached, mut shown) = (0usize, 0usize);
+        let (mut m_reached, mut m_shown, mut m_n) = (0usize, 0usize, 0usize);
+        for case in &cases {
+            let hits = index.top_k(&case.text, CAP);
+            let best = hits.first().map(|(_, s)| *s).unwrap_or(0.0);
+            let kept: Vec<_> = hits
+                .iter()
+                .filter(|(_, s)| *s >= FLOOR && *s >= best * ratio)
+                .collect();
+            let hit = kept.iter().any(|(r, _)| case.contains(r)) as usize;
+            shown += kept.len();
+            reached += hit;
+            if case.vocab == "modern" {
+                m_n += 1;
+                m_shown += kept.len();
+                m_reached += hit;
+            }
+        }
+        let n = cases.len();
+        out.push_str(&format!(
+            "  {:>6.0}%      {:>7.0}%      {:>5.2} | {:>10.0}%      {:>5.2}\n",
+            ratio * 100.0,
+            reached as f32 * 100.0 / n as f32,
+            shown as f32 / n as f32,
+            m_reached as f32 * 100.0 / m_n as f32,
+            m_shown as f32 / m_n as f32,
+        ));
+    }
+    out.push_str("\n  recall = right passage was reachable · avg shown = rows the\n");
+    out.push_str("  operator reads per detection · silent = nothing offered at all\n");
+    out
+}
+
 #[cfg(test)]
 mod para_tests {
     use super::*;
+
+    /// `cargo test eval::para_tests::print_suggestion_policy -- --nocapture`
+    #[test]
+    fn print_suggestion_policy() {
+        println!("{}", suggestion_policy_scorecard());
+    }
 
     /// `cargo test eval::para_tests::print_paraphrase_scorecard -- --nocapture`
     #[test]
