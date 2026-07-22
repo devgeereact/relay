@@ -36,7 +36,9 @@ use std::path::PathBuf;
 use channels::seed_channels;
 #[cfg(test)]
 use serde_json::Value;
-use templates::{reset_builtin_templates, seed_templates};
+use templates::{
+    ensure_lyrics_template, ensure_preset_templates, reset_builtin_templates, seed_templates,
+};
 #[cfg(test)]
 use verses::clean_verse;
 use verses::{rebuild_verses_fts, reimport_full_kjv, seed};
@@ -169,9 +171,16 @@ fn baseline_forward_fill(conn: &Connection) -> rusqlite::Result<()> {
 
 /// Additive table/column creation. Idempotent by construction.
 fn ensure_tables(conn: &Connection) -> rusqlite::Result<()> {
+    // app_settings FIRST: ensure_lyrics_template writes to it unconditionally
+    // (INSERT/DELETE, not tolerant .ok() reads). On a pre-app_settings v0 DB the
+    // reverse order hit `no such table: app_settings`, propagated out of migrate,
+    // and panicked at every boot before the window was shown. Its own
+    // CREATE TABLE IF NOT EXISTS must run before any writer touches it.
+    ensure_app_settings(conn)?; // key/value settings
     ensure_voice_profiles(conn)?; // per-preacher accent + gate calibration
     ensure_template_active(conn)?; // console-active templates (max 4)
-    ensure_app_settings(conn)?; // key/value settings
+    ensure_lyrics_template(conn)?; // the song template — see templates.rs
+    ensure_preset_templates(conn)?; // ready-to-use preset designs (additive, by name)
     ensure_service_plans(conn)?; // Planner
     ensure_songs(conn)?; // Lyrics
     ensure_saved_scripture(conn)?; // Library
@@ -257,6 +266,8 @@ pub const MIGRATION_TABLES: &[(&str, &str)] = &[
     ("App settings", "app_settings"),
     ("Service plans", "service_plans"),
     ("Planner cues", "plan_items"),
+    ("Plan sections", "plan_items.section_title"),
+    ("Plan running times", "plan_items.duration_sec"),
     ("Songs", "songs"),
     ("Song arrangements", "song_arrangements"),
     ("Saved scripture", "saved_scripture"),
@@ -570,6 +581,33 @@ mod tests {
         assert!(scratch, "a leftover detections_new went unreported");
     }
 
+    #[test]
+    fn a_v0_database_without_app_settings_migrates_without_panicking() {
+        // The bug: `ensure_lyrics_template` writes to `app_settings`
+        // (INSERT + an unconditional DELETE) but ran BEFORE `ensure_app_settings`
+        // created it. A pre-`app_settings` v0 DB — exactly the case the v0 path
+        // exists to fix — hit `no such table: app_settings`, which propagated out
+        // of `migrate` and panicked at startup on EVERY boot, forever, before the
+        // window was shown. Reorder the guarantee (app_settings first) and the v0
+        // path completes.
+        //
+        // This test fails if the ordering regresses: drop the table and force the
+        // v0 baseline path, which is what a real old install triggers.
+        let conn = fresh_db();
+        conn.execute_batch("DROP TABLE app_settings;").unwrap();
+        set_user_version(&conn, 0).unwrap();
+
+        // Must NOT error. Before the fix this returned Err(no such table) and the
+        // real app turned that Err into a boot panic.
+        migrate(&conn, false).expect("v0 migration must not fail on a missing app_settings");
+
+        // And the table the writer needed is now present.
+        assert!(
+            object_present(&conn, "app_settings").unwrap(),
+            "app_settings should be recreated by the v0 migration"
+        );
+    }
+
     /// A database with the OLD `detections` table — the one whose CHECK constraint
     /// could not express `'manual'`, so a human's fire was logged as the AI's.
     fn db_with_old_detections() -> Connection {
@@ -681,10 +719,19 @@ mod tests {
     }
 
     #[test]
-    fn seeds_four_templates() {
+    fn seeds_the_builtin_templates() {
+        // Five now, not four: "Worship Lyrics" was added because every previous
+        // built-in was scripture-shaped (a reference region and small type), and
+        // lyrics rendered through one put the song title where the words should
+        // be. See templates.rs.
         let conn = fresh_db();
         let ts = list_templates(&conn).unwrap();
-        assert_eq!(ts.len(), 4);
+        // Five built-ins plus the ready-to-use presets, all seeded on a fresh DB.
+        assert_eq!(ts.len(), 5 + templates::preset_template_count());
+        assert!(
+            ts.iter().any(|t| t.name == "Worship Lyrics"),
+            "the lyrics template is missing from the seed"
+        );
         assert_eq!(ts[0].name, "Classic Serif");
         assert_eq!(ts[0].style["font"], "var(--f-serif)");
         assert_eq!(ts[0].layout["align"], "center");
@@ -713,9 +760,11 @@ mod tests {
             style: serde_json::json!({ "font": "var(--f-body)" }),
             active: false,
         };
+        let seeded = 5 + templates::preset_template_count() as i64;
         let id = upsert_template(&conn, &t).unwrap();
-        assert_eq!(id, 5);
-        assert_eq!(list_templates(&conn).unwrap().len(), 5);
+        // The new row's id follows every seeded template (built-ins + presets).
+        assert_eq!(id, seeded + 1);
+        assert_eq!(list_templates(&conn).unwrap().len() as i64, seeded + 1);
     }
 
     #[test]
@@ -836,6 +885,120 @@ mod tests {
         // Independent copies — editing one plan doesn't touch the other.
         delete_plan(&conn, copy).unwrap();
         assert_eq!(plan_items(&conn, src).unwrap().len(), 2);
+    }
+
+    // ── Plan sections and running time ────────────────────────────────────
+    //
+    // Sections are derived from the cue order (a cue with a `section_title`
+    // begins one), so these guard the places that derivation can silently rot.
+
+    #[test]
+    fn ensure_service_plans_is_retryable() {
+        // It runs on EVERY boot. A bare ALTER TABLE ADD COLUMN would error with
+        // "duplicate column name" the second time and panic the app at startup —
+        // the §25 failure mode, one layer down.
+        let conn = Connection::open_in_memory().unwrap();
+        ensure_service_plans(&conn).unwrap();
+        ensure_service_plans(&conn).unwrap();
+        ensure_service_plans(&conn).unwrap();
+
+        let pid = create_plan(&conn, "Sunday", "2026-07-05").unwrap();
+        let id = add_plan_item(&conn, pid, "song", "Way Maker", "{}", None).unwrap();
+        set_plan_section(&conn, id, "Welcome & Worship").unwrap();
+        assert_eq!(
+            plan_items(&conn, pid).unwrap()[0].section_title,
+            "Welcome & Worship"
+        );
+    }
+
+    #[test]
+    fn a_plan_predating_sections_gains_the_columns() {
+        // A DB created before sections existed: the old CREATE TABLE, then the
+        // real migration on top. This is what every existing install does on the
+        // first launch after updating.
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE service_plans (
+                id INTEGER PRIMARY KEY, title TEXT NOT NULL,
+                plan_date TEXT NOT NULL DEFAULT '', notes TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT ''
+             );
+             CREATE TABLE plan_items (
+                id INTEGER PRIMARY KEY, plan_id INTEGER NOT NULL,
+                position INTEGER NOT NULL, cue_type TEXT NOT NULL,
+                label TEXT NOT NULL, payload_json TEXT NOT NULL DEFAULT '{}',
+                template_id INTEGER
+             );
+             INSERT INTO service_plans (id, title) VALUES (1, 'Old Plan');
+             INSERT INTO plan_items (plan_id, position, cue_type, label)
+                VALUES (1, 0, 'scripture', 'John 3:16');",
+        )
+        .unwrap();
+
+        ensure_service_plans(&conn).unwrap();
+
+        // The pre-existing cue survives and defaults to untimed / no section.
+        let items = plan_items(&conn, 1).unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].label, "John 3:16");
+        assert_eq!(items[0].section_title, "");
+        assert_eq!(items[0].duration_sec, 0);
+    }
+
+    #[test]
+    fn deleting_a_sections_first_cue_hands_the_heading_down() {
+        // Otherwise the section dissolves and its surviving cues get silently
+        // absorbed by the section above it.
+        let conn = fresh_db();
+        ensure_service_plans(&conn).unwrap();
+        let pid = create_plan(&conn, "Sunday", "2026-07-05").unwrap();
+        let a = add_plan_item(&conn, pid, "song", "Opener", "{}", None).unwrap();
+        let b = add_plan_item(&conn, pid, "song", "Second", "{}", None).unwrap();
+        set_plan_section(&conn, a, "Worship").unwrap();
+
+        remove_plan_item(&conn, a).unwrap();
+
+        let items = plan_items(&conn, pid).unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].id, b);
+        assert_eq!(items[0].section_title, "Worship");
+    }
+
+    #[test]
+    fn deleting_a_cue_never_overwrites_the_next_sections_heading() {
+        // The inheritance above must not clobber a heading that already exists —
+        // deleting the last cue of "Worship" would otherwise rename "Sermon".
+        let conn = fresh_db();
+        ensure_service_plans(&conn).unwrap();
+        let pid = create_plan(&conn, "Sunday", "2026-07-05").unwrap();
+        let a = add_plan_item(&conn, pid, "song", "Opener", "{}", None).unwrap();
+        let b = add_plan_item(&conn, pid, "sermon", "Message", "{}", None).unwrap();
+        set_plan_section(&conn, a, "Worship").unwrap();
+        set_plan_section(&conn, b, "Sermon").unwrap();
+
+        remove_plan_item(&conn, a).unwrap();
+
+        assert_eq!(plan_items(&conn, pid).unwrap()[0].section_title, "Sermon");
+    }
+
+    #[test]
+    fn duration_is_clamped_and_duplicated_with_the_plan() {
+        let conn = fresh_db();
+        ensure_service_plans(&conn).unwrap();
+        let pid = create_plan(&conn, "Sunday", "2026-07-05").unwrap();
+        let a = add_plan_item(&conn, pid, "song", "Way Maker", "{}", None).unwrap();
+        set_plan_section(&conn, a, "Worship").unwrap();
+        set_plan_duration(&conn, a, 360).unwrap();
+        // A negative running time is worse than none.
+        let b = add_plan_item(&conn, pid, "media", "Loop", "{}", None).unwrap();
+        set_plan_duration(&conn, b, -5).unwrap();
+        assert_eq!(plan_items(&conn, pid).unwrap()[1].duration_sec, 0);
+
+        // Duplicating last week's order must carry headings and times across.
+        let copy = duplicate_plan(&conn, pid, "Next Sunday", "2026-07-12").unwrap();
+        let dup = plan_items(&conn, copy).unwrap();
+        assert_eq!(dup[0].section_title, "Worship");
+        assert_eq!(dup[0].duration_sec, 360);
     }
 
     #[test]

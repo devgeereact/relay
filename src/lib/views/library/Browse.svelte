@@ -1,121 +1,149 @@
 <script>
-  // LIBRARY — VERSE & TRANSLATION MANAGER (§7)
-  // Reference: relay-production-interface.png panel 6.
+  // LIBRARY → BIBLE. Rebuilt from docs/relaydesign/relay-library-screen.png.
   //
-  // Book tree on the left, chapter's verses on the right, translation picker
-  // above. The Library could search and it could list what an operator had
-  // SAVED — but it could not open a Bible and read it, which is the one thing
-  // the word "library" promises.
+  //   BOOKS rail  ·  the chapter  ·  the verse inspector
   //
-  // ── Where this departs from the reference, and why ────────────────────────
+  // The mockup's three panes, its Slides/Read/Table segment, its 25-per-page
+  // footer and its right-hand inspector, section for section.
   //
-  // The mockup puts four language tabs across the top: English · Yoruba ·
-  // Swahili · Hausa. **Relay ships one Bible.** The corpus is the KJV and
-  // nothing else, so three of those four tabs would open on an empty shelf.
+  // ── Where the CONTENT differs from the mockup ─────────────────────────────
   //
-  // That is not a small cosmetic difference. Relay's stated differentiator is
-  // African-language scripture, and a UI that displays the languages as though
-  // they were present would be making exactly the claim the project is careful
-  // not to make (docs/LANGUAGES.md). So the picker is built from the
-  // translations that ACTUALLY exist, and the gap is stated in words underneath
-  // rather than implied by a tab that does nothing.
+  // Per-verse chips read `KJV · Direct · High Confidence` in the reference.
+  // Direct and High Confidence are DETECTION verdicts — claims about what the
+  // AI heard. A verse someone scrolled to was not detected by anything and no
+  // confidence was computed for it, so those chips would be the app lying about
+  // its own work on the screen the operator trusts most.
   //
-  // Detection already understands spoken Yoruba, Kiswahili and Hausa references
-  // — that is the alias table, and it is real. What is missing is verse TEXT in
-  // those languages, which is a licensing and sourcing problem, not a UI one.
-
+  // The reference paints selection and the live row gold. Gold means ON AIR
+  // (CLAUDE.md), so selection is the accent and only the live row is amber.
+  //
+  // ── SCRIPTURE IS NOT EDITABLE, AND THAT IS THE FEATURE ────────────────────
+  //
+  // No edit, no duplicate, no insert, no reorder. Genesis 1:2 follows Genesis
+  // 1:1 and says what it has always said — that is what a Bible IS, and an app
+  // that lets an operator quietly reword or reshuffle it is not showing
+  // scripture any more, it is showing something that looks like scripture.
+  // Lyrics, notices and plans are the church's own words and are fully
+  // editable; the corpus is not ours to touch.
   import { onMount } from 'svelte';
   import EmptyState from '../../ui/EmptyState.svelte';
   import Loading from '../../ui/Loading.svelte';
-  import SlideGrid from './SlideGrid.svelte';
+  import VerseDeck from './VerseDeck.svelte';
   import { humanError } from '../../errors.js';
   import { safeMode } from '../../boot/boot.js';
+  import { parsePassage, probeReference, inRange } from '../../passage.js';
   import {
-    listBooks,
     chapterVerses,
-    listTranslations,
-    getActiveTranslation,
-    setActiveTranslation,
-    saveScripture,
-    manualFire,
-    listActiveTemplates,
     searchScripture,
+    saveScripture,
+    listSavedScripture,
+    deleteSavedScripture,
+    manualFire,
+    clearScreens,
+    listActiveTemplates,
+    live,
+    screenBlack,
+    rehearsing,
   } from '../../stores/capture.js';
 
-  let books = [];
-  let translations = [];
-  let activeTranslation = null;
-  let openBook = null;
-  let book = null;
-  let chapter = 1;
+  /** Canonical book list + chapter counts, loaded by the Library shell. */
+  export let books = [];
+  /** The translations that ACTUALLY exist in the corpus. */
+  export let translations = [];
+  /** Bound to the shell's filter bar — one piece of state, two controls. */
+  export let book = null;
+  export let chapter = 1;
+  export let verse = null;
+  export let verseCount = 0;
+  /** The Library's one search box. */
+  export let query = '';
+  /** Only verses already in Favourites (the filter-bar toggle). */
+  export let favouritesOnly = false;
+  export let onSelect = () => {};
+  /** The queue lives in the shell, beside the rail that renders it. */
+  export let queue = [];
+  export let onQueueChange = () => {};
+
   let verses = [];
-  let loading = true;
+  let results = [];
+  let savedList = [];
+  let template = null;
+  let checked = new Set();
+  let sort = 'verse';
+  let layout = 'grid';
+  let perPage = 12;
+// { id?, ref, label, text, verse }
+  let passage = null;
+  let selected = null;
+  let page = 0;
   let loadingChapter = false;
+  let searching = false;
+  let firing = '';
   let error = '';
   let msg = '';
-  let firing = '';
-  /** Read/Slides. Slides is the default — see SlideGrid on why. */
-  let view = 'slides';
-  /** Search text from the Library's one search bar. */
-  export let query = '';
-  let results = [];
-  let searching = false;
   let lastQuery = null;
+  let lastPlace = '';
 
-  // A search REPLACES the chapter in the slide pane rather than opening a second
-  // surface: the operator is looking for something to put on the screen, and it
-  // should land in the same grid, behaving the same way, whether they browsed to
-  // it or searched for it.
+  onMount(async () => {
+    savedList = (await listSavedScripture()) ?? [];
+    // The template the OUTPUT actually uses, so a card is the real slide.
+    template = (await listActiveTemplates().catch(() => []))[0] ?? null;
+  });
+
+  // Typed reference → the chapter it lives in. "Ps 23 1-5" filters to 1–5;
+  // clearing the box drops the filter and leaves Psalm 23 where it was.
   $: if (query !== lastQuery) {
     lastQuery = query;
+    page = 0;
     runSearch(query);
   }
+  $: if (book && `${book}|${chapter}` !== lastPlace) {
+    lastPlace = `${book}|${chapter}`;
+    open(book, chapter);
+  }
+  // The verse picker scrolls; it does not fire. Where to look and what a
+  // congregation sees are different decisions.
+  $: if (verse) jumpTo(verse);
 
   async function runSearch(q) {
     if (!q?.trim()) {
       results = [];
+      passage = null;
       return;
     }
     searching = true;
+    error = '';
     try {
+      const typed = parsePassage(q);
+      if (typed) {
+        // The BOOK is resolved by Rust — "Ps", "psalm", "Sáàmù" and "Zaburi"
+        // all mean Psalms, and that alias table drives live detection too. A
+        // second copy here would drift, and typing a reference would eventually
+        // answer differently from saying it out loud.
+        const hit = (await searchScripture(probeReference(typed)))?.[0];
+        if (hit) {
+          passage = { ...typed, book: hit.book };
+          results = [];
+          book = hit.book;
+          chapter = hit.chapter;
+          searching = false;
+          return;
+        }
+      }
+      passage = null;
       results = (await searchScripture(q.trim())) ?? [];
     } catch (e) {
       error = humanError(e);
       results = [];
+      passage = null;
     }
     searching = false;
   }
-  // The template the OUTPUT would actually use, so a thumbnail is the real thing
-  // rather than a drawing of it.
-  let template = null;
-
-  onMount(async () => {
-    try {
-      const [b, t, a, tpls] = await Promise.all([
-        listBooks(),
-        listTranslations(),
-        getActiveTranslation(),
-        listActiveTemplates().catch(() => []),
-      ]);
-      books = b;
-      translations = t;
-      activeTranslation = a;
-      template = tpls[0] ?? null;
-      // Open on Genesis 1 rather than an empty pane: a Bible that opens closed
-      // makes the operator do a click that has exactly one sensible answer.
-      if (books.length) await open(books[0].book, 1);
-    } catch (e) {
-      error = humanError(e);
-    }
-    loading = false;
-  });
 
   async function open(b, ch) {
-    book = b;
-    openBook = b;
-    chapter = ch;
     loadingChapter = true;
     error = '';
+    page = 0;
     try {
       verses = await chapterVerses(b, ch);
     } catch (e) {
@@ -125,33 +153,26 @@
     loadingChapter = false;
   }
 
-  const toggle = (b) => (openBook = openBook === b.book ? null : b.book);
-
-  async function pickTranslation(id) {
-    activeTranslation = id;
-    await setActiveTranslation(id);
-    books = await listBooks();
-    if (book) await open(book, chapter);
+  function jumpTo(n) {
+    const target = Math.floor((n - 1) / perPage);
+    if (target !== page && target < pages) page = target;
+    requestAnimationFrame(() =>
+      document.querySelector(`[data-verse="${n}"]`)?.scrollIntoView({ block: 'center' }),
+    );
   }
 
-  async function save(v) {
-    msg = '';
-    try {
-      await saveScripture(`${v.book} ${v.chapter}:${v.verse}`);
-      msg = `Saved ${v.book} ${v.chapter}:${v.verse}`;
-    } catch (e) {
-      error = humanError(e);
-    }
-  }
-
-  // Putting a verse on the wall FROM THE LIBRARY is a real fire, on the real
-  // outputs — it is the same `manual_fire` the console uses, and it is labelled
-  // so nobody clicks it thinking they are previewing.
   async function fire(v) {
-    const ref = v.reference ?? `${v.book} ${v.chapter}:${v.verse}`;
+    if ($safeMode) {
+      // Not a silent no-op: tell the operator WHY the click did nothing, or a
+      // disarmed desk reads as a broken one.
+      error = 'Safe mode is on — outputs are disarmed. Turn it off in Settings to fire.';
+      msg = '';
+      return;
+    }
+    const ref = v.reference ?? refOf(v);
     msg = '';
     error = '';
-    firing = v.key ?? ref;
+    firing = ref;
     try {
       await manualFire(ref);
       msg = `${ref} is on the screens`;
@@ -161,117 +182,240 @@
     firing = '';
   }
 
-  // One shape for the grid, whatever the source is — browsed chapter or search
-  // results.
-  $: source = query?.trim() ? results : verses;
-  $: slides = source.map((v) => ({
-    key: `${v.book} ${v.chapter}:${v.verse}`,
-    reference: `${v.book} ${v.chapter}:${v.verse}`,
+  /** Favourites toggle — the bookmark in the card and in the inspector. */
+  async function toggleSave(v) {
+    error = '';
+    const hit = savedList.find((s) => s.reference === refOf(v));
+    try {
+      if (hit) {
+        await deleteSavedScripture(hit.id);
+        savedList = savedList.filter((s) => s.id !== hit.id);
+        msg = `Removed ${refOf(v)} from favourites`;
+      } else {
+        await saveScripture(v.book, v.chapter, v.verse);
+        savedList = (await listSavedScripture()) ?? savedList;
+        msg = `Saved ${refOf(v)}`;
+      }
+    } catch (e) {
+      error = humanError(e);
+    }
+  }
+
+  /** Queue / unqueue. Nothing here reaches a screen. */
+  function toggleQueue(v) {
+    const ref = refOf(v);
+    if (queue.some((q) => q.reference === ref)) {
+      onQueueChange(queue.filter((q) => q.reference !== ref));
+      msg = `Removed ${ref} from the queue`;
+    } else {
+      onQueueChange([...queue, { reference: ref, text: v.text }]);
+      msg = `Queued ${ref}`;
+    }
+  }
+
+  function toggleCheck(v) {
+    const ref = refOf(v);
+    const next = new Set(checked);
+    next.has(ref) ? next.delete(ref) : next.add(ref);
+    checked = next;
+  }
+
+  function queueChecked() {
+    const add = source
+      .filter((v) => checked.has(refOf(v)) && !queue.some((q) => q.reference === refOf(v)))
+      .map((v) => ({ reference: refOf(v), text: v.text }));
+    if (add.length) onQueueChange([...queue, ...add]);
+    msg = `Queued ${add.length} verse${add.length === 1 ? '' : 's'}`;
+    checked = new Set();
+  }
+
+  // A panic control never reports a success it did not achieve (CLAUDE.md §15):
+  // `clearScreens` returns a boolean and sets the global panicError store.
+  async function clear() {
+    msg = '';
+    if (await clearScreens()) msg = 'Screens cleared.';
+  }
+
+  const refOf = (v) => `${v.book} ${v.chapter}:${v.verse}`;
+  const shape = (v) => ({
+    key: refOf(v),
+    reference: refOf(v),
     text: v.text,
     translation: v.abbreviation,
     book: v.book,
     chapter: v.chapter,
     verse: v.verse,
-  }));
+  });
+  const words = (t) => (t ? t.trim().split(/\s+/).length : 0);
+  const isSaved = (v, list) => list.some((s) => s.reference === refOf(v));
 
-  $: chapterList = books.find((b) => b.book === openBook)?.chapters ?? 0;
+  $: searchMode = !!query?.trim();
+  $: base = passage ? inRange(verses, passage) : searchMode ? results : verses;
+  $: source = favouritesOnly ? base.filter((v) => isSaved(v, savedList)) : base;
+  $: verseCount = verses.length;
+  $: sorted =
+    sort === 'length'
+      ? [...source].sort((a, b) => a.text.length - b.text.length)
+      : source;
+  // THE DECK IS THE CHAPTER. Nothing is inserted into it and nothing is
+  // rewritten — see the note above the pane.
+  $: deck = sorted.map(shape);
+  // SLIDE NUMBERS are the position in the deck and keep counting across pages —
+  // they were the verse number, which drifts the moment anything is inserted,
+  // filtered or sorted, and then two slides on screen wear the same number.
+  $: numbered = deck.map((d, i) => ({ ...d, slideNo: i + 1 }));
+  $: pages = Math.max(1, Math.ceil(numbered.length / perPage));
+  $: pageItems = numbered.slice(page * perPage, page * perPage + perPage);
+  $: firstShown = numbered.length ? page * perPage + 1 : 0;
+  $: lastShown = Math.min(numbered.length, (page + 1) * perPage);
+  $: savedRefs = new Set(savedList.map((s) => s.reference));
+  $: totalChapters = books.reduce((n, b) => n + (b.chapters ?? 0), 0);
+  $: queuedRefs = new Set(queue.map((q) => q.reference));
+  $: if (page > pages - 1) page = 0;
+  $: pageNums =
+    pages <= 7
+      ? Array.from({ length: pages }, (_, i) => i)
+      : [0, 1, 2, 3, 4, -1, pages - 1].filter((n, i, a) => a.indexOf(n) === i);
+  $: liveRef = !$screenBlack && $live ? ($live.reference ?? null) : null;
+  $: heading = passage
+    ? passage.from == null
+      ? `${passage.book} ${passage.chapter}`
+      : `${passage.book} ${passage.chapter}:${passage.from}${passage.to > passage.from ? `–${passage.to}` : ''}`
+    : searchMode
+      ? `“${query.trim()}”`
+      : book
+        ? `${book} ${chapter}`
+        : 'Bible';
+  $: subheading = passage
+    ? `${source.length} of ${verses.length} verses · clear the search for the whole chapter`
+    : searchMode
+      ? `${source.length} result${source.length === 1 ? '' : 's'}`
+      : `${source.length} verse${source.length === 1 ? '' : 's'}${favouritesOnly ? ' in favourites' : ''}`;
 </script>
 
 <div class="br">
-  <header class="br-bar">
-    {#if translations.length > 1}
-      <div class="br-tabs" role="tablist" aria-label="Translation">
-        {#each translations as t}
-          <button
-            role="tab"
-            aria-selected={activeTranslation === t.id}
-            class:on={activeTranslation === t.id}
-            on:click={() => pickTranslation(t.id)}>
-            {t.abbreviation || t.name}
-          </button>
-        {/each}
-      </div>
-    {:else if translations.length === 1}
-      <span class="br-one r-mono">{translations[0].abbreviation || translations[0].name}</span>
-    {/if}
-    <span class="spring"></span>
-    {#if query?.trim()}
-      <span class="br-where">{slides.length} result{slides.length === 1 ? '' : 's'} for “{query.trim()}”</span>
-    {:else if book}
-      <span class="br-where">{book} {chapter}</span>
-    {/if}
-    <div class="br-view" role="group" aria-label="View">
-      <button class:on={view === 'slides'} on:click={() => (view = 'slides')}>Slides</button>
-      <button class:on={view === 'read'} on:click={() => (view = 'read')}>Read</button>
-    </div>
-  </header>
-
-  {#if loading}
-    <Loading what="the library" />
-  {:else if !books.length}
+  {#if !books.length}
     <EmptyState message="No scripture is loaded. Check Settings → data health." />
   {:else}
     <div class="br-grid">
-      <!-- BOOKS. Canonical order, from the backend — never alphabetical. -->
-      <nav class="br-books r-scroll" aria-label="Books">
-        {#each books as b}
-          <button class="br-book" class:open={openBook === b.book} on:click={() => toggle(b)}>
-            <span class="br-caret" class:down={openBook === b.book}>›</span>
-            {b.book}
+      <!-- BOOKS. Canonical order, from the backend — never alphabetical. A Bible
+           whose contents open "Acts, Amos, Chronicles" is not one anyone can
+           navigate; the order is part of what the book is. -->
+      <nav class="br-panel br-books" aria-label="Books">
+        <p class="r-lbl br-panelhead">Books ({books.length})</p>
+        <button class="br-all r-focus" class:on={!book} on:click={() => (book = null)}>
+          <span>All Books</span>
+          <span class="ct r-mono">{totalChapters} chapters</span>
+        </button>
+        <div class="br-booklist r-scroll">
+          {#each books as b (b.book)}
+            <button
+              class="br-book r-focus"
+              class:on={book === b.book}
+              on:click={() => {
+                book = b.book;
+                chapter = 1;
+              }}>
+              <span class="nm">{b.book}</span>
+              <span class="ct r-mono">{b.chapters}</span>
+            </button>
+          {/each}
+        </div>
+        <div class="br-panelfoot">
+          <button class="r-btn ghost sm" on:click={() => (book = books[0].book)}>
+            Browse All Books
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 4h6v6M20 4l-8 8M18 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4" /></svg>
           </button>
-          {#if openBook === b.book}
-            <div class="br-chapters">
-              {#each Array(chapterList) as _, i}
-                <button
-                  class="br-ch"
-                  class:on={book === b.book && chapter === i + 1}
-                  on:click={() => open(b.book, i + 1)}>
-                  Chapter {i + 1}
-                </button>
-              {/each}
-            </div>
-          {/if}
-        {/each}
+        </div>
       </nav>
 
       <!-- THE CHAPTER. -->
-      <div class="br-read r-scroll">
-        {#if loadingChapter}
-          <Loading what="the chapter" />
-        {:else if searching}
-          <Loading what="matching verses" />
-        {:else if query?.trim() && !slides.length}
-          <EmptyState message={`No scripture matching “${query.trim()}”.`} />
-        {:else if view === 'slides'}
-          <!-- SLIDES FIRST. An operator picks by looking, not by reading a list
-               of numbers — see SlideGrid. Clicking one FIRES it. -->
-          <SlideGrid items={slides} {template} onFire={fire} busyKey={firing} />
-        {:else if verses.length}
-          {#each verses as v}
-            <div class="br-v">
-              <span class="br-n r-mono">{v.chapter}:{v.verse}</span>
-              <p class="br-t">{v.text}</p>
-              <span class="br-acts">
-                <button on:click={() => save(v)} title="Save to the library">Save</button>
-                <button class="go" on:click={() => fire(v)} title="Put this on the output screens">
-                  Put on screen
-                </button>
-              </span>
-            </div>
-          {/each}
-        {:else}
-          <EmptyState message="That chapter is empty." />
-        {/if}
-      </div>
-    </div>
+      <section class="br-panel br-main">
+        <header class="br-mainhead">
+          <div class="br-where">
+            <b>{heading}</b>
+            <span>{subheading}</span>
+          </div>
 
-    <!-- The honest note about the three missing Bibles. See the header comment. -->
-    <p class="br-note">
-      Relay ships the <b>King James Version</b> only. It already <em>recognises</em> spoken
-      references in Yorùbá, Kiswahili and Hausa — what is missing is verse text in those
-      languages, which is a sourcing and licensing problem rather than a feature. Adding one
-      is a data import, not a code change.
-    </p>
+          {#if checked.size}
+            <button class="r-btn primary sm" on:click={queueChecked}>
+              Queue {checked.size} selected
+            </button>
+            <button class="r-btn ghost sm" on:click={() => (checked = new Set())}>Clear</button>
+          {:else}
+            <label class="br-ctl">
+              <span class="r-lbl">Sort</span>
+              <select class="r-select sm" bind:value={sort} aria-label="Sort">
+                <option value="verse">Verse order</option>
+                <option value="length">Shortest first</option>
+              </select>
+            </label>
+          {/if}
+
+          <div class="r-seg" role="group" aria-label="Layout">
+            <button class:on={layout === 'grid'} aria-label="Grid" on:click={() => (layout = 'grid')}>
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><rect x="3" y="3" width="7" height="7" rx="1.4" /><rect x="14" y="3" width="7" height="7" rx="1.4" /><rect x="3" y="14" width="7" height="7" rx="1.4" /><rect x="14" y="14" width="7" height="7" rx="1.4" /></svg>
+            </button>
+            <button class:on={layout === 'list'} aria-label="List" on:click={() => (layout = 'list')}>
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><rect x="3" y="5" width="18" height="2.6" rx="1.3" /><rect x="3" y="10.7" width="18" height="2.6" rx="1.3" /><rect x="3" y="16.4" width="18" height="2.6" rx="1.3" /></svg>
+            </button>
+          </div>
+        </header>
+
+        <div class="br-body r-scroll">
+          {#if loadingChapter}
+            <Loading what="the chapter" />
+          {:else if searching}
+            <Loading what="matching verses" />
+          {:else if !sorted.length}
+            <EmptyState
+              message={favouritesOnly
+                ? 'No favourites here yet — star a verse to keep it.'
+                : searchMode
+                  ? `No scripture matching “${query.trim()}”.`
+                  : 'That chapter is empty.'} />
+          {:else}
+            <VerseDeck
+              items={pageItems}
+              {template}
+              {liveRef}
+              rehearsing={$rehearsing}
+              selectedRef={selected ? refOf(selected) : ''}
+              {checked}
+              {savedRefs}
+              {queuedRefs}
+              busyRef={firing}
+              {layout}
+              onCheck={toggleCheck}
+              onFire={fire}
+              onQueue={toggleQueue}
+              onSave={toggleSave}
+              can={{ queue: true, favourite: true, edit: false, duplicate: false, add: false }} />
+          {/if}
+        </div>
+
+        <footer class="br-pager">
+          <div class="br-pages">
+            <button class="br-pg" disabled={page === 0} aria-label="Previous page" on:click={() => (page -= 1)}>‹</button>
+            {#each pageNums as n}
+              {#if n === -1}
+                <span class="br-gap">…</span>
+              {:else}
+                <button class="br-pg" class:on={page === n} on:click={() => (page = n)}>{n + 1}</button>
+              {/if}
+            {/each}
+            <button class="br-pg" disabled={page >= pages - 1} aria-label="Next page" on:click={() => (page += 1)}>›</button>
+          </div>
+          <span class="br-count">Showing {firstShown}–{lastShown} of {numbered.length} slides</span>
+          <label class="br-ctl">
+            <span class="r-lbl">Items per page</span>
+            <select class="r-select sm" bind:value={perPage} aria-label="Items per page">
+              {#each [12, 24, 48] as n}<option value={n}>{n}</option>{/each}
+            </select>
+          </label>
+        </footer>
+      </section>
+    </div>
   {/if}
 
   {#if msg}<p class="br-msg">{msg}</p>{/if}
@@ -279,199 +423,166 @@
 </div>
 
 <style>
-  .br {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-    min-height: 0;
-  }
-  .br-bar {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-  }
-  .spring {
-    flex: 1;
-  }
-  .br-tabs {
-    display: flex;
-    gap: 4px;
-  }
-  .br-tabs button {
-    padding: 7px 14px;
-    background: none;
-    border: 0;
-    border-bottom: 2px solid transparent;
-    color: var(--v-faint);
-    font: inherit;
-    font-size: 13px;
-    font-weight: 600;
-    cursor: pointer;
-  }
-  .br-tabs button.on {
-    color: var(--v-accent2);
-    border-bottom-color: var(--v-accent);
-  }
-  .br-one,
-  .br-where {
-    font-size: 11px;
-    color: var(--v-faint);
-  }
-
+  .br { display: flex; flex-direction: column; gap: 10px; min-height: 0; flex: 1; }
   .br-grid {
     display: grid;
-    grid-template-columns: 218px minmax(0, 1fr);
+    grid-template-columns: 196px minmax(0, 1fr);
     gap: 12px;
     min-height: 0;
-    height: clamp(360px, 58vh, 620px);
+    flex: 1;
   }
-  .br-books,
-  .br-read {
-    overflow-y: auto;
-    background: var(--v-surf);
-    border: 1px solid var(--v-line);
-    border-radius: var(--v-r-lg);
-    padding: 8px;
+  .br-panel {
+    display: flex; flex-direction: column; min-height: 0;
+    background: var(--v-bg); border: 1px solid var(--v-line); border-radius: var(--v-r-lg);
   }
+
+  /* ── Books ─────────────────────────────────────────────────────────────── */
+  .br-panelhead { margin: 0; padding: 13px 14px 9px; }
+  .br-booklist { flex: 1; min-height: 0; overflow-y: auto; padding: 0 8px 8px; }
   .br-book {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    width: 100%;
-    padding: 8px 10px;
-    border-radius: var(--v-r-md);
-    background: none;
-    border: 0;
-    color: var(--v-dim);
-    font: inherit;
-    font-size: 13px;
-    text-align: left;
-    cursor: pointer;
+    display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 10px;
+    border-radius: var(--v-r-md); background: none; border: 0; color: var(--v-dim);
+    font-family: var(--f-body); font-size: 13px; text-align: left; cursor: pointer;
   }
-  .br-book:hover {
-    background: var(--v-surf2);
-    color: var(--v-txt);
+  .br-book .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .br-book .ct { font-size: 11px; color: var(--v-faint); }
+  .br-book:hover:not(.on) { background: var(--v-surf2); color: var(--v-txt); }
+  .br-book.on { background: var(--v-accent-fill); color: var(--v-accent-ink); font-weight: 600; }
+  .br-book.on .ct { color: rgba(255, 255, 255, 0.75); }
+  .br-all {
+    display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+    width: calc(100% - 16px); margin: 0 8px 8px; padding: 8px 10px;
+    border-radius: var(--v-r-md); border: 1px solid var(--v-line);
+    background: var(--v-surf); color: var(--v-txt); font-family: var(--f-body);
+    font-size: 13px; text-align: left; cursor: pointer;
   }
-  .br-book.open {
-    color: var(--v-txt);
+  .br-all:hover { border-color: var(--v-line2); }
+  .br-all.on { border-color: var(--v-accent-line); background: var(--v-accent-soft); }
+  .br-all .ct { font-size: 10.5px; color: var(--v-faint); }
+  .br-ctl { display: flex; align-items: center; gap: 7px; flex: 0 0 auto; }
+  .br-ctl .r-lbl { margin: 0; }
+  .br-ctl .r-select { width: auto; height: 30px; padding: 0 30px 0 10px; font-size: 12px;
+    background-position: calc(100% - 14px) 13px, calc(100% - 9px) 13px; }
+  .br-pager { flex-wrap: wrap; }
+  .br-panelfoot { padding: 10px; border-top: 1px solid var(--v-line); }
+  .br-panelfoot .r-btn { width: 100%; }
+
+  /* ── The chapter ───────────────────────────────────────────────────────── */
+  .br-mainhead {
+    display: flex; align-items: center; gap: 12px; padding: 11px 14px;
+    border-bottom: 1px solid var(--v-line);
   }
-  .br-caret {
-    display: inline-block;
-    transition: transform 0.12s;
-    color: var(--v-faint);
+  .br-where { flex: 1; min-width: 0; }
+  .br-where b { display: block; font-size: 15px; font-weight: 600; color: var(--v-txt); }
+  .br-where span { font-size: var(--v-fs-cap); color: var(--v-faint); }
+  .br-step { display: flex; align-items: center; gap: 4px; }
+  .br-step span { font-size: 10.5px; color: var(--v-faint); min-width: 84px; text-align: center; }
+  .br-step button {
+    width: 24px; height: 24px; border-radius: var(--v-r-sm); border: 1px solid var(--v-line2);
+    background: var(--v-surf2); color: var(--v-dim); cursor: pointer; font-size: 13px; line-height: 1;
   }
-  .br-caret.down {
-    transform: rotate(90deg);
-  }
-  .br-chapters {
-    display: flex;
-    flex-direction: column;
-    padding: 2px 0 6px 22px;
-  }
-  .br-ch {
-    padding: 6px 10px;
-    border-radius: var(--v-r-sm);
-    background: none;
-    border: 0;
-    color: var(--v-faint);
-    font: inherit;
-    font-size: 12.5px;
-    text-align: left;
-    cursor: pointer;
-  }
-  .br-ch:hover {
-    color: var(--v-txt);
-  }
-  /* SELECTION is chrome, so it is the accent — not amber. The reference paints
-     the selected verse gold; gold means on air in this app, and a verse being
-     READ in the library is not on anybody's screen (DECISIONS §22). */
-  .br-ch.on {
-    background: var(--v-accent-soft);
-    color: var(--v-accent2);
-    font-weight: 600;
+  .br-step button:hover:not(:disabled) { color: var(--v-txt); }
+  .br-step button:disabled { opacity: 0.4; cursor: not-allowed; }
+  .br-body {
+    flex: 1; min-height: 0; overflow-y: auto; padding: 12px;
+    display: flex; flex-direction: column; gap: 8px;
   }
 
-  .br-v {
-    display: grid;
-    grid-template-columns: 46px minmax(0, 1fr) auto;
-    gap: 12px;
-    align-items: start;
-    padding: 10px 8px;
-    border-radius: var(--v-r-md);
+  .br-card {
+    position: relative; display: grid; grid-template-columns: 30px minmax(0, 1fr) auto;
+    gap: 12px; align-items: start; width: 100%; padding: 13px 15px; text-align: left;
+    background: var(--v-surf); border: 1px solid var(--v-line); border-radius: var(--v-r-md);
+    cursor: pointer; transition: border-color 0.14s, background 0.14s;
   }
-  .br-v:hover {
-    background: var(--v-surf2);
+  .br-card:hover { border-color: var(--v-line2); background: var(--v-surf2); }
+  .br-card.on { border-color: var(--v-accent-line); background: var(--v-accent-soft); }
+  /* ON AIR is an amber bar and an amber badge, never an amber field behind body
+     text: gold under 13px type is unreadable, and the badge carries the meaning. */
+  .br-card.air { border-color: rgba(255, 176, 0, 0.42); background: rgba(255, 176, 0, 0.05); }
+  .br-card.air::before {
+    content: ''; position: absolute; left: 0; top: 10px; bottom: 10px; width: 3px;
+    border-radius: 0 3px 3px 0; background: var(--v-amber);
   }
-  .br-v:hover .br-acts {
-    opacity: 1;
+  .br-n { font-size: 14px; color: var(--v-faint); padding-top: 1px; text-align: right; }
+  .br-card.air .br-n { color: var(--v-amber); }
+  .br-c { display: flex; flex-direction: column; gap: 9px; min-width: 0; }
+  .br-t { font-size: 13.5px; line-height: 1.55; color: var(--v-txt); }
+  .br-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .br-cardact { display: flex; align-items: center; gap: 4px; }
+  .br-ic {
+    width: 26px; height: 26px; display: grid; place-items: center; border: 0;
+    border-radius: var(--v-r-sm); background: transparent; color: var(--v-faint);
+    cursor: pointer; transition: color 0.14s, background 0.14s;
   }
-  .br-n {
-    font-size: 11px;
-    color: var(--v-faint);
-    padding-top: 3px;
-  }
-  .br-t {
-    margin: 0;
-    font-family: var(--f-serif);
-    font-size: 15px;
-    line-height: 1.6;
-    color: var(--v-txt);
-  }
-  .br-acts {
-    display: flex;
-    gap: 6px;
-    opacity: 0;
-    transition: opacity 0.12s;
-  }
-  .br-acts button {
-    padding: 5px 10px;
-    border-radius: var(--v-r-sm);
-    background: var(--v-surf2);
-    border: 1px solid var(--v-line2);
-    color: var(--v-dim);
-    font: inherit;
-    font-size: 11.5px;
-    cursor: pointer;
-    white-space: nowrap;
-  }
-  .br-acts button:hover {
-    color: var(--v-txt);
-  }
-  /* AMBER, deliberately: this button puts scripture in front of a congregation.
-     It is the one control on this screen that is genuinely an ON AIR ACTION. */
-  .br-acts button.go {
-    border-color: rgba(255, 176, 0, 0.4);
-    color: var(--v-amber);
-  }
-  .br-acts button.go:hover {
-    background: var(--v-amber-soft);
-  }
+  .br-ic:hover:not(:disabled) { color: var(--v-txt); background: var(--v-surf3); }
+  .br-ic.on { color: var(--v-accent2); }
+  .br-ic:disabled { opacity: 0.4; cursor: not-allowed; }
 
-  .br-note,
-  .br-msg,
-  .br-err {
-    margin: 0;
-    font-size: var(--v-fs-b2);
-    line-height: 1.6;
-  }
-  .br-note {
-    color: var(--v-faint);
-    max-width: 78ch;
-  }
-  .br-note b {
-    color: var(--v-dim);
-  }
-  .br-msg {
-    color: var(--v-emerald);
-  }
-  .br-err {
-    color: var(--v-red);
-  }
+  /* ── Read ──────────────────────────────────────────────────────────────── */
+  .br-read { font-size: 15px; line-height: 1.8; color: var(--v-txt); max-width: 68ch; padding: 4px 2px; }
+  .br-rv { cursor: pointer; border-radius: var(--v-r-sm); transition: background 0.14s; }
+  .br-rv sup { font-size: 9.5px; color: var(--v-faint); padding-right: 4px; vertical-align: super; }
+  .br-rv:hover { background: var(--v-surf2); }
+  .br-rv.on { background: var(--v-accent-soft); }
+  .br-rv.air { background: var(--v-amber-soft); color: var(--v-amber2); }
 
-  @media (max-width: 860px) {
-    .br-grid {
-      grid-template-columns: 1fr;
-      height: auto;
-    }
+  /* ── Table ─────────────────────────────────────────────────────────────── */
+  .br-table { width: 100%; border-collapse: collapse; font-size: var(--v-fs-b2); }
+  .br-table th {
+    text-align: left; padding: 0 10px 8px; font-family: var(--f-mono); font-size: 10px;
+    font-weight: 600; letter-spacing: 0.16em; text-transform: uppercase; color: var(--v-faint);
+    border-bottom: 1px solid var(--v-line);
   }
+  .br-table td { padding: 9px 10px; border-bottom: 1px solid var(--v-line); color: var(--v-dim); vertical-align: top; }
+  .br-table td.tx { color: var(--v-txt); line-height: 1.5; }
+  .br-table .num { text-align: right; }
+  .br-table tbody tr { cursor: pointer; }
+  .br-table tbody tr:hover td { background: var(--v-surf2); }
+  .br-table tbody tr.on td { background: var(--v-accent-soft); }
+  .br-table tbody tr.air td { background: var(--v-amber-soft); }
+
+  /* ── Pager ─────────────────────────────────────────────────────────────── */
+  .br-pager { display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-top: 1px solid var(--v-line); }
+  .br-pages { display: flex; align-items: center; gap: 4px; flex: 1; }
+  .br-pg {
+    min-width: 28px; height: 28px; padding: 0 7px; border-radius: var(--v-r-sm); border: 0;
+    background: transparent; color: var(--v-dim); font-family: var(--f-mono); font-size: 12px;
+    font-variant-numeric: tabular-nums; cursor: pointer;
+  }
+  .br-pg:hover:not(:disabled):not(.on) { background: var(--v-surf2); color: var(--v-txt); }
+  .br-pg.on { background: var(--v-accent-fill); color: var(--v-accent-ink); font-weight: 600; }
+  .br-pg:disabled { opacity: 0.35; cursor: not-allowed; }
+  .br-gap { color: var(--v-faint); padding: 0 2px; }
+  .br-count { font-size: var(--v-fs-cap); color: var(--v-faint); }
+
+  .br-modal {
+    position: fixed; inset: 0; z-index: 60; display: grid; place-items: center;
+    background: rgba(0, 0, 0, 0.6); padding: 24px;
+  }
+  .br-sheet {
+    width: min(560px, 100%); display: flex; flex-direction: column; gap: 12px;
+    padding: 18px; background: var(--v-surf); border: 1px solid var(--v-line2);
+    border-radius: var(--v-r-xl); box-shadow: var(--v-shadow-lg);
+  }
+  .br-sheet header { display: flex; align-items: center; gap: 8px; }
+  .br-sheet header .r-lbl { margin: 0; }
+  .br-spring { flex: 1; }
+  .br-field { display: flex; flex-direction: column; gap: 5px; }
+  .br-text {
+    height: auto; padding: 11px 13px; line-height: 1.6; resize: vertical;
+    font-family: var(--f-body); font-size: 13.5px;
+  }
+  .br-fine { margin: 0; font-size: var(--v-fs-cap); line-height: 1.6; color: var(--v-faint); }
+  .br-fine b { color: var(--v-dim); }
+
+  .br-msg, .br-err { margin: 0; font-size: var(--v-fs-b2); line-height: 1.6; }
+  .br-msg { color: var(--v-emerald); }
+  .br-err { color: var(--v-red); }
+
+  @media (max-width: 1360px) { .br-grid { grid-template-columns: 176px minmax(0, 1fr); } }
+  @media (max-width: 1140px) {
+    .br-grid { grid-template-columns: minmax(0, 1fr); }
+    .br-books { display: none; }
+  }
+  @media (max-width: 860px) { .br-grid { grid-template-columns: 1fr; } }
 </style>

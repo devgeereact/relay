@@ -37,6 +37,13 @@ pub enum RenderTarget {
 /// their regions; the pipeline never formats per channel.
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct OutputContent {
+    /// The content KIND — "scripture" | "song" | "media" | "announce" |
+    /// "countdown". Rides to every output so a screen can decide whether to show
+    /// it: an online wall shows all, a stage/confidence monitor might show only
+    /// scripture, songs and the timer. Per-screen visibility is filtered on this
+    /// in the output page against the template's `shows` set. None = unspecified
+    /// (treated as always shown, for older paths).
+    pub kind: Option<String>,
     pub reference: String,
     pub text: Option<String>,
     pub translation: Option<String>,
@@ -90,16 +97,25 @@ pub fn list_monitors(app: &tauri::AppHandle) -> Vec<MonitorInfo> {
     let Ok(monitors) = app.available_monitors() else {
         return Vec::new();
     };
+    // macOS knows the display's real name ("HP-532sf") and tao does not surface
+    // it; everywhere else the OS string is the best available and the humaniser
+    // handles it.
+    #[cfg(target_os = "macos")]
+    let real_names = macos_display_names(app);
+
     monitors
         .into_iter()
         .enumerate()
         .map(|(index, m)| {
-            let name = m
-                .name()
-                .cloned()
-                .unwrap_or_else(|| format!("Display {}", index + 1));
-            let size = m.size();
             let pos = m.position();
+            #[cfg(target_os = "macos")]
+            let name = real_names
+                .get(&(pos.x, pos.y))
+                .cloned()
+                .unwrap_or_else(|| humanize_monitor_name(m.name().map(|s| s.as_str()), index));
+            #[cfg(not(target_os = "macos"))]
+            let name = humanize_monitor_name(m.name().map(|s| s.as_str()), index);
+            let size = m.size();
             MonitorInfo {
                 primary: primary_name.as_ref() == m.name(),
                 index,
@@ -114,9 +130,191 @@ pub fn list_monitors(app: &tauri::AppHandle) -> Vec<MonitorInfo> {
         .collect()
 }
 
+/// Real display names from macOS, keyed by the monitor position Tauri reports.
+///
+/// **Why this exists.** tao names a macOS monitor
+/// `format!("Monitor #{}", CGDisplay::model_number())`, so Relay offered the
+/// operator "Monitor #1234555" for a screen macOS itself calls "HP-532sf". On the
+/// control that decides which physical screen the congregation sees, an
+/// unrecognisable name is a mis-send waiting to happen.
+///
+/// The name macOS shows in System Settings › Displays is `NSScreen.localizedName`.
+/// Matching it back to a Tauri monitor is done on POSITION, because Tauri drops
+/// the native display id — it keeps only name/size/position/scale. tao derives
+/// position as `CGDisplayBounds(id).origin * scale_factor`, so the same
+/// computation here produces a key that matches exactly.
+///
+/// Runs on the main thread: `NSScreen` is AppKit and is not safe to touch from a
+/// Tauri command's worker thread. Falls back to an empty map on any failure, and
+/// the caller then uses the generic humaniser — a missing real name degrades to
+/// the old behaviour rather than to no display list.
+#[cfg(target_os = "macos")]
+fn macos_display_names(app: &tauri::AppHandle) -> HashMap<(i32, i32), String> {
+    use std::sync::mpsc;
+
+    let (tx, rx) = mpsc::channel();
+    if app
+        .run_on_main_thread(move || {
+            let _ = tx.send(collect_macos_display_names());
+        })
+        .is_err()
+    {
+        return HashMap::new();
+    }
+    // Bounded: a hung main thread must not wedge the Channels screen.
+    rx.recv_timeout(std::time::Duration::from_millis(500))
+        .unwrap_or_default()
+}
+
+/// MAIN THREAD ONLY. See `macos_display_names`.
+#[cfg(target_os = "macos")]
+fn collect_macos_display_names() -> HashMap<(i32, i32), String> {
+    use core_graphics::display::CGDisplayBounds;
+    use objc2_app_kit::NSScreen;
+    use objc2_foundation::{ns_string, MainThreadMarker};
+
+    let mut out = HashMap::new();
+    let Some(mtm) = MainThreadMarker::new() else {
+        return out;
+    };
+    for screen in NSScreen::screens(mtm) {
+        // The CGDirectDisplayID lives in the screen's device description.
+        let desc = screen.deviceDescription();
+        let Some(num) = desc.objectForKey(ns_string!("NSScreenNumber")) else {
+            continue;
+        };
+        let Ok(num) = num.downcast::<objc2_foundation::NSNumber>() else {
+            continue;
+        };
+        let display_id = num.as_u32();
+
+        let name = screen.localizedName().to_string();
+        if name.trim().is_empty() {
+            continue;
+        }
+
+        // Mirror tao's own arithmetic so the key lines up with what Tauri reports.
+        let scale = screen.backingScaleFactor();
+        let bounds = unsafe { CGDisplayBounds(display_id) };
+        let key = (
+            (bounds.origin.x * scale).round() as i32,
+            (bounds.origin.y * scale).round() as i32,
+        );
+        out.insert(key, name);
+    }
+    out
+}
+
+/// A display's name as a human should read it.
+///
+/// The OS name is not fit to show an operator as-is, and it differs wildly by
+/// platform. Windows reports the GDI device path `\\.\DISPLAY1`. X11/Wayland
+/// report the connector — `HDMI-1`, `DP-2`, `eDP-1`. macOS is the good case and
+/// usually gives the real product name ("DELL U2720Q", "Built-in Retina
+/// Display"), which must be passed through untouched.
+///
+/// A volunteer choosing which screen the congregation sees needs to recognise a
+/// physical object in the room, so a real product name always wins; failing that,
+/// the connector is at least something written on the back of the machine
+/// ("HDMI 1"), which beats a device path. `Display N` is the last resort.
+///
+/// **What this cannot do**: turn `\\.\DISPLAY1` into the monitor's actual model.
+/// That name lives in the EDID blob and needs a Windows-specific device-registry
+/// lookup Tauri does not expose. So on Windows the operator gets "Display 1"
+/// alongside its resolution and primary flag, which is enough to tell two screens
+/// apart, and no claim is made about the make.
+fn humanize_monitor_name(raw: Option<&str>, index: usize) -> String {
+    let fallback = || format!("Display {}", index + 1);
+    let Some(name) = raw.map(str::trim).filter(|s| !s.is_empty()) else {
+        return fallback();
+    };
+
+    // macOS via tao: `Monitor #1234555` — a raw EDID model number, which is what
+    // sent the operator looking for a screen called "1234555". The real name is
+    // fetched separately (`macos_display_names`); this is the safety net for when
+    // that lookup finds nothing, and it must never let the model number through.
+    if let Some(rest) = name.strip_prefix("Monitor #") {
+        if rest.chars().all(|c| c.is_ascii_digit()) {
+            return fallback();
+        }
+    }
+
+    // Windows: `\\.\DISPLAY1` — a device path, never shown to a person.
+    if let Some(rest) = name.strip_prefix(r"\\.\") {
+        let digits: String = rest.chars().filter(|c| c.is_ascii_digit()).collect();
+        return match digits.parse::<usize>() {
+            Ok(n) if rest.to_ascii_uppercase().starts_with("DISPLAY") => format!("Display {n}"),
+            _ => fallback(),
+        };
+    }
+
+    // Linux/BSD connector names. `eDP` is the internal panel — the laptop's own
+    // screen — which is worth saying plainly, because it is the one display an
+    // operator must usually NOT send the congregation's output to.
+    let upper = name.to_ascii_uppercase();
+    for (prefix, label) in [
+        ("EDP", "Built-in display"),
+        ("LVDS", "Built-in display"),
+        ("HDMI", "HDMI"),
+        ("DP", "DisplayPort"),
+        ("DVI", "DVI"),
+        ("VGA", "VGA"),
+    ] {
+        if let Some(rest) = upper.strip_prefix(prefix) {
+            // Only treat it as a connector when what follows is punctuation and
+            // digits ("HDMI-1", "DP-2"). A product name that merely starts with
+            // these letters ("HDMI Splitter Pro") must survive intact.
+            let tail = rest.trim_start_matches(['-', '_', ' ', 'A', '/']);
+            if !rest.is_empty() && tail.chars().all(|c| c.is_ascii_digit()) && !tail.is_empty() {
+                if label == "Built-in display" {
+                    return label.to_string();
+                }
+                return format!("{label} {tail}");
+            }
+        }
+    }
+
+    // A real product name. Leave it exactly as the OS gave it.
+    name.to_string()
+}
+
 /// Prefix for programmatically-created output-window labels. Kept in sync with
 /// the capability glob (`output-*`) in capabilities/default.json.
 const OUTPUT_PREFIX: &str = "output-";
+
+/// Prefix for a window opened FOR A CONFIGURED CHANNEL, as opposed to an ad-hoc
+/// output window. Still inside `OUTPUT_PREFIX`, so `list_open` and the panic
+/// paths keep treating it as an output window.
+const CHANNEL_PREFIX: &str = "output-ch";
+
+/// The window label for a channel's native output. Deterministic, so a label can
+/// be mapped back to the channel that owns it.
+///
+/// It used to be minted from a monotonic counter (`output-1`, `output-2`, …),
+/// which had two consequences. Opening the same channel twice produced a SECOND
+/// fullscreen window for one channel, with nothing to notice the duplicate. And
+/// no label could be traced to a channel, so the app could not answer "does this
+/// channel have a window open?" — the question the Channels screen exists to
+/// answer. With the id in the label, `open_native_window`'s existing
+/// already-open check becomes the duplicate guard for free.
+pub fn channel_label(channel_id: i64) -> String {
+    format!("{CHANNEL_PREFIX}{channel_id}")
+}
+
+/// The channel id owning `label`, if it is a channel output window.
+pub fn channel_id_of(label: &str) -> Option<i64> {
+    label.strip_prefix(CHANNEL_PREFIX)?.parse().ok()
+}
+
+/// Channel ids that currently have a native output window open. This is a fact
+/// about the running app, not a stored flag — `output_channels.status` is written
+/// once at insert and never updated, so it has always read `offline`.
+pub fn open_channel_ids(app: &tauri::AppHandle) -> Vec<i64> {
+    app.webview_windows()
+        .into_keys()
+        .filter_map(|k| channel_id_of(&k))
+        .collect()
+}
 
 /// Build the output view URL for a channel: the shared output.html plus the
 /// template id (looked up from the DB by the window) and a display name.
@@ -153,6 +351,12 @@ pub fn open_native_window(
     )
     .title(format!("Relay — {name}"))
     .decorations(false)
+    // BLACK, not the webview default of WHITE. The output page is transparent so
+    // it keys out in an OBS/ATEM browser source; but on a real projector a
+    // transparent lower-third template used to show the webview's white
+    // background around the band. A black window backdrop makes the band sit on
+    // black on the wall while the :8032 browser source stays truly transparent.
+    .background_color(tauri::window::Color(0, 0, 0, 255))
     .inner_size(1280.0, 720.0);
 
     // Position within the target monitor (logical coords) before fullscreen.
@@ -247,6 +451,7 @@ fn rehearsing<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> bool {
 pub fn broadcast_content<R: tauri::Runtime>(app: &tauri::AppHandle<R>, content: OutputContent) {
     let json = serde_json::json!({
         "kind": "content",
+        "content_kind": content.kind,
         "reference": content.reference,
         "text": content.text,
         "translation": content.translation,
@@ -338,6 +543,18 @@ pub struct KioskHub {
     /// runtime, can't call `get_template`) gets the REAL saved template, not a
     /// built-in fallback. This is what makes OBS match the editor preview.
     templates: Arc<Mutex<HashMap<i64, String>>>,
+    /// How many clients are currently connected, per template id.
+    ///
+    /// This is what makes a networked channel's "online" light REAL. Each WS task
+    /// already knew which template its client asked for, but it kept that on its
+    /// own stack, so the app could not answer "is anything actually showing this
+    /// channel?" — and `output_channels.status` was a column nothing ever wrote,
+    /// so every channel read `offline` forever, including one filling a projector.
+    ///
+    /// A count, not a client list: Relay does not record who connected, from what
+    /// address, or when. A count is the most that can be honestly known here, and
+    /// it is enough to answer the only question the operator is asking.
+    clients: Arc<Mutex<HashMap<i64, usize>>>,
 }
 
 impl Default for KioskHub {
@@ -346,6 +563,61 @@ impl Default for KioskHub {
         KioskHub {
             tx,
             templates: Arc::new(Mutex::new(HashMap::new())),
+            clients: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+}
+
+/// Registry of connected kiosk clients, counted per template id.
+///
+/// Cloned into each WS task so it can register on `hello` and — critically —
+/// deregister when the socket drops. Handed out as its own type so the drop-guard
+/// below is the only way to hold a registration: a task that returned early, or
+/// panicked, would otherwise leave a phantom client counted forever and a channel
+/// showing `ONLINE` with nothing on the other end.
+#[derive(Clone, Default)]
+pub struct ClientRegistry(Arc<Mutex<HashMap<i64, usize>>>);
+
+impl ClientRegistry {
+    /// Register one client on `template_id`. The returned guard deregisters it
+    /// when dropped, however the task ends.
+    fn join(&self, template_id: i64) -> ClientGuard {
+        if let Ok(mut m) = self.0.lock() {
+            *m.entry(template_id).or_insert(0) += 1;
+        }
+        ClientGuard {
+            reg: self.clone(),
+            template_id,
+        }
+    }
+    /// Clients currently connected and showing `template_id`.
+    pub fn count(&self, template_id: i64) -> usize {
+        self.0
+            .lock()
+            .ok()
+            .and_then(|m| m.get(&template_id).copied())
+            .unwrap_or(0)
+    }
+}
+
+/// Deregisters its client when dropped — including on an early return or a panic
+/// inside the WS task, which is the whole point of it being a guard.
+struct ClientGuard {
+    reg: ClientRegistry,
+    template_id: i64,
+}
+
+impl Drop for ClientGuard {
+    fn drop(&mut self) {
+        if let Ok(mut m) = self.reg.0.lock() {
+            if let Some(n) = m.get_mut(&self.template_id) {
+                // Saturating: an underflow here would wrap to usize::MAX and
+                // report a channel as wildly online forever.
+                *n = n.saturating_sub(1);
+                if *n == 0 {
+                    m.remove(&self.template_id);
+                }
+            }
         }
     }
 }
@@ -361,6 +633,11 @@ impl KioskHub {
     pub fn templates_handle(&self) -> Arc<Mutex<HashMap<i64, String>>> {
         self.templates.clone()
     }
+    /// Shared handle to the connected-client registry — for the WS server task to
+    /// write, and for `channel_status` to read.
+    pub fn clients_handle(&self) -> ClientRegistry {
+        ClientRegistry(self.clients.clone())
+    }
     /// Cache a template's JSON (no push). Used to warm the cache at startup.
     pub fn cache_template(&self, id: i64, template_json: &str) {
         if let Ok(mut m) = self.templates.lock() {
@@ -374,17 +651,6 @@ impl KioskHub {
         self.publish(format!(
             r#"{{"kind":"template","id":{id},"template":{template_json}}}"#
         ));
-    }
-}
-
-/// The template id targeted by a `{"kind":"template","id":N,…}` message, if it is
-/// one. `None` for non-template messages (content/clear, forwarded to everyone).
-fn template_msg_id(msg: &str) -> Option<i64> {
-    let v: serde_json::Value = serde_json::from_str(msg).ok()?;
-    if v.get("kind").and_then(|k| k.as_str()) == Some("template") {
-        v.get("id").and_then(|i| i.as_i64())
-    } else {
-        None
     }
 }
 
@@ -445,6 +711,7 @@ pub async fn run_kiosk_server(
     on_error: ErrorSink,
     tx: broadcast::Sender<String>,
     templates: Arc<Mutex<HashMap<i64, String>>>,
+    clients: ClientRegistry,
     port: u16,
 ) {
     let listener = match tokio::net::TcpListener::bind(("0.0.0.0", port)).await {
@@ -461,23 +728,30 @@ pub async fn run_kiosk_server(
         };
         let mut rx = tx.subscribe();
         let templates = templates.clone();
+        let clients = clients.clone();
         tokio::spawn(async move {
             let ws = match tokio_tungstenite::accept_async(stream).await {
                 Ok(w) => w,
                 Err(_) => return,
             };
             let (mut write, mut read) = ws.split();
-            let mut my_template: Option<i64> = None;
+            // Dropped when this task ends by ANY route — break, error, or panic —
+            // which is what keeps the online count from drifting upward over a
+            // service as kiosk screens reconnect.
+            let mut _registration: Option<ClientGuard> = None;
             loop {
                 tokio::select! {
                     msg = rx.recv() => match msg {
                         Ok(m) => {
-                            // Template updates only go to the client showing them.
-                            if let Some(id) = template_msg_id(&m) {
-                                if Some(id) != my_template {
-                                    continue;
-                                }
-                            }
+                            // EVERY template edit goes to EVERY client. A client
+                            // applies it only where it's actually showing that
+                            // template — its channel template OR the content-type/
+                            // cue OVERRIDE on the verse currently on screen (see
+                            // Output.svelte::applyTemplateUpdate). Filtering by the
+                            // client's channel template here would drop exactly the
+                            // override case, so an edit to the scripture template
+                            // never reached a live verse using it. The client-side
+                            // guard makes the extra fan-out a no-op where irrelevant.
                             if write
                                 .send(tokio_tungstenite::tungstenite::Message::Text(m))
                                 .await
@@ -495,7 +769,12 @@ pub async fn run_kiosk_server(
                             if let Ok(v) = serde_json::from_str::<serde_json::Value>(&txt) {
                                 if v.get("kind").and_then(|k| k.as_str()) == Some("hello") {
                                     if let Some(id) = v.get("template_id").and_then(|i| i.as_i64()) {
-                                        my_template = Some(id);
+                                        // Replace, don't add: a client that says
+                                        // hello twice (a kiosk page reloading onto
+                                        // a different template) must not be
+                                        // counted on both. Assigning drops the old
+                                        // guard first.
+                                        _registration = Some(clients.join(id));
                                         let cached = templates.lock().ok().and_then(|m| m.get(&id).cloned());
                                         if let Some(tpl) = cached {
                                             let out = format!(
@@ -539,9 +818,20 @@ fn mime_for(path: &str) -> &'static str {
         "gif" => "image/gif",
         "webp" => "image/webp",
         "avif" => "image/avif",
+        "bmp" => "image/bmp",
         "mp4" | "m4v" => "video/mp4",
         "webm" => "video/webm",
         "mov" => "video/quicktime",
+        // The Library's importer accepts these, so this table has to know them.
+        // Served as `application/octet-stream`, a browser will not PLAY a video
+        // or DRAW an image — it offers to download it. The importer's accepted
+        // extensions and this list are one thing in two places; when one grows,
+        // the other has to. `mime_covers_every_imported_kind` pins that.
+        "mkv" => "video/x-matroska",
+        "ogv" => "video/ogg",
+        "pdf" => "application/pdf",
+        "ppt" => "application/vnd.ms-powerpoint",
+        "pptx" => "application/vnd.openxmlformats-officedocument.presentationml.presentation",
         "woff2" => "font/woff2",
         "woff" => "font/woff",
         "ico" => "image/x-icon",
@@ -570,6 +860,35 @@ where
     if let Some(rest) = clean.strip_prefix("media/") {
         serve_media_file(rest, stream).await;
         return;
+    }
+    // DEV ONLY: serve the LIVE on-disk `dist/` first. `DIST` is embedded at Rust
+    // COMPILE time, so under `tauri dev` a frontend change (`npm run build`, or a
+    // vite rebuild) updates `dist/` on disk but the running binary keeps serving
+    // the stale bundle it was compiled with — which meant every OBS/LAN output on
+    // :8032 silently ran old code (a fixed bug still "not fixed" on the very
+    // screens a church uses). Reading disk here makes those outputs current
+    // without a full recompile. Release builds (debug_assertions off) always use
+    // the embedded bundle — there is no `dist/` next to a shipped binary.
+    #[cfg(debug_assertions)]
+    // Reject path traversal before touching disk. `clean` comes straight from the
+    // request line, and this server binds 0.0.0.0 on a church LAN — without this,
+    // `GET /../../../../etc/passwd` escapes dist/ and streams any readable file to
+    // anyone on the network. The embedded DIST fallback below is traversal-safe,
+    // so on a `..` request we simply skip the disk read and fall through to it.
+    if !clean.contains("..") {
+        let disk = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../dist")
+            .join(clean);
+        if let Ok(body) = std::fs::read(&disk) {
+            let header = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: {}\r\nContent-Length: {}\r\nAccess-Control-Allow-Origin: *\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n",
+                mime_for(clean),
+                body.len()
+            );
+            let _ = stream.write_all(header.as_bytes()).await;
+            let _ = stream.write_all(&body).await;
+            return;
+        }
     }
     match DIST.get_file(clean) {
         Some(f) => {
@@ -646,7 +965,19 @@ where
 /// can load them in a packaged app (not just `tauri dev`). GET-only, one response
 /// per connection. Binds `0.0.0.0` for the same recorded reason as the kiosk WS
 /// server above — see that doc comment and docs/DECISIONS.md.
-pub async fn run_output_http_server(on_error: ErrorSink, port: u16) {
+/// The preacher's-remote control plane. Given a request path+query beginning with
+/// `/api/` (e.g. `/api/search?q=john+3`, `/api/next`, `/api/fire?ref=John%203:16`),
+/// it performs the action against the running app and returns a JSON body. `None`
+/// for a non-api path (falls through to the static file server).
+///
+/// SECURITY: this accepts CONTROL over the LAN with no authentication — a
+/// deliberate, recorded expansion of the previously broadcast-only exposure
+/// (docs/DECISIONS.md §47). It exists so the preacher's phone can search and push
+/// scripture. The threat model is unchanged in kind: anyone already on the church
+/// wifi. Do NOT expose this port to an untrusted network.
+pub type ApiSink = std::sync::Arc<dyn Fn(&str) -> Option<String> + Send + Sync>;
+
+pub async fn run_output_http_server(on_error: ErrorSink, api: ApiSink, port: u16) {
     let listener = match tokio::net::TcpListener::bind(("0.0.0.0", port)).await {
         Ok(l) => l,
         Err(e) => {
@@ -659,6 +990,7 @@ pub async fn run_output_http_server(on_error: ErrorSink, port: u16) {
         let Ok((mut stream, _addr)) = listener.accept().await else {
             continue;
         };
+        let api = api.clone();
         tokio::spawn(async move {
             use tokio::io::AsyncReadExt;
             let mut buf = [0u8; 8192];
@@ -675,9 +1007,60 @@ pub async fn run_output_http_server(on_error: ErrorSink, port: u16) {
                 .next()
                 .and_then(|l| l.split_whitespace().nth(1))
                 .unwrap_or("/");
-            serve_embedded(path, &mut stream).await;
+            if let Some(rest) = path.strip_prefix("/api/") {
+                let body = api(rest).unwrap_or_else(|| "{\"ok\":false}".to_string());
+                serve_json(&body, &mut stream).await;
+            } else {
+                serve_embedded(path, &mut stream).await;
+            }
         });
     }
+}
+
+/// Write a JSON body (no-store, permissive CORS — the remote is same-origin, but
+/// the header keeps it simple for a kiosk fetch).
+async fn serve_json<S>(body: &str, stream: &mut S)
+where
+    S: tokio::io::AsyncWrite + Unpin,
+{
+    use tokio::io::AsyncWriteExt;
+    let resp = format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\nCache-Control: no-store\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        body.len(),
+        body
+    );
+    let _ = stream.write_all(resp.as_bytes()).await;
+    let _ = stream.flush().await;
+}
+
+/// Percent-decode a query value (`John%203%3A16` → `John 3:16`, `+` → space).
+pub fn urldecode(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'%' if i + 2 < bytes.len() => {
+                let h = |c: u8| (c as char).to_digit(16);
+                if let (Some(a), Some(b)) = (h(bytes[i + 1]), h(bytes[i + 2])) {
+                    out.push((a * 16 + b) as u8);
+                    i += 3;
+                    continue;
+                }
+                out.push(bytes[i]);
+                i += 1;
+            }
+            b'+' => {
+                out.push(b' ');
+                i += 1;
+            }
+            c => {
+                out.push(c);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 /// Minimal query-safe encoder for the two values we put in the output URL.
@@ -715,7 +1098,8 @@ mod tests {
     #[tokio::test]
     async fn output_http_serves_embedded_pages() {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
-        tokio::spawn(run_output_http_server(log_only(), 8201));
+        let no_api: ApiSink = std::sync::Arc::new(|_: &str| None);
+        tokio::spawn(run_output_http_server(log_only(), no_api, 8201));
         tokio::time::sleep(std::time::Duration::from_millis(150)).await;
 
         let mut s = tokio::net::TcpStream::connect("127.0.0.1:8201")
@@ -757,6 +1141,7 @@ mod tests {
             log_only(),
             hub.sender(),
             hub.templates_handle(),
+            hub.clients_handle(),
             8200,
         ));
         tokio::time::sleep(std::time::Duration::from_millis(150)).await;
@@ -795,6 +1180,7 @@ mod tests {
             log_only(),
             tx,
             hub.templates_handle(),
+            hub.clients_handle(),
             8199,
         ));
         // Give the listener a moment to bind.
@@ -814,6 +1200,190 @@ mod tests {
             .expect("stream ended")
             .expect("ws error");
         assert!(msg.into_text().unwrap().contains("John 3:16"));
+    }
+
+    // ── Channel liveness ──────────────────────────────────────────────────
+    //
+    // These back the Channels screen's online light. Before them the only
+    // "status" was a DB column written once at insert and never updated, so
+    // every channel read `offline` forever — including one on a projector.
+
+    // ── Display names an operator can recognise ───────────────────────────
+    //
+    // The operator picking "which screen does the congregation see" is choosing
+    // a physical object in the room. A device path or a bare connector id does
+    // not identify one.
+
+    /// THE BUG THE OPERATOR HIT.
+    ///
+    /// tao names a macOS monitor `Monitor #{CGDisplay::model_number()}`, so the
+    /// display picker offered "Monitor #1234555" for a screen macOS itself calls
+    /// "HP-532sf". The real name now comes from `NSScreen.localizedName`; this
+    /// pins the fallback, so even when that lookup finds nothing the operator is
+    /// never shown an EDID model number and asked to recognise it.
+    #[test]
+    fn a_macos_edid_model_number_never_reaches_the_operator() {
+        for raw in ["Monitor #1234555", "Monitor #0", "Monitor #42"] {
+            let got = humanize_monitor_name(Some(raw), 1);
+            assert_eq!(got, "Display 2", "{raw} must not be shown as-is");
+            assert!(!got.contains('#'));
+        }
+    }
+
+    #[test]
+    fn a_display_actually_called_monitor_something_survives() {
+        // The rule keys on "Monitor #" followed by digits ONLY, so a real product
+        // name is not swallowed by it.
+        assert_eq!(
+            humanize_monitor_name(Some("Monitor #2 Pro"), 0),
+            "Monitor #2 Pro"
+        );
+        assert_eq!(
+            humanize_monitor_name(Some("Monitor Wall A"), 0),
+            "Monitor Wall A"
+        );
+    }
+
+    #[test]
+    fn a_real_product_name_is_never_touched() {
+        // macOS gives these, and they are exactly what we want.
+        assert_eq!(humanize_monitor_name(Some("DELL U2720Q"), 0), "DELL U2720Q");
+        assert_eq!(
+            humanize_monitor_name(Some("Built-in Retina Display"), 0),
+            "Built-in Retina Display"
+        );
+        assert_eq!(humanize_monitor_name(Some("BenQ TK850"), 1), "BenQ TK850");
+    }
+
+    #[test]
+    fn a_windows_device_path_is_not_shown_to_a_person() {
+        assert_eq!(humanize_monitor_name(Some(r"\\.\DISPLAY1"), 0), "Display 1");
+        assert_eq!(humanize_monitor_name(Some(r"\\.\DISPLAY2"), 1), "Display 2");
+        // Unrecognised device path → positional fallback, never the raw path.
+        let odd = humanize_monitor_name(Some(r"\\.\WEIRD"), 2);
+        assert_eq!(odd, "Display 3");
+        assert!(!odd.contains('\\'));
+    }
+
+    #[test]
+    fn a_linux_connector_becomes_the_socket_it_is_plugged_into() {
+        assert_eq!(humanize_monitor_name(Some("HDMI-1"), 0), "HDMI 1");
+        assert_eq!(humanize_monitor_name(Some("DP-2"), 1), "DisplayPort 2");
+        assert_eq!(humanize_monitor_name(Some("HDMI-A-1"), 0), "HDMI 1");
+        assert_eq!(humanize_monitor_name(Some("VGA-1"), 0), "VGA 1");
+    }
+
+    #[test]
+    fn the_laptops_own_panel_says_so() {
+        // The one display the congregation's output usually must NOT go to.
+        assert_eq!(humanize_monitor_name(Some("eDP-1"), 0), "Built-in display");
+        assert_eq!(humanize_monitor_name(Some("LVDS-1"), 0), "Built-in display");
+    }
+
+    #[test]
+    fn a_product_name_starting_with_connector_letters_survives() {
+        // The connector rule must not eat a real name.
+        assert_eq!(
+            humanize_monitor_name(Some("HDMI Splitter Pro"), 0),
+            "HDMI Splitter Pro"
+        );
+        assert_eq!(
+            humanize_monitor_name(Some("DPI Vision 4K"), 0),
+            "DPI Vision 4K"
+        );
+    }
+
+    #[test]
+    fn a_missing_or_blank_name_falls_back_to_its_position() {
+        assert_eq!(humanize_monitor_name(None, 0), "Display 1");
+        assert_eq!(humanize_monitor_name(Some(""), 1), "Display 2");
+        assert_eq!(humanize_monitor_name(Some("   "), 2), "Display 3");
+    }
+
+    #[test]
+    fn a_channel_label_round_trips_to_its_id() {
+        assert_eq!(channel_label(7), "output-ch7");
+        assert_eq!(channel_id_of("output-ch7"), Some(7));
+        // Two channels never collide, and the label stays an output window so the
+        // panic paths keep treating it as one.
+        assert_ne!(channel_label(7), channel_label(8));
+        assert!(channel_label(7).starts_with(OUTPUT_PREFIX));
+    }
+
+    #[test]
+    fn an_ad_hoc_output_window_is_not_mistaken_for_a_channel() {
+        // `open_output_window` still mints counter labels. Reading one of those as
+        // a channel id would light up an unrelated channel.
+        assert_eq!(channel_id_of("output-1"), None);
+        assert_eq!(channel_id_of("main"), None);
+        assert_eq!(channel_id_of("output-chX"), None);
+    }
+
+    #[tokio::test]
+    async fn a_kiosk_client_is_counted_while_connected_and_not_after() {
+        // The leak this guards: without the drop-guard, a kiosk screen that
+        // reconnects across a service leaves a phantom client counted on every
+        // previous connection, and the channel reads ONLINE with a dead screen.
+        let hub = KioskHub::default();
+        let clients = hub.clients_handle();
+        tokio::spawn(run_kiosk_server(
+            log_only(),
+            hub.sender(),
+            hub.templates_handle(),
+            hub.clients_handle(),
+            8202,
+        ));
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+
+        assert_eq!(clients.count(4), 0, "nothing connected yet");
+
+        let (ws, _) = tokio_tungstenite::connect_async("ws://127.0.0.1:8202")
+            .await
+            .expect("connect");
+        let (mut write, _read) = ws.split();
+        write
+            .send(tokio_tungstenite::tungstenite::Message::Text(
+                r#"{"kind":"hello","template_id":4}"#.to_string(),
+            ))
+            .await
+            .expect("send hello");
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+        assert_eq!(clients.count(4), 1, "hello should register the client");
+        assert_eq!(clients.count(9), 0, "only on the template it asked for");
+
+        // Drop the socket — the server task must notice and deregister.
+        drop(write);
+        drop(_read);
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        assert_eq!(clients.count(4), 0, "disconnect must not leak a client");
+    }
+
+    #[test]
+    fn re_saying_hello_moves_a_client_rather_than_double_counting_it() {
+        // A kiosk page reloading onto a different template says hello twice on one
+        // socket. Counting it on both would show two channels online for one screen.
+        let reg = ClientRegistry::default();
+        let mut held = Some(reg.join(1));
+        assert!(held.is_some());
+        assert_eq!(reg.count(1), 1);
+
+        held = Some(reg.join(2)); // assignment drops the previous guard
+        assert_eq!(reg.count(2), 1);
+        assert_eq!(reg.count(1), 0, "the old template must be released");
+
+        drop(held.take());
+        assert_eq!(reg.count(2), 0);
+    }
+
+    #[test]
+    fn the_client_count_never_underflows() {
+        // usize wrapping here would report a channel as online with ~1.8e19
+        // clients, forever.
+        let reg = ClientRegistry::default();
+        drop(reg.join(3));
+        drop(reg.join(3));
+        assert_eq!(reg.count(3), 0);
     }
 }
 
@@ -848,5 +1418,28 @@ mod rehearsal_tests {
         // And the console must never collide with an output window's label, or a
         // rehearsal would emit straight onto a projector.
         assert!(!CONSOLE.starts_with(OUTPUT_PREFIX));
+    }
+
+    /// EVERY EXTENSION THE LIBRARY IMPORTS MUST HAVE A REAL MIME TYPE.
+    ///
+    /// `application/octet-stream` is not a rendering failure the operator can
+    /// see coming: a browser source shows nothing, or offers a download, and the
+    /// screen stays black. The importer's accepted list and `mime_for` are one
+    /// decision kept in two files, so this pins them together.
+    #[test]
+    fn mime_covers_every_imported_kind() {
+        // Mirrors IMG / VID / DOC in src/lib/views/Library.svelte.
+        let imported = [
+            "png", "jpg", "jpeg", "gif", "webp", "bmp", "avif", "svg", // image
+            "mp4", "mov", "webm", "mkv", "m4v", // video
+            "pdf", "pptx", "ppt", // document
+        ];
+        for ext in imported {
+            let mime = mime_for(&format!("x.{ext}"));
+            assert_ne!(
+                mime, "application/octet-stream",
+                "the Library imports .{ext} but mime_for does not know it"
+            );
+        }
     }
 }

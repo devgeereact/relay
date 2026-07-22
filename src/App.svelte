@@ -2,7 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { trapFocus } from './lib/focus.js';
   import { t } from './lib/i18n.js';
-  import { capture, capturing, detectionOn, live, screenBlack, rehearsing, initAudio, setDetection, clearScreens, blackScreen, panicError, dismissPanicError } from './lib/stores/capture.js';
+  import { capture, capturing, detectionOn, live, screenBlack, rehearsing, initAudio, autoOpenOutputs, setDetection, clearScreens, blackScreen, panicError, dismissPanicError } from './lib/stores/capture.js';
   import { installShortcuts, cheatsheet, liveShortcuts } from './lib/shortcuts.js';
   import { installLeaveGuard } from './lib/crash.js';
   import { session, setSession } from './lib/session.js';
@@ -24,7 +24,6 @@
   import Channels from './lib/views/Channels.svelte';
   import Templates from './lib/views/Templates.svelte';
   import Library from './lib/views/Library.svelte';
-  import History from './lib/views/library/History.svelte';
   import ServicePlanner from './lib/views/ServicePlanner.svelte';
   import Settings from './lib/views/Settings.svelte';
   import Help from './lib/views/Help.svelte';
@@ -37,14 +36,19 @@
     // here. Someone who was on Live yesterday is on Live today.
     { key: 'dashboard', label: 'tab.dashboard', title: 'Dashboard',        view: Dashboard },
     { key: 'live',      label: 'tab.live',      title: 'Live Service',     view: Live },
-    { key: 'channels',  label: 'tab.channels',  title: 'Output Channels',  view: Channels },
-    { key: 'templates', label: 'tab.templates', title: 'Templates — Output Designer',  view: Templates },
+    // Outputs — the ONE surface for every render target: the congregation wall,
+    // stage/confidence/preacher monitors, streaming and lobby screens. Each is a
+    // real backend channel (native window or LAN/OBS URL over :8032) with its own
+    // template. This absorbed the old localStorage-only "Stage Displays" gallery,
+    // which looked lovely but never actually reached a screen — one real surface
+    // instead of two, one of them a phantom.
+    { key: 'channels',  label: 'tab.channels',  title: 'Outputs',  view: Channels },
+    { key: 'templates', label: 'tab.templates', title: 'Templates',  view: Templates },
     { key: 'library',   label: 'tab.library',   title: 'Content Library',  view: Library },
     { key: 'planner',   label: 'tab.planner',   title: 'Service Planner',  view: ServicePlanner },
-    // History left the Library. The Library is CONTENT YOU PUT ON A SCREEN;
-    // a record of past services is a different noun, and mixing them made the
-    // Library's own purpose harder to see.
-    { key: 'history',   label: 'tab.history',   title: 'Service History',  view: History },
+    // Service History now lives INSIDE Settings (its own section) — a record of
+    // past services is a config/records surface, not a top-level run tab, and
+    // folding it in keeps the sidebar to the seven surfaces an operator runs.
     { key: 'settings',  label: 'tab.settings',  title: 'System Settings',  view: Settings },
     // In-app help. There was NONE — the operator guide was a markdown file on
     // GitHub, which is exactly no use to a volunteer in a dark booth on a Sunday
@@ -56,7 +60,11 @@
   // written back. One direction, one source of truth, so anything can navigate:
   // the Planner's "Run this plan" hands the operator to LIVE by setting it, and a
   // reload (or a crash + Recover) puts them back on the tab they were on.
-  $: active = tabs.some((x) => x.key === $session.activeTab) ? $session.activeTab : 'live';
+  // `stagedisplays` was merged into Outputs (the `channels` tab); an operator
+  // whose persisted session still points at it is sent to Outputs, not dumped
+  // back on Live.
+  $: requestedTab = $session.activeTab === 'stagedisplays' ? 'channels' : $session.activeTab;
+  $: active = tabs.some((x) => x.key === requestedTab) ? requestedTab : 'live';
   const go = (key) => setSession({ activeTab: key });
   $: currentTab = tabs.find((x) => x.key === active) ?? tabs[0];
   $: current = currentTab.view;
@@ -73,6 +81,10 @@
   // is not negotiable (shortcuts.js). So the way out is a visible button that is
   // always on screen — never a key a muscle-memory reflex would reach for.
   $: liveFullscreen = active === 'live' && !!$session.liveFullscreen;
+  // A fired picture carries no reference (`fire_media` sends an empty one), so
+  // every image read "content" here. Name what it actually is.
+  const liveLabel = (l) =>
+    l?.reference || (l?.media_kind === 'video' ? 'video' : l?.media_url ? 'picture' : 'content');
 
   // Inline icons keyed by tab (SVG so they stay crisp on retina, themeable).
   const icons = {
@@ -83,6 +95,7 @@
     library: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M4 5a2 2 0 0 1 2-2h13v16H6a2 2 0 0 0-2 2V5Z"/><path d="M9 3v14"/></svg>',
     history: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v4h4"/><path d="M12 7v5l3 2"/></svg>',
     planner: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2v4M16 2v4"/><path d="M7 13h4M7 17h7"/></svg>',
+    stagedisplays: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="4" width="19" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg>',
     help: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M9.6 9a2.5 2.5 0 0 1 4.8.9c0 1.7-2.4 2.1-2.4 3.6"/><circle cx="12" cy="17" r=".6" fill="currentColor"/></svg>',
     settings: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="3.2"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-2.7 1.1V21a2 2 0 1 1-4 0v-.1A1.6 1.6 0 0 0 7 19.4a1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0-1.1-2.7H1a2 2 0 1 1 0-4h.1A1.6 1.6 0 0 0 2.6 7a1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1A1.6 1.6 0 0 0 7 2.6h.1A1.6 1.6 0 0 0 8 1.1V1a2 2 0 1 1 4 0v.1A1.6 1.6 0 0 0 15 2.6a1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0 1.1 2.7h.1a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1Z"/></svg>',
   };
@@ -133,6 +146,10 @@
     teardownKeys = installShortcuts({ clearScreens, blackScreen });
     teardownLeave = installLeaveGuard(() => isCapturing);
     await initAudio();
+    // Restore the physical output screens (HDMI/projector) the operator set up, so
+    // they come back on their own after a launch/update/rebuild. Safe: the backend
+    // only opens onto connected, non-primary displays.
+    autoOpenOutputs();
     try {
       const { invoke } = await import('@tauri-apps/api/core');
       await invoke('greet', { name: 'operator' });
@@ -192,7 +209,7 @@
   {:else if $screenBlack}
     Screens blacked out.
   {:else if $live}
-    Now on screen: {$live.reference || 'content'}{$live.translation
+    Now on screen: {liveLabel($live)}{$live.translation
       ? `, ${$live.translation}`
       : ''}
   {:else}
@@ -264,7 +281,11 @@
     <div class="side-foot">
       <div class="row">
         <span class="k">AI Signal</span>
-        <span class="dot" style="background:{engineOnline ? 'var(--v-amber)' : 'var(--v-faint)'};"></span>
+        <!-- Emerald, not amber. `engineOnline` is true whenever the backend is
+             attached (essentially always), so amber here would burn permanently —
+             and amber is the tally light: it may only ever mean the congregation
+             is looking at something on air (CLAUDE.md rule 18). -->
+        <span class="dot" style="background:{engineOnline ? 'var(--v-emerald)' : 'var(--v-faint)'};"></span>
       </div>
       <div class="m">Engine {engineOnline ? 'online' : 'offline'}</div>
       <div class="m">Detection {$detectionOn ? 'active' : 'off'}</div>
@@ -305,7 +326,7 @@
              colour — which put the loudest indicator in the product on the wrong
              side of the one colour law the whole app is built around. -->
         <span class="r-badge amber pulse"><span class="bd"></span>On Air</span>
-        <span class="topbar-live r-mono">{$live.reference || 'content'}</span>
+        <span class="topbar-live r-mono">{liveLabel($live)}</span>
       {:else}
         <!-- Nothing is on the wall. That is a NEUTRAL state, so it gets the grey
              chip — not amber, which now means, and only means, on air. -->
