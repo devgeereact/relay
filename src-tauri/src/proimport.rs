@@ -60,7 +60,7 @@ pub fn rtf_to_text(rtf: &str) -> String {
                             let hex: String = chars[i + 2..i + 4].iter().collect();
                             if let Ok(b) = u8::from_str_radix(&hex, 16) {
                                 if !ignore {
-                                    out.push(b as char);
+                                    out.push(cp1252(b));
                                 }
                             }
                             i += 4;
@@ -149,14 +149,45 @@ fn control_word(chars: &[char], i: usize, ignore: &mut bool, out: &mut String) -
                     }
                 }
             }
-            // \uc default is 1: skip the following fallback char.
-            if next < n && !matches!(chars[next], '\\' | '{' | '}') {
+            // \uc default is 1: skip the ONE fallback character that follows.
+            //
+            // But only if the parameter was not already delimited by a space. A
+            // space ends the number AND is consumed above; treating the next
+            // character as a fallback then swallows a real letter — which is how
+            // an imported lyric read "ntil the day" instead of "until the day",
+            // on a screen, in front of a congregation.
+            let space_delimited = k < n && chars[k] == ' ';
+            if !space_delimited && next < n && !matches!(chars[next], '\\' | '{' | '}') {
                 next += 1;
             }
         }
         _ => {}
     }
     next
+}
+
+/// Map an RTF `\'xx` byte to a character using **Windows-1252**, which is what
+/// ProPresenter actually writes — not Latin-1.
+///
+/// The two encodings agree everywhere except 0x80–0x9F, where Latin-1 has
+/// invisible C1 control codes and Windows-1252 has the punctuation people
+/// actually type: curly quotes, apostrophes, en/em dashes, ellipsis.
+///
+/// Treating those bytes as raw code points turned every apostrophe in an
+/// imported song into U+0092 — an invisible control character that `tidy()` then
+/// collapsed to whitespace. "they're" reached the projector as "they   re".
+fn cp1252(b: u8) -> char {
+    const HIGH: [char; 32] = [
+        '\u{20AC}', '\u{FFFD}', '\u{201A}', '\u{0192}', '\u{201E}', '\u{2026}', '\u{2020}',
+        '\u{2021}', '\u{02C6}', '\u{2030}', '\u{0160}', '\u{2039}', '\u{0152}', '\u{FFFD}',
+        '\u{017D}', '\u{FFFD}', '\u{FFFD}', '\u{2018}', '\u{2019}', '\u{201C}', '\u{201D}',
+        '\u{2022}', '\u{2013}', '\u{2014}', '\u{02DC}', '\u{2122}', '\u{0161}', '\u{203A}',
+        '\u{0153}', '\u{FFFD}', '\u{017E}', '\u{0178}',
+    ];
+    match b {
+        0x80..=0x9F => HIGH[(b - 0x80) as usize],
+        _ => b as char,
+    }
 }
 
 /// Normalize extracted text: trim each line, drop blank lines, collapse runs of
@@ -313,5 +344,59 @@ mod tests {
     #[test]
     fn bare_bytes_with_no_rtf_yield_nothing() {
         assert!(import_bytes("x.pro", b"no lyrics here").unwrap().is_empty());
+    }
+}
+
+#[cfg(test)]
+mod rtf_corruption {
+    use super::*;
+
+    // Found by LOOKING at imported lyrics on screen: "until" had become "ntil"
+    // and "they're" had become "they   re". Both are the decoder eating real
+    // characters, and both reached a congregation's screen.
+
+    #[test]
+    fn a_unicode_escape_with_a_space_delimiter_does_not_eat_the_next_letter() {
+        // The parameter is terminated by the space. Consuming the space AND a
+        // "fallback" character swallows the first letter of the next word —
+        // which is how "until" became "ntil" on a real screen.
+        let bs = '\\';
+        assert_eq!(
+            rtf_to_text(&format!("me {bs}u8217 until the day")),
+            "me \u{2019}until the day"
+        );
+    }
+
+    #[test]
+    fn a_unicode_escape_with_a_literal_fallback_still_skips_it() {
+        // Here `?` IS the fallback and must not survive.
+        let bs = '\\';
+        assert_eq!(
+            rtf_to_text(&format!("they{bs}u8217?re here")),
+            "they\u{2019}re here"
+        );
+    }
+
+    #[test]
+    fn windows_1252_punctuation_survives() {
+        // `\'92` is a curly apostrophe in Windows-1252, the encoding
+        // ProPresenter actually emits. Treating the byte as a raw code point
+        // yields U+0092 — an invisible control character — which is why
+        // "they're" arrived as "they   re".
+        assert_eq!(rtf_to_text(r"they\'92re"), "they\u{2019}re");
+        assert_eq!(rtf_to_text(r"\'93quoted\'94"), "\u{201C}quoted\u{201D}");
+        assert_eq!(rtf_to_text(r"dash \'96 here"), "dash \u{2013} here");
+    }
+
+    #[test]
+    fn latin1_accents_still_work() {
+        // Above 0x9F, Windows-1252 and Latin-1 agree — accented letters must be
+        // unaffected by the fix.
+        assert_eq!(rtf_to_text(r"caf\'e9"), "café");
+    }
+
+    #[test]
+    fn ordinary_text_is_untouched() {
+        assert_eq!(rtf_to_text("Hallelujah!"), "Hallelujah!");
     }
 }

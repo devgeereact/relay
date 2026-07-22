@@ -837,22 +837,41 @@ fn parse_reference(
         .map(|t| t.parse::<i64>().is_ok())
         .unwrap_or(false);
 
-    // BARE DIGITS with no "chapter"/"verse" keyword ("psalms 2 3") are a different
-    // animal from "Psalm 23 verse 1", and must not be trusted the same way.
+    // Optional range end ("John 3:16-18", "Psalm 23 verses 1 to 6"). Resolved
+    // BEFORE scoring, because whether a following number was absorbed as a range
+    // end is exactly what decides if a *leftover* one is a garble signal (below).
+    let range = parse_range_end(tokens, after_vs, verse);
+    let end_idx = range.map_or(after_vs, |(_, after)| after);
+
+    // BARE DIGITS with no "chapter"/"verse" keyword ("psalm 23 1", "Acts 2, 1.").
     //
-    // That form exists for TYPED shorthand ("ps 23 1") — and typed input goes
-    // through `manual_fire`, which bypasses the gate entirely. So demoting it here
-    // costs the operator nothing, and it fixes garbled speech. A real transcript,
-    // from a live rehearsal:
+    // Preachers really do say these — "Romans eight one", "Psalm 23, 1" — and ASR
+    // renders the pauses as commas and full stops, which `normalize` strips. So this
+    // form has to reach the congregation, or the product misses ordinary preaching.
+    //
+    // But it is also the shape of garbled speech. A real transcript, from a live
+    // rehearsal:
     //
     //     "Verse 1, Psalms 2, 3, 1, Next verse, chapter 2,"
     //
-    // scored 0.92 and put Psalms 2:3 on the wall, unasked. Nobody SAYS "Psalms two
-    // three" — they say "Psalms two verse three". A bare digit pair now reaches the
-    // operator, not the congregation, and a human decides.
+    // scored 0.92 and put Psalms 2:3 on the wall, unasked.
+    //
+    // What separates the two is not confidence — the parser sees the same shape —
+    // it is the LEFTOVER number. "Psalm 23 1" ends cleanly; "Psalms 2, 3, 1" parses
+    // 2:3 and leaves a stray "1" that no range could absorb (a range end must be
+    // >= the verse). A trailing loose number means the numbers did not line up, and
+    // that is the case that stays a suggestion.
+    //
+    // Note a bare pair off a REPAIRED book name lands at 0.55 - 0.06 = 0.49, still
+    // under the default auto-fire line: a misheard book plus loose digits always
+    // asks a human. And the sensitivity dial still governs all of it — a cautious
+    // install (low dial, auto-fire 0.90) demotes bare pairs exactly as before.
     let bare_digits = chapter_was_digit && verse_was_digit && !used_kw;
-    let base = if bare_digits {
-        0.45 // below auto-fire, above suggest
+    let trailing_number = parse_number(tokens, end_idx).is_some();
+    let base = if bare_digits && trailing_number {
+        0.45 // the garble shape — reaches the operator, never the congregation
+    } else if bare_digits {
+        0.55 // above the default auto-fire (0.50), still dial-controllable
     } else if chapter_was_digit && verse_was_digit {
         0.92
     } else {
@@ -861,11 +880,8 @@ fn parse_reference(
     let mut m = make_match(
         canonical, chapter, verse, tokens, book_start, after_vs, base, used_kw, phonetic,
     );
-    // Optional range end ("John 3:16-18", "Psalm 23 verses 1 to 6").
-    let mut end_idx = after_vs;
-    if let Some((e, after)) = parse_range_end(tokens, after_vs, verse) {
+    if let Some((e, _)) = range {
         m.verse_end = Some(e);
-        end_idx = after;
     }
     Some((m, end_idx))
 }
@@ -2128,6 +2144,59 @@ mod tests {
     #[test]
     fn bare_digits_two_tokens() {
         refeq(&one("psalm 23 1"), "Psalms", 23, 1);
+    }
+
+    /// A preacher who never says the word "verse" must still reach the screen.
+    /// ASR renders the pauses as commas and full stops; `normalize` strips them,
+    /// so all of these are the same bare pair — and all must clear the default
+    /// auto-fire line (0.50), not merely be offered as a suggestion.
+    #[test]
+    fn spoken_bare_pairs_auto_fire() {
+        for (text, book, ch, vs) in [
+            ("psalm 23 1", "Psalms", 23, 1),
+            ("Acts 2, 1.", "Acts", 2, 1),
+            ("John, 3, 16.", "John", 3, 16),
+            ("Romans 8, 1", "Romans", 8, 1),
+        ] {
+            let m = one(text);
+            refeq(&m, book, ch, vs);
+            assert!(
+                m.confidence > 0.50,
+                "{text:?} scored {:.2} — at or below the default auto-fire line, so a \
+                 preacher who never says \"verse\" would never reach the screen",
+                m.confidence
+            );
+        }
+    }
+
+    /// The live-rehearsal regression this demotion exists for. "Psalms 2, 3, 1"
+    /// parses 2:3 and leaves a stray "1" no range can absorb — the numbers did not
+    /// line up, so it must reach the OPERATOR, never the congregation.
+    ///
+    /// Reintroduce the bug (drop the `trailing_number` guard) and this fails.
+    #[test]
+    fn a_garbled_number_run_never_auto_fires() {
+        let m = one("Verse 1, Psalms 2, 3, 1, Next verse, chapter 2,");
+        refeq(&m, "Psalms", 2, 3);
+        assert!(
+            m.confidence < 0.50,
+            "garbled '2, 3, 1' scored {:.2} — this is the transcript that put \
+             Psalms 2:3 on the wall unasked",
+            m.confidence
+        );
+    }
+
+    /// A repaired (misheard) book name plus loose digits is two guesses stacked:
+    /// 0.55 - 0.06 = 0.49, just under the line. Always asks a human.
+    #[test]
+    fn a_repaired_book_with_bare_digits_still_asks_a_human() {
+        let m = one("psam 23 1"); // "psam" → Psalms, a Levenshtein repair
+        refeq(&m, "Psalms", 23, 1);
+        assert!(
+            m.confidence < 0.50,
+            "repaired book + bare digits scored {:.2}",
+            m.confidence
+        );
     }
 
     // ---- A1/A2: whole-chapter references and verse ranges ------------------

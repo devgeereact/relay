@@ -136,7 +136,8 @@ fn a_verse_the_operator_fires_reaches_the_congregation_with_its_text() {
     let h = app.handle().clone();
     let wall = Wall::watch(&h);
 
-    manual_fire(h.clone(), h.state::<Db>(), "John 3:16".into(), None).expect("fire John 3:16");
+    manual_fire(h.clone(), h.state::<Db>(), "John 3:16".into(), None, None)
+        .expect("fire John 3:16");
     settle();
 
     let shown = wall.last().expect("nothing reached the outputs");
@@ -158,12 +159,116 @@ fn a_verse_the_operator_fires_reaches_the_congregation_with_its_text() {
 }
 
 #[test]
+fn a_plan_cues_own_template_reaches_the_wall_not_just_the_content_default() {
+    // THE PLANNER FIX. A plan item can carry its own `template_id` (the operator
+    // picked a specific look for that cue). Every fire path used to resolve the
+    // template from the content TYPE only, so the per-cue choice never left the
+    // machine. Fire a scripture cue WITH a template override and assert that exact
+    // id is what the outputs receive.
+    let app = app();
+    let h = app.handle().clone();
+    let wall = Wall::watch(&h);
+
+    // A real, seeded template id that is NOT the scripture content default.
+    let override_id: i64 = {
+        let db = h.state::<Db>();
+        let conn = db.0.lock().unwrap();
+        crate::db::list_templates(&conn).unwrap()[1].id // Stage Mono
+    };
+
+    manual_fire(
+        h.clone(),
+        h.state::<Db>(),
+        "John 3:16".into(),
+        None,
+        Some(override_id),
+    )
+    .expect("fire with a template override");
+    settle();
+
+    let shown = wall.last().expect("nothing reached the outputs");
+    assert_eq!(
+        shown["template_id"].as_i64(),
+        Some(override_id),
+        "the cue's own template was dropped; the wall got {:?}",
+        shown["template_id"]
+    );
+    // And the override JSON rode along, so the output actually re-styles.
+    assert!(
+        !shown["template_json"].is_null(),
+        "the override id crossed but its style JSON did not"
+    );
+}
+
+#[test]
+fn a_lyric_slide_projects_the_lyric_and_not_the_song_title() {
+    // "Blessed Assurance · Slide 1" across the top of the wall is the
+    // operator's bookkeeping leaking onto a screen full of people. The label
+    // still names the cue; it just does not go out.
+    let app = app();
+    let h = app.handle().clone();
+    let wall = Wall::watch(&h);
+
+    fire_content(
+        h.clone(),
+        h.state::<Db>(),
+        "Blessed Assurance · Verse 1".into(),
+        "Blessed assurance, Jesus is mine".into(),
+        "song".into(),
+        None,
+        None,
+    )
+    .expect("fire the lyric");
+    settle();
+
+    let shown = wall.last().expect("nothing reached the outputs");
+    assert_eq!(
+        shown["reference"], "",
+        "the song title was projected: {:?}",
+        shown["reference"]
+    );
+    assert!(
+        shown["text"]
+            .as_str()
+            .unwrap_or("")
+            .contains("Blessed assurance"),
+        "the lyric arrived without its words"
+    );
+}
+
+#[test]
+fn an_announcement_still_shows_its_title() {
+    // The lyric rule is for lyrics only. A notice without its heading is a
+    // sentence floating on a wall with nothing to say what it is.
+    let app = app();
+    let h = app.handle().clone();
+    let wall = Wall::watch(&h);
+
+    fire_content(
+        h.clone(),
+        h.state::<Db>(),
+        "Midweek service".into(),
+        "Wednesday at 7pm".into(),
+        "announce".into(),
+        None,
+        None,
+    )
+    .expect("fire the notice");
+    settle();
+
+    assert_eq!(
+        wall.last().expect("nothing reached")["reference"],
+        "Midweek service"
+    );
+}
+
+#[test]
 fn next_and_back_walk_the_passage() {
     let app = app();
     let h = app.handle().clone();
     let wall = Wall::watch(&h);
 
-    manual_fire(h.clone(), h.state::<Db>(), "John 3:16".into(), None).unwrap();
+    manual_fire(h.clone(), h.state::<Db>(), "John 3:16".into(), None, None).unwrap();
 
     match nav(h.clone(), "next".into()).expect("nav next") {
         NavResult::Fired { reference } => assert_eq!(reference, "John 3:17"),
@@ -202,7 +307,7 @@ fn nav_says_so_when_it_cannot_move_instead_of_doing_nothing() {
 
     // "Psalm 23" is a whole-chapter reference, so the passage is BOUNDED — Relay knows
     // it ends at verse 6. Walk to the end of it and step off.
-    manual_fire(h.clone(), h.state::<Db>(), "Psalm 23".into(), None).unwrap();
+    manual_fire(h.clone(), h.state::<Db>(), "Psalm 23".into(), None, None).unwrap();
     for _ in 0..5 {
         assert!(
             matches!(
@@ -230,7 +335,7 @@ fn stepping_past_the_last_verse_of_a_book_is_reported_not_swallowed() {
     let app = app();
     let h = app.handle().clone();
 
-    manual_fire(h.clone(), h.state::<Db>(), "Jude 1:25".into(), None).unwrap(); // last verse of Jude
+    manual_fire(h.clone(), h.state::<Db>(), "Jude 1:25".into(), None, None).unwrap(); // last verse of Jude
     let r = nav(h.clone(), "next".into()).unwrap();
 
     assert!(
@@ -250,7 +355,7 @@ fn clear_blanks_the_screens_and_reports_that_it_did() {
     let h = app.handle().clone();
     let wall = Wall::watch(&h);
 
-    manual_fire(h.clone(), h.state::<Db>(), "John 3:16".into(), None).unwrap();
+    manual_fire(h.clone(), h.state::<Db>(), "John 3:16".into(), None, None).unwrap();
     settle();
     assert!(wall.last().is_some());
 
@@ -281,7 +386,13 @@ fn a_verse_that_does_not_exist_never_reaches_the_wall() {
     let h = app.handle().clone();
     let wall = Wall::watch(&h);
 
-    let _ = manual_fire(h.clone(), h.state::<Db>(), "Psalms 23:99".into(), None);
+    let _ = manual_fire(
+        h.clone(),
+        h.state::<Db>(),
+        "Psalms 23:99".into(),
+        None,
+        None,
+    );
     settle();
 
     assert_eq!(
@@ -309,7 +420,7 @@ fn nothing_reaches_the_congregation_during_a_rehearsal() {
     )
     .expect("enter rehearsal");
 
-    manual_fire(h.clone(), h.state::<Db>(), "John 3:16".into(), None).unwrap();
+    manual_fire(h.clone(), h.state::<Db>(), "John 3:16".into(), None, None).unwrap();
     let _ = nav(h.clone(), "next".into());
     settle();
 
@@ -317,6 +428,51 @@ fn nothing_reaches_the_congregation_during_a_rehearsal() {
         wall.count(),
         0,
         "content escaped to the outputs during a rehearsal"
+    );
+}
+
+/// THE PREACHER'S REMOTE, end to end. The phone talks to the same HTTP handler
+/// (`remote_api`) that `main.rs` wires onto :8032, which drives the SAME fire and
+/// nav commands the console does — one engine, no second code path. This proves a
+/// search result the preacher taps actually reaches the wall, and that the
+/// remote's Next walks the staged passage exactly like the console's.
+#[test]
+fn the_preacher_remote_searches_fires_and_walks_the_passage() {
+    let app = app();
+    let h = app.handle().clone();
+    let wall = Wall::watch(&h);
+
+    // Search resolves an explicit reference to a real verse the remote can offer.
+    let hits = super::remote_api(&h, "search?q=John%203:16");
+    let hits: serde_json::Value = serde_json::from_str(&hits).expect("search json");
+    assert_eq!(hits["ok"], true);
+    assert_eq!(
+        hits["results"][0]["reference"], "John 3:16",
+        "search did not surface the reference the preacher typed"
+    );
+
+    // Tapping the result fires it — through the real pipeline, onto the wall.
+    let fired = super::remote_api(&h, "fire?ref=John%203:16");
+    let fired: serde_json::Value = serde_json::from_str(&fired).expect("fire json");
+    assert_eq!(fired["ok"], true);
+    assert_eq!(fired["live"]["reference"], "John 3:16");
+    settle();
+    let shown = wall
+        .last()
+        .expect("the remote's fire never reached the wall");
+    assert_eq!(shown["reference"], "John 3:16");
+    assert!(
+        !shown["template_id"].is_null(),
+        "remote fire dropped the template"
+    );
+
+    // The remote's Next walks the staged passage, same as the console's transport.
+    let nexted = super::remote_api(&h, "next");
+    let nexted: serde_json::Value = serde_json::from_str(&nexted).expect("next json");
+    assert_eq!(nexted["ok"], true);
+    assert_eq!(
+        nexted["live"]["reference"], "John 3:17",
+        "the remote's Next did not walk to the next verse"
     );
 }
 

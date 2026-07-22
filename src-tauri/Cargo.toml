@@ -47,7 +47,7 @@ base64 = "0.22"               # Import — receive the picked file's bytes from 
 # default features: no `contexts`/`panic` auto-magic we haven't read, and above
 # all no HTTP transport we didn't choose. Nothing is sent unless the operator
 # turns it on, and content (transcripts, verse text, lyrics) is never sent at all.
-sentry = { version = "0.34", default-features = false, features = ["backtrace", "contexts", "panic", "reqwest", "rustls"] }
+sentry = { version = "0.48", default-features = false, features = ["backtrace", "contexts", "panic", "reqwest", "rustls"] }
 # In-app STT model download. rustls (not native-tls) so there is no OpenSSL build
 # dependency on Windows. `stream` gives us progress + resumable downloads; a
 # 148 MB fetch on a church's connection WILL be interrupted.
@@ -75,6 +75,25 @@ tauri-plugin-process = "2"   # relaunch after an update is installed
 # Caught by `sysprobe::tests::print_hardware`, which is exactly why that test
 # exists. Do not relax this bound without re-running it on macOS.
 sysinfo = { version = "0.39", default-features = false, features = ["system", "disk"] }
+
+# THE DISPLAY'S REAL NAME, on macOS.
+#
+# tao (Tauri's windowing layer) reports a macOS monitor as
+# `format!("Monitor #{}", CGDisplay::model_number())` — a raw EDID model number,
+# so the operator picking which screen the congregation sees was offered
+# "Monitor #1234555" instead of "HP-532sf". Choosing the wrong entry there sends
+# the verse to the wrong screen, so the name has to be the one macOS itself shows
+# in System Settings › Displays.
+#
+# That name is `NSScreen.localizedName` (10.15+), which needs AppKit; matching it
+# back to a Tauri monitor needs `CGDisplayBounds`. Both crates are already in the
+# dependency tree via Tauri — these entries only make them directly callable, and
+# only on macOS.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", features = ["NSScreen"] }
+objc2-foundation = { version = "0.3", features = ["NSValue", "NSString", "NSDictionary"] }
+core-graphics = "0.25"
 
 # Added in later build phases — uncomment as each phase lands (see PROMPT.md):
 # ndi-sdk-sys or equivalent  # Phase 10 — NDI render target (evaluate available crates, may need custom FFI bindings)

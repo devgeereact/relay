@@ -122,6 +122,7 @@ impl Fire {
     /// What every output channel renders.
     pub fn output(&self) -> OutputContent {
         OutputContent {
+            kind: Some("scripture".into()),
             reference: self.key.clone(),
             text: self.text.clone(),
             translation: self.translation.clone(),

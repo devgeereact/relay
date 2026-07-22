@@ -150,6 +150,36 @@ pub fn enable(dsn: &str, release: &str) {
     println!("telemetry: crash reporting ON (content-scrubbed)");
 }
 
+/// A **debug-build-only** DSN, read from `RELAY_SENTRY_DSN`.
+///
+/// Exists so crash reporting can actually be exercised against a throwaway
+/// Sentry project without re-typing a DSN into Settings every time a dev
+/// database is wiped. Nothing else about the contract changes: the report still
+/// goes through `enable`, so it is still scrubbed by `scrub`.
+///
+/// **Compiled out of release builds entirely, by construction.** An environment
+/// variable is not consent. A church's machine is not the place to discover that
+/// some process-level variable silently turned on network reporting, and a
+/// packaged build must have no code path that can do it. Under
+/// `debug_assertions`, the person who set the variable is the person reading
+/// this file.
+///
+/// An empty variable is treated as absent — `RELAY_SENTRY_DSN=` set by a shell
+/// profile or a CI matrix must not read as "on with a blank DSN" (the same trap
+/// as the notarization env vars; see CLAUDE.md §21).
+#[cfg(debug_assertions)]
+pub fn dev_dsn() -> Option<String> {
+    match std::env::var("RELAY_SENTRY_DSN") {
+        Ok(v) if !v.trim().is_empty() => Some(v.trim().to_string()),
+        _ => None,
+    }
+}
+
+#[cfg(not(debug_assertions))]
+pub fn dev_dsn() -> Option<String> {
+    None
+}
+
 /// Turn crash reporting OFF and drop the client (flushing anything queued).
 pub fn disable() {
     if let Ok(mut g) = GUARD.lock() {
@@ -172,6 +202,38 @@ mod tests {
         Event {
             message: Some(msg.to_string()),
             ..Default::default()
+        }
+    }
+
+    // An empty env var is not an absent env var. A shell profile or a CI matrix
+    // that exports `RELAY_SENTRY_DSN=` must read as OFF, not as "on, with a blank
+    // DSN" — the same trap that killed a release on the notarization variables.
+    // Delete the `!v.trim().is_empty()` guard in `dev_dsn` and this fails.
+    #[test]
+    #[cfg(debug_assertions)]
+    fn an_empty_dev_dsn_is_the_same_as_no_dev_dsn() {
+        let key = "RELAY_SENTRY_DSN";
+        let restore = std::env::var(key).ok();
+
+        std::env::remove_var(key);
+        assert_eq!(dev_dsn(), None, "unset must be off");
+
+        std::env::set_var(key, "");
+        assert_eq!(dev_dsn(), None, "empty must be off");
+
+        std::env::set_var(key, "   ");
+        assert_eq!(dev_dsn(), None, "whitespace-only must be off");
+
+        std::env::set_var(key, "  https://k@o1.ingest.de.sentry.io/2  ");
+        assert_eq!(
+            dev_dsn().as_deref(),
+            Some("https://k@o1.ingest.de.sentry.io/2"),
+            "a real value is trimmed and kept"
+        );
+
+        match restore {
+            Some(v) => std::env::set_var(key, v),
+            None => std::env::remove_var(key),
         }
     }
 

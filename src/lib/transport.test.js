@@ -52,6 +52,16 @@ describe('taking plan content off the screen', () => {
     expect(get(liveCue).cueId).toBe(7);
   });
 
+  // The opposite of a hand-typed verse: STEPPING the plan onto a scripture cue in
+  // Slide mode is still the plan. keepPlan must hold the plan ON AIR, or the
+  // transport flips to Verse mode and the next → walks the passage instead of
+  // advancing the plan — the Slide-mode bug.
+  it('firing a PLAN scripture slide (keepPlan) stays ON AIR — Slide mode holds', async () => {
+    await manualFire('John 3:16', null, null, true);
+    expect(get(liveCue).onAir).toBe(true);
+    expect(get(liveCue).cueId).toBe(7);
+  });
+
   // THE TRANSPORT FOLLOWS THE WALL, NOT THE INTENT.
   //
   // These two used to reset the playhead BEFORE calling the backend, so a fire that

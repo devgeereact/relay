@@ -135,3 +135,83 @@ export function stepFrom(items, cueId, slideIdx, dir) {
   const slide = dir > 0 ? 0 : Math.max(0, slidesOf(next).length - 1);
   return { item: next, slide };
 }
+
+/**
+ * Group an ordered cue list into the sections the Planner draws.
+ *
+ * A cue carrying a `section_title` BEGINS a section; the section runs until the
+ * next cue that carries one. Cues before the first titled cue belong to an
+ * untitled leading group (`title: ''`) — a plan is not required to start with a
+ * heading, and dropping those cues on the floor would hide them from the operator.
+ *
+ * Returns `[{ title, items, seconds, timed }]`, where `seconds` totals only the
+ * cues that have a duration and `timed` says whether every cue in the section had
+ * one. Grouping is derived, never stored, so it cannot disagree with the order.
+ */
+export function sectionsOf(items) {
+  const out = [];
+  for (const it of items ?? []) {
+    const title = (it.section_title || '').trim();
+    if (title || out.length === 0) {
+      out.push({ title: out.length === 0 && !title ? '' : title, items: [], seconds: 0, timed: true });
+    }
+    const sec = out[out.length - 1];
+    sec.items.push(it);
+    const d = Number(it.duration_sec) || 0;
+    if (d > 0) sec.seconds += d;
+    else sec.timed = false;
+  }
+  return out;
+}
+
+/**
+ * A plan's total planned length in seconds, and whether it is a complete figure.
+ *
+ * `partial` is true when any cue is untimed — the Planner must render that as an
+ * estimate rather than a total. A scripture cue fires when the preacher reaches
+ * it, so most real plans are partial, and presenting a partial sum as the service
+ * length is how a service runs long.
+ */
+export function planRuntime(items) {
+  let seconds = 0;
+  let partial = false;
+  for (const it of items ?? []) {
+    const d = Number(it.duration_sec) || 0;
+    if (d > 0) seconds += d;
+    else partial = true;
+  }
+  return { seconds, partial };
+}
+
+/**
+ * Read an operator-typed cue length into seconds. Accepts `5` (minutes), `5:30`,
+ * and `90s`. Returns 0 for anything it cannot read — including a blank box, which
+ * is how a cue is set back to untimed.
+ *
+ * A bare number is MINUTES, not seconds: an operator typing "5" for a song means
+ * five minutes, and reading it as five seconds would silently shrink the plan's
+ * running time to nonsense.
+ */
+export function parseDuration(input) {
+  const s = String(input ?? '').trim().toLowerCase();
+  if (!s) return 0;
+  const clock = s.match(/^(\d+):([0-5]?\d)$/);
+  if (clock) return Number(clock[1]) * 60 + Number(clock[2]);
+  const secs = s.match(/^(\d+)\s*s$/);
+  if (secs) return Number(secs[1]);
+  const mins = s.match(/^(\d+(?:\.\d+)?)\s*m?$/);
+  if (mins) return Math.round(Number(mins[1]) * 60);
+  return 0;
+}
+
+/** `m:ss` for a cue length; `1h 32m` for a whole plan. 0/absent → an em dash. */
+export function fmtDuration(seconds, long = false) {
+  const s = Math.max(0, Math.floor(Number(seconds) || 0));
+  if (!s) return '—';
+  if (long) {
+    const h = Math.floor(s / 3600);
+    const m = Math.round((s % 3600) / 60);
+    return h ? `${h}h ${m}m` : `${m}m`;
+  }
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}

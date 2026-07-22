@@ -15,6 +15,63 @@
   let clock = '';
   let timer;
 
+  // Preacher control plane — the phone can DRIVE the wall, not just mirror it.
+  // Hits the LAN HTTP API on :8031's sibling port (:8032/api/*), which runs the
+  // SAME fire/nav path the console does. LAN-only, no auth (see channels.rs).
+  let showCtl = false;
+  let q = '';
+  let results = [];
+  let searching = false;
+  let busy = false; // a nav/fire request is in flight
+  let ctlErr = '';
+  const API = `http://${location.hostname || 'localhost'}:8032/api`;
+
+  async function api(path) {
+    const r = await fetch(`${API}/${path}`);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const j = await r.json();
+    if (!j.ok) throw new Error(j.error || 'failed');
+    return j;
+  }
+
+  let searchSeq = 0;
+  async function doSearch() {
+    const term = q.trim();
+    if (!term) { results = []; return; }
+    const seq = ++searchSeq;
+    searching = true;
+    ctlErr = '';
+    try {
+      const j = await api(`search?q=${encodeURIComponent(term)}`);
+      if (seq === searchSeq) results = j.results || [];
+    } catch (e) {
+      if (seq === searchSeq) { results = []; ctlErr = 'Search failed — check the connection.'; }
+    } finally {
+      if (seq === searchSeq) searching = false;
+    }
+  }
+
+  async function fire(reference) {
+    if (busy) return;
+    busy = true; ctlErr = '';
+    try {
+      await api(`fire?ref=${encodeURIComponent(reference)}`);
+      results = []; q = '';
+    } catch (e) {
+      ctlErr = 'Could not put that on screen.';
+    } finally { busy = false; }
+  }
+
+  async function nav(dir) {
+    if (busy) return;
+    busy = true; ctlErr = '';
+    try {
+      await api(dir); // 'next' | 'prev'
+    } catch (e) {
+      ctlErr = dir === 'next' ? 'No next verse.' : 'No previous verse.';
+    } finally { busy = false; }
+  }
+
   // Countdown mirror — ticked by the same 1s timer as the wall clock.
   let cdTo = null;
   let cdDone = '';
@@ -84,6 +141,9 @@
     <span class="brand">Relay · Stage</span>
     <span class="status" class:on={connected}><i></i>{connected ? 'live' : 'connecting…'}</span>
     <span class="clock">{clock}</span>
+    <button class="ctl-toggle" class:active={showCtl} on:click={() => (showCtl = !showCtl)} aria-label="Control panel">
+      {showCtl ? 'Done' : 'Control'}
+    </button>
   </header>
   <main>
     {#if visible && cdTo}
@@ -98,6 +158,42 @@
       <div class="idle">— standby —</div>
     {/if}
   </main>
+  {#if showCtl}
+    <section class="ctl">
+      <div class="nav-row">
+        <button class="nav-btn" on:click={() => nav('prev')} disabled={busy}>‹ Prev</button>
+        <button class="nav-btn" on:click={() => nav('next')} disabled={busy}>Next ›</button>
+      </div>
+      <form class="search" on:submit|preventDefault={doSearch}>
+        <input
+          type="search"
+          inputmode="search"
+          enterkeyhint="search"
+          placeholder="Search a verse — “John 3:16” or “shepherd”"
+          bind:value={q}
+          on:input={doSearch}
+          autocomplete="off"
+          autocapitalize="off"
+          spellcheck="false" />
+        <button type="submit" class="go" disabled={searching}>{searching ? '…' : 'Go'}</button>
+      </form>
+      {#if ctlErr}<div class="ctl-err">{ctlErr}</div>{/if}
+      {#if results.length}
+        <ul class="results">
+          {#each results as r}
+            <li>
+              <button class="result" on:click={() => fire(r.reference)} disabled={busy}>
+                <span class="r-ref">{r.reference}</span>
+                <span class="r-text">{r.text}</span>
+              </button>
+            </li>
+          {/each}
+        </ul>
+      {:else if q.trim() && !searching}
+        <div class="no-results">No matches.</div>
+      {/if}
+    </section>
+  {/if}
   {#if next}
     <footer class="next">
       <span class="next-lbl">Up next</span>
@@ -162,4 +258,41 @@
     display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
   @media (orientation: landscape) { .verse { font-size: clamp(28px, 6vw, 72px); max-width: 22ch; } }
   @media (prefers-reduced-motion: reduce) { .status.on i { animation: none; } }
+
+  /* Preacher control panel — a phone that DRIVES the wall. Touch-sized targets
+     (44px+), high contrast, and it never touches the mirror above it. */
+  .ctl-toggle { flex: 0 0 auto; font-family: var(--f-mono); font-size: 11px; font-weight: 700;
+    letter-spacing: .12em; text-transform: uppercase; color: var(--v-dim); cursor: pointer;
+    background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.14);
+    border-radius: 8px; padding: 7px 12px; }
+  .ctl-toggle.active { color: var(--v-amber); border-color: rgba(255,176,0,.4); background: rgba(255,176,0,.08); }
+  .ctl { flex: 0 0 auto; display: flex; flex-direction: column; gap: 12px; padding: 16px 18px;
+    border-top: 1px solid rgba(255,255,255,.1); background: rgba(255,255,255,.02);
+    max-height: 60dvh; overflow-y: auto; }
+  .nav-row { display: flex; gap: 12px; }
+  .nav-btn { flex: 1; min-height: 52px; font-family: var(--f-head); font-weight: 700; font-size: 18px;
+    color: var(--v-txt); background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.16);
+    border-radius: 12px; cursor: pointer; }
+  .nav-btn:active { background: rgba(255,255,255,.1); }
+  .nav-btn:disabled { opacity: .4; }
+  .search { display: flex; gap: 10px; }
+  .search input { flex: 1; min-height: 48px; padding: 0 16px; font-family: var(--f-body); font-size: 17px;
+    color: var(--v-txt); background: var(--v-void); border: 1px solid rgba(255,255,255,.18);
+    border-radius: 12px; -webkit-appearance: none; }
+  .search input::placeholder { color: var(--v-faint); }
+  .search input:focus { outline: none; border-color: rgba(255,176,0,.5); }
+  .go { flex: 0 0 auto; min-width: 56px; min-height: 48px; font-family: var(--f-mono); font-weight: 700;
+    font-size: 14px; color: var(--v-void); background: var(--v-amber); border: none; border-radius: 12px; cursor: pointer; }
+  .go:disabled { opacity: .5; }
+  .ctl-err { font-family: var(--f-mono); font-size: 12px; color: var(--v-amber2); }
+  .results { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+  .result { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; width: 100%; text-align: left;
+    padding: 12px 14px; background: rgba(255,255,255,.03); border: 1px solid rgba(255,255,255,.1);
+    border-radius: 12px; cursor: pointer; }
+  .result:active { background: rgba(255,176,0,.1); border-color: rgba(255,176,0,.35); }
+  .result:disabled { opacity: .5; }
+  .r-ref { font-family: var(--f-mono); font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--v-amber); }
+  .r-text { font-family: var(--f-serif); font-size: 15px; color: var(--v-dim); line-height: 1.35;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .no-results { font-family: var(--f-mono); font-size: 12px; color: var(--v-faint); }
 </style>

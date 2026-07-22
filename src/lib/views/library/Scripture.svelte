@@ -1,168 +1,272 @@
 <script>
-  // Library → Scripture: verses the operator has SAVED (not the whole corpus).
-  // Search a reference or phrase, save what you want; saved verses render here
-  // and are cue sources for the Planner.
-  import { onMount, tick } from 'svelte';
+  // LIBRARY → SAVED. Verses the operator has kept, as a deck.
+  //
+  // The same card, rail and one-click rule as the Bible tab. Searching looks for
+  // something to KEEP; an empty box shows what is already kept. There is one
+  // search box in the Library — this pane used to carry a second one of its own.
+  import { onMount } from 'svelte';
   import EmptyState from '../../ui/EmptyState.svelte';
-  import { searchScripture, listSavedScripture, saveScripture, deleteSavedScripture } from '../../stores/capture.js';
+  import Loading from '../../ui/Loading.svelte';
+  import VerseDeck from './VerseDeck.svelte';
+  import { humanError } from '../../errors.js';
+  import { safeMode } from '../../boot/boot.js';
+  import {
+    searchScripture,
+    listSavedScripture,
+    saveScripture,
+    deleteSavedScripture,
+    manualFire,
+    listActiveTemplates,
+    live,
+    screenBlack,
+    rehearsing,
+  } from '../../stores/capture.js';
 
-  export let startSave = false;
+  export let query = '';
+  export let queue = [];
+  export let onQueueChange = () => {};
 
   let saved = [];
-  let q = '';
   let results = [];
+  let template = null;
+  let loading = true;
   let searching = false;
+  let firing = '';
+  let error = '';
   let msg = '';
-  let searchEl;
-  let searchTimer;
-
+  let checked = new Set();
+  let layout = 'grid';
+  let page = 0;
+  let perPage = 12;
   onMount(async () => {
-    saved = await listSavedScripture();
-    if (startSave) {
-      await tick();
-      searchEl?.focus();
-    }
+    saved = (await listSavedScripture()) ?? [];
+    template = (await listActiveTemplates().catch(() => []))[0] ?? null;
+    loading = false;
   });
 
-  function onInput() {
-    clearTimeout(searchTimer);
-    searchTimer = setTimeout(doSearch, 220);
+  let lastQuery = null;
+  $: if (query !== lastQuery) {
+    lastQuery = query;
+    page = 0;
+    doSearch(query);
   }
-  async function doSearch() {
-    const s = q.trim();
-    if (!s) {
+  async function doSearch(q) {
+    if (!q?.trim()) {
       results = [];
       return;
     }
     searching = true;
-    results = await searchScripture(s);
+    results = (await searchScripture(q.trim())) ?? [];
     searching = false;
   }
 
-  async function save(v) {
+  async function keep(v) {
+    error = '';
     try {
       await saveScripture(v.book, v.chapter, v.verse);
-      saved = await listSavedScripture();
+      saved = (await listSavedScripture()) ?? saved;
       msg = `Saved ${v.reference}`;
     } catch (e) {
-      msg = String(e);
+      error = humanError(e);
     }
   }
-  async function remove(item, ev) {
-    ev.stopPropagation();
-    await deleteSavedScripture(item.id);
-    saved = await listSavedScripture();
+
+  async function toggleSave(item) {
+    const hit = saved.find((s) => s.reference === item.reference);
+    error = '';
+    try {
+      if (hit) {
+        await deleteSavedScripture(hit.id);
+        saved = saved.filter((s) => s.id !== hit.id);
+        msg = `Removed ${item.reference}`;
+      } else if (item.book) {
+        await keep(item);
+      }
+    } catch (e) {
+      error = humanError(e);
+    }
   }
-  function isSaved(v) {
-    return saved.some((s) => s.reference === v.reference);
+
+  async function fire(item) {
+    if ($safeMode) return;
+    firing = item.reference;
+    error = '';
+    msg = '';
+    try {
+      await manualFire(item.reference);
+      msg = `${item.reference} is on the screens`;
+    } catch (e) {
+      error = humanError(e);
+    }
+    firing = '';
   }
+
+  function toggleQueue(item) {
+    if (queue.some((q) => q.reference === item.reference)) {
+      onQueueChange(queue.filter((q) => q.reference !== item.reference));
+      msg = `Removed ${item.reference} from the queue`;
+    } else {
+      onQueueChange([...queue, { reference: item.reference, text: item.text }]);
+      msg = `Queued ${item.reference}`;
+    }
+  }
+
+  function toggleCheck(item) {
+    const next = new Set(checked);
+    next.has(item.reference) ? next.delete(item.reference) : next.add(item.reference);
+    checked = next;
+  }
+
+  function queueChecked() {
+    const add = deck
+      .filter((d) => checked.has(d.reference) && !queue.some((q) => q.reference === d.reference))
+      .map((d) => ({ reference: d.reference, text: d.text }));
+    if (add.length) onQueueChange([...queue, ...add]);
+    msg = `Queued ${add.length} verse${add.length === 1 ? '' : 's'}`;
+    checked = new Set();
+  }
+
+  $: searchMode = !!query?.trim();
+  $: rows = searchMode ? results : saved;
+  $: base = rows.map((r) => ({
+    key: r.reference,
+    reference: r.reference,
+    label: r.reference,
+    text: r.text,
+    translation: r.translation ?? r.abbreviation,
+    book: r.book,
+    chapter: r.chapter,
+    verse: r.verse,
+  }));
+  // Saved verses are scripture: nothing here is edited or inserted.
+  $: deck = base;
+  $: numbered = deck.map((d, i) => ({ ...d, slideNo: i + 1 }));
+  $: pages = Math.max(1, Math.ceil(numbered.length / perPage));
+  $: if (page > pages - 1) page = 0;
+  $: pageItems = numbered.slice(page * perPage, page * perPage + perPage);
+  $: firstShown = numbered.length ? page * perPage + 1 : 0;
+  $: lastShown = Math.min(numbered.length, (page + 1) * perPage);
+  $: savedRefs = new Set(saved.map((s) => s.reference));
+  $: queuedRefs = new Set(queue.map((q) => q.reference));
+  $: liveRef = !$screenBlack && $live ? ($live.reference ?? null) : null;
 </script>
 
-<div class="scr">
-  <div class="scr-search">
-    <svg class="scr-ic" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3" stroke-linecap="round"/></svg>
-    <input bind:this={searchEl} bind:value={q} on:input={onInput} placeholder="Search a reference or phrase to save — John 3:16, ps 23, shepherd" />
-    {#if msg}<span class="scr-msg r-mono">{msg}</span>{/if}
-  </div>
-
-  {#if results.length}
-    <!-- Best match sits proud; the rest are "other places" suggestions. -->
-    {@const best = results[0]}
-    <div class="scr-bestwrap">
-      <div class="r-lbl scr-reslbl">Best match</div>
-      <div class="scr-best">
-        <div class="scr-bestbody">
-          <div class="scr-bestref">{best.reference}{best.translation ? ` · ${best.translation}` : ''}</div>
-          <div class="scr-besttext">{best.text}</div>
-        </div>
-        {#if isSaved(best)}
-          <span class="r-badge emerald scr-savedbadge"><span class="bd"></span>Saved</span>
-        {:else}
-          <button class="r-btn primary sm" on:click={() => save(best)}>Save</button>
-        {/if}
+<div class="sv">
+  <section class="sv-panel">
+    <header class="sv-head">
+      <div class="sv-where">
+        <b>{searchMode ? 'Search results' : 'Saved scripture'}</b>
+        <span>
+          {searchMode
+            ? `${numbered.length} match${numbered.length === 1 ? '' : 'es'} · star one to keep it`
+            : `${numbered.length} slide${numbered.length === 1 ? '' : 's'}`}
+        </span>
       </div>
+      {#if checked.size}
+        <button class="r-btn primary sm" on:click={queueChecked}>Queue {checked.size} selected</button>
+        <button class="r-btn ghost sm" on:click={() => (checked = new Set())}>Clear</button>
+      {/if}
+      <div class="r-seg" role="group" aria-label="Layout">
+        <button class:on={layout === 'grid'} aria-label="Grid" on:click={() => (layout = 'grid')}>
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><rect x="3" y="3" width="7" height="7" rx="1.4" /><rect x="14" y="3" width="7" height="7" rx="1.4" /><rect x="3" y="14" width="7" height="7" rx="1.4" /><rect x="14" y="14" width="7" height="7" rx="1.4" /></svg>
+        </button>
+        <button class:on={layout === 'list'} aria-label="List" on:click={() => (layout = 'list')}>
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><rect x="3" y="5" width="18" height="2.6" rx="1.3" /><rect x="3" y="10.7" width="18" height="2.6" rx="1.3" /><rect x="3" y="16.4" width="18" height="2.6" rx="1.3" /></svg>
+        </button>
+      </div>
+    </header>
+
+    <div class="sv-body r-scroll">
+      {#if loading}
+        <Loading what="saved scripture" />
+      {:else if searching}
+        <Loading what="matching verses" />
+      {:else if !numbered.length}
+        <EmptyState
+          message={searchMode
+            ? `No scripture matching “${query.trim()}”.`
+            : 'No saved verses yet — search above, then star one.'} />
+      {:else}
+        <VerseDeck
+          items={pageItems}
+          {template}
+          {liveRef}
+          rehearsing={$rehearsing}
+          {checked}
+          {savedRefs}
+          {queuedRefs}
+          busyRef={firing}
+          {layout}
+          onCheck={toggleCheck}
+          onFire={fire}
+          onQueue={toggleQueue}
+          onSave={toggleSave}
+          can={{ queue: true, favourite: true, edit: false, duplicate: false, add: false }} />
+      {/if}
     </div>
-    {#if results.length > 1}
-      <div class="r-lbl scr-reslbl">Other places this appears</div>
-      <div class="scr-results">
-        {#each results.slice(1) as v}
-          <div class="scr-result">
-            <div class="scr-rbody">
-              <span class="scr-rref">{v.reference}</span>
-              <span class="scr-rtext">{v.text}</span>
-            </div>
-            {#if isSaved(v)}
-              <span class="r-badge emerald scr-savedbadge"><span class="bd"></span>Saved</span>
-            {:else}
-              <button class="r-btn ghost sm" on:click={() => save(v)}>Save</button>
-            {/if}
-          </div>
+
+    <footer class="sv-pager">
+      <div class="sv-pages">
+        <button class="sv-pg" disabled={page === 0} aria-label="Previous page" on:click={() => (page -= 1)}>‹</button>
+        {#each Array(pages) as _, n}
+          <button class="sv-pg" class:on={page === n} on:click={() => (page = n)}>{n + 1}</button>
         {/each}
+        <button class="sv-pg" disabled={page >= pages - 1} aria-label="Next page" on:click={() => (page += 1)}>›</button>
       </div>
-    {/if}
-  {:else if q.trim() && !searching}
-    <div class="scr-hint r-mono">No verses found.</div>
-  {/if}
+      <span class="sv-count">Showing {firstShown}–{lastShown} of {numbered.length} slides</span>
+      <label class="sv-ctl">
+        <span class="r-lbl">Items per page</span>
+        <select class="r-select sm" bind:value={perPage} aria-label="Items per page">
+          {#each [12, 24, 48] as n}<option value={n}>{n}</option>{/each}
+        </select>
+      </label>
+    </footer>
+  </section>
 
-  <div class="r-lbl scr-savedlbl">Saved scripture <span class="scr-count">({saved.length})</span></div>
-  {#if saved.length}
-    <div class="scr-grid">
-      {#each saved as s}
-        <div class="scr-card">
-          <div class="scr-verse">{s.text}</div>
-          <div class="scr-cardfoot">
-            <span class="scr-cardref">{s.reference}{s.translation ? ` · ${s.translation}` : ''}</span>
-            <button class="r-iconbtn scr-del" title="Remove" on:click={(e) => remove(s, e)}>
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></svg>
-            </button>
-          </div>
-        </div>
-      {/each}
-    </div>
-  {:else}
-    <EmptyState message="No saved verses yet — search above and hit Save." />
-  {/if}
+  {#if msg}<p class="sv-msg">{msg}</p>{/if}
+  {#if error}<p class="sv-err">{error}</p>{/if}
 </div>
 
 <style>
-  .scr{ display:flex; flex-direction:column; gap:16px; }
-  .scr-search{ display:flex; align-items:center; gap:11px; background:var(--v-bg); border:1px solid var(--v-line2);
-    border-radius:10px; padding:0 14px; height:42px; max-width:640px; }
-  .scr-search:focus-within{ border-color:var(--v-accent-line); box-shadow:0 0 0 3px var(--v-accent-line); }
-  .scr-ic{ color:var(--v-faint); flex:0 0 auto; }
-  .scr-search input{ flex:1; background:transparent; border:0; outline:none; color:var(--v-txt);
-    font-family:var(--f-mono); font-size:12.5px; }
-  .scr-search input::placeholder{ color:var(--v-faint); }
-  .scr-msg{ font-size:10px; color:var(--v-emerald); flex:0 0 auto; }
+  .sv { display: flex; flex-direction: column; gap: 10px; min-height: 0; flex: 1; }
+  .sv-panel { display: flex; flex-direction: column; min-height: 0; flex: 1;
+    background: var(--v-bg); border: 1px solid var(--v-line); border-radius: var(--v-r-lg); }
+  .sv-head { display: flex; align-items: center; gap: 12px; padding: 11px 14px;
+    border-bottom: 1px solid var(--v-line); }
+  .sv-where { flex: 1; min-width: 0; }
+  .sv-where b { display: block; font-size: 15px; font-weight: 600; color: var(--v-txt); }
+  .sv-where span { font-size: var(--v-fs-cap); color: var(--v-faint); }
+  .sv-body { flex: 1; min-height: 0; overflow-y: auto; padding: 12px; }
+  .sv-pager { display: flex; align-items: center; gap: 12px; padding: 10px 14px;
+    border-top: 1px solid var(--v-line); flex-wrap: wrap; }
+  .sv-pages { display: flex; align-items: center; gap: 4px; flex: 1; }
+  .sv-pg { min-width: 28px; height: 28px; padding: 0 7px; border-radius: var(--v-r-sm); border: 0;
+    background: transparent; color: var(--v-dim); font-family: var(--f-mono); font-size: 12px;
+    font-variant-numeric: tabular-nums; cursor: pointer; }
+  .sv-pg:hover:not(:disabled):not(.on) { background: var(--v-surf2); color: var(--v-txt); }
+  .sv-pg.on { background: var(--v-accent-fill); color: var(--v-accent-ink); font-weight: 600; }
+  .sv-pg:disabled { opacity: 0.35; cursor: not-allowed; }
+  .sv-count { font-size: var(--v-fs-cap); color: var(--v-faint); }
+  .sv-ctl { display: flex; align-items: center; gap: 7px; }
+  .sv-ctl .r-lbl { margin: 0; }
+  .sv-ctl .r-select { width: auto; height: 30px; padding: 0 30px 0 10px; font-size: 12px;
+    background-position: calc(100% - 14px) 13px, calc(100% - 9px) 13px; }
 
-  .scr-reslbl{ margin-bottom:9px; }
-  .scr-bestwrap{ max-width:760px; }
-  .scr-best{ display:flex; align-items:center; gap:16px; padding:16px 18px; border-radius:14px;
-    border:1px solid var(--v-accent-line); background:radial-gradient(130% 150% at 0% 0%, var(--v-accent-soft), var(--v-surf));
-    box-shadow:0 10px 30px -18px var(--v-accent-glow); }
-  .scr-bestbody{ flex:1; min-width:0; }
-  .scr-bestref{ font-family:var(--f-head); font-weight:700; font-size:17px; color:var(--v-accent); }
-  .scr-besttext{ font-family:var(--f-serif); font-size:15px; line-height:1.5; color:#f4e4c8; margin-top:5px; }
-  .scr-results{ display:flex; flex-direction:column; gap:7px; max-width:760px; }
-  .scr-result{ display:flex; align-items:center; gap:14px; padding:11px 14px; border:1px solid var(--v-line);
-    border-radius:11px; background:var(--v-surf); }
-  .scr-rbody{ flex:1; min-width:0; }
-  .scr-rref{ display:block; font-family:var(--f-head); font-weight:700; font-size:14px; color:var(--v-txt); }
-  .scr-rtext{ display:block; font-family:var(--f-serif); font-size:12.5px; color:var(--v-dim); line-height:1.45; margin-top:3px;
-    display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
-  .scr-savedbadge{ padding:3px 9px; }
-  .scr-hint{ font-size:11px; color:var(--v-faint); }
+  .sv-modal { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center;
+    background: rgba(0, 0, 0, 0.6); padding: 24px; }
+  .sv-sheet { width: min(560px, 100%); display: flex; flex-direction: column; gap: 12px;
+    padding: 18px; background: var(--v-surf); border: 1px solid var(--v-line2);
+    border-radius: var(--v-r-xl); box-shadow: var(--v-shadow-lg); }
+  .sv-sheet header { display: flex; align-items: center; gap: 8px; }
+  .sv-sheet header .r-lbl { margin: 0; }
+  .sv-spring { flex: 1; }
+  .sv-field { display: flex; flex-direction: column; gap: 5px; }
+  .sv-text { height: auto; padding: 11px 13px; line-height: 1.6; resize: vertical;
+    font-family: var(--f-body); font-size: 13.5px; }
+  .sv-fine { margin: 0; font-size: var(--v-fs-cap); line-height: 1.6; color: var(--v-faint); }
+  .sv-fine b { color: var(--v-dim); }
 
-  .scr-savedlbl{ margin-top:4px; }
-  .scr-count{ color:var(--v-faint); letter-spacing:0; }
-  .scr-grid{ display:grid; grid-template-columns:repeat(auto-fill, minmax(240px, 1fr)); gap:12px; }
-  .scr-card{ display:flex; flex-direction:column; justify-content:space-between; min-height:132px; padding:15px 16px;
-    border:1px solid var(--v-line); border-radius:13px; background:radial-gradient(120% 140% at 50% 20%,#241a10,#0d0a06);
-    transition:border-color .14s; }
-  .scr-card:hover{ border-color:var(--v-line2); }
-  .scr-verse{ font-family:var(--f-serif); font-size:13.5px; line-height:1.45; color:#f4e4c8;
-    display:-webkit-box; -webkit-line-clamp:4; -webkit-box-orient:vertical; overflow:hidden; }
-  .scr-cardfoot{ display:flex; align-items:center; justify-content:space-between; margin-top:12px; }
-  .scr-cardref{ font-family:var(--f-serif); font-style:italic; font-size:11.5px; color:var(--v-accent); }
-  .scr-del:hover{ color:var(--v-rose); border-color:rgba(239,68,68,.4); }
+  .sv-msg, .sv-err { margin: 0; font-size: var(--v-fs-b2); }
+  .sv-msg { color: var(--v-emerald); }
+  .sv-err { color: var(--v-red); }
 </style>
