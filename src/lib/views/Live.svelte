@@ -470,8 +470,12 @@
     try {
       if ($capture.capturing) await stopCapture();
       else await startCapture($capture.inputDevice || null);
-    } catch {
-      /* surfaced via audio://error */
+    } catch (e) {
+      // Capture start is non-blocking (DECISIONS/rule 5): DEVICE errors arrive
+      // asynchronously on audio://error. So a rejection HERE is a command-level
+      // failure that event never carries — surface it rather than swallow, or the
+      // Listen button just silently does nothing.
+      flash(humanError(e));
     }
     listenBusy = false;
   }

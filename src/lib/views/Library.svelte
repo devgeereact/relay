@@ -2,6 +2,20 @@
   import { onMount } from 'svelte';
   import { setSession } from '../session.js';
   import { humanError } from '../errors.js';
+  import { trapFocus } from '../focus.js';
+
+  // Escape closes an open menu — and MUST stop there. The global panic handler
+  // (shortcuts.js) listens on `window` in the bubble phase and clears the wall on
+  // an unguarded Escape; stopPropagation here means a menu dismissal never reaches
+  // it. trapFocus puts focus inside the menu on open (so this fires) and restores
+  // it to the trigger on close.
+  function menuEsc(e, close) {
+    if (e.key === 'Escape') {
+      e.stopPropagation();
+      e.preventDefault();
+      close();
+    }
+  }
   // Library — the unified content catalog. Every content type lives behind a
   // sub-tab: Scripture (verses the operator saved), Lyrics (songs), Media
   // (images/video/documents), Announcements, and service History. One Import
@@ -333,10 +347,10 @@
         </button>
         {#if showNew}
           <button class="lib-newscrim" tabindex="-1" aria-label="Close menu" on:click={() => (showNew = false)}></button>
-          <div class="lib-newmenu" role="menu">
-            <button class="lib-newitem" on:click={newPasteSong}>Paste / draft song</button>
-            <button class="lib-newitem" on:click={newSaveScripture}>Save scripture</button>
-            <button class="lib-newitem" on:click={newDraftAnnouncement}>Draft announcement</button>
+          <div class="lib-newmenu" role="menu" tabindex="-1" use:trapFocus on:keydown={(e) => menuEsc(e, () => (showNew = false))}>
+            <button class="lib-newitem" role="menuitem" on:click={newPasteSong}>Paste / draft song</button>
+            <button class="lib-newitem" role="menuitem" on:click={newSaveScripture}>Save scripture</button>
+            <button class="lib-newitem" role="menuitem" on:click={newDraftAnnouncement}>Draft announcement</button>
           </div>
         {/if}
       </div>
@@ -346,9 +360,9 @@
         </button>
         {#if showMore}
           <button class="lib-newscrim" tabindex="-1" aria-label="Close menu" on:click={() => (showMore = false)}></button>
-          <div class="lib-newmenu" role="menu">
-            <button class="lib-newitem" on:click={() => { showMore = false; goTab(active); }}>Reload this list</button>
-            <button class="lib-newitem" on:click={() => { showMore = false; setSession({ activeTab: 'settings' }); }}>
+          <div class="lib-newmenu" role="menu" tabindex="-1" use:trapFocus on:keydown={(e) => menuEsc(e, () => (showMore = false))}>
+            <button class="lib-newitem" role="menuitem" on:click={() => { showMore = false; goTab(active); }}>Reload this list</button>
+            <button class="lib-newitem" role="menuitem" on:click={() => { showMore = false; setSession({ activeTab: 'settings' }); }}>
               Data health…
             </button>
           </div>
