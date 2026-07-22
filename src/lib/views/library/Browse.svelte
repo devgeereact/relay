@@ -81,6 +81,19 @@
   let firing = '';
   let error = '';
   let msg = '';
+  // Transient by design: a "Saved …" / "Queued …" or an error should fade, not
+  // linger across later navigation as if it still describes what is on screen.
+  // Errors sit longer so they can actually be read. Re-armed on each new message.
+  let msgT;
+  let errT;
+  $: if (msg) {
+    clearTimeout(msgT);
+    msgT = setTimeout(() => (msg = ''), 4000);
+  }
+  $: if (error) {
+    clearTimeout(errT);
+    errT = setTimeout(() => (error = ''), 6000);
+  }
   let lastQuery = null;
   let lastPlace = '';
 

@@ -446,7 +446,11 @@ export async function stopCapture() {
     unlistenDetect();
     unlistenDetect = null;
   }
-  capture.update((s) => ({ ...s, capturing: false, level: 0, isVoice: false }));
+  capture.update((s) => ({ ...s, capturing: false }));
+  // The live level lives on the `meter` store, not `capture` — resetting
+  // capture.level/isVoice (which nothing reads) left the input bars frozen lit at
+  // the last value after Stop. Reset the store that actually drives them.
+  meter.set({ level: 0, isVoice: false });
   transcript.update((t) => ({ ...t, partial: '' }));
 }
 

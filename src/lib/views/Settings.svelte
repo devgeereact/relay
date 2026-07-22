@@ -179,6 +179,7 @@
   // Real translations from the corpus + which one to read from.
   let translations = [];
   let activeTranslation = null;
+  let dataLoaded = false; // async settings data has resolved at least once
   let lanIp = '';
 
   // ─── System overview (right rail) ───────────────────────────────────────
@@ -256,6 +257,8 @@
       ctMap = await getContentTemplates();
     } catch (e) {
       crashMsg = humanError(e);
+    } finally {
+      dataLoaded = true; // distinguish "loading" from a genuinely empty list
     }
     try {
       lanIp = await localIp();
@@ -513,6 +516,8 @@
                 {#if tr.id === activeTranslation}<span class="s-tr-active r-mono">active</span>{/if}
               </button>
             {/each}
+          {:else if !dataLoaded}
+            <div class="r-empty" style="font-size:12.5px;">Loading translations…</div>
           {:else}
             <div class="r-empty" style="font-size:12.5px;">No translations loaded.</div>
           {/if}

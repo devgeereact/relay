@@ -130,7 +130,11 @@
     try {
       qrData = await QRCode.toDataURL(obsUrl(c), { width: 190, margin: 1, color: { dark: '#0a0a0a', light: '#ffffff' } });
       qrOpen = c.id;
-    } catch { /* qr gen failed */ }
+    } catch (e) {
+      // The URL is shown on the row regardless, so a failed QR is cosmetic — but
+      // log it rather than swallow, so a dead-looking button isn't invisible.
+      console.warn('QR generation failed', e);
+    }
   }
 
   // REACTIVE, not a function call in the markup.
@@ -150,14 +154,19 @@
     try {
       stageQr = await QRCode.toDataURL(stageUrl, { width: 200, margin: 1, color: { dark: '#0a0a0a', light: '#ffffff' } });
       stageQrOpen = true;
-    } catch { /* qr gen failed */ }
+    } catch (e) {
+      console.warn('QR generation failed', e);
+    }
   }
   async function copyStage() {
     try {
       await navigator.clipboard.writeText(stageUrl);
       copiedStage = true;
       setTimeout(() => (copiedStage = false), 1500);
-    } catch { /* clipboard blocked */ }
+    } catch (e) {
+      // The address is on screen to type by hand; log rather than swallow.
+      console.warn('Clipboard write blocked', e);
+    }
   }
 
   /** Run a mutation, refresh, and hand any error to the ONE humaniser. */
@@ -207,7 +216,9 @@
       await navigator.clipboard.writeText(obsUrl(c));
       copiedId = c.id;
       setTimeout(() => (copiedId = null), 1500);
-    } catch { /* clipboard blocked */ }
+    } catch (e) {
+      console.warn('Clipboard write blocked', e);
+    }
   }
 
   // A channel's preview shows its OWN template with stand-in content — the same
