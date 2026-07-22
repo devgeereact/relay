@@ -30,7 +30,10 @@ its log says so — this machine cannot capture the Tauri console webview.
 | 5 | AI Detection | **✅ resolved** — Inspector built · `.loop/aidetection-log.md` |
 | 6 | Transcript | **✅ resolved** — search built; the real work was the audio fix (DECISIONS §23) |
 | 7 | Scripture Library | **✅ resolved** — Bible browser built · `.loop/scripturelibrary-log.md` |
-| 8+ | Planner onward | not started |
+| 8 | Service Planner | **✅ resolved** — three-column rebuild + sections/durations migration · `.loop/planner-log.md` |
+| 9 | Templates | **✅ resolved** — gallery + reworked editor, honest to the model · `.loop/templates-log.md` |
+| 10 | Output Management | **✅ resolved** — Channels rebuilt + liveness made real · `.loop/channels-log.md` |
+| 11+ | Stage Display onward | not started |
 
 Also done outside the numbered sections: the app-wide token and mode-colour
 rebrand, the application icon and brand mark (`.loop/rebrand-log.md`,
@@ -44,7 +47,7 @@ reason, rather than shipped as UI that implies a capability. Each section's log
 records which, and why.
 
 **Done so far:** all of **§1 Launch & Startup** (`.loop/launch-log.md`) ·
-**§2 First Run** (`.loop/firstrun-log.md`) · **§3 Dashboard** (`.loop/dashboard-log.md`) · **§4 Live Production** (`.loop/liveproduction-log.md`) · **§5 AI Detection** (`.loop/aidetection-log.md`) · **§6 Transcript** · **§7 Scripture Library** (`.loop/scripturelibrary-log.md`) ·
+**§2 First Run** (`.loop/firstrun-log.md`) · **§3 Dashboard** (`.loop/dashboard-log.md`) · **§4 Live Production** (`.loop/liveproduction-log.md`) · **§5 AI Detection** (`.loop/aidetection-log.md`) · **§6 Transcript** · **§7 Scripture Library** (`.loop/scripturelibrary-log.md`) · **§8 Service Planner** (`.loop/planner-log.md`) · **§9 Templates** (`.loop/templates-log.md`) · **§10 Output Management** (`.loop/channels-log.md`) ·
 Live Surface (the operator console) · Template Designer · Help / Shortcuts ·
 the app-wide token and mode-colour rebrand (`.loop/rebrand-log.md`).
 
@@ -274,50 +277,123 @@ Bible and read it** — which is what the word promises.
 
 # 8. Service Planner
 
-* Planner
-* Calendar
-* Service Templates
-* Cue Library
-* Song Library
-* Worship Set Builder
-* Speaker Notes
-* Countdown Builder
-* Announcement Builder
-* Media Attachments
-* Duplicate Service
-* Archive
+**Section resolved.** Built and compared against `relay-planner-screen.png` —
+`.loop/planner-log.md` (pixel, 7 iterations + 4 state variants). The Planner was
+rebuilt as a three-column workspace (plans rail · running order · cue inspector),
+and `plan_items` gained **sections** and **durations** via a retryable migration.
+
+* Planner — **✅ DONE** (pixel; three-column rebuild, `.loop/planner-log.md`)
+* Cue Library — **✅ DONE** — the ＋ Add Cue panel: one search across scripture,
+  songs, media and announcements, plus the countdown quick-add
+* Song Library — **✅ DONE** — searchable from ＋ Add Cue, with the arrangement
+  picker when a song has saved arrangements
+* Worship Set Builder — **✅ DONE** — this IS the running order: drag-reorder,
+  sections, per-cue template and duration. Not a separate screen; a worship set
+  is a service plan with song cues in it
+* Announcement Builder — **✅ DONE** — authored in the Library, added here as a cue
+* Countdown Builder — **✅ DONE** — the quick-add in ＋ Add Cue; a countdown is the
+  one cue type whose length is known at build time, so it seeds its own duration
+* Speaker Notes — **✅ DONE** — the inspector's **Notes** tab (`stage_note`).
+  Confidence-monitor only; it never reaches an output screen
+* Media Attachments — **✅ DONE** — media cues from the Library
+* Duplicate Service — **✅ DONE** — `duplicate_plan`, now carrying section
+  headings and durations across (it silently dropped them until this pass)
+* Service Templates — **✅ RESOLVED as Duplicate.** A "service template" and a
+  duplicated plan are the same object in Relay's model — an ordered list of cues
+  with headings. Shipping both would be two names for one table
+* ~~Calendar~~ — **NOT BUILT.** A plan has a `plan_date` and the rail is ordered
+  by it, but there is no scheduling, no recurrence and no reminders behind a
+  month grid. A calendar that only filters a five-item list is decoration
+* ~~Archive~~ — **NOT BUILT.** Nothing is archived: plans are kept until deleted,
+  and `service_plans` has no archived flag. Deferred with §17 Service History,
+  which is where a past service actually lives
 
 ---
 
 # 9. Templates
 
-* Template Designer — **✅ DONE** (`.loop/templates-log.md`, pixel — populated via an IPC stub)
-* Template Gallery
-* Theme Manager
-* Typography Presets
-* Background Library
-* Animation Presets
-* Lower Third Designer
-* Scripture Layouts
-* Song Layouts
-* Responsive Preview
-* Safe Area Preview
-* Brand Assets
+**Section resolved.** The Templates tab is now two modes matching the two
+mockups: a **gallery** (`relay-templetes-screen.png`) of every template as a live
+thumbnail, and an **editor** (`relay-templeteeditor-screen.png`) for one.
+`.loop/templates-log.md` (pixel; the gallery is new, the editor reworks the prior
+Output Designer). The template MODEL is unchanged — layout(regions) + style — so
+everything the editor mockup shows beyond that model is refused, not faked.
+
+* Template Gallery — **✅ DONE** (pixel) — grid/list of cards rendered through the
+  real `TemplateRender`, so a card is what the wall shows; derived type tabs;
+  search; sort; preview inspector with Details + Usage
+* Template Designer / Editor — **✅ DONE** (pixel) — reworked into the mockup's
+  layers + design grammar. Layers map to the template's REAL parts (background,
+  lower-third band, reference, verse text); the design panel edits real style
+* Lower Third Designer — **✅ DONE** — the Lower-Third band is a real layer/toggle;
+  a lower-third template is derived and filtered as its own kind
+* Scripture Layouts / Song Layouts — **✅ DONE** — these ARE the derived kinds
+  (Scripture = reference + verse; Song = verse only), shown as gallery type tabs
+* Safe Area Preview — **✅ DONE** — the safe-area guide is a layer in the editor
+  (editor-only; never reaches an output)
+* Responsive Preview — **✅ RESOLVED as a readout.** Every template is 16:9 by
+  construction (`TemplateRender` sizes in cqw, so it scales identically at any
+  output size). There is nothing to preview responsively; the gallery and editor
+  state `16:9 · 1920×1080` as a readout rather than offering an orientation that
+  does not exist
+* ~~Theme Manager~~ / ~~Typography Presets~~ — **NOT BUILT.** There are no themes
+  or type presets in the model — a template carries a font family and colours
+  directly, and that is the whole of it. A preset system is a feature, not a screen
+* ~~Background Library~~ / ~~Brand Assets~~ — **NOT BUILT.** A background is a
+  per-template fill or a single uploaded image; there is no shared asset store,
+  media browser, or reusable element gallery to manage. The editor mockup's Assets
+  panel (backgrounds/gradients/ornaments/shapes/frames/dividers) has no backing
+  and is omitted with a note in the layers panel
+* ~~Animation Presets~~ — **NOT BUILT.** The only motion a template has is one
+  crossfade duration (`transitionMs`), edited in the editor's Motion section.
+  There are no keyframes, entrance/exit animations, or an Animation tab to preset
 
 ---
 
 # 10. Output Management
 
-* Channels
-* Output Monitor
-* Output Preview
-* Output Diagnostics
-* Display Arrangement
-* Multi Screen Mapping
-* Browser Source Manager
-* NDI Outputs
-* HDMI Outputs
-* Virtual Displays
+**Section resolved.** Built and compared against `relay-channels-screen.png` —
+`.loop/channels-log.md` (pixel, 3 iterations + 2 variants). The screen was rebuilt
+as a filtered table plus a channel inspector, and **per-channel liveness was made
+real**: it is computed from open output windows and connected kiosk clients, not
+read from `output_channels.status`, which is written once at insert and had always
+said `offline` for every channel — including one filling a projector.
+
+* Channels — **✅ DONE** (pixel; `.loop/channels-log.md`)
+* Output Preview — **✅ DONE** — the inspector renders the channel's own template
+  through `TemplateRender`, the same engine the wall uses, so it is WYSIWYG
+* Browser Source Manager — **✅ DONE** — network channels carry their copyable
+  `:8032` URL and a QR to open it on a phone or kiosk without typing
+* HDMI Outputs — **✅ DONE** — native-window channels, with a real display picker.
+  Displays now carry **the name macOS itself shows** (`NSScreen.localizedName`,
+  verified as "HP 532sf" on real hardware) instead of tao's raw EDID model number
+  `Monitor #1234555`; elsewhere the OS string is humanised (`\\.\DISPLAY1` →
+  "Display 1", `HDMI-1` → "HDMI 1", `eDP-1` → "Built-in display"). A channel's
+  assigned display is also actually honoured now — it was silently ignored and
+  fell back to primary. `cargo run --example displays` is the standing probe.
+  **Open:** the Windows half (EDID lookup) and multi-display position matching
+  are both untested — see `.loop/channels-log.md`
+* Display Arrangement — **✅ RESOLVED as the display picker.** Relay does not
+  arrange displays; the OS does. What it needs is to name them recognisably and
+  pin a channel to one, which the picker does (name · resolution · primary)
+* NDI Outputs — **⚠️ SURFACED, NOT BUILT.** NDI is parked (needs a proprietary
+  SDK; `open_ndi_output` returns a clear error). The tab exists and any NDI
+  channel reports **UNAVAILABLE** — deliberately a different word from "offline",
+  which would read as a fault rather than an absent capability
+* ~~Output Monitor~~ — **NOT BUILT.** Would mean a live thumbnail of what each
+  screen is showing. Relay pushes content to outputs and never reads a frame
+  back; there is no capture path, so a "monitor" could only re-render a guess
+* ~~Output Diagnostics~~ — **NOT BUILT, deliberately.** This is the reference's
+  CHANNEL HEALTH panel: bandwidth, dropped frames, uptime, latency, "Excellent".
+  **None of it exists** — nothing in the pipeline times a delivery, counts a
+  frame, or records a connect time. On the one screen an operator uses to decide
+  whether the projector is working, invented numbers are the worst possible
+  decoration. The panel states the limit in words instead
+* ~~Multi Screen Mapping~~ — **NOT BUILT.** Every channel already targets its own
+  display or client independently; a mapping matrix would be a second way to say
+  the same thing
+* ~~Virtual Displays~~ — **NOT BUILT.** Creating a virtual display is an OS-level
+  driver concern, not something an app can offer honestly
 
 ---
 
@@ -330,6 +406,19 @@ Bible and read it** — which is what the word promises.
 * Timer View
 * Countdown View
 * Remote Stage Display
+
+Stage Displays
+│
+├── Display Manager
+├── Display Preview
+├── Layout Library
+├── Layout Editor
+├── Layout Variables
+├── Theme Manager
+├── Remote Displays
+├── Mobile Displays
+├── Display Diagnostics
+└── Display Settings
 
 ---
 

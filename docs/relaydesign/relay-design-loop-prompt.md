@@ -4,26 +4,32 @@ Paste the block below into `/loop`. Swap `<SCREEN>` and `<REF>` per screen.
 
 ## Screens with a design reference
 
-Every screen below has a mockup PNG to match pixel-for-pixel. The four hi-fi PNGs are
+Every screen below has a mockup PNG to match pixel-for-pixel. The hi-fi PNGs are
 full-screen mockups; the rest are numbered panels cropped from the master contact sheet
 `docs/relaydesign/relay-production-interface.png` — match only that panel's region.
 
-| `<SCREEN>` | `<REF>` |
-|---|---|
-| splash | `docs/relaydesign/relay-splash-screen.png` |
-| live | `docs/relaydesign/relay-console-screen.png` |
-| templates | `docs/relaydesign/relay-templetedesigner-screen.png` |
-| help | `docs/relaydesign/relay-helpandshortcut-screen.png` |
-| firstrun | `docs/relaydesign/relay-production-interface.png` (panel 2 — First-Run Setup Wizard) |
-| channels | `docs/relaydesign/relay-production-interface.png` (panel 4 — Channels / Output Targets) |
-| library | `docs/relaydesign/relay-production-interface.png` (panel 6 — Library / Verse & Translation Manager) |
-| planner | `docs/relaydesign/relay-production-interface.png` (panel 7 — Planner / Build a Service Plan) |
-| inspector | `docs/relaydesign/relay-production-interface.png` (panel 8 — AI Detection Detail / Inspector) |
-| output | `docs/relaydesign/relay-production-interface.png` (panel 9 — Output / Projector) |
-| stage | `docs/relaydesign/relay-production-interface.png` (panel 10 — Stage Display / Preacher View) |
-| settings | `docs/relaydesign/relay-production-interface.png` (panel 11 — Settings) |
-| history | `docs/relaydesign/relay-production-interface.png` (panel 12 — Service History) |
-| statusstrip | `docs/relaydesign/relay-production-interface.png` (panel 14 — Global Status strip) |
+**A hi-fi mockup always supersedes its contact-sheet panel.** Several arrived after
+this table was first written, so check `ls docs/relaydesign/*.png` before starting a
+screen rather than trusting a panel reference here.
+
+| `<SCREEN>` | `<REF>` | state |
+|---|---|---|
+| splash | `docs/relaydesign/relay-splash-screen.png` | **✅ done** |
+| live | `docs/relaydesign/relay-console-screen.png` | **✅ done** |
+| templates | `docs/relaydesign/relay-templetedesigner-screen.png` | **✅ done** |
+| help | `docs/relaydesign/relay-helpandshortcut-screen.png` | **✅ done** |
+| firstrun | `docs/relaydesign/relay-production-interface.png` (panel 2 — First-Run Setup Wizard) | **✅ done** |
+| library | `docs/relaydesign/relay-main-library-screen.png` (hi-fi; supersedes panel 6) | **✅ done** — hi-fi arrived after; a re-compare is unclaimed |
+| planner | `docs/relaydesign/relay-planner-screen.png` (hi-fi; supersedes panel 7) | **✅ done** |
+| inspector | `docs/relaydesign/relay-production-interface.png` (panel 8 — AI Detection Detail / Inspector) | **✅ done** |
+| channels | `docs/relaydesign/relay-channels-screen.png` (hi-fi; supersedes panel 4) | **✅ done** |
+| template gallery | `docs/relaydesign/relay-templetes-screen.png` (hi-fi) | **✅ done** |
+| template editor | `docs/relaydesign/relay-templeteeditor-screen.png` (hi-fi) | **✅ done** |
+| output | `docs/relaydesign/relay-production-interface.png` (panel 9 — Output / Projector) | not started |
+| stage | `docs/relaydesign/relay-production-interface.png` (panel 10 — Stage Display / Preacher View) | not started |
+| settings | `docs/relaydesign/relay-production-interface.png` (panel 11 — Settings) | not started |
+| history | `docs/relaydesign/relay-production-interface.png` (panel 12 — Service History) | not started |
+| statusstrip | `docs/relaydesign/relay-production-interface.png` (panel 14 — Global Status strip) | not started |
 
 ---
 

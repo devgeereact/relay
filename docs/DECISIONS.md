@@ -344,3 +344,45 @@ AUTO-DETECT picks badly on short, quiet or noisy audio, not to refuse languages.
 levels. Per §13, an STT change is scored through the DETECTOR, not by reading the
 transcript — and that requires a real recording through `RELAY_BENCH_WAV`, which
 has not been run for this change.
+
+## 24. A bare spoken number pair fires; a garbled RUN of numbers does not
+
+Preachers say **"Romans eight one"** and **"Psalm 23, 1"**. They do not reliably say
+"verse". Whisper renders the pauses as commas and full stops, `normalize` strips them,
+and all of it arrives at the parser as the same bare pair: `book <num> <num>`.
+
+That form used to score **0.45** — deliberately below auto-fire — because of a real
+live-rehearsal transcript:
+
+```
+"Verse 1, Psalms 2, 3, 1, Next verse, chapter 2,"
+```
+
+which had scored 0.92 and put **Psalms 2:3 on the wall, unasked**. The demotion was the
+right call at the time, and its reasoning was recorded in the code. But it also meant a
+preacher who never says "verse" **never reaches the screen at all** — the product missed
+ordinary preaching, which is a failure of the same size, just quieter.
+
+**The two cases are not separable by confidence.** The parser sees the identical shape.
+What separates them is the **leftover number**: `"Psalm 23 1"` ends cleanly, while
+`"Psalms 2, 3, 1"` parses 2:3 and strands a `1` that no range could absorb (a range end
+must be `>=` the verse). Numbers that do not line up are garble; numbers that do are a
+reference.
+
+So:
+
+- A bare pair scores **0.55** — above the default auto-fire line (0.50), and still fully
+  governed by the sensitivity dial (a cautious install at auto-fire 0.90 demotes it
+  exactly as before). It is not a new baseline; it is one value moved across an existing,
+  operator-controlled line.
+- A bare pair **followed by another loose number** stays at **0.45** — it reaches the
+  operator, never the congregation. That is the rehearsal transcript, and it is pinned by
+  `a_garbled_number_run_never_auto_fires`, which was **mutation-verified**: deleting the
+  guard makes the garbled run score 0.55 and the test fail.
+- A **repaired** book name plus bare digits lands at `0.55 - 0.06 = 0.49`, still under the
+  line. A misheard book *and* loose digits is two guesses stacked, and always asks a human.
+
+This does not touch the structural rule in the live-safety decisions above: **only
+`DetectionMethod::Direct` may ever auto-fire**, and no threshold change can promote a
+paraphrase — `Semantic`/`Ambiguous` are capped at `Suggest` before any number is consulted. The detection scorecard is unchanged — 50/50
+cases, 100% recall, **0 wrong verses, 0 paraphrases auto-fired**.
