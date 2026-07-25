@@ -4,15 +4,34 @@
   // what shows. Sizes are in `cqw` (container-query width units) so the same
   // template scales identically whether the container is a full screen or a
   // small preview box.
-  import { fade } from 'svelte/transition';
   import { afterUpdate, onMount, onDestroy } from 'svelte';
-  import { isLayered, boundValue, templateShows } from './layers.js';
+  import { isLayered, boundValue, templateShows, formatElapsed, formatRemaining } from './layers.js';
 
   export let template = {};
   export let content = null; // { reference, text, translation }
+  // Optional theme (the style layer BENEATH the template — see themes.js). When
+  // present its whitelisted defaults fill the keys the template leaves unset;
+  // the template always WINS per key, so a themed render is byte-identical to a
+  // hand-styled one downstream. When ABSENT (the default) resolution is a no-op
+  // and this component behaves exactly as it did before themes existed — zero
+  // regression on every existing call site.
+  export let theme = null;
+  import { applyTheme, themeById, templateThemeRef, BUILTIN_THEMES } from './themes.js';
 
-  $: layout = template?.layout ?? {};
-  $: style = template?.style ?? {};
+  // The theme to apply. An EXPLICIT `theme` prop always wins (the Themes editor
+  // previewing an unsaved draft, or an output page that resolved a CUSTOM theme
+  // from the DB). Otherwise the template's own pinned theme (`style.themeRef`) is
+  // resolved against the BUILT-IN themes — which are bundled everywhere, so every
+  // surface (console previews, gallery cards, the wall) shows a builtin-themed
+  // template correctly with NO per-surface wiring. Custom themes carry no store
+  // here, so they resolve only where a caller injects them via the prop.
+  $: effectiveTheme = theme ?? themeById(templateThemeRef(template), BUILTIN_THEMES);
+  // Always run applyTheme: with a theme it merges style + resolves layer tokens;
+  // WITHOUT one it still resolves any layer theme-tokens to their literal
+  // fallbacks (a literal template hits applyTheme's fast path and is unchanged).
+  $: resolved = applyTheme(template, effectiveTheme);
+  $: layout = resolved?.layout ?? {};
+  $: style = resolved?.style ?? {};
 
   // ── LAYER MODE ─────────────────────────────────────────────────────────────
   // When a template carries `layout.layers`, render the free-form layer stack;
@@ -82,6 +101,8 @@
     let v;
     if (L.bind === 'countdown') v = countdownTo ? countdownText : '';
     else if (L.bind === 'clock') v = clockText;
+    else if (L.bind === 'elapsed') v = elapsedText;
+    else if (L.bind === 'remaining') v = remainingText;
     else v = boundValue(L, content);
     return lineTransform(v, L.lineTransform);
   }
@@ -155,6 +176,12 @@
   // decides — by a cheap signature — whether the expensive reflow actually runs.
   let fitRaf = 0;
   let lastFitSig = '';
+  // Only fit when the render is ON SCREEN (set by an IntersectionObserver below).
+  // Without IntersectionObserver (tests/jsdom) default to true so fitting still
+  // runs. This is what stops a chapter grid — a dozen TemplateRenders mounting at
+  // once — from running a dozen forced-reflow fit loops on load ("the Bible takes
+  // seconds"): offscreen cards defer their fit until scrolled into view.
+  let visible = typeof IntersectionObserver === 'undefined';
   // Everything that changes the FIT: container size, the configured sizes, and
   // the text being laid out. A countdown/clock tick does not change it, so the
   // reflow is skipped for ticks; a new verse changes it, so it always re-fits.
@@ -176,7 +203,7 @@
   }
   function runFit() {
     fitRaf = 0;
-    if (!stageEl) return;
+    if (!stageEl || !visible) return; // don't reflow an offscreen render
     const sig = fitSig();
     if (sig === lastFitSig) return;
     lastFitSig = sig;
@@ -190,15 +217,56 @@
   }
   afterUpdate(scheduleFit);
   let ro;
+  let io;
   onMount(() => {
     if (typeof ResizeObserver !== 'undefined' && stageEl) {
       // A resize genuinely changes the fit — always re-fit (coalesced to a frame).
       ro = new ResizeObserver(scheduleFit);
       ro.observe(stageEl);
     }
+    // Defer the (reflow-heavy) fit until this render is actually on screen. The
+    // output window is always visible, so it fits at once; a grid's offscreen
+    // cards fit lazily on scroll instead of all-at-once on mount.
+    if (typeof IntersectionObserver !== 'undefined' && stageEl) {
+      io = new IntersectionObserver((entries) => {
+        const nowVisible = entries.some((e) => e.isIntersecting);
+        if (nowVisible && !visible) {
+          visible = true;
+          lastFitSig = ''; // force a fresh fit now that we can measure it
+          scheduleFit();
+        } else {
+          visible = nowVisible;
+        }
+      });
+      io.observe(stageEl);
+    } else {
+      visible = true;
+    }
+    // WEB FONTS LOAD ASYNC. The FIRST fire often measures + fits with a fallback
+    // font, then the real webfont arrives, the text grows, and it overflows/clips
+    // — the "first verse doesn't fit" bug. When the fonts settle, force a re-fit.
+    //
+    // GUARD on `status !== 'loaded'`: once the fonts are in (which they are for
+    // every mount after the first view), `fonts.ready` is already resolved and its
+    // `.then` fires immediately — so WITHOUT this guard every TemplateRender adds a
+    // redundant second fit on mount, and a Library/Scripture grid of a dozen verse
+    // thumbnails becomes a reflow storm (the "slow on Scriptures/Library" regression).
+    // Only the genuinely-still-loading first view needs the deferred re-fit.
+    if (
+      typeof document !== 'undefined' &&
+      document.fonts &&
+      document.fonts.ready &&
+      document.fonts.status !== 'loaded'
+    ) {
+      document.fonts.ready.then(() => {
+        lastFitSig = '';
+        scheduleFit();
+      });
+    }
   });
   onDestroy(() => {
     ro?.disconnect();
+    io?.disconnect();
     if (fitRaf && typeof cancelAnimationFrame !== 'undefined') cancelAnimationFrame(fitRaf);
   });
 
@@ -343,27 +411,13 @@
     return `${f}, system-ui, sans-serif`;
   })();
 
-  // Slide transition (ProPresenter-style dissolve). Duration is template config
-  // (style.transitionMs, default 250ms); reduced-motion users get an instant cut.
-  //
-  // The slide uses `in:fade` ONLY — never a bidirectional `transition:fade`. With
-  // `{#key}` a bidirectional transition keeps the OUTGOING slide mounted (stacked
-  // on top, since the new block mounts before it) until its outro finishes; a
-  // rapid second fire interrupts that outro and Svelte can leave the stale node
-  // on top forever, so the wall looks FROZEN on the first verse while the store
-  // has long since moved on. `in:` destroys the old slide immediately — the new
-  // verse can never be hidden behind a lingering one.
-  const reduced =
-    typeof window !== 'undefined' &&
-    window.matchMedia &&
-    window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  // Guard against a non-numeric transitionMs: `Number("x")` is NaN, and a NaN
-  // duration makes the tween never complete.
-  $: dur = (() => {
-    if (reduced) return 0;
-    const n = Number(style.transitionMs ?? 250);
-    return Number.isFinite(n) ? Math.max(0, n) : 250;
-  })();
+  // NO SLIDE TRANSITION — the wall CUTS instantly to each verse (operator
+  // request: "quick as light, remove every animation"). A crossfade also made the
+  // auto-fit measure `scrollHeight` while the incoming slide still carried a
+  // transform, so a long verse was sized wrong and overflowed the frame. Cutting
+  // means the fit always measures a settled slide. `{#key slideKey}` still swaps
+  // content — it just does so with no animation. `style.transition`/`transitionMs`
+  // are now ignored; the theme editor's transition control is a no-op by design.
 
   // Countdown: tick a local clock only while a target is set. The number updates
   // in place via its own reactive (`now`), which slideKey excludes — so ticks
@@ -402,7 +456,23 @@
   // A wall clock for clock-bound layers — ticks once a second only when needed.
   let clockNow = 0;
   let clockTimer = null;
-  $: needClock = layered && layers.some((L) => L.bind === 'clock');
+  $: needClock =
+    layered &&
+    layers.some((L) => L.bind === 'clock' || L.bind === 'elapsed' || L.bind === 'remaining');
+  // Elapsed service timer: counts UP from the service-start epoch carried on the
+  // fired content, ticked by the same per-second clock. Empty when no service is
+  // recording (no start epoch). Like the wall clock it lives on internal state
+  // (clockNow), so a tick never re-keys the slide.
+  $: serviceStartedAt = content?.service_started_at ?? null;
+  $: serviceTargetMs = content?.service_target_ms ?? null;
+  $: nowTick = clockNow || (typeof Date !== 'undefined' ? Date.now() : 0);
+  $: elapsedText = serviceStartedAt != null ? formatElapsed(nowTick - serviceStartedAt) : '';
+  // Remaining = planned length − elapsed. Needs BOTH a start and a target; goes
+  // negative (shown as -M:SS) once the service runs over.
+  $: remainingText =
+    serviceStartedAt != null && serviceTargetMs != null
+      ? formatRemaining(serviceTargetMs - (nowTick - serviceStartedAt))
+      : '';
   $: if (needClock) startClockTick();
   else stopClockTick();
   function startClockTick() {
@@ -435,6 +505,8 @@
     void content;
     void countdownText;
     void clockText;
+    void elapsedText;
+    void remainingText;
     return layers.map((L) => ({ L, text: layerText(L) }));
   })();
 
@@ -524,13 +596,13 @@
                 class:lscroll={L.scroll}
                 data-base={L.size}
                 data-fit={L.fit || 'both'}
-                style="color:{L.color}; font-family:{fontFamOf(L.font)}; font-weight:{L.weight || 400}; text-align:{L.align}; text-transform:{L.transform || 'none'}; line-height:{L.lineHeight || 1.3}; letter-spacing:{(L.letterSpacing || 0)}em; text-shadow:{shadowOf(L.shadow)}; font-style:{L.italic ? 'italic' : 'normal'};"
-                in:fade={{ duration: dur }}>
+                style="color:{L.color}; font-family:{fontFamOf(L.font)}; font-weight:{L.weight || 400}; text-align:{L.align}; text-transform:{L.transform || 'none'}; line-height:{L.lineHeight || 1.3}; letter-spacing:{(L.letterSpacing || 0)}em; text-shadow:{shadowOf(L.shadow)}; font-style:{L.italic ? 'italic' : 'normal'};">
                 {#if L.scroll}
                   <span class="lrun" style="--tickdur:{Math.min(60, Math.max(10, (text?.length || 0) * 0.42))}s">{text}</span>
-                {:else if L.quote && text}
-                  “{text}”
                 {:else}
+                  <!-- Verbatim: the text is shown exactly as imported/typed. Relay
+                       does NOT wrap it in quotation marks — added quotes that were
+                       never in the source are wrong (operator request). -->
                   {text}
                 {/if}
               </div>
@@ -589,8 +661,7 @@
       <div
         class="slide"
         class:lower-third={bandMode}
-        class:bandless={bandMode && !bandHasWords}
-        in:fade={{ duration: dur }}>
+        class:bandless={bandMode && !bandHasWords}>
         {#if scroll && show('verse_text') && content.text && !countdownTo}
           <!-- FOOTER TICKER (ProPresenter-style). A band pinned to the very
                bottom of the screen: an optional fixed label on the left, then the
@@ -634,7 +705,7 @@
               {/if}
             {:else}
               {#if show('verse_text') && content.text}
-                <div class="verse" style="font-size:{verseSize}cqw; {verseStyle}">{#if hasRef}“{content.text}”{:else}{content.text}{/if}</div>
+                <div class="verse" style="font-size:{verseSize}cqw; {verseStyle}">{content.text}</div>
               {/if}
               {#if show('reference') && content.reference}
                 <div class="reference" style="font-size:{refSize}cqw; margin-top:{refGap}cqw; {refStyle} font-style:{style.italicRef ? 'italic' : 'normal'};">{content.reference}</div>

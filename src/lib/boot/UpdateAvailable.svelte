@@ -56,7 +56,7 @@
       </div>
     {:else if progress !== null}
       <div class="b-prog" style="margin-top:20px;">
-        <div class="track"><div class="fill" style="width:{progress}%"></div></div>
+        <div class="track"><div class="fill" style="transform:scaleX({progress / 100})"></div></div>
         <span class="pct">{progress}%</span>
       </div>
       <p style="margin:12px 0 0;font-size:12px;color:var(--v-faint);">

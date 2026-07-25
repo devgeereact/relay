@@ -58,10 +58,36 @@ pub struct OutputContent {
     /// template; when None, the channel's assigned template is used (default).
     pub template_id: Option<i64>,
     pub template_json: Option<String>,
+    /// True when `template_json` is a cue's DELIBERATE per-cue template choice
+    /// (a Planner item picked that look), which overrides the screen's own
+    /// template. False for a content-type DEFAULT (a "content look"), which
+    /// DEFERS to the screen's own template — so an operator sees the template they
+    /// assigned per screen, not one silently swapped in. See DECISIONS §29.
+    pub template_pinned: bool,
     /// Operator's private note for this cue (e.g. "hold for prayer"). Rides with
     /// the slide but is confidence-monitor only — the stage remote shows it, the
     /// congregation output never does (no template region renders it).
     pub stage_note: Option<String>,
+    /// The NEXT verse coming up, for a stage/confidence monitor's "up next" line.
+    /// Reaches output like `stage_note` but no congregation template renders it —
+    /// only a monitor template carrying a `next` / `next_reference` layer does.
+    /// BOUNDED by the read range: reading John 3:16–17 shows no "next" once 3:17
+    /// is up, rather than spilling into 3:18 (see `attach_next_verse`). None at a
+    /// range/chapter end or when the following verse is not in the corpus.
+    pub next_reference: Option<String>,
+    pub next_text: Option<String>,
+    /// Epoch (ms) the current service session STARTED, for a stage/confidence
+    /// monitor's elapsed timer (counts UP, ticked locally in the renderer like the
+    /// clock). None when nothing is being recorded. Like the other monitor fields
+    /// it rides to output but no congregation template renders it — only a monitor
+    /// template with an `elapsed` layer. It clears with the screens (the panic
+    /// clear stays total — a monitor is not exempt), which is deliberate.
+    pub service_started_at: Option<i64>,
+    /// Planned service length (ms), for a monitor's REMAINING timer (target minus
+    /// elapsed, ticked in the renderer). None when no length is configured. Rides
+    /// with `service_started_at`; only a monitor template with a `remaining` layer
+    /// renders it.
+    pub service_target_ms: Option<i64>,
     /// Pre-service countdown: the target epoch (ms) to count down TO. When set,
     /// the output renders a live MM:SS (ticked locally, so no per-second network
     /// traffic) styled by the template; `reference` is the label above it.
@@ -319,9 +345,13 @@ pub fn open_channel_ids(app: &tauri::AppHandle) -> Vec<i64> {
 /// Build the output view URL for a channel: the shared output.html plus the
 /// template id (looked up from the DB by the window) and a display name.
 /// Pure — unit-tested.
-pub fn output_url(template_id: i64, name: &str) -> String {
+pub fn output_url(channel_id: i64, template_id: i64, name: &str) -> String {
+    // `channel` lets the output live-swap its template when the screen is
+    // reassigned (it filters a channel-retemplate broadcast by this id); `template_id`
+    // is the first render before any push. `channel=0` = a channel-less preview.
     format!(
-        "output.html?template_id={}&name={}",
+        "output.html?channel={}&template_id={}&name={}",
+        channel_id,
         template_id,
         urlencode(name)
     )
@@ -347,7 +377,9 @@ pub fn open_native_window(
     let mut builder = WebviewWindowBuilder::new(
         app,
         label,
-        WebviewUrl::App(output_url(template_id, name).into()),
+        // Derive the channel id from the window label (channel_label encodes it),
+        // so a native output can live-swap its template like a kiosk does.
+        WebviewUrl::App(output_url(channel_id_of(label).unwrap_or(0), template_id, name).into()),
     )
     .title(format!("Relay — {name}"))
     .decorations(false)
@@ -444,12 +476,17 @@ fn rehearsing<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> bool {
         .unwrap_or(false)
 }
 
-/// Push content to every output channel. One broadcast, N independently-styled
-/// renders — native windows (Tauri event) AND networked kiosk clients (WS).
+/// The WS wire form of a content broadcast (what a kiosk/OBS client receives).
 ///
-/// In rehearsal this reaches the operator console and NOTHING else.
-pub fn broadcast_content<R: tauri::Runtime>(app: &tauri::AppHandle<R>, content: OutputContent) {
-    let json = serde_json::json!({
+/// A SEPARATE shape from the Tauri event because the kiosk protocol renames
+/// `kind` to `content_kind` (the client uses `kind` for the message type). Every
+/// field a monitor template can bind MUST appear here — this is the exact bug it
+/// guards: `next_reference`/`next_text` reach native windows via the struct emit
+/// but were dropped from THIS json, so a kiosk stage monitor never showed the
+/// "up next" verse while a native one did. Kept as a pure function so a test can
+/// assert the field set without a Tauri app handle.
+fn kiosk_content_json(content: &OutputContent) -> String {
+    serde_json::json!({
         "kind": "content",
         "content_kind": content.kind,
         "reference": content.reference,
@@ -459,11 +496,24 @@ pub fn broadcast_content<R: tauri::Runtime>(app: &tauri::AppHandle<R>, content: 
         "media_kind": content.media_kind,
         "template_id": content.template_id,
         "template_json": content.template_json,
+        "template_pinned": content.template_pinned,
         "stage_note": content.stage_note,
+        "next_reference": content.next_reference,
+        "next_text": content.next_text,
+        "service_started_at": content.service_started_at,
+        "service_target_ms": content.service_target_ms,
         "countdown_to": content.countdown_to,
         "countdown_done": content.countdown_done,
     })
-    .to_string();
+    .to_string()
+}
+
+/// Push content to every output channel. One broadcast, N independently-styled
+/// renders — native windows (Tauri event) AND networked kiosk clients (WS).
+///
+/// In rehearsal this reaches the operator console and NOTHING else.
+pub fn broadcast_content<R: tauri::Runtime>(app: &tauri::AppHandle<R>, content: OutputContent) {
+    let json = kiosk_content_json(&content);
     if rehearsing(app) {
         // Content-free by design: the reference is congregation/sermon data and this
         // log is written to disk. What matters operationally is only that the
@@ -555,6 +605,13 @@ pub struct KioskHub {
     /// address, or when. A count is the most that can be honestly known here, and
     /// it is enough to answer the only question the operator is asking.
     clients: Arc<Mutex<HashMap<i64, usize>>>,
+    /// The operator's CUSTOM themes, as a JSON array string (the `themes.custom`
+    /// settings blob). Sent to every kiosk client on connect so a browser source
+    /// (which has no DB) can resolve a template that pins a custom theme — builtin
+    /// themes it already knows (bundled in the page). Always well-formed: only a
+    /// validated JSON array is ever stored (see `set_themes`), so embedding it raw
+    /// into a WS message can never corrupt the frame.
+    themes: Arc<Mutex<String>>,
 }
 
 impl Default for KioskHub {
@@ -564,6 +621,7 @@ impl Default for KioskHub {
             tx,
             templates: Arc::new(Mutex::new(HashMap::new())),
             clients: Arc::new(Mutex::new(HashMap::new())),
+            themes: Arc::new(Mutex::new("[]".to_string())),
         }
     }
 }
@@ -637,6 +695,35 @@ impl KioskHub {
     /// write, and for `channel_status` to read.
     pub fn clients_handle(&self) -> ClientRegistry {
         ClientRegistry(self.clients.clone())
+    }
+    /// Shared handle to the custom-themes blob, for the WS server task to read and
+    /// send to each client on `hello`.
+    pub fn themes_handle(&self) -> Arc<Mutex<String>> {
+        self.themes.clone()
+    }
+    /// Validate + store the custom-themes blob WITHOUT pushing (startup warm).
+    /// Only a well-formed JSON ARRAY is kept — anything else falls back to `[]`,
+    /// so the value embedded raw into a WS frame is always valid JSON.
+    pub fn cache_themes(&self, themes_json: &str) {
+        let safe = match serde_json::from_str::<serde_json::Value>(themes_json) {
+            Ok(v) if v.is_array() => themes_json.to_string(),
+            _ => "[]".to_string(),
+        };
+        if let Ok(mut t) = self.themes.lock() {
+            *t = safe;
+        }
+    }
+    /// Update the custom themes AND push them live to every connected client, so a
+    /// kiosk re-resolves a custom-themed template the instant the operator saves a
+    /// theme. Same validate-then-store rule as `cache_themes`.
+    pub fn set_themes(&self, themes_json: &str) {
+        self.cache_themes(themes_json);
+        let blob = self
+            .themes
+            .lock()
+            .map(|t| t.clone())
+            .unwrap_or_else(|_| "[]".into());
+        self.publish(format!(r#"{{"kind":"themes","themes":{blob}}}"#));
     }
     /// Cache a template's JSON (no push). Used to warm the cache at startup.
     pub fn cache_template(&self, id: i64, template_json: &str) {
@@ -712,6 +799,7 @@ pub async fn run_kiosk_server(
     tx: broadcast::Sender<String>,
     templates: Arc<Mutex<HashMap<i64, String>>>,
     clients: ClientRegistry,
+    themes: Arc<Mutex<String>>,
     port: u16,
 ) {
     let listener = match tokio::net::TcpListener::bind(("0.0.0.0", port)).await {
@@ -729,6 +817,7 @@ pub async fn run_kiosk_server(
         let mut rx = tx.subscribe();
         let templates = templates.clone();
         let clients = clients.clone();
+        let themes = themes.clone();
         tokio::spawn(async move {
             let ws = match tokio_tungstenite::accept_async(stream).await {
                 Ok(w) => w,
@@ -784,6 +873,16 @@ pub async fn run_kiosk_server(
                                                 .send(tokio_tungstenite::tungstenite::Message::Text(out))
                                                 .await;
                                         }
+                                        // Send the custom themes too, so this client
+                                        // can resolve a template pinning a custom
+                                        // theme (builtins it already knows). Always
+                                        // a valid JSON array (see set_themes).
+                                        let blob = themes.lock().map(|t| t.clone()).unwrap_or_else(|_| "[]".into());
+                                        let _ = write
+                                            .send(tokio_tungstenite::tungstenite::Message::Text(
+                                                format!(r#"{{"kind":"themes","themes":{blob}}}"#),
+                                            ))
+                                            .await;
                                     }
                                 }
                             }
@@ -1079,16 +1178,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn output_url_carries_template_and_name() {
+    fn output_url_carries_channel_template_and_name() {
         assert_eq!(
-            output_url(1, "Main screen"),
-            "output.html?template_id=1&name=Main%20screen"
+            output_url(3, 1, "Main screen"),
+            "output.html?channel=3&template_id=1&name=Main%20screen"
         );
     }
 
     #[test]
     fn output_url_escapes_specials() {
-        let u = output_url(2, "Stage/2");
+        let u = output_url(0, 2, "Stage/2");
         assert!(u.contains("name=Stage%2F2"), "got {u}");
     }
 
@@ -1142,6 +1241,7 @@ mod tests {
             hub.sender(),
             hub.templates_handle(),
             hub.clients_handle(),
+            hub.themes_handle(),
             8200,
         ));
         tokio::time::sleep(std::time::Duration::from_millis(150)).await;
@@ -1170,6 +1270,52 @@ mod tests {
         );
     }
 
+    /// A kiosk gets the operator's custom themes on connect, so a browser source
+    /// can resolve a template that pins a custom theme (builtins it bundles).
+    #[tokio::test]
+    async fn a_kiosk_client_receives_the_custom_themes_on_hello() {
+        let hub = KioskHub::default();
+        hub.cache_themes(r##"[{"id":3,"name":"Sanctuary","style":{"accent":"#abc"}}]"##);
+        tokio::spawn(run_kiosk_server(
+            log_only(),
+            hub.sender(),
+            hub.templates_handle(),
+            hub.clients_handle(),
+            hub.themes_handle(),
+            8203,
+        ));
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+
+        let (ws, _) = tokio_tungstenite::connect_async("ws://127.0.0.1:8203")
+            .await
+            .expect("connect");
+        let (mut write, mut read) = ws.split();
+        write
+            .send(tokio_tungstenite::tungstenite::Message::Text(
+                r#"{"kind":"hello","template_id":7}"#.to_string(),
+            ))
+            .await
+            .expect("send hello");
+
+        // Read frames until the themes frame arrives (the template frame may come
+        // first when a template is cached; here none is, so themes is first).
+        let mut got = false;
+        for _ in 0..3 {
+            let Ok(Some(Ok(msg))) =
+                tokio::time::timeout(std::time::Duration::from_secs(2), read.next()).await
+            else {
+                break;
+            };
+            let text = msg.into_text().unwrap();
+            if text.contains(r#""kind":"themes""#) {
+                assert!(text.contains("Sanctuary"), "got {text}");
+                got = true;
+                break;
+            }
+        }
+        assert!(got, "the client never received the custom themes");
+    }
+
     /// End-to-end kiosk path (what OBS/vMix uses): a WS client connects, a fire
     /// is published, and the client receives it.
     #[tokio::test]
@@ -1181,6 +1327,7 @@ mod tests {
             tx,
             hub.templates_handle(),
             hub.clients_handle(),
+            hub.themes_handle(),
             8199,
         ));
         // Give the listener a moment to bind.
@@ -1311,6 +1458,51 @@ mod tests {
     }
 
     #[test]
+    fn the_kiosk_wire_form_carries_every_monitor_bindable_field() {
+        // The regression: a stage/confidence monitor over OBS/kiosk binds `next`
+        // and `note`, but the WS json dropped `next_reference`/`next_text`, so the
+        // "up next" line was blank on a kiosk while a native window showed it.
+        let content = OutputContent {
+            kind: Some("scripture".into()),
+            reference: "John 3:16".into(),
+            text: Some("For God so loved...".into()),
+            stage_note: Some("hold for prayer".into()),
+            next_reference: Some("John 3:17".into()),
+            next_text: Some("For God sent not...".into()),
+            service_started_at: Some(1_700_000_000_000),
+            service_target_ms: Some(1_800_000),
+            ..Default::default()
+        };
+        let v: serde_json::Value = serde_json::from_str(&kiosk_content_json(&content)).unwrap();
+        assert_eq!(v["kind"], "content");
+        assert_eq!(v["content_kind"], "scripture");
+        assert_eq!(v["reference"], "John 3:16");
+        assert_eq!(v["stage_note"], "hold for prayer");
+        assert_eq!(v["next_reference"], "John 3:17");
+        assert_eq!(v["next_text"], "For God sent not...");
+        assert_eq!(v["service_started_at"], 1_700_000_000_000_i64);
+        assert_eq!(v["service_target_ms"], 1_800_000);
+    }
+
+    #[test]
+    fn the_themes_blob_is_only_stored_when_it_is_a_valid_json_array() {
+        let hub = KioskHub::default();
+        // A well-formed array is kept verbatim.
+        hub.cache_themes(r#"[{"id":1,"name":"Mine","style":{}}]"#);
+        assert!(hub.themes_handle().lock().unwrap().contains("Mine"));
+        // Junk, a non-array, or an object all fall back to "[]" so the value can
+        // never corrupt the WS frame it is embedded raw into.
+        for bad in [r#"not json"#, r#"{"id":1}"#, r#"42"#, r#"null"#] {
+            hub.cache_themes(bad);
+            assert_eq!(
+                hub.themes_handle().lock().unwrap().as_str(),
+                "[]",
+                "bad blob {bad}"
+            );
+        }
+    }
+
+    #[test]
     fn an_ad_hoc_output_window_is_not_mistaken_for_a_channel() {
         // `open_output_window` still mints counter labels. Reading one of those as
         // a channel id would light up an unrelated channel.
@@ -1331,6 +1523,7 @@ mod tests {
             hub.sender(),
             hub.templates_handle(),
             hub.clients_handle(),
+            hub.themes_handle(),
             8202,
         ));
         tokio::time::sleep(std::time::Duration::from_millis(150)).await;

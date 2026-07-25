@@ -2,6 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import ModelSetup from '../ModelSetup.svelte';
   import History from './library/History.svelte';
+  import Dashboard from './Dashboard.svelte';
   import { locale, setLocale, LOCALES, t } from '../i18n.js';
   import { restartSetup, setSession } from '../session.js';
   import { humanError } from '../errors.js';
@@ -21,23 +22,25 @@
     Math.round(
       (Object.keys(CATALOGUES[code] ?? {}).filter((k) => !k.startsWith('_')).length / TOTAL) * 100,
     );
-  import { capture, meter, templates, initAudio, startCapture, stopCapture, setThresholds, setSttLanguage, setInputDevice, listTranslations, getActiveTranslation, setActiveTranslation, localIp, loadTemplates, getContentTemplates, setContentTemplate, getCrashReporting, setCrashReporting } from '../stores/capture.js';
+  import { capture, meter, templates, initAudio, startCapture, stopCapture, setThresholds, setSttLanguage, setInputDevice, listTranslations, getActiveTranslation, setActiveTranslation, localIp, loadTemplates, getCrashReporting, setCrashReporting, serviceTargetMinutes, loadServiceTarget, setServiceTarget } from '../stores/capture.js';
 
   // ─────────────────────────────────────────────────────────────────────────
   // SECTION NAV. The screen is one big config surface split into ref-matched
   // sections; the rail on the left picks which one is shown.
   // ─────────────────────────────────────────────────────────────────────────
   const SECTIONS = [
+    { key: 'dashboard', label: 'Dashboard',         desc: 'Service overview and quick actions', icon: 'grid' },
     { key: 'general',   label: 'General',           desc: 'Basic application preferences and behaviour', icon: 'gear' },
-    { key: 'outputs',   label: 'Outputs',           desc: 'Per-content-type templates and output routing', icon: 'monitor' },
     { key: 'audio',     label: 'Audio',             desc: 'Microphone input and live level', icon: 'mic' },
     { key: 'scripture', label: 'Scripture & Bible', desc: 'Recognition language and Bible translations', icon: 'book' },
     { key: 'ai',        label: 'AI & Detection',    desc: 'Detection thresholds and the run engine', icon: 'sparkle' },
     { key: 'shortcuts', label: 'Shortcuts',         desc: 'Keyboard controls for the live desk', icon: 'keyboard' },
     { key: 'network',   label: 'Network',           desc: 'Kiosk, output and stage distribution', icon: 'nodes' },
+    { key: 'integrations', label: 'Integrations',   desc: 'OBS, vMix, NDI and SDI switchers', icon: 'nodes' },
     { key: 'history',   label: 'Service History',   desc: 'Past services recorded locally', icon: 'clock' },
     { key: 'backup',    label: 'Backup & Recovery', desc: 'Setup walk-through and safe mode', icon: 'shield' },
     { key: 'updates',   label: 'Updates',           desc: 'App version and update channel', icon: 'refresh' },
+    { key: 'diagnostics', label: 'Diagnostics',     desc: 'Live status for a support request', icon: 'terminal' },
     { key: 'advanced',  label: 'Advanced',          desc: 'Crash reporting and privacy', icon: 'terminal' },
     { key: 'account',   label: 'Account',           desc: 'Licence and machine details', icon: 'user' },
   ];
@@ -45,6 +48,7 @@
   $: activeSection = SECTIONS.find((s) => s.key === section) ?? SECTIONS[0];
 
   const ICONS = {
+    grid: '<rect x="3" y="3" width="7.5" height="8.5" rx="1.6"/><rect x="13.5" y="3" width="7.5" height="5.5" rx="1.6"/><rect x="3" y="14.5" width="7.5" height="6.5" rx="1.6"/><rect x="13.5" y="11.5" width="7.5" height="9.5" rx="1.6"/>',
     gear: '<circle cx="12" cy="12" r="3.2"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M19.1 4.9L17 7M7 17l-2.1 2.1"/>',
     monitor: '<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/>',
     mic: '<path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10v1a7 7 0 0 1-14 0v-1"/><line x1="12" y1="18" x2="12" y2="22"/>',
@@ -112,9 +116,13 @@
 
   // The four toggles rendered as a data-driven list, matching the reference's
   // stacked switch rows.
+  // `soon` toggles need OS-level integration that does not ship yet (a Tauri
+  // autostart plugin, a system-tray icon). A switch that flips and "sticks" but
+  // does nothing is exactly the lying control this app refuses everywhere else,
+  // so these are shown disabled with a "Soon" tag instead of pretending to work.
   const GENERAL_TOGGLES = [
-    { key: 'autoStart',    title: 'Auto Start on Login',   note: 'Launch Relay automatically when you log in to your computer.' },
-    { key: 'minimizeTray', title: 'Minimize to System Tray', note: 'Minimize the application to the system tray instead of the taskbar.' },
+    { key: 'autoStart',    title: 'Auto Start on Login',   note: 'Launch Relay automatically when you log in to your computer.', soon: true },
+    { key: 'minimizeTray', title: 'Minimize to System Tray', note: 'Minimize the application to the system tray instead of the taskbar.', soon: true },
     { key: 'confirmLive',  title: 'Confirm Before Going Live', note: 'Show a confirmation dialog before sending content live.' },
     { key: 'autoSave',     title: 'Auto Save',             note: 'Automatically save changes in templates, plans and settings.' },
   ];
@@ -137,20 +145,6 @@
     } catch (e) {
       crashMsg = humanError(e);
     }
-  }
-
-  // Per-content-type default templates (ProPresenter-style).
-  const contentTypes = [
-    { key: 'scripture', label: 'Scripture' },
-    { key: 'song', label: 'Lyrics' },
-    { key: 'media', label: 'Media' },
-    { key: 'announce', label: 'Announcements' },
-  ];
-  let ctMap = { scripture: null, song: null, media: null, announce: null };
-  async function pickCt(kind, val) {
-    const id = val ? parseInt(val, 10) : null;
-    ctMap[kind] = id;
-    await setContentTemplate(kind, id);
   }
 
   // Threshold sliders push to the router; keep the invariant auto_fire ≥ suggest.
@@ -233,6 +227,7 @@
     applyTheme(prefs.theme);
   }
 
+  onMount(loadServiceTarget);
   onMount(async () => {
     loadPrefs();
     applyTheme(prefs.theme);
@@ -247,14 +242,13 @@
       appVersion = '';
     }
     // Guarded as a block: an unguarded reject on any one of these aborts the rest
-    // of mount, so crash state, content-type templates and the LAN IP would all
-    // silently fail to initialise off a single backend hiccup.
+    // of mount, so crash state and the LAN IP would all silently fail to
+    // initialise off a single backend hiccup.
     try {
       translations = await listTranslations();
       activeTranslation = await getActiveTranslation();
       crash = await getCrashReporting();
       await loadTemplates();
-      ctMap = await getContentTemplates();
     } catch (e) {
       crashMsg = humanError(e);
     } finally {
@@ -323,12 +317,20 @@
 
     <!-- ════ ACTIVE PANEL ════ -->
     <main class="s-panel">
-      <div class="s-panelhead">
-        <h2 class="s-paneltitle">{activeSection.label}</h2>
-        <p class="s-paneldesc">{activeSection.desc}</p>
-      </div>
+      {#if section !== 'dashboard'}
+        <div class="s-panelhead">
+          <h2 class="s-paneltitle">{activeSection.label}</h2>
+          <p class="s-paneldesc">{activeSection.desc}</p>
+        </div>
+      {/if}
 
-      {#if section === 'general'}
+      {#if section === 'dashboard'}
+        <!-- Dashboard moved into Settings — a records/overview surface, not a run
+             tab. Rendered full-bleed so its own layout is not squeezed by the
+             settings panel padding. -->
+        <div class="s-dash"><Dashboard /></div>
+
+      {:else if section === 'general'}
         <!-- Application language -->
         <div class="s-row">
           <div class="s-rowtext">
@@ -363,19 +365,37 @@
           </div>
         </div>
 
+        <!-- Service length — drives the REMAINING timer on a stage/confidence
+             monitor. 0 = no target (the remaining line stays blank). Read by the
+             backend when the next service starts. -->
+        <div class="s-row">
+          <div class="s-rowtext">
+            <div class="s-rowtitle">Service Length</div>
+            <div class="s-rownote">Planned length in minutes. Shows a “time remaining” timer on stage/confidence monitors. 0 = no target. Applies to the next service you start.</div>
+          </div>
+          <div class="s-rowctl s-lenctl">
+            <input class="r-input s-leninput" type="number" min="0" max="600" step="5"
+              value={$serviceTargetMinutes}
+              on:change={(e) => setServiceTarget(e.target.value)}
+              aria-label="Service length in minutes" />
+            <span class="s-lenunit r-mono">min</span>
+          </div>
+        </div>
+
         <!-- Toggles -->
         {#each GENERAL_TOGGLES as tg}
           <div class="s-row">
             <div class="s-rowtext">
-              <div class="s-rowtitle">{tg.title}</div>
-              <div class="s-rownote">{tg.note}</div>
+              <div class="s-rowtitle">{tg.title}{#if tg.soon}<span class="s-soon">Soon</span>{/if}</div>
+              <div class="s-rownote">{tg.note}{#if tg.soon} <span class="s-dim">— not available yet.</span>{/if}</div>
             </div>
             <button
               class="s-toggle"
-              class:on={prefs[tg.key]}
+              class:on={prefs[tg.key] && !tg.soon}
               role="switch"
-              aria-checked={prefs[tg.key]}
+              aria-checked={prefs[tg.key] && !tg.soon}
               aria-label={tg.title}
+              disabled={tg.soon}
               on:click={() => setPref(tg.key, !prefs[tg.key])}
             ><span class="s-knob"></span></button>
           </div>
@@ -440,21 +460,6 @@
             <option value="library">Library</option>
           </select>
         </div>
-
-      {:else if section === 'outputs'}
-        <p class="s-lead">Each content type can use its own template automatically — lyrics in a lower-third, scripture full-screen. “Channel default” leaves the look to each output's own template.</p>
-        <div class="s-cardbox">
-          {#each contentTypes as ct}
-            <div class="s-netrow">
-              <span class="s-netk">{ct.label}</span>
-              <select class="r-select s-ctsel" value={ctMap[ct.key] ?? ''} on:change={(e) => pickCt(ct.key, e.target.value)}>
-                <option value="">Channel default</option>
-                {#each $templates as tpl}<option value={tpl.id}>{tpl.name}</option>{/each}
-              </select>
-            </div>
-          {/each}
-        </div>
-        <p class="s-note">Add and manage network outputs (OBS · kiosk · stage remote) with copy-links and QR codes in the <b>Channels</b> tab.</p>
 
       {:else if section === 'audio'}
         <div class="s-inline">
@@ -566,7 +571,7 @@
           <div class="s-netrow"><span class="s-netk">Output / stage pages</span><span class="s-netv r-mono">:8032 · http</span></div>
           <div class="s-netrow"><span class="s-netk">Live update channel</span><span class="s-netv r-mono">:8031 · websocket</span></div>
         </div>
-        <p class="s-note">Connected devices (OBS · kiosk · stage remote) pull the live output from this machine on the same Wi-Fi. Manage them in the <b>Channels</b> tab.</p>
+        <p class="s-note">Connected devices (OBS · kiosk · stage remote) pull the live output from this machine on the same Wi-Fi. Manage them in the <b>Outputs</b> tab.</p>
 
         <div class="s-grouphead">Offline speech model</div>
         {#if $capture.stt.loaded}
@@ -575,6 +580,16 @@
         {:else}
           <ModelSetup />
         {/if}
+
+      {:else if section === 'integrations'}
+        <p class="s-lead">Relay sends its output to other software over your local network — no plugins to install. Add a <b>Browser Source</b> pointing at Relay; the exact per-channel URL is in <b>Outputs → Sharing</b>.</p>
+        <div class="s-cardbox">
+          <div class="s-netrow"><span class="s-netk">OBS / vMix (browser source)</span><span class="s-netv r-mono">http://{lanIp || 'this-pc'}:8032/output.html?template_id=&lt;n&gt;</span></div>
+          <div class="s-netrow"><span class="s-netk">Kiosk screen / stage tablet</span><span class="s-netv r-mono">:8032 · http</span></div>
+          <div class="s-netrow"><span class="s-netk">NDI</span><span class="s-netv r-mono">not available</span></div>
+          <div class="s-netrow"><span class="s-netk">ATEM / SDI switcher</span><span class="s-netv r-mono">via HDMI</span></div>
+        </div>
+        <p class="s-note"><b>NDI is parked</b> — it needs a proprietary SDK Relay does not bundle, so there is no NDI source to select. For an <b>ATEM or other SDI switcher</b>, open a Relay output window on an HDMI screen and feed that HDMI into the switcher — Relay does not speak SDI directly (and won't; that is served by the hardware you already own).</p>
 
       {:else if section === 'history'}
         <!-- History moved into Settings. The view is self-contained (its own list,
@@ -611,6 +626,20 @@
         </button>
         {#if updateMsg}<div class="s-note" style="margin-top:10px">{updateMsg}</div>{/if}
 
+      {:else if section === 'diagnostics'}
+        <p class="s-lead">The facts a support request needs, in one place. Nothing here leaves this machine.</p>
+        <div class="s-cardbox">
+          <div class="s-netrow"><span class="s-netk">Backend</span><span class="s-netv r-mono">{$capture.available ? 'connected' : 'not connected'}</span></div>
+          <div class="s-netrow"><span class="s-netk">Speech model</span><span class="s-netv r-mono">{$capture.stt.loaded ? ($capture.stt.model || 'loaded') : 'not loaded'}</span></div>
+          <div class="s-netrow"><span class="s-netk">Recognition language</span><span class="s-netv r-mono">{$capture.stt.language || '—'}</span></div>
+          <div class="s-netrow"><span class="s-netk">Microphone</span><span class="s-netv r-mono">{$capture.inputDevice || 'system default'}</span></div>
+          <div class="s-netrow"><span class="s-netk">Detection</span><span class="s-netv r-mono">{$capture.detectionOn ? 'armed' : 'off'}</span></div>
+          <div class="s-netrow"><span class="s-netk">This machine (LAN)</span><span class="s-netv r-mono">{lanIp || '—'}</span></div>
+          <div class="s-netrow"><span class="s-netk">Ports</span><span class="s-netv r-mono">5032 console · 8031 ws · 8032 http</span></div>
+          <div class="s-netrow"><span class="s-netk">Version</span><span class="s-netv r-mono">{appVersion || '—'} · {environment}</span></div>
+          <div class="s-netrow"><span class="s-netk">Uptime (this run)</span><span class="s-netv r-mono">{uptime}</span></div>
+        </div>
+
       {:else if section === 'advanced'}
         <div class="s-grouphead first">Crash Reporting</div>
         <p class="s-tr-note">
@@ -632,6 +661,8 @@
           <div class="s-netrow"><span class="s-netk">Version</span><span class="s-netv r-mono">{appVersion || '—'}</span></div>
         </div>
         <p class="s-note">Relay is free and open source. There is no account to sign in to and nothing to pay — every feature works offline, on this machine.</p>
+        <div class="s-grouphead">Operators</div>
+        <p class="s-note" style="margin-top:0">Relay is a <b>single-operator, on-device</b> app — there are no user accounts, roles or logins, by design. The one control that matters mid-service (operator override) is always reachable, and the preacher's stage remote is a separate, LAN-only surface (set up in <b>Outputs → Sharing</b>). Nothing about who is at the desk is recorded.</p>
       {/if}
     </main>
 
@@ -649,7 +680,7 @@
         <div class="s-ohead">Quick Links</div>
         <button class="s-qlink" on:click={() => (section = 'shortcuts')}>
           <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M6 14h12"/></svg>
-          <span class="s-qtext"><b>Keyboard Shortcuts</b><em>View and customise shortcuts</em></span>
+          <span class="s-qtext"><b>Keyboard Shortcuts</b><em>View the full shortcut reference</em></span>
           <svg class="s-qarr" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18l6-6-6-6"/></svg>
         </button>
         <button class="s-qlink" on:click={() => (section = 'updates')}>
@@ -707,6 +738,8 @@
 
   /* ── ACTIVE PANEL ── the cards float on the page, no outer box (matches ref) */
   .s-panel{ min-width:0; display:flex; flex-direction:column; gap:12px; }
+  /* Dashboard embed — let it fill and scroll within the settings panel. */
+  .s-dash{ flex:1; min-height:0; overflow:auto; }
   .s-panelhead{ margin-bottom:6px; }
   .s-paneltitle{ margin:0; font-family:var(--f-head); font-size:var(--v-fs-h2); line-height:var(--v-lh-h2);
     font-weight:600; letter-spacing:var(--v-tr-h2); color:var(--v-txt); }
@@ -723,6 +756,9 @@
   .s-rowtitle{ font-size:14px; font-weight:600; color:var(--v-txt); }
   .s-rownote{ margin-top:3px; font-size:12px; line-height:1.5; color:var(--v-faint); }
   .s-rowctl{ flex:0 0 auto; min-width:170px; max-width:220px; }
+  .s-lenctl{ display:flex; align-items:center; gap:8px; justify-content:flex-end; }
+  .s-leninput{ width:90px; text-align:right; }
+  .s-lenunit{ color:var(--v-faint); font-size:var(--v-fs-cap); }
 
   .s-grouphead{ margin:14px 0 2px; font-family:var(--f-mono); font-size:11px; font-weight:600;
     letter-spacing:.14em; text-transform:uppercase; color:var(--v-faint); }
@@ -744,6 +780,13 @@
   .s-knob{ position:absolute; top:2px; left:2px; width:18px; height:18px; border-radius:50%;
     background:#fff; transition:transform .16s; box-shadow:0 1px 2px rgba(0,0,0,.4); }
   .s-toggle.on .s-knob{ transform:translateX(20px); }
+  .s-toggle:disabled{ opacity:.4; cursor:not-allowed; }
+
+  /* "Soon" — a control shown for shape but not yet wired, marked so it can't lie. */
+  .s-soon{ display:inline-block; margin-left:8px; padding:1px 7px; border-radius:99px;
+    background:var(--v-surf3); border:1px solid var(--v-line2); color:var(--v-faint);
+    font-family:var(--f-mono); font-size:var(--v-fs-cap); letter-spacing:.04em; vertical-align:middle; }
+  .s-dim{ color:var(--v-faint); }
 
   /* Boxed rows (outputs, network, updates, account, shortcuts) */
   .s-cardbox{ display:flex; flex-direction:column; gap:8px; }
@@ -751,7 +794,6 @@
     padding:12px 14px; border-radius:var(--v-r-md); background:var(--v-surf2); border:1px solid var(--v-line); }
   .s-netk{ font-size:13px; color:var(--v-dim); }
   .s-netv{ font-size:11px; color:var(--v-txt); }
-  .s-ctsel{ max-width:200px; height:34px; }
 
   .s-note{ margin:14px 0 0; font-size:12px; line-height:1.6; color:var(--v-dim); }
   .s-note b{ color:var(--v-accent); }

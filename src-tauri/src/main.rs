@@ -77,7 +77,25 @@ struct Detecting(AtomicBool);
 struct SessionState {
     id: i64,
     started: Instant,
+    /// Wall-clock epoch (ms) the service started — the reference for a monitor's
+    /// elapsed timer. `Instant` can't be turned into a wall-clock time, so the
+    /// epoch is captured separately at start.
+    started_at_ms: i64,
+    /// Planned service length in ms, for a monitor's REMAINING timer. 0 = no
+    /// target set (the remaining line simply shows nothing). Captured once at
+    /// start from the `service.target_minutes` setting, so changing the setting
+    /// mid-service does not retro-move the current service's target.
+    target_ms: i64,
     last_transcript: Option<i64>,
+}
+
+/// Current wall-clock time in epoch milliseconds. `0` before the UNIX epoch
+/// (never happens in practice), so callers never handle an error.
+fn now_epoch_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
 }
 
 /// Current service-session state (None = not recording).
@@ -177,6 +195,19 @@ fn main() {
             let kiosk_tx = kiosk.sender();
             let kiosk_templates = kiosk.templates_handle();
             let kiosk_clients = kiosk.clients_handle();
+            let kiosk_themes = kiosk.themes_handle();
+            // Warm the custom-themes blob so a kiosk connecting before any theme is
+            // saved this session still gets the operator's themes on `hello`.
+            {
+                let db = app.state::<Db>();
+                if let Some(blob) =
+                    db.0.lock()
+                        .ok()
+                        .and_then(|conn| db::get_setting(&conn, "themes.custom").ok().flatten())
+                {
+                    kiosk.cache_themes(&blob);
+                }
+            }
             // Warm the template cache so a browser client (OBS/kiosk) gets the
             // REAL saved template immediately on connect (matches the editor).
             {
@@ -198,6 +229,7 @@ fn main() {
                 kiosk_tx,
                 kiosk_templates,
                 kiosk_clients,
+                kiosk_themes,
                 8031,
             ));
             // Serve the output/stage pages over LAN HTTP so other devices load
@@ -295,6 +327,9 @@ fn main() {
             fire_media,
             get_content_templates,
             set_content_template,
+            get_setting,
+            set_setting,
+            sync_kiosk_themes,
             data_health,
             list_books,
             chapter_verses,
@@ -310,6 +345,8 @@ fn main() {
             dismiss_detection,
             get_thresholds,
             set_thresholds,
+            get_sensitivity,
+            set_sensitivity,
             get_rehearsal,
             set_rehearsal,
             get_crash_reporting,
@@ -411,7 +448,11 @@ fn resolve_fire(
         .flatten();
     // A plan scripture cue's own template wins; the AI/auto path passes None and
     // gets the scripture content-type default.
-    let (template_id, template_json) = cue_or_content_tpl(conn, cue_template_id, "scripture");
+    let (template_id, template_json, template_pinned) =
+        cue_or_content_tpl(conn, cue_template_id, "scripture");
+    // `next_*` are filled in LATER by `attach_next_verse`, after the passage
+    // context has been updated — the bounded "up next" verse depends on the
+    // current passage span, which is only known after this fire is staged.
     Fire {
         key: Fire::key_for(&r),
         reference: r,
@@ -422,9 +463,33 @@ fn resolve_fire(
         method,
         status,
         stage_note,
+        next_reference: None,
+        next_text: None,
         template_id,
         template_json,
+        template_pinned,
         matched_text,
+    }
+}
+
+/// Fill in the "up next" fields on a fire from the CURRENT passage context.
+///
+/// Called AFTER the passage has been staged/advanced, so `context.next_verse()`
+/// reflects where the walk now is and — critically — is BOUNDED by the passage's
+/// range end: reading John 3:16–17 shows no "next" once 3:17 is up, rather than
+/// spilling into 3:18. A standalone verse (no range) still previews the following
+/// verse in the chapter. `None` when there is no next (end of range/chapter) or
+/// the next verse is not in the corpus. Only a monitor template with a `next`
+/// layer renders these, so this can never change what the congregation sees.
+fn attach_next_verse(conn: &Connection, context: &detection::ContextMemory, fire: &mut Fire) {
+    if let Some(nr) = context.next_verse() {
+        if let Some(v) = db::lookup_verse(conn, &nr.book, nr.chapter, nr.verse)
+            .ok()
+            .flatten()
+        {
+            fire.next_reference = Some(Fire::key_for(&nr));
+            fire.next_text = Some(v.text);
+        }
     }
 }
 
@@ -436,6 +501,30 @@ enum PassageUpdate {
     Advance,
     /// A jump inside the current book — new position, no new span.
     Jump,
+}
+
+/// Broadcast content, first stamping the elapsed-service clock onto it when a
+/// service is being recorded. ONE place, so every fire path's output carries the
+/// timer for a stage/confidence monitor without each caller remembering to — the
+/// same reason the pipeline builds the payload once. The Session lock is taken
+/// and RELEASED (mapped to a value) before the broadcast emits — never held
+/// across an emit (CLAUDE.md rule #2). `try_state` so a context without a managed
+/// Session simply stamps nothing rather than panicking.
+fn broadcast_with_clock<R: tauri::Runtime>(
+    handle: &tauri::AppHandle<R>,
+    mut content: channels::OutputContent,
+) {
+    if let Some(session) = handle.try_state::<Session>() {
+        if let Ok(g) = session.0.lock() {
+            if let Some(st) = g.as_ref() {
+                content.service_started_at = Some(st.started_at_ms);
+                // Only advertise a target when one is set (>0), so a monitor's
+                // remaining line stays blank rather than reading a bogus 0:00.
+                content.service_target_ms = (st.target_ms > 0).then_some(st.target_ms);
+            }
+        }
+    }
+    channels::broadcast_content(handle, content);
 }
 
 /// Put a verse on the screens because a HUMAN said so.
@@ -462,7 +551,7 @@ fn fire_manual<R: tauri::Runtime>(
 
     let fire = {
         let Ok(conn) = db.0.lock() else { return false };
-        let f = resolve_fire(
+        let mut f = resolve_fire(
             &conn,
             r,
             confidence,
@@ -488,6 +577,9 @@ fn fire_manual<R: tauri::Runtime>(
                 PassageUpdate::Advance => context.advance(&f.reference),
                 PassageUpdate::Jump => context.note(&f.reference),
             }
+            // The passage now reflects this fire, so "up next" is the bounded
+            // next verse (None at a range end). Computed here, under both locks.
+            attach_next_verse(&conn, &context, &mut f);
         }
         if let Ok(mut router) = handle.state::<Routing>().0.lock() {
             router.manual_fire(&f.key, 0);
@@ -504,7 +596,7 @@ fn fire_manual<R: tauri::Runtime>(
         f
     }; // locks released BEFORE the emit below — CLAUDE.md rule #2.
 
-    channels::broadcast_content(handle, fire.output());
+    broadcast_with_clock(handle, fire.output());
     let _ = handle.emit("detection://match", fire.event());
     true
 }
@@ -621,6 +713,8 @@ fn emit_detections(handle: &tauri::AppHandle, text: &str, now_ms: u64) {
             if fire.may_broadcast() {
                 // Stage the passage so "next" walks a range / whole chapter.
                 context.note_passage(&fire.reference, end);
+                // Fill "up next" from the now-staged passage (bounded by its end).
+                attach_next_verse(&conn, &context, &mut fire);
                 persist_fire(
                     &conn,
                     handle.state::<Session>(),
@@ -637,7 +731,7 @@ fn emit_detections(handle: &tauri::AppHandle, text: &str, now_ms: u64) {
     } // locks released here
 
     for content in broadcasts {
-        channels::broadcast_content(handle, content);
+        broadcast_with_clock(handle, content);
     }
     for ev in events {
         let _ = handle.emit("detection://match", ev);
@@ -1682,11 +1776,11 @@ fn start_countdown(
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0);
     let target = now_ms + (mins * 60_000.0) as i64;
-    let (tid, tjson) = {
+    let (tid, tjson, tpinned) = {
         let conn = db.0.lock()?;
         cue_or_content_tpl(&conn, template_id, "countdown")
     };
-    channels::broadcast_content(
+    broadcast_with_clock(
         &app,
         OutputContent {
             kind: Some("countdown".into()),
@@ -1695,6 +1789,7 @@ fn start_countdown(
             countdown_done: clean_note(Some(done_msg)),
             template_id: tid,
             template_json: tjson,
+            template_pinned: tpinned,
             ..Default::default()
         },
     );
@@ -1721,7 +1816,7 @@ fn fire_content<R: tauri::Runtime>(
     template_id: Option<i64>,
 ) -> error::Result<()> {
     let label = label.trim().to_string();
-    let (tid, tjson) = {
+    let (tid, tjson, tpinned) = {
         let conn = db.0.lock()?;
         cue_or_content_tpl(&conn, template_id, &kind)
     };
@@ -1736,7 +1831,7 @@ fn fire_content<R: tauri::Runtime>(
     } else {
         label.clone()
     };
-    channels::broadcast_content(
+    broadcast_with_clock(
         &app,
         OutputContent {
             kind: Some(kind.clone()),
@@ -1745,6 +1840,7 @@ fn fire_content<R: tauri::Runtime>(
             translation: None,
             template_id: tid,
             template_json: tjson,
+            template_pinned: tpinned,
             stage_note: clean_note(stage_note),
             ..Default::default()
         },
@@ -1764,7 +1860,7 @@ fn fire_media(
     id: i64,
     template_id: Option<i64>,
 ) -> error::Result<()> {
-    let (kind, filename, tid, tjson): (String, String, Option<i64>, Option<String>) = {
+    let (kind, filename, tid, tjson, tpinned): (String, String, Option<i64>, Option<String>, bool) = {
         let conn = db.0.lock()?;
         let (k, f) = conn
             .query_row(
@@ -1773,8 +1869,8 @@ fn fire_media(
                 |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
             )
             .map_err(|_| "media not found".to_string())?;
-        let (tid, tjson) = cue_or_content_tpl(&conn, template_id, "media");
-        (k, f, tid, tjson)
+        let (tid, tjson, tpinned) = cue_or_content_tpl(&conn, template_id, "media");
+        (k, f, tid, tjson, tpinned)
     };
     let media_kind = match kind.as_str() {
         "image" => "image",
@@ -1786,7 +1882,7 @@ fn fire_media(
         }
     };
     let ip = local_ip().unwrap_or_else(|| "127.0.0.1".to_string());
-    channels::broadcast_content(
+    broadcast_with_clock(
         &app,
         OutputContent {
             kind: Some("media".into()),
@@ -1794,20 +1890,12 @@ fn fire_media(
             media_kind: Some(media_kind.to_string()),
             template_id: tid,
             template_json: tjson,
+            template_pinned: tpinned,
             ..Default::default()
         },
     );
     persist_cue(&app, "media", Some(&filename));
     Ok(())
-}
-
-/// Resolve a content type's override template to (id, json) for the broadcast.
-/// A missing/unmapped type yields (None, None) → the channel template is used.
-fn content_tpl(conn: &rusqlite::Connection, kind: &str) -> (Option<i64>, Option<String>) {
-    match db::content_template(conn, kind) {
-        Ok(Some((id, j))) => (Some(id), Some(j)),
-        _ => (None, None),
-    }
 }
 
 /// The template a fire should render with: the CUE's own choice when it set one,
@@ -1827,15 +1915,27 @@ fn cue_or_content_tpl(
     conn: &rusqlite::Connection,
     cue_template_id: Option<i64>,
     kind: &str,
-) -> (Option<i64>, Option<String>) {
+) -> (Option<i64>, Option<String>, bool) {
     if let Some(id) = cue_template_id {
         if let Ok(Some(t)) = db::get_template(conn, id) {
             if let Ok(j) = serde_json::to_string(&t) {
-                return (Some(id), Some(j));
+                // PINNED: a cue's deliberate choice overrides the screen's template.
+                return (Some(id), Some(j), true);
             }
         }
     }
-    content_tpl(conn, kind)
+    // A content-type default DEFERS to the screen's own template, so it does NOT
+    // ship the template JSON — only the id, for the console readout. Each output
+    // resolves its own template locally.
+    //
+    // This is also a hard PERFORMANCE fix: `content_tpl` used to fetch AND
+    // serialize the whole default template on every fire and broadcast it to every
+    // output. A default template carrying an embedded image (a `data:` URL) is
+    // MEGABYTES — one was 13 MB — so every verse took seconds to serialize, send
+    // and re-parse on each screen. Reading only the id (a settings lookup) makes a
+    // fire instant regardless of how heavy the default template is.
+    let id = db::content_template_id(conn, kind).ok().flatten();
+    (id, None, false)
 }
 
 /// The default template ids mapped to each content type.
@@ -1845,6 +1945,7 @@ struct ContentTemplates {
     song: Option<i64>,
     media: Option<i64>,
     announce: Option<i64>,
+    countdown: Option<i64>,
 }
 
 /// Read the content-type → template mapping (Templates screen defaults).
@@ -1857,6 +1958,7 @@ fn get_content_templates(db: tauri::State<'_, Db>) -> error::Result<ContentTempl
         song: id("song"),
         media: id("media"),
         announce: id("announce"),
+        countdown: id("countdown"),
     })
 }
 
@@ -1869,6 +1971,34 @@ fn set_content_template(
 ) -> error::Result<()> {
     let conn = db.0.lock()?;
     db::set_content_template(&conn, &kind, template_id).map_err(Into::into)
+}
+
+/// Read a raw app setting by key (the generic KV store). Used by the frontend
+/// for small, whole-set config blobs — currently the operator's custom THEMES
+/// (`themes.custom`), which are read and written as one JSON array. Returns None
+/// when the key was never set. This is a general primitive on purpose: it is the
+/// offline-first, local-SQLite home for future frontend-owned config that does
+/// not warrant its own table.
+#[tauri::command]
+fn get_setting(db: tauri::State<'_, Db>, key: String) -> error::Result<Option<String>> {
+    let conn = db.0.lock()?;
+    db::get_setting(&conn, &key).map_err(Into::into)
+}
+
+/// Write a raw app setting (upsert). Counterpart to `get_setting`.
+#[tauri::command]
+fn set_setting(db: tauri::State<'_, Db>, key: String, value: String) -> error::Result<()> {
+    let conn = db.0.lock()?;
+    db::set_setting(&conn, &key, &value).map_err(Into::into)
+}
+
+/// Push the operator's custom themes to every connected kiosk/OBS client so a
+/// browser source (no DB) can resolve a template that pins a custom theme. The
+/// frontend calls this after persisting the `themes.custom` blob; builtin themes
+/// need no sync (the kiosk page bundles them). A no-op when nothing is connected.
+#[tauri::command]
+fn sync_kiosk_themes(kiosk: tauri::State<'_, channels::KioskHub>, themes_json: String) {
+    kiosk.set_themes(&themes_json);
 }
 
 /// Books available to browse, in canonical order — Library (§7).
@@ -2456,6 +2586,24 @@ fn set_thresholds(
     Ok(router.thresholds())
 }
 
+/// The single operator "sensitivity" dial (0..=100). Applies the SAME thresholds
+/// the two-slider Settings control would (`from_sensitivity` — the one forward
+/// mapping), so there is exactly one baseline. Returns the resulting dial
+/// position so the caller can reflect what actually landed.
+#[tauri::command]
+fn set_sensitivity(routing: tauri::State<'_, Routing>, sensitivity: u8) -> error::Result<u8> {
+    let mut router = routing.0.lock()?;
+    router.set_thresholds(Thresholds::from_sensitivity(sensitivity));
+    Ok(router.thresholds().to_sensitivity())
+}
+
+/// The current dial position, recovered from the live thresholds.
+#[tauri::command]
+fn get_sensitivity(routing: tauri::State<'_, Routing>) -> error::Result<u8> {
+    let router = routing.0.lock()?;
+    Ok(router.thresholds().to_sensitivity())
+}
+
 // ===== Voice profiles (Phase B — accent & speaker calibration) ==============
 
 /// Apply a profile's STT settings: language hint (code-switch when None) + the
@@ -2958,17 +3106,26 @@ fn channel_status(
                 }
             }
             "network_client" => {
-                // A networked channel is a template that clients subscribe to, so
-                // its liveness is "how many are showing this template".
+                // A networked output is SERVED CONTINUOUSLY: its URL responds and
+                // receives the live program the whole time the app runs, whether or
+                // not a browser is pulling it right now. So its liveness is "is it
+                // serving" (always true here), and the viewer count is reported
+                // SEPARATELY in the detail — not folded into the live/idle badge.
+                //
+                // The old rule (`online = clients > 0`) read IDLE for a perfectly
+                // live output the instant OBS momentarily dropped or hid its source,
+                // which is exactly the "some screens say not-live but OBS shows them
+                // all live" confusion. A viewer count of 0 means "nobody watching
+                // yet", not "the output is off".
                 let n = c.template_id.map(|t| clients.count(t)).unwrap_or(0);
                 ChannelLiveness {
                     id: c.id,
-                    online: n > 0,
+                    online: true,
                     clients: n,
                     detail: match n {
-                        0 => "No client connected".into(),
-                        1 => "1 client connected".into(),
-                        n => format!("{n} clients connected"),
+                        0 => "Serving · no viewer connected yet".into(),
+                        1 => "Serving · 1 viewer".into(),
+                        n => format!("Serving · {n} viewers"),
                     },
                     supported: true,
                 }
@@ -3135,11 +3292,40 @@ fn list_output_channels(db: tauri::State<'_, Db>) -> error::Result<Vec<db::Outpu
     db::list_output_channels(&conn).map_err(Into::into)
 }
 
-/// Assign a template to a channel — outputs are freely assignable.
+/// Assign a template to a channel — outputs are freely assignable — and push the
+/// change LIVE to that channel's outputs so switching a screen's template needs no
+/// reload and no URL change. Native windows get a `channel://retemplate` event; kiosk
+/// / OBS clients get a `channel_template` WS message they filter by their own channel.
 #[tauri::command]
-fn set_channel_template(db: tauri::State<'_, Db>, id: i64, template_id: i64) -> error::Result<()> {
-    let conn = db.0.lock()?;
-    db::set_channel_template(&conn, id, template_id).map_err(Into::into)
+fn set_channel_template(
+    app: tauri::AppHandle,
+    db: tauri::State<'_, Db>,
+    kiosk: tauri::State<'_, channels::KioskHub>,
+    id: i64,
+    template_id: i64,
+) -> error::Result<()> {
+    // DB write + resolve the new template JSON under one lock, then release before
+    // emitting (never hold a lock across emit — CLAUDE.md rule #2).
+    let tjson = {
+        let conn = db.0.lock()?;
+        db::set_channel_template(&conn, id, template_id)?;
+        db::get_template(&conn, template_id)?.and_then(|t| serde_json::to_string(&t).ok())
+    };
+    if let Some(j) = tjson {
+        if let Ok(tpl) = serde_json::from_str::<serde_json::Value>(&j) {
+            let _ = app.emit(
+                "channel://retemplate",
+                serde_json::json!({ "channel": id, "template": tpl }),
+            );
+        }
+        kiosk.publish(format!(
+            r#"{{"kind":"channel_template","channel":{id},"template":{j}}}"#
+        ));
+        // Keep the hub's per-template cache current so a fresh kiosk connect on this
+        // template id renders the up-to-date template too.
+        kiosk.cache_template(template_id, &j);
+    }
+    Ok(())
 }
 
 /// Operator "Clear all screens" / blackout — blank every output channel (D4).
@@ -3223,7 +3409,7 @@ fn push_announcement(app: tauri::AppHandle, message: String) -> error::Result<()
     if message.is_empty() {
         return Err(error::Error::refused("empty announcement"));
     }
-    channels::broadcast_content(
+    broadcast_with_clock(
         &app,
         OutputContent {
             reference: "Announcement".into(),
@@ -3278,9 +3464,20 @@ fn start_service(
         return Ok(st.id);
     }
     let id = db::create_service(&conn, &date, &title)?;
+    // Planned length (minutes) → ms, captured once so a later settings change does
+    // not retro-move this service's target. Absent/unparseable = no target.
+    let target_ms = db::get_setting(&conn, "service.target_minutes")
+        .ok()
+        .flatten()
+        .and_then(|s| s.trim().parse::<i64>().ok())
+        .filter(|m| *m > 0)
+        .map(|m| m * 60_000)
+        .unwrap_or(0);
     *sess = Some(SessionState {
         id,
         started: Instant::now(),
+        started_at_ms: now_epoch_ms(),
+        target_ms,
         last_transcript: None,
     });
     Ok(id)

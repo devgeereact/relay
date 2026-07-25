@@ -31,7 +31,7 @@ const EMPTY = {
   // surface. Everyone else is restored to whatever tab they were last on, because
   // this whole object is persisted: an operator who was running a service
   // yesterday comes back to Live, not to a summary screen.
-  activeTab: 'dashboard',
+  activeTab: 'live',
   planId: null,
   liveCueId: null,
   liveSlide: 0,

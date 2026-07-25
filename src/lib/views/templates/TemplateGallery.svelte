@@ -9,32 +9,45 @@
   import TemplateRender from '../../TemplateRender.svelte';
   import EmptyState from '../../ui/EmptyState.svelte';
   import { templateKind, kindsPresent, KIND_META } from '../../templateKind.js';
-  import { STARTERS, isLayered, regionsToLayers } from '../../layers.js';
+  import { STARTERS, isLayered, regionsToLayers, CONTENT_KINDS } from '../../layers.js';
+  import { testTemplateOnOutputs } from '../../templateTest.js';
+  import TemplatePreviewOverlay from '../../TemplatePreviewOverlay.svelte';
+  import { humanError } from '../../errors.js';
   import {
     capture,
     templates,
+    contentTemplates,
     loadTemplates,
     saveTemplate,
     saveTemplateQuiet,
     deleteTemplate,
-    setTemplateActive,
     listOutputChannels,
-    getContentTemplates,
-    setContentTemplate,
+    exportTemplate,
+    importTemplateFromFile,
+    defaultTemplateId,
+    loadDefaultTemplate,
+    setDefaultTemplate,
   } from '../../stores/capture.js';
-
-  // The content types a template can be the default for — "which screen it's for".
-  const CONTENT_KINDS = [
-    { key: 'scripture', label: 'Scripture' },
-    { key: 'song', label: 'Songs' },
-    { key: 'announce', label: 'Announcements' },
-    { key: 'media', label: 'Media' },
-  ];
 
   const dispatch = createEventDispatcher();
 
+  // Import a template file → a new template. A bad file surfaces its plain-
+  // language reason (parseImportedTemplate) via the ONE humaniser.
+  let fileInput;
+  async function onImportFile(e) {
+    err = '';
+    const file = e.target.files?.[0];
+    e.target.value = ''; // allow re-picking the same file after a fix
+    if (!file) return;
+    try {
+      selId = await importTemplateFromFile(file);
+      await loadTemplates();
+    } catch (ex) {
+      err = humanError(ex);
+    }
+  }
+
   let channels = [];
-  let contentTemplates = {}; // { kind: template_id } — the per-content-type defaults
   let filter = 'all';
   let q = '';
   let view = 'grid'; // grid | list
@@ -50,9 +63,9 @@
 
   onMount(async () => {
     await loadTemplates();
+    await loadDefaultTemplate();
     await upgradeLegacyToLayers();
     channels = await listOutputChannels().catch(() => []);
-    contentTemplates = await getContentTemplates().catch(() => ({}));
     if ($templates.length && selId == null) selId = $templates[0].id;
   });
 
@@ -90,7 +103,7 @@
     if (menuFor === t.id) { menuFor = null; return; }
     const r = e.currentTarget.getBoundingClientRect();
     const W = 150;
-    const H = 118; // three items + padding
+    const H = 152; // four items + padding
     let y = r.bottom + 4;
     if (y + H > window.innerHeight) y = r.top - H - 4; // flip up near the bottom edge
     menuPos = { x: Math.max(8, r.right - W), y };
@@ -108,7 +121,6 @@
     window.removeEventListener('resize', closeMenu);
   });
 
-  $: activeCount = $templates.filter((t) => t.active).length;
   $: kinds = kindsPresent($templates);
   $: shown = sortList(
     $templates
@@ -121,10 +133,10 @@
     const a = [...list];
     if (sort === 'name') a.sort((x, y) => x.name.localeCompare(y.name));
     else if (sort === 'kind') a.sort((x, y) => templateKind(x).localeCompare(templateKind(y)) || x.name.localeCompare(y.name));
-    // ACTIVE (console) templates always float to the top — they are the ≤4 that
-    // can actually go to a wall, so they are what the operator reaches for first.
-    // A stable sort keeps the chosen order within each group.
-    a.sort((x, y) => (y.active ? 1 : 0) - (x.active ? 1 : 0));
+    // The DEFAULT template floats to the top — it is the fallback look every slide
+    // wears, so it is what the operator reaches for first. A stable sort keeps the
+    // chosen order within each group.
+    a.sort((x, y) => (y.id === $defaultTemplateId ? 1 : 0) - (x.id === $defaultTemplateId ? 1 : 0));
     return a;
   }
 
@@ -143,25 +155,12 @@
 
   // The outputs a template is assigned to — REAL: a channel stores template_id.
   $: assignedChannels = sel ? channels.filter((c) => c.template_id === sel.id) : [];
-  // The content types this template is the default for — REAL: content-template map.
+  // READ-ONLY: the content types this template is the default look for. The ONE
+  // writer of the content-type→template map is the Outputs hub matrix (Decision
+  // §25); every other surface, this gallery included, only subscribes.
   $: defaultForKinds = sel
-    ? Object.entries(contentTemplates)
-        .filter(([, id]) => id === sel.id)
-        .map(([kind]) => kind)
+    ? CONTENT_KINDS.filter((k) => $contentTemplates[k.key] === sel.id)
     : [];
-
-  // Set (or clear) this template as the default for a content type — "use this
-  // template for Scripture / Songs / …". Clicking the one it already IS clears it
-  // back to the channel default.
-  async function useFor(kind) {
-    if (!sel) return;
-    err = '';
-    const already = contentTemplates[kind] === sel.id;
-    try {
-      await setContentTemplate(kind, already ? null : sel.id);
-      contentTemplates = await getContentTemplates().catch(() => contentTemplates);
-    } catch (e) { err = String(e); }
-  }
 
   // New template = pick a starting point (a layer stack), save it, open the editor.
   let newOpen = false;
@@ -188,9 +187,12 @@
       selId = id;
     } catch (e) { err = String(e); }
   }
-  async function toggleActive(t) {
+  // Make this template THE default (or clear it if it already is). One default,
+  // not a set of four — any template can be it, and any template can still be a
+  // screen's own output regardless.
+  async function makeDefault(t) {
     err = '';
-    try { await setTemplateActive(t.id, !t.active); }
+    try { await setDefaultTemplate($defaultTemplateId === t.id ? null : t.id); }
     catch (e) { err = String(e).replace('Error: ', ''); }
   }
 
@@ -212,6 +214,21 @@
       await deleteTemplate(t.id);
       if (selId === t.id) selId = $templates[0]?.id ?? null;
     } catch (e) { err = String(e); }
+  }
+
+  // Preview the selected template fullscreen, in-console (Decision §26). The overlay
+  // handles its own Esc; this only holds which template it is showing.
+  let previewing = null;
+  // Fire a sample verse to the LIVE screens using the selected template (Decision
+  // §26). A real fire — the operator clears it with Esc. testErr shows a failure.
+  let testErr = '';
+  async function testOnScreens() {
+    testErr = '';
+    try {
+      await testTemplateOnOutputs(sel.id);
+    } catch (e) {
+      testErr = humanError(e);
+    }
   }
 
   // Inline rename in the inspector.
@@ -241,6 +258,8 @@
         </button>
       {/each}
       <span class="tg-spring"></span>
+      <input type="file" accept=".json,application/json" bind:this={fileInput} on:change={onImportFile} style="display:none" />
+      <button class="r-btn ghost sm" on:click|stopPropagation={() => fileInput.click()}>Import</button>
       <span class="tg-newwrap">
         <button class="r-btn primary sm" on:click|stopPropagation={() => (newOpen = !newOpen)} disabled={!$capture.available}>＋ New Template</button>
         {#if newOpen}
@@ -298,13 +317,14 @@
                   <span class="tg-sub r-mono">{kindLabel(t)} · 16:9</span>
                 </div>
                 <div class="tg-cardbtns">
-                  <!-- Accent star, not amber ON AIR: 'active' means this template is
-                       one of the ≤4 the console CAN put on a wall, not that it is
-                       currently live. -->
-                  <button class="tg-star" class:on={t.active} title={t.active ? 'On the console' : 'Add to console (max 4)'}
-                    aria-label="Toggle console-active" on:click|stopPropagation={() => toggleActive(t)}
-                    disabled={!$capture.available || (!t.active && activeCount >= 4)}>
-                    <svg viewBox="0 0 24 24" width="14" height="14" fill={t.active ? 'currentColor' : 'none'} stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="m12 3 2.6 5.3 5.9.9-4.3 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8-4.3-4.1 5.9-.9L12 3Z"/></svg>
+                  <!-- Star = THE default template (the fallback look every slide
+                       wears). One default, not a set of four; accent when set. Not
+                       amber — amber means live on the wall, this only marks a fallback. -->
+                  <button class="tg-star" class:on={t.id === $defaultTemplateId}
+                    title={t.id === $defaultTemplateId ? 'Default template — click to clear' : 'Make this the default template'}
+                    aria-label="Toggle default template" on:click|stopPropagation={() => makeDefault(t)}
+                    disabled={!$capture.available}>
+                    <svg viewBox="0 0 24 24" width="14" height="14" fill={t.id === $defaultTemplateId ? 'currentColor' : 'none'} stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="m12 3 2.6 5.3 5.9.9-4.3 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8-4.3-4.1 5.9-.9L12 3Z"/></svg>
                   </button>
                   <button class="tg-more" aria-label="More actions" on:click|stopPropagation={(e) => openMenu(e, t)}>
                     <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="12" cy="19" r="1.6"/></svg>
@@ -339,11 +359,23 @@
         </div>
 
         <div class="tg-previewbtns">
+          <button class="r-btn primary sm" on:click={() => (previewing = sel)}>
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+            Preview fullscreen
+          </button>
           <button class="r-btn ghost sm" on:click={() => dispatch('edit', { id: sel.id })}>
             <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
             Edit template
           </button>
         </div>
+        <div class="tg-previewbtns">
+          <button class="r-btn ghost sm" on:click={testOnScreens} disabled={!$capture.available}
+            title="Fires sample scripture to the live screens using this template — clear it with Esc.">
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3v18l15-9L5 3Z"/></svg>
+            Test on screens
+          </button>
+        </div>
+        {#if testErr}<p class="tg-testerr" role="alert">{testErr}</p>{/if}
 
         <div class="r-seg tg-insptabs">
           <button class:on={inspTab === 'details'} on:click={() => (inspTab = 'details')}>Details</button>
@@ -367,7 +399,7 @@
                  (TemplateRender sizes in cqw), so there is no orientation to set. -->
             <dt>Orientation</dt><dd>16:9 · 1920×1080</dd>
             <dt>Background</dt><dd>{bgLabel(sel)}</dd>
-            <dt>On console</dt><dd>{sel.active ? 'Yes — can go to a wall' : 'No'}</dd>
+            <dt>Default</dt><dd>{sel.id === $defaultTemplateId ? 'Yes — the fallback for every slide' : 'No'}</dd>
           </dl>
           <!-- Created / Last modified / "used 26 times" are in the reference and
                omitted here on purpose: templates carry no timestamps and Relay
@@ -375,7 +407,12 @@
 
           <div class="r-lbl tg-flbl">Actions</div>
           <div class="tg-actions">
+            <button class="r-btn ghost sm" class:on={sel.id === $defaultTemplateId} on:click={() => makeDefault(sel)} disabled={!$capture.available}
+              title="The default template is the fallback look every slide wears when a screen or content type has no template of its own">
+              {sel.id === $defaultTemplateId ? 'Default ✓' : 'Set as default'}
+            </button>
             <button class="r-btn ghost sm" on:click={() => duplicate(sel)}>Duplicate</button>
+            <button class="r-btn ghost sm" on:click={() => exportTemplate(sel)}>Export</button>
             <button class="r-btn ghost sm" on:click={startRename}>Rename</button>
             <button class="r-btn ghost sm tg-del" class:arm={delArm === sel.id} on:click={() => del(sel)} disabled={!$capture.available}>
               {delArm === sel.id ? 'Click again to confirm' : 'Delete'}
@@ -394,19 +431,20 @@
               {/each}
             </div>
           {:else}
-            <p class="tg-fhelp">Not assigned to any output channel. Assign it in <b>Channels</b>.</p>
+            <p class="tg-fhelp">Not assigned to any screen. Assign it in <b>Outputs → Screens</b>.</p>
           {/if}
 
-          <div class="r-lbl tg-flbl">Use this template for</div>
-          <div class="tg-usefor">
-            {#each CONTENT_KINDS as ck}
-              <button class="tg-usebtn" class:on={contentTemplates[ck.key] === sel.id}
-                on:click={() => useFor(ck.key)} disabled={!$capture.available}>
-                <span class="tg-usedot"></span>{ck.label}
-              </button>
-            {/each}
-          </div>
-          <p class="tg-fhelp">Pick the content types this template should render. When something of that type fires — from Live or a plan — it uses this look. Tap again to clear.</p>
+          <div class="r-lbl tg-flbl">Default content look</div>
+          {#if defaultForKinds.length}
+            <div class="tg-chips">
+              {#each defaultForKinds as ck (ck.key)}
+                <span class="tg-defchip">Default for: {ck.label}</span>
+              {/each}
+            </div>
+          {:else}
+            <p class="tg-fhelp">Not set as a default content look.</p>
+          {/if}
+          <p class="tg-fhelp">Content looks are set in <b>Outputs → Content looks</b> — the one place a content type is bound to a template.</p>
         {/if}
       </div>
     {/if}
@@ -419,8 +457,14 @@
   <div class="tg-menu" style="left:{menuPos.x}px; top:{menuPos.y}px" on:click|stopPropagation role="menu" tabindex="-1">
     <button on:click={() => { menuFor = null; dispatch('edit', { id: menuTpl.id }); }}>Edit</button>
     <button on:click={() => duplicate(menuTpl)}>Duplicate</button>
+    <button on:click={() => { const t = menuTpl; menuFor = null; exportTemplate(t); }}>Export</button>
     <button class="danger" class:arm={delArm === menuTpl.id} on:click={() => del(menuTpl)}>{delArm === menuTpl.id ? 'Click again' : 'Delete'}</button>
   </div>
+{/if}
+
+<!-- Fullscreen in-console preview (Decision §26). Handles its own Esc. -->
+{#if previewing}
+  <TemplatePreviewOverlay template={previewing} onClose={() => (previewing = null)} />
 {/if}
 
 <style>
@@ -521,6 +565,8 @@
     overflow:hidden; background:var(--v-void); }
   .tg-previewbtns{ display:flex; gap:6px; margin-top:10px; }
   .tg-previewbtns .r-btn{ flex:1; justify-content:center; }
+  .tg-testerr{ margin:8px 0 0; padding:8px 10px; border:1px solid var(--v-rose); border-radius:var(--v-r-md);
+    background:var(--v-rose-soft); color:var(--v-rose); font-size:var(--v-fs-cap); line-height:1.45; }
   .tg-insptabs{ margin:14px 0 4px; width:100%; }
   .tg-insptabs :global(button){ flex:1; }
 
@@ -544,15 +590,9 @@
   .tg-aname{ flex:1; min-width:0; font-size:var(--v-fs-b2); color:var(--v-txt); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .tg-atype{ font-size:var(--v-fs-cap); color:var(--v-faint); }
   .tg-chips{ display:flex; flex-wrap:wrap; gap:6px; }
-  .tg-usefor{ display:grid; grid-template-columns:1fr 1fr; gap:6px; }
-  .tg-usebtn{ display:flex; align-items:center; gap:8px; padding:9px 10px; border-radius:var(--v-r-md);
-    background:var(--v-surf2); border:1px solid var(--v-line); color:var(--v-dim); cursor:pointer;
-    font-size:var(--v-fs-b2); text-align:left; }
-  .tg-usebtn:hover:not(:disabled){ border-color:var(--v-line2); color:var(--v-txt); }
-  .tg-usebtn.on{ border-color:var(--v-accent); background:var(--v-accent-soft); color:var(--v-txt); }
-  .tg-usebtn:disabled{ opacity:.4; cursor:not-allowed; }
-  .tg-usedot{ width:8px; height:8px; border-radius:50%; background:var(--v-line2); flex:0 0 auto; }
-  .tg-usebtn.on .tg-usedot{ background:var(--v-accent); }
+  .tg-defchip{ display:inline-flex; align-items:center; padding:4px 10px; border-radius:99px;
+    background:var(--v-accent-soft); border:1px solid var(--v-accent-line); color:var(--v-txt);
+    font-size:var(--v-fs-cap); font-weight:500; }
 
   .tg-empty{ margin:auto; padding:24px; text-align:center; }
 </style>

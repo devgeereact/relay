@@ -72,6 +72,23 @@ impl Thresholds {
             suggest: suggest.min(auto_fire),
         }
     }
+
+    /// Inverse of `from_sensitivity`, recovered from `auto_fire` (which is
+    /// monotonic in the dial). Display-only: it positions the operator's single
+    /// "sensitivity" slider from the stored thresholds so the two directions of
+    /// the mapping live in ONE place (here), never duplicated in the frontend.
+    /// The gate itself always uses the thresholds, never this number.
+    pub fn to_sensitivity(self) -> u8 {
+        let a = self.auto_fire;
+        let s = if a >= 0.50 {
+            // cautious half: auto_fire 0.90→0.50 maps to dial 0.0→0.5
+            ((0.90 - a) / 0.80).clamp(0.0, 0.5)
+        } else {
+            // eager half: auto_fire 0.50→0.30 maps to dial 0.5→1.0
+            0.5 + ((0.50 - a) / 0.40).clamp(0.0, 0.5)
+        };
+        (s * 100.0).round() as u8
+    }
 }
 
 /// Decide what thresholds a voice-profile save should land on.
@@ -369,6 +386,26 @@ mod tests {
     use super::*;
 
     const DIRECT: DetectionMethod = DetectionMethod::Direct;
+
+    #[test]
+    fn sensitivity_round_trips_through_the_thresholds() {
+        // The dial anchors: 0 = cautious, 50 = the shipped default, 100 = eager.
+        assert_eq!(Thresholds::from_sensitivity(50).to_sensitivity(), 50);
+        assert_eq!(Thresholds::from_sensitivity(0).to_sensitivity(), 0);
+        assert_eq!(Thresholds::from_sensitivity(100).to_sensitivity(), 100);
+        // Every dial position recovers to itself (±1 rounding) across the range —
+        // so the Live slider drawn from the stored thresholds lands where the
+        // operator left it, in both halves of the piecewise curve.
+        for s in 0..=100u8 {
+            let back = Thresholds::from_sensitivity(s).to_sensitivity();
+            assert!(
+                (back as i16 - s as i16).abs() <= 1,
+                "sensitivity {s} recovered as {back}"
+            );
+        }
+        // The default thresholds ARE dial 50 (the one baseline, DECISIONS §19).
+        assert_eq!(Thresholds::default().to_sensitivity(), 50);
+    }
 
     #[test]
     fn gates_by_tier() {

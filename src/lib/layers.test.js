@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import TemplateRender from './TemplateRender.svelte';
-import { makeLayer, isLayered, boundValue, regionsToLayers, STARTERS } from './layers.js';
+import { makeLayer, isLayered, boundValue, regionsToLayers, STARTERS, formatElapsed, formatRemaining, slideRevealCss } from './layers.js';
 
 describe('layer model', () => {
   it('makes typed layers with sane defaults and unique ids', () => {
@@ -41,6 +41,81 @@ describe('layer model', () => {
         expect(typeof L.x).toBe('number');
       }
     }
+  });
+
+  it('ships stage + confidence role profiles, theme-bound and using real bindings', () => {
+    for (const key of ['stage', 'confidence']) {
+      const s = STARTERS.find((x) => x.key === key);
+      expect(s, `starter ${key} exists`).toBeTruthy();
+      const t = s.make();
+      const layers = t.layout.layers;
+      // Shows the current verse and its reference, and a clock — a role monitor.
+      const verse = layers.find((L) => L.bind === 'verse');
+      const ref = layers.find((L) => L.bind === 'reference');
+      expect(verse).toBeTruthy();
+      expect(ref).toBeTruthy();
+      expect(layers.some((L) => L.bind === 'clock')).toBe(true);
+      // Colours bind to theme tokens, so the monitor follows its theme.
+      expect(verse.color).toBe('theme:verse');
+      expect(ref.color).toBe('theme:reference');
+      // Opaque background (a monitor, not a keyed camera overlay).
+      expect(layers.some((L) => L.type === 'background')).toBe(true);
+      // A service elapsed timer — a defining stage/confidence field.
+      expect(layers.some((L) => L.bind === 'elapsed')).toBe(true);
+    }
+  });
+
+  it('ships a preacher view with verse, next, timer and note; and a countdown timer', () => {
+    const preacher = STARTERS.find((s) => s.key === 'preacher').make().layout.layers;
+    for (const bind of ['verse', 'reference', 'next', 'elapsed', 'clock', 'note']) {
+      expect(preacher.some((L) => L.bind === bind), `preacher has a ${bind} layer`).toBe(true);
+    }
+
+    const timer = STARTERS.find((s) => s.key === 'timer').make().layout.layers;
+    // The huge digits are a countdown-bound layer (makeLayer('timer') → text/countdown).
+    const cd = timer.find((L) => L.bind === 'countdown');
+    expect(cd).toBeTruthy();
+    expect(cd.type).toBe('text'); // valid layer type for the renderer
+    expect(cd.size).toBeGreaterThan(10); // genuinely large
+    expect(cd.color).toBe('theme:verse'); // theme-aware
+  });
+
+  it('formatElapsed renders a service timer, clamping junk to 0:00', () => {
+    expect(formatElapsed(0)).toBe('0:00');
+    expect(formatElapsed(5_000)).toBe('0:05');
+    expect(formatElapsed(65_000)).toBe('1:05');
+    expect(formatElapsed(59 * 60_000 + 59_000)).toBe('59:59');
+    expect(formatElapsed(60 * 60_000)).toBe('1:00:00'); // rolls to H:MM:SS at an hour
+    expect(formatElapsed(3 * 3600_000 + 4 * 60_000 + 9_000)).toBe('3:04:09');
+    expect(formatElapsed(-500)).toBe('0:00');
+    expect(formatElapsed('nonsense')).toBe('0:00');
+  });
+
+  it('formatRemaining shows time left, and goes negative when over', () => {
+    expect(formatRemaining(90_000)).toBe('1:30'); // 1:30 left
+    expect(formatRemaining(0)).toBe('0:00');
+    expect(formatRemaining(-90_000)).toBe('-1:30'); // 1:30 over time
+    expect(formatRemaining(-1000)).toBe('-0:01');
+    expect(formatRemaining(3600_000)).toBe('1:00:00');
+  });
+
+  it('slideRevealCss ramps opacity for every mode, adds transform only for slide/zoom', () => {
+    // Fade: opacity only, no transform.
+    expect(slideRevealCss('fade', 0.5)).toBe('opacity:0.5;');
+    expect(slideRevealCss('fade', 1)).not.toContain('transform');
+    // Slide rises: at t=0 it is offset, at t=1 it lands.
+    expect(slideRevealCss('slide', 0)).toContain('translateY(4cqh)');
+    expect(slideRevealCss('slide', 1)).toContain('translateY(0cqh)');
+    // Zoom scales up into place.
+    expect(slideRevealCss('zoom', 0)).toContain('scale(0.92)');
+    expect(slideRevealCss('zoom', 1)).toContain('scale(1)');
+    // Every mode cross-fades (opacity tracks t).
+    for (const m of ['fade', 'slide', 'zoom']) expect(slideRevealCss(m, 0.3)).toContain('opacity:0.3');
+  });
+
+  it('the preacher view carries a remaining-time layer', () => {
+    const preacher = STARTERS.find((s) => s.key === 'preacher').make().layout.layers;
+    expect(preacher.some((L) => L.bind === 'remaining')).toBe(true);
   });
 
   it('converts a region template to layers faithfully', () => {

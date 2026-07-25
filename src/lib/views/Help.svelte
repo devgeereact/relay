@@ -29,7 +29,7 @@
       title: 'Nothing appears on the projector',
       body: [
         ['Is the output window open?', 'On the <b>Live</b> tab, click <b>Open output</b>. It opens on the projector — the screen that is <i>not</i> this laptop.'],
-        ['Is it on the right screen?', 'Go to <b>Channels</b> and set the display for “Main screen”. Relay lists every screen it can see.'],
+        ['Is it on the right screen?', 'Go to <b>Outputs → Screens</b> and set the display for “Main screen”. Relay lists every screen it can see.'],
         ['Still nothing?', 'Some projectors take a few seconds to wake. If Relay shows the verse in its own preview but the projector is dark, the problem is the cable or the projector input, not Relay.'],
       ],
     },

@@ -255,7 +255,10 @@
     /* NOT `overflow: hidden`. That clipped the kebab menu to the card, so the
        edit actions opened half-cut and looked misaligned. The shot does its own
        clipping instead, which is all the rounding needed. */
-    transition: border-color 0.14s, box-shadow 0.14s;
+    /* NOT `content-visibility: auto` — it FIGHTS the auto-fit. The fit loop reads
+       `scrollHeight`, which forces the browser to synchronously render the very
+       cards content-visibility was skipping, so interactions (like firing a verse)
+       janked. The font-refit guard already removed the real per-grid cost. */
   }
   .vd-card:hover {
     border-color: var(--v-line2);

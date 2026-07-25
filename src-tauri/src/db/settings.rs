@@ -2,7 +2,6 @@
 //! (scripture looks like scripture, lyrics look like lyrics — without any
 //! per-channel branching in the renderer).
 
-use super::templates::get_template;
 use rusqlite::Connection;
 use rusqlite::OptionalExtension;
 
@@ -52,17 +51,4 @@ pub fn set_content_template(
             Ok(())
         }
     }
-}
-
-/// Resolve a content type's template to (id, serialized-JSON) for the broadcast
-/// override. None when unmapped or the mapped template was deleted.
-pub fn content_template(conn: &Connection, kind: &str) -> rusqlite::Result<Option<(i64, String)>> {
-    if let Some(id) = content_template_id(conn, kind)? {
-        if let Some(t) = get_template(conn, id)? {
-            if let Ok(j) = serde_json::to_string(&t) {
-                return Ok(Some((id, j)));
-            }
-        }
-    }
-    Ok(None)
 }

@@ -386,3 +386,260 @@ This does not touch the structural rule in the live-safety decisions above: **on
 `DetectionMethod::Direct` may ever auto-fire**, and no threshold change can promote a
 paraphrase — `Semantic`/`Ambiguous` are capped at `Suggest` before any number is consulted. The detection scorecard is unchanged — 50/50
 cases, 100% recall, **0 wrong verses, 0 paraphrases auto-fired**.
+
+## 25. One vocabulary, one wiring hub: Screen · Template · Content look
+
+**Decision.** The output layer is presented through exactly three named concepts and
+each is edited in exactly one place:
+
+- **Template** = a look (layers/styling). Made and edited only in the **Templates** tab.
+- **Screen** = one output target (native window on a monitor · OBS/kiosk network URL ·
+  stage remote). Backed by `output_channels`. Wired only in the **Outputs** hub.
+- **Content look** = the type→template default (`tpl_{kind}`: scripture · song · media ·
+  announce · countdown). It answers "when the AI fires scripture, which look does it
+  wear on any screen that has not overridden it." Edited in exactly ONE authoritative
+  surface — the **Content looks** matrix inside the Outputs hub.
+
+**Why this shape.** The render chain is fixed and correct: `cue override → content-type
+default → channel template → builtin fallback` (`main.rs::cue_or_content_tpl`). The bug
+was never the chain; it was the UI. The content-type default was writable from **three**
+surfaces at once — Settings › Outputs dropdowns, the Templates editor "Where this shows"
+panel, and the gallery "Use this template for" buttons — each holding its own cached copy
+of the map with no shared store, so they silently disagreed and overwrote each other. A
+content-type default is a *wiring* decision (which look does fired content wear), not
+template decoration, so it belongs with the other wiring, not scattered across the app.
+
+**Consequences (binding):**
+- There is exactly **one writer** of the content-type default map, and it goes through a
+  single shared reactive store (`contentTemplates` in `capture.js`). Every other surface
+  that shows an assignment reads that store and is **read-only** (the gallery keeps a
+  "Default for: Scripture" badge; it does not set it). Never add a second writer.
+- The Templates editor's "Where this shows" content-role toggles are **removed** — the
+  editor's own comment called that loop "the single most confusing thing in the app."
+  Per-template `layout.shows` ("which content types this template is allowed to render")
+  stays in the editor; it is an intrinsic template property, a different concept, and must
+  not be conflated with the content-look default.
+- Settings › Outputs (the content-template dropdowns) is **removed**; the section had also
+  promised "output routing" it never shipped.
+- **`CONTENT_KINDS` in `layers.js` is the single canonical list** (scripture · song ·
+  media · announce · countdown). Gallery/editor/Settings local copies are deleted. The
+  backend `ContentTemplates` struct gains `countdown` so all five round-trip.
+- User-facing copy uses one word per concept: **Screen** / **Template** / **Content look**.
+  Backend identifiers keep `channel` (a rename is churn and risk); only surface copy changes.
+- Dead surfaces removed from the UI: the `StageDisplays` subtree (a localStorage mock with
+  zero importers that faked the Screens concept) and all **NDI** affordances (unsupported;
+  the backend stub stays). The dead `output_channels.status` column and the unused
+  `create_template` command are left for a later cleanup, noted here so they are not
+  mistaken for live wiring.
+
+## 26. Four capability additions (undo/redo · test-on-outputs · Live sensitivity · per-cue routing)
+
+**Decision.** A functional + design smoke pass (2026-07-22) found the app functionally
+complete but short of the reference on four capabilities. All four are being built.
+
+1. **Template editor Undo/Redo.** A direct-manipulation editor (drag/resize/arrow-nudge)
+   with autosave-to-live had no undo — one bad drag was unrecoverable. A bounded
+   snapshot history (frontend-only), `Ctrl/Cmd+Z` / `Ctrl/Cmd+Shift+Z`, captured on
+   settle (not per frame). Snapshots are of `{name, layout, style}` — the same shape the
+   autosave signature already serialises.
+
+2. **Test-on-outputs + fullscreen preview.** Both the gallery and the editor can (a)
+   preview a template fullscreen *in the console* (an in-app overlay, no backend, always
+   safe) and (b) push it to the real screens with sample scripture to check it before a
+   service. "Test on screens" reuses the ONE fire path (`fire_content` with the template
+   as the content-type override) — it is a normal live fire the operator clears with Esc,
+   not a new backend path. One shared helper (`lib/templateTest.js`) is the single source
+   of the sample content and the fire call, so the two surfaces cannot drift.
+
+3. **Live sensitivity dial.** The detection sensitivity (which maps to the router
+   thresholds, DECISIONS §19/§24) was Settings-only; the reference and the product
+   philosophy ("operator override is first-class") put it on the run surface. A compact
+   slider in the Live AI-detection panel writes the SAME `set_thresholds` the Settings
+   slider does — one baseline, no second source (router.rs invariant preserved).
+
+4. **Per-cue output routing + conditions (Planner).** A plan cue may target a SUBSET of
+   screens and carry its own fire behaviour. This is the one change that touches the
+   live-critical broadcast/router, so the rules are strict:
+   - **Targeting is additive and defaults to "all".** A cue with no explicit target set
+     fires to every screen exactly as before — the column is nullable, and an absent value
+     means all. No existing plan changes behaviour. Stored as `plan_items.output_targets_json`
+     (a JSON array of channel ids, or null = all).
+   - **The broadcast still goes through `channels::broadcast_content`**; targeting is a
+     filter applied there, never a second fan-out path. A screen not in the target set is
+     simply not sent this cue (its previous content stays).
+   - **Conditions never widen what may auto-fire.** Per-cue `auto_fire`/`require_confirm`
+     can only make a cue MORE cautious than the global gate, never less — the rule that
+     only `DetectionMethod::Direct` may auto-fire (DECISIONS live-safety) is upstream and
+     unchanged. A per-cue condition is an additional gate, ANDed with the router's.
+   - The migration is retryable (`DROP TABLE IF EXISTS` scratch, rollback on failure) per
+     the §25/rule-25 lesson, and the e2e fire test gains a case: a targeted cue reaches
+     only its screens, and an untargeted cue still reaches all.
+
+### §26 status (2026-07-23)
+
+Built and shipped: **1 (undo/redo)**, **2 (test-on-outputs + fullscreen preview)**,
+**3 (Live sensitivity dial)** — all with tests, all gates green.
+
+**4 (per-cue output routing + conditions) is DEFERRED to its own focused unit**, by
+deliberate engineering judgement, not omission. Grounding the design in the code showed
+it is not a UI addition but a change to three load-bearing, incident-scarred subsystems:
+- the **broadcast-only kiosk WS protocol** (§47) — network clients are template-keyed and
+  deliberately not channel-addressable; true targeting requires the client to report its
+  channel id and the hub to route by it (an additive protocol change, but on the
+  security-sensitive path);
+- the **live broadcast** (`channels::broadcast_content`) — the choke point CLAUDE.md rule 2
+  flags for main-run-loop deadlocks;
+- the **auto-fire gate** (§10) for the "conditions" half, which couples plan cues to the
+  detection router.
+A native-windows-only targeting would be *misleading* (a "lobby-only" cue would still reach
+the OBS stream), so a partial ship is worse than none. It will be built as an isolated unit
+with its own retryable migration (rule 25) and an e2e case (targeted cue reaches only its
+screens; untargeted reaches all) — not bolted onto a large mixed session touching the one
+path that puts scripture on a wall.
+
+## 27. Themes, role monitors, and portable looks (2026-07-24)
+
+A presentation-suite build-out (the ProPresenter-style IA). The load-bearing choices:
+
+**Themes are a style layer BENEATH templates, not a parallel system.** A theme is a
+named set of defaults for the exact same flat `style` keys the ONE renderer already
+reads. The effective look is `{ ...theme.style, ...template.style }` — the template wins
+per key. Resolving a theme produces a normal `template` object the renderer draws like
+any other, so a themed and a hand-styled template are indistinguishable downstream. This
+is what keeps WYSIWYG and the "outputs are render targets of one engine" rule intact —
+there is no `if themed` branch anywhere. A null/garbage theme degrades to the template's
+own look, never a blank wall (same law as `parseTemplateOverride`). See `src/lib/themes.js`.
+
+**Layer colours bind to theme TOKENS** (`theme:accent`, `theme:verse`…). A token always
+resolves to a literal — even with no theme applied it falls back to a sane default — so a
+token can never emit invalid CSS onto the wall. Existing templates were deliberately NOT
+retokenised on the legacy→layers upgrade: their fallback would differ from their current
+baked look, silently changing them. New bound-text layers default to tokens; the operator
+opts an existing layer in.
+
+**Role outputs (stage / confidence / preacher / musician) are render-profiles of the one
+engine, NOT separate template systems** — even though the pasted IA drew them as parallel
+systems, and even after being told to override the rule resisting that. A "stage display"
+is a normal template whose layers happen to show role-relevant fields. Building it as a
+second engine would re-introduce exactly the `if channel_type ==` drift the deleted
+stage-display system was killed for. The visible IA is fully delivered on the good bones.
+
+**Monitor-only content fields ride to output but no congregation template renders them.**
+`stage_note`, `next_reference`/`next_text`, `service_started_at` reach every output, but
+only a monitor template carrying a `note` / `next` / `elapsed` layer shows them. A
+congregation template simply omits those layers.
+
+**Next-verse is BOUNDED by the read range.** `attach_next_verse` fills the "up next" fields
+from the passage context AFTER it is staged, using `ContextMemory::next_verse()` (already
+bounded) — so reading John 3:16–17 shows no "next" once 3:17 is up, rather than spilling
+into 3:18. Computed once in a shared helper, two callers.
+
+**The panic "Clear all screens" stays TOTAL — a monitor is not exempt.** A persistent
+service timer that survives the clear was considered and REFUSED: it would mean adding an
+"except monitors" branch to a life-critical control. So the elapsed timer clears with the
+screens, deliberately. Whether a stage monitor should ignore the congregation clear is a
+real product decision, left open rather than resolved by a quiet special-case.
+
+**Kiosk theme delivery keeps ONE resolver.** Builtin themes are bundled in the output page,
+so a kiosk resolves them already. Custom themes are shipped as a validated JSON-array blob
+by the WS hub on `hello` (and pushed on save), and the kiosk's bundled resolver applies
+them — no theme-merge logic duplicated in Rust. The blob is validated to a JSON array
+before storage so it can never corrupt a WS frame.
+
+**Export/import carries the SHAPE, never the identity.** A theme file is `{ marker, name,
+style }`; a template file `{ marker, name, layout, style }` — no `id`, no `active`, no
+`builtin`. So an import always CREATES and can never overwrite an existing item or promote
+itself onto the console. A wrong/absent marker is refused with a plain-language error, not
+imported as a blank look.
+
+### §27 follow-on (2026-07-24): the rest of the presentation IA
+
+Built on top of the above, all tested and gate-green:
+
+- **Presets**: Preacher View and Countdown Timer starters (render-profiles, like Stage /
+  Confidence). The timer's huge digits are a countdown-bound layer — no special renderer path.
+- **Remaining-time timer**: a monitor `remaining` binding (target − elapsed, negative when
+  over). The planned length is a `service.target_minutes` setting captured ONCE into
+  `SessionState` at `start_service`, so changing it mid-service does not retro-move the
+  current service. Set in Settings › General.
+- **Template version history**: bounded (20), deduped-by-shape restore points per template,
+  persisted in the settings KV (`tplver.<id>`) — deliberately NOT a schema migration (rule
+  25). Snapshotted on an EXPLICIT Save only, never on the editor's live autosave.
+- **Settings sections**: Integrations (honest OBS/vMix-via-URL, NDI parked, ATEM-via-HDMI),
+  Diagnostics (one-glance support facts), and an honest Users note (Relay is single-operator
+  on-device, by design — no accounts).
+- **Transitions**: fade / slide / zoom as ONE custom `in:`-only transition (never a
+  bidirectional `transition:`, which is what froze the wall on a rapid re-fire). **Typewriter
+  is deliberately omitted** — a per-character reveal fights the measured auto-fit and is a
+  separate, riskier change.
+- **Routing overview**: a read-only screen × content-kind matrix — built, then REMOVED. It
+  added a fourth Outputs tab and read as clutter on the one screen an operator lives in; the
+  same facts are legible in Screens + Content-looks. Reverted rather than kept as low-value UI.
+
+## 28. Post-review UX corrections (2026-07-24)
+
+Driven by operator feedback on the running build:
+
+- **The "undefined Themes" nav label** was a missing icon: the sidebar renders
+  `{@html icons[tab.key]}`, and there was no `themes` entry, so `{@html undefined}` printed the
+  literal word. Added the icon. (Lesson: an icon map keyed by tab is a silent-undefined trap —
+  same shape as a missing i18n key.)
+
+- **The "4 starred templates (max 4)" concept is GONE.** It conflated "which templates the
+  console can use" with a hard cap, and operators read it as a limit on their templates. Replaced
+  by a single **Default template** (settings KV `default_template_id`) — the fallback look every
+  slide wears when a screen or content type has no template of its own. Any template can be the
+  default; any template can be any screen's output; there is no cap. The default NEVER overrides a
+  screen's own template (that would break per-screen assignment) — it is strictly a fallback
+  (console preview, Library previews, a new screen's initial template). The backend
+  `console_active` column and its two commands are left in place (harmless, and their
+  migration/boot-health tests guard real past incidents) — removing a column purely for tidiness
+  is not worth a migration (rule 25).
+
+- **A networked output now reads LIVE whenever it is serving**, not only when a browser client is
+  currently connected. The old rule (`online = clients > 0`) flipped a perfectly live OBS/kiosk
+  output to IDLE the instant a source hid or momentarily dropped — so the Screens list disagreed
+  with the Live panel and with OBS. Liveness for a network channel is "is it serving" (always,
+  while the app runs); the viewer count is reported SEPARATELY in the detail line.
+
+- **Dashboard moved into Settings** (a records/overview surface, not a run tab). The sidebar is now
+  the surfaces an operator runs during a service; a fresh install lands on Live.
+
+Two honest non-builds, recorded so they are not mistaken for oversights:
+
+- **Timeline** (Live Production) is **served by Service History** — which already shows, per
+  service, every fired verse with its timestamp alongside the transcript. A separate Timeline
+  view would duplicate it, and a dead-but-built duplicate is exactly what this codebase avoids.
+- **Per-cue output targeting** (send ONE cue to only some screens) remains the deferred
+  §26.4 unit. The Routing overview shows the routing that EXISTS; it does not add per-cue
+  targeting, because a partial version that still leaked a "lobby-only" cue to the live stream
+  would be worse than none. The Outputs UI says this in as many words.
+
+## 29. Per-screen template is authoritative; content looks defer (2026-07-24)
+
+REVERSES the §25 priority, on operator direction. §25 made a content-type default
+("content look") OVERRIDE every screen's own template, so scripture looked the same
+everywhere. Operators who deliberately assigned a different template to each screen found
+their choices silently replaced — "all my outputs have a template set but the output shows
+something else."
+
+New priority, resolved per output in `resolveOutputTemplate(channelTpl, override, pinned)`:
+
+1. **Transparency law** — a keyed (lower-third) screen never goes opaque. Wins over all.
+2. **A PINNED override** — a Planner cue's DELIBERATE per-cue template choice. Overrides the
+   screen (the operator picked that look for that item).
+3. **The SCREEN'S OWN template** — authoritative for everything else. A content-type default
+   (content look) is NOT pinned and DEFERS to it.
+4. The content look applies only as a fallback when a screen has no template of its own.
+
+The pin bit rides from the fire path: `cue_or_content_tpl` returns `pinned = true` only when a
+cue supplied the template, `false` for the content-type default. It crosses to output as
+`OutputContent::template_pinned` and is honoured identically on native windows AND kiosk/OBS
+(the kiosk content JSON previously dropped `template_json` entirely, so desktop and kiosk
+disagreed — now both carry it and resolve the same way).
+
+**Themes made useful**: `applyThemeToTemplate` recolours a template's layers to theme TOKENS by
+role (verse→`theme:verse`, reference→`theme:reference`, background→`theme:background`, else
+`theme:accent`, font→`theme:font`) and pins the theme. A layered template built with literal
+colours otherwise ignores a theme (a theme only fills UNSET keys); applying re-tokenises it so
+the theme then drives the whole template. Exposed as "Apply colours" in the template editor.

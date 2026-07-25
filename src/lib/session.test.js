@@ -94,13 +94,13 @@ describe('re-running first-run setup', () => {
 describe('where a session lands', () => {
   beforeEach(() => localStorage.clear());
 
-  it('sends a genuinely fresh install to the Dashboard', async () => {
-    // Nothing has ever been saved: nobody has run a service on this machine, and
-    // "is this going to work?" is the only question they have.
+  it('sends a genuinely fresh install to the run surface (Live)', async () => {
+    // Dashboard moved into Settings, so a fresh install lands on the surface an
+    // operator actually runs a service from — Live — not a separate home screen.
     const { session } = await import('./session.js?land1');
     let v;
     session.subscribe((s) => (v = s))();
-    expect(v.activeTab).toBe('dashboard');
+    expect(v.activeTab).toBe('live');
   });
 
   it('sends a CORRUPT session to the run surface, not the Dashboard', async () => {

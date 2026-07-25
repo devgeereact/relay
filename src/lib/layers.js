@@ -30,6 +30,16 @@ export const BINDINGS = [
   { key: 'translation', label: 'Translation' },
   { key: 'countdown', label: 'Countdown timer' },
   { key: 'clock', label: 'Clock' },
+  // ROLE-MONITOR fields. These carry data that reaches OUTPUT content but is not
+  // for the congregation: the next verse coming up and the operator's private
+  // note. A congregation template simply omits these layers; a stage/confidence
+  // monitor includes them. `note` has flowed to output for ages with nothing
+  // rendering it; `next` fields are populated by the fire path (resolve_fire).
+  { key: 'next', label: 'Next verse text' },
+  { key: 'next_reference', label: 'Next reference' },
+  { key: 'note', label: 'Operator note (monitors only)' },
+  { key: 'elapsed', label: 'Service timer (elapsed)' },
+  { key: 'remaining', label: 'Service timer (remaining)' },
   { key: 'static', label: 'Fixed text' },
 ];
 
@@ -205,10 +215,50 @@ export function templateShows(template, kind) {
  * camera; the verse still flows into the channel's own template. Opaque channels
  * take the override; a keyed override on a keyed channel is fine.
  */
-export function resolveOutputTemplate(channelTpl, override) {
+export function resolveOutputTemplate(channelTpl, override, pinned = false) {
   if (!override) return channelTpl;
+  // TRANSPARENCY LAW: a keyed (lower-third) screen never goes opaque for an opaque
+  // override — the camera it keys over must not be covered. Wins over everything.
   if (isKeyedTemplate(channelTpl) && !isKeyedTemplate(override)) return channelTpl;
-  return override;
+  // A cue's DELIBERATE per-cue template choice (pinned) overrides the screen — the
+  // operator picked that look for that item. A content-type DEFAULT (a "content
+  // look") does NOT: the SCREEN'S OWN template is authoritative, so an operator
+  // sees exactly the template they assigned to each screen. (This reverses the old
+  // "content look overrides every screen" — operators found it silently replaced
+  // the per-screen templates they had deliberately set. See DECISIONS §29.)
+  if (pinned) return override;
+  return channelTpl || override;
+}
+
+/** Format an elapsed duration (ms) as a service timer: `M:SS`, or `H:MM:SS` once
+ *  it passes an hour. Negative / garbage clamps to `0:00`. Pure, so the renderer
+ *  and its test share one definition. */
+export function formatElapsed(ms) {
+  const total = Math.max(0, Math.floor((Number(ms) || 0) / 1000));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  const pad = (n) => String(n).padStart(2, '0');
+  return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
+}
+
+/** The inline CSS for the slide-in transition at progress `t` (0→1), for a given
+ *  mode: 'slide' (rise) | 'zoom' (scale up) | anything else = 'fade'. Pure, so the
+ *  renderer's `in:` transition and its test share one definition. Opacity always
+ *  ramps with `t` so every mode also cross-fades. */
+export function slideRevealCss(mode, t) {
+  const o = `opacity:${t};`;
+  if (mode === 'slide') return `${o} transform:translateY(${(1 - t) * 4}cqh);`;
+  if (mode === 'zoom') return `${o} transform:scale(${0.92 + t * 0.08});`;
+  return o;
+}
+
+/** Format a remaining duration (ms). Positive shows time left (`M:SS`); once the
+ *  service runs OVER the planned length it goes negative and shows `-M:SS`, so a
+ *  preacher can see they are past time. Reuses formatElapsed for the magnitude. */
+export function formatRemaining(ms) {
+  const n = Number(ms) || 0;
+  return n < 0 ? `-${formatElapsed(-n)}` : formatElapsed(n);
 }
 
 /** The bound live value for a text/timer layer, given the fired content. */
@@ -221,10 +271,18 @@ export function boundValue(layer, content) {
       return c.reference || '';
     case 'translation':
       return c.translation || '';
+    case 'next':
+      return c.next_text || '';
+    case 'next_reference':
+      return c.next_reference || '';
+    case 'note':
+      return c.stage_note || '';
     case 'static':
       return layer.text || '';
     case 'countdown':
     case 'clock':
+    case 'elapsed':
+    case 'remaining':
       return ''; // computed live in the renderer (ticks), not from content
     default:
       return c.text || '';
@@ -306,11 +364,109 @@ function freestyle() {
   return { layout: { layers: [makeLayer('background', { fill: '#0a0a0a' })], align: 'center' }, style: {} };
 }
 
+// ── ROLE OUTPUTS ─────────────────────────────────────────────────────────────
+// A "stage display" / "confidence monitor" / "preacher view" is NOT a separate
+// engine — it is a normal template whose layers show role-relevant fields. These
+// starters are those profiles. They are theme-aware out of the box (colours bind
+// to theme tokens), and use ONLY the bindings that exist today: the current
+// verse, its reference, the wall clock and fixed labels. Richer role fields —
+// NEXT verse, speaker notes, elapsed/remaining service time — need new content
+// plumbing through the fire path and are a deliberate follow-up, not faked here.
+
+/** Stage display: a platform-facing monitor. Dark opaque background (it is a
+ *  screen, not a keyed camera overlay), a role label, the wall clock, and the
+ *  current verse + reference large enough to read from the stage. */
+function stageDisplay() {
+  return {
+    layout: {
+      layers: [
+        makeLayer('background', { name: 'Screen', fill: 'theme:background', x: 0, y: 0, w: 100, h: 100 }),
+        makeLayer('text', { name: 'Role label', bind: 'static', text: 'STAGE', x: 4, y: 3, w: 26, h: 7, size: 1.8, color: 'theme:accent', font: 'theme:font', align: 'left', valign: 'middle', transform: 'uppercase', letterSpacing: 0.12 }),
+        makeLayer('text', { name: 'Service timer', bind: 'elapsed', x: 37, y: 3, w: 26, h: 7, size: 2.2, color: 'theme:reference', font: 'theme:font', align: 'center', valign: 'middle' }),
+        makeLayer('text', { name: 'Clock', bind: 'clock', x: 70, y: 3, w: 26, h: 7, size: 2.2, color: 'theme:accent', font: 'theme:font', align: 'right', valign: 'middle' }),
+        makeLayer('text', { name: 'Verse', bind: 'verse', x: 6, y: 16, w: 88, h: 46, size: 4.6, color: 'theme:verse', font: 'theme:font', align: 'left', valign: 'middle' }),
+        makeLayer('text', { name: 'Reference', bind: 'reference', x: 6, y: 63, w: 88, h: 7, size: 2.4, color: 'theme:reference', font: 'theme:font', align: 'left', valign: 'middle', transform: 'uppercase', letterSpacing: 0.06 }),
+        makeLayer('text', { name: 'Up-next label', bind: 'static', text: 'UP NEXT', x: 6, y: 74, w: 40, h: 5, size: 1.5, color: 'theme:accent', font: 'theme:font', align: 'left', valign: 'middle', transform: 'uppercase', letterSpacing: 0.14 }),
+        makeLayer('text', { name: 'Next reference', bind: 'next_reference', x: 6, y: 79, w: 88, h: 5, size: 1.8, color: 'theme:reference', font: 'theme:font', align: 'left', valign: 'middle' }),
+        makeLayer('text', { name: 'Next verse', bind: 'next', x: 6, y: 84, w: 88, h: 13, size: 2.2, color: 'theme:verse', font: 'theme:font', align: 'left', valign: 'top', opacity: 0.8 }),
+      ],
+      align: 'left',
+    },
+    style: {},
+  };
+}
+
+/** Confidence monitor: booth/floor-facing. Same fields as the stage display,
+ *  centred and framed as the operator's "what is on screen now" confidence view. */
+function confidenceMonitor() {
+  return {
+    layout: {
+      layers: [
+        makeLayer('background', { name: 'Screen', fill: 'theme:background', x: 0, y: 0, w: 100, h: 100 }),
+        makeLayer('text', { name: 'Role label', bind: 'static', text: 'CONFIDENCE', x: 4, y: 4, w: 30, h: 8, size: 1.9, color: 'theme:accent', font: 'theme:font', align: 'left', valign: 'middle', transform: 'uppercase', letterSpacing: 0.12 }),
+        makeLayer('text', { name: 'Service timer', bind: 'elapsed', x: 36, y: 4, w: 28, h: 8, size: 2.2, color: 'theme:reference', font: 'theme:font', align: 'center', valign: 'middle' }),
+        makeLayer('text', { name: 'Clock', bind: 'clock', x: 66, y: 4, w: 30, h: 8, size: 2.2, color: 'theme:accent', font: 'theme:font', align: 'right', valign: 'middle' }),
+        makeLayer('text', { name: 'Verse', bind: 'verse', x: 8, y: 20, w: 84, h: 48, size: 5.2, color: 'theme:verse', font: 'theme:font', align: 'center', valign: 'middle' }),
+        makeLayer('text', { name: 'Reference', bind: 'reference', x: 8, y: 69, w: 84, h: 7, size: 2.6, color: 'theme:reference', font: 'theme:font', align: 'center', valign: 'middle' }),
+        makeLayer('text', { name: 'Operator note', bind: 'note', x: 8, y: 88, w: 84, h: 9, size: 2, color: 'theme:accent', font: 'theme:font', align: 'center', valign: 'middle', italic: true }),
+      ],
+      align: 'center',
+    },
+    style: {},
+  };
+}
+
+/** Preacher view: a platform monitor built for the person speaking — a big
+ *  centred verse, the reference, the verse coming up, the service timer + clock,
+ *  and the operator's private note. Everything the preacher needs, nothing the
+ *  congregation sees. Theme-aware. */
+function preacherView() {
+  return {
+    layout: {
+      layers: [
+        makeLayer('background', { name: 'Screen', fill: 'theme:background', x: 0, y: 0, w: 100, h: 100 }),
+        makeLayer('text', { name: 'Service timer', bind: 'elapsed', x: 4, y: 3, w: 30, h: 7, size: 2.2, color: 'theme:accent', font: 'theme:font', align: 'left', valign: 'middle' }),
+        makeLayer('text', { name: 'Time remaining', bind: 'remaining', x: 37, y: 3, w: 26, h: 7, size: 2.2, color: 'theme:reference', font: 'theme:font', align: 'center', valign: 'middle' }),
+        makeLayer('text', { name: 'Clock', bind: 'clock', x: 66, y: 3, w: 30, h: 7, size: 2.2, color: 'theme:accent', font: 'theme:font', align: 'right', valign: 'middle' }),
+        makeLayer('text', { name: 'Verse', bind: 'verse', x: 6, y: 15, w: 88, h: 45, size: 5.4, color: 'theme:verse', font: 'theme:font', align: 'center', valign: 'middle' }),
+        makeLayer('text', { name: 'Reference', bind: 'reference', x: 6, y: 61, w: 88, h: 7, size: 2.8, color: 'theme:reference', font: 'theme:font', align: 'center', valign: 'middle', transform: 'uppercase', letterSpacing: 0.05 }),
+        makeLayer('text', { name: 'Up-next label', bind: 'static', text: 'UP NEXT', x: 6, y: 72, w: 88, h: 5, size: 1.5, color: 'theme:accent', font: 'theme:font', align: 'center', valign: 'middle', transform: 'uppercase', letterSpacing: 0.14 }),
+        makeLayer('text', { name: 'Next verse', bind: 'next', x: 6, y: 77, w: 88, h: 12, size: 2.4, color: 'theme:verse', font: 'theme:font', align: 'center', valign: 'top', opacity: 0.8 }),
+        makeLayer('text', { name: 'Operator note', bind: 'note', x: 6, y: 90, w: 88, h: 8, size: 2, color: 'theme:accent', font: 'theme:font', align: 'center', valign: 'middle', italic: true }),
+      ],
+      align: 'center',
+    },
+    style: {},
+  };
+}
+
+/** Countdown timer: a full-screen pre-service clock — a label, huge MM:SS, and
+ *  the wall clock. The MM:SS is a timer layer bound to the fired countdown, so it
+ *  ticks and shows the "begins in" label from the fired content's reference. */
+function timerScreen() {
+  return {
+    layout: {
+      layers: [
+        makeLayer('background', { name: 'Screen', fill: 'theme:background', x: 0, y: 0, w: 100, h: 100 }),
+        makeLayer('text', { name: 'Label', bind: 'reference', x: 8, y: 18, w: 84, h: 12, size: 3.4, color: 'theme:accent', font: 'theme:font', align: 'center', valign: 'middle', transform: 'uppercase', letterSpacing: 0.12 }),
+        makeLayer('timer', { name: 'Countdown', x: 8, y: 32, w: 84, h: 48, size: 20, color: 'theme:verse', font: 'theme:font', align: 'center', valign: 'middle', shadow: 0.4 }),
+        makeLayer('text', { name: 'Clock', bind: 'clock', x: 8, y: 88, w: 84, h: 8, size: 2.4, color: 'theme:reference', font: 'theme:font', align: 'center', valign: 'middle' }),
+      ],
+      align: 'center',
+    },
+    style: {},
+  };
+}
+
 export const STARTERS = [
   { key: 'fullscreen', label: 'Full-Screen Scripture', make: fullScreen, hint: 'Verse centred with its reference beneath.' },
   { key: 'lowerthird', label: 'Lower Third', make: lowerThird, hint: 'A band at the bottom, keyed over camera in OBS/ATEM.' },
   { key: 'media', label: 'Full-Screen Media', make: mediaFull, hint: 'A picture or video fills the wall — add text over it if you like.' },
   { key: 'announcement', label: 'Announcement Ticker', make: announcement, hint: 'A scrolling crawl along the bottom.' },
+  { key: 'stage', label: 'Stage Display', make: stageDisplay, hint: 'Platform monitor: current verse, reference and clock. Theme-aware.' },
+  { key: 'confidence', label: 'Confidence Monitor', make: confidenceMonitor, hint: 'Booth-facing "what\'s on screen now" view with clock. Theme-aware.' },
+  { key: 'preacher', label: 'Preacher View', make: preacherView, hint: 'Big centred verse, the next verse, service timer and your note.' },
+  { key: 'timer', label: 'Countdown Timer', make: timerScreen, hint: 'Huge MM:SS for a pre-service countdown, with a label and clock.' },
   { key: 'freestyle', label: 'Freestyle', make: freestyle, hint: 'A blank canvas — add layers yourself.' },
 ];
 
