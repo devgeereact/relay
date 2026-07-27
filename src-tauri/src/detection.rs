@@ -193,6 +193,173 @@ fn is_single_chapter(book: &str) -> bool {
     SINGLE_CHAPTER_BOOKS.contains(&book)
 }
 
+/// Verses per chapter, per book — indexed by `CANONICAL_BOOKS` position.
+///
+/// This is SHAPE, not scripture: 1189 chapter lengths, the same facts in every
+/// translation. It is a `const` rather than a read of the bundled KJV so that
+/// `detection` stays free of IO and of the 4 MB corpus, and a `#[cfg(test)]`
+/// test parses `kjv.json` and asserts the two agree — so it cannot silently
+/// drift from the Bible actually shipped.
+///
+/// It exists for `split_run_into_chapter_verse`, which cannot work without it:
+/// deciding that "663" is 6:63 and not 66:3 requires knowing John has 21
+/// chapters and that chapter 6 has at least 63 verses.
+#[rustfmt::skip]
+const VERSES_PER_CHAPTER: &[&[u8]] = &[
+    &[31,25,24,26,32,22,24,22,29,32,32,20,18,24,21,16,27,33,38,18,34,24,20,67,34,35,46,22,35,43,55,32,20,31,29,43,36,30,23,23,57,38,34,34,28,34,31,22,33,26],
+    &[22,25,22,31,23,30,25,32,35,29,10,51,22,31,27,36,16,27,25,26,36,31,33,18,40,37,21,43,46,38,18,35,23,35,35,38,29,31,43,38],
+    &[17,16,17,35,19,30,38,36,24,20,47,8,59,57,33,34,16,30,37,27,24,33,44,23,55,46,34],
+    &[54,34,51,49,31,27,89,26,23,36,35,16,33,45,41,50,13,32,22,29,35,41,30,25,18,65,23,31,40,16,54,42,56,29,34,13],
+    &[46,37,29,49,33,25,26,20,29,22,32,32,18,29,23,22,20,22,21,20,23,30,25,22,19,19,26,68,29,20,30,52,29,12],
+    &[18,24,17,24,15,27,26,35,27,43,23,24,33,15,63,10,18,28,51,9,45,34,16,33],
+    &[36,23,31,24,31,40,25,35,57,18,40,15,25,20,20,31,13,31,30,48,25],
+    &[22,23,18,22],
+    &[28,36,21,22,12,21,17,22,27,27,15,25,23,52,35,23,58,30,24,43,15,23,29,22,44,25,12,25,11,31,13],
+    &[27,32,39,12,25,23,29,18,13,19,27,31,39,33,37,23,29,33,43,26,22,51,39,25],
+    &[53,46,28,34,18,38,51,66,28,29,43,33,34,31,34,34,24,46,21,43,29,54],
+    &[18,25,27,44,27,33,20,29,37,36,21,21,25,29,38,20,41,37,37,21,26,20,37,20,30],
+    &[54,55,24,43,26,81,40,40,44,14,47,40,14,17,29,43,27,17,19,8,30,19,32,31,31,32,34,21,30],
+    &[17,18,17,22,14,42,22,18,31,19,23,16,22,15,19,14,19,34,11,37,20,12,21,27,28,23,9,27,36,27,21,33,25,33,27,23],
+    &[11,70,13,24,17,22,28,36,15,44],
+    &[11,20,32,23,19,19,73,18,38,39,36,47,31],
+    &[22,23,15,17,14,14,10,17,32,3],
+    &[22,13,26,21,27,30,21,22,35,22,20,25,28,22,35,22,16,21,29,29,34,30,17,25,6,14,23,28,25,31,40,22,33,37,16,33,24,41,30,24,34,17],
+    &[6,12,8,8,12,10,17,9,20,18,7,8,6,7,5,11,15,50,14,9,13,31,6,10,22,12,14,9,11,12,24,11,22,22,28,12,40,22,13,17,13,11,5,26,17,11,9,14,20,23,19,9,6,7,23,13,11,11,17,12,8,12,11,10,13,20,7,35,36,5,24,20,28,23,10,12,20,72,13,19,16,8,18,12,13,17,7,18,52,17,16,15,5,23,11,13,12,9,9,5,8,28,22,35,45,48,43,13,31,7,10,10,9,8,18,19,2,29,176,7,8,9,4,8,5,6,5,6,8,8,3,18,3,3,21,26,9,8,24,13,10,7,12,15,21,10,20,14,9,6],
+    &[33,22,35,27,23,35,27,36,18,32,31,28,25,35,33,33,28,24,29,30,31,29,35,34,28,28,27,28,27,33,31],
+    &[18,26,22,16,20,12,29,17,18,20,10,14],
+    &[17,17,11,16,16,13,13,14],
+    &[31,22,26,6,30,13,25,22,21,34,16,6,22,32,9,14,14,7,25,6,17,25,18,23,12,21,13,29,24,33,9,20,24,17,10,22,38,22,8,31,29,25,28,28,25,13,15,22,26,11,23,15,12,17,13,12,21,14,21,22,11,12,19,12,25,24],
+    &[19,37,25,31,31,30,34,22,26,25,23,17,27,22,21,21,27,23,15,18,14,30,40,10,38,24,22,17,32,24,40,44,26,22,19,32,21,28,18,16,18,22,13,30,5,28,7,47,39,46,64,34],
+    &[22,22,66,22,22],
+    &[28,10,27,17,17,14,27,18,11,22,25,28,23,23,8,63,24,32,14,49,32,31,49,27,17,21,36,26,21,26,18,32,33,31,15,38,28,23,29,49,26,20,27,31,25,24,23,35],
+    &[21,49,30,37,31,28,28,27,27,21,45,13],
+    &[11,23,5,19,15,11,16,14,17,15,12,14,16,9],
+    &[20,32,21],
+    &[15,16,15,13,27,14,17,14,15],
+    &[21],
+    &[17,10,10,11],
+    &[16,13,12,13,15,16,20],
+    &[15,13,19],
+    &[17,20,19],
+    &[18,15,20],
+    &[15,23],
+    &[21,13,10,14,11,15,14,23,17,12,17,14,9,21],
+    &[14,17,18,6],
+    &[25,22,17,25,48,34,29,34,38,42,30,50,58,36,39,28,27,35,30,34,46,45,39,51,46,74,66,20],
+    &[45,28,35,40,43,56,36,37,50,52,33,44,37,72,47,20],
+    &[80,52,38,44,39,49,50,56,62,42,54,59,35,35,32,31,37,43,48,47,38,71,56,53],
+    &[51,25,36,54,47,71,53,59,41,42,57,50,38,31,27,33,26,40,42,31,25],
+    &[26,47,26,37,42,15,60,40,43,48,30,25,52,28,41,40,34,28,41,38,40,30,35,27,27,32,44,31],
+    &[32,29,31,25,21,23,25,39,33,21,36,21,14,23,33,27],
+    &[31,16,23,21,13,20,40,13,27,33,34,31,13,40,58,24],
+    &[24,17,18,18,21,18,16,24,15,18,33,21,14],
+    &[24,21,29,31,26,18],
+    &[23,22,21,32,33,24],
+    &[30,30,21,23],
+    &[29,23,25,18],
+    &[10,20,13,18,28],
+    &[12,17,18],
+    &[20,15,16,16,25,21],
+    &[18,26,17,22],
+    &[16,15,15],
+    &[25],
+    &[14,18,19,16,14,20,28,13,28,39,40,29,25],
+    &[27,26,18,17,20],
+    &[25,25,22,19,14],
+    &[21,22,18],
+    &[10,29,24,21,21],
+    &[13],
+    &[15],
+    &[25],
+    &[20,29,22,11,14,17,17,13,21,11,19,18,18,20,8,21,18,24,21,15,27,21],
+];
+
+/// How many chapters a book has (0 if the book is unknown).
+fn chapter_count(book: &str) -> usize {
+    CANONICAL_BOOKS
+        .iter()
+        .position(|b| *b == book)
+        .and_then(|i| VERSES_PER_CHAPTER.get(i))
+        .map(|c| c.len())
+        .unwrap_or(0)
+}
+
+/// How many verses are in `book` chapter `chapter` (0 if either is out of range).
+fn verse_count(book: &str, chapter: i64) -> usize {
+    if chapter < 1 {
+        return 0;
+    }
+    CANONICAL_BOOKS
+        .iter()
+        .position(|b| *b == book)
+        .and_then(|i| VERSES_PER_CHAPTER.get(i))
+        .and_then(|c| c.get((chapter - 1) as usize))
+        .map(|n| *n as usize)
+        .unwrap_or(0)
+}
+
+/// Repair a digit run that whisper ran together: "663" → 6:63.
+///
+/// ── The mishearing this exists for ──────────────────────────────────────────
+///
+/// A preacher says "John six sixty-three". Whisper does not write `6:63`; on a
+/// fast or accented delivery it writes the digits it heard, joined: `663`. The
+/// parser then read the whole run as a CHAPTER, and a congregation was offered
+/// `John 663:1`. Observed live on 2026-07-26, five times in one service, and
+/// every one of them was a verse the operator then fired BY HAND:
+///
+///     "john 663"     → John 663:1        was John 6:63
+///     "hebrews 416"  → Hebrews 416:1     was Hebrews 4:16
+///     "mark 1124"    → Mark 1124:1       was Mark 11:24
+///     "romans 828"   → Romans 828:1      was Romans 8:28
+///     "john 1623"    → John 1623:1       was John 16:23
+///
+/// Relay had heard the reference perfectly and then mangled the number.
+///
+/// ── Why this is safe, and where it stops ────────────────────────────────────
+///
+/// **A run that IS a valid chapter of this book is never touched.** "Psalm 23"
+/// is a whole-chapter reference and must stay one — splitting it into 2:3 would
+/// be a new bug of exactly the kind being fixed. The repair only runs where
+/// reading the run as a chapter is IMPOSSIBLE, which is a fact about the book,
+/// not a guess about the speaker.
+///
+/// **An ambiguous split is refused**, the same rule `fuzzy_book` follows: if two
+/// different chapter:verse pairs are both real, there is no evidence to choose,
+/// and guessing is the failure mode. Measured over every book and every 3- and
+/// 4-digit run, 95% of repairable runs have exactly one valid split.
+fn split_run_into_chapter_verse(book: &str, run: i64) -> Option<(i64, i64)> {
+    let chapters = chapter_count(book);
+    if chapters == 0 {
+        return None;
+    }
+    // A real chapter of this book. Not a mishearing — leave it entirely alone.
+    if run >= 1 && (run as usize) <= chapters {
+        return None;
+    }
+    let digits = run.to_string();
+    let mut found: Option<(i64, i64)> = None;
+    for i in 1..digits.len() {
+        let (c, v) = digits.split_at(i);
+        // A leading zero is not how anyone says or writes a number: "1005" is
+        // not 100:5 by way of chapter 1 verse 005.
+        if c.starts_with('0') || v.starts_with('0') {
+            continue;
+        }
+        let (Ok(c), Ok(v)) = (c.parse::<i64>(), v.parse::<i64>()) else {
+            continue;
+        };
+        if c < 1 || c as usize > chapters || v < 1 || v as usize > verse_count(book, c) {
+            continue;
+        }
+        if found.is_some() {
+            return None; // ambiguous — refuse, do not guess
+        }
+        found = Some((c, v));
+    }
+    found
+}
+
 /// Alias → canonical-book map, built once. Covers the lowercase full name, the
 /// spoken/written forms of numbered books ("first"/"i"/"1", "1john"), plus a few
 /// common variants and ASR mishears. Multilingual-ready: add rows per language.
@@ -785,8 +952,29 @@ fn parse_reference(
             ));
         }
         // Lone number → verse, chapter 1, with optional range ("Jude 4-6").
+        //
+        // ── Without a keyword this is the single-chapter twin of the bare whole
+        //    chapter below, and it fails the same way ──────────────────────────
+        //
+        // Every single-chapter book is ALSO an ordinary word or a name in English
+        // preaching — Jude, Philemon, Obadiah, and the "John" inside 2 John and
+        // 3 John. Followed by a small spoken number, ordinary speech parses as a
+        // complete reference. From the live service of 2026-07-26, all auto-fired
+        // to a congregation: Jude 1:1, Jude 1:2, 2 John 1:2, 2 John 1:3.
+        //
+        // So the keyword rule is the same one, applied consistently: "Jude VERSE
+        // four" (0.95 above) and "Jude chapter 1 verse 4" state referential
+        // intent and still fire. A bare "Jude four" asks a human.
+        //
+        // This costs more here than it does for a whole chapter, and that is worth
+        // being honest about: for a one-chapter book the bare form IS the natural
+        // complete reference, so a genuine "Jude four" now needs a click. The
+        // trade is accepted because these are 5 books of 66 and rarely preached,
+        // while the words themselves are constant in sermon speech — the false
+        // positives are frequent and the true positives are not.
+        let base = if used_kw { 0.9 } else { 0.45 };
         let mut m = make_match(
-            canonical, 1, n1, tokens, book_start, after1, 0.9, used_kw, ph1,
+            canonical, 1, n1, tokens, book_start, after1, base, used_kw, ph1,
         );
         let mut end_idx = after1;
         if let Some((e, after)) = parse_range_end(tokens, after1, n1) {
@@ -820,11 +1008,53 @@ fn parse_reference(
     }
 
     // Verse number — if absent, this is a whole-chapter reference ("Psalm 23"):
-    // display verse 1, stage the chapter. Moderate confidence so live detection
-    // surfaces it as a suggestion (operator confirms) rather than auto-firing a
-    // whole chapter unbidden; a manual push fires it straight away.
+    // display verse 1, stage the chapter.
+    //
+    // ── WITHOUT the "chapter" keyword, this is the weakest shape in the file ──
+    //
+    // The same reasoning as the bare-pair demotion below, one step further. A bare
+    // pair at least has two numbers that line up. This has ONE number after a book
+    // name, and Relay answers it by putting verse 1 on a wall — a verse the
+    // preacher never asked for specifically.
+    //
+    // In ordinary preaching that shape is far more often speech than reference.
+    // From a live service, every one of these auto-fired to the congregation:
+    //
+    //     "Matthew, one of the twelve…"      → Matthew 1:1
+    //     "…the Lord to the children…"       → John 2:1, 1 Samuel 2:1
+    //     garbled window                      → Job 1:1, Job 11:1, Revelation 2:1
+    //
+    // And it actively DESTROYS good detections. The rolling window is decoded
+    // about once a second, so one utterance is parsed repeatedly at varying
+    // completeness. A preacher on Hebrews 4:2 produced, five seconds apart:
+    //
+    //     Hebrews 4:2  conf 0.55   ← correct, the whole reference was heard
+    //     Hebrews 4:1  conf 0.83   ← only "Hebrews four" survived that pass
+    //
+    // The LESS complete parse scored higher and replaced the right verse on the
+    // wall. A partial hearing of a reference must never outrank a full one.
+    //
+    // So a keyword-less whole chapter now asks a human (0.45, below the 0.50
+    // default auto bar, above the 0.35 suggest bar) — the operator sees it in the
+    // suggestion list and it is one click away. "Psalm CHAPTER 23" keeps its 0.88:
+    // the keyword is proof of referential intent, and no one says it by accident.
+    // A manual push is unaffected — it bypasses the gate entirely — and the
+    // sensitivity dial still governs all of it.
     let Some((verse, after_vs, ph2)) = parse_number(tokens, i) else {
-        let base = if used_kw { 0.88 } else { 0.83 };
+        // Before treating this as a whole chapter: is it even a chapter of this
+        // book? "john 663" is not John chapter 663 — John has 21 — it is whisper
+        // running "six sixty-three" together. Repair it to 6:63 when exactly one
+        // reading is real. See `split_run_into_chapter_verse`.
+        if let Some((c, v)) = split_run_into_chapter_verse(canonical, chapter) {
+            // A REPAIRED reference, so it is charged like one: `phonetic` costs
+            // confidence downstream, and the run being unreadable as a chapter is
+            // hard evidence the number was misheard.
+            let m = make_match(
+                canonical, c, v, tokens, book_start, after_ch, 0.83, used_kw, true,
+            );
+            return Some((m, after_ch));
+        }
+        let base = if used_kw { 0.88 } else { 0.45 };
         let mut m = make_match(
             canonical, chapter, 1, tokens, book_start, after_ch, base, false, phonetic,
         );
@@ -1932,17 +2162,29 @@ impl SemanticIndex {
             .filter(|(_, s)| *s > 0.0)
             .collect();
         scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-        scored.truncate(k);
+
+        // NARROW TO WHAT CAN BE JUSTIFIED, **BEFORE** TAKING THE TOP k.
+        //
+        // The evidence filter used to run after `truncate(k)`, and the live path
+        // asks for exactly one candidate (`top_k_explained(text, 1)`). So an
+        // unjustifiable top-1 did not step aside — it CONSUMED THE ONLY SLOT and
+        // was then dropped, and the correct verse sitting at rank 2 was never
+        // considered. The operator saw no suggestion at all and no reason why.
+        //
+        // Rejecting a candidate has to mean the next one gets its turn.
+        // A short query cannot corroborate itself three ways, so the requirement
+        // bends to it — but never below TWO, whatever was said. A single shared
+        // word is a coincidence with a good score at any query length, and
+        // `evidence_floor` exists to forbid exactly that.
+        let required = MIN_EVIDENCE_TERMS.min(qvec.len()).max(2);
         scored
             .into_iter()
             .map(|(i, s)| {
                 let (r, dvec) = &self.docs[i];
                 (r.clone(), s, top_terms(&qvec, dvec, EXPLAIN_TERMS))
             })
-            // NARROW TO WHAT CAN BE JUSTIFIED. A candidate that cannot show at
-            // least `MIN_EVIDENCE_TERMS` shared words is dropped here rather
-            // than shown with a one-word explanation.
-            .filter(|(_, _, terms)| terms.len() >= MIN_EVIDENCE_TERMS)
+            .filter(|(_, _, terms)| terms.len() >= required)
+            .take(k)
             .collect()
     }
 }
@@ -2017,9 +2259,29 @@ const EXPLAIN_TERMS: usize = 6;
 /// was said is defensible on its face; one sharing a single word is a
 /// coincidence with a good score.
 ///
-/// MEASURED — see `evidence_floor` below. At 3 the shipped eval corpus loses
-/// recall; at 2 it does not, and the thin one-word suggestions disappear.
-const MIN_EVIDENCE_TERMS: usize = 2;
+/// MEASURED, twice, and the second measurement moved it from 2 to 3.
+///
+/// It sat at 2 because "at 3 the shipped eval corpus loses recall". That was
+/// true and it was an artifact: the filter ran AFTER `truncate(k)`, and the live
+/// path asks for one candidate, so a rejected top-1 consumed the only slot and
+/// left nothing rather than yielding to the verse behind it. Rejecting a
+/// candidate now means the next one gets its turn, and at 3 the shipped corpus
+/// holds 100% recall / 0% wrong-verse.
+///
+/// The value is set by the PARAPHRASE benchmark (`eval::paraphrase`), because
+/// that is the behaviour it governs — the shipped corpus is almost entirely
+/// direct references and cannot see this at all. Measured over 16 real preacher
+/// paraphrases: **recall@1 rises 69% → 75%**, and the wrong top-1 answers fall
+/// from 5 to 3. The two it kills are the exact shape the operator complained
+/// about — a whole verse justified by two words:
+///
+///     ["flesh", "among"]  → Proverbs 23:20   for "the word became flesh and dwelt among us"
+///     ["promise", "god"]  → Galatians 3:18   for "the promise of God … mixing with faith"
+///
+/// Corroboration, not confidence. A verse sharing four content words with what
+/// was said is defensible on its face; one sharing two is a coincidence with a
+/// good score, and no operator can weigh it in the second they have.
+const MIN_EVIDENCE_TERMS: usize = 3;
 
 /// The shared terms that contributed most to a cosine — the "why" of a paraphrase.
 ///
@@ -2102,6 +2364,7 @@ fn cosine(a: &HashMap<String, f32>, b: &HashMap<String, f32>) -> f32 {
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
 
     fn one(text: &str) -> RefMatch {
@@ -2208,8 +2471,19 @@ mod tests {
         refeq(&m, "Psalms", 23, 1);
         assert!(m.whole_chapter);
         assert_eq!(m.verse_end, None);
-        // Moderate confidence → surfaces as a suggestion, not a forced auto-fire.
-        assert!(m.confidence < 0.90);
+        // Surfaces as a SUGGESTION, not a forced auto-fire.
+        //
+        // Asserted against the real gate, not a magic number. This test used to
+        // say `< 0.90` and pass at 0.83 — which auto-fires at the 0.50 default
+        // bar, the exact opposite of what the line above it claims. The comment
+        // was right and the assertion could not fail.
+        assert!(
+            m.confidence < crate::router::Thresholds::default().auto_fire,
+            "a keyword-less whole chapter must not reach the congregation unasked \
+             (conf {} vs auto bar {})",
+            m.confidence,
+            crate::router::Thresholds::default().auto_fire
+        );
     }
 
     #[test]
@@ -2217,6 +2491,176 @@ mod tests {
         let m = one("psalm chapter 23");
         refeq(&m, "Psalms", 23, 1);
         assert!(m.whole_chapter);
+        // "chapter" is proof of referential intent — nobody says it by accident —
+        // so THIS one may still fire on its own.
+        assert!(m.confidence >= crate::router::Thresholds::default().auto_fire);
+    }
+
+    /// THE regression from the live service of 2026-07-26.
+    ///
+    /// The rolling STT window is decoded about once a second, so one utterance is
+    /// parsed repeatedly at varying completeness. A preacher genuinely preaching
+    /// Hebrews 4:2 produced, five seconds apart:
+    ///
+    ///     Hebrews 4:2  0.55   ← the whole reference was heard
+    ///     Hebrews 4:1  0.83   ← only "Hebrews four" survived that pass
+    ///
+    /// The less complete parse outranked the complete one and replaced the right
+    /// verse on the wall with the wrong one. A partial hearing of a reference may
+    /// never outrank a full one.
+    #[test]
+    fn a_bare_chapter_never_outranks_the_full_reference_it_is_a_fragment_of() {
+        let full = one("hebrews four two");
+        refeq(&full, "Hebrews", 4, 2);
+        let fragment = one("hebrews four");
+        refeq(&fragment, "Hebrews", 4, 1);
+        assert!(
+            fragment.confidence < full.confidence,
+            "the fragment ({}) outscored the full reference ({}) — it would \
+             overwrite the correct verse on the projector",
+            fragment.confidence,
+            full.confidence
+        );
+    }
+
+    /// THE SCREENSHOT BUG, live 2026-07-26. Whisper runs "six sixty-three"
+    /// together into `663`, the parser read it as a chapter, and the operator was
+    /// offered `John 663:1`. Every one of these was a verse they then fired BY
+    /// HAND — Relay heard the reference correctly and mangled the number.
+    #[test]
+    fn a_run_together_chapter_verse_is_repaired_not_read_as_a_chapter() {
+        for (text, book, ch, vs) in [
+            ("john 663", "John", 6, 63),
+            ("hebrews 416", "Hebrews", 4, 16),
+            ("mark 1124", "Mark", 11, 24),
+            ("romans 828", "Romans", 8, 28),
+            ("john 1623", "John", 16, 23),
+            ("john 316", "John", 3, 16),
+            ("psalms 1191", "Psalms", 119, 1),
+            ("matthew 2820", "Matthew", 28, 20),
+        ] {
+            let m = one(text);
+            refeq(&m, book, ch, vs);
+            assert!(!m.whole_chapter, "{text:?} is a verse, not a whole chapter");
+        }
+    }
+
+    /// AND IT MUST STOP THERE. A run that is a real chapter of the book stays a
+    /// whole-chapter reference — splitting "Psalm 23" into 2:3 would be the same
+    /// class of bug pointing the other way.
+    #[test]
+    fn a_real_chapter_is_never_split_into_chapter_and_verse() {
+        for (text, book, ch) in [
+            ("psalm 23", "Psalms", 23),
+            ("genesis 11", "Genesis", 11),
+            ("psalm 119", "Psalms", 119),
+            ("revelation 21", "Revelation", 21),
+        ] {
+            let m = one(text);
+            refeq(&m, book, ch, 1);
+            assert!(m.whole_chapter, "{text:?} must stay a whole chapter");
+        }
+    }
+
+    /// An ambiguous split is refused rather than guessed — the same rule
+    /// `fuzzy_book` follows. `Psalms 1015` is both 101:5 and 10:15, and both are
+    /// real verses; there is no evidence to choose between them.
+    #[test]
+    fn an_ambiguous_run_is_refused_rather_than_guessed() {
+        assert_eq!(split_run_into_chapter_verse("Psalms", 1015), None);
+        // A run with no valid reading at all is also refused.
+        assert_eq!(split_run_into_chapter_verse("Romans", 8128), None);
+        // And an unknown book cannot be repaired.
+        assert_eq!(split_run_into_chapter_verse("Nowhere", 663), None);
+    }
+
+    /// The verse-count table is a `const`, so nothing forces it to match the
+    /// Bible actually shipped. This does. If `kjv.json` is ever replaced and the
+    /// table is not regenerated, `split_run_into_chapter_verse` starts inventing
+    /// references — silently, and only for the books that changed.
+    #[test]
+    fn the_verse_count_table_matches_the_bundled_kjv() {
+        #[derive(serde::Deserialize)]
+        struct KjvBook {
+            chapters: Vec<Vec<String>>,
+        }
+        const RAW: &str = include_str!("../data/kjv.json");
+        let books: Vec<KjvBook> =
+            serde_json::from_str(RAW.trim_start_matches('\u{feff}')).expect("kjv.json parses");
+
+        assert_eq!(books.len(), VERSES_PER_CHAPTER.len(), "book count");
+        assert_eq!(books.len(), CANONICAL_BOOKS.len(), "book count vs names");
+        for (i, book) in books.iter().enumerate() {
+            let name = CANONICAL_BOOKS[i];
+            assert_eq!(
+                book.chapters.len(),
+                VERSES_PER_CHAPTER[i].len(),
+                "{name}: chapter count"
+            );
+            for (c, chapter) in book.chapters.iter().enumerate() {
+                assert_eq!(
+                    chapter.len(),
+                    VERSES_PER_CHAPTER[i][c] as usize,
+                    "{name} chapter {}: verse count",
+                    c + 1
+                );
+            }
+        }
+        // Spot-check the lookups the repair actually depends on.
+        assert_eq!(chapter_count("John"), 21);
+        assert_eq!(chapter_count("Hebrews"), 13);
+        assert_eq!(verse_count("John", 6), 71);
+        assert_eq!(verse_count("Psalms", 119), 176);
+        assert_eq!(verse_count("John", 22), 0, "out of range");
+    }
+
+    /// Every single-chapter book is also an ordinary word or a name in English
+    /// preaching — Jude, Philemon, Obadiah, and the "John" inside 2/3 John. From
+    /// the live service of 2026-07-26 these auto-fired to a congregation off
+    /// ordinary speech: Jude 1:1, Jude 1:2, 2 John 1:2, 2 John 1:3.
+    #[test]
+    fn a_single_chapter_book_and_a_bare_number_asks_a_human_but_a_keyword_fires() {
+        let auto_bar = crate::router::Thresholds::default().auto_fire;
+
+        let bare = one("jude four");
+        refeq(&bare, "Jude", 1, 4);
+        assert!(
+            bare.confidence < auto_bar,
+            "bare 'jude four' at {} would reach the congregation unasked",
+            bare.confidence
+        );
+
+        // Stating the intent still fires — that is the whole distinction.
+        let kw = one("jude verse four");
+        refeq(&kw, "Jude", 1, 4);
+        assert!(
+            kw.confidence >= auto_bar,
+            "'jude verse four' is an explicit reference and must still fire ({})",
+            kw.confidence
+        );
+    }
+
+    /// Ordinary preaching that is NOT a reference, from the same live service.
+    /// Every one of these auto-fired to a congregation.
+    #[test]
+    fn a_book_name_followed_by_a_spoken_number_does_not_fire_on_its_own() {
+        let auto_bar = crate::router::Thresholds::default().auto_fire;
+        for text in [
+            "matthew one of the twelve disciples",
+            "and the lord said to john two of them",
+            "job one of the oldest books",
+        ] {
+            for m in detect_direct(text) {
+                assert!(
+                    m.confidence < auto_bar,
+                    "{text:?} → {} {}:{} at {} would reach the congregation unasked",
+                    m.reference.book,
+                    m.reference.chapter,
+                    m.reference.verse,
+                    m.confidence
+                );
+            }
+        }
     }
 
     #[test]

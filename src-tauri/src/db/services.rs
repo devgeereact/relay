@@ -65,6 +65,12 @@ pub fn insert_transcript(
 }
 
 /// Insert a fired detection linked to a transcript.
+/// Record a detection.
+///
+/// `heard_text` is THE EVIDENCE: the exact text the detector was looking at when
+/// this fired. See `ensure_detection_evidence` for why a detection without it is
+/// not diagnosable after the fact.
+#[allow(clippy::too_many_arguments)]
 pub fn insert_detection(
     conn: &Connection,
     transcript_id: i64,
@@ -73,10 +79,11 @@ pub fn insert_detection(
     confidence: f32,
     status: &str,
     fired_at: Option<f64>,
+    heard_text: Option<&str>,
 ) -> rusqlite::Result<i64> {
     conn.execute(
-        "INSERT INTO detections (transcript_id, verse_id, method, confidence, status, fired_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        "INSERT INTO detections (transcript_id, verse_id, method, confidence, status, fired_at, heard_text)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
         (
             transcript_id,
             verse_id,
@@ -84,6 +91,7 @@ pub fn insert_detection(
             confidence,
             status,
             fired_at,
+            heard_text,
         ),
     )?;
     Ok(conn.last_insert_rowid())

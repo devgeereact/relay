@@ -60,6 +60,13 @@ export const capture = writable({
   inputDevice: '', // operator-selected input device name ('' = default). Shared so Console + Settings agree.
   stt: { loaded: false, model: null, language: null }, // local STT model status (language null = auto)
   detectedLang: null, // language of the latest transcript window (code-switching)
+  // Auto-detect is not settling on a language — [codes] once per session, else null.
+  // Whisper re-elects a language every window from ~99 candidates, and on accented
+  // speech it wanders (one real service: en·yo·pt·sw·sv·ms). The label IS the decode,
+  // so a wandering label degrades the transcript — and that looks exactly like the AI
+  // being bad. The operator has the control that fixes it (Settings → Recognition
+  // Language) and no reason to suspect they should touch it. See stt.rs.
+  langUnstable: null,
   detectionOn: true, // is automatic detection armed?
   audioError: null, // last audio device error (surfaced, not fatal)
   outputError: null, // LAN output server failed to bind (OBS/kiosk/stage are dead)
@@ -253,6 +260,28 @@ export const liveTemplatePinned = derived(live, ($l) => !!$l?.template_pinned);
 
 const MAX_FINALS = 12;
 const MAX_DETECTIONS = 6;
+
+/**
+ * How long a pending suggestion stays actionable, in ms.
+ *
+ * A suggestion is a claim about what the preacher is saying RIGHT NOW. Forty-five
+ * seconds later they have moved on, and accepting it puts the wrong thing on the
+ * wall — so an old card is not merely clutter, it is a trap sitting under the `A`
+ * key. In one live service the queue held six of these at once, all stale, while
+ * the one that mattered scrolled out of view.
+ *
+ * Comfortably outlives the router's repeat cooldown (WINDOW_SECS + 2 = 10s), so
+ * the operator always gets a real chance to read and decide.
+ */
+export const SUGGESTION_TTL_MS = 45_000;
+
+/**
+ * Drop suggestions that have gone stale. Pure — takes `now` so it is testable
+ * without a clock, and so the whole list shares one timestamp.
+ */
+export function pruneStaleSuggestions(list, now) {
+  return list.filter((d) => now - (d.at ?? 0) < SUGGESTION_TTL_MS);
+}
 let unlistenAudio = null;
 let unlistenStt = null;
 let unlistenDetect = null;
@@ -324,6 +353,12 @@ export async function initAudio() {
       // keeps running regardless.
       await listen('audio://quality', (e) =>
         capture.update((s) => ({ ...s, quality: e.payload }))
+      );
+      // Auto-detect is wandering between languages. Same contract as `quality`:
+      // it is DATA, never a rendering decision — the pipeline keeps running, the
+      // console just stops being silent about the one thing the operator can fix.
+      await listen('stt://language_unstable', (e) =>
+        capture.update((s) => ({ ...s, langUnstable: e.payload }))
       );
       // A template was edited → make the console mirror change LIVE, without
       // waiting for a re-fire. Two things can be showing it: the console's
@@ -476,16 +511,31 @@ export async function startCapture(device) {
       }
       return { ...t, partial: text };
     });
+    // Expire stale suggestions here too, not only when a NEW one arrives. The
+    // preacher moving on quietly is the commonest way a card goes stale, and it
+    // produces no detection event at all — so without this a dead suggestion sat
+    // under the `A` key indefinitely. Transcript events tick about once a second
+    // while listening, which is all the resolution this needs and costs no timer.
+    detections.update((list) => {
+      const fresh = pruneStaleSuggestions(list, Date.now());
+      return fresh.length === list.length ? list : fresh; // no-op → no re-render
+    });
   });
   capture.update((s) => ({ ...s, audioError: null }));
   unlistenDetect = await listen('detection://match', (e) => {
     const d = e.payload;
     detections.update((list) => {
-      const rest = list.filter((x) => x.reference !== d.reference);
+      const now = Date.now();
+      // Sweep the stale ones out on the way past. A new suggestion is the moment
+      // the operator's attention moves, so it is exactly the moment the previous
+      // sentence's leftovers stop being offers and start being traps.
+      const rest = pruneStaleSuggestions(list, now).filter(
+        (x) => x.reference !== d.reference
+      );
       // Only suggestions queue up; a fired verse resolves (removes) its pending
       // suggestion since it's already on screen.
       if (d.status === 'suggested') {
-        return [{ ...d, at: Date.now() }, ...rest].slice(0, MAX_DETECTIONS);
+        return [{ ...d, at: now }, ...rest].slice(0, MAX_DETECTIONS);
       }
       return rest;
     });

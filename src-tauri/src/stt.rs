@@ -57,6 +57,63 @@ pub struct TranscriptUpdate {
     pub timestamp_ms: u64,
 }
 
+/// How many of the most recent FINAL windows the stability check looks at.
+const LANG_STABILITY_WINDOW: usize = 8;
+/// How many distinct languages inside that window count as "flapping".
+const LANG_STABILITY_LIMIT: usize = 3;
+
+/// Watches auto-detect for the failure mode that cannot be fixed downstream.
+///
+/// ── The observation this exists to report ───────────────────────────────────
+///
+/// Whisper re-elects a language on every window, independently, from ~99
+/// candidates, using 8 seconds of accented room audio. On a Nigerian-accented
+/// English preacher it does not settle. One real service, 58 windows:
+///
+///     en 23 · yo 30 · pt 2 · sw 1 · sv 1 · ms 1
+///
+/// Every `yo`-labelled line was English. That is not a labelling curiosity: the
+/// label IS the decode. Committing a window to Yoruba runs it through weak
+/// Yoruba acoustics, and the output degrades into word-salad — "The Swadibows
+/// did that do not yet go" — which the reference detector then mines for book
+/// names. Half the wrong verses that reached that congregation trace back here.
+///
+/// **This type only OBSERVES.** It does not force a language, because that is a
+/// change to the acoustic path and CLAUDE.md §13 forbids making one without
+/// scoring it through the detector on real audio (`RELAY_BENCH_WAV`). What it
+/// does is end the silence: auto-detect failing looks exactly like the AI being
+/// bad, and the operator has a Recognition Language control that fixes it in one
+/// click and no reason to suspect they should touch it. See docs/DECISIONS.md.
+#[derive(Debug, Default)]
+pub struct LanguageStability {
+    recent: std::collections::VecDeque<String>,
+    reported: bool,
+}
+
+impl LanguageStability {
+    /// Record a finalized window's detected language. Returns `Some(languages)`
+    /// exactly ONCE per session, the first time the recent history is flapping —
+    /// a warning repeated every eight seconds during a sermon is noise the
+    /// operator will learn to ignore.
+    pub fn observe(&mut self, language: &str) -> Option<Vec<String>> {
+        self.recent.push_back(language.to_string());
+        while self.recent.len() > LANG_STABILITY_WINDOW {
+            self.recent.pop_front();
+        }
+        if self.reported || self.recent.len() < LANG_STABILITY_WINDOW {
+            return None;
+        }
+        let mut distinct: Vec<String> = self.recent.iter().cloned().collect();
+        distinct.sort();
+        distinct.dedup();
+        if distinct.len() < LANG_STABILITY_LIMIT {
+            return None;
+        }
+        self.reported = true;
+        Some(distinct)
+    }
+}
+
 /// Owns the whisper worker thread and the channel feeding it audio.
 pub struct SttEngine {
     tx: Sender<AudioChunk>,
@@ -448,11 +505,22 @@ const DECODE: Decode = Decode::Fast;
 /// Every Tier-1 language (CLAUDE.md: Yoruba, Swahili, Hausa, plus English) is
 /// written in the LATIN script — including the Yoruba diacritics `ẹ ọ ṣ` and its
 /// tone marks, which are Latin Extended and pass this check unharmed.
+/// The languages Relay ships recognition for — English plus every Tier-1
+/// language (CLAUDE.md: Yoruba, Swahili, Hausa).
+///
+/// ONE list, used both by the script guard and by the auto-detect guard below,
+/// so the two can never disagree about what Relay claims to hear.
+pub const SUPPORTED_LANGUAGES: &[&str] = &["en", "yo", "sw", "ha"];
+
+fn is_supported_language(lang: &str) -> bool {
+    SUPPORTED_LANGUAGES.contains(&lang)
+}
+
 fn expects_latin_script(lang: Option<&str>) -> bool {
     match lang {
         // An explicitly chosen language is respected: if someone selects a
         // language Relay does not ship, we do not second-guess their script.
-        Some(l) => matches!(l, "en" | "yo" | "sw" | "ha"),
+        Some(l) => is_supported_language(l),
         // AUTO-DETECT. This is the risky mode and the one the symptom came from:
         // whisper picks a language per chunk, and on a short, quiet or noisy
         // chunk it picks badly. Relay only offers Latin-script languages, so in
@@ -498,8 +566,103 @@ fn is_hallucination(text: &str, lang: Option<&str>) -> bool {
     if expects_latin_script(lang) && foreign > 0 {
         return true;
     }
+    if is_decode_loop(text) {
+        return true;
+    }
     false
 }
+
+/// Did the decoder get STUCK, emitting one phrase over and over?
+///
+/// ── Why this is not a phrase blocklist either ───────────────────────────────
+///
+/// Whisper is autoregressive: on a window it cannot resolve it will re-emit its
+/// own last output and lock into a cycle. The result is grammatical, in the right
+/// language and the right script, so every guard above passes it. From the live
+/// service of 2026-07-26, one FINAL transcript, in full:
+///
+///     "Matthew, 1 John, 2 John, 2 John, 2 John, 2 John, 2 John, 2 John,"
+///
+/// A line consisting of nothing but book names. `detect_direct` dutifully mined
+/// six references out of it and the router put them on a wall. That one stuck
+/// decode accounts for a large share of the wrong verses that service.
+///
+/// The invariant is STRUCTURAL, like the script check: no one speaking says the
+/// same phrase six times consecutively, in any language. So this measures the
+/// repetition rather than naming the phrase — it catches the next loop too,
+/// whatever whisper happens to get stuck on.
+///
+/// ── Why "dominates", not "occurs" ───────────────────────────────────────────
+///
+/// Preachers repeat themselves ON PURPOSE, constantly — "we recover, we recover",
+/// "pray, pray, pray". That is real speech and must survive. So a repeat is only
+/// a loop when it has eaten the LINE: the repeated unit must cover at least half
+/// of it. From the same service, this one passes and is kept, correctly:
+///
+///     "Expire, I say, say, say, say, no, no, don't, don't look at the expiry
+///      date. Shall we pray?"          — longest run 4 of 18 tokens = 22%
+///
+/// while the stuck decode above is 12 of 15 = 80%.
+fn is_decode_loop(text: &str) -> bool {
+    let words: Vec<String> = text
+        .split_whitespace()
+        .map(|w| {
+            w.trim_matches(|c: char| !c.is_alphanumeric())
+                .to_lowercase()
+        })
+        .filter(|w| !w.is_empty())
+        .collect();
+    // Too short to tell a loop from emphasis.
+    if words.len() < 6 {
+        return false;
+    }
+    // Look for a repeated unit of 1..=4 words. A book name is often two tokens
+    // ("2 john"), which a unigram scan alone would miss entirely, and whisper's
+    // stock filler runs longer still ("thank you for watching").
+    for n in 1..=4usize {
+        if words.len() < n * MIN_LOOP_REPEATS {
+            continue;
+        }
+        let mut i = 0;
+        while i + n <= words.len() {
+            let unit = &words[i..i + n];
+            let mut reps = 1usize;
+            while i + n * (reps + 1) <= words.len()
+                && &words[i + n * reps..i + n * (reps + 1)] == unit
+            {
+                reps += 1;
+            }
+            let span = n * reps;
+            if reps >= MIN_LOOP_REPEATS && span >= MIN_LOOP_SPAN && span * 2 >= words.len() {
+                return true;
+            }
+            i += 1;
+        }
+    }
+    false
+}
+
+/// Consecutive repeats of the same unit before it counts as a possible loop.
+/// Three is deliberate: two is ordinary rhetorical emphasis in every language
+/// Relay hears ("we recover, we recover").
+const MIN_LOOP_REPEATS: usize = 3;
+
+/// How many WORDS the repetition must span before it counts as a loop.
+///
+/// This is the condition that separates a preacher from a stuck decoder, and it
+/// was found by replaying all 104 final transcripts of a real service. Repeats
+/// and coverage alone were not enough — they also condemned this line, which is
+/// a preacher saying "hold on" four times and whisper dropping the H:
+///
+///     "Old on, old on, old on, old on."          4 repeats, 100% of the line
+///
+/// Emphasis is a short burst; a decoder locked in a cycle runs on. That line
+/// spans 8 words. The stuck decode it must be told apart from spans 12:
+///
+///     "Matthew, 1 John, 2 John, 2 John, 2 John, 2 John, 2 John, 2 John,"
+///
+/// Ten is the line between them, and re-running the corpus is how to move it.
+const MIN_LOOP_SPAN: usize = 10;
 
 /// Is this alphabetic char part of the Latin script (including the extended
 /// ranges Yoruba, Hausa and Swahili need)?
@@ -592,6 +755,29 @@ fn transcribe(
                 .map(|s| s.to_string())
         })
         .unwrap_or_else(|| "en".into());
+
+    // ── AUTO-DETECT: the language SET is an invariant too ───────────────────
+    //
+    // The script guard above rejects a window whose alphabet nobody in the room
+    // was using. That is the same argument as this one, one notch looser: it
+    // catches Chinese subtitle boilerplate but is blind to a LATIN-script
+    // language Relay does not ship. From a live service, all three auto-detected
+    // and all three passed the script check untouched:
+    //
+    //     ms | "Kebawah, kamu tidak akan berikan kebawah ini."
+    //     pt | "Eu sou o Rafael, eu amo a nuva-coma, em danimo de Jesus"
+    //     sv | "Oh, say, children boy again."
+    //
+    // Whisper is choosing from ~99 languages on 8 seconds of accented, noisy
+    // room audio. A window it labels Malay, in a service Relay is configured to
+    // hear in English and Tier-1 languages, is not a mis-hearing of a word — it
+    // is the model reaching outside the room, exactly like the subtitle case.
+    //
+    // Only in AUTO mode. An explicitly chosen language is respected as always:
+    // this guard exists because auto-detect picks badly, not to refuse languages.
+    if lang.is_none() && !is_supported_language(&detected) {
+        return None;
+    }
     Some((text, detected))
 }
 
@@ -681,6 +867,7 @@ pub fn scripture_bias_prompt(lang: Option<&str>, extra: &str) -> String {
 
 #[cfg(test)]
 mod hallucination_tests {
+
     use super::*;
 
     // THE SYMPTOM THIS EXISTS FOR, reported from a real service:
@@ -695,6 +882,115 @@ mod hallucination_tests {
         assert!(is_hallucination("请不吝点赞 订阅 转发 打赏", None));
         assert!(is_hallucination("字幕由Amara.org社群提供", None));
         assert!(is_hallucination("小编推荐", Some("en")));
+    }
+
+    /// THE GAP THE SCRIPT CHECK LEAVES, from the live service of 2026-07-26.
+    ///
+    /// The script guard catches a language written in another alphabet. It cannot
+    /// see a LATIN-script language Relay does not ship — and whisper, choosing
+    /// from ~99 languages on 8s of accented room audio, reaches for those
+    /// constantly. All three of these auto-detected in one service and every one
+    /// passed `is_hallucination` untouched.
+    #[test]
+    fn latin_script_languages_relay_does_not_ship_are_not_what_was_said() {
+        for lang in ["pt", "sv", "ms", "id", "tl", "af", "nl"] {
+            assert!(
+                !is_supported_language(lang),
+                "{lang} is not a language Relay ships recognition for"
+            );
+        }
+        for lang in SUPPORTED_LANGUAGES {
+            assert!(is_supported_language(lang));
+        }
+        // And the script check alone genuinely cannot tell the difference — which
+        // is why the set check has to exist separately. If this ever starts
+        // failing, the guard below it has become redundant, not the other way up.
+        assert!(!is_hallucination(
+            "Eu sou o Rafael, eu amo a nuva-coma, em danimo de Jesus",
+            None
+        ));
+        assert!(!is_hallucination(
+            "Kebawah, kamu tidak akan berikan kebawah ini.",
+            None
+        ));
+    }
+
+    /// The real language histogram from the live service of 2026-07-26 must trip
+    /// the warning — and a service that simply code-switches between two of
+    /// Relay's own languages must NOT, because that is the product working.
+    #[test]
+    fn flapping_auto_detect_is_reported_once_but_code_switching_is_not() {
+        let mut s = LanguageStability::default();
+        // Real sequence shape: English preacher, auto-detect wandering.
+        let observed = ["en", "yo", "yo", "en", "pt", "yo", "sv", "en"];
+        let mut hits = 0;
+        for l in observed {
+            if s.observe(l).is_some() {
+                hits += 1;
+            }
+        }
+        assert_eq!(hits, 1, "the operator must be told exactly once");
+        // And never again, however long the sermon runs.
+        for l in ["ms", "yo", "en", "pt"] {
+            assert!(s.observe(l).is_none());
+        }
+
+        // Genuine English/Yoruba code-switching is NORMAL here (DECISIONS.md) and
+        // must never be reported as a fault.
+        let mut ok = LanguageStability::default();
+        for l in ["en", "yo", "en", "en", "yo", "en", "yo", "yo", "en", "yo"] {
+            assert!(
+                ok.observe(l).is_none(),
+                "code-switching between two supported languages is not instability"
+            );
+        }
+    }
+
+    /// A STUCK DECODE, from the live service of 2026-07-26. Right language, right
+    /// script, grammatical — every other guard passes it. `detect_direct` mined
+    /// six references out of it and the router put them on a wall.
+    #[test]
+    fn rejects_a_decoder_stuck_repeating_itself() {
+        assert!(is_hallucination(
+            "Matthew, 1 John, 2 John, 2 John, 2 John, 2 John, 2 John, 2 John,",
+            None
+        ));
+        // Single-word loops too, and the next one whisper invents — the rule is
+        // the repetition, never the phrase.
+        assert!(is_hallucination(
+            "thank you thank you thank you thank you thank you thank you",
+            None
+        ));
+        assert!(is_hallucination(
+            "thank you for watching thank you for watching thank you for watching",
+            None
+        ));
+    }
+
+    /// AND IT MUST NOT TOUCH REAL PREACHING. Repetition is a rhetorical device,
+    /// used constantly, in every language Relay hears. A guard that cannot tell
+    /// emphasis from a loop would make Relay deaf mid-sermon.
+    #[test]
+    fn deliberate_repetition_in_real_preaching_survives() {
+        for line in [
+            // Every one of these is a REAL final transcript from that service.
+            "Expire, I say, say, say, say, no, no, don't, don't look at the expiry date. Shall we pray?",
+            "You will recover, you will recover, come on, shout out, we recover.",
+            "Most, most in the name of the law. We will do it!",
+            "He, that believer, he, that believer would not be put to shame.",
+            "And when he came back, he came back with an expired passport.",
+            // The line that set MIN_LOOP_SPAN. A preacher saying "hold on" four
+            // times, with whisper dropping the H — 4 repeats covering 100% of the
+            // line, structurally identical to a loop and yet real speech.
+            "Old on, old on, old on, old on.",
+        ] {
+            assert!(
+                !is_hallucination(line, None),
+                "real preaching was discarded as a loop: {line:?}"
+            );
+        }
+        // Two repeats is emphasis, not a loop, however short the line.
+        assert!(!is_decode_loop("pray pray for the church and the nation"));
     }
 
     #[test]

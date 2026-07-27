@@ -581,6 +581,20 @@
     );
   })();
 
+  // ── recognition language is not settling ─────────────────────────────────
+  // Same shape as the mic warnings above, and the same reasoning: name the
+  // problem and the physical thing to go and do. This one is worth saying
+  // because it is INVISIBLE — a wandering language label degrades the transcript
+  // and reads to the operator as "the AI is bad", while the fix is one dropdown.
+  $: langWarning = (() => {
+    const langs = $capture.langUnstable;
+    if (!langs?.length || $capture.stt?.language) return null; // already pinned
+    return {
+      title: 'Relay keeps changing its mind about the language.',
+      fix: `It has heard ${langs.join(', ')} in the last few minutes. Pick the language in Settings → Scripture & Bible → Recognition Language — auto-detect struggles with a strong accent, and a wrong guess garbles the transcript.`,
+    };
+  })();
+
   $: selCue = items.find((i) => i.id === selId) || null;
   $: selSlides = slidesOf(selCue);
   $: liveIndex = items.findIndex((i) => i.id === liveCueId);
@@ -1254,6 +1268,10 @@
        that is always on screen is wallpaper. -->
   {#if $capture.capturing && qualityWarning}
     <div class="sttwarn"><b>{qualityWarning.title}</b>{qualityWarning.fix}</div>
+  {/if}
+
+  {#if $capture.capturing && langWarning}
+    <div class="sttwarn"><b>{langWarning.title}</b>{langWarning.fix}</div>
   {/if}
 
   <!-- No STT model = the AI cannot listen. Relay degrades to a fully working MANUAL

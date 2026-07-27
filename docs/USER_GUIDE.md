@@ -79,6 +79,8 @@ If the bar does not move, Relay cannot hear, and nothing else on this page will 
 
 A paraphrase **never** goes on screen by itself. Ever. Only a reference Relay actually *heard* can do that, and only if you have left auto-fire on.
 
+**A half-reference waits for you.** If the preacher says *"turn to Psalm twenty-three"* — a book and a number, with no "chapter" or "verse" — Relay **offers** it rather than putting it up on its own. That is deliberate. Preachers say book names and numbers constantly without meaning a reference: *"Matthew, one of the twelve"*, *"number one… number two…"* — and "Numbers" is a book of the Bible. Say **"Psalm chapter twenty-three"** or **"Psalm twenty-three verse one"** and it goes straight up, because now you have said you mean it.
+
 **"Related" chips are not detections.** At the bottom of the feed you may see a few verses under a theme — *"Related · Fear & Anxiety"*. Nobody said those. Relay is offering them because of what is being preached about. They go nowhere until you click one.
 
 ---
@@ -91,6 +93,8 @@ Live software fails live. These are the things that actually happen.
 |---|---|---|
 | **The bar doesn't move when someone speaks** | Relay cannot hear. Nothing else will work. | Settings → Audio. Try a different input. Check the cable and that the desk is sending. |
 | **The transcript is nonsense** | Usually the mic is too quiet, not the AI being bad. | Get a stronger feed. Relay adapts to a quiet room, but it cannot invent a signal that is not there. |
+| **"Relay keeps changing its mind about the language"** | On a strong accent, leaving the language on **Auto** makes Relay re-guess every few seconds — and a wrong guess garbles the transcript, which is where most wrong verses come from. | **Settings → Scripture & Bible → Recognition Language.** Pick the language instead of Auto. This is the single biggest accuracy win for an accented preacher. |
+| **Wrong verses keep appearing on the wall** | Relay heard a book name and a number in ordinary speech — *"Matthew, one of the twelve"*, *"number one… number two…"*. | Turn the **sensitivity dial down** on Live. If it is still noisy, press the **Armed** chip to disarm auto-fire — everything else keeps working and you fire by hand. And fix the language above first, because that is usually the real cause. |
 | **"No speech model loaded"** | Step 2 above never happened. | Settings → Speech → Download. Manual override still works meanwhile. |
 | **Nothing appears on the projector** | The output window is not open, or it is on the wrong display. | Outputs → Screens → pick the display → **Open**. |
 | **OBS / the kiosk screen is blank** | The browser source is pointed at the wrong address. | It must be `http://<this-computer>:8032/output.html?template_id=1` — the **Copy URL** button in Outputs → Screens gives you the right one. **Not 5032.** |

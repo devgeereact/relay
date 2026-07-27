@@ -11,6 +11,7 @@
 
 use crate::detection::DetectionMethod;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// Two-tier gate thresholds. Seed defaults per docs/DECISIONS.md (placeholders
 /// until tuned against a real corpus); nudged per install by operator feedback.
@@ -155,8 +156,22 @@ pub struct Router {
     /// anchor, calibration is a one-way ratchet.
     baseline: Thresholds,
     debounce_ms: u64,
-    /// (reference key, when it last auto-fired) — for the repeat cooldown.
-    last_fire: Option<(String, u64)>,
+    /// When each reference last reached the screen — for the repeat cooldown.
+    ///
+    /// **A MAP, not a single slot.** It was `Option<(String, u64)>`, which could
+    /// only ever remember the most recent key: the moment a *different* verse
+    /// fired, the previous one's cooldown was erased. That made the debounce
+    /// defeatable by the exact thing it exists to absorb. A rolling window
+    /// re-transcribed once a second does not yield one steady reference — it
+    /// yields a mutating hypothesis, and two candidates alternating inside it
+    /// cleared each other's memory on every pass. Live, 2026-07-26, one second
+    /// apart: `2 Chronicles 7:1 · 1 Thessalonians 3:1 · 2 Chronicles 7:2 ·
+    /// 2 Chronicles 7:1 · 2 Chronicles 7:2 · 2 Chronicles 7:1 · …` — eight
+    /// broadcasts of two verses in eight seconds, in front of a congregation.
+    ///
+    /// Pruned to the cooldown window on every insert, so it stays a handful of
+    /// entries across a whole service rather than growing with it.
+    fired_at: HashMap<String, u64>,
     /// Confidence of the most recent AUTO-FIRE. `dismiss_detection` is an "undo"
     /// with no argument — it can't tell us what it rejected — so the router
     /// remembers what it just put on screen. Without this, a rejection is a blind
@@ -171,7 +186,7 @@ impl Default for Router {
             thresholds: Thresholds::default(),
             baseline: Thresholds::default(),
             debounce_ms: DEFAULT_DEBOUNCE_MS,
-            last_fire: None,
+            fired_at: HashMap::new(),
             last_fire_conf: None,
         }
     }
@@ -225,14 +240,14 @@ impl Router {
             };
         }
         if confidence >= self.thresholds.auto_fire {
-            if let Some((k, t)) = &self.last_fire {
-                if k == key && now_ms.saturating_sub(*t) < self.debounce_ms {
+            if let Some(t) = self.fired_at.get(key) {
+                if now_ms.saturating_sub(*t) < self.debounce_ms {
                     // Already on screen, and said again within the cooldown —
                     // almost always the same utterance being re-transcribed.
                     return RouteDecision::Drop;
                 }
             }
-            self.last_fire = Some((key.to_string(), now_ms));
+            self.note_fired(key, now_ms);
             // Remember WHAT we put on screen, so a later "undo" is a proportional
             // correction rather than a blind nudge.
             self.last_fire_conf = Some(confidence);
@@ -257,15 +272,28 @@ impl Router {
     /// score of an auto-fire that is no longer on screen — correcting the router
     /// for a decision the operator was not actually reacting to.
     pub fn forget_last_fire(&mut self) {
-        self.last_fire = None;
+        self.fired_at.clear();
         self.last_fire_conf = None;
+    }
+
+    /// Stamp a reference as on-screen, and drop every entry whose cooldown has
+    /// already expired.
+    ///
+    /// Pruning here (rather than never) is what keeps the per-reference cooldown
+    /// from being a slow leak: an expired entry can no longer suppress anything,
+    /// so keeping it only grows the map for the length of the service.
+    fn note_fired(&mut self, key: &str, now_ms: u64) {
+        let debounce = self.debounce_ms;
+        self.fired_at
+            .retain(|_, t| now_ms.saturating_sub(*t) < debounce);
+        self.fired_at.insert(key.to_string(), now_ms);
     }
 
     /// Operator manual override — always fires, bypassing thresholds and
     /// debounce entirely. This is a first-class control (CLAUDE.md), never a
     /// fallback: it must always win.
     pub fn manual_fire(&mut self, key: &str, now_ms: u64) -> RouteDecision {
-        self.last_fire = Some((key.to_string(), now_ms));
+        self.note_fired(key, now_ms);
         // The AI did not choose this, so there is no AI decision to learn from.
         // Clearing it means that if the operator immediately clears the screen,
         // we don't "correct" the gate for a fire it never made — undoing your own
@@ -551,6 +579,72 @@ mod tests {
                 "re-fired at t={t}s — the projector would flicker"
             );
         }
+    }
+
+    /// THE regression test from the live service of 2026-07-26.
+    ///
+    /// The debounce above only ever saw the SAME key twice in a row, and that is
+    /// the only shape it could catch: `last_fire` was a single slot, so any other
+    /// verse firing in between ERASED the cooldown of the one before it.
+    ///
+    /// A rolling window re-transcribed once a second does not produce one steady
+    /// reference — it produces a mutating hypothesis. Two candidates alternating
+    /// inside it therefore defeated the debounce completely, each clearing the
+    /// other's memory. From the live service, one second apart:
+    ///
+    ///     2 Chronicles 7:1 · 1 Thessalonians 3:1 · 2 Chronicles 7:2 ·
+    ///     2 Chronicles 7:1 · 2 Chronicles 7:2 · 2 Chronicles 7:1 · …
+    ///
+    /// Eight broadcasts of two verses in eight seconds, in front of a
+    /// congregation. The cooldown must be per-reference, not per-last-fire.
+    #[test]
+    fn two_alternating_verses_do_not_erase_each_others_cooldown() {
+        let mut r = Router::default();
+        assert_eq!(
+            r.decide("2 Chronicles 7:1", 0.88, DIRECT, 0),
+            RouteDecision::AutoFire
+        );
+        assert_eq!(
+            r.decide("2 Chronicles 7:2", 0.95, DIRECT, 1_000),
+            RouteDecision::AutoFire
+        );
+
+        // Both are on the cooldown clock now. Neither may fire again while the
+        // utterance that produced them is still inside the STT window, no matter
+        // how they interleave.
+        for t in 2..=crate::stt::WINDOW_SECS as u64 {
+            assert_eq!(
+                r.decide("2 Chronicles 7:1", 0.88, DIRECT, t * 1_000),
+                RouteDecision::Drop,
+                "7:1 re-fired at t={t}s — the other verse had erased its cooldown"
+            );
+            assert_eq!(
+                r.decide("2 Chronicles 7:2", 0.95, DIRECT, t * 1_000 + 500),
+                RouteDecision::Drop,
+                "7:2 re-fired at t={t}s — the other verse had erased its cooldown"
+            );
+        }
+    }
+
+    /// The per-reference cooldown must not become a memory leak across a service.
+    /// It must also still EXPIRE — a verse genuinely referenced again half an hour
+    /// later is a new utterance and has to reach the screen.
+    #[test]
+    fn a_per_reference_cooldown_still_expires() {
+        let mut r = Router::default();
+        assert_eq!(
+            r.decide("Psalm 23:1", 0.95, DIRECT, 0),
+            RouteDecision::AutoFire
+        );
+        assert_eq!(
+            r.decide("John 3:16", 0.95, DIRECT, 1_000),
+            RouteDecision::AutoFire
+        );
+        assert_eq!(
+            r.decide("Psalm 23:1", 0.95, DIRECT, DEFAULT_DEBOUNCE_MS + 1),
+            RouteDecision::AutoFire,
+            "a genuine later re-reference must still fire"
+        );
     }
 
     /// But clearing the screens forgets it: nothing is showing any more, so the

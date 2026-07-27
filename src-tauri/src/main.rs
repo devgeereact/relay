@@ -36,7 +36,7 @@ use router::{RouteDecision, Router, Thresholds};
 use rusqlite::Connection;
 use serde::Serialize;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
 use stt::SttEngine;
 use tauri::{Emitter, Manager};
@@ -582,7 +582,11 @@ fn fire_manual<R: tauri::Runtime>(
             attach_next_verse(&conn, &context, &mut f);
         }
         if let Ok(mut router) = handle.state::<Routing>().0.lock() {
-            router.manual_fire(&f.key, 0);
+            // The same wall clock the AI path uses. This was a literal `0`, which
+            // on any clock means "long ago" — so a verse the operator had just put
+            // on the wall themselves was never protected from the AI immediately
+            // re-firing it off the still-rolling STT window.
+            router.manual_fire(&f.key, router_clock_ms());
         }
         persist_fire(
             &conn,
@@ -601,10 +605,40 @@ fn fire_manual<R: tauri::Runtime>(
     true
 }
 
+/// Monotonic milliseconds since process start — THE ROUTER'S CLOCK.
+///
+/// ── Why this is not the audio timestamp ─────────────────────────────────────
+///
+/// The router's repeat cooldown asks one question: "has this verse been on the
+/// wall long enough that saying it again means the preacher said it again?"
+/// That is a question about a room, so it is measured in wall time.
+///
+/// It used to be handed `TranscriptUpdate::timestamp_ms` — a position in the
+/// audio — and that silently breaks the debounce under load. The STT worker
+/// drains its entire backlog per decode (stt.rs: "the deeper the backlog, the
+/// more audio each decode consumes"), so `last_ts_ms` advances in JUMPS. One
+/// decode can move the audio clock 10+ seconds while one second of real time
+/// passed, putting every partial past the cooldown. Live, at one-second
+/// intervals: `Romans 8:28 · Romans 8:28 · Romans 8:28` — the same verse
+/// re-broadcast three times because the clock, not the gate, had moved.
+///
+/// It fails hardest exactly when whisper is running behind, which is when the
+/// transcript is worst and the gate matters most.
+///
+/// `Router::decide` still takes `now_ms` as a parameter and stays clock-free, so
+/// the gate remains deterministic and unit-testable. Only the source changed.
+fn router_clock_ms() -> u64 {
+    static START: OnceLock<Instant> = OnceLock::new();
+    START.get_or_init(Instant::now).elapsed().as_millis() as u64
+}
+
 /// Detect references in `text` — direct, context-resolved bare verses, and
 /// semantic paraphrase — dedup them, gate each through the router, resolve
 /// against the corpus, and emit one `detection://match` per survivor. Dropped
 /// (debounced / low-confidence) detections are silent.
+///
+/// `now_ms` is a WALL-CLOCK monotonic stamp (`router_clock_ms`), never an audio
+/// position — see that function for why the difference is load-bearing.
 fn emit_detections(handle: &tauri::AppHandle, text: &str, now_ms: u64) {
     // Detection disarmed → transcribe but surface nothing. Manual override is a
     // separate path and stays live.
@@ -868,6 +902,20 @@ fn persist_transcript(handle: &tauri::AppHandle, text: &str, language: &str) {
 /// (`router::record_feedback`, docs/DECISIONS.md) learns from precisely this
 /// confirm/reject signal. Logging every human decision as a machine decision
 /// means the router is being trained on a record that cannot tell the two apart.
+///
+/// ── `window_text` IS THE EVIDENCE, and it is now STORED ─────────────────────
+///
+/// It used to be a fallback only — used to seed a transcript row when none
+/// existed yet, and otherwise thrown away. The row was then attached to
+/// `last_transcript`, the most recent FINAL transcript.
+///
+/// But detection runs on every partial STT hypothesis, and only finals are
+/// persisted (`build_stt`). So in a real service the two routinely have nothing
+/// to do with each other: nine auto-fires were logged against a final from three
+/// minutes earlier which, replayed through the detector, produces no matches at
+/// all. `transcript_id` said where the service was; it could not say what was
+/// heard. Now `heard_text` does, so a wrong verse on a wall can be explained
+/// after the fact instead of guessed at.
 #[allow(clippy::too_many_arguments)]
 fn persist_fire(
     conn: &Connection,
@@ -895,7 +943,16 @@ fn persist_fire(
             Err(_) => return,
         },
     };
-    let _ = db::insert_detection(conn, tid, verse_id, method, confidence, status, Some(ts));
+    let _ = db::insert_detection(
+        conn,
+        tid,
+        verse_id,
+        method,
+        confidence,
+        status,
+        Some(ts),
+        Some(window_text),
+    );
 }
 
 /// Record an operator cue (manual_override / clear_screens) into the current
@@ -2590,11 +2647,51 @@ fn set_thresholds(
 /// the two-slider Settings control would (`from_sensitivity` — the one forward
 /// mapping), so there is exactly one baseline. Returns the resulting dial
 /// position so the caller can reflect what actually landed.
+/// ── Moving the dial must MOVE THE BASELINE, and must SURVIVE ────────────────
+///
+/// This used to call `set_thresholds` alone. Two things followed from that, both
+/// invisible, and both were caught in a live service:
+///
+/// 1. **The baseline never moved.** `sensitivity` is defined as the anchor the
+///    self-calibration decays back toward (`apply_profile`, DECISIONS §26). Set
+///    the gate without setting the anchor and every subsequent operator decision
+///    drags the gate back toward the dial position they just left. The dial did
+///    not stick even within the session.
+///
+/// 2. **Nothing was written down.** The learned thresholds are persisted on every
+///    confirm/dismiss, but a deliberate dial move was not — so the DB kept a
+///    stale learned value and reloaded it at next launch, silently undoing the
+///    operator's change. The live evidence was a profile reading
+///    `auto_fire = 0.832` beside `sensitivity = 50`, whose mapping is 0.50: a
+///    state the router was never in.
+///
+/// The dial is the operator overruling the machine. It is the one input here
+/// that must outlast both the learning and the restart.
 #[tauri::command]
-fn set_sensitivity(routing: tauri::State<'_, Routing>, sensitivity: u8) -> error::Result<u8> {
-    let mut router = routing.0.lock()?;
-    router.set_thresholds(Thresholds::from_sensitivity(sensitivity));
-    Ok(router.thresholds().to_sensitivity())
+fn set_sensitivity(
+    routing: tauri::State<'_, Routing>,
+    db: tauri::State<'_, Db>,
+    sensitivity: u8,
+) -> error::Result<u8> {
+    let t = Thresholds::from_sensitivity(sensitivity.min(100));
+    let landed = {
+        let mut router = routing.0.lock()?;
+        router.set_thresholds(t);
+        router.set_baseline(t); // the dial IS the baseline
+        router.thresholds().to_sensitivity()
+    }; // lock released before touching the db — Db before Session, never nested here
+    if let Ok(conn) = db.0.lock() {
+        if let Ok(Some(p)) = db::active_voice_profile(&conn) {
+            let _ = db::save_profile_sensitivity(
+                &conn,
+                p.id,
+                landed as i64,
+                t.auto_fire as f64,
+                t.suggest as f64,
+            );
+        }
+    }
+    Ok(landed)
 }
 
 /// The current dial position, recovered from the live thresholds.
@@ -2653,10 +2750,24 @@ fn apply_profile(stt: &Stt, routing: &Routing, p: &db::VoiceProfile) -> error::R
 fn build_stt(handle: &tauri::AppHandle) -> Option<SttEngine> {
     let path = stt::default_model_path()?;
     let handle = handle.clone();
+    // Auto-detect re-elects a language every window and, on accented speech, does
+    // not settle — which degrades the decode and looks exactly like the AI being
+    // bad. Say so once, out loud, because the operator has the control that fixes
+    // it and no reason to suspect they should touch it. See `LanguageStability`.
+    let lang_stability = Mutex::new(stt::LanguageStability::default());
     match SttEngine::try_load(path, move |update| {
         let _ = handle.emit("stt://transcript", &update);
         if update.is_final {
             println!("stt[{}]: {}", update.language, update.text);
+            // Compute under the lock, release, THEN emit — CLAUDE.md rule #2.
+            let unstable = lang_stability
+                .lock()
+                .ok()
+                .and_then(|mut s| s.observe(&update.language));
+            if let Some(langs) = unstable {
+                println!("stt: language auto-detect is unstable ({langs:?})");
+                let _ = handle.emit("stt://language_unstable", langs);
+            }
             persist_transcript(&handle, &update.text, &update.language);
             // Spoken "next"/"back" navigates from the current verse.
             //
@@ -2688,7 +2799,11 @@ fn build_stt(handle: &tauri::AppHandle) -> Option<SttEngine> {
             }
         }
         // Detect references, then route each through the confidence gate.
-        emit_detections(&handle, &update.text, update.timestamp_ms);
+        //
+        // The gate's clock is WALL TIME, not `update.timestamp_ms`. The audio
+        // position advances in backlog-sized jumps and silently defeated the
+        // repeat cooldown — see `router_clock_ms`.
+        emit_detections(&handle, &update.text, router_clock_ms());
     }) {
         Ok(e) => {
             println!("stt: model loaded from {}", e.model_path().display());

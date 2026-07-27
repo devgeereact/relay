@@ -48,7 +48,7 @@ const SCHEMA: &str = include_str!("../../../docs/data/schema.sql");
 
 /// The schema version this build expects. Bump it and add a rung to
 /// `run_migrations` when you change the schema.
-pub const SCHEMA_VERSION: i64 = 1;
+pub const SCHEMA_VERSION: i64 = 2;
 
 fn user_version(conn: &Connection) -> rusqlite::Result<i64> {
     conn.query_row("PRAGMA user_version", [], |r| r.get(0))
@@ -64,10 +64,18 @@ fn set_user_version(conn: &Connection, v: i64) -> rusqlite::Result<()> {
 /// Add a rung here (and bump `SCHEMA_VERSION`) for each schema change. Rungs run
 /// in order, only the ones newer than the DB's recorded version, exactly once.
 fn run_migrations(conn: &Connection, from: i64) -> rusqlite::Result<()> {
-    // v2, v3, … go here as:
-    //   if from < 2 { …change…; }
-    // Nothing yet — v1 IS the baseline.
-    let _ = (conn, from);
+    // v2: every detection records the text that caused it.
+    //
+    // THIS is where a schema change goes — not into `baseline_forward_fill`.
+    // That function is the v0-ONLY path, and putting this rung there meant it ran
+    // on brand-new databases and on nothing else: an existing install took the
+    // `else` branch in `migrate` and never saw it. The column was present in
+    // `schema.sql`, present in every test, and absent from the one database that
+    // mattered — the operator's. Caught by launching the real app against the
+    // real file, which no unit test was doing.
+    if from < 2 {
+        ensure_detection_evidence(conn)?;
+    }
     Ok(())
 }
 
@@ -166,6 +174,14 @@ fn baseline_forward_fill(conn: &Connection) -> rusqlite::Result<()> {
     ensure_tables(conn)?;
     // detections.status gained 'manual' — see the fn doc.
     ensure_manual_detection_status(conn)?;
+    // `detections.heard_text` is deliberately NOT here. It is a v2 rung and lives
+    // in `run_migrations`, which runs for a v0 database (via `from = 0 < 2`) AND
+    // for an existing versioned one. This function only ever runs for v0, so a
+    // schema change placed here reaches new installs and no others.
+    //
+    // The ORDER still holds either way: `ensure_manual_detection_status` rebuilds
+    // the table from a hard-coded seven-column list, so it must run before the
+    // column is added, and `run_migrations` is called after this returns.
     Ok(())
 }
 
@@ -256,6 +272,7 @@ pub fn active_translation_id(conn: &Connection) -> rusqlite::Result<i64> {
 /// them as applied regardless, which is precisely the failure being fixed.
 pub const MIGRATION_TABLES: &[(&str, &str)] = &[
     ("Core tables", "detections"),
+    ("Detection evidence", "detections.heard_text"),
     ("Service history", "services"),
     ("Transcripts", "transcripts"),
     ("Scripture", "verses"),
@@ -332,6 +349,42 @@ pub fn manual_status_report(conn: &Connection) -> rusqlite::Result<(bool, bool)>
         |r| r.get(0),
     )?;
     Ok((applied, scratch > 0))
+}
+
+/// Give every detection the TEXT THAT CAUSED IT.
+///
+/// ── The gap this closes ─────────────────────────────────────────────────────
+///
+/// A detection row recorded which verse fired, how confident, and when — but not
+/// what the detector was reading. And `persist_fire` attaches the row to
+/// `SessionState::last_transcript`, the most recent FINAL transcript, while
+/// detection also runs on every partial STT hypothesis. Partials are never
+/// persisted. So a fire is routinely stamped onto a final transcript from
+/// minutes earlier that provably could not have produced it.
+///
+/// From the live service of 2026-07-26: nine `direct` auto-fires — Job 1:1,
+/// Jude 1:1, John 1:1, 1 Samuel 2:1 and more — all attributed to
+///
+///     "I am not in the ward when the Lord to the children of Israel."
+///
+/// Replaying that sentence through `detect_direct` yields NOTHING. The text that
+/// actually fired them was a partial, discarded the moment it was decoded. The
+/// whole service was un-diagnosable: forty wrong verses reached a congregation
+/// and the log could not say what any of them heard.
+///
+/// A nullable column, so it is additive and needs no table rebuild — and
+/// therefore no scratch table to strand (contrast `ensure_manual_detection_status`
+/// and CLAUDE.md §25). Idempotent: it asks SQLite whether the column is there.
+fn ensure_detection_evidence(conn: &Connection) -> rusqlite::Result<()> {
+    let present: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM pragma_table_info('detections') WHERE name = 'heard_text'",
+        [],
+        |r| r.get(0),
+    )?;
+    if present > 0 {
+        return Ok(());
+    }
+    conn.execute_batch("ALTER TABLE detections ADD COLUMN heard_text TEXT;")
 }
 
 /// Widen `detections.status` to allow `'manual'`.
@@ -1355,8 +1408,18 @@ mod tests {
         insert_transcript(&conn, sid, 40.0, "turn to romans eight", "en", None).unwrap();
 
         let john = lookup_verse(&conn, "John", 3, 16).unwrap().unwrap();
-        insert_detection(&conn, t1, Some(john.id), "direct", 0.96, "auto", Some(13.0)).unwrap();
-        insert_detection(&conn, t1, None, "semantic", 0.62, "auto", Some(41.0)).unwrap();
+        insert_detection(
+            &conn,
+            t1,
+            Some(john.id),
+            "direct",
+            0.96,
+            "auto",
+            Some(13.0),
+            None,
+        )
+        .unwrap();
+        insert_detection(&conn, t1, None, "semantic", 0.62, "auto", Some(41.0), None).unwrap();
         // A manual override cue counts toward "overrides".
         insert_cue(&conn, sid, "manual_override", Some("John 3:16"), 13.0).unwrap();
         insert_cue(&conn, sid, "clear_screens", None, 60.0).unwrap();
@@ -1515,11 +1578,13 @@ mod tests {
         let tid = insert_transcript(&conn, sid, 0.0, "john three sixteen", "en", None).unwrap();
 
         for status in ["auto", "suggested", "dismissed", "manual"] {
-            insert_detection(&conn, tid, None, "direct", 1.0, status, Some(0.0))
+            insert_detection(&conn, tid, None, "direct", 1.0, status, Some(0.0), None)
                 .unwrap_or_else(|e| panic!("status {status:?} rejected: {e}"));
         }
         // And a bogus one is still refused — the constraint was widened, not dropped.
-        assert!(insert_detection(&conn, tid, None, "direct", 1.0, "nonsense", Some(0.0)).is_err());
+        assert!(
+            insert_detection(&conn, tid, None, "direct", 1.0, "nonsense", Some(0.0), None).is_err()
+        );
     }
 
     /// Exercises the ACTUAL rebuild path, from a real pre-migration database —
@@ -1548,12 +1613,25 @@ mod tests {
 
         let sid = create_service(&conn, "Last Sunday", "2026-07-05").unwrap();
         let tid = insert_transcript(&conn, sid, 0.0, "john three sixteen", "en", None).unwrap();
-        insert_detection(&conn, tid, None, "direct", 0.9, "auto", Some(1.0)).unwrap();
-        insert_detection(&conn, tid, None, "semantic", 0.4, "suggested", None).unwrap();
+        // RAW SQL, deliberately: the table above is genuinely pre-migration, so it
+        // has no `heard_text` and the typed helper cannot address it. Writing these
+        // rows the legacy way is what keeps this test an honest test of an OLD
+        // database rather than of a freshly-built one wearing an old name.
+        let legacy = |method: &str, conf: f64, status: &str, fired: Option<f64>| {
+            conn.execute(
+                "INSERT INTO detections (transcript_id, verse_id, method, confidence, status, fired_at)
+                 VALUES (?1, NULL, ?2, ?3, ?4, ?5)",
+                (tid, method, conf, status, fired),
+            )
+        };
+        legacy("direct", 0.9, "auto", Some(1.0)).unwrap();
+        legacy("semantic", 0.4, "suggested", None).unwrap();
         // Pre-migration, 'manual' is rejected — this is the bug being fixed.
-        assert!(insert_detection(&conn, tid, None, "direct", 1.0, "manual", Some(2.0)).is_err());
+        assert!(legacy("direct", 1.0, "manual", Some(2.0)).is_err());
 
         ensure_manual_detection_status(&conn).unwrap();
+        // Both rungs run, in this order, on every real boot (see `migrate`).
+        ensure_detection_evidence(&conn).unwrap();
 
         // The operator's history survived the rebuild intact...
         let rows: Vec<(String, f64)> = conn
@@ -1568,13 +1646,198 @@ mod tests {
         assert_eq!(rows[1].0, "suggested");
 
         // ...and 'manual' is now accepted.
-        insert_detection(&conn, tid, None, "direct", 1.0, "manual", Some(2.0)).unwrap();
+        insert_detection(&conn, tid, None, "direct", 1.0, "manual", Some(2.0), None).unwrap();
         // Re-running is a safe no-op.
         ensure_manual_detection_status(&conn).unwrap();
         let n: i64 = conn
             .query_row("SELECT COUNT(*) FROM detections", [], |r| r.get(0))
             .unwrap();
         assert_eq!(n, 3);
+    }
+
+    /// THE TEST THAT WAS MISSING, and the reason a shipped build reached the
+    /// operator's machine with the migration silently not applied.
+    ///
+    /// `migrate` has two arms: a v0 database goes through `baseline_forward_fill`,
+    /// an already-versioned one goes through `ensure_tables` and then the
+    /// `run_migrations` ladder. Every test for `heard_text` either called
+    /// `ensure_detection_evidence` directly or used `init_fresh`, which builds
+    /// from `schema.sql` — where the column had also been added. So the column
+    /// existed in every test and in no existing install.
+    ///
+    /// This drives the REAL boot path against an EXISTING database, which is the
+    /// only thing that could have failed and the only thing nothing was doing.
+    #[test]
+    fn migrating_an_existing_versioned_db_adds_the_evidence_column() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_fresh(&conn).unwrap();
+
+        // Reconstruct an installed v1 database: the column does not exist yet and
+        // the file is stamped at the previous schema version.
+        conn.execute_batch(
+            "DROP TABLE detections;
+             CREATE TABLE detections (
+                 id            INTEGER PRIMARY KEY,
+                 transcript_id INTEGER NOT NULL REFERENCES transcripts(id),
+                 verse_id      INTEGER REFERENCES verses(id),
+                 method        TEXT NOT NULL CHECK (method IN ('direct', 'semantic')),
+                 confidence    REAL NOT NULL,
+                 status        TEXT NOT NULL CHECK (status IN ('auto', 'suggested', 'dismissed', 'manual')),
+                 fired_at      REAL
+             );",
+        )
+        .unwrap();
+        set_user_version(&conn, 1).unwrap();
+        assert!(
+            !object_present(&conn, "detections.heard_text").unwrap(),
+            "precondition: the v1 database must not have the column"
+        );
+
+        // The real boot path, on a NON-fresh database.
+        migrate(&conn, false).unwrap();
+
+        assert!(
+            object_present(&conn, "detections.heard_text").unwrap(),
+            "an existing install booted without gaining detections.heard_text"
+        );
+        assert_eq!(
+            user_version(&conn).unwrap(),
+            SCHEMA_VERSION,
+            "version stamp"
+        );
+
+        // And booting again is a no-op, not an error.
+        migrate(&conn, false).unwrap();
+        assert!(object_present(&conn, "detections.heard_text").unwrap());
+    }
+
+    /// Every object the Database Migration screen claims must actually be
+    /// reachable by the migration path an existing install takes. A rung added to
+    /// the v0-only branch passes every other test in this file and ships broken.
+    #[test]
+    fn every_advertised_schema_object_exists_after_migrating_a_v1_db() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_fresh(&conn).unwrap();
+        set_user_version(&conn, 1).unwrap();
+        migrate(&conn, false).unwrap();
+        for (label, object) in MIGRATION_TABLES {
+            assert!(
+                object_present(&conn, object).unwrap(),
+                "{label}: {object} missing after migrating an existing install"
+            );
+        }
+    }
+
+    /// A detection must be able to say WHAT IT HEARD.
+    ///
+    /// `transcript_id` cannot: detection runs on partial STT hypotheses that are
+    /// never persisted, so a fire is stamped onto whichever FINAL transcript was
+    /// most recent — in a live service, one from minutes earlier that does not
+    /// contain the reference at all. Nine wrong verses reached a congregation and
+    /// the log could not explain a single one.
+    #[test]
+    fn a_detection_records_the_text_that_caused_it() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_fresh(&conn).unwrap();
+        let s = create_service(&conn, "2026-07-26", "Sunday Service").unwrap();
+        let tid =
+            insert_transcript(&conn, s, 0.0, "unrelated final transcript", "en", None).unwrap();
+
+        insert_detection(
+            &conn,
+            tid,
+            None,
+            "direct",
+            0.83,
+            "auto",
+            Some(1.0),
+            Some("and the numbers two three"),
+        )
+        .unwrap();
+
+        let heard: Option<String> = conn
+            .query_row("SELECT heard_text FROM detections", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(
+            heard.as_deref(),
+            Some("and the numbers two three"),
+            "the evidence did not survive the insert"
+        );
+    }
+
+    /// The evidence column is added AFTER the status rebuild, and the rebuild
+    /// copies a hard-coded column list. Get that order wrong and `heard_text`
+    /// exists, then silently does not. Running the whole migration twice must
+    /// leave it — and its contents — intact.
+    #[test]
+    fn the_evidence_column_survives_a_re_run_of_every_migration() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_fresh(&conn).unwrap();
+        let s = create_service(&conn, "2026-07-26", "Sunday Service").unwrap();
+        let tid = insert_transcript(&conn, s, 0.0, "t", "en", None).unwrap();
+        insert_detection(
+            &conn,
+            tid,
+            None,
+            "direct",
+            0.9,
+            "auto",
+            Some(1.0),
+            Some("psalm 23"),
+        )
+        .unwrap();
+
+        for _ in 0..3 {
+            ensure_manual_detection_status(&conn).unwrap();
+            ensure_detection_evidence(&conn).unwrap();
+        }
+
+        let heard: Option<String> = conn
+            .query_row("SELECT heard_text FROM detections", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(heard.as_deref(), Some("psalm 23"));
+        // And no scratch table was stranded (CLAUDE.md §25).
+        let (_, scratch) = manual_status_report(&conn).unwrap();
+        assert!(!scratch, "a scratch table was left behind");
+    }
+
+    /// A DIAL MOVE MUST LEAVE THE PROFILE SELF-CONSISTENT.
+    ///
+    /// `sensitivity` and `auto_fire`/`suggest` are not independent: the dial is
+    /// the baseline, and `Thresholds::from_sensitivity` is the one mapping
+    /// between them. Persisting the thresholds without the dial (or the other way
+    /// round) records a state the router was never in — a live service left
+    /// `auto_fire = 0.832` sitting beside `sensitivity = 50`, whose mapping is
+    /// 0.50, and the stale value was reloaded at next launch, silently undoing
+    /// the operator's change.
+    #[test]
+    fn saving_the_sensitivity_dial_keeps_the_profile_self_consistent() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_fresh(&conn).unwrap();
+        let p = active_voice_profile(&conn)
+            .unwrap()
+            .expect("active profile");
+
+        // The self-calibration has ratcheted the gate up over a service...
+        save_profile_thresholds(&conn, p.id, 0.832, 0.60).unwrap();
+
+        // ...and now the operator deliberately moves the dial to 20.
+        let t = crate::router::Thresholds::from_sensitivity(20);
+        save_profile_sensitivity(&conn, p.id, 20, t.auto_fire as f64, t.suggest as f64).unwrap();
+
+        let after = active_voice_profile(&conn).unwrap().unwrap();
+        assert_eq!(after.sensitivity, 20, "the dial did not stick");
+        let implied = crate::router::Thresholds::from_sensitivity(after.sensitivity as u8);
+        assert!(
+            (after.auto_fire - implied.auto_fire as f64).abs() < 1e-6,
+            "profile says sensitivity {} but auto_fire {} — that maps to {}",
+            after.sensitivity,
+            after.auto_fire,
+            implied.auto_fire
+        );
+        assert!((after.suggest - implied.suggest as f64).abs() < 1e-6);
+        // The learned value is gone, deliberately: the operator overruled it.
+        assert!(after.auto_fire < 0.832);
     }
 
     /// A fresh DB is stamped at the current version, so it is never mistaken for
