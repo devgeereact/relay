@@ -19,8 +19,8 @@
   } from '../stores/capture.js';
 
   const tabs = [
-    { key: 'scripture', label: 'Scripture', color: 'var(--v-amber)' },
-    { key: 'lyrics', label: 'Lyrics', color: 'var(--v-amber)' },
+    { key: 'scripture', label: 'Scripture', color: 'var(--v-accent)' },
+    { key: 'lyrics', label: 'Lyrics', color: 'var(--v-accent)' },
     { key: 'media', label: 'Media', color: 'var(--v-amethyst)' },
     { key: 'announcements', label: 'Announcements', color: 'var(--v-rose)' },
     { key: 'history', label: 'History', color: 'var(--v-cyan)' },
@@ -148,7 +148,7 @@
         {importing ? 'Importing…' : 'Import'}
       </button>
       <div class="lib-newwrap">
-        <button class="r-btn amber sm" on:click={() => (showNew = !showNew)}>＋ New</button>
+        <button class="r-btn primary sm" on:click={() => (showNew = !showNew)}>＋ New</button>
         {#if showNew}
           <button class="lib-newscrim" tabindex="-1" aria-label="Close menu" on:click={() => (showNew = false)}></button>
           <div class="lib-newmenu">
@@ -193,5 +193,5 @@
     display:flex; flex-direction:column; gap:2px; }
   .lib-newitem{ text-align:left; padding:9px 11px; border-radius:8px; border:0; background:transparent; color:var(--v-txt);
     font-family:var(--f-body); font-size:13px; cursor:pointer; }
-  .lib-newitem:hover{ background:var(--v-surf3); color:var(--v-amber); }
+  .lib-newitem:hover{ background:var(--v-surf3); color:var(--v-accent); }
 </style>

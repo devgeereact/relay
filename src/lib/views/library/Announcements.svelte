@@ -91,7 +91,7 @@
         <span class="r-lbl">{edit.id ? 'Edit announcement' : 'New announcement'}</span>
         <span class="ann-spring"></span>
         <button class="r-btn ghost sm" on:click={() => (edit = null)}>Cancel</button>
-        <button class="r-btn amber sm" on:click={save}>Save</button>
+        <button class="r-btn primary sm" on:click={save}>Save</button>
       </div>
       <label class="ann-field">
         <span class="r-lbl">Title</span>
@@ -129,7 +129,7 @@
   {:else if !edit}
     <div class="cat-empty">
       <span class="r-empty">No announcements yet — use <b>＋ New → Draft announcement</b> above, or the button below.</span>
-      <button class="r-btn amber sm ann-new" on:click={draft}>＋ Draft announcement</button>
+      <button class="r-btn primary sm ann-new" on:click={draft}>＋ Draft announcement</button>
     </div>
   {/if}
 </div>
@@ -156,10 +156,10 @@
   .ann-preview{ display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden;
     font-size:12px; line-height:1.5; color:var(--v-dim); margin-top:3px; white-space:pre-wrap; }
   .ann-foot{ display:flex; align-items:center; justify-content:space-between; margin-top:auto; }
-  .ann-send{ font-family:var(--f-mono); font-size:9px; font-weight:700; letter-spacing:.06em; color:var(--v-amber);
-    background:var(--v-amber-soft); border:1px solid rgba(245,166,35,.3); padding:5px 10px; border-radius:7px; cursor:pointer; }
-  .ann-send:hover{ background:rgba(245,166,35,.2); }
-  .ann-del:hover{ color:var(--v-rose); border-color:rgba(244,113,139,.4); }
+  .ann-send{ font-family:var(--f-mono); font-size:9px; font-weight:700; letter-spacing:.06em; color:var(--v-accent);
+    background:var(--v-accent-soft); border:1px solid var(--v-accent-line); padding:5px 10px; border-radius:7px; cursor:pointer; }
+  .ann-send:hover{ background:var(--v-accent-line); }
+  .ann-del:hover{ color:var(--v-rose); border-color:rgba(239,68,68,.4); }
   .ann-del.arm{ width:auto; padding:0 8px; color:var(--v-rose); border-color:var(--v-rose); background:var(--v-rose-soft); }
   .ann-delconf{ font-size:9px; font-weight:700; letter-spacing:.04em; }
   .cat-empty{ display:flex; flex-direction:column; align-items:flex-start; gap:12px; }

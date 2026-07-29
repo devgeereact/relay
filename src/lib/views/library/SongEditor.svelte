@@ -263,7 +263,7 @@
       </div>
       <span class="se-spring"></span>
       {#if saveMsg}<span class="se-msg r-mono" class:err={saveMsg !== 'Saved'}>{saveMsg}</span>{/if}
-      <button class="r-btn amber sm" on:click={save} disabled={!dirty}>Save</button>
+      <button class="r-btn primary sm" on:click={save} disabled={!dirty}>Save</button>
     </div>
 
     <!-- meta row -->
@@ -303,7 +303,7 @@
                 on:click={() => removeArrangement({ id: draft.id })}>✕</button>
             {/if}
             <button class="r-btn ghost sm" on:click={() => (draft = null)}>Cancel</button>
-            <button class="r-btn amber sm" on:click={saveDraft}>Save arrangement</button>
+            <button class="r-btn primary sm" on:click={saveDraft}>Save arrangement</button>
           </div>
 
           <!-- the built sequence -->
@@ -422,7 +422,7 @@
     border:1px solid var(--v-line2); }
   .se-arrpill.act{ cursor:pointer; transition:.12s; }
   .se-arrpill.act:hover{ color:var(--v-txt); border-color:var(--v-line); }
-  .se-arrpill.on{ color:var(--v-amber); border-color:var(--v-amber); background:var(--v-amber-soft); }
+  .se-arrpill.on{ color:var(--v-accent); border-color:var(--v-accent); background:var(--v-accent-soft); }
   .se-arrcount{ font-size:9px; color:var(--v-faint); padding:1px 5px; border-radius:5px; background:var(--v-surf3); }
 
   .se-arrbuild{ display:flex; flex-direction:column; gap:11px; padding-top:2px; }
@@ -453,7 +453,7 @@
     background:var(--v-surf2); padding:16px; display:flex; align-items:center; justify-content:center; text-align:center;
     cursor:pointer; overflow:hidden; transition:border-color .12s, box-shadow .12s; }
   .se-slide:hover{ border-color:var(--v-line2); }
-  .se-slide.on{ border-color:var(--v-amber); box-shadow:0 0 0 1px var(--v-amber), 0 10px 30px -12px var(--v-amber-glow); }
+  .se-slide.on{ border-color:var(--v-accent); box-shadow:0 0 0 1px var(--v-accent), 0 10px 30px -12px var(--v-accent-glow); }
   .se-slide.drop{ border-color:var(--v-cyan); box-shadow:0 0 0 2px var(--v-cyan); }
   .se-slide{ cursor:grab; }
   .se-slide:active{ cursor:grabbing; }
@@ -466,15 +466,15 @@
   .se-add{ aspect-ratio:16/9; border-radius:12px; border:1.5px dashed var(--v-line2); background:transparent;
     display:flex; flex-direction:column; align-items:center; justify-content:center; gap:6px; cursor:pointer;
     color:var(--v-faint); font-size:11px; letter-spacing:.06em; transition:.14s; }
-  .se-add:hover{ color:var(--v-amber); border-color:rgba(245,166,35,.4); }
+  .se-add:hover{ color:var(--v-accent); border-color:var(--v-accent-line); }
   .se-addplus{ font-size:22px; line-height:1; }
 
   /* group colours */
-  .tg-cyan{ background:var(--v-cyan-soft); color:var(--v-cyan); border:1px solid rgba(63,182,230,.4); }
-  .tg-amber{ background:var(--v-amber-soft); color:var(--v-amber); border:1px solid rgba(245,166,35,.4); }
-  .tg-amethyst{ background:var(--v-amethyst-soft); color:var(--v-amethyst); border:1px solid rgba(192,139,255,.4); }
-  .tg-rose{ background:var(--v-rose-soft); color:var(--v-rose); border:1px solid rgba(244,113,139,.4); }
-  .tg-emerald{ background:var(--v-emerald-soft); color:var(--v-emerald); border:1px solid rgba(16,185,129,.4); }
+  .tg-cyan{ background:var(--v-cyan-soft); color:var(--v-cyan); border:1px solid rgba(34,211,238,.4); }
+  .tg-amber{ background:var(--v-accent-soft); color:var(--v-accent); border:1px solid var(--v-accent-line); }
+  .tg-amethyst{ background:var(--v-amethyst-soft); color:var(--v-amethyst); border:1px solid rgba(139,92,246,.4); }
+  .tg-rose{ background:var(--v-rose-soft); color:var(--v-rose); border:1px solid rgba(239,68,68,.4); }
+  .tg-emerald{ background:var(--v-emerald-soft); color:var(--v-emerald); border:1px solid rgba(34,197,94,.4); }
   .tg-dim{ background:var(--v-surf3); color:var(--v-dim); border:1px solid var(--v-line2); }
 
   /* editor panel */
@@ -489,7 +489,7 @@
   .se-lyrhint{ font-size:9px; letter-spacing:.03em; color:var(--v-faint); margin-top:2px; }
   .se-splitbtn{ width:100%; justify-content:center; }
   .se-slideacts{ display:flex; align-items:center; gap:6px; }
-  .se-del:hover{ color:var(--v-rose); border-color:rgba(244,113,139,.4); }
+  .se-del:hover{ color:var(--v-rose); border-color:rgba(239,68,68,.4); }
 
   @media (max-width:900px){
     .se-body{ grid-template-columns:1fr; }

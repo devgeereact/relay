@@ -17,6 +17,18 @@ tauri-build = { version = "2", features = [] }
 [dev-dependencies]
 tauri = { version = "2", features = ["test"] }
 
+# GPU acceleration for whisper is a BUILD-TIME fact, not a runtime one: whisper.cpp
+# is compiled with a backend or it is not. These forward to whisper-rs so
+# `sysprobe` can report what this binary was actually built with, instead of
+# guessing from the hardware. Default is CPU — every shipped build today runs
+# whisper on the CPU, and the Hardware Check screen says so out loud.
+[features]
+default = []
+metal = ["whisper-rs/metal"]
+cuda = ["whisper-rs/cuda"]
+vulkan = ["whisper-rs/vulkan"]
+coreml = ["whisper-rs/coreml"]
+
 [dependencies]
 tauri = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
@@ -49,6 +61,21 @@ unicode-normalization = "0.1"
 # congregation. Updates are signed; see docs/RELEASING.md.
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"   # relaunch after an update is installed
+# Hardware Check (Launch & Startup). Memory and disk headroom cannot be read from
+# std on both Windows and macOS without per-platform FFI. Minimal features: the
+# system and disk readers only — no processes, no networks, no components. Relay
+# reads totals and free space; it does not enumerate what else is running.
+#
+# **>= 0.39 IS A CORRECTNESS FLOOR, NOT A PREFERENCE.** On 0.32,
+# `System::available_memory()` returns **0 on macOS** — silently, with no error.
+# The Hardware Check screen would have read "0.0 GB free of 25.8 GB — close other
+# apps before the service" on a completely healthy laptop, every single boot.
+# `free_memory()` is not a substitute: macOS excludes cached and inactive pages,
+# so it reported 674 MB on the same machine that had 12.3 GB genuinely available.
+# Caught by `sysprobe::tests::print_hardware`, which is exactly why that test
+# exists. Do not relax this bound without re-running it on macOS.
+sysinfo = { version = "0.39", default-features = false, features = ["system", "disk"] }
+rust-stemmers = "1.2.0"
 
 # Added in later build phases — uncomment as each phase lands (see PROMPT.md):
 # ndi-sdk-sys or equivalent  # Phase 10 — NDI render target (evaluate available crates, may need custom FFI bindings)

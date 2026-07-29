@@ -221,6 +221,94 @@ pub fn migrate(conn: &Connection, fresh: bool) -> rusqlite::Result<()> {
     Ok(())
 }
 
+/// The tables the Database Migration screen verifies, with the rung that owns
+/// each one. Kept next to `ensure_tables` so adding a rung without adding it
+/// here is an obvious omission rather than a silent one.
+/// An entry is either a table (`"songs"`) or a column (`"templates.console_active"`).
+/// Both are real schema objects and both are checked by asking SQLite.
+///
+/// The first version of this list was written from memory and named two objects
+/// that do not exist — `media` (it is `media_assets`) and `template_active`
+/// (it is a COLUMN, `templates.console_active`). The screen would have reported
+/// them as applied regardless, which is precisely the failure being fixed.
+pub const MIGRATION_TABLES: &[(&str, &str)] = &[
+    ("Core tables", "detections"),
+    ("Service history", "services"),
+    ("Transcripts", "transcripts"),
+    ("Scripture", "verses"),
+    ("Templates", "templates"),
+    ("Console-active templates", "templates.console_active"),
+    ("Output channels", "output_channels"),
+    ("Voice profiles", "voice_profiles"),
+    ("App settings", "app_settings"),
+    ("Service plans", "service_plans"),
+    ("Planner cues", "plan_items"),
+    ("Songs", "songs"),
+    ("Song arrangements", "song_arrangements"),
+    ("Saved scripture", "saved_scripture"),
+    ("Media", "media_assets"),
+    ("Announcements", "announcements"),
+];
+
+/// Does a table — or a `table.column` — exist right now?
+fn object_present(conn: &Connection, name: &str) -> rusqlite::Result<bool> {
+    if let Some((table, column)) = name.split_once('.') {
+        let n: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM pragma_table_info(?1) WHERE name = ?2",
+            [table, column],
+            |r| r.get(0),
+        )?;
+        return Ok(n > 0);
+    }
+    let n: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
+        [name],
+        |r| r.get(0),
+    )?;
+    Ok(n > 0)
+}
+
+/// What the schema ACTUALLY looks like right now.
+///
+/// The Database Migration screen used to assert its rungs from a hard-coded list
+/// — it drew six green ticks whether or not the tables were there, because the
+/// only evidence it had was that the app had started. This asks the database.
+///
+/// Returns `(recorded_version, expected_version, [(label, table, present)])`.
+#[allow(clippy::type_complexity)]
+pub fn schema_report(
+    conn: &Connection,
+) -> rusqlite::Result<(i64, i64, Vec<(&'static str, &'static str, bool)>)> {
+    let mut rows = Vec::with_capacity(MIGRATION_TABLES.len());
+    for (label, object) in MIGRATION_TABLES {
+        rows.push((*label, *object, object_present(conn, object)?));
+    }
+    Ok((user_version(conn)?, SCHEMA_VERSION, rows))
+}
+
+/// Did the `detections.status` rebuild (CLAUDE.md §25) actually land?
+///
+/// Read from the stored DDL, not from "the app booted". The scar this comes from
+/// is a migration that left a `detections_new` scratch table behind and bricked
+/// every subsequent boot — so this ALSO reports a leftover scratch table, which
+/// is the fingerprint of that failure.
+pub fn manual_status_report(conn: &Connection) -> rusqlite::Result<(bool, bool)> {
+    let ddl: Option<String> = conn
+        .query_row(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'detections'",
+            [],
+            |r| r.get(0),
+        )
+        .ok();
+    let applied = ddl.map(|d| d.contains("'manual'")).unwrap_or(false);
+    let scratch: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'detections_new'",
+        [],
+        |r| r.get(0),
+    )?;
+    Ok((applied, scratch > 0))
+}
+
 /// Widen `detections.status` to allow `'manual'`.
 ///
 /// Operator-driven fires (an override, a confirmed suggestion, a next/back nav)
@@ -396,6 +484,76 @@ mod tests {
         conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
         init_fresh(&conn).unwrap();
         conn
+    }
+
+    // ── The Database Migration screen's evidence ───────────────────────────
+    //
+    // These guard the thing that screen got wrong before it was made real: it
+    // reported "already applied" from a hard-coded list, so it drew green ticks
+    // whether or not the tables existed.
+
+    #[test]
+    fn schema_report_finds_every_table_on_a_fresh_database() {
+        let conn = fresh_db();
+        let (_, expected, rows) = schema_report(&conn).unwrap();
+        assert_eq!(expected, SCHEMA_VERSION);
+        let missing: Vec<_> = rows
+            .iter()
+            .filter(|(_, _, present)| !present)
+            .map(|(_, t, _)| *t)
+            .collect();
+        assert!(
+            missing.is_empty(),
+            "MIGRATION_TABLES names objects a fresh database does not create: {missing:?}"
+        );
+    }
+
+    #[test]
+    fn schema_report_notices_a_missing_column() {
+        // `templates.console_active` is a COLUMN rung, not a table one. Naming it
+        // as a table (the original bug) made it unconditionally "present".
+        let conn = fresh_db();
+        assert!(object_present(&conn, "templates.console_active").unwrap());
+        assert!(!object_present(&conn, "templates.no_such_column").unwrap());
+        assert!(!object_present(&conn, "no_such_table.anything").unwrap());
+    }
+
+    #[test]
+    fn schema_report_notices_a_missing_table() {
+        // The bug: the screen ticks a row it never checked. Drop a real table and
+        // the report must say so — if this passes with the table gone, the screen
+        // is decorative again.
+        let conn = fresh_db();
+        conn.execute_batch("DROP TABLE announcements;").unwrap();
+        let (_, _, rows) = schema_report(&conn).unwrap();
+        let row = rows.iter().find(|(_, t, _)| *t == "announcements").unwrap();
+        assert!(!row.2, "a dropped table still reported as present");
+    }
+
+    #[test]
+    fn manual_status_report_reads_the_ddl_not_the_boot() {
+        let conn = fresh_db();
+        let (applied, scratch) = manual_status_report(&conn).unwrap();
+        assert!(applied, "fresh schema should already allow 'manual'");
+        assert!(!scratch, "fresh database has no scratch table");
+    }
+
+    #[test]
+    fn manual_status_report_spots_an_unmigrated_database() {
+        let conn = db_with_old_detections();
+        let (applied, _) = manual_status_report(&conn).unwrap();
+        assert!(!applied, "the old CHECK constraint reported as migrated");
+    }
+
+    #[test]
+    fn manual_status_report_spots_the_leftover_scratch_table() {
+        // CLAUDE.md §25: a `detections_new` left behind is the fingerprint of the
+        // failure that bricked every subsequent boot. The screen must surface it.
+        let conn = fresh_db();
+        conn.execute_batch("CREATE TABLE detections_new (id INTEGER PRIMARY KEY);")
+            .unwrap();
+        let (_, scratch) = manual_status_report(&conn).unwrap();
+        assert!(scratch, "a leftover detections_new went unreported");
     }
 
     /// A database with the OLD `detections` table — the one whose CHECK constraint

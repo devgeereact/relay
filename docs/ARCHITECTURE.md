@@ -1,6 +1,6 @@
 # Relay — Architecture & How It Works
 
-How the application is built and how the pieces fit together, end to end. For the *why* behind decisions see [DECISIONS.md](DECISIONS.md); for operating the app see [USER_GUIDE.md](USER_GUIDE.md); for the original brief see [SPEC.md](SPEC.md).
+How the application is built and how the pieces fit together, end to end. For the *why* behind decisions see [DECISIONS.md](DECISIONS.md); for the entities, invariants, and event catalog see [DOMAIN_MODEL.md](DOMAIN_MODEL.md); for the visual/interaction system see [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md); for operating the app see [USER_GUIDE.md](USER_GUIDE.md); for the original brief see [SPEC.md](SPEC.md); for what is deferred see [ROADMAP.md](ROADMAP.md). The whole doc hierarchy is indexed in [README.md](README.md).
 
 Relay is **AI-assisted live presentation software for churches**. It listens to a live sermon, detects scripture references (direct quotes *and* paraphrases), and routes the right content to multiple independently-styled output screens in real time — built to sit **above** the AV chain (OBS, ATEM, ProPresenter) over NDI/HDMI/network, not replace it. Everything core runs **fully offline**.
 
@@ -68,7 +68,7 @@ mic ─▶ audio.rs ─▶ stt.rs ─▶ detection.rs ─▶ router.rs ─▶ ch
    - **Direct** — book aliases (full names, numbered `1 John`/`first john`/`1jn`, fast abbreviations `ps 23 1`, ASR mishears like `sam`→Psalms), a spoken-number FSM (`three sixteen`→3:16), single-chapter books (`Jude 4`→1:4), ambiguity handling (`revelation 22`→suggests 22:1 *and* 2:2).
    - **Semantic** — a TF-IDF `SemanticIndex.top_k` turns paraphrases ("there is therefore no condemnation…") into the real verse (Romans 8:1). This is the seam where a neural embedder will later drop in.
    - **Context memory** — recent passages bias interpretation and enable "next"/"back" navigation.
-4. **`router.rs`** — confidence gating with **self-calibrating thresholds** (config, not hardcoded — seed `0.90`/`0.60`), debounce, and the decision of what actually fires. High-confidence auto-fires; mid-confidence becomes an operator *suggestion*; low is dropped.
+4. **`router.rs`** — confidence gating with **self-calibrating thresholds** (config, not hardcoded — seed `0.50`/`0.35` at sensitivity 50, the single baseline `Thresholds::default()`; see [DECISIONS.md](DECISIONS.md) §16), debounce, and the decision of what actually fires. High-confidence auto-fires; mid-confidence becomes an operator *suggestion*; low is dropped. Only `Direct` matches may auto-fire (see [DOMAIN_MODEL.md](DOMAIN_MODEL.md) §6).
 5. **`channels.rs`** — one `broadcast_content()` pushes the chosen content to **every** output: a Tauri event (`output://content`) for native windows **and** a JSON frame over the kiosk WS for networked clients. N independently-styled renders from one broadcast; the pipeline never formats per channel.
 
 **Operator override is first-class**, never a fallback — reachable in one action at every stage. Manual fire, confirm/dismiss suggestion, prev/next nav, clear, and blackout all go through the same broadcast path.
@@ -203,7 +203,7 @@ These were learned the hard way (hours-long freezes/crashes). Do not regress the
 
 ## 9. Parked / honest limits
 
-Not faked — clearly bounded:
+Not faked — clearly bounded. The full deferral + technical-debt register is [ROADMAP.md](ROADMAP.md); the highlights:
 
 - **NDI output** — needs the proprietary SDK; `open_ndi_output` returns a clear error. NDI + HDMI only; **no native SDI** (served by existing ATEM/converter hardware).
 - **Neural paraphrase embedder** — TF-IDF is the current seam behind `SemanticIndex::top_k`.

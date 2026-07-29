@@ -78,7 +78,7 @@
         {#if isSaved(best)}
           <span class="r-badge emerald scr-savedbadge"><span class="bd"></span>Saved</span>
         {:else}
-          <button class="r-btn amber sm" on:click={() => save(best)}>Save</button>
+          <button class="r-btn primary sm" on:click={() => save(best)}>Save</button>
         {/if}
       </div>
     </div>
@@ -128,7 +128,7 @@
   .scr{ display:flex; flex-direction:column; gap:16px; }
   .scr-search{ display:flex; align-items:center; gap:11px; background:var(--v-bg); border:1px solid var(--v-line2);
     border-radius:10px; padding:0 14px; height:42px; max-width:640px; }
-  .scr-search:focus-within{ border-color:rgba(245,166,35,.45); box-shadow:0 0 0 3px rgba(245,166,35,.08); }
+  .scr-search:focus-within{ border-color:var(--v-accent-line); box-shadow:0 0 0 3px var(--v-accent-line); }
   .scr-ic{ color:var(--v-faint); flex:0 0 auto; }
   .scr-search input{ flex:1; background:transparent; border:0; outline:none; color:var(--v-txt);
     font-family:var(--f-mono); font-size:12.5px; }
@@ -138,10 +138,10 @@
   .scr-reslbl{ margin-bottom:9px; }
   .scr-bestwrap{ max-width:760px; }
   .scr-best{ display:flex; align-items:center; gap:16px; padding:16px 18px; border-radius:14px;
-    border:1px solid rgba(245,166,35,.34); background:radial-gradient(130% 150% at 0% 0%, var(--v-amber-soft), var(--v-surf));
-    box-shadow:0 10px 30px -18px var(--v-amber-glow); }
+    border:1px solid var(--v-accent-line); background:radial-gradient(130% 150% at 0% 0%, var(--v-accent-soft), var(--v-surf));
+    box-shadow:0 10px 30px -18px var(--v-accent-glow); }
   .scr-bestbody{ flex:1; min-width:0; }
-  .scr-bestref{ font-family:var(--f-head); font-weight:700; font-size:17px; color:var(--v-amber); }
+  .scr-bestref{ font-family:var(--f-head); font-weight:700; font-size:17px; color:var(--v-accent); }
   .scr-besttext{ font-family:var(--f-serif); font-size:15px; line-height:1.5; color:#f4e4c8; margin-top:5px; }
   .scr-results{ display:flex; flex-direction:column; gap:7px; max-width:760px; }
   .scr-result{ display:flex; align-items:center; gap:14px; padding:11px 14px; border:1px solid var(--v-line);
@@ -163,6 +163,6 @@
   .scr-verse{ font-family:var(--f-serif); font-size:13.5px; line-height:1.45; color:#f4e4c8;
     display:-webkit-box; -webkit-line-clamp:4; -webkit-box-orient:vertical; overflow:hidden; }
   .scr-cardfoot{ display:flex; align-items:center; justify-content:space-between; margin-top:12px; }
-  .scr-cardref{ font-family:var(--f-serif); font-style:italic; font-size:11.5px; color:var(--v-amber); }
-  .scr-del:hover{ color:var(--v-rose); border-color:rgba(244,113,139,.4); }
+  .scr-cardref{ font-family:var(--f-serif); font-style:italic; font-size:11.5px; color:var(--v-accent); }
+  .scr-del:hover{ color:var(--v-rose); border-color:rgba(239,68,68,.4); }
 </style>

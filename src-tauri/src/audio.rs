@@ -117,6 +117,17 @@ pub fn rms(samples: &[f32]) -> f32 {
 /// This is deliberately still a plain energy gate, not a neural VAD (silero/webrtc)
 /// — it just no longer assumes it knows how loud the preacher is. A real VAD slots
 /// in behind the same seam.
+/// How speech-like RNNoise must find the audio before it may START an utterance.
+///
+/// Deliberately LOW. This is not "is this definitely speech?" — it is "is this
+/// definitely NOT speech?". RNNoise is confident about clear speech and about
+/// clear noise, and unsure about plenty of real preaching: a quiet aside, a sung
+/// line, a heavy accent, a room with a hum. A high bar here would recreate the
+/// bug this codebase already paid for once — silently deaf to a quiet preacher —
+/// so the threshold only rejects audio the model is fairly sure has no voice in
+/// it at all.
+const SPEECH_OPEN_MIN: f32 = 0.30;
+
 #[derive(Debug, Clone, Copy)]
 pub struct Vad {
     /// Absolute floor. Not the speech threshold — only a guard against tracking a
@@ -146,7 +157,33 @@ impl Vad {
     }
 
     /// Feed one chunk's RMS. Stateful — call once per chunk, in order.
-    pub fn is_voice(&mut self, rms: f32) -> bool {
+    ///
+    /// `speech` is RNNoise's smoothed speech probability for this audio, or
+    /// `None` when the real neural VAD is not running (the device is not 48 kHz,
+    /// so `dsp.rs` degrades to an energy proxy — feeding that back in here would
+    /// be circular, judging energy by energy).
+    ///
+    /// ── What the probability is allowed to do ─────────────────────────────
+    ///
+    /// It may VETO OPENING the gate. It may never close it.
+    ///
+    /// An energy gate cannot tell a voice from a sound: a door, a chair, a music
+    /// bed and an air-conditioner surge all have energy, they open the gate, and
+    /// whisper is then handed non-speech — which it does not decline to
+    /// transcribe. It answers with the most likely token sequence for audio that
+    /// contains no words, and that is where hallucinated subtitle text (in any
+    /// language) comes from. So: something must be BOTH loud enough and
+    /// speech-like to start an utterance.
+    ///
+    /// The asymmetry is deliberate and load-bearing. Once the preacher is
+    /// speaking, only the energy gate and its hysteresis decide when the
+    /// utterance ends. If a low probability could also SHUT the gate, then every
+    /// moment RNNoise was unsure — a shout, a whisper, a sung line, a heavy
+    /// accent, a bad room — would chop the sentence, which is precisely the
+    /// failure `VAD_CLOSE_RATIO` and the "append every chunk" rule in `stt.rs`
+    /// exist to prevent. Being wrong about the START of an utterance costs one
+    /// late word; being wrong about the MIDDLE mangles the transcript.
+    pub fn is_voice(&mut self, rms: f32, speech: Option<f32>) -> bool {
         // SEED the floor from the first chunk.
         //
         // Without this the floor starts at the absolute minimum, so in a merely NOISY
@@ -166,9 +203,12 @@ impl Vad {
         let close = (self.noise * VAD_CLOSE_RATIO).max(self.threshold_rms * 0.6);
 
         self.speaking = if self.speaking {
+            // Mid-utterance: energy alone, as before. See the note above on why
+            // the probability is not consulted here.
             rms >= close
         } else {
-            rms >= open
+            // Starting an utterance: loud enough AND speech-like.
+            rms >= open && speech.is_none_or(|p| p >= SPEECH_OPEN_MIN)
         };
 
         // The floor may ALWAYS fall, but it may only RISE while we believe nobody is
@@ -411,7 +451,14 @@ where
                         }
                     }
                     let ac = AudioChunk {
-                        is_voice: vad.is_voice(level),
+                        // The neural VAD only counts when it is actually neural:
+                        // below 48 kHz `speech_prob` is an energy proxy (dsp.rs).
+                        is_voice: vad.is_voice(
+                            level,
+                            frontend
+                                .denoise_active()
+                                .then_some(cleaned.quality.speech_prob),
+                        ),
                         rms: level,
                         timestamp_ms: ts_ms,
                         sample_rate,
@@ -586,7 +633,7 @@ mod tests {
     fn hold(vad: &mut Vad, level: f32, n: usize) -> bool {
         let mut v = false;
         for _ in 0..n {
-            v = vad.is_voice(level);
+            v = vad.is_voice(level, None);
         }
         v
     }
@@ -596,7 +643,7 @@ mod tests {
         // Room tone, whatever its level, is not speech. The gate learns it.
         let mut vad = Vad::new(VAD_RMS_THRESHOLD);
         assert!(!hold(&mut vad, 0.004, 40));
-        assert!(!vad.is_voice(0.0));
+        assert!(!vad.is_voice(0.0, None));
     }
 
     #[test]
@@ -608,7 +655,7 @@ mod tests {
         let mut vad = Vad::new(VAD_RMS_THRESHOLD);
         hold(&mut vad, 0.004, 40); // settle on the room
         assert!(
-            vad.is_voice(0.02),
+            vad.is_voice(0.02, None),
             "quiet speech over a quiet room is speech"
         );
     }
@@ -619,9 +666,12 @@ mod tests {
         // the new "speech". Same 5x rise, ten times the noise floor.
         let mut vad = Vad::new(VAD_RMS_THRESHOLD);
         hold(&mut vad, 0.04, 40);
-        assert!(!vad.is_voice(0.05), "room tone is not speech, however loud");
         assert!(
-            vad.is_voice(0.20),
+            !vad.is_voice(0.05, None),
+            "room tone is not speech, however loud"
+        );
+        assert!(
+            vad.is_voice(0.20, None),
             "speech above a loud room still reads as speech"
         );
     }
@@ -633,13 +683,13 @@ mod tests {
         // into fragments and made whisper transcribe "John, 3, 6, Linn."
         let mut vad = Vad::new(VAD_RMS_THRESHOLD);
         hold(&mut vad, 0.004, 40);
-        assert!(vad.is_voice(0.05)); // speaking
+        assert!(vad.is_voice(0.05, None)); // speaking
         assert!(
-            vad.is_voice(0.012),
+            vad.is_voice(0.012, None),
             "a dip mid-sentence must not close the gate"
         );
         // But a real pause, well down toward the floor, does close it.
-        assert!(!vad.is_voice(0.005));
+        assert!(!vad.is_voice(0.005, None));
     }
 
     #[test]
@@ -648,7 +698,78 @@ mod tests {
         // floor, the gate's own ratios would then treat dither as a sermon.
         let mut vad = Vad::new(VAD_RMS_THRESHOLD);
         assert!(!hold(&mut vad, 0.0, 60));
-        assert!(!vad.is_voice(0.0002), "dither on a dead mic is not speech");
+        assert!(
+            !vad.is_voice(0.0002, None),
+            "dither on a dead mic is not speech"
+        );
+    }
+
+    // ── THE NEURAL VETO ───────────────────────────────────────────────────
+    //
+    // Reported from a real service: "the transcript is getting Chinese words and
+    // other languages that aren't heard". An energy gate cannot tell a voice from
+    // a sound, so a door, a chair or a music bed opens it, whisper is handed audio
+    // containing no words, and it answers with the most likely token sequence —
+    // subtitle boilerplate, often not in English.
+
+    #[test]
+    fn loud_non_speech_no_longer_opens_the_gate() {
+        let mut vad = Vad::new(VAD_RMS_THRESHOLD);
+        vad.is_voice(0.001, Some(0.0)); // seed the floor on a quiet room
+                                        // A door slam: plenty of energy, and RNNoise is sure there is no voice.
+        assert!(
+            !vad.is_voice(0.20, Some(0.02)),
+            "loud non-speech opened the gate — whisper would be asked to transcribe a bang"
+        );
+    }
+
+    #[test]
+    fn speech_still_opens_the_gate() {
+        let mut vad = Vad::new(VAD_RMS_THRESHOLD);
+        vad.is_voice(0.001, Some(0.0));
+        assert!(
+            vad.is_voice(0.20, Some(0.9)),
+            "clear speech must open the gate"
+        );
+    }
+
+    #[test]
+    fn an_unsure_model_does_not_silence_a_quiet_preacher() {
+        // THE REGRESSION THIS GUARDS. Relay has already shipped one gate that was
+        // silently deaf to a quiet voice; a high probability bar would rebuild it
+        // in a new place. RNNoise is unsure about plenty of real preaching.
+        let mut vad = Vad::new(VAD_RMS_THRESHOLD);
+        vad.is_voice(0.001, Some(0.0));
+        assert!(
+            vad.is_voice(0.20, Some(SPEECH_OPEN_MIN)),
+            "a merely-unsure model must not veto audible speech"
+        );
+    }
+
+    #[test]
+    fn the_veto_can_never_cut_off_a_sentence_in_progress() {
+        // THE MOST IMPORTANT ONE. Once speaking, only energy decides. If a low
+        // probability could close the gate, every moment the model was unsure —
+        // a shout, a whisper, a sung line — would chop the sentence, which is
+        // exactly what `stt.rs`'s "append every chunk" rule exists to prevent.
+        let mut vad = Vad::new(VAD_RMS_THRESHOLD);
+        vad.is_voice(0.001, Some(0.0));
+        assert!(vad.is_voice(0.20, Some(0.9)), "should be speaking");
+        assert!(
+            vad.is_voice(0.20, Some(0.0)),
+            "a mid-utterance probability dip closed the gate"
+        );
+    }
+
+    #[test]
+    fn without_a_real_neural_vad_behaviour_is_unchanged() {
+        // Below 48 kHz `speech_prob` is an energy proxy, so it is passed as None
+        // and the gate behaves exactly as it did before this change.
+        let mut a = Vad::new(VAD_RMS_THRESHOLD);
+        let mut b = Vad::new(VAD_RMS_THRESHOLD);
+        for lvl in [0.001f32, 0.02, 0.2, 0.05, 0.001] {
+            assert_eq!(a.is_voice(lvl, None), b.is_voice(lvl, None));
+        }
     }
 
     #[test]
@@ -801,7 +922,7 @@ mod gate {
             peaks.last().copied().unwrap_or(0.0),
         );
 
-        let voiced = levels.iter().filter(|&&l| vad.is_voice(l)).count();
+        let voiced = levels.iter().filter(|&&l| vad.is_voice(l, None)).count();
         let mut sorted = levels.clone();
         sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
         let pct = |p: f32| sorted[((sorted.len() - 1) as f32 * p) as usize];

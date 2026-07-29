@@ -47,9 +47,9 @@
     border-radius: 8px;
     /* Rose, not amber. Amber is the tally light and means ON AIR — an error that
        borrows it is a tally light that lies (docs/DECISIONS.md §18). */
-    background: rgba(147, 0, 10, 0.16);
-    border: 1px solid rgba(255, 157, 148, 0.3);
-    color: var(--v-rose, #f4718b);
+    background: rgba(239,68,68, 0.16);
+    border: 1px solid rgba(239,68,68, 0.3);
+    color: var(--v-red);
     font-size: 12.5px;
     line-height: 1.55;
   }

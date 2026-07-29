@@ -1546,6 +1546,59 @@ pub struct SemanticIndex {
     idf: HashMap<String, f32>,
     /// (reference, L2-normalized tf-idf vector) per verse.
     docs: Vec<(VerseRef, HashMap<String, f32>)>,
+    /// stem → the readable word it came from, for the operator-facing "why".
+    /// Stemming is right for matching and wrong for reading: Snowball turns
+    /// "belly" into "belli". Rule #18 says the operator must be able to judge
+    /// the claim, and nobody can judge "belli · husk".
+    surface: HashMap<String, String>,
+}
+
+/// Modern English → KJV vocabulary, baked in (`include_str!`) so it stays
+/// offline. See `data/kjv_gloss.json` for why this exists and what it is not.
+/// Keys AND values are stemmed at load, and the gloss is applied after
+/// stemming — so one entry ("pig") covers "pig" and "pigs", and the table stays
+/// a list of concepts instead of a list of word forms.
+fn kjv_gloss() -> &'static HashMap<String, Vec<String>> {
+    static GLOSS: std::sync::OnceLock<HashMap<String, Vec<String>>> = std::sync::OnceLock::new();
+    GLOSS.get_or_init(|| {
+        #[derive(serde::Deserialize)]
+        struct Raw {
+            gloss: HashMap<String, Vec<String>>,
+        }
+        const RAW: &str = include_str!("../data/kjv_gloss.json");
+        let raw = serde_json::from_str::<Raw>(RAW)
+            .map(|r| r.gloss)
+            .unwrap_or_default();
+        let mut out: HashMap<String, Vec<String>> = HashMap::new();
+        for (k, vs) in raw {
+            let key = stem_all(vec![k]).pop().unwrap_or_default();
+            out.entry(key).or_default().extend(stem_all(vs));
+        }
+        for vs in out.values_mut() {
+            vs.sort();
+            vs.dedup();
+        }
+        out
+    })
+}
+
+/// Expand a QUERY's tokens with their KJV equivalents.
+///
+/// Applied to the query only, never when building the index: glossing the corpus
+/// would change the document frequencies, and it is exactly those frequencies
+/// (how rare "Meribah" or "husks" is) that make biblical nouns such strong
+/// signals. The original token is kept — a retelling that already uses the KJV
+/// word must not get worse — so this can only ever ADD evidence.
+fn expand_with_gloss(tokens: Vec<String>) -> Vec<String> {
+    let gloss = kjv_gloss();
+    let mut out = Vec::with_capacity(tokens.len() * 2);
+    for t in tokens {
+        if let Some(alts) = gloss.get(&t) {
+            out.extend(alts.iter().cloned());
+        }
+        out.push(t);
+    }
+    out
 }
 
 impl SemanticIndex {
@@ -1554,9 +1607,36 @@ impl SemanticIndex {
         let n = corpus.len().max(1) as f32;
         // Document frequency per term.
         let mut df: HashMap<String, f32> = HashMap::new();
+        // stem → { original word → times seen }, collapsed below to the most
+        // common surface form so the explanation reads like English.
+        let mut surface_counts: HashMap<String, HashMap<String, usize>> = HashMap::new();
         let tokenized: Vec<(VerseRef, Vec<String>)> = corpus
             .iter()
-            .map(|(r, text)| (r.clone(), tokenize(text)))
+            .map(|(r, text)| {
+                let raw = tokenize(text);
+                let stems = stem_all(raw.clone());
+                for (stem, word) in stems.iter().zip(raw.iter()) {
+                    *surface_counts
+                        .entry(stem.clone())
+                        .or_default()
+                        .entry(word.clone())
+                        .or_insert(0) += 1;
+                }
+                (r.clone(), stems)
+            })
+            .collect();
+        // Most frequent original wins; ties go to the shorter word, which is the
+        // one closer to a dictionary form.
+        let surface: HashMap<String, String> = surface_counts
+            .into_iter()
+            .map(|(stem, counts)| {
+                let best = counts
+                    .into_iter()
+                    .max_by(|a, b| a.1.cmp(&b.1).then(b.0.len().cmp(&a.0.len())))
+                    .map(|(w, _)| w)
+                    .unwrap_or_else(|| stem.clone());
+                (stem, best)
+            })
             .collect();
         for (_, toks) in &tokenized {
             let mut seen = std::collections::HashSet::new();
@@ -1576,7 +1656,7 @@ impl SemanticIndex {
             .map(|(r, toks)| (r, tfidf_vector(&toks, &idf)))
             .collect();
 
-        SemanticIndex { idf, docs }
+        SemanticIndex { idf, docs, surface }
     }
 
     /// Top-k verses by cosine similarity to `query`, highest first. Scores are
@@ -1603,15 +1683,19 @@ impl SemanticIndex {
     /// they have to judge it — "grace · saved · faith" is something a human can
     /// agree or disagree with. "0.61" is not.
     pub fn top_k_explained(&self, query: &str, k: usize) -> Vec<(VerseRef, f32, Vec<String>)> {
-        let qvec = tfidf_vector(&tokenize(query), &self.idf);
+        let qvec = tfidf_vector(&expand_with_gloss(stem_all(tokenize(query))), &self.idf);
         if qvec.is_empty() {
             return Vec::new();
         }
+        // Sorted once per query, so every document is scored by summing the same
+        // terms in the same order — identical input, identical score, every run.
+        let mut qsorted: Vec<(String, f32)> = qvec.iter().map(|(t, w)| (t.clone(), *w)).collect();
+        qsorted.sort_by(|a, b| a.0.cmp(&b.0));
         let mut scored: Vec<(usize, f32)> = self
             .docs
             .iter()
             .enumerate()
-            .map(|(i, (_, dvec))| (i, cosine(&qvec, dvec)))
+            .map(|(i, (_, dvec))| (i, cosine(&qsorted, dvec)))
             .filter(|(_, s)| *s > 0.0)
             .collect();
         scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
@@ -1620,7 +1704,11 @@ impl SemanticIndex {
             .into_iter()
             .map(|(i, s)| {
                 let (r, dvec) = &self.docs[i];
-                (r.clone(), s, top_terms(&qvec, dvec, EXPLAIN_TERMS))
+                let why = top_terms(&qvec, dvec, EXPLAIN_TERMS)
+                    .into_iter()
+                    .map(|t| self.surface.get(&t).cloned().unwrap_or(t))
+                    .collect();
+                (r.clone(), s, why)
             })
             .collect()
     }
@@ -1665,6 +1753,26 @@ fn tokenize(text: &str) -> Vec<String> {
         .collect()
 }
 
+/// Reduce tokens to their stems, so "pigs"/"pig", "flames"/"flame" and
+/// "physicians"/"physician" stop being different words.
+///
+/// Applied to BOTH the index and the query — unlike the gloss, this is a
+/// normalisation, and normalising only one side would simply stop them matching.
+///
+/// Deliberately a STANDARD Snowball stemmer rather than a hand-rolled suffix
+/// stripper: a stemmer written here would inevitably get tuned against
+/// data/paraphrase_corpus.json until the score looked good, which measures
+/// nothing. An off-the-shelf algorithm cannot be fitted to our own benchmark.
+fn stem_all(tokens: Vec<String>) -> Vec<String> {
+    use rust_stemmers::{Algorithm, Stemmer};
+    static STEMMER: std::sync::OnceLock<Stemmer> = std::sync::OnceLock::new();
+    let s = STEMMER.get_or_init(|| Stemmer::create(Algorithm::English));
+    tokens
+        .into_iter()
+        .map(|t| s.stem(&t).into_owned())
+        .collect()
+}
+
 fn is_stopword(w: &str) -> bool {
     const STOP: &[&str] = &[
         "the", "and", "that", "for", "his", "him", "her", "she", "you", "your", "our", "with",
@@ -1690,7 +1798,13 @@ fn tfidf_vector(tokens: &[String], idf: &HashMap<String, f32>) -> HashMap<String
             (t, w)
         })
         .collect();
-    let norm: f32 = vec.values().map(|v| v * v).sum::<f32>().sqrt();
+    // Summed in a FIXED order. `vec.values()` iterates a HashMap, whose order
+    // varies per instance, and float addition is not associative — so the norm
+    // (and therefore every weight, and therefore every score) drifted in the last
+    // decimal place between two runs of the same query. See `cosine`.
+    let mut squares: Vec<f32> = vec.values().map(|v| v * v).collect();
+    squares.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let norm: f32 = squares.into_iter().sum::<f32>().sqrt();
     if norm > 0.0 {
         for v in vec.values_mut() {
             *v /= norm;
@@ -1700,12 +1814,19 @@ fn tfidf_vector(tokens: &[String], idf: &HashMap<String, f32>) -> HashMap<String
 }
 
 /// Cosine similarity of two L2-normalized sparse vectors (= dot product).
-fn cosine(a: &HashMap<String, f32>, b: &HashMap<String, f32>) -> f32 {
-    // Iterate the smaller map.
-    let (small, big) = if a.len() <= b.len() { (a, b) } else { (b, a) };
-    small
+/// Cosine of a query (as a SORTED slice) against a document vector.
+///
+/// The query side is a sorted slice, not a HashMap, so the summation order is
+/// fixed. Float addition is not associative, and `HashMap` iteration order
+/// varies per map instance — so summing over one made the same query score
+/// microscopically differently between two calls. That is a real problem, not a
+/// test nit: `SEMANTIC_FLOOR` gates on this number, so a borderline paraphrase
+/// could be suggested on one run and dropped on the next, from identical input.
+/// Live software has to be predictable.
+fn cosine(query: &[(String, f32)], doc: &HashMap<String, f32>) -> f32 {
+    query
         .iter()
-        .filter_map(|(t, av)| big.get(t).map(|bv| av * bv))
+        .filter_map(|(t, qv)| doc.get(t).map(|dv| qv * dv))
         .sum()
 }
 
@@ -2205,6 +2326,96 @@ mod tests {
     fn semantic_empty_on_no_content_overlap() {
         let idx = seed_index();
         assert!(idx.top_k("xyzzy plugh frobnicate", 1).is_empty());
+    }
+
+    // ── KJV gloss: modern speech against a 1611 text ────────────────────────
+
+    /// The whole point: a word that appears NOWHERE in the KJV still finds the
+    /// verse. Reintroduce the un-glossed query path and this fails — "pigs" and
+    /// "dad" share not one token with the text.
+    #[test]
+    fn gloss_finds_the_verse_through_modern_words() {
+        let corpus =
+            vec![
+            (
+                VerseRef { book: "Luke".into(), chapter: 15, verse: 16 },
+                "And he would fain have filled his belly with the husks that the swine did eat."
+                    .to_string(),
+            ),
+            (
+                VerseRef { book: "Genesis".into(), chapter: 1, verse: 1 },
+                "In the beginning God created the heaven and the earth.".to_string(),
+            ),
+        ];
+        let idx = SemanticIndex::build(&corpus);
+        let hits = idx.top_k("he ended up feeding pigs", 1);
+        assert_eq!(hits.len(), 1, "modern wording found nothing");
+        assert_eq!(hits[0].0.reference_book_chapter_verse(), "Luke 15:16");
+    }
+
+    /// The gloss ADDS evidence, never replaces it: a retelling that already uses
+    /// the KJV word must not be made worse by glossing something else in it.
+    #[test]
+    fn gloss_keeps_the_original_token() {
+        let expanded = expand_with_gloss(vec!["swine".into(), "pigs".into()]);
+        assert!(expanded.contains(&"swine".to_string()));
+        assert!(expanded.contains(&"pigs".to_string()));
+    }
+
+    /// THE architectural invariant. The gloss is a QUERY-time expansion only.
+    /// Glossing the corpus would change document frequencies, and it is exactly
+    /// how rare a word like "husks" is that makes it such a strong signal —
+    /// inflating those counts would quietly degrade every other match.
+    #[test]
+    fn gloss_never_touches_the_index() {
+        // "boat" is modern; the corpus keeps it verbatim, so a KJV-word query
+        // ("ship") must NOT reach it — expansion runs one way, on the query.
+        let corpus = vec![(
+            VerseRef {
+                book: "Mark".into(),
+                chapter: 4,
+                verse: 37,
+            },
+            "the waves beat into the boat".to_string(),
+        )];
+        let idx = SemanticIndex::build(&corpus);
+        assert!(
+            idx.top_k("ship", 1).is_empty(),
+            "the index was glossed — document frequencies are now wrong"
+        );
+        // ...while the modern query still finds the modern text unaided.
+        assert!(!idx.top_k("boat", 1).is_empty());
+    }
+
+    /// Identical input must produce a bit-identical score, every time.
+    ///
+    /// It did not: `cosine` summed over a HashMap, whose iteration order varies
+    /// per instance, and float addition is not associative. `SEMANTIC_FLOOR`
+    /// gates on this number, so a borderline paraphrase could be suggested on
+    /// one run and silently dropped on the next from the same words.
+    #[test]
+    fn the_same_query_always_scores_the_same() {
+        let idx = seed_index();
+        let q = "god so loved the world that he gave his only son to have life";
+        let first = idx.top_k(q, 3);
+        for _ in 0..25 {
+            let again = idx.top_k(q, 3);
+            assert_eq!(first.len(), again.len());
+            for (a, b) in first.iter().zip(again.iter()) {
+                assert_eq!(a.1.to_bits(), b.1.to_bits(), "score drifted between runs");
+            }
+        }
+    }
+
+    /// A gloss that names an answer is a cheat, not a gloss. Story-specific
+    /// proper nouns must never appear as keys, or the benchmark measures itself.
+    #[test]
+    fn gloss_contains_no_story_specific_giveaways() {
+        for key in kjv_gloss().keys() {
+            for banned in ["samaritan", "sycomore", "zacchaeus", "lazarus", "goliath"] {
+                assert_ne!(key.as_str(), banned, "gloss key '{key}' names an answer");
+            }
+        }
     }
 
     /// A paraphrase match must be able to SAY WHY.

@@ -10,6 +10,7 @@
   } from '../audioOutput.js';
   import { locale, setLocale, LOCALES, t } from '../i18n.js';
   import { restartSetup } from '../session.js';
+  import { safeMode, setSafeMode } from '../boot/boot.js';
   import en from '../locales/en.json';
   import yo from '../locales/yo.json';
   import sw from '../locales/sw.json';
@@ -200,6 +201,25 @@
     <button class="r-btn ghost sm setup-again" on:click={restartSetup}>
       Run the setup walk-through
     </button>
+
+    <!-- SAFE MODE — the way OUT.
+         Both launch screens promise "safe mode stays on until you turn it off in
+         Settings". Without this control that sentence is a lie, and the operator
+         it lies to is one who is already having a bad morning: they would be
+         stuck in a console that silently refuses to put anything on a screen,
+         with no way back and no explanation. The escape hatch ships with the
+         thing that traps you, or it does not ship. -->
+    {#if $safeMode}
+      <hr class="s-rule" />
+      <p class="s-note">
+        <b style="color:var(--v-amethyst);">Safe mode is on.</b> Outputs will not open and
+        detection is disarmed — nothing Relay does can reach a screen. Turn it off before you
+        run a service.
+      </p>
+      <button class="r-btn ghost sm setup-again" on:click={() => setSafeMode(false)}>
+        Turn off safe mode
+      </button>
+    {/if}
   </section>
 
   <!-- AUDIO: input and output, stacked as ONE grid cell so the speaker picker
@@ -233,7 +253,7 @@
     </div>
 
     <div class="s-listen">
-      <button class="r-btn amber" on:click={toggleCapture} disabled={!$capture.available}>
+      <button class="r-btn primary" on:click={toggleCapture} disabled={!$capture.available}>
         {#if $capture.capturing}
           <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
           Stop listening
@@ -513,16 +533,16 @@
   .s-head{ display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:16px; }
   .s-head-l{ display:flex; align-items:center; gap:9px;
     font-family:var(--f-mono); font-size:11px; font-weight:600; letter-spacing:.13em;
-    text-transform:uppercase; color:var(--v-amber); }
-  .s-ic{ color:var(--v-amber); flex:0 0 auto; }
+    text-transform:uppercase; color:var(--v-accent); }
+  .s-ic{ color:var(--v-accent); flex:0 0 auto; }
   .s-count{ font-family:var(--f-mono); font-size:10px; letter-spacing:.05em; color:var(--v-faint); }
-  .s-count-live{ color:var(--v-amber); }
+  .s-count-live{ color:var(--v-accent); }
 
   /* level meter */
   .s-meterwrap{ margin-top:16px; }
   .s-meter{ height:7px; border-radius:99px; background:var(--v-surf3); overflow:hidden; }
   .s-meter i{ display:block; height:100%; border-radius:99px;
-    background:linear-gradient(90deg,var(--v-amber),var(--v-amber2)); }
+    background:linear-gradient(90deg,var(--v-accent),var(--v-accent2)); }
   .s-meter-scale{ display:flex; justify-content:space-between; margin-top:7px;
     font-family:var(--f-mono); font-size:9.5px; letter-spacing:.05em; color:var(--v-faint); }
 
@@ -538,14 +558,14 @@
   .s-slider:first-of-type{ margin-top:4px; }
   .s-slider-top{ display:flex; align-items:baseline; justify-content:space-between; margin-bottom:12px; }
   .s-slider-name{ color:var(--v-dim); }
-  .s-slider-val{ font-family:var(--f-mono); font-size:18px; font-weight:500; color:var(--v-amber);
+  .s-slider-val{ font-family:var(--f-mono); font-size:18px; font-weight:500; color:var(--v-accent);
     font-variant-numeric:tabular-nums; }
   .s-slider-ends{ display:flex; justify-content:space-between; margin-top:9px;
     font-family:var(--f-mono); font-size:9.5px; letter-spacing:.06em; text-transform:uppercase; color:var(--v-faint); }
 
   /* recognition language */
   .s-note{ margin:10px 0 0; font-size:12px; line-height:1.6; color:var(--v-dim); }
-  .s-note b{ color:var(--v-amber); }
+  .s-note b{ color:var(--v-accent); }
   .s-subhead{ margin-top:20px; margin-bottom:10px; }
 
   /* bible translations */
@@ -577,11 +597,11 @@
     background:var(--v-surf2); border:1px solid var(--v-line); border-radius:9px; padding:10px 12px;
     color:var(--v-txt); font-family:var(--f-body); font-size:13px; transition:border-color .14s, background .14s; }
   .s-tr:hover{ border-color:var(--v-line2); }
-  .s-tr.on{ border-color:rgba(245,166,35,.4); background:var(--v-amber-soft); }
+  .s-tr.on{ border-color:var(--v-accent-line); background:var(--v-accent-soft); }
   .s-tr-dot{ width:14px; height:14px; border-radius:50%; flex:0 0 auto; border:2px solid var(--v-faint); }
-  .s-tr-dot.on{ border-color:var(--v-amber); background:radial-gradient(circle,var(--v-amber) 40%,transparent 45%); }
+  .s-tr-dot.on{ border-color:var(--v-accent); background:radial-gradient(circle,var(--v-accent) 40%,transparent 45%); }
   .s-tr-name{ color:var(--v-dim); flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .s-tr-active{ font-size:9px; letter-spacing:.1em; text-transform:uppercase; color:var(--v-amber); }
+  .s-tr-active{ font-size:9px; letter-spacing:.1em; text-transform:uppercase; color:var(--v-accent); }
   .s-tr-note{ font-size:10px; color:var(--v-faint); margin-top:10px; line-height:1.6; }
   .s-tr-note b{ color:var(--v-dim); }
 </style>

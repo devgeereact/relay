@@ -104,7 +104,7 @@
 
   // On a lower-third band the accent IS the background, so the reference uses
   // the verse (readable) color; elsewhere the accent tints the reference.
-  $: refColor = layout.lowerThird ? style.verseColor || '#1c1224' : style.accent || 'var(--amber)';
+  $: refColor = layout.lowerThird ? style.verseColor || '#1c1224' : style.accent || 'var(--v-amber)';
 
   $: show = (r) => layout.regions?.includes(r);
 
@@ -170,7 +170,7 @@
   $: slideKey = `${content?.reference ?? ''}|${content?.text ?? ''}|${content?.media_url ?? ''}|${countdownTo ?? ''}`;
 </script>
 
-<div class="stage" bind:this={stageEl} style="background:{bg}; --accent:{style.accent || 'var(--amber)'};">
+<div class="stage" bind:this={stageEl} style="background:{bg}; --accent:{style.accent || 'var(--v-amber)'};">
   {#if content}
     {#key slideKey}
       <div class="slide" class:lower-third={bandMode} transition:fade={{ duration: dur }}>

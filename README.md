@@ -8,10 +8,11 @@ Built out into a lightweight presentation suite: a **Content Library** (saved sc
 
 ## Start here
 
+0. **[docs/README.md](docs/README.md)** — the documentation index: the whole spec mapped as a professional hierarchy, with a "start here" path for whoever you are (engineer / operator / contributor / designer).
 1. **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — how the app works, in detail (process model, pipeline, cue model, rendering, data layer, command/event reference, invariants).
 2. **[docs/USER_GUIDE.md](docs/USER_GUIDE.md)** — how to operate it: every screen and the typical Sunday flow.
 3. `CLAUDE.md` — working conventions and non-negotiable constraints; read first if you're using an AI coding agent in this repo.
-4. `PROMPT.md` — the full project brief and suggested build-phase order.
+4. `PROMPT.md` — the build-phase reference (the module docs cite its phase numbers); the full brief now lives in `docs/SPEC.md`.
 5. `docs/SPEC.md` — canonical technical spec (original brief). `docs/DECISIONS.md` — every major decision, with reasoning.
 6. `docs/design/` — visual mockups. Open the `.html` files directly in a browser; no build step needed.
 

@@ -1,0 +1,282 @@
+{
+  "_note": [
+    "Narrative-paraphrase retrieval set. This is NOT the auto-fire gate (see",
+    "eval_corpus.json) — nothing here may ever auto-fire, because a paraphrase is",
+    "always capped at Suggest. What this measures is RETRIEVAL: when a preacher",
+    "TELLS a story instead of quoting it, does Relay surface a verse from the",
+    "right story?",
+    "",
+    "`vocab` splits the set honestly:",
+    "  kjv   — the retelling reuses words that are actually in the KJV text, but",
+    "          SPREAD ACROSS several verses. No single verse holds them all. This",
+    "          is the case story-level (windowed) retrieval is supposed to fix.",
+    "  modern— the retelling uses today's words for KJV concepts ('paralysed' for",
+    "          'sick of the palsy'). Lexical search cannot fix this at any window",
+    "          size; only a real sentence embedder will. Tracked so the limit is",
+    "          measured instead of assumed."
+  ],
+  "cases": [
+    {
+      "id": "roof-paralytic",
+      "text": "They could not come nigh him for the press, so they uncovered the roof and broke it up and let down the bed where the sick man lay, and he said thy sins be forgiven thee, arise and take up thy bed and walk.",
+      "book": "Mark", "chapter": 2, "verse_start": 1, "verse_end": 12,
+      "vocab": "kjv"
+    },
+    {
+      "id": "roof-paralytic-modern",
+      "text": "Four friends could not get through the crowd, so they tore open the roof and lowered the paralysed man down on a stretcher, and Jesus forgave his sins and told him to pick up his mat and go home.",
+      "book": "Mark", "chapter": 2, "verse_start": 1, "verse_end": 12,
+      "vocab": "modern"
+    },
+    {
+      "id": "prodigal",
+      "text": "The younger son gathered all together and took his journey into a far country and wasted his substance with riotous living, and when he came to himself he arose and went to his father, and his father saw him a great way off and had compassion and ran and fell on his neck and kissed him.",
+      "book": "Luke", "chapter": 15, "verse_start": 11, "verse_end": 32,
+      "vocab": "kjv"
+    },
+    {
+      "id": "prodigal-modern",
+      "text": "The younger boy demanded his inheritance early, blew it all on wild living in a distant country, ended up feeding pigs, and came home to a dad who ran down the road to hug him.",
+      "book": "Luke", "chapter": 15, "verse_start": 11, "verse_end": 32,
+      "vocab": "modern"
+    },
+    {
+      "id": "storm-stilled",
+      "text": "There arose a great storm of wind and the waves beat into the ship, and he was in the hinder part of the ship asleep on a pillow, and they awoke him saying master carest thou not that we perish, and he rebuked the wind and said peace be still and there was a great calm.",
+      "book": "Mark", "chapter": 4, "verse_start": 35, "verse_end": 41,
+      "vocab": "kjv"
+    },
+    {
+      "id": "storm-stilled-modern",
+      "text": "A huge squall blew up on the lake while he was asleep at the back of the boat, and the terrified disciples woke him and he told the wind and the waves to be quiet and everything went completely still.",
+      "book": "Mark", "chapter": 4, "verse_start": 35, "verse_end": 41,
+      "vocab": "modern"
+    },
+    {
+      "id": "good-samaritan",
+      "text": "A certain man went down from Jerusalem to Jericho and fell among thieves which stripped him of his raiment and departed leaving him half dead, and a priest passed by on the other side, and a Levite likewise, but a certain Samaritan had compassion and bound up his wounds pouring in oil and wine.",
+      "book": "Luke", "chapter": 10, "verse_start": 30, "verse_end": 37,
+      "vocab": "kjv"
+    },
+    {
+      "id": "zacchaeus",
+      "text": "He was little of stature and could not see for the press, so he ran before and climbed up into a sycomore tree, and when Jesus came to the place he looked up and said make haste and come down for today I must abide at thy house.",
+      "book": "Luke", "chapter": 19, "verse_start": 1, "verse_end": 10,
+      "vocab": "kjv"
+    },
+    {
+      "id": "peter-walks-water",
+      "text": "He walked on the water to go to Jesus, but when he saw the wind boisterous he was afraid and beginning to sink he cried saying Lord save me, and immediately Jesus stretched forth his hand and caught him and said O thou of little faith wherefore didst thou doubt.",
+      "book": "Matthew", "chapter": 14, "verse_start": 22, "verse_end": 33,
+      "vocab": "kjv"
+    },
+    {
+      "id": "fiery-furnace",
+      "text": "The furnace was heated seven times more than it was wont to be heated, and they were bound and cast into the midst of the burning fiery furnace, and the king was astonied and said lo I see four men loose walking in the midst of the fire and they have no hurt.",
+      "book": "Daniel", "chapter": 3, "verse_start": 19, "verse_end": 27,
+      "vocab": "kjv"
+    },
+    {
+      "id": "lions-den",
+      "text": "They cast him into the den of lions and a stone was laid upon the mouth of the den, and the king went to his palace and passed the night fasting, and early in the morning he cried my God hath sent his angel and hath shut the lions mouths that they have not hurt me.",
+      "book": "Daniel", "chapter": 6, "verse_start": 16, "verse_end": 23,
+      "vocab": "kjv"
+    },
+    {
+      "id": "elijah-carmel",
+      "text": "He built an altar and put the wood in order and cut the bullock in pieces and poured water on the burnt sacrifice and on the wood until the trench was filled, and the fire of the Lord fell and consumed the burnt sacrifice and licked up the water that was in the trench.",
+      "book": "1 Kings", "chapter": 18, "verse_start": 30, "verse_end": 39,
+      "vocab": "kjv"
+    },
+    {
+      "id": "lazarus-raised",
+      "text": "It was a cave and a stone lay upon it, and he said take ye away the stone, and Martha said by this time he stinketh for he hath been dead four days, and he cried with a loud voice Lazarus come forth and he that was dead came forth bound hand and foot with graveclothes.",
+      "book": "John", "chapter": 11, "verse_start": 38, "verse_end": 44,
+      "vocab": "kjv"
+    },
+    {
+      "id": "paul-silas-prison",
+      "text": "At midnight they prayed and sang praises unto God and the prisoners heard them, and suddenly there was a great earthquake so that the foundations of the prison were shaken and immediately all the doors were opened and every one's bands were loosed.",
+      "book": "Acts", "chapter": 16, "verse_start": 25, "verse_end": 34,
+      "vocab": "kjv"
+    },
+    {
+      "id": "water-from-rock",
+      "text": "The people thirsted there for water and murmured against Moses saying wherefore is this that thou hast brought us up out of Egypt to kill us with thirst, and the Lord said thou shalt smite the rock and there shall come water out of it that the people may drink.",
+      "book": "Exodus", "chapter": 17, "verse_start": 1, "verse_end": 7,
+      "vocab": "kjv"
+    },
+    {
+      "id": "woman-touched-hem",
+      "text": "She had an issue of blood twelve years and had suffered many things of many physicians and was nothing bettered but rather grew worse, and she came in the press behind and touched his garment for she said if I may touch but his clothes I shall be whole.",
+      "book": "Mark", "chapter": 5, "verse_start": 25, "verse_end": 34,
+      "vocab": "kjv"
+    },
+    {
+      "id": "feeding-five-thousand",
+      "text": "We have here but five loaves and two fishes, and he commanded the multitude to sit down on the grass and took the five loaves and looked up to heaven and blessed and brake and gave to the disciples, and they did all eat and were filled and they took up twelve baskets full of the fragments.",
+      "book": "Matthew", "chapter": 14, "verse_start": 15, "verse_end": 21,
+      "vocab": "kjv"
+    },
+    {
+      "id": "joseph-sold",
+      "text": "They stripped him out of his coat of many colours and cast him into a pit, and there passed by Midianites merchantmen and they drew and lifted him up out of the pit and sold him to the Ishmeelites for twenty pieces of silver and they brought him into Egypt.",
+      "book": "Genesis", "chapter": 37, "verse_start": 23, "verse_end": 28,
+      "vocab": "kjv"
+    },
+    {
+      "id": "blind-man-sight",
+      "text": "He spat on the ground and made clay of the spittle and anointed the eyes of the blind man and said go wash in the pool of Siloam, and he went his way and washed and came seeing, and he answered whether he be a sinner I know not one thing I know that whereas I was blind now I see.",
+      "book": "John", "chapter": 9, "verse_start": 1, "verse_end": 25,
+      "vocab": "kjv"
+    },
+    {
+      "id": "jonah-fish",
+      "text": "They took him up and cast him forth into the sea and the sea ceased from her raging, and the Lord prepared a great fish to swallow him up and he was in the belly of the fish three days and three nights.",
+      "book": "Jonah", "chapter": 1, "verse_start": 12, "verse_end": 17,
+      "vocab": "kjv"
+    },
+    {
+      "id": "woman-adultery",
+      "text": "They set her in the midst and said this woman was taken in adultery in the very act, and he stooped down and with his finger wrote on the ground, and he said he that is without sin among you let him first cast a stone at her.",
+      "book": "John", "chapter": 8, "verse_start": 1, "verse_end": 11,
+      "vocab": "kjv"
+    },
+    {
+      "id": "david-goliath",
+      "text": "He took his staff in his hand and chose him five smooth stones out of the brook and put them in a shepherd's bag and his sling was in his hand, and he smote the Philistine in his forehead that the stone sunk into his forehead and he fell upon his face to the earth.",
+      "book": "1 Samuel", "chapter": 17, "verse_start": 38, "verse_end": 51,
+      "vocab": "kjv"
+    },
+    {
+      "id": "noah-ark",
+      "text": "Make thee an ark of gopher wood and pitch it within and without with pitch, and of every living thing of all flesh two of every sort shalt thou bring into the ark to keep them alive with thee, and they shall be male and female.",
+      "book": "Genesis", "chapter": 6, "verse_start": 13, "verse_end": 22,
+      "vocab": "kjv"
+    },
+    {
+      "id": "david-goliath-modern",
+      "text": "A teenage shepherd boy turned down the king's armour, picked five stones out of a stream, and knocked the nine foot champion flat with a single shot from his sling.",
+      "book": "1 Samuel", "chapter": 17, "verse_start": 38, "verse_end": 51,
+      "vocab": "modern"
+    },
+    {
+      "id": "zacchaeus-modern",
+      "text": "The tax collector was too short to see over the crowd so he shinned up a tree, and Jesus stopped underneath and invited himself round for dinner.",
+      "book": "Luke", "chapter": 19, "verse_start": 1, "verse_end": 10,
+      "vocab": "modern"
+    },
+
+    {
+      "_comment": "The modern block below was authored BEFORE any KJV-modernisation glossary existed, deliberately, so it stays a held-out test rather than a list of things a glossary was fitted to. Natural preacher speech: today's words for 1611 concepts.",
+      "id": "good-samaritan-modern",
+      "text": "A man was mugged on the road out of the city and left for dead, and a priest walked past on the other side, but a foreigner stopped and bandaged his injuries and put him on his own animal and paid for his room.",
+      "book": "Luke", "chapter": 10, "verse_start": 30, "verse_end": 37,
+      "vocab": "modern"
+    },
+    {
+      "id": "woman-touched-hem-modern",
+      "text": "She had been bleeding for twelve years and had spent everything she had on doctors who only made her worse, and she thought if I can just touch his clothes I will be healed.",
+      "book": "Mark", "chapter": 5, "verse_start": 25, "verse_end": 34,
+      "vocab": "modern"
+    },
+    {
+      "id": "lazarus-modern",
+      "text": "His friend had been in the tomb four days and already smelled, and he stood outside and shouted his name, and the dead man walked out still wrapped in the grave clothes.",
+      "book": "John", "chapter": 11, "verse_start": 1, "verse_end": 44,
+      "vocab": "modern"
+    },
+    {
+      "id": "furnace-modern",
+      "text": "The king heated the oven seven times hotter than usual and threw the three of them in, then looked and saw four men walking around in the flames completely unharmed.",
+      "book": "Daniel", "chapter": 3, "verse_start": 1, "verse_end": 30,
+      "vocab": "modern"
+    },
+    {
+      "id": "lions-den-modern",
+      "text": "They shut him in with the lions overnight and sealed the entrance with a rock, and in the morning he called up that God had closed their jaws so they could not hurt him.",
+      "book": "Daniel", "chapter": 6, "verse_start": 16, "verse_end": 23,
+      "vocab": "modern"
+    },
+    {
+      "id": "peter-water-modern",
+      "text": "He stepped out of the boat and started walking towards Jesus, but when he noticed the wind he panicked and began to go under and shouted save me.",
+      "book": "Matthew", "chapter": 14, "verse_start": 22, "verse_end": 33,
+      "vocab": "modern"
+    },
+    {
+      "id": "feeding-modern",
+      "text": "All they had was five bread rolls and a couple of fish, and everyone sat down on the grass and ate as much as they wanted, and afterwards they filled twelve baskets with the leftovers.",
+      "book": "Matthew", "chapter": 14, "verse_start": 15, "verse_end": 21,
+      "vocab": "modern"
+    },
+    {
+      "id": "paul-silas-modern",
+      "text": "Their feet were locked up in the deepest cell of the jail, and around midnight they were singing, and an earthquake shook the building and every door flew open.",
+      "book": "Acts", "chapter": 16, "verse_start": 19, "verse_end": 34,
+      "vocab": "modern"
+    },
+    {
+      "id": "elijah-modern",
+      "text": "He soaked the altar and the wood with water until the ditch around it was full, and then fire fell and burned up everything and even dried up the water in the trench.",
+      "book": "1 Kings", "chapter": 18, "verse_start": 30, "verse_end": 39,
+      "vocab": "modern"
+    },
+    {
+      "id": "jonah-modern",
+      "text": "They threw him overboard and the sea went calm, and a huge fish swallowed him whole and he was inside it for three days and three nights.",
+      "book": "Jonah", "chapter": 1, "verse_start": 12, "verse_end": 17,
+      "vocab": "modern"
+    },
+    {
+      "id": "water-rock-modern",
+      "text": "The people were desperate for a drink and complained that he had dragged them out of Egypt just to die of thirst, so God told him to hit the rock and water poured out of it.",
+      "book": "Exodus", "chapter": 17, "verse_start": 1, "verse_end": 7,
+      "vocab": "modern"
+    },
+    {
+      "id": "joseph-sold-modern",
+      "text": "His brothers ripped off his fancy coat and threw him into a dry well, and then sold him to a passing caravan of traders for twenty pieces of silver.",
+      "book": "Genesis", "chapter": 37, "verse_start": 23, "verse_end": 28,
+      "vocab": "modern"
+    },
+
+    {
+      "_comment": "scattered: KJV words, but deliberately pulled from verses that do NOT sit together. No single verse holds more than one or two of these fragments, so a per-verse cosine sees only a thin signal while the STORY holds all of them. This is the precise condition story-level retrieval is meant to win, and the only fair test of it.",
+      "id": "mark2-scattered",
+      "text": "So many were gathered together that there was no room to receive them, and the scribes sat there reasoning in their hearts, and he arose and took up the bed and went forth before them all.",
+      "book": "Mark", "chapter": 2, "verse_start": 1, "verse_end": 12,
+      "vocab": "scattered"
+    },
+    {
+      "id": "luke15-scattered",
+      "text": "There arose a mighty famine in that land, and he would fain have filled his belly with the husks that the swine did eat, and the father said bring forth the best robe and put a ring on his hand, for this my son was dead and is alive again.",
+      "book": "Luke", "chapter": 15, "verse_start": 11, "verse_end": 32,
+      "vocab": "scattered"
+    },
+    {
+      "id": "daniel3-scattered",
+      "text": "The herald cried aloud that all people should fall down and worship the golden image, but they answered we will not serve thy gods, and afterward the fire had no power upon their bodies nor was an hair of their head singed.",
+      "book": "Daniel", "chapter": 3, "verse_start": 1, "verse_end": 30,
+      "vocab": "scattered"
+    },
+    {
+      "id": "exodus17-scattered",
+      "text": "The people murmured and said wherefore hast thou brought us up out of Egypt, and the Lord said take thy rod wherewith thou smotest the river, and he called the name of the place Massah and Meribah.",
+      "book": "Exodus", "chapter": 17, "verse_start": 1, "verse_end": 7,
+      "vocab": "scattered"
+    },
+    {
+      "id": "john11-scattered",
+      "text": "Lord if thou hadst been here my brother had not died, and Jesus wept, and he said loose him and let him go.",
+      "book": "John", "chapter": 11, "verse_start": 1, "verse_end": 44,
+      "vocab": "scattered"
+    },
+    {
+      "id": "acts16-scattered",
+      "text": "They made their feet fast in the stocks in the inner prison, and the keeper drew out his sword and would have killed himself, and he washed their stripes and was baptized straightway.",
+      "book": "Acts", "chapter": 16, "verse_start": 19, "verse_end": 34,
+      "vocab": "scattered"
+    }
+  ]
+}

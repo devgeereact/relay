@@ -47,14 +47,14 @@
     await refresh();
   });
 
-  const chipFor = (i) => ['var(--amber)', 'var(--teal)', 'var(--violet)', 'var(--rose)', 'var(--text-faint)'][i % 5];
+  const chipFor = (i) => ['var(--v-accent)', 'var(--v-cyan)', 'var(--v-amethyst)', 'var(--v-emerald)', 'var(--v-faint)'][i % 5];
   const obsUrl = (c) => `http://${lanIp}:8032/output.html?template_id=${c.template_id ?? 1}&name=${encodeURIComponent(c.name)}`;
   const isNative = (c) => c.render_target === 'native_window';
 
   async function showQr(c) {
     if (qrOpen === c.id) { qrOpen = null; return; }
     try {
-      qrData = await QRCode.toDataURL(obsUrl(c), { width: 190, margin: 1, color: { dark: '#0a0a0b', light: '#ffffff' } });
+      qrData = await QRCode.toDataURL(obsUrl(c), { width: 190, margin: 1, color: { dark: '#0a0a0a', light: '#ffffff' } });
       qrOpen = c.id;
     } catch { /* qr gen failed */ }
   }
@@ -67,7 +67,7 @@
   async function showStageQr() {
     if (stageQrOpen) { stageQrOpen = false; return; }
     try {
-      stageQr = await QRCode.toDataURL(stageUrl(), { width: 200, margin: 1, color: { dark: '#0a0a0b', light: '#ffffff' } });
+      stageQr = await QRCode.toDataURL(stageUrl(), { width: 200, margin: 1, color: { dark: '#0a0a0a', light: '#ffffff' } });
       stageQrOpen = true;
     } catch { /* qr gen failed */ }
   }
@@ -151,7 +151,11 @@
     {#if !$capture.available}
       <span class="r-badge rose"><span class="bd"></span>Backend not attached</span>
     {:else}
-      <span class="r-badge amber pulse"><span class="bd"></span>Engine ready</span>
+      <!-- GREEN, not amber. The design sheet's usage guide is explicit: green is
+           "confirmed / success / connected", amber is "anything that is live/on the
+           wall". The engine being ready is a connection fact — nothing is on a
+           screen because of it. -->
+      <span class="r-badge green"><span class="bd"></span>Engine ready</span>
     {/if}
     <span class="ch-count r-mono">{channels.length} configured · {monitors.length} display{monitors.length === 1 ? '' : 's'}</span>
   </div>
@@ -200,7 +204,7 @@
 
         <div class="c-act">
           {#if isNative(c)}
-            <button class="r-btn amber sm" on:click={() => openNative(c)} disabled={!$capture.available}>
+            <button class="r-btn primary sm" on:click={() => openNative(c)} disabled={!$capture.available}>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 3h6v6M10 14 21 3M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg>
               Open
             </button>
@@ -262,7 +266,7 @@
         <option value="native_window">native window (HDMI)</option>
         <option value="network_client">network client (OBS/kiosk)</option>
       </select>
-      <button class="r-btn amber" on:click={add} disabled={!$capture.available || !newName.trim()}>Add channel</button>
+      <button class="r-btn primary" on:click={add} disabled={!$capture.available || !newName.trim()}>Add channel</button>
     </div>
   </div>
 
@@ -278,7 +282,7 @@
         <div class="ch-stage-title">Preacher's stage remote</div>
         <div class="ch-stage-sub r-dim">Open the live verse on a phone or iPad — big and readable, updates in real time. Scan the QR (same Wi-Fi) or open <code class="r-mono">{stageUrl()}</code>.</div>
         <div class="ch-stage-actions">
-          <button class="r-btn amber sm" on:click={showStageQr}>{stageQrOpen ? 'Hide QR' : 'Show QR'}</button>
+          <button class="r-btn primary sm" on:click={showStageQr}>{stageQrOpen ? 'Hide QR' : 'Show QR'}</button>
           <button class="r-btn ghost sm" on:click={copyStage}>{copiedStage ? 'Copied ✓' : 'Copy link'}</button>
         </div>
       </div>
@@ -343,18 +347,18 @@
   .ch-nettxt{ font-size:11px; color:var(--v-dim); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 
   .c-act{ display:flex; align-items:center; justify-content:flex-end; gap:8px; }
-  .ch-del:hover:not(:disabled){ color:var(--v-rose); border-color:rgba(244,113,139,.4); }
+  .ch-del:hover:not(:disabled){ color:var(--v-rose); border-color:rgba(239,68,68,.4); }
   .ch-del.arm{ width:auto; padding:0 9px; color:var(--v-rose); border-color:var(--v-rose); background:var(--v-rose-soft); }
   .ch-delconf{ font-size:9px; font-weight:700; letter-spacing:.04em; }
   .ch-del:disabled{ opacity:.4; cursor:not-allowed; }
-  .c-act :global(.qr-on){ color:var(--v-amber); border-color:rgba(245,166,35,.4); }
+  .c-act :global(.qr-on){ color:var(--v-accent); border-color:var(--v-accent-line); }
 
   /* QR panel (scan to open on another device) */
   .ch-qr{ display:flex; gap:18px; align-items:center; padding:16px 18px 16px 26px; margin-top:-4px;
-    background:var(--v-surf); border:1px solid rgba(245,166,35,.28); border-radius:12px; }
+    background:var(--v-surf); border:1px solid var(--v-accent-line); border-radius:12px; }
   .ch-qr-img{ border-radius:8px; background:#fff; padding:6px; flex:0 0 auto; }
   .ch-qr-info{ min-width:0; display:flex; flex-direction:column; gap:8px; }
-  .ch-qr-url{ font-size:11px; color:var(--v-amber); word-break:break-all; }
+  .ch-qr-url{ font-size:11px; color:var(--v-accent); word-break:break-all; }
   .ch-qr-actions{ display:flex; gap:8px; }
   .ch-qr-hint{ font-size:10px; color:var(--v-faint); line-height:1.6; }
 
@@ -362,11 +366,11 @@
   .ch-stage{ display:flex; align-items:center; justify-content:space-between; gap:20px; padding:18px 20px; flex-wrap:wrap; }
   .ch-stage-info{ display:flex; gap:14px; min-width:0; flex:1 1 320px; }
   .ch-stage-mark{ width:42px; height:42px; border-radius:11px; flex:0 0 auto; display:grid; place-items:center;
-    background:var(--v-surf2); border:1px solid var(--v-line2); color:var(--v-amber); }
+    background:var(--v-surf2); border:1px solid var(--v-line2); color:var(--v-accent); }
   .ch-stage-txt{ min-width:0; }
   .ch-stage-title{ font-family:var(--f-head); font-size:17px; font-weight:700; color:var(--v-txt); }
   .ch-stage-sub{ font-size:12.5px; line-height:1.6; margin-top:3px; }
-  .ch-stage-sub code{ color:var(--v-amber); font-size:11px; }
+  .ch-stage-sub code{ color:var(--v-accent); font-size:11px; }
   .ch-stage-actions{ display:flex; gap:8px; margin-top:11px; }
   .ch-stage-qr{ border-radius:10px; background:#fff; padding:7px; flex:0 0 auto; }
 
@@ -375,10 +379,10 @@
     display:flex; flex-direction:column; align-items:center; text-align:center; gap:6px;
     padding:26px 20px; border:2px dashed var(--v-line2); border-radius:16px;
     background:var(--v-surf); transition:border-color .2s, background .2s; }
-  .ch-add:hover{ border-color:rgba(245,166,35,.35); background:var(--v-surf2); }
-  .ch-add:focus-within, .ch-add:hover{ border-color:rgba(245,166,35,.4); background:var(--v-surf2); }
+  .ch-add:hover{ border-color:var(--v-accent-line); background:var(--v-surf2); }
+  .ch-add:focus-within, .ch-add:hover{ border-color:var(--v-accent-line); background:var(--v-surf2); }
   .ch-add-mark{ width:48px; height:48px; border-radius:50%; display:grid; place-items:center;
-    background:var(--v-surf2); border:1px solid var(--v-line2); color:var(--v-amber); margin-bottom:4px; }
+    background:var(--v-surf2); border:1px solid var(--v-line2); color:var(--v-accent); margin-bottom:4px; }
   .ch-add-title{ font-family:var(--f-head); font-size:19px; font-weight:700; color:var(--v-txt); }
   .ch-add-sub{ font-size:13px; }
   .ch-add-form{ display:flex; gap:10px; align-items:center; margin-top:12px; width:100%;
@@ -396,7 +400,7 @@
   .ch-div{ width:1px; align-self:stretch; background:var(--v-line2); }
   .ch-notes{ flex:1 1 340px; min-width:0; font-size:10.5px; line-height:1.7; color:var(--v-dim); }
   .ch-notes b{ color:var(--v-txt); font-weight:600; }
-  .ch-notes code{ color:var(--v-amber); }
+  .ch-notes code{ color:var(--v-accent); }
 
   @media (max-width:820px){
     .ch-head{ display:none; }

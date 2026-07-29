@@ -25,6 +25,7 @@ mod proimport;
 mod router;
 mod songs;
 mod stt;
+mod sysprobe;
 mod telemetry;
 
 use audio::AudioEngine;
@@ -275,6 +276,9 @@ fn main() {
             get_content_templates,
             set_content_template,
             data_health,
+            system_hardware,
+            probe_integrations,
+            migration_status,
             list_audio_devices,
             local_ip,
             start_capture,
@@ -343,7 +347,37 @@ fn main() {
 
 /// Minimum semantic cosine to even consider a paraphrase candidate. Below this
 /// it's noise; above, the router's suggest/auto thresholds still apply.
+///
+/// NOTE: this floor, not the length of the suggestion list, is what currently
+/// limits paraphrase recall. `eval::suggestion_policy_scorecard` shows the right
+/// passage sits in the top 5 for 98% of retellings but only 84% survive this
+/// cut. Lowering it would trade that back for noise — and the corpus has no
+/// negative cases yet (transcript that mentions no scripture at all), so the
+/// noise it would cost is currently UNMEASURED. Do not lower it on a hunch.
 const SEMANTIC_FLOOR: f32 = 0.30;
+
+/// Most paraphrase alternatives to offer for one transcript chunk.
+const SEMANTIC_SUGGESTIONS_MAX: usize = 3;
+
+/// Keep an alternative only if it scores within this fraction of the best hit.
+/// At 1.0 only ties survive (the old single-suggestion behaviour); lower widens
+/// the list when scores are close. 0.60 measured +12 points of reachable recall
+/// on modern-wording retellings for about one extra row.
+const SEMANTIC_RELATIVE_FLOOR: f32 = 0.60;
+
+/// Which paraphrase hits are worth an operator's attention.
+///
+/// Absolute floor removes noise; relative floor keeps the list at one when a
+/// verse wins outright and widens it only when Relay is genuinely torn. Input is
+/// assumed ordered best-first, as `top_k_explained` returns it.
+fn worth_suggesting(
+    hits: Vec<(detection::VerseRef, f32, Vec<String>)>,
+) -> Vec<(detection::VerseRef, f32, Vec<String>)> {
+    let best = hits.first().map(|(_, s, _)| *s).unwrap_or(0.0);
+    hits.into_iter()
+        .filter(|(_, s, _)| *s >= SEMANTIC_FLOOR && *s >= best * SEMANTIC_RELATIVE_FLOOR)
+        .collect()
+}
 
 /// Resolve the inclusive last verse to stage for a candidate: the explicit range
 /// end, or the chapter's last verse for a whole-chapter reference, or None for a
@@ -533,15 +567,30 @@ fn emit_detections(handle: &tauri::AppHandle, text: &str, now_ms: u64) {
                 ));
             }
         }
-        if let Some((r, score, terms)) = sem.0.top_k_explained(text, 1).into_iter().next() {
-            if score >= SEMANTIC_FLOOR {
-                candidates.push(Cand::single(
-                    r,
-                    score.min(0.95),
-                    DetectionMethod::Semantic,
-                    Some(terms.join(" · ")),
-                ));
-            }
+        // Paraphrase alternatives. Only ONE was ever offered, which threw away
+        // most of what the index had already found: measured on the paraphrase
+        // corpus, the right passage is in the top 5 for 98% of retellings but is
+        // ranked first for only 81% — and for a retelling in modern words, only
+        // 53%. The operator was never shown the difference.
+        //
+        // Two limits, because a longer list is not free — every row costs a
+        // volunteer attention in a dark booth mid-service:
+        //   * a RELATIVE floor, so the list widens only when Relay is genuinely
+        //     torn between similar scores, and stays at one when a verse wins
+        //     outright,
+        //   * a hard CAP, because a well-quoted verse matches many verses
+        //     strongly and would otherwise pad the list exactly when the first
+        //     answer was already correct.
+        // Both are configuration (§ thresholds are config, not constants).
+        for (r, score, terms) in
+            worth_suggesting(sem.0.top_k_explained(text, SEMANTIC_SUGGESTIONS_MAX))
+        {
+            candidates.push(Cand::single(
+                r,
+                score.min(0.95),
+                DetectionMethod::Semantic,
+                Some(terms.join(" · ")),
+            ));
         }
         if direct_empty {
             for r in detection::detect_ambiguous(text) {
@@ -1636,6 +1685,76 @@ fn data_health(db: tauri::State<'_, Db>) -> error::Result<i64> {
 #[tauri::command]
 fn list_audio_devices() -> Vec<audio::DeviceInfo> {
     audio::list_input_devices()
+}
+
+/// What this machine and this build can do — Hardware Check (Launch & Startup).
+///
+/// Measures the volume holding APP-DATA, not the boot volume: models, media and
+/// the database all land there, and it is the one that fills up.
+#[tauri::command]
+fn system_hardware() -> sysprobe::Hardware {
+    sysprobe::read(&db::app_data_dir())
+}
+
+/// Is something listening on the default OBS / ATEM ports — Plugin Loading.
+///
+/// A TCP connect and nothing more. Relay implements neither control protocol, so
+/// it may not claim the app is running; the screen words it as "something is
+/// listening on the port a default install would use".
+#[tauri::command]
+async fn probe_integrations() -> Vec<sysprobe::PortProbe> {
+    // Two 300 ms connects worst case, off the main thread — a boot screen must
+    // never be held behind a firewall prompt.
+    tauri::async_runtime::spawn_blocking(sysprobe::probe_integrations)
+        .await
+        .unwrap_or_default()
+}
+
+/// One row of the Database Migration screen.
+#[derive(serde::Serialize)]
+struct MigrationRow {
+    label: String,
+    table: String,
+    present: bool,
+}
+
+/// What the schema actually looks like — Database Migration (Launch & Startup).
+#[derive(serde::Serialize)]
+struct MigrationStatus {
+    version: i64,
+    expected: i64,
+    tables: Vec<MigrationRow>,
+    /// Did the `detections.status` rebuild land? (CLAUDE.md §25)
+    manual_status: bool,
+    /// A leftover `detections_new` — the fingerprint of the §25 failure.
+    scratch_table: bool,
+}
+
+/// Report the schema by ASKING THE DATABASE.
+///
+/// The migration runner finishes before the webview exists, so there is nothing
+/// to stream — but "already applied" was previously asserted from a hard-coded
+/// list and would have drawn six green ticks over a database missing every one
+/// of those tables. This queries `sqlite_master`.
+#[tauri::command]
+fn migration_status(db: tauri::State<'_, Db>) -> error::Result<MigrationStatus> {
+    let conn = db.0.lock()?;
+    let (version, expected, rows) = db::schema_report(&conn)?;
+    let (manual_status, scratch_table) = db::manual_status_report(&conn)?;
+    Ok(MigrationStatus {
+        version,
+        expected,
+        tables: rows
+            .into_iter()
+            .map(|(label, table, present)| MigrationRow {
+                label: label.to_string(),
+                table: table.to_string(),
+                present,
+            })
+            .collect(),
+        manual_status,
+        scratch_table,
+    })
 }
 
 /// This machine's LAN IPv4, so output URLs point at a real address other devices
@@ -2919,4 +3038,60 @@ fn set_detection_enabled(detecting: tauri::State<'_, Detecting>, enabled: bool) 
 #[tauri::command]
 fn get_detection_enabled(detecting: tauri::State<'_, Detecting>) -> bool {
     detecting.0.load(Ordering::Relaxed)
+}
+
+#[cfg(test)]
+mod suggestion_tests {
+    use super::*;
+    use detection::VerseRef;
+
+    fn hit(book: &str, verse: i64, score: f32) -> (VerseRef, f32, Vec<String>) {
+        (
+            VerseRef {
+                book: book.into(),
+                chapter: 1,
+                verse,
+            },
+            score,
+            vec!["why".into()],
+        )
+    }
+
+    /// A clear winner stays a list of ONE. Widening it every time would spend a
+    /// volunteer's attention on alternatives Relay is not actually unsure about.
+    #[test]
+    fn a_runaway_best_hit_is_offered_alone() {
+        let kept = worth_suggesting(vec![
+            hit("Mark", 1, 0.90),
+            hit("Luke", 2, 0.40),
+            hit("John", 3, 0.35),
+        ]);
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].0.book, "Mark");
+    }
+
+    /// Scores this close mean Relay cannot tell them apart — so the operator,
+    /// who can, is shown all of them rather than one picked by a hair.
+    #[test]
+    fn near_ties_are_all_offered() {
+        let kept = worth_suggesting(vec![
+            hit("Mark", 1, 0.62),
+            hit("Matthew", 2, 0.60),
+            hit("Luke", 3, 0.58),
+        ]);
+        assert_eq!(kept.len(), 3);
+    }
+
+    /// The absolute floor still rules: noise never reaches the operator, however
+    /// close it sits to an equally weak best hit.
+    #[test]
+    fn nothing_below_the_absolute_floor_is_ever_offered() {
+        let kept = worth_suggesting(vec![hit("Mark", 1, 0.20), hit("Luke", 2, 0.19)]);
+        assert!(kept.is_empty());
+    }
+
+    #[test]
+    fn no_hits_is_not_a_panic() {
+        assert!(worth_suggesting(vec![]).is_empty());
+    }
 }

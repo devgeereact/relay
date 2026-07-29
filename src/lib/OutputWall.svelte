@@ -70,9 +70,9 @@
   .mon{position:relative;aspect-ratio:16/9;border-radius:14px;overflow:hidden;background:#000;
     border:1px solid rgba(255,255,255,.12);transition:.18s}
   .mon.on.a-amber{border:2px solid var(--v-amber);box-shadow:0 0 26px -6px var(--v-amber-glow)}
-  .mon.on.a-cyan{border:1px solid rgba(63,182,230,.5);box-shadow:0 0 26px -8px rgba(0,133,190,.42)}
-  .mon.on.a-amethyst{border:1px solid rgba(192,139,255,.45);box-shadow:0 0 26px -8px rgba(168,85,247,.38)}
-  .mon.on.a-emerald{border:1px solid rgba(16,185,129,.45);box-shadow:0 0 26px -8px rgba(16,185,129,.4)}
+  .mon.on.a-cyan{border:1px solid rgba(34,211,238,.5);box-shadow:0 0 26px -8px rgba(34,211,238,.42)}
+  .mon.on.a-amethyst{border:1px solid rgba(139,92,246,.45);box-shadow:0 0 26px -8px rgba(139,92,246,.38)}
+  .mon.on.a-emerald{border:1px solid rgba(34,197,94,.45);box-shadow:0 0 26px -8px rgba(34,197,94,.4)}
   /* Rehearsal: a dashed ring, never a lit one. */
   .mon.reh{border:1px dashed var(--v-amethyst);box-shadow:none}
   .mon-badge{position:absolute;top:11px;left:11px;z-index:2;padding:3px 9px;border-radius:6px;
@@ -84,7 +84,7 @@
   .b-emerald{background:var(--v-emerald);color:#04291d}
   .mon:not(.on):not(.reh) .mon-badge{background:#2a2a2b;color:#c8c6ca}
   .mon-badge.b-reh{background:var(--v-amethyst);color:#2a0d45}
-  .tpl{position:absolute;inset:0;overflow:hidden;background:#0a0a0b;border-radius:inherit}
+  .tpl{position:absolute;inset:0;overflow:hidden;background:var(--v-void);border-radius:inherit}
   .mon-black{position:absolute;inset:0;z-index:3;background:#000;border-radius:inherit}
   .mon-foot{position:absolute;left:0;right:0;bottom:0;z-index:2;display:flex;align-items:center;
     justify-content:space-between;gap:8px;padding:9px 11px;

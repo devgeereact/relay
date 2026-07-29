@@ -260,11 +260,11 @@
       {#if showNew}
         <form class="sp-newform" on:submit|preventDefault={addPlan}>
           <input class="r-input" placeholder="Plan title…" bind:value={newTitle} autofocus />
-          <button class="r-btn amber sm" type="submit">Create</button>
+          <button class="r-btn primary sm" type="submit">Create</button>
           <button class="r-btn ghost sm" type="button" on:click={() => (showNew = false)}>Cancel</button>
         </form>
       {:else}
-        <button class="r-btn amber" on:click={() => (showNew = true)}>＋ New Plan</button>
+        <button class="r-btn primary" on:click={() => (showNew = true)}>＋ New Plan</button>
       {/if}
     </div>
 
@@ -319,7 +319,7 @@
            congregation's wall — that is deliberate. An operator arranging next
            Sunday's songs on a Tuesday must not be able to fire one onto a screen
            by clicking the wrong thing. -->
-      <button class="r-btn amber sm" on:click={runPlan} disabled={!items.length}>
+      <button class="r-btn primary sm" on:click={runPlan} disabled={!items.length}>
         Run this plan
         <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>
       </button>
@@ -521,11 +521,11 @@
   .plan-card{ position:relative; display:flex; flex-direction:column; background:var(--v-surf); border:1px solid var(--v-line);
     border-radius:13px; padding:14px 15px 11px; overflow:hidden; transition:border-color .14s, background .14s; }
   .plan-card:hover{ border-color:var(--v-line2); background:var(--v-surf2); }
-  .plan-card::before{ content:""; position:absolute; left:0; top:14px; bottom:14px; width:3px; border-radius:0 3px 3px 0; background:var(--v-amber); }
+  .plan-card::before{ content:""; position:absolute; left:0; top:14px; bottom:14px; width:3px; border-radius:0 3px 3px 0; background:var(--v-accent); }
   .plan-hit{ display:block; width:100%; text-align:left; background:none; border:0; padding:0 0 0 7px; cursor:pointer; color:inherit; }
   .plan-head{ display:flex; align-items:center; justify-content:space-between; margin-bottom:11px; }
-  .plan-badge{ font-family:var(--f-mono); font-size:8.5px; font-weight:700; letter-spacing:.14em; color:var(--v-amber);
-    background:var(--v-amber-soft); border:1px solid rgba(245,166,35,.3); padding:3px 8px; border-radius:6px; }
+  .plan-badge{ font-family:var(--f-mono); font-size:8.5px; font-weight:700; letter-spacing:.14em; color:var(--v-accent);
+    background:var(--v-accent-soft); border:1px solid var(--v-accent-line); padding:3px 8px; border-radius:6px; }
   .plan-cues{ font-size:15px; font-weight:600; color:var(--v-txt); display:inline-flex; align-items:baseline; gap:5px; }
   .plan-cues i{ font-style:normal; font-size:8.5px; font-weight:500; letter-spacing:.1em; text-transform:uppercase; color:var(--v-faint); }
   .plan-title{ font-family:var(--f-head); font-size:15px; font-weight:600; line-height:1.28; color:var(--v-txt);
@@ -534,9 +534,9 @@
   .plan-foot{ display:flex; align-items:center; justify-content:space-between; margin:11px 0 0 7px; padding-top:10px; border-top:1px solid var(--v-line); }
   .plan-foot-btns{ display:flex; align-items:center; gap:6px; }
   .plan-open{ font-size:8.5px; letter-spacing:.06em; color:var(--v-faint); transition:color .14s; }
-  .plan-card:hover .plan-open{ color:var(--v-amber); }
+  .plan-card:hover .plan-open{ color:var(--v-accent); }
   .plan-del{ width:30px; height:30px; }
-  .plan-del:hover{ color:var(--v-rose); border-color:rgba(244,113,139,.4); }
+  .plan-del:hover{ color:var(--v-rose); border-color:rgba(239,68,68,.4); }
 
   /* run editor — fill the scroll area; each column scrolls internally */
   .sp-run{ display:flex; flex-direction:column; gap:12px; height:100%; min-height:0; }
@@ -560,7 +560,7 @@
   .sp-seg{ display:flex; gap:3px; background:var(--v-bg); border:1px solid var(--v-line2); border-radius:9px; padding:3px; }
   .sp-segbtn{ font-family:var(--f-mono); font-size:9.5px; font-weight:600; letter-spacing:.06em; text-transform:uppercase;
     padding:5px 9px; border-radius:6px; border:0; background:transparent; color:var(--v-dim); cursor:pointer; }
-  .sp-segbtn.on{ background:var(--v-surf3); color:var(--v-amber); }
+  .sp-segbtn.on{ background:var(--v-surf3); color:var(--v-accent); }
 
   /* cue list */
   .sp-cuelist{ flex:1; overflow-y:auto; padding:11px; display:flex; flex-direction:column; gap:7px;
@@ -568,7 +568,7 @@
   .sp-cue{ display:flex; align-items:center; gap:10px; padding:10px 11px; border:1px solid var(--v-line); border-radius:10px;
     background:var(--v-surf2); cursor:pointer; text-align:left; transition:border-color .12s, background .12s; }
   .sp-cue:hover{ border-color:var(--v-line2); }
-  .sp-cue.sel{ border-color:rgba(245,166,35,.4); }
+  .sp-cue.sel{ border-color:var(--v-accent-line); }
   .sp-cue :global(.sp-num){ cursor:grab; }
   .sp-bar{ width:3px; align-self:stretch; min-height:24px; border-radius:3px; flex:0 0 auto; }
   .sp-num{ font-size:9.5px; color:var(--v-faint); width:16px; flex:0 0 auto; }
@@ -577,8 +577,8 @@
   .sp-cuemeta{ display:block; font-size:8px; color:var(--v-faint); margin-top:2px; letter-spacing:.03em; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .sp-mini{ width:22px; height:22px; border-radius:6px; display:grid; place-items:center; cursor:pointer; font-size:11px;
     background:var(--v-surf3); border:1px solid var(--v-line); color:var(--v-dim); }
-  .sp-mini:hover:not(:disabled){ color:var(--v-amber); border-color:var(--v-line2); }
-  .sp-mini.danger:hover:not(:disabled){ color:var(--v-rose); border-color:rgba(244,113,139,.4); }
+  .sp-mini:hover:not(:disabled){ color:var(--v-accent); border-color:var(--v-line2); }
+  .sp-mini.danger:hover:not(:disabled){ color:var(--v-rose); border-color:rgba(239,68,68,.4); }
   .sp-mini:disabled{ opacity:.3; cursor:not-allowed; }
   .sp-drop{ padding:16px; text-align:center; font-size:11px; color:var(--v-faint); }
 
@@ -586,7 +586,7 @@
   .sp-addpanel{ flex:1; overflow-y:auto; padding:12px; }
   .sp-addsearch{ display:flex; align-items:center; gap:9px; background:var(--v-bg); border:1px solid var(--v-line2);
     border-radius:9px; padding:0 11px; height:38px; }
-  .sp-addsearch:focus-within{ border-color:rgba(245,166,35,.45); box-shadow:0 0 0 3px rgba(245,166,35,.08); }
+  .sp-addsearch:focus-within{ border-color:var(--v-accent-line); box-shadow:0 0 0 3px var(--v-accent-line); }
   .sp-searchic{ color:var(--v-faint); flex:0 0 auto; }
   .sp-addsearch input{ flex:1; min-width:0; background:transparent; border:0; outline:none; color:var(--v-txt);
     font-family:var(--f-body); font-size:12.5px; }
@@ -606,11 +606,11 @@
   /* per-cue stage note editor */
   .sp-noterow{ display:flex; align-items:center; gap:8px; padding:8px 10px; margin:0 0 8px;
     border:1px solid var(--v-line); border-radius:10px; background:var(--v-surf2); }
-  .sp-noteico{ color:var(--v-amber); flex:0 0 auto; }
+  .sp-noteico{ color:var(--v-accent); flex:0 0 auto; }
   .sp-noteinput{ flex:1; min-width:0; border:none; background:transparent; padding:2px 0; font-size:12px; }
   .sp-noteinput:focus{ outline:none; }
   .sp-cuenote{ display:inline-flex; align-items:center; gap:4px; margin-top:3px; max-width:100%;
-    font-size:10px; color:var(--v-amber); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    font-size:10px; color:var(--v-accent); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .sp-cuenote svg{ flex:0 0 auto; }
 
   /* arrangement picker */
@@ -624,7 +624,7 @@
   .sp-arropt{ display:flex; flex-direction:column; gap:3px; width:100%; text-align:left; padding:10px 12px;
     border-radius:10px; background:var(--v-surf2); border:1px solid var(--v-line); color:var(--v-txt); cursor:pointer;
     transition:.12s; }
-  .sp-arropt:hover{ border-color:var(--v-amber); background:var(--v-amber-soft); }
+  .sp-arropt:hover{ border-color:var(--v-accent); background:var(--v-accent-soft); }
   .sp-arroptname{ font-weight:600; font-size:13px; }
   .sp-arroptseq{ font-size:9.5px; letter-spacing:.03em; color:var(--v-faint);
     white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
@@ -639,7 +639,7 @@
   .sp-resref{ display:block; font-family:var(--f-head); font-weight:700; font-size:12.5px; color:var(--v-txt); }
   .sp-restext{ display:block; font-size:10.5px; color:var(--v-dim); line-height:1.4; margin-top:2px;
     display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
-  .sp-plus{ color:var(--v-amber); font-family:var(--f-mono); font-weight:700; flex:0 0 auto; }
+  .sp-plus{ color:var(--v-accent); font-family:var(--f-mono); font-weight:700; flex:0 0 auto; }
 
   /* centre slide flow */
   .sp-flowhead{ gap:12px; }

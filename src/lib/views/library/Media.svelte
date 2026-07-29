@@ -88,9 +88,9 @@
   .med-title{ font-size:12.5px; font-weight:600; color:var(--v-txt); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .med-foot{ display:flex; align-items:center; justify-content:space-between; margin-top:9px; }
   .med-meta{ font-size:9px; color:var(--v-faint); }
-  .med-send{ font-family:var(--f-mono); font-size:9px; font-weight:700; letter-spacing:.06em; color:var(--v-amber);
-    background:var(--v-amber-soft); border:1px solid rgba(245,166,35,.3); padding:5px 10px; border-radius:7px; cursor:pointer; }
-  .med-send:hover{ background:rgba(245,166,35,.2); }
-  .med-del:hover{ color:var(--v-rose); border-color:rgba(244,113,139,.4); }
+  .med-send{ font-family:var(--f-mono); font-size:9px; font-weight:700; letter-spacing:.06em; color:var(--v-accent);
+    background:var(--v-accent-soft); border:1px solid var(--v-accent-line); padding:5px 10px; border-radius:7px; cursor:pointer; }
+  .med-send:hover{ background:var(--v-accent-line); }
+  .med-del:hover{ color:var(--v-rose); border-color:rgba(239,68,68,.4); }
   .med-msg{ font-size:11.5px; color:var(--v-emerald); margin-bottom:4px; }
 </style>

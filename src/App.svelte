@@ -2,11 +2,15 @@
   import { onMount, onDestroy } from 'svelte';
   import { trapFocus } from './lib/focus.js';
   import { t } from './lib/i18n.js';
-  import { capture, capturing, detectionOn, live, screenBlack, rehearsing, initAudio, clearScreens, blackScreen, panicError, dismissPanicError } from './lib/stores/capture.js';
+  import { capture, capturing, detectionOn, live, screenBlack, rehearsing, initAudio, setDetection, clearScreens, blackScreen, panicError, dismissPanicError } from './lib/stores/capture.js';
   import { installShortcuts, cheatsheet, liveShortcuts } from './lib/shortcuts.js';
   import { installLeaveGuard } from './lib/crash.js';
   import { session, setSession } from './lib/session.js';
   import FirstRun from './lib/FirstRun.svelte';
+  import Splash from './lib/Splash.svelte';
+  import BootSequence from './lib/boot/BootSequence.svelte';
+  import BrandMark from './lib/ui/BrandMark.svelte';
+  import { safeMode } from './lib/boot/boot.js';
   import {
     checkForUpdate,
     installUpdate,
@@ -15,6 +19,7 @@
     updateProgress,
     updateError,
   } from './lib/updater.js';
+  import Dashboard from './lib/views/Dashboard.svelte';
   import Live from './lib/views/Live.svelte';
   import Channels from './lib/views/Channels.svelte';
   import Templates from './lib/views/Templates.svelte';
@@ -26,9 +31,13 @@
   // `label` is an i18n KEY. The tab strip is the first thing a volunteer looks at and
   // the last thing they should have to read in a second language.
   const tabs = [
+    // Dashboard is FIRST but is not where a returning operator lands — the active
+    // tab is persisted (session.js), so only a genuinely fresh install starts
+    // here. Someone who was on Live yesterday is on Live today.
+    { key: 'dashboard', label: 'tab.dashboard', title: 'Dashboard',        view: Dashboard },
     { key: 'live',      label: 'tab.live',      title: 'Live Service',     view: Live },
     { key: 'channels',  label: 'tab.channels',  title: 'Output Channels',  view: Channels },
-    { key: 'templates', label: 'tab.templates', title: 'Template Editor',  view: Templates },
+    { key: 'templates', label: 'tab.templates', title: 'Templates — Output Designer',  view: Templates },
     { key: 'library',   label: 'tab.library',   title: 'Content Library',  view: Library },
     { key: 'planner',   label: 'tab.planner',   title: 'Service Planner',  view: ServicePlanner },
     { key: 'settings',  label: 'tab.settings',  title: 'System Settings',  view: Settings },
@@ -36,7 +45,7 @@
     // GitHub, which is exactly no use to a volunteer in a dark booth on a Sunday
     // with no internet. Help that needs a network is missing when Relay is most
     // useful: offline.
-    { key: 'help',      label: 'tab.help',      title: 'Help',             view: Help },
+    { key: 'help',      label: 'tab.help',      title: 'Help / Shortcuts',             view: Help },
   ];
   // The active tab IS the session — not a local copy of it that happens to be
   // written back. One direction, one source of truth, so anything can navigate:
@@ -47,8 +56,22 @@
   $: currentTab = tabs.find((x) => x.key === active) ?? tabs[0];
   $: current = currentTab.view;
 
+  // FULL SCREEN LIVE CONTROL (§4). Hides the sidebar, top bar and footer so the
+  // run surface owns the whole screen — a dark booth on a 13" laptop.
+  //
+  // It applies ONLY on Live. Leaving it on while the operator wanders to Settings
+  // would strand them on a tab with no navigation, mid-service, with the chrome
+  // they need to get back deliberately hidden.
+  //
+  // NOTE: Escape does NOT exit it. Everywhere else in computing Escape leaves
+  // full screen; here Escape CLEARS THE CONGREGATION'S SCREENS and that meaning
+  // is not negotiable (shortcuts.js). So the way out is a visible button that is
+  // always on screen — never a key a muscle-memory reflex would reach for.
+  $: liveFullscreen = active === 'live' && !!$session.liveFullscreen;
+
   // Inline icons keyed by tab (SVG so they stay crisp on retina, themeable).
   const icons = {
+    dashboard: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><rect x="3" y="3" width="7.5" height="8.5" rx="1.6"/><rect x="13.5" y="3" width="7.5" height="5.5" rx="1.6"/><rect x="3" y="14.5" width="7.5" height="6.5" rx="1.6"/><rect x="13.5" y="11.5" width="7.5" height="9.5" rx="1.6"/></svg>',
     live: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="2.5" y="4.5" width="19" height="13" rx="2"/><path d="M8 21h8M12 17.5V21" stroke-linecap="round"/><circle cx="12" cy="11" r="2.6" fill="currentColor" stroke="none"/></svg>',
     channels: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3"/><circle cx="4" cy="12" r="2"/><circle cx="12" cy="6" r="2"/><circle cx="20" cy="14" r="2"/></svg>',
     templates: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="m12 2 9 5-9 5-9-5 9-5Z"/><path d="m3 12 9 5 9-5M3 17l9 5 9-5"/></svg>',
@@ -68,12 +91,35 @@
   let teardownKeys;
   let teardownLeave;
 
+  // ── Boot splash ────────────────────────────────────────────────────────────
+  // Decoration over a fact, never a fact of its own. Two rules:
+  //   1. It is HELD briefly so a fast boot doesn't strobe the brand for 80ms.
+  //   2. It is CAPPED hard. If attaching the engine hangs — no backend, a wedged
+  //      IPC, a plain browser — the splash comes down anyway. A boot screen that
+  //      outlives its boot is indistinguishable from a hung app, and it would be
+  //      covering the console an operator may need in the next thirty seconds.
+  let booting = true;
+  let appVersion = '';
+  // The LAUNCH & STARTUP sequence (lib/boot/) runs AFTER the splash comes down
+  // and BEFORE the console is usable. It is skippable by construction — Esc, a
+  // per-stage cap, and a clean boot that collapses straight through — so this
+  // flag can only ever delay the console briefly, never withhold it.
+  let launched = false;
+  /** Measured height of the panic bar, so the shell can move out from under it. */
+  let panicH = 0;
+  let holdTimer;
+  let capTimer;
+  const BOOT_HOLD_MS = 900;
+  const BOOT_CAP_MS = 4000;
+
   // Read through a closure, so the beforeunload guard always sees the CURRENT
   // value rather than the one captured at mount time.
   let isCapturing = false;
   $: isCapturing = $capturing;
 
   onMount(async () => {
+    const bootAt = Date.now();
+    capTimer = setTimeout(() => (booting = false), BOOT_CAP_MS);
     tick();
     timer = setInterval(tick, 1000);
     // The panic keys are installed at the shell — never per-view — so Escape and
@@ -88,11 +134,39 @@
     } catch {
       engineOnline = false;
     }
+    // The version the splash shows is the one the UPDATER compares against, so
+    // read it from Tauri rather than a second copy in the frontend bundle
+    // (CLAUDE.md §19 — the version lives in three files and no more).
+    try {
+      const { getVersion } = await import('@tauri-apps/api/app');
+      appVersion = await getVersion();
+    } catch {
+      appVersion = '';
+    }
+    // SAFE MODE IS A PROMISE, NOT A LABEL (lib/boot/SafeModeStartup.svelte):
+    // nothing this app does may reach a congregation. Honour it the moment the
+    // engine is attached — before any view has had a chance to arm anything. A
+    // screen that says "outputs disabled" over a live detector is worse than no
+    // safe mode at all.
+    if ($safeMode) {
+      try {
+        await setDetection(false);
+      } catch {
+        /* no backend — nothing was armed in the first place */
+      }
+    }
+    clearTimeout(capTimer);
+    holdTimer = setTimeout(
+      () => (booting = false),
+      Math.max(0, BOOT_HOLD_MS - (Date.now() - bootAt)),
+    );
     // Check once, on launch, while nothing is live. Never during a service.
     checkForUpdate();
   });
   onDestroy(() => {
     clearInterval(timer);
+    clearTimeout(holdTimer);
+    clearTimeout(capTimer);
     teardownKeys?.();
     teardownLeave?.();
   });
@@ -120,16 +194,51 @@
   {/if}
 </div>
 
-<!-- First run. Only ever on a genuinely fresh install, and only once the backend
-     is attached (in a plain browser there is nothing to configure). -->
-{#if $capture.available && !$session.setupDone}
+<!-- Boot splash. Covers the shell only while the engine is being attached, and
+     comes down on a hard cap as well as on success (see BOOT_CAP_MS). It sits
+     BELOW the panic bar deliberately — nothing may hide "the screens may still
+     be live", not even the brand. -->
+{#if booting}
+  <Splash version={appVersion} />
+{/if}
+
+<!-- LAUNCH & STARTUP — Boot Diagnostics · Hardware Check · Plugin Loading ·
+     Database Migration, plus the four gates (crash report, safe mode, update,
+     recover session). Takes over from the splash and hands off to the console.
+
+     Like the splash, it sits BELOW the panic bar: nothing may hide "the screens
+     may still be live", not even a boot screen that is asking a question. -->
+{#if !booting && !launched}
+  <BootSequence version={appVersion} onDone={() => (launched = true)} />
+{/if}
+
+<!-- First run. Only ever on a genuinely fresh install, once the backend is
+     attached (in a plain browser there is nothing to configure) — and never on
+     top of the launch sequence, which is still asking about crashes and
+     updates. One question at a time. -->
+{#if launched && $capture.available && !$session.setupDone}
   <FirstRun />
 {/if}
 
-<div class="shell">
+<!-- `padding-top` is driven by the MEASURED height of the panic bar, not a
+     guessed constant: the message wraps to two or three lines on a narrow window,
+     and a hard-coded offset would either clip it or leave a gap.
+
+     Why it matters that the shell moves at all: the bar is `position:fixed` at
+     the top, so it was COVERING the first ~56px of the app — the sidebar's brand
+     lockup, and part of the top bar including the On Air badge. The one moment
+     the operator most needs to see what is on the wall is the moment this bar is
+     up, and it was sitting on top of that exact readout. -->
+<div class="shell" class:has-panic={$panicError} class:chromeless={liveFullscreen} style="--panic-h:{panicH}px">
   <!-- Sidebar -->
   <aside class="side">
-    <div class="side-brand">Relay</div>
+    <!-- The lockup from the design sheet's BRAND block: the waveform mark, then
+         the wordmark. The sidebar carried the word alone — the app's own logo
+         appeared nowhere in the app. -->
+    <div class="side-brand">
+      <BrandMark size="22px" />
+      <span>RELAY</span>
+    </div>
     <div class="side-profile">
       <div class="side-avatar">
         <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M12 2 4 7v13h16V7l-8-5Z"/><path d="M12 6v5M9.5 8.5h5M9 20v-4a3 3 0 0 1 6 0v4"/></svg>
@@ -170,7 +279,14 @@
       <!-- Rehearsal outranks everything else here. Nothing is reaching the
            congregation, so the app must not say "On Air" — on ANY tab, not just
            Live. The one indicator the operator glances at cannot be tab-specific. -->
-      {#if $rehearsing}
+      <!-- Safe mode OUTRANKS every other state here, including rehearsal. Both
+           mean "not reaching the screens", but safe mode also means the operator
+           cannot change that without restarting — so it must be the thing they
+           read, or they will spend the service wondering why nothing fires. -->
+      {#if $safeMode}
+        <span class="r-badge amethyst"><span class="bd" style="box-shadow:none;"></span>Safe mode</span>
+        <span class="topbar-live r-mono">outputs disabled — turn it off in Settings</span>
+      {:else if $rehearsing}
         <span class="r-badge amethyst pulse"><span class="bd"></span>Rehearsal</span>
         <span class="topbar-live r-mono">nothing is reaching the screens</span>
       {:else if $screenBlack}
@@ -178,10 +294,16 @@
           <span class="bd" style="background:var(--v-faint);box-shadow:none;"></span>Blackout
         </span>
       {:else if $live}
-        <span class="r-badge rose pulse"><span class="bd"></span>On Air</span>
+        <!-- AMBER. The design system's MODE INDICATORS and CLAUDE.md say the same
+             thing: amber IS on air. This badge was rose — the system's Error/Panic
+             colour — which put the loudest indicator in the product on the wrong
+             side of the one colour law the whole app is built around. -->
+        <span class="r-badge amber pulse"><span class="bd"></span>On Air</span>
         <span class="topbar-live r-mono">{$live.reference || 'content'}</span>
       {:else}
-        <span class="r-badge amber"><span class="bd" style="box-shadow:none;"></span>Screens clear</span>
+        <!-- Nothing is on the wall. That is a NEUTRAL state, so it gets the grey
+             chip — not amber, which now means, and only means, on air. -->
+        <span class="r-badge grey"><span class="bd" style="box-shadow:none;"></span>Screens clear</span>
       {/if}
       {#if $capturing}
         <span class="topbar-mic" title="Microphone is live">
@@ -198,6 +320,14 @@
     </header>
 
     <div class="mainscroll r-scroll">
+      {#if liveFullscreen}
+        <button
+          class="exit-fs"
+          on:click={() => setSession({ liveFullscreen: false })}
+          title="Escape clears the screens — it does not leave full screen">
+          Exit full screen
+        </button>
+      {/if}
       <svelte:component this={current} />
     </div>
 
@@ -207,8 +337,8 @@
         <span>Detection {$detectionOn ? 'ACTIVE' : 'OFF'}</span>
       </div>
       <div style="display:flex;align-items:center;gap:8px;">
-        <span class="dot" style="width:6px;height:6px;border-radius:50%;background:{$rehearsing ? 'var(--v-amethyst)' : $live && !$screenBlack ? 'var(--v-rose)' : 'var(--v-faint)'};"></span>
-        {$rehearsing ? 'REHEARSAL' : $screenBlack ? 'BLACKOUT' : $live ? 'ON AIR' : 'SCREENS CLEAR'}
+        <span class="dot" style="width:6px;height:6px;border-radius:50%;background:{$safeMode || $rehearsing ? 'var(--v-amethyst)' : $live && !$screenBlack ? 'var(--v-amber)' : 'var(--v-faint)'};"></span>
+        {$safeMode ? 'SAFE MODE' : $rehearsing ? 'REHEARSAL' : $screenBlack ? 'BLACKOUT' : $live ? 'ON AIR' : 'SCREENS CLEAR'}
       </div>
     </footer>
   </div>
@@ -220,7 +350,7 @@
        to interrupt whatever a screen reader is currently saying. And it does not
        auto-dismiss: the operator closes it, having looked at the actual screen. -->
   {#if $panicError}
-    <div class="panicbar" role="alert" aria-live="assertive">
+    <div class="panicbar" role="alert" aria-live="assertive" bind:clientHeight={panicH}>
       <div class="panic-t">
         <b>The screens may still be live.</b>
         <span>{$panicError}</span>
@@ -240,7 +370,7 @@
       {#if $updateProgress !== null}
         <span class="r-mono upd-pct">{$updateProgress}%</span>
       {:else}
-        <button class="r-btn amber sm" on:click={installUpdate}>Update now</button>
+        <button class="r-btn primary sm" on:click={installUpdate}>Update now</button>
         <button class="r-btn ghost sm" on:click={dismissUpdate}>Not now</button>
       {/if}
     </div>
