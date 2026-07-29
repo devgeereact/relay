@@ -8,9 +8,21 @@
     saveAnnouncement,
     deleteAnnouncement,
     fireContent,
+    live,
+    screenBlack,
+    rehearsing,
   } from '../../stores/capture.js';
+  import { humanError } from '../../errors.js';
+  import { safeMode } from '../../boot/boot.js';
+  import VerseDeck from './VerseDeck.svelte';
+  import EmptyState from '../../ui/EmptyState.svelte';
+  import { listActiveTemplates, getContentTemplates, loadTemplates, templates } from '../../stores/capture.js';
 
   export let startDraft = false; // New → "Draft announcement" opens the editor
+  /** The Library's one search box. */
+  export let query = '';
+  export let queue = [];
+  export let onQueueChange = () => {};
 
   let items = [];
   let msg = '';
@@ -18,10 +30,48 @@
   // Editor state: null = list view; else { id, title, body } being edited.
   let edit = null;
 
+  let template = null;
+  let checked = new Set();
+  let layout = 'grid';
+
   onMount(async () => {
     await refresh();
+    // The ANNOUNCE template, not the scripture one — a notice is not a verse.
+    const [tpls, ct] = await Promise.all([
+      listActiveTemplates().catch(() => []),
+      getContentTemplates().catch(() => ({})),
+    ]);
+    await loadTemplates().catch(() => {});
+    const all = $templates ?? [];
+    template = all.find((t) => t.id === ct?.announce) ?? tpls[0] ?? all[0] ?? null;
     if (startDraft) draft();
   });
+
+  function toggleQueue(item) {
+    if (queue.some((q) => q.reference === item.reference)) {
+      onQueueChange(queue.filter((q) => q.reference !== item.reference));
+    } else {
+      onQueueChange([...queue, { reference: item.reference, text: item.text }]);
+    }
+  }
+  function toggleCheck(item) {
+    const next = new Set(checked);
+    next.has(item.reference) ? next.delete(item.reference) : next.add(item.reference);
+    checked = next;
+  }
+  /** Duplicating a notice is a REAL new row, not a session overlay — an
+      announcement is the operator's own text, so there is nothing to protect. */
+  async function duplicate(item) {
+    const a = items.find((x) => x.id === item.id);
+    if (!a) return;
+    try {
+      await saveAnnouncement(null, `${a.title} (copy)`, a.body);
+      await refresh();
+      flash('Duplicated.');
+    } catch (e) {
+      flash(humanError(e));
+    }
+  }
   async function refresh() {
     items = await listAnnouncements();
   }
@@ -70,98 +120,131 @@
     if (edit && edit.id === a.id) edit = null;
     await refresh();
   }
-  async function send(a, ev) {
-    ev?.stopPropagation();
+  // ONE CLICK GOES LIVE, the same as every other pane in the Library.
+  let firing = '';
+  async function send(a) {
+    if ($safeMode) return;
+    firing = a.reference ?? a.title;
     try {
-      await fireContent(a.title || '', a.body || a.title, 'announce');
-      flash(`Live: ${a.title || 'announcement'}`);
+      const title = a.title ?? a.label ?? a.reference ?? '';
+      const body = a.body ?? a.text ?? title;
+      await fireContent(title, body, 'announce');
+      flash(`${title || 'Announcement'} is on the screens`);
     } catch (e) {
-      flash(String(e));
+      flash(humanError(e));
     }
+    firing = '';
   }
+
+  const deckOf = (list) =>
+    list.map((a, i) => ({
+      key: `a${a.id}`,
+      id: a.id,
+      reference: a.title || 'Untitled',
+      label: a.title || 'Untitled',
+      text: a.body,
+      slideNo: i + 1,
+    }));
+
+  const matches = (a) =>
+    !query?.trim() ||
+    `${a.title ?? ''} ${a.body ?? ''}`.toLowerCase().includes(query.trim().toLowerCase());
+  $: shown = items.filter(matches);
+  $: deck = deckOf(shown);
+  $: queuedRefs = new Set(queue.map((q) => q.reference));
+  // What is on the wall right now, so a card can wear the tally.
+  $: liveRef = !$screenBlack && $live ? ($live.reference ?? '') : null;
+  const isLive = (a, r) => r !== null && !!(a.title || '') && r === a.title;
 </script>
 
-<div class="ann">
-  {#if msg}<div class="ann-msg r-mono">{msg}</div>{/if}
-
-  {#if edit}
-    <!-- editor -->
-    <div class="ann-editor">
-      <div class="ann-ehead">
-        <span class="r-lbl">{edit.id ? 'Edit announcement' : 'New announcement'}</span>
-        <span class="ann-spring"></span>
-        <button class="r-btn ghost sm" on:click={() => (edit = null)}>Cancel</button>
-        <button class="r-btn primary sm" on:click={save}>Save</button>
+<div class="an">
+  <section class="an-panel">
+    <header class="an-head">
+      <div class="an-where">
+        <b>Announcements</b>
+        <span>{deck.length} notice{deck.length === 1 ? '' : 's'}</span>
       </div>
-      <label class="ann-field">
-        <span class="r-lbl">Title</span>
-        <input class="r-input" bind:value={edit.title} placeholder="e.g. Midweek service — Wednesday 7pm" />
-      </label>
-      <label class="ann-field">
-        <span class="r-lbl">Body</span>
-        <textarea class="r-input ann-body" bind:value={edit.body} placeholder="The notice text shown on screen…"></textarea>
-      </label>
-    </div>
-  {/if}
-
-  {#if items.length}
-    <div class="ann-grid">
-      {#each items as a (a.id)}
-        <button class="ann-card r-focus" class:sel={edit && edit.id === a.id} on:click={() => open(a)}>
-          <span class="ann-bar"></span>
-          <span class="ann-body-wrap">
-            <span class="ann-title">{a.title || 'Untitled'}</span>
-            {#if a.body}<span class="ann-preview">{a.body}</span>{/if}
-          </span>
-          <span class="ann-foot">
-            <button class="ann-send" title="Send to output" on:click={(e) => send(a, e)}>▶ To output</button>
-            <button class="r-iconbtn ann-del" class:arm={delArm === a.id} title={delArm === a.id ? 'Click again to confirm' : 'Delete'} on:click={(e) => remove(a, e)}>
-              {#if delArm === a.id}
-                <span class="ann-delconf r-mono">Sure?</span>
-              {:else}
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></svg>
-              {/if}
-            </button>
-          </span>
+      <button class="r-btn ghost sm" on:click={draft}>
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
+        New notice
+      </button>
+      <div class="r-seg" role="group" aria-label="Layout">
+        <button class:on={layout === 'grid'} aria-label="Grid" on:click={() => (layout = 'grid')}>
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><rect x="3" y="3" width="7" height="7" rx="1.4" /><rect x="14" y="3" width="7" height="7" rx="1.4" /><rect x="3" y="14" width="7" height="7" rx="1.4" /><rect x="14" y="14" width="7" height="7" rx="1.4" /></svg>
         </button>
-      {/each}
+        <button class:on={layout === 'list'} aria-label="List" on:click={() => (layout = 'list')}>
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><rect x="3" y="5" width="18" height="2.6" rx="1.3" /><rect x="3" y="10.7" width="18" height="2.6" rx="1.3" /><rect x="3" y="16.4" width="18" height="2.6" rx="1.3" /></svg>
+        </button>
+      </div>
+    </header>
+
+    <div class="an-body r-scroll">
+      {#if edit}
+        <div class="an-editor" role="dialog" aria-label="Announcement editor">
+          <div class="an-ehead">
+            <span class="r-lbl">{edit.id ? 'Edit announcement' : 'New announcement'}</span>
+            <span class="an-spring"></span>
+            <button class="r-btn ghost sm" on:click={() => (edit = null)}>Cancel</button>
+            <button class="r-btn primary sm" on:click={save}>Save</button>
+          </div>
+          <label class="an-field">
+            <span class="r-lbl">Title</span>
+            <input class="r-input" bind:value={edit.title} placeholder="e.g. Midweek service — Wednesday 7pm" />
+          </label>
+          <label class="an-field">
+            <span class="r-lbl">Body</span>
+            <textarea class="r-input an-text" bind:value={edit.body} placeholder="The notice text shown on screen…"></textarea>
+          </label>
+        </div>
+      {/if}
+
+      {#if deck.length}
+        <VerseDeck
+          items={deck}
+          {template}
+          liveRef={liveRef}
+          rehearsing={$rehearsing}
+          {checked}
+          {queuedRefs}
+          busyRef={firing}
+          {layout}
+          showStar={false}
+          can={{ queue: true, favourite: false, edit: true, duplicate: true, add: false, move: false }}
+          onCheck={toggleCheck}
+          onFire={send}
+          onQueue={toggleQueue}
+          onEdit={(d) => open(items.find((x) => x.id === d.id))}
+          onDuplicate={duplicate}
+          onDelete={(d) => remove(items.find((x) => x.id === d.id), new Event('x'))} />
+      {:else if !edit}
+        <EmptyState
+          message={query?.trim()
+            ? `No announcements matching “${query.trim()}”.`
+            : 'No announcements yet — draft one with New notice.'} />
+      {/if}
     </div>
-  {:else if !edit}
-    <div class="cat-empty">
-      <span class="r-empty">No announcements yet — use <b>＋ New → Draft announcement</b> above, or the button below.</span>
-      <button class="r-btn primary sm ann-new" on:click={draft}>＋ Draft announcement</button>
-    </div>
-  {/if}
+  </section>
+
+  {#if msg}<p class="an-msg">{msg}</p>{/if}
 </div>
 
 <style>
-  .ann{ display:flex; flex-direction:column; gap:16px; }
-  .ann-msg{ font-size:11.5px; color:var(--v-emerald); }
-
-  .ann-editor{ display:flex; flex-direction:column; gap:12px; padding:16px; border:1px solid var(--v-line2);
-    border-radius:14px; background:var(--v-surf); }
-  .ann-ehead{ display:flex; align-items:center; gap:8px; }
-  .ann-spring{ flex:1; }
-  .ann-field{ display:flex; flex-direction:column; gap:5px; }
-  .ann-body{ min-height:110px; line-height:1.5; resize:vertical; font-family:var(--f-body); }
-
-  .ann-grid{ display:grid; grid-template-columns:repeat(auto-fill, minmax(240px, 1fr)); gap:12px; }
-  .ann-card{ position:relative; display:flex; flex-direction:column; text-align:left; gap:9px; overflow:hidden;
-    border:1px solid var(--v-line); border-radius:13px; background:var(--v-surf); padding:14px 14px 12px 18px;
-    cursor:pointer; transition:border-color .14s; }
-  .ann-card:hover{ border-color:var(--v-line2); }
-  .ann-card.sel{ border-color:var(--v-rose); box-shadow:0 0 0 1px var(--v-rose); }
-  .ann-bar{ position:absolute; left:0; top:0; bottom:0; width:4px; background:var(--v-rose); }
-  .ann-title{ font-family:var(--f-head); font-weight:700; font-size:14px; color:var(--v-txt); }
-  .ann-preview{ display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden;
-    font-size:12px; line-height:1.5; color:var(--v-dim); margin-top:3px; white-space:pre-wrap; }
-  .ann-foot{ display:flex; align-items:center; justify-content:space-between; margin-top:auto; }
-  .ann-send{ font-family:var(--f-mono); font-size:9px; font-weight:700; letter-spacing:.06em; color:var(--v-accent);
-    background:var(--v-accent-soft); border:1px solid var(--v-accent-line); padding:5px 10px; border-radius:7px; cursor:pointer; }
-  .ann-send:hover{ background:var(--v-accent-line); }
-  .ann-del:hover{ color:var(--v-rose); border-color:rgba(239,68,68,.4); }
-  .ann-del.arm{ width:auto; padding:0 8px; color:var(--v-rose); border-color:var(--v-rose); background:var(--v-rose-soft); }
-  .ann-delconf{ font-size:9px; font-weight:700; letter-spacing:.04em; }
-  .cat-empty{ display:flex; flex-direction:column; align-items:flex-start; gap:12px; }
-  .ann-new{ align-self:flex-start; }
+  .an { display: flex; flex-direction: column; gap: 10px; min-height: 0; flex: 1; }
+  .an-panel { display: flex; flex-direction: column; min-height: 0; flex: 1;
+    background: var(--v-bg); border: 1px solid var(--v-line); border-radius: var(--v-r-lg); }
+  .an-head { display: flex; align-items: center; gap: 12px; padding: 11px 14px;
+    border-bottom: 1px solid var(--v-line); }
+  .an-where { flex: 1; min-width: 0; }
+  .an-where b { display: block; font-size: 15px; font-weight: 600; color: var(--v-txt); }
+  .an-where span { font-size: var(--v-fs-cap); color: var(--v-faint); }
+  .an-body { flex: 1; min-height: 0; overflow-y: auto; padding: 12px;
+    display: flex; flex-direction: column; gap: 12px; }
+  .an-editor { display: flex; flex-direction: column; gap: 12px; padding: 14px;
+    background: var(--v-surf); border: 1px solid var(--v-line2); border-radius: var(--v-r-md); }
+  .an-ehead { display: flex; align-items: center; gap: 8px; }
+  .an-spring { flex: 1; }
+  .an-field { display: flex; flex-direction: column; gap: 5px; }
+  .an-text { min-height: 110px; padding: 10px 13px; line-height: 1.5; resize: vertical;
+    font-family: var(--f-body); }
+  .an-msg { margin: 0; font-size: var(--v-fs-b2); color: var(--v-emerald); }
 </style>

@@ -356,6 +356,37 @@ body{ overflow:hidden; text-rendering:optimizeLegibility; -moz-osx-font-smoothin
 .r-row:hover{ border-color:var(--v-line2); }
 .r-row .bar{ position:absolute; left:0; top:12px; bottom:12px; width:3px; border-radius:0 3px 3px 0; }
 
+/* ── Pills, segments, chips ────────────────────────────────────────────────
+   The Library reference (docs/relaydesign/relay-library-screen.png) introduces
+   three small controls that are not one-offs: the content-type PILL row, the
+   view SEGMENT control, and the metadata CHIP. They live here so the Library,
+   the Planner and anything after them cannot drift apart on radius or height. */
+.r-pill{ display:inline-flex; align-items:center; gap:8px; height:34px; padding:0 16px;
+  border-radius:var(--v-r-md); border:1px solid transparent; background:var(--v-surf2);
+  color:var(--v-dim); font-family:var(--f-body); font-size:13px; font-weight:600;
+  cursor:pointer; white-space:nowrap; transition:background .14s, color .14s; }
+.r-pill:hover:not(.on){ background:var(--v-surf3); color:var(--v-txt); }
+/* SELECTED is chrome, so it is amethyst. Amber here would mean the congregation
+   is looking at a tab (CLAUDE.md — amber is the tally light, and nothing else). */
+.r-pill.on{ background:var(--v-accent-fill); color:var(--v-accent-ink); }
+
+.r-seg{ display:inline-flex; gap:2px; padding:3px; border-radius:var(--v-r-md);
+  background:var(--v-bg); border:1px solid var(--v-line); }
+.r-seg button{ height:28px; padding:0 15px; border:0; border-radius:6px; background:transparent;
+  color:var(--v-dim); font-family:var(--f-body); font-size:12.5px; font-weight:600; cursor:pointer;
+  transition:background .14s, color .14s; }
+.r-seg button:hover:not(.on){ color:var(--v-txt); }
+.r-seg button.on{ background:var(--v-accent-fill); color:var(--v-accent-ink); }
+
+.r-chip{ display:inline-flex; align-items:center; gap:5px; height:21px; padding:0 8px;
+  border-radius:var(--v-r-sm); border:1px solid var(--v-line2); background:var(--v-surf2);
+  font-family:var(--f-mono); font-size:10.5px; font-variant-numeric:tabular-nums;
+  letter-spacing:.02em; color:var(--v-dim); white-space:nowrap; }
+.r-chip.green{ background:var(--v-emerald-soft); border-color:rgba(34,197,94,.32); color:var(--v-emerald); }
+.r-chip.cyan{ background:var(--v-cyan-soft); border-color:rgba(34,211,238,.32); color:var(--v-cyan); }
+.r-chip.amethyst{ background:var(--v-accent-soft); border-color:var(--v-accent-line); color:var(--v-accent2); }
+.r-chip.amber{ background:var(--v-amber-soft); border-color:rgba(255,176,0,.32); color:var(--v-amber); }
+
 .r-empty{ color:var(--v-faint); font-size:13.5px; }
 .r-focus:focus-visible, .r-btn:focus-visible, .r-iconbtn:focus-visible, .nav-item:focus-visible,
 .r-input:focus-visible, .r-select:focus-visible, .r-switch:focus-visible{ outline:2px solid var(--v-accent2); outline-offset:2px; }

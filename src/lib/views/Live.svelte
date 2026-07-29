@@ -49,6 +49,8 @@
     live,
     screenBlack,
     liveCue,
+    templates,
+    loadTemplates,
     listActiveTemplates,
     confirmDetection,
     dismissDetection,
@@ -152,6 +154,9 @@
 
   onMount(async () => {
     await loadRehearsal();
+    // Populate the reactive `$templates` store so the preview/program panes
+    // resolve (and stay live to edits) from it, not just a one-shot snapshot.
+    await loadTemplates().catch(() => {});
     activeTpls = await listActiveTemplates().catch(() => []);
     channels = await listOutputChannels().catch(() => []);
     plans = await listPlans().catch(() => []);
@@ -241,27 +246,40 @@
     const p = payloadOf(item);
     const s = slidesOf(item)[i];
     if (!s) return;
-    setLive(item.id, i);
-    selId = item.id;
     const stageNote = p.stage_note || null;
+    // The template the operator set for THIS cue in the Planner. Passed on every
+    // fire so a plan item renders with its own chosen look, not just the
+    // content-type default. null → the backend falls back to that default.
+    const tpl = item.template_id ?? null;
     try {
       if (item.cue_type === 'scripture') {
-        await manualFire(p.reference || item.label, stageNote);
+        // keepPlan: TRUE — this is a plan slide, so the transport must stay in
+        // Slide mode. Without it, manualFire's leavePlan() flipped us to Verse
+        // mode the moment a scripture cue fired, and the next → walked the passage
+        // instead of advancing the plan. That was the Slide-mode bug.
+        await manualFire(p.reference || item.label, stageNote, tpl, true);
       } else if (item.cue_type === 'media') {
         if (!p.media_id) {
           flash('Media asset missing — re-add it from the Library.');
           return;
         }
-        await fireMedia(p.media_id);
+        await fireMedia(p.media_id, tpl);
       } else if (item.cue_type === 'countdown') {
-        await startCountdown(Number(p.minutes) || 5, p.label || 'Service begins in', p.done || 'Welcome');
+        await startCountdown(Number(p.minutes) || 5, p.label || 'Service begins in', p.done || 'Welcome', tpl);
       } else if (item.cue_type === 'song') {
         // Lyrics carry NO title/section on the live screen — that stays in the
         // operator UI. Only the lyric lines go out.
-        await fireContent('', s.text, 'song', stageNote);
+        await fireContent('', s.text, 'song', stageNote, tpl);
       } else {
-        await fireContent(item.label, s.text, 'announce', stageNote);
+        await fireContent(item.label, s.text, 'announce', stageNote, tpl);
       }
+      // Mark the cue live ONLY after the fire resolves. Setting onAir before the
+      // await meant a failed fire left this cue amber "On Air" — and the reactive
+      // setSession persisted that lie across a reload — while the wall still
+      // showed the previous content. Amber must never claim a screen it did not
+      // reach (CLAUDE.md rule 18; matches manualFire, which also sets after).
+      setLive(item.id, i);
+      selId = item.id;
       flash(`Live: ${s.label}`);
       const n = nextOf(items, item.id, i);
       setStageNext(n?.label ?? null, n?.text ?? null);
@@ -336,8 +354,18 @@
   let transcriptEl;
   // afterUpdate, never a reactive block: tick() inside `$:` re-enters the Svelte
   // scheduler and hard-freezes the webview. That one cost hours.
+  //
+  // Reading scrollHeight forces a synchronous reflow, so do it ONLY when the
+  // transcript actually changed — not on every unrelated component update (a
+  // detection, a meter tick, a hover). `$transcript` updates several times a
+  // second during a sermon; scrolling on every render made that a reflow-per-tick.
+  let lastTxSig = '';
   afterUpdate(() => {
-    if (transcriptEl) transcriptEl.scrollTop = transcriptEl.scrollHeight;
+    if (!transcriptEl) return;
+    const sig = `${$transcript.finals.length}|${$transcript.partial}`;
+    if (sig === lastTxSig) return;
+    lastTxSig = sig;
+    transcriptEl.scrollTop = transcriptEl.scrollHeight;
   });
   $: hasTranscript = $transcript.finals.length > 0 || $transcript.partial.length > 0;
 
@@ -359,12 +387,22 @@
   // about what is being said NOW, and an hour of transcript matches everything.
   $: relatedWindow = $transcript.finals.slice(-3).join(' ').slice(-400);
 
-  $: {
-    const w = relatedWindow;
-    const ex = $live?.reference ?? null;
+  // Depend ONLY on relatedWindow (new speech). Reading $capture.detectionOn or
+  // $live here made the block re-run on every audio://quality / language update
+  // too — each one cleared and re-armed the 1500ms timer, and those arrive faster
+  // than 1.5s while listening, so the timeout never elapsed and Related Scripture
+  // never populated. detectionOn / live are read imperatively at fire time instead,
+  // so they gate the result without resetting the debounce.
+  $: armRelated(relatedWindow);
+  function armRelated(w) {
     clearTimeout(relatedT);
-    if (w.length > 40 && $capture.detectionOn) {
+    if (w.length > 40) {
       relatedT = setTimeout(async () => {
+        if (!get(capture).detectionOn) {
+          related = null;
+          return;
+        }
+        const ex = get(live)?.reference ?? null;
         const key = w + '|' + (ex ?? '');
         if (key === lastRelatedFor) return; // nothing new was said
         lastRelatedFor = key;
@@ -432,8 +470,12 @@
     try {
       if ($capture.capturing) await stopCapture();
       else await startCapture($capture.inputDevice || null);
-    } catch {
-      /* surfaced via audio://error */
+    } catch (e) {
+      // Capture start is non-blocking (DECISIONS/rule 5): DEVICE errors arrive
+      // asynchronously on audio://error. So a rejection HERE is a command-level
+      // failure that event never carries — surface it rather than swallow, or the
+      // Listen button just silently does nothing.
+      flash(humanError(e));
     }
     listenBusy = false;
   }
@@ -461,7 +503,7 @@
       await startCountdown(m);
       flash(`Countdown started — ${m} min`);
     } catch (e) {
-      flash(String(e));
+      flash(humanError(e));
     }
   }
 
@@ -564,10 +606,24 @@
     if (previewCue) return fireSlide(previewCue.item, previewCue.slide);
   }
 
-  // The preview and program panes render through the FIRST active template, the
-  // same component the real output window uses, so the pair is WYSIWYG by
-  // construction rather than a second drawing of the same thing.
-  $: previewTpl = activeTpls[0] ?? null;
+  // The preview and program panes must render through the SAME template the real
+  // output window uses, or the operator sees one thing here and the congregation
+  // sees another. The wall's look is the MAIN output channel's assigned template
+  // (Output.svelte: `contentOverride ?? channelTemplate`), NOT the first
+  // console-active template — those diverge, which read as the program pane being
+  // "frozen on something different" from the wall.
+  //
+  // Resolved from the reactive `$templates` store (not a one-shot snapshot), so a
+  // template edit — which updates `$templates` app-wide via saveTemplate →
+  // loadTemplates — flows straight into these panes instead of leaving them stale.
+  $: mainChannel = channels.find((c) => c.render_target === 'native_window') ?? channels[0] ?? null;
+  $: mainTpl =
+    (mainChannel && $templates.find((t) => t.id === mainChannel.template_id)) ||
+    $templates.find((t) => t.id === activeTpls[0]?.id) ||
+    activeTpls[0] ||
+    $templates[0] ||
+    null;
+  $: previewTpl = mainTpl;
 
   // ── output status ────────────────────────────────────────────────────────
   // The configured render targets, read-only here. Editing them is the Channels
@@ -575,27 +631,15 @@
   let channels = [];
 
   // ── transcript arrival times ─────────────────────────────────────────────
-  // The reference stamps each transcript line. The store keeps no times (it is a
-  // rolling `{partial, finals[]}`), so rather than change the store — or, worse,
-  // print an invented time — the view notes when each final ARRIVED in front of
-  // this operator. It is a display fact about this session, not data.
-  let finalTimes = [];
-  let lastFinals = 0;
-  $: {
-    const n = $transcript.finals.length;
-    if (n > lastFinals) {
-      const now = new Date();
-      const hhmmss = now.toLocaleTimeString('en-GB');
-      for (let i = lastFinals; i < n; i++) finalTimes[i] = hhmmss;
-      finalTimes = finalTimes;
-    } else if (n < lastFinals) {
-      finalTimes = finalTimes.slice(-n); // the store trims to MAX_FINALS
-    }
-    lastFinals = n;
-  }
+  // Each final's arrival time is stamped in the store (`finalsAt`) and trimmed in
+  // lockstep with `finals`, so line and time can never drift. The old view-local
+  // length-tracking froze once the rolling cap pinned `finals.length` at
+  // MAX_FINALS: every new line shifted the array left while the length stayed 12,
+  // so the change was never detected and every stamp then labelled the wrong line.
+  //
   // Newest last, and the LAST one is the one the AI is currently working on — that
   // is the line the reference highlights.
-  $: tLines = $transcript.finals.map((text, i) => ({ text, at: finalTimes[i] ?? '' }));
+  $: tLines = $transcript.finals.map((text, i) => ({ text, at: $transcript.finalsAt?.[i] ?? '' }));
 
   // ── audio meter ──────────────────────────────────────────────────────────
   // Segment count is fixed; which segments light is the LEARNED level, never an
@@ -1312,7 +1356,11 @@
   .blk{position:absolute; inset:0; background:#000}
 
   /* ── the take rack ─────────────────────────────────────────────────────── */
-  .rack{display:flex; flex-direction:column; gap:6px; min-height:0; padding:10px 8px;
+  /* align-self:start — the rack is only as tall as its controls. Left to stretch
+     to the full height of the 16:9 preview/program panes beside it, the leftover
+     vertical space had to go SOMEWHERE, and it ballooned the MODE chip into a huge
+     empty box. A transport rack is compact by nature; keep it that way. */
+  .rack{display:flex; flex-direction:column; gap:6px; min-height:0; align-self:start; padding:10px 8px;
     background:var(--v-surf); border:1px solid var(--v-line); border-radius:var(--v-r-lg)}
   .rack-lbl{font-family:var(--f-mono); font-size:9px; font-weight:700; letter-spacing:.14em;
     text-transform:uppercase; color:var(--v-faint); text-align:center}
@@ -1329,8 +1377,15 @@
   .rk:hover:not(:disabled){background:var(--v-surf3); color:var(--v-txt)}
   .rk:disabled{opacity:.4; cursor:not-allowed}
   .rk.wide{width:100%}
-  .rack-lbl.push{margin-top:auto}
-  .rack-mode{text-align:center; padding:7px 0; border-radius:var(--v-r-md);
+  /* A small top gap before the MODE group; NOT margin-top:auto — with the rack no
+     longer stretched there is no free space to push into, and auto once let the
+     chip swallow it. */
+  .rack-lbl.push{margin-top:4px}
+  /* A compact, content-width pill — inline-flex + align-self:center so it hugs its
+     text and centres under the MODE label, and a fixed height so it can never
+     stretch no matter what the flex context does. */
+  .rack-mode{flex:0 0 auto; align-self:center; height:30px; display:inline-flex; align-items:center; justify-content:center;
+    padding:0 14px; border-radius:999px;
     background:var(--v-surf2); border:1px solid var(--v-line2);
     font-size:var(--v-fs-cap); font-weight:700; letter-spacing:.1em; color:var(--v-cyan)}
   .rack-mode.slide{color:var(--v-amber)}

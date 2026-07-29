@@ -344,3 +344,85 @@ AUTO-DETECT picks badly on short, quiet or noisy audio, not to refuse languages.
 levels. Per §13, an STT change is scored through the DETECTOR, not by reading the
 transcript — and that requires a real recording through `RELAY_BENCH_WAV`, which
 has not been run for this change.
+
+## 24. A bare spoken number pair fires; a garbled RUN of numbers does not
+
+Preachers say **"Romans eight one"** and **"Psalm 23, 1"**. They do not reliably say
+"verse". Whisper renders the pauses as commas and full stops, `normalize` strips them,
+and all of it arrives at the parser as the same bare pair: `book <num> <num>`.
+
+That form used to score **0.45** — deliberately below auto-fire — because of a real
+live-rehearsal transcript:
+
+```
+"Verse 1, Psalms 2, 3, 1, Next verse, chapter 2,"
+```
+
+which had scored 0.92 and put **Psalms 2:3 on the wall, unasked**. The demotion was the
+right call at the time, and its reasoning was recorded in the code. But it also meant a
+preacher who never says "verse" **never reaches the screen at all** — the product missed
+ordinary preaching, which is a failure of the same size, just quieter.
+
+**The two cases are not separable by confidence.** The parser sees the identical shape.
+What separates them is the **leftover number**: `"Psalm 23 1"` ends cleanly, while
+`"Psalms 2, 3, 1"` parses 2:3 and strands a `1` that no range could absorb (a range end
+must be `>=` the verse). Numbers that do not line up are garble; numbers that do are a
+reference.
+
+So:
+
+- A bare pair scores **0.55** — above the default auto-fire line (0.50), and still fully
+  governed by the sensitivity dial (a cautious install at auto-fire 0.90 demotes it
+  exactly as before). It is not a new baseline; it is one value moved across an existing,
+  operator-controlled line.
+- A bare pair **followed by another loose number** stays at **0.45** — it reaches the
+  operator, never the congregation. That is the rehearsal transcript, and it is pinned by
+  `a_garbled_number_run_never_auto_fires`, which was **mutation-verified**: deleting the
+  guard makes the garbled run score 0.55 and the test fail.
+- A **repaired** book name plus bare digits lands at `0.55 - 0.06 = 0.49`, still under the
+  line. A misheard book *and* loose digits is two guesses stacked, and always asks a human.
+
+This does not touch the structural rule in the live-safety decisions above: **only
+`DetectionMethod::Direct` may ever auto-fire**, and no threshold change can promote a
+paraphrase — `Semantic`/`Ambiguous` are capped at `Suggest` before any number is consulted. The detection scorecard is unchanged — 50/50
+cases, 100% recall, **0 wrong verses, 0 paraphrases auto-fired**.
+
+## 25. Two shared words, or one rare one — evidence, not word count
+
+**Decided during the `NEW-DESIGN-IMPLEMEMTATION` merge, because the two branches
+disagreed and each shipped a test that failed if the other won.**
+
+`top_k_explained` refuses a paraphrase candidate it cannot justify. The bar was a flat
+count: at least `MIN_EVIDENCE_TERMS` (2) shared content words, so a match is
+*corroborated* rather than merely confident. One shared word is usually a coincidence
+with a good score, and — under §21 — a one-word explanation gives the operator nothing
+they can actually judge in the second they have to judge it.
+
+The KJV gloss (`expand_with_gloss`) landed independently and its entire premise is the
+opposite case: a modern retelling reaches its verse through **exactly one** rare KJV
+noun. "he ended up feeding pigs" shares precisely `swine` with Luke 15:16 — no second
+word exists to corroborate it, in the test corpus or in the real KJV. A flat 2-word floor
+does not make that match weaker; it makes the gloss inert.
+
+Both are right about different words, so the rule is about **evidence, not arithmetic**:
+
+- **Two or more shared words** — offered, as before.
+- **Exactly one shared word** — offered *only* if that word is rare: it appears in at most
+  `RARE_DF_FRACTION` (0.1%) of the corpus, floored at one document so the rule still
+  bites on the small corpora the tests build. On the full KJV that is ~31 of 31,102
+  verses: `swine` (~30) and `ossifrage` (2) clear it; `lord` (~7,800) is nowhere near.
+- Rarity is computed **at build time, from raw document frequency**, and judged on the
+  **stem** — `surface` deliberately maps several stems onto one readable word, and `idf`
+  is a float nobody should be inverting on the query path.
+
+A word that names one story is corroboration all by itself, because there is nowhere else
+in the corpus it could have come from. A word that names half the Bible is not, however
+high it scores.
+
+This changes what is *suggested*, never what fires: `Semantic` is still capped at
+`Suggest` in `router.rs::decide` (live-safety rule #10), so every one of these reaches a
+human and none reaches a congregation on its own.
+
+Pinned by `a_common_single_shared_word_is_not_offered_as_a_paraphrase` and
+`a_rare_single_shared_word_is_evidence_enough`, both **mutation-verified**: removing the
+rarity exception fails the second, and treating every term as rare fails the first.

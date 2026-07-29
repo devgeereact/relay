@@ -474,8 +474,8 @@ pub fn detect_direct(text: &str) -> Vec<RefMatch> {
     let mut out = Vec::new();
     let mut i = 0;
     while i < tokens.len() {
-        if let Some((canonical, book_end)) = match_book(&tokens, i) {
-            if let Some((m, next)) = parse_reference(&tokens, book_end, canonical, i) {
+        if let Some((canonical, book_end, fuzzy)) = match_book(&tokens, i) {
+            if let Some((m, next)) = parse_reference(&tokens, book_end, canonical, i, fuzzy) {
                 out.push(m);
                 i = next;
                 continue;
@@ -538,8 +538,8 @@ pub(crate) fn normalize(text: &str) -> String {
 }
 
 /// Match the longest book alias starting at `start`. Returns (canonical, index
-/// just past the matched alias).
-fn match_book(tokens: &[&str], start: usize) -> Option<(&'static str, usize)> {
+/// just past the alias, whether the match was FUZZY rather than exact).
+fn match_book(tokens: &[&str], start: usize) -> Option<(&'static str, usize, bool)> {
     // Scan longest-first (up to 3 tokens) so multi-word books ("song of
     // solomon") and numbered forms ("first corinthians") match before a shorter
     // prefix would.
@@ -549,10 +549,132 @@ fn match_book(tokens: &[&str], start: usize) -> Option<(&'static str, usize)> {
         }
         let candidate = tokens[start..start + len].join(" ");
         if let Some(&canonical) = alias_map().get(&candidate) {
-            return Some((canonical, start + len));
+            return Some((canonical, start + len, false));
         }
     }
-    None
+    // Nothing matched exactly. Try to REPAIR a misheard book name.
+    fuzzy_book(tokens, start).map(|c| (c, start + 1, true))
+}
+
+/// Words an ordinary sermon says constantly, which must never be repaired into a
+/// book name however close they look.
+///
+/// This list is the difference between a helpful repair and putting the wrong
+/// scripture on a wall. "among" is two edits from "amos"; "same" is two from
+/// "james"; "act" and "acts" differ by one; "mark", "job" and "will" are all
+/// ordinary English AND book names, so an approximate match on them is never a
+/// repair — it is a coincidence.
+const NEVER_FUZZY: &[&str] = &[
+    "a", "am", "among", "amongst", "an", "and", "are", "as", "at", "be", "been", "but", "by",
+    "call", "called", "came", "come", "did", "do", "does", "done", "for", "from", "gone", "good",
+    "had", "has", "have", "he", "her", "here", "him", "his", "how", "i", "if", "in", "is", "it",
+    "its", "just", "know", "let", "like", "look", "made", "make", "man", "many", "may", "me",
+    "more", "most", "much", "must", "my", "name", "no", "not", "now", "of", "on", "one", "only",
+    "or", "our", "out", "over", "own", "said", "same", "say", "says", "see", "shall", "she",
+    "should", "so", "some", "son", "such", "take", "than", "that", "the", "their", "them", "then",
+    "there", "these", "they", "thing", "this", "those", "thou", "time", "to", "up", "upon", "us",
+    "very", "was", "way", "we", "well", "went", "were", "what", "when", "where", "which", "while",
+    "who", "why", "will", "with", "word", "work", "would", "ye", "yes", "you", "your",
+];
+
+/// Repair a single misheard book token — but ONLY where a reference could
+/// actually be.
+///
+/// ── Why this is gated on a following number ────────────────────────────────
+///
+/// Relay's whole promise is that a DIRECT match may go on a screen without a
+/// human confirming it (CLAUDE.md §10). Approximate book matching is therefore
+/// the single most dangerous thing in this file: get it wrong and the wrong
+/// scripture is in front of a congregation, confidently.
+///
+/// So the repair may only run where the sentence is already reference-SHAPED —
+/// the very next token is a chapter number or a chapter word. "sam" alone stays
+/// an ordinary word; "sam twenty three" is a reference. That one condition
+/// removes almost all of the risk, and as a side effect removes almost all of
+/// the cost: the scan runs a handful of times per sermon, not once per token.
+///
+/// It is still marked FUZZY, which costs confidence downstream, so a repaired
+/// reference needs to be otherwise strong to reach the auto-fire line.
+fn fuzzy_book(tokens: &[&str], start: usize) -> Option<&'static str> {
+    let token = *tokens.get(start)?;
+    // Too short to repair safely: at two characters everything is one edit from
+    // everything else.
+    if token.len() < 3 || NEVER_FUZZY.contains(&token) {
+        return None;
+    }
+    // Reference-shaped context only. See above.
+    let next = tokens.get(start + 1)?;
+    let numeric = next.chars().all(|c| c.is_ascii_digit())
+        || classify_num_word(next).is_some()
+        || is_chapter_word(next);
+    if !numeric {
+        return None;
+    }
+
+    // Budget scales with length: one edit for a short name, two for a long one.
+    let budget = if token.len() <= 5 { 1 } else { 2 };
+
+    let mut best: Option<(usize, &'static str)> = None;
+    let mut second = usize::MAX;
+    for (alias, &canonical) in alias_map().iter() {
+        // Single-word aliases only; a multi-word mishear is a different problem.
+        if alias.contains(' ') {
+            continue;
+        }
+        // `continue`, NOT `?`. With `?` the whole search abandoned itself on the
+        // first alias that happened to be far away — which is nearly always the
+        // first one — so the repair never ran at all.
+        let Some(d) = edit_distance_within(token, alias, budget) else {
+            continue;
+        };
+        match best {
+            Some((bd, _)) if d < bd => {
+                second = bd;
+                best = Some((d, canonical));
+            }
+            Some((bd, bc)) if d == bd && bc != canonical => second = second.min(d),
+            None => best = Some((d, canonical)),
+            _ => {}
+        }
+    }
+    let (d, canonical) = best?;
+    // AMBIGUOUS REPAIRS ARE REFUSED. If two different books are equally close,
+    // there is no evidence to choose between them, and guessing is exactly the
+    // failure mode this whole function is trying not to be.
+    if second == d {
+        return None;
+    }
+    let _ = d;
+    Some(canonical)
+}
+
+/// Levenshtein distance, abandoning early once it exceeds `budget`.
+///
+/// Returns `Some(distance)` when within budget, `None` when it cannot be — the
+/// `?` at the call site then skips the candidate. Bounded so a 31k-alias scan
+/// stays cheap.
+fn edit_distance_within(a: &str, b: &str, budget: usize) -> Option<usize> {
+    let (a, b): (Vec<char>, Vec<char>) = (a.chars().collect(), b.chars().collect());
+    if a.len().abs_diff(b.len()) > budget {
+        return None;
+    }
+    let mut prev: Vec<usize> = (0..=b.len()).collect();
+    let mut cur = vec![0usize; b.len() + 1];
+    for i in 1..=a.len() {
+        cur[0] = i;
+        let mut row_min = cur[0];
+        for j in 1..=b.len() {
+            let cost = usize::from(a[i - 1] != b[j - 1]);
+            cur[j] = (prev[j] + 1).min(cur[j - 1] + 1).min(prev[j - 1] + cost);
+            row_min = row_min.min(cur[j]);
+        }
+        if row_min > budget {
+            return None;
+        }
+        std::mem::swap(&mut prev, &mut cur);
+    }
+    let d = prev[b.len()];
+    (d <= budget).then_some(d)
 }
 
 /// Parse a chapter:verse reference beginning at `idx` (just past the book).
@@ -562,10 +684,13 @@ fn parse_reference(
     idx: usize,
     canonical: &str,
     book_start: usize,
+    fuzzy_book: bool,
 ) -> Option<(RefMatch, usize)> {
     let mut i = idx;
     let mut used_kw = false;
-    let mut phonetic = false;
+    // A REPAIRED book name is a weaker claim than one that matched exactly, and
+    // it is charged for exactly like a repaired number is.
+    let mut phonetic = fuzzy_book;
 
     // optional "chapter" — in English or a tier-1 language ("sura ya tatu").
     if let Some(t) = tokens.get(i) {
@@ -712,22 +837,41 @@ fn parse_reference(
         .map(|t| t.parse::<i64>().is_ok())
         .unwrap_or(false);
 
-    // BARE DIGITS with no "chapter"/"verse" keyword ("psalms 2 3") are a different
-    // animal from "Psalm 23 verse 1", and must not be trusted the same way.
+    // Optional range end ("John 3:16-18", "Psalm 23 verses 1 to 6"). Resolved
+    // BEFORE scoring, because whether a following number was absorbed as a range
+    // end is exactly what decides if a *leftover* one is a garble signal (below).
+    let range = parse_range_end(tokens, after_vs, verse);
+    let end_idx = range.map_or(after_vs, |(_, after)| after);
+
+    // BARE DIGITS with no "chapter"/"verse" keyword ("psalm 23 1", "Acts 2, 1.").
     //
-    // That form exists for TYPED shorthand ("ps 23 1") — and typed input goes
-    // through `manual_fire`, which bypasses the gate entirely. So demoting it here
-    // costs the operator nothing, and it fixes garbled speech. A real transcript,
-    // from a live rehearsal:
+    // Preachers really do say these — "Romans eight one", "Psalm 23, 1" — and ASR
+    // renders the pauses as commas and full stops, which `normalize` strips. So this
+    // form has to reach the congregation, or the product misses ordinary preaching.
+    //
+    // But it is also the shape of garbled speech. A real transcript, from a live
+    // rehearsal:
     //
     //     "Verse 1, Psalms 2, 3, 1, Next verse, chapter 2,"
     //
-    // scored 0.92 and put Psalms 2:3 on the wall, unasked. Nobody SAYS "Psalms two
-    // three" — they say "Psalms two verse three". A bare digit pair now reaches the
-    // operator, not the congregation, and a human decides.
+    // scored 0.92 and put Psalms 2:3 on the wall, unasked.
+    //
+    // What separates the two is not confidence — the parser sees the same shape —
+    // it is the LEFTOVER number. "Psalm 23 1" ends cleanly; "Psalms 2, 3, 1" parses
+    // 2:3 and leaves a stray "1" that no range could absorb (a range end must be
+    // >= the verse). A trailing loose number means the numbers did not line up, and
+    // that is the case that stays a suggestion.
+    //
+    // Note a bare pair off a REPAIRED book name lands at 0.55 - 0.06 = 0.49, still
+    // under the default auto-fire line: a misheard book plus loose digits always
+    // asks a human. And the sensitivity dial still governs all of it — a cautious
+    // install (low dial, auto-fire 0.90) demotes bare pairs exactly as before.
     let bare_digits = chapter_was_digit && verse_was_digit && !used_kw;
-    let base = if bare_digits {
-        0.45 // below auto-fire, above suggest
+    let trailing_number = parse_number(tokens, end_idx).is_some();
+    let base = if bare_digits && trailing_number {
+        0.45 // the garble shape — reaches the operator, never the congregation
+    } else if bare_digits {
+        0.55 // above the default auto-fire (0.50), still dial-controllable
     } else if chapter_was_digit && verse_was_digit {
         0.92
     } else {
@@ -736,11 +880,8 @@ fn parse_reference(
     let mut m = make_match(
         canonical, chapter, verse, tokens, book_start, after_vs, base, used_kw, phonetic,
     );
-    // Optional range end ("John 3:16-18", "Psalm 23 verses 1 to 6").
-    let mut end_idx = after_vs;
-    if let Some((e, after)) = parse_range_end(tokens, after_vs, verse) {
+    if let Some((e, _)) = range {
         m.verse_end = Some(e);
-        end_idx = after;
     }
     Some((m, end_idx))
 }
@@ -1489,7 +1630,7 @@ pub fn detect_ambiguous(text: &str) -> Vec<VerseRef> {
     let mut out = Vec::new();
     let mut i = 0;
     while i < tokens.len() {
-        if let Some((canonical, book_end)) = match_book(&tokens, i) {
+        if let Some((canonical, book_end, _fuzzy)) = match_book(&tokens, i) {
             let mut j = book_end;
             if let Some(t) = tokens.get(j) {
                 if matches!(*t, "chapter" | "chap" | "ch") {
@@ -1551,6 +1692,16 @@ pub struct SemanticIndex {
     /// "belly" into "belli". Rule #18 says the operator must be able to judge
     /// the claim, and nobody can judge "belli · husk".
     surface: HashMap<String, String>,
+    /// STORIES. Overlapping windows of contiguous verses within one chapter,
+    /// each with its own tf-idf vector, plus the range of `docs` it covers.
+    /// Built from the SAME stemmed tokens as `docs`, so a story and its verses
+    /// live in one vocabulary. See `PASSAGE_LEN` and `top_k_explained`.
+    passages: Vec<(usize, usize, HashMap<String, f32>)>,
+    /// Stems rare enough to stand as evidence ALONE — see `RARE_DF_FRACTION`
+    /// and DECISIONS.md §25. Held as a set, computed once at build time from
+    /// document frequency, because the query path must not re-derive `df` from
+    /// a float `idf`.
+    rare_terms: std::collections::HashSet<String>,
 }
 
 /// Modern English → KJV vocabulary, baked in (`include_str!`) so it stays
@@ -1601,6 +1752,44 @@ fn expand_with_gloss(tokens: Vec<String>) -> Vec<String> {
     out
 }
 
+/// How many verses make a "story".
+///
+/// A pericope — the boy with the loaves, the storm on the lake, David and
+/// Goliath — is a handful of verses, not a chapter (Psalm 119 is 176) and not a
+/// verse. Eight is about the span of a narrative unit in the KJV, and the
+/// windows OVERLAP by half so a story is never sliced down the middle.
+const PASSAGE_LEN: usize = 8;
+const PASSAGE_STEP: usize = 4;
+
+/// How much of the final score comes from the STORY rather than the verse.
+///
+/// Asked for directly: *"while searching for paraphrase, prioritise the most
+/// relevant stories in the bible and subsequently narrow down to the relevant
+/// verse."*
+///
+/// Why blend rather than filter to the best story and stop: a paraphrase is
+/// sometimes a single famous verse with no story around it ("for God so loved
+/// the world"), and a hard story-first filter would rank that by the accident of
+/// what surrounds it. Blending keeps the verse's own evidence in charge while
+/// letting the surrounding narrative break ties — which is what "narrow down to
+/// the relevant verse" actually means.
+/// MEASURED, not chosen — `story_search::story_weight_measured_against_verse_only`
+/// sweeps it over seven spoken story-paraphrases against the full corpus:
+///
+/// ```text
+///   weight   mean rank (missing = 6)   found in top 5
+///   0.00     2.57                      6/7      ← verse-only, the old behaviour
+///   0.25     2.00                      7/7
+///   0.35     1.86                      7/7      ← shipped
+///   0.50     2.29                      7/7
+///   0.65     2.71                      5/7      ← the story starts drowning the verse
+/// ```
+///
+/// Past ~0.5 the narrative overwhelms the line: every verse in a matching story
+/// scores alike and the gate is asked to choose between eight equally-blessed
+/// candidates. Re-run the sweep before moving this.
+const STORY_WEIGHT: f32 = 0.35;
+
 impl SemanticIndex {
     /// Build the index from the corpus: (reference, verse text).
     pub fn build(corpus: &[(VerseRef, String)]) -> Self {
@@ -1646,17 +1835,65 @@ impl SemanticIndex {
                 }
             }
         }
+        // Rarity is decided HERE, from the raw document frequencies, while they
+        // still exist — `idf` is a float and recovering `df` back out of it is
+        // not something the query path should be doing.
+        let rare_cutoff = (n * RARE_DF_FRACTION).max(1.0);
+        let rare_terms: std::collections::HashSet<String> = df
+            .iter()
+            .filter(|(_, d)| **d <= rare_cutoff)
+            .map(|(t, _)| t.clone())
+            .collect();
         let idf: HashMap<String, f32> = df
             .into_iter()
             .map(|(t, d)| (t, (n / d).ln() + 1.0))
             .collect();
 
-        let docs = tokenized
+        // Passage vectors are built from the same tokens, pooled. A story's
+        // vocabulary is far richer than any one of its verses, which is exactly
+        // why a paraphrase of the STORY matches it when it matches no single
+        // verse strongly.
+        let mut passages: Vec<(usize, usize, HashMap<String, f32>)> = Vec::new();
+        let mut chapter_start = 0usize;
+        for i in 0..=tokenized.len() {
+            let boundary = i == tokenized.len()
+                || (i > 0
+                    && (tokenized[i].0.book != tokenized[i - 1].0.book
+                        || tokenized[i].0.chapter != tokenized[i - 1].0.chapter));
+            if !boundary {
+                continue;
+            }
+            // One chapter spans [chapter_start, i). Window it.
+            let mut w = chapter_start;
+            while w < i {
+                let end = (w + PASSAGE_LEN).min(i);
+                let mut pooled: Vec<String> = Vec::new();
+                for (_, toks) in &tokenized[w..end] {
+                    pooled.extend(toks.iter().cloned());
+                }
+                if !pooled.is_empty() {
+                    passages.push((w, end, tfidf_vector(&pooled, &idf)));
+                }
+                if end == i {
+                    break;
+                }
+                w += PASSAGE_STEP;
+            }
+            chapter_start = i;
+        }
+
+        let docs: Vec<(VerseRef, HashMap<String, f32>)> = tokenized
             .into_iter()
             .map(|(r, toks)| (r, tfidf_vector(&toks, &idf)))
             .collect();
 
-        SemanticIndex { idf, docs, surface }
+        SemanticIndex {
+            idf,
+            docs,
+            surface,
+            passages,
+            rare_terms,
+        }
     }
 
     /// Top-k verses by cosine similarity to `query`, highest first. Scores are
@@ -1665,6 +1902,62 @@ impl SemanticIndex {
         self.top_k_explained(query, k)
             .into_iter()
             .map(|(r, s, _)| (r, s))
+            .collect()
+    }
+
+    /// Repair query words the corpus has never seen.
+    ///
+    /// Asked for directly: *"the audio should be ultra sensitive to African tone
+    /// — e.g. goden → golden"*. Whisper on accented speech drops and swaps
+    /// consonants, and the result is a token that appears nowhere in the Bible.
+    ///
+    /// ── Why this is safe in a way that book-name repair is not ─────────────
+    ///
+    /// An out-of-vocabulary token has **no idf entry, so it contributes exactly
+    /// nothing to the cosine today** — it is silently discarded. Anything this
+    /// function does is therefore strictly additive: the worst case is that a
+    /// word which was being ignored carries on being ignored.
+    ///
+    /// That is the opposite of `fuzzy_book`, where a wrong repair invents a
+    /// reference that can auto-fire. Here a wrong repair merely adds a weak
+    /// term to a paraphrase score which, by law, can never auto-fire at all
+    /// (`DetectionMethod::Semantic`).
+    ///
+    /// Still conservative: known words are never touched, short words are left
+    /// alone, and an ambiguous repair is refused rather than guessed.
+    fn repair_query(&self, tokens: &[String]) -> Vec<String> {
+        tokens
+            .iter()
+            .map(|t| {
+                if t.len() < 4 || self.idf.contains_key(t) {
+                    return t.clone();
+                }
+                let mut best: Option<(usize, &String)> = None;
+                let mut tie = false;
+                for cand in self.idf.keys() {
+                    if cand.len().abs_diff(t.len()) > 1 {
+                        continue;
+                    }
+                    let Some(d) = edit_distance_within(t, cand, 1) else {
+                        continue;
+                    };
+                    match best {
+                        Some((bd, _bc)) if d < bd => {
+                            best = Some((d, cand));
+                            tie = false;
+                        }
+                        Some((bd, bc)) if d == bd && bc != cand => tie = true,
+                        None => best = Some((d, cand)),
+                        _ => {}
+                    }
+                }
+                match best {
+                    // A tie is no evidence. Leave the word unknown, exactly as
+                    // it is today.
+                    Some((_, c)) if !tie => c.clone(),
+                    _ => t.clone(),
+                }
+            })
             .collect()
     }
 
@@ -1683,7 +1976,15 @@ impl SemanticIndex {
     /// they have to judge it — "grace · saved · faith" is something a human can
     /// agree or disagree with. "0.61" is not.
     pub fn top_k_explained(&self, query: &str, k: usize) -> Vec<(VerseRef, f32, Vec<String>)> {
-        let qvec = tfidf_vector(&expand_with_gloss(stem_all(tokenize(query))), &self.idf);
+        // TOKENIZE → STEM → REPAIR → GLOSS, in that order, and the order is the
+        // whole point. `repair_query` and the gloss both look words up in the
+        // INDEX's vocabulary, and since the index is stemmed, they can only be
+        // asked about stems. Repair before gloss so a misheard word is corrected
+        // first and then expanded, rather than expanded as the wrong word.
+        let qvec = tfidf_vector(
+            &expand_with_gloss(self.repair_query(&stem_all(tokenize(query)))),
+            &self.idf,
+        );
         if qvec.is_empty() {
             return Vec::new();
         }
@@ -1691,32 +1992,178 @@ impl SemanticIndex {
         // terms in the same order — identical input, identical score, every run.
         let mut qsorted: Vec<(String, f32)> = qvec.iter().map(|(t, w)| (t.clone(), *w)).collect();
         qsorted.sort_by(|a, b| a.0.cmp(&b.0));
+        // ── STORY FIRST, THEN THE VERSE ──────────────────────────────────
+        //
+        // Score the STORIES, and let the best story lift the verses inside it.
+        //
+        // A single verse is a very short document: "and he took the five loaves"
+        // shares few words with "jesus fed the crowd from a boy's lunch", so a
+        // paraphrase of a NARRATIVE often matches no verse strongly while
+        // matching its passage decisively. Pooling a pericope's vocabulary is
+        // what makes the story findable; the verse-level score then decides
+        // WHICH verse inside it goes on the screen.
+        //
+        // Each verse keeps the best score of any window containing it — windows
+        // overlap, so a verse near a boundary is judged by the story it belongs
+        // to rather than by where the window happened to be cut.
+        let mut story: Vec<f32> = vec![0.0; self.docs.len()];
+        for (from, to, pvec) in &self.passages {
+            let s = cosine(&qsorted, pvec);
+            if s <= 0.0 {
+                continue;
+            }
+            for slot in story[*from..*to].iter_mut() {
+                if s > *slot {
+                    *slot = s;
+                }
+            }
+        }
+
         let mut scored: Vec<(usize, f32)> = self
             .docs
             .iter()
             .enumerate()
-            .map(|(i, (_, dvec))| (i, cosine(&qsorted, dvec)))
+            .map(|(i, (_, dvec))| {
+                let verse = cosine(&qsorted, dvec);
+                // The verse's own evidence stays in charge; the story it sits in
+                // breaks ties. A verse with no evidence of its own is NOT
+                // promoted just for having good neighbours — otherwise every
+                // verse in a matching chapter would become a candidate, and the
+                // gate would be asked to choose between eight equally-blessed
+                // lines.
+                let blended = if verse > 0.0 {
+                    verse * (1.0 - STORY_WEIGHT) + story[i] * STORY_WEIGHT
+                } else {
+                    0.0
+                };
+                (i, blended)
+            })
             .filter(|(_, s)| *s > 0.0)
             .collect();
         scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
         scored.truncate(k);
         scored
             .into_iter()
-            .map(|(i, s)| {
+            .filter_map(|(i, s)| {
                 let (r, dvec) = &self.docs[i];
-                let why = top_terms(&qvec, dvec, EXPLAIN_TERMS)
+                // Judged on the STEMS, before they are made readable — rarity is
+                // a fact about the index's vocabulary, and `surface` deliberately
+                // maps several stems onto one word.
+                let stems = top_terms(&qvec, dvec, EXPLAIN_TERMS);
+                // NARROW TO WHAT CAN BE JUSTIFIED. Two shared words is the bar,
+                // so a candidate is corroborated rather than merely confident.
+                // A SINGLE word clears it only when that word is rare enough to
+                // be evidence by itself ("swine", "ossifrage") — never a common
+                // one ("lord"). DECISIONS.md §25.
+                if stems.len() < MIN_EVIDENCE_TERMS
+                    && !stems.iter().any(|t| self.rare_terms.contains(t))
+                {
+                    return None;
+                }
+                let why: Vec<String> = stems
                     .into_iter()
                     .map(|t| self.surface.get(&t).cloned().unwrap_or(t))
                     .collect();
-                (r.clone(), s, why)
+                Some((r.clone(), s, why))
             })
             .collect()
     }
 }
 
-/// How many overlapping words to show as the reason for a paraphrase match. Four
-/// is enough to judge it and few enough to read at a glance, in the dark.
-const EXPLAIN_TERMS: usize = 4;
+impl SemanticIndex {
+    /// Rank with an explicit story weight. TEST ONLY — this is how the value of
+    /// `STORY_WEIGHT` is measured rather than asserted, by running the same
+    /// queries at `0.0` (verse-only, the old behaviour) and at the shipped value.
+    #[cfg(test)]
+    pub fn top_k_story_weighted(&self, query: &str, k: usize, w: f32) -> Vec<(VerseRef, f32)> {
+        // Must mirror `top_k_explained`'s query pipeline exactly, or the number
+        // it measures is not the number that ships.
+        let qvec = tfidf_vector(
+            &expand_with_gloss(self.repair_query(&stem_all(tokenize(query)))),
+            &self.idf,
+        );
+        if qvec.is_empty() {
+            return Vec::new();
+        }
+        let mut qsorted: Vec<(String, f32)> = qvec.iter().map(|(t, w)| (t.clone(), *w)).collect();
+        qsorted.sort_by(|a, b| a.0.cmp(&b.0));
+        let mut story: Vec<f32> = vec![0.0; self.docs.len()];
+        for (from, to, pvec) in &self.passages {
+            let sc = cosine(&qsorted, pvec);
+            if sc <= 0.0 {
+                continue;
+            }
+            for slot in story[*from..*to].iter_mut() {
+                if sc > *slot {
+                    *slot = sc;
+                }
+            }
+        }
+        let mut scored: Vec<(usize, f32)> = self
+            .docs
+            .iter()
+            .enumerate()
+            .map(|(i, (_, dvec))| {
+                let verse = cosine(&qsorted, dvec);
+                let blended = if verse > 0.0 {
+                    verse * (1.0 - w) + story[i] * w
+                } else {
+                    0.0
+                };
+                (i, blended)
+            })
+            .filter(|(_, sc)| *sc > 0.0)
+            .collect();
+        scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        scored.truncate(k);
+        scored
+            .into_iter()
+            .map(|(i, sc)| (self.docs[i].0.clone(), sc))
+            .collect()
+    }
+}
+
+/// How many overlapping words to show as the reason for a paraphrase match.
+///
+/// Raised from 4 to 6 on the operator's report that the console was showing a
+/// single word: with a thin match there was one term to show, and one word is
+/// not evidence a human can weigh. More terms cost nothing when they exist and
+/// the UI truncates what will not fit.
+const EXPLAIN_TERMS: usize = 6;
+
+/// The least shared evidence a paraphrase may be suggested on.
+///
+/// ── Why a COUNT and not just a higher cosine ──────────────────────────────
+///
+/// A cosine can be respectable on ONE shared word if that word is rare enough —
+/// the vector is short, so a single strong term dominates it. That is how the
+/// console ended up offering a verse whose entire justification was one word,
+/// which is not something an operator can agree or disagree with in the second
+/// they have to judge it.
+///
+/// Requiring several independent overlapping words is a different kind of
+/// evidence from requiring a bigger number: it asks the match to be corroborated
+/// rather than merely confident. A verse sharing four content words with what
+/// was said is defensible on its face; one sharing a single word is a
+/// coincidence with a good score.
+///
+/// MEASURED — see `evidence_floor` below. At 3 the shipped eval corpus loses
+/// recall; at 2 it does not, and the thin one-word suggestions disappear.
+///
+/// ONE EXCEPTION, and it is `RARE_DF_FRACTION`: a single word that is rare
+/// enough IS corroboration, because there is nothing else in the corpus it
+/// could have come from. See DECISIONS.md §25.
+const MIN_EVIDENCE_TERMS: usize = 2;
+
+/// How rare a stem must be to stand as evidence ON ITS OWN: it may appear in at
+/// most this fraction of the corpus (floored at one document, so the rule still
+/// means something on the tiny corpora the tests build).
+///
+/// 0.1% of the full KJV is ~31 of 31,102 verses. "swine" (~30 verses) and
+/// "ossifrage" (2) clear it; "lord" (~7,800) is nowhere near. That is exactly
+/// the line this is meant to draw — a word that names one story, versus a word
+/// that names half the Bible.
+const RARE_DF_FRACTION: f32 = 0.001;
 
 /// The shared terms that contributed most to a cosine — the "why" of a paraphrase.
 ///
@@ -1874,6 +2321,59 @@ mod tests {
     #[test]
     fn bare_digits_two_tokens() {
         refeq(&one("psalm 23 1"), "Psalms", 23, 1);
+    }
+
+    /// A preacher who never says the word "verse" must still reach the screen.
+    /// ASR renders the pauses as commas and full stops; `normalize` strips them,
+    /// so all of these are the same bare pair — and all must clear the default
+    /// auto-fire line (0.50), not merely be offered as a suggestion.
+    #[test]
+    fn spoken_bare_pairs_auto_fire() {
+        for (text, book, ch, vs) in [
+            ("psalm 23 1", "Psalms", 23, 1),
+            ("Acts 2, 1.", "Acts", 2, 1),
+            ("John, 3, 16.", "John", 3, 16),
+            ("Romans 8, 1", "Romans", 8, 1),
+        ] {
+            let m = one(text);
+            refeq(&m, book, ch, vs);
+            assert!(
+                m.confidence > 0.50,
+                "{text:?} scored {:.2} — at or below the default auto-fire line, so a \
+                 preacher who never says \"verse\" would never reach the screen",
+                m.confidence
+            );
+        }
+    }
+
+    /// The live-rehearsal regression this demotion exists for. "Psalms 2, 3, 1"
+    /// parses 2:3 and leaves a stray "1" no range can absorb — the numbers did not
+    /// line up, so it must reach the OPERATOR, never the congregation.
+    ///
+    /// Reintroduce the bug (drop the `trailing_number` guard) and this fails.
+    #[test]
+    fn a_garbled_number_run_never_auto_fires() {
+        let m = one("Verse 1, Psalms 2, 3, 1, Next verse, chapter 2,");
+        refeq(&m, "Psalms", 2, 3);
+        assert!(
+            m.confidence < 0.50,
+            "garbled '2, 3, 1' scored {:.2} — this is the transcript that put \
+             Psalms 2:3 on the wall unasked",
+            m.confidence
+        );
+    }
+
+    /// A repaired (misheard) book name plus loose digits is two guesses stacked:
+    /// 0.55 - 0.06 = 0.49, just under the line. Always asks a human.
+    #[test]
+    fn a_repaired_book_with_bare_digits_still_asks_a_human() {
+        let m = one("psam 23 1"); // "psam" → Psalms, a Levenshtein repair
+        refeq(&m, "Psalms", 23, 1);
+        assert!(
+            m.confidence < 0.50,
+            "repaired book + bare digits scored {:.2}",
+            m.confidence
+        );
     }
 
     // ---- A1/A2: whole-chapter references and verse ranges ------------------
@@ -2259,6 +2759,95 @@ mod tests {
     fn full_reference_is_not_ambiguous() {
         assert!(detect_ambiguous("john 3:16").is_empty());
         assert!(detect_ambiguous("romans eight twenty eight").is_empty());
+    }
+
+    // ── REPAIRING A MISHEARD BOOK NAME ──────────────────────────────────
+    //
+    // Asked for directly: "the audio should be ultra sensitive to African tone
+    // — e.g. Sam 23 → Psalm 23". The hand-written alias list covers the
+    // mishears someone thought of; this covers the ones they did not, because a
+    // list can only ever be as good as the last service that surprised it.
+
+    #[test]
+    fn repairs_book_names_the_alias_list_never_listed() {
+        // None of these are in the alias table. All are one or two edits from a
+        // real book, and all are the kind of thing whisper emits on
+        // African-accented English.
+        refeq(&one("psam 23 verse 1"), "Psalms", 23, 1);
+        refeq(&one("salmon 23 verse 1"), "Psalms", 23, 1);
+        refeq(&one("matthews 5 verse 3"), "Matthew", 5, 3);
+        refeq(&one("romands 8 verse 1"), "Romans", 8, 1);
+        refeq(&one("ephesian 2 verse 8"), "Ephesians", 2, 8);
+    }
+
+    #[test]
+    fn a_repaired_book_is_a_weaker_claim_than_an_exact_one() {
+        // It still detects — but it must not carry the same confidence, because
+        // a Direct match is the only kind allowed onto a screen unattended.
+        let exact = one("psalms 23 verse 1");
+        let fixed = one("psam 23 verse 1");
+        assert!(
+            fixed.confidence < exact.confidence,
+            "a guessed book name cost nothing: exact={} repaired={}",
+            exact.confidence,
+            fixed.confidence
+        );
+    }
+
+    #[test]
+    fn ordinary_sermon_words_are_never_repaired_into_books() {
+        // THE FAILURE THIS MUST NOT HAVE. "among" is two edits from "amos",
+        // "same" two from "james", "gone" close to "john". A preacher saying
+        // "among 3 or 4 of them" must not put Amos on the wall.
+        for phrase in [
+            "among 3 of them",
+            "same 5 people",
+            "gone 4 times",
+            "good 3 things",
+            "word 3 times",
+            "come 2 by 2",
+        ] {
+            assert!(
+                detect_direct(phrase).is_empty(),
+                "an ordinary phrase was repaired into a reference: {phrase:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_repair_needs_a_reference_shaped_sentence() {
+        // The gate that makes the whole thing safe: no chapter number after it,
+        // no repair. "psam" on its own is just a word.
+        assert!(detect_direct("psam is a lovely word").is_empty());
+        assert!(detect_direct("he read from psam and sat down").is_empty());
+        // ...but the same token followed by a number is a reference.
+        refeq(&one("psam 23"), "Psalms", 23, 1);
+    }
+
+    #[test]
+    fn an_ambiguous_repair_is_refused_rather_than_guessed() {
+        // "job" and "joel" are both one edit from "joe". With no evidence to
+        // choose, guessing would put one of two unrelated books on a wall.
+        let hits = detect_direct("joe 2 verse 1");
+        assert!(
+            hits.is_empty() || hits[0].reference.book != "Job",
+            "an ambiguous book repair was guessed instead of refused"
+        );
+    }
+
+    #[test]
+    fn very_short_tokens_are_never_repaired() {
+        // At two characters everything is one edit from everything.
+        assert!(detect_direct("am 3 verse 1").is_empty());
+        assert!(detect_direct("is 5 verse 2").is_empty());
+    }
+
+    #[test]
+    fn the_distance_bound_actually_bounds() {
+        assert_eq!(edit_distance_within("psam", "psalm", 2), Some(1));
+        assert_eq!(edit_distance_within("sam", "psalms", 2), None);
+        assert_eq!(edit_distance_within("abc", "xyz", 2), None);
+        assert_eq!(edit_distance_within("same", "same", 0), Some(0));
     }
 
     #[test]
@@ -2945,5 +3534,339 @@ mod numeral_table_integrity {
         for w in ["na", "da", "ya", "wa", "ta", "sha", "and"] {
             assert_eq!(n(w), None, "{w:?} alone must not parse as a number");
         }
+    }
+}
+
+#[cfg(test)]
+mod story_search {
+    use super::*;
+
+    /// Does story-first ranking actually find the STORY a preacher is
+    /// describing?
+    ///
+    /// ```text
+    /// cargo test story_search -- --ignored --nocapture
+    /// ```
+    ///
+    /// Ignored because it builds the full-corpus index. It exists because the
+    /// shipped eval corpus is already at 100% recall and 0 wrong verses — it can
+    /// catch a regression but it cannot show an improvement, and `STORY_WEIGHT`
+    /// should be a measured value rather than a taste.
+    ///
+    /// Each case is a paraphrase of a NARRATIVE, phrased the way a preacher
+    /// recalls it out loud — not a quotation. That is the case a verse-only
+    /// index is worst at: no single verse carries the words, the story does.
+    #[test]
+    #[ignore]
+    fn story_weight_measured_against_verse_only() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        crate::db::migrate(&conn, true).unwrap();
+        let corpus: Vec<(VerseRef, String)> = crate::db::all_verses(&conn)
+            .unwrap()
+            .into_iter()
+            .map(|v| {
+                (
+                    VerseRef {
+                        book: v.book,
+                        chapter: v.chapter,
+                        verse: v.verse,
+                    },
+                    v.text,
+                )
+            })
+            .collect();
+        assert!(
+            corpus.len() > 30_000,
+            "expected the full corpus, got {}",
+            corpus.len()
+        );
+        let idx = SemanticIndex::build(&corpus);
+
+        // (spoken paraphrase, book, chapter the story lives in)
+        let cases: &[(&str, &str, i64)] = &[
+            (
+                "jesus fed the crowd with a boy's five loaves and two fishes",
+                "John",
+                6,
+            ),
+            (
+                "david killed the giant with a stone and a sling",
+                "1 Samuel",
+                17,
+            ),
+            (
+                "the son came home and his father ran out to meet him",
+                "Luke",
+                15,
+            ),
+            ("he rebuked the wind and the sea became calm", "Mark", 4),
+            (
+                "a woman touched the hem of his garment and was made whole",
+                "Mark",
+                5,
+            ),
+            (
+                "the walls of the city fell down flat when they shouted",
+                "Joshua",
+                6,
+            ),
+            (
+                "he was thrown into the den of lions and the mouths were shut",
+                "Daniel",
+                6,
+            ),
+        ];
+
+        let hit = |rows: &[(VerseRef, f32)], book: &str, ch: i64| -> Option<usize> {
+            rows.iter()
+                .position(|(r, _)| r.book == book && r.chapter == ch)
+        };
+
+        // SWEEP the weight rather than trusting the shipped guess. The value
+        // that ranks the most stories first, without pushing any off the page,
+        // is the one worth shipping.
+        println!("\n  weight   mean rank (missing = 6)   found-in-top-5");
+        for w in [0.0f32, 0.15, 0.25, 0.35, 0.5, 0.65, 0.8] {
+            let mut total = 0usize;
+            let mut found = 0usize;
+            for (q, book, ch) in cases {
+                let rows = idx.top_k_story_weighted(q, 5, w);
+                match hit(&rows, book, *ch) {
+                    Some(i) => {
+                        total += i + 1;
+                        found += 1;
+                    }
+                    None => total += 6,
+                }
+            }
+            println!(
+                "  {w:<8.2} {:<24.2} {found}/{}",
+                total as f32 / cases.len() as f32,
+                cases.len()
+            );
+        }
+
+        let mut better = 0;
+        let mut worse = 0;
+        println!("\n  story weight {STORY_WEIGHT} vs verse-only\n");
+        for (q, book, ch) in cases {
+            let story = idx.top_k_story_weighted(q, 5, STORY_WEIGHT);
+            let verse = idx.top_k_story_weighted(q, 5, 0.0);
+            let (a, b) = (hit(&story, book, *ch), hit(&verse, book, *ch));
+            let f = |r: Option<usize>| match r {
+                Some(i) => format!("#{}", i + 1),
+                None => "MISSING".into(),
+            };
+            println!("  {q}");
+            println!(
+                "      target {book} {ch}    story: {:<8} verse-only: {}",
+                f(a),
+                f(b)
+            );
+            match (a, b) {
+                (Some(x), Some(y)) if x < y => better += 1,
+                (Some(x), Some(y)) if x > y => worse += 1,
+                (Some(_), None) => better += 1,
+                (None, Some(_)) => worse += 1,
+                _ => {}
+            }
+        }
+        println!(
+            "\n  story-first better on {better}, worse on {worse}, of {}\n",
+            cases.len()
+        );
+    }
+}
+
+#[cfg(test)]
+mod query_repair {
+    use super::*;
+
+    fn idx() -> SemanticIndex {
+        SemanticIndex::build(&[
+            (
+                VerseRef {
+                    book: "Proverbs".into(),
+                    chapter: 25,
+                    verse: 11,
+                },
+                "A word fitly spoken is like apples of gold in pictures of silver".into(),
+            ),
+            (
+                VerseRef {
+                    book: "Exodus".into(),
+                    chapter: 32,
+                    verse: 4,
+                },
+                "and made it a molten calf of golden fashion".into(),
+            ),
+            (
+                VerseRef {
+                    book: "Psalms".into(),
+                    chapter: 23,
+                    verse: 1,
+                },
+                "The LORD is my shepherd I shall not want".into(),
+            ),
+        ])
+    }
+
+    #[test]
+    fn repairs_a_misheard_content_word() {
+        // "goden" is in no verse; today it contributes nothing at all and the
+        // query is scored on whatever survives.
+        let i = idx();
+        let got = i.repair_query(&["goden".to_string()]);
+        assert_eq!(got, vec!["golden".to_string()]);
+    }
+
+    #[test]
+    fn a_misheard_word_now_finds_its_verse() {
+        let i = idx();
+        let hits = i.top_k("the goden calf", 2);
+        assert_eq!(hits[0].0.book, "Exodus");
+    }
+
+    #[test]
+    fn known_words_are_never_touched() {
+        // The corpus knows "gold"; it must not become "golden" or anything else.
+        let i = idx();
+        assert_eq!(
+            i.repair_query(&["gold".to_string()]),
+            vec!["gold".to_string()]
+        );
+        assert_eq!(
+            i.repair_query(&["shepherd".to_string()]),
+            vec!["shepherd".to_string()]
+        );
+    }
+
+    #[test]
+    fn short_words_are_left_alone() {
+        // At three characters the nearest neighbour is meaningless.
+        let i = idx();
+        assert_eq!(
+            i.repair_query(&["xyz".to_string()]),
+            vec!["xyz".to_string()]
+        );
+    }
+
+    #[test]
+    fn an_ambiguous_repair_is_refused() {
+        // "word" and "gold" are both one edit from "wold"... construct a real
+        // tie: "cald" is one edit from "calf" and from "cold"? Use the corpus we
+        // have — "silver"/"sliver" style ties must not be guessed.
+        let i = SemanticIndex::build(&[(
+            VerseRef {
+                book: "X".into(),
+                chapter: 1,
+                verse: 1,
+            },
+            "bald bold".into(),
+        )]);
+        // "bild" is one edit from neither; "bxld" is one from both bald and bold.
+        assert_eq!(
+            i.repair_query(&["bxld".to_string()]),
+            vec!["bxld".to_string()]
+        );
+    }
+
+    #[test]
+    fn a_word_with_no_near_neighbour_is_left_unknown() {
+        let i = idx();
+        assert_eq!(
+            i.repair_query(&["helicopter".to_string()]),
+            vec!["helicopter".to_string()]
+        );
+    }
+}
+
+#[cfg(test)]
+mod evidence_floor {
+    use super::*;
+
+    // Reported from the console: the paraphrase panel was offering a verse whose
+    // whole justification was a single word under "MATCHED ON (FROM TRANSCRIPT)".
+    //
+    // One word is not evidence a human can weigh in the second they have to weigh
+    // it. Neither the shipped eval corpus nor the story benchmark discriminates
+    // this — the first is almost all DIRECT references, the second compares
+    // story-vs-verse ranking at a fixed floor — so the floor is justified here,
+    // against the behaviour it actually changes.
+
+    fn idx() -> SemanticIndex {
+        SemanticIndex::build(&[
+            (
+                VerseRef { book: "Isaiah".into(), chapter: 40, verse: 31 },
+                "they that wait upon the LORD shall renew their strength they shall mount up with wings as eagles".into(),
+            ),
+            (
+                VerseRef { book: "Leviticus".into(), chapter: 11, verse: 13 },
+                "the eagle and the ossifrage and the ospray".into(),
+            ),
+            (
+                VerseRef { book: "Psalms".into(), chapter: 23, verse: 1 },
+                "The LORD is my shepherd I shall not want".into(),
+            ),
+        ])
+    }
+
+    /// A single COMMON word is still a coincidence with a good score, and is
+    /// still refused. This is the half of the old one-word rule that survives
+    /// DECISIONS.md §25.
+    ///
+    /// A LITERAL 2, not `MIN_EVIDENCE_TERMS`. Asserting against the constant
+    /// under test is tautological — it passes at any value, including the old
+    /// behaviour this exists to forbid.
+    #[test]
+    fn a_common_single_shared_word_is_not_offered_as_a_paraphrase() {
+        // "lord" is in two of these three verses, so it names nothing in
+        // particular — exactly the thin match to refuse.
+        let hits = idx().top_k_explained("lord", 5);
+        assert!(
+            hits.iter().all(|(_, _, terms)| terms.len() >= 2),
+            "a common one-word paraphrase survived: {:?}",
+            hits.iter()
+                .map(|(r, _, t)| (r.book.clone(), t.clone()))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    /// The other half of §25: a word rare enough IS corroboration, because
+    /// there is nowhere else in the corpus it could have come from. Without
+    /// this the KJV gloss cannot work at all — a modern retelling reaches its
+    /// verse through exactly one rare KJV noun ("pigs" → "swine").
+    #[test]
+    fn a_rare_single_shared_word_is_evidence_enough() {
+        // "ossifrage" appears in exactly ONE verse in the corpus.
+        let hits = idx().top_k_explained("ossifrage", 5);
+        assert_eq!(hits.len(), 1, "a rare one-word match was dropped");
+        assert_eq!(hits[0].0.book, "Leviticus");
+        // And the operator is shown the word that did it, not a bare score.
+        assert_eq!(hits[0].2, vec!["ossifrage".to_string()]);
+    }
+
+    #[test]
+    fn a_corroborated_paraphrase_still_matches_and_shows_its_words() {
+        // Several independent shared words: defensible on its face, and the
+        // operator gets more than one word to judge.
+        let hits =
+            idx().top_k_explained("they shall renew their strength and mount up with wings", 3);
+        assert!(!hits.is_empty(), "a well-evidenced paraphrase was dropped");
+        assert_eq!(hits[0].0.book, "Isaiah");
+        assert!(
+            hits[0].2.len() >= 3,
+            "expected several matched words, got {:?}",
+            hits[0].2
+        );
+    }
+
+    #[test]
+    fn up_to_six_matched_words_are_surfaced() {
+        // The console showed at most four. More evidence costs nothing when it
+        // exists, and the UI truncates what will not fit.
+        let hits = idx().top_k_explained("wait upon the lord renew strength mount wings eagles", 3);
+        assert!(hits[0].2.len() > 4, "still capped low: {:?}", hits[0].2);
+        assert!(hits[0].2.len() <= EXPLAIN_TERMS);
     }
 }

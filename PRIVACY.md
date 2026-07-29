@@ -136,3 +136,21 @@ report, and never enabled by anything you click.
 This is sermon audio. Treat the file as you would a recording of the service —
 because that is what it is. Delete it when you are done, and do not enable this
 during a service you have not told people is being recorded.
+
+## `RELAY_SENTRY_DSN` (development builds only)
+
+A developer running Relay from source can point crash reporting at their own
+Sentry project without going through Settings:
+
+```bash
+RELAY_SENTRY_DSN=https://…@…ingest.sentry.io/… npm run tauri dev
+```
+
+This does **not** weaken anything the rest of this document promises. Reports
+still go through the same scrubber, so no transcript, verse text, lyric,
+announcement or plan name is sent. An empty value counts as unset.
+
+The variable is compiled out of release builds entirely — an installed copy of
+Relay has no code path that reads it. An environment variable is not consent,
+and the app you install must never start reporting because of something set
+outside it.

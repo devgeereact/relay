@@ -43,7 +43,7 @@ Tier 1: **Yoruba, Swahili, Hausa**, plus English. Code-switching (English mixed 
 npm install
 npm run tauri dev        # desktop app + Vite on :5032, kiosk WS on :8031
 
-npm test                 # vitest (140 tests)
+npm test                 # vitest (247 tests)
 npx vitest run src/lib/nav.test.js          # one file
 npx vitest run -t "Escape closes the cheat" # one test by name
 npm run build            # vite build — catches Svelte compile errors fast
@@ -57,7 +57,7 @@ Rust (**prefix with the cmake path — this machine has no Homebrew**):
 ```bash
 export PATH="/Users/gideonakinlotan/.local/bin:$PATH"   # cmake 3.31.6, needed by whisper-rs
 cd src-tauri
-cargo test                                   # 250 tests
+cargo test                                   # 330 tests
 cargo test e2e                               # the fire → nav → clear path (7 tests)
 cargo test detection::                       # one module
 cargo test the_macos_build -- --nocapture    # one test
@@ -78,6 +78,7 @@ Every audio bug so far was invisible in the code and reproducible only with a sp
 
 - `RELAY_RECORD_WAV=/path/x.wav` — write the CLEANED stream (what the VAD and whisper actually see) on Stop. Off by default, never uploaded.
 - `RELAY_STT_TIMING=1`, `RELAY_AUDIO_RMS=1` — decode lag / what the voice gate sees. Content-free.
+- `RELAY_SENTRY_DSN=…` — **debug builds only** — point crash reporting at your own Sentry project without touching Settings. Still scrubbed; compiled out of release. Empty = unset.
 - `RELAY_BENCH_WAV=… cargo test audio::gate stt::bench -- --ignored --nocapture` — replay real speech through the real front-end at any mic level (`RELAY_BENCH_SCALE`) and noise (`RELAY_BENCH_NOISE`). This is how the "deaf to a quiet preacher" bug was proved.
 
 ## Repo map
@@ -197,7 +198,7 @@ These caused real crashes, freezes, or silent failures in front of people. Keep 
 
 ## Testing
 
-250 Rust + 140 frontend. CI runs both on **macOS and Windows**, plus `fmt`, `clippy -D warnings`, the detection scorecard, and a release build.
+330 Rust + 247 frontend. CI runs both on **macOS and Windows**, plus `fmt`, `clippy -D warnings`, the detection scorecard, and a release build.
 
 - **`e2e.rs` is the one test that exercises what a congregation actually sees.** It drives the real commands (`manual_fire`, `nav`, `clear_screens`, `blackout`, `set_rehearsal`) against a real in-memory DB, through the real router and pipeline, and asserts on the events that leave the machine. Nothing is mocked but the window (`tauri::test::mock_builder`, dev-dependency `tauri/test`). **Add a test here whenever you touch the fire path.**
   - Use `mock_context(noop_assets())`, **not** `generate_context!()` — the real macro embeds `Info.plist` as a link symbol and expanding it twice fails with `_EMBED_INFO_PLIST is already defined`.

@@ -1,5 +1,15 @@
 import { describe, it, expect } from 'vitest';
-import { payloadOf, slidesOf, nextOf, stepFrom, cueSub } from './plan.js';
+import {
+  payloadOf,
+  slidesOf,
+  nextOf,
+  stepFrom,
+  cueSub,
+  sectionsOf,
+  planRuntime,
+  fmtDuration,
+  parseDuration,
+} from './plan.js';
 
 const song = (id, ...labels) => ({
   id,
@@ -102,5 +112,82 @@ describe('cueSub', () => {
   it('counts a song by its slides', () => {
     expect(cueSub(song(1, 'Verse', 'Chorus', 'Bridge'))).toBe('SONG · 3 SLIDES');
     expect(cueSub(verse(2, 'John 3:16'))).toBe('SCRIPTURE · AUTO-DETECT');
+  });
+});
+
+// A cue with a section_title begins a section; grouping is derived from the
+// order, never stored, so it cannot disagree with what the transport walks.
+const cue = (id, section_title = '', duration_sec = 0) => ({
+  id,
+  cue_type: 'song',
+  label: `Cue ${id}`,
+  payload_json: '{}',
+  section_title,
+  duration_sec,
+});
+
+describe('sectionsOf', () => {
+  it('groups cues under the cue that starts each section', () => {
+    const secs = sectionsOf([
+      cue(1, 'Welcome & Worship'),
+      cue(2),
+      cue(3),
+      cue(4, 'Sermon'),
+      cue(5),
+    ]);
+    expect(secs.map((s) => s.title)).toEqual(['Welcome & Worship', 'Sermon']);
+    expect(secs[0].items.map((i) => i.id)).toEqual([1, 2, 3]);
+    expect(secs[1].items.map((i) => i.id)).toEqual([4, 5]);
+  });
+
+  it('keeps cues that precede the first heading', () => {
+    // A plan need not open with a section. Dropping these would hide real cues
+    // from the operator entirely.
+    const secs = sectionsOf([cue(1), cue(2, 'Sermon')]);
+    expect(secs[0].title).toBe('');
+    expect(secs[0].items.map((i) => i.id)).toEqual([1]);
+    expect(secs[1].title).toBe('Sermon');
+  });
+
+  it('sums only timed cues and flags a section that is not fully timed', () => {
+    const secs = sectionsOf([cue(1, 'Worship', 240), cue(2, '', 120), cue(3)]);
+    expect(secs[0].seconds).toBe(360);
+    expect(secs[0].timed).toBe(false); // cue 3 is untimed
+  });
+
+  it('is empty for an empty plan', () => {
+    expect(sectionsOf([])).toEqual([]);
+    expect(sectionsOf(undefined)).toEqual([]);
+  });
+});
+
+describe('planRuntime', () => {
+  it('marks the total partial when any cue is untimed', () => {
+    // Most real plans are partial — scripture fires when the preacher reaches
+    // it. Presenting a partial sum as the service length is how a service runs
+    // long, so the Planner has to be able to say "est.".
+    expect(planRuntime([cue(1, '', 300), cue(2, '', 120)])).toEqual({
+      seconds: 420,
+      partial: false,
+    });
+    expect(planRuntime([cue(1, '', 300), cue(2)])).toEqual({ seconds: 300, partial: true });
+    expect(planRuntime([])).toEqual({ seconds: 0, partial: false });
+  });
+});
+
+describe('fmtDuration', () => {
+  it('renders a cue as m:ss and a plan as Xh Ym', () => {
+    expect(fmtDuration(120)).toBe('2:00');
+    expect(fmtDuration(345)).toBe('5:45');
+    expect(fmtDuration(5520, true)).toBe('1h 32m');
+    expect(fmtDuration(1800, true)).toBe('30m');
+  });
+
+  it('renders an untimed cue as a dash, never 0:00', () => {
+    // 0:00 reads as "this cue takes no time", which is a different claim from
+    // "this cue is not on a clock".
+    expect(fmtDuration(0)).toBe('—');
+    expect(fmtDuration(null)).toBe('—');
+    expect(fmtDuration(-5)).toBe('—');
   });
 });

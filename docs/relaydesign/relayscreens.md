@@ -19,8 +19,35 @@ compared against its reference, and logged in `docs/relaydesign/.loop/<screen>-l
 Where a screen is marked done from a **code-level** compare rather than a pixel one,
 its log says so — this machine cannot capture the Tauri console webview.
 
+## Progress
+
+| § | Section | State |
+|---|---|---|
+| 1 | Launch & Startup | **✅ complete** — 8 screens · `.loop/launch-log.md` |
+| 2 | First Run | **✅ complete** — one 6-step wizard · `.loop/firstrun-log.md` |
+| 3 | Dashboard | **✅ complete** — `.loop/dashboard-log.md` |
+| 4 | Live Production | **✅ resolved** — 2 built, rest already existed or refused · `.loop/liveproduction-log.md` |
+| 5 | AI Detection | **✅ resolved** — Inspector built · `.loop/aidetection-log.md` |
+| 6 | Transcript | **✅ resolved** — search built; the real work was the audio fix (DECISIONS §23) |
+| 7 | Scripture Library | **✅ resolved** — Bible browser built · `.loop/scripturelibrary-log.md` |
+| 8 | Service Planner | **✅ resolved** — three-column rebuild + sections/durations migration · `.loop/planner-log.md` |
+| 9 | Templates | **✅ resolved** — gallery + reworked editor, honest to the model · `.loop/templates-log.md` |
+| 10 | Output Management | **✅ resolved** — Channels rebuilt + liveness made real · `.loop/channels-log.md` |
+| 11+ | Stage Display onward | not started |
+
+Also done outside the numbered sections: the app-wide token and mode-colour
+rebrand, the application icon and brand mark (`.loop/rebrand-log.md`,
+DECISIONS §22), and the Live Surface / Template Designer / Help screens.
+
+**A note on what "resolved" means.** Several sections list screens Relay cannot
+honestly build — a licence activation screen for MIT software, OBS/ATEM setup for
+protocols it does not speak, a speaker timeline with no diarization, a translation
+downloader with no translations to download. Those are marked NOT BUILT with the
+reason, rather than shipped as UI that implies a capability. Each section's log
+records which, and why.
+
 **Done so far:** all of **§1 Launch & Startup** (`.loop/launch-log.md`) ·
-**§2 First Run** (`.loop/firstrun-log.md`) · **§3 Dashboard** (`.loop/dashboard-log.md`) · **§4 Live Production** (`.loop/liveproduction-log.md`) · **§5 AI Detection** (`.loop/aidetection-log.md`) ·
+**§2 First Run** (`.loop/firstrun-log.md`) · **§3 Dashboard** (`.loop/dashboard-log.md`) · **§4 Live Production** (`.loop/liveproduction-log.md`) · **§5 AI Detection** (`.loop/aidetection-log.md`) · **§6 Transcript** · **§7 Scripture Library** (`.loop/scripturelibrary-log.md`) · **§8 Service Planner** (`.loop/planner-log.md`) · **§9 Templates** (`.loop/templates-log.md`) · **§10 Output Management** (`.loop/channels-log.md`) ·
 Live Surface (the operator console) · Template Designer · Help / Shortcuts ·
 the app-wide token and mode-colour rebrand (`.loop/rebrand-log.md`).
 
@@ -174,76 +201,199 @@ proved by reverting the guard and watching two tests fail.
 
 # 6. Transcript
 
-* Live Transcript
-* Search Transcript
-* Transcript Editor
-* Transcript Export
-* Speaker Timeline
-* Timestamp Editor
+**Section resolved.** The transcript work in this section became mostly an AUDIO
+fix rather than a UI one — see `docs/DECISIONS.md` §23.
+
+* Live Transcript — **✅ ALREADY BUILT** — panel 1 of the Live surface
+* Search Transcript — **✅ DONE** — search within the open service's transcript
+  in Library → History, with match highlighting and a count. It says plainly that
+  it searches **that service only**; there is no backend cross-service transcript
+  search, and a box that silently covers less than the operator assumes is worse
+  than no box
+* Transcript Export — **✅ ALREADY BUILT** — `export_service` writes the
+  transcript and fired detections to Markdown
+* Transcript Editor · Timestamp Editor — **NOT BUILT.** No backend exists to
+  update a transcript row, and editing one is not a neutral feature: the
+  transcript is the RECORD of what a person said from a pulpit. Making it
+  editable is a decision about that record, and `docs/DECISIONS.md` contains no
+  such decision
+* Speaker Timeline — **NOT BUILT, and it cannot be faked.** It needs speaker
+  diarization. There is **zero** diarization anywhere in the codebase (grepped);
+  whisper.cpp does not provide it and `voice_profiles` is per-preacher
+  calibration, not "who is talking now". A timeline drawn without it would be
+  invented data about who said what
+
+**Also fixed here, from a live report:** the transcript was emitting Chinese and
+other unspoken languages. That is whisper hallucinating on non-speech — see
+DECISIONS §23 for the three-layer fix (a neural speech-probability veto on the
+gate, whisper's own suppression parameters which were never switched on, and a
+script check). Service History was additionally showing `conf 0.61` on
+paraphrases — the forbidden number, decimal-formatted.
 
 ---
 
 # 7. Scripture Library
 
-* Library
-* Translation Manager
-* Download Translations
-* Verse Comparison
-* Favourite Scriptures
-* Recent Scriptures
-* Search History
-* Offline Packages
-* Translation Import
-* Bible Metadata
+**Section resolved** — log: `.loop/scripturelibrary-log.md`. Built against panel
+6. The Library could search and could list what was saved, but could not **open a
+Bible and read it** — which is what the word promises.
+
+* Library — **✅ REBUILT, ProPresenter-style** — a **slide grid of real rendered
+  thumbnails** (same `TemplateRender` the projector uses, so WYSIWYG by
+  construction), click-to-fire, and a **live strip showing what is on the wall
+  right now** without leaving the tab. The on-air slide carries the amber ring;
+  in rehearsal it goes amethyst, because nothing is reaching anyone.
+  Book tree in canonical order, chapter list, Read view alongside Slides
+  (`list_books`, `chapter_verses`).
+  **Canonical order is the substantive part**: `GROUP BY book` returns
+  alphabetical, and a Bible opening "Acts, Amos, Chronicles" is unnavigable.
+  Pinned by a test against the real 31,100-verse corpus
+* Favourite Scriptures — **✅ ALREADY BUILT** (the Saved tab), now reachable
+  per-verse from the browser
+* Recent Scriptures — **✅ ALREADY BUILT** — Service History lists every fired verse
+* Verse Comparison — **✅ as far as the data allows.** Comparing translations
+  needs ≥2; there is 1. The picker appears the moment a second exists
+* Translation Manager — **✅ partly.** The active translation is chosen in
+  Settings and honoured here; there is nothing to *manage* with one translation
+* Bible Metadata — **✅ partly.** Book and chapter counts are real and shown. The
+  corpus carries no author/date metadata and none is invented
+* Search History — **NOT BUILT.** Nothing persists queries. Reconstructing it
+  from the detection log would show fired verses, not searches
+* ~~Download Translations~~ · ~~Offline Packages~~ · ~~Translation Import~~ —
+  **NOT BUILT: one blocked problem, not three screens.** All three are the same
+  missing capability — getting a second Bible onto the machine — which needs a
+  source, a licence and a format decision that `docs/DECISIONS.md` does not
+  record. A downloader pointed at nothing is three screens pretending
+
+> **Relay ships the KJV only.** Verified against the live database: one
+> translation row. Detection already *recognises* spoken Yorùbá, Kiswahili and
+> Hausa references — that alias table is real — what is missing is verse TEXT in
+> those languages. The reference's four language tabs are therefore **not** drawn;
+> the picker is built from translations that exist, and the gap is stated in
+> words. Showing three empty tabs would make exactly the claim
+> `docs/LANGUAGES.md` is careful not to make.
 
 ---
 
 # 8. Service Planner
 
-* Planner
-* Calendar
-* Service Templates
-* Cue Library
-* Song Library
-* Worship Set Builder
-* Speaker Notes
-* Countdown Builder
-* Announcement Builder
-* Media Attachments
-* Duplicate Service
-* Archive
+**Section resolved.** Built and compared against `relay-planner-screen.png` —
+`.loop/planner-log.md` (pixel, 7 iterations + 4 state variants). The Planner was
+rebuilt as a three-column workspace (plans rail · running order · cue inspector),
+and `plan_items` gained **sections** and **durations** via a retryable migration.
+
+* Planner — **✅ DONE** (pixel; three-column rebuild, `.loop/planner-log.md`)
+* Cue Library — **✅ DONE** — the ＋ Add Cue panel: one search across scripture,
+  songs, media and announcements, plus the countdown quick-add
+* Song Library — **✅ DONE** — searchable from ＋ Add Cue, with the arrangement
+  picker when a song has saved arrangements
+* Worship Set Builder — **✅ DONE** — this IS the running order: drag-reorder,
+  sections, per-cue template and duration. Not a separate screen; a worship set
+  is a service plan with song cues in it
+* Announcement Builder — **✅ DONE** — authored in the Library, added here as a cue
+* Countdown Builder — **✅ DONE** — the quick-add in ＋ Add Cue; a countdown is the
+  one cue type whose length is known at build time, so it seeds its own duration
+* Speaker Notes — **✅ DONE** — the inspector's **Notes** tab (`stage_note`).
+  Confidence-monitor only; it never reaches an output screen
+* Media Attachments — **✅ DONE** — media cues from the Library
+* Duplicate Service — **✅ DONE** — `duplicate_plan`, now carrying section
+  headings and durations across (it silently dropped them until this pass)
+* Service Templates — **✅ RESOLVED as Duplicate.** A "service template" and a
+  duplicated plan are the same object in Relay's model — an ordered list of cues
+  with headings. Shipping both would be two names for one table
+* ~~Calendar~~ — **NOT BUILT.** A plan has a `plan_date` and the rail is ordered
+  by it, but there is no scheduling, no recurrence and no reminders behind a
+  month grid. A calendar that only filters a five-item list is decoration
+* ~~Archive~~ — **NOT BUILT.** Nothing is archived: plans are kept until deleted,
+  and `service_plans` has no archived flag. Deferred with §17 Service History,
+  which is where a past service actually lives
 
 ---
 
 # 9. Templates
 
-* Template Designer — **✅ DONE** (`.loop/templates-log.md`, pixel — populated via an IPC stub)
-* Template Gallery
-* Theme Manager
-* Typography Presets
-* Background Library
-* Animation Presets
-* Lower Third Designer
-* Scripture Layouts
-* Song Layouts
-* Responsive Preview
-* Safe Area Preview
-* Brand Assets
+**Section resolved.** The Templates tab is now two modes matching the two
+mockups: a **gallery** (`relay-templetes-screen.png`) of every template as a live
+thumbnail, and an **editor** (`relay-templeteeditor-screen.png`) for one.
+`.loop/templates-log.md` (pixel; the gallery is new, the editor reworks the prior
+Output Designer). The template MODEL is unchanged — layout(regions) + style — so
+everything the editor mockup shows beyond that model is refused, not faked.
+
+* Template Gallery — **✅ DONE** (pixel) — grid/list of cards rendered through the
+  real `TemplateRender`, so a card is what the wall shows; derived type tabs;
+  search; sort; preview inspector with Details + Usage
+* Template Designer / Editor — **✅ DONE** (pixel) — reworked into the mockup's
+  layers + design grammar. Layers map to the template's REAL parts (background,
+  lower-third band, reference, verse text); the design panel edits real style
+* Lower Third Designer — **✅ DONE** — the Lower-Third band is a real layer/toggle;
+  a lower-third template is derived and filtered as its own kind
+* Scripture Layouts / Song Layouts — **✅ DONE** — these ARE the derived kinds
+  (Scripture = reference + verse; Song = verse only), shown as gallery type tabs
+* Safe Area Preview — **✅ DONE** — the safe-area guide is a layer in the editor
+  (editor-only; never reaches an output)
+* Responsive Preview — **✅ RESOLVED as a readout.** Every template is 16:9 by
+  construction (`TemplateRender` sizes in cqw, so it scales identically at any
+  output size). There is nothing to preview responsively; the gallery and editor
+  state `16:9 · 1920×1080` as a readout rather than offering an orientation that
+  does not exist
+* ~~Theme Manager~~ / ~~Typography Presets~~ — **NOT BUILT.** There are no themes
+  or type presets in the model — a template carries a font family and colours
+  directly, and that is the whole of it. A preset system is a feature, not a screen
+* ~~Background Library~~ / ~~Brand Assets~~ — **NOT BUILT.** A background is a
+  per-template fill or a single uploaded image; there is no shared asset store,
+  media browser, or reusable element gallery to manage. The editor mockup's Assets
+  panel (backgrounds/gradients/ornaments/shapes/frames/dividers) has no backing
+  and is omitted with a note in the layers panel
+* ~~Animation Presets~~ — **NOT BUILT.** The only motion a template has is one
+  crossfade duration (`transitionMs`), edited in the editor's Motion section.
+  There are no keyframes, entrance/exit animations, or an Animation tab to preset
 
 ---
 
 # 10. Output Management
 
-* Channels
-* Output Monitor
-* Output Preview
-* Output Diagnostics
-* Display Arrangement
-* Multi Screen Mapping
-* Browser Source Manager
-* NDI Outputs
-* HDMI Outputs
-* Virtual Displays
+**Section resolved.** Built and compared against `relay-channels-screen.png` —
+`.loop/channels-log.md` (pixel, 3 iterations + 2 variants). The screen was rebuilt
+as a filtered table plus a channel inspector, and **per-channel liveness was made
+real**: it is computed from open output windows and connected kiosk clients, not
+read from `output_channels.status`, which is written once at insert and had always
+said `offline` for every channel — including one filling a projector.
+
+* Channels — **✅ DONE** (pixel; `.loop/channels-log.md`)
+* Output Preview — **✅ DONE** — the inspector renders the channel's own template
+  through `TemplateRender`, the same engine the wall uses, so it is WYSIWYG
+* Browser Source Manager — **✅ DONE** — network channels carry their copyable
+  `:8032` URL and a QR to open it on a phone or kiosk without typing
+* HDMI Outputs — **✅ DONE** — native-window channels, with a real display picker.
+  Displays now carry **the name macOS itself shows** (`NSScreen.localizedName`,
+  verified as "HP 532sf" on real hardware) instead of tao's raw EDID model number
+  `Monitor #1234555`; elsewhere the OS string is humanised (`\\.\DISPLAY1` →
+  "Display 1", `HDMI-1` → "HDMI 1", `eDP-1` → "Built-in display"). A channel's
+  assigned display is also actually honoured now — it was silently ignored and
+  fell back to primary. `cargo run --example displays` is the standing probe.
+  **Open:** the Windows half (EDID lookup) and multi-display position matching
+  are both untested — see `.loop/channels-log.md`
+* Display Arrangement — **✅ RESOLVED as the display picker.** Relay does not
+  arrange displays; the OS does. What it needs is to name them recognisably and
+  pin a channel to one, which the picker does (name · resolution · primary)
+* NDI Outputs — **⚠️ SURFACED, NOT BUILT.** NDI is parked (needs a proprietary
+  SDK; `open_ndi_output` returns a clear error). The tab exists and any NDI
+  channel reports **UNAVAILABLE** — deliberately a different word from "offline",
+  which would read as a fault rather than an absent capability
+* ~~Output Monitor~~ — **NOT BUILT.** Would mean a live thumbnail of what each
+  screen is showing. Relay pushes content to outputs and never reads a frame
+  back; there is no capture path, so a "monitor" could only re-render a guess
+* ~~Output Diagnostics~~ — **NOT BUILT, deliberately.** This is the reference's
+  CHANNEL HEALTH panel: bandwidth, dropped frames, uptime, latency, "Excellent".
+  **None of it exists** — nothing in the pipeline times a delivery, counts a
+  frame, or records a connect time. On the one screen an operator uses to decide
+  whether the projector is working, invented numbers are the worst possible
+  decoration. The panel states the limit in words instead
+* ~~Multi Screen Mapping~~ — **NOT BUILT.** Every channel already targets its own
+  display or client independently; a mapping matrix would be a second way to say
+  the same thing
+* ~~Virtual Displays~~ — **NOT BUILT.** Creating a virtual display is an OS-level
+  driver concern, not something an app can offer honestly
 
 ---
 
@@ -256,6 +406,19 @@ proved by reverting the guard and watching two tests fail.
 * Timer View
 * Countdown View
 * Remote Stage Display
+
+Stage Displays
+│
+├── Display Manager
+├── Display Preview
+├── Layout Library
+├── Layout Editor
+├── Layout Variables
+├── Theme Manager
+├── Remote Displays
+├── Mobile Displays
+├── Display Diagnostics
+└── Display Settings
 
 ---
 

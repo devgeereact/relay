@@ -83,7 +83,12 @@ pub fn delete_channel(conn: &Connection, id: i64) -> rusqlite::Result<()> {
 /// 1..4 match the seeded templates.
 pub(super) fn seed_channels(conn: &Connection) -> rusqlite::Result<()> {
     let channels: &[(&str, &str, i64, Option<&str>)] = &[
-        ("Main screen", "native_window", 1, Some("Display 1")),
+        // "0", not "Display 1": `display_target` is parsed as a monitor INDEX, and
+        // the human-readable form silently failed to parse, so the seeded main
+        // screen always opened on the primary display instead of the one it was
+        // configured with. (`parse_display` now accepts both, but the seed should
+        // still write the canonical form.)
+        ("Main screen", "native_window", 1, Some("0")),
         ("Stage display", "network_client", 2, None),
         ("Streaming", "network_client", 3, None),
         ("Lobby screen", "network_client", 4, None),

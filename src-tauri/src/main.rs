@@ -136,7 +136,15 @@ fn main() {
                         .unwrap_or_default();
                     on.then_some(dsn)
                 };
-                if let Some(dsn) = consent {
+                // A debug-build-only `RELAY_SENTRY_DSN` stands in for the Settings
+                // toggle, so reporting can be tested without re-entering a DSN into
+                // every fresh dev DB. `telemetry::dev_dsn()` is `None` by
+                // construction in a release build — see its doc comment.
+                let dev = telemetry::dev_dsn();
+                if dev.is_some() {
+                    println!("telemetry: DSN taken from RELAY_SENTRY_DSN (debug build)");
+                }
+                if let Some(dsn) = dev.or(consent) {
                     telemetry::enable(&dsn, env!("CARGO_PKG_VERSION"));
                 }
             }
@@ -168,6 +176,7 @@ fn main() {
             let kiosk = channels::KioskHub::default();
             let kiosk_tx = kiosk.sender();
             let kiosk_templates = kiosk.templates_handle();
+            let kiosk_clients = kiosk.clients_handle();
             // Warm the template cache so a browser client (OBS/kiosk) gets the
             // REAL saved template immediately on connect (matches the editor).
             {
@@ -188,12 +197,20 @@ fn main() {
                 channels::report_to(app.handle()),
                 kiosk_tx,
                 kiosk_templates,
+                kiosk_clients,
                 8031,
             ));
             // Serve the output/stage pages over LAN HTTP so other devices load
             // them in a packaged app (not only in `tauri dev`). See channels.rs.
+            // The `api` closure is the preacher's-remote control plane: search,
+            // next/prev and fire, performed against this app. LAN-only, no auth —
+            // a recorded expansion of the broadcast-only exposure (DECISIONS §47).
+            let api_handle = app.handle().clone();
+            let api: channels::ApiSink =
+                std::sync::Arc::new(move |rest: &str| Some(remote_api(&api_handle, rest)));
             tauri::async_runtime::spawn(channels::run_output_http_server(
                 channels::report_to(app.handle()),
+                api,
                 8032,
             ));
 
@@ -249,6 +266,9 @@ fn main() {
             move_plan_item,
             set_plan_note,
             reorder_plan,
+            set_plan_section,
+            set_plan_duration,
+            set_plan_template,
             list_songs,
             search_songs,
             get_song,
@@ -276,6 +296,8 @@ fn main() {
             get_content_templates,
             set_content_template,
             data_health,
+            list_books,
+            chapter_verses,
             system_hardware,
             probe_integrations,
             migration_status,
@@ -301,9 +323,12 @@ fn main() {
             close_output_window,
             list_output_windows,
             list_output_channels,
+            channel_status,
+            close_channel_output,
             set_channel_template,
             list_monitors,
             open_channel_output,
+            auto_open_outputs,
             set_channel_display,
             add_channel,
             delete_channel,
@@ -409,11 +434,14 @@ fn resolve_fire(
     status: FireStatus,
     stage_note: Option<String>,
     matched_text: Option<String>,
+    cue_template_id: Option<i64>,
 ) -> Fire {
     let looked = db::lookup_verse(conn, &r.book, r.chapter, r.verse)
         .ok()
         .flatten();
-    let (template_id, template_json) = content_tpl(conn, "scripture");
+    // A plan scripture cue's own template wins; the AI/auto path passes None and
+    // gets the scripture content-type default.
+    let (template_id, template_json) = cue_or_content_tpl(conn, cue_template_id, "scripture");
     Fire {
         key: Fire::key_for(&r),
         reference: r,
@@ -457,6 +485,7 @@ fn fire_manual<R: tauri::Runtime>(
     confidence: f32,
     update: PassageUpdate,
     stage_note: Option<String>,
+    cue_template_id: Option<i64>,
 ) -> bool {
     let db = handle.state::<Db>();
     let ctx = handle.state::<Context>();
@@ -475,6 +504,7 @@ fn fire_manual<R: tauri::Runtime>(
             // be noise, and worse, would dilute the badge that matters: the one on
             // the AI's guesses.
             None,
+            cue_template_id,
         );
         // Not in the corpus → leave the screen exactly as it is. Better to show
         // the previous verse than to blank the wall mid-sentence. Same rule the
@@ -621,7 +651,9 @@ fn emit_detections(handle: &tauri::AppHandle, text: &str, now_ms: u64) {
                 RouteDecision::Drop => continue,
             };
             let end = passage_end(&conn, &c);
-            let mut fire = resolve_fire(&conn, c.r, c.conf, c.method, status, None, c.matched);
+            // Auto-detection has no plan cue behind it — content-type default.
+            let mut fire =
+                resolve_fire(&conn, c.r, c.conf, c.method, status, None, c.matched, None);
 
             // Parsed, but the verse doesn't exist (garbled speech readily yields
             // "Psalms 23:99"). Demote to a suggestion rather than broadcasting a
@@ -723,7 +755,8 @@ fn handle_nav<R: tauri::Runtime>(
 
     let reference = Fire::key_for(&r);
     // Advance keeps the staged passage span, so a range/chapter walk stays bounded.
-    if fire_manual(handle, r, 1.0, PassageUpdate::Advance, None) {
+    // A nav step walks a passage, not a plan cue — content-type default.
+    if fire_manual(handle, r, 1.0, PassageUpdate::Advance, None, None) {
         Ok(NavResult::Fired { reference })
     } else {
         Ok(NavResult::NotInLibrary { reference })
@@ -753,7 +786,7 @@ fn handle_passage_nav<R: tauri::Runtime>(handle: &tauri::AppHandle<R>, text: &st
             verse: nav.verse.unwrap_or(1),
         }
     };
-    fire_manual(handle, target, 1.0, PassageUpdate::Jump, None)
+    fire_manual(handle, target, 1.0, PassageUpdate::Jump, None, None)
 }
 
 /// Persist a finalized transcript line into the current service (if recording),
@@ -871,11 +904,21 @@ fn search_scripture(
     sem: tauri::State<'_, Semantic>,
     query: String,
 ) -> error::Result<Vec<db::VerseRow>> {
+    let conn = db.0.lock()?;
+    Ok(search_verses(&conn, &sem.0, query.trim()))
+}
+
+/// The scripture search itself, over a connection + semantic index — shared by
+/// the `search_scripture` command and the preacher-remote HTTP endpoint.
+fn search_verses(
+    conn: &rusqlite::Connection,
+    sem: &SemanticIndex,
+    query: &str,
+) -> Vec<db::VerseRow> {
     let q = query.trim();
     if q.is_empty() {
-        return Ok(vec![]);
+        return vec![];
     }
-    let conn = db.0.lock()?;
 
     // Score candidates and rank: exact reference > exact phrase > semantic
     // paraphrase > loose text. Semantic is what turns a paraphrase ("there is
@@ -887,7 +930,7 @@ fn search_scripture(
     // 1) Explicit references ("john 3:16", "ps 23").
     for m in detection::detect_direct(q) {
         let r = &m.reference;
-        if let Ok(Some(v)) = db::lookup_verse(&conn, &r.book, r.chapter, r.verse) {
+        if let Ok(Some(v)) = db::lookup_verse(conn, &r.book, r.chapter, r.verse) {
             if seen.insert(v.id) {
                 scored.push((1.0, v));
             }
@@ -895,7 +938,7 @@ fn search_scripture(
     }
     // 2) Exact phrase (the whole query appears verbatim).
     if q.split_whitespace().count() >= 2 {
-        if let Ok(hits) = db::search_verses_text(&conn, q, 12) {
+        if let Ok(hits) = db::search_verses_text(conn, q, 12) {
             for v in hits {
                 if seen.insert(v.id) {
                     scored.push((0.95, v));
@@ -904,11 +947,11 @@ fn search_scripture(
         }
     }
     // 3) Semantic paraphrase — top matches by meaning, highest first.
-    for (r, score) in sem.0.top_k(q, 12) {
+    for (r, score) in sem.top_k(q, 12) {
         if score < 0.08 {
             continue;
         }
-        if let Ok(Some(v)) = db::lookup_verse(&conn, &r.book, r.chapter, r.verse) {
+        if let Ok(Some(v)) = db::lookup_verse(conn, &r.book, r.chapter, r.verse) {
             if seen.insert(v.id) {
                 scored.push((0.5 + score * 0.4, v)); // 0.5..0.9 band
             }
@@ -917,7 +960,7 @@ fn search_scripture(
     // 4) Full-text word/phrase recall (FTS5, bm25-ranked). Catches loose,
     //    non-contiguous word queries ("lord shepherd") a substring LIKE misses,
     //    and ranks the best-matching verse first.
-    for (i, v) in db::search_verses_fts(&conn, q, 15)
+    for (i, v) in db::search_verses_fts(conn, q, 15)
         .unwrap_or_default()
         .into_iter()
         .enumerate()
@@ -928,7 +971,7 @@ fn search_scripture(
     }
     // 4b) Last-ditch substring scan if FTS returned nothing (index still building).
     if scored.is_empty() {
-        if let Ok(hits) = db::search_verses_text(&conn, q, 15) {
+        if let Ok(hits) = db::search_verses_text(conn, q, 15) {
             for v in hits {
                 if seen.insert(v.id) {
                     scored.push((0.3, v));
@@ -938,7 +981,130 @@ fn search_scripture(
     }
 
     scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
-    Ok(scored.into_iter().take(25).map(|(_, v)| v).collect())
+    scored.into_iter().take(25).map(|(_, v)| v).collect()
+}
+
+/// The preacher's-remote HTTP control plane. `rest` is the path after `/api/`
+/// (e.g. `search?q=john`, `next`, `prev`, `fire?ref=John%203:16`, `live`). Returns
+/// a JSON body. Runs on the HTTP server task with the real AppHandle, so it drives
+/// the SAME fire/nav path the console does — one verse engine, one source of truth.
+fn remote_api<R: tauri::Runtime>(app: &tauri::AppHandle<R>, rest: &str) -> String {
+    let (route, query) = rest.split_once('?').unwrap_or((rest, ""));
+    let param = |key: &str| -> Option<String> {
+        query.split('&').find_map(|kv| {
+            let (k, v) = kv.split_once('=')?;
+            (k == key).then(|| channels::urldecode(v))
+        })
+    };
+
+    match route.trim_end_matches('/') {
+        "search" => {
+            let q = param("q").unwrap_or_default();
+            let rows = {
+                let db = app.state::<Db>();
+                let sem = app.state::<Semantic>();
+                let guard = db.0.lock();
+                match guard {
+                    Ok(conn) => search_verses(&conn, &sem.0, &q),
+                    Err(_) => vec![],
+                }
+            };
+            let items: Vec<String> = rows
+                .into_iter()
+                .take(20)
+                .map(|v| {
+                    format!(
+                        "{{\"reference\":{},\"text\":{}}}",
+                        json_str(&format!("{} {}:{}", v.book, v.chapter, v.verse)),
+                        json_str(&v.text)
+                    )
+                })
+                .collect();
+            format!("{{\"ok\":true,\"results\":[{}]}}", items.join(","))
+        }
+        "fire" => {
+            let Some(reference) = param("ref") else {
+                return "{\"ok\":false,\"error\":\"no reference\"}".to_string();
+            };
+            match manual_fire(app.clone(), app.state::<Db>(), reference, None, None) {
+                Ok(()) => format!("{{\"ok\":true,{}}}", live_json(app)),
+                Err(e) => format!("{{\"ok\":false,\"error\":{}}}", json_str(&e.to_string())),
+            }
+        }
+        "next" | "prev" => {
+            let dir = if route == "next" {
+                detection::NavCommand::Next
+            } else {
+                detection::NavCommand::Previous
+            };
+            match handle_nav(app, dir) {
+                Ok(_) => format!("{{\"ok\":true,{}}}", live_json(app)),
+                Err(e) => format!("{{\"ok\":false,\"error\":{}}}", json_str(&e.to_string())),
+            }
+        }
+        // Panic from the LAN (the preacher's phone, a remote operator): clear or
+        // black out every screen. Same threat model as `fire`/`next` — anyone on
+        // the church network can already drive the wall — and the same engine the
+        // console panic keys use, so the outputs behave identically.
+        "clear" => match clear_screens(app.clone()) {
+            Ok(()) => "{\"ok\":true}".to_string(),
+            Err(e) => format!("{{\"ok\":false,\"error\":{}}}", json_str(&e.to_string())),
+        },
+        "black" => match blackout(app.clone()) {
+            Ok(()) => "{\"ok\":true}".to_string(),
+            Err(e) => format!("{{\"ok\":false,\"error\":{}}}", json_str(&e.to_string())),
+        },
+        "live" => format!("{{\"ok\":true,{}}}", live_json(app)),
+        _ => "{\"ok\":false,\"error\":\"unknown\"}".to_string(),
+    }
+}
+
+/// The current live verse (reference + text) as JSON fields, for the remote to
+/// show what is on the wall. Reads the context's current passage anchor.
+fn live_json<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> String {
+    let ctx = app.state::<Context>();
+    let cur = ctx.0.lock().ok().and_then(|c| c.current().cloned());
+    match cur {
+        Some(r) => {
+            let text = {
+                let db = app.state::<Db>();
+                db.0.lock()
+                    .ok()
+                    .and_then(|conn| {
+                        db::lookup_verse(&conn, &r.book, r.chapter, r.verse)
+                            .ok()
+                            .flatten()
+                    })
+                    .map(|v| v.text)
+                    .unwrap_or_default()
+            };
+            format!(
+                "\"live\":{{\"reference\":{},\"text\":{}}}",
+                json_str(&format!("{} {}:{}", r.book, r.chapter, r.verse)),
+                json_str(&text)
+            )
+        }
+        None => "\"live\":null".to_string(),
+    }
+}
+
+/// Minimal JSON string escaper (quotes, backslashes, control chars).
+fn json_str(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
 }
 
 /// Planner: all service plans (newest first) with cue counts.
@@ -1037,6 +1203,31 @@ fn set_plan_note(db: tauri::State<'_, Db>, id: i64, note: String) -> error::Resu
 fn reorder_plan(db: tauri::State<'_, Db>, plan_id: i64, ids: Vec<i64>) -> error::Result<()> {
     let conn = db.0.lock()?;
     db::reorder_plan_items(&conn, plan_id, &ids).map_err(Into::into)
+}
+
+/// Planner: begin a section at this cue (blank title merges it into the one above).
+#[tauri::command]
+fn set_plan_section(db: tauri::State<'_, Db>, id: i64, title: String) -> error::Result<()> {
+    let conn = db.0.lock()?;
+    db::set_plan_section(&conn, id, &title).map_err(Into::into)
+}
+
+/// Planner: set a cue's planned length in seconds (0 = untimed).
+#[tauri::command]
+fn set_plan_duration(db: tauri::State<'_, Db>, id: i64, seconds: i64) -> error::Result<()> {
+    let conn = db.0.lock()?;
+    db::set_plan_duration(&conn, id, seconds).map_err(Into::into)
+}
+
+/// Planner: point a cue at a specific template, or back at the channel default.
+#[tauri::command]
+fn set_plan_template(
+    db: tauri::State<'_, Db>,
+    id: i64,
+    template_id: Option<i64>,
+) -> error::Result<()> {
+    let conn = db.0.lock()?;
+    db::set_plan_template(&conn, id, template_id).map_err(Into::into)
 }
 
 /// Lyrics: all songs (with section counts).
@@ -1524,6 +1715,7 @@ fn start_countdown(
     minutes: f64,
     label: String,
     done_msg: String,
+    template_id: Option<i64>,
 ) -> error::Result<()> {
     let mins = if minutes.is_finite() && minutes > 0.0 {
         minutes
@@ -1537,11 +1729,12 @@ fn start_countdown(
     let target = now_ms + (mins * 60_000.0) as i64;
     let (tid, tjson) = {
         let conn = db.0.lock()?;
-        content_tpl(&conn, "countdown")
+        cue_or_content_tpl(&conn, template_id, "countdown")
     };
     channels::broadcast_content(
         &app,
         OutputContent {
+            kind: Some("countdown".into()),
             reference: label.trim().to_string(),
             countdown_to: Some(target),
             countdown_done: clean_note(Some(done_msg)),
@@ -1559,24 +1752,40 @@ fn start_countdown(
 /// a scripture manual fire; operator override, always. `label` is the on-screen
 /// citation, `text` the body. `stage_note` is the operator's confidence-monitor
 /// note for this cue, if any.
+// GENERIC OVER THE RUNTIME, deliberately (CLAUDE.md §24). Welded to the
+// concrete desktop handle, this path could not be driven from `e2e.rs` — and
+// the one code that decides what a congregation reads would have no test.
 #[tauri::command]
-fn fire_content(
-    app: tauri::AppHandle,
+fn fire_content<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     db: tauri::State<'_, Db>,
     label: String,
     text: String,
     kind: String,
     stage_note: Option<String>,
+    template_id: Option<i64>,
 ) -> error::Result<()> {
     let label = label.trim().to_string();
     let (tid, tjson) = {
         let conn = db.0.lock()?;
-        content_tpl(&conn, &kind)
+        cue_or_content_tpl(&conn, template_id, &kind)
+    };
+    // A LYRIC SLIDE PROJECTS THE LYRIC. The congregation is not singing the
+    // song title, and "Blessed Assurance · Slide 1" across the top of the wall
+    // is the operator's bookkeeping leaking onto a screen full of people. The
+    // label still names the cue in history and in the plan — it just does not
+    // go out. Scripture is the opposite case: the reference IS part of what is
+    // being shown, so it is projected.
+    let projected = if kind == "song" {
+        String::new()
+    } else {
+        label.clone()
     };
     channels::broadcast_content(
         &app,
         OutputContent {
-            reference: label.clone(),
+            kind: Some(kind.clone()),
+            reference: projected,
             text: Some(text),
             translation: None,
             template_id: tid,
@@ -1594,7 +1803,12 @@ fn fire_content(
 /// `http://<lan-ip>:8032/media/<id>` so native windows AND kiosk/OBS clients
 /// load the same URL. Documents (pdf/pptx) aren't renderable as output yet.
 #[tauri::command]
-fn fire_media(app: tauri::AppHandle, db: tauri::State<'_, Db>, id: i64) -> error::Result<()> {
+fn fire_media(
+    app: tauri::AppHandle,
+    db: tauri::State<'_, Db>,
+    id: i64,
+    template_id: Option<i64>,
+) -> error::Result<()> {
     let (kind, filename, tid, tjson): (String, String, Option<i64>, Option<String>) = {
         let conn = db.0.lock()?;
         let (k, f) = conn
@@ -1604,7 +1818,7 @@ fn fire_media(app: tauri::AppHandle, db: tauri::State<'_, Db>, id: i64) -> error
                 |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
             )
             .map_err(|_| "media not found".to_string())?;
-        let (tid, tjson) = content_tpl(&conn, "media");
+        let (tid, tjson) = cue_or_content_tpl(&conn, template_id, "media");
         (k, f, tid, tjson)
     };
     let media_kind = match kind.as_str() {
@@ -1620,6 +1834,7 @@ fn fire_media(app: tauri::AppHandle, db: tauri::State<'_, Db>, id: i64) -> error
     channels::broadcast_content(
         &app,
         OutputContent {
+            kind: Some("media".into()),
             media_url: Some(format!("http://{ip}:8032/media/{id}")),
             media_kind: Some(media_kind.to_string()),
             template_id: tid,
@@ -1638,6 +1853,34 @@ fn content_tpl(conn: &rusqlite::Connection, kind: &str) -> (Option<i64>, Option<
         Ok(Some((id, j))) => (Some(id), Some(j)),
         _ => (None, None),
     }
+}
+
+/// The template a fire should render with: the CUE's own choice when it set one,
+/// otherwise the content-type default.
+///
+/// A Planner cue can carry a `template_id` (the operator picked a specific look
+/// for that item), but every fire path used to resolve the template purely from
+/// the content TYPE — so a scripture cue always rendered with the one scripture
+/// default and the per-cue choice was dead data. This is the seam that honours
+/// it: "always use the template that is set for a planner item when pushing it".
+///
+/// A cue pointing at a since-deleted template falls back to the content default
+/// rather than the channel's, so the intent (a deliberate, non-default look)
+/// degrades to the next best thing instead of to whatever the channel happens to
+/// be set to.
+fn cue_or_content_tpl(
+    conn: &rusqlite::Connection,
+    cue_template_id: Option<i64>,
+    kind: &str,
+) -> (Option<i64>, Option<String>) {
+    if let Some(id) = cue_template_id {
+        if let Ok(Some(t)) = db::get_template(conn, id) {
+            if let Ok(j) = serde_json::to_string(&t) {
+                return (Some(id), Some(j));
+            }
+        }
+    }
+    content_tpl(conn, kind)
 }
 
 /// The default template ids mapped to each content type.
@@ -1671,6 +1914,26 @@ fn set_content_template(
 ) -> error::Result<()> {
     let conn = db.0.lock()?;
     db::set_content_template(&conn, &kind, template_id).map_err(Into::into)
+}
+
+/// Books available to browse, in canonical order — Library (§7).
+#[tauri::command]
+fn list_books(db: tauri::State<'_, Db>) -> error::Result<Vec<db::BookSummary>> {
+    let conn = db.0.lock()?;
+    let tid = db::active_translation_id(&conn)?;
+    db::list_books(&conn, tid).map_err(Into::into)
+}
+
+/// One chapter's verses, in order — the Library's reading pane.
+#[tauri::command]
+fn chapter_verses(
+    db: tauri::State<'_, Db>,
+    book: String,
+    chapter: i64,
+) -> error::Result<Vec<db::VerseRow>> {
+    let conn = db.0.lock()?;
+    let tid = db::active_translation_id(&conn)?;
+    db::chapter_verses(&conn, tid, &book, chapter).map_err(Into::into)
 }
 
 /// Number of verses currently seeded — surfaced in Settings as a data-layer
@@ -1969,6 +2232,8 @@ fn confirm_detection(
             m.reference,
             m.confidence,
             PassageUpdate::Note(end),
+            None,
+            // Confirming an AI suggestion is not a plan cue — scripture default.
             None,
         );
     }
@@ -2518,6 +2783,7 @@ fn manual_fire<R: tauri::Runtime>(
     db: tauri::State<'_, Db>,
     reference: String,
     stage_note: Option<String>,
+    template_id: Option<i64>,
 ) -> error::Result<()> {
     let m = detection::detect_direct(&reference)
         .into_iter()
@@ -2545,6 +2811,7 @@ fn manual_fire<R: tauri::Runtime>(
         1.0,
         PassageUpdate::Note(end),
         clean_note(stage_note),
+        template_id,
     ) {
         // Parsed fine, but that verse doesn't exist (e.g. "John 3:99"). Say so.
         // This used to broadcast an EMPTY verse instead — blanking the wall
@@ -2601,17 +2868,179 @@ fn open_channel_output(
             .ok_or_else(|| format!("channel {channel_id} not found"))?
     };
     let template_id = channel.template_id.unwrap_or(1);
-    let monitor_index = channel
-        .display_target
-        .as_deref()
-        .and_then(|s| s.parse::<usize>().ok());
-    let label = {
-        let mut n = outputs.0.lock()?;
-        *n += 1;
-        format!("output-{n}")
-    };
+    let monitor_index = channel.display_target.as_deref().and_then(parse_display);
+    // Deterministic, so the window can be traced back to this channel — that is
+    // what makes the channel's "online" light real. It also makes
+    // `open_native_window`'s already-open check a duplicate guard: the counter
+    // used to mint a fresh label each time, so opening one channel twice put two
+    // fullscreen windows on the same projector.
+    let label = channels::channel_label(channel_id);
     channels::open_native_window(&app, &label, template_id, &channel.name, monitor_index)?;
+    let _ = outputs; // labels no longer come from the counter
     Ok(label)
+}
+
+/// Auto-open the physical output windows on launch, so HDMI/projector screens
+/// come back BY THEMSELVES after a restart, an update or a rebuild — the operator
+/// never re-opens them or re-assigns displays. The channel config (template +
+/// `display_target`) lives in SQLite and survives every rebuild, so this just
+/// re-materialises the windows from it.
+///
+/// SAFE BY CONSTRUCTION: a window is opened ONLY onto a display that is actually
+/// connected AND is NOT the primary (operator) monitor — auto-opening a fullscreen
+/// output on the console's own screen would cover the very UI the operator needs.
+/// On a single-monitor desk nothing auto-opens; plug in the projector and its
+/// screen restores itself. Already-open windows are skipped (duplicate guard in
+/// `open_native_window`). Best-effort: one screen failing never blocks the others.
+#[tauri::command]
+fn auto_open_outputs(
+    app: tauri::AppHandle,
+    db: tauri::State<'_, Db>,
+) -> error::Result<Vec<String>> {
+    let monitors = channels::list_monitors(&app);
+    let list = {
+        let conn = db.0.lock()?;
+        db::list_output_channels(&conn)?
+    };
+    let mut opened = Vec::new();
+    for c in list {
+        if c.render_target != "native_window" {
+            continue; // OBS/kiosk auto-reconnect over the WS; nothing to open here
+        }
+        let Some(idx) = c.display_target.as_deref().and_then(parse_display) else {
+            continue; // no display assigned → not a fixed physical screen
+        };
+        let Some(m) = monitors.iter().find(|m| m.index == idx) else {
+            continue; // that display isn't connected right now
+        };
+        if m.primary {
+            continue; // never cover the operator's console
+        }
+        let tid = c.template_id.unwrap_or(1);
+        let label = channels::channel_label(c.id);
+        if channels::open_native_window(&app, &label, tid, &c.name, Some(idx)).is_ok() {
+            opened.push(label);
+        }
+    }
+    Ok(opened)
+}
+
+/// A channel's `display_target` as a monitor index.
+///
+/// Accepts a bare index ("1") and the "Display 1" form the seed writes. The seed
+/// has always written `display_target = "Display 1"` for the Main screen while
+/// this parsed with a plain `parse::<usize>()`, so it silently returned `None`
+/// and the channel opened on the PRIMARY display — ignoring the display it was
+/// configured with, with nothing reported. On a two-screen setup that means the
+/// congregation's verse appears on the operator's monitor.
+///
+/// "Display 1" is 1-BASED (it is a human label); a bare index is 0-based, matching
+/// `MonitorInfo.index` and what `set_channel_display` writes.
+fn parse_display(s: &str) -> Option<usize> {
+    let s = s.trim();
+    if let Ok(n) = s.parse::<usize>() {
+        return Some(n);
+    }
+    let rest = s
+        .strip_prefix("Display ")
+        .or_else(|| s.strip_prefix("display "))?;
+    rest.trim()
+        .parse::<usize>()
+        .ok()
+        .map(|n| n.saturating_sub(1))
+}
+
+/// What is actually live on each output channel, right now.
+///
+/// Computed from the running app, never read from `output_channels.status` — that
+/// column is written once at insert and never updated, so it has always said
+/// `offline` for every channel, including one filling a projector.
+///
+/// `clients` is only meaningful for a networked channel, and is a COUNT, not a
+/// list: Relay records no address, identity, or connect time for a kiosk client,
+/// so the count is the most that can honestly be reported. `detail` is the one
+/// line the UI shows; it never claims more than the two facts above.
+#[derive(serde::Serialize)]
+struct ChannelLiveness {
+    id: i64,
+    online: bool,
+    clients: usize,
+    detail: String,
+    /// False for a target Relay cannot drive at all (NDI is parked), so the UI can
+    /// say "unavailable" rather than "offline" — a different claim.
+    supported: bool,
+}
+
+/// Live status for every channel. Polled by the Channels screen.
+#[tauri::command]
+fn channel_status(
+    app: tauri::AppHandle,
+    db: tauri::State<'_, Db>,
+    kiosk: tauri::State<'_, channels::KioskHub>,
+) -> error::Result<Vec<ChannelLiveness>> {
+    let list = {
+        let conn = db.0.lock()?;
+        db::list_output_channels(&conn)?
+    };
+    let open = channels::open_channel_ids(&app);
+    let clients = kiosk.clients_handle();
+
+    Ok(list
+        .into_iter()
+        .map(|c| match c.render_target.as_str() {
+            "native_window" => {
+                let online = open.contains(&c.id);
+                ChannelLiveness {
+                    id: c.id,
+                    online,
+                    clients: 0,
+                    detail: if online {
+                        "Output window open".into()
+                    } else {
+                        "No output window open".into()
+                    },
+                    supported: true,
+                }
+            }
+            "network_client" => {
+                // A networked channel is a template that clients subscribe to, so
+                // its liveness is "how many are showing this template".
+                let n = c.template_id.map(|t| clients.count(t)).unwrap_or(0);
+                ChannelLiveness {
+                    id: c.id,
+                    online: n > 0,
+                    clients: n,
+                    detail: match n {
+                        0 => "No client connected".into(),
+                        1 => "1 client connected".into(),
+                        n => format!("{n} clients connected"),
+                    },
+                    supported: true,
+                }
+            }
+            // NDI is parked, not broken — `open_ndi_output` says so too.
+            "ndi_encode" => ChannelLiveness {
+                id: c.id,
+                online: false,
+                clients: 0,
+                detail: "NDI output is not available in this build".into(),
+                supported: false,
+            },
+            other => ChannelLiveness {
+                id: c.id,
+                online: false,
+                clients: 0,
+                detail: format!("Unknown render target '{other}'"),
+                supported: false,
+            },
+        })
+        .collect())
+}
+
+/// Close a channel's native output window, if it has one open.
+#[tauri::command]
+fn close_channel_output(app: tauri::AppHandle, channel_id: i64) -> error::Result<()> {
+    channels::close_window(&app, &channels::channel_label(channel_id)).map_err(Into::into)
 }
 
 /// Assign a physical display to a channel (HDMI). `display` is the monitor index
@@ -3093,5 +3522,51 @@ mod suggestion_tests {
     #[test]
     fn no_hits_is_not_a_panic() {
         assert!(worth_suggesting(vec![]).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod display_target_tests {
+    use super::parse_display;
+
+    /// A channel's assigned display must actually be honoured.
+    ///
+    /// `seed_channels` wrote `display_target = "Display 1"` while this parsed with
+    /// a plain `parse::<usize>()`, which returned `None` — so the seeded main
+    /// screen silently opened on the PRIMARY display instead of the one it was
+    /// configured with, reporting nothing. On a two-screen booth that puts the
+    /// congregation's verse on the operator's monitor.
+    #[test]
+    fn a_human_readable_display_target_is_not_silently_ignored() {
+        assert_eq!(
+            parse_display("Display 1"),
+            Some(0),
+            "1-based label → 0-based index"
+        );
+        assert_eq!(parse_display("Display 2"), Some(1));
+        assert_eq!(parse_display("display 3"), Some(2));
+    }
+
+    #[test]
+    fn a_bare_index_is_still_a_zero_based_index() {
+        // What `set_channel_display` writes, and what MonitorInfo.index means.
+        assert_eq!(parse_display("0"), Some(0));
+        assert_eq!(parse_display("1"), Some(1));
+        assert_eq!(parse_display(" 2 "), Some(2));
+    }
+
+    #[test]
+    fn an_unreadable_target_falls_back_rather_than_guessing() {
+        // None → primary display, which is the safe default.
+        assert_eq!(parse_display(""), None);
+        assert_eq!(parse_display("HDMI-A-1"), None);
+        assert_eq!(parse_display("Display"), None);
+    }
+
+    #[test]
+    fn display_zero_does_not_underflow_to_a_huge_index() {
+        // "Display 0" is not a form anything writes, but saturating_sub must not
+        // turn it into usize::MAX and index past the monitor list.
+        assert_eq!(parse_display("Display 0"), Some(0));
     }
 }

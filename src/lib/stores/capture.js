@@ -101,7 +101,11 @@ export const rehearsing = writable(false);
 
 // Rolling transcript: `partial` is the in-progress line, `finals` are closed
 // utterances (silence-delimited). Kept across capture stop/start.
-export const transcript = writable({ partial: '', finals: [] });
+// `finalsAt[i]` is the arrival wall-clock of `finals[i]`. Stamped here, at the
+// source, and sliced in lockstep with `finals` — so a consumer can never drift
+// the two apart (the length-based alignment in Live did, once the rolling cap
+// froze `finals.length` at MAX_FINALS and every new line shifted the array left).
+export const transcript = writable({ partial: '', finals: [], finalsAt: [] });
 
 // PENDING SUGGESTIONS awaiting an operator decision (status 'suggested'),
 // de-duplicated by reference. Auto/manual fires do NOT land here — they go
@@ -253,6 +257,26 @@ export async function initAudio() {
       await listen('audio://quality', (e) =>
         capture.update((s) => ({ ...s, quality: e.payload }))
       );
+      // A template was edited → make the console mirror change LIVE, without
+      // waiting for a re-fire. Two things can be showing it: the console's
+      // preview/program panes resolve their template from the reactive `$templates`
+      // store (so reloading it updates them), and the content currently on screen
+      // may carry that template as a content-type/cue OVERRIDE snapshot — refresh
+      // that snapshot so the program pane re-renders the live verse at once.
+      await listen('template://updated', async (e) => {
+        const id = e.payload;
+        await loadTemplates();
+        const cur = get(live);
+        const ov = cur && parseTemplateOverride(cur.template_json);
+        if (ov && ov.id === id) {
+          try {
+            const fresh = await call('get_template', { id });
+            if (fresh) live.set({ ...cur, template_json: JSON.stringify(fresh) });
+          } catch {
+            /* backend hiccup — next fire will carry the fresh template anyway */
+          }
+        }
+      });
       // Only NOW are they actually up. Setting this before registration meant a
       // single failed `listen` latched the flag forever: the listeners were never
       // registered and never retried, so the console silently stopped mirroring
@@ -357,6 +381,9 @@ export async function startCapture(device) {
   }
   await call('start_capture', { device: device ?? null });
 
+  // Last language pushed to `capture` — guards against re-notifying subscribers
+  // on every transcript when the detected language hasn't changed.
+  let lastLang = null;
   // The hot path. Goes to `meter`, never to `capture` — see the note on `meter`.
   unlistenAudio = await listen('audio://chunk', (e) => {
     const { rms, is_voice } = e.payload;
@@ -364,11 +391,20 @@ export async function startCapture(device) {
   });
   unlistenStt = await listen('stt://transcript', (e) => {
     const { text, is_final, language } = e.payload;
-    if (language) capture.update((s) => ({ ...s, detectedLang: language }));
+    // Only touch `capture` when the detected language actually CHANGES. A Svelte
+    // writable notifies every subscriber on every `set`, so updating it on each
+    // transcript event re-rendered the whole app shell several times a second for
+    // a value almost nothing reads — the same churn the `meter` split-out fixed.
+    if (language && language !== lastLang) {
+      lastLang = language;
+      capture.update((s) => ({ ...s, detectedLang: language }));
+    }
     transcript.update((t) => {
       if (is_final) {
+        const at = new Date().toLocaleTimeString('en-GB');
         const finals = [...t.finals, text].slice(-MAX_FINALS);
-        return { partial: '', finals };
+        const finalsAt = [...(t.finalsAt ?? []), at].slice(-MAX_FINALS);
+        return { partial: '', finals, finalsAt };
       }
       return { ...t, partial: text };
     });
@@ -410,7 +446,11 @@ export async function stopCapture() {
     unlistenDetect();
     unlistenDetect = null;
   }
-  capture.update((s) => ({ ...s, capturing: false, level: 0, isVoice: false }));
+  capture.update((s) => ({ ...s, capturing: false }));
+  // The live level lives on the `meter` store, not `capture` — resetting
+  // capture.level/isVoice (which nothing reads) left the input bars frozen lit at
+  // the last value after Stop. Reset the store that actually drives them.
+  meter.set({ level: 0, isVoice: false });
   transcript.update((t) => ({ ...t, partial: '' }));
 }
 
@@ -448,10 +488,18 @@ export async function dismissDetection(reference) {
 }
 
 /** Manual override: fire a free-text reference now (throws if unparseable).
- *  `stageNote` is an optional confidence-monitor note for this cue. */
-export async function manualFire(reference, stageNote = null) {
+ *  `stageNote` is an optional confidence-monitor note for this cue.
+ *  `keepPlan` — when a PLAN slide is being fired (the operator stepping the plan
+ *  in Slide mode), the transport must STAY on the plan. Without this, firing a
+ *  scripture plan cue ran `leavePlan()` below and flipped the transport out of
+ *  Slide mode into Verse mode — so the very next → walked the passage instead of
+ *  advancing the plan. Songs/media/countdown never hit this (they don't fire
+ *  through `manual_fire`); only scripture cues did, which is exactly what made
+ *  Slide mode "break" on a scripture item. Hand-typed fires keep the default. */
+export async function manualFire(reference, stageNote = null, templateId = null, keepPlan = false) {
   const call = await invoke();
-  await call('manual_fire', { reference, stageNote });
+  await call('manual_fire', { reference, stageNote, templateId });
+  if (keepPlan) return; // a plan slide fire — stay on the plan (Slide mode holds)
   // A hand-typed verse is not a plan cue. If the arrows still thought we were in
   // the plan, the next → would jump back to a slide the congregation has moved on
   // from.
@@ -582,6 +630,24 @@ export async function reorderPlan(planId, ids) {
   await call('reorder_plan', { planId, ids });
 }
 
+/** Begin a section at this cue. A blank title merges it into the section above. */
+export async function setPlanSection(id, title) {
+  const call = await invoke();
+  await call('set_plan_section', { id, title: title ?? '' });
+}
+
+/** Set a cue's planned length in seconds. 0 = untimed (fires on cue, not a clock). */
+export async function setPlanDuration(id, seconds) {
+  const call = await invoke();
+  await call('set_plan_duration', { id, seconds });
+}
+
+/** Override the template a cue renders with. `null` re-inherits the channel's. */
+export async function setPlanTemplate(id, templateId) {
+  const call = await invoke();
+  await call('set_plan_template', { id, templateId: templateId ?? null });
+}
+
 // ── Songs (Lyrics) ───────────────────────────────────────────────────────────
 
 /** All songs with section counts. */
@@ -693,20 +759,21 @@ export function countdownRunning() {
  *  from the broadcast target; `label` shows above, `doneMsg` replaces it at 0.
  *  Guarded: refuses to start a second countdown while one is still running —
  *  clear the screen (or let it finish) first. */
-export async function startCountdown(minutes, label = 'Service begins in', doneMsg = 'Welcome') {
+export async function startCountdown(minutes, label = 'Service begins in', doneMsg = 'Welcome', templateId = null) {
   if (countdownRunning()) {
     throw new Error('A countdown is already running — clear the screen to start a new one.');
   }
   const call = await invoke();
-  await call('start_countdown', { minutes, label, doneMsg });
+  await call('start_countdown', { minutes, label, doneMsg, templateId });
 }
 
 /** Fire arbitrary content to the screens. `kind` ('song'|'announce') selects the
  *  content-type default template (per-content-type templates). `stageNote` is an
- *  optional confidence-monitor note for this cue. */
-export async function fireContent(label, text, kind = 'announce', stageNote = null) {
+ *  optional confidence-monitor note for this cue. `templateId`, when set, is the
+ *  cue's OWN template override (Planner) — it wins over the content-type default. */
+export async function fireContent(label, text, kind = 'announce', stageNote = null, templateId = null) {
   const call = await invoke();
-  await call('fire_content', { label, text, kind, stageNote });
+  await call('fire_content', { label, text, kind, stageNote, templateId });
 }
 
 /** The content-type → template default mapping. */
@@ -795,10 +862,11 @@ export async function deleteMedia(id) {
   const call = await invoke();
   await call('delete_media', { id });
 }
-/** Fire a media asset (image/video) to the output screens as a background. */
-export async function fireMedia(id) {
+/** Fire a media asset (image/video) to the output screens as a background.
+ *  `templateId`, when set, is the cue's own Planner template override. */
+export async function fireMedia(id, templateId = null) {
   const call = await invoke();
-  await call('fire_media', { id });
+  await call('fire_media', { id, templateId });
 }
 
 /** Parse a lyric file into songs WITHOUT saving — for the pre-save review. */
@@ -843,6 +911,13 @@ export async function saveTemplate(t) {
   return id;
 }
 
+/** Save without reloading the store — for bulk operations that reload once at
+ *  the end (e.g. the one-time legacy→layers upgrade). */
+export async function saveTemplateQuiet(t) {
+  const call = await invoke();
+  return call('save_template', { template: t });
+}
+
 /** The active templates (max 4) previewed on the console Output grid. */
 export async function listActiveTemplates() {
   try {
@@ -875,6 +950,16 @@ export async function deleteTemplate(id) {
   await loadTemplates();
 }
 
+/** Labels of the output windows that are actually OPEN right now. */
+export async function listOutputWindows() {
+  try {
+    const call = await invoke();
+    return await call('list_output_windows');
+  } catch {
+    return [];
+  }
+}
+
 /** All configured output channels. */
 export async function listOutputChannels() {
   try {
@@ -902,6 +987,26 @@ export async function listMonitors() {
   try {
     const call = await invoke();
     return await call('list_monitors');
+  } catch {
+    return [];
+  }
+}
+
+/** Books available to browse, in canonical order (Library §7). */
+export async function listBooks() {
+  try {
+    const call = await invoke();
+    return await call('list_books');
+  } catch {
+    return [];
+  }
+}
+
+/** One chapter's verses, in order. */
+export async function chapterVerses(book, chapter) {
+  try {
+    const call = await invoke();
+    return await call('chapter_verses', { book, chapter });
   } catch {
     return [];
   }
@@ -949,6 +1054,19 @@ export async function openChannelOutput(channelId) {
   return call('open_channel_output', { channelId });
 }
 
+/** Re-open the physical output windows assigned to a display, so HDMI/projector
+ *  screens restore themselves after a launch/update/rebuild. Backend only opens
+ *  onto connected, non-primary displays, so it never covers the operator's
+ *  console. Best-effort — a plain browser (no backend) just no-ops. */
+export async function autoOpenOutputs() {
+  try {
+    const call = await invoke();
+    return await call('auto_open_outputs');
+  } catch {
+    return [];
+  }
+}
+
 /** Assign a physical display (monitor index string, or null) to a channel. */
 export async function setChannelDisplay(id, display) {
   const call = await invoke();
@@ -965,6 +1083,29 @@ export async function addChannel(name, renderTarget, templateId) {
 export async function deleteChannel(id) {
   const call = await invoke();
   await call('delete_channel', { id });
+}
+
+/**
+ * What is actually live on each channel, right now.
+ *
+ * Computed by the backend from open output windows and connected kiosk clients —
+ * NOT from `output_channels.status`, which is written once at insert and has
+ * always read `offline` for every channel. Returns `[]` without a backend rather
+ * than throwing: a dead status strip must not take the Channels screen down.
+ */
+export async function channelStatus() {
+  try {
+    const call = await invoke();
+    return await call('channel_status');
+  } catch {
+    return [];
+  }
+}
+
+/** Close a channel's native output window, if it has one open. */
+export async function closeChannelOutput(channelId) {
+  const call = await invoke();
+  await call('close_channel_output', { channelId });
 }
 
 /**
