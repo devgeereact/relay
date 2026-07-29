@@ -53,7 +53,12 @@ export function makeProbes({ invoke = tauriInvoke, getVersion } = {}) {
   return {
     // ── Diagnostics ────────────────────────────────────────────────────────
     async engine() {
-      await invoke('greet', { name: 'operator' });
+      // `ping`, NOT `greet`. `greet` prints the console's boot heartbeat, and
+      // that line is only worth anything if it appears exactly once per launch —
+      // this probe runs from the launch sequence AND the Dashboard, so calling it
+      // here printed "webview up" three times and made a healthy boot
+      // indistinguishable from a webview reloading. See `greet` in main.rs.
+      await invoke('ping');
       return { state: 'ok', note: 'attached' };
     },
     async version() {

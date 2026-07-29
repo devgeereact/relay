@@ -254,6 +254,7 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             greet,
+            ping,
             lookup_verse,
             search_scripture,
             list_plans,
@@ -869,6 +870,15 @@ fn persist_cue<R: tauri::Runtime>(
 
 // Bridge liveness probe — the frontend calls this on mount to tell whether the
 // Rust core is attached (see App.svelte). Cheap, no side effects.
+//
+// EXACTLY ONE CALLER, FOREVER. `greet` is not a health check; it is a COUNTER of
+// console mounts that happens to return a string. Its whole diagnostic value is
+// that one line means one webview came up — so a second caller does not add
+// information, it destroys it. The boot sequence and the Dashboard both used to
+// call this to ask "is the engine attached?", which printed the heartbeat three
+// times per launch and made it impossible to tell a healthy boot from a webview
+// reloading twice. Liveness probes call `ping`, which is silent. Pinned by
+// `ipc.test.js`.
 #[tauri::command]
 fn greet(name: &str) -> String {
     // Called once from App.svelte's onMount. It is the console's boot heartbeat:
@@ -878,6 +888,16 @@ fn greet(name: &str) -> String {
     // a blank webview prints nothing here.
     println!("console: webview up ({name})");
     format!("Relay is running. Hello, {name}.")
+}
+
+/// Is the Rust core attached? The SILENT counterpart to `greet`.
+///
+/// Anything that repeatedly asks "is the bridge up?" — the launch sequence, the
+/// Dashboard health panel, anything polled — belongs here. It prints nothing, so
+/// it cannot drown the one line that tells you the console actually booted.
+#[tauri::command]
+fn ping() -> bool {
+    true
 }
 
 /// Look up a verse by canonical reference for the operator console / manual
