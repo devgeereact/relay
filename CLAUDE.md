@@ -43,7 +43,7 @@ Tier 1: **Yoruba, Swahili, Hausa**, plus English. Code-switching (English mixed 
 npm install
 npm run tauri dev        # desktop app + Vite on :5032, kiosk WS on :8031
 
-npm test                 # vitest (247 tests)
+npm test                 # vitest (404 tests)
 npx vitest run src/lib/nav.test.js          # one file
 npx vitest run -t "Escape closes the cheat" # one test by name
 npm run build            # vite build — catches Svelte compile errors fast
@@ -57,7 +57,7 @@ Rust (**prefix with the cmake path — this machine has no Homebrew**):
 ```bash
 export PATH="/Users/gideonakinlotan/.local/bin:$PATH"   # cmake 3.31.6, needed by whisper-rs
 cd src-tauri
-cargo test                                   # 330 tests
+cargo test                                   # 408 tests
 cargo test e2e                               # the fire → nav → clear path (7 tests)
 cargo test detection::                       # one module
 cargo test the_macos_build -- --nocapture    # one test
@@ -67,7 +67,7 @@ cargo test eval::tests::print_scorecard -- --nocapture         # detection score
 
 - **Desktop app = a native window.** `localhost:5032` in a plain browser has NO backend (dead UI). `:5032` exists for the app's webview + OBS/kiosk browser sources.
 - **`tauri dev` does NOT exercise the CSP.** In dev, Tauri loads the Vite `devUrl`; `app.security.csp` only applies to bundled assets. **Any CSP change must be verified with `npm run tauri build`** against the packaged binary.
-- **This machine cannot screenshot the app.** Verify via `cargo test`, `vite build`, backend stdout, and the **boot heartbeat**: `App.svelte` calls `greet` on mount, `main.rs` prints `console: webview up (operator)`. No line = blank/broken console.
+- **This machine cannot screenshot the app.** Verify via `cargo test`, `vite build`, backend stdout, and the **boot heartbeat**: `App.svelte` calls `greet` on mount, `main.rs` prints `console: webview up (operator)`. No line = blank/broken console. **Exactly one line per launch** — the count is the signal, so `greet` has exactly ONE caller and anything else asking "is the bridge up?" calls `ping`, which is silent. Pinned by `ipc.test.js`; see §26.
 - **STT models** live in app-data (`db::app_data_dir()/models`), gitignored. Downloaded in-app (`models.rs`), or resolved via `RELAY_MODEL_PATH` → repo `models/`.
 - **Full KJV** is bundled at `src-tauri/data/kjv.json` (`include_str!`, committed — required to build).
 - **SQLite** dev DB: `~/Library/Application Support/com.relay.app/relay.db`.
@@ -140,7 +140,7 @@ Shipping: in-app model download, first-run wizard, auto-updater, rehearsal mode,
 
 Parked, honestly (not faked): **NDI** (needs proprietary SDK — `open_ndi_output` returns a clear error), **neural paraphrase embedder** (TF-IDF is the seam behind `SemanticIndex::top_k`; the `verses.embedding` column exists and has never been written to), **African-language STT fine-tunes**.
 
-Dead-but-built, decide and act: `related_scripture` (19 themes, a registered command, **zero frontend callers**).
+`related_scripture` (19 themes) is **wired** as of the new-design merge — `Live.svelte` calls it via `relatedScripture()` in `capture.js`. It is no longer dead code; treat it as shipped.
 
 ## Architecture rules learned the HARD WAY — do not regress these
 
@@ -171,6 +171,7 @@ These caused real crashes, freezes, or silent failures in front of people. Keep 
 23. **A release is signed per-platform, or not at all.** One global "is it signed?" flag *is* the bug: it tested `APPLE_CERTIFICATE` and shipped an unsigned Windows MSI in silence. Two certificates, two independent verdicts, and the gate fails loud on a real tag.
 24. **The fire engine is generic over `tauri::Runtime`** (`fire_manual`, `handle_nav`, `clear_or_report`, `persist_cue`, and `channels::{broadcast_content, clear, black, stage_next}`). That is what makes `e2e.rs` possible: welded to the concrete desktop runtime, the one path that puts scripture on a wall could not be driven without a window, and so was never tested. **Keep new fire-path code generic** — a concrete `AppHandle` quietly re-welds it.
 25. **A migration must be RETRYABLE.** `ensure_manual_detection_status` rebuilds a table (SQLite cannot `ALTER` a `CHECK`). It had no `ROLLBACK`, so a mid-batch failure left the transaction open — the following `PRAGMA foreign_keys = ON` then ran *inside* it, where the pragma is a documented no-op, and the error panicked the app at startup with FKs off. The leftover `detections_new` scratch table then made **every subsequent boot** fail with "table already exists", forever, before the window is even shown. Always `DROP TABLE IF EXISTS` the scratch table first, and roll back on failure.
+26. **`greet` is a COUNTER, not a health check — exactly one caller, forever.** It prints `console: webview up`, and on a machine that cannot screenshot the app that line is the only proof the webview loaded and reached the Tauri bridge. Its entire value is the *count*: one line, one console mount. The new-design branch added `probes.js:engine()` calling `greet` to ask "is the bridge attached?", and that probe runs from **both** the launch sequence and the Dashboard — so every launch printed the heartbeat **three times**. Nothing was broken, which is the point: the one instrument for diagnosing a blank console now read exactly like a webview reloading twice, and a real double-mount would have been invisible in the noise. **Liveness probes call `ping`** (silent, returns `true`). Pinned by `ipc.test.js`, which fails if any file other than `App.svelte` mentions `greet`.
 
 ## Frontend shape
 
@@ -198,7 +199,7 @@ These caused real crashes, freezes, or silent failures in front of people. Keep 
 
 ## Testing
 
-374 Rust + 384 frontend. CI runs both on **macOS and Windows**, plus `fmt`, `clippy -D warnings`, the detection scorecard, and a release build.
+408 Rust + 404 frontend. CI runs both on **macOS and Windows**, plus `fmt`, `clippy -D warnings`, the detection scorecard, and a release build.
 
 - **`e2e.rs` is the one test that exercises what a congregation actually sees.** It drives the real commands (`manual_fire`, `nav`, `clear_screens`, `blackout`, `set_rehearsal`) against a real in-memory DB, through the real router and pipeline, and asserts on the events that leave the machine. Nothing is mocked but the window (`tauri::test::mock_builder`, dev-dependency `tauri/test`). **Add a test here whenever you touch the fire path.**
   - Use `mock_context(noop_assets())`, **not** `generate_context!()` — the real macro embeds `Info.plist` as a link symbol and expanding it twice fails with `_EMBED_INFO_PLIST is already defined`.

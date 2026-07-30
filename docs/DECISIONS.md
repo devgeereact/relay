@@ -1069,3 +1069,43 @@ If a church wants TPT or MSG on its wall, that is a licence they buy, plus an AP
 key they hold — a per-install integration, not a feature Relay can ship. Saying so
 plainly is the honest answer; quietly shipping the text would put every church
 using Relay in breach.
+
+## 33. Two shared words, or one rare one — evidence, not word count
+
+**Decided during the `NEW-DESIGN-IMPLEMEMTATION` merge, because the two branches
+disagreed and each shipped a test that failed if the other won.**
+
+`top_k_explained` refuses a paraphrase candidate it cannot justify. The bar was a flat
+count: at least `MIN_EVIDENCE_TERMS` (2) shared content words, so a match is
+*corroborated* rather than merely confident. One shared word is usually a coincidence
+with a good score, and — under §21 — a one-word explanation gives the operator nothing
+they can actually judge in the second they have to judge it.
+
+The KJV gloss (`expand_with_gloss`) landed independently and its entire premise is the
+opposite case: a modern retelling reaches its verse through **exactly one** rare KJV
+noun. "he ended up feeding pigs" shares precisely `swine` with Luke 15:16 — no second
+word exists to corroborate it, in the test corpus or in the real KJV. A flat 2-word floor
+does not make that match weaker; it makes the gloss inert.
+
+Both are right about different words, so the rule is about **evidence, not arithmetic**:
+
+- **Two or more shared words** — offered, as before.
+- **Exactly one shared word** — offered *only* if that word is rare: it appears in at most
+  `RARE_DF_FRACTION` (0.1%) of the corpus, floored at one document so the rule still
+  bites on the small corpora the tests build. On the full KJV that is ~31 of 31,102
+  verses: `swine` (~30) and `ossifrage` (2) clear it; `lord` (~7,800) is nowhere near.
+- Rarity is computed **at build time, from raw document frequency**, and judged on the
+  **stem** — `surface` deliberately maps several stems onto one readable word, and `idf`
+  is a float nobody should be inverting on the query path.
+
+A word that names one story is corroboration all by itself, because there is nowhere else
+in the corpus it could have come from. A word that names half the Bible is not, however
+high it scores.
+
+This changes what is *suggested*, never what fires: `Semantic` is still capped at
+`Suggest` in `router.rs::decide` (live-safety rule #10), so every one of these reaches a
+human and none reaches a congregation on its own.
+
+Pinned by `a_common_single_shared_word_is_not_offered_as_a_paraphrase` and
+`a_rare_single_shared_word_is_evidence_enough`, both **mutation-verified**: removing the
+rarity exception fails the second, and treating every term as rare fails the first.

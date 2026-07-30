@@ -64,6 +64,11 @@
   let unlisten = [];
   let ws = null;
   let kioskClosed = false;
+  // Video sound is enabled on the NATIVE output window only (the one running on
+  // the operator's machine, wired to the house speakers). The kiosk/OBS page is
+  // a browser source: OBS captures and mixes its audio itself, so unmuting there
+  // would push unexpected audio into a stream the operator did not ask for.
+  let isDesktop = false;
 
   async function invoke() {
     const core = await import('@tauri-apps/api/core');
@@ -216,6 +221,7 @@
           }
         }),
       );
+      isDesktop = true;
     } catch {
       startKiosk();
     }
@@ -227,7 +233,7 @@
   });
 </script>
 
-<TemplateRender template={themedTemplate} content={visible ? content : null} />
+<TemplateRender template={themedTemplate} content={visible ? content : null} audio={isDesktop} />
 <!-- BLACKOUT NEVER BLACKS OUT A LOWER THIRD. On a keyed channel "black" would
      paint an opaque rectangle over the live camera — the opposite of what the
      operator pressed it for. On that channel the panic control removes the

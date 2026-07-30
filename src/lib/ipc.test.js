@@ -70,6 +70,35 @@ describe('Tauri IPC contract', () => {
     const missing = commandsCalledByFrontend().filter((c) => !registered.has(c));
     expect(missing, `frontend calls commands that do not exist in Rust: ${missing.join(', ')}`).toEqual([]);
   });
+
+  // ── The boot heartbeat has exactly one caller ──
+  //
+  // `greet` prints "console: webview up" and is the ONLY way to tell, on a machine
+  // that cannot screenshot the app, that the webview loaded and reached the Tauri
+  // bridge (CLAUDE.md). Its value is entirely in the COUNT: one line, one mount.
+  //
+  // The new-design branch added `probes.js:engine()` calling `greet` as a liveness
+  // check, and that probe runs from BOTH the launch sequence and the Dashboard — so
+  // every launch printed the heartbeat three times. Nothing was wrong with the app,
+  // but the one instrument for diagnosing a blank console now read like a webview
+  // reloading twice, and a real double-mount would have been invisible in the noise.
+  //
+  // Liveness probes call `ping` (silent). This keeps it that way.
+  it('the boot heartbeat (greet) is called from exactly one place', () => {
+    const sources = [
+      ['src/App.svelte', read('src/App.svelte')],
+      ['src/lib/boot/probes.js', probesJs],
+      ['src/lib/stores/capture.js', captureJs],
+      ['src/lib/boot/BootSequence.svelte', read('src/lib/boot/BootSequence.svelte')],
+      ['src/lib/views/Dashboard.svelte', read('src/lib/views/Dashboard.svelte')],
+    ];
+    const callers = sources.filter(([, text]) => /['"]greet['"]/.test(text)).map(([f]) => f);
+    expect(
+      callers,
+      `greet is the boot heartbeat and must have ONE caller (App.svelte). ` +
+        `Liveness probes call 'ping' instead. Found: ${callers.join(', ')}`,
+    ).toEqual(['src/App.svelte']);
+  });
 });
 
 describe('Tauri event contract', () => {

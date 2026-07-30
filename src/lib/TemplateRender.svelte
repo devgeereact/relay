@@ -6,6 +6,7 @@
   // small preview box.
   import { afterUpdate, onMount, onDestroy } from 'svelte';
   import { isLayered, boundValue, templateShows, formatElapsed, formatRemaining } from './layers.js';
+  import { applySink, getAudioOutput, onAudioOutputChange } from './audioOutput.js';
 
   export let template = {};
   export let content = null; // { reference, text, translation }
@@ -17,6 +18,10 @@
   // regression on every existing call site.
   export let theme = null;
   import { applyTheme, themeById, templateThemeRef, BUILTIN_THEMES } from './themes.js';
+  // Sound is OPT-IN per surface. This same renderer draws the Templates editor
+  // preview, and editing a template must not blast video audio across the room —
+  // so only a real output surface passes audio={true}.
+  export let audio = false;
 
   // The theme to apply. An EXPLICIT `theme` prop always wins (the Themes editor
   // previewing an unsaved draft, or an output page that resolved a CUSTOM theme
@@ -269,6 +274,44 @@
     io?.disconnect();
     if (fitRaf && typeof cancelAnimationFrame !== 'undefined') cancelAnimationFrame(fitRaf);
   });
+
+  // --- Video sound: the operator's chosen speaker, applied to the clip ---
+  // The <video> lives inside a {#key} block, so a new clip is a NEW element:
+  // routing is (re)applied on each element's loadedmetadata, not once on mount.
+  // Layer mode, full-frame media and the legacy band are mutually exclusive
+  // branches, so at most one <video> is ever mounted — one binding covers all.
+  let videoEl;
+  let sink = getAudioOutput();
+  let unsubSink;
+  onMount(() => {
+    unsubSink = onAudioOutputChange((id) => {
+      sink = id;
+      routeAudio();
+    });
+  });
+  onDestroy(() => unsubSink?.());
+
+  // Apply the speaker choice, then play WITH sound. If the webview refuses
+  // unmuted autoplay (no user gesture in this window yet), fall back to muted
+  // playback rather than letting the clip not play at all — the picture is the
+  // primary job in front of a congregation; sound is the bonus. Never let an
+  // audio problem become a blank screen.
+  async function routeAudio() {
+    const el = videoEl;
+    if (!el || !audio) return;
+    await applySink(el, sink);
+    try {
+      el.muted = false;
+      await el.play();
+    } catch {
+      el.muted = true;
+      try {
+        await el.play();
+      } catch {
+        /* autoplay blocked entirely; the element keeps its own autoplay attempt */
+      }
+    }
+  }
 
   // Verse colour, with a readable default.
   $: verseColor = style.verseColor || '#f4e4c8';
@@ -577,7 +620,7 @@
             <div class="lmediabox" style="{boxStyle(L)} border-radius:{L.radius || 0}cqw; opacity:{L.opacity == null ? 1 : L.opacity};">
               {#if content.media_kind === 'video'}
                 <!-- svelte-ignore a11y-media-has-caption -->
-                <video class="lmediafill" src={content.media_url} style="object-fit:{L.fit === 'contain' ? 'contain' : 'cover'};" autoplay loop muted playsinline></video>
+                <video class="lmediafill" src={content.media_url} style="object-fit:{L.fit === 'contain' ? 'contain' : 'cover'};" bind:this={videoEl} autoplay loop muted={!audio} playsinline on:loadedmetadata={routeAudio}></video>
               {:else}
                 <img class="lmediafill" src={content.media_url} style="object-fit:{L.fit === 'contain' ? 'contain' : 'cover'};" alt="" />
               {/if}
@@ -617,7 +660,7 @@
            layer to the template to position it instead. -->
       {#if content.media_kind === 'video'}
         <!-- svelte-ignore a11y-media-has-caption -->
-        <video class="media" src={content.media_url} autoplay loop muted playsinline></video>
+        <video class="media" src={content.media_url} bind:this={videoEl} autoplay loop muted={!audio} playsinline on:loadedmetadata={routeAudio}></video>
       {:else}
         <img class="media" src={content.media_url} alt="" />
       {/if}
@@ -641,7 +684,7 @@
          sensible behaviour and keeps old templates working. -->
     {#if content.media_kind === 'video'}
       <!-- svelte-ignore a11y-media-has-caption -->
-      <video class="media" src={content.media_url} autoplay loop muted playsinline></video>
+      <video class="media" src={content.media_url} bind:this={videoEl} autoplay loop muted={!audio} playsinline on:loadedmetadata={routeAudio}></video>
     {:else}
       <img class="media" src={content.media_url} alt="" />
     {/if}

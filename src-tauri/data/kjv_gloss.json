@@ -1,0 +1,204 @@
+{
+  "_note": [
+    "Modern English → KJV vocabulary, for PARAPHRASE SEARCH ONLY.",
+    "",
+    "Why this exists: the bundled text is 1611 English, but a preacher retelling a",
+    "story speaks 2026 English. Measured on data/paraphrase_corpus.json, a natural",
+    "retelling ('the paralysed man lowered through the roof') found the right",
+    "passage 18% of the time, because not one of its content words appears in the",
+    "KJV at all. That is a VOCABULARY gap, not a semantics gap — and a vocabulary",
+    "gap is a table, not a neural network.",
+    "",
+    "Applied to the QUERY ONLY, never to the index. Expanding the corpus would",
+    "corrupt the IDF weights that make rare biblical nouns such strong signals.",
+    "",
+    "Deliberately GENERAL KJV archaisms, not a list reverse-engineered from the",
+    "failing cases — otherwise the benchmark would just be measuring itself. Terms",
+    "unique to one story (a 'Samaritan', a 'sycomore') are left out on purpose: a",
+    "gloss that names an answer is not a gloss, it is a cheat.",
+    "",
+    "This is the same shape as data/book_aliases.json: hand-curated, offline, and",
+    "reviewable by anyone who knows the text. It does NOT replace a sentence",
+    "embedder — it closes the cheap half of the gap first."
+  ],
+  "gloss": {
+    "boat": [
+      "ship"
+    ],
+    "lake": [
+      "sea"
+    ],
+    "overboard": [
+      "sea"
+    ],
+    "crowd": [
+      "press",
+      "multitude"
+    ],
+    "pig": [
+      "swine"
+    ],
+    "collector": [
+      "publican"
+    ],
+    "clothes": [
+      "raiment",
+      "garment"
+    ],
+    "stream": [
+      "brook"
+    ],
+    "doctor": [
+      "physician"
+    ],
+    "jail": [
+      "prison"
+    ],
+    "cell": [
+      "prison",
+      "dungeon"
+    ],
+    "oven": [
+      "furnace"
+    ],
+    "ditch": [
+      "trench"
+    ],
+    "tomb": [
+      "sepulchre",
+      "grave"
+    ],
+    "donkey": [
+      "ass",
+      "colt"
+    ],
+    "animal": [
+      "beast"
+    ],
+    "traders": [
+      "merchantmen",
+      "merchants"
+    ],
+    "caravan": [
+      "merchantmen",
+      "company"
+    ],
+    "entrance": [
+      "door",
+      "mouth"
+    ],
+    "stretcher": [
+      "bed",
+      "couch"
+    ],
+    "mat": [
+      "bed",
+      "couch"
+    ],
+    "dad": [
+      "father"
+    ],
+    "kid": [
+      "child",
+      "lad"
+    ],
+    "boy": [
+      "lad",
+      "child",
+      "youth"
+    ],
+    "inheritance": [
+      "portion",
+      "substance",
+      "goods"
+    ],
+    "paralysed": [
+      "palsy"
+    ],
+    "healed": [
+      "whole",
+      "healed"
+    ],
+    "cured": [
+      "whole",
+      "healed"
+    ],
+    "shouted": [
+      "cried"
+    ],
+    "threw": [
+      "cast"
+    ],
+    "bleeding": [
+      "issue",
+      "blood"
+    ],
+    "smelled": [
+      "stinketh"
+    ],
+    "wrapped": [
+      "bound",
+      "swaddling"
+    ],
+    "panicked": [
+      "afraid",
+      "feared"
+    ],
+    "terrified": [
+      "afraid",
+      "sore",
+      "feared"
+    ],
+    "complained": [
+      "murmured"
+    ],
+    "hit": [
+      "smite",
+      "smote"
+    ],
+    "sank": [
+      "sink"
+    ],
+    "mugged": [
+      "thieves",
+      "robbers",
+      "wounded"
+    ],
+    "bandaged": [
+      "bound",
+      "wounds"
+    ],
+    "ripped": [
+      "rent",
+      "stripped"
+    ],
+    "soaked": [
+      "poured",
+      "water"
+    ],
+    "hug": [
+      "neck",
+      "embraced"
+    ],
+    "singing": [
+      "sang",
+      "praises"
+    ],
+    "deepest": [
+      "inner"
+    ],
+    "wooden": [
+      "wood"
+    ],
+    "sealed": [
+      "sealed",
+      "stone"
+    ],
+    "short": [
+      "stature"
+    ],
+    "well": [
+      "pit"
+    ]
+  }
+}

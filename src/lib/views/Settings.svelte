@@ -8,6 +8,13 @@
   import { humanError } from '../errors.js';
   import { safeMode, setSafeMode } from '../boot/boot.js';
   import { checkForUpdate, updateAvailable } from '../updater.js';
+  import {
+    listOutputDevices,
+    getAudioOutput,
+    setAudioOutput,
+    supportsSinkId,
+    ensureDeviceAccess,
+  } from '../audioOutput.js';
   import en from '../locales/en.json';
   import yo from '../locales/yo.json';
   import sw from '../locales/sw.json';
@@ -22,7 +29,7 @@
     Math.round(
       (Object.keys(CATALOGUES[code] ?? {}).filter((k) => !k.startsWith('_')).length / TOTAL) * 100,
     );
-  import { capture, meter, templates, initAudio, startCapture, stopCapture, setThresholds, setSttLanguage, setInputDevice, listTranslations, getActiveTranslation, setActiveTranslation, localIp, loadTemplates, getCrashReporting, setCrashReporting, serviceTargetMinutes, loadServiceTarget, setServiceTarget } from '../stores/capture.js';
+  import { capture, meter, templates, initAudio, startCapture, stopCapture, setThresholds, setSttLanguage, setInputDevice, listTranslations, getActiveTranslation, setActiveTranslation, localIp, loadTemplates, getContentTemplates, setContentTemplate, getCrashReporting, setCrashReporting, serviceTargetMinutes, loadServiceTarget, setServiceTarget } from '../stores/capture.js';
 
   // ─────────────────────────────────────────────────────────────────────────
   // SECTION NAV. The screen is one big config surface split into ref-matched
@@ -31,7 +38,8 @@
   const SECTIONS = [
     { key: 'dashboard', label: 'Dashboard',         desc: 'Service overview and quick actions', icon: 'grid' },
     { key: 'general',   label: 'General',           desc: 'Basic application preferences and behaviour', icon: 'gear' },
-    { key: 'audio',     label: 'Audio',             desc: 'Microphone input and live level', icon: 'mic' },
+    { key: 'outputs',   label: 'Outputs',           desc: 'Per-content-type templates and output routing', icon: 'monitor' },
+    { key: 'audio',     label: 'Audio',             desc: 'Microphone input, live level and video sound output', icon: 'mic' },
     { key: 'scripture', label: 'Scripture & Bible', desc: 'Recognition language and Bible translations', icon: 'book' },
     { key: 'ai',        label: 'AI & Detection',    desc: 'Detection thresholds and the run engine', icon: 'sparkle' },
     { key: 'shortcuts', label: 'Shortcuts',         desc: 'Keyboard controls for the live desk', icon: 'keyboard' },
@@ -147,6 +155,20 @@
     }
   }
 
+  // Per-content-type default templates (ProPresenter-style).
+  const contentTypes = [
+    { key: 'scripture', label: 'Scripture' },
+    { key: 'song', label: 'Lyrics' },
+    { key: 'media', label: 'Media' },
+    { key: 'announce', label: 'Announcements' },
+  ];
+  let ctMap = { scripture: null, song: null, media: null, announce: null };
+  async function pickCt(kind, val) {
+    const id = val ? parseInt(val, 10) : null;
+    ctMap[kind] = id;
+    await setContentTemplate(kind, id);
+  }
+
   // Threshold sliders push to the router; keep the invariant auto_fire ≥ suggest.
   function onAuto(v) {
     const suggest = Math.min($capture.thresholds.suggest, v);
@@ -165,6 +187,46 @@
   async function toggleCapture() {
     if ($capture.capturing) await stopCapture();
     else await startCapture($capture.inputDevice || null);
+  }
+
+  // --- Audio output (speakers for video sound) ---
+  // Enumerated from the WEBVIEW, not cpal: routing a <video>'s sound needs
+  // setSinkId(deviceId), and cpal's device names are a different namespace that
+  // setSinkId can never accept. See lib/audioOutput.js.
+  let outDevices = [];
+  let outDevice = getAudioOutput();
+  let sinkOk = true;
+  let outBusy = false;
+  // The webview hides the speaker list until a media permission has been granted
+  // (measured: no audiooutput entries at all before that). So an empty list is
+  // "not unlocked yet", NOT "this machine has no speakers" — the default output
+  // always exists and always works, and stays selectable either way.
+  $: outLocked = sinkOk && outDevices.length === 0;
+  onMount(async () => {
+    sinkOk = supportsSinkId();
+    await refreshOutputs();
+    // Devices change when a monitor/USB/Bluetooth speaker comes or goes.
+    navigator.mediaDevices?.addEventListener?.('devicechange', refreshOutputs);
+  });
+  onDestroy(() => {
+    navigator.mediaDevices?.removeEventListener?.('devicechange', refreshOutputs);
+  });
+  async function refreshOutputs() {
+    outDevices = await listOutputDevices();
+  }
+  /** Unlock real speaker names by tripping the media permission once. */
+  async function detectSpeakers() {
+    outBusy = true;
+    try {
+      await ensureDeviceAccess();
+      await refreshOutputs();
+    } finally {
+      outBusy = false;
+    }
+  }
+  function pickOutput(id) {
+    outDevice = id;
+    setAudioOutput(id); // reaches the open output window via localStorage + event
   }
 
   // RMS on speech sits well below 1.0; scale so normal talking fills the meter.
@@ -242,13 +304,14 @@
       appVersion = '';
     }
     // Guarded as a block: an unguarded reject on any one of these aborts the rest
-    // of mount, so crash state and the LAN IP would all silently fail to
-    // initialise off a single backend hiccup.
+    // of mount, so crash state, content-type templates and the LAN IP would all
+    // silently fail to initialise off a single backend hiccup.
     try {
       translations = await listTranslations();
       activeTranslation = await getActiveTranslation();
       crash = await getCrashReporting();
       await loadTemplates();
+      ctMap = await getContentTemplates();
     } catch (e) {
       crashMsg = humanError(e);
     } finally {
@@ -461,6 +524,21 @@
           </select>
         </div>
 
+      {:else if section === 'outputs'}
+        <p class="s-lead">Each content type can use its own template automatically — lyrics in a lower-third, scripture full-screen. “Channel default” leaves the look to each output's own template.</p>
+        <div class="s-cardbox">
+          {#each contentTypes as ct}
+            <div class="s-netrow">
+              <span class="s-netk">{ct.label}</span>
+              <select class="r-select s-ctsel" value={ctMap[ct.key] ?? ''} on:change={(e) => pickCt(ct.key, e.target.value)}>
+                <option value="">Channel default</option>
+                {#each $templates as tpl}<option value={tpl.id}>{tpl.name}</option>{/each}
+              </select>
+            </div>
+          {/each}
+        </div>
+        <p class="s-note">Add and manage network outputs (OBS · kiosk · stage remote) with copy-links and QR codes in the <b>Channels</b> tab.</p>
+
       {:else if section === 'audio'}
         <div class="s-inline">
           {#if $capture.available}
@@ -498,6 +576,53 @@
             </span>
           {/if}
         </div>
+
+        <!-- AUDIO OUTPUT (speakers for video sound). Sits under the mic on the
+             same panel: input and output are one operator question. -->
+        <div class="s-grouphead">Audio Output</div>
+        <div class="s-inline">
+          {#if !sinkOk}
+            <span class="s-count">system default only</span>
+          {:else if outLocked}
+            <span class="s-count">system default</span>
+          {:else}
+            <span class="s-count">{outDevices.length + 1} device{outDevices.length === 0 ? '' : 's'}</span>
+          {/if}
+        </div>
+        <!-- Never disabled: "System default" is always a real, working choice — it is
+             where video sound already plays. A greyed-out picker would read as "no
+             speakers found", which is never true. -->
+        <select class="r-select" value={outDevice} on:change={(e) => pickOutput(e.target.value)}>
+          <option value="">System default — computer speakers</option>
+          {#each outDevices as d}
+            <option value={d.id}>{d.label || 'Speaker'}{d.is_default ? ' — default' : ''}</option>
+          {/each}
+        </select>
+
+        {#if !sinkOk}
+          <p class="s-note">
+            This webview can't switch speakers, so video sound plays on whatever macOS
+            has selected. Change it in <b>System Settings → Sound → Output</b>.
+          </p>
+        {:else if outLocked}
+          <div class="s-listen">
+            <button class="r-btn" on:click={detectSpeakers} disabled={outBusy}>
+              {outBusy ? 'Detecting…' : 'Detect speakers'}
+            </button>
+            <span class="s-rms">names need mic permission once</span>
+          </div>
+          <p class="s-note">
+            Sound plays on your <b>system default</b> speakers right now. macOS hides
+            the list of other outputs until this app has been granted the microphone
+            once — <b>Detect speakers</b> asks for it, then releases the mic straight
+            away (capture still runs through the audio engine, not the browser).
+          </p>
+        {:else}
+          <p class="s-note">
+            Where video sound plays on the <b>fullscreen output window</b>. OBS/kiosk
+            browser sources are left muted — OBS mixes their audio itself.
+          </p>
+        {/if}
 
       {:else if section === 'scripture'}
         <div class="s-grouphead first">Recognition Language</div>
