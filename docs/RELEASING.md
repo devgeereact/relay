@@ -97,10 +97,31 @@ you need both.
 > | **signed + notarized** | **dead** |
 >
 > The first build correct enough to hand to a church would have been the first one
-> that could not hear the preacher — and no build you can make locally would have
-> shown it. `src-tauri/relay.entitlements` and `src-tauri/Info.plist` now carry both
-> keys, and `models::config_boots` fails the build if either goes missing. **Do not
-> "clean up" those files.**
+> that could not hear the preacher. `src-tauri/relay.entitlements` and
+> `src-tauri/Info.plist` now carry both keys, and `models::config_boots` fails the
+> build if either goes missing. **Do not "clean up" those files.**
+>
+> **You can reproduce these conditions locally, for free — you do not need the
+> certificate.** The hardened runtime is not a property of *who* signed the app; it
+> is a flag on the signature, and `codesign --options runtime` sets it for an ad-hoc
+> signature exactly as for a Developer ID one. TCC then enforces entitlements the
+> same way. So:
+>
+> ```bash
+> npm run tauri build
+> ./scripts/sign-local.sh          # ad-hoc + hardened runtime + the real entitlements
+> open -a Relay                    # press Start Listening — it must hear you
+> ```
+>
+> The script asserts the hardened runtime is actually ON, the mic entitlement is
+> embedded, and the usage string survived into the bundled `Info.plist` — and exits
+> non-zero if any of them is missing, so it cannot pass vacuously. This is the check
+> that was missing when the table above was written; the row that says "no local
+> build would have shown it" is no longer true, and that is the point.
+>
+> It still does **not** satisfy Gatekeeper. An ad-hoc signature carries no identity,
+> so `spctl` says `rejected` and a downloaded copy still shows *"Relay is damaged"*.
+> Only §2 above fixes that.
 
 ---
 
