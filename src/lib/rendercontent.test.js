@@ -137,21 +137,26 @@ describe('isKeyedTemplate (blackout must not black a keyed channel)', () => {
 });
 
 import { resolveOutputTemplate } from './layers.js';
-describe('resolveOutputTemplate (keyed channel must not go opaque)', () => {
+describe('resolveOutputTemplate (per-screen template is authoritative; cue choice pins)', () => {
   const keyed = { layout: { layers: [makeLayer('shape', { fill: '#101319' }), makeLayer('text', { bind: 'verse' })] } };
   const opaque = { layout: { layers: [makeLayer('background', { fill: '#201010' }), makeLayer('text', { bind: 'verse' })] } };
   it('no override → channel template', () => {
     expect(resolveOutputTemplate(keyed, null)).toBe(keyed);
   });
-  it('keyed channel + opaque override → keeps its keyed template (camera stays)', () => {
+  it('keyed channel + opaque override → keeps its keyed template (camera stays), even if pinned', () => {
     expect(resolveOutputTemplate(keyed, opaque)).toBe(keyed);
+    expect(resolveOutputTemplate(keyed, opaque, true)).toBe(keyed); // transparency law wins over pin
   });
-  it('keyed channel + keyed override → override applies', () => {
-    const kOv = { layout: { layers: [makeLayer('shape', {}), makeLayer('text', { bind: 'verse' })] } };
-    expect(resolveOutputTemplate(keyed, kOv)).toBe(kOv);
+  it('opaque channel + content-look default (not pinned) → the SCREEN keeps its own template', () => {
+    // The fix: an operator who set this screen's template sees it, not a content
+    // default that silently replaces it.
+    expect(resolveOutputTemplate(opaque, opaque)).toBe(opaque); // channelTpl, which is `opaque` here
+    const otherLook = { layout: { layers: [makeLayer('background', { fill: '#0a0a0a' }), makeLayer('text', { bind: 'verse' })] } };
+    expect(resolveOutputTemplate(opaque, otherLook, false)).toBe(opaque); // screen wins over the look
   });
-  it('opaque channel + opaque override → override applies (scripture looks like scripture)', () => {
-    expect(resolveOutputTemplate(opaque, opaque)).toBe(opaque);
+  it('a PINNED cue choice overrides an opaque screen (the operator picked it for that cue)', () => {
+    const cueTpl = { layout: { layers: [makeLayer('background', { fill: '#123456' }), makeLayer('text', { bind: 'verse' })] } };
+    expect(resolveOutputTemplate(opaque, cueTpl, true)).toBe(cueTpl);
   });
 });
 

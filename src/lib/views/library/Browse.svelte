@@ -70,7 +70,10 @@
   let template = null;
   let checked = new Set();
   let sort = 'verse';
-  let layout = 'grid';
+  // LIST by default — plain text, like the Lyrics pane, so a chapter opens
+  // instantly. The grid view (a live TemplateRender thumbnail per verse) is
+  // gorgeous but renders a dozen fit loops at once; it stays one click away.
+  let layout = 'list';
   let perPage = 12;
 // { id?, ref, label, text, verse }
   let passage = null;
@@ -389,7 +392,7 @@
                   : 'That chapter is empty.'} />
           {:else}
             <VerseDeck
-              items={pageItems}
+              items={numbered}
               {template}
               {liveRef}
               rehearsing={$rehearsing}
@@ -407,25 +410,11 @@
           {/if}
         </div>
 
+        <!-- NO pagination — the whole chapter is one scroll (operator request). A
+             chapter is a bounded list, and paging a Bible chapter is friction the
+             reader never wanted. The count stays as a quiet footer. -->
         <footer class="br-pager">
-          <div class="br-pages">
-            <button class="br-pg" disabled={page === 0} aria-label="Previous page" on:click={() => (page -= 1)}>‹</button>
-            {#each pageNums as n}
-              {#if n === -1}
-                <span class="br-gap">…</span>
-              {:else}
-                <button class="br-pg" class:on={page === n} on:click={() => (page = n)}>{n + 1}</button>
-              {/if}
-            {/each}
-            <button class="br-pg" disabled={page >= pages - 1} aria-label="Next page" on:click={() => (page += 1)}>›</button>
-          </div>
-          <span class="br-count">Showing {firstShown}–{lastShown} of {numbered.length} slides</span>
-          <label class="br-ctl">
-            <span class="r-lbl">Items per page</span>
-            <select class="r-select sm" bind:value={perPage} aria-label="Items per page">
-              {#each [12, 24, 48] as n}<option value={n}>{n}</option>{/each}
-            </select>
-          </label>
+          <span class="br-count">{numbered.length} {numbered.length === 1 ? 'verse' : 'verses'}</span>
         </footer>
       </section>
     </div>

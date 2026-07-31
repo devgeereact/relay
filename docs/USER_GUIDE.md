@@ -30,9 +30,9 @@ Do this **before** Sunday. It is 148 MB over the church wifi.
 
 ### 3. Point it at the projector
 
-**Settings → Output**, or the **Channels** tab.
+Open the **Outputs** tab → **Screens**.
 
-Relay treats every screen as a *channel* — the main projector, a stage monitor, an OBS stream, the preacher's phone. Each one can look different.
+Relay treats every output as a *screen* — the main projector, a stage monitor, an OBS stream, the preacher's phone. Each one can look different.
 
 For a projector plugged into your laptop: pick the display, press **Open**. A fullscreen window appears on it.
 
@@ -79,6 +79,8 @@ If the bar does not move, Relay cannot hear, and nothing else on this page will 
 
 A paraphrase **never** goes on screen by itself. Ever. Only a reference Relay actually *heard* can do that, and only if you have left auto-fire on.
 
+**A half-reference waits for you.** If the preacher says *"turn to Psalm twenty-three"* — a book and a number, with no "chapter" or "verse" — Relay **offers** it rather than putting it up on its own. That is deliberate. Preachers say book names and numbers constantly without meaning a reference: *"Matthew, one of the twelve"*, *"number one… number two…"* — and "Numbers" is a book of the Bible. Say **"Psalm chapter twenty-three"** or **"Psalm twenty-three verse one"** and it goes straight up, because now you have said you mean it.
+
 **"Related" chips are not detections.** At the bottom of the feed you may see a few verses under a theme — *"Related · Fear & Anxiety"*. Nobody said those. Relay is offering them because of what is being preached about. They go nowhere until you click one.
 
 ---
@@ -91,9 +93,11 @@ Live software fails live. These are the things that actually happen.
 |---|---|---|
 | **The bar doesn't move when someone speaks** | Relay cannot hear. Nothing else will work. | Settings → Audio. Try a different input. Check the cable and that the desk is sending. |
 | **The transcript is nonsense** | Usually the mic is too quiet, not the AI being bad. | Get a stronger feed. Relay adapts to a quiet room, but it cannot invent a signal that is not there. |
+| **"Relay keeps changing its mind about the language"** | On a strong accent, leaving the language on **Auto** makes Relay re-guess every few seconds — and a wrong guess garbles the transcript, which is where most wrong verses come from. | **Settings → Scripture & Bible → Recognition Language.** Pick the language instead of Auto. This is the single biggest accuracy win for an accented preacher. |
+| **Wrong verses keep appearing on the wall** | Relay heard a book name and a number in ordinary speech — *"Matthew, one of the twelve"*, *"number one… number two…"*. | Turn the **sensitivity dial down** on Live. If it is still noisy, press the **Armed** chip to disarm auto-fire — everything else keeps working and you fire by hand. And fix the language above first, because that is usually the real cause. |
 | **"No speech model loaded"** | Step 2 above never happened. | Settings → Speech → Download. Manual override still works meanwhile. |
-| **Nothing appears on the projector** | The output window is not open, or it is on the wrong display. | Channels → pick the display → **Open**. |
-| **OBS / the kiosk screen is blank** | The browser source is pointed at the wrong address. | It must be `http://<this-computer>:8032/output.html?template_id=1` — the **Copy URL** button in Channels gives you the right one. **Not 5032.** |
+| **Nothing appears on the projector** | The output window is not open, or it is on the wrong display. | Outputs → Screens → pick the display → **Open**. |
+| **OBS / the kiosk screen is blank** | The browser source is pointed at the wrong address. | It must be `http://<this-computer>:8032/output.html?template_id=1` — the **Copy URL** button in Outputs → Screens gives you the right one. **Not 5032.** |
 | **"The screens may still be live"** (red bar) | A clear or blackout **failed**. Relay is telling you rather than pretending. | **Look at the actual screen.** Clear it from the output window if you have to. |
 | **`→` says it did nothing** | End of the passage, or nothing is on screen yet. Relay says which. | Fire a verse first, or step back. |
 | **Relay crashed mid-service** | The console crashed. **The output screens are separate — the congregation still sees the verse.** | Press **Recover**. It puts you back where you were. |
@@ -112,10 +116,32 @@ You will not need these during a service.
 
 - **Library** — your songs, saved verses, media, announcements, and the history of past services.
 - **Planner** — build a service plan. Cannot reach a screen.
-- **Channels** — one row per output screen. Set up once.
-- **Templates** — what scripture *looks like* on the wall. What you see in the editor is exactly what the projector shows.
+- **Outputs** — three panes: **Screens** (one row per output screen — the projector, a stage monitor, OBS, the preacher's phone), **Content looks** (which template scripture, lyrics, media and announcements wear by default), and **Sharing** (the LAN address and the preacher's stage remote). Set up once.
+- **Templates** — what scripture *looks like* on the wall. What you see in the editor is exactly what the projector shows. **Import** a design someone shared, or **Export** one of yours to a file (⋮ menu / the preview panel) to hand to another church.
+- **Themes** — the *look beneath* your templates: fonts, colours, spacing, motion. Pick a theme (eight are built in), tweak a copy in the theme editor, then apply it to a template — the template inherits the theme and you override only what you want. Themes export and import as files too. A theme never reaches a screen on its own; it dresses a template, and the template is what fires.
 - **Settings** — audio, speech model, sensitivity, console language, privacy.
 - **Help** — the same guide, inside the app, where you can read it without the internet.
+
+---
+
+## Screens for the platform and the booth
+
+The congregation's wall is not the only screen you can drive. A **stage display**
+(facing the preacher) and a **confidence monitor** (facing the booth) are just
+templates — start a new template from the **Stage Display** or **Confidence Monitor**
+preset, then assign it to a screen in **Outputs** exactly like the projector.
+
+These monitors show what the wall cannot:
+
+- the **current verse and its reference**, large enough to read from the platform;
+- the **verse coming up next** — bounded by the reading, so a "John 3:16–17" reading
+  shows nothing after 3:17 rather than running on into the next verse;
+- the **wall clock** and a **service timer** counting up from when you started recording;
+- your **private operator note** for the cue (never shown to the congregation).
+
+They inherit their theme like any template, so a monitor matches your house style.
+One thing to know: pressing **Clear all screens** clears the monitors too — the panic
+key is deliberately total, so it clears *everything*, monitor timers included.
 
 ---
 

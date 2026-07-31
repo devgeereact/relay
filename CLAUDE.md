@@ -43,7 +43,7 @@ Tier 1: **Yoruba, Swahili, Hausa**, plus English. Code-switching (English mixed 
 npm install
 npm run tauri dev        # desktop app + Vite on :5032, kiosk WS on :8031
 
-npm test                 # vitest (345 tests)
+npm test                 # vitest (404 tests)
 npx vitest run src/lib/nav.test.js          # one file
 npx vitest run -t "Escape closes the cheat" # one test by name
 npm run build            # vite build — catches Svelte compile errors fast
@@ -57,7 +57,7 @@ Rust (**prefix with the cmake path — this machine has no Homebrew**):
 ```bash
 export PATH="/Users/gideonakinlotan/.local/bin:$PATH"   # cmake 3.31.6, needed by whisper-rs
 cd src-tauri
-cargo test                                   # 380 tests
+cargo test                                   # 408 tests
 cargo test e2e                               # the fire → nav → clear path (7 tests)
 cargo test detection::                       # one module
 cargo test the_macos_build -- --nocapture    # one test
@@ -175,7 +175,7 @@ These caused real crashes, freezes, or silent failures in front of people. Keep 
 
 ## Frontend shape
 
-- **Tabs: Live · Channels · Templates · Library · Planner · Settings · Help.** There is no Console tab — `Live` IS the console. **Build** a plan in Planner (a Tuesday job; nothing there can reach an output). **Run** it in Live (a Sunday job). The merge exists because an operator running a plan on a separate tab could not see the AI's suggestions — and the preacher going off-script is the entire product.
+- **Tabs: Live · Channels · Templates · Themes · Library · Planner · Settings · Help.** There is no Console tab — `Live` IS the console. **Themes** is the style layer beneath templates (DECISIONS §27): a theme sets default `style` keys, a template overrides them per key, and `TemplateRender` resolves a template's `style.themeRef` against builtins itself, so every surface is themed with no per-surface wiring. Layer colours may bind to theme tokens (`theme:accent`). Stage/confidence monitors are render-profiles of the one engine (starters in `layers.js`), not a parallel system — they show monitor-only fields (`next`, `note`, `elapsed`) that ride to output but no congregation template renders. **Build** a plan in Planner (a Tuesday job; nothing there can reach an output). **Run** it in Live (a Sunday job). The merge exists because an operator running a plan on a separate tab could not see the AI's suggestions — and the preacher going off-script is the entire product.
 - **The transport is MODE-AWARE and says so.** `→` steps a plan SLIDE when plan content is on air, and walks the passage (VERSE) when a detected/manual verse is. The mode is printed in the transport bar; the same key silently meaning two things is how the wrong thing reaches a congregation.
 - **`liveCue` = `{ cueId, slide, onAir }` — position and on-air-ness are SEPARATE facts.** Panic keys clear only `onAir`. Wiping the position would make the next `→` restart the plan at cue 1. A cue that is where `→` resumes but is NOT on screen reads **CUED**, in grey. Never amber. Amber means live and is never allowed to lie.
 - One store: `src/lib/stores/capture.js` (`capture`, `transcript`, `detections` = pending suggestions only, `live` = what's on screen, `panicError`, `templates`). All Tauri command wrappers + event listeners live here.
@@ -193,17 +193,18 @@ These caused real crashes, freezes, or silent failures in front of people. Keep 
 
 `5032` = operator console (Vite dev server) · `8031` = kiosk/OBS WebSocket hub · `8032` = embedded HTTP server (output/stage pages + `/media/<id>`).
 
-**OBS/vMix/kiosk browser source → `http://<host>:8032/output.html?template_id=<n>`.**
+**OBS/vMix/kiosk browser source → `http://<host>:8032/output.html?channel=<id>&template_id=<n>`.** The URL is CHANNEL-keyed (DECISIONS §29): changing a screen's template broadcasts a `channel_template` message the output applies by matching its own `channel`, so a template swap is live with no re-copying of the URL. `template_id` is only the first render before any push. Use **Copy URL** in Outputs → Screens; a hand-built `?template_id=`-only URL will not live-swap.
 
 **NOT 5032.** `5032` is Vite. It exists ONLY under `npm run tauri dev`; in the packaged app there is no server on it at all, so a browser source pointed there shows a blank screen with no error and nothing in any log. The docs said 5032 for months.
 
 ## Testing
 
-380 Rust + 345 frontend. CI runs both on **macOS and Windows**, plus `fmt`, `clippy -D warnings`, the detection scorecard, and a release build.
+408 Rust + 404 frontend. CI runs both on **macOS and Windows**, plus `fmt`, `clippy -D warnings`, the detection scorecard, and a release build.
 
 - **`e2e.rs` is the one test that exercises what a congregation actually sees.** It drives the real commands (`manual_fire`, `nav`, `clear_screens`, `blackout`, `set_rehearsal`) against a real in-memory DB, through the real router and pipeline, and asserts on the events that leave the machine. Nothing is mocked but the window (`tauri::test::mock_builder`, dev-dependency `tauri/test`). **Add a test here whenever you touch the fire path.**
   - Use `mock_context(noop_assets())`, **not** `generate_context!()` — the real macro embeds `Info.plist` as a link symbol and expanding it twice fails with `_EMBED_INFO_PLIST is already defined`.
-  - A fresh install does **not** seed `tpl_scripture`: the per-content-type template is an *override* the operator sets, and without it the channel's own template is used. Set one in the fixture, or the "every fire carries its template" assertion is vacuous.
+  - Template resolution reversed in **DECISIONS §29**: a SCREEN'S OWN template now WINS; a content-type default (a "content look") DEFERS to it, and a cue's deliberate choice is `template_pinned` and overrides. `resolveOutputTemplate(channelTpl, override, pinned)` is the one resolver; the console program pane and the Outputs inspector preview both call it so they cannot disagree with the wall.
+  - A content-look default rides as an ID ONLY — it never serializes/broadcasts its template JSON, because it defers to per-screen. This is also a hard PERF rule: a default template carrying an embedded image (`data:` URL) can be MEGABYTES (one was 13 MB), and serializing + broadcasting that on every fire made verses take seconds. Only a PINNED cue template ships its JSON.
 
 - **`eval.rs` is a CI build gate**, not shipped code: a 50-case labelled corpus scored **through the real router**, failing the build above SPEC's 5% wrong-verse rate. It measures detection over TEXT, not accuracy over AUDIO — WER has never been measured, in any language.
 - **`ipc.test.js` is the contract test**: every Tauri command the frontend calls by string must exist in Rust. Renaming a `#[tauri::command]` otherwise fails silently inside a `catch {}` and a button just quietly stops working.

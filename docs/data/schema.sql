@@ -172,7 +172,17 @@ CREATE TABLE detections (
     -- confirmed suggestion, or next/back nav) — NOT an AI decision, and must never
     -- be counted as one: the self-calibrating router learns from this column.
     status        TEXT NOT NULL CHECK (status IN ('auto', 'suggested', 'dismissed', 'manual')),
-    fired_at      REAL                    -- seconds since service start, null if never fired
+    fired_at      REAL,                   -- seconds since service start, null if never fired
+    -- THE EVIDENCE: the exact text the detector was reading when this fired.
+    --
+    -- transcript_id alone cannot answer "why did this verse appear?". Detection
+    -- runs on every partial STT hypothesis, and only FINAL transcripts are
+    -- stored — so a fire is stamped onto whichever final happened to be most
+    -- recent, which may be minutes old and may not contain the reference at all.
+    -- A live service produced nine auto-fires attributed to a sentence that,
+    -- replayed through the detector, yields nothing. Without this column a wrong
+    -- verse on a wall is not diagnosable after the fact.
+    heard_text    TEXT
 );
 
 -- Operator-action log for a running service (distinct from a plan_items cue).

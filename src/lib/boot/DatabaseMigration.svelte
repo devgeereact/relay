@@ -56,7 +56,7 @@
   </p>
 
   <div class="b-prog">
-    <div class="track"><div class="fill" style="width:{pct}%"></div></div>
+    <div class="track"><div class="fill" style="transform:scaleX({pct / 100})"></div></div>
     <span class="pct">{pct}%</span>
   </div>
 

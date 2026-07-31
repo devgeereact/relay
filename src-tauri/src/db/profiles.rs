@@ -203,6 +203,28 @@ pub fn save_profile_thresholds(
     Ok(())
 }
 
+/// Persist a deliberate move of the operator's sensitivity DIAL: the new
+/// baseline and the thresholds it implies, together, in one statement.
+///
+/// Together is the point. `sensitivity` is the baseline learning decays back
+/// toward; `auto_fire`/`suggest` are where the gate is right now. Writing one
+/// without the other leaves the profile describing a state that never existed —
+/// which is exactly what a live service produced: a stored `auto_fire` of 0.832
+/// sitting beside a `sensitivity` of 50, whose own mapping is 0.50.
+pub fn save_profile_sensitivity(
+    conn: &Connection,
+    id: i64,
+    sensitivity: i64,
+    auto_fire: f64,
+    suggest: f64,
+) -> rusqlite::Result<()> {
+    conn.execute(
+        "UPDATE voice_profiles SET sensitivity = ?1, auto_fire = ?2, suggest = ?3 WHERE id = ?4",
+        (sensitivity, auto_fire, suggest, id),
+    )?;
+    Ok(())
+}
+
 /// Make `id` the sole active profile.
 pub fn set_active_profile(conn: &Connection, id: i64) -> rusqlite::Result<()> {
     conn.execute("UPDATE voice_profiles SET is_active = 0", [])?;

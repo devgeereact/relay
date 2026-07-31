@@ -363,7 +363,7 @@
           <div class="lib-newmenu" role="menu" tabindex="-1" use:trapFocus on:keydown={(e) => menuEsc(e, () => (showMore = false))}>
             <button class="lib-newitem" role="menuitem" on:click={() => { showMore = false; goTab(active); }}>Reload this list</button>
             <button class="lib-newitem" role="menuitem" on:click={() => { showMore = false; setSession({ activeTab: 'settings' }); }}>
-              Data health…
+              Open Settings
             </button>
           </div>
         {/if}

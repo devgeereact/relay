@@ -110,7 +110,7 @@
       const ch =
         channels.find((c) => c.render_target === 'native_window' && c.name === 'Main screen') ??
         channels.find((c) => c.render_target === 'native_window');
-      if (!ch) throw new Error('No output channel is configured yet. Add one in Channels.');
+      if (!ch) throw new Error('No screen is configured yet. Add one in Outputs.');
       await openChannelOutput(ch.id);
     });
 

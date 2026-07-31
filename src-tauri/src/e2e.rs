@@ -156,6 +156,61 @@ fn a_verse_the_operator_fires_reaches_the_congregation_with_its_text() {
         !shown["template_id"].is_null(),
         "the scripture template was dropped on the way to the wall"
     );
+    // The NEXT verse rides along for a stage/confidence monitor's "up next" line.
+    // John 3:17 exists in the seeded KJV, so firing 3:16 must carry it. The
+    // congregation template ignores it; only a monitor template renders it.
+    assert_eq!(
+        shown["next_reference"], "John 3:17",
+        "the next verse did not ride to the monitors"
+    );
+    assert!(
+        shown["next_text"]
+            .as_str()
+            .unwrap_or("")
+            .contains("condemn"),
+        "the next verse arrived without its text: {:?}",
+        shown["next_text"]
+    );
+}
+
+/// The "up next" line on a stage/confidence monitor respects the READ RANGE: it
+/// previews the next verse mid-passage, but shows nothing once the last verse of
+/// the bounded range is up — it must not spill into the verse after the reading.
+#[test]
+fn a_bounded_passage_shows_no_next_verse_past_its_end() {
+    let app = app();
+    let h = app.handle().clone();
+    let wall = Wall::watch(&h);
+
+    manual_fire(
+        h.clone(),
+        h.state::<Db>(),
+        "John 3:16-17".into(),
+        None,
+        None,
+    )
+    .expect("fire the range John 3:16-17");
+    settle();
+    let first = wall.last().expect("first fire reached the wall");
+    assert_eq!(first["reference"], "John 3:16");
+    assert_eq!(
+        first["next_reference"], "John 3:17",
+        "mid-range, the next verse should preview"
+    );
+
+    // Walk to the last verse of the read range.
+    match nav(h.clone(), "next".into()).expect("nav next") {
+        NavResult::Fired { reference } => assert_eq!(reference, "John 3:17"),
+        other => panic!("expected to fire 3:17, got {:?}", other.kind()),
+    }
+    settle();
+    let last = wall.last().expect("second fire reached the wall");
+    assert_eq!(last["reference"], "John 3:17");
+    assert!(
+        last["next_reference"].is_null(),
+        "at the end of the bounded range there is no next verse — got {:?}",
+        last["next_reference"]
+    );
 }
 
 #[test]

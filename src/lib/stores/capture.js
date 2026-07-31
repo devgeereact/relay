@@ -60,6 +60,13 @@ export const capture = writable({
   inputDevice: '', // operator-selected input device name ('' = default). Shared so Console + Settings agree.
   stt: { loaded: false, model: null, language: null }, // local STT model status (language null = auto)
   detectedLang: null, // language of the latest transcript window (code-switching)
+  // Auto-detect is not settling on a language — [codes] once per session, else null.
+  // Whisper re-elects a language every window from ~99 candidates, and on accented
+  // speech it wanders (one real service: en·yo·pt·sw·sv·ms). The label IS the decode,
+  // so a wandering label degrades the transcript — and that looks exactly like the AI
+  // being bad. The operator has the control that fixes it (Settings → Recognition
+  // Language) and no reason to suspect they should touch it. See stt.rs.
+  langUnstable: null,
   detectionOn: true, // is automatic detection armed?
   audioError: null, // last audio device error (surfaced, not fatal)
   outputError: null, // LAN output server failed to bind (OBS/kiosk/stage are dead)
@@ -115,6 +122,63 @@ export const detections = writable([]);
 
 // Output templates (Phase 8), loaded from the DB.
 export const templates = writable([]);
+
+// CUSTOM themes (the style layer beneath templates — see lib/themes.js). Builtin
+// themes live in the frontend (themes.js); the operator's own themes are
+// persisted as a JSON blob in the settings KV under THEMES_KEY. The store holds
+// ONLY the custom ones — surfaces concatenate BUILTIN_THEMES + $customThemes.
+export const customThemes = writable([]);
+
+// Planned service length in MINUTES (0 = no target). Drives a monitor's REMAINING
+// timer. Persisted in the settings KV and read by the backend at start_service.
+export const serviceTargetMinutes = writable(0);
+
+// THE default template — the one every slide wears unless a screen or a content
+// look overrides it. Replaces the old "console-active (max 4)" star: a template
+// is not limited to four, and any template can be a screen's output; this is just
+// the single fallback look. Persisted in the settings KV (`default_template_id`).
+export const defaultTemplateId = writable(null);
+
+/** Load the default-template id into the store (null if unset). */
+export async function loadDefaultTemplate() {
+  try {
+    const call = await invoke();
+    const n = parseInt(await call('get_setting', { key: 'default_template_id' }), 10);
+    defaultTemplateId.set(Number.isFinite(n) ? n : null);
+  } catch {
+    defaultTemplateId.set(null);
+  }
+}
+
+/** Set (or clear, with null) the default template. */
+export async function setDefaultTemplate(id) {
+  const call = await invoke();
+  await call('set_setting', { key: 'default_template_id', value: id == null ? '' : String(id) });
+  defaultTemplateId.set(id ?? null);
+}
+
+/**
+ * THE content-type → template default map, as a LIVE store (Decision §25).
+ *
+ * A "content look" answers: when the AI fires scripture (or a song, media,
+ * announcement, countdown), which template does it wear on any screen that has
+ * not overridden it. It is a wiring fact, not template decoration.
+ *
+ * This used to be read straight from the backend by three separate surfaces
+ * (Settings › Outputs, the Templates editor, the gallery), each holding its own
+ * cached copy with no shared state — so they silently disagreed and overwrote
+ * one another. Now there is ONE store and ONE writer (`setContentTemplate`); the
+ * Content-looks matrix in the Outputs hub edits it, everything else subscribes
+ * and is read-only. Keys are the canonical CONTENT_KINDS (see lib/layers.js).
+ */
+export const EMPTY_CONTENT_LOOKS = {
+  scripture: null,
+  song: null,
+  media: null,
+  announce: null,
+  countdown: null,
+};
+export const contentTemplates = writable({ ...EMPTY_CONTENT_LOOKS });
 
 /**
  * THE PLAYHEAD — where the operator is in the service plan, and whether that is
@@ -189,8 +253,35 @@ export const liveTemplateOverride = derived(live, ($l) =>
   parseTemplateOverride($l?.template_json),
 );
 
+/** Whether the live override is a PINNED cue choice (overrides the screen) vs a
+ *  content-type default (defers to the screen's own template). Mirrors the exact
+ *  resolution the real output window uses, so the console program pane matches. */
+export const liveTemplatePinned = derived(live, ($l) => !!$l?.template_pinned);
+
 const MAX_FINALS = 12;
 const MAX_DETECTIONS = 6;
+
+/**
+ * How long a pending suggestion stays actionable, in ms.
+ *
+ * A suggestion is a claim about what the preacher is saying RIGHT NOW. Forty-five
+ * seconds later they have moved on, and accepting it puts the wrong thing on the
+ * wall — so an old card is not merely clutter, it is a trap sitting under the `A`
+ * key. In one live service the queue held six of these at once, all stale, while
+ * the one that mattered scrolled out of view.
+ *
+ * Comfortably outlives the router's repeat cooldown (WINDOW_SECS + 2 = 10s), so
+ * the operator always gets a real chance to read and decide.
+ */
+export const SUGGESTION_TTL_MS = 45_000;
+
+/**
+ * Drop suggestions that have gone stale. Pure — takes `now` so it is testable
+ * without a clock, and so the whole list shares one timestamp.
+ */
+export function pruneStaleSuggestions(list, now) {
+  return list.filter((d) => now - (d.at ?? 0) < SUGGESTION_TTL_MS);
+}
 let unlistenAudio = null;
 let unlistenStt = null;
 let unlistenDetect = null;
@@ -220,6 +311,12 @@ export async function initAudio() {
     call('get_detection_enabled').catch(() => true),
   ]);
   capture.update((s) => ({ ...s, available: true, devices, stt, thresholds, detectionOn }));
+
+  // Seed the shared content-look map ONCE at boot so every surface (the Outputs
+  // hub matrix, the gallery "Default for" badges, the live preview) reads one
+  // source of truth. Best-effort — a failure leaves the empty default, never
+  // disables the app.
+  loadContentTemplates();
 
   // Mirror output state into `live` (set once). A listener failure must NOT
   // disable the app — hence a separate try that leaves `available` alone.
@@ -256,6 +353,12 @@ export async function initAudio() {
       // keeps running regardless.
       await listen('audio://quality', (e) =>
         capture.update((s) => ({ ...s, quality: e.payload }))
+      );
+      // Auto-detect is wandering between languages. Same contract as `quality`:
+      // it is DATA, never a rendering decision — the pipeline keeps running, the
+      // console just stops being silent about the one thing the operator can fix.
+      await listen('stt://language_unstable', (e) =>
+        capture.update((s) => ({ ...s, langUnstable: e.payload }))
       );
       // A template was edited → make the console mirror change LIVE, without
       // waiting for a re-fire. Two things can be showing it: the console's
@@ -408,16 +511,31 @@ export async function startCapture(device) {
       }
       return { ...t, partial: text };
     });
+    // Expire stale suggestions here too, not only when a NEW one arrives. The
+    // preacher moving on quietly is the commonest way a card goes stale, and it
+    // produces no detection event at all — so without this a dead suggestion sat
+    // under the `A` key indefinitely. Transcript events tick about once a second
+    // while listening, which is all the resolution this needs and costs no timer.
+    detections.update((list) => {
+      const fresh = pruneStaleSuggestions(list, Date.now());
+      return fresh.length === list.length ? list : fresh; // no-op → no re-render
+    });
   });
   capture.update((s) => ({ ...s, audioError: null }));
   unlistenDetect = await listen('detection://match', (e) => {
     const d = e.payload;
     detections.update((list) => {
-      const rest = list.filter((x) => x.reference !== d.reference);
+      const now = Date.now();
+      // Sweep the stale ones out on the way past. A new suggestion is the moment
+      // the operator's attention moves, so it is exactly the moment the previous
+      // sentence's leftovers stop being offers and start being traps.
+      const rest = pruneStaleSuggestions(list, now).filter(
+        (x) => x.reference !== d.reference
+      );
       // Only suggestions queue up; a fired verse resolves (removes) its pending
       // suggestion since it's already on screen.
       if (d.status === 'suggested') {
-        return [{ ...d, at: Date.now() }, ...rest].slice(0, MAX_DETECTIONS);
+        return [{ ...d, at: now }, ...rest].slice(0, MAX_DETECTIONS);
       }
       return rest;
     });
@@ -776,19 +894,45 @@ export async function fireContent(label, text, kind = 'announce', stageNote = nu
   await call('fire_content', { label, text, kind, stageNote, templateId });
 }
 
-/** The content-type → template default mapping. */
-export async function getContentTemplates() {
+/**
+ * Load the content-type → template default map from the DB into the shared
+ * `contentTemplates` store. Call once at boot; surfaces then read the store.
+ */
+export async function loadContentTemplates() {
   try {
     const call = await invoke();
-    return await call('get_content_templates');
+    const map = await call('get_content_templates');
+    contentTemplates.set({ ...EMPTY_CONTENT_LOOKS, ...map });
+    return map;
   } catch {
-    return { scripture: null, song: null, media: null, announce: null };
+    return null;
   }
 }
-/** Map a content type to a template (null clears → channel default). */
+
+/** The content-type → template default mapping (one-shot read; also seeds the
+ *  store). Prefer subscribing to `contentTemplates`. */
+export async function getContentTemplates() {
+  const map = await loadContentTemplates();
+  return map ?? { ...EMPTY_CONTENT_LOOKS };
+}
+
+/**
+ * THE ONE writer of the content-look map (Decision §25). Maps a content type to
+ * a template (null clears → the screen's own template). Updates the shared store
+ * optimistically so every subscribed surface reflects the change instantly, then
+ * persists; on failure it reloads truth so the UI can never lie about what is
+ * stored. Do NOT add a second writer of this map.
+ */
 export async function setContentTemplate(kind, templateId) {
-  const call = await invoke();
-  await call('set_content_template', { kind, templateId });
+  const id = templateId ?? null;
+  contentTemplates.update((m) => ({ ...m, [kind]: id }));
+  try {
+    const call = await invoke();
+    await call('set_content_template', { kind, templateId: id });
+  } catch (e) {
+    await loadContentTemplates();
+    throw e;
+  }
 }
 
 // ── Saved scripture (Library → Scripture) ────────────────────────────────────
@@ -918,21 +1062,87 @@ export async function saveTemplateQuiet(t) {
   return call('save_template', { template: t });
 }
 
-/** The active templates (max 4) previewed on the console Output grid. */
-export async function listActiveTemplates() {
+// ── TEMPLATE VERSION HISTORY ─────────────────────────────────────────────────
+// Snapshots persisted per template in the settings KV under `tplver.<id>`. The
+// list/trim/dedup logic is pure (templates.js); these wrappers own persistence.
+const versionsKey = (id) => `tplver.${id}`;
+
+/** Snapshot a template into its version history (deduped, bounded). Best-effort —
+ *  a failure to record history must never block the save it follows. `at` is the
+ *  timestamp (Date.now() by default; the app may use it, unlike workflow code). */
+export async function snapshotTemplateVersion(template, at = Date.now()) {
+  if (!template?.id) return;
   try {
     const call = await invoke();
-    return await call('list_active_templates');
+    const { parseTemplateVersions, appendTemplateVersion } = await import('../templates.js');
+    const raw = await call('get_setting', { key: versionsKey(template.id) });
+    const next = appendTemplateVersion(parseTemplateVersions(raw), template, at);
+    await call('set_setting', { key: versionsKey(template.id), value: JSON.stringify(next) });
+  } catch {
+    /* history is a convenience — never surface or block on its failure */
+  }
+}
+
+/** The saved versions of a template, newest first. [] if none/unavailable. */
+export async function listTemplateVersions(id) {
+  try {
+    const call = await invoke();
+    const { parseTemplateVersions } = await import('../templates.js');
+    return parseTemplateVersions(await call('get_setting', { key: versionsKey(id) }));
   } catch {
     return [];
   }
 }
 
-/** Activate/deactivate a template on the console (throws past the 4 cap). */
-export async function setTemplateActive(id, active) {
-  const call = await invoke();
-  await call('set_template_active', { id, active });
-  await loadTemplates();
+/** Restore a template to a saved version's shape (a normal save, so it live-
+ *  updates outputs like any edit). Returns the saved id. */
+export async function restoreTemplateVersion(template, version) {
+  return saveTemplate({ ...template, layout: version.layout, style: version.style });
+}
+
+/** Download a template as a portable `.relaytemplate.json` file. Pure client-side
+ *  (Blob + transient anchor), so it needs no backend. */
+export async function exportTemplate(t) {
+  const { serializeTemplate } = await import('../templates.js');
+  const safeName = String(t?.name ?? 'template').replace(/[^a-z0-9]+/gi, '-').toLowerCase();
+  const blob = new Blob([serializeTemplate(t)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${safeName}.relaytemplate.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+/** Read a picked template file, validate it, and save it as a NEW template.
+ *  Returns the new id. Throws a plain-language Error (parseImportedTemplate) the
+ *  caller shows through the ONE humaniser. */
+export async function importTemplateFromFile(file) {
+  const { parseImportedTemplate } = await import('../templates.js');
+  const text = await file.text();
+  const t = parseImportedTemplate(text); // throws on a non-template file
+  return saveTemplate(t); // fresh id (no id in the payload), reloads the store
+}
+
+/** The DEFAULT template object (by `defaultTemplateId`), else the first template,
+ *  else null. The single fallback look — the console preview and the Library
+ *  previews all resolve their stand-in template from this. */
+export async function resolveDefaultTemplate() {
+  await loadDefaultTemplate();
+  let list = get(templates);
+  if (!list.length) list = await loadTemplates();
+  const id = get(defaultTemplateId);
+  return list.find((t) => t.id === id) || list[0] || null;
+}
+
+/** Back-compat shim: the old "console-active (max 4)" concept is gone. Callers
+ *  that used the first active template as a preview/fallback now get the single
+ *  DEFAULT template, so nothing has to know the star system was removed. */
+export async function listActiveTemplates() {
+  const t = await resolveDefaultTemplate().catch(() => null);
+  return t ? [t] : [];
 }
 
 /** Create a new template; returns its id and reloads the store. */
@@ -943,11 +1153,132 @@ export async function createTemplate(name) {
   return id;
 }
 
-/** Delete a template; reloads the store. */
+/** Delete a template; reloads the store. Also refreshes the content-look map —
+ *  a content default (or a channel) may have pointed at the deleted template and
+ *  the backend nulls those references. */
 export async function deleteTemplate(id) {
   const call = await invoke();
   await call('delete_template', { id });
   await loadTemplates();
+  await loadContentTemplates();
+}
+
+// ── THEMES ───────────────────────────────────────────────────────────────────
+// Custom themes persist as ONE JSON blob in the settings KV. This deliberately
+// reuses the generic get_setting/set_setting commands rather than adding a
+// themes table + five commands: a theme is small, edited rarely, and always read
+// as a whole set. Builtins never touch persistence — they live in themes.js.
+const THEMES_KEY = 'themes.custom';
+
+/** Load the operator's custom themes into the store. Degrades to [] (builtins
+ *  only) if the backend has no get_setting yet or the blob is corrupt — a bad
+ *  themes blob must never break boot. Mirrors loadTemplates' resilience. */
+export async function loadThemes() {
+  try {
+    const call = await invoke();
+    const raw = await call('get_setting', { key: THEMES_KEY });
+    const { parseThemes } = await import('../themes.js');
+    const list = parseThemes(raw);
+    customThemes.set(list);
+    return list;
+  } catch {
+    customThemes.set([]);
+    return [];
+  }
+}
+
+/** Persist the whole custom-theme set (the store IS the source of truth here),
+ *  then push it to any connected kiosk/OBS client so a browser source resolves a
+ *  custom-themed template live. The kiosk sync is best-effort — a failure to
+ *  reach the hub must never block saving a theme locally. */
+async function persistThemes(list) {
+  const call = await invoke();
+  const value = JSON.stringify(list);
+  await call('set_setting', { key: THEMES_KEY, value });
+  try {
+    await call('sync_kiosk_themes', { themesJson: value });
+  } catch {
+    /* no hub / no clients — the blob is saved; kiosks get it on next connect */
+  }
+}
+
+/**
+ * Insert or update a custom theme; returns its id. A theme with no id (or a
+ * builtin's negative id) is treated as NEW and gets a fresh positive id, so
+ * "duplicate a builtin" always creates rather than trying to overwrite a
+ * read-only builtin. Ids are max+1 (never Date-based — the app forbids it).
+ */
+export async function saveTheme(theme) {
+  const list = get(customThemes);
+  const isExisting = typeof theme.id === 'number' && theme.id > 0 && list.some((t) => t.id === theme.id);
+  let next;
+  if (isExisting) {
+    next = list.map((t) => (t.id === theme.id ? { ...theme, builtin: false } : t));
+  } else {
+    const id = list.reduce((m, t) => Math.max(m, t.id), 0) + 1;
+    next = [...list, { ...theme, id, builtin: false }];
+    theme = { ...theme, id };
+  }
+  await persistThemes(next);
+  customThemes.set(next);
+  return theme.id;
+}
+
+/** Load the configured service length (minutes) into the store. Degrades to 0
+ *  (no target) if the backend/setting is absent. */
+export async function loadServiceTarget() {
+  try {
+    const call = await invoke();
+    const raw = await call('get_setting', { key: 'service.target_minutes' });
+    const n = parseInt(raw, 10);
+    serviceTargetMinutes.set(Number.isFinite(n) && n > 0 ? n : 0);
+  } catch {
+    serviceTargetMinutes.set(0);
+  }
+}
+
+/** Set the service length (minutes; 0 clears the target). Persisted in the KV,
+ *  read by the backend when the next service starts. */
+export async function setServiceTarget(minutes) {
+  const n = Math.max(0, Math.min(600, Math.floor(Number(minutes) || 0)));
+  const call = await invoke();
+  await call('set_setting', { key: 'service.target_minutes', value: String(n) });
+  serviceTargetMinutes.set(n);
+}
+
+/** Delete a custom theme by id. Builtins (negative ids) are not stored, so this
+ *  is a no-op for them by construction. */
+export async function deleteTheme(id) {
+  const next = get(customThemes).filter((t) => t.id !== id);
+  await persistThemes(next);
+  customThemes.set(next);
+}
+
+/** Download a theme (builtin or custom) as a portable `.relaytheme.json` file.
+ *  Pure client-side — a Blob + a transient anchor click, so it needs no backend
+ *  and works the same in the app webview and a plain browser. */
+export async function exportTheme(theme) {
+  const { serializeTheme } = await import('../themes.js');
+  const safeName = String(theme?.name ?? 'theme').replace(/[^a-z0-9]+/gi, '-').toLowerCase();
+  const blob = new Blob([serializeTheme(theme)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${safeName}.relaytheme.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+/** Read a picked theme file, validate it, and save it as a NEW custom theme.
+ *  Returns the new id. Throws a plain-language Error (via parseImportedTheme) the
+ *  caller shows through the ONE humaniser — a bad file must never blank the UI. */
+export async function importThemeFromFile(file) {
+  const { parseImportedTheme } = await import('../themes.js');
+  const text = await file.text();
+  const theme = parseImportedTheme(text); // throws on a non-theme file
+  return saveTheme(theme); // fresh positive id, persisted, pushed to kiosks
 }
 
 /** Labels of the output windows that are actually OPEN right now. */
@@ -1237,6 +1568,31 @@ export async function setThresholds(auto_fire, suggest) {
     capture.update((s) => ({ ...s, thresholds }));
   } catch {
     /* backend absent */
+  }
+}
+
+/** The single operator sensitivity dial (0..100), read from the live thresholds.
+ *  One forward mapping (`from_sensitivity`) and its inverse both live in Rust —
+ *  the frontend never duplicates the curve. */
+export async function getSensitivity() {
+  try {
+    const call = await invoke();
+    return await call('get_sensitivity');
+  } catch {
+    return 50;
+  }
+}
+/** Set sensitivity (0..100). Applies the same thresholds Settings would and keeps
+ *  the local `thresholds` mirror in step. Returns the landed dial position. */
+export async function setSensitivity(sensitivity) {
+  try {
+    const call = await invoke();
+    const landed = await call('set_sensitivity', { sensitivity });
+    const thresholds = await call('get_thresholds');
+    capture.update((s) => ({ ...s, thresholds }));
+    return landed;
+  } catch {
+    return sensitivity;
   }
 }
 

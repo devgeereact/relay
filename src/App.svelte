@@ -19,14 +19,27 @@
     updateProgress,
     updateError,
   } from './lib/updater.js';
-  import Dashboard from './lib/views/Dashboard.svelte';
-  import Live from './lib/views/Live.svelte';
-  import Channels from './lib/views/Channels.svelte';
-  import Templates from './lib/views/Templates.svelte';
-  import Library from './lib/views/Library.svelte';
-  import ServicePlanner from './lib/views/ServicePlanner.svelte';
-  import Settings from './lib/views/Settings.svelte';
-  import Help from './lib/views/Help.svelte';
+  // Views are CODE-SPLIT. Statically importing all eight put every tab — Live
+  // (the heaviest), the Planner, Settings, all of them — into one 637 KB bundle
+  // the webview had to parse before the first frame, on hardware that is often a
+  // borrowed church laptop. Now the boot bundle is the shell plus whichever tab
+  // the operator was last on; each other view's chunk loads on first visit (all
+  // from local disk — no network, offline-safe) and an idle prefetch warms the
+  // rest so switching stays instant after boot.
+  const viewLoaders = {
+    live:      () => import('./lib/views/Live.svelte'),
+    channels:  () => import('./lib/views/Channels.svelte'),
+    templates: () => import('./lib/views/Templates.svelte'),
+    themes:    () => import('./lib/views/Themes.svelte'),
+    library:   () => import('./lib/views/Library.svelte'),
+    planner:   () => import('./lib/views/ServicePlanner.svelte'),
+    settings:  () => import('./lib/views/Settings.svelte'),
+    help:      () => import('./lib/views/Help.svelte'),
+  };
+  const viewCache = {}; // key → resolved component, loaded once then kept
+  let current = null;   // the component for the active tab (null while its chunk loads)
+  let viewLoadError = null;
+  let viewLoadToken = 0;
 
   // `label` is an i18n KEY. The tab strip is the first thing a volunteer looks at and
   // the last thing they should have to read in a second language.
@@ -34,27 +47,34 @@
     // Dashboard is FIRST but is not where a returning operator lands — the active
     // tab is persisted (session.js), so only a genuinely fresh install starts
     // here. Someone who was on Live yesterday is on Live today.
-    { key: 'dashboard', label: 'tab.dashboard', title: 'Dashboard',        view: Dashboard },
-    { key: 'live',      label: 'tab.live',      title: 'Live Service',     view: Live },
+    // Dashboard is no longer a top-level tab — it lives inside Settings (a
+    // records/overview surface, not a run surface). The sidebar is the surfaces an
+    // operator actually runs during a service.
+    { key: 'live',      label: 'tab.live',      title: 'Live Service' },
     // Outputs — the ONE surface for every render target: the congregation wall,
     // stage/confidence/preacher monitors, streaming and lobby screens. Each is a
     // real backend channel (native window or LAN/OBS URL over :8032) with its own
     // template. This absorbed the old localStorage-only "Stage Displays" gallery,
     // which looked lovely but never actually reached a screen — one real surface
     // instead of two, one of them a phantom.
-    { key: 'channels',  label: 'tab.channels',  title: 'Outputs',  view: Channels },
-    { key: 'templates', label: 'tab.templates', title: 'Templates',  view: Templates },
-    { key: 'library',   label: 'tab.library',   title: 'Content Library',  view: Library },
-    { key: 'planner',   label: 'tab.planner',   title: 'Service Planner',  view: ServicePlanner },
+    { key: 'channels',  label: 'tab.channels',  title: 'Outputs' },
+    { key: 'templates', label: 'tab.templates', title: 'Templates' },
+    // Themes — the style layer BENEATH templates (typography, colour, rhythm). A
+    // template inherits a theme and overrides it per key; a theme never reaches a
+    // wall on its own. Sits next to Templates because they are one pipeline: pick
+    // a look here, apply it to a template, fire the template.
+    { key: 'themes',    label: 'tab.themes',    title: 'Themes' },
+    { key: 'library',   label: 'tab.library',   title: 'Content Library' },
+    { key: 'planner',   label: 'tab.planner',   title: 'Service Planner' },
     // Service History now lives INSIDE Settings (its own section) — a record of
     // past services is a config/records surface, not a top-level run tab, and
     // folding it in keeps the sidebar to the seven surfaces an operator runs.
-    { key: 'settings',  label: 'tab.settings',  title: 'System Settings',  view: Settings },
+    { key: 'settings',  label: 'tab.settings',  title: 'System Settings' },
     // In-app help. There was NONE — the operator guide was a markdown file on
     // GitHub, which is exactly no use to a volunteer in a dark booth on a Sunday
     // with no internet. Help that needs a network is missing when Relay is most
     // useful: offline.
-    { key: 'help',      label: 'tab.help',      title: 'Help / Shortcuts',             view: Help },
+    { key: 'help',      label: 'tab.help',      title: 'Help / Shortcuts' },
   ];
   // The active tab IS the session — not a local copy of it that happens to be
   // written back. One direction, one source of truth, so anything can navigate:
@@ -67,7 +87,38 @@
   $: active = tabs.some((x) => x.key === requestedTab) ? requestedTab : 'live';
   const go = (key) => setSession({ activeTab: key });
   $: currentTab = tabs.find((x) => x.key === active) ?? tabs[0];
-  $: current = currentTab.view;
+
+  // Resolve the active tab's component, loading its chunk on first visit and
+  // caching it after. A token guards against a fast tab switch resolving out of
+  // order and flashing the wrong view. A load failure (a missing chunk) is
+  // surfaced calmly rather than white-screening — the outputs are separate
+  // webviews and stay live regardless.
+  $: resolveView(active);
+  async function resolveView(key) {
+    if (viewCache[key]) { current = viewCache[key]; viewLoadError = null; return; }
+    const token = ++viewLoadToken;
+    viewLoadError = null;
+    try {
+      const mod = await viewLoaders[key]();
+      viewCache[key] = mod.default;
+      if (token === viewLoadToken) current = mod.default;
+    } catch (e) {
+      if (token === viewLoadToken) { viewLoadError = e; current = null; }
+    }
+  }
+
+  // After boot, warm the other chunks while the machine is idle so the FIRST
+  // switch to any tab is instant. Never blocks; failures are ignored (the chunk
+  // will just load on demand instead).
+  function prefetchViews() {
+    const idle = typeof requestIdleCallback !== 'undefined'
+      ? requestIdleCallback
+      : (cb) => setTimeout(cb, 300);
+    for (const key of Object.keys(viewLoaders)) {
+      if (viewCache[key]) continue;
+      idle(() => viewLoaders[key]().then((m) => (viewCache[key] = m.default)).catch(() => {}));
+    }
+  }
 
   // FULL SCREEN LIVE CONTROL (§4). Hides the sidebar, top bar and footer so the
   // run surface owns the whole screen — a dark booth on a 13" laptop.
@@ -92,6 +143,7 @@
     live: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="2.5" y="4.5" width="19" height="13" rx="2"/><path d="M8 21h8M12 17.5V21" stroke-linecap="round"/><circle cx="12" cy="11" r="2.6" fill="currentColor" stroke="none"/></svg>',
     channels: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3"/><circle cx="4" cy="12" r="2"/><circle cx="12" cy="6" r="2"/><circle cx="20" cy="14" r="2"/></svg>',
     templates: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="m12 2 9 5-9 5-9-5 9-5Z"/><path d="m3 12 9 5 9-5M3 17l9 5 9-5"/></svg>',
+    themes: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="13.5" cy="6.5" r="1.3"/><circle cx="17.5" cy="10.5" r="1.3"/><circle cx="8.5" cy="7.5" r="1.3"/><circle cx="6.5" cy="12.5" r="1.3"/><path d="M12 2a10 10 0 1 0 0 20 2.5 2.5 0 0 0 2-4 2.5 2.5 0 0 1 2-4h1a5 5 0 0 0 5-5 9 9 0 0 0-9-7Z"/></svg>',
     library: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M4 5a2 2 0 0 1 2-2h13v16H6a2 2 0 0 0-2 2V5Z"/><path d="M9 3v14"/></svg>',
     history: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v4h4"/><path d="M12 7v5l3 2"/></svg>',
     planner: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2v4M16 2v4"/><path d="M7 13h4M7 17h7"/></svg>',
@@ -149,7 +201,12 @@
     // Restore the physical output screens (HDMI/projector) the operator set up, so
     // they come back on their own after a launch/update/rebuild. Safe: the backend
     // only opens onto connected, non-primary displays.
-    autoOpenOutputs();
+    //
+    // NOT in safe mode. Safe mode promises nothing reaches a congregation, and
+    // that promise is void the instant the projector windows re-open themselves
+    // on boot. This used to run unconditionally, one step ahead of the safe-mode
+    // guard below — so "outputs disabled" showed over screens that had just opened.
+    if (!$safeMode) autoOpenOutputs();
     try {
       const { invoke } = await import('@tauri-apps/api/core');
       await invoke('greet', { name: 'operator' });
@@ -185,6 +242,8 @@
     );
     // Check once, on launch, while nothing is live. Never during a service.
     checkForUpdate();
+    // Warm the other tab chunks while idle so the first switch is instant.
+    prefetchViews();
   });
   onDestroy(() => {
     clearInterval(timer);
@@ -312,7 +371,7 @@
            read, or they will spend the service wondering why nothing fires. -->
       {#if $safeMode}
         <span class="r-badge amethyst"><span class="bd" style="box-shadow:none;"></span>Safe mode</span>
-        <span class="topbar-live r-mono">outputs disabled — turn it off in Settings</span>
+        <span class="topbar-live r-mono">outputs disabled — turn off Safe mode in Settings › Backup</span>
       {:else if $rehearsing}
         <span class="r-badge amethyst pulse"><span class="bd"></span>Rehearsal</span>
         <span class="topbar-live r-mono">nothing is reaching the screens</span>
@@ -355,7 +414,16 @@
           Exit full screen
         </button>
       {/if}
-      <svelte:component this={current} />
+      {#if current}
+        <svelte:component this={current} />
+      {:else if viewLoadError}
+        <div class="view-loaderr">
+          <p>This section could not load.</p>
+          <button class="r-btn sm" on:click={() => resolveView(active)}>Try again</button>
+        </div>
+      {:else}
+        <div class="view-loading" aria-live="polite" aria-busy="true"><span class="view-spinner"></span></div>
+      {/if}
     </div>
 
     <footer class="footer-v">

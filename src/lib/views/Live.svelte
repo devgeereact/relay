@@ -28,6 +28,7 @@
   // task, done on a Tuesday, not with a congregation waiting.
   import { onMount, onDestroy, afterUpdate } from 'svelte';
   import TemplateRender from '../TemplateRender.svelte';
+  import { resolveOutputTemplate } from '../layers.js';
   import ModelSetup from '../ModelSetup.svelte';
   import { registerContext } from '../shortcuts.js';
   import { t } from '../i18n.js';
@@ -44,6 +45,7 @@
     meter,
     liveContent,
     liveTemplateOverride,
+    liveTemplatePinned,
     transcript,
     detections,
     live,
@@ -51,7 +53,8 @@
     liveCue,
     templates,
     loadTemplates,
-    listActiveTemplates,
+    defaultTemplateId,
+    loadDefaultTemplate,
     confirmDetection,
     dismissDetection,
     manualFire,
@@ -78,6 +81,8 @@
     rehearsing,
     loadRehearsal,
     setRehearsal,
+    getSensitivity,
+    setSensitivity,
   } from '../stores/capture.js';
 
   // ── the plan being RUN (not edited) ──────────────────────────────────────
@@ -85,7 +90,6 @@
   let openPlan = null;
   let items = [];
   let selId = null;
-  let activeTpls = [];
 
   // "Have we actually asked the database yet?" — NOT the same question as "is the
   // list empty", and conflating them is a lie the operator sees every single mount.
@@ -154,10 +158,11 @@
 
   onMount(async () => {
     await loadRehearsal();
+    getSensitivity().then((v) => (sensitivity = v));
     // Populate the reactive `$templates` store so the preview/program panes
     // resolve (and stay live to edits) from it, not just a one-shot snapshot.
     await loadTemplates().catch(() => {});
-    activeTpls = await listActiveTemplates().catch(() => []);
+    await loadDefaultTemplate().catch(() => {});
     channels = await listOutputChannels().catch(() => []);
     plans = await listPlans().catch(() => []);
     plansLoaded = true;
@@ -345,6 +350,15 @@
     }
   }
 
+  // The operator's single sensitivity dial, on the run surface (Decision §26).
+  // It writes the SAME thresholds the Settings sliders do (one baseline) — the
+  // whole point is dialling out false fires mid-service without leaving Live.
+  let sensitivity = 50;
+  function onSensitivity(v) {
+    sensitivity = v;
+    setSensitivity(v);
+  }
+
   function dismissTop() {
     if (!dets[0]) return;
     dismissDetection(dets[0].reference);
@@ -518,7 +532,7 @@
         channels.find((c) => c.render_target === 'native_window' && c.name === 'Main screen') ??
         channels.find((c) => c.render_target === 'native_window');
       if (!main) {
-        errMsg = 'No output channel yet — add one in the Channels tab.';
+        errMsg = 'No screen yet — add one in the Outputs tab.';
         return;
       }
       if (!main.display_target) {
@@ -565,6 +579,20 @@
         fix: 'Detection accuracy may suffer. Check the mixer channel and the mic.',
       }
     );
+  })();
+
+  // ── recognition language is not settling ─────────────────────────────────
+  // Same shape as the mic warnings above, and the same reasoning: name the
+  // problem and the physical thing to go and do. This one is worth saying
+  // because it is INVISIBLE — a wandering language label degrades the transcript
+  // and reads to the operator as "the AI is bad", while the fix is one dropdown.
+  $: langWarning = (() => {
+    const langs = $capture.langUnstable;
+    if (!langs?.length || $capture.stt?.language) return null; // already pinned
+    return {
+      title: 'Relay keeps changing its mind about the language.',
+      fix: `It has heard ${langs.join(', ')} in the last few minutes. Pick the language in Settings → Scripture & Bible → Recognition Language — auto-detect struggles with a strong accent, and a wrong guess garbles the transcript.`,
+    };
   })();
 
   $: selCue = items.find((i) => i.id === selId) || null;
@@ -619,8 +647,7 @@
   $: mainChannel = channels.find((c) => c.render_target === 'native_window') ?? channels[0] ?? null;
   $: mainTpl =
     (mainChannel && $templates.find((t) => t.id === mainChannel.template_id)) ||
-    $templates.find((t) => t.id === activeTpls[0]?.id) ||
-    activeTpls[0] ||
+    $templates.find((t) => t.id === $defaultTemplateId) ||
     $templates[0] ||
     null;
   $: previewTpl = mainTpl;
@@ -646,6 +673,11 @@
   // absolute threshold (DECISIONS §19 — nothing here compares a signal to a fixed
   // level; it only draws the one the engine already computed).
   const SEGS = 24;
+  // Hoisted: `$meter` ticks ~15×/s during a sermon and each VU meter used to
+  // rebuild a fresh `Array.from({length: SEGS})` on every one of those renders —
+  // two throwaway 24-element arrays per tick, pure GC churn. One frozen array,
+  // iterated read-only, does the same job with no allocation.
+  const SEG_ARR = Array.from({ length: SEGS });
   $: lvl = Math.max(0, Math.min(1, $meter.level ?? 0));
   // ── §4 presentation modes ────────────────────────────────────────────────
   // COMPACT is a density change, not a different screen: the same panels, the
@@ -793,7 +825,7 @@
       </header>
       <div class="screen" class:lit={$live && !$rehearsing && !$screenBlack}>
         {#if $live}
-          <TemplateRender template={$liveTemplateOverride ?? previewTpl} content={$liveContent} />
+          <TemplateRender template={resolveOutputTemplate(previewTpl, $liveTemplateOverride, $liveTemplatePinned)} content={$liveContent} />
         {:else}
           <!-- Nothing is on the wall. Say so in words — a blank rectangle and a
                black-out look identical, and they are not the same fact. -->
@@ -804,7 +836,7 @@
     </section>
 
     <!-- OUTPUT STATUS. Read-only on purpose: during a service the only question is
-         "is it up?". Changing a target is the Channels tab's job. -->
+         "is it up?". Changing a target is the Outputs tab's job. -->
     <section class="pane">
       <header class="pane-head">
         <h2>Output Status</h2>
@@ -830,7 +862,7 @@
             {/if}
           </div>
         {:else}
-          <EmptyState message="No output channels yet — add one in the Channels tab." />
+          <EmptyState message="No screens yet — add one in the Outputs tab." />
         {/each}
       </div>
       <footer class="pane-foot">
@@ -881,7 +913,7 @@
         <span class="mic-lbl r-mono">{$capture.capturing ? ($capture.detectedLang ?? 'listening') : 'standby'}</span>
         <span class="meter" role="meter" aria-valuemin="0" aria-valuemax="100"
           aria-valuenow={Math.round(lvl * 100)} aria-label="Microphone input level">
-          {#each Array.from({ length: SEGS }) as _, i}
+          {#each SEG_ARR as _, i}
             <i class="sg" class:on={i < litSegs} class:mid={i >= 15 && i < 20} class:hot={i >= 20}></i>
           {/each}
         </span>
@@ -900,6 +932,13 @@
         <span class="pn">2</span>
         <h2>AI Detection — Current Claim</h2>
         <span class="spring"></span>
+        <label class="sens" title="How readily the AI fires. Lower = fewer, surer catches; higher = more, noisier. Same dial as Settings.">
+          <span class="sens-lbl r-mono">SENS</span>
+          <input type="range" min="0" max="100" step="1" value={sensitivity}
+            on:input={(e) => onSensitivity(+e.target.value)} disabled={!$capture.available}
+            aria-label="Detection sensitivity" />
+          <span class="sens-val r-mono">{sensitivity}</span>
+        </label>
         <button class="chip btnchip" class:ok={$capture.detectionOn} on:click={toggleDetection}
           disabled={!$capture.available} title="Arm or disarm automatic detection">
           <i class="bd"></i>{$capture.detectionOn ? 'Armed' : 'Off'}
@@ -1115,13 +1154,19 @@
         {:else}
           <!-- No plan loaded. Not an error — plenty of services run entirely on the
                AI and the manual box. Offer the plans, don't demand one. -->
+          {#if plansLoaded && plans.length}
+            <div class="pick-intro r-lbl">Service plans — pick one to run</div>
+          {/if}
           {#each plans as p (p.id)}
             <button class="cue pick" on:click={() => loadPlan(p)}>
+              <span class="pick-ic" aria-hidden="true">
+                <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2v4M16 2v4"/></svg>
+              </span>
               <span class="cue-body">
                 <span class="cue-title">{p.title}</span>
-                <span class="cue-meta r-mono">{p.plan_date} · {p.cue_count} cues</span>
+                <span class="cue-meta r-mono">{p.plan_date} · {p.cue_count} {p.cue_count === 1 ? 'cue' : 'cues'}</span>
               </span>
-              <span class="r-badge grey sm-badge">Run</span>
+              <span class="pick-run"><svg viewBox="0 0 24 24" width="10" height="10" fill="currentColor" aria-hidden="true"><path d="M5 3v18l15-9L5 3Z"/></svg>Run</span>
             </button>
           {/each}
           <!-- Loading is NOT Empty. Until the query comes back, "no plans" is not a
@@ -1202,7 +1247,7 @@
         <div class="amon">
           <span class="amon-k">Input level</span>
           <span class="meter" aria-hidden="true">
-            {#each Array.from({ length: SEGS }) as _, i}
+            {#each SEG_ARR as _, i}
               <i class="sg" class:on={i < litSegs} class:mid={i >= 15 && i < 20} class:hot={i >= 20}></i>
             {/each}
           </span>
@@ -1223,6 +1268,10 @@
        that is always on screen is wallpaper. -->
   {#if $capture.capturing && qualityWarning}
     <div class="sttwarn"><b>{qualityWarning.title}</b>{qualityWarning.fix}</div>
+  {/if}
+
+  {#if $capture.capturing && langWarning}
+    <div class="sttwarn"><b>{langWarning.title}</b>{langWarning.fix}</div>
   {/if}
 
   <!-- No STT model = the AI cannot listen. Relay degrades to a fully working MANUAL
@@ -1441,6 +1490,21 @@
   .btnchip{cursor:pointer; font-family:var(--f-body)}
   .btnchip:disabled{opacity:.5; cursor:not-allowed}
 
+  /* Sensitivity dial — compact, on the run surface. Reaches the same thresholds
+     as Settings; the value is amethyst (chrome), never amber. */
+  .sens{display:inline-flex; align-items:center; gap:7px; flex:0 0 auto;}
+  .sens-lbl{font-size:var(--v-fs-cap); letter-spacing:.08em; color:var(--v-faint);}
+  .sens-val{font-size:var(--v-fs-cap); color:var(--v-dim); min-width:20px; text-align:right;}
+  .sens input[type="range"]{-webkit-appearance:none; appearance:none; width:88px; height:4px;
+    border-radius:99px; background:var(--v-surf3); cursor:pointer; outline:none;}
+  .sens input[type="range"]:focus-visible{box-shadow:0 0 0 3px var(--v-accent-soft);}
+  .sens input[type="range"]:disabled{opacity:.5; cursor:not-allowed;}
+  .sens input[type="range"]::-webkit-slider-thumb{-webkit-appearance:none; appearance:none;
+    width:13px; height:13px; border-radius:50%; background:var(--v-accent);
+    border:2px solid var(--v-surf); box-shadow:var(--v-shadow-sm);}
+  .sens input[type="range"]::-moz-range-thumb{width:13px; height:13px; border-radius:50%;
+    background:var(--v-accent); border:2px solid var(--v-surf);}
+
   .claim{background:var(--v-surf2); border:1px solid rgba(255,176,0,.28);
     border-radius:var(--v-r-lg); padding:14px; box-shadow:0 0 20px -6px var(--v-amber-glow)}
   /* A GUESS MUST LOOK LIKE A GUESS. Amber reads as "Relay is confident" and a
@@ -1543,6 +1607,20 @@
   .cue-body{flex:1; min-width:0; display:flex; flex-direction:column; gap:2px}
   .cue-title{font-size:var(--v-fs-b2); overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
   .cue-meta{font-size:9px; letter-spacing:.05em; color:var(--v-faint)}
+  /* Plan picker (no plan loaded) — a plan reads as a real, inviting card. */
+  .pick-intro{ padding:2px 2px 4px; flex:0 0 auto; }
+  /* A pick card is NATURAL height (flex:0 0 auto) — `.cue` is flex:1, which made a
+     single plan card stretch to fill the whole pane. Picks stack at the top. */
+  .cue.pick{ flex:0 0 auto; padding:13px; gap:12px; align-items:center; }
+  .pick-ic{ flex:0 0 auto; width:32px; height:32px; display:grid; place-items:center;
+    border-radius:var(--v-r-md); background:var(--v-surf3); border:1px solid var(--v-line); color:var(--v-dim); transition:.14s; }
+  .cue.pick:hover .pick-ic{ color:var(--v-accent); border-color:var(--v-accent-line); }
+  .cue.pick .cue-title{ font-size:var(--v-fs-b1); font-weight:600; }
+  .cue.pick .cue-meta{ font-size:var(--v-fs-cap); letter-spacing:.03em; }
+  .pick-run{ flex:0 0 auto; display:inline-flex; align-items:center; gap:5px; padding:5px 11px;
+    border-radius:99px; background:var(--v-accent-soft); border:1px solid var(--v-accent-line);
+    color:var(--v-accent); font-size:var(--v-fs-cap); font-weight:600; transition:.14s; }
+  .cue.pick:hover .pick-run{ background:var(--v-accent-fill); color:var(--v-accent-ink); border-color:var(--v-accent-fill); }
   .slide{align-items:flex-start; margin-left:19px; background:var(--v-bg)}
   .slide-tag{flex:0 0 auto; min-width:26px; padding-top:2px; font-size:9px; font-weight:700;
     letter-spacing:.05em; color:var(--acc)}

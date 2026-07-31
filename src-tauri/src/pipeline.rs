@@ -81,10 +81,21 @@ pub struct Fire {
     /// Operator's private note — rides to the stage monitor, never to the
     /// congregation (no template region renders it).
     pub stage_note: Option<String>,
+    /// The next verse coming up (reference + text), for a stage/confidence
+    /// monitor. Rides to output alongside `stage_note`; only a monitor template
+    /// with a `next` layer renders it. Filled by `attach_next_verse` from the
+    /// staged passage, so it is BOUNDED by the read range. `None` at a range end
+    /// or when the following verse is not in the corpus.
+    pub next_reference: Option<String>,
+    pub next_text: Option<String>,
     /// The per-content-type scripture template. EVERY fire path must carry this;
     /// forgetting it is the bug this module exists to make impossible.
     pub template_id: Option<i64>,
     pub template_json: Option<String>,
+    /// True when the template is a cue's DELIBERATE choice (it overrides the
+    /// screen), false for a content-type default (defers to the screen). See
+    /// `OutputContent::template_pinned`.
+    pub template_pinned: bool,
     /// WHY the machine thinks this verse. The transcript span a direct reference was
     /// parsed from ("john three sixteen"), or the overlapping words that produced a
     /// paraphrase's cosine ("grace · saved · faith"). `None` for a human's own fire —
@@ -128,7 +139,10 @@ impl Fire {
             translation: self.translation.clone(),
             template_id: self.template_id,
             template_json: self.template_json.clone(),
+            template_pinned: self.template_pinned,
             stage_note: self.stage_note.clone(),
+            next_reference: self.next_reference.clone(),
+            next_text: self.next_text.clone(),
             ..Default::default()
         }
     }
@@ -247,8 +261,11 @@ mod tests {
             method: DetectionMethod::Direct,
             status,
             stage_note: None,
+            next_reference: None,
+            next_text: None,
             template_id: Some(7),
             template_json: Some(r#"{"style":{}}"#.into()),
+            template_pinned: false,
             matched_text: Some("john three sixteen".into()),
         }
     }
@@ -332,6 +349,41 @@ mod tests {
         let mut f = fire(FireStatus::Manual);
         f.stage_note = Some("hold for prayer".into());
         assert_eq!(f.output().stage_note.as_deref(), Some("hold for prayer"));
+    }
+
+    /// The next verse rides to output for a monitor's "up next" line — but never
+    /// leaks onto the detection event (the console shows what IS on screen, not
+    /// what is coming). Only a monitor template with a `next` layer renders it.
+    #[test]
+    fn the_next_verse_rides_to_the_output_only() {
+        let mut f = fire(FireStatus::Manual);
+        f.next_reference = Some("John 3:17".into());
+        f.next_text = Some("For God sent not his Son...".into());
+        let out = f.output();
+        assert_eq!(out.next_reference.as_deref(), Some("John 3:17"));
+        assert_eq!(
+            out.next_text.as_deref(),
+            Some("For God sent not his Son...")
+        );
+        // It is not a field on the detection event at all.
+        let _ = f.event(); // compiles = DetectionEvent has no next_* to set
+    }
+
+    /// The pin flag rides to output: a cue's deliberate template choice (pinned)
+    /// overrides the screen; a content-type default (not pinned) defers to it.
+    #[test]
+    fn the_template_pin_flag_rides_to_output() {
+        let mut f = fire(FireStatus::Manual);
+        f.template_pinned = true;
+        assert!(
+            f.output().template_pinned,
+            "a pinned cue choice must ride out"
+        );
+        f.template_pinned = false;
+        assert!(
+            !f.output().template_pinned,
+            "a content default is not pinned"
+        );
     }
 
     /// A direct hit must beat a paraphrase for the same verse even when the

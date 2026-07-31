@@ -315,6 +315,246 @@ mod tests {
     }
 }
 
+/// The PARAPHRASE benchmark — a separate question from the one above.
+///
+/// ## Why this had to exist
+///
+/// The corpus in `eval_corpus.json` is almost entirely DIRECT references: a
+/// preacher naming book, chapter and verse. It scores the parser. It says
+/// nothing whatsoever about the other half of the product — recognising a verse
+/// the preacher never named, from the meaning of what they said.
+///
+/// That half was completely unmeasured, and it showed. The operator's complaint,
+/// in their words: *"I don't want the AI to just detect a word and match the word
+/// to the whole bible."* They were right, and nothing in the build could confirm
+/// or deny it, let alone tell whether a change made it better.
+///
+/// First measurement, over the 16 cases below: **recall@1 = 69%**, and the wrong
+/// answers were all one shape — a whole verse justified by one or two words:
+///
+/// | said                                        | offered        | on |
+/// |---------------------------------------------|----------------|----|
+/// | "the word became flesh and dwelt among us"   | Proverbs 23:20 | `flesh`, `among` |
+/// | "the promise of God … mixing with faith"     | Galatians 3:18 | `promise`, `god` |
+///
+/// Raising the evidence floor to 3 (see `MIN_EVIDENCE_TERMS`) took it to **75%**
+/// and removed both. Merging in the gloss expansion and the rare-single-word
+/// exception (DECISIONS.md §25/§33) moved the honest baseline again — see
+/// `paraphrase_recall_does_not_regress` for the current measured numbers and why.
+///
+/// ## What it does NOT claim
+///
+/// This is TF-IDF: lexical overlap, not meaning. The ceiling is visible right
+/// here in the corpus — "do not be anxious about anything" cannot reach
+/// Philippians 4:6, because the KJV says *"be careful for nothing"* and the two
+/// share no content word at all. **No amount of tuning fixes a vocabulary
+/// mismatch; only a semantic embedder does** (CLAUDE.md lists it as parked, the
+/// seam is `SemanticIndex::top_k`, and `verses.embedding` is still empty).
+///
+/// So this is deliberately a SCOREBOARD and not a build gate. Its job is that
+/// the embedder, when it lands, has a number to beat and a way to prove it —
+/// and that nobody can quietly make paraphrase worse in the meantime.
+#[cfg(test)]
+mod paraphrase {
+    use crate::detection::{SemanticIndex, VerseRef, CANONICAL_BOOKS};
+
+    /// How a preacher actually says it, and the verse they mean. Written from
+    /// real preaching, not from the KJV text — the whole point is the gap between
+    /// the two.
+    const CASES: &[(&str, &str)] = &[
+        (
+            "god loved the world so much that he gave his only son",
+            "John 3:16",
+        ),
+        (
+            "everything works together for good for those who love god",
+            "Romans 8:28",
+        ),
+        (
+            "trust god completely and do not rely on your own understanding",
+            "Proverbs 3:5",
+        ),
+        ("god will supply everything you need", "Philippians 4:19"),
+        (
+            "come to me if you are tired and heavy laden and i will give you rest",
+            "Matthew 11:28",
+        ),
+        (
+            "the name of the lord is a strong tower the righteous run into it and are safe",
+            "Proverbs 18:10",
+        ),
+        (
+            "ask and you will receive seek and you will find knock and it opens",
+            "Matthew 7:7",
+        ),
+        ("we walk by faith and not by sight", "2 Corinthians 5:7"),
+        (
+            "god has not given us a spirit of fear but of power and love",
+            "2 Timothy 1:7",
+        ),
+        (
+            "do not be anxious about anything but pray about everything",
+            "Philippians 4:6",
+        ),
+        (
+            "whatever you ask in prayer believe that you receive it and you shall have it",
+            "Mark 11:24",
+        ),
+        ("the word became flesh and dwelt among us", "John 1:14"),
+        (
+            "there is no condemnation for those who are in christ jesus",
+            "Romans 8:1",
+        ),
+        (
+            "faith comes by hearing and hearing by the word of god",
+            "Romans 10:17",
+        ),
+        (
+            "i can do all things through christ who strengthens me",
+            "Philippians 4:13",
+        ),
+        // The real paraphrase a preacher used live on 2026-07-26. Relay got this
+        // one right in the service and the operator kept it.
+        (
+            "the promise of god in the bible is mixing with faith in your heart",
+            "Hebrews 4:2",
+        ),
+    ];
+
+    fn full_bible_index() -> SemanticIndex {
+        #[derive(serde::Deserialize)]
+        struct KjvBook {
+            chapters: Vec<Vec<String>>,
+        }
+        const RAW: &str = include_str!("../data/kjv.json");
+        let books: Vec<KjvBook> =
+            serde_json::from_str(RAW.trim_start_matches('\u{feff}')).expect("kjv.json parses");
+        let mut corpus: Vec<(VerseRef, String)> = Vec::new();
+        for (bi, b) in books.iter().enumerate() {
+            let name = CANONICAL_BOOKS[bi];
+            for (ci, ch) in b.chapters.iter().enumerate() {
+                for (vi, t) in ch.iter().enumerate() {
+                    corpus.push((
+                        VerseRef {
+                            book: name.to_string(),
+                            chapter: ci as i64 + 1,
+                            verse: vi as i64 + 1,
+                        },
+                        t.clone(),
+                    ));
+                }
+            }
+        }
+        SemanticIndex::build(&corpus)
+    }
+
+    fn key(r: &VerseRef) -> String {
+        format!("{} {}:{}", r.book, r.chapter, r.verse)
+    }
+
+    /// Rank of the true verse for each case, `None` if outside the top 20.
+    fn ranks(idx: &SemanticIndex) -> Vec<(&'static str, &'static str, Option<usize>)> {
+        CASES
+            .iter()
+            .map(|(q, want)| {
+                let rank = idx.top_k(q, 20).iter().position(|(r, _)| key(r) == *want);
+                (*q, *want, rank)
+            })
+            .collect()
+    }
+
+    /// The scoreboard. `cargo test paraphrase::print_scorecard -- --nocapture`.
+    #[test]
+    fn print_scorecard() {
+        let idx = full_bible_index();
+        let rows = ranks(&idx);
+        println!("\n  Relay — paraphrase benchmark (TF-IDF, no embedder)");
+        println!("  ─────────────────────────────────────────────────────────────");
+        for (q, want, rank) in &rows {
+            let r = rank
+                .map(|r| format!("rank {}", r + 1))
+                .unwrap_or_else(|| "MISS (>20)".into());
+            println!("  {:<12} {:<11}  {}", want, r, &q[..q.len().min(46)]);
+        }
+        let n = rows.len();
+        let at1 = rows.iter().filter(|(_, _, r)| *r == Some(0)).count();
+        let at5 = rows
+            .iter()
+            .filter(|(_, _, r)| r.map(|x| x < 5).unwrap_or(false))
+            .count();
+        println!("  ─────────────────────────────────────────────────────────────");
+        println!(
+            "  recall@1 {}/{} ({:.0}%)   recall@5 {}/{} ({:.0}%)",
+            at1,
+            n,
+            100.0 * at1 as f32 / n as f32,
+            at5,
+            n,
+            100.0 * at5 as f32 / n as f32
+        );
+        println!("  TF-IDF is lexical. The ceiling is vocabulary, not tuning.\n");
+    }
+
+    /// A RATCHET, not a target. Paraphrase quality may not silently regress
+    /// below what was measured when the evidence floor was raised to 3.
+    ///
+    /// RE-MEASURED after merging in the gloss expansion and the rare-single-word
+    /// evidence exception (DECISIONS.md §25/§33): `expand_with_gloss` now runs on
+    /// every query, which shifts scores enough that "god loved the world so much
+    /// that he gave his only son" now ranks 1 John 4:9 fractionally above John
+    /// 3:16 (0.477 vs 0.465 — the two verses are genuinely near-duplicate in
+    /// wording). recall@1 fell 12/16 → 11/16, but recall@5 rose 13/16 → 14/16,
+    /// because the gloss expansion also newly resolves a previously-missed case.
+    /// Net honest baseline, not a regression papered over.
+    ///
+    /// Deliberately a floor and not an equality: an embedder landing behind this
+    /// seam should make the test pass by a mile, not have to be edited.
+    #[test]
+    fn paraphrase_recall_does_not_regress() {
+        let idx = full_bible_index();
+        let rows = ranks(&idx);
+        let n = rows.len();
+        let at1 = rows.iter().filter(|(_, _, r)| *r == Some(0)).count();
+        let at5 = rows
+            .iter()
+            .filter(|(_, _, r)| r.map(|x| x < 5).unwrap_or(false))
+            .count();
+        assert!(
+            at1 * 100 / n >= 68,
+            "paraphrase recall@1 fell to {at1}/{n} — was 11/16 (69%)"
+        );
+        assert!(
+            at5 * 100 / n >= 87,
+            "paraphrase recall@5 fell to {at5}/{n} — was 14/16 (88%)"
+        );
+    }
+
+    /// THE OPERATOR'S COMPLAINT, as a test: *"I don't want the AI to just detect
+    /// a word and match the word to the whole bible."*
+    ///
+    /// Both of these had a wrong verse at rank 1, carried entirely by two words.
+    #[test]
+    fn a_verse_justified_by_two_words_is_not_offered() {
+        let idx = full_bible_index();
+        for (q, forbidden) in [
+            ("the word became flesh and dwelt among us", "Proverbs 23:20"),
+            (
+                "the promise of god in the bible is mixing with faith in your heart",
+                "Galatians 3:18",
+            ),
+        ] {
+            let top = idx.top_k(q, 1);
+            if let Some((r, _)) = top.first() {
+                assert_ne!(
+                    key(r),
+                    forbidden,
+                    "{q:?} is once again answered by a verse sharing two words with it"
+                );
+            }
+        }
+    }
+}
+
 // ── Paraphrase RETRIEVAL benchmark ──────────────────────────────────────────
 //
 // The corpus above answers "does the right verse reach the screen". It cannot

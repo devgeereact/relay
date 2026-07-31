@@ -14,10 +14,15 @@
   // The preview is the SAME TemplateRender as the wall — WYSIWYG by construction.
   import { createEventDispatcher, onMount, onDestroy } from 'svelte';
   import TemplateRender from '../../TemplateRender.svelte';
+  import TemplatePreviewOverlay from '../../TemplatePreviewOverlay.svelte';
+  import { testTemplateOnOutputs } from '../../templateTest.js';
+  import { humanError } from '../../errors.js';
   import {
     capture, templates, loadTemplates, saveTemplate,
-    listOutputChannels, setChannelTemplate, getContentTemplates, setContentTemplate,
+    customThemes, loadThemes,
+    snapshotTemplateVersion, listTemplateVersions, restoreTemplateVersion,
   } from '../../stores/capture.js';
+  import { BUILTIN_THEMES, resolveThemed, isThemeToken, THEME_TOKENS, applyThemeToTemplate } from '../../themes.js';
   import { BACKGROUNDS } from '../../backgrounds.js';
   import {
     makeLayer, isLayered, layerLabel, regionsToLayers, templateShows, CONTENT_KINDS,
@@ -36,10 +41,37 @@
 
   onMount(async () => {
     if (!$templates.length) await loadTemplates();
+    loadThemes();
     load(templateId);
     detectFonts(true);
-    loadAssign();
   });
+
+  // The theme this template inherits (style.themeRef), and the picker's options.
+  // A theme fills the style keys the template leaves unset; the template always
+  // overrides it. Setting it goes through the normal edit path (edit = edit), so
+  // it undoes, live-applies and persists like any other change.
+  $: allThemes = [...BUILTIN_THEMES, ...$customThemes];
+  $: currentThemeRef = edit?.style?.themeRef ?? '';
+  function setTheme(v) {
+    if (!edit) return;
+    edit.style ??= {};
+    if (v === '' || v == null) delete edit.style.themeRef;
+    else edit.style.themeRef = Number(v);
+    edit = edit;
+  }
+  // Recolour this template's layers to the selected theme's tokens — the step that
+  // makes a literal-coloured template actually FOLLOW the theme. Goes through the
+  // normal edit path (edit = edit), so it undoes, live-applies and can be Saved.
+  function applyThemeColours() {
+    if (!edit) return;
+    const theme = allThemes.find((t) => t.id === Number(currentThemeRef));
+    if (!theme) return;
+    edit = applyThemeToTemplate(edit, theme);
+  }
+  // The template WITH its inherited theme merged in — what the wall will show, so
+  // the editor preview is WYSIWYG including the theme. Layout/layers are shared
+  // by reference (a theme only fills style), so drag/selection still target edit.
+  $: themedEdit = edit ? resolveThemed(edit, $customThemes) : edit;
   onDestroy(() => clearTimeout(liveTimer));
 
   function load(id) {
@@ -52,6 +84,8 @@
     edit.style ??= {};
     selId = layered ? edit.layout.layers[0]?.id ?? null : null;
     lastSig = sigOf(edit);
+    past = [];
+    future = [];
   }
 
   $: layered = isLayered(edit);
@@ -79,7 +113,18 @@
   }
   function addBoundText(bind) {
     addOpen = false;
-    const L = makeLayer('text', { bind, name: BINDINGS.find((b) => b.key === bind)?.label });
+    // A freshly-added bound line follows the theme out of the box: verse text
+    // takes the theme's verse colour, a reference the theme's reference colour,
+    // anything else the accent — and all take the theme typeface. The operator
+    // can unbind any of them to a literal in the properties panel.
+    const colorToken =
+      bind === 'verse' ? 'theme:verse' : bind === 'reference' ? 'theme:reference' : 'theme:accent';
+    const L = makeLayer('text', {
+      bind,
+      name: BINDINGS.find((b) => b.key === bind)?.label,
+      color: colorToken,
+      font: 'theme:font',
+    });
     edit.layout.layers = [...(edit.layout.layers || []), L];
     selId = L.id;
     edit = edit;
@@ -128,6 +173,13 @@
   }
   function set(k, v) { if (sel) { sel[k] = v; edit = edit; } }
   function num(k, v) { set(k, +v); }
+  // Layer colour/fill/font can bind to a THEME TOKEN (`theme:accent`) that follows
+  // the applied theme, or be a literal. Colours offer every token except the
+  // typeface; unbinding ('custom') restores an editable literal.
+  const COLOUR_TOKENS = THEME_TOKENS.filter((t) => t.token !== 'theme:font');
+  function bindToken(field, value, fallback) {
+    set(field, value === 'custom' ? fallback : value);
+  }
 
   // ── Canvas drag / resize ───────────────────────────────────────────────────
   // `mode` is 'move' or a compass direction (n/s/e/w/ne/nw/se/sw) — a handle on
@@ -278,58 +330,29 @@
 
   const isColor = (v) => typeof v === 'string' && v.startsWith('#');
 
-  // ── Where this template shows (WYSIWYG assignment) ─────────────────────────
-  // The single most confusing thing about the old editor: you could restyle a
-  // template all day and the wall never changed, because the output resolves its
-  // look from the CHANNEL's assigned template or the content-type default — not
-  // from "whatever template happens to be open in the editor". This panel closes
-  // that loop: it shows which screens and which content roles currently render
-  // THIS template, and lets the operator point them here in one click. Editing
-  // the template that a screen/role actually uses is then obvious, so the editor
-  // preview and the live output are the same thing by construction.
-  const ROLES = [
-    ['scripture', 'Scripture'],
-    ['song', 'Song / Lyrics'],
-    ['media', 'Media'],
-    ['announce', 'Announcement'],
-  ];
-  let assignChannels = [];
-  let contentMap = { scripture: null, song: null, media: null, announce: null };
-  let assignBusy = false;
-  $: tid = edit?.id ?? null;
-  async function loadAssign() {
-    try { assignChannels = (await listOutputChannels()) || []; } catch { assignChannels = []; }
-    try { contentMap = (await getContentTemplates()) || contentMap; } catch { /* keep */ }
-  }
-  async function toggleRole(kind) {
-    if (!tid || assignBusy) return;
-    assignBusy = true;
-    try {
-      await setContentTemplate(kind, contentMap[kind] === tid ? null : tid);
-      contentMap = (await getContentTemplates()) || contentMap;
-    } catch { /* surfaced elsewhere */ }
-    assignBusy = false;
-  }
-  async function assignToChannel(cid) {
-    if (!tid || assignBusy) return;
-    assignBusy = true;
-    try {
-      await setChannelTemplate(cid, tid);
-      assignChannels = (await listOutputChannels()) || assignChannels;
-    } catch { /* surfaced elsewhere */ }
-    assignBusy = false;
-  }
-
   // ── Live apply (debounced save + push) ─────────────────────────────────────
   let lastSig = '';
   let liveTimer;
   const sigOf = (t) => JSON.stringify({ name: t?.name, layout: t?.layout, style: t?.style });
-  $: if (edit) scheduleLive(sigOf(edit));
-  function scheduleLive(sig) {
-    if (sig === lastSig) return;
-    lastSig = sig;
+  // Coalesce, and DON'T stringify per frame. This block re-runs on every
+  // `edit = edit` — which fires on every pointermove of a drag/resize. It used to
+  // call `sigOf(edit)` (a full JSON.stringify of layout+style) on each of those
+  // frames just to compare. Now the frame only re-arms a 400ms timer; the whole
+  // template is serialised ONCE, when the drag settles, inside the timer.
+  $: if (edit) scheduleLive();
+  function scheduleLive() {
     clearTimeout(liveTimer);
-    liveTimer = setTimeout(applyLive, 400);
+    liveTimer = setTimeout(() => {
+      const sig = sigOf(edit);
+      if (sig === lastSig) return;
+      // A settled, user-made change: bank the previous state for undo, and a new
+      // edit invalidates any redo tail. (undo/redo set `lastSig` before mutating
+      // `edit`, so their restores land here as sig === lastSig and are skipped.)
+      past = [...past, lastSig].slice(-HIST_MAX);
+      future = [];
+      lastSig = sig;
+      applyLive();
+    }, 400);
   }
   async function applyLive() {
     if (!edit || !$capture.available) return;
@@ -343,8 +366,121 @@
     } catch (e) { err = 'Live update failed: ' + e; }
     saving = false;
   }
-  function saveNow() { clearTimeout(liveTimer); applyLive(); }
+  async function saveNow() {
+    clearTimeout(liveTimer);
+    await applyLive();
+    // An explicit Save banks a restore point (deduped) — distinct from the live
+    // autosave, which must NOT spam the history on every drag.
+    if (edit?.id) {
+      await snapshotTemplateVersion(edit);
+      if (histOpen) await loadHistory();
+    }
+  }
+
+  // ── Version history (persisted restore points) ─────────────────────────────
+  let histOpen = false;
+  let versions = [];
+  async function loadHistory() {
+    if (edit?.id) versions = await listTemplateVersions(edit.id);
+  }
+  async function toggleHistory() {
+    histOpen = !histOpen;
+    if (histOpen) await loadHistory();
+  }
+  onMount(() => {
+    const close = () => (histOpen = false);
+    window.addEventListener('click', close);
+    return () => window.removeEventListener('click', close);
+  });
+  async function restoreVersion(v) {
+    if (!edit) return;
+    try {
+      await restoreTemplateVersion(edit, v);
+      edit = { ...edit, layout: v.layout, style: v.style };
+      lastSig = sigOf(edit); // this IS the committed state now — don't re-autosave it
+      histOpen = false;
+    } catch (e) { err = String(e); }
+  }
+  // A short relative-time label for a version's timestamp.
+  function agoLabel(ts) {
+    const s = Math.max(0, Math.round((Date.now() - (Number(ts) || 0)) / 1000));
+    if (s < 60) return 'just now';
+    const m = Math.round(s / 60);
+    if (m < 60) return `${m}m ago`;
+    const h = Math.round(m / 60);
+    if (h < 24) return `${h}h ago`;
+    return `${Math.round(h / 24)}d ago`;
+  }
+
+  // ── Undo / redo ────────────────────────────────────────────────────────────
+  //
+  // A direct-manipulation editor with autosave-to-live but no undo meant one bad
+  // drag was unrecoverable (Decision §26). History is a stack of `sigOf`
+  // snapshots — the same {name,layout,style} shape the autosave already
+  // serialises. `lastSig` doubles as the CURRENT node: it always equals the
+  // committed state, so it is both the change-detector and the history cursor.
+  const HIST_MAX = 60;
+  let past = [];
+  let future = [];
+  $: canUndo = past.length > 0;
+  $: canRedo = future.length > 0;
+
+  function restoreFrom(sig) {
+    const s = JSON.parse(sig);
+    edit = { ...edit, name: s.name, layout: s.layout, style: s.style };
+    // Keep the selected layer valid across the restore.
+    if (isLayered(edit) && !edit.layout.layers?.some((l) => l.id === selId)) {
+      selId = edit.layout.layers?.[0]?.id ?? null;
+    }
+  }
+  function undo() {
+    if (!canUndo || fsPreview) return;
+    future = [lastSig, ...future].slice(0, HIST_MAX);
+    lastSig = past[past.length - 1];
+    past = past.slice(0, -1);
+    restoreFrom(lastSig);
+    applyLive();
+  }
+  function redo() {
+    if (!canRedo || fsPreview) return;
+    past = [...past, lastSig].slice(-HIST_MAX);
+    lastSig = future[0];
+    future = future.slice(1);
+    restoreFrom(lastSig);
+    applyLive();
+  }
+  function onKey(e) {
+    if (!edit) return;
+    const tgt = e.target;
+    // Let text fields keep their own native undo.
+    if (tgt && (tgt.tagName === 'INPUT' || tgt.tagName === 'TEXTAREA' || tgt.isContentEditable)) return;
+    if (!(e.metaKey || e.ctrlKey)) return;
+    if (e.key === 'z' && !e.shiftKey) { e.preventDefault(); undo(); }
+    else if ((e.key === 'z' && e.shiftKey) || e.key === 'y') { e.preventDefault(); redo(); }
+  }
+
+  // ── Preview / test on the real screens (Decision §26) ──────────────────────
+  let fsPreview = false;   // in-console fullscreen preview overlay (reaches no output)
+  let testing = false;
+  async function testOnScreens() {
+    if (!edit) return;
+    testing = true;
+    err = '';
+    try {
+      if (!edit.id) await applyLive(); // a never-saved template has no id yet
+      await testTemplateOnOutputs(edit.id);
+    } catch (e) {
+      err = 'Test failed: ' + humanError(e);
+    }
+    testing = false;
+  }
 </script>
+
+<svelte:window on:keydown={onKey} />
+
+{#if fsPreview && edit}
+  <TemplatePreviewOverlay template={themedEdit} onClose={() => (fsPreview = false)} />
+{/if}
 
 <div class="te-shell">
   <header class="te-top">
@@ -353,14 +489,61 @@
       Back to Templates
     </button>
     {#if edit}<span class="te-name">{edit.name}</span><span class="te-sub r-mono">{layered ? layers.length + ' layers' : 'legacy'} · 1920×1080</span>{/if}
+    {#if edit && layered}
+      <div class="te-undo">
+        <button class="te-zbtn" on:click={undo} disabled={!canUndo} title="Undo (Ctrl/⌘+Z)" aria-label="Undo">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14 4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-1"/></svg>
+        </button>
+        <button class="te-zbtn" on:click={redo} disabled={!canRedo} title="Redo (Ctrl/⌘+Shift+Z)" aria-label="Redo">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 14 5-5-5-5"/><path d="M20 9H9a5 5 0 0 0 0 10h1"/></svg>
+        </button>
+      </div>
+    {/if}
     <span class="te-spring"></span>
     <div class="te-zoom">
       <button class="te-zbtn" on:click={() => (zoomIdx = Math.max(0, zoomIdx - 1))} disabled={zoomIdx === 0} aria-label="Zoom out">−</button>
       <span class="te-pct r-mono">{zoom}%</span>
       <button class="te-zbtn" on:click={() => (zoomIdx = Math.min(ZOOMS.length - 1, zoomIdx + 1))} disabled={zoomIdx === ZOOMS.length - 1} aria-label="Zoom in">+</button>
     </div>
+    {#if edit}
+      <label class="te-theme" title="The theme this template inherits. Your own settings override it.">
+        <span class="r-lbl">Theme</span>
+        <select class="r-select sm" value={currentThemeRef} on:change={(e) => setTheme(e.target.value)}>
+          <option value="">None</option>
+          {#each allThemes as th (th.id)}
+            <option value={th.id}>{th.name}{th.builtin ? '' : ' (custom)'}</option>
+          {/each}
+        </select>
+      </label>
+      <button class="r-btn ghost sm" on:click={applyThemeColours} disabled={currentThemeRef === ''}
+        title="Recolour this template's layers to the selected theme, so it follows the theme from now on">
+        Apply colours
+      </button>
+    {/if}
     <button class="r-btn ghost sm" class:on={previewMode} on:click={() => (previewMode = !previewMode)}>{previewMode ? 'Editing' : 'Preview'}</button>
-    <button class="r-btn confirm sm" on:click={saveNow} disabled={saving || !$capture.available || !edit} title="Edits also apply to live outputs automatically">
+    <button class="r-btn ghost sm" on:click={() => (fsPreview = true)} disabled={!edit} title="Preview this template fullscreen in the console — reaches no output">Fullscreen</button>
+    <button class="r-btn ghost sm" on:click={testOnScreens} disabled={testing || !$capture.available || !edit} title="Put a sample verse on the live screens with this template — clear it with Esc">
+      {testing ? 'Testing…' : 'Test on screens'}
+    </button>
+    <span class="te-histwrap">
+      <button class="r-btn ghost sm" class:on={histOpen} on:click|stopPropagation={toggleHistory} disabled={!edit?.id} title="Restore an earlier saved version of this template">History</button>
+      {#if histOpen}
+        <div class="te-histmenu" on:click|stopPropagation role="menu" tabindex="-1">
+          <div class="te-histhead r-lbl">Saved versions</div>
+          {#if versions.length}
+            {#each versions as v, i (v.ts)}
+              <button class="te-histitem" on:click={() => restoreVersion(v)}>
+                <span class="te-histwhen">{i === 0 ? 'Latest' : agoLabel(v.ts)}</span>
+                <span class="te-histrestore r-mono">Restore</span>
+              </button>
+            {/each}
+          {:else}
+            <div class="te-histempty">No saved versions yet. Press <b>Save Template</b> to bank one.</div>
+          {/if}
+        </div>
+      {/if}
+    </span>
+    <button class="r-btn primary sm" on:click={saveNow} disabled={saving || !$capture.available || !edit} title="Edits apply to live outputs automatically; an explicit Save also banks a restore point">
       {saving ? 'Saving…' : savedTick ? 'Saved · live ✓' : 'Save Template'}
     </button>
   </header>
@@ -373,7 +556,7 @@
       <div class="te-legacycard">
         <h2>This is a classic template</h2>
         <p>It renders with fixed regions. Convert it to editable layers to move, restyle and add pieces freely — the look is preserved, and other templates are untouched.</p>
-        <div class="te-legacyprev"><TemplateRender template={edit} content={SAMPLE} /></div>
+        <div class="te-legacyprev"><TemplateRender template={themedEdit} content={SAMPLE} /></div>
         <button class="r-btn primary" on:click={convertToLayers}>Convert to layers</button>
       </div>
     </div>
@@ -430,7 +613,7 @@
             {/if}
           <div class="te-artboard" bind:this={boardEl}>
             {#if !previewMode}<div class="te-checker"></div>{/if}
-            <TemplateRender template={edit} content={previewContent} />
+            <TemplateRender template={themedEdit} content={previewContent} />
             {#if !previewMode}
               <!-- Selection / drag overlay: one handle box per positioned layer. -->
               <div class="te-overlay">
@@ -486,50 +669,15 @@
             {/each}
           </div>
 
-          <!-- ══ WHERE THIS SHOWS ══ point real screens / content roles at this
-               template so editing here changes the wall. -->
-          <h3 class="te-sec">Where this shows</h3>
-          {#if !tid}
-            <p class="te-fnote">Saving… once saved you can point screens and content types at this template.</p>
-          {:else}
-            <div class="te-asblock">
-              <span class="r-lbl te-assublbl">Content types</span>
-              <div class="te-aschips">
-                {#each ROLES as [kind, label]}
-                  <button class="te-aschip" class:on={contentMap[kind] === tid} disabled={assignBusy}
-                    on:click={() => toggleRole(kind)}
-                    title={contentMap[kind] === tid ? `${label} uses this template — click to unset` : `Use this template for ${label}`}>
-                    {label}{#if contentMap[kind] === tid}<span class="te-astick">✓</span>{/if}
-                  </button>
-                {/each}
-              </div>
-              <p class="te-fnote">A content type set here overrides each screen's own template when that kind of content fires — how scripture can look like scripture and lyrics like lyrics.</p>
-            </div>
-            {#if assignChannels.length}
-              <div class="te-asblock">
-                <span class="r-lbl te-assublbl">Screens</span>
-                <div class="te-aslist">
-                  {#each assignChannels as c (c.id)}
-                    <button class="te-asrow" class:on={c.template_id === tid} disabled={assignBusy}
-                      on:click={() => assignToChannel(c.id)}
-                      title={c.template_id === tid ? 'This screen already uses this template' : 'Point this screen at this template'}>
-                      <span class="te-asname">{c.name}</span>
-                      <span class="te-asstate r-mono">{c.template_id === tid ? 'live ✓' : 'assign'}</span>
-                    </button>
-                  {/each}
-                </div>
-              </div>
-            {/if}
-          {/if}
-
           {#if !sel}
             <p class="te-guide">Select a layer to edit it, or add one with ＋.</p>
           {:else if sel.type === 'background'}
             <h3 class="te-sec">Background</h3>
             <div class="te-frow">
               <label class="te-fk" for="te-fill">Fill</label>
-              <span class="te-fv te-swatch"><input id="te-fill" type="color" value={isColor(sel.fill) ? sel.fill : '#0b0906'} on:input={(e) => { set('fill', e.target.value); set('image', null); }} /><span class="te-hex r-mono">{isColor(sel.fill) ? sel.fill.toUpperCase() : 'gradient'}</span></span>
+              <span class="te-fv te-swatch"><input id="te-fill" type="color" value={isColor(sel.fill) ? sel.fill : '#0b0906'} on:input={(e) => { set('fill', e.target.value); set('image', null); }} disabled={isThemeToken(sel.fill)} /><span class="te-hex r-mono">{isThemeToken(sel.fill) ? 'theme' : isColor(sel.fill) ? sel.fill.toUpperCase() : 'gradient'}</span></span>
             </div>
+            <div class="te-frow"><label class="te-fk" for="te-bgbind">Theme link</label><select id="te-bgbind" class="r-select te-fv" value={isThemeToken(sel.fill) ? sel.fill : 'custom'} on:change={(e) => { bindToken('fill', e.target.value, '#0b0906'); if (e.target.value !== 'custom') set('image', null); }}><option value="custom">Custom fill</option>{#each COLOUR_TOKENS as t}<option value={t.token}>{t.label}</option>{/each}</select></div>
             <div class="te-frow">
               <label class="te-fk" for="te-op">Opacity</label>
               <span class="te-fv te-rangerow"><input id="te-op" class="r-range" type="range" min="0" max="1" step="0.05" value={sel.opacity ?? 1} on:input={(e) => num('opacity', e.target.value)} /><span class="te-rnum r-mono">{Math.round((sel.opacity ?? 1) * 100)}%</span></span>
@@ -564,7 +712,8 @@
             <p class="te-fnote">Shows the fired picture or video. Empty until media is on screen — a template without a Media layer never shows media on that screen. Put it high in the layer list to cover everything, or low to sit behind the text.</p>
           {:else if sel.type === 'shape'}
             <h3 class="te-sec">Shape</h3>
-            <div class="te-frow"><label class="te-fk" for="te-sfill">Fill</label><span class="te-fv te-swatch"><input id="te-sfill" type="color" value={isColor(sel.fill) ? sel.fill : '#101319'} on:input={(e) => set('fill', e.target.value)} /><span class="te-hex r-mono">{isColor(sel.fill) ? sel.fill.toUpperCase() : '#101319'}</span></span></div>
+            <div class="te-frow"><label class="te-fk" for="te-sfill">Fill</label><span class="te-fv te-swatch"><input id="te-sfill" type="color" value={isColor(sel.fill) ? sel.fill : '#101319'} on:input={(e) => set('fill', e.target.value)} disabled={isThemeToken(sel.fill)} /><span class="te-hex r-mono">{isThemeToken(sel.fill) ? 'theme' : isColor(sel.fill) ? sel.fill.toUpperCase() : '#101319'}</span></span></div>
+            <div class="te-frow"><label class="te-fk" for="te-sfillbind">Theme link</label><select id="te-sfillbind" class="r-select te-fv" value={isThemeToken(sel.fill) ? sel.fill : 'custom'} on:change={(e) => bindToken('fill', e.target.value, '#101319')}><option value="custom">Custom fill</option>{#each COLOUR_TOKENS as t}<option value={t.token}>{t.label}</option>{/each}</select></div>
             <div class="te-frow"><label class="te-fk" for="te-sop">Opacity</label><span class="te-fv te-rangerow"><input id="te-sop" class="r-range" type="range" min="0" max="1" step="0.05" value={sel.opacity ?? 1} on:input={(e) => num('opacity', e.target.value)} /><span class="te-rnum r-mono">{Math.round((sel.opacity ?? 1) * 100)}%</span></span></div>
             <div class="te-frow"><label class="te-fk" for="te-srad">Radius</label><span class="te-fv te-rangerow"><input id="te-srad" class="r-range" type="range" min="0" max="8" step="0.2" value={sel.radius || 0} on:input={(e) => num('radius', e.target.value)} /><span class="te-rnum r-mono">{(sel.radius || 0).toFixed(1)}</span></span></div>
           {:else}
@@ -582,14 +731,16 @@
             <div class="te-frow">
               <label class="te-fk" for="te-font">Font</label>
               <select id="te-font" class="r-select te-fv" value={sel.font} on:change={(e) => set('font', e.target.value)}>
-                {#if sel.font && !fonts.includes(sel.font)}<option value={sel.font}>{fontLabel(sel.font)}</option>{/if}
+                <option value="theme:font">Theme typeface</option>
+                {#if sel.font && sel.font !== 'theme:font' && !fonts.includes(sel.font)}<option value={sel.font}>{fontLabel(sel.font)}</option>{/if}
                 {#each fonts as f}<option value={f}>{f}</option>{/each}
               </select>
             </div>
             <button class="te-minilink" on:click={() => detectFonts(false)}>Use all computer fonts {fontMsg}</button>
             {#if missingFont}<p class="te-fwarn">“{fontLabel(missingFont)}” isn't installed here — outputs use a default. Install it to use it.</p>{/if}
             <div class="te-frow"><label class="te-fk" for="te-size">Size</label><span class="te-fv te-stepper"><input id="te-size" class="te-num r-mono" type="number" min="1" max="16" step="0.1" value={sel.size} on:input={(e) => num('size', e.target.value)} /><span class="te-unit r-mono">cqw</span></span></div>
-            <div class="te-frow"><label class="te-fk" for="te-col">Colour</label><span class="te-fv te-swatch"><input id="te-col" type="color" value={isColor(sel.color) ? sel.color : '#ffffff'} on:input={(e) => set('color', e.target.value)} /><span class="te-hex r-mono">{isColor(sel.color) ? sel.color.toUpperCase() : '#FFFFFF'}</span></span></div>
+            <div class="te-frow"><label class="te-fk" for="te-col">Colour</label><span class="te-fv te-swatch"><input id="te-col" type="color" value={isColor(sel.color) ? sel.color : '#ffffff'} on:input={(e) => set('color', e.target.value)} disabled={isThemeToken(sel.color)} /><span class="te-hex r-mono">{isThemeToken(sel.color) ? 'theme' : isColor(sel.color) ? sel.color.toUpperCase() : '#FFFFFF'}</span></span></div>
+            <div class="te-frow"><label class="te-fk" for="te-colbind">Theme link</label><select id="te-colbind" class="r-select te-fv" value={isThemeToken(sel.color) ? sel.color : 'custom'} on:change={(e) => bindToken('color', e.target.value, '#ffffff')}><option value="custom">Custom colour</option>{#each COLOUR_TOKENS as t}<option value={t.token}>{t.label}</option>{/each}</select></div>
             <div class="te-frow">
               <span class="te-fk">Align</span>
               <span class="te-fv te-seg">
@@ -666,7 +817,20 @@
   .te-spring{ flex:1; }
   .te-top{ display:flex; align-items:center; gap:10px; flex:0 0 auto; }
   .te-name{ font-family:var(--f-head); font-size:var(--v-fs-h3); font-weight:600; color:var(--v-txt); }
+  .te-histwrap{ position:relative; }
+  .te-histmenu{ position:absolute; top:34px; right:0; z-index:60; width:230px; max-height:320px; overflow-y:auto;
+    background:var(--v-surf2); border:1px solid var(--v-line2); border-radius:var(--v-r-md);
+    box-shadow:var(--v-shadow-lg); padding:5px; }
+  .te-histhead{ padding:6px 8px 4px; }
+  .te-histitem{ display:flex; align-items:center; justify-content:space-between; gap:10px; width:100%;
+    text-align:left; padding:8px 10px; border:0; background:none; color:var(--v-txt); border-radius:var(--v-r-sm); cursor:pointer; }
+  .te-histitem:hover{ background:var(--v-surf3); }
+  .te-histwhen{ font-size:var(--v-fs-b2); }
+  .te-histrestore{ font-size:var(--v-fs-cap); color:var(--v-accent); }
+  .te-histempty{ padding:9px 10px; font-size:var(--v-fs-cap); line-height:1.5; color:var(--v-faint); }
+  .te-histempty b{ color:var(--v-dim); }
   .te-sub{ font-size:var(--v-fs-cap); color:var(--v-faint); }
+  .te-undo{ display:inline-flex; align-items:center; gap:2px; margin-left:10px; }
   .te-zoom{ display:flex; align-items:center; gap:4px; }
   .te-zbtn{ width:26px; height:26px; border-radius:var(--v-r-sm); background:var(--v-surf2); border:1px solid var(--v-line2); color:var(--v-dim); cursor:pointer; font-size:15px; line-height:1; }
   .te-zbtn:disabled{ opacity:.4; cursor:not-allowed; }
@@ -768,7 +932,7 @@
   .te-fk{ font-size:var(--v-fs-b2); color:var(--v-dim); }
   .te-fv{ min-width:0; }
   .te-fnote, .te-guide{ font-size:var(--v-fs-cap); color:var(--v-faint); margin:0; line-height:1.5; }
-  .te-minilink{ background:none; border:0; padding:0; text-align:left; color:var(--v-cyan); font-family:var(--f-mono); font-size:9px; cursor:pointer; letter-spacing:.04em; }
+  .te-minilink{ background:none; border:0; padding:0; text-align:left; color:var(--v-dim); font-family:var(--f-mono); font-size:9px; cursor:pointer; letter-spacing:.04em; }
   .te-fwarn{ margin:0; padding:8px 10px; border:1px solid var(--v-amber-soft); border-radius:var(--v-r-sm); background:var(--v-amber-soft); color:var(--v-amber2); font-size:var(--v-fs-cap); line-height:1.45; }
   .te-stepper{ display:flex; align-items:center; }
   .te-num{ height:32px; padding:0 8px; border-radius:var(--v-r-md); background:var(--v-bg); border:1px solid var(--v-line2); color:var(--v-txt); font-size:var(--v-fs-b2); outline:none; width:100%; box-sizing:border-box; }
@@ -793,9 +957,6 @@
   .te-bgtile.on{ border-color:var(--v-accent); box-shadow:0 0 0 1px var(--v-accent); }
   .te-bgnone{ display:grid; place-items:center; background:var(--v-surf2); color:var(--v-faint); font-size:13px; }
   .te-bgnone:hover{ color:var(--v-rose); }
-  /* Where-this-shows assignment */
-  .te-asblock{ display:flex; flex-direction:column; gap:7px; }
-  .te-assublbl{ margin-top:2px; }
   /* Per-screen content visibility chips */
   .te-showlbl{ margin-top:4px; }
   .te-showgrid{ display:flex; flex-wrap:wrap; gap:6px; }
@@ -803,20 +964,6 @@
   .te-showchip:hover{ color:var(--v-txt); border-color:var(--v-accent-line); }
   .te-showchip.on{ background:var(--v-accent-soft); border-color:var(--v-accent-line); color:var(--v-txt); }
   .te-showtick{ width:9px; text-align:center; color:var(--v-emerald); font-weight:700; }
-  .te-aschips{ display:flex; flex-wrap:wrap; gap:6px; }
-  .te-aschip{ display:inline-flex; align-items:center; gap:5px; padding:6px 10px; border-radius:var(--v-r-md); background:var(--v-surf2); border:1px solid var(--v-line2); color:var(--v-dim); font-size:var(--v-fs-cap); cursor:pointer; }
-  .te-aschip:hover:not(:disabled){ color:var(--v-txt); border-color:var(--v-accent-line); }
-  .te-aschip.on{ background:var(--v-accent-soft); border-color:var(--v-accent-line); color:var(--v-txt); }
-  .te-aschip:disabled{ opacity:.5; cursor:default; }
-  .te-astick{ color:var(--v-emerald); font-weight:700; }
-  .te-aslist{ display:flex; flex-direction:column; gap:4px; }
-  .te-asrow{ display:flex; align-items:center; justify-content:space-between; gap:8px; padding:8px 10px; border-radius:var(--v-r-md); background:var(--v-surf2); border:1px solid var(--v-line); color:var(--v-txt); font-size:var(--v-fs-b2); cursor:pointer; }
-  .te-asrow:hover:not(:disabled){ border-color:var(--v-accent-line); }
-  .te-asrow.on{ background:var(--v-accent-soft); border-color:var(--v-accent-line); }
-  .te-asrow:disabled{ opacity:.6; cursor:default; }
-  .te-asname{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .te-asstate{ flex:0 0 auto; font-size:var(--v-fs-cap); color:var(--v-faint); }
-  .te-asrow.on .te-asstate{ color:var(--v-emerald); }
   .te-alignrow{ display:flex; gap:6px; }
   .te-alignbtn{ flex:1; height:30px; border-radius:var(--v-r-md); background:var(--v-surf2); border:1px solid var(--v-line2); color:var(--v-dim); font-size:var(--v-fs-cap); cursor:pointer; }
   .te-alignbtn:hover{ color:var(--v-txt); border-color:var(--v-accent-line); background:var(--v-accent-soft); }
