@@ -287,7 +287,6 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             greet,
             ping,
-            lookup_verse,
             search_scripture,
             list_plans,
             create_plan,
@@ -358,7 +357,6 @@ fn main() {
             load_stt_model,
             manual_fire,
             open_output_window,
-            close_output_window,
             list_output_windows,
             list_output_channels,
             channel_status,
@@ -379,13 +377,10 @@ fn main() {
             nav,
             start_service,
             end_service,
-            current_service,
             list_services,
             service_detail,
             export_service,
             list_templates,
-            list_active_templates,
-            set_template_active,
             create_template,
             delete_template,
             get_template,
@@ -1049,20 +1044,6 @@ fn greet(name: &str) -> String {
 #[tauri::command]
 fn ping() -> bool {
     true
-}
-
-/// Look up a verse by canonical reference for the operator console / manual
-/// override. Errors are returned as strings for the frontend to surface —
-/// no panics on a live path.
-#[tauri::command]
-fn lookup_verse(
-    db: tauri::State<'_, Db>,
-    book: String,
-    chapter: i64,
-    verse: i64,
-) -> error::Result<Option<db::VerseRow>> {
-    let conn = db.0.lock()?;
-    db::lookup_verse(&conn, &book, chapter, verse).map_err(Into::into)
 }
 
 /// Scripture search for the Planner — resolve a query to verses to add as cues.
@@ -3382,30 +3363,6 @@ fn list_templates(db: tauri::State<'_, Db>) -> error::Result<Vec<db::Template>> 
     db::list_templates(&conn).map_err(Into::into)
 }
 
-/// The active templates (max 4) previewed on the console Output grid.
-#[tauri::command]
-fn list_active_templates(db: tauri::State<'_, Db>) -> error::Result<Vec<db::Template>> {
-    let conn = db.0.lock()?;
-    db::list_active_templates(&conn).map_err(Into::into)
-}
-
-/// Activate/deactivate a template on the console Output grid. Enforces the
-/// max-4 rule with a clear error the UI can show.
-#[tauri::command]
-fn set_template_active(db: tauri::State<'_, Db>, id: i64, active: bool) -> error::Result<()> {
-    let conn = db.0.lock()?;
-    if active {
-        let others = db::active_template_count(&conn, id)?;
-        if others >= 4 {
-            return Err(
-                "Only 4 templates can be active on the console at once — deactivate one first."
-                    .into(),
-            );
-        }
-    }
-    db::set_template_active(&conn, id, active).map_err(Into::into)
-}
-
 /// Create a new (blank-styled) template. Returns its id.
 #[tauri::command]
 fn create_template(db: tauri::State<'_, Db>, name: Option<String>) -> error::Result<i64> {
@@ -3451,12 +3408,6 @@ fn save_template(
     }
     let _ = app.emit("template://updated", id);
     Ok(id)
-}
-
-/// Close an output window by label.
-#[tauri::command]
-fn close_output_window(app: tauri::AppHandle, label: String) -> error::Result<()> {
-    channels::close_window(&app, &label).map_err(Into::into)
 }
 
 /// Labels of currently-open output windows.
@@ -3668,12 +3619,6 @@ fn start_service(
 fn end_service(session: tauri::State<'_, Session>) -> error::Result<()> {
     *session.0.lock()? = None;
     Ok(())
-}
-
-/// Id of the service currently being recorded, if any.
-#[tauri::command]
-fn current_service(session: tauri::State<'_, Session>) -> error::Result<Option<i64>> {
-    Ok(session.0.lock()?.as_ref().map(|s| s.id))
 }
 
 /// All services for the Library list, newest first.

@@ -821,22 +821,6 @@ mod tests {
     }
 
     #[test]
-    fn active_templates_capped_and_toggle() {
-        let conn = fresh_db();
-        // Fresh seed activates up to 4 of the default templates.
-        assert_eq!(list_active_templates(&conn).unwrap().len(), 4);
-        // Deactivate one, activate a freshly created one.
-        set_template_active(&conn, 1, false).unwrap();
-        let id = create_template(&conn, "Extra").unwrap();
-        set_template_active(&conn, id, true).unwrap();
-        let active = list_active_templates(&conn).unwrap();
-        assert_eq!(active.len(), 4);
-        assert!(active.iter().any(|t| t.id == id && t.active));
-        // Count excluding self supports the command-layer max-4 rule.
-        assert_eq!(active_template_count(&conn, id).unwrap(), 3);
-    }
-
-    #[test]
     fn deleting_template_unassigns_channels() {
         let conn = fresh_db();
         // Channel 1 (Main) points at template 1 in the seed.
@@ -1384,12 +1368,24 @@ mod tests {
             .unwrap();
         }
         // The ALTER branch runs and activates the first 4.
+        // Counted with SQL: the `console_active` column outlived the console
+        // Output grid it was built for (superseded by per-channel templates), so
+        // there is no longer a query helper to ask through — but the migration
+        // must still be idempotent for every already-installed database.
+        fn active_count(conn: &Connection) -> i64 {
+            conn.query_row(
+                "SELECT COUNT(*) FROM templates WHERE console_active = 1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap()
+        }
         ensure_template_active(&conn).unwrap();
         assert_eq!(list_templates(&conn).unwrap().len(), 6);
-        assert_eq!(list_active_templates(&conn).unwrap().len(), 4);
+        assert_eq!(active_count(&conn), 4);
         // Idempotent: running again neither errors nor re-activates.
         ensure_template_active(&conn).unwrap();
-        assert_eq!(list_active_templates(&conn).unwrap().len(), 4);
+        assert_eq!(active_count(&conn), 4);
     }
 
     #[test]

@@ -35,16 +35,6 @@ pub fn list_templates(conn: &Connection) -> rusqlite::Result<Vec<Template>> {
     rows.collect()
 }
 
-/// The active templates shown on the console Output grid (max 4).
-pub fn list_active_templates(conn: &Connection) -> rusqlite::Result<Vec<Template>> {
-    let mut stmt = conn.prepare(
-        "SELECT id, name, region_config_json, style_json, console_active
-           FROM templates WHERE console_active = 1 ORDER BY id LIMIT 4",
-    )?;
-    let rows = stmt.query_map([], row_to_template)?;
-    rows.collect()
-}
-
 /// A single template by id.
 pub fn get_template(conn: &Connection, id: i64) -> rusqlite::Result<Option<Template>> {
     conn.query_row(
@@ -53,24 +43,6 @@ pub fn get_template(conn: &Connection, id: i64) -> rusqlite::Result<Option<Templ
         row_to_template,
     )
     .optional()
-}
-
-/// Count of currently-active templates (for the max-4 rule).
-pub fn active_template_count(conn: &Connection, excluding: i64) -> rusqlite::Result<i64> {
-    conn.query_row(
-        "SELECT COUNT(*) FROM templates WHERE console_active = 1 AND id != ?1",
-        [excluding],
-        |r| r.get(0),
-    )
-}
-
-/// Set a template's active flag. Max-4 enforcement lives in the command layer.
-pub fn set_template_active(conn: &Connection, id: i64, active: bool) -> rusqlite::Result<()> {
-    conn.execute(
-        "UPDATE templates SET console_active = ?1 WHERE id = ?2",
-        (active as i64, id),
-    )?;
-    Ok(())
 }
 
 /// Create a new template with sensible starting style. Returns its id.

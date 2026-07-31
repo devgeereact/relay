@@ -9,6 +9,13 @@
   import { safeMode, setSafeMode } from '../boot/boot.js';
   import { checkForUpdate, updateAvailable } from '../updater.js';
   import {
+    listVoiceProfiles,
+    createVoiceProfile,
+    updateVoiceProfile,
+    selectVoiceProfile,
+    deleteVoiceProfile,
+  } from '../stores/capture.js';
+  import {
     listOutputDevices,
     getAudioOutput,
     setAudioOutput,
@@ -40,6 +47,7 @@
     { key: 'general',   label: 'General',           desc: 'Basic application preferences and behaviour', icon: 'gear' },
     { key: 'outputs',   label: 'Outputs',           desc: 'Per-content-type templates and output routing', icon: 'monitor' },
     { key: 'audio',     label: 'Audio',             desc: 'Microphone input, live level and video sound output', icon: 'mic' },
+    { key: 'voice',     label: 'Voice Profiles',    desc: 'Per-preacher language, bias vocabulary and gate calibration', icon: 'user' },
     { key: 'scripture', label: 'Scripture & Bible', desc: 'Recognition language and Bible translations', icon: 'book' },
     { key: 'ai',        label: 'AI & Detection',    desc: 'Detection thresholds and the run engine', icon: 'sparkle' },
     { key: 'shortcuts', label: 'Shortcuts',         desc: 'Keyboard controls for the live desk', icon: 'keyboard' },
@@ -228,6 +236,67 @@
     outDevice = id;
     setAudioOutput(id); // reaches the open output window via localStorage + event
   }
+
+  // ── Voice profiles (SPEC §4.6) ──────────────────────────────────────────────
+  //
+  // `sensitivity` is the OPERATOR'S DIAL. `auto_fire`/`suggest` are what the
+  // router has LEARNED from their confirmations. They are different things, and
+  // the form treats them differently on purpose: the dial is editable, the
+  // learned pair is shown read-only.
+  //
+  // Moving the dial is the operator deliberately re-baselining the gate, and the
+  // backend re-derives the thresholds from it (`thresholds_on_profile_save`).
+  // Every other edit — a rename, a language change — must PRESERVE the learning.
+  // Conflating the two once wiped an operator's calibration on every save, so
+  // this form never sends a threshold it made up.
+  let profiles = [];
+  let profileErr = '';
+  let profileBusy = false;
+  let editing = null; // a working copy; null = nothing open
+  let newName = '';
+
+  async function refreshProfiles() {
+    profiles = await listVoiceProfiles();
+  }
+  onMount(refreshProfiles);
+
+  /** Every write goes through here: these throw by contract (they change what the
+   *  AI may put on a screen), so the operator is told rather than left guessing. */
+  async function profileAction(fn) {
+    profileBusy = true;
+    profileErr = '';
+    try {
+      await fn();
+      await refreshProfiles();
+    } catch (e) {
+      profileErr = humanError(e);
+    } finally {
+      profileBusy = false;
+    }
+  }
+
+  const addProfile = () => {
+    const name = newName.trim();
+    if (!name) return;
+    return profileAction(async () => {
+      await createVoiceProfile(name, null);
+      newName = '';
+    });
+  };
+  const useProfile = (id) => profileAction(() => selectVoiceProfile(id));
+  const removeProfile = (id) =>
+    profileAction(async () => {
+      await deleteVoiceProfile(id);
+      if (editing?.id === id) editing = null;
+    });
+  const saveProfile = () =>
+    profileAction(async () => {
+      await updateVoiceProfile(editing);
+      editing = null;
+    });
+  // Edit a COPY. Binding the row itself would show edits that were never saved —
+  // and on this form an unsaved "change" reads as a calibration that is live.
+  const openEditor = (p) => (editing = { ...p });
 
   // RMS on speech sits well below 1.0; scale so normal talking fills the meter.
   $: levelPct = Math.min(100, Math.round($meter.level * 320));
@@ -624,6 +693,111 @@
           </p>
         {/if}
 
+      {:else if section === 'voice'}
+        <p class="s-lead">
+          One profile per preacher. Each remembers the language they preach in, the
+          names and places Relay should expect to hear, and how cautious the gate
+          should be for that voice — so calibration is not relearned from scratch
+          every Sunday.
+        </p>
+
+        {#if profileErr}
+          <p class="s-note s-err" role="alert">{profileErr}</p>
+        {/if}
+
+        <div class="s-cardbox">
+          {#each profiles as p (p.id)}
+            <div class="s-row">
+              <div class="s-rowtext">
+                <div class="s-rowtitle">
+                  {p.name}
+                  {#if p.is_active}<span class="s-vpactive r-mono">active</span>{/if}
+                </div>
+                <div class="s-rownote">
+                  {p.language ? p.language.toUpperCase() : 'Auto-detect (code-switching)'}
+                  · sensitivity {p.sensitivity}
+                  · gate {Math.round(p.auto_fire * 100)}% / {Math.round(p.suggest * 100)}%
+                </div>
+              </div>
+              <div class="s-rowctl s-vpbtns">
+                {#if !p.is_active}
+                  <button class="r-btn ghost sm" disabled={profileBusy} on:click={() => useProfile(p.id)}>Use</button>
+                {/if}
+                <button class="r-btn ghost sm" disabled={profileBusy} on:click={() => openEditor(p)}>Edit</button>
+                <!-- Deleting the profile in use would leave the gate calibrated by
+                     nothing, so the backend refuses it and says why. -->
+                <button class="r-btn ghost sm" disabled={profileBusy} on:click={() => removeProfile(p.id)}>Delete</button>
+              </div>
+            </div>
+          {:else}
+            <p class="s-note">No profiles yet. The first one you add becomes the active calibration.</p>
+          {/each}
+        </div>
+
+        <div class="s-grouphead">Add a profile</div>
+        <div class="s-vpadd">
+          <input
+            class="r-input"
+            placeholder="Preacher's name"
+            bind:value={newName}
+            on:keydown={(e) => e.key === 'Enter' && addProfile()} />
+          <button class="r-btn" disabled={profileBusy || !newName.trim()} on:click={addProfile}>Add</button>
+        </div>
+
+        {#if editing}
+          <div class="s-grouphead">Editing “{editing.name}”</div>
+
+          <label class="r-lbl" for="vp-name">Name</label>
+          <input id="vp-name" class="r-input" bind:value={editing.name} />
+
+          <label class="r-lbl" for="vp-lang">Language</label>
+          <select id="vp-lang" class="r-select" bind:value={editing.language}>
+            <option value={null}>Auto-detect (code-switching)</option>
+            <option value="en">English</option>
+            <option value="yo">Yoruba</option>
+            <option value="sw">Swahili</option>
+            <option value="ha">Hausa</option>
+          </select>
+
+          <label class="r-lbl" for="vp-bias">Expected names and places</label>
+          <input
+            id="vp-bias"
+            class="r-input"
+            placeholder="Habakkuk, Ekiti, Oyelaran…"
+            bind:value={editing.bias_terms} />
+          <p class="s-note">
+            Comma-separated. These are fed to the decoder as a hint, which is how an
+            unusual name stops being transcribed as something else. It biases
+            recognition — it does not force it.
+          </p>
+
+          <div class="s-slider">
+            <div class="s-slider-top">
+              <span class="r-lbl s-slider-name">Sensitivity</span>
+              <span class="s-slider-val">{editing.sensitivity}</span>
+            </div>
+            <input class="r-range" type="range" min="0" max="100" step="1" bind:value={editing.sensitivity} />
+            <div class="s-slider-ends"><span>CAUTIOUS</span><span>EAGER</span></div>
+          </div>
+          <!-- THE ONE THING THIS FORM MUST NOT GET WRONG. The learned pair is shown,
+               never edited: it is what the router worked out from this operator's
+               confirmations. Moving the dial above is the operator deliberately
+               re-baselining, and only then does the backend re-derive these. A
+               rename must never cost them their calibration. -->
+          <p class="s-note">
+            Learned gate for this voice: <b>auto-fire {Math.round(editing.auto_fire * 100)}%</b>,
+            <b>suggest {Math.round(editing.suggest * 100)}%</b> — set by Relay from what you
+            have confirmed, not by hand. Renaming or changing the language keeps them.
+            <b>Moving the sensitivity dial resets them</b>, because that is you saying the
+            gate is wrong.
+          </p>
+
+          <div class="s-vpadd">
+            <button class="r-btn primary" disabled={profileBusy} on:click={saveProfile}>Save profile</button>
+            <button class="r-btn ghost" disabled={profileBusy} on:click={() => (editing = null)}>Cancel</button>
+          </div>
+        {/if}
+
       {:else if section === 'scripture'}
         <div class="s-grouphead first">Recognition Language</div>
         <select class="r-select" value={$capture.stt.language ?? ''} on:change={(e) => setSttLanguage(e.target.value || null)} disabled={!$capture.stt.loaded}>
@@ -888,6 +1062,17 @@
   .s-grouphead{ margin:14px 0 2px; font-family:var(--f-mono); font-size:11px; font-weight:600;
     letter-spacing:.14em; text-transform:uppercase; color:var(--v-faint); }
   .s-grouphead.first{ margin-top:0; }
+
+  /* Voice profiles. `s-vpactive` marks the profile the gate is calibrated by —
+     EMERALD, never amber: amber is spent only on air (CLAUDE.md / DECISIONS §22),
+     and a selected profile is configuration, not something on a screen. */
+  .s-vpactive{ margin-left:8px; padding:1px 6px; border-radius:var(--v-r-sm);
+    font-size:10px; letter-spacing:.08em; text-transform:uppercase;
+    color:var(--v-emerald); border:1px solid color-mix(in srgb, var(--v-emerald) 40%, transparent); }
+  .s-vpbtns{ display:flex; gap:6px; justify-content:flex-end; }
+  .s-vpadd{ display:flex; gap:8px; align-items:center; margin-top:8px; }
+  .s-vpadd .r-input{ flex:1 1 auto; min-width:0; }
+  .s-err{ color:var(--v-red); }
 
   /* Segmented control (theme, time format) */
   .s-seg{ display:inline-flex; gap:4px; padding:4px; border-radius:var(--v-r-md);

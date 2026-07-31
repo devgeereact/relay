@@ -83,6 +83,8 @@
     setRehearsal,
     getSensitivity,
     setSensitivity,
+    pushAnnouncement,
+    verseRepeatCount,
   } from '../stores/capture.js';
 
   // ── the plan being RUN (not edited) ──────────────────────────────────────
@@ -310,6 +312,44 @@
   async function blackAll() {
     const ok = await blackScreen();
     if (ok) flash('Blackout');
+  }
+
+  // ── EMERGENCY ANNOUNCEMENT ────────────────────────────────────────────────
+  //
+  // Paints a message over whatever is on the wall, on every channel at once —
+  // the fire alarm, the blocked car park, the doctor needed at the back. It goes
+  // through the same template engine as any slide, so it is not a special screen
+  // and needs no per-channel handling.
+  //
+  // ARMED IN TWO STEPS, exactly like the countdown, and for a stronger reason:
+  // this one interrupts live scripture on every screen in the building. A stray
+  // Enter in a text field must not be able to do that.
+  //
+  // `pushAnnouncement` THROWS by contract (it changes what the congregation
+  // sees), and this is the one place that can tell the operator — so the catch
+  // reports rather than swallowing. Saying nothing here would leave them
+  // believing the room had been warned.
+  let annMsg = '';
+  let annArmed = false;
+  let annArmT;
+  async function sendAnnouncement() {
+    const text = annMsg.trim();
+    if (!text) return;
+    if (!annArmed) {
+      annArmed = true;
+      clearTimeout(annArmT);
+      annArmT = setTimeout(() => (annArmed = false), 3000);
+      return;
+    }
+    clearTimeout(annArmT);
+    annArmed = false;
+    try {
+      await pushAnnouncement(text);
+      flash('Announcement on all screens');
+      annMsg = '';
+    } catch (e) {
+      flash(humanError(e));
+    }
   }
 
   // ── AI suggestions ───────────────────────────────────────────────────────
@@ -634,6 +674,28 @@
     if (previewCue) return fireSlide(previewCue.item, previewCue.slide);
   }
 
+  // How many times the previewed verse has ALREADY gone out this service.
+  //
+  // Recomputed only when the previewed reference changes — not on every store
+  // tick — because this is a per-verse DB read on the run surface. 0 also means
+  // "no service is being recorded", which correctly shows nothing.
+  //
+  // `verseRepeatCount` swallows by contract: a badge that fails to load costs the
+  // operator nothing they cannot see for themselves.
+  let previewRepeats = 0;
+  let repeatsFor = null;
+  $: if (previewLabel !== repeatsFor) {
+    repeatsFor = previewLabel;
+    previewRepeats = 0;
+    if (previewLabel) {
+      const asked = previewLabel;
+      verseRepeatCount(asked).then((n) => {
+        // A slow lookup must not label the NEXT verse with the last one's count.
+        if (repeatsFor === asked) previewRepeats = n;
+      });
+    }
+  }
+
   // The preview and program panes must render through the SAME template the real
   // output window uses, or the operator sees one thing here and the congregation
   // sees another. The wall's look is the MAIN output channel's assigned template
@@ -763,6 +825,15 @@
       <header class="mon-bar">
         <span class="tag preview">Preview</span>
         <span class="spring"></span>
+        <!-- "Shown earlier" belongs HERE, on the thing about to go out, not on the
+             thing already on air — by then the repeat has happened. A preacher
+             circling back to a verse is normal, so this states the fact and stops:
+             it is not a warning and must not read like one. -->
+        {#if previewRepeats > 0}
+          <span class="mon-repeat r-mono" title="Already shown in this service">
+            shown {previewRepeats > 1 ? `${previewRepeats}×` : 'earlier'}
+          </span>
+        {/if}
         <span class="mon-name">{previewLabel || 'Nothing cued'}</span>
       </header>
       <div class="screen">
@@ -1243,6 +1314,24 @@
           </button>
         </div>
 
+        <!-- Emergency announcement. Same row shape as the countdown, and armed the
+             same way — this one goes over live scripture on every screen at once. -->
+        <div class="sb cd">
+          <span>Announce</span>
+          <input
+            class="cd-msg"
+            type="text"
+            placeholder="Message for every screen"
+            bind:value={annMsg}
+            aria-label="Emergency announcement"
+            on:keydown={(e) => e.key === 'Enter' && sendAnnouncement()}
+            disabled={!$capture.available} />
+          <button class="cd-go" class:armed={annArmed} on:click={sendAnnouncement}
+            disabled={!$capture.available || !annMsg.trim()}>
+            {annArmed ? 'Confirm?' : 'Send'}
+          </button>
+        </div>
+
         <span class="klbl sec">Audio monitor</span>
         <div class="amon">
           <span class="amon-k">Input level</span>
@@ -1397,6 +1486,11 @@
   .tag.off{background:var(--v-grey-soft); border:1px solid var(--v-line2); color:var(--v-dim)}
   .mon-name{min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
     font-size:var(--v-fs-cap); color:var(--v-faint)}
+  /* Slate, not amber and not rose: a repeat is a fact, not an alarm. Amber means
+     ON AIR and must never be spent on anything else (DECISIONS §22). */
+  .mon-repeat{margin-right:8px; padding:1px 6px; border-radius:var(--v-r-sm);
+    font-size:10px; letter-spacing:.06em; color:var(--v-faint);
+    border:1px solid var(--v-line2)}
   .screen{flex:1; min-height:0; position:relative; overflow:hidden; background:#000;
     border-top:1px solid var(--v-line)}
   .screen.lit{box-shadow:inset 0 0 0 2px var(--v-amber)}
@@ -1682,6 +1776,11 @@
   .cd-unit{flex:0 0 auto; font-size:9px; color:var(--v-faint)}
   .cd-min{width:40px; padding:3px 5px; border-radius:var(--v-r-sm); border:1px solid var(--v-line2);
     background:var(--v-bg); color:var(--v-txt); font-size:var(--v-fs-cap); text-align:center}
+  /* The announcement field takes the row's spare width — the message, not the
+     label, is the part the operator is reading back before they confirm. */
+  .cd-msg{flex:1 1 auto; min-width:0; padding:3px 7px; border-radius:var(--v-r-sm);
+    border:1px solid var(--v-line2); background:var(--v-bg); color:var(--v-txt);
+    font-size:var(--v-fs-cap)}
   .cd-go{padding:4px 9px; border-radius:var(--v-r-sm); border:1px solid rgba(34,211,238,.4);
     background:var(--v-cyan-soft); color:var(--v-cyan); font-family:var(--f-mono);
     font-size:10px; font-weight:700; cursor:pointer}

@@ -43,7 +43,7 @@ Tier 1: **Yoruba, Swahili, Hausa**, plus English. Code-switching (English mixed 
 npm install
 npm run tauri dev        # desktop app + Vite on :5032, kiosk WS on :8031
 
-npm test                 # vitest (404 tests)
+npm test                 # vitest (413 tests)
 npx vitest run src/lib/nav.test.js          # one file
 npx vitest run -t "Escape closes the cheat" # one test by name
 npm run build            # vite build — catches Svelte compile errors fast
@@ -57,7 +57,7 @@ Rust (**prefix with the cmake path — this machine has no Homebrew**):
 ```bash
 export PATH="/Users/gideonakinlotan/.local/bin:$PATH"   # cmake 3.31.6, needed by whisper-rs
 cd src-tauri
-cargo test                                   # 408 tests
+cargo test                                   # 407 tests
 cargo test e2e                               # the fire → nav → clear path (7 tests)
 cargo test detection::                       # one module
 cargo test the_macos_build -- --nocapture    # one test
@@ -140,7 +140,7 @@ Shipping: in-app model download, first-run wizard, auto-updater, rehearsal mode,
 
 Parked, honestly (not faked): **NDI** (needs proprietary SDK — `open_ndi_output` returns a clear error), **neural paraphrase embedder** (TF-IDF is the seam behind `SemanticIndex::top_k`; the `verses.embedding` column exists and has never been written to), **African-language STT fine-tunes**.
 
-`related_scripture` (19 themes) is **wired** as of the new-design merge — `Live.svelte` calls it via `relatedScripture()` in `capture.js`. It is no longer dead code; treat it as shipped.
+**No dead-but-built commands.** Every one of the 113 registered `#[tauri::command]`s has a frontend caller. The last thirteen were closed together: five superseded ones were deleted (`lookup_verse`, `close_output_window`, `current_service`, and the `*_template_active` pair — the console Output grid became per-channel templates), and eight were given the UI they had always lacked — voice profiles (SPEC §4.6), the emergency announcement, and the "shown earlier" badge. `related_scripture` was wired by the new-design merge.
 
 ## Architecture rules learned the HARD WAY — do not regress these
 
@@ -199,7 +199,7 @@ These caused real crashes, freezes, or silent failures in front of people. Keep 
 
 ## Testing
 
-408 Rust + 404 frontend. CI runs both on **macOS and Windows**, plus `fmt`, `clippy -D warnings`, the detection scorecard, and a release build.
+407 Rust + 413 frontend. CI runs both on **macOS and Windows**, plus `fmt`, `clippy -D warnings`, the detection scorecard, and a release build.
 
 - **`e2e.rs` is the one test that exercises what a congregation actually sees.** It drives the real commands (`manual_fire`, `nav`, `clear_screens`, `blackout`, `set_rehearsal`) against a real in-memory DB, through the real router and pipeline, and asserts on the events that leave the machine. Nothing is mocked but the window (`tauri::test::mock_builder`, dev-dependency `tauri/test`). **Add a test here whenever you touch the fire path.**
   - Use `mock_context(noop_assets())`, **not** `generate_context!()` — the real macro embeds `Info.plist` as a link symbol and expanding it twice fails with `_EMBED_INFO_PLIST is already defined`.

@@ -983,6 +983,85 @@ export async function deleteAnnouncement(id) {
   await call('delete_announcement', { id });
 }
 
+/** EMERGENCY announcement — over whatever is on the wall, on every channel.
+ *
+ *  GROUP 1 (throws). This is the most literal "the congregation can see the
+ *  difference" there is: it is used for a fire alarm or a blocked car park, and
+ *  it paints over live scripture on every screen at once. A silent failure means
+ *  the operator believes the room has been told something it has not been told.
+ *
+ *  Distinct from `saveAnnouncement`, which is Library CONTENT planned in advance.
+ *  This one does not touch the library and is not part of any plan. */
+export async function pushAnnouncement(message) {
+  const call = await invoke();
+  await call('push_announcement', { message });
+}
+
+/** How many times this verse already went out in the CURRENT service.
+ *
+ *  GROUP 2 (swallows, returns 0). A "shown earlier" badge is an affordance, not a
+ *  control: if it fails the operator sees a verse without a badge, which is what
+ *  they saw before the badge existed. Nothing on any screen changes, so nothing
+ *  is being hidden. 0 also means "not recording a service", which reads the same. */
+export async function verseRepeatCount(reference) {
+  try {
+    const call = await invoke();
+    return (await call('verse_repeat_count', { reference })) ?? 0;
+  } catch {
+    return 0;
+  }
+}
+
+// ── Voice profiles (Settings → Voice Profiles) ───────────────────────────────
+//
+// Per-preacher accent + gate calibration: the STT language hint, the decoder-bias
+// vocabulary, the operator's sensitivity dial, and the thresholds the router has
+// LEARNED. SPEC.md §4.6.
+//
+// The reads swallow (GROUP 2) — an empty list is visibly empty. The writes THROW
+// (GROUP 1): selecting or editing a profile changes the STT language and the gate
+// thresholds, i.e. what the AI is allowed to put on a screen without asking. A
+// selection that silently failed would leave the operator calibrated for the wrong
+// preacher, and nothing on screen would say so.
+
+export async function listVoiceProfiles() {
+  try {
+    const call = await invoke();
+    return (await call('list_voice_profiles')) ?? [];
+  } catch {
+    return [];
+  }
+}
+
+export async function activeVoiceProfile() {
+  try {
+    const call = await invoke();
+    return (await call('active_voice_profile')) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export async function createVoiceProfile(name, language = null) {
+  const call = await invoke();
+  return await call('create_voice_profile', { name, language });
+}
+
+export async function updateVoiceProfile(profile) {
+  const call = await invoke();
+  return await call('update_voice_profile', { profile });
+}
+
+export async function selectVoiceProfile(id) {
+  const call = await invoke();
+  return await call('select_voice_profile', { id });
+}
+
+export async function deleteVoiceProfile(id) {
+  const call = await invoke();
+  return await call('delete_voice_profile', { id });
+}
+
 // ── Media (Library → Media) ──────────────────────────────────────────────────
 
 export async function listMedia() {
