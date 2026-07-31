@@ -27,10 +27,15 @@ const EMPTY = {
   // Never showing up uninvited and never being reachable are two different things, and
   // only the first one is the good idea.
   setupDone: false,
-  // A FRESH install lands on the Dashboard — the "is this machine going to work?"
-  // surface. Everyone else is restored to whatever tab they were last on, because
-  // this whole object is persisted: an operator who was running a service
-  // yesterday comes back to Live, not to a summary screen.
+  // Everyone lands on LIVE, including a fresh install, because the whole object is
+  // persisted: an operator who was running a service yesterday comes back to Live,
+  // not to a summary screen.
+  //
+  // This used to say a fresh install lands on the Dashboard, and it had not been
+  // true since the Dashboard stopped being a top-level tab and became a section
+  // inside Settings. The value below never changed — only the comment describing
+  // it went stale, which is the more dangerous half: it reads as intent, and the
+  // next person to "restore" it would be reintroducing a tab that no longer exists.
   activeTab: 'live',
   planId: null,
   liveCueId: null,
@@ -56,9 +61,10 @@ function load() {
       return null;
     }
   })();
-  // NOTHING SAVED = a genuinely fresh install. Land on the Dashboard: nobody has
-  // ever run a service on this machine, and "is this going to work?" is the only
-  // question they have.
+  // NOTHING SAVED = a genuinely fresh install. Falls through to EMPTY, which lands
+  // on the run surface; the "is this machine going to work?" question is answered
+  // by the LAUNCH & STARTUP sequence and the Dashboard section inside Settings,
+  // not by a tab that no longer exists.
   if (!raw) return { ...EMPTY };
   try {
     const parsed = JSON.parse(raw);
@@ -110,4 +116,47 @@ export function clearSession() {
  */
 export function restartSetup() {
   setSession({ setupDone: false });
+}
+
+// ── Tabs that MOVED ─────────────────────────────────────────────────────────
+//
+// `activeTab` is persisted, so it long outlives the layout it was written under.
+// When a surface stops being a top-level tab, every operator who was last on it
+// still has its key in localStorage — and `tabs.some(...)` says "unknown", which
+// lands them on Live.
+//
+// Live is the safe fallback, but it is the WRONG answer here: none of these
+// surfaces was deleted. They were relocated, and the operator asked for the
+// thing, not for the tab strip. Sending them where it went is the difference
+// between "moved" and "vanished".
+//
+//   stagedisplays → Outputs  — the old localStorage-only Stage Displays gallery
+//                              was absorbed into real backend channels.
+//   dashboard     → Settings — became a Settings section (records/overview, not
+//                              a run surface).
+//   history       → Settings — same: a record of past services is config, not a
+//                              tab an operator runs a service from.
+//
+// Add an entry here whenever a tab is folded into another surface. A key that is
+// genuinely gone (not moved) belongs nowhere in this map — it should fall through
+// to the run surface.
+export const MOVED_TABS = {
+  stagedisplays: 'channels',
+  dashboard: 'settings',
+  history: 'settings',
+};
+
+/**
+ * The tab to actually render, given what the session remembers.
+ *
+ * Pure and exported so it is testable — App.svelte is not. The redirect lived
+ * inline as a one-key ternary and quietly stopped covering two of the three tabs
+ * that had moved, because nothing could fail when it went stale.
+ *
+ * @param saved  the persisted `activeTab` (may be stale, unknown, or missing)
+ * @param known  the keys currently in the tab strip
+ */
+export function resolveActiveTab(saved, known) {
+  const target = MOVED_TABS[saved] ?? saved;
+  return known.includes(target) ? target : 'live';
 }

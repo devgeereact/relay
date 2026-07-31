@@ -29,7 +29,6 @@
   "tab.themes": "Themes",
   "tab.library": "Library",
   "tab.planner": "Planner",
-  "tab.stagedisplays": "Stage Displays",
   "tab.settings": "Settings",
   "tab.help": "Help",
   "panic.title": "The screens may still be live.",
@@ -72,7 +71,5 @@
   "settings.language": "Console language",
   "settings.language_hint": "The language Relay speaks to YOU. It listens to the preacher in whatever language they use, regardless of this.",
   "settings.translated_percent": "{percent}% translated",
-  "settings.help_translate": "Help translate",
-  "tab.dashboard": "Dashboard",
-  "tab.history": "History"
+  "settings.help_translate": "Help translate"
 }

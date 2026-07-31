@@ -115,3 +115,51 @@ describe('where a session lands', () => {
     expect(v.activeTab).toBe('live');
   });
 });
+
+// ── Tabs that moved ─────────────────────────────────────────────────────────
+//
+// `activeTab` is persisted and outlives the layout it was written under, so every
+// relocated surface leaves a stale key in somebody's localStorage. The redirect
+// lived inline in App.svelte as a one-key ternary and covered only
+// `stagedisplays`; `dashboard` and `history` had ALSO stopped being tabs, and an
+// operator last on either was silently dropped on Live instead of Settings, where
+// both of them went.
+//
+// Nothing could catch that, because App.svelte is not unit-testable and the map
+// was not a value. It is now both.
+describe('a tab that moved sends the operator where it went', () => {
+  const KNOWN = ['live', 'channels', 'templates', 'themes', 'library', 'planner', 'settings', 'help'];
+
+  it('sends each relocated surface to the tab that absorbed it', async () => {
+    const { resolveActiveTab } = await import('./session.js?tabs1');
+    // The gallery became real backend channels.
+    expect(resolveActiveTab('stagedisplays', KNOWN)).toBe('channels');
+    // Both became sections INSIDE Settings.
+    expect(resolveActiveTab('dashboard', KNOWN)).toBe('settings');
+    expect(resolveActiveTab('history', KNOWN)).toBe('settings');
+  });
+
+  it('leaves a tab that still exists alone', async () => {
+    const { resolveActiveTab } = await import('./session.js?tabs2');
+    for (const k of KNOWN) expect(resolveActiveTab(k, KNOWN)).toBe(k);
+  });
+
+  // A key that is genuinely gone — not moved — must still land somewhere usable.
+  // Live is the run surface and the only safe default mid-service.
+  it('falls back to the run surface for a key that is simply unknown', async () => {
+    const { resolveActiveTab } = await import('./session.js?tabs3');
+    expect(resolveActiveTab('somethingelse', KNOWN)).toBe('live');
+    expect(resolveActiveTab(undefined, KNOWN)).toBe('live');
+    expect(resolveActiveTab(null, KNOWN)).toBe('live');
+  });
+
+  // The map is only correct if its targets are real. A rename of the Settings tab
+  // would otherwise turn every redirect into a silent bounce back to Live — the
+  // exact failure this whole block exists to prevent, one level up.
+  it('every redirect target is itself a real tab', async () => {
+    const { MOVED_TABS } = await import('./session.js?tabs4');
+    for (const [from, to] of Object.entries(MOVED_TABS)) {
+      expect(KNOWN, `${from} redirects to '${to}', which is not a tab`).toContain(to);
+    }
+  });
+});
