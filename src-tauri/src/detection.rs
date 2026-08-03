@@ -945,8 +945,12 @@ fn parse_reference(
         let (n1, after1, ph1) = parse_number(tokens, i)?;
         let mut k = after1;
         let mut kw2 = used_kw;
+        // Same commitment as the general chapter path below: consuming a verse
+        // marker here means a number is expected.
+        let mut verse_marker = false;
         while let Some(t) = tokens.get(k) {
             if is_verse_word(t) || *t == ":" {
+                verse_marker = true;
                 if *t != ":" {
                     kw2 = true;
                 }
@@ -989,6 +993,15 @@ fn parse_reference(
                 after2,
             ));
         }
+        // TRUNCATED MID-REFERENCE, single-chapter twin. "Jude chapter 1 verse" —
+        // the marker was consumed and the number never came, so falling through to
+        // the lone-number reading would answer with Jude 1:1 at 0.95, which is
+        // HIGHER than the 0.88 the general path was handing out. Same defect, worse
+        // number. See the guard on the chapter path below for the full reasoning.
+        if verse_marker {
+            return None;
+        }
+
         // Lone number → verse, chapter 1, with optional range ("Jude 4-6").
         //
         // ── Without a keyword this is the single-chapter twin of the bare whole
@@ -2768,6 +2781,14 @@ mod tests {
             "romans chapter 8 verses",
             "let us read psalm 23 v",
             "john 3:",
+            // SINGLE-CHAPTER BOOKS take a different branch in `parse_reference`,
+            // and the first version of this guard missed it entirely — where the
+            // truncated reading scored 0.95, higher than the 0.88 on the path that
+            // was fixed. Jude, Philemon, Obadiah, 2 John, 3 John.
+            "turn to jude chapter 1 verse",
+            "2 john chapter 1 verse",
+            "philemon chapter 1 verse",
+            "jude 1:",
         ] {
             assert!(
                 detect_direct(text).is_empty(),
@@ -2810,6 +2831,10 @@ mod tests {
         refeq(&one("psalm 23 verse 1"), "Psalms", 23, 1);
         refeq(&one("john 3:16"), "John", 3, 16);
         refeq(&one("jude verse 4"), "Jude", 1, 4);
+        // Single-chapter books, both shapes — the branch the guard also covers.
+        refeq(&one("jude chapter 1 verse 4"), "Jude", 1, 4);
+        refeq(&one("jude 4"), "Jude", 1, 4);
+        refeq(&one("2 john chapter 1 verse 3"), "2 John", 1, 3);
         // A range still parses: "verses" then a number.
         let r = one("psalm 23 verses 1 to 6");
         refeq(&r, "Psalms", 23, 1);

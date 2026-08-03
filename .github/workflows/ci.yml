@@ -100,6 +100,14 @@ jobs:
       # gets compiled on every push, like everything else that can break a release.
       - name: Release build (compile only, no installer)
         if: matrix.os != 'windows-latest'
+        env:
+          # MUST match release.yml. whisper.cpp needs std::filesystem (macOS 10.15+)
+          # and Tauri's release profile otherwise passes 10.13, which is why
+          # `tauri build` never once succeeded before it was fixed. A CI job that
+          # compiles against a different deployment target than the one shipped is
+          # not testing the build that ships — the exact failure mode this whole
+          # step exists to catch.
+          MACOSX_DEPLOYMENT_TARGET: '11.0'
         run: npm run tauri build -- --no-bundle --features metal
 
       # WINDOWS GETS THE FULL BUNDLE, every push.

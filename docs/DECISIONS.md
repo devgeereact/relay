@@ -1136,11 +1136,19 @@ drives real audio through the real pipeline and scores through the real router):
 
 **1. A dangling verse marker was *promoting* the mistake.** The parser consumes
 `verse` / `verses` / `vs` / `v` / `:` and sets the keyword bonus. When the number then
-failed to arrive, the code fell through to a whole-chapter reading — *carrying that
-bonus*. A bare `"Romans 8"` scores 0.45 and asks a human; `"Romans 8 verse"` scored
-**0.88** and went straight to the screen. The most truncated reading of the sentence
-outranked the honest one. Now the parse simply fails: the grammar committed to a verse
-number, so not finding one is a parse error, not a licence to invent verse 1.
+failed to arrive, the code fell through to a weaker reading — *carrying that bonus*. A
+bare `"Romans 8"` scores 0.45 and asks a human; `"Romans 8 verse"` scored **0.88** and
+went straight to the screen. The most truncated reading of the sentence outranked the
+honest one. Now the parse fails: the grammar committed to a verse number, so not finding
+one is a parse error, not a licence to invent verse 1.
+
+`parse_reference` has **two** branches that consume verse markers, and the guard belongs
+in both. The first version of this fix only covered the general chapter path; the
+single-chapter path (Jude, Philemon, Obadiah, 2 John, 3 John) still answered
+`"Jude chapter 1 verse"` with **Jude 1:1 at 0.95** — a higher score than the defect that
+had just been fixed, on books whose names are ordinary English words. Caught in review,
+not by the tests, which is why `a_transcript_that_stops_at_verse_does_not_invent_verse_one`
+now exercises both branches.
 
 **2. A whole chapter at the end of a partial is provisional.** `"…John chapter 3"` is a
 complete, well-formed reference — and it is also what `"John chapter 3 verse 16"` looks

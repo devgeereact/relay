@@ -566,20 +566,32 @@ mod tests {
     fn the_default_order_leads_with_the_model_that_runs_anywhere() {
         let first = crate::stt::MODEL_CANDIDATES[0];
         assert_eq!(first, "ggml-base.bin");
+
         let heavy: Vec<_> = CATALOG
             .iter()
             .filter(|m| m.needs_acceleration)
             .map(|m| m.filename)
             .collect();
-        let light_end = crate::stt::MODEL_CANDIDATES
-            .iter()
-            .position(|n| heavy.contains(n))
-            .unwrap_or(crate::stt::MODEL_CANDIDATES.len());
-        for name in &crate::stt::MODEL_CANDIDATES[..light_end] {
-            assert!(
-                !heavy.contains(name),
-                "{name} needs acceleration but sits above one that does not"
-            );
+        assert!(
+            !heavy.is_empty(),
+            "nothing is flagged heavy — test is vacuous"
+        );
+
+        // The real invariant: NO HEAVY ENTRY MAY PRECEDE A LIGHT ONE.
+        //
+        // Written the obvious way — find the first heavy index, then check nothing
+        // before it is heavy — this is a tautology that cannot fail, and a future
+        // edit moving `ggml-large-v3-turbo.bin` to index 1 would sail through it.
+        // Compare every pair instead.
+        let cands = crate::stt::MODEL_CANDIDATES;
+        for (i, a) in cands.iter().enumerate() {
+            for b in &cands[i + 1..] {
+                assert!(
+                    !(heavy.contains(a) && !heavy.contains(b)),
+                    "{a} needs acceleration but is offered before {b}, which does not — \
+                     the default order is what a church laptop gets by never opening Settings"
+                );
+            }
         }
     }
 

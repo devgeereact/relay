@@ -146,10 +146,20 @@ impl Deoverlap {
     /// The part of `chunk` not returned by a previous call. Empty when the chunk
     /// is wholly ground already covered — the caller skips it entirely.
     pub fn tail<'a>(&mut self, chunk: &'a AudioChunk) -> &'a [f32] {
-        // `.max(1)`: a zero sample rate is a broken device, not a panic. Dividing
-        // by it would abort the STT thread mid-service, which is the one outcome
-        // worse than a garbled transcript.
-        let sr = (chunk.sample_rate as u64).max(1);
+        // A zero sample rate is a broken device, and there are two wrong ways to
+        // handle it. Dividing by it aborts the STT thread mid-service. Clamping it
+        // to 1 — which this did — is worse, because it is SILENT: the chunk's
+        // duration is then computed as one sample per second, so 128 samples
+        // advance the mark by 128 SECONDS, and every real chunk after it reads as
+        // already-covered. One malformed chunk and Relay stops hearing anything at
+        // all, for the rest of the service, with a transcript that simply stops.
+        //
+        // Without a rate there is no time, so there is no overlap to compute. Pass
+        // the audio through and leave the mark untouched: a possible duplicate is
+        // survivable, and a poisoned mark is not.
+        let Some(sr) = Some(chunk.sample_rate as u64).filter(|r| *r > 0) else {
+            return &chunk.samples;
+        };
         let chunk_end_ms = chunk.timestamp_ms + chunk.samples.len() as u64 * 1000 / sr;
         let tail: &[f32] = if chunk.timestamp_ms >= self.appended_end_ms {
             &chunk.samples
@@ -1399,20 +1409,39 @@ mod deoverlap_tests {
         );
     }
 
-    /// A broken device reporting a zero sample rate must not divide by zero. The
-    /// STT worker runs during a live service; an abort here is worse than any
-    /// transcript.
+    /// A broken device reporting a zero sample rate must not divide by zero — and,
+    /// less obviously, must not POISON THE MARK either.
+    ///
+    /// Clamping the rate to 1 avoids the panic and silently computes the chunk's
+    /// duration as one sample per second, so 128 samples advance the mark by 128
+    /// seconds. Every real chunk after that reads as already-covered, and Relay goes
+    /// deaf for the rest of the service with no error anywhere — the transcript just
+    /// stops. That is strictly worse than the crash it was avoiding, because a crash
+    /// is at least visible.
     #[test]
-    fn a_zero_sample_rate_does_not_panic() {
+    fn a_zero_sample_rate_neither_panics_nor_deafens_the_engine() {
         let mut d = Deoverlap::default();
+        let good = chunk(0, 3200, 16_000); // 0..200 ms
+        assert_eq!(d.tail(&good).len(), 3200);
+
         let bad = AudioChunk {
             samples: vec![0.0; 128],
-            timestamp_ms: 0,
+            timestamp_ms: 200,
             sample_rate: 0,
             rms: 0.0,
             is_voice: true,
         };
-        assert_eq!(d.tail(&bad).len(), 128);
+        assert_eq!(d.tail(&bad).len(), 128, "audio must not be dropped");
+
+        // THE ASSERTION THAT MATTERS: the stream keeps working afterwards.
+        let next = chunk(200, 3200, 16_000); // 200..400 ms, all new
+        assert_eq!(
+            d.tail(&next).len(),
+            3200,
+            "a malformed chunk poisoned the mark — the engine is now deaf"
+        );
+        let later = chunk(400, 3200, 16_000);
+        assert_eq!(d.tail(&later).len(), 3200);
     }
 }
 
@@ -2004,6 +2033,19 @@ mod bench {
                     .and_then(|v| v.parse().ok())
                     .filter(|s: &f64| *s > 0.0)
                     .unwrap_or(1.0);
+                if speed > 1.0 {
+                    // Said once, not per condition. Silence here would let a number
+                    // that is not comparable to a service be read as though it were.
+                    static WARNED: std::sync::Once = std::sync::Once::new();
+                    WARNED.call_once(|| {
+                        println!(
+                            "\n  ⚠ RELAY_BENCH_SPEED={speed} — faster than life. The worker \
+                             starts draining\n    backlogs in one batch and decoding only the \
+                             freshest window, so misses\n    are pessimistic and these numbers \
+                             are NOT comparable to a real service.\n"
+                        );
+                    });
+                }
 
                 let t0 = std::time::Instant::now();
                 let tx = engine.sender();

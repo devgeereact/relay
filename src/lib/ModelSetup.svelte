@@ -40,7 +40,17 @@
 
   async function use(filename) {
     busy = true;
-    await selectModel(filename);
+    // `selectModel` reports a THROWN failure through $modelError, but it can also
+    // resolve `false` — the model was chosen and then would not load. Nothing is
+    // thrown, so without this the badge simply vanishes and the operator is left
+    // reading a list that shows nothing in use, with no explanation. A control may
+    // not report a success it did not achieve (CLAUDE.md #15).
+    const ok = await selectModel(filename);
+    if (!ok && !$modelError) {
+      modelError.set(
+        'That model could not be loaded. Relay has kept the one it was already using.',
+      );
+    }
     await refresh();
     busy = false;
   }

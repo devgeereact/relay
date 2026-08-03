@@ -140,7 +140,7 @@ Once a baseline exists, five questions that are currently unanswerable become ar
 4. **What is the real detection recall?** `eval.rs` scores 100% — on hand-written clean text. Recall on *ASR output* is a different and much harder number, and it is the one that decides what reaches a wall.
 5. **Is `base` costing us verses?** Relay ships `ggml-base`, the smallest useful whisper, and nothing has ever compared it against a larger one on real speech. Before anyone concludes the recognition engine needs replacing, this is the cheaper question, and `engine_shootout` answers it in one run — including whether the larger model still fits inside the realtime budget on a church laptop, which is the reason a bigger model is not automatically better.
 
-Every one of those is currently an assertion in a document. Thirty minutes of tape turns all four into measurements.
+Every one of those is currently an assertion in a document. Thirty minutes of tape turns all five into measurements.
 
 ---
 
