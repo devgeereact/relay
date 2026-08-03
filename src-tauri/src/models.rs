@@ -69,27 +69,59 @@ pub struct ModelInfo {
     pub bytes: u64,
     /// Whether this is the one we want most people to pick.
     pub recommended: bool,
+    /// Does this model need GPU acceleration to keep up with a live sermon?
+    ///
+    /// Static: a property of the model, not of the machine. `catalog()` combines it
+    /// with what THIS build can actually accelerate to produce `caution`.
+    pub needs_acceleration: bool,
     /// Filled in per-request: is it already on this machine?
     pub installed: bool,
+    /// Filled in per-request: why this model may be a bad idea *here*, in words a
+    /// volunteer can act on. `None` means no known problem on this machine.
+    ///
+    /// This exists because a bigger model is a DOWNGRADE WEARING AN UPGRADE'S LABEL
+    /// when nothing can accelerate it, and the failure is silent: the STT worker
+    /// warns once to stderr that it is slower than real time, then quietly drops
+    /// audio it can no longer catch up on. Nobody sees an error. The operator sees a
+    /// transcript that thins out, an hour into a service, having done nothing wrong
+    /// except pick the model that said it was more accurate.
+    pub caution: Option<String>,
 }
 
 /// The catalogue.
 ///
-/// Checksums and sizes are the REAL values of the two models this project has
-/// actually been run against — computed from the files on disk, not copied from a
-/// README. If a download does not match these bytes, it is not the model we
-/// tested and we refuse it.
+/// Checksums and sizes are the REAL values — for `base` and `base.en`, computed
+/// from the files this project has been run against; for the rest, the Git-LFS
+/// object ids published by `ggerganov/whisper.cpp`, which ARE the sha256 of the
+/// file (verified: the published ids for `base` and `base.en` reproduce the two
+/// hashes below exactly, which is what makes the source trustworthy for the
+/// others). If a download does not match these bytes, it is not the model we
+/// meant and we refuse it.
+///
+/// ── WHY THERE IS MORE THAN `base` HERE ──────────────────────────────────────
+///
+/// Relay shipped only `base` — the smallest useful whisper — for its entire life,
+/// while `docs/PRODUCT_AUDIT.md` called African-language accuracy the biggest
+/// weakness in the product. Those two facts were never connected, because nothing
+/// had ever measured what a larger model buys. `stt::bench::engine_shootout` is
+/// that measurement, and these are the models it has to choose between.
+///
+/// `medium` is deliberately absent. `large-v3-turbo` is both faster and more
+/// accurate, so offering `medium` would be offering a strictly worse option with
+/// a friendlier-sounding name.
 const CATALOG: &[ModelInfo] = &[
     ModelInfo {
         id: "base",
         filename: "ggml-base.bin",
         label: "Multilingual (recommended)",
-        detail: "Understands English plus Yoruba, Swahili and Hausa, including switching between them mid-sentence.",
+        detail: "Understands English plus Yoruba, Swahili and Hausa, including switching between them mid-sentence. Runs on any laptop.",
         url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin",
         sha256: "60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe",
         bytes: 147_951_465,
         recommended: true,
+        needs_acceleration: false,
         installed: false,
+        caution: None,
     },
     ModelInfo {
         id: "base.en",
@@ -100,7 +132,48 @@ const CATALOG: &[ModelInfo] = &[
         sha256: "a03779c86df3323075f5e796cb2ce5029f00ec8869eee3fdfb897afe36c6d002",
         bytes: 147_964_211,
         recommended: false,
+        needs_acceleration: false,
         installed: false,
+        caution: None,
+    },
+    ModelInfo {
+        id: "small",
+        filename: "ggml-small.bin",
+        label: "Multilingual, larger",
+        detail: "Understands the same languages as the recommended model but hears them more accurately, especially over a poor microphone. Three times the download, and needs a reasonably quick computer.",
+        url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin",
+        sha256: "1be3a9b2063867b937e64e2ec7483364a79917e157fa98c5d94b5c1fffea987b",
+        bytes: 487_601_967,
+        recommended: false,
+        needs_acceleration: false,
+        installed: false,
+        caution: None,
+    },
+    ModelInfo {
+        id: "large-v3-turbo-q5_0",
+        filename: "ggml-large-v3-turbo-q5_0.bin",
+        label: "Most accurate that still fits a modest laptop",
+        detail: "The most accurate model, compressed so it downloads and loads in about a third of the space. Best choice for African languages. Works best on a computer with graphics acceleration.",
+        url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin",
+        sha256: "394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2",
+        bytes: 574_041_195,
+        recommended: false,
+        needs_acceleration: true,
+        installed: false,
+        caution: None,
+    },
+    ModelInfo {
+        id: "large-v3-turbo",
+        filename: "ggml-large-v3-turbo.bin",
+        label: "Most accurate",
+        detail: "The best speech recognition Relay can run, uncompressed. A 1.6 GB download, and it needs a fast computer with graphics acceleration to keep up with a live sermon.",
+        url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin",
+        sha256: "1fc70f774d38eb169993ac391eea357ef47c88757ef72ee5943879b7e8e2bc69",
+        bytes: 1_624_555_275,
+        recommended: false,
+        needs_acceleration: true,
+        installed: false,
+        caution: None,
     },
 ];
 
@@ -110,9 +183,12 @@ pub fn models_dir() -> PathBuf {
     crate::db::app_data_dir().join("models")
 }
 
-/// The catalogue, with `installed` resolved against this machine.
+/// The catalogue, with `installed` and `caution` resolved against this machine.
 pub fn catalog() -> Vec<ModelInfo> {
     let dir = models_dir();
+    // Compile-time, not a GPU probe: a graphics card whisper.cpp was not built to
+    // use is not acceleration, it is decoration (see `sysprobe`).
+    let accelerated = !crate::sysprobe::gpu_backends().is_empty();
     CATALOG
         .iter()
         .map(|m| ModelInfo {
@@ -121,6 +197,13 @@ pub fn catalog() -> Vec<ModelInfo> {
                 || crate::stt::default_model_path()
                     .map(|p| p.ends_with(m.filename))
                     .unwrap_or(false),
+            caution: (m.needs_acceleration && !accelerated).then(|| {
+                "This copy of Relay has no graphics acceleration, so this model will \
+                 probably fall behind a live sermon — the transcript thins out instead \
+                 of stopping, so it is easy to miss. Pick a smaller model unless you \
+                 have tested this one on this computer."
+                    .to_string()
+            }),
             ..m.clone()
         })
         .collect()
@@ -471,6 +554,72 @@ mod tests {
             assert_eq!(m.sha256.len(), 64, "{}", m.id);
             assert!(m.sha256.chars().all(|c| c.is_ascii_hexdigit()), "{}", m.id);
             assert!(m.bytes > 100_000_000, "{} size looks wrong", m.id);
+        }
+    }
+
+    /// The default must stay the model that RUNS ON ANY LAPTOP, not the most
+    /// accurate one. `MODEL_CANDIDATES` is what an operator who never opens Settings
+    /// gets, and the large models were added below the small ones deliberately —
+    /// this pins that ordering so a future edit cannot quietly promote a 1.6 GB
+    /// model into the default position on a donated church laptop.
+    #[test]
+    fn the_default_order_leads_with_the_model_that_runs_anywhere() {
+        let first = crate::stt::MODEL_CANDIDATES[0];
+        assert_eq!(first, "ggml-base.bin");
+        let heavy: Vec<_> = CATALOG
+            .iter()
+            .filter(|m| m.needs_acceleration)
+            .map(|m| m.filename)
+            .collect();
+        let light_end = crate::stt::MODEL_CANDIDATES
+            .iter()
+            .position(|n| heavy.contains(n))
+            .unwrap_or(crate::stt::MODEL_CANDIDATES.len());
+        for name in &crate::stt::MODEL_CANDIDATES[..light_end] {
+            assert!(
+                !heavy.contains(name),
+                "{name} needs acceleration but sits above one that does not"
+            );
+        }
+    }
+
+    /// A model that cannot keep up must SAY SO on the machine it cannot keep up on.
+    /// The failure it prevents is silent — the STT worker warns once to stderr and
+    /// then drops audio — so an operator who is never told will read it as Relay
+    /// being bad at their language rather than as the model being too big.
+    #[test]
+    fn heavy_models_are_flagged_when_nothing_can_accelerate_them() {
+        let accelerated = !crate::sysprobe::gpu_backends().is_empty();
+        for m in catalog() {
+            match (m.needs_acceleration, accelerated) {
+                (true, false) => {
+                    let c = m.caution.unwrap_or_default();
+                    assert!(!c.is_empty(), "{} needs a caution here", m.id);
+                    // Written for a volunteer: it must name the way it fails, or it
+                    // is just a scary noise they will click past.
+                    assert!(
+                        c.contains("behind") || c.contains("thins out"),
+                        "{}: the caution does not describe the failure: {c}",
+                        m.id
+                    );
+                }
+                // Nothing else may carry one: a caution on every row is a caution on
+                // no row.
+                _ => assert!(m.caution.is_none(), "{} should have no caution", m.id),
+            }
+        }
+    }
+
+    /// Every model must be reachable by its own name. A catalogue entry whose
+    /// filename the resolver would not pick is a download that changes nothing.
+    #[test]
+    fn every_catalogued_model_can_actually_be_selected() {
+        for m in CATALOG {
+            assert!(
+                crate::stt::MODEL_CANDIDATES.contains(&m.filename),
+                "{} cannot be resolved by name",
+                m.id
+            );
         }
     }
 

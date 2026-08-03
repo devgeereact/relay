@@ -41,6 +41,7 @@
 import { writable, derived, get } from 'svelte/store';
 import { parseTemplateOverride } from '../templates.js';
 import { tNow } from '../i18n.js';
+import { humanError } from '../errors.js';
 
 /**
  * The audio meter — RMS level + voice-activity, arriving 10–50 times a second.
@@ -1749,15 +1750,45 @@ export async function downloadModel(id) {
     // for. But there is no model on disk, so loading it would fail and report an
     // error for something that is not one.
     if (cancelled) return false;
-    // Bring STT up in-place. A 148 MB download that ends in "now quit and
-    // reopen the app" is a miserable last step for a first-time user.
-    const loaded = await call('load_stt_model');
+    // Bring STT up in-place, ON THE MODEL THAT WAS JUST DOWNLOADED. A 148 MB
+    // download that ends in "now quit and reopen the app" is a miserable last step
+    // for a first-time user — and once more than one model exists, merely reloading
+    // would bring up whichever the DEFAULT ORDER picks, which is the small one. The
+    // operator would have waited out a 1.6 GB download to keep running `base`, with
+    // the list showing the new model as installed and nothing saying which was live.
+    const filename = (await call('list_models').catch(() => [])).find((m) => m.id === id)
+      ?.filename;
+    const loaded = filename
+      ? await call('select_stt_model', { filename })
+      : await call('load_stt_model');
     const stt = await call('stt_status');
     capture.update((s) => ({ ...s, stt }));
     return loaded;
   } finally {
     stop.forEach((fn) => fn());
     modelProgress.set(null);
+  }
+}
+
+/**
+ * Switch to an already-installed model, now — not on next launch.
+ *
+ * `filename` of `null` clears the choice and returns to the default order.
+ * Resolves to whether speech recognition came back up.
+ */
+export async function selectModel(filename) {
+  const call = await invoke();
+  modelError.set(null);
+  try {
+    const loaded = await call('select_stt_model', { filename: filename ?? null });
+    const stt = await call('stt_status');
+    capture.update((s) => ({ ...s, stt }));
+    return loaded;
+  } catch (e) {
+    // Swallowing this would leave the operator looking at a list that says they
+    // switched, running the model they switched away from.
+    modelError.set(humanError(e));
+    return false;
   }
 }
 

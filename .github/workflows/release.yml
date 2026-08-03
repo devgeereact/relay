@@ -32,9 +32,22 @@ jobs:
         include:
           # Universal binary — one download that works on both Apple Silicon and
           # Intel. Churches run whatever laptop they were donated.
+          #
+          # `--features metal` runs whisper's encoder on the GPU. Until this was
+          # added, every shipped build was CPU-ONLY: `default = []` in Cargo.toml,
+          # and the metal/coreml features were wired up but never once turned on by
+          # anything that produced an artifact. The Hardware Check screen said
+          # "CPU" and was telling the truth.
+          #
+          # It is safe on BOTH halves of the universal binary — Metal exists on
+          # Intel macOS too, and whisper-rs-sys builds with
+          # GGML_METAL_EMBED_LIBRARY=ON, so the shaders are compiled INTO the
+          # binary. That matters more than it looks: with an external .metal file,
+          # a packaged app that could not find it would fall back silently, which
+          # is the failure mode this project keeps getting bitten by.
           - os: macos-latest
             label: macOS (universal)
-            args: --target universal-apple-darwin
+            args: --target universal-apple-darwin --features metal
           - os: windows-latest
             label: Windows
             args: ''

@@ -76,6 +76,54 @@ Then do it again as a **church laptop**, which is the case that actually matters
 RELAY_BENCH_SCALE=0.2 RELAY_BENCH_NOISE=0.01 ...   # quiet mic, in a noisy room
 ```
 
+### The one that compares engines and models
+
+`word_error_rate` scores the transcript. **`engine_shootout` scores the wall** — it runs every
+installed model through the *real* `SttEngine`, over the whole degradation grid, and ranks
+them on the only question that matters: which one puts the wrong verse in front of a
+congregation. It needs a second, much smaller file — the references actually cited in the
+recording, one per line:
+
+```
+# bench/refs.txt — references actually cited in sermon.f32
+Romans 8:28
+John 3:16
+```
+
+```bash
+RELAY_BENCH_WAV=../bench/sermon.f32 \
+RELAY_BENCH_REFS=../bench/refs.txt \
+  cargo test --release --features metal stt::bench::engine_shootout -- --ignored --nocapture
+```
+
+Unlike every other bench here it drives audio in through `SttEngine::sender()`, so the
+measurement contains the whole pipeline — the voice gate, `Deoverlap`, the rolling window,
+the batch drain — and not just a call into whisper. That is what makes it able to compare a
+future non-whisper backend at all, and it is why each row also prints **`voiced N/M`**: if
+the gate passed nothing, the decoder was never given a sample and no model will fix it.
+Results are then scored **through the real `Router`**, like `eval.rs`, so "wrong verse"
+means *would have reached the wall*, not *was briefly considered*.
+
+Read the output in this order: **WRONG VERSES first**, lag second, correct third.
+
+> ### It runs in real time, and that is not an oversight
+>
+> Audio is fed at the pace a room produces it. Pushing the whole clip in at once is not a
+> faster version of this measurement, it is a different one: the worker drains the backlog
+> in a single batch and decodes **once**, on the freshest 8 seconds, which is correct live
+> behaviour and is what stops lag compounding through a sermon. The first version of this
+> bench did exactly that, and every model scored identically — because it was scoring one
+> window per model, and every reference spoken earlier had simply never been transcribed.
+>
+> So thirty minutes of tape takes thirty minutes per condition. `RELAY_BENCH_SPEED=4` will
+> go faster and will start re-creating that collapse; the numbers get pessimistic and stop
+> being comparable to a real service.
+>
+> `RELAY_BENCH_VERBOSE=1` prints every distinct transcript and anything the router offered
+> but did not auto-fire. A reference can go missing two ways — the decoder never said the
+> words, or it said them and detection did not parse them — and the score alone cannot tell
+> those apart.
+
 `RELAY_BENCH_SCALE=0.2` is not a made-up number. It is roughly the level at which Relay used to go **silently deaf** — 94% of speech detected at studio level, **2%** at a church-laptop level, with no error and no warning, just a transcript quietly turning to nonsense (DECISIONS §19). If the WER at ×0.2 is not close to the WER at ×1.0, the audio front-end has regressed and a church will never tell you.
 
 ---
@@ -84,12 +132,13 @@ RELAY_BENCH_SCALE=0.2 RELAY_BENCH_NOISE=0.01 ...   # quiet mic, in a noisy room
 
 The first run is a **baseline, not a pass mark.** The bench asserts nothing on purpose: inventing a target before the first measurement is choosing the number you would *like* rather than the one that is *true*.
 
-Once a baseline exists, four questions that are currently unanswerable become arithmetic:
+Once a baseline exists, five questions that are currently unanswerable become arithmetic:
 
 1. **Is the decoder-bias prompt helping or hurting?** `stt.rs` currently primes whisper with all 66 book names — and the code's own comment argues that `initial_prompt` is *prior context, not a vocabulary list*, and that a noun-dump "actively harms accuracy… it starts hallucinating them." Nobody knows which is true. `prompt_sweep` settles it in one run.
 2. **Would a fine-tuned Yorùbá model actually help, and by how much?** Community fine-tunes exist. Relay ships none, deliberately, because none has been *verified against real sermon audio* (`LANGUAGES.md:164`). This is that verification.
 3. **Does the front-end hold up at church levels?** See ×0.2 above.
 4. **What is the real detection recall?** `eval.rs` scores 100% — on hand-written clean text. Recall on *ASR output* is a different and much harder number, and it is the one that decides what reaches a wall.
+5. **Is `base` costing us verses?** Relay ships `ggml-base`, the smallest useful whisper, and nothing has ever compared it against a larger one on real speech. Before anyone concludes the recognition engine needs replacing, this is the cheaper question, and `engine_shootout` answers it in one run — including whether the larger model still fits inside the realtime budget on a church laptop, which is the reason a bigger model is not automatically better.
 
 Every one of those is currently an assertion in a document. Thirty minutes of tape turns all four into measurements.
 

@@ -355,6 +355,7 @@ fn main() {
             download_model,
             cancel_model_download,
             load_stt_model,
+            select_stt_model,
             manual_fire,
             open_output_window,
             list_output_windows,
@@ -665,7 +666,13 @@ fn router_clock_ms() -> u64 {
 ///
 /// `now_ms` is a WALL-CLOCK monotonic stamp (`router_clock_ms`), never an audio
 /// position — see that function for why the difference is load-bearing.
-fn emit_detections(handle: &tauri::AppHandle, text: &str, now_ms: u64) {
+///
+/// `is_final` says whether `text` is a CLOSED utterance or a partial that is still
+/// growing. Detection deliberately runs on partials (DECISIONS.md) — waiting for a
+/// pause would put the verse on the wall long after the preacher moved on — but a
+/// partial is a sentence caught mid-word, and one shape of reference is created by
+/// that truncation rather than described by it. See the whole-chapter guard below.
+fn emit_detections(handle: &tauri::AppHandle, text: &str, now_ms: u64, is_final: bool) {
     // Detection disarmed → transcribe but surface nothing. Manual override is a
     // separate path and stays live.
     if !handle.state::<Detecting>().0.load(Ordering::Relaxed) {
@@ -697,6 +704,13 @@ fn emit_detections(handle: &tauri::AppHandle, text: &str, now_ms: u64) {
         let directs = detection::detect_direct(text);
         let direct_empty = directs.is_empty();
         for m in directs {
+            // A reading that exists only because the transcript was cut mid-sentence
+            // describes the window boundary, not the sermon. See
+            // `RefMatch::is_provisional`, which owns the rule so this path and the
+            // bench that scores it cannot disagree.
+            if m.is_provisional(is_final) {
+                continue;
+            }
             candidates.push(Cand {
                 r: m.reference,
                 conf: m.confidence,
@@ -2794,7 +2808,12 @@ fn apply_profile(stt: &Stt, routing: &Routing, p: &db::VoiceProfile) -> error::R
 /// Returns None (audio-only) when no model is installed. That is a supported
 /// state, not a failure: manual fire and plan playback still work.
 fn build_stt(handle: &tauri::AppHandle) -> Option<SttEngine> {
-    let path = stt::default_model_path()?;
+    // Which model the operator picked, if any. Read and RELEASE the lock before
+    // constructing the engine — rule 2, and `try_load` reads a ~1.6 GB file.
+    let chosen: Option<String> = handle
+        .try_state::<Db>()
+        .and_then(|db| db.0.lock().ok().and_then(|c| stt_model_setting(&c)));
+    let path = stt::model_path_for(chosen.as_deref())?;
     let handle = handle.clone();
     // Auto-detect re-elects a language every window and, on accented speech, does
     // not settle — which degrades the decode and looks exactly like the AI being
@@ -2849,7 +2868,7 @@ fn build_stt(handle: &tauri::AppHandle) -> Option<SttEngine> {
         // The gate's clock is WALL TIME, not `update.timestamp_ms`. The audio
         // position advances in backlog-sized jumps and silently defeated the
         // repeat cooldown — see `router_clock_ms`.
-        emit_detections(&handle, &update.text, router_clock_ms());
+        emit_detections(&handle, &update.text, router_clock_ms(), update.is_final);
     }) {
         Ok(e) => {
             println!("stt: model loaded from {}", e.model_path().display());
@@ -2860,6 +2879,42 @@ fn build_stt(handle: &tauri::AppHandle) -> Option<SttEngine> {
             None
         }
     }
+}
+
+/// The app-settings key holding the model filename the operator chose.
+///
+/// A filename, not a path or a catalogue id: the catalogue can be re-edited and
+/// ids can be renamed, but the file on disk is the thing that has to be found, and
+/// `stt::model_path_for` reduces whatever is stored here to a bare filename anyway.
+const STT_MODEL_KEY: &str = "stt.model";
+
+fn stt_model_setting(conn: &rusqlite::Connection) -> Option<String> {
+    db::get_setting(conn, STT_MODEL_KEY)
+        .ok()
+        .flatten()
+        .filter(|s| !s.trim().is_empty())
+}
+
+/// Choose which installed speech model to run, and switch to it now.
+///
+/// `filename` of `None` clears the choice and returns to the default order.
+///
+/// This is a separate command from `set_setting` on purpose. Writing the setting
+/// alone would change nothing until the next launch, while the model list showed
+/// the new model as selected — so the operator would be told they had switched,
+/// and be running the old model for the rest of the service. Choosing a model and
+/// loading it are one action or the promise is false (see rule 15).
+#[tauri::command]
+fn select_stt_model(app: tauri::AppHandle, filename: Option<String>) -> error::Result<bool> {
+    {
+        let db = app.state::<Db>();
+        let conn = db.0.lock()?;
+        match filename.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            Some(name) => db::set_setting(&conn, STT_MODEL_KEY, name)?,
+            None => db::set_setting(&conn, STT_MODEL_KEY, "")?,
+        }
+    }
+    load_stt_model(app)
 }
 
 /// Bring speech recognition up after a model has just been installed, without a

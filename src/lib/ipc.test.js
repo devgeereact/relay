@@ -109,12 +109,25 @@ describe('Tauri event contract', () => {
     read('src/Stage.svelte'),
   ].join('\n');
 
+  // The name part must allow `_`. It did not, and two events were silently
+  // outside this contract for as long as it has existed: `stt://language_unstable`
+  // and `output://panic_failed` — the second being a PANIC path, the one place a
+  // dropped event is least affordable. They matched nothing, so they were never
+  // checked, and the test still passed and still looked exhaustive.
   const emitted = new Set(
-    [...mainRs.matchAll(/emit\(\s*"([a-z]+:\/\/[a-z]+)"/g)].map((m) => m[1]),
+    [...mainRs.matchAll(/emit\(\s*"([a-z_]+:\/\/[a-z_]+)"/g)].map((m) => m[1]),
   );
 
   it('finds the emitted events', () => {
     expect(emitted.size).toBeGreaterThan(3);
+  });
+
+  // Guards the regex itself, not the app. A character class that quietly stops
+  // matching is invisible: the suite goes green because it checked nothing.
+  it('the scanner sees the underscored events, not just the simple ones', () => {
+    expect([...emitted]).toEqual(
+      expect.arrayContaining(['stt://language_unstable', 'output://panic_failed']),
+    );
   });
 
   it('every event the backend emits is listened for on the frontend', () => {

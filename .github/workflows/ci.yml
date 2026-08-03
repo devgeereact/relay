@@ -90,9 +90,17 @@ jobs:
       # release profile was passing a 10.13 deployment target), and it needs no
       # signing identity to prove. Installer/layout coverage is a separate job we
       # don't have yet — don't read this step as "packaging works".
+      # `--features metal` MUST match what release.yml ships. The matrix above is
+      # [macos-latest, windows-latest], so this step is the macOS one.
+      #
+      # Without it here, a tag would be the first time Metal was ever compiled —
+      # which is precisely the shape of every release trap already recorded in
+      # CLAUDE.md (§19-23): a build path that only runs when it is far too late to
+      # find out it is broken. Metal doubles the whisper.cpp compile surface, so it
+      # gets compiled on every push, like everything else that can break a release.
       - name: Release build (compile only, no installer)
         if: matrix.os != 'windows-latest'
-        run: npm run tauri build -- --no-bundle
+        run: npm run tauri build -- --no-bundle --features metal
 
       # WINDOWS GETS THE FULL BUNDLE, every push.
       #

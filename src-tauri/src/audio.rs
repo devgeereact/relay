@@ -267,6 +267,44 @@ impl Chunker {
     }
 }
 
+/// Turn a continuous mono stream into the exact `AudioChunk` sequence the live
+/// capture path would produce: same chunk length, same 50% overlap, same learned
+/// voice gate, same timestamps.
+///
+/// TEST AND BENCH ONLY — and it exists so that a benchmark cannot quietly drift
+/// from the thing it claims to measure. A decoder scored on hand-rolled chunks is
+/// a measurement of a pipeline no congregation will ever hear, and the constants
+/// that would have to be copied to hand-roll them (`CHUNK_MS`, `HOP_MS`,
+/// `VAD_RMS_THRESHOLD`) are private precisely because there must be one copy.
+///
+/// The one thing it does NOT do is run `dsp::FrontEnd` — callers feed it audio
+/// that has already been cleaned, because the bench degrades the signal itself
+/// and then cleans it, in that order, exactly as a room would.
+#[cfg(test)]
+pub(crate) fn chunks_as_captured(cleaned: &[f32], sample_rate: u32) -> Vec<AudioChunk> {
+    let mut chunker = Chunker::new(sample_rate, CHUNK_MS, HOP_MS);
+    let mut vad = Vad::new(VAD_RMS_THRESHOLD);
+    let mut out = Vec::new();
+    // Push in blocks rather than all at once so the chunker's internal buffering
+    // behaves as it does live; the VAD is stateful and must see chunks in order.
+    for block in cleaned.chunks(1024) {
+        for (samples, ts_ms) in chunker.push(block) {
+            let level = rms(&samples);
+            out.push(AudioChunk {
+                // `None`: the neural speech probability only counts at 48 kHz
+                // (dsp.rs), and bench audio is 16 kHz — same as the live path on
+                // a device that cannot give us 48.
+                is_voice: vad.is_voice(level, None),
+                rms: level,
+                timestamp_ms: ts_ms,
+                sample_rate,
+                samples,
+            });
+        }
+    }
+    out
+}
+
 /// Owns the running capture + processing thread. Drop or call `stop()` to end.
 pub struct AudioEngine {
     stop: Arc<AtomicBool>,
