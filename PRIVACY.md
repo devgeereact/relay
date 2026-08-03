@@ -34,11 +34,12 @@ anywhere else, because there is nowhere else.
 
 Relay does **not** send audio to a speech-recognition service. It uses a local
 [Whisper](https://github.com/ggml-org/whisper.cpp) model that runs on your own
-CPU. The sermon is transcribed on the same computer that heard it.
+computer. The sermon is transcribed on the same computer that heard it.
 
 The **only** time Relay talks to the internet is when you press the button to
-download that model (a one-time ~148 MB file from Hugging Face), or when it checks
-for an app update. Neither sends any of your content anywhere.
+download that model (a one-time file from Hugging Face — about 148 MB for the
+recommended model, up to 1.6 GB if you choose the most accurate one), or when it
+checks for an app update. Neither sends any of your content anywhere.
 
 ---
 

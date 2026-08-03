@@ -22,11 +22,16 @@ function gb(bytes) {
 }
 
 /**
- * The STT model an operator is most likely to run, in bytes. Used to turn free
- * disk into an answer ("room for a model") rather than a number they have to do
- * arithmetic on. `ggml-base` is ~148 MB; leave real headroom for media too.
+ * Enough disk to be useful, in bytes. Turns free space into an answer ("room for
+ * a model") rather than a number the operator has to do arithmetic on.
+ *
+ * Sized against the LARGEST model Relay offers, not the default one. `ggml-base`
+ * is ~148 MB, and 2 GB was generous against that — but the catalogue now goes up
+ * to `large-v3-turbo` at 1.6 GB, which 2 GB would have called "enough" while
+ * leaving ~400 MB for the database, media and the operating system. The check is
+ * only worth having if passing it means the operator is actually fine.
  */
-const HEADROOM_BYTES = 2e9;
+const HEADROOM_BYTES = 3e9;
 
 /** Injected in tests. */
 export function makeProbes({ invoke = tauriInvoke, getVersion } = {}) {

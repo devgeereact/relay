@@ -1109,3 +1109,87 @@ human and none reaches a congregation on its own.
 Pinned by `a_common_single_shared_word_is_not_offered_as_a_paraphrase` and
 `a_rare_single_shared_word_is_evidence_enough`, both **mutation-verified**: removing the
 rarity exception fails the second, and treating every term as rare fails the first.
+
+---
+
+## 34. A reference cut off mid-sentence is not a reference (2026-08-03)
+
+§30 established that detection runs on **partial** STT hypotheses, and that a bare
+chapter is a weak claim (demoted to 0.45, below the auto bar). Both were right. What
+neither caught is that the partials themselves *manufacture* bare chapters.
+
+The STT window is re-decoded about once a second. So every reference anyone speaks is
+parsed at least once in a state where its verse number has not arrived yet:
+
+```
+t+0s   "…and we read again in John chapter 3 verse"   → John 3:1   conf 0.88 → ON THE WALL
+t+1s   "…and we read again in John chapter 3 verse 16" → John 3:16  conf 0.95 → ON THE WALL
+```
+
+The congregation sees the wrong verse flash, then the right one. Whether it happens at
+all depends only on where the window boundary lands relative to the number — so it is
+not an edge case, it is a coin toss on **every citation of the commonest form in English
+preaching**.
+
+Two distinct defects, found by `stt::bench::engine_shootout` (§0 of that harness: it
+drives real audio through the real pipeline and scores through the real router):
+
+**1. A dangling verse marker was *promoting* the mistake.** The parser consumes
+`verse` / `verses` / `vs` / `v` / `:` and sets the keyword bonus. When the number then
+failed to arrive, the code fell through to a weaker reading — *carrying that bonus*. A
+bare `"Romans 8"` scores 0.45 and asks a human; `"Romans 8 verse"` scored **0.88** and
+went straight to the screen. The most truncated reading of the sentence outranked the
+honest one. Now the parse fails: the grammar committed to a verse number, so not finding
+one is a parse error, not a licence to invent verse 1.
+
+`parse_reference` has **two** branches that consume verse markers, and the guard belongs
+in both. The first version of this fix only covered the general chapter path; the
+single-chapter path (Jude, Philemon, Obadiah, 2 John, 3 John) still answered
+`"Jude chapter 1 verse"` with **Jude 1:1 at 0.95** — a higher score than the defect that
+had just been fixed, on books whose names are ordinary English words. Caught in review,
+not by the tests, which is why `a_transcript_that_stops_at_verse_does_not_invent_verse_one`
+now exercises both branches.
+
+**2. A whole chapter at the end of a partial is provisional.** `"…John chapter 3"` is a
+complete, well-formed reference — and it is also what `"John chapter 3 verse 16"` looks
+like one second early. `RefMatch::is_provisional` suppresses **only** a whole-chapter
+reading, **only** with nothing after it, and **only** while the text can still grow.
+
+### What this deliberately does not do
+
+- **It does not delay complete references.** A finished `"John 3:16"` at the tail of a
+  partial still fires instantly. Guarding every tail match would have cost ~1s on
+  essentially every auto-fire, trading this bug for a latency regression against SPEC's
+  3-second budget.
+- **It does not touch mishearings.** `"Romans chapter 8 verse 2"` when the preacher said
+  28 is a well-formed reference with a wrong number, and no parser can know. That is a
+  decoder-accuracy question, measured (rule #13), not patched here.
+- **It loses nothing.** The next partial carries the number; a preacher who really did
+  mean the chapter gets it when the utterance closes and `is_final` lets it through.
+
+`is_provisional` lives on `RefMatch` and is called by **both** `main::emit_detections`
+and the bench that scores it, so the benchmark cannot measure a policy the live path
+does not run.
+
+Measured on one clip through the real pipeline, five signal conditions, two models:
+wrong verses reaching the wall fell from **4 and 5 to 2 and 2**, with recall unchanged
+and the `eval.rs` scorecard still 100% recall / 0 wrong verses in all four languages.
+The two survivors are mishearings of the number under extreme attenuation (×0.03).
+
+Pinned by `a_transcript_that_stops_at_verse_does_not_invent_verse_one`,
+`a_dangling_verse_marker_cannot_buy_a_promotion_to_auto_fire`,
+`a_truncated_reference_does_not_hide_a_complete_one_after_it`,
+`at_tail_marks_only_a_reference_with_nothing_after_it`,
+`a_complete_reference_at_the_tail_is_not_treated_as_provisional` and
+`only_a_growing_whole_chapter_at_the_tail_is_provisional` — all **mutation-verified**,
+in both directions:
+
+| Mutation | Fails |
+|---|---|
+| Remove the dangling-marker guard | the first three |
+| Widen `is_provisional` to every tail match (drop `whole_chapter`) | the last two |
+| Ignore `is_final` (suppress closed utterances too) | the last one |
+
+The last row is the one that matters most: it is what stops a future "tighten the gate"
+change from quietly making a preacher who really did say *"turn to Psalm chapter 23"*
+undetectable.

@@ -114,6 +114,66 @@ impl LanguageStability {
     }
 }
 
+/// The non-overlapping tail of each chunk — CLAUDE.md rule #8.
+///
+/// The detection chunker (`audio.rs`) emits 50%-overlapping chunks on purpose:
+/// overlap is what stops a spoken reference falling across a chunk boundary and
+/// being missed. An acoustic model fed those chunks verbatim hears every hop
+/// TWICE, and the transcript garbles.
+///
+/// So exactly one thing is tracked: how far into the stream has already been
+/// handed downstream. Anything at or before that mark is a repeat, and is cut.
+///
+/// Two properties are deliberate, and both are the reason this is a type rather
+/// than three lines in a loop:
+///
+/// - The mark is in **milliseconds, not samples**, so it survives a device that
+///   changes sample rate mid-stream. Sample counts from two different rates are
+///   not comparable; timestamps are.
+/// - The mark **never moves backwards** (`max`), so a chunk that arrives late
+///   cannot re-open ground already covered and replay audio into the decoder.
+///
+/// This is a rule Relay learned the hard way and names by number, and until now
+/// it lived inline in the worker loop with no test of its own. Here it can be
+/// driven with synthetic chunks, on any platform, with no microphone.
+#[derive(Debug, Default)]
+pub struct Deoverlap {
+    /// End (ms) of the audio already emitted.
+    appended_end_ms: u64,
+}
+
+impl Deoverlap {
+    /// The part of `chunk` not returned by a previous call. Empty when the chunk
+    /// is wholly ground already covered — the caller skips it entirely.
+    pub fn tail<'a>(&mut self, chunk: &'a AudioChunk) -> &'a [f32] {
+        // A zero sample rate is a broken device, and there are two wrong ways to
+        // handle it. Dividing by it aborts the STT thread mid-service. Clamping it
+        // to 1 — which this did — is worse, because it is SILENT: the chunk's
+        // duration is then computed as one sample per second, so 128 samples
+        // advance the mark by 128 SECONDS, and every real chunk after it reads as
+        // already-covered. One malformed chunk and Relay stops hearing anything at
+        // all, for the rest of the service, with a transcript that simply stops.
+        //
+        // Without a rate there is no time, so there is no overlap to compute. Pass
+        // the audio through and leave the mark untouched: a possible duplicate is
+        // survivable, and a poisoned mark is not.
+        let Some(sr) = Some(chunk.sample_rate as u64).filter(|r| *r > 0) else {
+            return &chunk.samples;
+        };
+        let chunk_end_ms = chunk.timestamp_ms + chunk.samples.len() as u64 * 1000 / sr;
+        let tail: &[f32] = if chunk.timestamp_ms >= self.appended_end_ms {
+            &chunk.samples
+        } else {
+            let skip = ((self.appended_end_ms - chunk.timestamp_ms) * sr / 1000) as usize;
+            // A skip past the end means the chunk is entirely old: `get` yields
+            // None and this becomes an empty slice, which is exactly right.
+            chunk.samples.get(skip..).unwrap_or(&[])
+        };
+        self.appended_end_ms = chunk_end_ms.max(self.appended_end_ms);
+        tail
+    }
+}
+
 /// Owns the whisper worker thread and the channel feeding it audio.
 pub struct SttEngine {
     tx: Sender<AudioChunk>,
@@ -253,11 +313,9 @@ fn worker<F>(
     // decode, this must persist ACROSS batches — a batch of purely-overlapping
     // chunks assigns nothing, and the last real timestamp is still the right one.
     let mut last_ts_ms: u64 = 0;
-    // End (ms) of the audio already appended, so we only add the NON-overlapping
-    // tail of each chunk. The detection chunker emits 50%-overlapping chunks;
-    // feeding those to whisper verbatim duplicates every hop and garbles the
-    // transcript. Timestamps make this robust to any overlap ratio.
-    let mut appended_end_ms = 0u64;
+    // Only the NON-overlapping tail of each chunk is appended — rule #8. See
+    // `Deoverlap`, which owns that rule and is tested independently of a mic.
+    let mut deoverlap = Deoverlap::default();
 
     // How far behind real time we have been running. Only used to warn.
     let mut lag_warned = false;
@@ -353,19 +411,8 @@ fn worker<F>(
                 continue;
             }
 
-            let sr = chunk.sample_rate as u64;
-            let chunk_len_ms = chunk.samples.len() as u64 * 1000 / sr.max(1);
-            let chunk_end_ms = chunk.timestamp_ms + chunk_len_ms;
             // Skip the portion already covered by a previous (overlapping) chunk.
-            // The detection chunker emits 50%-overlapping chunks; feeding those to
-            // whisper verbatim duplicates every hop and garbles the transcript.
-            let new_slice: &[f32] = if chunk.timestamp_ms >= appended_end_ms {
-                &chunk.samples
-            } else {
-                let skip = ((appended_end_ms - chunk.timestamp_ms) * sr / 1000) as usize;
-                chunk.samples.get(skip..).unwrap_or(&[])
-            };
-            appended_end_ms = chunk_end_ms.max(appended_end_ms);
+            let new_slice = deoverlap.tail(&chunk);
             if new_slice.is_empty() {
                 continue; // fully overlapping — nothing new
             }
@@ -801,35 +848,91 @@ pub fn resample_linear(input: &[f32], src_rate: u32, dst_rate: u32) -> Vec<f32> 
     out
 }
 
-/// Candidate model filenames, most-preferred first. The multilingual model
-/// (ggml-base.bin) is preferred so Yoruba/Swahili/Hausa + code-switching work;
-/// the English-only model is the fallback. Swap in a fine-tuned model by name.
-pub const MODEL_CANDIDATES: &[&str] = &["ggml-base.bin", "ggml-base.en.bin"];
+/// Candidate model filenames, most-preferred first — the FALLBACK order, used
+/// only when the operator has not chosen (see `model_path_for`).
+///
+/// The multilingual `ggml-base.bin` leads so Yoruba/Swahili/Hausa +
+/// code-switching work, and the English-only model is the fallback. The larger
+/// models come last **on purpose**: this list decides what an operator who has
+/// never opened Settings gets, and that must stay the model which runs on any
+/// laptop, not the one with the best accuracy on a fast one.
+///
+/// Kept in sync with `models::CATALOG` by `models::tests`.
+pub const MODEL_CANDIDATES: &[&str] = &[
+    "ggml-base.bin",
+    "ggml-base.en.bin",
+    "ggml-small.bin",
+    "ggml-large-v3-turbo-q5_0.bin",
+    "ggml-large-v3-turbo.bin",
+];
 
-/// Resolve the default model path: RELAY_MODEL_PATH override, then the first
-/// existing candidate in the repo-local dev dir, then the per-OS app-data dir.
+/// Resolve the model path with no stated preference — see `model_path_for`.
 pub fn default_model_path() -> Option<PathBuf> {
+    model_path_for(None)
+}
+
+/// Resolve which model file to load.
+///
+/// `preferred` is the filename the operator chose, persisted under `stt.model`.
+/// It WINS whenever the file is present, and that is the entire point: resolution
+/// used to be `MODEL_CANDIDATES` order alone, so once more than one model could be
+/// installed, downloading a better one changed nothing — `ggml-base.bin` was still
+/// first in the list and still on disk, so it was still what loaded. The operator
+/// would have waited out a 1.6 GB download, seen the model listed as installed, and
+/// been running the old one, with nothing anywhere saying so.
+///
+/// Order: `RELAY_MODEL_PATH` (a developer override, absolute) → the chosen model in
+/// either directory → the first `MODEL_CANDIDATES` entry that exists.
+///
+/// A chosen model that is no longer on disk falls back rather than failing: the
+/// operator deleted a file, and running with a working model beats refusing to
+/// listen. `stt_status` reports what actually loaded, so the difference is visible.
+pub fn model_path_for(preferred: Option<&str>) -> Option<PathBuf> {
     if let Ok(p) = std::env::var("RELAY_MODEL_PATH") {
         return Some(PathBuf::from(p));
     }
     // Dev: models downloaded to <repo>/models (see README). CARGO_MANIFEST_DIR
     // is <repo>/src-tauri at compile time.
-    let dev_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../models");
-    for name in MODEL_CANDIDATES {
-        let p = dev_dir.join(name);
-        if p.exists() {
-            return Some(p);
-        }
-    }
     // Prod: alongside the SQLite DB in the per-OS app-data dir. MUST go through
     // db::app_data_dir() — this branch was once hardcoded to the macOS
     // `$HOME/Library/Application Support` layout, so on a packaged Windows build
     // it never resolved and Relay came up with speech recognition silently dead.
-    let dir = crate::db::app_data_dir().join("models");
-    for name in MODEL_CANDIDATES {
-        let p = dir.join(name);
-        if p.exists() {
-            return Some(p);
+    let dirs = [
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../models"),
+        crate::db::app_data_dir().join("models"),
+    ];
+    resolve_model(&dirs, preferred)
+}
+
+/// The resolution rule itself, over directories given rather than discovered — so
+/// it can be tested without a 148 MB file or the machine's real app-data dir.
+fn resolve_model(dirs: &[PathBuf], preferred: Option<&str>) -> Option<PathBuf> {
+    // A chosen model beats the fallback order in EITHER directory, so a developer's
+    // repo-local copy of the base model cannot shadow the one that was picked.
+    //
+    // Only ever a bare filename: a persisted setting is not a path the app should
+    // follow out of its own model directory. `file_name()` also rejects `.` and
+    // `..`, and the `is_file` check rejects the empty name — `dir.join("")` is the
+    // directory itself, and a directory very much `exists()`.
+    if let Some(name) = preferred
+        .map(str::trim)
+        .filter(|n| !n.is_empty())
+        .map(Path::new)
+        .and_then(Path::file_name)
+    {
+        for dir in dirs {
+            let p = dir.join(name);
+            if p.is_file() {
+                return Some(p);
+            }
+        }
+    }
+    for dir in dirs {
+        for name in MODEL_CANDIDATES {
+            let p = dir.join(name);
+            if p.is_file() {
+                return Some(p);
+            }
         }
     }
     None
@@ -1071,6 +1174,274 @@ mod hallucination_tests {
         // picking badly, not about refusing languages.
         assert!(!expects_latin_script(Some("zh")));
         assert!(!is_hallucination("请不吝点赞", Some("zh")));
+    }
+}
+
+/// WHICH MODEL ACTUALLY LOADS.
+///
+/// Once more than one model can be installed, "which file gets opened" stops being
+/// obvious and starts being a decision — and the failure mode is silent in the worst
+/// way: the operator downloads a better model, sees it listed as installed, and runs
+/// the old one for the whole service with nothing anywhere saying so.
+#[cfg(test)]
+mod model_choice_tests {
+    use super::*;
+
+    /// A scratch model directory. Files are empty — resolution is about names and
+    /// existence, and nothing here loads a decoder.
+    struct Scratch(PathBuf);
+
+    impl Scratch {
+        fn new(tag: &str) -> Self {
+            let dir = std::env::temp_dir().join(format!(
+                "relay-models-{}-{tag}-{:?}",
+                std::process::id(),
+                std::thread::current().id()
+            ));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).expect("scratch dir");
+            Scratch(dir)
+        }
+        fn with(self, names: &[&str]) -> Self {
+            for n in names {
+                std::fs::write(self.0.join(n), b"").expect("touch model");
+            }
+            self
+        }
+    }
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// THE BUG THIS EXISTS FOR. Resolution was `MODEL_CANDIDATES` order alone, so
+    /// the operator's choice was not consulted at all — and `ggml-base.bin` is first
+    /// in that list and still on disk, so a 1.6 GB download changed nothing.
+    #[test]
+    fn the_chosen_model_wins_over_the_default_order() {
+        let s = Scratch::new("chosen").with(&["ggml-base.bin", "ggml-large-v3-turbo.bin"]);
+        let dirs = [s.0.clone()];
+        assert_eq!(
+            resolve_model(&dirs, Some("ggml-large-v3-turbo.bin")),
+            Some(s.0.join("ggml-large-v3-turbo.bin"))
+        );
+        // And with no choice, the default order still wins — an operator who has
+        // never opened Settings must get the model that runs on any laptop.
+        assert_eq!(
+            resolve_model(&dirs, None),
+            Some(s.0.join("ggml-base.bin")),
+            "the no-choice default must stay the small multilingual model"
+        );
+    }
+
+    /// A choice pointing at a file that is gone must not take speech recognition
+    /// down with it. The operator deleted a file to reclaim disk; running with a
+    /// working model beats refusing to listen.
+    #[test]
+    fn a_chosen_model_that_is_missing_falls_back_instead_of_failing() {
+        let s = Scratch::new("missing").with(&["ggml-base.bin"]);
+        let dirs = [s.0.clone()];
+        assert_eq!(
+            resolve_model(&dirs, Some("ggml-large-v3-turbo.bin")),
+            Some(s.0.join("ggml-base.bin"))
+        );
+    }
+
+    /// The setting is a filename, never a path. It is written by the app today, but
+    /// it lives in a plain SQLite row on the operator's disk, and a value that could
+    /// send the loader outside the model directory is not something to leave to the
+    /// good manners of whoever writes it next.
+    #[test]
+    fn a_stored_value_cannot_walk_out_of_the_model_directory() {
+        let s = Scratch::new("escape").with(&["ggml-base.bin"]);
+        let dirs = [s.0.clone()];
+        for hostile in [
+            "../../../etc/passwd",
+            "/etc/passwd",
+            "..",
+            ".",
+            "",
+            "   ",
+            "sub/dir/ggml-base.bin",
+        ] {
+            let got = resolve_model(&dirs, Some(hostile));
+            assert_eq!(
+                got,
+                Some(s.0.join("ggml-base.bin")),
+                "{hostile:?} escaped the model directory or resolved to a directory"
+            );
+        }
+    }
+
+    /// Nothing installed is a supported state, not a crash: Relay runs audio-only
+    /// and says so (`stt_status.loaded == false`).
+    #[test]
+    fn no_models_installed_resolves_to_nothing() {
+        let s = Scratch::new("empty");
+        let dirs = std::slice::from_ref(&s.0);
+        assert_eq!(resolve_model(dirs, None), None);
+        assert_eq!(resolve_model(dirs, Some("ggml-base.bin")), None);
+    }
+
+    /// The first directory wins, so a developer's repo-local model still shadows the
+    /// app-data one — unchanged behaviour, pinned because the loop was rewritten.
+    #[test]
+    fn the_first_directory_still_wins() {
+        let a = Scratch::new("dir-a").with(&["ggml-base.bin"]);
+        let b = Scratch::new("dir-b").with(&["ggml-base.bin"]);
+        let dirs = [a.0.clone(), b.0.clone()];
+        assert_eq!(resolve_model(&dirs, None), Some(a.0.join("ggml-base.bin")));
+    }
+}
+
+/// CLAUDE.md rule #8, finally testable.
+///
+/// The rule ("STT is fed the NON-overlapping tail of each chunk") is listed among
+/// the architecture rules learned the hard way, and until this module existed it
+/// was enforced by three lines inside a `while let` loop that could only be
+/// exercised with a live microphone and a running whisper model — which is to say,
+/// never, in CI, on either platform.
+#[cfg(test)]
+mod deoverlap_tests {
+    use super::*;
+
+    /// Build a chunk of `len` samples starting at `at_ms`. Sample VALUES are the
+    /// absolute sample index, so a test can assert on *which* audio came back and
+    /// not merely on how much.
+    fn chunk(at_ms: u64, len: usize, rate: u32) -> AudioChunk {
+        let first = at_ms as usize * rate as usize / 1000;
+        AudioChunk {
+            samples: (0..len).map(|i| (first + i) as f32).collect(),
+            timestamp_ms: at_ms,
+            sample_rate: rate,
+            rms: 0.1,
+            is_voice: true,
+        }
+    }
+
+    /// THE BUG THIS EXISTS FOR. `audio.rs` emits `CHUNK_MS = 400` every
+    /// `HOP_MS = 200` — half of every chunk is the previous chunk. Fed verbatim,
+    /// whisper hears every hop twice.
+    #[test]
+    fn fifty_percent_overlap_yields_each_sample_exactly_once() {
+        let mut d = Deoverlap::default();
+        let rate = 16_000;
+        let len = 400 * rate as usize / 1000; // 400 ms
+
+        let mut seen: Vec<f32> = Vec::new();
+        for hop in 0..5u64 {
+            seen.extend_from_slice(d.tail(&chunk(hop * 200, len, rate)));
+        }
+
+        // Five 400 ms chunks on a 200 ms hop span 1200 ms of real audio (the last
+        // one ends at 800+400), not the 2000 ms their lengths add up to. And the
+        // result must be CONTIGUOUS and in order — a gap would be lost speech and
+        // a repeat is the garbling this rule exists to prevent.
+        let expected: Vec<f32> = (0..(1200 * rate as usize / 1000))
+            .map(|i| i as f32)
+            .collect();
+        assert_eq!(seen, expected, "overlap was duplicated or audio was lost");
+    }
+
+    #[test]
+    fn non_overlapping_chunks_pass_through_whole() {
+        let mut d = Deoverlap::default();
+        let a = chunk(0, 3200, 16_000); // 200 ms
+        let b = chunk(200, 3200, 16_000);
+        assert_eq!(d.tail(&a).len(), 3200);
+        assert_eq!(d.tail(&b).len(), 3200);
+    }
+
+    #[test]
+    fn a_fully_overlapping_chunk_yields_nothing() {
+        let mut d = Deoverlap::default();
+        let big = chunk(0, 6400, 16_000); // 0..400 ms
+        assert_eq!(d.tail(&big).len(), 6400);
+        // Wholly inside ground already covered.
+        let inside = chunk(100, 1600, 16_000); // 100..200 ms
+        assert!(
+            d.tail(&inside).is_empty(),
+            "a chunk with nothing new must yield nothing, so the caller can skip it"
+        );
+    }
+
+    /// A late chunk must not re-open ground already covered. Without the `max`,
+    /// the mark would jump BACKWARDS to the end of the stale chunk and the next
+    /// arrival would replay audio the decoder had already been given.
+    #[test]
+    fn a_late_chunk_does_not_rewind_the_mark() {
+        let mut d = Deoverlap::default();
+        let _ = d.tail(&chunk(0, 16_000, 16_000)); // 0..1000 ms
+        let late = chunk(200, 1600, 16_000); // arrives after, covers 200..300 ms
+        assert!(d.tail(&late).is_empty());
+
+        // The mark must still be at 1000 ms. If the late chunk had dragged it back
+        // to 300, THIS chunk — entirely inside ground already covered — would be
+        // handed to the decoder a second time. That is the actual failure a rewind
+        // causes, so it is what the assertion has to be about; a chunk starting
+        // after 1000 ms would pass whether the mark rewound or not.
+        let replay = chunk(400, 8000, 16_000); // 400..900 ms, all of it old
+        assert!(
+            d.tail(&replay).is_empty(),
+            "the mark rewound — already-decoded audio would be replayed"
+        );
+    }
+
+    /// The mark is milliseconds, not samples, precisely so a device that switches
+    /// rate mid-stream cannot corrupt it. Sample counts across two rates are not
+    /// comparable quantities.
+    #[test]
+    fn a_sample_rate_change_mid_stream_is_handled_in_time_not_samples() {
+        let mut d = Deoverlap::default();
+        // 0..1000 ms at 16 kHz.
+        let _ = d.tail(&chunk(0, 16_000, 16_000));
+        // Same instant, three times the rate: 0..500 ms, all of it already covered.
+        let hi = chunk(0, 24_000, 48_000);
+        assert!(d.tail(&hi).is_empty());
+        // 900..1400 ms at 48k — the first 100 ms is old, the last 400 ms is new.
+        let straddle = chunk(900, 24_000, 48_000);
+        assert_eq!(
+            d.tail(&straddle).len(),
+            400 * 48, // 400 ms at 48 kHz
+            "the skip must be computed in the CHUNK's rate, not the previous one"
+        );
+    }
+
+    /// A broken device reporting a zero sample rate must not divide by zero — and,
+    /// less obviously, must not POISON THE MARK either.
+    ///
+    /// Clamping the rate to 1 avoids the panic and silently computes the chunk's
+    /// duration as one sample per second, so 128 samples advance the mark by 128
+    /// seconds. Every real chunk after that reads as already-covered, and Relay goes
+    /// deaf for the rest of the service with no error anywhere — the transcript just
+    /// stops. That is strictly worse than the crash it was avoiding, because a crash
+    /// is at least visible.
+    #[test]
+    fn a_zero_sample_rate_neither_panics_nor_deafens_the_engine() {
+        let mut d = Deoverlap::default();
+        let good = chunk(0, 3200, 16_000); // 0..200 ms
+        assert_eq!(d.tail(&good).len(), 3200);
+
+        let bad = AudioChunk {
+            samples: vec![0.0; 128],
+            timestamp_ms: 200,
+            sample_rate: 0,
+            rms: 0.0,
+            is_voice: true,
+        };
+        assert_eq!(d.tail(&bad).len(), 128, "audio must not be dropped");
+
+        // THE ASSERTION THAT MATTERS: the stream keeps working afterwards.
+        let next = chunk(200, 3200, 16_000); // 200..400 ms, all new
+        assert_eq!(
+            d.tail(&next).len(),
+            3200,
+            "a malformed chunk poisoned the mark — the engine is now deaf"
+        );
+        let later = chunk(400, 3200, 16_000);
+        assert_eq!(d.tail(&later).len(), 3200);
     }
 }
 
@@ -1477,6 +1848,354 @@ mod bench {
             println!("    ── correct: {right}/20   WRONG VERSES: {wrong}");
         }
         println!();
+    }
+
+    /// WHICH ENGINE PUTS THE RIGHT VERSE ON THE WALL? — the ruler for changing
+    /// how Relay hears.
+    ///
+    /// Every other bench in this file measures ONE decoder, and `prompt_sweep` —
+    /// the only other one scored through the detector — is welded to a single clip
+    /// with two hardcoded references and calls `transcribe()` directly. That is
+    /// fine for comparing prompts. It cannot compare *engines*, for two reasons:
+    ///
+    /// 1. It bypasses everything between the microphone and the decoder. `Deoverlap`,
+    ///    the rolling window, the batch drain, the silence finalizer — all skipped.
+    ///    A different engine differs mostly in exactly that region.
+    /// 2. `transcribe()` is a synchronous call into whisper. A streaming recognizer
+    ///    (macOS `SFSpeechRecognizer`) has no such function to call; it emits results
+    ///    on its own schedule. Anything that can only be measured by calling
+    ///    `transcribe()` can only ever measure whisper.
+    ///
+    /// So this drives the REAL `SttEngine` through `sender()`, with chunks built by
+    /// `audio::chunks_as_captured` — the same size, overlap, timestamps and voice
+    /// gate the live path produces. What is measured is the whole pipeline, which is
+    /// the only version of it a congregation is exposed to.
+    ///
+    /// **It scores through the detector, never by reading the transcript** (CLAUDE.md
+    /// rule 13). The headline number is WRONG VERSES, not word error rate: a
+    /// transcript can be ugly and still put the right scripture on the wall, and it
+    /// can read beautifully while putting up the wrong one. Only the second is a
+    /// failure the product exists to prevent.
+    ///
+    /// Today it compares every INSTALLED MODEL, which is the question in front of us:
+    /// Relay ships `base`, the smallest useful whisper, and nobody has ever measured
+    /// what a larger one buys. When a second backend exists it becomes another row.
+    ///
+    /// It asserts NOTHING, for the same reason `word_error_rate` asserts nothing —
+    /// there is no baseline yet, and inventing a threshold before the first
+    /// measurement is choosing the number we would like over the number that is true.
+    /// The first honest assertion here is a WRONG-VERSE CEILING, and it can be
+    /// written the day this has been run once.
+    ///
+    /// ```text
+    /// RELAY_BENCH_WAV=bench/sermon.f32 \
+    /// RELAY_BENCH_REFS=bench/refs.txt \
+    ///   cargo test --release --features metal stt::bench::engine_shootout -- --ignored --nocapture
+    /// ```
+    #[test]
+    #[ignore]
+    fn engine_shootout() {
+        let (Some(wav), Some(refs_path)) = (
+            std::env::var_os("RELAY_BENCH_WAV"),
+            std::env::var_os("RELAY_BENCH_REFS"),
+        ) else {
+            eprintln!(
+                "\n  Which engine puts the RIGHT VERSE on the wall? Relay has never measured it.\n\
+                 \n  Needs a recording and the list of references actually cited in it.\
+                 \n  See bench/README.md — audio is never committed, only the number.\n\
+                 \n  RELAY_BENCH_WAV=bench/sermon.f32 RELAY_BENCH_REFS=bench/refs.txt\n"
+            );
+            return;
+        };
+        let wav = wav.to_string_lossy().to_string();
+
+        // One reference per line, as `Book C:V`. Blank lines and `#` comments skipped
+        // so the file can explain itself to whoever records the next sermon.
+        let want: Vec<String> = std::fs::read_to_string(&refs_path)
+            .expect("read RELAY_BENCH_REFS")
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty() && !l.starts_with('#'))
+            .map(str::to_string)
+            .collect();
+        assert!(!want.is_empty(), "RELAY_BENCH_REFS lists no references");
+
+        // Every model actually on this machine. NOT the catalogue — an entry that has
+        // not been downloaded cannot be scored, and silently reporting zero for it
+        // would read as "this model is bad" rather than "this model is absent".
+        // Both places `default_model_path` looks: the repo-local dev dir and the
+        // per-OS app-data dir. Kept in that order so a dev's local model wins, which
+        // is the same precedence the live path uses.
+        let mut engines: Vec<(String, PathBuf)> = Vec::new();
+        for dir in [
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../models"),
+            model_install_dir(),
+        ] {
+            let Ok(rd) = std::fs::read_dir(&dir) else {
+                continue;
+            };
+            for e in rd.flatten() {
+                let p = e.path();
+                if p.extension().is_some_and(|x| x == "bin")
+                    && !engines.iter().any(|(_, q)| q.file_name() == p.file_name())
+                {
+                    let label = p
+                        .file_stem()
+                        .map(|s| s.to_string_lossy().to_string())
+                        .unwrap_or_default();
+                    engines.push((label, p));
+                }
+            }
+        }
+        engines.sort_by(|a, b| a.0.cmp(&b.0));
+        if engines.is_empty() {
+            eprintln!("no models installed — nothing to compare");
+            return;
+        }
+        println!("\n  references sought: {want:?}");
+        println!("  models installed:  {:?}", engines.len());
+
+        // The same degradation grid the other benches use. A decoder that only wins on
+        // studio audio wins nothing: clean audio is the one case Relay already handles.
+        let conds = [
+            ("clean       ", 1.0f32, 0.0f32),
+            ("quiet       ", 0.08, 0.0),
+            ("noisy       ", 1.0, 0.02),
+            ("quiet+noisy ", 0.08, 0.004),
+            ("very quiet  ", 0.03, 0.002),
+        ];
+
+        for (label, model) in &engines {
+            println!("\n  ── engine: whisper · {label} ──");
+            let (mut right, mut wrong, mut audio_s, mut wall_s) = (0usize, 0usize, 0f64, 0f64);
+
+            for (clabel, scale, noise) in conds {
+                let mut cleaned = church_signal(&wav, scale, noise, 0x1234_5678);
+                // Trailing silence, so the worker's silence run fires a FINAL rather
+                // than leaving the last utterance stranded as a partial. This is what
+                // the end of a sentence looks like to the live path.
+                cleaned.extend(std::iter::repeat_n(0.0, TARGET_RATE as usize * 3));
+                let secs = cleaned.len() as f64 / TARGET_RATE as f64;
+
+                // (arrival ms, text). The TIME matters: the router debounces repeats,
+                // and a rolling window says the same reference several seconds running.
+                // Replaying without timestamps would either suppress everything or
+                // suppress nothing, and neither is what a service looks like.
+                // `is_final` rides along because it changes what may be believed: a
+                // whole-chapter reading at the end of a PARTIAL is usually a citation
+                // caught before its verse number (`RefMatch::is_provisional`). Scoring
+                // without it would measure a pipeline the live path does not run.
+                let started = std::time::Instant::now();
+                let seen: Arc<Mutex<Vec<(u64, String, bool)>>> = Arc::new(Mutex::new(Vec::new()));
+                let sink = seen.clone();
+                let engine = match SttEngine::try_load(model.clone(), move |u| {
+                    if let Ok(mut g) = sink.lock() {
+                        g.push((started.elapsed().as_millis() as u64, u.text, u.is_final));
+                    }
+                }) {
+                    Ok(e) => e,
+                    Err(e) => {
+                        println!("    {clabel} → could not load: {e}");
+                        continue;
+                    }
+                };
+
+                // Count what the GATE saw before the decoder ever runs. Without this
+                // number, "found nothing" is unattributable: a silent voice gate and a
+                // deaf decoder produce the identical empty result, and DECISIONS §19 is
+                // the story of that ambiguity costing a live service. `voiced 0/N` means
+                // whisper was never given a sample, and no model will fix it.
+                let chunks = crate::audio::chunks_as_captured(&cleaned, TARGET_RATE);
+                let voiced = chunks.iter().filter(|c| c.is_voice).count();
+                let n_chunks = chunks.len();
+
+                // FEED IT LIKE A ROOM DOES — in real time, not as fast as the loop
+                // can push.
+                //
+                // This was the bench's first and worst bug, and it is worth keeping the
+                // reason written down. Pushing every chunk at once is not a faster
+                // version of the same measurement, it is a DIFFERENT measurement: the
+                // worker drains the whole backlog in one batch and then decodes ONCE,
+                // on the freshest 8 seconds (see the batch-drain comment on the worker
+                // loop — it is correct, and it is what stops lag compounding through a
+                // sermon). So an eleven-second clip produced exactly one transcript, of
+                // the last window, and every reference spoken before it simply did not
+                // exist. Both models then scored identically, because the bench was
+                // measuring the same one window for each — which reads exactly like
+                // "a bigger model makes no difference", the most expensive wrong
+                // conclusion this file could produce.
+                //
+                // `RELAY_BENCH_SPEED` trades fidelity for wall-clock: >1 is faster than
+                // life and starts re-creating that collapse, so it warns rather than
+                // pretending the number means the same thing.
+                let speed: f64 = std::env::var("RELAY_BENCH_SPEED")
+                    .ok()
+                    .and_then(|v| v.parse().ok())
+                    .filter(|s: &f64| *s > 0.0)
+                    .unwrap_or(1.0);
+                if speed > 1.0 {
+                    // Said once, not per condition. Silence here would let a number
+                    // that is not comparable to a service be read as though it were.
+                    static WARNED: std::sync::Once = std::sync::Once::new();
+                    WARNED.call_once(|| {
+                        println!(
+                            "\n  ⚠ RELAY_BENCH_SPEED={speed} — faster than life. The worker \
+                             starts draining\n    backlogs in one batch and decoding only the \
+                             freshest window, so misses\n    are pessimistic and these numbers \
+                             are NOT comparable to a real service.\n"
+                        );
+                    });
+                }
+
+                let t0 = std::time::Instant::now();
+                let tx = engine.sender();
+                for chunk in chunks {
+                    let due = std::time::Duration::from_secs_f64(
+                        chunk.timestamp_ms as f64 / 1000.0 / speed,
+                    );
+                    if let Some(wait) = due.checked_sub(t0.elapsed()) {
+                        std::thread::sleep(wait);
+                    }
+                    if tx.send(chunk).is_err() {
+                        break;
+                    }
+                }
+                let fed = t0.elapsed();
+                // Feeding is far faster than decoding, so the queue is deep here. Wait
+                // for the worker to go quiet rather than guessing a duration.
+                //
+                // "Quiet" cannot simply mean "the sink stopped growing": before the
+                // FIRST decode returns, the sink has never grown, and a big model on a
+                // cold cache can sit there for a minute. An idle-only rule scores that
+                // as a silent engine — which is how a bench comes to report that the
+                // better model is worse. So nothing counts as quiet until either a
+                // result has actually arrived or `FIRST_RESULT_GRACE` has passed.
+                const IDLE_QUIET: std::time::Duration = std::time::Duration::from_secs(5);
+                const FIRST_RESULT_GRACE: std::time::Duration = std::time::Duration::from_secs(120);
+                let mut last_len = 0usize;
+                let mut last_change = std::time::Instant::now();
+                loop {
+                    std::thread::sleep(std::time::Duration::from_millis(250));
+                    let n = seen.lock().map(|g| g.len()).unwrap_or(0);
+                    if n != last_len {
+                        last_len = n;
+                        last_change = std::time::Instant::now();
+                        continue;
+                    }
+                    if last_change.elapsed() < IDLE_QUIET {
+                        continue;
+                    }
+                    if n > 0 || t0.elapsed() >= FIRST_RESULT_GRACE {
+                        break;
+                    }
+                }
+                // HOW FAR BEHIND THE PREACHER IT FINISHED.
+                //
+                // Audio is fed in real time now, so wall-clock over audio-seconds is
+                // ~1.0 by construction and says nothing. What matters is whether the
+                // decoder was still chewing after the room went quiet. `IDLE_QUIET` is
+                // silence the wait loop must sit through by definition, so it comes
+                // off: what is left is the real catch-up time. Near zero means it kept
+                // up; seconds mean the transcript was already arriving late on an
+                // eleven-second clip, and over a sermon it only grows.
+                let lag = (t0.elapsed().saturating_sub(fed))
+                    .saturating_sub(IDLE_QUIET)
+                    .as_secs_f64();
+                drop(engine);
+
+                // SCORE WHAT WOULD HAVE REACHED THE WALL — through the real router.
+                //
+                // Detection alone is not the answer to "which verse does Relay put up".
+                // A rolling window sees "John chapter 3 verse 1..." before the "6"
+                // arrives, so `detect_direct` yields John 3:1 and then John 3:16 — and
+                // scored raw, that counts as a wrong verse. It is not: the router is
+                // exactly what stands between a mid-window guess and a projector, and
+                // `eval.rs` scores through it for the same reason. Counting pre-router
+                // candidates would report a failure the product does not have, and
+                // send someone off tuning a decoder to fix a routing question.
+                //
+                // Every update is scored, partial and final alike — that is when
+                // `emit_detections` runs live, so it is when a verse can reach a wall.
+                let updates: Vec<(u64, String, bool)> =
+                    seen.lock().map(|g| g.clone()).unwrap_or_default();
+                let mut router = crate::router::Router::default();
+                let mut found: Vec<String> = Vec::new();
+                let mut offered: Vec<String> = Vec::new();
+                for (ms, text, is_final) in &updates {
+                    for m in crate::detection::detect_direct(text)
+                        .into_iter()
+                        .filter(|m| !m.is_provisional(*is_final))
+                    {
+                        let key = format!(
+                            "{} {}:{}",
+                            m.reference.book, m.reference.chapter, m.reference.verse
+                        );
+                        match router.decide(
+                            &key,
+                            m.confidence,
+                            crate::detection::DetectionMethod::Direct,
+                            *ms,
+                        ) {
+                            crate::router::RouteDecision::AutoFire => found.push(key),
+                            crate::router::RouteDecision::Suggest => offered.push(key),
+                            crate::router::RouteDecision::Drop => {}
+                        }
+                    }
+                }
+                found.sort();
+                found.dedup();
+                offered.sort();
+                offered.dedup();
+
+                // `RELAY_BENCH_VERBOSE=1` prints what was actually heard. A missing
+                // reference has two very different causes — the decoder never said
+                // the words, or it said them and the detector did not parse them —
+                // and the score alone cannot tell them apart. Guessing which one it
+                // is, is how an afternoon gets spent tuning the wrong component.
+                //
+                // Every DISTINCT update, not the last one: the last is only the final
+                // rolling window, so a reference spoken early is not in it — printing
+                // just that would make an early reference look like it was never
+                // transcribed, when it was, in a window the scorer did see.
+                if std::env::var_os("RELAY_BENCH_VERBOSE").is_some() {
+                    let mut shown: Vec<&String> = Vec::new();
+                    for (_, t, _) in &updates {
+                        if !t.trim().is_empty() && !shown.contains(&t) {
+                            shown.push(t);
+                            println!("      heard: {t}");
+                        }
+                    }
+                    if !offered.is_empty() {
+                        println!("      offered (not auto-fired): {offered:?}");
+                    }
+                }
+
+                let hit = want.iter().filter(|w| found.contains(w)).count();
+                let bad = found.iter().filter(|f| !want.contains(f)).count();
+                right += hit;
+                wrong += bad;
+                audio_s = audio_s.max(secs);
+                wall_s = wall_s.max(lag);
+                println!(
+                    "    {clabel} → {hit}/{} correct, {bad} WRONG   \
+                     [lag {lag:.1}s, voiced {voiced}/{n_chunks}]  {found:?}",
+                    want.len(),
+                );
+            }
+
+            let total = want.len() * conds.len();
+            // Worst lag, not mean: a decoder that keeps up four times out of five is
+            // one that fell behind during a sermon, and an average hides that.
+            println!(
+                "    ══ {label}: {right}/{total} correct   WRONG VERSES: {wrong}   \
+                 worst lag {wall_s:.1}s over {audio_s:.0}s of audio",
+            );
+            // A lag that grows with the clip means the decoder cannot keep up, and the
+            // worker starts dropping genuinely old audio (see the batch-drain comment
+            // on the worker loop). An accuracy win bought at a growing lag is not a win.
+        }
+        println!("\n  A wrong verse is the failure this product exists to prevent.");
+        println!("  Rank on WRONG VERSES first, lag second, correct third.\n");
     }
 
     #[test]

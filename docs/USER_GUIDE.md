@@ -28,6 +28,22 @@ Until you do this, Relay still works as a *manual* tool — you can type a verse
 
 Do this **before** Sunday. It is 148 MB over the church wifi.
 
+#### If Relay keeps mishearing
+
+The recommended model is the small one, because it runs on any laptop. If Relay is
+mishearing a lot — especially over a poor microphone, or in Yoruba, Swahili or
+Hausa — Settings → Speech lists larger models that hear more accurately. They are
+bigger downloads and they need a faster computer.
+
+Two things worth knowing before you switch:
+
+- Relay marks the one it is actually using **In use**. Downloading a model switches
+  to it; you can switch back at any time, and it takes effect immediately.
+- If a model would be too slow for your computer, Relay says so **on that model**,
+  before you download it. Take that seriously: a model that cannot keep up does not
+  stop — the transcript just quietly thins out, which is much harder to notice
+  mid-service than an error would be.
+
 ### 3. Point it at the projector
 
 Open the **Outputs** tab → **Screens**.

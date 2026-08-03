@@ -9,10 +9,12 @@
   import {
     listModels,
     downloadModel,
+    selectModel,
     cancelModelDownload,
     dismissModelError,
     modelProgress,
     modelError,
+    capture,
   } from './stores/capture.js';
 
   export let compact = false; // banner form (Console) vs full card (Settings)
@@ -36,12 +38,37 @@
     busy = false;
   }
 
+  async function use(filename) {
+    busy = true;
+    // `selectModel` reports a THROWN failure through $modelError, but it can also
+    // resolve `false` — the model was chosen and then would not load. Nothing is
+    // thrown, so without this the badge simply vanishes and the operator is left
+    // reading a list that shows nothing in use, with no explanation. A control may
+    // not report a success it did not achieve (CLAUDE.md #15).
+    const ok = await selectModel(filename);
+    if (!ok && !$modelError) {
+      modelError.set(
+        'That model could not be loaded. Relay has kept the one it was already using.',
+      );
+    }
+    await refresh();
+    busy = false;
+  }
+
   const mb = (b) => `${Math.round(b / 1_000_000)} MB`;
   $: pct =
     $modelProgress?.total > 0
       ? Math.min(100, Math.round(($modelProgress.downloaded / $modelProgress.total) * 100))
       : 0;
   $: installed = models.some((m) => m.installed);
+
+  // Which model is ACTUALLY loaded — `stt_status.model` is a full path, and the
+  // catalogue keys on filename. This is the difference between "installed" and
+  // "running", and once more than one model can be installed those stop being the
+  // same thing. Showing only "installed" is how an operator ends up certain they
+  // are on the large model while `base` is doing the listening.
+  $: activeFile = ($capture.stt?.model || '').split(/[/\\]/).pop();
+
 </script>
 
 <div class="ms" class:compact>
@@ -66,31 +93,55 @@
       · you can keep using Relay while this runs
     </div>
     <button class="r-btn ghost sm" on:click={cancelModelDownload}>Cancel</button>
-  {:else if installed}
+  {:else if installed && compact}
+    <!-- The Live banner exists to get a first model onto the machine. Once one is
+         here its job is done; choosing between models is a Settings job, not
+         something to offer an operator mid-service. -->
     <div class="ms-head"><b class="ok">Speech recognition is ready.</b></div>
   {:else}
     <div class="ms-head">
-      <b>Relay can't hear the sermon yet.</b>
+      <b>{installed ? 'Speech model' : "Relay can't hear the sermon yet."}</b>
     </div>
     <p class="ms-sub">
-      It needs a speech model — a one-time download. Everything else already works:
-      you can put any verse on screen by typing its reference.
+      {#if installed}
+        A bigger model hears more accurately but needs a faster computer. Relay uses
+        the one marked <b>In use</b>.
+      {:else}
+        It needs a speech model — a one-time download. Everything else already works:
+        you can put any verse on screen by typing its reference.
+      {/if}
     </p>
 
     {#each models as m}
+      {@const active = m.installed && m.filename === activeFile}
       <div class="ms-opt">
         <div class="ms-opt-t">
           <b>{m.label}</b>
           <span class="r-mono ms-size">{mb(m.bytes)}</span>
+          {#if active}<span class="ms-live">In use</span>{/if}
         </div>
         <div class="ms-opt-d">{m.detail}</div>
-        <button
-          class="r-btn"
-          class:amber={m.recommended}
-          disabled={busy}
-          on:click={() => get(m.id)}>
-          {m.installed ? 'Installed' : `Download ${m.recommended ? '— recommended' : ''}`}
-        </button>
+        {#if m.caution}
+          <!-- Not an error: nothing has gone wrong, and the operator may still
+               have good reason to pick it. It must be readable BEFORE the
+               download, which is why it sits above the button. -->
+          <p class="ms-caution">{m.caution}</p>
+        {/if}
+        {#if active}
+          <button class="r-btn" disabled>In use</button>
+        {:else if m.installed}
+          <button class="r-btn" disabled={busy} on:click={() => use(m.filename)}>
+            Use this one
+          </button>
+        {:else}
+          <button
+            class="r-btn"
+            class:amber={m.recommended}
+            disabled={busy}
+            on:click={() => get(m.id)}>
+            Download {m.recommended ? '— recommended' : ''}
+          </button>
+        {/if}
       </div>
     {/each}
   {/if}
@@ -147,6 +198,22 @@
   .ms-opt-t b { font-size: 13px; color: var(--v-txt); }
   .ms-size { font-size: 11px; color: var(--v-dim); }
   .ms-opt-d { font-size: 12px; color: var(--v-dim); line-height: 1.55; margin: 3px 0 8px; }
+  /* Amber, not red: nothing is broken, and the operator may still have a good
+     reason to choose it. Red here would read as a failure and be clicked past. */
+  .ms-caution {
+    font-size: 12px; line-height: 1.55; margin: 0 0 8px;
+    padding: 7px 9px; border-radius: 7px;
+    background: rgba(245, 158, 11, 0.14);
+    border: 1px solid rgba(245, 158, 11, 0.3);
+    color: var(--v-amber, #f59e0b);
+  }
+  .ms-live {
+    font-size: 10.5px; letter-spacing: 0.04em; text-transform: uppercase;
+    padding: 2px 6px; border-radius: 99px;
+    background: rgba(16, 185, 129, 0.16);
+    border: 1px solid rgba(16, 185, 129, 0.32);
+    color: var(--v-emerald);
+  }
   .ms-err {
     margin-top: 10px; padding: 8px 10px; border-radius: 8px;
     background: rgba(239,68,68, 0.18); border: 1px solid rgba(239,68,68, 0.3);

@@ -876,9 +876,14 @@
         {#if $capture.stt.loaded}
           <div class="s-status ok s-model"><span class="s-sdot"></span>loaded</div>
           <div class="s-modelpath">{$capture.stt.model}</div>
-        {:else}
-          <ModelSetup />
         {/if}
+        <!-- ALWAYS rendered, not only when nothing is loaded. This used to be the
+             `{:else}` branch, which was right when there was one model and wrong the
+             moment there were several: the operator could install a more accurate
+             model and then had no way to see which one was running, let alone choose.
+             ModelSetup shows the picker once something is installed and the
+             download prompt when nothing is. -->
+        <ModelSetup />
 
       {:else if section === 'integrations'}
         <p class="s-lead">Relay sends its output to other software over your local network — no plugins to install. Add a <b>Browser Source</b> pointing at Relay; the exact per-channel URL is in <b>Outputs → Sharing</b>.</p>

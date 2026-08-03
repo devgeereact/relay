@@ -109,6 +109,40 @@ pub struct RefMatch {
     /// decision: an operator can tell in a glance whether Relay heard "John three
     /// sixteen" or misheard "gone free sixty".
     pub matched_text: String,
+    /// This match ran to the LAST WORD of the text it was parsed from — nothing
+    /// followed it.
+    ///
+    /// Meaningless on its own; it matters only for a PARTIAL transcript, where the
+    /// text is still growing. There, ending at the tail means the next word may
+    /// still be part of this reference, so the reading is provisional. See
+    /// `main::emit_detections`, which is where the transcript's finality is known.
+    pub at_tail: bool,
+}
+
+impl RefMatch {
+    /// True when this reading exists only because the transcript was CUT OFF, and
+    /// so describes the window boundary rather than anything anyone said.
+    ///
+    /// "…turn to John chapter 3" is a complete, well-formed whole-chapter reference
+    /// worth 0.88 — and it is also exactly what "John chapter 3 verse 16" looks like
+    /// one second before the number arrives. The STT window is re-decoded about once
+    /// a second and detection runs on every partial (DECISIONS.md), so whether a
+    /// citation is seen whole or half depends only on where the boundary lands.
+    /// Measured via `stt::bench::engine_shootout`, that coin toss put John 3:1 on the
+    /// wall ahead of John 3:16.
+    ///
+    /// Narrow on purpose — a whole-chapter reading, with nothing after it, in text
+    /// that can still grow. A complete "John 3:16" at the tail is NOT provisional and
+    /// still fires instantly, so this costs no latency on the path that matters.
+    /// Nothing is lost, either: the next partial carries the number, and a preacher
+    /// who really did mean the chapter gets it when the utterance closes.
+    ///
+    /// Lives here, and is used by both `main::emit_detections` and
+    /// `stt::bench::engine_shootout`, so the bench cannot score a policy the live
+    /// path does not have.
+    pub fn is_provisional(&self, is_final: bool) -> bool {
+        self.whole_chapter && self.at_tail && !is_final
+    }
 }
 
 /// The 66 canonical books in standard Protestant order. This is the source of
@@ -642,7 +676,11 @@ pub fn detect_direct(text: &str) -> Vec<RefMatch> {
     let mut i = 0;
     while i < tokens.len() {
         if let Some((canonical, book_end, fuzzy)) = match_book(&tokens, i) {
-            if let Some((m, next)) = parse_reference(&tokens, book_end, canonical, i, fuzzy) {
+            if let Some((mut m, next)) = parse_reference(&tokens, book_end, canonical, i, fuzzy) {
+                // Nothing followed this reference in the text it came from. On a
+                // partial transcript that means the next word might still belong to
+                // it — see `RefMatch::at_tail`.
+                m.at_tail = next >= tokens.len();
                 out.push(m);
                 i = next;
                 continue;
@@ -907,8 +945,12 @@ fn parse_reference(
         let (n1, after1, ph1) = parse_number(tokens, i)?;
         let mut k = after1;
         let mut kw2 = used_kw;
+        // Same commitment as the general chapter path below: consuming a verse
+        // marker here means a number is expected.
+        let mut verse_marker = false;
         while let Some(t) = tokens.get(k) {
             if is_verse_word(t) || *t == ":" {
+                verse_marker = true;
                 if *t != ":" {
                     kw2 = true;
                 }
@@ -951,6 +993,15 @@ fn parse_reference(
                 after2,
             ));
         }
+        // TRUNCATED MID-REFERENCE, single-chapter twin. "Jude chapter 1 verse" —
+        // the marker was consumed and the number never came, so falling through to
+        // the lone-number reading would answer with Jude 1:1 at 0.95, which is
+        // HIGHER than the 0.88 the general path was handing out. Same defect, worse
+        // number. See the guard on the chapter path below for the full reasoning.
+        if verse_marker {
+            return None;
+        }
+
         // Lone number → verse, chapter 1, with optional range ("Jude 4-6").
         //
         // ── Without a keyword this is the single-chapter twin of the bare whole
@@ -995,8 +1046,14 @@ fn parse_reference(
 
     // Colon-combined right after chapter? (e.g. tokens were "3" ":" "16" — rare)
     // optional "verse" / "verses" / "vs" / "v" / ":" separators
+    //
+    // `verse_marker` records that the grammar COMMITTED to a verse number here. If
+    // one never arrives, this is not a whole-chapter reference — it is a reference
+    // cut off mid-sentence. See the truncation guard below.
+    let mut verse_marker = false;
     while let Some(t) = tokens.get(i) {
         if is_verse_word(t) || *t == ":" {
+            verse_marker = true;
             if *t != ":" {
                 used_kw = true;
             }
@@ -1041,6 +1098,36 @@ fn parse_reference(
     // A manual push is unaffected — it bypasses the gate entirely — and the
     // sensitivity dial still governs all of it.
     let Some((verse, after_vs, ph2)) = parse_number(tokens, i) else {
+        // ── TRUNCATED MID-REFERENCE ─────────────────────────────────────────
+        //
+        // "…John chapter 3 verse" — the speaker said a verse number and the
+        // TRANSCRIPT STOPPED BEFORE IT. There is no whole-chapter reading to fall
+        // back to: a dangling verse marker is proof a verse was coming, which is
+        // the exact opposite of the referential intent the keyword bonus below
+        // rewards. Answering it with verse 1 invents a verse nobody asked for.
+        //
+        // This is not hypothetical, and it is not rare. Detection runs on every
+        // PARTIAL hypothesis (DECISIONS.md), and the STT window is re-decoded
+        // about once a second — so every reference anyone speaks is parsed at
+        // least once in a state where the number has not arrived yet. Measured
+        // through `stt::bench::engine_shootout`, one clip citing two verses
+        // auto-fired John 3:1 and Romans 8:1 to the wall on the way to the right
+        // answer. The congregation sees the wrong verse flash, then the right one.
+        //
+        // Worse, the marker was ACTIVELY PROMOTING the mistake. A bare "Romans 8"
+        // scores 0.45 and asks a human — but the dangling "verse" set `used_kw`,
+        // which bought the truncated parse 0.88 and a straight path to the screen.
+        // The most incomplete reading of the sentence outranked every other.
+        //
+        // So the parse fails. `detect_direct`'s scanner advances a token and
+        // carries on, the next second's window carries the whole reference, and
+        // that one fires. This is the same principle the keyword-less demotion
+        // below rests on, stated one step harder: A PARTIAL HEARING OF A REFERENCE
+        // MUST NEVER OUTRANK A FULL ONE.
+        if verse_marker {
+            return None;
+        }
+
         // Before treating this as a whole chapter: is it even a chapter of this
         // book? "john 663" is not John chapter 663 — John has 21 — it is whisper
         // running "six sixty-three" together. Repair it to 6:63 when exactly one
@@ -1152,6 +1239,9 @@ fn make_match(
         confidence: conf,
         method: DetectionMethod::Direct,
         matched_text: tokens[book_start..end].join(" "),
+        // Set by `detect_direct`, which is the only place that knows where the
+        // scan actually stopped once ranges have been absorbed.
+        at_tail: false,
     }
 }
 
@@ -2672,6 +2762,159 @@ mod tests {
         // "chapter" is proof of referential intent — nobody says it by accident —
         // so THIS one may still fire on its own.
         assert!(m.confidence >= crate::router::Thresholds::default().auto_fire);
+    }
+
+    /// A REFERENCE CUT OFF BEFORE ITS VERSE NUMBER IS NOT A WHOLE-CHAPTER
+    /// REFERENCE.
+    ///
+    /// Measured, not imagined: `stt::bench::engine_shootout` drives real audio
+    /// through the real pipeline, and because detection runs on every PARTIAL
+    /// hypothesis of a window re-decoded once a second, every spoken reference is
+    /// parsed at least once before its number has arrived. A clip citing Romans
+    /// 8:28 and John 3:16 auto-fired **John 3:1** and **Romans 8:1** to the wall on
+    /// the way to the right answers.
+    #[test]
+    fn a_transcript_that_stops_at_verse_does_not_invent_verse_one() {
+        for text in [
+            "and we read again in john chapter 3 verse",
+            "turn with me in your bibles to romans 8 verse",
+            "romans chapter 8 verses",
+            "let us read psalm 23 v",
+            "john 3:",
+            // SINGLE-CHAPTER BOOKS take a different branch in `parse_reference`,
+            // and the first version of this guard missed it entirely — where the
+            // truncated reading scored 0.95, higher than the 0.88 on the path that
+            // was fixed. Jude, Philemon, Obadiah, 2 John, 3 John.
+            "turn to jude chapter 1 verse",
+            "2 john chapter 1 verse",
+            "philemon chapter 1 verse",
+            "jude 1:",
+        ] {
+            assert!(
+                detect_direct(text).is_empty(),
+                "{text:?} is a reference cut off mid-sentence, not a whole chapter — \
+                 got {:?}",
+                detect_direct(text)
+                    .iter()
+                    .map(|m| format!(
+                        "{} {}:{} @{:.2}",
+                        m.reference.book, m.reference.chapter, m.reference.verse, m.confidence
+                    ))
+                    .collect::<Vec<_>>()
+            );
+        }
+    }
+
+    /// The dangling marker was not merely tolerated, it was PROMOTING the mistake.
+    ///
+    /// A bare "Romans 8" scores 0.45 and asks a human. The trailing "verse" set the
+    /// keyword bonus, which bought the *less* complete parse 0.88 — straight past
+    /// the 0.50 auto bar. The most truncated reading of the sentence outranked the
+    /// honest one.
+    #[test]
+    fn a_dangling_verse_marker_cannot_buy_a_promotion_to_auto_fire() {
+        let bar = crate::router::Thresholds::default().auto_fire;
+        // The honest, complete form still fires.
+        let full = one("turn to john chapter 3 verse 16");
+        refeq(&full, "John", 3, 16);
+        assert!(full.confidence >= bar);
+        // The truncated form reaches nothing at all.
+        assert!(detect_direct("turn to john chapter 3 verse").is_empty());
+    }
+
+    /// The guard must fire on the MISSING NUMBER, not on the word "verse". These
+    /// all carry a verse number and must be untouched — this is what stops the fix
+    /// above from being a silent recall regression.
+    #[test]
+    fn a_verse_marker_with_its_number_is_unaffected() {
+        refeq(&one("john chapter 3 verse 16"), "John", 3, 16);
+        refeq(&one("psalm 23 verse 1"), "Psalms", 23, 1);
+        refeq(&one("john 3:16"), "John", 3, 16);
+        refeq(&one("jude verse 4"), "Jude", 1, 4);
+        // Single-chapter books, both shapes — the branch the guard also covers.
+        refeq(&one("jude chapter 1 verse 4"), "Jude", 1, 4);
+        refeq(&one("jude 4"), "Jude", 1, 4);
+        refeq(&one("2 john chapter 1 verse 3"), "2 John", 1, 3);
+        // A range still parses: "verses" then a number.
+        let r = one("psalm 23 verses 1 to 6");
+        refeq(&r, "Psalms", 23, 1);
+        assert_eq!(r.verse_end, Some(6));
+        // And a genuine whole chapter — no verse marker anywhere — is untouched.
+        assert!(one("turn to psalm 23").whole_chapter);
+        assert!(one("psalm chapter 23").whole_chapter);
+    }
+
+    /// Truncation must not swallow the rest of the sentence. `detect_direct`'s
+    /// scanner advances a token on a failed parse, so a later, complete reference
+    /// in the same window still lands — which is the whole reason returning None
+    /// here is safe rather than lossy.
+    #[test]
+    fn a_truncated_reference_does_not_hide_a_complete_one_after_it() {
+        let ms = detect_direct("romans 8 verse and then we turn to john chapter 3 verse 16");
+        assert_eq!(ms.len(), 1, "got {ms:?}");
+        refeq(&ms[0], "John", 3, 16);
+    }
+
+    /// `at_tail` is the fact `emit_detections` gates the whole-chapter guard on: it
+    /// must mean "nothing followed this reference", and nothing more.
+    #[test]
+    fn at_tail_marks_only_a_reference_with_nothing_after_it() {
+        assert!(one("and we read again in john chapter 3").at_tail);
+        assert!(one("john 3:16").at_tail);
+        // Trailing punctuation is not a word — `normalize` drops it, so a reference
+        // ending a sentence is still at the tail. This is the shape the guard is
+        // actually for: whisper emits "…John chapter 3." mid-utterance.
+        assert!(one("and we read again in john chapter 3.").at_tail);
+        // Something genuinely follows.
+        assert!(!one("john chapter 3 verse 16 for god so loved the world").at_tail);
+        assert!(!one("john 3:16 is the verse").at_tail);
+        // A range is absorbed before the tail test, so the tail is past the range.
+        let r = one("psalm 23 verses 1 to 6");
+        assert_eq!(r.verse_end, Some(6));
+        assert!(r.at_tail);
+    }
+
+    /// The guard is deliberately narrow, and THIS is the test that holds it narrow.
+    ///
+    /// A complete reference at the tail must keep firing instantly — that is the
+    /// common case, and suppressing every tail match on a partial would delay
+    /// essentially every auto-fire by about a second, trading this bug for a latency
+    /// regression against SPEC's 3-second budget. Widen `is_provisional` past
+    /// whole-chapter-at-tail and this fails.
+    #[test]
+    fn a_complete_reference_at_the_tail_is_not_treated_as_provisional() {
+        let m = one("turn with me to john chapter 3 verse 16");
+        assert!(m.at_tail, "precondition: it does end the text");
+        assert!(
+            !m.is_provisional(false),
+            "a finished reference is not provisional just because it ends the window"
+        );
+        assert!(m.confidence >= crate::router::Thresholds::default().auto_fire);
+    }
+
+    /// `is_provisional` is the one place the rule lives — `emit_detections` and
+    /// `stt::bench::engine_shootout` both call it — so its truth table is pinned
+    /// here rather than inferred from either caller.
+    #[test]
+    fn only_a_growing_whole_chapter_at_the_tail_is_provisional() {
+        // The shape the guard exists for: whole chapter, nothing after, still growing.
+        let partial = one("and we read again in john chapter 3");
+        assert!(partial.whole_chapter && partial.at_tail);
+        assert!(partial.is_provisional(false));
+
+        // Same words, but the utterance CLOSED. The preacher meant the chapter.
+        assert!(
+            !partial.is_provisional(true),
+            "a final transcript will not grow — this must be allowed through"
+        );
+
+        // Whole chapter, but more text followed, so it was never truncated.
+        let midtext = one("we read john chapter 3 and then we prayed");
+        assert!(midtext.whole_chapter && !midtext.at_tail);
+        assert!(!midtext.is_provisional(false));
+
+        // Not a whole chapter at all.
+        assert!(!one("john 3:16").is_provisional(false));
     }
 
     /// THE regression from the live service of 2026-07-26.
