@@ -1203,8 +1203,19 @@ fn remote_api<R: tauri::Runtime>(app: &tauri::AppHandle<R>, rest: &str) -> Strin
             } else {
                 detection::NavCommand::Previous
             };
+            // The OUTCOME rides, not just "ok". `NavResult` exists because a nav
+            // that returned `()` let the operator press Next mid-sermon, watch the
+            // wall not change, and get no error, no toast and nothing in any log.
+            // That was repaired for the console and left standing here: the remote
+            // discarded the outcome with `Ok(_)`, so the preacher's own phone
+            // answered `{"ok":true}` at the end of a reading and moved nothing —
+            // the same silent no-op, one surface along.
             match handle_nav(app, dir) {
-                Ok(_) => format!("{{\"ok\":true,{}}}", live_json(app)),
+                Ok(outcome) => format!(
+                    "{{\"ok\":true,\"nav\":{},{}}}",
+                    serde_json::to_string(&outcome).unwrap_or_else(|_| "null".into()),
+                    live_json(app)
+                ),
                 Err(e) => format!("{{\"ok\":false,\"error\":{}}}", json_str(&e.to_string())),
             }
         }

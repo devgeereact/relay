@@ -189,6 +189,7 @@ These caused real crashes, freezes, or silent failures in front of people. Keep 
 - `detection.rs` is DB/IO-free and heavily unit-tested. Book aliases: full names, numbered ("1 john"/"first john"/"1jn"), fast abbreviations ("ps 23 1"), ASR mishears ("sam"→Psalms).
 - Spoken-number FSM: "three sixteen" → 3:16 (not 19). Single-chapter books ("Jude 4" → 1:4). Ambiguous "revelation 22" → suggests 22:1 AND 2:2.
 - Voice/manual nav: "next"/"back" and the console Prev/Next both go through the `nav` command → `handle_nav`, which returns a **`NavResult`** (Fired / EndOfPassage / NoPassage / NotInLibrary). Not every outcome is a failure — reaching the end of a passage is a correct boundary, and the operator must be told *which*. It used to return `()` and silently do nothing.
+- **A guarantee is only kept on the doors you checked.** Three separate bugs this repo has now had are the same bug: a rule enforced on one surface and skipped on its twin. Rehearsal gated three of four kiosk publishers. The throw-vs-swallow contract held for eight of nine group-1 wrappers. And `NavResult` — built precisely so nav could never again silently do nothing — was thrown away by `remote_api` with `Ok(_)`, so the preacher's phone answered `{"ok":true}` at the end of a reading and moved nothing, which is the original bug verbatim. When you fix something, **enumerate every caller of the thing you fixed**, and write the test on the surface that was missed.
 
 ## Ports (global registry, NN=03)
 

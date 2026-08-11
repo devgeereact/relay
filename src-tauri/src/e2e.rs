@@ -578,6 +578,56 @@ fn the_preacher_remote_searches_fires_and_walks_the_passage() {
         nexted["live"]["reference"], "John 3:17",
         "the remote's Next did not walk to the next verse"
     );
+    assert_eq!(
+        nexted["nav"]["kind"], "fired",
+        "the remote did not say WHICH outcome its Next had"
+    );
+}
+
+/// THE REMOTE MUST SAY WHY NOTHING MOVED — the same repair `NavResult` was built
+/// for, applied to the surface it was never applied to.
+///
+/// `nav` used to return `()`, so an operator pressed Next mid-sermon, the wall did
+/// not change, and nothing anywhere said why. That was fixed for the console and
+/// left standing on the preacher's phone: `remote_api` matched `Ok(_)` and threw
+/// the outcome away, so the end of a reading answered `{"ok":true}` exactly like a
+/// successful step. `Stage.svelte`'s only handler was a `catch`, which fires on a
+/// transport error and never on this — so the preacher tapped Next at the end of a
+/// reading and got silence, which is the original bug verbatim.
+///
+/// Every non-firing outcome must be nameable by the phone.
+#[test]
+fn the_remote_says_which_outcome_its_nav_had_not_merely_ok() {
+    let app = app();
+    let h = app.handle().clone();
+
+    // Nothing staged at all — stepping has nowhere to go, and must say so.
+    let cold = super::remote_api(&h, "next");
+    let cold: serde_json::Value = serde_json::from_str(&cold).expect("next json");
+    assert_eq!(cold["ok"], true, "a boundary is not a transport failure");
+    assert_eq!(
+        cold["nav"]["kind"], "no_passage",
+        "the remote reported ok with nothing staged, and named no outcome"
+    );
+
+    // Stage a passage, then walk off the end of the BOOK. Jude has one chapter and
+    // 25 verses, so 25 is the last verse there is.
+    let fired = super::remote_api(&h, "fire?ref=Jude%2025");
+    let fired: serde_json::Value = serde_json::from_str(&fired).expect("fire json");
+    assert_eq!(fired["ok"], true);
+    assert_eq!(fired["live"]["reference"], "Jude 1:25");
+
+    let past = super::remote_api(&h, "next");
+    let past: serde_json::Value = serde_json::from_str(&past).expect("next json");
+    assert_eq!(past["ok"], true);
+    assert_ne!(
+        past["nav"]["kind"], "fired",
+        "the remote claimed it advanced past the last verse of Jude"
+    );
+    assert_eq!(
+        past["live"]["reference"], "Jude 1:25",
+        "the wall moved when the remote had nowhere to move to"
+    );
 }
 
 impl NavResult {

@@ -62,11 +62,27 @@
     } finally { busy = false; }
   }
 
+  // Not every outcome is a failure, and the preacher is entitled to know WHICH.
+  // The end of a reading is a correct boundary; a verse missing from the library
+  // is a real fault. Only `fired` moved the wall.
+  const NAV_SAID = {
+    end_of_passage: 'End of the reading.',
+    no_passage: 'Nothing on screen yet — tap a verse first.',
+    not_in_library: 'That verse is not in the library.',
+  };
+
   async function nav(dir) {
     if (busy) return;
     busy = true; ctlErr = '';
     try {
-      await api(dir); // 'next' | 'prev'
+      // The backend answers `ok: true` for every outcome it handled — including
+      // the ones where NOTHING MOVED. So the catch below is not enough on its own:
+      // it only ever fires on a transport failure, which meant tapping Next at the
+      // end of a reading did nothing, said nothing, and left the preacher tapping.
+      const j = await api(dir); // 'next' | 'prev'
+      if (j.nav && j.nav.kind !== 'fired') {
+        ctlErr = NAV_SAID[j.nav.kind] ?? (dir === 'next' ? 'No next verse.' : 'No previous verse.');
+      }
     } catch (e) {
       ctlErr = dir === 'next' ? 'No next verse.' : 'No previous verse.';
     } finally { busy = false; }
