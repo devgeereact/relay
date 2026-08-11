@@ -221,6 +221,9 @@
     unregisterKeys?.();
     unsubNav?.();
     clearTimeout(cdArmT);
+    // The emergency announcement's arm timer, cleared for the same reason as the
+    // countdown's right above it. It was the one of the pair that was missed.
+    clearTimeout(annArmT);
     clearTimeout(liveMsgT);
     clearTimeout(relatedT); // a pending poll must not fire into a destroyed view
   });

@@ -82,9 +82,9 @@ One shared template engine renders to three target types (docs/SPEC.md §5):
   Channels tab. Live now.
 - **Kiosk / network client** — a LAN browser (e.g. a $50 Raspberry Pi) or an
   OBS/vMix **browser source** points at
-  `http://<app-host>:8032/output.html?template_id=<n>` and receives live state
-  over the WebSocket hub on **port 8031**. Add channels and copy the URL/QR from
-  the **Channels** tab. Live now.
+  `http://<app-host>:8032/output.html?channel=<id>&template_id=<n>` and receives
+  live state over the WebSocket hub on **port 8031**. Add channels and copy the
+  URL/QR from the **Channels** tab. Live now.
 - **Preacher stage remote** — `http://<app-host>:8032/stage.html` on a phone or
   iPad: the live verse large + "up next" + operator stage notes + countdown, kept
   off the congregation screen. Uploaded media is served from the same port
@@ -102,6 +102,13 @@ One shared template engine renders to three target types (docs/SPEC.md §5):
 > screen with no error. The embedded HTTP server on **`8032`** serves the output and
 > stage pages in both dev and production — and it is what the **Channels** tab's
 > Copy URL / QR actually hand you, so prefer those over typing a URL by hand.
+>
+> The URL is **channel-keyed**, and that is the reason to prefer Copy URL rather
+> than merely a convenience. Changing a screen's template broadcasts a retemplate
+> message that each output applies by matching its own `channel`. A URL carrying
+> only `?template_id=` parses as channel 0 — it renders, so it looks correct, and
+> it is then the one source in the building that silently never follows a template
+> change.
 - **NDI encode** — into OBS/vMix/ATEM/ProPresenter. **Not yet available:**
   requires the proprietary NDI SDK (native lib + FFI). The command returns a
   clear error; integration path is documented in `src-tauri/src/main.rs`

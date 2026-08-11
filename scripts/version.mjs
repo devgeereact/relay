@@ -79,14 +79,35 @@ function fail(msg, hint) {
   process.exit(1);
 }
 
+// ONE validator, used by both --set and --check.
+//
+// These files are also hand-edited and merged, so --check is not merely a
+// re-run of what --set already allowed: it is the last gate before the release
+// workflow starts building. It used to be the weaker of the two — it tested the
+// shape but not the MSI's 65535 ceiling on the pre-release number, so a version
+// --set would have refused could still reach a tag and die in the Windows
+// bundler a quarter of an hour later. That is the exact failure this file exists
+// to move forward in time.
+function validate(v, where) {
+  if (!SEMVER.test(v)) fail(`${where} has an unusable version: "${v}"`, BAD_VERSION_HELP);
+  const pre = v.split('-')[1];
+  if (pre && Number(pre) > MSI_MAX_PRERELEASE) {
+    fail(
+      `${where} has pre-release number ${pre}, above the MSI limit of ${MSI_MAX_PRERELEASE}.`,
+      BAD_VERSION_HELP,
+    );
+  }
+}
+
 function check(expected) {
   const found = current();
   const values = Object.values(found);
 
   for (const [file, v] of Object.entries(found)) {
     if (!v) fail(`No version found in ${file}.`);
-    if (!SEMVER.test(v)) fail(`${file} has an unusable version: "${v}"`, BAD_VERSION_HELP);
+    validate(v, file);
   }
+  if (expected) validate(expected, 'The tag');
 
   if (new Set(values).size !== 1) {
     const list = Object.entries(found)
@@ -114,11 +135,7 @@ function check(expected) {
 }
 
 function set(v) {
-  if (!SEMVER.test(v)) fail(`"${v}" is not a usable version.`, BAD_VERSION_HELP);
-  const pre = v.split('-')[1];
-  if (pre && Number(pre) > MSI_MAX_PRERELEASE) {
-    fail(`pre-release number ${pre} is above the MSI limit of ${MSI_MAX_PRERELEASE}.`);
-  }
+  validate(v, `"${v}"`);
 
   const tauri = JSON.parse(read(TAURI));
   tauri.version = v;

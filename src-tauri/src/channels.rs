@@ -454,6 +454,27 @@ const CONSOLE: &str = "main";
 ///
 /// Gating at the choke point, not at the callers, is also what makes it honest: a
 /// new fire path added tomorrow is sandboxed by construction and cannot forget.
+///
+/// ## The choke point is FOUR functions, and it is worth naming them
+///
+/// "One function" was the intent and never the fact, and the gap cost a leak. Every
+/// function below that publishes to the kiosk hub is a way out of the machine:
+///
+/// * `broadcast_content` — gated
+/// * `clear` — gated
+/// * `black` — gated
+/// * `stage_next` — gated, and it was NOT. It leaked "up next" to a live stage
+///   tablet mid-rehearsal, and it has no Tauri emit at all, so the e2e rehearsal
+///   test — which counts wall events — saw nothing wrong.
+///
+/// `main.rs::set_channel_template` also publishes, and is DELIBERATELY not gated:
+/// it carries a template, not content. Reassigning a screen's look is live by
+/// design (DECISIONS §29), puts no scripture anywhere, and suppressing it would
+/// leave a kiosk rendering a template the operator has already replaced.
+///
+/// Anything added here that carries what a person would READ belongs in the gated
+/// list. Check `rehearsing(app)` first, and add an e2e case that watches the KIOSK
+/// hub, not just the wall.
 #[derive(Default)]
 pub struct Rehearsal(pub AtomicBool);
 
@@ -565,11 +586,32 @@ pub fn black<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<(), String>
 /// Push the "up next" preview to the stage/confidence monitor(s). Distinct from
 /// live content — it only reaches the stage view, never the main output. None
 /// clears the panel.
+///
+/// REHEARSAL APPLIES HERE TOO, and it did not.
+///
+/// This is the one content publisher that has no Tauri emit at all: a stage monitor
+/// is always a network client (stage.html over :8032, state over the :8031 hub), so
+/// it is reached only through `publish_kiosk`. That is exactly why it slipped the
+/// gate — `broadcast_content`, `clear` and `black` were each checked, and the e2e
+/// rehearsal test asserts on the WALL, which counts Tauri events. `stage_next`
+/// emits none, so it was invisible to both the gate and the test that guards it.
+///
+/// So an operator rehearsing on the real desk pushed the real upcoming verse to
+/// whatever stage tablet was still connected from the last service — to the
+/// preacher's own screen, in the middle of a live one. Nothing on the congregation
+/// wall would have moved, which is worse: the sandbox looked intact.
 pub fn stage_next<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
     label: Option<String>,
     text: Option<String>,
 ) {
+    if rehearsing(app) {
+        // Nothing to preview on the console — there is no console stage panel — so
+        // this is a suppression, not a redirect. The stage monitor keeps showing
+        // whatever it was showing, exactly as the projector does.
+        println!("rehearsal: stage_next SUPPRESSED — nothing left the machine");
+        return;
+    }
     let json =
         serde_json::json!({ "kind": "stage_next", "label": label, "text": text }).to_string();
     publish_kiosk(app, json);

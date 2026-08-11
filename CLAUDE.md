@@ -43,7 +43,7 @@ Tier 1: **Yoruba, Swahili, Hausa**, plus English. Code-switching (English mixed 
 npm install
 npm run tauri dev        # desktop app + Vite on :5032, kiosk WS on :8031
 
-npm test                 # vitest (417 tests)
+npm test                 # vitest (421 tests)
 npx vitest run src/lib/nav.test.js          # one file
 npx vitest run -t "Escape closes the cheat" # one test by name
 npm run build            # vite build — catches Svelte compile errors fast
@@ -52,13 +52,14 @@ npm run version:check    # the 3 version files agree (CI runs this)
 npm run version:set -- 0.2.0
 ```
 
-Rust (**prefix with the cmake path — this machine has no Homebrew**):
+Rust (**`whisper-rs` compiles whisper.cpp from source, so `cmake` must be on PATH**):
 
 ```bash
-export PATH="/Users/gideonakinlotan/.local/bin:$PATH"   # cmake 3.31.6, needed by whisper-rs
+cmake --version          # any 3.x. `brew install cmake` if it is missing;
+                         # a machine without Homebrew needs its own prefix on PATH
 cd src-tauri
-cargo test                                   # 407 tests
-cargo test e2e                               # the fire → nav → clear path (7 tests)
+cargo test                                   # 429 tests
+cargo test e2e                               # the fire → nav → clear path (13 tests)
 cargo test detection::                       # one module
 cargo test the_macos_build -- --nocapture    # one test
 cargo fmt --all && cargo clippy --all-targets -- -D warnings   # CI enforces both
@@ -96,7 +97,7 @@ Every audio bug so far was invisible in the code and reproducible only with a sp
 │   ├── relay.entitlements   — com.apple.security.device.audio-input. See §17.
 │   ├── tauri.conf.json      — base; tauri.updater.conf.json overlays it at release
 │   └── src/
-│       ├── main.rs          — Tauri commands + the live-fire engine (2.9k lines, 101 cmds)
+│       ├── main.rs          — Tauri commands + the live-fire engine (3.9k lines, 114 cmds)
 │       ├── e2e.rs           — TEST-ONLY. Drives the real fire → nav → clear commands
 │       │                      against a real in-memory DB via tauri::test::mock_builder
 │       ├── audio.rs · dsp.rs · stt.rs      — capture · denoise/gain · whisper worker
@@ -140,7 +141,7 @@ Shipping: in-app model download, first-run wizard, auto-updater, rehearsal mode,
 
 Parked, honestly (not faked): **NDI** (needs proprietary SDK — `open_ndi_output` returns a clear error), **neural paraphrase embedder** (TF-IDF is the seam behind `SemanticIndex::top_k`; the `verses.embedding` column exists and has never been written to), **African-language STT fine-tunes**.
 
-**No dead-but-built commands.** Every one of the 113 registered `#[tauri::command]`s has a frontend caller. The last thirteen were closed together: five superseded ones were deleted (`lookup_verse`, `close_output_window`, `current_service`, and the `*_template_active` pair — the console Output grid became per-channel templates), and eight were given the UI they had always lacked — voice profiles (SPEC §4.6), the emergency announcement, and the "shown earlier" badge. `related_scripture` was wired by the new-design merge.
+**No dead-but-built commands.** Every one of the 114 registered `#[tauri::command]`s has a frontend caller. The last thirteen were closed together: five superseded ones were deleted (`lookup_verse`, `close_output_window`, `current_service`, and the `*_template_active` pair — the console Output grid became per-channel templates), and eight were given the UI they had always lacked — voice profiles (SPEC §4.6), the emergency announcement, and the "shown earlier" badge. `related_scripture` was wired by the new-design merge.
 
 ## Architecture rules learned the HARD WAY — do not regress these
 
@@ -199,7 +200,9 @@ These caused real crashes, freezes, or silent failures in front of people. Keep 
 
 ## Testing
 
-407 Rust + 417 frontend. CI runs both on **macOS and Windows**, plus `fmt`, `clippy -D warnings`, the detection scorecard, and a release build.
+429 Rust + 421 frontend. CI runs both on **macOS and Windows**, plus `fmt`, `clippy -D warnings`, the detection scorecard, and a release build.
+
+- **The frontend suite must pass on a CURRENT Node, not only on CI's Node 20.** Node ≥ 22 defines `localStorage`/`sessionStorage` on the global as own accessors that return `undefined` without `--localstorage-file`; vitest's jsdom environment leaves keys the global already owns, so Node's dead stub won and 60 tests — every one covering what an operator sees on relaunch — failed on a clean checkout with `Cannot read properties of undefined`. `src/test-setup.js` hands the global a real jsdom Storage when the ambient one is missing. Don't delete it because "jsdom provides that".
 
 - **`e2e.rs` is the one test that exercises what a congregation actually sees.** It drives the real commands (`manual_fire`, `nav`, `clear_screens`, `blackout`, `set_rehearsal`) against a real in-memory DB, through the real router and pipeline, and asserts on the events that leave the machine. Nothing is mocked but the window (`tauri::test::mock_builder`, dev-dependency `tauri/test`). **Add a test here whenever you touch the fire path.**
   - Use `mock_context(noop_assets())`, **not** `generate_context!()` — the real macro embeds `Info.plist` as a link symbol and expanding it twice fails with `_EMBED_INFO_PLIST is already defined`.
@@ -209,5 +212,6 @@ These caused real crashes, freezes, or silent failures in front of people. Keep 
 - **`eval.rs` is a CI build gate**, not shipped code: a 50-case labelled corpus scored **through the real router**, failing the build above SPEC's 5% wrong-verse rate. It measures detection over TEXT, not accuracy over AUDIO — WER has never been measured, in any language.
 - **`ipc.test.js` is the contract test**: every Tauri command the frontend calls by string must exist in Rust. Renaming a `#[tauri::command]` otherwise fails silently inside a `catch {}` and a button just quietly stops working.
 - **Test the bug, not the fix.** When fixing something, verify the new test FAILS if you reintroduce the original defect. Several tests in this repo were written that way on purpose; one entitlement test initially passed on a broken file because it grepped a comment.
-- **Largest remaining gaps:** 88 × `Result<_, String>` (no typed error, so the frontend cannot tell "not found" from "DB locked" from "disk full"), and `capture.js`'s throw-vs-swallow contract is stated in a comment and applied ad hoc.
+- **A contract stated in a comment is not a contract.** Both of the gaps this line used to name were fixed by writing the rule down — `error.rs` for typed errors, the throw-vs-swallow groups at the top of `capture.js` — and then only ONE of them was pinned by a test. `stopCapture` sat in the THROWS group, swallowing, for as long as the comment existed: one bare `catch {}` around both the bridge import and the command, so a `stop_capture` that failed on a poisoned audio lock printed "Start listening" over a live microphone and no caller's `catch` could fire. `micstop.test.js` pins it. When you place a wrapper in a group, add the test that holds it there.
+- **A test's assertion surface is part of its claim.** `e2e.rs`'s `Wall` listens for Tauri events, so it can only ever see content that leaves through one of the two doors. `channels::stage_next` publishes to the kiosk hub and emits nothing — so the rehearsal guarantee was tested, passing, and false for the preacher's stage tablet the whole time. `nothing_reaches_the_stage_monitor_during_a_rehearsal` watches the hub itself. Anything new that publishes to the kiosk needs the same.
 - Vitest gotcha: `beforeEach(() => invoke.mockReset())` returns the mock, and vitest treats a value returned from a hook as a **teardown function** — so it calls `invoke()` after every test. Use a block body.

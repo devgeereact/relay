@@ -545,14 +545,37 @@ export async function startCapture(device) {
   capture.update((s) => ({ ...s, capturing: true }));
 }
 
-/** Stop capture and detach listeners. Keeps transcript history. Idempotent. */
+/**
+ * Stop capture and detach listeners. Keeps transcript history. Idempotent.
+ *
+ * THROWS (contract group 1). This changes whether the microphone is live, which is
+ * the group's own definition, and it used to swallow — one bare `catch {}` around
+ * both the bridge import AND the command.
+ *
+ * The comment on that catch said "backend gone — nothing to stop", which is true of
+ * exactly one case: a plain browser, where `invoke()` fails to import and there was
+ * never an engine. It was ALSO catching a real `stop_capture` failure — and
+ * `stop_capture` can fail: it takes a lock, so an audio thread that panicked while
+ * holding it leaves the mutex poisoned and the engine running. The frontend then
+ * detached its listeners, set `capturing: false`, and every caller's
+ * `catch (e) { flash(humanError(e)) }` never ran. The operator read "Start
+ * listening" on a live microphone with detection still auto-firing behind it —
+ * rule 15, from the other end: a control reporting a success it did not achieve.
+ *
+ * So a failed stop leaves the UI saying `capturing` and rethrows. Nothing is torn
+ * down, because nothing stopped, and the operator can press it again.
+ */
 export async function stopCapture() {
+  let call = null;
   try {
-    const call = await invoke();
-    await call('stop_capture');
+    call = await invoke();
   } catch {
-    /* backend gone — nothing to stop */
+    /* no Tauri bridge at all (a plain browser) — there is no engine to stop */
   }
+  // Deliberately NOT in a try: a rejection must reach the caller, and must reach it
+  // before any local teardown claims the microphone is off.
+  if (call) await call('stop_capture');
+
   if (unlistenAudio) {
     unlistenAudio();
     unlistenAudio = null;

@@ -163,10 +163,15 @@
   async function stopMicTest() {
     if (!micOn) return;
     micOn = false;
+    // Caught, not propagated — this also runs from onDestroy, where a rejection is
+    // an unhandled promise with nobody left to catch it. But SHOWN, not swallowed:
+    // `stopCapture` now rejects when the microphone did not actually stop, and the
+    // wizard's whole job is proving to a volunteer that the microphone does what
+    // the screen says it does.
     try {
       await stopCapture();
-    } catch {
-      /* already stopped */
+    } catch (e) {
+      error = humanError(e);
     }
     // Restoring detection MUST NOT throw out of here — this also runs from onDestroy,
     // where a rejection is an unhandled promise and nobody is left to catch it.

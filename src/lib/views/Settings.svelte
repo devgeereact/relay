@@ -192,9 +192,19 @@
   // NOTE: capture is app-level state, NOT tied to this view's lifetime — do not
   // stop it on unmount, or switching tabs would kill the mic mid-service.
 
+  // Both halves can reject — `startCapture` always could, and `stopCapture` now
+  // does rather than swallowing a stop that did not happen. Unhandled here, that
+  // is a rejection nobody sees: the button appears to do nothing and the operator
+  // is left guessing whether the microphone is live.
+  let micErr = '';
   async function toggleCapture() {
-    if ($capture.capturing) await stopCapture();
-    else await startCapture($capture.inputDevice || null);
+    micErr = '';
+    try {
+      if ($capture.capturing) await stopCapture();
+      else await startCapture($capture.inputDevice || null);
+    } catch (e) {
+      micErr = humanError(e);
+    }
   }
 
   // --- Audio output (speakers for video sound) ---
@@ -645,6 +655,9 @@
             </span>
           {/if}
         </div>
+        {#if micErr}
+          <p class="s-note s-err" role="alert">{micErr}</p>
+        {/if}
 
         <!-- AUDIO OUTPUT (speakers for video sound). Sits under the mic on the
              same panel: input and output are one operator question. -->
@@ -888,7 +901,15 @@
       {:else if section === 'integrations'}
         <p class="s-lead">Relay sends its output to other software over your local network — no plugins to install. Add a <b>Browser Source</b> pointing at Relay; the exact per-channel URL is in <b>Outputs → Sharing</b>.</p>
         <div class="s-cardbox">
-          <div class="s-netrow"><span class="s-netk">OBS / vMix (browser source)</span><span class="s-netv r-mono">http://{lanIp || 'this-pc'}:8032/output.html?template_id=&lt;n&gt;</span></div>
+          <!-- The URL is CHANNEL-keyed (DECISIONS §29). Changing a screen's template
+               broadcasts a channel_template message the output applies by matching its
+               OWN `channel` — so a template swap is live with no re-copying of the URL.
+               This row used to show a `?template_id=<n>`-only shape, which parses to
+               channel 0 ("no channel"): it renders, so it looks right, and then it is
+               the one browser source in the building that never follows a template
+               change. Copy URL in Outputs → Sharing is still the only thing that fills
+               in the real ids. -->
+          <div class="s-netrow"><span class="s-netk">OBS / vMix (browser source)</span><span class="s-netv r-mono">http://{lanIp || 'this-pc'}:8032/output.html?channel=&lt;screen&gt;&amp;template_id=&lt;n&gt;</span></div>
           <div class="s-netrow"><span class="s-netk">Kiosk screen / stage tablet</span><span class="s-netv r-mono">:8032 · http</span></div>
           <div class="s-netrow"><span class="s-netk">NDI</span><span class="s-netv r-mono">not available</span></div>
           <div class="s-netrow"><span class="s-netk">ATEM / SDI switcher</span><span class="s-netv r-mono">via HDMI</span></div>

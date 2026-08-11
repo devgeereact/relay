@@ -486,6 +486,55 @@ fn nothing_reaches_the_congregation_during_a_rehearsal() {
     );
 }
 
+/// REHEARSAL, THROUGH THE OTHER DOOR — the WebSocket hub, which the wall cannot see.
+///
+/// `Wall` listens for Tauri events. That is the whole assertion surface of the test
+/// above, and it is why `channels::stage_next` leaked for as long as it did: the
+/// stage/confidence monitor is ALWAYS a network client (stage.html over :8032, state
+/// over the :8031 hub), so `stage_next` publishes to the kiosk hub and emits no Tauri
+/// event at all. It was invisible to the gate and invisible to the guard.
+///
+/// The failure it allowed is the quiet kind. Nothing on the congregation wall moves —
+/// so the sandbox looks intact — while the preacher's own tablet, still connected
+/// from the last service, is handed the real "up next" mid-rehearsal.
+///
+/// This test therefore subscribes to the hub itself. The e2e app deliberately does
+/// not manage a `KioskHub` (headless = "no LAN"), so it is attached here.
+#[test]
+fn nothing_reaches_the_stage_monitor_during_a_rehearsal() {
+    let app = app();
+    let h = app.handle().clone();
+    h.manage(channels::KioskHub::default());
+    let mut kiosk = h.state::<channels::KioskHub>().sender().subscribe();
+
+    // Not rehearsing: the stage monitor is supposed to get it. Assert that FIRST, so
+    // this test cannot pass by the publish path being broken outright.
+    set_stage_next(h.clone(), Some("Up next".into()), Some("John 3:16".into()));
+    settle();
+    let live = kiosk
+        .try_recv()
+        .expect("a real service must reach the stage");
+    assert!(
+        live.contains("stage_next") && live.contains("John 3:16"),
+        "the stage monitor got something other than the up-next it was sent: {live}"
+    );
+
+    set_rehearsal(
+        h.clone(),
+        h.state::<Session>(),
+        h.state::<channels::Rehearsal>(),
+        true,
+    )
+    .expect("enter rehearsal");
+
+    set_stage_next(h.clone(), Some("Up next".into()), Some("Psalm 23:1".into()));
+    settle();
+    assert!(
+        kiosk.try_recv().is_err(),
+        "the up-next preview escaped to a live stage monitor during a rehearsal"
+    );
+}
+
 /// THE PREACHER'S REMOTE, end to end. The phone talks to the same HTTP handler
 /// (`remote_api`) that `main.rs` wires onto :8032, which drives the SAME fire and
 /// nav commands the console does — one engine, no second code path. This proves a
