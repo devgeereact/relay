@@ -43,7 +43,7 @@ Tier 1: **Yoruba, Swahili, Hausa**, plus English. Code-switching (English mixed 
 npm install
 npm run tauri dev        # desktop app + Vite on :5032, kiosk WS on :8031
 
-npm test                 # vitest (421 tests)
+npm test                 # vitest (434 tests)
 npx vitest run src/lib/nav.test.js          # one file
 npx vitest run -t "Escape closes the cheat" # one test by name
 npm run build            # vite build — catches Svelte compile errors fast
@@ -58,7 +58,7 @@ Rust (**`whisper-rs` compiles whisper.cpp from source, so `cmake` must be on PAT
 cmake --version          # any 3.x. `brew install cmake` if it is missing;
                          # a machine without Homebrew needs its own prefix on PATH
 cd src-tauri
-cargo test                                   # 429 tests
+cargo test                                   # 432 tests
 cargo test e2e                               # the fire → nav → clear path (13 tests)
 cargo test detection::                       # one module
 cargo test the_macos_build -- --nocapture    # one test
@@ -90,6 +90,7 @@ Every audio bug so far was invisible in the code and reproducible only with a sp
 │          DESIGN_SYSTEM · PRODUCT_AUDIT · ROADMAP · LANGUAGES
 │          RELEASING · USER_GUIDE · AI_DISCLOSURE · data/schema.sql
 ├── scripts/version.mjs      — the ONLY place the version is read or written (3 files)
+│   scripts/qa-inventory.mjs — controls · orphan components · command map · create paths
 ├── .github/workflows/       — ci.yml (fmt·clippy·tests·scorecard·build, macOS+Windows)
 │                              release.yml (per-platform signing gate; tags only)
 ├── src-tauri/
@@ -98,8 +99,10 @@ Every audio bug so far was invisible in the code and reproducible only with a sp
 │   ├── tauri.conf.json      — base; tauri.updater.conf.json overlays it at release
 │   └── src/
 │       ├── main.rs          — Tauri commands + the live-fire engine (3.9k lines, 114 cmds)
+│       ├── qa.rs            — TEST-ONLY. THE fixture: bare_app() = a fresh install and
+│       │                      nothing else, + Wall (Tauri events) and Kiosk (the WS door)
 │       ├── e2e.rs           — TEST-ONLY. Drives the real fire → nav → clear commands
-│       │                      against a real in-memory DB via tauri::test::mock_builder
+│       │                      against a real in-memory DB via qa::bare_app()
 │       ├── audio.rs · dsp.rs · stt.rs      — capture · denoise/gain · whisper worker
 │       ├── detection.rs     — direct + semantic (TF-IDF) + context memory. DB/IO-free, heavily tested
 │       ├── router.rs        — THE GATE: per-method routing, debounce, self-calibrating thresholds
@@ -141,7 +144,7 @@ Shipping: in-app model download, first-run wizard, auto-updater, rehearsal mode,
 
 Parked, honestly (not faked): **NDI** (needs proprietary SDK — `open_ndi_output` returns a clear error), **neural paraphrase embedder** (TF-IDF is the seam behind `SemanticIndex::top_k`; the `verses.embedding` column exists and has never been written to), **African-language STT fine-tunes**.
 
-**No dead-but-built commands.** Every one of the 114 registered `#[tauri::command]`s has a frontend caller. The last thirteen were closed together: five superseded ones were deleted (`lookup_verse`, `close_output_window`, `current_service`, and the `*_template_active` pair — the console Output grid became per-channel templates), and eight were given the UI they had always lacked — voice profiles (SPEC §4.6), the emergency announcement, and the "shown earlier" badge. `related_scripture` was wired by the new-design merge.
+**No dead-but-built commands — with ONE known exception, recorded rather than hidden.** Every one of the 114 registered `#[tauri::command]`s has a frontend caller **in `capture.js`**; that is the level `ipc.test.js` checks, and it is not the level that matters. `save_arrangement` is the exception: the wrapper `saveArrangement` exists and **no component imports it**, so a user cannot save a song arrangement at all. Found by `scripts/qa-inventory.mjs`, which traces the chain one hop further — to a control something actually renders. Building the arrangement editor is a feature, not a fix; until it exists, this sentence is the honest version of the claim. The last thirteen were closed together: five superseded ones were deleted (`lookup_verse`, `close_output_window`, `current_service`, and the `*_template_active` pair — the console Output grid became per-channel templates), and eight were given the UI they had always lacked — voice profiles (SPEC §4.6), the emergency announcement, and the "shown earlier" badge. `related_scripture` was wired by the new-design merge.
 
 ## Architecture rules learned the HARD WAY — do not regress these
 
@@ -156,7 +159,7 @@ These caused real crashes, freezes, or silent failures in front of people. Keep 
 7. **`initAudio()` runs at app level** (`App.svelte` onMount), not only in Settings — otherwise `$capture.available` is false on the default tab and every button looks dead.
 8. **STT is fed the NON-overlapping tail of each chunk** — the detection chunker emits 50%-overlapping chunks; feeding them verbatim garbles whisper.
 9. **Never hand-roll an app-data path.** Use `db::app_data_dir()`. A macOS-only `$HOME/…` variant meant packaged **Windows** never found the STT model and ran with speech recognition silently dead. Windows has no `HOME`.
-10. **Only `DetectionMethod::Direct` may auto-fire.** A TF-IDF cosine is not a probability. Semantic/Ambiguous are capped at `Suggest` in `router.rs::decide`, at any score. Do not "fix" this by raising a number.
+10. **Only `DetectionMethod::Direct` may auto-fire — and "Direct" means Relay HEARD it, not that it parsed confidently.** A TF-IDF cosine is not a probability. Semantic/Ambiguous/**UncertainBook** are capped at `Suggest` in `router.rs::decide`, at any score. Do not "fix" this by raising a number. `UncertainBook` was added 2026-08-14 after a P0: `fuzzy_book` repairs a misheard book token by edit distance, gated only on "the next token is a number" — which is the exact shape of a church announcement. "please turn to **hymn number** three sixteen" put **Numbers 3:16** on the wall at 0.840 against a 0.50 bar, unattended; `room`→Romans, `row`, `van`, `day`→Daniel and 33 more did the same. The claimed mitigation ("marked FUZZY, costs confidence downstream") was worth **0.06** against a 0.34 margin. Its confidence was never wrong — it was a real parse confidence, about a word nobody said, which is why no threshold could have saved it. Two routes now yield `UncertainBook`: an edit-distance repair (never rescued — a guess about the acoustics), and an ordinary English word that is also a one-token alias (`song`, `job` — rescued by an explicit chapter/verse keyword, because the word genuinely *was* heard). **`psalm` is deliberately not on that list** and must never be: "Psalm twenty three" is how preachers say it.
 11. **Panic keys live in `lib/shortcuts.js`, mounted once at `App.svelte`** — never per-view. `Space` means *advance*, app-wide, and nothing else.
 12. **Audio levels are LEARNED, never assumed** (DECISIONS §19). Nothing may compare a signal to an absolute level. Three individually-reasonable thresholds together made Relay **deaf to a quiet preacher, silently** — 94% voiced at studio level, **2% at a church-laptop level**. Speech is *contrast*, not volume. Verify: `cargo test audio::gate -- --ignored`.
 13. **Score STT changes through the DETECTOR, never by reading the transcript.** A grep-the-text scorer rated a hallucinated `Peter 8 verse 28` a success and a correct spelled-out reference a failure. The only question is *which verse would Relay put on the screen*.
@@ -201,8 +204,13 @@ These caused real crashes, freezes, or silent failures in front of people. Keep 
 
 ## Testing
 
-429 Rust + 421 frontend. CI runs both on **macOS and Windows**, plus `fmt`, `clippy -D warnings`, the detection scorecard, and a release build.
+432 Rust + 434 frontend (1 skipped, deliberately — see `liveoutputrail.test.js`). CI runs both on **macOS and Windows**, plus `fmt`, `clippy -D warnings`, the detection scorecard, and a release build.
 
+- **`qa.rs` owns the fixture. Do not write another one.** `qa::bare_app()` is a fresh install and nothing else — real schema, real seed, no operator has touched it — and `qa::{Wall, Kiosk, settle}` are the two doors out of the machine plus the drain. `e2e::app()` is now `bare_app()` **plus one documented difference** (a content-look override, without which its template assertion is vacuous), which is exactly the shape a deviation should have: three visible lines, not a fifty-line copy that drifts. A second fixture is how two suites start disagreeing about what a fresh install contains. `the_bare_fixture_is_a_first_launch_and_nothing_more` is the tripwire; it is what caught that `tpl_song` **is** seeded on purpose (every other built-in is scripture-shaped, so a lyric rendered through one showed the song title instead of the words).
+- **The QA apparatus is documented, not folklore.** `docs/Working-Agent.md` (design + the five evidence layers), `-PROMPT.md` (the agents' shared preamble), `-COVERAGE.md` (what is already pinned — read it before filing anything, so you don't "find" a fixed bug). Run `/qa-audit`; `node scripts/qa-inventory.mjs` prints the control/orphan/create-path report on its own.
+- **A component nothing renders is not covered, however green its tests.** Fourteen passing tests were written against `PreviewProgram.svelte` before `qa-inventory.mjs` reported that nothing imports it — the shipped surface is `LiveOutputRail.svelte`. Before writing a component test, check something actually renders the component.
+
+- **`vitest.config.js` MUST set `resolve: { conditions: ['browser'] }`. Do not "tidy" it away.** Svelte 4 maps its `.` export to `src/runtime/ssr.js` under every condition except `browser`, and that file defines `onMount`, `beforeUpdate` and `afterUpdate` as literal empty functions. `environment: 'jsdom'` does not imply the condition. Without the line, a component is compiled for the DOM and handed the SSR stubs: it mounts, it renders, and it silently skips every load-on-mount path — no list fetches, no subscription runs, and the test passes by doing nothing. It hid for the entire life of the project because the asymmetry is invisible: `svelte/internal` has only a `default` condition, so rendering, `onDestroy` and `tick` were always real, and only the mount half was dead. Guarded from three directions now — `r6-lifecycle-probe.test.js` asserts the runtime, `r2livepath.test.js` asserts that mounting the run column actually reaches `list_output_channels`, and `surface.test.js`'s `LIFECYCLE_LIVE` gate reads the runtime so its tests skip loudly rather than pass vacuously.
 - **The frontend suite must pass on a CURRENT Node, not only on CI's Node 20.** Node ≥ 22 defines `localStorage`/`sessionStorage` on the global as own accessors that return `undefined` without `--localstorage-file`; vitest's jsdom environment leaves keys the global already owns, so Node's dead stub won and 60 tests — every one covering what an operator sees on relaunch — failed on a clean checkout with `Cannot read properties of undefined`. `src/test-setup.js` hands the global a real jsdom Storage when the ambient one is missing. Don't delete it because "jsdom provides that".
 
 - **`e2e.rs` is the one test that exercises what a congregation actually sees.** It drives the real commands (`manual_fire`, `nav`, `clear_screens`, `blackout`, `set_rehearsal`) against a real in-memory DB, through the real router and pipeline, and asserts on the events that leave the machine. Nothing is mocked but the window (`tauri::test::mock_builder`, dev-dependency `tauri/test`). **Add a test here whenever you touch the fire path.**
@@ -216,3 +224,24 @@ These caused real crashes, freezes, or silent failures in front of people. Keep 
 - **A contract stated in a comment is not a contract.** Both of the gaps this line used to name were fixed by writing the rule down — `error.rs` for typed errors, the throw-vs-swallow groups at the top of `capture.js` — and then only ONE of them was pinned by a test. `stopCapture` sat in the THROWS group, swallowing, for as long as the comment existed: one bare `catch {}` around both the bridge import and the command, so a `stop_capture` that failed on a poisoned audio lock printed "Start listening" over a live microphone and no caller's `catch` could fire. `micstop.test.js` pins it. When you place a wrapper in a group, add the test that holds it there.
 - **A test's assertion surface is part of its claim.** `e2e.rs`'s `Wall` listens for Tauri events, so it can only ever see content that leaves through one of the two doors. `channels::stage_next` publishes to the kiosk hub and emits nothing — so the rehearsal guarantee was tested, passing, and false for the preacher's stage tablet the whole time. `nothing_reaches_the_stage_monitor_during_a_rehearsal` watches the hub itself. Anything new that publishes to the kiosk needs the same.
 - Vitest gotcha: `beforeEach(() => invoke.mockReset())` returns the mock, and vitest treats a value returned from a hook as a **teardown function** — so it calls `invoke()` after every test. Use a block body.
+
+# gstack
+
+Installed at `~/.claude/skills/gstack`. Run `~/.claude/skills/gstack/setup` after
+cloning it if the skills aren't registered yet.
+
+## Web browsing
+
+Use the `/browse` skill from gstack for **all** web browsing. Never use the
+`mcp__claude-in-chrome__*` tools.
+
+## Available skills
+
+`/office-hours`, `/plan-ceo-review`, `/plan-eng-review`, `/plan-design-review`,
+`/design-consultation`, `/design-shotgun`, `/design-html`, `/review`, `/ship`,
+`/land-and-deploy`, `/canary`, `/benchmark`, `/browse`, `/connect-chrome`, `/qa`,
+`/qa-only`, `/design-review`, `/setup-browser-cookies`, `/setup-deploy`,
+`/setup-gbrain`, `/retro`, `/investigate`, `/document-release`,
+`/document-generate`, `/codex`, `/cso`, `/autoplan`, `/plan-devex-review`,
+`/devex-review`, `/careful`, `/freeze`, `/guard`, `/unfreeze`,
+`/gstack-upgrade`, `/learn`.

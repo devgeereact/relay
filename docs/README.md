@@ -90,6 +90,27 @@ contradicts it, the code is wrong — flag it, don't silently "fix" the decision
 
 **An AI coding agent**
 - [../CLAUDE.md](../CLAUDE.md) first, every session. Then this index, then the volume you need.
+- Auditing rather than building? [Working-Agent.md](Working-Agent.md) — and read
+  [Working-Agent-COVERAGE.md](Working-Agent-COVERAGE.md) before filing anything, so you don't
+  re-discover a deliberate decision or "find" a bug that was fixed.
+
+---
+
+## How Relay gets audited
+
+Three documents own the QA apparatus. They are **not** part of the specification hierarchy
+above — SPEC, DECISIONS and PRODUCT_AUDIT own the product; these own how it is checked.
+
+| Document | Owns |
+|---|---|
+| [Working-Agent.md](Working-Agent.md) | The design: five evidence layers, the six-agent roster, the hook, and why "click every button" cannot be executed literally on a desktop binary that this machine cannot see |
+| [Working-Agent-PROMPT.md](Working-Agent-PROMPT.md) | The shared preamble every `relay-qa-*` agent inherits, plus the six mandates |
+| [Working-Agent-COVERAGE.md](Working-Agent-COVERAGE.md) | The evidence baseline — what the existing tests already prove, and what no instrument here can reach |
+
+Run it with **`/qa-audit`** (changed surface by default; `--full` before a release, `--live` to
+drive the running app over `:8032`). The cheap half runs on every edit:
+`.claude/hooks/relay-fast-gate.mjs`, path-filtered and report-only. Reports land in
+`docs/audits/`.
 
 ---
 

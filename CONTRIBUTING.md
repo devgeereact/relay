@@ -71,10 +71,13 @@ Read **[`docs/DECISIONS.md`](docs/DECISIONS.md)** before proposing a feature. If
 
 ```bash
 npm install
+npm run hooks:install      # optional, recommended — see below
 npm run tauri dev
 ```
 
 You need **cmake** (whisper.cpp compiles from source) and a Rust toolchain. The desktop window is the app — `localhost:5032` in a browser is a dead console with no engine attached.
+
+`hooks:install` registers a Claude Code hook that runs the tests guarding a file whenever you edit the fire path or a contract surface. It reports and never blocks, and it is per machine because a hook can only live in a settings file that is not committed. Skip it if you do not use Claude Code; `npm run hooks:check` tells you whether it is on.
 
 ### The bar
 

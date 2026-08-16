@@ -483,7 +483,8 @@ Built and shipped: **1 (undo/redo)**, **2 (test-on-outputs + fullscreen preview)
 **4 (per-cue output routing + conditions) is DEFERRED to its own focused unit**, by
 deliberate engineering judgement, not omission. Grounding the design in the code showed
 it is not a UI addition but a change to three load-bearing, incident-scarred subsystems:
-- the **broadcast-only kiosk WS protocol** (§47) — network clients are template-keyed and
+- the **broadcast-only kiosk WS protocol** (§35 — and note the WS hub is broadcast-only
+  while its sibling HTTP port is not) — network clients are template-keyed and
   deliberately not channel-addressable; true targeting requires the client to report its
   channel id and the hub to route by it (an additive protocol change, but on the
   security-sensitive path);
@@ -1193,3 +1194,69 @@ in both directions:
 The last row is the one that matters most: it is what stops a future "tighten the gate"
 change from quietly making a preacher who really did say *"turn to Psalm chapter 23"*
 undetectable.
+
+---
+
+## 35. The LAN remote is a control plane, and the docs said it was a window (2026-08-14)
+
+**The `§47` citations in `channels.rs`, `main.rs` and this file's own §NN list point at
+nothing.** This document's sections end at §34; `47` was the *line number* of a table row
+in the exposure section, and three code comments were written as though it were a section
+number. That is worth recording on its own, because the citation looked authoritative and
+the thing it cited did not exist.
+
+What it pointed at said:
+
+> the WebSocket hub is **broadcast-only** (the sole inbound message it honours is `hello`),
+> so a stranger on the network can *read* the live content feed but can **never push to the
+> screens** … the worst case is someone on the church wifi seeing the verse that is already
+> on a projector in front of them.
+
+**That was true, and then we shipped the preacher's remote and it stopped being true, and
+nobody wrote the second decision down.** `main.rs::remote_api` serves `search`, `fire`,
+`next`, `prev`, `clear`, `black` and `live` on `0.0.0.0:8032` with no authentication, and
+`Stage.svelte` is a touch UI for exactly that at the well-known
+`http://<host>:8032/stage.html`. `PRIVACY.md` and `SECURITY.md` repeated the old claim to
+churches until this section was written.
+
+### The decision, as it actually stands
+
+**The HTTP API is an unauthenticated control plane on the local network, deliberately.** The
+preacher driving their own reading from a phone is the feature; a password on a device shared
+between a preacher, a tech volunteer and a stand-in every Sunday is a password written on a
+sticky note behind the desk. A LAN appliance in a building whose network the congregation
+already trusts is the threat model we accepted.
+
+Two things follow that are NOT the same as "no auth", and both are recorded here rather than
+discovered again:
+
+1. **The WebSocket hub (`:8031`) really is still broadcast-only.** The `hello` claim was
+   never wrong about the socket — only about the sibling HTTP port. Keep it that way; it is
+   a genuinely different guarantee and the docs should stop conflating them.
+2. **The reachable audience is wider than "someone on the church wifi".** Every action is a
+   side-effecting `GET`, the request line is parsed verb-agnostically, and every response
+   carries `Access-Control-Allow-Origin: *`. So `<img src="http://<relay>:8032/api/black">`
+   on *any* web page, opened by anyone on that network while browsing anything, blacks out
+   the congregation's wall. No preflight, no foothold beyond a victim's browser. This is a
+   composition of three individually-reasonable choices and nobody chose the result.
+
+### What would change it
+
+- **Any move off a trusted LAN.** A laptop that also joins café WiFi serves the media files
+  *and* the remote to that network.
+- **The drive-by (point 2 above) being judged unacceptable on its own.** It is the cheapest
+  thing here to fix without touching the product: require `POST` for the mutating routes and
+  drop the wildcard CORS header on them. That removes the `<img>` vector entirely while
+  leaving the preacher's phone working exactly as it does. If we do only one thing, do this.
+- **Anyone asking for Relay on a guest or shared network**, which is the realistic way a
+  church discovers this.
+
+### The rule this cost us
+
+A decision record is only load-bearing if the code cannot outrun it. Three comments cited a
+section that never existed, for months, and the citation is what made the claim look checked.
+**Cite a section number that exists, and when a feature crosses a line an existing decision
+drew, the new decision is part of the feature — not follow-up work.**
+
+Pinned by `qa_r5::the_lan_remote_answers_exactly_seven_routes_and_refuses_the_rest`, which
+fails if the route list grows without somebody revisiting this section.
