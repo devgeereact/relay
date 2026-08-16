@@ -432,6 +432,59 @@
       "text": "Muna godiya ga Allah da iyalinmu na coci",
       "expect": [],
       "note": "'da' and 'na' are everywhere in Hausa."
+    },
+    {
+      "id": "neg-en-hymn-number",
+      "lang": "en",
+      "text": "Please turn to hymn number three sixteen.",
+      "expect": [],
+      "note": "THE 2026-08-14 P0. 'number' is one edit from the book 'numbers', and the fuzzy gate ('the next token is a number') is exactly the shape of an announcement. This put Numbers 3:16 on a wall at 0.840 against a 0.50 bar. The Yoruba twin (neg-yo-everyday-song) was already here; the English one never was, which is how a corpus can see a trap and still miss it."
+    },
+    {
+      "id": "neg-en-room-number",
+      "lang": "en",
+      "text": "The youth meet in room two twelve after the service.",
+      "expect": [],
+      "note": "'room' is one edit from the typing shortcut 'rom' -> Romans 2:12. The abbreviation table was built for typing and was being used for listening."
+    },
+    {
+      "id": "neg-en-row-number",
+      "lang": "en",
+      "text": "There are free seats on row three sixteen.",
+      "expect": [],
+      "note": "'row' -> 'rom' -> Romans. Same single edit, different everyday word."
+    },
+    {
+      "id": "neg-en-everyday-song",
+      "lang": "en",
+      "text": "We will sing song two twelve this morning.",
+      "expect": [],
+      "note": "The English twin of neg-yo-everyday-song. An EXACT alias, not a repair: 'song' is an ordinary word AND a book name, so it now needs a chapter/verse keyword to auto-fire."
+    },
+    {
+      "id": "neg-en-day-count",
+      "lang": "en",
+      "text": "He fasted for day three sixteen of the challenge.",
+      "expect": [],
+      "note": "'day' and 'van' are one edit from 'dan' -> Daniel."
+    },
+    {
+      "id": "pos-en-psalm-singular",
+      "lang": "en",
+      "text": "Let us read Psalm three sixteen together.",
+      "expect": [
+        "Psalms 3:16"
+      ],
+      "note": "The CONTROL for the negatives above. 'Psalm' is not an everyday noun colliding with a book, it is how every preacher names the book, and it must keep auto-firing. A safety fix that breaks this row has overshot."
+    },
+    {
+      "id": "pos-en-song-with-keyword",
+      "lang": "en",
+      "text": "Song of Solomon chapter two verse twelve.",
+      "expect": [
+        "Song of Solomon 2:12"
+      ],
+      "note": "The other control: an ordinary-word book name WITH explicit reference language is unambiguous and still auto-fires."
     }
   ]
 }

@@ -34,15 +34,48 @@ pub enum DetectionMethod {
     /// → 22:1 or 2:2). Confidence is a hardcoded placeholder, not measured.
     /// May never auto-fire.
     Ambiguous,
+    /// A reference whose BOOK NAME was guessed by `fuzzy_book`'s edit-distance
+    /// repair rather than heard. May never auto-fire.
+    ///
+    /// ── Why this variant exists (the P0 of 2026-08-14) ──────────────────────
+    ///
+    /// `fuzzy_book` repairs a misheard book token against the alias table, gated
+    /// on "the next token is a number". That gate is exactly the shape of a church
+    /// announcement, and one edit from a three-letter typing shortcut is an
+    /// enormous set of ordinary English words. Measured through the real router at
+    /// the shipped default: "please turn to hymn **number** three sixteen" put
+    /// **Numbers 3:16** on the wall at 0.840 against a 0.50 bar; "the youth meet in
+    /// **room** two twelve" put up Romans 2:12; `row`, `van`, `day` and 34 more did
+    /// the same. Nobody pressed anything.
+    ///
+    /// The mitigation the code claimed — "still marked FUZZY, which costs
+    /// confidence downstream" — was worth 0.06 against a 0.34 margin. A contract
+    /// stated in a comment is not a contract, and the repair is here restated as
+    /// one the router can enforce.
+    ///
+    /// The principle is the one that already governs `Semantic`: **only what was
+    /// actually heard may reach a congregation unattended.** A Levenshtein repair
+    /// is not evidence about what was said, it is a guess about it — so it goes to
+    /// the operator, who accepts it in one press if it is right. Note the deliberate
+    /// narrowness: this covers a repaired **book name** only. A repaired *number*
+    /// word ("john free sixteen" → John 3:16) still auto-fires, because the book
+    /// was heard exactly and only the digit was in doubt.
+    #[serde(rename = "uncertain_book")]
+    UncertainBook,
 }
 
 impl DetectionMethod {
     /// Whether a candidate detected this way is ever allowed onto the
     /// congregation's screen without a human confirming it first.
     ///
-    /// Only `Direct` is. `Semantic` and `Ambiguous` carry confidences that are
-    /// not calibrated probabilities, so no threshold on them is meaningful —
-    /// gating them by number would be gating them by noise.
+    /// Only `Direct` is. `Semantic`, `Ambiguous` and `Repaired` carry confidences
+    /// that are not calibrated probabilities, so no threshold on them is
+    /// meaningful — gating them by number would be gating them by noise.
+    ///
+    /// `Repaired` is the newest and was learned the hard way: its confidence *is*
+    /// a real parse confidence, which is precisely the trap. The number is honest
+    /// about the parse and says nothing about whether the word being parsed was
+    /// the word that was spoken. See the variant's doc comment.
     pub fn may_auto_fire(&self) -> bool {
         matches!(self, DetectionMethod::Direct)
     }
@@ -55,9 +88,16 @@ impl DetectionMethod {
     /// is ambiguous is *which verse* it resolves to, not how it was found. The
     /// routing distinction (never auto-fire) is enforced in the router, which is
     /// where it belongs; it isn't a property of the historical record.
+    /// `Repaired` persists as `direct` for the same reason `Ambiguous` does: it
+    /// was parsed from spoken words. What the record loses is *which* word was
+    /// guessed — and `heard_text` carries that, which is the column that exists
+    /// because a service put forty wrong verses on a wall and the log could not
+    /// say what any of them heard.
     pub fn db_method(&self) -> &'static str {
         match self {
-            DetectionMethod::Direct | DetectionMethod::Ambiguous => "direct",
+            DetectionMethod::Direct
+            | DetectionMethod::Ambiguous
+            | DetectionMethod::UncertainBook => "direct",
             DetectionMethod::Semantic => "semantic",
         }
     }
@@ -675,8 +715,8 @@ pub fn detect_direct(text: &str) -> Vec<RefMatch> {
     let mut out = Vec::new();
     let mut i = 0;
     while i < tokens.len() {
-        if let Some((canonical, book_end, fuzzy)) = match_book(&tokens, i) {
-            if let Some((mut m, next)) = parse_reference(&tokens, book_end, canonical, i, fuzzy) {
+        if let Some((canonical, book_end, book_ev)) = match_book(&tokens, i) {
+            if let Some((mut m, next)) = parse_reference(&tokens, book_end, canonical, i, book_ev) {
                 // Nothing followed this reference in the text it came from. On a
                 // partial transcript that means the next word might still belong to
                 // it — see `RefMatch::at_tail`.
@@ -742,9 +782,44 @@ pub(crate) fn normalize(text: &str) -> String {
     s.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+/// Ordinary English words that are ALSO one-token book aliases.
+///
+/// `NEVER_FUZZY` already records the insight — *"'mark', 'job' and 'will' are all
+/// ordinary English AND book names, so an approximate match on them is never a
+/// repair — it is a coincidence"* — but it only guards the fuzzy path. An **exact**
+/// match on `song` was still a heard reference, so "we'll sing song two twelve" put
+/// Song of Solomon 2:12 on the wall at 0.900, unattended.
+///
+/// `eval.rs` already carries this exact case as a negative — `neg-yo-everyday-song`,
+/// *"Ẹ jẹ́ ká kọ orin 3"* — **in Yorùbá**. The English twin was never written, which
+/// is how a corpus can see a trap and still miss it.
+///
+/// The list is deliberately tiny and evidence-led: these two are what a 118-noun
+/// sweep through the real router actually caught. `psalm` is NOT here and must never
+/// be — "Psalm twenty three" is how preachers say it, and demoting it would trade a
+/// false positive for a false negative on the single most-quoted book in use.
+const ORDINARY_WORD_ALIASES: &[&str] = &["song", "job"];
+
+/// How much the BOOK NAME is worth as evidence — the input to whether a candidate
+/// may reach a congregation unattended. See `DetectionMethod::UncertainBook`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum BookEvidence {
+    /// The alias matched exactly and the word means nothing else. Heard.
+    Heard,
+    /// `fuzzy_book` guessed it by edit distance. Never auto-fires, keyword or not:
+    /// the repair is a guess about the acoustics and no amount of surrounding
+    /// grammar makes the guessed word more likely to be the spoken one.
+    Repaired,
+    /// The alias matched exactly, but the word is ordinary English
+    /// (`ORDINARY_WORD_ALIASES`). Auto-fires ONLY with an explicit chapter/verse
+    /// keyword — unlike a repair, the word really was heard, so "song chapter two
+    /// verse twelve" removes the doubt entirely while "song two twelve" does not.
+    OrdinaryWord,
+}
+
 /// Match the longest book alias starting at `start`. Returns (canonical, index
-/// just past the alias, whether the match was FUZZY rather than exact).
-fn match_book(tokens: &[&str], start: usize) -> Option<(&'static str, usize, bool)> {
+/// just past the alias, how good the book evidence is).
+fn match_book(tokens: &[&str], start: usize) -> Option<(&'static str, usize, BookEvidence)> {
     // Scan longest-first (up to 3 tokens) so multi-word books ("song of
     // solomon") and numbered forms ("first corinthians") match before a shorter
     // prefix would.
@@ -754,11 +829,18 @@ fn match_book(tokens: &[&str], start: usize) -> Option<(&'static str, usize, boo
         }
         let candidate = tokens[start..start + len].join(" ");
         if let Some(&canonical) = alias_map().get(&candidate) {
-            return Some((canonical, start + len, false));
+            // Only a ONE-token alias can be an ordinary word. "song of solomon" is
+            // three tokens and is nobody's everyday phrase.
+            let ev = if len == 1 && ORDINARY_WORD_ALIASES.contains(&candidate.as_str()) {
+                BookEvidence::OrdinaryWord
+            } else {
+                BookEvidence::Heard
+            };
+            return Some((canonical, start + len, ev));
         }
     }
     // Nothing matched exactly. Try to REPAIR a misheard book name.
-    fuzzy_book(tokens, start).map(|c| (c, start + 1, true))
+    fuzzy_book(tokens, start).map(|c| (c, start + 1, BookEvidence::Repaired))
 }
 
 /// Words an ordinary sermon says constantly, which must never be repaired into a
@@ -889,13 +971,13 @@ fn parse_reference(
     idx: usize,
     canonical: &str,
     book_start: usize,
-    fuzzy_book: bool,
+    book_ev: BookEvidence,
 ) -> Option<(RefMatch, usize)> {
     let mut i = idx;
     let mut used_kw = false;
     // A REPAIRED book name is a weaker claim than one that matched exactly, and
     // it is charged for exactly like a repaired number is.
-    let mut phonetic = fuzzy_book;
+    let mut phonetic = book_ev == BookEvidence::Repaired;
 
     // optional "chapter" — in English or a tier-1 language ("sura ya tatu").
     if let Some(t) = tokens.get(i) {
@@ -909,7 +991,7 @@ fn parse_reference(
     // Combined "3:16" token, with optional "-18" range end.
     if let Some((ch, vs, next)) = try_colon_pair(tokens, i) {
         let mut m = make_match(
-            canonical, ch, vs, tokens, book_start, next, 0.96, used_kw, false,
+            canonical, ch, vs, tokens, book_start, next, 0.96, used_kw, false, book_ev,
         );
         let mut end_idx = next;
         if let Some((e, after)) = parse_range_end(tokens, next, vs) {
@@ -937,7 +1019,7 @@ fn parse_reference(
             let (verse, after, ph) = parse_number(tokens, j)?;
             return Some((
                 make_match(
-                    canonical, 1, verse, tokens, book_start, after, 0.95, true, ph,
+                    canonical, 1, verse, tokens, book_start, after, 0.95, true, ph, book_ev,
                 ),
                 after,
             ));
@@ -989,6 +1071,7 @@ fn parse_reference(
                     base,
                     kw2,
                     ph1 || ph2,
+                    book_ev,
                 ),
                 after2,
             ));
@@ -1025,7 +1108,7 @@ fn parse_reference(
         // positives are frequent and the true positives are not.
         let base = if used_kw { 0.9 } else { 0.45 };
         let mut m = make_match(
-            canonical, 1, n1, tokens, book_start, after1, base, used_kw, ph1,
+            canonical, 1, n1, tokens, book_start, after1, base, used_kw, ph1, book_ev,
         );
         let mut end_idx = after1;
         if let Some((e, after)) = parse_range_end(tokens, after1, n1) {
@@ -1137,13 +1220,13 @@ fn parse_reference(
             // confidence downstream, and the run being unreadable as a chapter is
             // hard evidence the number was misheard.
             let m = make_match(
-                canonical, c, v, tokens, book_start, after_ch, 0.83, used_kw, true,
+                canonical, c, v, tokens, book_start, after_ch, 0.83, used_kw, true, book_ev,
             );
             return Some((m, after_ch));
         }
         let base = if used_kw { 0.88 } else { 0.45 };
         let mut m = make_match(
-            canonical, chapter, 1, tokens, book_start, after_ch, base, false, phonetic,
+            canonical, chapter, 1, tokens, book_start, after_ch, base, false, phonetic, book_ev,
         );
         m.whole_chapter = true;
         return Some((m, after_ch));
@@ -1195,7 +1278,7 @@ fn parse_reference(
         0.90
     };
     let mut m = make_match(
-        canonical, chapter, verse, tokens, book_start, after_vs, base, used_kw, phonetic,
+        canonical, chapter, verse, tokens, book_start, after_vs, base, used_kw, phonetic, book_ev,
     );
     if let Some((e, _)) = range {
         m.verse_end = Some(e);
@@ -1214,6 +1297,7 @@ fn make_match(
     base: f32,
     used_kw: bool,
     phonetic: bool,
+    book_ev: BookEvidence,
 ) -> RefMatch {
     let mut conf = base;
     if used_kw {
@@ -1237,7 +1321,19 @@ fn make_match(
         verse_end: None,
         whole_chapter: false,
         confidence: conf,
-        method: DetectionMethod::Direct,
+        // A guessed book name is not a heard one. This is the structural half of
+        // the P0 repair: the router refuses to auto-fire `Repaired` whatever the
+        // confidence says, so it cannot be undone by a threshold, by the operator's
+        // sensitivity dial, or by the calibrator drifting. The 0.06 `phonetic`
+        // penalty below is left in place because it still orders suggestions
+        // sensibly — but it is no longer load-bearing, and it never should have been.
+        // A repair is never rescued by grammar; an ordinary word is. See
+        // `BookEvidence` for why those two are not the same question.
+        method: match book_ev {
+            BookEvidence::Repaired => DetectionMethod::UncertainBook,
+            BookEvidence::OrdinaryWord if !used_kw => DetectionMethod::UncertainBook,
+            _ => DetectionMethod::Direct,
+        },
         matched_text: tokens[book_start..end].join(" "),
         // Set by `detect_direct`, which is the only place that knows where the
         // scan actually stopped once ranges have been absorbed.
@@ -1870,9 +1966,22 @@ pub fn detect_bare_verses(text: &str) -> Vec<i64> {
     let mut out = Vec::new();
     let mut i = 0;
     while i < tokens.len() {
-        // Both singular ("verse 1") and plural ("verses 1"), plus abbreviations.
-        if matches!(tokens[i], "verse" | "verses" | "vs" | "v") {
-            if let Some((n, _, _)) = parse_number(&tokens, i + 1) {
+        // `is_verse_word`, NOT an inline English literal list.
+        //
+        // This matched `"verse" | "verses" | "vs" | "v"` directly while its sibling
+        // `parse_reference` asked `is_verse_word`, which consults `numerals.json`
+        // and therefore already speaks Swahili and Hausa. The result was a preacher
+        // whose FULL reference parsed correctly — "Yohana sura ya tatu mstari wa
+        // kumi na sita" → John 3:16 — saying "mstari wa nne" to move within the
+        // passage and getting nothing at all. CLAUDE.md: never write detection logic
+        // that assumes single-language input.
+        //
+        // `skip_linkers` comes with it: "mstari WA nne" puts grammatical glue
+        // between the keyword and its number, and that glue is why the English-only
+        // version could not have worked even with the vocabulary added.
+        if is_verse_word(tokens[i]) {
+            let j = skip_linkers(&tokens, i + 1);
+            if let Some((n, _, _)) = parse_number(&tokens, j) {
                 out.push(n);
             }
         }
@@ -1913,24 +2022,27 @@ pub fn detect_passage_nav(text: &str) -> Option<PassageNav> {
     let mut saw_kw = false;
     let mut i = 0;
     while i < tokens.len() {
-        match tokens[i] {
-            "chapter" | "chapters" | "chap" | "ch" => {
-                saw_kw = true;
-                if let Some((n, next, _)) = parse_number(&tokens, i + 1) {
-                    chapter = Some(n);
-                    i = next;
-                    continue;
-                }
+        // `is_chapter_word` / `is_verse_word` + `skip_linkers`, for the same reason
+        // as `detect_bare_verses` above: these were inline English literals while
+        // `parse_reference` two functions away asked the multilingual helpers. So
+        // "sura ya tano" and "aya ta huɗu" — a Swahili or Hausa preacher moving
+        // within a passage they had already opened correctly — did nothing.
+        if is_chapter_word(tokens[i]) {
+            saw_kw = true;
+            let j = skip_linkers(&tokens, i + 1);
+            if let Some((n, next, _)) = parse_number(&tokens, j) {
+                chapter = Some(n);
+                i = next;
+                continue;
             }
-            "verse" | "verses" | "vs" | "v" => {
-                saw_kw = true;
-                if let Some((n, next, _)) = parse_number(&tokens, i + 1) {
-                    verse = Some(n);
-                    i = next;
-                    continue;
-                }
+        } else if is_verse_word(tokens[i]) {
+            saw_kw = true;
+            let j = skip_linkers(&tokens, i + 1);
+            if let Some((n, next, _)) = parse_number(&tokens, j) {
+                verse = Some(n);
+                i = next;
+                continue;
             }
-            _ => {}
         }
         i += 1;
     }
@@ -4556,5 +4668,508 @@ mod evidence_floor {
         let hits = idx().top_k_explained("wait upon the lord renew strength mount wings eagles", 3);
         assert!(hits[0].2.len() > 4, "still capped low: {:?}", hits[0].2);
         assert!(hits[0].2.len() <= EXPLAIN_TERMS);
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// R4 · Detection & Language — audit evidence (QA run 2026-08-14)
+// ════════════════════════════════════════════════════════════════════════════
+//
+// Every test below asserts the behaviour Relay SHOULD have, and every one of them
+// is `#[ignore]`d because it fails today. They are evidence, not fixes: CI stays
+// green, and one command reproduces the whole finding set.
+//
+//     cargo test detection::r4_audit -- --ignored --nocapture
+//
+// A test that passes when it is fixed is worth more than a test that passes now
+// and blocks the fix, so none of these assert the defect.
+#[cfg(test)]
+mod r4_audit {
+    use super::*;
+    use crate::router::{RouteDecision, Router, Thresholds};
+
+    /// (reference, confidence) pairs, as the router classified them.
+    type Routed = Vec<(String, f32)>;
+
+    /// Score a line the way the product does: the real parser, then the real
+    /// router. Never by reading the text. Returns (auto-fired, suggested).
+    fn wall(text: &str, dial: u8) -> (Routed, Routed) {
+        let mut r = Router::default();
+        r.set_thresholds(Thresholds::from_sensitivity(dial));
+        let (mut fired, mut sugg) = (Vec::new(), Vec::new());
+        for m in detect_direct(text) {
+            let key = format!(
+                "{} {}:{}",
+                m.reference.book, m.reference.chapter, m.reference.verse
+            );
+            match r.decide(&key, m.confidence, m.method, 0) {
+                RouteDecision::AutoFire => fired.push((key, m.confidence)),
+                RouteDecision::Suggest => sugg.push((key, m.confidence)),
+                RouteDecision::Drop => {}
+            }
+        }
+        (fired, sugg)
+    }
+
+    fn fired(text: &str, dial: u8) -> Vec<String> {
+        wall(text, dial).0.into_iter().map(|(k, _)| k).collect()
+    }
+
+    // ── R4-01 · ordinary sermon speech auto-fires a wrong verse ────────────
+    //
+    // Two repairs meet, and both of them raise the score of the LESS plausible
+    // reading of the same sentence.
+    //
+    // `split_run_into_chapter_verse` exists because whisper writes "six sixty
+    // three" as `663`. It refuses to touch a run that IS a valid chapter of the
+    // book — "a fact about the book, not a guess about the speaker". True. But it
+    // has no analogue of the guard `fuzzy_book` carries: nothing requires the
+    // sentence to be reference-SHAPED. And it hands the repaired reading 0.83,
+    // where the keyword-less whole-chapter reading it replaced is deliberately
+    // demoted to 0.45.
+    //
+    // So a number the parser could NOT read as a chapter makes Relay more
+    // confident, not less:
+    //
+    //     "Nehemiah, thirteen days ..."   → Nehemiah 13:1 @0.45  (asks a human)
+    //     "Nehemiah, fifty two days ..."  → Nehemiah  5:2 @0.77  (goes on the wall)
+    //
+    // `fuzzy_book` then compounds it. `NEVER_FUZZY` protects ordinary English
+    // function words; it holds no PROPER NAMES, and a sermon is made of proper
+    // names. "Mary" is one edit from "Mark", and `phonetic` is a bool, so a
+    // reference that guessed the BOOK and split a run it could not read is
+    // charged 0.06 once rather than twice.
+    //
+    // All three sentences below are ordinary preaching. All three put a verse in
+    // front of a congregation at the shipped default dial, with no human asked.
+    #[test]
+    #[ignore]
+    fn r4_01_ordinary_sermon_speech_does_not_auto_fire_a_verse() {
+        // The control: the same shape, with a number that IS a real chapter.
+        assert!(
+            fired("Nehemiah, thirteen days they built the wall", 50).is_empty(),
+            "control: a keyword-less whole chapter is correctly demoted"
+        );
+        for line in [
+            "Nehemiah, fifty two days they built the wall", // → Nehemiah 5:2 @0.77
+            "Mary, twenty two years of age, stood there",   // → Mark 2:2 @0.77
+            "Mary, chapter two of her life had begun",      // → Mark 2:1 @0.82
+        ] {
+            assert!(
+                fired(line, 50).is_empty(),
+                "{line:?} auto-fired {:?} at the shipped default dial — a repair                  scored the less plausible reading of the sentence HIGHER than                  the reading it replaced",
+                fired(line, 50)
+            );
+        }
+    }
+
+    // ── R4-02 · the garble guard covers digits and not spoken words ─────────
+    //
+    // `parse_reference` demotes a bare pair to 0.45 when a LEFTOVER number follows
+    // it, because "Psalms 2, 3, 1" is the shape of garbled speech. That guard is
+    // gated on `bare_digits`, so it only ever sees `23`-style tokens.
+    //
+    // Whisper writes spoken numbers as WORDS on a large share of decodes,
+    // especially on accented speech — which is the market. The identical garble,
+    // rendered in words, scores 0.90 and goes straight to the congregation.
+    #[test]
+    #[ignore]
+    fn r4_02_a_trailing_loose_number_is_a_garble_signal_in_words_too() {
+        // The digit rendering is correctly demoted...
+        assert!(fired("Psalms 2 3 1", 50).is_empty());
+        // ...and the word rendering of the SAME utterance is not.
+        for line in [
+            "Psalms two three one",
+            "romans eight one two",
+            "acts two thirty eight forty",
+        ] {
+            assert!(
+                fired(line, 50).is_empty(),
+                "{line:?} auto-fired {:?} — the leftover number says the numbers \
+                 did not line up, in words exactly as in digits",
+                fired(line, 50)
+            );
+        }
+    }
+
+    // ── R4-03 · at the top of the dial every demotion is inert ──────────────
+    //
+    // `make_match` clamps confidence to a 0.30 floor. `from_sensitivity(100)`
+    // returns auto_fire = 0.30, and `decide` compares with `>=`. So at maximum
+    // sensitivity NO direct match can ever be a suggestion: every deliberate
+    // demotion in detection.rs — the bare whole chapter, the bare single-chapter
+    // verse, the garble shape, the repaired book — auto-fires.
+    //
+    // These are the exact sentences the demotions were written for, taken from
+    // the comments in `parse_reference`.
+    #[test]
+    #[ignore]
+    fn r4_03_the_deliberate_demotions_survive_the_top_of_the_sensitivity_dial() {
+        for line in [
+            "Matthew one of the twelve disciples",
+            "Jonah three days in the belly of the fish",
+            "jude four men came in",
+            "James two of the brothers were there",
+            "Job one day said to his friends",
+            "Verse 1, Psalms 2, 3, 1, Next verse, chapter 2,",
+        ] {
+            assert!(
+                fired(line, 100).is_empty(),
+                "{line:?} auto-fired {:?} at dial 100 — the safety margin for \
+                 every demotion in this file is the 0.05 between 0.45 and the \
+                 default 0.50 bar, and the operator's own dial closes it",
+                fired(line, 100)
+            );
+        }
+    }
+
+    // ── R4-04 · the SPEC gate is measured at one dial position ──────────────
+    //
+    // `eval.rs::run` builds `Router::default()`, so the CI wrong-verse gate scores
+    // the corpus at sensitivity 50 and nowhere else. A church that moves the dial
+    // is running a configuration nothing has ever measured.
+    #[test]
+    #[ignore]
+    fn r4_04_measure_the_wrong_verse_rate_across_the_whole_dial() {
+        #[derive(serde::Deserialize)]
+        struct Case {
+            id: String,
+            text: String,
+            expect: Vec<String>,
+        }
+        #[derive(serde::Deserialize)]
+        struct Corpus {
+            cases: Vec<Case>,
+        }
+        const RAW: &str = include_str!("../data/eval_corpus.json");
+        let c: Corpus = serde_json::from_str(RAW).expect("eval_corpus.json");
+        for dial in [0u8, 25, 50, 63, 75, 100] {
+            let mut wrong = Vec::new();
+            for case in &c.cases {
+                for k in fired(&case.text, dial) {
+                    if !case.expect.contains(&k) {
+                        wrong.push(format!("[{}] {k} — {:?}", case.id, case.text));
+                    }
+                }
+            }
+            let rate = wrong.len() as f64 * 100.0 / c.cases.len() as f64;
+            let t = Thresholds::from_sensitivity(dial);
+            println!(
+                "  dial {dial:>3}  auto {:.2} / suggest {:.2}   wrong-verse rate {rate:.1}%",
+                t.auto_fire, t.suggest
+            );
+            for w in &wrong {
+                println!("      {w}");
+            }
+            // Holds on THIS corpus, which was authored against dial 50. It is
+            // recorded, not asserted away: the mechanism in R4-03 is real and the
+            // corpus simply contains few of the shapes it lets through.
+            assert!(
+                rate < 5.0,
+                "dial {dial}: wrong-verse rate {rate:.1}% exceeds SPEC's 5%"
+            );
+        }
+    }
+
+    // ── R4-05 · Yorùbá is book names only ───────────────────────────────────
+    //
+    // `data/numerals.json` carries `sw` and `ha`. There is no `yo` key — no Yorùbá
+    // numerals, no `orí`, no `ẹsẹ̀`. So a reference spoken ENTIRELY in Yorùbá
+    // parses to nothing: the book alias matches and then the chapter number is not
+    // a number the FSM knows, so `parse_reference` returns None.
+    //
+    // docs/LANGUAGES.md says this plainly and it is not a discovery. It is here
+    // because `eval_corpus.json` contains twelve `yo` cases, every one of which
+    // uses digits or English number words, and the scorecard therefore prints a
+    // 100% Yorùbá row beside Swahili and Hausa rows that really did parse their
+    // own numerals.
+    #[test]
+    #[ignore]
+    fn r4_05_a_reference_spoken_entirely_in_yoruba_is_detected() {
+        for line in [
+            "Jòhánù orí kẹta ẹsẹ̀ kẹrìndínlógún", // John 3:16
+            "Johanu ori keta ese kerindinlogun", // the same, tone marks dropped
+            "Sáàmù orí ogún",                    // Psalm 20
+        ] {
+            let (f, s) = wall(line, 50);
+            assert!(
+                !f.is_empty() || !s.is_empty(),
+                "{line:?} produced nothing at all — the Yorùbá book name matched \
+                 and the Yorùbá numeral did not, because data/numerals.json has \
+                 no \"yo\" key"
+            );
+        }
+    }
+
+    // ── R4-06 · three sibling entry points are hardcoded to English ─────────
+    //
+    // `parse_reference` asks `is_chapter_word` / `is_verse_word`, which consult
+    // `data/numerals.json` and so speak Swahili and Hausa. Its three siblings —
+    // `detect_bare_verses`, `detect_passage_nav`, `detect_ambiguous` — match the
+    // English literals inline instead. Code-switching is the normal case for this
+    // market (CLAUDE.md), so a preacher who says "mstari wa nne" mid-passage gets
+    // nothing where "verse four" would have moved the wall.
+    #[test]
+    #[ignore]
+    fn r4_06_in_language_verse_and_chapter_words_reach_the_nav_entry_points() {
+        // Swahili "mstari"/"aya" = verse, "sura" = chapter. Hausa "aya", "sura".
+        assert_eq!(detect_bare_verses("verse four"), vec![4], "control");
+        for line in ["mstari wa nne", "aya ta huɗu", "aya ya nne"] {
+            assert_eq!(
+                detect_bare_verses(line),
+                vec![4],
+                "{line:?} — a bare in-language verse does not resolve against the \
+                 passage on screen"
+            );
+        }
+        assert!(detect_passage_nav("chapter five").is_some(), "control");
+        for line in ["sura ya tano", "sura ta biyar"] {
+            assert!(
+                detect_passage_nav(line).is_some(),
+                "{line:?} — an in-language in-passage jump is invisible"
+            );
+        }
+    }
+
+    // ── R4-07 · two references in one window land in random order ───────────
+    //
+    // `main::emit_detections` dedups candidates into a `std::collections::HashMap`
+    // and then broadcasts `for (key, c) in best`. `detect_direct` returns matches
+    // left-to-right; the HashMap throws that ordering away and replaces it with
+    // SipHash order, which is seeded per map instance.
+    //
+    // So when one transcript window carries two references — "turn to John 3:16
+    // and Romans 8:28" — both auto-fire, both broadcast, and WHICH ONE IS LEFT ON
+    // THE WALL is decided by hash order, not by what the preacher said last. The
+    // console's suggestion list is ordered by arrival too, so `A` (accept top)
+    // accepts an arbitrary one of a batch.
+    //
+    // This test does not touch `emit_detections` (see R4-08 — it cannot be driven
+    // from a test at all). It demonstrates the mechanism directly.
+    #[test]
+    #[ignore]
+    fn r4_07_the_order_two_references_reach_the_wall_is_deterministic() {
+        let text = "turn with me to John three sixteen and also Romans eight twenty eight";
+        let parsed: Vec<String> = detect_direct(text)
+            .iter()
+            .map(|m| {
+                format!(
+                    "{} {}:{}",
+                    m.reference.book, m.reference.chapter, m.reference.verse
+                )
+            })
+            .collect();
+        assert_eq!(parsed.len(), 2, "both references parse: {parsed:?}");
+
+        // The order `emit_detections` actually broadcasts in.
+        let broadcast_order = |_seed: usize| -> Vec<String> {
+            let mut best: std::collections::HashMap<String, usize> =
+                std::collections::HashMap::new();
+            for (i, k) in parsed.iter().enumerate() {
+                best.insert(k.clone(), i);
+            }
+            best.into_keys().collect()
+        };
+        let first = broadcast_order(0);
+        for i in 1..200 {
+            assert_eq!(
+                broadcast_order(i),
+                first,
+                "the broadcast order of two references in one window changed \
+                 between runs — the verse left on the wall is chosen by hash \
+                 order, not by the sermon"
+            );
+        }
+        assert_eq!(
+            first, parsed,
+            "the wall order does not match the order the preacher spoke them"
+        );
+    }
+
+    // ── R4-08 · the auto-fire path cannot be driven by a test ───────────────
+    //
+    // CLAUDE.md rule #24: the fire engine is generic over `tauri::Runtime`, and
+    // that is what makes `e2e.rs` possible. Every HUMAN fire path honoured it —
+    // `fire_manual`, `handle_nav`, `manual_fire`, `clear_or_report`. The two
+    // paths where the AI decides did not:
+    //
+    //     fn emit_detections(handle: &tauri::AppHandle, ...)          // main.rs
+    //     fn confirm_detection(app: tauri::AppHandle, ...)            // main.rs
+    //
+    // A bare `tauri::AppHandle` is the concrete desktop runtime, so neither can be
+    // called with `qa::bare_app()`. The result is that all thirteen `e2e.rs` tests
+    // drive `manual_fire`, and the ONE path that puts scripture on a wall with no
+    // human in the loop has no end-to-end coverage at all.
+    #[test]
+    #[ignore]
+    fn r4_08_the_ai_fire_path_is_generic_over_the_runtime_like_every_other() {
+        let src = include_str!("main.rs");
+        for f in ["fn emit_detections", "fn confirm_detection"] {
+            let at = src.find(f).expect("function still exists");
+            let sig = &src[at..src[at..].find('(').map(|i| at + i).unwrap_or(at)];
+            assert!(
+                sig.contains('<'),
+                "{f} is welded to the concrete runtime ({sig:?}) — qa::bare_app() \
+                 cannot drive it, so the auto-fire path is the only fire path in \
+                 the product with no e2e test"
+            );
+        }
+    }
+
+    // ── R4-09 · what `confirm_detection` teaches the gate is invented ───────
+    //
+    // The operator accepts a suggestion. `confirm_detection` receives only the
+    // reference STRING, re-parses it with `detect_direct`, and feeds THAT parse's
+    // confidence to `router::record_feedback` as "the score the operator agreed
+    // with". The suggestion's own confidence — and its METHOD — are known to the
+    // console and thrown away at the call site.
+    //
+    // A canonical "Book C:V" always re-parses through the colon-pair branch at
+    // 0.96, for all 66 books. So the confirm arm of the self-calibrating gate
+    // always learns c = 0.96, whatever was actually accepted; and because
+    // `record_feedback` only corrects when `c < auto_fire`, and auto_fire is 0.50
+    // at the default dial and 0.90 at the most cautious, the correction never
+    // fires. `router.rs::confirming_a_suggestion_lowers_the_auto_bar_toward_it`
+    // passes because it calls `record_feedback` directly; in the product, every
+    // confirm is pure decay toward baseline.
+    #[test]
+    #[ignore]
+    fn r4_09_confirming_a_suggestion_does_not_feed_the_gate_a_reparsed_constant() {
+        let mut scores = std::collections::BTreeSet::new();
+        for b in CANONICAL_BOOKS {
+            let s = format!("{b} 1:1");
+            let m = detect_direct(&s)
+                .into_iter()
+                .next()
+                .unwrap_or_else(|| panic!("{s:?} did not re-parse — confirm would silently no-op"));
+            scores.insert(format!("{:.2}", m.confidence));
+        }
+        assert!(
+            scores.len() > 1,
+            "every reference re-parses at exactly {:?}, so `confirm_detection` \
+             feeds `record_feedback` a constant rather than the score of the \
+             suggestion the operator accepted",
+            scores
+        );
+    }
+
+    // ── R4-10 · Settings' two sliders are the dial's untested twin ──────────
+    //
+    // `set_sensitivity` moves the gate, re-anchors the baseline, AND writes
+    // `voice_profiles.sensitivity` alongside the thresholds — its doc comment
+    // explains at length why writing one without the other leaves the profile
+    // "describing a state that never existed", found live.
+    //
+    // `set_thresholds`, the Settings two-slider twin, moves the gate and the
+    // in-memory baseline and writes NOTHING. The next confirm/dismiss then calls
+    // `persist_active_thresholds`, which writes auto_fire/suggest and leaves
+    // `sensitivity` stale — producing exactly the forbidden row. At next launch
+    // `apply_profile` re-anchors the baseline from that stale dial, so calibration
+    // decays back toward a number the operator overruled.
+    #[test]
+    #[ignore]
+    fn r4_10_the_settings_sliders_leave_the_profile_in_a_state_the_router_was_in() {
+        use tauri::Manager;
+        let app = crate::qa::bare_app();
+        let h = app.handle().clone();
+
+        // The operator drags the two Settings sliders.
+        crate::set_thresholds(
+            h.state::<crate::Routing>(),
+            Thresholds {
+                auto_fire: 0.80,
+                suggest: 0.60,
+            },
+        )
+        .expect("set_thresholds");
+
+        // Later in the service they accept one suggestion, which persists.
+        let live = h.state::<crate::Routing>().0.lock().unwrap().thresholds();
+        let dbs = h.state::<crate::Db>();
+        {
+            let conn = dbs.0.lock().unwrap();
+            crate::persist_active_thresholds(&conn, live);
+        }
+
+        let conn = dbs.0.lock().unwrap();
+        let p = crate::db::active_voice_profile(&conn)
+            .unwrap()
+            .expect("a fresh install has one active profile");
+        let implied = Thresholds::from_sensitivity(p.sensitivity.clamp(0, 100) as u8);
+        assert!(
+            (implied.auto_fire - p.auto_fire as f32).abs() < 1e-4,
+            "profile says sensitivity={} (auto_fire {:.2}) beside a stored \
+             auto_fire of {:.2} — a state the router was never in. On the next \
+             launch apply_profile anchors the baseline at {:.2} and calibration \
+             decays back to the dial position the operator just overruled.",
+            p.sensitivity,
+            implied.auto_fire,
+            p.auto_fire,
+            implied.auto_fire
+        );
+    }
+}
+
+#[cfg(test)]
+mod spoken_nav_speaks_the_tier1_languages {
+    use super::*;
+
+    /// R4-G, closed 2026-08-15.
+    ///
+    /// `parse_reference` asked `is_chapter_word`/`is_verse_word`, which consult
+    /// `numerals.json` and so already spoke Swahili and Hausa. Its three siblings
+    /// matched English literals inline. The visible result: a preacher whose FULL
+    /// reference parsed — "Yohana sura ya tatu mstari wa kumi na sita" → John 3:16 —
+    /// then said "mstari wa nne" to move within that passage, and nothing happened.
+    ///
+    /// Code-switching is the normal case in this product, not an edge case, and the
+    /// half that failed was the half used mid-reading.
+    #[test]
+    fn an_in_passage_jump_works_in_swahili_and_hausa() {
+        // English — the control. If this ever breaks, the repair overshot.
+        assert_eq!(detect_bare_verses("verse four"), vec![4]);
+        assert_eq!(
+            detect_passage_nav("chapter five verse one"),
+            Some(PassageNav {
+                chapter: Some(5),
+                verse: Some(1)
+            })
+        );
+
+        // Swahili: "mstari wa nne" — verse four. `wa` is the grammatical linker,
+        // and skipping it is why the English-only version could not have worked
+        // even with the vocabulary added.
+        assert_eq!(detect_bare_verses("mstari wa nne"), vec![4]);
+        assert_eq!(
+            detect_passage_nav("sura ya tano"),
+            Some(PassageNav {
+                chapter: Some(5),
+                verse: None
+            })
+        );
+
+        // Hausa: "aya ta huɗu" — verse four.
+        assert_eq!(detect_bare_verses("aya ta huɗu"), vec![4]);
+        assert_eq!(
+            detect_passage_nav("sura ta biyar"),
+            Some(PassageNav {
+                chapter: Some(5),
+                verse: None
+            })
+        );
+    }
+
+    /// The guard that keeps the widening honest: a jump is only a jump when no book
+    /// was named, and only when a keyword was actually spoken. Widening the keyword
+    /// vocabulary must not widen what COUNTS as a command.
+    #[test]
+    fn a_full_reference_is_still_not_a_jump_and_bare_numbers_are_still_not_commands() {
+        assert_eq!(
+            detect_passage_nav("Yohana sura ya tatu mstari wa kumi na sita"),
+            None
+        );
+        assert_eq!(detect_passage_nav("tano"), None);
+        assert_eq!(detect_passage_nav("nne"), None);
+        assert!(detect_bare_verses("hakuna marejeo hapa").is_empty());
     }
 }

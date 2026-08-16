@@ -22,6 +22,20 @@ mod eval;
 mod models;
 mod pipeline;
 mod proimport;
+/// The shared QA harness: a first-launch fixture plus the two doors (Tauri events
+/// and the kiosk hub) a guarantee has to be checked on. Test-only. See `qa.rs`.
+#[cfg(test)]
+mod qa;
+/// R5 audit evidence: the LAN remote's route surface, the telemetry scrub's
+/// blocklist shape, and the nav choose-then-commit baseline. Test-only, and two
+/// of its tests are RED on purpose — see the module doc.
+#[cfg(test)]
+mod qa_r5;
+/// R6 audit evidence, written independently of R1–R5: the LAN remote's answer to
+/// "what is live", checked against what actually reached the wall. Test-only, and
+/// two of its tests are RED on purpose — see the module doc.
+#[cfg(test)]
+mod r6;
 mod router;
 mod songs;
 mod stt;
@@ -132,6 +146,7 @@ fn main() {
         .manage(Outputs::default())
         .manage(Detecting(AtomicBool::new(true)))
         .manage(channels::Rehearsal::default())
+        .manage(channels::WallState::default())
         .manage(Session::default())
         .manage(models::DownloadState::default())
         .setup(|app| {
@@ -236,7 +251,7 @@ fn main() {
             // them in a packaged app (not only in `tauri dev`). See channels.rs.
             // The `api` closure is the preacher's-remote control plane: search,
             // next/prev and fire, performed against this app. LAN-only, no auth —
-            // a recorded expansion of the broadcast-only exposure (DECISIONS §47).
+            // a recorded expansion of the broadcast-only exposure (DECISIONS §35).
             let api_handle = app.handle().clone();
             let api: channels::ApiSink =
                 std::sync::Arc::new(move |rest: &str| Some(remote_api(&api_handle, rest)));
@@ -672,7 +687,12 @@ fn router_clock_ms() -> u64 {
 /// pause would put the verse on the wall long after the preacher moved on — but a
 /// partial is a sentence caught mid-word, and one shape of reference is created by
 /// that truncation rather than described by it. See the whole-chapter guard below.
-fn emit_detections(handle: &tauri::AppHandle, text: &str, now_ms: u64, is_final: bool) {
+fn emit_detections<R: tauri::Runtime>(
+    handle: &tauri::AppHandle<R>,
+    text: &str,
+    now_ms: u64,
+    is_final: bool,
+) {
     // Detection disarmed → transcribe but surface nothing. Manual override is a
     // separate path and stays live.
     if !handle.state::<Detecting>().0.load(Ordering::Relaxed) {
@@ -714,7 +734,20 @@ fn emit_detections(handle: &tauri::AppHandle, text: &str, now_ms: u64, is_final:
             candidates.push(Cand {
                 r: m.reference,
                 conf: m.confidence,
-                method: DetectionMethod::Direct,
+                // `m.method`, NOT a hardcoded `Direct`. This line threw away the
+                // parser's own verdict about how good the evidence was, and it is
+                // the THIRD place in this codebase found doing it on 2026-08-14 —
+                // `eval.rs`'s scorer and `detection.rs`'s harness were the other
+                // two. Between them they meant the `UncertainBook` cap existed,
+                // was unit-tested, passed at the router, and did nothing whatever
+                // in the product: "hymn number three sixteen" still reached the
+                // wall, because by the time the router saw the candidate it had
+                // been relabelled as something Relay heard.
+                //
+                // Caught by `e2e::ordinary_church_announcements_reach_nobody`,
+                // which is the first test in this repo to drive the AI's own path
+                // end to end. A router that is told the answer is not a gate.
+                method: m.method,
                 verse_end: m.verse_end,
                 whole_chapter: m.whole_chapter,
                 matched: Some(m.matched_text),
@@ -1239,30 +1272,65 @@ fn remote_api<R: tauri::Runtime>(app: &tauri::AppHandle<R>, rest: &str) -> Strin
 /// The current live verse (reference + text) as JSON fields, for the remote to
 /// show what is on the wall. Reads the context's current passage anchor.
 fn live_json<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> String {
+    // WHAT THE CONGREGATION CAN SEE — not where the playhead is.
+    //
+    // This read the Context passage ANCHOR and published it under the key `live`.
+    // The anchor deliberately survives a clear (it is what makes `→` resume rather
+    // than restart), so the preacher's phone was told "John 3:16 is live" over
+    // cleared screens and over blacked-out ones. Cued ≠ On Air, violated on the one
+    // surface whose holder cannot look up and check.
+    //
+    // It also answered a REHEARSAL fire byte-identically to a real one, so a
+    // preacher practising on a Thursday was told the congregation's wall had their
+    // verse on it. Containment held — nothing reached the wall or the kiosk — but
+    // the HTTP control plane is a fifth door and it is a *reporter*, not a
+    // publisher, so nobody enumerated it. Same quiet shape as the `stage_next` leak.
+    let rehearsing = app
+        .try_state::<channels::Rehearsal>()
+        .map(|r| r.on())
+        .unwrap_or(false);
+    let wall = app.try_state::<channels::WallState>();
+    let on_air = wall.as_ref().map(|w| w.on_air()).unwrap_or(false);
+    let blacked = wall.as_ref().map(|w| w.blacked()).unwrap_or(false);
+
+    // The anchor still rides, under a name that says what it is: where the
+    // transport would resume. It is genuinely useful to the remote — it is what
+    // Next/Prev will step — and it is not a claim about any screen.
     let ctx = app.state::<Context>();
     let cur = ctx.0.lock().ok().and_then(|c| c.current().cloned());
-    match cur {
-        Some(r) => {
-            let text = {
-                let db = app.state::<Db>();
-                db.0.lock()
-                    .ok()
-                    .and_then(|conn| {
-                        db::lookup_verse(&conn, &r.book, r.chapter, r.verse)
-                            .ok()
-                            .flatten()
-                    })
-                    .map(|v| v.text)
-                    .unwrap_or_default()
-            };
-            format!(
-                "\"live\":{{\"reference\":{},\"text\":{}}}",
-                json_str(&format!("{} {}:{}", r.book, r.chapter, r.verse)),
-                json_str(&text)
-            )
+    let cued = match &cur {
+        Some(r) => json_str(&format!("{} {}:{}", r.book, r.chapter, r.verse)),
+        None => "null".to_string(),
+    };
+
+    let live = if on_air && !rehearsing {
+        match &cur {
+            Some(r) => {
+                let text = {
+                    let db = app.state::<Db>();
+                    db.0.lock()
+                        .ok()
+                        .and_then(|conn| {
+                            db::lookup_verse(&conn, &r.book, r.chapter, r.verse)
+                                .ok()
+                                .flatten()
+                        })
+                        .map(|v| v.text)
+                        .unwrap_or_default()
+                };
+                format!(
+                    "{{\"reference\":{},\"text\":{}}}",
+                    json_str(&format!("{} {}:{}", r.book, r.chapter, r.verse)),
+                    json_str(&text)
+                )
+            }
+            None => "null".to_string(),
         }
-        None => "\"live\":null".to_string(),
-    }
+    } else {
+        "null".to_string()
+    };
+
+    format!("\"live\":{live},\"cued\":{cued},\"rehearsing\":{rehearsing},\"blacked\":{blacked}")
 }
 
 /// Minimal JSON string escaper (quotes, backslashes, control chars).
@@ -2414,8 +2482,8 @@ fn open_ndi_output(_template_id: i64) -> error::Result<String> {
 /// Operator confirmed a suggestion — fire it to the output channels and feed the
 /// self-calibrating gate. Returns updated thresholds so Settings reflects the nudge.
 #[tauri::command]
-fn confirm_detection(
-    app: tauri::AppHandle,
+fn confirm_detection<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     db: tauri::State<'_, Db>,
     routing: tauri::State<'_, Routing>,
     rehearsal: tauri::State<'_, channels::Rehearsal>,
@@ -2424,9 +2492,39 @@ fn confirm_detection(
     // The confidence of the suggestion the operator just accepted — this is the
     // evidence the self-calibrating gate learns from, so it has to outlive the
     // `if let` that parses the reference.
-    let mut confirmed_conf: Option<f32> = None;
-    if let Some(m) = detection::detect_direct(&reference).into_iter().next() {
-        confirmed_conf = Some(m.confidence);
+    // ── BOTH FAILURE PATHS REPORT. Neither used to. ─────────────────────────
+    //
+    // This returned `Ok(thresholds)` in two situations where nothing reached any
+    // screen: `detect_direct` finding nothing (the `if let` simply fell through),
+    // and `fire_manual` returning `false` — whose bool was DISCARDED, with no
+    // binding and no `if`. Its twin `manual_fire` reports both, one function along,
+    // with the same engine underneath. `NavResult`'s `Ok(_)` all over again.
+    //
+    // The reachable case is not hypothetical. `emit_detections` deliberately
+    // demotes a parsed-but-absent verse to a suggestion and emits it with
+    // `in_library: false` — "heard-but-unresolvable must degrade to a suggestion,
+    // never to silence" — and NO frontend file reads `in_library`. So a garbled
+    // "Psalms 23:99" renders as an ordinary card with Accept enabled; the backend
+    // answered Ok; `capture.js` ran `leavePlan()` and removed the card; and
+    // `Live.svelte` flashed **"Now live: Psalms 23:99"** while the previous verse
+    // was still on the wall. That is the exact bug the comment above `acceptTop`
+    // says was fixed — the caller was hardened and the callee was not.
+    //
+    // It also fed the calibrator: `record_feedback(true, …)` ran on the Ok path
+    // whether or not anything had fired.
+    let m = detection::detect_direct(&reference)
+        .into_iter()
+        .next()
+        .ok_or_else(|| {
+            error::Error::not_found(format!(
+                "could not read a reference from \"{reference}\" — nothing was put on the screens"
+            ))
+        })?;
+    // Always Some now: the parse is a hard precondition rather than an `if let`
+    // that could quietly do nothing. `record_feedback` still takes an Option
+    // because the router's own tests exercise the None arm.
+    let confirmed_conf = Some(m.confidence);
+    {
         // Stage the passage span, then fire through the one shared manual path —
         // the operator accepting a suggestion IS a human decision, so it records
         // as "manual" and carries the scripture template like every other fire.
@@ -2440,7 +2538,11 @@ fn confirm_detection(
                 m.verse_end
             }
         };
-        fire_manual(
+        let key = format!(
+            "{} {}:{}",
+            m.reference.book, m.reference.chapter, m.reference.verse
+        );
+        if !fire_manual(
             &app,
             m.reference,
             m.confidence,
@@ -2448,7 +2550,14 @@ fn confirm_detection(
             None,
             // Confirming an AI suggestion is not a plan cue — scripture default.
             None,
-        );
+        ) {
+            // Same wording as `manual_fire`'s, deliberately: it is the same
+            // failure, and a volunteer should not have to learn two sentences for
+            // one problem depending on which control they pressed.
+            return Err(error::Error::not_found(format!(
+                "{key} isn't in the Bible text — check the reference"
+            )));
+        }
     }
     let t = {
         let mut router = routing.0.lock()?;
