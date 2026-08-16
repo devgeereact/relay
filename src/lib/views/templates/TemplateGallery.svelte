@@ -8,6 +8,7 @@
   import { createEventDispatcher, onMount, onDestroy } from 'svelte';
   import TemplateRender from '../../TemplateRender.svelte';
   import EmptyState from '../../ui/EmptyState.svelte';
+  import ErrorState from '../../ui/ErrorState.svelte';
   import { templateKind, kindsPresent, KIND_META } from '../../templateKind.js';
   import { STARTERS, isLayered, regionsToLayers, CONTENT_KINDS } from '../../layers.js';
   import { testTemplateOnOutputs } from '../../templateTest.js';
@@ -18,6 +19,7 @@
     templates,
     contentTemplates,
     loadTemplates,
+    readErrors,
     saveTemplate,
     saveTemplateQuiet,
     deleteTemplate,
@@ -334,6 +336,14 @@
             </div>
           {/each}
         </div>
+      {:else if $readErrors.loadTemplates}
+        <!-- THREE FACTS, NOT TWO. A fresh install ships five built-in templates, so
+             "No templates yet — create one to start" was never a thing this screen
+             could truthfully say about an empty list; it could only ever mean the
+             read failed. An operator told their five templates do not exist is about
+             to make five more. `readErrors` carries the reason the GROUP 2 wrapper
+             used to discard. -->
+        <ErrorState error={$readErrors.loadTemplates} onRetry={() => loadTemplates()} />
       {:else}
         <EmptyState message={$templates.length ? 'No template matches this filter.' : 'No templates yet — create one to start.'} />
       {/if}

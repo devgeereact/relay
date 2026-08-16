@@ -64,7 +64,7 @@
       await deleteTheme(t.id);
       if (selId === t.id) selId = BUILTIN_THEMES[0].id;
     } catch (e) {
-      err = String(e);
+      err = humanError(e); // `String(e)` on a typed error is "[object Object]".
     }
   }
 
@@ -80,7 +80,7 @@
       selId = id;
       dispatch('edit', { id });
     } catch (e) {
-      err = String(e);
+      err = humanError(e); // `String(e)` on a typed error is "[object Object]".
     }
   }
 
@@ -94,7 +94,7 @@
       selId = id;
       dispatch('edit', { id });
     } catch (e) {
-      err = String(e);
+      err = humanError(e); // `String(e)` on a typed error is "[object Object]".
     }
   }
 

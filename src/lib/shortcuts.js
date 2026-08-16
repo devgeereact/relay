@@ -140,7 +140,28 @@ export function installShortcuts({ clearScreens, blackScreen }) {
       // Read from the DOM rather than a registry of open overlays: a registry is a
       // list somebody has to remember to add the next dialog to, and the whole point
       // is that this must not depend on anybody remembering.
-      if (document.querySelector('[role="dialog"]')) return;
+      //
+      // ── Why this is a LIST of roles, and why it grew (2026-08-14) ────────────
+      //
+      // It probed for `[role="dialog"]` alone, and the audit found SEVEN overlays
+      // it therefore did not cover: six popup menus and the console crash panel.
+      // Pressing Escape in any of them wiped the congregation's screens AND left
+      // the overlay open — the same "one outcome they did not ask for, none of the
+      // one they did" this guard was written to end, on the doors nobody
+      // enumerated.
+      //
+      // The crash panel is the sharpest of the seven. It uses `role="alertdialog"`
+      // — the ARIA role for exactly the modals that matter most — and its own copy
+      // reads "Your output screens are still live". So the reflex key for
+      // dismissing a modal blanked the wall at the one moment the product
+      // guarantees the wall is hot.
+      //
+      // `alertdialog` is a dialog and `menu`/`listbox` are transient overlays; in
+      // every case Escape belongs to the thing on top. If you add an overlay kind,
+      // add it here — and `panic.test.js` will tell you if you don't.
+      if (document.querySelector('[role="dialog"],[role="alertdialog"],[role="menu"],[role="listbox"]')) {
+        return;
+      }
 
       clearScreens();
       return;

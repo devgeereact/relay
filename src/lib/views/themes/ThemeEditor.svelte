@@ -1,4 +1,5 @@
 <script>
+  import { humanError } from '../../errors.js';
   // Theme editor — edit ONE custom theme's style and see it live on the same
   // TemplateRender the wall uses. A theme owns only the whitelisted style keys
   // (themes.js: THEME_STYLE_KEYS); this form is grouped by concern (type, colour,
@@ -62,7 +63,7 @@
       await saveTheme({ id: draft.id, name: draft.name.trim(), style: draft.style });
       dirty = false;
     } catch (e) {
-      err = String(e);
+      err = humanError(e); // `String(e)` on a typed error is "[object Object]".
     } finally {
       saving = false;
     }

@@ -421,7 +421,7 @@
   {/if}
 
   {#if msg}<p class="br-msg">{msg}</p>{/if}
-  {#if error}<p class="br-err">{error}</p>{/if}
+  {#if error}<p class="br-err" role="alert">{error}</p>{/if}
 </div>
 
 <style>

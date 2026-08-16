@@ -79,6 +79,19 @@
   function finish() {
     if (finished) return;
     finished = true;
+    // CLEARED HERE, at the single exit — not in `resume()`, which is one of three.
+    //
+    // `resume()` cleared it with the right reason ("amber means the congregation is
+    // looking at something, and it is never allowed to be true because an app
+    // restarted") and `startFresh()` cleared it via `clearSession()`. The third
+    // exit — Esc, documented at the top of this file as the always-available skip,
+    // and also the plain fall-through when no gate is shown — cleared nothing. So a
+    // volunteer relaunching after a power cut forty seconds before the sermon, who
+    // pressed the key this module tells them to press, got a plan cue rendered
+    // amber "On Air" over output windows that had died with the process.
+    //
+    // A flag that must die on every exit belongs at the exit, not at one of them.
+    setSession({ liveOnAir: false });
     booting.set(false);
     onDone();
   }
@@ -127,10 +140,8 @@
     finish();
   }
   function resume() {
-    // The POSITION comes back. `liveOnAir` does not — see RecoverSession.svelte.
-    // Amber means the congregation is looking at something, and it is never
-    // allowed to be true because an app restarted.
-    setSession({ liveOnAir: false });
+    // The POSITION comes back; `liveOnAir` does not. The clearing itself now lives
+    // in `finish()`, which every exit runs through — see the note there.
     gate.set(null);
     finish();
   }

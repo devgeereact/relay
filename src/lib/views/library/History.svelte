@@ -1,4 +1,5 @@
 <script>
+  import { humanError } from '../../errors.js';
   import { onMount } from 'svelte';
   import { showsConfidence } from '../../detect.js';
   import Loading from '../../ui/Loading.svelte';
@@ -11,7 +12,8 @@
       const path = await exportService(selected.id);
       exportMsg = `Saved to ${path}`;
     } catch (e) {
-      exportMsg = `Export failed: ${e}`;
+      // `${e}` on a typed error is "[object Object]" — error.rs sends an object.
+      exportMsg = `Export failed — ${humanError(e)}`;
     }
   }
 
@@ -91,7 +93,13 @@
     try {
       detail = await serviceDetail(svc.id);
     } catch (e) {
-      detail = { transcripts: [], detections: [], error: String(e) };
+      // `error` is RENDERED now. It was set here and referenced nowhere in the
+      // template, so a service whose detail failed to load was reported to the
+      // operator as a service that had not been recorded — "No transcript
+      // recorded", "No verses fired" — with the reason sitting one property away.
+      // Telling somebody their Sunday was not captured, when in fact a query
+      // failed, is the kind of wrong that gets acted on.
+      detail = { transcripts: [], detections: [], error: humanError(e) };
     }
     loading = false;
   }
@@ -127,7 +135,7 @@
       </div>
     </div>
 
-    {#if exportMsg}<div class="lib-exportmsg r-mono">{exportMsg}</div>{/if}
+    {#if exportMsg}<div class="lib-exportmsg" role="status">{exportMsg}</div>{/if}
 
     {#if loading}
       <Loading what="services" />
@@ -175,6 +183,10 @@
                 </span>
               </div>
             {/if}
+          {:else if detail?.error}
+            <div class="r-tile lib-emptytile" role="alert">
+              <span class="lib-detailerr">Could not open this service — {detail.error}</span>
+            </div>
           {:else}
             <div class="r-tile lib-emptytile"><span class="r-empty">No transcript recorded.</span></div>
           {/if}
@@ -213,6 +225,10 @@
                   </div>
                 </div>
               {/each}
+            </div>
+          {:else if detail?.error}
+            <div class="r-tile lib-emptytile" role="alert">
+              <span class="lib-detailerr">Could not open this service — {detail.error}</span>
             </div>
           {:else}
             <div class="r-tile lib-emptytile"><span class="r-empty">No verses fired.</span></div>
@@ -358,7 +374,10 @@
   .lib-detail-actions{ display:flex; align-items:center; gap:12px; flex-shrink:0; }
   .lib-detail-count{ font-size:11px; color:var(--v-dim); }
 
-  .lib-exportmsg{ font-size:11px; color:var(--v-emerald); word-break:break-all; margin-top:-8px; }
+  .lib-exportmsg{ font-size:11px; color:var(--v-emerald); word-break:break-word; margin-top:-8px; }
+  /* `r-mono` is gone: it now carries a humanised sentence, and monospace is what
+     made the old raw-error dumps read like a crash to a volunteer. */
+  .lib-detailerr{ font-size:12px; color:var(--v-rose); }
 
   .lib-detail-grid{ display:grid; grid-template-columns:1fr 340px; gap:16px; align-items:start; }
   .lib-collabel{ margin-bottom:10px; }

@@ -419,7 +419,7 @@
   </div>
 
   {#if msg}<p class="ly-msg">{msg}</p>{/if}
-  {#if error}<p class="ly-err">{error}</p>{/if}
+  {#if error}<p class="ly-err" role="alert">{error}</p>{/if}
 </div>
 
 <style>

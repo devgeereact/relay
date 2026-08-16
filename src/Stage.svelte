@@ -108,7 +108,27 @@
       cdDone = m.countdown_done || '';
       nowMs = Date.now();
       visible = true;
-    } else if (m.kind === 'clear') {
+    } else if (m.kind === 'clear' || m.kind === 'black') {
+      // `black` HAS to be here, and it was not.
+      //
+      // The hub publishes four kinds and this page handled three. `Output.svelte`
+      // honours `black`; this one did not — so the operator hit `B`, the
+      // congregation's wall went dark, and the screen the preacher is READING FROM
+      // kept the verse. The console reported success, correctly: the message did
+      // leave the machine. Nobody was told a screen had ignored it.
+      //
+      // Blanking on `black` rather than ignoring it is the conservative reading of
+      // a genuine ambiguity, and the ambiguity is worth stating because the other
+      // answer is defensible. A stage monitor faces the PREACHER, not the
+      // congregation, so one could argue a blackout — whose purpose is "the
+      // congregation must see nothing" — should leave it alone. But `clear`
+      // already blanks this page, and **the harsher control must never do less
+      // than the milder one**. An operator who has just hit the emergency key
+      // cannot be asked to remember that it reaches three screens out of four.
+      //
+      // If Relay ever decides the stage monitor should survive a panic, it must
+      // survive BOTH controls, deliberately, in both branches — not by one of them
+      // being forgotten.
       visible = false;
       note = '';
       cdTo = null;

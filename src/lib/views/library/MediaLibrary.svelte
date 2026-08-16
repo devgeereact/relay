@@ -252,7 +252,7 @@
   </div>
 
   {#if msg}<p class="ml-msg">{msg}</p>{/if}
-  {#if error}<p class="ml-err">{error}</p>{/if}
+  {#if error}<p class="ml-err" role="alert">{error}</p>{/if}
 </div>
 
 <style>
