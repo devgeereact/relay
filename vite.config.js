@@ -42,6 +42,13 @@ export default defineConfig({
     // can load the output page over http://<this-machine-ip>:5032 during dev.
     host: true,
   },
+  // Same port as dev: `vite preview` otherwise drifts to the shared 4173,
+  // which no project owns and which collides across checkouts.
+  preview: {
+    port: 5032,
+    strictPort: true,
+    host: true,
+  },
   build: {
     // Two entries: the operator console (index.html) and the native output
     // window (output.html) that channels.rs opens per output channel.
