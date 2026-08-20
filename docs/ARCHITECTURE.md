@@ -193,7 +193,7 @@ These were learned the hard way (hours-long freezes/crashes). Do not regress the
 4. **Call `whisper_rs::install_logging_hooks()` once** — else whisper floods stderr with per-token lines (an I/O storm that looks like a freeze).
 5. **Audio capture start must be non-blocking** — spawn the thread, return immediately, surface device errors via `audio://error`.
 6. **Consistent global lock order: `Db` before `Session`** everywhere.
-7. **`initAudio()` at app level** (not only in Settings) so `$capture.available` is true on the default Console tab.
+7. **`initAudio()` at app level** (not only in Settings) so `$capture.available` is true on the default **Live** tab.
 8. **Feed STT the non-overlapping tail** of each chunk (the detection chunker's overlap garbles whisper).
 9. **No `unwrap()` in live paths** — a panic mid-sermon is the worst failure. Surface errors to the operator.
 10. **No per-channel-type rendering branches** — output differences are template *configuration*, never `if channel_type == …` in render code.

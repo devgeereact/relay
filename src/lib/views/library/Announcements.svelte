@@ -180,7 +180,20 @@
 
     <div class="an-body r-scroll">
       {#if edit}
-        <div class="an-editor" role="dialog" aria-label="Announcement editor">
+        <!-- NOT `role="dialog"`. It is an in-flow panel — no scrim, no
+             `position:fixed`, no `aria-modal`, no focus trap, nothing bound to
+             Escape — and claiming the role made `shortcuts.js` treat it as a modal
+             that owns the Escape key. `shortcuts.js` probes the DOM precisely so
+             nobody has to remember to register an overlay; the price is that a
+             wrong role silently DISARMS the panic key instead of merely
+             mislabelling a box.
+             That mattered more here than anywhere else: `Esc` is the only panic key
+             that survives a focused text field (`B` is suppressed while typing, or
+             "Habakkuk" would black out the wall on the second keystroke) and this
+             panel is nothing but text fields. While it was open, Escape neither
+             closed the editor nor cleared the screens. It did nothing at all.
+             `role="group"` is what this is: a labelled region, not a modal. -->
+        <div class="an-editor" role="group" aria-label="Announcement editor">
           <div class="an-ehead">
             <span class="r-lbl">{edit.id ? 'Edit announcement' : 'New announcement'}</span>
             <span class="an-spring"></span>

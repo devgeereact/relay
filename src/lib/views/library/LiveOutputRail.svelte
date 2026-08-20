@@ -44,14 +44,20 @@
     listOutputChannels,
   } from '../../stores/capture.js';
 
-  export let preview = null;
   export let template = null;
   export let allTemplates = [];
   export let queue = [];
-  export let busy = false;
-  export let onTake = () => {};
   export let onQueueChange = () => {};
   export let onFireQueued = () => {};
+
+  /** Escape closes the popup and goes NO FURTHER — it must not reach the panic key. */
+  function menuEsc(e) {
+    if (e.key === 'Escape') {
+      e.stopPropagation();
+      e.preventDefault();
+      showMins = false;
+    }
+  }
 
   let channels = [];
   let watching = null;
@@ -83,7 +89,10 @@
   async function goLive() {
     error = '';
     msg = '';
-    if (preview) return onTake();
+    // The QUEUE is the staging area — "Up Next" is a switcher that holds N items
+    // rather than one. The `preview` prop this used to check first had no producer
+    // in the shipping app and is gone (audit P1-2); see Library.svelte for why the
+    // AI path stayed at one press.
     const { item, rest } = take(queue);
     if (!item) {
       msg = 'Nothing staged and nothing queued.';
@@ -156,7 +165,7 @@
     <header class="lo-head">
       <p class="r-lbl">
         Live Output <span class="lo-dot">·</span>
-        {preview ? 'Preview' : $rehearsing ? 'Rehearsal' : 'Program'}
+        {$rehearsing ? 'Rehearsal' : 'Program'}
       </p>
       {#if channels.length > 1}
         <select class="lo-pick" aria-label="Which output to watch" bind:value={watching}>
@@ -164,6 +173,13 @@
           {#each channels as c}<option value={c.id}>{c.name}</option>{/each}
         </select>
       {/if}
+      <!-- This monitor now shows ONE thing: the congregation's wall. It used to be
+           time-multiplexed with a staged slide, and the badge read `onAir` alone —
+           which knew nothing about `preview` — so a staged verse drew an amber,
+           pulsing "Live" beside content nobody could see. That was fixed, and then
+           the audit found the staged half had no producer at all and could never
+           render. The honest repair is one pane, one fact. Amber means live and is
+           never allowed to lie (CLAUDE.md §18). -->
       <span class="r-badge {onAir && !$rehearsing ? 'amber' : $rehearsing ? 'amethyst' : 'grey'}">
         {#if onAir && !$rehearsing}<span class="bd"></span>{/if}
         {onAir ? ($rehearsing ? 'Rehearsal' : 'Live') : 'Clear'}
@@ -171,21 +187,7 @@
     </header>
 
     <div class="lo-screen">
-      {#if preview}
-        {#if monitorTemplate}
-          <TemplateRender
-            template={monitorTemplate}
-            content={{
-              reference: preview.hideReference ? null : preview.reference,
-              text: preview.text,
-              translation: preview.translation,
-              media_url: preview.media_url,
-              media_kind: preview.media_kind,
-            }} />
-        {:else}
-          <span class="lo-plain">{preview.text}</span>
-        {/if}
-      {:else if $screenBlack}
+      {#if $screenBlack}
         <span class="lo-empty">Blacked out</span>
       {:else if $live}
         {#if monitorTemplate}
@@ -208,9 +210,10 @@
       {/if}
     </div>
 
-    <button class="lo-take" disabled={!preview || busy || $safeMode} on:click={onTake}>
-      {busy ? 'Taking…' : $safeMode ? 'Safe mode' : 'Take to screen →'}
-    </button>
+    <!-- "Take to screen →" lived here and was permanently disabled: it took the
+         `preview` prop, which had no producer. Going live from the Library is the
+         "Go Live" control at the bottom of this rail, which fires the top of the
+         queue — the staging area that actually exists. -->
   </section>
 
   <div class="lo-scroll r-scroll">
@@ -312,15 +315,17 @@
 
   <!-- ── ACTIONS — pinned ─────────────────────────────────────────────────── -->
   <section class="lo-panel lo-pad lo-quick">
-    <!-- AMBER: this is what puts something in front of people. "Send to
-         Preview" used to sit beside it and did the same job as Take to screen
-         under the monitor — two buttons, one action, and a row of height the
-         transcript needed more. -->
+    <!-- AMBER: this is what puts something in front of people. "Send to Preview"
+         used to sit beside it and did the same job — two buttons, one action, and a
+         row of height the transcript needed more. That removal was right, and the
+         2026-08-15 audit finished it: the staged half it left behind had no producer
+         at all. This fires the top of the QUEUE, which is the staging area that
+         actually exists. -->
     <button
       class="r-btn amber lo-golive"
-      disabled={$safeMode || (!preview && !queue.length)}
+      disabled={$safeMode || !queue.length}
       on:click={goLive}>
-      {preview ? 'Go Live — staged' : queue.length ? `Go Live — ${queue[0].reference}` : 'Go Live'}
+      {queue.length ? `Go Live — ${queue[0].reference}` : 'Go Live'}
     </button>
 
     <div class="lo-tiles">
@@ -343,9 +348,15 @@
         </button>
         {#if showMins}
           <button class="lo-scrim" tabindex="-1" aria-label="Close" on:click={() => (showMins = false)}></button>
-          <div class="lo-menu">
+          <!-- `role="menu"` is load-bearing, not decoration. `shortcuts.js` decides
+               whether Escape belongs to an overlay or to the panic key by probing
+               the DOM, deliberately, so the rule cannot depend on anyone
+               remembering to register a new popup. This menu carried no role at
+               all, so Escape here used to blank the congregation's screens and
+               leave the menu open — on the RUN RAIL, mid-service. -->
+          <div class="lo-menu" role="menu" tabindex="-1" on:keydown={menuEsc}>
             {#each [5, 10, 15, 30] as m}
-              <button class="lo-mi" on:click={() => countdown(m)}>{m} minutes</button>
+              <button class="lo-mi" role="menuitem" on:click={() => countdown(m)}>{m} minutes</button>
             {/each}
           </div>
         {/if}
@@ -357,7 +368,7 @@
     </button>
 
     {#if msg}<p class="lo-msg">{msg}</p>{/if}
-    {#if error}<p class="lo-err">{error}</p>{/if}
+    {#if error}<p class="lo-err" role="alert">{error}</p>{/if}
   </section>
 </aside>
 
@@ -413,6 +424,14 @@
   .lo-head .r-lbl {
     flex: 1;
     margin: 0;
+  }
+  /* The "wall live" chip sits BESIDE the pane's own badge, and is deliberately the
+     smaller of the two: it is a second fact, not a competing headline. It must not
+     wrap the header onto a second line on a narrow rail. */
+  .lo-behind {
+    flex: 0 0 auto;
+    padding: 4px 9px;
+    font-size: 9px;
   }
   .lo-pad .r-lbl {
     margin: 0;

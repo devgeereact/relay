@@ -198,6 +198,42 @@ describe('cheatsheet', () => {
     stop();
   });
 
+  // THE 2026-08-14 AUDIT, P1-3. The guard above probed for `[role="dialog"]` and
+  // nothing else, so SEVEN overlays were not covered: six popup menus and the
+  // console crash panel. Escape in any of them wiped the congregation's screens and
+  // left the overlay open — the identical failure the test above was written to end,
+  // on the doors nobody enumerated.
+  //
+  // Table-driven on purpose: the bug was never "this one role was missed", it was
+  // "the list was a list". Adding an overlay kind means adding a row here.
+  it.each([
+    // The crash panel. Its own copy says "Your output screens are still live", and
+    // Escape is the reflex key for dismissing a modal — so this was the wall going
+    // dark at the one moment the product guarantees the wall is hot.
+    ['alertdialog', 'the console crash panel'],
+    // Countdown on the run rail, the VerseDeck kebab, two template-gallery menus,
+    // two template-editor menus.
+    ['menu', 'a popup menu'],
+    ['listbox', 'an open combobox list'],
+  ])('Escape inside role="%s" (%s) does not clear the screens', (role) => {
+    const clearScreens = vi.fn();
+    const stop = installShortcuts({ clearScreens, blackScreen: () => {} });
+    cheatsheet.set(false);
+
+    const overlay = document.createElement('div');
+    overlay.setAttribute('role', role);
+    document.body.appendChild(overlay);
+
+    press('Escape');
+    expect(clearScreens).not.toHaveBeenCalled();
+
+    // …and the guard must not cost the operator their panic key once it closes.
+    overlay.remove();
+    press('Escape');
+    expect(clearScreens).toHaveBeenCalledTimes(1);
+    stop();
+  });
+
   it('but Escape with NO cheatsheet open is still the panic key', () => {
     // The guard above must not cost the operator their panic key.
     const clearScreens = vi.fn();

@@ -44,30 +44,81 @@ static GUARD: Mutex<Option<sentry::ClientInitGuard>> = Mutex::new(None);
 /// and the cost of failing open here is publishing somebody's sermon.
 ///
 /// Pure, so it is actually testable — the tests below are the real specification.
-pub fn scrub(mut event: sentry::protocol::Event<'static>) -> sentry::protocol::Event<'static> {
-    // Breadcrumbs are free-form strings logged from all over the app. We cannot
-    // audit every one of them forever, so we don't try: drop the lot.
-    event.breadcrumbs = Default::default();
+pub fn scrub(event: sentry::protocol::Event<'static>) -> sentry::protocol::Event<'static> {
+    // BUILD A FRESH EVENT AND COPY THE ALLOWED FIELDS ACROSS.
+    //
+    // This function's doc comment has always said "deliberately an ALLOW-LIST …
+    // a blocklist fails open, and the cost of failing open here is publishing
+    // somebody's sermon". The implementation was a blocklist: it enumerated the
+    // carriers it emptied — breadcrumbs, extra, contexts, user, server_name,
+    // request, message, exception values and their frame vars — and shipped every
+    // other field of `sentry::protocol::Event` verbatim.
+    //
+    // Three of the remainder are free text and reachable from ordinary Sentry
+    // APIs. Serialised wire output from the audit's test:
+    //
+    //   {"logentry":{"message":"failed to render For God so loved the world",
+    //                "params":["turn with me to the book of Romans"]},
+    //    "threads":{"values":[{"stacktrace":{"frames":[{"vars":
+    //                {"verse":"For God so loved the world"}}]}}]},
+    //    "tags":{"last_verse":"For God so loved the world"}}
+    //
+    // Note `threads[].stacktrace.frames[].vars` — the SAME carrier the exception
+    // path was careful to clear, on the other stacktrace field.
+    //
+    // Not a live leak when it was found: only the `panic` integration is enabled
+    // and nothing in this crate calls `capture_message`, `add_breadcrumb` or
+    // `set_tag`. That is exactly the argument for closing it now — it was one call
+    // away from not existing, in a module whose promise in PRIVACY.md is
+    // unconditional. Struct update syntax (`..Default::default()`) is what makes
+    // this hold: a field ADDED to the protocol by a future SDK version arrives
+    // empty rather than arriving populated.
+    // Whether there WAS free text, computed before the move. A redacted report must
+    // stay distinguishable from an empty one, or the operator's opt-in bought a
+    // report nobody can tell was ever populated.
+    let had_text = event.message.is_some() || event.logentry.is_some();
 
-    // "Extra" and "contexts" are where structured payloads get attached. Same
-    // argument. (Device/OS context is re-added by the `contexts` feature and is
-    // not content — but we cannot distinguish per-key safely, so we keep only the
-    // OS/device/runtime contexts by name.)
-    event.extra.clear();
-    event
-        .contexts
+    let sentry::protocol::Event {
+        event_id,
+        level,
+        fingerprint,
+        culprit,
+        transaction,
+        timestamp,
+        release,
+        environment,
+        sdk,
+        platform,
+        exception,
+        contexts,
+        ..
+    } = event;
+
+    let mut out = sentry::protocol::Event {
+        // Identity and grouping. None of these is content.
+        event_id,
+        level,
+        fingerprint,
+        // `culprit` and `transaction` are code locations — a function path and a
+        // span name — set by the SDK, not by us. Kept because a crash report with
+        // no location is a crash report nobody can action.
+        culprit,
+        transaction,
+        timestamp,
+        release,
+        environment,
+        sdk,
+        platform,
+        exception,
+        contexts,
+        ..Default::default()
+    };
+
+    // Device/OS/runtime context only, by name. We cannot audit per-key safely.
+    out.contexts
         .retain(|k, _| matches!(k.as_str(), "os" | "device" | "runtime" | "rust"));
 
-    // Never identify the operator or the machine.
-    event.user = None;
-    event.server_name = None;
-    event.request = None;
-
-    // Free text goes. All of it. See `REDACTED` below for why.
-    if event.message.is_some() {
-        event.message = Some(REDACTED.to_string());
-    }
-    for ex in event.exception.values.iter_mut() {
+    for ex in out.exception.values.iter_mut() {
         // The exception TYPE stays — "PanicException", "std::io::Error". A type
         // name is code, not content, and it is what Sentry groups on.
         if ex.value.is_some() {
@@ -80,11 +131,22 @@ pub fn scrub(mut event: sentry::protocol::Event<'static>) -> sentry::protocol::E
         if let Some(st) = ex.stacktrace.as_mut() {
             for frame in st.frames.iter_mut() {
                 frame.vars.clear();
+                // The build machine's source paths are not church content, but they
+                // are not ours to publish either, and `filename` alone is enough to
+                // action a crash.
+                frame.abs_path = None;
             }
         }
     }
 
-    event
+    // A message is never carried, but an event that HAD one should still say that
+    // something was there — otherwise a redacted report is indistinguishable from
+    // an empty one. See `REDACTED` below.
+    if had_text {
+        out.message = Some(REDACTED.to_string());
+    }
+
+    out
 }
 
 /// What replaces every free-text field in a crash report.

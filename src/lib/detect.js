@@ -32,6 +32,14 @@ export const heard = (d) => d?.method === 'direct';
 export function methodKey(d) {
   if (d?.method === 'semantic') return 'live.paraphrase_a_guess';
   if (d?.method === 'ambiguous') return 'live.ambiguous_reference';
+  // `uncertain_book` — the chapter and verse were heard, the BOOK was not. Either
+  // an edit-distance repair of a misheard word, or an everyday word that happens
+  // to be a book name ("song two twelve"). It reads as a normal reference and it
+  // is the one the operator most needs to look at, so it must not fall through to
+  // "heard the reference" — that sentence would be a lie with a real parse
+  // confidence standing behind it, which is how "hymn number three sixteen" put
+  // Numbers 3:16 in front of a congregation. See detection.rs.
+  if (d?.method === 'uncertain_book') return 'live.book_name_uncertain';
   return 'live.heard_the_reference';
 }
 

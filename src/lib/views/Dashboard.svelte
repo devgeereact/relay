@@ -287,7 +287,7 @@
     {/if}
   </section>
 
-  {#if error}<div class="d-err">{error}</div>{/if}
+  {#if error}<div class="d-err" role="alert">{error}</div>{/if}
 </div>
 
 <style>

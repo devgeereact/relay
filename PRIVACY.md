@@ -77,16 +77,32 @@ are enough to fix a crash. (`src-tauri/src/telemetry.rs`, and the tests beneath 
 Relay serves the output screens over your local network, so a projector machine,
 an OBS computer, or the preacher's phone can display what you fire.
 
-**This is LAN-only and unauthenticated**, and you should know what that means:
-anyone already on the same church WiFi can open the output page and see the verse
-that is *already on the projector in front of them.* They **cannot** push content
-to your screens — the connection is broadcast-only — and they cannot reach your
-transcripts, plans, or history.
+**This is LAN-only and unauthenticated**, and you should know exactly what that
+means, because it is more than reading:
 
-We record that as a deliberate tradeoff, not an oversight
-([`docs/DECISIONS.md`](docs/DECISIONS.md)). **Revisit it if you run Relay on an
-untrusted network** — a laptop that also joins café WiFi would serve imported media
-to that network too.
+- Anyone already on the same church WiFi can open the output page and **see** the
+  verse that is already on the projector in front of them.
+- They can also **change what is on your screens.** Relay serves a remote control
+  at `http://<your-computer>:8032/stage.html` — it exists so the preacher can drive
+  their own reading from a phone — and it needs no password. Whoever opens it can
+  put a verse up, step forwards and backwards, clear the screens, or black them
+  out.
+- They **cannot** reach your transcripts, your service plans, or your history.
+  Nothing leaves your computer either way.
+
+That second point is a deliberate tradeoff for a device on a church's own network,
+and it is recorded as one — see **[DECISIONS §35](docs/DECISIONS.md)**, which also
+lists what would make us change it. It is written here in plain words because a
+privacy document that undersells the exposure is worse than one that says nothing.
+
+> **Until 2026-08-14 this file said the opposite** — that people on your network
+> "cannot push content to your screens". That was true when it was written and
+> stopped being true when the phone remote shipped, and nobody updated it. If you
+> made a decision about running Relay on a shared network based on that sentence,
+> please re-read this one.
+
+**Revisit this if you run Relay on an untrusted network** — a laptop that also joins
+café WiFi serves both the media files *and* the remote control to that network.
 
 ---
 

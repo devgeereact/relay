@@ -76,7 +76,12 @@ fn run(case: &Case) -> Outcome {
             "{} {}:{}",
             m.reference.book, m.reference.chapter, m.reference.verse
         );
-        match router.decide(&key, m.confidence, DetectionMethod::Direct, 0) {
+        // `m.method`, NOT a hardcoded `Direct`. Hardcoding it meant the scorer
+        // routed every candidate as if the parser had heard it exactly — so the
+        // benchmark could not have measured the `Repaired` cap even after it
+        // existed, and would have kept reporting the P0's phrasings as auto-fires.
+        // A gate that assumes the answer is not a gate.
+        match router.decide(&key, m.confidence, m.method, 0) {
             RouteDecision::AutoFire => auto_fired.push(key),
             RouteDecision::Suggest => suggested.push(key),
             RouteDecision::Drop => {}

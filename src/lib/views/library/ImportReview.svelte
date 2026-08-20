@@ -1,4 +1,5 @@
 <script>
+  import { humanError } from '../../errors.js';
   // Pre-save import review — edit parsed songs (titles, slide text, tags, order)
   // BEFORE they land in the library, so there's no import-then-fix-then-replace
   // cycle. Save commits everything (dedupe by title). Design-system styling.
@@ -69,7 +70,7 @@
       const res = await saveReviewedSongs(payload);
       dispatch('done', res);
     } catch (e) {
-      msg = String(e);
+      msg = humanError(e); // `String(e)` on a typed error is "[object Object]".
       saving = false;
     }
   }
@@ -80,7 +81,7 @@
     <div class="ir-title">Review import</div>
     <span class="ir-sub r-mono">{keepCount} of {list.length} song{list.length === 1 ? '' : 's'} · edit before saving</span>
     <span class="ir-spring"></span>
-    {#if msg}<span class="ir-msg r-mono">{msg}</span>{/if}
+    {#if msg}<span class="ir-msg r-mono" role="alert">{msg}</span>{/if}
     <button class="r-btn ghost sm" on:click={() => dispatch('cancel')}>Cancel</button>
     <button class="r-btn primary sm" on:click={save} disabled={saving || !keepCount}>{saving ? 'Saving…' : `Save ${keepCount} to Library`}</button>
   </div>

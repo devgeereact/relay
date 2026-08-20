@@ -62,11 +62,27 @@
     } finally { busy = false; }
   }
 
+  // Not every outcome is a failure, and the preacher is entitled to know WHICH.
+  // The end of a reading is a correct boundary; a verse missing from the library
+  // is a real fault. Only `fired` moved the wall.
+  const NAV_SAID = {
+    end_of_passage: 'End of the reading.',
+    no_passage: 'Nothing on screen yet — tap a verse first.',
+    not_in_library: 'That verse is not in the library.',
+  };
+
   async function nav(dir) {
     if (busy) return;
     busy = true; ctlErr = '';
     try {
-      await api(dir); // 'next' | 'prev'
+      // The backend answers `ok: true` for every outcome it handled — including
+      // the ones where NOTHING MOVED. So the catch below is not enough on its own:
+      // it only ever fires on a transport failure, which meant tapping Next at the
+      // end of a reading did nothing, said nothing, and left the preacher tapping.
+      const j = await api(dir); // 'next' | 'prev'
+      if (j.nav && j.nav.kind !== 'fired') {
+        ctlErr = NAV_SAID[j.nav.kind] ?? (dir === 'next' ? 'No next verse.' : 'No previous verse.');
+      }
     } catch (e) {
       ctlErr = dir === 'next' ? 'No next verse.' : 'No previous verse.';
     } finally { busy = false; }
@@ -92,7 +108,27 @@
       cdDone = m.countdown_done || '';
       nowMs = Date.now();
       visible = true;
-    } else if (m.kind === 'clear') {
+    } else if (m.kind === 'clear' || m.kind === 'black') {
+      // `black` HAS to be here, and it was not.
+      //
+      // The hub publishes four kinds and this page handled three. `Output.svelte`
+      // honours `black`; this one did not — so the operator hit `B`, the
+      // congregation's wall went dark, and the screen the preacher is READING FROM
+      // kept the verse. The console reported success, correctly: the message did
+      // leave the machine. Nobody was told a screen had ignored it.
+      //
+      // Blanking on `black` rather than ignoring it is the conservative reading of
+      // a genuine ambiguity, and the ambiguity is worth stating because the other
+      // answer is defensible. A stage monitor faces the PREACHER, not the
+      // congregation, so one could argue a blackout — whose purpose is "the
+      // congregation must see nothing" — should leave it alone. But `clear`
+      // already blanks this page, and **the harsher control must never do less
+      // than the milder one**. An operator who has just hit the emergency key
+      // cannot be asked to remember that it reaches three screens out of four.
+      //
+      // If Relay ever decides the stage monitor should survive a panic, it must
+      // survive BOTH controls, deliberately, in both branches — not by one of them
+      // being forgotten.
       visible = false;
       note = '';
       cdTo = null;

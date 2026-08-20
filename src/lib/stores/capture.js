@@ -115,6 +115,47 @@ export const rehearsing = writable(false);
 // froze `finals.length` at MAX_FINALS and every new line shifted the array left).
 export const transcript = writable({ partial: '', finals: [], finalsAt: [] });
 
+/**
+ * THE TRANSCRIPT REDUCER — the one place the rolling-transcript rule lives.
+ *
+ * Extracted from inside the `stt://transcript` listener on 2026-08-15 because it
+ * was untestable there, and it was the ONLY live surface in the app with no test
+ * of any kind: a grep for `transcript.set|transcript.update|$transcript` across
+ * every `*.test.js` returned zero.
+ *
+ * That matters more than a coverage number. The run rail's own comment says this
+ * panel is "the difference between 'the preacher has not said a reference' and
+ * 'Relay has gone deaf', and those need opposite responses" — so an operator reads
+ * it to decide whether to intervene. Four things have to hold, and none of them was
+ * pinned:
+ *
+ *   1. A FINAL clears the partial. Otherwise the half-heard fragment that became
+ *      the final sits underneath it, and the operator reads the tail twice.
+ *   2. `finals` and `finalsAt` are sliced in LOCKSTEP. They are stamped here, at
+ *      the source, precisely because a consumer that aligned them by length once
+ *      drifted them — the rolling cap froze `finals.length` and every new line
+ *      shifted the array left, so every timestamp labelled the wrong line.
+ *   3. A partial NEVER appends to finals. It is one line being revised, not a new
+ *      one, and whisper revises the same utterance several times a second.
+ *   4. The cap is a WINDOW ON THE NEWEST. A sermon is an hour long; the panel shows
+ *      the last few lines and the array must not grow without bound.
+ *
+ * Pure on purpose: `at` is passed in rather than read from the clock, so the
+ * ordering and alignment can be asserted deterministically.
+ */
+export function applyTranscript(t, { text, is_final }, at) {
+  if (!is_final) return { ...t, partial: text };
+  return {
+    partial: '',
+    finals: [...t.finals, text].slice(-MAX_FINALS),
+    // `?? []` because a session restored from an older build has no `finalsAt`,
+    // and a missing timestamp must degrade to an unlabelled line, never to a crash
+    // on the surface an operator is watching to decide whether Relay has gone deaf.
+    finalsAt: [...(t.finalsAt ?? []), at].slice(-MAX_FINALS),
+  };
+}
+
+
 // PENDING SUGGESTIONS awaiting an operator decision (status 'suggested'),
 // de-duplicated by reference. Auto/manual fires do NOT land here — they go
 // straight to the screens (see `live`). Keeps the console focused on what needs
@@ -142,13 +183,20 @@ export const defaultTemplateId = writable(null);
 
 /** Load the default-template id into the store (null if unset). */
 export async function loadDefaultTemplate() {
-  try {
-    const call = await invoke();
-    const n = parseInt(await call('get_setting', { key: 'default_template_id' }), 10);
-    defaultTemplateId.set(Number.isFinite(n) ? n : null);
-  } catch {
-    defaultTemplateId.set(null);
-  }
+  return guardedRead(
+    'loadDefaultTemplate',
+    async (call) => {
+      const n = parseInt(await call('get_setting', { key: 'default_template_id' }), 10);
+      defaultTemplateId.set(Number.isFinite(n) ? n : null);
+      return n;
+    },
+    // The old catch also did `defaultTemplateId.set(null)`. A fallback VALUE cannot
+    // carry a side effect, so the reset is explicit — without it a failed read left
+    // the store holding the last good id and every surface resolved a template the
+    // backend could no longer confirm.
+    null,
+    () => defaultTemplateId.set(null),
+  );
 }
 
 /** Set (or clear, with null) the default template. */
@@ -325,8 +373,18 @@ export async function initAudio() {
     try {
       const { listen } = await import('@tauri-apps/api/event');
       await listen('output://content', (e) => { live.set(e.payload); screenBlack.set(false); });
-      await listen('output://clear', () => { live.set(null); screenBlack.set(false); });
-      await listen('output://black', () => screenBlack.set(true));
+      // `leavePlan()` HERE, not only in the wrappers — this is the half no wrapper
+      // can reach. A clear that did not originate in this console still takes plan
+      // content off the wall: `/api/clear` from the preacher's phone, the spoken
+      // "clear the screen", and the exit from a rehearsal all reach
+      // `channels::clear` directly, and the console's only report of them is this
+      // event. It set `live` and `screenBlack` and nothing else, so the plan rail
+      // went on drawing amber "On Air" over a wall the congregation had stopped
+      // looking at — while the topbar, reading `$live`, simultaneously said the
+      // screens were clear. Two indicators in one window, disagreeing, and amber
+      // is never allowed to be the wrong one (CLAUDE.md §18).
+      await listen('output://clear', () => { live.set(null); screenBlack.set(false); leavePlan(); });
+      await listen('output://black', () => { screenBlack.set(true); leavePlan(); });
       // A SPOKEN "next"/"back" that did nothing. The STT thread has no caller to
       // return a NavResult to, so it pushes it here — the preacher says "next", the
       // wall does not move, and the console explains why instead of staying silent.
@@ -407,12 +465,15 @@ export async function setDetection(enabled) {
 
 /** Read rehearsal state from the backend (which owns it). */
 export async function loadRehearsal() {
-  try {
-    const call = await invoke();
-    rehearsing.set((await call('get_rehearsal')) === true);
-  } catch {
-    /* backend absent */
-  }
+  // Neither of the last two reads feeds a list with an empty state, so neither was
+  // part of R3-04's finding. They are routed anyway: a rule that covers 20 of 22
+  // reads is the shape this repo keeps shipping bugs in, and "which reads are
+  // guarded?" should not be a question anybody has to look up.
+  return guardedRead(
+    'loadRehearsal',
+    async (call) => rehearsing.set((await call('get_rehearsal')) === true),
+    undefined,
+  );
 }
 
 /**
@@ -448,129 +509,140 @@ export async function endService() {
 
 /** All recorded services (Library list). */
 export async function listServices() {
-  try {
-    const call = await invoke();
-    return await call('list_services');
-  } catch {
-    return [];
-  }
+  return guardedRead('listServices', (call) => call('list_services'), []);
 }
 
 /** Transcript + fired detections for one service. */
 export async function serviceDetail(id) {
-  const call = await invoke();
-  return call('service_detail', { id });
+const call = await invoke();
+return call('service_detail', { id });
 }
 
 /** Export a service to a Markdown file. Returns the written path. */
 export async function exportService(id) {
-  const call = await invoke();
-  return call('export_service', { id });
+const call = await invoke();
+return call('export_service', { id });
 }
 
 /** Set the shared input device (name, or '' for default). Used by Console + Settings. */
 export function setInputDevice(name) {
-  capture.update((s) => ({ ...s, inputDevice: name || '' }));
+capture.update((s) => ({ ...s, inputDevice: name || '' }));
 }
 
 /** Start capture from `device` (name string, or null for the default input). */
 export async function startCapture(device) {
-  const call = await invoke();
-  const { listen } = await import('@tauri-apps/api/event');
-  // Begin (or resume) recording this service so transcripts + detections persist.
-  try {
-    await startService('Sunday Service', new Date().toISOString().slice(0, 10));
-  } catch {
-    /* recording is best-effort — capture proceeds regardless */
+const call = await invoke();
+const { listen } = await import('@tauri-apps/api/event');
+// Begin (or resume) recording this service so transcripts + detections persist.
+try {
+  await startService('Sunday Service', new Date().toISOString().slice(0, 10));
+} catch {
+  /* recording is best-effort — capture proceeds regardless */
+}
+await call('start_capture', { device: device ?? null });
+
+// Last language pushed to `capture` — guards against re-notifying subscribers
+// on every transcript when the detected language hasn't changed.
+let lastLang = null;
+// The hot path. Goes to `meter`, never to `capture` — see the note on `meter`.
+unlistenAudio = await listen('audio://chunk', (e) => {
+  const { rms, is_voice } = e.payload;
+  meter.set({ level: rms, isVoice: is_voice });
+});
+unlistenStt = await listen('stt://transcript', (e) => {
+  const { text, is_final, language } = e.payload;
+  // Only touch `capture` when the detected language actually CHANGES. A Svelte
+  // writable notifies every subscriber on every `set`, so updating it on each
+  // transcript event re-rendered the whole app shell several times a second for
+  // a value almost nothing reads — the same churn the `meter` split-out fixed.
+  if (language && language !== lastLang) {
+    lastLang = language;
+    capture.update((s) => ({ ...s, detectedLang: language }));
   }
-  await call('start_capture', { device: device ?? null });
-
-  // Last language pushed to `capture` — guards against re-notifying subscribers
-  // on every transcript when the detected language hasn't changed.
-  let lastLang = null;
-  // The hot path. Goes to `meter`, never to `capture` — see the note on `meter`.
-  unlistenAudio = await listen('audio://chunk', (e) => {
-    const { rms, is_voice } = e.payload;
-    meter.set({ level: rms, isVoice: is_voice });
+  const at = new Date().toLocaleTimeString('en-GB');
+  transcript.update((t) => applyTranscript(t, { text, is_final }, at));
+  // Expire stale suggestions here too, not only when a NEW one arrives. The
+  // preacher moving on quietly is the commonest way a card goes stale, and it
+  // produces no detection event at all — so without this a dead suggestion sat
+  // under the `A` key indefinitely. Transcript events tick about once a second
+  // while listening, which is all the resolution this needs and costs no timer.
+  detections.update((list) => {
+    const fresh = pruneStaleSuggestions(list, Date.now());
+    return fresh.length === list.length ? list : fresh; // no-op → no re-render
   });
-  unlistenStt = await listen('stt://transcript', (e) => {
-    const { text, is_final, language } = e.payload;
-    // Only touch `capture` when the detected language actually CHANGES. A Svelte
-    // writable notifies every subscriber on every `set`, so updating it on each
-    // transcript event re-rendered the whole app shell several times a second for
-    // a value almost nothing reads — the same churn the `meter` split-out fixed.
-    if (language && language !== lastLang) {
-      lastLang = language;
-      capture.update((s) => ({ ...s, detectedLang: language }));
+});
+capture.update((s) => ({ ...s, audioError: null }));
+unlistenDetect = await listen('detection://match', (e) => {
+  const d = e.payload;
+  detections.update((list) => {
+    const now = Date.now();
+    // Sweep the stale ones out on the way past. A new suggestion is the moment
+    // the operator's attention moves, so it is exactly the moment the previous
+    // sentence's leftovers stop being offers and start being traps.
+    const rest = pruneStaleSuggestions(list, now).filter(
+      (x) => x.reference !== d.reference
+    );
+    // Only suggestions queue up; a fired verse resolves (removes) its pending
+    // suggestion since it's already on screen.
+    if (d.status === 'suggested') {
+      return [{ ...d, at: now }, ...rest].slice(0, MAX_DETECTIONS);
     }
-    transcript.update((t) => {
-      if (is_final) {
-        const at = new Date().toLocaleTimeString('en-GB');
-        const finals = [...t.finals, text].slice(-MAX_FINALS);
-        const finalsAt = [...(t.finalsAt ?? []), at].slice(-MAX_FINALS);
-        return { partial: '', finals, finalsAt };
-      }
-      return { ...t, partial: text };
-    });
-    // Expire stale suggestions here too, not only when a NEW one arrives. The
-    // preacher moving on quietly is the commonest way a card goes stale, and it
-    // produces no detection event at all — so without this a dead suggestion sat
-    // under the `A` key indefinitely. Transcript events tick about once a second
-    // while listening, which is all the resolution this needs and costs no timer.
-    detections.update((list) => {
-      const fresh = pruneStaleSuggestions(list, Date.now());
-      return fresh.length === list.length ? list : fresh; // no-op → no re-render
-    });
+    return rest;
   });
-  capture.update((s) => ({ ...s, audioError: null }));
-  unlistenDetect = await listen('detection://match', (e) => {
-    const d = e.payload;
-    detections.update((list) => {
-      const now = Date.now();
-      // Sweep the stale ones out on the way past. A new suggestion is the moment
-      // the operator's attention moves, so it is exactly the moment the previous
-      // sentence's leftovers stop being offers and start being traps.
-      const rest = pruneStaleSuggestions(list, now).filter(
-        (x) => x.reference !== d.reference
-      );
-      // Only suggestions queue up; a fired verse resolves (removes) its pending
-      // suggestion since it's already on screen.
-      if (d.status === 'suggested') {
-        return [{ ...d, at: now }, ...rest].slice(0, MAX_DETECTIONS);
-      }
-      return rest;
-    });
-  });
+});
 
-  capture.update((s) => ({ ...s, capturing: true }));
+capture.update((s) => ({ ...s, capturing: true }));
 }
 
-/** Stop capture and detach listeners. Keeps transcript history. Idempotent. */
+/**
+ * Stop capture and detach listeners. Keeps transcript history. Idempotent.
+ *
+ * THROWS (contract group 1). This changes whether the microphone is live, which is
+ * the group's own definition, and it used to swallow — one bare `catch {}` around
+ * both the bridge import AND the command.
+ *
+ * The comment on that catch said "backend gone — nothing to stop", which is true of
+ * exactly one case: a plain browser, where `invoke()` fails to import and there was
+ * never an engine. It was ALSO catching a real `stop_capture` failure — and
+ * `stop_capture` can fail: it takes a lock, so an audio thread that panicked while
+ * holding it leaves the mutex poisoned and the engine running. The frontend then
+ * detached its listeners, set `capturing: false`, and every caller's
+ * `catch (e) { flash(humanError(e)) }` never ran. The operator read "Start
+ * listening" on a live microphone with detection still auto-firing behind it —
+ * rule 15, from the other end: a control reporting a success it did not achieve.
+ *
+ * So a failed stop leaves the UI saying `capturing` and rethrows. Nothing is torn
+ * down, because nothing stopped, and the operator can press it again.
+ */
 export async function stopCapture() {
-  try {
-    const call = await invoke();
-    await call('stop_capture');
-  } catch {
-    /* backend gone — nothing to stop */
-  }
-  if (unlistenAudio) {
-    unlistenAudio();
-    unlistenAudio = null;
-  }
-  if (unlistenStt) {
-    unlistenStt();
-    unlistenStt = null;
-  }
-  if (unlistenDetect) {
-    unlistenDetect();
-    unlistenDetect = null;
-  }
-  capture.update((s) => ({ ...s, capturing: false }));
-  // The live level lives on the `meter` store, not `capture` — resetting
-  // capture.level/isVoice (which nothing reads) left the input bars frozen lit at
-  // the last value after Stop. Reset the store that actually drives them.
-  meter.set({ level: 0, isVoice: false });
-  transcript.update((t) => ({ ...t, partial: '' }));
+let call = null;
+try {
+  call = await invoke();
+} catch {
+  /* no Tauri bridge at all (a plain browser) — there is no engine to stop */
+}
+// Deliberately NOT in a try: a rejection must reach the caller, and must reach it
+// before any local teardown claims the microphone is off.
+if (call) await call('stop_capture');
+
+if (unlistenAudio) {
+  unlistenAudio();
+  unlistenAudio = null;
+}
+if (unlistenStt) {
+  unlistenStt();
+  unlistenStt = null;
+}
+if (unlistenDetect) {
+  unlistenDetect();
+  unlistenDetect = null;
+}
+capture.update((s) => ({ ...s, capturing: false }));
+// The live level lives on the `meter` store, not `capture` — resetting
+// capture.level/isVoice (which nothing reads) left the input bars frozen lit at
+// the last value after Stop. Reset the store that actually drives them.
+meter.set({ level: 0, isVoice: false });
+transcript.update((t) => ({ ...t, partial: '' }));
 }
 
 /**
@@ -585,25 +657,25 @@ export async function stopCapture() {
  * confirmed the verse is actually live.
  */
 export async function confirmDetection(reference) {
-  const call = await invoke();
-  const thresholds = await call('confirm_detection', { reference });
-  // Accepting an AI suggestion also takes us out of the plan — same reason as
-  // manualFire.
-  leavePlan();
-  detections.update((list) => list.filter((d) => d.reference !== reference));
-  capture.update((s) => ({ ...s, thresholds }));
+const call = await invoke();
+const thresholds = await call('confirm_detection', { reference });
+// Accepting an AI suggestion also takes us out of the plan — same reason as
+// manualFire.
+leavePlan();
+detections.update((list) => list.filter((d) => d.reference !== reference));
+capture.update((s) => ({ ...s, thresholds }));
 }
 
 /** Operator dismisses a suggestion → drop it + tighten the gate. */
 export async function dismissDetection(reference) {
-  detections.update((list) => list.filter((d) => d.reference !== reference));
-  try {
-    const call = await invoke();
-    const thresholds = await call('dismiss_detection');
-    capture.update((s) => ({ ...s, thresholds }));
-  } catch {
-    /* backend absent */
-  }
+detections.update((list) => list.filter((d) => d.reference !== reference));
+try {
+  const call = await invoke();
+  const thresholds = await call('dismiss_detection');
+  capture.update((s) => ({ ...s, thresholds }));
+} catch {
+  /* backend absent */
+}
 }
 
 /** Manual override: fire a free-text reference now (throws if unparseable).
@@ -616,23 +688,23 @@ export async function dismissDetection(reference) {
  *  through `manual_fire`); only scripture cues did, which is exactly what made
  *  Slide mode "break" on a scripture item. Hand-typed fires keep the default. */
 export async function manualFire(reference, stageNote = null, templateId = null, keepPlan = false) {
-  const call = await invoke();
-  await call('manual_fire', { reference, stageNote, templateId });
-  if (keepPlan) return; // a plan slide fire — stay on the plan (Slide mode holds)
-  // A hand-typed verse is not a plan cue. If the arrows still thought we were in
-  // the plan, the next → would jump back to a slide the congregation has moved on
-  // from.
-  //
-  // AFTER the call, not before. The transport must follow what is ACTUALLY on the
-  // wall. If the fire failed — an unparseable reference, a verse outside the corpus —
-  // then nothing changed, the plan slide is still up there, and taking the plan "off
-  // air" would leave `→` walking a verse passage that the congregation cannot see,
-  // firing content they did not ask for. Nothing moved, so nothing here moves either.
-  //
-  // (The panic controls are the deliberate exception: `clearScreens`/`blackScreen`
-  // reset the cursor FIRST, because a panic key that half-works is worse than one
-  // that does not work at all — and they now report their own failure loudly.)
-  leavePlan();
+const call = await invoke();
+await call('manual_fire', { reference, stageNote, templateId });
+if (keepPlan) return; // a plan slide fire — stay on the plan (Slide mode holds)
+// A hand-typed verse is not a plan cue. If the arrows still thought we were in
+// the plan, the next → would jump back to a slide the congregation has moved on
+// from.
+//
+// AFTER the call, not before. The transport must follow what is ACTUALLY on the
+// wall. If the fire failed — an unparseable reference, a verse outside the corpus —
+// then nothing changed, the plan slide is still up there, and taking the plan "off
+// air" would leave `→` walking a verse passage that the congregation cannot see,
+// firing content they did not ask for. Nothing moved, so nothing here moves either.
+//
+// (The panic controls are the deliberate exception: `clearScreens`/`blackScreen`
+// reset the cursor FIRST, because a panic key that half-works is worse than one
+// that does not work at all — and they now report their own failure loudly.)
+leavePlan();
 }
 
 // ── Service Planner ──────────────────────────────────────────────────────────
@@ -642,12 +714,9 @@ export async function manualFire(reference, stageNote = null, templateId = null,
 
 /** Search the bundled Bible — reference ("john 3:16", "ps 23") or free text. */
 export async function searchScripture(query) {
-  try {
-    const call = await invoke();
+return guardedRead('searchScripture', async (call) => {
     return await call('search_scripture', { query });
-  } catch {
-    return [];
-  }
+}, []);
 }
 
 /**
@@ -663,236 +732,242 @@ export async function searchScripture(query) {
  * finds out, because nothing exercises it.
  */
 export async function relatedScripture(text, exclude = null) {
-  try {
-    const call = await invoke();
-    return await call('related_scripture', { text, exclude });
-  } catch {
-    return null;
-  }
+try {
+  const call = await invoke();
+  return await call('related_scripture', { text, exclude });
+} catch {
+  return null;
+}
 }
 
 /** All service plans, newest first. */
 export async function listPlans() {
-  try {
-    const call = await invoke();
+return guardedRead('listPlans', async (call) => {
     return await call('list_plans');
-  } catch {
-    return [];
-  }
+}, []);
 }
 
 /** Create a plan; returns its id. */
 export async function createPlan(title, date) {
-  const call = await invoke();
-  return await call('create_plan', { title, date });
+const call = await invoke();
+return await call('create_plan', { title, date });
 }
 
 /** Delete a plan and its cues. */
 export async function deletePlan(id) {
-  const call = await invoke();
-  await call('delete_plan', { id });
+const call = await invoke();
+await call('delete_plan', { id });
 }
 
 /** Duplicate a plan (with all its cues). Returns the new plan id. */
 export async function duplicatePlan(id, title) {
-  const call = await invoke();
-  return await call('duplicate_plan', {
-    id,
-    title,
-    date: new Date().toISOString().slice(0, 10),
-  });
+const call = await invoke();
+return await call('duplicate_plan', {
+  id,
+  title,
+  date: new Date().toISOString().slice(0, 10),
+});
 }
 
 /** Ordered cues of a plan. */
 export async function planItems(planId) {
-  try {
-    const call = await invoke();
-    return await call('plan_items', { planId });
-  } catch {
-    return [];
-  }
+try {
+  const call = await invoke();
+  return await call('plan_items', { planId });
+} catch {
+  return [];
+}
 }
 
 /** Append a cue of any type. `payload` is serialized to JSON here. */
 export async function addPlanItem(planId, cueType, label, payload, templateId = null) {
-  const call = await invoke();
-  return await call('add_plan_item', {
-    planId,
-    cueType,
-    label,
-    payloadJson: JSON.stringify(payload ?? {}),
-    templateId,
-  });
+const call = await invoke();
+return await call('add_plan_item', {
+  planId,
+  cueType,
+  label,
+  payloadJson: JSON.stringify(payload ?? {}),
+  templateId,
+});
 }
 
 /** Remove a cue. */
 export async function removePlanItem(id) {
-  const call = await invoke();
-  await call('remove_plan_item', { id });
+const call = await invoke();
+await call('remove_plan_item', { id });
 }
 
 /** Reorder a cue: direction -1 (up) / +1 (down). */
 export async function movePlanItem(id, direction) {
-  const call = await invoke();
-  await call('move_plan_item', { id, direction });
+const call = await invoke();
+await call('move_plan_item', { id, direction });
 }
 
 /** Set/clear a cue's operator stage note (confidence-monitor only; blank clears). */
 export async function setPlanNote(id, note) {
-  const call = await invoke();
-  await call('set_plan_note', { id, note: note ?? '' });
+const call = await invoke();
+await call('set_plan_note', { id, note: note ?? '' });
 }
 
 /** Apply a drag-reorder: the full new order of cue ids. */
 export async function reorderPlan(planId, ids) {
-  const call = await invoke();
-  await call('reorder_plan', { planId, ids });
+const call = await invoke();
+await call('reorder_plan', { planId, ids });
 }
 
 /** Begin a section at this cue. A blank title merges it into the section above. */
 export async function setPlanSection(id, title) {
-  const call = await invoke();
-  await call('set_plan_section', { id, title: title ?? '' });
+const call = await invoke();
+await call('set_plan_section', { id, title: title ?? '' });
 }
 
 /** Set a cue's planned length in seconds. 0 = untimed (fires on cue, not a clock). */
 export async function setPlanDuration(id, seconds) {
-  const call = await invoke();
-  await call('set_plan_duration', { id, seconds });
+const call = await invoke();
+await call('set_plan_duration', { id, seconds });
 }
 
 /** Override the template a cue renders with. `null` re-inherits the channel's. */
 export async function setPlanTemplate(id, templateId) {
-  const call = await invoke();
-  await call('set_plan_template', { id, templateId: templateId ?? null });
+const call = await invoke();
+await call('set_plan_template', { id, templateId: templateId ?? null });
 }
 
 // ── Songs (Lyrics) ───────────────────────────────────────────────────────────
 
 /** All songs with section counts. */
 export async function listSongs() {
-  try {
-    const call = await invoke();
+return guardedRead('listSongs', async (call) => {
     return await call('list_songs');
-  } catch {
-    return [];
-  }
+}, []);
 }
 
 /** Search songs by title/author (empty query = all). */
 export async function searchSongs(query) {
-  try {
-    const call = await invoke();
+return guardedRead('searchSongs', async (call) => {
     return await call('search_songs', { query });
-  } catch {
-    return [];
-  }
+}, []);
 }
 
 /** A full song with ordered sections. */
 export async function getSong(id) {
-  const call = await invoke();
-  return await call('get_song', { id });
+const call = await invoke();
+return await call('get_song', { id });
 }
 
 /** Import a song from pasted lyrics; the backend parses sections. Returns id. */
 export async function importSong({ title, author, ccli, key, bpm, lyrics }) {
-  const call = await invoke();
-  return await call('import_song', {
-    title,
-    author: author ?? '',
-    ccli: ccli ?? '',
-    songKey: key ?? '',
-    bpm: bpm ?? null,
-    lyrics,
-    date: new Date().toISOString().slice(0, 10),
-  });
+const call = await invoke();
+return await call('import_song', {
+  title,
+  author: author ?? '',
+  ccli: ccli ?? '',
+  songKey: key ?? '',
+  bpm: bpm ?? null,
+  lyrics,
+  date: new Date().toISOString().slice(0, 10),
+});
 }
 
 /** Save edits to a song — metadata + full ordered section list. */
 export async function saveSong(song) {
-  const call = await invoke();
-  await call('save_song', {
-    id: song.id,
-    title: song.title,
-    author: song.author ?? '',
-    ccli: song.ccli ?? '',
-    songKey: song.song_key ?? '',
-    bpm: song.bpm ?? null,
-    sections: song.sections.map((s) => ({ tag: s.tag, label: s.label, lyrics: s.lyrics })),
-  });
+const call = await invoke();
+await call('save_song', {
+  id: song.id,
+  title: song.title,
+  author: song.author ?? '',
+  ccli: song.ccli ?? '',
+  songKey: song.song_key ?? '',
+  bpm: song.bpm ?? null,
+  sections: song.sections.map((s) => ({ tag: s.tag, label: s.label, lyrics: s.lyrics })),
+});
 }
 
 /** Delete a song. */
 export async function deleteSong(id) {
-  const call = await invoke();
-  await call('delete_song', { id });
+const call = await invoke();
+await call('delete_song', { id });
 }
 
 /** Arrangements: named play-orders of a song's sections (ProPresenter-style).
  *  A sequence is a list of 0-based section indices; repeats are allowed. */
 export async function listArrangements(songId) {
-  const call = await invoke();
-  return await call('list_arrangements', { songId });
+const call = await invoke();
+return await call('list_arrangements', { songId });
 }
 
 /** Create (id null) or update (id set) an arrangement. Returns its id. */
 export async function saveArrangement(songId, id, name, sequence) {
-  const call = await invoke();
-  return await call('save_arrangement', { songId, id: id ?? null, name, sequence });
+const call = await invoke();
+return await call('save_arrangement', { songId, id: id ?? null, name, sequence });
 }
 
 export async function deleteArrangement(id) {
-  const call = await invoke();
-  await call('delete_arrangement', { id });
+const call = await invoke();
+await call('delete_arrangement', { id });
 }
 
 /** Expand a song's sections into a play order. `sequence` is a list of 0-based
  *  section indices (an arrangement); repeats allowed, out-of-range dropped.
  *  Empty/no sequence = the sections verbatim (the implicit "Standard" order). */
 export function expandSections(sections, sequence) {
-  if (!Array.isArray(sequence) || sequence.length === 0) return sections;
-  return sequence.map((i) => sections[i]).filter(Boolean);
+if (!Array.isArray(sequence) || sequence.length === 0) return sections;
+return sequence.map((i) => sections[i]).filter(Boolean);
 }
 
 /** Import songs from a ProPresenter file. `dataB64` is the file's bytes, base64
  *  encoded by the webview (a .proplaylist yields many songs). Returns titles. */
 export async function importProFile(filename, dataB64) {
-  const call = await invoke();
-  return await call('import_pro', {
-    filename,
-    data: dataB64,
-    date: new Date().toISOString().slice(0, 10),
-  });
+const call = await invoke();
+return await call('import_pro', {
+  filename,
+  data: dataB64,
+  date: new Date().toISOString().slice(0, 10),
+});
 }
 
 /** True while a countdown is live on the outputs (its target is still in the
  *  future). Derived from the mirrored output content, so it clears the moment
  *  the screen is cleared or any other content goes live. */
 export function countdownRunning() {
-  const l = get(live);
-  return !!(l && l.countdown_to && l.countdown_to > Date.now());
+const l = get(live);
+return !!(l && l.countdown_to && l.countdown_to > Date.now());
 }
 
 /** Start a pre-service countdown on every output. Outputs tick MM:SS locally
  *  from the broadcast target; `label` shows above, `doneMsg` replaces it at 0.
  *  Guarded: refuses to start a second countdown while one is still running —
  *  clear the screen (or let it finish) first. */
-export async function startCountdown(minutes, label = 'Service begins in', doneMsg = 'Welcome', templateId = null) {
-  if (countdownRunning()) {
-    throw new Error('A countdown is already running — clear the screen to start a new one.');
-  }
-  const call = await invoke();
-  await call('start_countdown', { minutes, label, doneMsg, templateId });
+export async function startCountdown(
+minutes,
+label = 'Service begins in',
+doneMsg = 'Welcome',
+templateId = null,
+keepPlan = false,
+) {
+if (countdownRunning()) {
+  throw new Error('A countdown is already running — clear the screen to start a new one.');
+}
+const call = await invoke();
+await call('start_countdown', { minutes, label, doneMsg, templateId });
+if (!keepPlan) leavePlan();
 }
 
 /** Fire arbitrary content to the screens. `kind` ('song'|'announce') selects the
  *  content-type default template (per-content-type templates). `stageNote` is an
  *  optional confidence-monitor note for this cue. `templateId`, when set, is the
  *  cue's OWN template override (Planner) — it wins over the content-type default. */
-export async function fireContent(label, text, kind = 'announce', stageNote = null, templateId = null) {
-  const call = await invoke();
-  await call('fire_content', { label, text, kind, stageNote, templateId });
+export async function fireContent(
+label,
+text,
+kind = 'announce',
+stageNote = null,
+templateId = null,
+keepPlan = false,
+) {
+const call = await invoke();
+await call('fire_content', { label, text, kind, stageNote, templateId });
+if (!keepPlan) leavePlan();
 }
 
 /**
@@ -900,21 +975,18 @@ export async function fireContent(label, text, kind = 'announce', stageNote = nu
  * `contentTemplates` store. Call once at boot; surfaces then read the store.
  */
 export async function loadContentTemplates() {
-  try {
-    const call = await invoke();
+return guardedRead('loadContentTemplates', async (call) => {
     const map = await call('get_content_templates');
     contentTemplates.set({ ...EMPTY_CONTENT_LOOKS, ...map });
     return map;
-  } catch {
-    return null;
-  }
+}, null);
 }
 
 /** The content-type → template default mapping (one-shot read; also seeds the
  *  store). Prefer subscribing to `contentTemplates`. */
 export async function getContentTemplates() {
-  const map = await loadContentTemplates();
-  return map ?? { ...EMPTY_CONTENT_LOOKS };
+const map = await loadContentTemplates();
+return map ?? { ...EMPTY_CONTENT_LOOKS };
 }
 
 /**
@@ -925,63 +997,57 @@ export async function getContentTemplates() {
  * stored. Do NOT add a second writer of this map.
  */
 export async function setContentTemplate(kind, templateId) {
-  const id = templateId ?? null;
-  contentTemplates.update((m) => ({ ...m, [kind]: id }));
-  try {
-    const call = await invoke();
-    await call('set_content_template', { kind, templateId: id });
-  } catch (e) {
-    await loadContentTemplates();
-    throw e;
-  }
+const id = templateId ?? null;
+contentTemplates.update((m) => ({ ...m, [kind]: id }));
+try {
+  const call = await invoke();
+  await call('set_content_template', { kind, templateId: id });
+} catch (e) {
+  await loadContentTemplates();
+  throw e;
+}
 }
 
 // ── Saved scripture (Library → Scripture) ────────────────────────────────────
 
 export async function listSavedScripture() {
-  try {
-    const call = await invoke();
+return guardedRead('listSavedScripture', async (call) => {
     return await call('list_saved_scripture');
-  } catch {
-    return [];
-  }
+}, []);
 }
 export async function saveScripture(book, chapter, verse) {
-  const call = await invoke();
-  return await call('save_scripture', {
-    book,
-    chapter,
-    verse,
-    date: new Date().toISOString().slice(0, 10),
-  });
+const call = await invoke();
+return await call('save_scripture', {
+  book,
+  chapter,
+  verse,
+  date: new Date().toISOString().slice(0, 10),
+});
 }
 export async function deleteSavedScripture(id) {
-  const call = await invoke();
-  await call('delete_saved_scripture', { id });
+const call = await invoke();
+await call('delete_saved_scripture', { id });
 }
 
 // ── Announcements (Library → Announcements) ──────────────────────────────────
 export async function listAnnouncements() {
-  try {
-    const call = await invoke();
+return guardedRead('listAnnouncements', async (call) => {
     return await call('list_announcements');
-  } catch {
-    return [];
-  }
+}, []);
 }
 /** Create (id null) or update an announcement. Returns its id. */
 export async function saveAnnouncement(id, title, body) {
-  const call = await invoke();
-  return await call('save_announcement', {
-    id: id ?? null,
-    title,
-    body,
-    date: new Date().toISOString().slice(0, 10),
-  });
+const call = await invoke();
+return await call('save_announcement', {
+  id: id ?? null,
+  title,
+  body,
+  date: new Date().toISOString().slice(0, 10),
+});
 }
 export async function deleteAnnouncement(id) {
-  const call = await invoke();
-  await call('delete_announcement', { id });
+const call = await invoke();
+await call('delete_announcement', { id });
 }
 
 /** EMERGENCY announcement — over whatever is on the wall, on every channel.
@@ -994,8 +1060,12 @@ export async function deleteAnnouncement(id) {
  *  Distinct from `saveAnnouncement`, which is Library CONTENT planned in advance.
  *  This one does not touch the library and is not part of any plan. */
 export async function pushAnnouncement(message) {
-  const call = await invoke();
-  await call('push_announcement', { message });
+const call = await invoke();
+await call('push_announcement', { message });
+// No `keepPlan`: the emergency announcement is never a plan cue, and it covers
+// every screen. If the plan rail stayed amber under it, the one indicator that
+// says what a congregation is looking at would be naming a cue nobody can see.
+leavePlan();
 }
 
 /** How many times this verse already went out in the CURRENT service.
@@ -1005,12 +1075,9 @@ export async function pushAnnouncement(message) {
  *  they saw before the badge existed. Nothing on any screen changes, so nothing
  *  is being hidden. 0 also means "not recording a service", which reads the same. */
 export async function verseRepeatCount(reference) {
-  try {
-    const call = await invoke();
+return guardedRead('verseRepeatCount', async (call) => {
     return (await call('verse_repeat_count', { reference })) ?? 0;
-  } catch {
-    return 0;
-  }
+}, 0);
 }
 
 // ── Voice profiles (Settings → Voice Profiles) ───────────────────────────────
@@ -1026,120 +1093,112 @@ export async function verseRepeatCount(reference) {
 // preacher, and nothing on screen would say so.
 
 export async function listVoiceProfiles() {
-  try {
-    const call = await invoke();
+return guardedRead('listVoiceProfiles', async (call) => {
     return (await call('list_voice_profiles')) ?? [];
-  } catch {
-    return [];
-  }
+}, []);
 }
 
 export async function activeVoiceProfile() {
-  try {
-    const call = await invoke();
-    return (await call('active_voice_profile')) ?? null;
-  } catch {
-    return null;
-  }
+try {
+  const call = await invoke();
+  return (await call('active_voice_profile')) ?? null;
+} catch {
+  return null;
+}
 }
 
 export async function createVoiceProfile(name, language = null) {
-  const call = await invoke();
-  return await call('create_voice_profile', { name, language });
+const call = await invoke();
+return await call('create_voice_profile', { name, language });
 }
 
 export async function updateVoiceProfile(profile) {
-  const call = await invoke();
-  return await call('update_voice_profile', { profile });
+const call = await invoke();
+return await call('update_voice_profile', { profile });
 }
 
 export async function selectVoiceProfile(id) {
-  const call = await invoke();
-  return await call('select_voice_profile', { id });
+const call = await invoke();
+return await call('select_voice_profile', { id });
 }
 
 export async function deleteVoiceProfile(id) {
-  const call = await invoke();
-  return await call('delete_voice_profile', { id });
+const call = await invoke();
+return await call('delete_voice_profile', { id });
 }
 
 // ── Media (Library → Media) ──────────────────────────────────────────────────
 
 export async function listMedia() {
-  try {
-    const call = await invoke();
+return guardedRead('listMedia', async (call) => {
     return await call('list_media');
-  } catch {
-    return [];
-  }
+}, []);
 }
 export async function importMedia(kind, filename, dataB64) {
-  const call = await invoke();
-  return await call('import_media', {
-    kind,
-    filename,
-    data: dataB64,
-    date: new Date().toISOString().slice(0, 10),
-  });
+const call = await invoke();
+return await call('import_media', {
+  kind,
+  filename,
+  data: dataB64,
+  date: new Date().toISOString().slice(0, 10),
+});
 }
 export async function deleteMedia(id) {
-  const call = await invoke();
-  await call('delete_media', { id });
+const call = await invoke();
+await call('delete_media', { id });
 }
 /** Fire a media asset (image/video) to the output screens as a background.
  *  `templateId`, when set, is the cue's own Planner template override. */
-export async function fireMedia(id, templateId = null) {
-  const call = await invoke();
-  await call('fire_media', { id, templateId });
+export async function fireMedia(id, templateId = null, keepPlan = false) {
+const call = await invoke();
+await call('fire_media', { id, templateId });
+if (!keepPlan) leavePlan();
 }
 
 /** Parse a lyric file into songs WITHOUT saving — for the pre-save review. */
 export async function parseImport(filename, dataB64) {
-  const call = await invoke();
-  return await call('parse_import', { filename, data: dataB64 });
+const call = await invoke();
+return await call('parse_import', { filename, data: dataB64 });
 }
 /** Commit reviewed/edited songs to the library. Returns { added, replaced }. */
 export async function saveReviewedSongs(songs) {
-  const call = await invoke();
-  return await call('save_reviewed_songs', { songs, date: new Date().toISOString().slice(0, 10) });
+const call = await invoke();
+return await call('save_reviewed_songs', { songs, date: new Date().toISOString().slice(0, 10) });
 }
 
 // Read a File (from an <input type=file>) as base64 for the import commands.
 export async function fileToBase64(file) {
-  const buf = new Uint8Array(await file.arrayBuffer());
-  let bin = '';
-  const chunk = 0x8000;
-  for (let i = 0; i < buf.length; i += chunk) {
-    bin += String.fromCharCode.apply(null, buf.subarray(i, i + chunk));
-  }
-  return btoa(bin);
+const buf = new Uint8Array(await file.arrayBuffer());
+let bin = '';
+const chunk = 0x8000;
+for (let i = 0; i < buf.length; i += chunk) {
+  bin += String.fromCharCode.apply(null, buf.subarray(i, i + chunk));
+}
+return btoa(bin);
 }
 
 /** Load all output templates from the DB into the store. */
 export async function loadTemplates() {
-  try {
-    const call = await invoke();
+return guardedRead('loadTemplates', async (call) => {
     const list = await call('list_templates');
     templates.set(list);
     return list;
-  } catch {
-    return [];
-  }
+}, []);
 }
 
 /** Save a template (insert or update). Returns its id; reloads the store. */
 export async function saveTemplate(t) {
-  const call = await invoke();
-  const id = await call('save_template', { template: t });
-  await loadTemplates();
-  return id;
+const call = await invoke();
+const id = await call('save_template', { template: t });
+await loadTemplates();
+return id;
 }
 
 /** Save without reloading the store — for bulk operations that reload once at
  *  the end (e.g. the one-time legacy→layers upgrade). */
 export async function saveTemplateQuiet(t) {
-  const call = await invoke();
-  return call('save_template', { template: t });
+const call = await invoke();
+return call('save_template', { template: t });
 }
 
 // ── TEMPLATE VERSION HISTORY ─────────────────────────────────────────────────
@@ -1151,96 +1210,93 @@ const versionsKey = (id) => `tplver.${id}`;
  *  a failure to record history must never block the save it follows. `at` is the
  *  timestamp (Date.now() by default; the app may use it, unlike workflow code). */
 export async function snapshotTemplateVersion(template, at = Date.now()) {
-  if (!template?.id) return;
-  try {
-    const call = await invoke();
-    const { parseTemplateVersions, appendTemplateVersion } = await import('../templates.js');
-    const raw = await call('get_setting', { key: versionsKey(template.id) });
-    const next = appendTemplateVersion(parseTemplateVersions(raw), template, at);
-    await call('set_setting', { key: versionsKey(template.id), value: JSON.stringify(next) });
-  } catch {
-    /* history is a convenience — never surface or block on its failure */
-  }
+if (!template?.id) return;
+try {
+  const call = await invoke();
+  const { parseTemplateVersions, appendTemplateVersion } = await import('../templates.js');
+  const raw = await call('get_setting', { key: versionsKey(template.id) });
+  const next = appendTemplateVersion(parseTemplateVersions(raw), template, at);
+  await call('set_setting', { key: versionsKey(template.id), value: JSON.stringify(next) });
+} catch {
+  /* history is a convenience — never surface or block on its failure */
+}
 }
 
 /** The saved versions of a template, newest first. [] if none/unavailable. */
 export async function listTemplateVersions(id) {
-  try {
-    const call = await invoke();
+return guardedRead('listTemplateVersions', async (call) => {
     const { parseTemplateVersions } = await import('../templates.js');
     return parseTemplateVersions(await call('get_setting', { key: versionsKey(id) }));
-  } catch {
-    return [];
-  }
+}, []);
 }
 
 /** Restore a template to a saved version's shape (a normal save, so it live-
  *  updates outputs like any edit). Returns the saved id. */
 export async function restoreTemplateVersion(template, version) {
-  return saveTemplate({ ...template, layout: version.layout, style: version.style });
+return saveTemplate({ ...template, layout: version.layout, style: version.style });
 }
 
 /** Download a template as a portable `.relaytemplate.json` file. Pure client-side
  *  (Blob + transient anchor), so it needs no backend. */
 export async function exportTemplate(t) {
-  const { serializeTemplate } = await import('../templates.js');
-  const safeName = String(t?.name ?? 'template').replace(/[^a-z0-9]+/gi, '-').toLowerCase();
-  const blob = new Blob([serializeTemplate(t)], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `${safeName}.relaytemplate.json`;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
+const { serializeTemplate } = await import('../templates.js');
+const safeName = String(t?.name ?? 'template').replace(/[^a-z0-9]+/gi, '-').toLowerCase();
+const blob = new Blob([serializeTemplate(t)], { type: 'application/json' });
+const url = URL.createObjectURL(blob);
+const a = document.createElement('a');
+a.href = url;
+a.download = `${safeName}.relaytemplate.json`;
+document.body.appendChild(a);
+a.click();
+a.remove();
+URL.revokeObjectURL(url);
 }
 
 /** Read a picked template file, validate it, and save it as a NEW template.
  *  Returns the new id. Throws a plain-language Error (parseImportedTemplate) the
  *  caller shows through the ONE humaniser. */
 export async function importTemplateFromFile(file) {
-  const { parseImportedTemplate } = await import('../templates.js');
-  const text = await file.text();
-  const t = parseImportedTemplate(text); // throws on a non-template file
-  return saveTemplate(t); // fresh id (no id in the payload), reloads the store
+const { parseImportedTemplate } = await import('../templates.js');
+const text = await file.text();
+const t = parseImportedTemplate(text); // throws on a non-template file
+return saveTemplate(t); // fresh id (no id in the payload), reloads the store
 }
 
 /** The DEFAULT template object (by `defaultTemplateId`), else the first template,
  *  else null. The single fallback look — the console preview and the Library
  *  previews all resolve their stand-in template from this. */
 export async function resolveDefaultTemplate() {
-  await loadDefaultTemplate();
-  let list = get(templates);
-  if (!list.length) list = await loadTemplates();
-  const id = get(defaultTemplateId);
-  return list.find((t) => t.id === id) || list[0] || null;
+await loadDefaultTemplate();
+let list = get(templates);
+if (!list.length) list = await loadTemplates();
+const id = get(defaultTemplateId);
+return list.find((t) => t.id === id) || list[0] || null;
 }
 
 /** Back-compat shim: the old "console-active (max 4)" concept is gone. Callers
  *  that used the first active template as a preview/fallback now get the single
  *  DEFAULT template, so nothing has to know the star system was removed. */
 export async function listActiveTemplates() {
-  const t = await resolveDefaultTemplate().catch(() => null);
-  return t ? [t] : [];
+const t = await resolveDefaultTemplate().catch(() => null);
+return t ? [t] : [];
 }
 
 /** Create a new template; returns its id and reloads the store. */
 export async function createTemplate(name) {
-  const call = await invoke();
-  const id = await call('create_template', { name });
-  await loadTemplates();
-  return id;
+const call = await invoke();
+const id = await call('create_template', { name });
+await loadTemplates();
+return id;
 }
 
 /** Delete a template; reloads the store. Also refreshes the content-look map —
  *  a content default (or a channel) may have pointed at the deleted template and
  *  the backend nulls those references. */
 export async function deleteTemplate(id) {
-  const call = await invoke();
-  await call('delete_template', { id });
-  await loadTemplates();
-  await loadContentTemplates();
+const call = await invoke();
+await call('delete_template', { id });
+await loadTemplates();
+await loadContentTemplates();
 }
 
 // ── THEMES ───────────────────────────────────────────────────────────────────
@@ -1254,17 +1310,18 @@ const THEMES_KEY = 'themes.custom';
  *  only) if the backend has no get_setting yet or the blob is corrupt — a bad
  *  themes blob must never break boot. Mirrors loadTemplates' resilience. */
 export async function loadThemes() {
-  try {
-    const call = await invoke();
-    const raw = await call('get_setting', { key: THEMES_KEY });
-    const { parseThemes } = await import('../themes.js');
-    const list = parseThemes(raw);
-    customThemes.set(list);
-    return list;
-  } catch {
-    customThemes.set([]);
-    return [];
-  }
+return guardedRead(
+    'loadThemes',
+    async (call) => {
+      const raw = await call('get_setting', { key: THEMES_KEY });
+      const { parseThemes } = await import('../themes.js');
+      const list = parseThemes(raw);
+      customThemes.set(list);
+      return list;
+    },
+    [],
+    () => customThemes.set([]),
+  );
 }
 
 /** Persist the whole custom-theme set (the store IS the source of truth here),
@@ -1307,14 +1364,16 @@ export async function saveTheme(theme) {
 /** Load the configured service length (minutes) into the store. Degrades to 0
  *  (no target) if the backend/setting is absent. */
 export async function loadServiceTarget() {
-  try {
-    const call = await invoke();
-    const raw = await call('get_setting', { key: 'service.target_minutes' });
-    const n = parseInt(raw, 10);
-    serviceTargetMinutes.set(Number.isFinite(n) && n > 0 ? n : 0);
-  } catch {
-    serviceTargetMinutes.set(0);
-  }
+  return guardedRead(
+    'loadServiceTarget',
+    async (call) => {
+      const raw = await call('get_setting', { key: 'service.target_minutes' });
+      const n = parseInt(raw, 10);
+      serviceTargetMinutes.set(Number.isFinite(n) && n > 0 ? n : 0);
+    },
+    undefined,
+    () => serviceTargetMinutes.set(0),
+  );
 }
 
 /** Set the service length (minutes; 0 clears the target). Persisted in the KV,
@@ -1363,106 +1422,89 @@ export async function importThemeFromFile(file) {
 
 /** Labels of the output windows that are actually OPEN right now. */
 export async function listOutputWindows() {
-  try {
-    const call = await invoke();
-    return await call('list_output_windows');
-  } catch {
-    return [];
-  }
+  return guardedRead('listOutputWindows', (call) => call('list_output_windows'), []);
 }
 
 /** All configured output channels. */
 export async function listOutputChannels() {
-  try {
-    const call = await invoke();
+return guardedRead('listOutputChannels', async (call) => {
     return await call('list_output_channels');
-  } catch {
-    return [];
-  }
+}, []);
 }
 
 /** Assign a template to a channel. */
 export async function setChannelTemplate(id, templateId) {
-  const call = await invoke();
-  await call('set_channel_template', { id, templateId });
+const call = await invoke();
+await call('set_channel_template', { id, templateId });
 }
 
 /** Open a native fullscreen output window for a template id. Returns its label. */
 export async function openOutput(templateId, name, monitorIndex) {
-  const call = await invoke(); // throws in browser
-  return call('open_output_window', { templateId, name, monitorIndex });
+const call = await invoke(); // throws in browser
+return call('open_output_window', { templateId, name, monitorIndex });
 }
 
 /** Connected physical displays for HDMI screen assignment. */
 export async function listMonitors() {
-  try {
-    const call = await invoke();
+return guardedRead('listMonitors', async (call) => {
     return await call('list_monitors');
-  } catch {
-    return [];
-  }
+}, []);
 }
 
 /** Books available to browse, in canonical order (Library §7). */
 export async function listBooks() {
-  try {
-    const call = await invoke();
+return guardedRead('listBooks', async (call) => {
     return await call('list_books');
-  } catch {
-    return [];
-  }
+}, []);
 }
 
 /** One chapter's verses, in order. */
 export async function chapterVerses(book, chapter) {
-  try {
-    const call = await invoke();
-    return await call('chapter_verses', { book, chapter });
-  } catch {
-    return [];
-  }
+try {
+  const call = await invoke();
+  return await call('chapter_verses', { book, chapter });
+} catch {
+  return [];
+}
 }
 
 /** This machine's LAN IP so output URLs work on other devices. Null if offline. */
 export async function localIp() {
-  try {
-    const call = await invoke();
-    return await call('local_ip');
-  } catch {
-    return null;
-  }
+try {
+  const call = await invoke();
+  return await call('local_ip');
+} catch {
+  return null;
+}
 }
 
 /** Bible translations available in the corpus. */
 export async function listTranslations() {
-  try {
-    const call = await invoke();
+return guardedRead('listTranslations', async (call) => {
     return await call('list_translations');
-  } catch {
-    return [];
-  }
+}, []);
 }
 
 /** Currently active translation id (null if none). */
 export async function getActiveTranslation() {
-  try {
-    const call = await invoke();
-    return await call('get_active_translation');
-  } catch {
-    return null;
-  }
+try {
+  const call = await invoke();
+  return await call('get_active_translation');
+} catch {
+  return null;
+}
 }
 
 /** Choose which translation to read from — every lookup then prefers it. */
 export async function setActiveTranslation(id) {
-  const call = await invoke();
-  await call('set_active_translation', { id });
+const call = await invoke();
+await call('set_active_translation', { id });
 }
 
 /** Open a channel's output on its assigned display (HDMI). Returns the label. */
 export async function openChannelOutput(channelId) {
-  const call = await invoke(); // throws in browser
-  return call('open_channel_output', { channelId });
+const call = await invoke(); // throws in browser
+return call('open_channel_output', { channelId });
 }
 
 /** Re-open the physical output windows assigned to a display, so HDMI/projector
@@ -1470,30 +1512,30 @@ export async function openChannelOutput(channelId) {
  *  onto connected, non-primary displays, so it never covers the operator's
  *  console. Best-effort — a plain browser (no backend) just no-ops. */
 export async function autoOpenOutputs() {
-  try {
-    const call = await invoke();
-    return await call('auto_open_outputs');
-  } catch {
-    return [];
-  }
+try {
+  const call = await invoke();
+  return await call('auto_open_outputs');
+} catch {
+  return [];
+}
 }
 
 /** Assign a physical display (monitor index string, or null) to a channel. */
 export async function setChannelDisplay(id, display) {
-  const call = await invoke();
-  await call('set_channel_display', { id, display });
+const call = await invoke();
+await call('set_channel_display', { id, display });
 }
 
 /** Add a new output channel. Returns its id. */
 export async function addChannel(name, renderTarget, templateId) {
-  const call = await invoke();
-  return call('add_channel', { name, renderTarget, templateId });
+const call = await invoke();
+return call('add_channel', { name, renderTarget, templateId });
 }
 
 /** Delete an output channel. */
 export async function deleteChannel(id) {
-  const call = await invoke();
-  await call('delete_channel', { id });
+const call = await invoke();
+await call('delete_channel', { id });
 }
 
 /**
@@ -1505,18 +1547,18 @@ export async function deleteChannel(id) {
  * than throwing: a dead status strip must not take the Channels screen down.
  */
 export async function channelStatus() {
-  try {
-    const call = await invoke();
-    return await call('channel_status');
-  } catch {
-    return [];
-  }
+try {
+  const call = await invoke();
+  return await call('channel_status');
+} catch {
+  return [];
+}
 }
 
 /** Close a channel's native output window, if it has one open. */
 export async function closeChannelOutput(channelId) {
-  const call = await invoke();
-  await call('close_channel_output', { channelId });
+const call = await invoke();
+await call('close_channel_output', { channelId });
 }
 
 /**
@@ -1532,8 +1574,14 @@ export async function closeChannelOutput(channelId) {
  * the "Screens cleared" lie (docs/DECISIONS.md §20).
  */
 export async function navVerse(direction) {
-  const call = await invoke();
-  return call('nav', { direction });
+const call = await invoke();
+const outcome = await call('nav', { direction });
+// Only when it ACTUALLY fired. `NavResult` exists precisely because not every
+// outcome moves the wall — EndOfPassage and NotInLibrary leave the screens
+// exactly as they were, and clearing `onAir` on those would take the plan off
+// air because the operator pressed a key that did nothing.
+if (outcome?.kind === 'fired') leavePlan();
+return outcome;
 }
 
 /**
@@ -1545,28 +1593,28 @@ export async function navVerse(direction) {
  * fault. `null` means it worked and the screens changed — the wall is the feedback.
  */
 export function navNotice(r) {
-  switch (r?.kind) {
-    case 'fired':
-      return null;
-    case 'end_of_passage':
-      return tNow('nav.end_of_passage');
-    case 'no_passage':
-      return tNow('nav.no_passage');
-    case 'not_in_library':
-      return tNow('nav.not_in_library', { reference: r.reference });
-    default:
-      return null;
-  }
+switch (r?.kind) {
+  case 'fired':
+    return null;
+  case 'end_of_passage':
+    return tNow('nav.end_of_passage');
+  case 'no_passage':
+    return tNow('nav.no_passage');
+  case 'not_in_library':
+    return tNow('nav.not_in_library', { reference: r.reference });
+  default:
+    return null;
+}
 }
 
 /** Blank every output channel (operator "Clear all screens" / Esc). */
 export async function clearScreens() {
-  return panicRun('clear_screens', 'Clear screens');
+return panicRun('clear_screens', 'Clear screens');
 }
 
 /** Blackout every output (opaque). Next fire/clear cancels it. Returns true on success. */
 export async function blackScreen() {
-  return panicRun('blackout', 'Blackout');
+return panicRun('blackout', 'Blackout');
 }
 
 /**
@@ -1581,6 +1629,42 @@ export async function blackScreen() {
 export const panicError = writable(null);
 
 /**
+ * WHY A LIST WAS EMPTY — failure, or genuinely nothing.
+ *
+ * Every read wrapper below is GROUP 2: it swallows and returns a safe default. The
+ * rationale written at the top of this file — *"a list that fails to load costs the
+ * operator nothing they cannot see for themselves — the list is visibly empty"* —
+ * is the sentence that produced the lie. A fresh install ships **five** built-in
+ * templates, and with `list_templates` failing the Templates tab said *"No templates
+ * yet — create one to start."* An operator told their five templates do not exist is
+ * about to make five more.
+ *
+ * The wrappers still return `[]`, because that is what keeps every caller working and
+ * a broken read must never take a view down. What changes is that the reason is no
+ * longer thrown away: it is recorded here, keyed by wrapper name, and a view can ask
+ * `readErrors` which of the three facts to show — Empty, Loading, or Error. Same
+ * shape as `panicError`, for the same reason: the caller is not in a position to act
+ * on it, and the person who is looks at a screen.
+ *
+ * Cleared on the next SUCCESSFUL read of the same key, so a transient failure does
+ * not leave a permanent banner.
+ */
+export const readErrors = writable({});
+
+/** Run a GROUP 2 read, remembering why it failed instead of discarding it. */
+async function guardedRead(key, run, fallback) {
+try {
+  const value = await run(await invoke());
+  readErrors.update((m) => (m[key] ? { ...m, [key]: null } : m));
+  return value;
+} catch (e) {
+  readErrors.update((m) => ({ ...m, [key]: e }));
+  return fallback;
+}
+}
+
+
+/**
  * Run a panic control and tell the truth about whether it worked.
  *
  * Both of these used to swallow every error into a `catch {}` and return void, so
@@ -1593,87 +1677,107 @@ export const panicError = writable(null);
  * Returns true on success. Callers that report success to the operator MUST check it.
  */
 async function panicRun(cmd, label) {
-  // Reset the transport FIRST, so it happens even if the backend call fails. A
-  // panic key that half-works is worse than one that doesn't.
-  leavePlan();
-  try {
-    const call = await invoke();
-    await call(cmd);
-    panicError.set(null);
-    return true;
-  } catch (e) {
-    // In a plain browser there is no backend AND no output screen, so there is
-    // nothing to warn about — don't cry wolf in a dev tab.
-    if (get(capture).available) {
-      panicError.set(
-        `${label} FAILED — the congregation may still be seeing the last thing you put up. ` +
-          `Check the output screen and clear it there. (${String(e).replace(/^Error:\s*/, '')})`,
-      );
-    }
-    return false;
+// Reset the transport FIRST, so it happens even if the backend call fails. A
+// panic key that half-works is worse than one that doesn't.
+leavePlan();
+try {
+  const call = await invoke();
+  await call(cmd);
+  panicError.set(null);
+  return true;
+} catch (e) {
+  // In a plain browser there is no backend AND no output screen, so there is
+  // nothing to warn about — don't cry wolf in a dev tab.
+  if (get(capture).available) {
+    panicError.set(
+      `${label} FAILED — the congregation may still be seeing the last thing you put up. ` +
+        `Check the output screen and clear it there. (${String(e).replace(/^Error:\s*/, '')})`,
+    );
   }
+  return false;
+}
 }
 
 /** Operator has read the panic warning (or a later panic control succeeded). */
 export function dismissPanicError() {
-  panicError.set(null);
+panicError.set(null);
 }
 
-/** Push the "up next" preview to the stage/confidence monitor (null clears). */
+/** Push the "up next" preview to the stage/confidence monitor (null clears).
+ *
+ *  GROUP 1 (THROWS), moved out of GROUP 2 on 2026-08-14 (R5-8) — and the reason is
+ *  a correction to the group rule itself, not just to this wrapper.
+ *
+ *  GROUP 2's test is *"can the congregation see the difference?"*. For this call the
+ *  honest answer is **no, but the preacher can, and he is the one acting on it.**
+ *  The stage monitor is a real screen on a stand in front of a person, and
+ *  `setStageNext(null, null)` is how the "up next" panel comes DOWN. A swallowed
+ *  failure there leaves a preacher reading a stale next-verse for the rest of the
+ *  service with nothing, anywhere, reporting it.
+ *
+ *  Throwing makes each CALL SITE state its choice, which is the point of having
+ *  groups at all: the push after a fire may reasonably shrug (there is nothing to
+ *  correct and the wall is unaffected); the clear may not. */
 export async function setStageNext(label, text) {
-  try {
-    const call = await invoke();
-    await call('set_stage_next', { label: label ?? null, text: text ?? null });
-  } catch {
-    /* backend absent */
-  }
+const call = await invoke();
+await call('set_stage_next', { label: label ?? null, text: text ?? null });
 }
 
 /** Set STT language: a code ("yo"/"sw"/"ha"/"en") or null for auto-detect. */
 export async function setSttLanguage(language) {
-  try {
-    const call = await invoke();
-    await call('set_stt_language', { language: language ?? null });
-    capture.update((s) => ({ ...s, stt: { ...s.stt, language: language ?? null } }));
-  } catch {
-    /* backend absent */
-  }
+try {
+  const call = await invoke();
+  await call('set_stt_language', { language: language ?? null });
+  capture.update((s) => ({ ...s, stt: { ...s.stt, language: language ?? null } }));
+} catch {
+  /* backend absent */
+}
 }
 
 /** Manual threshold override (Settings sliders). */
 export async function setThresholds(auto_fire, suggest) {
-  try {
-    const call = await invoke();
-    const thresholds = await call('set_thresholds', { thresholds: { auto_fire, suggest } });
-    capture.update((s) => ({ ...s, thresholds }));
-  } catch {
-    /* backend absent */
-  }
+try {
+  const call = await invoke();
+  const thresholds = await call('set_thresholds', { thresholds: { auto_fire, suggest } });
+  capture.update((s) => ({ ...s, thresholds }));
+} catch {
+  /* backend absent */
+}
 }
 
 /** The single operator sensitivity dial (0..100), read from the live thresholds.
  *  One forward mapping (`from_sensitivity`) and its inverse both live in Rust —
  *  the frontend never duplicates the curve. */
 export async function getSensitivity() {
-  try {
-    const call = await invoke();
-    return await call('get_sensitivity');
-  } catch {
-    return 50;
-  }
+try {
+  const call = await invoke();
+  return await call('get_sensitivity');
+} catch {
+  return 50;
+}
 }
 /** Set sensitivity (0..100). Applies the same thresholds Settings would and keeps
- *  the local `thresholds` mirror in step. Returns the landed dial position. */
+ *  the local `thresholds` mirror in step. Returns the LANDED dial position.
+ *
+ *  GROUP 1 (THROWS). It used to be GROUP 2 with `catch { return sensitivity; }` —
+ *  returning the value the caller ASKED for, as if it had landed, under a doc
+ *  comment promising the opposite. `set_sensitivity` really can fail:
+ *  `routing.0.lock()?` on a poisoned router mutex, the same failure shape that
+ *  produced the `stopCapture` bug.
+ *
+ *  This is the third wrapper repaired for the rule behind DECISIONS §20 — after
+ *  `clearScreens` and `stopCapture` — and it is on the one control that governs
+ *  **what the AI may put on a wall without asking**. An operator who drags the dial
+ *  to 80 over a gate still sitting at 50 has been told the machine is more cautious,
+ *  or more eager, than it is, and there is nothing on any screen that would show
+ *  them otherwise. Fabricating the answer is worse here than anywhere except a
+ *  panic control. */
 export async function setSensitivity(sensitivity) {
-  try {
-    const call = await invoke();
-    const landed = await call('set_sensitivity', { sensitivity });
-    const thresholds = await call('get_thresholds');
-    capture.update((s) => ({ ...s, thresholds }));
-    return landed;
-  } catch {
-    return sensitivity;
-  }
+const call = await invoke();
+const landed = await call('set_sensitivity', { sensitivity });
+const thresholds = await call('get_thresholds');
+capture.update((s) => ({ ...s, thresholds }));
+return landed;
 }
 
 /**
@@ -1685,17 +1789,17 @@ export async function setSensitivity(sensitivity) {
  * text before it is sent (see src-tauri/src/telemetry.rs).
  */
 export async function getCrashReporting() {
-  try {
-    const call = await invoke();
-    return await call('get_crash_reporting');
-  } catch {
-    return { enabled: false, dsn: '' };
-  }
+try {
+  const call = await invoke();
+  return await call('get_crash_reporting');
+} catch {
+  return { enabled: false, dsn: '' };
+}
 }
 
 export async function setCrashReporting(enabled, dsn) {
-  const call = await invoke();
-  return await call('set_crash_reporting', { enabled, dsn: dsn ?? '' });
+const call = await invoke();
+return await call('set_crash_reporting', { enabled, dsn: dsn ?? '' });
 }
 
 // ── Speech model acquisition ────────────────────────────────────────────────
@@ -1713,12 +1817,9 @@ export const modelError = writable(null);
 
 /** The catalogue, with `installed` resolved for this machine. */
 export async function listModels() {
-  try {
-    const call = await invoke();
+return guardedRead('listModels', async (call) => {
     return await call('list_models');
-  } catch {
-    return [];
-  }
+}, []);
 }
 
 /**
@@ -1726,48 +1827,48 @@ export async function listModels() {
  * been brought up — no restart. Rejects with a sentence a volunteer can act on.
  */
 export async function downloadModel(id) {
-  const call = await invoke();
-  const { listen } = await import('@tauri-apps/api/event');
+const call = await invoke();
+const { listen } = await import('@tauri-apps/api/event');
 
-  modelError.set(null);
-  modelProgress.set({ id, downloaded: 0, total: 0 });
+modelError.set(null);
+modelProgress.set({ id, downloaded: 0, total: 0 });
 
-  let cancelled = false;
-  const stop = [
-    await listen('model://progress', (e) => modelProgress.set(e.payload)),
-    await listen('model://error', (e) => modelError.set(e.payload)),
-    // Cancelling is something the operator CHOSE. It used to come down the error
-    // channel, so stopping your own download painted a red failure box — which had
-    // no dismiss, so it sat there until the component remounted.
-    await listen('model://cancelled', () => {
-      cancelled = true;
-      modelError.set(null);
-    }),
-  ];
-  try {
-    await call('download_model', { id });
-    // A cancelled download resolves normally — the operator got what they asked
-    // for. But there is no model on disk, so loading it would fail and report an
-    // error for something that is not one.
-    if (cancelled) return false;
-    // Bring STT up in-place, ON THE MODEL THAT WAS JUST DOWNLOADED. A 148 MB
-    // download that ends in "now quit and reopen the app" is a miserable last step
-    // for a first-time user — and once more than one model exists, merely reloading
-    // would bring up whichever the DEFAULT ORDER picks, which is the small one. The
-    // operator would have waited out a 1.6 GB download to keep running `base`, with
-    // the list showing the new model as installed and nothing saying which was live.
-    const filename = (await call('list_models').catch(() => [])).find((m) => m.id === id)
-      ?.filename;
-    const loaded = filename
-      ? await call('select_stt_model', { filename })
-      : await call('load_stt_model');
-    const stt = await call('stt_status');
-    capture.update((s) => ({ ...s, stt }));
-    return loaded;
-  } finally {
-    stop.forEach((fn) => fn());
-    modelProgress.set(null);
-  }
+let cancelled = false;
+const stop = [
+  await listen('model://progress', (e) => modelProgress.set(e.payload)),
+  await listen('model://error', (e) => modelError.set(e.payload)),
+  // Cancelling is something the operator CHOSE. It used to come down the error
+  // channel, so stopping your own download painted a red failure box — which had
+  // no dismiss, so it sat there until the component remounted.
+  await listen('model://cancelled', () => {
+    cancelled = true;
+    modelError.set(null);
+  }),
+];
+try {
+  await call('download_model', { id });
+  // A cancelled download resolves normally — the operator got what they asked
+  // for. But there is no model on disk, so loading it would fail and report an
+  // error for something that is not one.
+  if (cancelled) return false;
+  // Bring STT up in-place, ON THE MODEL THAT WAS JUST DOWNLOADED. A 148 MB
+  // download that ends in "now quit and reopen the app" is a miserable last step
+  // for a first-time user — and once more than one model exists, merely reloading
+  // would bring up whichever the DEFAULT ORDER picks, which is the small one. The
+  // operator would have waited out a 1.6 GB download to keep running `base`, with
+  // the list showing the new model as installed and nothing saying which was live.
+  const filename = (await call('list_models').catch(() => [])).find((m) => m.id === id)
+    ?.filename;
+  const loaded = filename
+    ? await call('select_stt_model', { filename })
+    : await call('load_stt_model');
+  const stt = await call('stt_status');
+  capture.update((s) => ({ ...s, stt }));
+  return loaded;
+} finally {
+  stop.forEach((fn) => fn());
+  modelProgress.set(null);
+}
 }
 
 /**
@@ -1777,31 +1878,31 @@ export async function downloadModel(id) {
  * Resolves to whether speech recognition came back up.
  */
 export async function selectModel(filename) {
-  const call = await invoke();
-  modelError.set(null);
-  try {
-    const loaded = await call('select_stt_model', { filename: filename ?? null });
-    const stt = await call('stt_status');
-    capture.update((s) => ({ ...s, stt }));
-    return loaded;
-  } catch (e) {
-    // Swallowing this would leave the operator looking at a list that says they
-    // switched, running the model they switched away from.
-    modelError.set(humanError(e));
-    return false;
-  }
+const call = await invoke();
+modelError.set(null);
+try {
+  const loaded = await call('select_stt_model', { filename: filename ?? null });
+  const stt = await call('stt_status');
+  capture.update((s) => ({ ...s, stt }));
+  return loaded;
+} catch (e) {
+  // Swallowing this would leave the operator looking at a list that says they
+  // switched, running the model they switched away from.
+  modelError.set(humanError(e));
+  return false;
+}
 }
 
 /** Operator has read the download error. */
 export function dismissModelError() {
-  modelError.set(null);
+modelError.set(null);
 }
 
 export async function cancelModelDownload() {
-  try {
-    const call = await invoke();
-    await call('cancel_model_download');
-  } catch {
-    /* nothing running */
-  }
+try {
+  const call = await invoke();
+  await call('cancel_model_download');
+} catch {
+  /* nothing running */
+}
 }

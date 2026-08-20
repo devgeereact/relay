@@ -44,6 +44,46 @@
   export let showStar = true;
 
   let menuFor = '';
+
+  /**
+   * ENTER fires a list row. SPACE DOES NOT — Space is the transport, app-wide.
+   *
+   * CLAUDE.md rule 11: *"`Space` means advance, app-wide, and nothing else."* The
+   * GRID card is a native `<button>`, and `shortcuts.js` calls `preventDefault` on
+   * Space globally, which suppresses the button's own activation — so in the grid,
+   * Space advances the service and nothing else. This row is a `role="button"` div
+   * with its own handler, which ran FIRST and answered Space by putting scripture
+   * in front of a congregation. Same deck, same content, two layouts, one key, two
+   * meanings — and the extra meaning was the dangerous one. Six views render this.
+   *
+   * Note what the repair is NOT: adding `stopPropagation` so the row fires and the
+   * transport does not. That closes the double-action and leaves the two layouts
+   * still disagreeing, which is the actual finding. Space now falls through here
+   * exactly as it does on the grid card.
+   *
+   * The ARIA authoring practices say a `role="button"` should answer both keys.
+   * This app deliberately overrides Space everywhere, native buttons included, and
+   * an operator who has learned "Space advances" must not meet an exception on a
+   * live surface. Enter remains the activation key, which is what a keyboard
+   * operator reaches for to act on the row they are focused on.
+   */
+  function rowKey(v) {
+    return (e) => {
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      e.stopPropagation();
+      onFire(v);
+    };
+  }
+
+  /** Escape closes the kebab menu and goes NO FURTHER — never to the panic key. */
+  function menuEsc(e) {
+    if (e.key === 'Escape') {
+      e.stopPropagation();
+      e.preventDefault();
+      menuFor = '';
+    }
+  }
 </script>
 
 {#if layout === 'list'}
@@ -61,7 +101,7 @@
           ? `Safe mode — ${v.reference} cannot reach a screen`
           : `Put ${v.reference} on the screens`}
         on:click={() => onFire(v)}
-        on:keydown={(e) => (e.key === 'Enter' || e.key === ' ') && onFire(v)}>
+        on:keydown={rowKey(v)}>
         <span class="vd-n r-mono">{v.slideNo}</span>
         {#if v.media}
           <span class="vd-rthumb">
@@ -188,7 +228,10 @@
             </button>
             {#if menuFor === v.reference}
               <button class="vd-scrim" tabindex="-1" aria-label="Close" on:click={() => (menuFor = '')}></button>
-              <div class="vd-menu">
+              <!-- `role="menu"` is load-bearing: `shortcuts.js` probes the DOM to
+                   decide whether Escape belongs to an overlay or to the panic key,
+                   so a popup with no role let Escape wipe the wall. -->
+              <div class="vd-menu" role="menu" tabindex="-1" on:keydown={menuEsc}>
                 <button class="vd-mi air" disabled={$safeMode} on:click={() => { menuFor = ''; onFire(v); }}>
                   Take to screen
                 </button>

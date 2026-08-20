@@ -41,6 +41,7 @@
   "live.heard_the_reference": "Heard the reference",
   "live.paraphrase_a_guess": "Paraphrase — a guess",
   "live.ambiguous_reference": "Ambiguous reference",
+  "live.book_name_uncertain": "Book name uncertain — a guess",
   "live.not_a_spoken_reference": "not a spoken reference",
   "live.match_percent": "{percent}% match",
   "live.heard": "Heard",

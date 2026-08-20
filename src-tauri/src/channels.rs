@@ -454,6 +454,27 @@ const CONSOLE: &str = "main";
 ///
 /// Gating at the choke point, not at the callers, is also what makes it honest: a
 /// new fire path added tomorrow is sandboxed by construction and cannot forget.
+///
+/// ## The choke point is FOUR functions, and it is worth naming them
+///
+/// "One function" was the intent and never the fact, and the gap cost a leak. Every
+/// function below that publishes to the kiosk hub is a way out of the machine:
+///
+/// * `broadcast_content` — gated
+/// * `clear` — gated
+/// * `black` — gated
+/// * `stage_next` — gated, and it was NOT. It leaked "up next" to a live stage
+///   tablet mid-rehearsal, and it has no Tauri emit at all, so the e2e rehearsal
+///   test — which counts wall events — saw nothing wrong.
+///
+/// `main.rs::set_channel_template` also publishes, and is DELIBERATELY not gated:
+/// it carries a template, not content. Reassigning a screen's look is live by
+/// design (DECISIONS §29), puts no scripture anywhere, and suppressing it would
+/// leave a kiosk rendering a template the operator has already replaced.
+///
+/// Anything added here that carries what a person would READ belongs in the gated
+/// list. Check `rehearsing(app)` first, and add an e2e case that watches the KIOSK
+/// hub, not just the wall.
 #[derive(Default)]
 pub struct Rehearsal(pub AtomicBool);
 
@@ -512,6 +533,48 @@ fn kiosk_content_json(content: &OutputContent) -> String {
 /// renders — native windows (Tauri event) AND networked kiosk clients (WS).
 ///
 /// In rehearsal this reaches the operator console and NOTHING else.
+/// WHAT THE CONGREGATION IS ACTUALLY LOOKING AT.
+///
+/// The console has always known this — it derives it from the `output://` events —
+/// and the backend did not, so anything asking the backend had to guess. The LAN
+/// remote guessed with the Context passage ANCHOR, which deliberately survives a
+/// clear (that is what makes `→` resume instead of restarting) and is therefore not
+/// an answer to "what is on the wall". `/api/live` consequently named a verse over
+/// cleared screens and over blacked-out ones.
+///
+/// Maintained at the three choke points below and nowhere else, so it cannot drift:
+/// `broadcast_content` (and only on the path that really broadcasts — a rehearsal
+/// returns before it), `clear`, and `black`.
+#[derive(Default)]
+pub struct WallState {
+    on_air: std::sync::atomic::AtomicBool,
+    black: std::sync::atomic::AtomicBool,
+}
+
+impl WallState {
+    /// True when a congregation can currently see content.
+    pub fn on_air(&self) -> bool {
+        use std::sync::atomic::Ordering;
+        self.on_air.load(Ordering::Relaxed) && !self.black.load(Ordering::Relaxed)
+    }
+    pub fn blacked(&self) -> bool {
+        self.black.load(std::sync::atomic::Ordering::Relaxed)
+    }
+    fn set(&self, on_air: bool, black: bool) {
+        use std::sync::atomic::Ordering;
+        self.on_air.store(on_air, Ordering::Relaxed);
+        self.black.store(black, Ordering::Relaxed);
+    }
+}
+
+/// Record a change at one of the three choke points. A no-op when the state is not
+/// managed (headless tests that do not care).
+fn note_wall<R: tauri::Runtime>(app: &tauri::AppHandle<R>, on_air: bool, black: bool) {
+    if let Some(w) = app.try_state::<WallState>() {
+        w.set(on_air, black);
+    }
+}
+
 pub fn broadcast_content<R: tauri::Runtime>(app: &tauri::AppHandle<R>, content: OutputContent) {
     let json = kiosk_content_json(&content);
     if rehearsing(app) {
@@ -525,6 +588,9 @@ pub fn broadcast_content<R: tauri::Runtime>(app: &tauri::AppHandle<R>, content: 
     }
     let _ = app.emit("output://content", content);
     publish_kiosk(app, json);
+    // AFTER the rehearsal early-return above, so this records the CONGREGATION
+    // wall and not the operator's sandbox.
+    note_wall(app, true, false);
 }
 
 /// Clear all output channels (operator "Clear all screens" / Esc). Clears to the
@@ -544,6 +610,7 @@ pub fn clear<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<(), String>
     }
     app.emit("output://clear", ()).map_err(|e| e.to_string())?;
     publish_kiosk(app, r#"{"kind":"clear"}"#.to_string());
+    note_wall(app, false, false);
     Ok(())
 }
 
@@ -559,17 +626,39 @@ pub fn black<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<(), String>
     }
     app.emit("output://black", ()).map_err(|e| e.to_string())?;
     publish_kiosk(app, r#"{"kind":"black"}"#.to_string());
+    note_wall(app, false, true);
     Ok(())
 }
 
 /// Push the "up next" preview to the stage/confidence monitor(s). Distinct from
 /// live content — it only reaches the stage view, never the main output. None
 /// clears the panel.
+///
+/// REHEARSAL APPLIES HERE TOO, and it did not.
+///
+/// This is the one content publisher that has no Tauri emit at all: a stage monitor
+/// is always a network client (stage.html over :8032, state over the :8031 hub), so
+/// it is reached only through `publish_kiosk`. That is exactly why it slipped the
+/// gate — `broadcast_content`, `clear` and `black` were each checked, and the e2e
+/// rehearsal test asserts on the WALL, which counts Tauri events. `stage_next`
+/// emits none, so it was invisible to both the gate and the test that guards it.
+///
+/// So an operator rehearsing on the real desk pushed the real upcoming verse to
+/// whatever stage tablet was still connected from the last service — to the
+/// preacher's own screen, in the middle of a live one. Nothing on the congregation
+/// wall would have moved, which is worse: the sandbox looked intact.
 pub fn stage_next<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
     label: Option<String>,
     text: Option<String>,
 ) {
+    if rehearsing(app) {
+        // Nothing to preview on the console — there is no console stage panel — so
+        // this is a suppression, not a redirect. The stage monitor keeps showing
+        // whatever it was showing, exactly as the projector does.
+        println!("rehearsal: stage_next SUPPRESSED — nothing left the machine");
+        return;
+    }
     let json =
         serde_json::json!({ "kind": "stage_next", "label": label, "text": text }).to_string();
     publish_kiosk(app, json);
@@ -980,9 +1069,10 @@ where
             .join(clean);
         if let Ok(body) = std::fs::read(&disk) {
             let header = format!(
-                "HTTP/1.1 200 OK\r\nContent-Type: {}\r\nContent-Length: {}\r\nAccess-Control-Allow-Origin: *\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n",
+                "HTTP/1.1 200 OK\r\nContent-Type: {}\r\nContent-Length: {}\r\nContent-Security-Policy: {}\r\nX-Content-Type-Options: nosniff\r\nAccess-Control-Allow-Origin: *\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n",
                 mime_for(clean),
-                body.len()
+                body.len(),
+                KIOSK_CSP
             );
             let _ = stream.write_all(header.as_bytes()).await;
             let _ = stream.write_all(&body).await;
@@ -993,9 +1083,10 @@ where
         Some(f) => {
             let body = f.contents();
             let header = format!(
-                "HTTP/1.1 200 OK\r\nContent-Type: {}\r\nContent-Length: {}\r\nAccess-Control-Allow-Origin: *\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n",
+                "HTTP/1.1 200 OK\r\nContent-Type: {}\r\nContent-Length: {}\r\nContent-Security-Policy: {}\r\nX-Content-Type-Options: nosniff\r\nAccess-Control-Allow-Origin: *\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n",
                 mime_for(clean),
-                body.len()
+                body.len(),
+                KIOSK_CSP
             );
             let _ = stream.write_all(header.as_bytes()).await;
             let _ = stream.write_all(body).await;
@@ -1071,7 +1162,7 @@ where
 ///
 /// SECURITY: this accepts CONTROL over the LAN with no authentication — a
 /// deliberate, recorded expansion of the previously broadcast-only exposure
-/// (docs/DECISIONS.md §47). It exists so the preacher's phone can search and push
+/// (docs/DECISIONS.md §35). It exists so the preacher's phone can search and push
 /// scripture. The threat model is unchanged in kind: anyone already on the church
 /// wifi. Do NOT expose this port to an untrusted network.
 pub type ApiSink = std::sync::Arc<dyn Fn(&str) -> Option<String> + Send + Sync>;
@@ -1115,6 +1206,26 @@ pub async fn run_output_http_server(on_error: ErrorSink, api: ApiSink, port: u16
         });
     }
 }
+
+/// The Content-Security-Policy the LAN pages are served with.
+///
+/// The packaged app has one (`tauri.conf.json`) and this server had **none** — so
+/// `output.html` in the packaged webview was constrained and the *same page* served
+/// to an OBS browser source, a kiosk screen or a phone was not. That is the half of
+/// the audience this policy most needs to cover: those clients are ordinary browsers
+/// on a church network, running a page whose look is assembled from template JSON
+/// that may have arrived in an email.
+///
+/// Deliberately TIGHTER than the packaged policy in the one way that matters:
+/// **no `http:` in `img-src` or `media-src`.** The desktop app allows it for
+/// operator-chosen local sources; a page on the LAN has no such need, and Relay
+/// renders offline or it does not render. `connect-src 'self' ws:` keeps the kiosk
+/// socket working and nothing else.
+pub(crate) const KIOSK_CSP: &str = "default-src 'self'; script-src 'self'; \
+style-src 'self' 'unsafe-inline'; font-src 'self' data:; \
+img-src 'self' data: blob:; media-src 'self' data: blob:; \
+connect-src 'self' ws: wss:; object-src 'none'; frame-src 'none'; \
+base-uri 'self'; form-action 'none'";
 
 /// Write a JSON body (no-store, permissive CORS — the remote is same-origin, but
 /// the header keeps it simple for a kiosk fetch).

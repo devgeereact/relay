@@ -23,111 +23,38 @@
 //!   - the gate → a paraphrase can never auto-fire, however confident it claims to be
 //!   - rehearsal → nothing reaches the congregation, from any of the above
 
+use super::qa::{self, settle, Wall};
 use super::*;
-use std::sync::Arc;
-use tauri::test::{mock_builder, mock_context, noop_assets};
-use tauri::{Listener, Manager};
+use tauri::Manager;
 
 /// A headless Relay with the same state `main()` manages, and a real database.
 ///
-/// The DB is in-memory and seeded exactly as a fresh install is — so the verses these
-/// tests fire are the verses a church would get.
-fn app() -> tauri::App<tauri::test::MockRuntime> {
-    let conn = Connection::open_in_memory().expect("in-memory db");
-    conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
-    db::init_fresh(&conn).expect("seed schema + KJV + templates + channels");
-
-    // A fresh install seeds templates but does NOT assign a per-content-type
-    // override — `tpl_scripture` is only written when the operator picks one, and
-    // without it the channel's own template is used (docs/DECISIONS.md). So pick one
-    // here, which is what makes the "every fire carries its template" invariant
-    // testable at all: with no override set, `template_id` is legitimately None and
-    // the assertion would be vacuous.
-    let tpl: i64 = conn
-        .query_row("SELECT id FROM templates ORDER BY id LIMIT 1", [], |r| {
-            r.get(0)
-        })
-        .expect("a fresh install seeds templates");
-    db::set_content_template(&conn, "scripture", Some(tpl)).expect("set scripture template");
-
-    let corpus: Vec<(VerseRef, String)> = db::all_verses(&conn)
-        .expect("corpus")
-        .into_iter()
-        .map(|v| {
-            (
-                VerseRef {
-                    book: v.book,
-                    chapter: v.chapter,
-                    verse: v.verse,
-                },
-                v.text,
-            )
-        })
-        .collect();
-
-    let app = mock_builder()
-        .manage(Db(Mutex::new(conn)))
-        .manage(Routing::default())
-        .manage(Outputs::default())
-        .manage(Detecting(AtomicBool::new(true)))
-        .manage(channels::Rehearsal::default())
-        .manage(Session::default())
-        .manage(Semantic(SemanticIndex::build(&corpus)))
-        .manage(Context(Mutex::new(ContextMemory::default())))
-        // mock_context, NOT generate_context!(): the real macro embeds Info.plist as a
-        // link symbol, and expanding it a second time fails with
-        // "symbol `_EMBED_INFO_PLIST` is already defined".
-        .build(mock_context(noop_assets()))
-        .expect("mock app");
-
-    // The kiosk hub and the audio engine are deliberately NOT managed: `channels`
-    // reaches for them with `try_state`, so their absence is the "no LAN, no mic"
-    // case — which is exactly what a headless test is.
-    app
-}
-
-/// Records everything that leaves the machine through the output layer.
+/// This is [`qa::bare_app`] — a genuine first launch — plus **one** deliberate
+/// difference, which is the reason this wrapper exists rather than the fixture being
+/// used directly.
 ///
-/// This is the assertion surface that matters: not "did the function return Ok", but
-/// "what did the congregation actually see".
-#[derive(Default)]
-struct Wall {
-    content: Arc<Mutex<Vec<serde_json::Value>>>,
-    cleared: Arc<AtomicBool>,
-    blacked: Arc<AtomicBool>,
-}
-
-impl Wall {
-    fn watch(app: &tauri::AppHandle<tauri::test::MockRuntime>) -> Self {
-        let w = Wall::default();
-        let c = w.content.clone();
-        // OutputContent is Serialize-only (it is never read back in production), so
-        // the wall records the JSON that actually went out — which is, if anything,
-        // the more honest thing to assert on: it is the bytes the outputs receive.
-        app.listen("output://content", move |e| {
-            if let Ok(v) = serde_json::from_str::<serde_json::Value>(e.payload()) {
-                c.lock().unwrap().push(v);
-            }
-        });
-        let cl = w.cleared.clone();
-        app.listen("output://clear", move |_| cl.store(true, Ordering::SeqCst));
-        let bl = w.blacked.clone();
-        app.listen("output://black", move |_| bl.store(true, Ordering::SeqCst));
-        w
+/// A fresh install seeds templates but does NOT assign a per-content-type override:
+/// `tpl_scripture` is only written when the operator picks one, and without it the
+/// channel's own template is used (docs/DECISIONS.md). So one is picked here, which
+/// is what makes the "every fire carries its template" invariant testable at all —
+/// with no override set, `template_id` is legitimately None and the assertion would
+/// be vacuous.
+///
+/// That convenience is correct for this suite and wrong for a cold-start audit. Use
+/// [`qa::bare_app`] directly when the question is "can a new operator get here?".
+fn app() -> tauri::App<tauri::test::MockRuntime> {
+    let app = qa::bare_app();
+    {
+        let db = app.state::<Db>();
+        let conn = db.0.lock().expect("db");
+        let tpl: i64 = conn
+            .query_row("SELECT id FROM templates ORDER BY id LIMIT 1", [], |r| {
+                r.get(0)
+            })
+            .expect("a fresh install seeds templates");
+        db::set_content_template(&conn, "scripture", Some(tpl)).expect("set scripture template");
     }
-
-    fn last(&self) -> Option<serde_json::Value> {
-        self.content.lock().unwrap().last().cloned()
-    }
-    fn count(&self) -> usize {
-        self.content.lock().unwrap().len()
-    }
-}
-
-/// Tauri delivers events to listeners asynchronously on the mock runtime; give the
-/// loop a moment to drain before asserting on what the wall received.
-fn settle() {
-    std::thread::sleep(std::time::Duration::from_millis(60));
+    app
 }
 
 #[test]
@@ -419,17 +346,11 @@ fn clear_blanks_the_screens_and_reports_that_it_did() {
     // "Screens cleared" over a wall that still had scripture on it.
     clear_screens(h.clone()).expect("clear must report success");
     settle();
-    assert!(
-        wall.cleared.load(Ordering::SeqCst),
-        "the screens never cleared"
-    );
+    assert!(wall.cleared(), "the screens never cleared");
 
     blackout(h.clone()).expect("blackout must report success");
     settle();
-    assert!(
-        wall.blacked.load(Ordering::SeqCst),
-        "the screens never blacked out"
-    );
+    assert!(wall.blacked(), "the screens never blacked out");
 }
 
 /// A verse that parses but does not exist must NEVER be broadcast — it would render
@@ -486,6 +407,53 @@ fn nothing_reaches_the_congregation_during_a_rehearsal() {
     );
 }
 
+/// REHEARSAL, THROUGH THE OTHER DOOR — the WebSocket hub, which the wall cannot see.
+///
+/// `Wall` listens for Tauri events. That is the whole assertion surface of the test
+/// above, and it is why `channels::stage_next` leaked for as long as it did: the
+/// stage/confidence monitor is ALWAYS a network client (stage.html over :8032, state
+/// over the :8031 hub), so `stage_next` publishes to the kiosk hub and emits no Tauri
+/// event at all. It was invisible to the gate and invisible to the guard.
+///
+/// The failure it allowed is the quiet kind. Nothing on the congregation wall moves —
+/// so the sandbox looks intact — while the preacher's own tablet, still connected
+/// from the last service, is handed the real "up next" mid-rehearsal.
+///
+/// This test therefore subscribes to the hub itself, through `qa::Kiosk` — the
+/// second door. The e2e app deliberately does not manage a `KioskHub` (headless =
+/// "no LAN"), so attaching one is part of watching it.
+#[test]
+fn nothing_reaches_the_stage_monitor_during_a_rehearsal() {
+    let app = app();
+    let h = app.handle().clone();
+    let mut kiosk = qa::Kiosk::attach(&h);
+
+    // Not rehearsing: the stage monitor is supposed to get it. Assert that FIRST, so
+    // this test cannot pass by the publish path being broken outright.
+    set_stage_next(h.clone(), Some("Up next".into()), Some("John 3:16".into()));
+    settle();
+    let live = kiosk.next().expect("a real service must reach the stage");
+    assert!(
+        live.contains("stage_next") && live.contains("John 3:16"),
+        "the stage monitor got something other than the up-next it was sent: {live}"
+    );
+
+    set_rehearsal(
+        h.clone(),
+        h.state::<Session>(),
+        h.state::<channels::Rehearsal>(),
+        true,
+    )
+    .expect("enter rehearsal");
+
+    set_stage_next(h.clone(), Some("Up next".into()), Some("Psalm 23:1".into()));
+    settle();
+    assert!(
+        kiosk.silent(),
+        "the up-next preview escaped to a live stage monitor during a rehearsal"
+    );
+}
+
 /// THE PREACHER'S REMOTE, end to end. The phone talks to the same HTTP handler
 /// (`remote_api`) that `main.rs` wires onto :8032, which drives the SAME fire and
 /// nav commands the console does — one engine, no second code path. This proves a
@@ -529,6 +497,90 @@ fn the_preacher_remote_searches_fires_and_walks_the_passage() {
         nexted["live"]["reference"], "John 3:17",
         "the remote's Next did not walk to the next verse"
     );
+    assert_eq!(
+        nexted["nav"]["kind"], "fired",
+        "the remote did not say WHICH outcome its Next had"
+    );
+}
+
+/// THE REMOTE MUST SAY WHY NOTHING MOVED — the same repair `NavResult` was built
+/// for, applied to the surface it was never applied to.
+///
+/// `nav` used to return `()`, so an operator pressed Next mid-sermon, the wall did
+/// not change, and nothing anywhere said why. That was fixed for the console and
+/// left standing on the preacher's phone: `remote_api` matched `Ok(_)` and threw
+/// the outcome away, so the end of a reading answered `{"ok":true}` exactly like a
+/// successful step. `Stage.svelte`'s only handler was a `catch`, which fires on a
+/// transport error and never on this — so the preacher tapped Next at the end of a
+/// reading and got silence, which is the original bug verbatim.
+///
+/// Every non-firing outcome must be nameable by the phone.
+#[test]
+fn the_remote_says_which_outcome_its_nav_had_not_merely_ok() {
+    let app = app();
+    let h = app.handle().clone();
+
+    // Nothing staged at all — stepping has nowhere to go, and must say so.
+    let cold = super::remote_api(&h, "next");
+    let cold: serde_json::Value = serde_json::from_str(&cold).expect("next json");
+    assert_eq!(cold["ok"], true, "a boundary is not a transport failure");
+    assert_eq!(
+        cold["nav"]["kind"], "no_passage",
+        "the remote reported ok with nothing staged, and named no outcome"
+    );
+
+    // Stage a passage, then walk off the end of the BOOK. Jude has one chapter and
+    // 25 verses, so 25 is the last verse there is.
+    let fired = super::remote_api(&h, "fire?ref=Jude%2025");
+    let fired: serde_json::Value = serde_json::from_str(&fired).expect("fire json");
+    assert_eq!(fired["ok"], true);
+    assert_eq!(fired["live"]["reference"], "Jude 1:25");
+
+    let past = super::remote_api(&h, "next");
+    let past: serde_json::Value = serde_json::from_str(&past).expect("next json");
+    assert_eq!(past["ok"], true);
+    // Named EXACTLY, not merely "not fired". The three non-firing outcomes mean
+    // three different things to a preacher holding the phone — "there is no more of
+    // this reading", "you have not put anything up yet", and "that verse is not in
+    // your Bible" — and a test that accepts any of them would pass just as happily
+    // if the wall reported the wrong one, which is the bug `NavResult` exists to
+    // prevent one layer down.
+    //
+    // Jude 1:25 is fired as a SINGLE verse, so the passage is unbounded: the step
+    // resolves Jude 1:26, which is not in the corpus. Hence `not_in_library` here
+    // and not `end_of_passage` — the bounded case is asserted below.
+    assert_eq!(
+        past["nav"]["kind"], "not_in_library",
+        "the remote gave the wrong name to a step past the last verse of Jude"
+    );
+    assert_eq!(
+        past["live"]["reference"], "Jude 1:25",
+        "the wall moved when the remote had nowhere to move to"
+    );
+
+    // A BOUNDED reading, walked off its own end. This is the outcome a preacher
+    // meets most often — the reading finished — and it must not be reported with
+    // the same word as a verse that does not exist.
+    let _ = super::remote_api(&h, "fire?ref=John%203:16-17");
+    let step: serde_json::Value =
+        serde_json::from_str(&super::remote_api(&h, "next")).expect("next json");
+    assert_eq!(step["nav"]["kind"], "fired", "precondition: 3:16 -> 3:17");
+    assert_eq!(step["live"]["reference"], "John 3:17");
+
+    let end: serde_json::Value =
+        serde_json::from_str(&super::remote_api(&h, "next")).expect("next json");
+    assert_eq!(
+        end["ok"], true,
+        "the end of a reading is not a transport failure"
+    );
+    assert_eq!(
+        end["nav"]["kind"], "end_of_passage",
+        "the remote did not name the end of a bounded reading"
+    );
+    assert_eq!(
+        end["live"]["reference"], "John 3:17",
+        "the wall moved past the end of the reading"
+    );
 }
 
 impl NavResult {
@@ -541,4 +593,468 @@ impl NavResult {
             NavResult::NotInLibrary { .. } => "NotInLibrary",
         }
     }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// R2 · LIVE PATH AUDIT — evidence, 2026-08-14
+//
+// Four findings, each pinned as a test asserting the CORRECT behaviour, following
+// the precedent in `src/lib/liveoutputrail.test.js`: a known defect is pinned as a
+// skipped test with the repair written out, so the fix has a target and CI stays
+// green until a human chooses one.
+//
+// **Two of the four have since been fixed (R2-A and R2-B), and their tests are no
+// longer `#[ignore]`d** — they run on every `cargo test` and now guard the repair
+// instead of describing the defect. An ignored test that has started passing is
+// worse than no test: it protects nothing while reading, in its own reason string,
+// as an open bug.
+//
+// R2-C and R2-D remain open, remain RED, and remain ignored. Run them with:
+//
+//   cargo test r2_ -- --ignored --nocapture
+//
+// All three are the SAME class of bug this repo has now had four times: a rule
+// enforced on one surface and skipped on its twin.
+// ════════════════════════════════════════════════════════════════════════════
+
+/// R2-A · `/api/live` REPORTS A VERSE ON A WALL THAT IS CLEAR.
+///
+/// `live_json` reads the CONTEXT's current passage anchor, not what is on the
+/// screens. The context deliberately survives a clear — that is what makes the
+/// next `→` resume the passage instead of restarting it (CLAUDE.md: position and
+/// on-air-ness are separate facts). But the remote publishes that position under
+/// the key `live`, so the preacher's control plane answers "John 3:16 is up"
+/// after the operator has hit Esc, and again after a blackout.
+///
+/// This is Cued ≠ On Air, violated on the one surface where the operator cannot
+/// see the wall to check.
+///
+/// It also means the existing test `the_remote_says_which_outcome_its_nav_had…`
+/// asserts on the wrong surface: its `past["live"]["reference"] == "Jude 1:25"`
+/// check reads "the wall did not move", and would pass just as happily if the
+/// wall had been cleared.
+///
+/// **FIXED, and this test now guards the repair.** `live_json` reports what the
+/// outputs are showing rather than where the playhead is, so a cleared wall answers
+/// `live: null` while the context keeps the position for the next `→`. It ran
+/// `#[ignore]`d and RED while the defect stood; leaving the ignore on after the fix
+/// would have left the repair unprotected and the reason string lying about it.
+#[test]
+fn r2_the_remote_must_not_call_a_cleared_wall_live() {
+    let app = app();
+    let h = app.handle().clone();
+    let wall = Wall::watch(&h);
+
+    let _ = super::remote_api(&h, "fire?ref=John%203:16");
+    settle();
+    let up: serde_json::Value = serde_json::from_str(&super::remote_api(&h, "live")).unwrap();
+    assert_eq!(up["live"]["reference"], "John 3:16", "precondition");
+
+    // The operator clears the screens. The wall really does go blank.
+    let cleared: serde_json::Value = serde_json::from_str(&super::remote_api(&h, "clear")).unwrap();
+    assert_eq!(cleared["ok"], true);
+    settle();
+    assert!(wall.cleared(), "precondition: the wall actually cleared");
+
+    let after: serde_json::Value = serde_json::from_str(&super::remote_api(&h, "live")).unwrap();
+    assert!(
+        after["live"].is_null(),
+        "the remote told the preacher {} is on the wall, and the wall is empty",
+        after["live"]["reference"]
+    );
+}
+
+/// R2-B · A REHEARSAL FIRE ANSWERS THE PHONE AS THOUGH IT WENT OUT.
+///
+/// Rehearsal is gated at the four kiosk publishers, and it holds: `wall.count()`
+/// is 0 and the hub is silent. The HTTP control plane is a fifth door, and it is
+/// not a publisher — it is a REPORTER — so nobody enumerated it. `/api/fire`
+/// during a rehearsal returns `{"ok":true,"live":{"reference":"John 3:16",…}}`,
+/// which is indistinguishable from the answer it gives during a service.
+///
+/// The failure is the quiet kind, exactly like `stage_next` was: nothing escapes,
+/// so the sandbox looks intact — while the preacher, holding the phone during a
+/// Thursday rehearsal, is told the congregation's wall has John 3:16 on it.
+///
+/// **FIXED, and this test now guards the repair.** The remote's answer carries the
+/// sandbox the way every console surface does, so the phone can no longer report a
+/// rehearsal fire as though the congregation saw it. It ran `#[ignore]`d and RED
+/// while the defect stood.
+#[test]
+fn r2_the_remote_must_say_a_rehearsal_fire_reached_nobody() {
+    let app = app();
+    let h = app.handle().clone();
+    let wall = Wall::watch(&h);
+    let mut kiosk = qa::Kiosk::attach(&h);
+
+    set_rehearsal(
+        h.clone(),
+        h.state::<Session>(),
+        h.state::<channels::Rehearsal>(),
+        true,
+    )
+    .expect("enter rehearsal");
+
+    let fired: serde_json::Value =
+        serde_json::from_str(&super::remote_api(&h, "fire?ref=John%203:16")).unwrap();
+    settle();
+
+    // Containment itself is intact — assert that first, so this test cannot be
+    // read as a leak.
+    assert_eq!(wall.count(), 0, "containment held on the wall");
+    assert!(kiosk.silent(), "containment held on the kiosk");
+
+    assert!(
+        fired["rehearsing"] == true || fired["live"].is_null(),
+        "the remote answered {fired} — identical to a real fire, during a rehearsal"
+    );
+}
+
+/// R2-C · THE SPOKEN IN-PASSAGE JUMP IS THE FOURTH SILENT NO-OP.
+///
+/// `NavResult` exists because `nav` used to return `()` and do nothing. The
+/// console was repaired, then the remote (`Ok(_)`), and both are now covered.
+/// `handle_passage_nav` — the spoken "chapter five verse one" / "verse four" —
+/// still returns a bare `bool`, and the STT callback discards it:
+///
+///     if handle_passage_nav(&handle, &update.text) { return; }
+///
+/// A `false` means one of three things and says none of them: the context lock
+/// was poisoned, nothing is staged so there is no book to resolve against, or
+/// the verse parsed and is not in the corpus. Its sibling two lines above emits
+/// `nav://blocked` for exactly these cases.
+///
+/// So the preacher says "verse four" before anything has been fired, the wall
+/// does not move, and there is no toast, no banner and no log line — which is
+/// the original bug, verbatim, on the fourth door.
+///
+/// Repair direction: return a `NavResult` (or fold the jump into `handle_nav`)
+/// and emit `nav://blocked` for every non-firing outcome.
+#[test]
+#[ignore = "R2-C: known defect — a spoken in-passage jump that cannot move says nothing"]
+fn r2_a_spoken_passage_jump_that_cannot_move_must_say_so() {
+    let app = app();
+    let h = app.handle().clone();
+    let wall = Wall::watch(&h);
+
+    // A blocked-nav notice is pushed to the operator as an event, because the STT
+    // thread has no caller to return to. Count them.
+    let blocked = std::sync::Arc::new(AtomicBool::new(false));
+    let b = blocked.clone();
+    tauri::Listener::listen(&h, "nav://blocked", move |_| {
+        b.store(true, Ordering::SeqCst)
+    });
+
+    // "verse ninety nine" parses to a real jump target …
+    assert!(
+        super::detection::detect_passage_nav("verse ninety nine").is_some(),
+        "precondition: the phrase is understood as a jump"
+    );
+    manual_fire(h.clone(), h.state::<Db>(), "Psalm 23".into(), None, None).unwrap();
+    settle();
+    let before = wall.count();
+
+    // … but Psalm 23 has six verses, so it cannot be fired.
+    let moved = super::handle_passage_nav(&h, "verse ninety nine");
+    settle();
+
+    assert!(!moved, "precondition: it did not move");
+    assert_eq!(
+        wall.count(),
+        before,
+        "precondition: the wall was left alone"
+    );
+    assert!(
+        blocked.load(Ordering::SeqCst),
+        "the wall did not move and nothing anywhere said why — `nav` would have \
+         reported NotInLibrary for the same target"
+    );
+}
+
+/// R2-D (backend half) · THE STAGED PASSAGE OUTLIVES EVERYTHING THAT REPLACES IT.
+///
+/// `Context` is only written by scripture fires (`PassageUpdate`). A song, a
+/// notice, a picture, a countdown and a blackout all leave it exactly as it was,
+/// forever — so `nav` will happily walk a passage that left the wall an hour ago
+/// and report `Fired`, which is true of the wall and false of the sermon.
+///
+/// That is harmless while the console is in SLIDE mode. It stops being harmless
+/// when the console flips to VERSE mode without the operator asking, and it does:
+/// `Live.svelte:124` reads `mode = … !($live && !planOnAir) ? 'slide' : 'verse'`,
+/// and a BLACKOUT clears `planOnAir` (panicRun → leavePlan) while leaving `$live`
+/// set (only `output://clear` nulls it). Esc → SLIDE, B → VERSE, from the same
+/// state, and only the Esc behaviour is documented.
+///
+/// So: running a plan, operator hits B to kill the wall, then presses `→` to pick
+/// the service back up. They get the next verse of a passage from earlier in the
+/// service, on a wall they had just blacked out.
+///
+/// This test asserts only the backend half, which is the part layer A can see.
+#[test]
+#[ignore = "R2-D: known defect — a stale passage stays armed under non-scripture content"]
+fn r2_a_passage_must_not_stay_armed_under_unrelated_content() {
+    let app = app();
+    let h = app.handle().clone();
+    let wall = Wall::watch(&h);
+
+    // Sermon scripture, twenty minutes ago.
+    manual_fire(h.clone(), h.state::<Db>(), "John 3:16".into(), None, None).unwrap();
+    // …then the closing song takes the wall. Nothing scripture-shaped since.
+    fire_content(
+        h.clone(),
+        h.state::<Db>(),
+        "Blessed Assurance · Verse 1".into(),
+        "Blessed assurance, Jesus is mine".into(),
+        "song".into(),
+        None,
+        None,
+    )
+    .unwrap();
+    settle();
+    assert!(
+        wall.last().unwrap()["text"]
+            .as_str()
+            .unwrap_or("")
+            .contains("Blessed assurance"),
+        "precondition: the song is what is on the wall"
+    );
+
+    let r = nav(h.clone(), "next".into()).unwrap();
+    settle();
+    assert!(
+        matches!(r, NavResult::NoPassage),
+        "`next` walked a passage the congregation stopped looking at: {} — the wall \
+         now shows {:?}",
+        r.kind(),
+        wall.last().unwrap()["reference"]
+    );
+}
+
+// ── THE AUTO-FIRE PATH ──────────────────────────────────────────────────────
+//
+// Everything above drives a HUMAN path: `manual_fire`, `nav`, `clear_screens`.
+// Until 2026-08-14 that was every e2e test in the file, and it meant the one path
+// where **the AI decides on its own** — transcript in, scripture on a wall, nobody
+// pressing anything — had never been driven end to end by anything.
+//
+// That was not an oversight anybody could see, because it looked like coverage.
+// `emit_detections` took a concrete `tauri::AppHandle`, so it *could not* be driven
+// on the mock runtime; architecture rule 24 predicts exactly this ("a concrete
+// AppHandle quietly re-welds it") and it had happened to the most dangerous function
+// in the product. It is now generic, and these are the first tests through it.
+//
+// The P0 that shipped in the meantime — "please turn to hymn number three sixteen"
+// putting Numbers 3:16 on a wall, unattended — is the reason to be specific about
+// what this file is for: not "does detection work" (detection.rs owns that) but
+// "what leaves the machine when nobody is watching".
+
+/// A heard reference in an ordinary sentence reaches the congregation by itself.
+///
+/// The positive control. Without it the three negative tests below could all pass
+/// by the auto-fire path being broken outright, which is the failure mode a
+/// suppression test cannot distinguish from success.
+#[test]
+fn a_spoken_reference_auto_fires_all_the_way_to_the_wall() {
+    let app = app();
+    let h = app.handle().clone();
+    let wall = Wall::watch(&h);
+
+    emit_detections(
+        &h,
+        "turn with me to John chapter three verse sixteen",
+        0,
+        true,
+    );
+    settle();
+
+    let shown = wall
+        .last()
+        .expect("a heard reference never reached the outputs");
+    assert_eq!(shown["reference"], "John 3:16");
+    assert!(
+        shown["text"]
+            .as_str()
+            .unwrap_or("")
+            .contains("God so loved"),
+        "the verse arrived without its text: {:?}",
+        shown["text"]
+    );
+}
+
+/// THE P0 OF 2026-08-14, pinned end to end rather than at the router.
+///
+/// `r6_11`/`r6_12` prove the router refuses these. This proves nothing reaches the
+/// wall — which is a different claim, and the only one a congregation experiences.
+#[test]
+fn ordinary_church_announcements_reach_nobody() {
+    let announcements = [
+        "please turn to hymn number three sixteen",
+        "we will sing hymn number one one",
+        "the youth meet in room two twelve after the service",
+        "the crèche is in room one one for under fives",
+        "there are free seats on row three sixteen",
+        "we will sing song two twelve this morning",
+        "welcome to our nine thirty service",
+    ];
+    for text in announcements {
+        let app = app();
+        let h = app.handle().clone();
+        let wall = Wall::watch(&h);
+
+        emit_detections(&h, text, 0, true);
+        settle();
+
+        assert_eq!(
+            wall.count(),
+            0,
+            "{text:?} put {:?} in front of a congregation with nobody pressing anything",
+            wall.last().map(|v| v["reference"].clone())
+        );
+    }
+}
+
+/// The gate, through the real path this time. `router.rs` proves `decide` refuses a
+/// paraphrase; `e2e` proves the refusal survives everything between `decide` and the
+/// projector.
+#[test]
+fn a_paraphrase_never_auto_fires_through_the_real_transcript_path() {
+    let app = app();
+    let h = app.handle().clone();
+    let wall = Wall::watch(&h);
+
+    // Words from John 3:16 with no reference spoken — the semantic index's job, and
+    // the one thing it may never do unattended.
+    emit_detections(
+        &h,
+        "because God loved the world so much that he gave his only son",
+        0,
+        true,
+    );
+    settle();
+
+    assert_eq!(
+        wall.count(),
+        0,
+        "a paraphrase reached the congregation on its own: {:?}",
+        wall.last()
+    );
+}
+
+/// Rehearsal contains the AI, not just the operator.
+///
+/// Every previous rehearsal test drove a human path. This one lets the machine
+/// decide during a rehearsal — the case where a preacher is practising, says a real
+/// reference out loud, and the sandbox has to hold with nobody watching it.
+#[test]
+fn nothing_the_ai_decides_escapes_a_rehearsal() {
+    let app = app();
+    let h = app.handle().clone();
+    let wall = Wall::watch(&h);
+    let mut kiosk = qa::Kiosk::attach(&h);
+
+    set_rehearsal(
+        h.clone(),
+        h.state::<Session>(),
+        h.state::<channels::Rehearsal>(),
+        true,
+    )
+    .expect("enter rehearsal");
+
+    emit_detections(
+        &h,
+        "turn with me to John chapter three verse sixteen",
+        0,
+        true,
+    );
+    settle();
+
+    assert_eq!(
+        wall.count(),
+        0,
+        "the AI put {:?} on the congregation's wall during a rehearsal",
+        wall.last().map(|v| v["reference"].clone())
+    );
+    assert!(
+        kiosk.silent(),
+        "the AI's fire escaped to the kiosk hub during a rehearsal — the second door"
+    );
+}
+
+/// ACCEPTING A SUGGESTION REPORTS WHAT IT ACTUALLY DID.
+///
+/// `confirm_detection` returned `Ok(thresholds)` on two paths that put nothing on
+/// any screen: an unparseable reference (the `if let` fell through) and a verse
+/// outside the corpus (`fire_manual`'s bool was discarded — no binding, no `if`).
+///
+/// The second is reachable in ordinary use. `emit_detections` deliberately demotes
+/// a parsed-but-absent verse to a suggestion rather than dropping it, and no
+/// frontend file reads the `in_library` flag that says so — so a garbled
+/// "Psalms 23:99" looked like any other card, Accept was enabled, the backend said
+/// Ok, and the console flashed "Now live: Psalms 23:99" over the verse that was
+/// still on the wall.
+///
+/// These tests are only possible because P1-10 made the command generic over `R`.
+#[test]
+fn accepting_a_suggestion_that_cannot_fire_says_so() {
+    let app = app();
+    let h = app.handle().clone();
+    let wall = Wall::watch(&h);
+
+    // Precondition: a real acceptance works, so the two refusals below cannot pass
+    // by the command being broken outright.
+    confirm_detection(
+        h.clone(),
+        h.state::<Db>(),
+        h.state::<Routing>(),
+        h.state::<channels::Rehearsal>(),
+        "John 3:16".into(),
+    )
+    .expect("accepting a real suggestion must fire");
+    settle();
+    assert_eq!(
+        wall.last().expect("nothing reached the wall")["reference"],
+        "John 3:16"
+    );
+    let after_real = wall.count();
+
+    // A verse that parsed but does not exist. Psalms 23 has six verses.
+    let err = confirm_detection(
+        h.clone(),
+        h.state::<Db>(),
+        h.state::<Routing>(),
+        h.state::<channels::Rehearsal>(),
+        "Psalms 23:99".into(),
+    )
+    .expect_err("accepting a verse outside the corpus must NOT report success");
+    assert!(
+        err.to_string().contains("isn't in the Bible text"),
+        "the operator needs the same sentence manual_fire gives them, got: {err}"
+    );
+
+    // Nothing new left the machine, and — the part that mattered — the previous
+    // verse is untouched. The console's "Now live" flash was over a wall that had
+    // never changed.
+    settle();
+    assert_eq!(
+        wall.count(),
+        after_real,
+        "a refused accept still broadcast something"
+    );
+    assert_eq!(wall.last().unwrap()["reference"], "John 3:16");
+
+    // And a reference the parser cannot read at all.
+    let err = confirm_detection(
+        h.clone(),
+        h.state::<Db>(),
+        h.state::<Routing>(),
+        h.state::<channels::Rehearsal>(),
+        "the pastor's third point".into(),
+    )
+    .expect_err("an unreadable reference must NOT report success");
+    assert!(
+        err.to_string().contains("could not read a reference"),
+        "got: {err}"
+    );
+    settle();
+    assert_eq!(wall.count(), after_real);
 }

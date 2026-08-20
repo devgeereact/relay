@@ -224,7 +224,7 @@
   </section>
 
   {#if msg}<p class="sv-msg">{msg}</p>{/if}
-  {#if error}<p class="sv-err">{error}</p>{/if}
+  {#if error}<p class="sv-err" role="alert">{error}</p>{/if}
 </div>
 
 <style>

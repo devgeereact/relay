@@ -224,7 +224,7 @@ correctly notarized `.dmg` **and an MSI that was never signed at all** — and t
 so it stayed silent too. Windows is the platform most of our churches are on.
 
 An unsigned build is still allowed on a **pre-release** tag (one with a hyphen —
-`v0.2.0-rc1`), because you need some way to exercise the pipeline before you own a
+`v0.2.0-1`), because you need some way to exercise the pipeline before you own a
 certificate. The release notes then say, per platform, which half is unsigned.
 
 ---
@@ -331,9 +331,20 @@ pipelines break.
 
 So: **an unsigned build is allowed, but only on a pre-release tag.**
 
+**A tag is not enough on its own.** The release gate compares the tag against all
+three version files, so the version has to move first or the workflow fails before it
+reaches the signing decision:
+
 ```bash
-git tag v0.1.0-rc1 && git push origin v0.1.0-rc1      # unsigned, allowed
-git tag v0.1.0     && git push origin v0.1.0          # FAILS without certificates
+# unsigned pre-release — allowed
+npm run version:set -- 0.1.0-1                    # numeric identifier; the MSI rejects names
+git commit -am "chore(release): 0.1.0-1" && git push
+git tag v0.1.0-1 && git push origin v0.1.0-1
+
+# real release — FAILS without certificates, by design
+npm run version:set -- 0.1.0
+git commit -am "chore(release): 0.1.0" && git push
+git tag v0.1.0 && git push origin v0.1.0
 ```
 
 The rule is enforced in `release.yml`: a tag containing a hyphen is a pre-release and
@@ -368,7 +379,7 @@ release**. So:
 | Release | Served to installed apps? |
 |---|---|
 | draft (what the workflow opens) | **No** — assets aren't public until you publish |
-| pre-release (`v0.2.0-rc1`) | **No** — `/latest/` skips prereleases, by design |
+| pre-release (`v0.2.0-1`) | **No** — `/latest/` skips prereleases, by design |
 | published, plain tag (`v0.2.0`) | **Yes** |
 
 That behaviour is *correct* — a church must never be auto-updated onto an unsigned
@@ -385,18 +396,18 @@ pre-release's manifest by its exact tag (not `/latest/`):
 
 ```bash
 # 1. Cut an unsigned pre-release and let the workflow publish it (as a prerelease).
-npm run version:set -- 0.2.0-rc1
-git commit -am "chore(release): 0.2.0-rc1" && git push
-git tag v0.2.0-rc1 && git push origin v0.2.0-rc1
+npm run version:set -- 0.2.0-1
+git commit -am "chore(release): 0.2.0-1" && git push
+git tag v0.2.0-1 && git push origin v0.2.0-1
 
 # 2. Build a LOCAL app claiming to be 0.0.1, pointed at that tag's manifest.
 #    The updater config comes first (it carries the pubkey); the override comes
 #    second, because configs merge in order and the last value wins.
 npm run tauri build -- \
   --config src-tauri/tauri.updater.conf.json \
-  --config '{"version":"0.0.1","plugins":{"updater":{"endpoints":["https://github.com/devgeereact/relay/releases/download/v0.2.0-rc1/latest.json"]}}}'
+  --config '{"version":"0.0.1","plugins":{"updater":{"endpoints":["https://github.com/devgeereact/relay/releases/download/v0.2.0-1/latest.json"]}}}'
 ```
 
-Install that build, launch it, and it should offer 0.2.0-rc1. If it doesn't, the
+Install that build, launch it, and it should offer 0.2.0-1. If it doesn't, the
 updater is broken **now**, on your machine, where you can fix it — instead of on a tag
 that a church is waiting on.

@@ -59,6 +59,45 @@ describe('confidence is only shown where it means something', () => {
   });
 });
 
+describe('a guessed BOOK NAME is a guess, and says so', () => {
+  // THE 2026-08-14 P0, on the frontend side. `uncertain_book` is the one method
+  // whose confidence is a genuine, well-calibrated parse confidence — of the wrong
+  // question. The parse of "number three sixteen" really is 0.84 certain, about a
+  // word nobody said. That makes it the most dangerous number in the product, and
+  // the only defence on this side is that it is never printed and never described
+  // as something Relay heard.
+  const guessedBook = { method: 'uncertain_book', reference: 'Numbers 3:16', confidence: 0.84 };
+
+  it('is NOT heard, however confident the parse was', () => {
+    expect(heard(guessedBook)).toBe(false);
+    for (const c of [0.3, 0.77, 0.84, 0.96, 0.99]) {
+      expect(heard({ ...guessedBook, confidence: c })).toBe(false);
+    }
+  });
+
+  it('never shows a percentage', () => {
+    for (const c of [0.3, 0.77, 0.84, 0.96, 0.99]) {
+      expect(showsConfidence({ ...guessedBook, confidence: c })).toBe(false);
+    }
+  });
+
+  it('does not describe itself as a reference Relay heard', () => {
+    expect(methodKey(guessedBook)).not.toBe('live.heard_the_reference');
+  });
+
+  it('is distinguishable from all three other kinds of claim', () => {
+    // Four methods, four keys. The operator is the human in the loop and cannot be
+    // one while being shown the same sentence for four different situations.
+    const keys = [
+      methodKey({ method: 'direct' }),
+      methodKey({ method: 'semantic' }),
+      methodKey({ method: 'ambiguous' }),
+      methodKey(guessedBook),
+    ];
+    expect(new Set(keys).size).toBe(4);
+  });
+});
+
 describe('nothing crashes on a malformed payload', () => {
   // A detection card that throws takes the console down MID-SERVICE. Degrade to the
   // cautious reading instead — but note that an unknown method reads as "heard",

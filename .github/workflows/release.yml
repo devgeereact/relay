@@ -90,9 +90,15 @@ jobs:
       # cannot be tested until the day it matters, which is how release pipelines break.
       #
       # The rule: unsigned is allowed ONLY on a PRE-RELEASE tag (one with a hyphen —
-      # v0.1.0-rc1, v0.2.0-beta2). A plain version tag with no certificate FAILS, loudly.
+      # v0.1.0-1, v0.2.0-2). A plain version tag with no certificate FAILS, loudly.
       # You cannot ship an unsigned build to a church without first typing a tag that
       # says, in the tag itself, that it is not a real release.
+      #
+      # The pre-release identifier is a NUMBER, not a name. `v0.2.0-rc1` is valid
+      # semver and builds a perfectly good .dmg — and then the Windows MSI bundler
+      # rejects it ("must be numeric-only"), a quarter of an hour in, on the platform
+      # most of our churches are on. scripts/version.mjs refuses it in a second, both
+      # for the repo files and for the tag, at the --check below.
         #
       # THE GATE IS PER-PLATFORM, and it has to be. It used to test one secret —
       # APPLE_CERTIFICATE — and call the whole release "signed". So a real tag with the
@@ -185,7 +191,7 @@ jobs:
           VERSION="${GITHUB_REF_NAME#v}"
           node scripts/version.mjs --check "$VERSION"
 
-          # A hyphen in the tag = a pre-release. v0.1.0-rc1 → yes. v0.1.0 → no.
+          # A hyphen in the tag = a pre-release. v0.1.0-1 → yes. v0.1.0 → no.
           case "$GITHUB_REF_NAME" in
             *-*) PRE=true  ;;
             *)   PRE=false ;;
@@ -230,7 +236,11 @@ jobs:
             if [ "$WIN_SIGNED" = "false" ]; then echo "::error::Windows is UNSIGNED — missing:$WIN_MISSING"; fi
             echo "An unsigned build cannot be opened by a church: Gatekeeper says 'Relay is damaged',"
             echo "and SmartScreen warns on the installer. Set the secrets (docs/RELEASING.md),"
-            echo "or tag a pre-release instead: v0.1.0-rc1"
+            echo "or cut a pre-release instead — which means moving the VERSION, not only the tag,"
+            echo "because the check above compares the tag against all three version files:"
+            echo "     npm run version:set -- ${VERSION%%-*}-1   # numeric identifier — the MSI rejects names"
+            echo "     git commit -am 'chore(release): ${VERSION%%-*}-1' && git push"
+            echo "     git tag v${VERSION%%-*}-1 && git push origin v${VERSION%%-*}-1"
             exit 1
           fi
 

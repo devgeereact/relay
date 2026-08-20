@@ -215,8 +215,90 @@ export function parseImportedTemplate(text) {
     throw new Error('That template file has no layout to import.');
   }
   const style = parsed.style && typeof parsed.style === 'object' && !Array.isArray(parsed.style) ? parsed.style : {};
-  return { name: String(parsed.name ?? 'Imported template'), layout: parsed.layout, style };
+  return {
+    name: String(parsed.name ?? 'Imported template'),
+    layout: sanitiseLayout(parsed.layout),
+    style: sanitiseStyleValues(style),
+  };
 }
+
+/**
+ * A template file is UNTRUSTED INPUT, and it is meant to be shared.
+ *
+ * Export/import exists so churches can swap looks, so a template arrives from a
+ * stranger by design. This function validated the SHAPE — a marker, a layout
+ * object, a style object — and not one value inside either, and `TemplateRender`
+ * then interpolated those values raw into inline CSS:
+ *
+ *     background: url("http://tracker.example/beacon.png") center / cover no-repeat
+ *
+ * observed in the rendered DOM. Two consequences, and the second is the one that
+ * matters most for this product:
+ *
+ *   1. a per-fire beacon to a third party, from a church's projector;
+ *   2. **a blank background the first Sunday the wifi is out.** Offline-first is
+ *      Relay's first non-negotiable constraint and this was the one path that
+ *      broke it inside the renderer.
+ *
+ * Validating HERE rather than in `TemplateRender` is deliberate: the renderer has
+ * five call sites and will grow a sixth, and the import boundary is the one place
+ * a file stops being a file and becomes data the app trusts.
+ */
+
+/** `url(...)` targets we allow: bundled assets and embedded data. Never the network. */
+const SAFE_URL = /^(data:image\/(png|jpe?g|gif|webp|avif|svg\+xml);base64,[A-Za-z0-9+/=\s]+|asset:\/\/[\w./-]+|\/[\w./-]+)$/;
+
+/** Strip anything that could leave the machine or escape its own declaration. */
+function safeCssValue(v) {
+  if (typeof v !== 'string') return v;
+
+  // ALLOW-LIST FIRST, and this order is not cosmetic. A `data:` URI legitimately
+  // contains a semicolon (`image/png;base64,…`), so a blunt "no semicolons" rule
+  // applied first deletes the single most common thing a shared template carries —
+  // its embedded background. Caught by this module's own control test, which is
+  // why that test exists: a safety fix that breaks ordinary templates has
+  // overshot, and it would have shipped looking like a success.
+  const inner = /url\s*\(/i.test(v)
+    ? v.replace(/^.*?url\s*\(\s*['"]?/i, '').replace(/['"]?\s*\).*$/, '').trim()
+    : v.trim();
+  if (SAFE_URL.test(inner)) return v;
+
+  // Anything that reaches the network. Offline-first is the first non-negotiable
+  // constraint, and a template that needs the wifi is a blank wall on the Sunday
+  // the wifi is out — which is worse than a beacon, and far more likely.
+  if (/url\s*\(/i.test(v)) return '';
+  if (/^\s*(https?:|\/\/|blob:|javascript:)/i.test(v)) return '';
+
+  // `;` and `}` end a declaration or a block, so a value containing either can
+  // append rules of its own — `red; position:fixed; inset:0; background:#000` in a
+  // colour field is a full-frame blackout from a file somebody emailed you.
+  if (/[;{}]/.test(v)) return '';
+
+  // `expression()` is IE-era script-in-CSS; `@import` pulls a remote stylesheet.
+  if (/expression\s*\(|@import/i.test(v)) return '';
+  return v;
+}
+
+/**
+ * Walk EVERYTHING — arrays included.
+ *
+ * The first version of this skipped arrays, which meant it sanitised nothing that
+ * mattered: a template's values live in `layout.layers[]`, so the one shape the
+ * hostile file actually uses was the one shape that passed through untouched. The
+ * test caught it because the fixture is a real hostile file rather than a
+ * hand-made object.
+ */
+function sanitiseStyleValues(value) {
+  if (Array.isArray(value)) return value.map(sanitiseStyleValues);
+  if (value && typeof value === 'object') {
+    const out = {};
+    for (const [k, v] of Object.entries(value)) out[k] = sanitiseStyleValues(v);
+    return out;
+  }
+  return safeCssValue(value);
+}
+
+const sanitiseLayout = sanitiseStyleValues;
 
 export function parseTemplateOverride(templateJson) {
   if (!templateJson) return null;

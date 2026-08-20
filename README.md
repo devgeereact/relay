@@ -4,7 +4,9 @@
 
 **Status:** builds and runs, full pipeline end to end. Operator console, SQLite data layer, audio capture + VAD, local STT (multilingual + code-switching), direct + semantic + context-memory detection, confidence-gating router with first-class manual override, and output channels (native fullscreen + kiosk/OBS WebSocket + preacher stage remote; NDI parked on the external SDK).
 
-Built out into a lightweight presentation suite: a **Content Library** (saved scripture, songs with a slide-flow editor + named arrangements, media, announcements, service history), a **Service Planner** (Mission-Control run editor over a unified cue model — scripture, song, media, announcement, countdown — with drag-reorder, per-cue stage notes, and plan duplication), **FTS5 + semantic scripture search**, **per-content-type templates** with a WYSIWYG editor, verse **auto-fit**, crossfade transitions, blackout, a **pre-service countdown timer**, and the full KJV corpus (66 books, 31,100 verses, bundled offline, translator glosses stripped). Next: African-language STT fine-tunes, neural paraphrase embedder, NDI, document (PDF/PPTX) presentation, real-service hardening. Working name — rename freely.
+Built out into a lightweight presentation suite: a **Content Library** (saved scripture, songs with a slide-flow editor + named arrangements, media, announcements, service history), a **Service Planner** (Mission-Control run editor over a unified cue model — scripture, song, media, announcement, countdown — with drag-reorder, per-cue stage notes, and plan duplication), **FTS5 + semantic scripture search**, **per-content-type templates** with a WYSIWYG editor, verse **auto-fit**, crossfade transitions, blackout, a **pre-service countdown timer**, and the full KJV corpus (66 books, 31,100 verses, bundled offline, translator glosses stripped). Next: African-language STT fine-tunes, neural paraphrase embedder, NDI, document (PDF/PPTX) presentation, real-service hardening.
+
+**Relay has never shipped, and the current release decision is NO-GO** — not for a known defect (every P0 and P1 from the last full audit is closed) but because roughly half of the product as a volunteer experiences it has never been observed: no real microphone, no projector, no hardware, no packaged signed build, no Sunday. See [docs/audits/QA-2026-08-14.md](docs/audits/QA-2026-08-14.md) §16 and [docs/ROADMAP.md](docs/ROADMAP.md) §1. *"Relay" is still a working name; the brand decision is due before the first church installs, not after.*
 
 ## Start here
 
@@ -14,11 +16,11 @@ Built out into a lightweight presentation suite: a **Content Library** (saved sc
 3. `CLAUDE.md` — working conventions and non-negotiable constraints; read first if you're using an AI coding agent in this repo.
 4. `PROMPT.md` — the build-phase reference (the module docs cite its phase numbers); the full brief now lives in `docs/SPEC.md`.
 5. `docs/SPEC.md` — canonical technical spec (original brief). `docs/DECISIONS.md` — every major decision, with reasoning.
-6. `docs/design/` — visual mockups. Open the `.html` files directly in a browser; no build step needed.
+6. **[docs/DESIGN_SYSTEM.md](docs/DESIGN_SYSTEM.md)** — tokens, type, and the four colours that carry a promise (amber = on air, amethyst = rehearsal, cyan = a guess, grey = cued). Read before touching any UI. `docs/design/` holds the rendered screen references.
 
 ## Tech stack
 
-Rust core · Tauri v2 shell · Svelte + Vite frontend · SQLite (`rusqlite`) · WebSocket (`tokio-tungstenite`) · local whisper.cpp-class STT with optional cloud fallback · NDI SDK via Rust FFI. Windows + macOS, both from day one. MIT licensed.
+Rust core · Tauri v2 shell · Svelte + Vite frontend · SQLite (`rusqlite`) · WebSocket (`tokio-tungstenite`) · local whisper.cpp-class STT with optional cloud fallback. Windows + macOS, both from day one. MIT licensed. (NDI is a *parked* render target, not part of the shipping stack — see below.)
 
 ## Prerequisites
 
@@ -27,7 +29,6 @@ Rust core · Tauri v2 shell · Svelte + Vite frontend · SQLite (`rusqlite`) · 
 - Tauri CLI (`cargo install tauri-cli` or `npm install -D @tauri-apps/cli`)
 - Platform build tools ([Tauri prerequisites](https://tauri.app/start/prerequisites/) — WebView2 on Windows, Xcode command line tools on macOS)
 - **CMake** — required to build `whisper-rs` (compiles whisper.cpp). `brew install cmake`, or download from [cmake.org](https://cmake.org/download/) and put it on your PATH.
-- NDI SDK (for NDI render-target work, later phase)
 
 ## Privacy, security, and what the AI does
 
@@ -79,12 +80,12 @@ app window — a plain browser at `:5032` renders the UI but has no Rust backend
 One shared template engine renders to three target types (docs/SPEC.md §5):
 
 - **Native window** — borderless fullscreen webview (HDMI). Open from the
-  Channels tab. Live now.
+  **Outputs** tab. Live now.
 - **Kiosk / network client** — a LAN browser (e.g. a $50 Raspberry Pi) or an
   OBS/vMix **browser source** points at
-  `http://<app-host>:8032/output.html?template_id=<n>` and receives live state
-  over the WebSocket hub on **port 8031**. Add channels and copy the URL/QR from
-  the **Channels** tab. Live now.
+  `http://<app-host>:8032/output.html?channel=<id>&template_id=<n>` and receives
+  live state over the WebSocket hub on **port 8031**. Add channels and copy the
+  URL/QR from the **Outputs** tab. Live now.
 - **Preacher stage remote** — `http://<app-host>:8032/stage.html` on a phone or
   iPad: the live verse large + "up next" + operator stage notes + countdown, kept
   off the congregation screen. Uploaded media is served from the same port
@@ -100,8 +101,15 @@ One shared template engine renders to three target types (docs/SPEC.md §5):
 > **only** while a developer is running `npm run tauri dev`. In the installed app it
 > does not exist at all, so an OBS browser source pointed at `:5032` shows a blank
 > screen with no error. The embedded HTTP server on **`8032`** serves the output and
-> stage pages in both dev and production — and it is what the **Channels** tab's
+> stage pages in both dev and production — and it is what the **Outputs** tab's
 > Copy URL / QR actually hand you, so prefer those over typing a URL by hand.
+>
+> The URL is **channel-keyed**, and that is the reason to prefer Copy URL rather
+> than merely a convenience. Changing a screen's template broadcasts a retemplate
+> message that each output applies by matching its own `channel`. A URL carrying
+> only `?template_id=` parses as channel 0 — it renders, so it looks correct, and
+> it is then the one source in the building that silently never follows a template
+> change.
 - **NDI encode** — into OBS/vMix/ATEM/ProPresenter. **Not yet available:**
   requires the proprietary NDI SDK (native lib + FFI). The command returns a
   clear error; integration path is documented in `src-tauri/src/main.rs`
@@ -109,33 +117,18 @@ One shared template engine renders to three target types (docs/SPEC.md §5):
 
 ## Repo structure
 
+The authoritative map — every module with its single responsibility — is the **Repo map** in
+[`CLAUDE.md`](CLAUDE.md). The short version:
+
 ```
-CLAUDE.md  README.md  PROMPT.md  LICENSE
-docs/
-  ARCHITECTURE.md        -- how it works, in detail
-  USER_GUIDE.md          -- how to operate it
-  SPEC.md  DECISIONS.md  -- original brief + decision log
-  data/schema.sql
-  design/                -- open the .html files in a browser
-src-tauri/               -- Rust core + Tauri backend
-  src/
-    main.rs              -- Tauri commands, state, pipeline wiring (composition root)
-    audio.rs  dsp.rs     -- cpal capture + VAD + chunker; noise/gain/quality
-    stt.rs               -- whisper.cpp STT worker
-    detection.rs         -- direct + semantic (TF-IDF) + context memory (DB/IO-free, tested)
-    router.rs            -- confidence gating, debounce, self-calibrating thresholds
-    channels.rs          -- output render targets: native window + kiosk WS hub + HTTP server
-    db.rs                -- SQLite: KJV, FTS5, templates, plans, songs, library, history
-    proimport.rs songs.rs-- ProPresenter import; song lyric parsing
-data/kjv.json            -- bundled full KJV (include_str!, committed)
-src/                      -- Svelte frontend
-  Output.svelte Stage.svelte      -- fullscreen output + preacher stage remote pages
-  lib/
-    TemplateRender.svelte         -- THE one renderer (output + editor preview)
-    stores/capture.js             -- all stores + command wrappers + event listeners
-    views/  Console Library Planner Channels Templates Settings
-    views/library/  Scripture Lyrics Media Announcements History SongEditor ImportReview
-models/                   -- STT ggml models (gitignored, per-machine)
+docs/            -- README.md is the documentation index; start there
+src-tauri/src/   -- Rust core: audio -> stt -> detection -> router -> pipeline -> channels
+src/             -- Svelte frontend: App.svelte shell, lib/views/Live.svelte is the run surface
+src/lib/stores/capture.js        -- every Tauri command wrapper + event listener
+src/lib/TemplateRender.svelte    -- THE one renderer (fullscreen output + editor preview)
+docs/data/schema.sql             -- COMPILED IN via include_str! -- not just documentation
+src-tauri/data/kjv.json          -- the full bundled KJV, committed, required to build
+models/                          -- STT ggml models (gitignored, per-machine)
 ```
 
 ## Design principles worth re-reading before you build

@@ -121,7 +121,20 @@
   // on air. That is the preacher going off-script — the operator accepts the AI's
   // suggested verse and → now walks that passage. Clear the screen and → is back
   // to stepping the plan, from the cue it was already on.
-  $: mode = openPlan && items.length && !($live && !planOnAir) ? 'slide' : 'verse';
+  // `!$screenBlack` is load-bearing, and its absence was a live-safety bug.
+  //
+  // `$live` means "content is ARMED", not "a congregation is looking at it" — the
+  // same confusion the amber badge on the run rail had. A blackout leaves `$live`
+  // set and blanks the screens, so this read VERSE mode after `B` and SLIDE mode
+  // after `Esc`: the same conceptual state, two panic keys, opposite transports,
+  // and only the Esc behaviour was documented. The consequence was worse than the
+  // inconsistency — after a blackout mid-plan the next `→` fired a verse from an
+  // earlier passage AND cancelled the blackout, so the emergency key was undone by
+  // the key an operator presses more than any other.
+  //
+  // Now it matches the sentence above it: verse mode means something that did not
+  // come from the plan is genuinely IN FRONT OF PEOPLE.
+  $: mode = openPlan && items.length && !($live && !$screenBlack && !planOnAir) ? 'slide' : 'verse';
 
   async function loadPlan(p) {
     openPlan = p;
@@ -221,6 +234,9 @@
     unregisterKeys?.();
     unsubNav?.();
     clearTimeout(cdArmT);
+    // The emergency announcement's arm timer, cleared for the same reason as the
+    // countdown's right above it. It was the one of the pair that was missed.
+    clearTimeout(annArmT);
     clearTimeout(liveMsgT);
     clearTimeout(relatedT); // a pending poll must not fire into a destroyed view
   });
@@ -270,15 +286,21 @@
           flash('Media asset missing — re-add it from the Library.');
           return;
         }
-        await fireMedia(p.media_id, tpl);
+        await fireMedia(p.media_id, tpl, true); // keepPlan — this IS the plan's slide
       } else if (item.cue_type === 'countdown') {
-        await startCountdown(Number(p.minutes) || 5, p.label || 'Service begins in', p.done || 'Welcome', tpl);
+        await startCountdown(
+          Number(p.minutes) || 5,
+          p.label || 'Service begins in',
+          p.done || 'Welcome',
+          tpl,
+          true, // keepPlan — this IS the plan's slide
+        );
       } else if (item.cue_type === 'song') {
         // Lyrics carry NO title/section on the live screen — that stays in the
         // operator UI. Only the lyric lines go out.
-        await fireContent('', s.text, 'song', stageNote, tpl);
+        await fireContent('', s.text, 'song', stageNote, tpl, true); // keepPlan
       } else {
-        await fireContent(item.label, s.text, 'announce', stageNote, tpl);
+        await fireContent(item.label, s.text, 'announce', stageNote, tpl, true); // keepPlan
       }
       // Mark the cue live ONLY after the fire resolves. Setting onAir before the
       // await meant a failed fire left this cue amber "On Air" — and the reactive
@@ -289,7 +311,10 @@
       selId = item.id;
       flash(`Live: ${s.label}`);
       const n = nextOf(items, item.id, i);
-      setStageNext(n?.label ?? null, n?.text ?? null);
+      // Deliberately shrugged: a missing "up next" is an absent hint, and the
+      // wall — and this catch — already report anything that matters. Contrast
+      // the CLEAR below, which cannot be shrugged.
+      setStageNext(n?.label ?? null, n?.text ?? null).catch(() => {});
     } catch (e) {
       flash(humanError(e));
     }
@@ -305,7 +330,15 @@
     // clean while the verse was still on it. On failure the panic banner in the app
     // shell says so; adding a second, softer message here would only dilute it.
     const ok = await clearScreens();
-    setStageNext(null, null);
+    // This one is a SCREEN going blank, not a hint disappearing. If it fails the
+    // preacher keeps reading a stale "up next" all service, and until 2026-08-14
+    // nothing anywhere said so — the wrapper swallowed it.
+    try {
+      await setStageNext(null, null);
+    } catch (e) {
+      flash(`The preacher's stage monitor may still show the old "up next" — ${humanError(e)}`);
+      return;
+    }
     if (ok) flash($t('live.screens_cleared'));
   }
 
@@ -394,9 +427,22 @@
   // It writes the SAME thresholds the Settings sliders do (one baseline) — the
   // whole point is dialling out false fires mid-service without leaving Live.
   let sensitivity = 50;
-  function onSensitivity(v) {
+  async function onSensitivity(v) {
+    // Optimistic, then CORRECTED — never assumed. The slider used to be written
+    // from the request and the result thrown away, so a refused change left the
+    // dial showing a position the gate had never reached.
     sensitivity = v;
-    setSensitivity(v);
+    try {
+      const landed = await setSensitivity(v);
+      // The backend owns the curve and its inverse; trust its number, not ours.
+      if (Number.isFinite(landed)) sensitivity = landed;
+    } catch (e) {
+      // Put the dial back where the GATE actually is, read from the backend rather
+      // than remembered here, and say so. A slider that silently disagrees with the
+      // thing it controls is the whole finding.
+      sensitivity = await getSensitivity();
+      flash(`Sensitivity stayed at ${sensitivity} — ${humanError(e)}`);
+    }
   }
 
   function dismissTop() {

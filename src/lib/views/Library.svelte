@@ -30,7 +30,6 @@
     listActiveTemplates,
     loadTemplates,
     templates,
-    confirmDetection,
     manualFire,
     fireMedia,
     listBooks,
@@ -75,24 +74,36 @@
   // or a notice, and four different browsing metaphors would be four things to
   // learn under pressure.
   //
-  // PREVIEW holds AI SUGGESTIONS ONLY. Browsing FIRES (see Browse.svelte), so
-  // staging a slide the operator already chose would only mirror Program and
-  // make the pair meaningless — the point of two monitors is that they differ.
-  let staged = null;
-  let taking = false;
+  // ── THE PREVIEW HALF IS GONE, DELIBERATELY (2026-08-15, audit P1-2) ───────
+  //
+  // It was built for AI suggestions only — "browsing FIRES", and `stage(d)` took a
+  // detection whose `_fire` was `confirmDetection`. Its producer was meant to be the
+  // Heard panel: suggest → stage → look → Take. What shipped was suggest → Accept →
+  // fire, and `stage()` was left with zero callers, so `preview` was permanently
+  // null: the Take button permanently disabled, the badge unable to read "Preview",
+  // and seventeen tests standing over a prop the app could not supply.
+  //
+  // Kept as one press, and the preview half removed rather than wired, because:
+  //
+  //   * the card the operator presses already shows the reference, the text, the
+  //     METHOD and the evidence. What a Preview monitor adds is how it will LOOK,
+  //     which is a Templates-tab question, not a Sunday one;
+  //   * `Live.svelte` already implements Preview ≠ Programme for the plan path. A
+  //     second staging model on the most time-critical surface is a second mental
+  //     model, and two implementations of one safety distinction is the exact shape
+  //     that produced most of this audit's findings;
+  //   * the queue IS the switcher. "Up Next" is a staging area that holds N items
+  //     instead of one, it is reachable, and `goLive()` already fires from it;
+  //   * the product's one sentence is "the least possible effort from the operator",
+  //     and an extra press on the AI path costs it exactly when the preacher has
+  //     moved on.
+  //
+  // The trackpad-slip risk this was drawn to answer is real but belongs to the
+  // suggestion FEED, not to a monitor: the mitigation is that the list must not
+  // reorder under the pointer. That is a separate, cheaper fix.
   // A FAILURE surface, humanised and rose — kept separate from the green
   // importMsg so a broken fire or import can never be shown in success colour.
   let errMsg = '';
-  const select = () => {};
-  function stage(d) {
-    staged = {
-      key: d.reference,
-      reference: d.reference,
-      text: d.text,
-      translation: d.translation,
-      _fire: () => confirmDetection(d.reference),
-    };
-  }
   /** Fire something the operator queued. Same manual_fire as every other path.
       This is a LIVE-FIRE path — a swallowed rejection is a Fire button that does
       nothing to the wall and says nothing about why, so it must surface. */
@@ -106,21 +117,6 @@
     }
   }
 
-  async function take() {
-    if (!staged?._fire) return;
-    errMsg = '';
-    taking = true;
-    try {
-      await staged._fire();
-      staged = null;
-    } catch (e) {
-      // Do NOT clear `staged` — the operator's chosen slide stays put so they can
-      // retry, rather than vanishing as if it fired.
-      errMsg = humanError(e);
-    } finally {
-      taking = false;
-    }
-  }
   // ONE search box for the whole Library. Each pane decides what the words mean
   // for its own content — a reference or a phrase in scripture, a title or a
   // line in a song — but the operator only has to find one box.
@@ -455,11 +451,11 @@
             {favouritesOnly}
             {queue}
             onQueueChange={(q) => (queue = q)}
-            onSelect={select} />
+            />
         {:else if active === 'scripture'}
           <Scripture query={debounced} {queue} onQueueChange={(q) => (queue = q)} />
         {:else if active === 'lyrics'}
-          <LyricsPane query={debounced} onSelect={select} {queue} onQueueChange={(q) => (queue = q)} />
+          <LyricsPane query={debounced} {queue} onQueueChange={(q) => (queue = q)} />
         {:else if active === 'media' || active === 'graphics'}
           <MediaLibrary
             query={debounced}
@@ -473,11 +469,8 @@
     </div>
 
     <LiveOutputRail
-      preview={staged}
       template={liveTemplate}
       {queue}
-      busy={taking}
-      onTake={take}
       onQueueChange={(q) => (queue = q)}
       onFireQueued={fireQueued}
       allTemplates={$templates} />

@@ -3,6 +3,41 @@
 **Revision 3 · 2026-07-13 · verified against `cfa2aa5`**
 Supersedes Revision 2 (2026-07-12) and Revision 1 (2026-07-05). Every claim was re-verified against the code that exists today; nothing is carried forward on trust. Line references are live.
 
+> ## ⚠️ Status as of 2026-08-20 — read this before the scorecard
+>
+> **This revision is five weeks and ~40 commits behind `07654a7`, and it predates the first
+> full machine audit entirely.** The scorecard below is still the right *shape* — the strategy,
+> the scope decisions and the §13 NOT-APPLICABLE reasoning all stand — but treat its numbers and
+> its "what's left" list as a snapshot of 2026-07-13, not as today.
+>
+> What has happened since, and what it changes:
+>
+> | | Rev 3 said | Today |
+> |---|---|---|
+> | Tests | 250 Rust + 138 frontend | **478 Rust** (24 ignored) + **581 frontend** (0 skipped) |
+> | `main.rs` | 2,922 lines / 101 commands | **4,024 lines / 114 commands** |
+> | Decision log | 25 decisions | **35** |
+> | `Result<_, String>` in `main.rs` | replaced | **zero remain** — confirmed |
+> | Release decision | not stated | **NO-GO**, and it is a machine's, not this document's |
+>
+> **The load-bearing change is the audit this revision could not have seen.**
+> [`audits/QA-2026-08-14.md`](audits/QA-2026-08-14.md) was a six-agent full-scope run. It raised
+> **one P0 and eleven P1s** — the P0 being that Relay would, unattended, put **Numbers 3:16** on
+> the wall when a preacher said *"please turn to hymn number three sixteen"*. **Every one of the
+> twelve is now closed** (that document's §0 fix log records each closure and the test that fails
+> if it returns), and the repair for the P0 was structural — a `DetectionMethod::UncertainBook`
+> that no confidence score, sensitivity dial or calibrator drift can undo (CLAUDE.md rule 10).
+>
+> **But the release decision is still NO-GO**, on the condition Rev 3 never scored:
+> *roughly half of Relay, as a volunteer experiences it, has never been reached by any
+> instrument here.* Audio in — 0%. Pixels out — 0%. Hardware — 0%. The packaged build — 0%.
+> A real congregation — 0%. That is `audits/QA-2026-08-14.md` §16, the human test script, and it
+> **has not been run**.
+>
+> So the honest one-line summary of this document, updated: **the code is done and now genuinely
+> hardened; what is left needs a certificate, a microphone in a real church, a Yorùbá speaker,
+> and a Sunday.** Nothing on that list is a commit — which is what Rev 3 said, and it was right.
+
 > **Revision 3 in one line: every finding in this document that could be closed by writing code has been closed. What is left cannot be — it needs money, a certificate, a native speaker, and thirty minutes of a real preacher on tape.**
 
 **Scope, decided with the owner and unchanged:**
@@ -76,7 +111,7 @@ Revision 1's finding was *"the engineering is ahead of the product"* — the app
 
 What that produced is a product with an unusual property for its stage: **its failure modes are visible.** A clear that fails says so. A `→` that cannot move says why it cannot. A paraphrase guess cannot masquerade as a heard reference, because it is rendered as a different kind of claim with no percentage attached. A release that would ship unsigned refuses to build. A migration that dies halfway can be retried. These are not features; they are the absence of a specific class of lie, and in software that fails **live, in front of five hundred people**, that class of lie is the whole danger.
 
-The engine underneath is strong and now genuinely covered: **250 Rust + 138 frontend tests**, zero panic sites in any module that runs during a service, a detection benchmark that fails CI on regression, an end-to-end test that drives the real fire → nav → clear path, and a gate that makes "the AI put the wrong verse on the wall" structurally unrepresentable rather than merely unlikely.
+The engine underneath is strong and now genuinely covered (**250 Rust + 138 frontend tests** when this was written; **478 + 581** today), zero panic sites in any module that runs during a service, a detection benchmark that fails CI on regression, an end-to-end test that drives the real fire → nav → clear path, and a gate that makes "the AI put the wrong verse on the wall" structurally unrepresentable rather than merely unlikely.
 
 **So the honest position is now a shopping list, not an engineering plan:**
 
@@ -102,13 +137,13 @@ Scored against the stated bar (*first 10 churches*), not against Stripe. Δ is t
 | **Onboarding / first-run** | **8 / 10** | ▲ +1 | The wizard now *proves* the microphone works — its meter was dead, so the one step whose entire purpose was proof proved nothing. Still cannot be re-run once skipped. |
 | **UX (live operation)** | **8 / 10** | ▲ +2 | Every control that lied has been fixed: the clear toast, the `B`-while-typing cheatsheet line, `Esc`-wipes-the-wall-from-inside-a-modal (which turned out to affect the arrangement pickers too, not just the cheatsheet), and the `nav` key that silently did nothing. The transport now follows **what is on the wall**, not what the operator intended. |
 | **UI / design language** | **8 / 10** | ▲ +1 | The dark/amber broadcast language remains correct and unmodernised. One `EmptyState`/`Loading`/`ErrorState` trio replaces four competing classes. The colour discipline held under pressure: a paraphrase got cyan, *not* amethyst, because amethyst already means rehearsal — a colour carrying a promise cannot be borrowed for a hunch. |
-| **Architecture** | **8 / 10** | ▲ +2 | The fire engine is now generic over `tauri::Runtime`, so the path that puts scripture on a wall can be driven **without a window** — which is the useful half of "split `main.rs`". Typed errors (`error.rs`) replace 88 × `Result<_, String>`. `main.rs` is still 2,922 lines / 101 commands, but it is no longer untestable, which was the actual problem. |
+| **Architecture** | **8 / 10** | ▲ +2 | The fire engine is now generic over `tauri::Runtime`, so the path that puts scripture on a wall can be driven **without a window** — which is the useful half of "split `main.rs`". Typed errors (`error.rs`) replace 88 × `Result<_, String>`, and **zero remain**. `main.rs` was 2,922 lines / 101 commands here and is **4,024 / 114** today — but it is no longer untestable, which was the actual problem. |
 | **Performance** | **9 / 10** | — | Unchanged. Measure-before-optimising is practised here, not preached: the semantic scan stays a linear scan and beam search stays unused, both because measurement said so. |
 | **Accessibility** | **8 / 10** | ▲ **+4** | Focus traps on all 5 dialogs, **with focus restore** (the half everyone forgets). A real heading structure. The AI suggestion feed, the transport and errors are all announced — the product's whole reason to exist used to arrive in total silence. Every text token passes WCAG AA. Not 10/10: ~150 lines of dead legacy CSS remain, deliberately (see §7). |
 | **Security** | **8 / 10** | ▲ +1 | A tag name is no longer interpolated into a release shell (a real injection vector CodeRabbit caught). LAN bind is unauthenticated, broadcast-only, bounded, and honestly documented. Unsigned Windows remains the exposure — but the pipeline now *refuses* to produce it rather than doing so quietly. |
 | **Privacy** | **9 / 10** | — | Unchanged, and still the strongest part of the product. Telemetry off by default, no DSN in OSS builds, free text *dropped* not sifted. |
-| **Testing** | **9 / 10** | ▲ **+3** | **250 Rust + 138 frontend.** The gap was never the count — it was that `main.rs` had zero tests and no e2e existed, so the fire → nav → clear path was verified only by hand. `e2e.rs` now drives the real commands against a real DB. And the culture shifted: several fixes were **mutation-verified** — the test was checked to *fail* when the original bug was reintroduced. Two tests in this repo initially passed on broken code; both were caught that way. |
-| **Developer experience** | **9 / 10** | ▲ +2 | CI, CodeRabbit, `clippy -D warnings`, a decision log 25 rules deep. `scripts/version.mjs` makes releasing a one-liner. CONTRIBUTING / CoC / CHANGELOG / issue forms / PR template all ship — and the PR checklist is the project's *real* rules (no `unwrap()` in a live path, no borrowed tally colours, *reintroduce the bug and check your test fails*), not a generic one. |
+| **Testing** | **9 / 10** | ▲ **+3** | **250 Rust + 138 frontend** at the time of writing; **478 + 581** today. The gap was never the count — it was that `main.rs` had zero tests and no e2e existed, so the fire → nav → clear path was verified only by hand. `e2e.rs` now drives the real commands against a real DB. And the culture shifted: several fixes were **mutation-verified** — the test was checked to *fail* when the original bug was reintroduced. Two tests in this repo initially passed on broken code; both were caught that way. |
+| **Developer experience** | **9 / 10** | ▲ +2 | CI, CodeRabbit, `clippy -D warnings`, a decision log 25 rules deep (**35** today). `scripts/version.mjs` makes releasing a one-liner. CONTRIBUTING / CoC / CHANGELOG / issue forms / PR template all ship — and the PR checklist is the project's *real* rules (no `unwrap()` in a live path, no borrowed tally colours, *reintroduce the bug and check your test fails*), not a generic one. |
 | **AI readiness** | **6 / 10** | ▲ +1 | The operator can finally *see* what kind of claim the AI is making, and `related_scripture` — built, tested, and called by nothing for months — is surfaced. The gate remains excellent. But paraphrase is still TF-IDF, `verses.embedding` has still never been written to, and **the acoustic layer is still unmeasured**. Blocked on audio, not on code. |
 | **Brand** | **4 / 10** | — | Unchanged and now the weakest column. Still no logo, no tagline, no positioning line. README still says *"Working name — rename freely."* |
 | **Business model** | **N/A** | — | Deliberately free/MIT. Sustainability parked, not decided. |

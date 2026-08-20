@@ -10,6 +10,8 @@
 //                            plan RESTARTS at cue 1 — the opening countdown, back
 //                            on the wall, at the end of the service.
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { get } from 'svelte/store';
 
 const invoke = vi.fn();
@@ -95,5 +97,77 @@ describe('taking plan content off the screen', () => {
     await clearScreens();
     await clearScreens();
     expect(get(liveCue)).toEqual({ cueId: 7, slide: 2, onAir: false });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THE CONTRACT, not the four instances of it.
+//
+// This file used to pin exactly the four wrappers that behaved and enumerate none
+// of their twins. That is how the 2026-08-14 audit found FIVE more paths taking
+// the wall while the plan rail stayed amber — `fireContent`, `fireMedia`,
+// `startCountdown`, `pushAnnouncement`, `navVerse` — and it is the third time this
+// repo has shipped an eight-of-nine: rehearsal gated three of four kiosk
+// publishers, the throw-vs-swallow contract held for eight of nine wrappers, and
+// `NavResult` was honoured by the console and discarded by the remote.
+//
+// So the rule is asserted over the WHOLE SET, derived from the source. Add a
+// wrapper that puts something in front of a congregation and this test names it
+// until it has decided what happens to the plan.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('every path that takes the wall has an answer for the plan rail', () => {
+  // `resolve` from the repo root, matching ipc.test.js. `new URL(…, import.meta.url)`
+  // is not a file: URL for every module under vite-node.
+  const src = readFileSync(resolve(process.cwd(), 'src/lib/stores/capture.js'), 'utf8');
+
+  /** Commands that change what a congregation is looking at. */
+  const SCREEN_COMMANDS = [
+    'manual_fire',
+    'fire_content',
+    'fire_media',
+    'start_countdown',
+    'push_announcement',
+    'nav',
+    'clear_screens',
+    'blackout',
+  ];
+
+  it('every wrapper that fires one either clears the plan or opts out on purpose', () => {
+    const heads = [...src.matchAll(/export\s+(?:async\s+)?function\s+([A-Za-z0-9_]+)\s*\(/g)];
+    const undecided = [];
+
+    heads.forEach((h, i) => {
+      const body = src.slice(h.index, i + 1 < heads.length ? heads[i + 1].index : src.length);
+      const fires = SCREEN_COMMANDS.some((c) =>
+        new RegExp(`\\bcall\\(\\s*['"]${c}['"]`).test(body),
+      );
+      if (!fires) return;
+      // Three acceptable answers: clear it, offer the caller an opt-out (the plan's
+      // own take path passes `keepPlan`), or route through `panicRun`, which clears
+      // it for the panic controls.
+      const decided =
+        /leavePlan\(\)/.test(body) || /keepPlan/.test(body) || /panicRun\(/.test(body);
+      if (!decided) undecided.push(h[1]);
+    });
+
+    expect(
+      undecided,
+      'These wrappers put something in front of a congregation and say nothing about ' +
+        '`liveCue.onAir`, so the plan rail will keep drawing amber "On Air" over a cue ' +
+        'nobody is looking at. Amber means live and is never allowed to lie. Either call ' +
+        'leavePlan(), or take a `keepPlan` flag if this is the plan\'s own take path.',
+    ).toEqual([]);
+  });
+
+  it('and the listeners cover the clears this console did not initiate', () => {
+    // /api/clear from the preacher's phone, the spoken "clear the screen", and the
+    // exit from a rehearsal all reach `channels::clear` directly. No wrapper runs;
+    // this event is the console's only report.
+    const block = src.slice(
+      src.indexOf("listen('output://content'"),
+      src.indexOf("listen('nav://blocked'"),
+    );
+    expect(block).toMatch(/output:\/\/clear[\s\S]*?leavePlan\(\)/);
+    expect(block).toMatch(/output:\/\/black[\s\S]*?leavePlan\(\)/);
   });
 });
