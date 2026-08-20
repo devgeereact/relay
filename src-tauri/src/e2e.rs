@@ -466,7 +466,7 @@ fn the_preacher_remote_searches_fires_and_walks_the_passage() {
     let wall = Wall::watch(&h);
 
     // Search resolves an explicit reference to a real verse the remote can offer.
-    let hits = super::remote_api(&h, "search?q=John%203:16");
+    let hits = super::remote_api(&h, "GET", "search?q=John%203:16").body;
     let hits: serde_json::Value = serde_json::from_str(&hits).expect("search json");
     assert_eq!(hits["ok"], true);
     assert_eq!(
@@ -475,7 +475,7 @@ fn the_preacher_remote_searches_fires_and_walks_the_passage() {
     );
 
     // Tapping the result fires it — through the real pipeline, onto the wall.
-    let fired = super::remote_api(&h, "fire?ref=John%203:16");
+    let fired = super::remote_api(&h, "POST", "fire?ref=John%203:16").body;
     let fired: serde_json::Value = serde_json::from_str(&fired).expect("fire json");
     assert_eq!(fired["ok"], true);
     assert_eq!(fired["live"]["reference"], "John 3:16");
@@ -490,7 +490,7 @@ fn the_preacher_remote_searches_fires_and_walks_the_passage() {
     );
 
     // The remote's Next walks the staged passage, same as the console's transport.
-    let nexted = super::remote_api(&h, "next");
+    let nexted = super::remote_api(&h, "POST", "next").body;
     let nexted: serde_json::Value = serde_json::from_str(&nexted).expect("next json");
     assert_eq!(nexted["ok"], true);
     assert_eq!(
@@ -521,7 +521,7 @@ fn the_remote_says_which_outcome_its_nav_had_not_merely_ok() {
     let h = app.handle().clone();
 
     // Nothing staged at all — stepping has nowhere to go, and must say so.
-    let cold = super::remote_api(&h, "next");
+    let cold = super::remote_api(&h, "POST", "next").body;
     let cold: serde_json::Value = serde_json::from_str(&cold).expect("next json");
     assert_eq!(cold["ok"], true, "a boundary is not a transport failure");
     assert_eq!(
@@ -531,12 +531,12 @@ fn the_remote_says_which_outcome_its_nav_had_not_merely_ok() {
 
     // Stage a passage, then walk off the end of the BOOK. Jude has one chapter and
     // 25 verses, so 25 is the last verse there is.
-    let fired = super::remote_api(&h, "fire?ref=Jude%2025");
+    let fired = super::remote_api(&h, "POST", "fire?ref=Jude%2025").body;
     let fired: serde_json::Value = serde_json::from_str(&fired).expect("fire json");
     assert_eq!(fired["ok"], true);
     assert_eq!(fired["live"]["reference"], "Jude 1:25");
 
-    let past = super::remote_api(&h, "next");
+    let past = super::remote_api(&h, "POST", "next").body;
     let past: serde_json::Value = serde_json::from_str(&past).expect("next json");
     assert_eq!(past["ok"], true);
     // Named EXACTLY, not merely "not fired". The three non-firing outcomes mean
@@ -561,14 +561,14 @@ fn the_remote_says_which_outcome_its_nav_had_not_merely_ok() {
     // A BOUNDED reading, walked off its own end. This is the outcome a preacher
     // meets most often — the reading finished — and it must not be reported with
     // the same word as a verse that does not exist.
-    let _ = super::remote_api(&h, "fire?ref=John%203:16-17");
+    let _ = super::remote_api(&h, "POST", "fire?ref=John%203:16-17").body;
     let step: serde_json::Value =
-        serde_json::from_str(&super::remote_api(&h, "next")).expect("next json");
+        serde_json::from_str(&super::remote_api(&h, "POST", "next").body).expect("next json");
     assert_eq!(step["nav"]["kind"], "fired", "precondition: 3:16 -> 3:17");
     assert_eq!(step["live"]["reference"], "John 3:17");
 
     let end: serde_json::Value =
-        serde_json::from_str(&super::remote_api(&h, "next")).expect("next json");
+        serde_json::from_str(&super::remote_api(&h, "POST", "next").body).expect("next json");
     assert_eq!(
         end["ok"], true,
         "the end of a reading is not a transport failure"
@@ -645,18 +645,21 @@ fn r2_the_remote_must_not_call_a_cleared_wall_live() {
     let h = app.handle().clone();
     let wall = Wall::watch(&h);
 
-    let _ = super::remote_api(&h, "fire?ref=John%203:16");
+    let _ = super::remote_api(&h, "POST", "fire?ref=John%203:16").body;
     settle();
-    let up: serde_json::Value = serde_json::from_str(&super::remote_api(&h, "live")).unwrap();
+    let up: serde_json::Value =
+        serde_json::from_str(&super::remote_api(&h, "GET", "live").body).unwrap();
     assert_eq!(up["live"]["reference"], "John 3:16", "precondition");
 
     // The operator clears the screens. The wall really does go blank.
-    let cleared: serde_json::Value = serde_json::from_str(&super::remote_api(&h, "clear")).unwrap();
+    let cleared: serde_json::Value =
+        serde_json::from_str(&super::remote_api(&h, "POST", "clear").body).unwrap();
     assert_eq!(cleared["ok"], true);
     settle();
     assert!(wall.cleared(), "precondition: the wall actually cleared");
 
-    let after: serde_json::Value = serde_json::from_str(&super::remote_api(&h, "live")).unwrap();
+    let after: serde_json::Value =
+        serde_json::from_str(&super::remote_api(&h, "GET", "live").body).unwrap();
     assert!(
         after["live"].is_null(),
         "the remote told the preacher {} is on the wall, and the wall is empty",
@@ -696,7 +699,7 @@ fn r2_the_remote_must_say_a_rehearsal_fire_reached_nobody() {
     .expect("enter rehearsal");
 
     let fired: serde_json::Value =
-        serde_json::from_str(&super::remote_api(&h, "fire?ref=John%203:16")).unwrap();
+        serde_json::from_str(&super::remote_api(&h, "POST", "fire?ref=John%203:16").body).unwrap();
     settle();
 
     // Containment itself is intact — assert that first, so this test cannot be

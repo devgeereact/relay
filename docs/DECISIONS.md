@@ -1233,21 +1233,36 @@ discovered again:
 1. **The WebSocket hub (`:8031`) really is still broadcast-only.** The `hello` claim was
    never wrong about the socket — only about the sibling HTTP port. Keep it that way; it is
    a genuinely different guarantee and the docs should stop conflating them.
-2. **The reachable audience is wider than "someone on the church wifi".** Every action is a
-   side-effecting `GET`, the request line is parsed verb-agnostically, and every response
-   carries `Access-Control-Allow-Origin: *`. So `<img src="http://<relay>:8032/api/black">`
-   on *any* web page, opened by anyone on that network while browsing anything, blacks out
-   the congregation's wall. No preflight, no foothold beyond a victim's browser. This is a
+2. **The reachable audience was wider than "someone on the church wifi".** Every action was a
+   side-effecting `GET`, the request line was parsed verb-agnostically, and every response
+   carried `Access-Control-Allow-Origin: *`. So `<img src="http://<relay>:8032/api/black">`
+   on *any* web page, opened by anyone on that network while browsing anything, blacked out
+   the congregation's wall. No preflight, no foothold beyond a victim's browser. This was a
    composition of three individually-reasonable choices and nobody chose the result.
+   **Closed 2026-08-20 — see "What would change it" below.** The lesson survives the fix:
+   the danger was in the *composition*, and each of the three choices read as sensible alone.
 
 ### What would change it
 
 - **Any move off a trusted LAN.** A laptop that also joins café WiFi serves the media files
   *and* the remote to that network.
-- **The drive-by (point 2 above) being judged unacceptable on its own.** It is the cheapest
-  thing here to fix without touching the product: require `POST` for the mutating routes and
-  drop the wildcard CORS header on them. That removes the `<img>` vector entirely while
-  leaving the preacher's phone working exactly as it does. If we do only one thing, do this.
+- **The drive-by (point 2 above) being judged unacceptable on its own.** ✅ **Done,
+  2026-08-20** — this was the "if we do only one thing, do this" item and it is now the one
+  thing that was done. `fire`, `next`, `prev`, `clear` and `black` require `POST` and answer
+  **without** the wildcard; `search` and `live` mutate nothing and are unchanged. An `<img>`,
+  a `<script>`, a stylesheet, a prefetch and a plain link can issue nothing but `GET`, so the
+  class is gone. The preacher's phone works exactly as it did — `Stage.svelte` picks the verb
+  from the same route list the gate uses.
+
+  **What this is not:** authentication. The control plane above stays deliberately open,
+  because a password on a device shared between a preacher, a tech volunteer and a stand-in
+  every Sunday is a password on a sticky note. This closed the *bystander's browser* as a
+  weapon, not the decision.
+
+  Pinned by four tests in `qa_r5.rs`: a `GET` cannot move the wall, the phone still drives it
+  over `POST`, the read-only routes keep their wildcard, and **a successful mutation still
+  withholds it** — because refusing the `GET` removes the vector while withholding the
+  wildcard is what stops a cross-origin caller reading what it did.
 - **Anyone asking for Relay on a guest or shared network**, which is the realistic way a
   church discovers this.
 

@@ -39,7 +39,7 @@ fn the_lan_remote_answers_exactly_seven_routes_and_refuses_the_rest() {
         "black",
         "live",
     ] {
-        let body = super::remote_api(&h, route);
+        let body = super::remote_api(&h, super::remote_verb(route), route).body;
         assert!(
             !body.contains(r#""error":"unknown""#),
             "route {route:?} is part of the decided surface and stopped answering: {body}"
@@ -62,12 +62,12 @@ fn the_lan_remote_answers_exactly_seven_routes_and_refuses_the_rest() {
         "transcript",
         "history",
     ] {
-        let body = super::remote_api(&h, route);
+        let body = super::remote_api(&h, super::remote_verb(route), route).body;
         assert!(
             body.contains(r#""error":"unknown""#),
             "the unauthenticated LAN control plane has grown a {route:?} route. \
-             Re-read docs/DECISIONS.md line 47 before this merges — it currently \
-             promises the LAN exposure is broadcast-only. Body: {body}"
+             Re-read docs/DECISIONS.md §35 before this merges — it owns the no-auth \
+             call and the exact size of the surface it applies to. Body: {body}"
         );
     }
 }
@@ -158,11 +158,13 @@ fn sequential_navs_step_one_verse_each_the_baseline_the_race_would_break() {
     let app = bare_app();
     let h = app.handle().clone();
 
-    super::remote_api(&h, "fire?ref=Psalms%2023:1");
+    let _ = super::remote_api(&h, "POST", "fire?ref=Psalms%2023:1");
     settle();
 
-    let a: serde_json::Value = serde_json::from_str(&super::remote_api(&h, "next")).unwrap();
-    let b: serde_json::Value = serde_json::from_str(&super::remote_api(&h, "next")).unwrap();
+    let a: serde_json::Value =
+        serde_json::from_str(&super::remote_api(&h, "POST", "next").body).unwrap();
+    let b: serde_json::Value =
+        serde_json::from_str(&super::remote_api(&h, "POST", "next").body).unwrap();
 
     assert_eq!(a["nav"]["reference"], "Psalms 23:2", "first step: {a}");
     assert_eq!(
@@ -170,4 +172,123 @@ fn sequential_navs_step_one_verse_each_the_baseline_the_race_would_break() {
         "second step must not repeat the first — if it ever does, the \
          choose-then-commit window in handle_nav has widened: {b}"
     );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// R5-6 · THE DRIVE-BY — closed 2026-08-20.
+//
+// `<img src="http://<relay>:8032/api/black">` on any page, opened by anyone on the
+// church network while browsing anything, used to black out the congregation's
+// wall. Three individually reasonable choices composed into it: every action was a
+// side-effecting GET, the request line was parsed verb-agnostically, and every
+// response carried `Access-Control-Allow-Origin: *`. Nobody chose the result.
+//
+// DECISIONS §35 named the fix and left it undone — "if we do only one thing, do
+// this". This is that one thing. It is NOT authentication: the LAN control plane
+// stays deliberately open, because the preacher driving their own reading from a
+// phone is the feature. What closes is the drive-by, whose audience is not "someone
+// on the church wifi" but "anyone whose browser can be pointed at a URL".
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// A `GET` may not change what a congregation is looking at.
+///
+/// An `<img>`, a `<script>`, a stylesheet, a prefetch and a plain link can issue
+/// nothing but `GET`, so refusing it removes the entire class — without a password
+/// on a device three volunteers share.
+#[test]
+fn a_get_cannot_change_what_the_congregation_sees() {
+    let app = bare_app();
+    let h = app.handle().clone();
+
+    // Precondition: a verse really is on the wall, so "nothing happened" below is a
+    // statement about the gate and not about an empty room.
+    let up = super::remote_api(&h, "POST", "fire?ref=John%203:16");
+    assert_eq!(up.status, 200, "precondition: the POST path still works");
+    let live: serde_json::Value =
+        serde_json::from_str(&super::remote_api(&h, "GET", "live").body).unwrap();
+    assert_eq!(live["live"]["reference"], "John 3:16", "precondition");
+
+    for route in ["black", "clear", "next", "prev", "fire?ref=Psalms%2023:1"] {
+        let reply = super::remote_api(&h, "GET", route);
+        assert_eq!(
+            reply.status, 405,
+            "GET /api/{route} was honoured — the <img> drive-by is back (DECISIONS §35)"
+        );
+        assert!(
+            !reply.cors,
+            "GET /api/{route} was refused but still offered the CORS wildcard, so a \
+             cross-origin page can read the refusal and probe the surface"
+        );
+        assert!(
+            reply.body.contains("POST"),
+            "the refusal must say what to do instead, got: {}",
+            reply.body
+        );
+    }
+
+    // ...and the wall is untouched by all of it.
+    let after: serde_json::Value =
+        serde_json::from_str(&super::remote_api(&h, "GET", "live").body).unwrap();
+    assert_eq!(
+        after["live"]["reference"], "John 3:16",
+        "a GET moved the wall"
+    );
+}
+
+/// The preacher's phone keeps working. This is the half a security fix usually
+/// breaks, and the reason DECISIONS §35 chose this repair over a password.
+#[test]
+fn the_preachers_phone_still_drives_the_wall_over_post() {
+    let app = bare_app();
+    let h = app.handle().clone();
+
+    let fired = super::remote_api(&h, "POST", "fire?ref=John%203:16-17");
+    assert_eq!(fired.status, 200);
+    assert!(fired.body.contains("\"ok\":true"), "{}", fired.body);
+
+    let stepped: serde_json::Value =
+        serde_json::from_str(&super::remote_api(&h, "POST", "next").body).unwrap();
+    assert_eq!(stepped["nav"]["kind"], "fired");
+    assert_eq!(stepped["live"]["reference"], "John 3:17");
+
+    assert_eq!(super::remote_api(&h, "POST", "clear").status, 200);
+    assert_eq!(super::remote_api(&h, "POST", "black").status, 200);
+}
+
+/// The READ-ONLY routes are unchanged, and deliberately so: they mutate nothing,
+/// and a kiosk fetching them cross-origin is a real use. Narrowing them would be a
+/// different decision than the one §35 records.
+#[test]
+fn the_read_only_routes_keep_working_over_get_and_keep_their_cors() {
+    let app = bare_app();
+    let h = app.handle().clone();
+
+    for route in ["search?q=john", "live"] {
+        let reply = super::remote_api(&h, "GET", route);
+        assert_eq!(reply.status, 200, "GET /api/{route} stopped answering");
+        assert!(
+            reply.cors,
+            "GET /api/{route} lost its CORS wildcard — a kiosk fetch depends on it, \
+             and this route changes nothing"
+        );
+    }
+}
+
+/// A mutating route withholds the wildcard even when it SUCCEEDS.
+///
+/// Refusing the GET is the vector; withholding the wildcard is what stops a
+/// cross-origin caller reading what a successful POST did to the wall.
+#[test]
+fn a_successful_mutation_is_not_readable_cross_origin() {
+    let app = bare_app();
+    let h = app.handle().clone();
+
+    for route in ["fire?ref=John%203:16", "next", "clear", "black"] {
+        let reply = super::remote_api(&h, "POST", route);
+        assert_eq!(reply.status, 200, "precondition for {route}");
+        assert!(
+            !reply.cors,
+            "POST /api/{route} succeeded and handed out the CORS wildcard"
+        );
+    }
 }

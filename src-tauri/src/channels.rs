@@ -1165,7 +1165,26 @@ where
 /// (docs/DECISIONS.md §35). It exists so the preacher's phone can search and push
 /// scripture. The threat model is unchanged in kind: anyone already on the church
 /// wifi. Do NOT expose this port to an untrusted network.
-pub type ApiSink = std::sync::Arc<dyn Fn(&str) -> Option<String> + Send + Sync>;
+/// What the control plane answers with: a body, the status it deserves, and
+/// whether this particular route may be read cross-origin.
+///
+/// The last field is not decoration. Every response used to carry
+/// `Access-Control-Allow-Origin: *`, every action was a side-effecting `GET`, and
+/// the request line was parsed verb-agnostically — three individually reasonable
+/// choices whose composition let `<img src="http://<relay>:8032/api/black">`, on any
+/// page anyone on the church network happened to open, black out the congregation's
+/// wall (DECISIONS §35). The mutating routes now refuse anything but `POST` and
+/// answer without the wildcard, which removes that vector without touching the
+/// preacher's phone.
+pub struct ApiReply {
+    pub status: u16,
+    pub body: String,
+    /// `true` only for the read-only routes. A mutating route never sends the
+    /// wildcard, so a cross-origin caller cannot read what it did.
+    pub cors: bool,
+}
+
+pub type ApiSink = std::sync::Arc<dyn Fn(&str, &str) -> Option<ApiReply> + Send + Sync>;
 
 pub async fn run_output_http_server(on_error: ErrorSink, api: ApiSink, port: u16) {
     let listener = match tokio::net::TcpListener::bind(("0.0.0.0", port)).await {
@@ -1190,16 +1209,19 @@ pub async fn run_output_http_server(on_error: ErrorSink, api: ApiSink, port: u16
             if n == 0 {
                 return;
             }
-            // Parse "GET /path HTTP/1.1" — a browser GET fits in one read.
+            // Parse "GET /path HTTP/1.1". The VERB is read, not discarded: it is
+            // half of what stops a drive-by from driving the wall (DECISIONS §35).
             let head = String::from_utf8_lossy(&buf[..n]);
-            let path = head
-                .lines()
-                .next()
-                .and_then(|l| l.split_whitespace().nth(1))
-                .unwrap_or("/");
+            let mut first = head.lines().next().unwrap_or("").split_whitespace();
+            let method = first.next().unwrap_or("GET");
+            let path = first.next().unwrap_or("/");
             if let Some(rest) = path.strip_prefix("/api/") {
-                let body = api(rest).unwrap_or_else(|| "{\"ok\":false}".to_string());
-                serve_json(&body, &mut stream).await;
+                let reply = api(method, rest).unwrap_or_else(|| ApiReply {
+                    status: 500,
+                    body: "{\"ok\":false}".to_string(),
+                    cors: false,
+                });
+                serve_json(&reply, &mut stream).await;
             } else {
                 serve_embedded(path, &mut stream).await;
             }
@@ -1227,17 +1249,38 @@ img-src 'self' data: blob:; media-src 'self' data: blob:; \
 connect-src 'self' ws: wss:; object-src 'none'; frame-src 'none'; \
 base-uri 'self'; form-action 'none'";
 
-/// Write a JSON body (no-store, permissive CORS — the remote is same-origin, but
-/// the header keeps it simple for a kiosk fetch).
-async fn serve_json<S>(body: &str, stream: &mut S)
+/// Write a JSON reply. `no-store` always; the CORS wildcard **only** where the
+/// reply says it may go (read-only routes — see `ApiReply`).
+async fn serve_json<S>(reply: &ApiReply, stream: &mut S)
 where
     S: tokio::io::AsyncWrite + Unpin,
 {
     use tokio::io::AsyncWriteExt;
+    let phrase = match reply.status {
+        200 => "OK",
+        405 => "Method Not Allowed",
+        _ => "Internal Server Error",
+    };
+    // `Allow` is part of a correct 405, and it is also the honest answer to a
+    // developer wondering why their GET stopped working.
+    let extra = if reply.status == 405 {
+        "Allow: POST\r\n"
+    } else {
+        ""
+    };
+    let cors = if reply.cors {
+        "Access-Control-Allow-Origin: *\r\n"
+    } else {
+        ""
+    };
     let resp = format!(
-        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\nCache-Control: no-store\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-        body.len(),
-        body
+        "HTTP/1.1 {} {}\r\nContent-Type: application/json\r\n{}{}Cache-Control: no-store\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        reply.status,
+        phrase,
+        cors,
+        extra,
+        reply.body.len(),
+        reply.body
     );
     let _ = stream.write_all(resp.as_bytes()).await;
     let _ = stream.flush().await;
@@ -1308,7 +1351,7 @@ mod tests {
     #[tokio::test]
     async fn output_http_serves_embedded_pages() {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
-        let no_api: ApiSink = std::sync::Arc::new(|_: &str| None);
+        let no_api: ApiSink = std::sync::Arc::new(|_: &str, _: &str| None);
         tokio::spawn(run_output_http_server(log_only(), no_api, 8201));
         tokio::time::sleep(std::time::Duration::from_millis(150)).await;
 

@@ -26,8 +26,17 @@
   let ctlErr = '';
   const API = `http://${location.hostname || 'localhost'}:8032/api`;
 
+  // Anything that CHANGES the wall goes by POST, and the backend refuses it as a
+  // GET (405). That is what stops `<img src=".../api/black">` on any page anyone on
+  // the church network happens to open from blacking out the congregation's wall —
+  // an image, a script, a stylesheet and a link can only ever issue GET.
+  // DECISIONS §35. `search` and `live` mutate nothing and stay GET.
+  const MUTATES = new Set(['fire', 'next', 'prev', 'clear', 'black']);
+
   async function api(path) {
-    const r = await fetch(`${API}/${path}`);
+    const route = path.split('?')[0];
+    const method = MUTATES.has(route) ? 'POST' : 'GET';
+    const r = await fetch(`${API}/${path}`, { method });
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const j = await r.json();
     if (!j.ok) throw new Error(j.error || 'failed');

@@ -77,15 +77,23 @@ but they are already understood — see [`docs/DECISIONS.md`](docs/DECISIONS.md)
   screens**, via the same unauthenticated remote the preacher uses. Path traversal
   is defended; screen control is not, on purpose. Full reasoning and the conditions
   that would change it: [DECISIONS §35](docs/DECISIONS.md).
-- **Any web page can reach that API while a viewer is on the church WiFi.** Every
-  action is a side-effecting `GET` and every response carries
+- **A web page can no longer drive the screens — closed 2026-08-20.** It used to:
+  every action was a side-effecting `GET` answered with
   `Access-Control-Allow-Origin: *`, so `<img src="http://<relay>:8032/api/black">`
-  on an unrelated website blacks out the wall — no CORS preflight, no attacker on
-  the LAN beyond a victim's browser. Recorded in §35 as the widest reading of the
-  same decision, and the strongest argument for revisiting it.
+  on any unrelated website blacked out the wall, with no attacker on the LAN beyond
+  a victim's browser. **The mutating routes (`fire`, `next`, `prev`, `clear`,
+  `black`) now require `POST` and answer without the wildcard.** An image, a script,
+  a stylesheet, a prefetch and a plain link can only ever issue `GET`, so that class
+  is gone. `search` and `live` change nothing and stay `GET`.
 
-  **This is a reasonable tradeoff for a LAN appliance and an unreasonable one on an
-  untrusted network.** If Relay ever ships a "public WiFi" mode, this must change.
+  **This is not authentication and does not pretend to be.** Anyone actually on the
+  church network can still drive the screens deliberately — that is the recorded
+  decision above, and the preacher's phone depends on it. What changed is that a
+  *bystander's browser* can no longer be used as the weapon.
+
+  **Still a reasonable tradeoff for a LAN appliance and an unreasonable one on an
+  untrusted network.** If Relay ever ships a "public WiFi" mode, the no-auth
+  decision itself must change.
 
 - **Relay is not hardened against a malicious operator.** The person running it can
   already put anything they like on the screen — that is their job.
