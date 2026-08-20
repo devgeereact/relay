@@ -331,9 +331,20 @@ pipelines break.
 
 So: **an unsigned build is allowed, but only on a pre-release tag.**
 
+**A tag is not enough on its own.** The release gate compares the tag against all
+three version files, so the version has to move first or the workflow fails before it
+reaches the signing decision:
+
 ```bash
-git tag v0.1.0-1 && git push origin v0.1.0-1      # unsigned, allowed
-git tag v0.1.0     && git push origin v0.1.0          # FAILS without certificates
+# unsigned pre-release — allowed
+npm run version:set -- 0.1.0-1                    # numeric identifier; the MSI rejects names
+git commit -am "chore(release): 0.1.0-1" && git push
+git tag v0.1.0-1 && git push origin v0.1.0-1
+
+# real release — FAILS without certificates, by design
+npm run version:set -- 0.1.0
+git commit -am "chore(release): 0.1.0" && git push
+git tag v0.1.0 && git push origin v0.1.0
 ```
 
 The rule is enforced in `release.yml`: a tag containing a hyphen is a pre-release and

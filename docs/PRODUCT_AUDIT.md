@@ -14,7 +14,7 @@ Supersedes Revision 2 (2026-07-12) and Revision 1 (2026-07-05). Every claim was 
 >
 > | | Rev 3 said | Today |
 > |---|---|---|
-> | Tests | 250 Rust + 138 frontend | **476 Rust** (26 ignored) + **579 frontend** (0 skipped) |
+> | Tests | 250 Rust + 138 frontend | **478 Rust** (24 ignored) + **581 frontend** (0 skipped) |
 > | `main.rs` | 2,922 lines / 101 commands | **4,024 lines / 114 commands** |
 > | Decision log | 25 decisions | **35** |
 > | `Result<_, String>` in `main.rs` | replaced | **zero remain** — confirmed |
@@ -111,7 +111,7 @@ Revision 1's finding was *"the engineering is ahead of the product"* — the app
 
 What that produced is a product with an unusual property for its stage: **its failure modes are visible.** A clear that fails says so. A `→` that cannot move says why it cannot. A paraphrase guess cannot masquerade as a heard reference, because it is rendered as a different kind of claim with no percentage attached. A release that would ship unsigned refuses to build. A migration that dies halfway can be retried. These are not features; they are the absence of a specific class of lie, and in software that fails **live, in front of five hundred people**, that class of lie is the whole danger.
 
-The engine underneath is strong and now genuinely covered (**250 Rust + 138 frontend tests** when this was written; **476 + 579** today), zero panic sites in any module that runs during a service, a detection benchmark that fails CI on regression, an end-to-end test that drives the real fire → nav → clear path, and a gate that makes "the AI put the wrong verse on the wall" structurally unrepresentable rather than merely unlikely.
+The engine underneath is strong and now genuinely covered (**250 Rust + 138 frontend tests** when this was written; **478 + 581** today), zero panic sites in any module that runs during a service, a detection benchmark that fails CI on regression, an end-to-end test that drives the real fire → nav → clear path, and a gate that makes "the AI put the wrong verse on the wall" structurally unrepresentable rather than merely unlikely.
 
 **So the honest position is now a shopping list, not an engineering plan:**
 
@@ -142,7 +142,7 @@ Scored against the stated bar (*first 10 churches*), not against Stripe. Δ is t
 | **Accessibility** | **8 / 10** | ▲ **+4** | Focus traps on all 5 dialogs, **with focus restore** (the half everyone forgets). A real heading structure. The AI suggestion feed, the transport and errors are all announced — the product's whole reason to exist used to arrive in total silence. Every text token passes WCAG AA. Not 10/10: ~150 lines of dead legacy CSS remain, deliberately (see §7). |
 | **Security** | **8 / 10** | ▲ +1 | A tag name is no longer interpolated into a release shell (a real injection vector CodeRabbit caught). LAN bind is unauthenticated, broadcast-only, bounded, and honestly documented. Unsigned Windows remains the exposure — but the pipeline now *refuses* to produce it rather than doing so quietly. |
 | **Privacy** | **9 / 10** | — | Unchanged, and still the strongest part of the product. Telemetry off by default, no DSN in OSS builds, free text *dropped* not sifted. |
-| **Testing** | **9 / 10** | ▲ **+3** | **250 Rust + 138 frontend** at the time of writing; **476 + 579** today. The gap was never the count — it was that `main.rs` had zero tests and no e2e existed, so the fire → nav → clear path was verified only by hand. `e2e.rs` now drives the real commands against a real DB. And the culture shifted: several fixes were **mutation-verified** — the test was checked to *fail* when the original bug was reintroduced. Two tests in this repo initially passed on broken code; both were caught that way. |
+| **Testing** | **9 / 10** | ▲ **+3** | **250 Rust + 138 frontend** at the time of writing; **478 + 581** today. The gap was never the count — it was that `main.rs` had zero tests and no e2e existed, so the fire → nav → clear path was verified only by hand. `e2e.rs` now drives the real commands against a real DB. And the culture shifted: several fixes were **mutation-verified** — the test was checked to *fail* when the original bug was reintroduced. Two tests in this repo initially passed on broken code; both were caught that way. |
 | **Developer experience** | **9 / 10** | ▲ +2 | CI, CodeRabbit, `clippy -D warnings`, a decision log 25 rules deep (**35** today). `scripts/version.mjs` makes releasing a one-liner. CONTRIBUTING / CoC / CHANGELOG / issue forms / PR template all ship — and the PR checklist is the project's *real* rules (no `unwrap()` in a live path, no borrowed tally colours, *reintroduce the bug and check your test fails*), not a generic one. |
 | **AI readiness** | **6 / 10** | ▲ +1 | The operator can finally *see* what kind of claim the AI is making, and `related_scripture` — built, tested, and called by nothing for months — is surfaced. The gate remains excellent. But paraphrase is still TF-IDF, `verses.embedding` has still never been written to, and **the acoustic layer is still unmeasured**. Blocked on audio, not on code. |
 | **Brand** | **4 / 10** | — | Unchanged and now the weakest column. Still no logo, no tagline, no positioning line. README still says *"Working name — rename freely."* |

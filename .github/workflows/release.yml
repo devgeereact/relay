@@ -236,7 +236,11 @@ jobs:
             if [ "$WIN_SIGNED" = "false" ]; then echo "::error::Windows is UNSIGNED — missing:$WIN_MISSING"; fi
             echo "An unsigned build cannot be opened by a church: Gatekeeper says 'Relay is damaged',"
             echo "and SmartScreen warns on the installer. Set the secrets (docs/RELEASING.md),"
-            echo "or tag a pre-release instead: v${VERSION%%-*}-1  (numeric identifier — the MSI rejects names)"
+            echo "or cut a pre-release instead — which means moving the VERSION, not only the tag,"
+            echo "because the check above compares the tag against all three version files:"
+            echo "     npm run version:set -- ${VERSION%%-*}-1   # numeric identifier — the MSI rejects names"
+            echo "     git commit -am 'chore(release): ${VERSION%%-*}-1' && git push"
+            echo "     git tag v${VERSION%%-*}-1 && git push origin v${VERSION%%-*}-1"
             exit 1
           fi
 

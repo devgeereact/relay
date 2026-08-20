@@ -25,9 +25,9 @@ the command is named — a count you cannot reproduce is a rumour.
 
 | | Count | How to reproduce |
 |---|---|---|
-| Rust tests | **476 passing**, 26 ignored | `cd src-tauri && cargo test` |
-| Frontend tests | **579 passing**, 0 skipped, 43 files | `npx vitest run` |
-| `e2e.rs` tests | **23** (19 run, 4 ignored) | `cd src-tauri && cargo test e2e` |
+| Rust tests | **478 passing**, 24 ignored | `cd src-tauri && cargo test` |
+| Frontend tests | **581 passing**, 0 skipped, 44 files | `npx vitest run` |
+| `e2e.rs` tests | **23** (21 run, 2 ignored — R2-C and R2-D, both open defects) | `cd src-tauri && cargo test e2e` |
 | Registered `#[tauri::command]` | **114** | `grep -c '#\[tauri::command\]' src-tauri/src/main.rs` |
 | `.svelte` files | **47**, 22 of them views | `find src -name '*.svelte' | wc -l` |
 | `<button>` occurrences | **319** | `grep -ro '<button' --include='*.svelte' src | wc -l` |
@@ -283,7 +283,7 @@ kind of quiet damage.
    override it needs to make its template assertion non-vacuous. Two harness self-tests keep
    the fixture honest: one asserts the fresh install has no content-look chosen except the
    deliberate `tpl_song`, the other asserts the kiosk is a genuinely different door from the
-   wall. 476 Rust tests pass, `fmt` and `clippy -D warnings` clean.
+   wall. The Rust suite passes, `fmt` and `clippy -D warnings` clean.
 2. **The Preview ≠ Programme gap.** Closed on the surface that ships — see §3.
 3. **Six agents plus `/qa-audit`.**
 4. **The hook** — §5.

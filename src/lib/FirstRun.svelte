@@ -162,14 +162,19 @@
 
   async function stopMicTest() {
     if (!micOn) return;
-    micOn = false;
     // Caught, not propagated — this also runs from onDestroy, where a rejection is
     // an unhandled promise with nobody left to catch it. But SHOWN, not swallowed:
     // `stopCapture` now rejects when the microphone did not actually stop, and the
     // wizard's whole job is proving to a volunteer that the microphone does what
     // the screen says it does.
+    //
+    // `micOn` is cleared only AFTER the backend confirms. Clearing it first meant a
+    // failed stop left the flag saying "off" over a microphone that was still open,
+    // and the `if (!micOn) return;` above then refused every retry — the same shape
+    // as the `stopCapture` bug this wizard step exists to prove is gone.
     try {
       await stopCapture();
+      micOn = false;
     } catch (e) {
       error = humanError(e);
     }
@@ -188,8 +193,16 @@
   async function chooseDevice(name) {
     await setInputDevice(name);
     if (micOn) {
-      await stopCapture().catch(() => {});
-      micOn = false;
+      // Never open a second capture over one that did not close. A swallowed stop
+      // here would leave the OLD device streaming under the NEW device's meter —
+      // which is the failure this whole step exists to rule out.
+      try {
+        await stopCapture();
+        micOn = false;
+      } catch (e) {
+        error = humanError(e);
+        return;
+      }
       await startCapture(name || undefined).catch((e) => (error = humanError(e)));
       micOn = true;
     }

@@ -539,13 +539,47 @@ fn the_remote_says_which_outcome_its_nav_had_not_merely_ok() {
     let past = super::remote_api(&h, "next");
     let past: serde_json::Value = serde_json::from_str(&past).expect("next json");
     assert_eq!(past["ok"], true);
-    assert_ne!(
-        past["nav"]["kind"], "fired",
-        "the remote claimed it advanced past the last verse of Jude"
+    // Named EXACTLY, not merely "not fired". The three non-firing outcomes mean
+    // three different things to a preacher holding the phone — "there is no more of
+    // this reading", "you have not put anything up yet", and "that verse is not in
+    // your Bible" — and a test that accepts any of them would pass just as happily
+    // if the wall reported the wrong one, which is the bug `NavResult` exists to
+    // prevent one layer down.
+    //
+    // Jude 1:25 is fired as a SINGLE verse, so the passage is unbounded: the step
+    // resolves Jude 1:26, which is not in the corpus. Hence `not_in_library` here
+    // and not `end_of_passage` — the bounded case is asserted below.
+    assert_eq!(
+        past["nav"]["kind"], "not_in_library",
+        "the remote gave the wrong name to a step past the last verse of Jude"
     );
     assert_eq!(
         past["live"]["reference"], "Jude 1:25",
         "the wall moved when the remote had nowhere to move to"
+    );
+
+    // A BOUNDED reading, walked off its own end. This is the outcome a preacher
+    // meets most often — the reading finished — and it must not be reported with
+    // the same word as a verse that does not exist.
+    let _ = super::remote_api(&h, "fire?ref=John%203:16-17");
+    let step: serde_json::Value =
+        serde_json::from_str(&super::remote_api(&h, "next")).expect("next json");
+    assert_eq!(step["nav"]["kind"], "fired", "precondition: 3:16 -> 3:17");
+    assert_eq!(step["live"]["reference"], "John 3:17");
+
+    let end: serde_json::Value =
+        serde_json::from_str(&super::remote_api(&h, "next")).expect("next json");
+    assert_eq!(
+        end["ok"], true,
+        "the end of a reading is not a transport failure"
+    );
+    assert_eq!(
+        end["nav"]["kind"], "end_of_passage",
+        "the remote did not name the end of a bounded reading"
+    );
+    assert_eq!(
+        end["live"]["reference"], "John 3:17",
+        "the wall moved past the end of the reading"
     );
 }
 
@@ -564,11 +598,18 @@ impl NavResult {
 // ════════════════════════════════════════════════════════════════════════════
 // R2 · LIVE PATH AUDIT — evidence, 2026-08-14
 //
-// Three findings, each pinned as a test that asserts the CORRECT behaviour and
-// is therefore RED. They are `#[ignore]`d rather than deleted, following the
-// precedent in `src/lib/liveoutputrail.test.js` (a known defect is pinned as a
-// skipped test, with the repair written out, so the fix has a target and CI
-// stays green until a human chooses one).
+// Four findings, each pinned as a test asserting the CORRECT behaviour, following
+// the precedent in `src/lib/liveoutputrail.test.js`: a known defect is pinned as a
+// skipped test with the repair written out, so the fix has a target and CI stays
+// green until a human chooses one.
+//
+// **Two of the four have since been fixed (R2-A and R2-B), and their tests are no
+// longer `#[ignore]`d** — they run on every `cargo test` and now guard the repair
+// instead of describing the defect. An ignored test that has started passing is
+// worse than no test: it protects nothing while reading, in its own reason string,
+// as an open bug.
+//
+// R2-C and R2-D remain open, remain RED, and remain ignored. Run them with:
 //
 //   cargo test r2_ -- --ignored --nocapture
 //
@@ -593,10 +634,12 @@ impl NavResult {
 /// check reads "the wall did not move", and would pass just as happily if the
 /// wall had been cleared.
 ///
-/// Repair direction: `live_json` must report what the outputs are showing (a
-/// cleared/blacked flag alongside the anchor), not merely where the playhead is.
+/// **FIXED, and this test now guards the repair.** `live_json` reports what the
+/// outputs are showing rather than where the playhead is, so a cleared wall answers
+/// `live: null` while the context keeps the position for the next `→`. It ran
+/// `#[ignore]`d and RED while the defect stood; leaving the ignore on after the fix
+/// would have left the repair unprotected and the reason string lying about it.
 #[test]
-#[ignore = "R2-A: known defect — /api/live reports the passage anchor as if it were on the wall"]
 fn r2_the_remote_must_not_call_a_cleared_wall_live() {
     let app = app();
     let h = app.handle().clone();
@@ -633,10 +676,11 @@ fn r2_the_remote_must_not_call_a_cleared_wall_live() {
 /// so the sandbox looks intact — while the preacher, holding the phone during a
 /// Thursday rehearsal, is told the congregation's wall has John 3:16 on it.
 ///
-/// Repair direction: the remote's answer must carry the sandbox
-/// (`"rehearsing":true`, or `live: null`), the way every console surface does.
+/// **FIXED, and this test now guards the repair.** The remote's answer carries the
+/// sandbox the way every console surface does, so the phone can no longer report a
+/// rehearsal fire as though the congregation saw it. It ran `#[ignore]`d and RED
+/// while the defect stood.
 #[test]
-#[ignore = "R2-B: known defect — the LAN remote reports rehearsal content as live"]
 fn r2_the_remote_must_say_a_rehearsal_fire_reached_nobody() {
     let app = app();
     let h = app.handle().clone();
