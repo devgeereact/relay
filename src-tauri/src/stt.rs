@@ -1705,10 +1705,8 @@ mod bench {
         let bytes = std::fs::read(path).expect("read wav");
         // Skip a 44-byte RIFF header if present; the payload is little-endian f32.
         let start = if bytes.starts_with(b"RIFF") { 44 } else { 0 };
-        bytes[start..]
-            .chunks_exact(4)
-            .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
-            .collect()
+        let (frames, _tail) = bytes[start..].as_chunks::<4>();
+        frames.iter().map(|c| f32::from_le_bytes(*c)).collect()
     }
 
     /// Does the decoder get the NUMBERS right, and what does it cost?
