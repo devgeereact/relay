@@ -1,13 +1,20 @@
 -- Relay — canonical SQLite schema
 --
--- This reflects the CURRENT on-device shape a fresh install creates, transcribed
--- from the migration/ensure code in `src-tauri/src/db/` (mod.rs + one file per
--- table-family). It supersedes the old v0.1 draft, which had drifted (it was
--- missing service_plans, plan_items, songs, arrangements, the library tables and
--- the FTS5 index).
+-- ⚠️ THIS FILE IS COMPILED INTO THE BINARY. `db/mod.rs` does
+--    `const SCHEMA: &str = include_str!("../../../docs/data/schema.sql");`
+-- so it is not a transcript of the schema — it IS the baseline schema every
+-- fresh install is created from. Editing it changes the product. Deleting or
+-- moving it breaks the build.
 --
--- SOURCE OF TRUTH IS THE CODE, NOT THIS FILE. Regenerate whenever a migration in
--- `db/mod.rs` (or a `db/*.rs` `ensure_*`) changes. To dump the live schema:
+-- What it is NOT is the whole story: the `ensure_*` rungs in `db/*.rs` and the
+-- `PRAGMA user_version` ladder (`db::SCHEMA_VERSION`) evolve a database created
+-- from this baseline. A column added by a rung will not appear here, and that is
+-- correct — but keeping the two agreeing is manual, and that is tracked as debt
+-- in docs/ROADMAP.md §4.
+--
+-- Rule of thumb: a NEW table or column for a fresh install belongs here AND in a
+-- rung (so existing installs get it too). To dump what a live database actually
+-- has, which is the tiebreaker:
 --   sqlite3 "$HOME/Library/Application Support/com.relay.app/relay.db" .schema
 -- (defaults shown below match the code — a dev DB created before an amendment may
 -- show stale column DEFAULTs, e.g. voice_profiles auto_fire/suggest.)

@@ -58,3 +58,6 @@ Thumbs.db
 # (certificate thumbprint / signCommand). Never committed.
 /src-tauri/tauri.winsign.conf.json
 backgrounds-originals/
+
+# Design-tool caches (local only)
+.impeccable/

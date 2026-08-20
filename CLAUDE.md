@@ -43,7 +43,7 @@ Tier 1: **Yoruba, Swahili, Hausa**, plus English. Code-switching (English mixed 
 npm install
 npm run tauri dev        # desktop app + Vite on :5032, kiosk WS on :8031
 
-npm test                 # vitest (434 tests)
+npm test                 # vitest (579 tests)
 npx vitest run src/lib/nav.test.js          # one file
 npx vitest run -t "Escape closes the cheat" # one test by name
 npm run build            # vite build — catches Svelte compile errors fast
@@ -58,8 +58,8 @@ Rust (**`whisper-rs` compiles whisper.cpp from source, so `cmake` must be on PAT
 cmake --version          # any 3.x. `brew install cmake` if it is missing;
                          # a machine without Homebrew needs its own prefix on PATH
 cd src-tauri
-cargo test                                   # 432 tests
-cargo test e2e                               # the fire → nav → clear path (13 tests)
+cargo test                                   # 502 tests (476 run, 26 ignored)
+cargo test e2e                               # the fire → nav → clear path (23 tests)
 cargo test detection::                       # one module
 cargo test the_macos_build -- --nocapture    # one test
 cargo fmt --all && cargo clippy --all-targets -- -D warnings   # CI enforces both
@@ -87,7 +87,7 @@ Every audio bug so far was invisible in the code and reproducible only with a sp
 ```
 ├── CLAUDE.md · README.md · LICENSE · PRIVACY.md · SECURITY.md
 ├── docs/  README (index) · SPEC · DECISIONS · ARCHITECTURE · DOMAIN_MODEL
-│          DESIGN_SYSTEM · PRODUCT_AUDIT · ROADMAP · LANGUAGES
+│          DESIGN_SYSTEM · PRODUCT_AUDIT · ROADMAP · LANGUAGES · QA_HARNESS
 │          RELEASING · USER_GUIDE · AI_DISCLOSURE · data/schema.sql
 ├── scripts/version.mjs      — the ONLY place the version is read or written (3 files)
 │   scripts/qa-inventory.mjs — controls · orphan components · command map · create paths
@@ -98,9 +98,10 @@ Every audio bug so far was invisible in the code and reproducible only with a sp
 │   ├── relay.entitlements   — com.apple.security.device.audio-input. See §17.
 │   ├── tauri.conf.json      — base; tauri.updater.conf.json overlays it at release
 │   └── src/
-│       ├── main.rs          — Tauri commands + the live-fire engine (3.9k lines, 114 cmds)
-│       ├── qa.rs            — TEST-ONLY. THE fixture: bare_app() = a fresh install and
-│       │                      nothing else, + Wall (Tauri events) and Kiosk (the WS door)
+│       ├── main.rs          — Tauri commands + the live-fire engine (4.0k lines, 114 cmds)
+│       ├── qa.rs · qa_r5.rs · r6.rs — TEST-ONLY. qa.rs owns THE fixture: bare_app() =
+│       │                      a fresh install and nothing else, + Wall (Tauri events)
+│       │                      and Kiosk (the WS door). The other two are audit suites.
 │       ├── e2e.rs           — TEST-ONLY. Drives the real fire → nav → clear commands
 │       │                      against a real in-memory DB via qa::bare_app()
 │       ├── audio.rs · dsp.rs · stt.rs      — capture · denoise/gain · whisper worker
@@ -109,6 +110,9 @@ Every audio bug so far was invisible in the code and reproducible only with a sp
 │       ├── pipeline.rs      — the ONE place a verse becomes screen content (Fire → output + event)
 │       ├── channels.rs      — output render targets: native window + kiosk WS + LAN HTTP
 │       ├── models.rs        — in-app STT model download (resumable, checksummed, cancellable)
+│       ├── error.rs          — the ONE typed error across the bridge { kind, message }
+│       ├── proimport.rs · songs.rs — ProPresenter import; pure song-lyric parsing
+│       ├── sysprobe.rs       — host capability probe (can this machine run this model?)
 │       ├── eval.rs          — CI-gated detection benchmark, scored THROUGH the router
 │       ├── telemetry.rs     — opt-in, content-scrubbed, no DSN in OSS builds
 │       └── db/              — one module per aggregate; mod.rs owns connection + migrations
@@ -122,6 +126,7 @@ Every audio bug so far was invisible in the code and reproducible only with a sp
         ├── shortcuts.js               — the ONE global keydown listener (panic keys)
         ├── detect.js                  — heard vs guessed (the frontend half of the gate)
         ├── errors.js                  — the ONE backend-error humaniser
+        ├── themes.js · layers.js       — the style layer beneath templates; layer starters
         ├── plan.js · cues.js · session.js · crash.js · updater.js
         └── *.test.js                  — vitest, incl. the IPC contract test
 ```
@@ -179,7 +184,7 @@ These caused real crashes, freezes, or silent failures in front of people. Keep 
 
 ## Frontend shape
 
-- **Tabs: Live · Channels · Templates · Themes · Library · Planner · Settings · Help.** There is no Console tab — `Live` IS the console. **Themes** is the style layer beneath templates (DECISIONS §27): a theme sets default `style` keys, a template overrides them per key, and `TemplateRender` resolves a template's `style.themeRef` against builtins itself, so every surface is themed with no per-surface wiring. Layer colours may bind to theme tokens (`theme:accent`). Stage/confidence monitors are render-profiles of the one engine (starters in `layers.js`), not a parallel system — they show monitor-only fields (`next`, `note`, `elapsed`) that ride to output but no congregation template renders. **Build** a plan in Planner (a Tuesday job; nothing there can reach an output). **Run** it in Live (a Sunday job). The merge exists because an operator running a plan on a separate tab could not see the AI's suggestions — and the preacher going off-script is the entire product.
+- **Tabs: Live · Outputs · Templates · Themes · Library · Planner · Settings · Help.** (The Outputs tab's internal key is still `channels`, and its view file is `Channels.svelte` — the label is what an operator reads.) There is no Console tab — `Live` IS the console. **Themes** is the style layer beneath templates (DECISIONS §27): a theme sets default `style` keys, a template overrides them per key, and `TemplateRender` resolves a template's `style.themeRef` against builtins itself, so every surface is themed with no per-surface wiring. Layer colours may bind to theme tokens (`theme:accent`). Stage/confidence monitors are render-profiles of the one engine (starters in `layers.js`), not a parallel system — they show monitor-only fields (`next`, `note`, `elapsed`) that ride to output but no congregation template renders. **Build** a plan in Planner (a Tuesday job; nothing there can reach an output). **Run** it in Live (a Sunday job). The merge exists because an operator running a plan on a separate tab could not see the AI's suggestions — and the preacher going off-script is the entire product.
 - **The transport is MODE-AWARE and says so.** `→` steps a plan SLIDE when plan content is on air, and walks the passage (VERSE) when a detected/manual verse is. The mode is printed in the transport bar; the same key silently meaning two things is how the wrong thing reaches a congregation.
 - **`liveCue` = `{ cueId, slide, onAir }` — position and on-air-ness are SEPARATE facts.** Panic keys clear only `onAir`. Wiping the position would make the next `→` restart the plan at cue 1. A cue that is where `→` resumes but is NOT on screen reads **CUED**, in grey. Never amber. Amber means live and is never allowed to lie.
 - One store: `src/lib/stores/capture.js` (`capture`, `transcript`, `detections` = pending suggestions only, `live` = what's on screen, `panicError`, `templates`). All Tauri command wrappers + event listeners live here.
@@ -204,10 +209,10 @@ These caused real crashes, freezes, or silent failures in front of people. Keep 
 
 ## Testing
 
-432 Rust + 434 frontend (1 skipped, deliberately — see `liveoutputrail.test.js`). CI runs both on **macOS and Windows**, plus `fmt`, `clippy -D warnings`, the detection scorecard, and a release build.
+**476 Rust** (26 ignored) + **579 frontend** (0 skipped), re-measured 2026-08-20. CI runs both on **macOS and Windows**, plus `fmt`, `clippy -D warnings`, the detection scorecard, and a release build.
 
 - **`qa.rs` owns the fixture. Do not write another one.** `qa::bare_app()` is a fresh install and nothing else — real schema, real seed, no operator has touched it — and `qa::{Wall, Kiosk, settle}` are the two doors out of the machine plus the drain. `e2e::app()` is now `bare_app()` **plus one documented difference** (a content-look override, without which its template assertion is vacuous), which is exactly the shape a deviation should have: three visible lines, not a fifty-line copy that drifts. A second fixture is how two suites start disagreeing about what a fresh install contains. `the_bare_fixture_is_a_first_launch_and_nothing_more` is the tripwire; it is what caught that `tpl_song` **is** seeded on purpose (every other built-in is scripture-shaped, so a lyric rendered through one showed the song title instead of the words).
-- **The QA apparatus is documented, not folklore.** `docs/Working-Agent.md` (design + the five evidence layers), `-PROMPT.md` (the agents' shared preamble), `-COVERAGE.md` (what is already pinned — read it before filing anything, so you don't "find" a fixed bug). Run `/qa-audit`; `node scripts/qa-inventory.mjs` prints the control/orphan/create-path report on its own.
+- **The QA apparatus is documented, not folklore.** `docs/QA_HARNESS.md` — Part 0 the current counts (each with the command that reproduces it), Part 1 the design and the five evidence layers, Part 2 the shared preamble every `relay-qa-*` agent inherits verbatim, Part 3 the roster, **Part 4 what is already pinned — read it before filing anything, so you don't "find" a fixed bug**. Run `/qa-audit`; `node scripts/qa-inventory.mjs` prints the control/orphan/create-path report on its own.
 - **A component nothing renders is not covered, however green its tests.** Fourteen passing tests were written against `PreviewProgram.svelte` before `qa-inventory.mjs` reported that nothing imports it — the shipped surface is `LiveOutputRail.svelte`. Before writing a component test, check something actually renders the component.
 
 - **`vitest.config.js` MUST set `resolve: { conditions: ['browser'] }`. Do not "tidy" it away.** Svelte 4 maps its `.` export to `src/runtime/ssr.js` under every condition except `browser`, and that file defines `onMount`, `beforeUpdate` and `afterUpdate` as literal empty functions. `environment: 'jsdom'` does not imply the condition. Without the line, a component is compiled for the DOM and handed the SSR stubs: it mounts, it renders, and it silently skips every load-on-mount path — no list fetches, no subscription runs, and the test passes by doing nothing. It hid for the entire life of the project because the asymmetry is invisible: `svelte/internal` has only a `default` condition, so rendering, `onDestroy` and `tick` were always real, and only the mount half was dead. Guarded from three directions now — `r6-lifecycle-probe.test.js` asserts the runtime, `r2livepath.test.js` asserts that mounting the run column actually reaches `list_output_channels`, and `surface.test.js`'s `LIFECYCLE_LIVE` gate reads the runtime so its tests skip loudly rather than pass vacuously.

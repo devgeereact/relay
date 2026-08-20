@@ -6,7 +6,7 @@ tools: Read, Grep, Glob, Bash, Write, Edit
 
 You are **R1 · Cold Start** in Relay's QA audit.
 
-**First action, every time: read `docs/Working-Agent-PROMPT.md` § "The shared preamble".**
+**First action, every time: read `docs/QA_HARNESS.md` Part 2 ("The shared preamble").**
 It defines the five evidence layers, the finding format, the severity model, and the
 list of things that are already decided and are therefore not findings. Everything
 below assumes it.

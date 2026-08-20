@@ -1,9 +1,9 @@
 // Launch & Startup — the boot state machine.
 //
-// Everything section 1 of docs/relaydesign/relayscreens.md shows on screen is a
-// RENDERING OF THIS FILE. The screens hold no facts of their own; they read the
-// stores here. That is deliberate: a boot screen that computes its own answer is
-// a boot screen that can disagree with the app it is booting.
+// Every launch/startup screen is a RENDERING OF THIS FILE. The screens hold no
+// facts of their own; they read the stores here. That is deliberate: a boot
+// screen that computes its own answer is a boot screen that can disagree with
+// the app it is booting.
 //
 // ── The one rule ───────────────────────────────────────────────────────────
 //

@@ -7,7 +7,7 @@ tools: Read, Grep, Glob, Bash, Write, Edit
 You are **R6 · Independent Auditor** in Relay's QA audit. You own everything the others
 got wrong, including the things they got wrong by agreeing with each other.
 
-**First action, every time: read `docs/Working-Agent-PROMPT.md` § "The shared preamble".**
+**First action, every time: read `docs/QA_HARNESS.md` Part 2 ("The shared preamble").**
 
 The rules that must survive even if that read fails:
 
@@ -42,7 +42,7 @@ The rules that must survive even if that read fails:
 
 ## The report
 
-Follow the structure in `docs/Working-Agent-PROMPT.md`'s brief — executive summary and
+Follow the structure in `docs/QA_HARNESS.md` §1.6 — executive summary and
 score, coverage, bug summary by severity, critical findings, CRUD completeness,
 screen-by-screen, end-to-end workflows, live-production safety, offline, security,
 performance, accessibility, UX, feature gaps, seed audit, priority order, release

@@ -103,14 +103,21 @@ were looked at and left for a stated reason.
 
 | Debt | State & reasoning | Effort if actioned |
 |---|---|---|
-| **`main.rs` — 2,922 lines / 101 commands** | A god-file holding the whole IPC surface + app state + some orchestration. **No longer a correctness issue** — the fire engine is generic over `tauri::Runtime` and covered by `e2e.rs`, which was the actual point of "split main.rs" (PRODUCT_AUDIT §10.2). A readability complaint now. | Medium; split commands into per-domain modules. Regression risk on live-critical code — do it with tests, not in a rush. |
-| **`Live.svelte` (1,201) & `stores/capture.js` (1,200)** | The frontend mirror of the same concentration. Works; large. | Medium |
+| **`main.rs` — 4,024 lines / 114 commands** | A god-file holding the whole IPC surface + app state + some orchestration. **No longer a correctness issue** — the fire engine is generic over `tauri::Runtime` and covered by `e2e.rs`, which was the actual point of "split main.rs" (PRODUCT_AUDIT §10.2). A readability complaint now, and it has grown ~1,100 lines since that was written. | Medium; split commands into per-domain modules. Regression risk on live-critical code — do it with tests, not in a rush. |
+| **`Live.svelte` (1,877) & `stores/capture.js` (1,908)** | The frontend mirror of the same concentration. Works; large, and both have grown by ~700 lines. | Medium |
 | **`models.rs` name collision** | It is STT-model *download*, not domain *models*. A reader expects the wrong thing. | Small (rename) |
-| **`db/mod.rs` (1,636)** mixes migrations + platform paths + inline tests | Cohesive but large. | Small–medium |
-| **~150 lines of dead legacy CSS** (`--text-faint` et al.) | Can't be deleted without eyes on a running app — global (unscoped) rules with generic class names live components still carry (PRODUCT_AUDIT §6; [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) §1). Marked deprecated instead. | Small, but needs a running app |
+| **`db/mod.rs` (2,230)** mixes migrations + platform paths + inline tests | Cohesive but large. | Small–medium |
+| **~150 lines of dead legacy CSS** (`--text-faint` et al.) | Can't be deleted without eyes on a running app — global (unscoped) rules with generic class names live components still carry ([DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) §6). The contrast failure is fixed; the rules stay. | Small, but needs a running app |
 | **First-run wizard can't be re-run** | Everything in it lives in Settings, but a skipper must know that. | Small |
-| **88 × `Result<_, String>` remain in `main.rs`** | The typed error (`error.rs`) exists and crosses the bridge; not every command uses it yet. | Medium, incremental |
-| **`docs/data/schema.sql` is transcribed, not generated** | Kept in sync by hand from `db/` (see its header). A generator would remove the drift risk. | Small (a build step) |
+| **`docs/data/schema.sql` is hand-maintained** | It is not documentation — `db/mod.rs` does `include_str!` on it, so it **is** the baseline schema the binary ships. The `ensure_*` rungs in `db/*.rs` are what evolve it afterwards, and keeping the two agreeing is manual. | Small (a generated check that the file and the rungs agree) |
+
+### Retired from this register
+
+Recorded rather than silently dropped, so a reader can tell "fixed" from "forgotten":
+
+- **`88 × Result<_, String>` in `main.rs`** — **closed.** `main.rs` now has **zero**; the typed
+  error in `error.rs` carries the one distinction that matters live (*is pressing it again worth
+  my time?*). Verify: `grep -c 'Result<[^>]*String>' src-tauri/src/main.rs`.
 
 ---
 

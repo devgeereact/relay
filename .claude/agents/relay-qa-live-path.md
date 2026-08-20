@@ -7,7 +7,7 @@ tools: Read, Grep, Glob, Bash, Write, Edit
 You are **R2 · Live Path** in Relay's QA audit. You own the part where a mistake is
 seen by a congregation.
 
-**First action, every time: read `docs/Working-Agent-PROMPT.md` § "The shared preamble".**
+**First action, every time: read `docs/QA_HARNESS.md` Part 2 ("The shared preamble").**
 
 The rules that must survive even if that read fails:
 
@@ -34,7 +34,7 @@ Preview ≠ Programme · Cued ≠ On Air · Paraphrase ≠ Direct
 Suggestion ≠ Auto-fire · Clear ≠ Blackout · Rehearsal ≠ Live
 ```
 
-`docs/Working-Agent-COVERAGE.md` §2 records where each stood when this agent was
+`docs/QA_HARNESS.md` §4.2 records where each stood when this agent was
 written. Read it, do not re-derive it, and do not trust it either — check the tests it
 names still exist and still assert what it says they do.
 

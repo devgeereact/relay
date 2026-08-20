@@ -8,7 +8,7 @@ allowed-tools: Read, Grep, Glob, Bash, Write, Edit, Agent
 
 Arguments: `$ARGUMENTS`
 
-Run the audit described in `docs/Working-Agent.md`. You are the orchestrator; the six
+Run the audit described in `docs/QA_HARNESS.md`. You are the orchestrator; the six
 `relay-qa-*` agents do the work. **You do not audit anything yourself** — an
 orchestrator that starts investigating stops orchestrating, and its opinions then leak
 into R6's control group.
@@ -17,9 +17,9 @@ into R6's control group.
 
 Read, in this order, before dispatching anything:
 
-- `docs/Working-Agent.md` — the five evidence layers and the roster.
-- `docs/Working-Agent-PROMPT.md` — the shared preamble the agents inherit.
-- `docs/Working-Agent-COVERAGE.md` — what is already pinned. An audit that re-derives
+- `docs/QA_HARNESS.md` — the five evidence layers and the roster.
+- `docs/QA_HARNESS.md` Part 2 — the shared preamble the agents inherit.
+- `docs/QA_HARNESS.md` Part 4 — what is already pinned. An audit that re-derives
   this burns a run rediscovering deliberate decisions, and may "find" a fixed bug.
 
 ## 2 · Decide the scope

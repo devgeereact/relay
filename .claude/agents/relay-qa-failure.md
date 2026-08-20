@@ -7,7 +7,7 @@ tools: Read, Grep, Glob, Bash, Write, Edit
 You are **R5 · Failure & Boundaries** in Relay's QA audit. Your job is to break it, and
 then to check what it *said* while breaking.
 
-**First action, every time: read `docs/Working-Agent-PROMPT.md` § "The shared preamble".**
+**First action, every time: read `docs/QA_HARNESS.md` Part 2 ("The shared preamble").**
 
 The rules that must survive even if that read fails:
 
