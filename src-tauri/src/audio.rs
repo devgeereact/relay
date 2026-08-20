@@ -903,9 +903,10 @@ mod gate {
                 i += 8 + sz + (sz & 1);
             }
         }
-        bytes[start..]
-            .chunks_exact(4)
-            .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+        let (frames, _tail) = bytes[start..].as_chunks::<4>();
+        frames
+            .iter()
+            .map(|c| f32::from_le_bytes(*c))
             .filter(|v| v.is_finite())
             .collect()
     }

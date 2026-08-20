@@ -57,7 +57,8 @@ impl Wall {
 }
 
 fn api(app: &tauri::AppHandle<tauri::test::MockRuntime>, rest: &str) -> serde_json::Value {
-    serde_json::from_str(&remote_api(app, rest)).expect("the remote always answers JSON")
+    serde_json::from_str(&remote_api(app, crate::remote_verb(rest), rest).body)
+        .expect("the remote always answers JSON")
 }
 
 // ───────────────────────────────────────────────────────────────────────────────
@@ -189,7 +190,7 @@ fn r6_4_a_hostile_search_query_still_produces_valid_json() {
         "search?q=Yor%C3%B9b%C3%A1%20%E1%BB%8Dl%E1%BB%8Dr%E1%BB%8Dn",
         "fire?ref=%3Cimg%20src%3Dx%20onerror%3Dalert(1)%3E",
     ] {
-        let raw = remote_api(&h, q);
+        let raw = remote_api(&h, crate::remote_verb(q), q).body;
         serde_json::from_str::<serde_json::Value>(&raw)
             .unwrap_or_else(|e| panic!("R6-4: /api/{q} produced invalid JSON ({e}): {raw}"));
     }

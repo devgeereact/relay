@@ -253,8 +253,9 @@ fn main() {
             // next/prev and fire, performed against this app. LAN-only, no auth —
             // a recorded expansion of the broadcast-only exposure (DECISIONS §35).
             let api_handle = app.handle().clone();
-            let api: channels::ApiSink =
-                std::sync::Arc::new(move |rest: &str| Some(remote_api(&api_handle, rest)));
+            let api: channels::ApiSink = std::sync::Arc::new(move |method: &str, rest: &str| {
+                Some(remote_api(&api_handle, method, rest))
+            });
             tauri::async_runtime::spawn(channels::run_output_http_server(
                 channels::report_to(app.handle()),
                 api,
@@ -1187,8 +1188,74 @@ fn search_verses(
 /// (e.g. `search?q=john`, `next`, `prev`, `fire?ref=John%203:16`, `live`). Returns
 /// a JSON body. Runs on the HTTP server task with the real AppHandle, so it drives
 /// the SAME fire/nav path the console does — one verse engine, one source of truth.
-fn remote_api<R: tauri::Runtime>(app: &tauri::AppHandle<R>, rest: &str) -> String {
+/// Routes that CHANGE what a congregation is looking at.
+///
+/// Kept as one list because it is the thing the method gate and the CORS decision
+/// must agree about, and two copies of it would be the next place they disagree.
+fn remote_mutates(route: &str) -> bool {
+    matches!(route, "fire" | "next" | "prev" | "clear" | "black")
+}
+
+/// The verb a route requires, derived from `remote_mutates` rather than restated.
+///
+/// Test-only, and it shares the list on purpose: a test that hard-coded its own
+/// verbs could keep passing while the gate it exercises drifted underneath it.
+#[cfg(test)]
+fn remote_verb(rest: &str) -> &'static str {
+    let route = rest.split('?').next().unwrap_or("").trim_end_matches('/');
+    if remote_mutates(route) {
+        "POST"
+    } else {
+        "GET"
+    }
+}
+
+/// The preacher's remote, and the answer to the drive-by in DECISIONS §35.
+///
+/// Every action used to be a side-effecting `GET` answered with
+/// `Access-Control-Allow-Origin: *`, so `<img src="http://<relay>:8032/api/black">`
+/// on any page — opened by anyone on the church network, browsing anything — blacked
+/// out the wall. No preflight, no foothold beyond a victim's browser.
+///
+/// A mutating route now requires `POST`. An `<img>`, a `<script>`, a stylesheet, a
+/// prefetch and a plain link can only issue `GET`, so the entire class is gone, and
+/// the wildcard is withheld from those routes as well so nothing cross-origin can
+/// read what happened. `search` and `live` are unchanged: they mutate nothing, and a
+/// kiosk fetching them cross-origin is a real use.
+///
+/// **This is not authentication and does not pretend to be.** The LAN control plane
+/// is deliberately unauthenticated (DECISIONS §35) — the preacher driving their own
+/// reading from a phone is the feature. This closes the drive-by, which is a
+/// different and much wider audience than "someone on the church wifi".
+fn remote_api<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    method: &str,
+    rest: &str,
+) -> channels::ApiReply {
     let (route, query) = rest.split_once('?').unwrap_or((rest, ""));
+    let route_name = route.trim_end_matches('/');
+
+    if remote_mutates(route_name) && !method.eq_ignore_ascii_case("POST") {
+        return channels::ApiReply {
+            status: 405,
+            body: format!(
+                "{{\"ok\":false,\"error\":{}}}",
+                json_str(&format!(
+                    "{route_name} changes what the congregation sees, so it needs POST, not {}. \
+                     See docs/DECISIONS.md §35.",
+                    method.to_uppercase()
+                ))
+            ),
+            cors: false,
+        };
+    }
+    let ok = |body: String| channels::ApiReply {
+        status: 200,
+        body,
+        // Withheld from the mutating routes even when they succeed: a cross-origin
+        // caller must not be able to read what it just did to the wall.
+        cors: !remote_mutates(route_name),
+    };
     let param = |key: &str| -> Option<String> {
         query.split('&').find_map(|kv| {
             let (k, v) = kv.split_once('=')?;
@@ -1196,7 +1263,7 @@ fn remote_api<R: tauri::Runtime>(app: &tauri::AppHandle<R>, rest: &str) -> Strin
         })
     };
 
-    match route.trim_end_matches('/') {
+    ok(match route_name {
         "search" => {
             let q = param("q").unwrap_or_default();
             let rows = {
@@ -1221,17 +1288,17 @@ fn remote_api<R: tauri::Runtime>(app: &tauri::AppHandle<R>, rest: &str) -> Strin
                 .collect();
             format!("{{\"ok\":true,\"results\":[{}]}}", items.join(","))
         }
-        "fire" => {
-            let Some(reference) = param("ref") else {
-                return "{\"ok\":false,\"error\":\"no reference\"}".to_string();
-            };
-            match manual_fire(app.clone(), app.state::<Db>(), reference, None, None) {
-                Ok(()) => format!("{{\"ok\":true,{}}}", live_json(app)),
-                Err(e) => format!("{{\"ok\":false,\"error\":{}}}", json_str(&e.to_string())),
+        "fire" => match param("ref") {
+            None => "{\"ok\":false,\"error\":\"no reference\"}".to_string(),
+            Some(reference) => {
+                match manual_fire(app.clone(), app.state::<Db>(), reference, None, None) {
+                    Ok(()) => format!("{{\"ok\":true,{}}}", live_json(app)),
+                    Err(e) => format!("{{\"ok\":false,\"error\":{}}}", json_str(&e.to_string())),
+                }
             }
-        }
+        },
         "next" | "prev" => {
-            let dir = if route == "next" {
+            let dir = if route_name == "next" {
                 detection::NavCommand::Next
             } else {
                 detection::NavCommand::Previous
@@ -1266,7 +1333,7 @@ fn remote_api<R: tauri::Runtime>(app: &tauri::AppHandle<R>, rest: &str) -> Strin
         },
         "live" => format!("{{\"ok\":true,{}}}", live_json(app)),
         _ => "{\"ok\":false,\"error\":\"unknown\"}".to_string(),
-    }
+    })
 }
 
 /// The current live verse (reference + text) as JSON fields, for the remote to
