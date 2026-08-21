@@ -1,7 +1,8 @@
 import { defineConfig } from 'vite';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
 
-// Relay = client NN=03 in the global port registry (~/.claude/CLAUDE.md).
+// Relay = project block NN=03 in the workspace port registry
+// (~/.claude/CLAUDE.md, "Dev-server ports").
 // App surface (operator console) is pinned to 5032; strictPort makes a clash
 // fail loud instead of drifting. Tauri's devUrl in tauri.conf.json must match.
 // Svelte warnings that are not warnings — they are bugs that reach the operator
@@ -35,6 +36,10 @@ export default defineConfig({
     }),
   ],
   clearScreen: false,
+  // A second checkout of this repo keeps 5032 deliberately: a diverging port
+  // committed in a branch lands on main at merge. To run two copies at once,
+  // override at the CLI for the one you care less about, and never in this file:
+  // npm run dev -- --port 5033
   server: {
     port: 5032,
     strictPort: true,
