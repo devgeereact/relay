@@ -1,0 +1,62 @@
+name: CodeQL
+
+# Free on public repositories, and unused here until now.
+#
+# Relay is a Tauri desktop app: the Svelte front end runs in a webview that is
+# wired to Rust commands over the Tauri IPC bridge, so a DOM sink or a tainted
+# path in the UI layer is not sandboxed the way a browser tab would be — it is
+# one `invoke` away from the filesystem. That is the class of bug CodeQL is good
+# at and review is bad at.
+#
+# Scope is javascript-typescript only. CodeQL does support Rust, but adding it
+# means building src-tauri in CI, which the existing Rust job already does on a
+# macOS + Windows matrix; a third build for analysis is not worth the minutes
+# until the JS results are being acted on.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # Weekly, so newly published queries reach an unchanged codebase too. Most
+    # findings arrive from updated rules, not from new commits.
+    - cron: '23 5 * * 1'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    name: analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    permissions:
+      # Required to upload results to the Security tab.
+      security-events: write
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        language: ['javascript-typescript']
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Initialise CodeQL
+        uses: github/codeql-action/init@v4.37.7
+        with:
+          languages: ${{ matrix.language }}
+          # security-extended adds lower-severity security queries; the default
+          # pack alone is thin for an app that bridges a webview to native code.
+          queries: security-extended
+
+      # No build step: Vite output adds nothing CodeQL cannot read from source.
+      - name: Analyse
+        uses: github/codeql-action/analyze@v4.37.7
+        with:
+          category: '/language:${{ matrix.language }}'
