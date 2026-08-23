@@ -36,7 +36,8 @@
     Math.round(
       (Object.keys(CATALOGUES[code] ?? {}).filter((k) => !k.startsWith('_')).length / TOTAL) * 100,
     );
-  import { capture, meter, templates, initAudio, startCapture, stopCapture, setThresholds, setSttLanguage, setInputDevice, listTranslations, getActiveTranslation, setActiveTranslation, localIp, loadTemplates, getContentTemplates, setContentTemplate, getCrashReporting, setCrashReporting, serviceTargetMinutes, loadServiceTarget, setServiceTarget } from '../stores/capture.js';
+  import { capture, meter, templates, initAudio, startCapture, stopCapture, setThresholds, setSttLanguage, setInputDevice, listTranslations, getActiveTranslation, setActiveTranslation, localIp, loadTemplates, getContentTemplates, setContentTemplate, getCrashReporting, setCrashReporting, serviceTargetMinutes, loadServiceTarget, setServiceTarget, latencyReport, latencyReset, latencySetEnabled } from '../stores/capture.js';
+  import { diagnose, drift } from '../latency.js';
 
   // ─────────────────────────────────────────────────────────────────────────
   // SECTION NAV. The screen is one big config surface split into ref-matched
@@ -317,6 +318,44 @@
   let dataLoaded = false; // async settings data has resolved at least once
   let lanIp = '';
 
+  // ── LIVE LATENCY ────────────────────────────────────────────────────────────
+  //
+  // The numbers a field test is graded on, on the machine and in the room where
+  // it matters. Polled only while this section is open — a diagnostic that costs
+  // a bridge round-trip every two seconds for the whole service is a diagnostic
+  // that changes what it measures.
+  let lat = null;
+  let latTimer = null;
+  $: latVerdict = lat ? diagnose(lat) : null;
+  $: latDrift = lat ? drift(lat) : null;
+  $: latRows = (lat?.metrics ?? []).filter((m) => m.samples > 0);
+  async function refreshLatency() {
+    lat = await latencyReport(0);
+  }
+  // Start and stop with the section, not with the component.
+  $: if (section === 'diagnostics') startLatencyPoll();
+  else stopLatencyPoll();
+  function startLatencyPoll() {
+    if (latTimer) return;
+    refreshLatency();
+    latTimer = setInterval(refreshLatency, 2000);
+  }
+  function stopLatencyPoll() {
+    if (!latTimer) return;
+    clearInterval(latTimer);
+    latTimer = null;
+  }
+  async function resetLatency() {
+    await latencyReset();
+    await refreshLatency();
+  }
+  async function toggleLatency(on) {
+    // Reflect what Rust says is in force, never what was asked for.
+    const now = await latencySetEnabled(on);
+    if (now !== null && lat) lat = { ...lat, enabled: now };
+    await refreshLatency();
+  }
+
   // ─── System overview (right rail) ───────────────────────────────────────
   let appVersion = '';
   const environment = import.meta.env?.DEV ? 'Development' : 'Production';
@@ -402,7 +441,12 @@
       lanIp = '';
     }
   });
-  onDestroy(() => uptimeTimer && clearInterval(uptimeTimer));
+  onDestroy(() => {
+    if (uptimeTimer) clearInterval(uptimeTimer);
+    // A polling timer that outlives its view is exactly the kind of thing a
+    // long-service stability test is supposed to catch, so this one does not.
+    stopLatencyPoll();
+  });
 
   async function pickTranslation(id) {
     const prev = activeTranslation;
@@ -964,6 +1008,50 @@
           <div class="s-netrow"><span class="s-netk">Version</span><span class="s-netv r-mono">{appVersion || '—'} · {environment}</span></div>
           <div class="s-netrow"><span class="s-netk">Uptime (this run)</span><span class="s-netv r-mono">{uptime}</span></div>
         </div>
+
+        <div class="s-grouphead">Live latency</div>
+        <p class="s-tr-note">
+          How long it takes a spoken word to reach the operator's screen, and a spoken reference to reach the wall — measured on <b>this</b> machine, in <b>this</b> room, on the model you are actually running. Milliseconds. Nothing here leaves the computer.
+          <br /><br />
+          The clock starts when audio reaches the speech engine. Assembling it from the microphone adds a further {lat?.capture_front_end_ms ?? 400}ms at most (about half that on average), and the end-to-end row already includes it.
+        </p>
+        {#if latVerdict}
+          <div class="s-netrow"><span class="s-netk">Verdict</span><span class="s-netv">{latVerdict.verdict}</span></div>
+          <p class="s-note">{latVerdict.detail}</p>
+        {/if}
+        {#if latRows.length}
+          <div class="s-cardbox">
+            <div class="s-netrow"><span class="s-netk">measurement</span><span class="s-netv r-mono">n · median · P95 · worst</span></div>
+            {#each latRows as m}
+              <div class="s-netrow">
+                <span class="s-netk">{m.metric.replace(/_/g, ' ')}</span>
+                <span class="s-netv r-mono">{m.samples} · {Math.round(m.p50_ms ?? 0)}ms · {Math.round(m.p95_ms ?? 0)}ms · {Math.round(m.worst_ms ?? 0)}ms</span>
+              </div>
+            {/each}
+            <div class="s-netrow"><span class="s-netk">transcript updates / second</span><span class="s-netv r-mono">{(lat?.transcript_updates_per_s ?? 0).toFixed(2)}</span></div>
+            <div class="s-netrow"><span class="s-netk">partials dropped (queue full)</span><span class="s-netv r-mono">{lat?.dropped_partials ?? 0}</span></div>
+          </div>
+        {:else}
+          <p class="s-note">Nothing measured yet. Start listening and speak for a few seconds.</p>
+        {/if}
+        {#if latDrift}
+          <p class="s-note">
+            {#if latDrift.growing}
+              <b>Latency is growing.</b> It averaged {Math.round(latDrift.early)}ms early in this session and {Math.round(latDrift.late)}ms recently — the pipeline is falling further behind the longer it runs.
+            {:else}
+              Steady: {Math.round(latDrift.early)}ms early in this session, {Math.round(latDrift.late)}ms recently.
+            {/if}
+          </p>
+        {/if}
+        <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;">
+          <button class="r-btn" on:click={resetLatency} disabled={!$capture.available}>Start a fresh measurement</button>
+          <button
+            class="r-btn"
+            on:click={() => toggleLatency(!(lat?.enabled ?? true))}
+            disabled={!$capture.available}
+          >{(lat?.enabled ?? true) ? 'Stop measuring' : 'Start measuring'}</button>
+        </div>
+        <p class="s-note">Measuring is on by default and costs a handful of timestamps per decode. Turning it off is here so a field test can prove the instrument is not the delay.</p>
 
       {:else if section === 'advanced'}
         <div class="s-grouphead first">Crash Reporting</div>

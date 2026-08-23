@@ -19,6 +19,7 @@ mod error;
 /// regresses, not to ship. `cargo test eval -- --nocapture` prints the scorecard.
 #[cfg(test)]
 mod eval;
+mod latency;
 mod models;
 mod pipeline;
 mod proimport;
@@ -303,6 +304,10 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             greet,
             ping,
+            latency_report,
+            latency_mark,
+            latency_reset,
+            latency_set_enabled,
             search_scripture,
             list_plans,
             create_plan,
@@ -512,6 +517,8 @@ fn resolve_fire(
         template_json,
         template_pinned,
         matched_text,
+        // Filled in by the caller when a decode pass is behind this fire.
+        trace_id: None,
     }
 }
 
@@ -734,6 +741,7 @@ fn emit_detections<R: tauri::Runtime>(
     text: &str,
     now_ms: u64,
     is_final: bool,
+    trace: Option<u64>,
 ) {
     // Detection disarmed → transcribe but surface nothing. Manual override is a
     // separate path and stays live.
@@ -751,7 +759,10 @@ fn emit_detections<R: tauri::Runtime>(
     // command contending the same lock (this was the freeze on Start listening).
     let mut events: Vec<DetectionEvent> = Vec::new();
     let mut broadcasts: Vec<OutputContent> = Vec::new();
-    {
+    // Latency stamps sampled under the locks and applied after they are released.
+    // The block yields them so `detected_at` is INITIALISED by the sample rather
+    // than pre-seeded with a value no path ever reads.
+    let (detected_at, authorised_at) = {
         let (Ok(conn), Ok(mut router), Ok(mut context)) =
             (db.0.lock(), routing.0.lock(), ctx.0.lock())
         else {
@@ -841,6 +852,14 @@ fn emit_detections<R: tauri::Runtime>(
         if candidates.is_empty() {
             return;
         }
+        // A reference exists in this transcript. Sampled, not stamped: the locks
+        // above are still held, and `latency` takes a mutex of its own. It is a
+        // leaf lock that calls nothing, so there is no cycle to deadlock on — but
+        // rule 2 in CLAUDE.md is about not reaching outward while holding a lock,
+        // and the discipline is worth more than the two lines it costs. The stamps
+        // are applied below, after every lock is released.
+        let detected_at = crate::latency::now_us();
+        let mut authorised_at: Option<u64> = None;
 
         // Dedup by reference, keeping the strongest evidence per verse — see
         // pipeline::better for why this is NOT simply the highest confidence.
@@ -899,6 +918,10 @@ fn emit_detections<R: tauri::Runtime>(
             // Auto-detection has no plan cue behind it — content-type default.
             let mut fire =
                 resolve_fire(&conn, c.r, c.conf, c.method, status, None, c.matched, None);
+            // Which decode pass put this verse here. Rides to the console and to
+            // every output so the last leg — pixels on a projector — can be timed
+            // rather than assumed.
+            fire.trace_id = trace;
 
             // Parsed, but the verse doesn't exist (garbled speech readily yields
             // "Psalms 23:99"). Demote to a suggestion rather than broadcasting a
@@ -909,6 +932,11 @@ fn emit_detections<R: tauri::Runtime>(
             }
 
             if fire.may_broadcast() {
+                // The gate said yes and the verse exists: this is the instant a
+                // fire became authorised. Everything after it is delivery.
+                if authorised_at.is_none() {
+                    authorised_at = Some(crate::latency::now_us());
+                }
                 // Stage the passage so "next" walks a range / whole chapter.
                 context.note_passage(&fire.reference, end);
                 // Fill "up next" from the now-staged passage (bounded by its end).
@@ -926,13 +954,31 @@ fn emit_detections<R: tauri::Runtime>(
             }
             events.push(fire.event());
         }
-    } // locks released here
+        (detected_at, authorised_at)
+    }; // locks released here
 
+    if let Some(id) = trace {
+        crate::latency::stamp_at(id, crate::latency::Stage::ReferenceDetected, detected_at);
+        if let Some(at) = authorised_at {
+            crate::latency::stamp_at(id, crate::latency::Stage::FireAuthorised, at);
+        }
+    }
+
+    let sent_anything = !broadcasts.is_empty();
     for content in broadcasts {
         broadcast_with_clock(handle, content);
     }
     for ev in events {
         let _ = handle.emit("detection://match", ev);
+    }
+    // Stamped AFTER the broadcast returns, not before it: the kiosk fan-out and
+    // the Tauri emit are on this path and are exactly the kind of cost a
+    // "reference detected → fired" number is supposed to expose. Only when
+    // something actually left for a wall — a window that produced suggestions
+    // only has no fire to time, and counting it as an instant one would flatter
+    // the metric with the passes that did the least work.
+    if let (Some(id), true) = (trace, sent_anything) {
+        crate::latency::stamp(id, crate::latency::Stage::FireSent);
     }
 }
 
@@ -1167,6 +1213,57 @@ fn greet(name: &str) -> String {
 #[tauri::command]
 fn ping() -> bool {
     true
+}
+
+/// THE LATENCY REPORT — where the time went, this session.
+///
+/// `recent` is how many complete traces to include for reading a single spoken
+/// reference end to end; the percentiles cover the whole session regardless.
+///
+/// This is a diagnostic and it is deliberately available on a packaged build. A
+/// church's laptop in a church's room is the only place the numbers are real, and
+/// a measurement that needs a developer build is a measurement nobody in a church
+/// will ever take.
+#[tauri::command]
+fn latency_report(recent: Option<usize>) -> latency::Report {
+    latency::report(recent.unwrap_or(20).min(latency_recent_cap()))
+}
+
+/// Upper bound on `latency_report`'s detail list, so a frontend asking for
+/// `usize::MAX` cannot make the bridge serialise the whole ring on every poll.
+fn latency_recent_cap() -> usize {
+    64
+}
+
+/// The console or an output page reporting that it has PAINTED something.
+///
+/// `at_epoch_ms` is the surface's own `Date.now()`; Rust also stamps the arrival,
+/// and the gap between the two is the IPC bridge — reported, not hidden, because
+/// "the transcript is late" has a completely different fix depending on which
+/// side of that gap the time went.
+///
+/// Unknown stage names are ignored rather than erroring: this is telemetry on a
+/// hot path and a rejected mark must never become an exception in a render.
+#[tauri::command]
+fn latency_mark(trace_id: u64, stage: String, at_epoch_ms: u64) {
+    if let Some(st) = latency::Stage::from_wire(&stage) {
+        latency::frontend_mark(trace_id, st, at_epoch_ms);
+    }
+}
+
+/// Start a clean measurement run — for a field test that wants the numbers for
+/// THIS service and not for the hour the app spent idle before it.
+#[tauri::command]
+fn latency_reset() {
+    latency::reset();
+}
+
+/// Turn measurement off (or back on). On by default; the cost is a few integer
+/// stamps against a decode measured in hundreds of milliseconds.
+#[tauri::command]
+fn latency_set_enabled(on: bool) -> bool {
+    latency::set_enabled(on);
+    latency::is_enabled()
 }
 
 /// Scripture search for the Planner — resolve a query to verses to add as cues.
@@ -3069,6 +3166,109 @@ fn apply_profile(stt: &Stt, routing: &Routing, p: &db::VoiceProfile) -> error::R
 ///
 /// Returns None (audio-only) when no model is installed. That is a supported
 /// state, not a failure: manual fire and plan playback still work.
+/// How many transcripts may be waiting for detection before back-pressure bites.
+///
+/// Small on purpose. Detection costs single-digit milliseconds against a decode
+/// costing hundreds, so this queue should never hold more than one entry in
+/// practice; its whole job is to be a bounded place for the exception rather than
+/// an unbounded one. A queue that can grow without limit does not prevent
+/// falling behind — it hides it, and then hides it for the rest of the service.
+const DETECT_QUEUE: usize = 8;
+
+/// Everything that happens BECAUSE of a transcript: the language-stability watch,
+/// persistence, spoken commands, and reference detection.
+///
+/// ── Why this is not in the STT callback any more ────────────────────────────
+///
+/// It used to be, and that made the decoder wait for it. The callback ran on the
+/// whisper worker thread, between one decode and the worker's next `recv()`, so
+/// the semantic scan, three lock acquisitions, a DB write, the verse lookup, the
+/// Tauri emit and the kiosk fan-out all sat directly on the cadence. Every
+/// millisecond spent deciding what the LAST window said was a millisecond the
+/// next window was not being decoded in — and on a fire it is not milliseconds:
+/// `persist_fire` writes to SQLite and `broadcast_content` walks every connected
+/// output, all before the worker may look at the microphone again.
+///
+/// That is a serial dependency between two things that have no reason to be
+/// serial. The decoder's only job is to turn audio into text as fast as the
+/// machine allows; deciding what the text MEANS can happen alongside the next
+/// decode, and the answer is the same either way.
+///
+/// Order is still exact: one consumer thread, one queue, so a final can never
+/// overtake the partial before it and a spoken "next" cannot be applied out of
+/// sequence.
+fn handle_transcript(
+    handle: &tauri::AppHandle,
+    lang_stability: &Mutex<stt::LanguageStability>,
+    update: stt::TranscriptUpdate,
+) {
+    if update.is_final {
+        println!("stt[{}]: {}", update.language, update.text);
+        // Compute under the lock, release, THEN emit — CLAUDE.md rule #2.
+        let unstable = lang_stability
+            .lock()
+            .ok()
+            .and_then(|mut s| s.observe(&update.language));
+        if let Some(langs) = unstable {
+            println!("stt: language auto-detect is unstable ({langs:?})");
+            let _ = handle.emit("stt://language_unstable", langs);
+        }
+        persist_transcript(handle, &update.text, &update.language);
+        // Spoken "next"/"back" navigates from the current verse.
+        //
+        // This runs off the operator's thread, with nobody to return a result to —
+        // exactly like the spoken "clear the screen" below. So a nav that did
+        // nothing is PUSHED to the operator rather than swallowed: the preacher
+        // says "next", the wall does not move, and the console says why.
+        if let Some(cmd) = detection::detect_command(&update.text) {
+            match handle_nav(handle, cmd) {
+                Ok(NavResult::Fired { .. }) => {}
+                Ok(blocked) => {
+                    let _ = handle.emit("nav://blocked", blocked);
+                }
+                Err(e) => {
+                    eprintln!("nav failed: {e}");
+                    let _ = handle.emit("output://panic_failed", e.to_string());
+                }
+            }
+            latency::close(update.trace_id);
+            return;
+        }
+        // Spoken "clear the screen" / "blackout".
+        if detection::detect_clear(&update.text) {
+            clear_or_report(handle);
+            latency::close(update.trace_id);
+            return;
+        }
+        // Spoken in-passage jump — "chapter 5 verse 1", "verse 4".
+        if handle_passage_nav(handle, &update.text) {
+            latency::close(update.trace_id);
+            return;
+        }
+    }
+    // Detect references, then route each through the confidence gate.
+    //
+    // The gate's clock is WALL TIME, not `update.timestamp_ms`. The audio
+    // position advances in backlog-sized jumps and silently defeated the
+    // repeat cooldown — see `router_clock_ms`.
+    emit_detections(
+        handle,
+        &update.text,
+        router_clock_ms(),
+        update.is_final,
+        Some(update.trace_id),
+    );
+}
+
+/// Build the STT engine and wire its transcript callback into the pipeline.
+///
+/// Extracted from `setup` so it can be run AGAIN, at runtime, the moment the
+/// operator finishes downloading a model. Without this, a 148 MB download would
+/// end with "now quit and reopen Relay" — a miserable last step for the very
+/// first thing a new user does.
+///
+/// Returns None (audio-only) when no model is installed. That is a supported
+/// state, not a failure: manual fire and plan playback still work.
 fn build_stt(handle: &tauri::AppHandle) -> Option<SttEngine> {
     // Which model the operator picked, if any. Read and RELEASE the lock before
     // constructing the engine — rule 2, and `try_load` reads a ~1.6 GB file.
@@ -3077,60 +3277,63 @@ fn build_stt(handle: &tauri::AppHandle) -> Option<SttEngine> {
         .and_then(|db| db.0.lock().ok().and_then(|c| stt_model_setting(&c)));
     let path = stt::model_path_for(chosen.as_deref())?;
     let handle = handle.clone();
-    // Auto-detect re-elects a language every window and, on accented speech, does
-    // not settle — which degrades the decode and looks exactly like the AI being
-    // bad. Say so once, out loud, because the operator has the control that fixes
-    // it and no reason to suspect they should touch it. See `LanguageStability`.
-    let lang_stability = Mutex::new(stt::LanguageStability::default());
+
+    // The detection thread. See `handle_transcript` for why it is not the STT
+    // thread. Bounded, so a stall here can never become unbounded memory growth
+    // in the middle of a service.
+    let (tx, rx) = std::sync::mpsc::sync_channel::<stt::TranscriptUpdate>(DETECT_QUEUE);
+    let consumer = handle.clone();
+    if let Err(e) = std::thread::Builder::new()
+        .name("relay-detect".into())
+        .spawn(move || {
+            // Auto-detect re-elects a language every window and, on accented speech,
+            // does not settle — which degrades the decode and looks exactly like the
+            // AI being bad. Say so once, out loud, because the operator has the
+            // control that fixes it and no reason to suspect they should touch it.
+            // See `LanguageStability`.
+            let lang_stability = Mutex::new(stt::LanguageStability::default());
+            for update in rx {
+                handle_transcript(&consumer, &lang_stability, update);
+            }
+        })
+    {
+        // A thread that will not spawn is not a reason to run deaf, but it IS a
+        // reason to say so: without this consumer nothing is ever detected, and
+        // silence here would look exactly like an AI that never hears anything.
+        eprintln!("stt: could not start the detection thread ({e}) — no detection this session");
+    }
+
     match SttEngine::try_load(path, move |update| {
+        // The operator's eyes first. This is the cheapest thing on the path and
+        // the only one they are waiting on, so it happens before the hand-off and
+        // before anything decides what the words MEAN.
         let _ = handle.emit("stt://transcript", &update);
-        if update.is_final {
-            println!("stt[{}]: {}", update.language, update.text);
-            // Compute under the lock, release, THEN emit — CLAUDE.md rule #2.
-            let unstable = lang_stability
-                .lock()
-                .ok()
-                .and_then(|mut s| s.observe(&update.language));
-            if let Some(langs) = unstable {
-                println!("stt: language auto-detect is unstable ({langs:?})");
-                let _ = handle.emit("stt://language_unstable", langs);
-            }
-            persist_transcript(&handle, &update.text, &update.language);
-            // Spoken "next"/"back" navigates from the current verse.
-            //
-            // This runs on the STT thread, which has nobody to return a result to —
-            // exactly like the spoken "clear the screen" below. So a nav that did
-            // nothing is PUSHED to the operator rather than swallowed: the preacher
-            // says "next", the wall does not move, and the console says why.
-            if let Some(cmd) = detection::detect_command(&update.text) {
-                match handle_nav(&handle, cmd) {
-                    Ok(NavResult::Fired { .. }) => {}
-                    Ok(blocked) => {
-                        let _ = handle.emit("nav://blocked", blocked);
-                    }
-                    Err(e) => {
-                        eprintln!("nav failed: {e}");
-                        let _ = handle.emit("output://panic_failed", e.to_string());
-                    }
+        let is_final = update.is_final;
+        let trace = update.trace_id;
+        match tx.try_send(update) {
+            Ok(()) => {}
+            Err(std::sync::mpsc::TrySendError::Full(update)) => {
+                if is_final {
+                    // A final carries persistence and the spoken commands, so it is
+                    // never dropped — this blocks the decoder, which is the correct
+                    // trade at the one point where dropping would lose something a
+                    // partial cannot re-supply.
+                    let _ = tx.send(update);
+                } else {
+                    // A partial is one revision of a window that will be decoded
+                    // again in a moment, so dropping it loses nothing permanent —
+                    // and dropping it is far better than stalling the decoder, which
+                    // would make the very backlog that caused the drop worse.
+                    // Counted, because silent shedding is how a pipeline gets to
+                    // "fine" while missing half its work.
+                    latency::note_dropped_partial();
+                    latency::close(trace);
                 }
-                return;
             }
-            // Spoken "clear the screen" / "blackout".
-            if detection::detect_clear(&update.text) {
-                clear_or_report(&handle);
-                return;
-            }
-            // Spoken in-passage jump — "chapter 5 verse 1", "verse 4".
-            if handle_passage_nav(&handle, &update.text) {
-                return;
+            Err(std::sync::mpsc::TrySendError::Disconnected(_)) => {
+                latency::close(trace);
             }
         }
-        // Detect references, then route each through the confidence gate.
-        //
-        // The gate's clock is WALL TIME, not `update.timestamp_ms`. The audio
-        // position advances in backlog-sized jumps and silently defeated the
-        // repeat cooldown — see `router_clock_ms`.
-        emit_detections(&handle, &update.text, router_clock_ms(), update.is_final);
     }) {
         Ok(e) => {
             println!("stt: model loaded from {}", e.model_path().display());

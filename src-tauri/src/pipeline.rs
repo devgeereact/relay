@@ -105,6 +105,10 @@ pub struct Fire {
     /// away at the IPC boundary, which meant the operator was asked to accept or
     /// reject the AI's judgement while being shown nothing but a percentage.
     pub matched_text: Option<String>,
+    /// The decode pass this verse came out of, when speech put it here. Set by
+    /// `emit_detections`; `None` on every human-driven path, which is exactly the
+    /// distinction the latency report needs (see `OutputContent::trace_id`).
+    pub trace_id: Option<u64>,
 }
 
 impl Fire {
@@ -134,6 +138,7 @@ impl Fire {
     pub fn output(&self) -> OutputContent {
         OutputContent {
             kind: Some("scripture".into()),
+            trace_id: self.trace_id,
             reference: self.key.clone(),
             text: self.text.clone(),
             translation: self.translation.clone(),
@@ -161,6 +166,7 @@ impl Fire {
             text: self.text.clone(),
             translation: self.translation.clone(),
             matched_text: self.matched_text.clone(),
+            trace_id: self.trace_id,
         }
     }
 }
@@ -191,6 +197,9 @@ pub struct DetectionEvent {
     pub translation: Option<String>,
     /// The evidence. See `Fire::matched_text`.
     pub matched_text: Option<String>,
+    /// The decode pass behind this detection. See `OutputContent::trace_id`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trace_id: Option<u64>,
 }
 
 /// A gate candidate: the anchor verse plus how it should route, and whether it is
@@ -267,6 +276,7 @@ mod tests {
             template_json: Some(r#"{"style":{}}"#.into()),
             template_pinned: false,
             matched_text: Some("john three sixteen".into()),
+            trace_id: None,
         }
     }
 

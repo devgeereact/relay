@@ -94,6 +94,17 @@ pub struct OutputContent {
     pub countdown_to: Option<i64>,
     /// Message shown in place of the timer when the countdown reaches zero.
     pub countdown_done: Option<String>,
+    /// The decode pass that produced this content (`latency::Trace`), when it came
+    /// from speech. Rides to every output — the native window and every kiosk
+    /// browser source — purely so the page can report back the instant it painted,
+    /// which is the only way to measure the last leg of the chain (fire sent →
+    /// pixels on a projector) rather than assuming it is small.
+    ///
+    /// `None` for anything a human fired: an operator's own action has no decode
+    /// pass behind it, and inventing one would put manual fires into a percentile
+    /// that is supposed to describe the AI's path.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trace_id: Option<u64>,
 }
 
 /// A connected physical display, shaped for the Channels UI. `index` is the
@@ -525,6 +536,10 @@ fn kiosk_content_json(content: &OutputContent) -> String {
         "service_target_ms": content.service_target_ms,
         "countdown_to": content.countdown_to,
         "countdown_done": content.countdown_done,
+        // Rides to every kiosk client purely so it can report back when it painted
+        // — the last leg of the latency chain, over the real church network. See
+        // `OutputContent::trace_id` and the `rendered` message the hub accepts.
+        "trace_id": content.trace_id,
     })
     .to_string()
 }
@@ -945,6 +960,35 @@ pub async fn run_kiosk_server(
                         Some(Ok(tokio_tungstenite::tungstenite::Message::Text(txt))) => {
                             // Client hello → remember its template + send it now.
                             if let Ok(v) = serde_json::from_str::<serde_json::Value>(&txt) {
+                                // A kiosk page reporting that it has PAINTED a verse.
+                                //
+                                // This is the ONLY inbound message that is not a
+                                // hello, and it is deliberately inert: it stamps a
+                                // latency trace and touches nothing else. A kiosk
+                                // client still cannot push to the screens (the
+                                // read-only guarantee this server is built on) —
+                                // the worst a hostile client on the LAN can do with
+                                // it is make a diagnostic number wrong, and only for
+                                // a trace id it managed to guess inside the ten
+                                // seconds one stays open.
+                                //
+                                // It exists because the last leg — fire sent to
+                                // pixels on the projector, over the real church
+                                // network — is the one stage nothing else can see,
+                                // and "the output path is probably fast" is not a
+                                // measurement.
+                                if v.get("kind").and_then(|k| k.as_str()) == Some("rendered") {
+                                    if let (Some(id), Some(at)) = (
+                                        v.get("trace_id").and_then(|i| i.as_u64()),
+                                        v.get("at").and_then(|a| a.as_u64()),
+                                    ) {
+                                        crate::latency::frontend_mark(
+                                            id,
+                                            crate::latency::Stage::OutputRendered,
+                                            at,
+                                        );
+                                    }
+                                }
                                 if v.get("kind").and_then(|k| k.as_str()) == Some("hello") {
                                     if let Some(id) = v.get("template_id").and_then(|i| i.as_i64()) {
                                         // Replace, don't add: a client that says
