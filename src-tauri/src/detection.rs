@@ -1134,6 +1134,24 @@ fn parse_reference(
     // one never arrives, this is not a whole-chapter reference — it is a reference
     // cut off mid-sentence. See the truncation guard below.
     let mut verse_marker = false;
+    // "chapter nine AND verse twenty-four" — the connector is ordinary English and
+    // it was throwing the verse away.
+    //
+    // Measured in a real service (2026-08-23): every reference spoken this way
+    // reached the wall as VERSE 1, at 0.88, unattended. "1 Corinthians chapter 9
+    // and verse 24" put 1 Corinthians 9:1 in front of a congregation; the same
+    // phrasing produced 2 Chronicles 15:1 and 26:1, Proverbs 3:1, Isaiah 61:1,
+    // Hebrews 6:1, Genesis 12:1 and Psalms 23:1 in one sitting. Without the "and"
+    // the identical sentence parses correctly to 9:24 at 0.95 — so this was one
+    // stop-word between the operator and the right verse.
+    //
+    // Skipped ONLY when a verse word actually follows. "Hebrews 12 and 13" is two
+    // chapters and must stay two chapters; "and" before a digit is left alone.
+    if tokens.get(i).is_some_and(|t| is_ref_connector(t))
+        && tokens.get(i + 1).is_some_and(|t| is_verse_word(t))
+    {
+        i += 1;
+    }
     while let Some(t) = tokens.get(i) {
         if is_verse_word(t) || *t == ":" {
             verse_marker = true;
@@ -1473,6 +1491,15 @@ fn numerals() -> &'static Numerals {
 /// "chapter" in any tier-1 language: Swahili "sura", Hausa "sura"/"babi".
 fn is_chapter_word(t: &str) -> bool {
     matches!(t, "chapter" | "chap" | "ch") || numerals().chapter_words.contains(t)
+}
+
+/// A word that can sit between a chapter number and the "verse" keyword without
+/// meaning anything: "chapter 9 AND verse 24", "chapter 9, verse 24".
+///
+/// Deliberately tiny. This is only ever consulted when the very next token is a
+/// verse word, so it cannot swallow a connector that joins two numbers.
+fn is_ref_connector(t: &str) -> bool {
+    matches!(t, "and" | "," | "&")
 }
 
 /// "verse" in any tier-1 language: Swahili "mstari"/"aya", Hausa "aya".
@@ -5171,5 +5198,99 @@ mod spoken_nav_speaks_the_tier1_languages {
         assert_eq!(detect_passage_nav("tano"), None);
         assert_eq!(detect_passage_nav("nne"), None);
         assert!(detect_bare_verses("hakuna marejeo hapa").is_empty());
+    }
+}
+
+#[cfg(test)]
+mod chapter_and_verse {
+    use super::*;
+
+    /// THE BUG, from a real service on 2026-08-23.
+    ///
+    /// "chapter N **and** verse M" is ordinary English and the connector was
+    /// throwing the verse away: the reference parsed as whole-chapter and Relay put
+    /// **verse 1** on the wall at 0.88, unattended. One sitting produced
+    /// 1 Corinthians 9:1, 2 Chronicles 15:1 and 26:1, Proverbs 3:1, Isaiah 61:1,
+    /// Hebrews 6:1, Genesis 12:1 and Psalms 23:1 this way. Removing the word made
+    /// the identical sentence parse correctly, which is what identified it.
+    #[test]
+    fn chapter_n_and_verse_m_keeps_the_verse() {
+        for (text, book, ch, v) in [
+            (
+                "1 Corinthians chapter 9 and verse 24",
+                "1 Corinthians",
+                9,
+                24,
+            ),
+            (
+                "2 Chronicles chapter 15 and verse 12",
+                "2 Chronicles",
+                15,
+                12,
+            ),
+            ("Proverbs chapter 3 and verse 5", "Proverbs", 3, 5),
+            ("Isaiah chapter 61 and verse 2", "Isaiah", 61, 2),
+        ] {
+            let hits = detect_direct(text);
+            let m = hits
+                .first()
+                .unwrap_or_else(|| panic!("{text:?} parsed to nothing"));
+            assert!(
+                !m.whole_chapter,
+                "{text:?} threw the verse away and became a whole-chapter reading — \
+                 that puts verse 1 on a wall"
+            );
+            assert_eq!(
+                (
+                    m.reference.book.as_str(),
+                    m.reference.chapter,
+                    m.reference.verse
+                ),
+                (book, ch, v),
+                "{text:?} parsed to the wrong verse"
+            );
+        }
+    }
+
+    /// The connector must be worth the same as no connector. If these ever diverge
+    /// again, one phrasing of the same sentence is reaching a different wall.
+    #[test]
+    fn the_connector_costs_nothing() {
+        let with = detect_direct("1 Corinthians chapter 9 and verse 24");
+        let without = detect_direct("1 Corinthians chapter 9 verse 24");
+        assert_eq!(with.len(), without.len());
+        assert_eq!(with[0].reference, without[0].reference);
+        assert!(
+            (with[0].confidence - without[0].confidence).abs() < f32::EPSILON,
+            "the same reference scored differently with and without 'and': {} vs {}",
+            with[0].confidence,
+            without[0].confidence
+        );
+    }
+
+    /// A bare chapter is still a real thing to say and must survive untouched —
+    /// "turn to Psalm twenty three" is a whole-chapter reading, and verse 1 is the
+    /// right answer to it. The fix above must not turn every chapter into a verse.
+    #[test]
+    fn a_bare_chapter_is_still_a_whole_chapter() {
+        let hits = detect_direct("Let us turn together to Psalm twenty three.");
+        let m = hits.first().expect("a bare chapter still parses");
+        assert!(m.whole_chapter, "a bare chapter stopped being a chapter");
+        assert_eq!(m.reference.chapter, 23);
+        assert_eq!(m.reference.verse, 1);
+    }
+
+    /// "and" joining two NUMBERS is not a chapter/verse separator. The connector is
+    /// only skipped when a verse word actually follows it, so this must be unchanged.
+    #[test]
+    fn and_between_two_numbers_is_left_alone() {
+        let hits = detect_direct("Hebrews chapter 12 and 13");
+        for m in &hits {
+            assert_ne!(
+                (m.reference.chapter, m.reference.verse),
+                (12, 13),
+                "'chapter 12 and 13' was read as 12:13 — the connector rule is too greedy"
+            );
+        }
     }
 }

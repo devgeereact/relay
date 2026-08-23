@@ -1061,3 +1061,76 @@ fn accepting_a_suggestion_that_cannot_fire_says_so() {
     settle();
     assert_eq!(wall.count(), after_real);
 }
+
+// ════════════════════════════════════════════════════════════════════════════
+// ONE WINDOW, ONE WALL — evidence from a real service, 2026-08-23.
+//
+// 58 broadcasts reached the congregation's screens in 45 minutes and the wall
+// visibly flickered. Both causes are pinned below with the phrasing that produced
+// them, taken verbatim from the transcript.
+// ════════════════════════════════════════════════════════════════════════════
+
+/// "X chapter N and verse M" must put ONE verse on the wall, not two.
+///
+/// Live, this fired `1 Corinthians 9:1` alongside `9:24` — the chapter-only reading
+/// resolves to verse 1, scores the same 0.88, and has a different key, so neither
+/// the debounce nor the corroboration rule could see it. The wall showed
+/// 9:24 -> 9:1 -> 9:24 over six seconds. The same shape produced 2 Chronicles 15:1
+/// and 26:1, Proverbs 3:1, Isaiah 61:1, Hebrews 6:1, Genesis 12:1 and Psalms 23:1
+/// in the same service.
+#[test]
+fn a_chapter_and_verse_reference_does_not_also_fire_verse_one() {
+    let app = app();
+    let h = app.handle().clone();
+    let wall = Wall::watch(&h);
+
+    super::emit_detections(
+        &h,
+        "The Bible says in 1 Corinthians chapter 9 and verse 24. It says,",
+        1_000,
+        true,
+    );
+    settle();
+
+    let seen = wall.references();
+    assert!(
+        !seen.iter().any(|r| r == "1 Corinthians 9:1"),
+        "verse 1 reached the wall beside the verse that was actually named: {seen:?}"
+    );
+    assert_eq!(
+        seen.iter()
+            .filter(|r| r.starts_with("1 Corinthians"))
+            .count(),
+        1,
+        "one utterance, one verse on the wall — got {seen:?}"
+    );
+}
+
+/// Two unrelated references in ONE window may inform the operator, but only one of
+/// them may reach a wall.
+///
+/// Live, `Matthew 13:10` and `2 Chronicles 15:1` fired at the same timestamp to the
+/// tenth of a second. A wall can only show one thing, so the second was not
+/// information — it erased the first before anybody could read it.
+#[test]
+fn two_references_in_one_window_put_one_verse_on_the_wall() {
+    let app = app();
+    let h = app.handle().clone();
+    let wall = Wall::watch(&h);
+
+    super::emit_detections(
+        &h,
+        "as it says in Matthew 13:10, and again in 2 Chronicles 15:12,",
+        1_000,
+        true,
+    );
+    settle();
+
+    assert_eq!(
+        wall.count(),
+        1,
+        "one window put {} verses on the wall: {:?}",
+        wall.count(),
+        wall.references()
+    );
+}
