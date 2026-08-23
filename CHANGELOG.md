@@ -12,11 +12,38 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 
 ### 🚧 Nothing has been released to anyone yet.
 
-Relay has never shipped. Every tag so far (`v0.1.0-rc1` … `v0.1.0-1`) is a **draft pre-release** used to exercise the pipeline — they are unsigned, and an unsigned build is stopped dead by macOS Gatekeeper and warned about by Windows SmartScreen. A volunteer does not push past those screens, and should not be asked to.
+Relay has never shipped. Every tag so far (`v0.1.0-rc1` … `v0.1.0-2`) is a **draft pre-release** used to exercise the pipeline — they are unsigned, and an unsigned build is stopped dead by macOS Gatekeeper and warned about by Windows SmartScreen. A volunteer does not push past those screens, and should not be asked to.
 
 **The first real release is blocked on one purchase: a Windows code-signing certificate** (~$10/month, Azure Trusted Signing). The release workflow now *refuses* to publish an unsigned Windows installer rather than doing it quietly — see `docs/RELEASING.md`.
 
 Everything below is what that first release will contain.
+
+---
+
+## [0.1.0-2] — 2026-08-23 · pre-release
+
+**Relay now keeps up with the preacher.** On this Mac the speech model was running on
+the processor instead of the graphics chip, which made every decode about three times
+slower than it needed to be — slower than real time, so the transcript, the detected
+verse and the firing all fell further behind the longer someone spoke. macOS builds now
+use the graphics chip automatically. Nothing to switch on.
+
+- **The transcript keeps pace with speech.** It also updates more often on a fast
+  machine instead of once a second regardless — Relay now measures how quickly your
+  computer can transcribe and paces itself to match.
+- **Fewer wrong verses from half-heard numbers.** Listening more often means Relay
+  sometimes glimpses a reference before it has heard all of it — "verse twenty eight"
+  can look like "verse sixteen" for a moment. A verse now has to be heard twice before
+  Relay puts it on a screen by itself. It still *offers* it immediately, so you can fire
+  it by hand the instant you see it.
+- **A web page can no longer black out your wall.** Anyone on the church network could
+  previously blank the congregation's screen just by loading a page containing a hidden
+  image link. Closed. Driving Relay from the preacher's phone works exactly as before.
+- **The Hardware Check screen tells the truth about the graphics chip.** It was
+  reporting "CPU" on builds that were using the GPU.
+
+**Still a draft pre-release, still unsigned**, so macOS will warn you it cannot verify
+the app. Nothing here changes that — it needs the certificates in `docs/RELEASING.md`.
 
 ---
 

@@ -1050,3 +1050,96 @@ mod corroboration {
         }
     }
 }
+
+#[cfg(test)]
+mod sensitivity_sweep {
+    use super::*;
+
+    /// What would each dial setting have done to a REAL sermon?
+    ///
+    /// ```text
+    /// RELAY_SWEEP_TRANSCRIPT=/path/lines.txt RELAY_SWEEP_TRUTH="Romans 10:17" \
+    ///   cargo test sensitivity_sweep -- --ignored --nocapture
+    /// ```
+    ///
+    /// One line per transcript window, in order, exactly as the STT worker emitted
+    /// them. Each is run through the real parser and the real gate at every dial
+    /// setting, and the question asked is the only one that matters: **which verses
+    /// would have reached the wall?** Not what the parser saw — what fired.
+    ///
+    /// The synthetic corpus in `eval.rs` cannot answer this. It is 50 lines chosen
+    /// to contain references; a sermon is an hour of ordinary speech that mostly
+    /// contains none, and the false-positive rate on ordinary speech is precisely
+    /// what the dial trades against.
+    #[test]
+    #[ignore = "needs a transcript export"]
+    fn what_each_dial_setting_would_have_fired() {
+        let Some(path) = std::env::var_os("RELAY_SWEEP_TRANSCRIPT") else {
+            eprintln!("set RELAY_SWEEP_TRANSCRIPT");
+            return;
+        };
+        let truth = std::env::var("RELAY_SWEEP_TRUTH").unwrap_or_default();
+        let lines: Vec<String> = std::fs::read_to_string(&path)
+            .expect("read transcript")
+            .lines()
+            .map(|l| l.to_string())
+            .filter(|l| !l.trim().is_empty())
+            .collect();
+
+        println!(
+            "\n{} windows of real sermon speech; truth = {:?}\n",
+            lines.len(),
+            truth
+        );
+        println!("  dial  auto_fire  suggest   FIRED   of which wrong   truth fired?");
+        println!("  ────  ─────────  ───────   ─────   ──────────────   ────────────");
+
+        for dial in [0u8, 6, 25, 40, 50, 60, 75, 89, 100] {
+            let t = Thresholds::from_sensitivity(dial);
+            let mut r = Router::default();
+            r.set_thresholds(t);
+            r.set_baseline(t);
+
+            let mut fired: Vec<String> = Vec::new();
+            for (i, line) in lines.iter().enumerate() {
+                // Each window is a separate utterance as far as this replay is
+                // concerned, so it is scored as FINAL — the corroboration rule needs a
+                // second decode of the same rolling window, which an exported
+                // transcript no longer has. This is therefore the PESSIMISTIC reading:
+                // it counts fires that the live path would make an extra pass to
+                // confirm, so the wrong-fire counts here are an upper bound.
+                let now_ms = i as u64 * 1000;
+                for m in crate::detection::detect_direct(line) {
+                    if m.is_provisional(true) {
+                        continue;
+                    }
+                    let key = format!(
+                        "{} {}:{}",
+                        m.reference.book, m.reference.chapter, m.reference.verse
+                    );
+                    if r.decide_live(&key, m.confidence, m.method, now_ms, true)
+                        == RouteDecision::AutoFire
+                    {
+                        fired.push(key);
+                    }
+                }
+            }
+            let wrong = fired.iter().filter(|k| **k != truth).count();
+            let hit = fired.contains(&truth);
+            println!(
+                "  {dial:>4}  {:>9.3}  {:>7.3}   {:>5}   {:>14}   {}",
+                t.auto_fire,
+                t.suggest,
+                fired.len(),
+                wrong,
+                if hit { "YES" } else { "no" }
+            );
+            if wrong > 0 {
+                let mut names: Vec<&String> = fired.iter().filter(|k| **k != truth).collect();
+                names.sort();
+                names.dedup();
+                println!("          wrong: {names:?}");
+            }
+        }
+    }
+}
