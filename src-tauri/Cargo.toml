@@ -20,8 +20,32 @@ tauri = { version = "2", features = ["test"] }
 # GPU acceleration for whisper is a BUILD-TIME fact, not a runtime one: whisper.cpp
 # is compiled with a backend or it is not. These forward to whisper-rs so
 # `sysprobe` can report what this binary was actually built with, instead of
-# guessing from the hardware. Default is CPU — every shipped build today runs
-# whisper on the CPU, and the Hardware Check screen says so out loud.
+# guessing from the hardware.
+#
+# ── macOS gets Metal automatically, and this is the single biggest latency fix
+#    in the product. MEASURED on an M4 Pro, one decode of the 8s rolling window:
+#
+#      ggml-large-v3-turbo   CPU   ~1710 ms      Metal   ~602 ms    (2.8x)
+#      ggml-small            CPU    ~423 ms      Metal   ~153 ms
+#      ggml-base             CPU    ~146 ms      Metal    ~59 ms
+#
+#    Each figure is the median of repeated runs; a first-ever build measures far
+#    slower on cold caches and must not be quoted.
+#
+#    The worker re-decodes that window every step of new voice against a ~1000ms
+#    budget, so 1710ms can never keep up: the backlog grows, the drain jumps the
+#    audio position, and the operator watches the transcript arrive after the
+#    sentence. 602ms fits, with room to spare.
+#    That was a DEFAULT, not a choice anyone made — `default = []` shipped CPU-only
+#    builds to every Mac while the Hardware Check screen honestly reported it.
+#
+#    Window length is NOT the lever, and measuring said so: 8s and 4s cost the same
+#    because whisper pads the mel window internally. Do not
+#    "optimise" WINDOW_SECS — it is also coupled to `router::DEFAULT_DEBOUNCE_MS`.
+#
+# Windows/Linux keep the CPU default: `vulkan` and `cuda` need a runtime the box may
+# not have, and a build that fails to start is worse than one that is slow. Ship
+# those explicitly (`--features vulkan`) once there is a machine to verify them on.
 [features]
 default = []
 metal = ["whisper-rs/metal"]
@@ -91,6 +115,8 @@ rust-stemmers = "1.2.0"
 # dependency tree via Tauri — these entries only make them directly callable, and
 # only on macOS.
 [target.'cfg(target_os = "macos")'.dependencies]
+# Metal, unconditionally on macOS — see the measured numbers above [features].
+whisper-rs = { version = "0.14", features = ["metal"] }
 objc2 = "0.6"
 objc2-app-kit = { version = "0.3", features = ["NSScreen"] }
 objc2-foundation = { version = "0.3", features = ["NSValue", "NSString", "NSDictionary"] }

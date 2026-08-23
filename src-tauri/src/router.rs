@@ -172,6 +172,10 @@ pub struct Router {
     /// Pruned to the cooldown window on every insert, so it stays a handful of
     /// entries across a whole service rather than growing with it.
     fired_at: HashMap<String, u64>,
+    /// When each reference was last READ out of the rolling window — which is not
+    /// the same as reaching a screen. Drives the corroboration rule in
+    /// `decide_live`; pruned on insert like `fired_at`.
+    sighted_at: HashMap<String, u64>,
     /// Confidence of the most recent AUTO-FIRE. `dismiss_detection` is an "undo"
     /// with no argument — it can't tell us what it rejected — so the router
     /// remembers what it just put on screen. Without this, a rejection is a blind
@@ -187,6 +191,7 @@ impl Default for Router {
             baseline: Thresholds::default(),
             debounce_ms: DEFAULT_DEBOUNCE_MS,
             fired_at: HashMap::new(),
+            sighted_at: HashMap::new(),
             last_fire_conf: None,
         }
     }
@@ -224,6 +229,73 @@ impl Router {
     /// rescue — the verse is right there. So the same key is now always debounced.
     /// If the operator clears the screens, `forget_last_fire` drops the memory, so
     /// a genuine re-reference after a clear fires immediately.
+    /// The live-path entry point: `decide`, plus the rule that a reference read out
+    /// of a PARTIAL window has to be seen twice before it may reach a wall.
+    ///
+    /// ── Why this exists ─────────────────────────────────────────────────────────
+    ///
+    /// The worker re-decodes the same rolling window every step, and a shorter
+    /// window decodes to different words than a longer one. Measured on real speech
+    /// ("Romans chapter eight verse twenty eight", `stt::e2e_latency`), the
+    /// intermediate decodes produced **Romans 8:16** and **Romans 8:21** before the
+    /// window grew enough to settle on 8:28. Each was a complete, non-provisional,
+    /// `Direct` reference — `is_provisional` cannot catch them, because nothing was
+    /// cut off; whisper simply misheard a number with less context.
+    ///
+    /// At the old fixed cadence there were few enough passes that this was rare.
+    /// Stepping faster makes it common, so the cadence change and this rule are one
+    /// change: **latency comes from decoding more often, and safety comes from
+    /// requiring the extra decodes to agree.** A transient misread appears in one
+    /// pass and is gone; a reference the preacher actually said survives into the
+    /// next. One corroboration costs one step — at the adaptive cadence roughly
+    /// 250ms, still far inside the second the operator used to wait.
+    ///
+    /// A FINAL window is exempt and fires on first sight: the utterance is closed,
+    /// there is no "next pass" coming to confirm it, and waiting for one would mean
+    /// a verse spoken just before a pause never reaches the screen at all.
+    ///
+    /// Suggestions are NOT gated. A wrong suggestion costs the operator a glance; a
+    /// wrong auto-fire costs a congregation the wrong scripture. Only the second one
+    /// is worth latency.
+    pub fn decide_live(
+        &mut self,
+        key: &str,
+        confidence: f32,
+        method: DetectionMethod,
+        now_ms: u64,
+        is_final: bool,
+    ) -> RouteDecision {
+        let corroborated = is_final || self.note_sighting(key, now_ms);
+        // Checked BEFORE `decide`, never after: `decide` stamps `fired_at` when it
+        // returns AutoFire, and a fire we then downgrade would leave the cooldown
+        // holding a verse that never reached a screen — so the corroborating pass
+        // one step later would be swallowed as a repeat. The gate has to decline
+        // the fire, not undo it.
+        if !corroborated && method.may_auto_fire() && confidence >= self.thresholds.auto_fire {
+            return RouteDecision::Suggest;
+        }
+        self.decide(key, confidence, method, now_ms)
+    }
+
+    /// Record that `key` was read out of the current window. Returns whether it had
+    /// already been seen recently — i.e. whether this is a corroboration.
+    ///
+    /// Sightings expire after `debounce_ms`, so a reference quoted again much later
+    /// in the sermon starts over rather than inheriting a stale agreement.
+    fn note_sighting(&mut self, key: &str, now_ms: u64) -> bool {
+        let debounce = self.debounce_ms;
+        let seen_before = self
+            .sighted_at
+            .get(key)
+            .is_some_and(|t| now_ms.saturating_sub(*t) <= debounce);
+        self.sighted_at.insert(key.to_string(), now_ms);
+        if self.sighted_at.len() > 64 {
+            self.sighted_at
+                .retain(|_, t| now_ms.saturating_sub(*t) <= debounce);
+        }
+        seen_before
+    }
+
     pub fn decide(
         &mut self,
         key: &str,
@@ -866,5 +938,115 @@ mod tests {
             suggest: 0.9, // invalid: above auto_fire
         });
         assert!(r.thresholds().suggest <= r.thresholds().auto_fire);
+    }
+}
+
+#[cfg(test)]
+mod corroboration {
+    use super::*;
+    const DIRECT: DetectionMethod = DetectionMethod::Direct;
+
+    /// THE BUG THIS EXISTS FOR, measured on real speech.
+    ///
+    /// Decoding the rolling window more often means decoding it while it is still
+    /// short, and a short window mishears numbers: "Romans chapter eight verse
+    /// twenty eight" read as **Romans 8:16**, then **8:21**, before settling on
+    /// 8:28. Complete, non-provisional, `Direct` — nothing else in the pipeline can
+    /// tell them apart from the real thing. A misread appears once; the reference
+    /// the preacher actually said survives into the next pass.
+    #[test]
+    fn a_reference_read_once_from_a_partial_window_may_not_reach_the_wall() {
+        let mut r = Router::default();
+        assert_eq!(
+            r.decide_live("Romans 8:16", 0.95, DIRECT, 0, false),
+            RouteDecision::Suggest,
+            "a first sighting from a partial window auto-fired — this is the misread \
+             that put the wrong verse on the wall"
+        );
+    }
+
+    /// ...and the corroborating pass fires it, so the cost is one step, not a veto.
+    #[test]
+    fn the_second_sighting_fires_it() {
+        let mut r = Router::default();
+        assert_eq!(
+            r.decide_live("Romans 8:28", 0.95, DIRECT, 0, false),
+            RouteDecision::Suggest
+        );
+        assert_eq!(
+            r.decide_live("Romans 8:28", 0.95, DIRECT, 250, false),
+            RouteDecision::AutoFire,
+            "a reference the decoder saw twice is the one the preacher said"
+        );
+    }
+
+    /// A FINAL window fires on first sight. Without this exemption a verse spoken
+    /// just before a pause would never reach the screen at all: the utterance closes,
+    /// the window clears, and the corroborating pass that was supposed to confirm it
+    /// never comes.
+    #[test]
+    fn a_final_window_needs_no_corroboration() {
+        let mut r = Router::default();
+        assert_eq!(
+            r.decide_live("John 3:16", 0.95, DIRECT, 0, true),
+            RouteDecision::AutoFire,
+            "a closed utterance has no next pass to wait for"
+        );
+    }
+
+    /// The declined fire must not poison the cooldown. `decide` stamps `fired_at`
+    /// when it returns AutoFire, so checking corroboration AFTER it would leave the
+    /// debounce holding a verse that never reached a screen — and swallow the real
+    /// fire one step later. That is why the check happens first.
+    #[test]
+    fn declining_a_fire_does_not_start_its_cooldown() {
+        let mut r = Router::default();
+        r.decide_live("John 3:16", 0.95, DIRECT, 0, false); // declined -> Suggest
+        assert_eq!(
+            r.decide_live("John 3:16", 0.95, DIRECT, 10, false),
+            RouteDecision::AutoFire,
+            "the declined fire started a cooldown and ate the corroborated one"
+        );
+    }
+
+    /// Suggestions are never gated: a wrong suggestion costs a glance, a wrong
+    /// auto-fire costs a congregation. Only one of those is worth latency.
+    #[test]
+    fn a_suggestion_still_arrives_on_first_sight() {
+        let mut r = Router::default();
+        let mid = (Thresholds::default().suggest + Thresholds::default().auto_fire) / 2.0;
+        assert_eq!(
+            r.decide_live("John 3:16", mid, DIRECT, 0, false),
+            RouteDecision::Suggest,
+            "the operator must still see it immediately"
+        );
+    }
+
+    /// A sighting expires with the cooldown, so a verse quoted again much later in
+    /// the sermon starts over rather than inheriting a stale agreement.
+    #[test]
+    fn a_stale_sighting_does_not_corroborate() {
+        let mut r = Router::default();
+        r.decide_live("John 3:16", 0.95, DIRECT, 0, false);
+        let long_after = DEFAULT_DEBOUNCE_MS + 1;
+        assert_eq!(
+            r.decide_live("John 3:16", 0.95, DIRECT, long_after, false),
+            RouteDecision::Suggest,
+            "an hour-old sighting corroborated a fresh misread"
+        );
+    }
+
+    /// The paraphrase cap is untouched by any of this — it is enforced before
+    /// corroboration is even consulted, and no number of sightings lifts it.
+    #[test]
+    fn corroboration_never_promotes_a_paraphrase() {
+        let mut r = Router::default();
+        for t in [0, 250, 500, 750] {
+            assert_eq!(
+                r.decide_live("John 3:16", 1.0, DetectionMethod::Semantic, t, false),
+                RouteDecision::Suggest,
+                "a guess seen four times is still a guess"
+            );
+        }
     }
 }
