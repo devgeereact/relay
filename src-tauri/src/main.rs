@@ -815,7 +815,12 @@ fn emit_detections<R: tauri::Runtime>(
         }
 
         for (key, c) in best {
-            let status = match router.decide(&key, c.conf, c.method, now_ms) {
+            // `decide_live`, not `decide`: the live path is the one place a
+            // candidate is read out of a PARTIAL window that will be decoded again a
+            // step later, so it is the one place corroboration is both possible and
+            // necessary. See `Router::decide_live` for the measured misreads it
+            // exists to catch.
+            let status = match router.decide_live(&key, c.conf, c.method, now_ms, is_final) {
                 RouteDecision::AutoFire => FireStatus::Auto,
                 RouteDecision::Suggest => FireStatus::Suggested,
                 RouteDecision::Drop => continue,

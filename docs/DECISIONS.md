@@ -1275,3 +1275,97 @@ drew, the new decision is part of the feature — not follow-up work.**
 
 Pinned by `qa_r5::the_lan_remote_answers_exactly_seven_routes_and_refuses_the_rest`, which
 fails if the route list grows without somebody revisiting this section.
+
+## 36. The transcript was late because the build shipped without a GPU (2026-08-23)
+
+**Measured first, on an M4 Pro, one decode of the 8s rolling window:**
+
+| model | CPU | Metal |
+|---|---|---|
+| `ggml-large-v3-turbo` | **~1710 ms** | **~602 ms** |
+| `ggml-small` | ~423 ms | ~153 ms |
+| `ggml-base` | ~146 ms | ~59 ms |
+
+Medians of repeated runs. The first figure this investigation produced was 4193 ms,
+measured on a first-ever build with cold caches, and it was wrong by 2.5x — a single
+timing on a cold toolchain is not a measurement. Re-run `stt::decode_cost` a few
+times and take the median.
+
+The worker re-decodes that window every step of new voice — a step being one second
+of audio. A pass costing ~1710 ms against a ~1000 ms budget cannot keep up, ever: the
+queue grows for as long as the preacher keeps talking, the backlog drain jumps the
+audio position, and the operator watches the transcript arrive seconds behind the
+sentence. Detection and firing ride the same clock, so they were late for exactly
+one reason — they were waiting on a transcript that was late.
+
+Nobody chose this. `Cargo.toml` said `default = []`, the comment under it said *"every
+shipped build today runs whisper on the CPU"*, and the Hardware Check screen reported
+it honestly. It was a default nobody revisited after the model picker learned to
+download a 1.6 GB model.
+
+### What changed
+
+**1. macOS links Metal unconditionally.** Not a feature flag anyone has to remember —
+a `[target.'cfg(target_os = "macos")'.dependencies]` entry, so every build, every
+`npm run tauri build`, every release, gets it. Windows and Linux keep the CPU default:
+`vulkan` and `cuda` need a runtime the box may not have, and a build that fails to
+start is worse than one that is slow. Ship those explicitly once there is a machine to
+verify them on.
+
+`sysprobe::gpu_backends` had to change with it. It read `cfg!(feature = "metal")`,
+which a target dependency does not set — so it reported **CPU on a binary
+demonstrably running on the GPU**. A Hardware Check screen that under-reports is the
+same defect as one that over-reports.
+
+**2. The cadence is measured, not assumed.** `STEP_SAMPLES` was a constant second,
+which is two failures at once: it made a fast pairing wait a second for text that was
+ready in a seventh of one, and it asked a slow pairing for a pass every second that
+took four. `step_samples_for(decode_ema_ms)` now sets the pace from what decodes
+actually cost on this machine with this model, clamped to [250 ms, 1000 ms] — never
+faster than a person can read, **never slower than the constant it replaced**. Same
+rule the audio gate already follows (§19): the machine reports what it can do.
+
+**Window length is NOT a lever, and measuring said so.** 8 s and 4 s cost the same
+because whisper pads the mel window internally. Do not "optimise"
+`WINDOW_SECS` — it is also coupled to `router::DEFAULT_DEBOUNCE_MS`.
+
+### The part that is a real trade, and why it is priced this way
+
+Decoding more often means decoding while the window is still short, **and a short
+window mishears numbers.** On real speech, "Romans chapter eight verse twenty eight"
+produced **Romans 8:16** and then **Romans 8:21** before it settled on 8:28. Each was
+a complete, non-provisional, `Direct` reference. `is_provisional` (§34) cannot catch
+them: nothing was cut off. Nothing else in the pipeline could tell them from the real
+thing, and at the auto-fire threshold each would have reached a wall.
+
+So the cadence change and the safety rule are **one change**: latency comes from
+decoding more often, and safety comes from requiring the extra decodes to agree.
+`Router::decide_live` holds a reference read out of a PARTIAL window at `Suggest`
+until a second pass sees it too. A misread appears once and is gone; a reference the
+preacher actually said survives into the next pass. The cost is one step — about
+250 ms at the adaptive cadence, well inside the second the operator used to wait.
+
+Three details that are load-bearing rather than incidental:
+
+- **A FINAL window is exempt** and fires on first sight. The utterance is closed,
+  there is no next pass coming, and waiting for one would mean a verse spoken just
+  before a pause never reaches the screen at all.
+- **The check happens BEFORE `decide`, never after.** `decide` stamps `fired_at` when
+  it returns `AutoFire`; downgrading afterwards would leave the cooldown holding a
+  verse that never reached a screen, and swallow the corroborating fire one step
+  later. The gate declines the fire — it does not undo it.
+- **Suggestions are not gated.** A wrong suggestion costs the operator a glance; a
+  wrong auto-fire costs a congregation the wrong scripture. Only one is worth latency.
+
+### What this does not claim
+
+The paraphrase cap is untouched and no number of sightings lifts it. Whisper is a
+window decoder, not a streaming recogniser: the floor is one step plus one decode, so
+"words appear as they are spoken" means ~400 ms on `base` and ~1.2 s on
+`large-v3-turbo`, not per-word streaming. Getting below that is a different decoder,
+not a tuning exercise, and it is not in this decision.
+
+And the numbers above are one machine and one voice. `stt::e2e_latency` is the
+instrument — it walks real audio through the real decoder and scores **through the
+router**, so it reports what would reach a wall rather than what the parser saw.
+Re-run it on the target hardware before trusting any of this on a different box.

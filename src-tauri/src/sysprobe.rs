@@ -61,7 +61,13 @@ pub struct Hardware {
 /// not compiled to use is not acceleration, it is decoration.
 pub fn gpu_backends() -> Vec<&'static str> {
     let mut v = Vec::new();
-    if cfg!(feature = "metal") {
+    // macOS is Metal ALWAYS, feature flag or not: `Cargo.toml` pulls whisper-rs with
+    // `features = ["metal"]` from the macOS target block, which links the backend
+    // without ever setting `feature = "metal"` on this crate. Reading the flag alone
+    // reported "CPU" on a binary that was demonstrably running on the GPU — the
+    // Hardware Check screen exists to tell an operator what their machine is doing,
+    // and a screen that under-reports is the same defect as one that over-reports.
+    if cfg!(target_os = "macos") || cfg!(feature = "metal") {
         v.push("Metal");
     }
     if cfg!(feature = "coreml") {
@@ -212,13 +218,20 @@ mod tests {
 
     #[test]
     fn gpu_backends_reflect_the_build_not_the_machine() {
-        // Every shipped build enables no whisper GPU feature, so this is empty —
-        // and the Hardware Check screen must say "CPU". If someone adds a
-        // default GPU feature, this fails and the copy has to be revisited.
         let v = gpu_backends();
-        if cfg!(feature = "metal") {
+        if cfg!(target_os = "macos") {
+            // Every macOS build links Metal via the target dependency, so the screen
+            // must say Metal. It said CPU for as long as this read the feature flag,
+            // on builds that were decoding 7x faster than a CPU build can.
+            assert!(
+                v.contains(&"Metal"),
+                "macOS builds link Metal unconditionally — see Cargo.toml"
+            );
+        } else if cfg!(feature = "metal") {
             assert!(v.contains(&"Metal"));
         } else {
+            // Windows and Linux keep the CPU default deliberately: a GPU runtime the
+            // box may not have turns a slow start into no start.
             assert!(!v.contains(&"Metal"));
         }
     }

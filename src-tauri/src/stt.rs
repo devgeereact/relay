@@ -36,8 +36,42 @@ const TARGET_RATE: u32 = 16_000; // whisper input rate
 /// re-detected on every pass — which is why `router::DEFAULT_DEBOUNCE_MS` is
 /// derived from this value rather than picked independently. Keep them coupled.
 pub const WINDOW_SECS: usize = 8;
-const STEP_SAMPLES: usize = TARGET_RATE as usize; // re-transcribe every ~1s of new voice
+/// The SLOWEST the worker will step: one pass per second of new audio. This is
+/// also the ceiling the real-time budget is judged against, and it is what the
+/// cadence used to be, always, on every machine.
+const STEP_SAMPLES: usize = TARGET_RATE as usize;
+/// The FASTEST it will step: four passes a second. Below this the operator cannot
+/// read the revisions anyway, and whisper re-decodes the same window each pass, so
+/// the extra work buys nothing a person can see.
+const MIN_STEP_SAMPLES: usize = TARGET_RATE as usize / 4;
+/// Headroom on the measured decode. A step exactly equal to decode time saturates
+/// the worker — it would start the next pass the instant the last one ended, with
+/// no slack for a slow window, and the backlog would grow on the first hiccup.
+const STEP_SAFETY: f32 = 1.5;
+/// How fast the measured decode cost is allowed to move the cadence. Slow enough
+/// that one unlucky window does not halve the update rate; fast enough to settle
+/// within a few seconds of someone switching model.
+const DECODE_EMA_ALPHA: f32 = 0.25;
 const MIN_SAMPLES: usize = TARGET_RATE as usize / 2; // don't run whisper on <0.5s
+
+/// How much new audio to require before the next decode, given what decodes have
+/// actually been costing on THIS machine with THIS model.
+///
+/// The cadence used to be a constant second, which is two failures at once. On a
+/// fast pairing (base on Metal: ~59ms; large-v3-turbo on Metal: ~602ms) it made the
+/// operator wait a second for text that was ready in a fraction of one. On a slow
+/// pairing (large-v3-turbo on CPU: ~1710ms) it asked for a pass every second that
+/// took nearly two, so the backlog grew for as long as the preacher kept talking.
+///
+/// Measuring instead of assuming is the same rule the audio gate already follows
+/// (DECISIONS §19): the machine reports what it can do, and the pipeline is shaped
+/// to fit it. Clamped at both ends — never slower than the old fixed second, never
+/// faster than a human can read.
+fn step_samples_for(decode_ema_ms: f32) -> usize {
+    let want_ms = decode_ema_ms * STEP_SAFETY;
+    let want = (want_ms / 1000.0 * TARGET_RATE as f32) as usize;
+    want.clamp(MIN_STEP_SAMPLES, STEP_SAMPLES)
+}
 /// Consecutive silent chunks that end an utterance. Chunks hop ~200ms, so 7 ≈ 1.4s.
 ///
 /// Raised from 5 (~1s). A preacher pausing for breath, or for effect, mid-sentence
@@ -308,6 +342,11 @@ fn worker<F>(
     let mut window: Vec<f32> = Vec::with_capacity(TARGET_RATE as usize * WINDOW_SECS);
     let max_window = TARGET_RATE as usize * WINDOW_SECS;
     let mut new_since_step = 0usize;
+    // Cadence, and the measurement that drives it. Starts at the old fixed second
+    // so the first pass on a cold worker behaves exactly as it always did; from the
+    // second pass on, this machine's real decode cost sets the pace.
+    let mut step_samples = STEP_SAMPLES;
+    let mut decode_ema_ms = 0.0f32;
     let mut silence_run = 0u32;
     // Timestamp of the newest chunk seen. Now that a batch is drained before any
     // decode, this must persist ACROSS batches — a batch of purely-overlapping
@@ -429,7 +468,7 @@ fn worker<F>(
             // of samples that had passed the VAD — which, at a third of them passing,
             // took three seconds of real time to accumulate, and longer for a softer
             // speaker. That gap IS the lag the operator felt.
-            if new_since_step >= STEP_SAMPLES && window.len() >= MIN_SAMPLES {
+            if new_since_step >= step_samples && window.len() >= MIN_SAMPLES {
                 want_step = true;
             }
         }
@@ -472,13 +511,29 @@ fn worker<F>(
         // possible thing for a volunteer to diagnose ("it just feels slow"), and the
         // fix is a real-world one: a smaller window, or a smaller model.
         let decode_ms = started.elapsed().as_millis() as u64;
+        // Feed the measurement back into the cadence before judging it, so the
+        // budget is the one actually in force rather than a constant.
+        decode_ema_ms = if decode_ema_ms == 0.0 {
+            decode_ms as f32
+        } else {
+            decode_ema_ms + DECODE_EMA_ALPHA * (decode_ms as f32 - decode_ema_ms)
+        };
+        step_samples = step_samples_for(decode_ema_ms);
         let realtime_budget_ms = STEP_SAMPLES as u64 * 1000 / TARGET_RATE as u64;
         if decode_ms > realtime_budget_ms && !lag_warned {
             lag_warned = true;
+            let advice = if cfg!(target_os = "macos") && !cfg!(feature = "metal") {
+                "This build has no GPU backend. Rebuild with Metal — measured 2.8x on an \
+                 M4 Pro (~1710ms -> ~602ms for large-v3-turbo)."
+            } else {
+                "Switch to a smaller model in Settings -> Speech (measured on an M4 Pro with \
+                 Metal: large-v3-turbo ~602ms, small ~153ms, base ~59ms per window)."
+            };
             eprintln!(
                 "stt: decode {decode_ms}ms for a {window_ms}ms window on {threads} threads — \
                  slower than real time (budget {realtime_budget_ms}ms). The transcript will \
-                 run behind live speech. Consider a shorter window or a smaller model."
+                 run behind live speech. {advice} A SHORTER WINDOW WILL NOT HELP: whisper pads \
+                 the mel window internally, so 4s and 8s cost the same."
             );
         }
         // Content-free. The transcript is sermon data and must never be logged.
@@ -2425,5 +2480,287 @@ mod bench {
             "\n  budget = {budget_ms:.0}ms (one decode per {:.0}s of new speech)\n",
             STEP_SAMPLES as f64 / TARGET_RATE as f64
         );
+    }
+}
+
+#[cfg(test)]
+mod decode_cost {
+    use super::*;
+    use std::time::Instant;
+
+    /// How long does ONE whisper pass cost, per model and per window length?
+    ///
+    /// This is the number the whole live-latency question turns on: the worker
+    /// re-decodes the rolling window every ~1s of new voice, so if a pass costs
+    /// more than that, the pipeline can never keep up and lag compounds.
+    ///
+    ///   RELAY_BENCH_MODEL=/path/to/ggml-x.bin cargo test decode_cost -- --ignored --nocapture
+    #[test]
+    #[ignore = "measurement; needs a model on disk"]
+    fn one_pass_per_window_length() {
+        let Some(path) = std::env::var_os("RELAY_BENCH_MODEL") else {
+            eprintln!("set RELAY_BENCH_MODEL");
+            return;
+        };
+        let path = path.to_string_lossy().to_string();
+        let name = path.rsplit('/').next().unwrap_or("?").to_string();
+
+        whisper_rs::install_logging_hooks();
+        let t0 = Instant::now();
+        let ctx = WhisperContext::new_with_params(&path, WhisperContextParameters::default())
+            .expect("load model");
+        println!("\nmodel {name}  load={}ms", t0.elapsed().as_millis());
+
+        // Speech-shaped noise: an amplitude-modulated harmonic stack. Content is not
+        // the point — encoder cost is what dominates and it is content-independent.
+        let make = |secs: usize| -> Vec<f32> {
+            (0..secs * TARGET_RATE as usize)
+                .map(|i| {
+                    let t = i as f32 / TARGET_RATE as f32;
+                    let env = 0.5 * (1.0 + (2.0 * std::f32::consts::PI * 3.0 * t).sin());
+                    env * 0.2
+                        * ((2.0 * std::f32::consts::PI * 130.0 * t).sin()
+                            + 0.5 * (2.0 * std::f32::consts::PI * 260.0 * t).sin()
+                            + 0.25 * (2.0 * std::f32::consts::PI * 520.0 * t).sin())
+                })
+                .collect()
+        };
+
+        for secs in [1usize, 2, 4, 8] {
+            let pcm = make(secs);
+            let mut best = u128::MAX;
+            for _ in 0..3 {
+                let mut st = ctx.create_state().expect("state");
+                let mut p = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
+                p.set_n_threads(num_cpus_for_test());
+                p.set_translate(false);
+                p.set_print_special(false);
+                p.set_print_progress(false);
+                p.set_print_realtime(false);
+                p.set_print_timestamps(false);
+                let t = Instant::now();
+                st.full(p, &pcm).expect("decode");
+                best = best.min(t.elapsed().as_millis());
+            }
+            let budget = 1000u128; // the worker re-decodes every ~1s of new voice
+            println!(
+                "  window={secs}s  decode={best}ms  {}",
+                if best > budget {
+                    format!("OVER BUDGET by {}ms — pipeline falls behind", best - budget)
+                } else {
+                    "within budget".into()
+                }
+            );
+        }
+    }
+
+    fn num_cpus_for_test() -> i32 {
+        std::thread::available_parallelism()
+            .map(|n| n.get() as i32)
+            .unwrap_or(4)
+            .min(8)
+    }
+}
+
+#[cfg(test)]
+mod adaptive_cadence {
+    use super::*;
+
+    fn ms(samples: usize) -> u64 {
+        samples as u64 * 1000 / TARGET_RATE as u64
+    }
+
+    /// A fast pairing must not be held to the old fixed second.
+    ///
+    /// `ggml-base` decodes the window in ~59ms on an M4 Pro with Metal. Waiting a
+    /// second to show text ready in a twentieth of one is latency the product invented,
+    /// and it is what made the transcript feel like it arrived in blocks.
+    #[test]
+    fn a_fast_decoder_steps_at_the_floor_not_at_a_fixed_second() {
+        assert_eq!(ms(step_samples_for(59.0)), 250, "base on Metal");
+        assert_eq!(ms(step_samples_for(153.0)), 250, "small on Metal");
+        assert_eq!(ms(step_samples_for(602.0)), 903, "large-v3-turbo on Metal");
+    }
+
+    /// A slow pairing must not be asked for a pass it cannot deliver.
+    ///
+    /// `ggml-large-v3-turbo` on CPU costs ~1710ms. The old constant asked for a decode
+    /// every second regardless, so the queue grew for as long as the preacher spoke.
+    /// Clamping does not make it fast — nothing here can — but it stops the pipeline
+    /// promising a cadence the machine cannot hold, and the lag warning says why.
+    #[test]
+    fn a_slow_decoder_is_clamped_to_the_old_ceiling_and_never_worse() {
+        assert_eq!(ms(step_samples_for(1710.0)), 1000, "large-v3-turbo on CPU");
+        assert_eq!(ms(step_samples_for(60_000.0)), 1000, "absurdly slow");
+        assert!(
+            step_samples_for(f32::MAX) <= STEP_SAMPLES,
+            "the cadence may never be slower than it was before this change"
+        );
+    }
+
+    /// The floor holds even for a decoder that costs nothing, so a pathological
+    /// measurement cannot spin the worker.
+    #[test]
+    fn the_cadence_never_runs_faster_than_a_person_can_read() {
+        assert_eq!(step_samples_for(0.0), MIN_STEP_SAMPLES);
+        assert_eq!(ms(step_samples_for(0.0)), 250);
+        const { assert!(MIN_STEP_SAMPLES < STEP_SAMPLES) };
+    }
+
+    /// Headroom is the point: a step equal to the decode time saturates the worker.
+    #[test]
+    fn the_cadence_leaves_room_for_a_slow_window() {
+        let decode = 500.0;
+        let step = ms(step_samples_for(decode));
+        assert!(
+            step > decode as u64,
+            "step {step}ms must exceed decode {decode}ms or there is no slack"
+        );
+    }
+}
+
+/// END-TO-END LATENCY, over real speech, through the real decoder and the real
+/// detector. `#[ignore]`d — needs a model and an audio file.
+///
+/// ```text
+/// RELAY_BENCH_MODEL=…/ggml-base.bin RELAY_BENCH_WAV=…/speech32.wav \
+///   cargo test e2e_latency -- --ignored --nocapture
+/// ```
+///
+/// This is the only instrument here that answers the question an operator actually
+/// asks — *how long after the preacher says a reference does Relay know?* — because
+/// it walks the audio exactly as the worker does: 200ms hops into an 8s rolling
+/// window, one decode per step, detection run on every emitted text including
+/// partials. It scores THROUGH the detector (CLAUDE.md rule 13), never by reading
+/// the transcript.
+///
+/// It runs the same audio twice — once at the fixed one-second cadence this code
+/// used to have, once at the adaptive cadence — so the difference is measured on
+/// identical input rather than argued about.
+#[cfg(test)]
+mod e2e_latency {
+    use super::*;
+    use std::time::Instant;
+
+    fn load_f32(path: &str) -> Vec<f32> {
+        let bytes = std::fs::read(path).expect("read audio");
+        let start = if bytes.starts_with(b"RIFF") { 44 } else { 0 };
+        let (frames, _) = bytes[start..].as_chunks::<4>();
+        frames.iter().map(|c| f32::from_le_bytes(*c)).collect()
+    }
+
+    /// One pass over the audio at a given cadence. Returns, per reference, the audio
+    /// position (seconds) at which the detector first named it, plus wall cost.
+    fn walk(
+        ctx: &WhisperContext,
+        pcm: &[f32],
+        adaptive: bool,
+    ) -> (Vec<(String, f32)>, u128, usize) {
+        let hop = TARGET_RATE as usize / 5; // 200ms, as the chunker emits
+        let max_window = WINDOW_SECS * TARGET_RATE as usize;
+        let mut state = ctx.create_state().expect("state");
+        let mut window: Vec<f32> = Vec::new();
+        let mut new_since_step = 0usize;
+        let mut step_samples = STEP_SAMPLES;
+        let mut decode_ema = 0.0f32;
+        let mut first_seen: Vec<(String, f32)> = Vec::new();
+        let mut router = crate::router::Router::default();
+        let mut decodes = 0usize;
+        let wall = Instant::now();
+
+        for (i, block) in pcm.chunks(hop).enumerate() {
+            window.extend_from_slice(block);
+            if window.len() > max_window {
+                let drop = window.len() - max_window;
+                window.drain(..drop);
+            }
+            new_since_step += block.len();
+            if new_since_step < step_samples || window.len() < MIN_SAMPLES {
+                continue;
+            }
+            new_since_step = 0;
+            let audio_pos = ((i + 1) * hop) as f32 / TARGET_RATE as f32;
+
+            let t = Instant::now();
+            let out = transcribe(&mut state, &window, 8, Some("en"), None, DECODE);
+            let decode_ms = t.elapsed().as_millis() as f32;
+            decodes += 1;
+            decode_ema = if decode_ema == 0.0 {
+                decode_ms
+            } else {
+                decode_ema + DECODE_EMA_ALPHA * (decode_ms - decode_ema)
+            };
+            if adaptive {
+                step_samples = step_samples_for(decode_ema);
+            }
+
+            if let Some((text, _)) = out {
+                for m in crate::detection::detect_direct(&text) {
+                    let _ = &mut router;
+                    // EXACTLY what `main.rs::emit_detections` does. A reading that
+                    // exists only because the window was cut mid-sentence describes
+                    // the boundary, not the sermon (DECISIONS §34) — and stepping
+                    // more often creates more such boundaries, so a bench that
+                    // skipped this would credit the change with detections the
+                    // product would never make, and hide the wrong ones it might.
+                    if m.is_provisional(false) {
+                        continue;
+                    }
+                    let key = format!(
+                        "{} {}:{}",
+                        m.reference.book, m.reference.chapter, m.reference.verse
+                    );
+                    // THROUGH THE GATE, not past it. The only question that matters
+                    // is which verse Relay would put on a wall (CLAUDE.md rule 13),
+                    // so this records auto-fires — not everything the parser saw.
+                    let now_ms = (audio_pos * 1000.0) as u64;
+                    if router.decide_live(&key, m.confidence, m.method, now_ms, false)
+                        == crate::router::RouteDecision::AutoFire
+                        && !first_seen.iter().any(|(k, _)| *k == key)
+                    {
+                        first_seen.push((key, audio_pos));
+                    }
+                }
+            }
+        }
+        (first_seen, wall.elapsed().as_millis(), decodes)
+    }
+
+    #[test]
+    #[ignore = "needs RELAY_BENCH_MODEL and RELAY_BENCH_WAV"]
+    fn how_long_after_the_words_does_relay_know() {
+        let (Some(model), Some(wav)) = (
+            std::env::var_os("RELAY_BENCH_MODEL"),
+            std::env::var_os("RELAY_BENCH_WAV"),
+        ) else {
+            eprintln!("set RELAY_BENCH_MODEL and RELAY_BENCH_WAV");
+            return;
+        };
+        whisper_rs::install_logging_hooks();
+        let ctx = WhisperContext::new_with_params(
+            &model.to_string_lossy(),
+            WhisperContextParameters::default(),
+        )
+        .expect("load model");
+        let pcm = load_f32(&wav.to_string_lossy());
+        println!(
+            "\naudio {:.2}s  model {}",
+            pcm.len() as f32 / TARGET_RATE as f32,
+            model.to_string_lossy().rsplit('/').next().unwrap_or("?")
+        );
+
+        for (label, adaptive) in [
+            ("fixed 1s cadence (before)", false),
+            ("adaptive (after)", true),
+        ] {
+            let (seen, wall_ms, decodes) = walk(&ctx, &pcm, adaptive);
+            println!("\n  {label}:  {decodes} decodes, {wall_ms}ms wall");
+            if seen.is_empty() {
+                println!("    (no reference detected)");
+            }
+            for (r, at) in &seen {
+                println!("    {r:<18} first detected at audio {at:.1}s");
+            }
+        }
     }
 }
