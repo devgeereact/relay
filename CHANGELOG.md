@@ -12,11 +12,33 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 
 ### 🚧 Nothing has been released to anyone yet.
 
-Relay has never shipped. Every tag so far (`v0.1.0-rc1` … `v0.1.0-2`) is a **draft pre-release** used to exercise the pipeline — they are unsigned, and an unsigned build is stopped dead by macOS Gatekeeper and warned about by Windows SmartScreen. A volunteer does not push past those screens, and should not be asked to.
+Relay has never shipped. Every tag so far (`v0.1.0-rc1` … `v0.1.0-3`) is a **draft pre-release** used to exercise the pipeline — they are unsigned, and an unsigned build is stopped dead by macOS Gatekeeper and warned about by Windows SmartScreen. A volunteer does not push past those screens, and should not be asked to.
 
 **The first real release is blocked on one purchase: a Windows code-signing certificate** (~$10/month, Azure Trusted Signing). The release workflow now *refuses* to publish an unsigned Windows installer rather than doing it quietly — see `docs/RELEASING.md`.
 
 Everything below is what that first release will contain.
+
+---
+
+## [0.1.0-3] — 2026-08-23 · pre-release
+
+**Two wrong-verse bugs, both found by running a real service and then reading
+Relay's own record of what it did.**
+
+- **"Chapter nine and verse twenty-four" now shows verse 24.** It was showing
+  **verse 1**. The word "and" between the chapter and the verse made Relay throw the
+  verse away and fall back to the start of the chapter — confidently, with no sign
+  anything was wrong. Say the same sentence without "and" and it had always worked.
+  In one service this put 1 Corinthians 9:1, 2 Chronicles 15:1 and 26:1, Proverbs
+  3:1, Isaiah 61:1, Hebrews 6:1, Genesis 12:1 and Psalms 23:1 on the screens.
+- **The wall no longer flickers between two verses.** If Relay heard more than one
+  reference in the same moment of speech it put them all up, one erasing the next
+  before anyone could read it. It now shows the strongest and *offers* the rest, so
+  you can still fire them with one press.
+
+Both were invisible to every check already in the product: they are not mis-hearings
+— the transcript was right and the confidence was high. Relay was reading the
+sentence wrongly, the same way, every time.
 
 ---
 
