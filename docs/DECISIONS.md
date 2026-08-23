@@ -1369,3 +1369,72 @@ And the numbers above are one machine and one voice. `stt::e2e_latency` is the
 instrument — it walks real audio through the real decoder and scores **through the
 router**, so it reports what would reach a wall rather than what the parser saw.
 Re-run it on the target hardware before trusting any of this on a different box.
+
+## 37. One window, one wall — and the stop-word that cost a congregation the right verse (2026-08-23)
+
+**A real service, watched live through the kiosk hub and Relay's own detection log:
+58 broadcasts reached the congregation's screens in 45 minutes, and the wall
+visibly flickered.** Two causes, neither visible to any existing gate.
+
+### The stop-word
+
+"Chapter nine **and** verse twenty-four" is ordinary English. The parser consumed
+`verse`/`vs`/`:` after a chapter number but not the connector, so `verse_marker` was
+never set and the reference fell through to a whole-chapter reading — **verse 1**, at
+0.88, unattended.
+
+```
+"1 Corinthians chapter 9 and verse 24"  ->  9:1  [whole-chapter] @0.88   WRONG
+"1 Corinthians chapter 9 verse 24"      ->  9:24                 @0.95   right
+```
+
+One sitting produced 1 Corinthians 9:1, 2 Chronicles 15:1 and 26:1, Proverbs 3:1,
+Isaiah 61:1, Hebrews 6:1, Genesis 12:1 and Psalms 23:1 this way. Every one of them
+put a verse on a wall that nobody had asked for, and the operator had no way to know
+why: the transcript was *correct*, the confidence was high, and the reference was
+real — it was simply the wrong half of it.
+
+`is_ref_connector` now skips `and` / `,` / `&` between the chapter number and the
+verse keyword, **and only when a verse word actually follows**, so "Hebrews 12 and
+13" stays two chapters. A connector must cost nothing: `the_connector_costs_nothing`
+asserts both phrasings produce the identical reference at the identical confidence,
+because a sentence that reaches a different wall depending on one stop-word is the
+defect, not the score.
+
+### One window, one wall
+
+Separately, a single window could fire several verses at once. Two fires shared a
+timestamp to the tenth of a second — `Matthew 13:10` and `2 Chronicles 15:1` at
+1194.2s. A wall shows one thing, so the second was not information; it erased the
+first before anyone read it.
+
+`rank_for_wall` orders a window's candidates by `pipeline::better` (the same
+comparison the per-reference dedup already uses, so "strongest" means one thing in
+that file) and only the first may auto-fire. The rest are still **offered
+immediately** — the operator loses nothing, the congregation stops watching verses
+flicker past.
+
+It also drops a `whole_chapter` candidate when the same window names a specific verse
+in that book and chapter: that reading is not a second reference, it is the first
+half of the one that was made. A chapter named alone survives untouched — "turn to
+Psalm 23" is a real thing to say and verse 1 is the right answer.
+
+### Why the existing gates could not catch either
+
+The debounce is keyed per REFERENCE, and `9:1` and `9:24` are different references.
+The corroboration rule from §36 requires a candidate to survive a second decode —
+and a stable misparse survives every decode, because the parser is deterministic and
+the window still contains the same words. **Corroboration catches a decoder that
+wavers; it cannot catch a parser that is confidently wrong.** Those are different
+failures and they need different rules, which is why this is a separate decision.
+
+### What this does not fix
+
+The wall can still change several times as a preacher reads *through* a passage —
+"verse 5 … verse 6 … verse 10" is three references and three fires, and that is
+correct behaviour, not flicker. Whether a reading should instead advance one staged
+passage is a product question and is not decided here.
+
+Nothing above was found by a test. It was found by watching a service and then
+reading Relay's own `detections` table, which is the instrument that exists for
+exactly this and had never been used that way.

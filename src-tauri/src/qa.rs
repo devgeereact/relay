@@ -125,6 +125,18 @@ impl Wall {
         self.content.lock().unwrap().len()
     }
 
+    /// Every reference that reached an output, in order. `last()` answers "what is
+    /// up now"; this answers "what did the congregation actually watch happen",
+    /// which is the question a flickering wall raises.
+    pub(crate) fn references(&self) -> Vec<String> {
+        self.content
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|v| v.get("reference")?.as_str().map(str::to_string))
+            .collect()
+    }
+
     pub(crate) fn cleared(&self) -> bool {
         self.cleared.load(Ordering::SeqCst)
     }

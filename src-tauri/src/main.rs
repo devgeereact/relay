@@ -688,6 +688,47 @@ fn router_clock_ms() -> u64 {
 /// pause would put the verse on the wall long after the preacher moved on — but a
 /// partial is a sentence caught mid-word, and one shape of reference is created by
 /// that truncation rather than described by it. See the whole-chapter guard below.
+/// Order one window's candidates so the strongest is first, and drop the readings
+/// that are just a less complete parse of another one in the same window.
+///
+/// **The chapter-only rule.** A `whole_chapter` candidate is what "chapter 9" alone
+/// yields, and it resolves to verse 1. When the same window also names a specific
+/// verse in that same book and chapter, the chapter-only reading is not a second
+/// reference the preacher made — it is the first half of the one they did make.
+/// Firing it puts verse 1 on the wall next to the verse they asked for. Removed
+/// entirely rather than demoted: offering the operator "Genesis 12:1?" while they
+/// are reading Genesis 12:5 is noise, not a decision.
+///
+/// A chapter-only reading with NO specific verse beside it survives untouched —
+/// "turn to Psalm 23" is a real thing to say and verse 1 is the right answer.
+///
+/// Ordering is `pipeline::better`, the same comparison the per-reference dedup
+/// uses, so "strongest" means one thing in this file rather than two.
+fn rank_for_wall(mut cands: Vec<(String, Cand)>) -> Vec<(String, Cand)> {
+    let specific: Vec<(String, i64)> = cands
+        .iter()
+        .filter(|(_, c)| !c.whole_chapter)
+        .map(|(_, c)| (c.r.book.clone(), c.r.chapter))
+        .collect();
+    cands.retain(|(_, c)| {
+        !c.whole_chapter
+            || !specific
+                .iter()
+                .any(|(b, ch)| *b == c.r.book && *ch == c.r.chapter)
+    });
+    // Strongest first. `better(a, b)` is "a beats b", so a is ordered before b.
+    cands.sort_by(|(_, a), (_, b)| {
+        if pipeline::better(a, b) {
+            std::cmp::Ordering::Less
+        } else if pipeline::better(b, a) {
+            std::cmp::Ordering::Greater
+        } else {
+            std::cmp::Ordering::Equal
+        }
+    });
+    cands
+}
+
 fn emit_detections<R: tauri::Runtime>(
     handle: &tauri::AppHandle<R>,
     text: &str,
@@ -814,14 +855,43 @@ fn emit_detections<R: tauri::Runtime>(
             }
         }
 
-        for (key, c) in best {
+        // ── ONE WINDOW, ONE WALL ────────────────────────────────────────────────
+        //
+        // Measured in a real service, 2026-08-23: 58 broadcasts reached the
+        // congregation's screens in 45 minutes, and the wall visibly flickered.
+        // Two distinct causes, both here, both invisible to every existing gate
+        // because the debounce is keyed per REFERENCE and these are different
+        // references.
+        //
+        // 1. A chapter-only reading rides along with the verse. "1 Corinthians
+        //    chapter 9 and verse 24" parses as BOTH `9:1` (chapter-only defaults to
+        //    verse 1) and `9:24`, each `Direct` at 0.88. Live, the wall showed
+        //    9:24 -> 9:1 -> 9:24 over six seconds. Same shape produced 2 Chronicles
+        //    15:1, 26:1, Proverbs 3:1, Isaiah 61:1, Hebrews 6:1, Genesis 12:1 and
+        //    Psalms 23:1 in one service.
+        //
+        // 2. Several verses fire from ONE window, at the same instant. Two fires
+        //    share a timestamp to the tenth of a second (Matthew 13:10 and
+        //    2 Chronicles 15:1 at 1194.2s). A wall can only show one thing, so the
+        //    second is not information — it is the first one being erased before
+        //    anybody read it.
+        //
+        // A window is one hearing of one moment of speech. It may inform the
+        // operator about several verses; it may put at most ONE on a wall.
+        let ranked = rank_for_wall(best.into_iter().collect());
+
+        for (rank, (key, c)) in ranked.into_iter().enumerate() {
+            // Everything after the strongest candidate in this window is offered,
+            // never fired. It still reaches the operator instantly.
+            let may_fire = rank == 0;
             // `decide_live`, not `decide`: the live path is the one place a
             // candidate is read out of a PARTIAL window that will be decoded again a
             // step later, so it is the one place corroboration is both possible and
             // necessary. See `Router::decide_live` for the measured misreads it
             // exists to catch.
             let status = match router.decide_live(&key, c.conf, c.method, now_ms, is_final) {
-                RouteDecision::AutoFire => FireStatus::Auto,
+                RouteDecision::AutoFire if may_fire => FireStatus::Auto,
+                RouteDecision::AutoFire => FireStatus::Suggested,
                 RouteDecision::Suggest => FireStatus::Suggested,
                 RouteDecision::Drop => continue,
             };
