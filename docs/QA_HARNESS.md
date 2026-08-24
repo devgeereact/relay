@@ -20,15 +20,15 @@ every edit: `.claude/hooks/relay-fast-gate.mjs`, path-filtered and report-only (
 
 ## 0. Current inventory
 
-Re-measured **2026-08-20** against `07654a7`. Every number here is produced by a command, and
+Re-measured **2026-08-24** against `perf/realtime-latency`. Every number here is produced by a command, and
 the command is named — a count you cannot reproduce is a rumour.
 
 | | Count | How to reproduce |
 |---|---|---|
-| Rust tests | **478 passing**, 24 ignored | `cd src-tauri && cargo test` |
-| Frontend tests | **581 passing**, 0 skipped, 44 files | `npx vitest run` |
-| `e2e.rs` tests | **23** (21 run, 2 ignored — R2-C and R2-D, both open defects) | `cd src-tauri && cargo test e2e` |
-| Registered `#[tauri::command]` | **114** | `grep -c '#\[tauri::command\]' src-tauri/src/main.rs` |
+| Rust tests | **519 passing**, 28 ignored | `cd src-tauri && cargo test` |
+| Frontend tests | **594 passing**, 0 skipped, 45 files | `npx vitest run` |
+| `e2e.rs` tests | **28** (26 run, 2 ignored — R2-C and R2-D, both open defects) | `cd src-tauri && cargo test e2e::` |
+| Registered `#[tauri::command]` | **118** | `grep -c '#\[tauri::command\]' src-tauri/src/main.rs` |
 | `.svelte` files | **47**, 22 of them views | `find src -name '*.svelte' | wc -l` |
 | `<button>` occurrences | **319** | `grep -ro '<button' --include='*.svelte' src | wc -l` |
 | Tables in the schema | **18** | `grep -c 'CREATE TABLE' docs/data/schema.sql` |
@@ -481,6 +481,15 @@ count. This is the audit's starting line.
 | **C — Static contract** | Yes, one exemplar | `src/lib/ipc.test.js` — command names both directions, event listeners, and a `greet`-has-one-caller assertion |
 | **D — Live app** | Exists as a surface, is not exercised by any test | `channels.rs` serves `:8032`; `main.rs::remote_api` handles `search / fire / next / prev / clear / black / live`. Kiosk hub on `:8031` |
 | **E — Human** | The bench harness is built and pointed at nothing | `bench/README.md` says what to record; `bench/.gitignore` refuses to let sermon audio into the repo |
+| **F — Real-time latency** | Built 2026-08-24. Nine stamps per decode pass, mic → projector, readable in the shipped app | `src-tauri/src/latency.rs`; the rig is `stt::realtime::live_transcript_latency`; the surface is Settings → Diagnostics |
+
+**Layer F is new and it is the only layer that measures TIME.** Every other instrument here
+answers "is the answer right"; none of them could answer "how long did it take", and for two
+releases running that was the complaint. It is deliberately a shipped surface, not a test
+fixture: the numbers that matter are produced by a church laptop in a church, and an instrument
+that needs `cargo` is one nobody in a church will ever run. See
+[`audits/PERF-2026-08-24.md`](audits/PERF-2026-08-24.md) for what it has and has not measured,
+and Stage F of the human test script for the part that needs a room.
 
 Totals are in §0 and are re-measured, not inherited.
 

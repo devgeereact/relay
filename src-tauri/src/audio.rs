@@ -27,10 +27,20 @@ use std::thread::JoinHandle;
 #[derive(Debug, Clone)]
 pub struct AudioChunk {
     pub samples: Vec<f32>,
+    /// Position in the AUDIO stream (ms). Not a wall clock — see `received_at_us`.
     pub timestamp_ms: u64,
     pub sample_rate: u32,
     pub rms: f32,
     pub is_voice: bool,
+    /// WALL time this chunk left the capture callback (monotonic microseconds,
+    /// `latency::now_us`). The two clocks are both needed and are not
+    /// interchangeable: `timestamp_ms` says where in the sermon this audio is,
+    /// and this says when the machine got it. Every latency this pipeline is
+    /// judged on is a difference of wall times, and the audio clock cannot
+    /// answer it — under load the STT worker consumes its backlog in one pass,
+    /// so audio time jumps seconds while a fraction of a second of real time
+    /// passes (the same trap `main::router_clock_ms` documents).
+    pub received_at_us: u64,
 }
 
 /// An available capture device, shaped for the frontend.
@@ -41,8 +51,8 @@ pub struct DeviceInfo {
 }
 
 // --- chunking parameters (see docs/SPEC.md §4 step 1: 200-500ms overlapping) ---
-const CHUNK_MS: u32 = 400;
-const HOP_MS: u32 = 200; // 50% overlap
+pub const CHUNK_MS: u32 = 400;
+pub const HOP_MS: u32 = 200; // 50% overlap
 /// ABSOLUTE floor for the voice gate, on f32 samples in [-1, 1]. This is NOT the
 /// speech threshold — the real threshold is learned from the room's noise floor (see
 /// `Vad`). This only stops a dead or unplugged microphone from having its own dither
@@ -299,6 +309,7 @@ pub(crate) fn chunks_as_captured(cleaned: &[f32], sample_rate: u32) -> Vec<Audio
                 timestamp_ms: ts_ms,
                 sample_rate,
                 samples,
+                received_at_us: crate::latency::now_us(),
             });
         }
     }
@@ -501,6 +512,7 @@ where
                         timestamp_ms: ts_ms,
                         sample_rate,
                         samples: chunk,
+                        received_at_us: crate::latency::now_us(),
                     };
                     on_chunk(&ac);
                 }

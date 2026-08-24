@@ -42,6 +42,7 @@ import { writable, derived, get } from 'svelte/store';
 import { parseTemplateOverride } from '../templates.js';
 import { tNow } from '../i18n.js';
 import { humanError } from '../errors.js';
+import { markTranscript } from '../latency.js';
 
 /**
  * The audio meter — RMS level + voice-activity, arriving 10–50 times a second.
@@ -550,7 +551,7 @@ unlistenAudio = await listen('audio://chunk', (e) => {
   meter.set({ level: rms, isVoice: is_voice });
 });
 unlistenStt = await listen('stt://transcript', (e) => {
-  const { text, is_final, language } = e.payload;
+  const { text, is_final, language, trace_id } = e.payload;
   // Only touch `capture` when the detected language actually CHANGES. A Svelte
   // writable notifies every subscriber on every `set`, so updating it on each
   // transcript event re-rendered the whole app shell several times a second for
@@ -561,6 +562,10 @@ unlistenStt = await listen('stt://transcript', (e) => {
   }
   const at = new Date().toLocaleTimeString('en-GB');
   transcript.update((t) => applyTranscript(t, { text, is_final }, at));
+  // Tell Rust when this actually reached the operator's eyes. Everything before
+  // this point the backend can time itself; the webview's own share of the delay
+  // is only visible from inside the webview. Never throws — see lib/latency.js.
+  markTranscript(trace_id);
   // Expire stale suggestions here too, not only when a NEW one arrives. The
   // preacher moving on quietly is the commonest way a card goes stale, and it
   // produces no detection event at all — so without this a dead suggestion sat
@@ -1184,6 +1189,34 @@ return guardedRead('loadTemplates', async (call) => {
     templates.set(list);
     return list;
 }, []);
+}
+
+/**
+ * THE LATENCY REPORT — where the time went, this session.
+ *
+ * GROUP 2 (swallows). It is a diagnostic: a backend that is absent or a command
+ * that fails costs the operator nothing they can see, and the panel renders an
+ * honest "no data" instead of throwing on the Settings screen.
+ */
+export async function latencyReport(recent = 12) {
+  return guardedRead('latencyReport', (call) => call('latency_report', { recent }), null);
+}
+
+/** Start a clean measurement run — for a field test that wants THIS service. */
+export async function latencyReset() {
+  return guardedRead('latencyReset', (call) => call('latency_reset'), null);
+}
+
+/**
+ * Turn measurement on or off.
+ *
+ * Returns the state that is ACTUALLY in force, as Rust reports it — not the state
+ * that was asked for. A toggle that flips itself on a failed call tells the
+ * operator the instrument is running when it is not, which is the same class of
+ * lie as "Screens cleared" over a live verse, in a much smaller room.
+ */
+export async function latencySetEnabled(on) {
+  return guardedRead('latencySetEnabled', (call) => call('latency_set_enabled', { on }), null);
 }
 
 /** Save a template (insert or update). Returns its id; reloads the store. */

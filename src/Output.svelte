@@ -5,6 +5,7 @@
   import { parseTemplateOverride } from './lib/templates.js';
   import { isKeyedTemplate, resolveOutputTemplate, templateShows } from './lib/layers.js';
   import { resolveThemed, parseThemes } from './lib/themes.js';
+  import { markOutput } from './lib/latency.js';
 
   // Two modes, ONE renderer (TemplateRender): desktop (Tauri — DB template,
   // live edits over events) and kiosk/OBS (plain browser — built-in template by
@@ -122,6 +123,11 @@
       content = { kind: m.content_kind, reference: m.reference, text: m.text, translation: m.translation, media_url: m.media_url, media_kind: m.media_kind, template_json: m.template_json, template_pinned: m.template_pinned, countdown_to: m.countdown_to, countdown_done: m.countdown_done, stage_note: m.stage_note, next_reference: m.next_reference, next_text: m.next_text, service_started_at: m.service_started_at, service_target_ms: m.service_target_ms };
       visible = true;
       black = false;
+      // Report the paint back over the SAME socket the content came in on. This is
+      // the only measurement of the real last leg — the church's own network, to a
+      // browser source in OBS, to the projector — and it is the leg every other
+      // instrument in this codebase has had to assume was fast.
+      markOutput(m.trace_id, ws);
     } else if (m.kind === 'themes') {
       // The operator's custom themes, pushed by the hub on connect and whenever a
       // theme is saved. Lets THIS browser source resolve a template that pins a
@@ -198,6 +204,8 @@
         content = e.payload;
         visible = true;
         black = false;
+        // The native output window has the bridge, not the kiosk socket.
+        markOutput(e.payload?.trace_id);
       }));
       unlisten.push(await listen('output://clear', () => { visible = false; black = false; }));
       unlisten.push(

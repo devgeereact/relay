@@ -40,14 +40,53 @@ pub const WINDOW_SECS: usize = 8;
 /// also the ceiling the real-time budget is judged against, and it is what the
 /// cadence used to be, always, on every machine.
 const STEP_SAMPLES: usize = TARGET_RATE as usize;
-/// The FASTEST it will step: four passes a second. Below this the operator cannot
-/// read the revisions anyway, and whisper re-decodes the same window each pass, so
-/// the extra work buys nothing a person can see.
-const MIN_STEP_SAMPLES: usize = TARGET_RATE as usize / 4;
-/// Headroom on the measured decode. A step exactly equal to decode time saturates
-/// the worker — it would start the next pass the instant the last one ended, with
-/// no slack for a slow window, and the backlog would grow on the first hiccup.
-const STEP_SAFETY: f32 = 1.5;
+/// The FASTEST it will step: ONE CHUNKER HOP of new audio.
+///
+/// This was a flat 250 ms — a quarter second, chosen as "faster than a person can
+/// read revisions" — and it was 250 ms in a unit the pipeline cannot deliver.
+/// Audio arrives from `audio::Chunker` in `HOP_MS` lumps and in no other size, so
+/// a floor of 250 ms is not satisfied by one hop and IS satisfied by two: the real
+/// cadence was 400 ms, and the oldest word in each pair of hops sat waiting for
+/// 200 ms of it. Measured on this machine with `ggml-base`: a 165 ms decode
+/// producing a 370 ms audio-to-transcript latency, of which more than half was the
+/// gate, not the decoder.
+///
+/// A floor finer than the delivery granularity is unachievable; a floor between
+/// one hop and two costs two. So it is exactly one hop, and the coupling to the
+/// chunker is now written down instead of being a coincidence of two constants
+/// that happened to be edited in different files.
+///
+/// It is still a floor and it still does something: on a decoder faster than a hop
+/// it stops the worker re-decoding the same window several times per hop for
+/// revisions nobody can read.
+const MIN_STEP_SAMPLES: usize = (TARGET_RATE as usize) * (crate::audio::HOP_MS as usize) / 1000;
+/// Headroom on the measured decode.
+///
+/// **This was 1.5, and the headroom was the single largest avoidable delay in the
+/// pipeline.** On large-v3-turbo (measured on an M4 Pro with Metal: 655 ms for an
+/// 8 s window) it set the cadence to 982 ms — so after every decode the worker sat
+/// idle for a third of a second, waiting for audio it already had, before starting
+/// the next pass. The operator paid that third of a second on every transcript
+/// update, and again on the corroborating pass that a live detection needs
+/// (rule 28), so a spoken reference reached the wall roughly 650 ms later than the
+/// machine was capable of.
+///
+/// The headroom was protecting against a backlog that the loop below cannot have.
+/// Read its comment: a batch is drained WHOLE and decoded ONCE, so falling behind
+/// costs one decode no matter how deep the queue, and the 8-second window cap
+/// discards genuinely old audio rather than paying to decode it again. Slack in
+/// the cadence adds nothing to that; it only makes the worker idle.
+///
+/// So the cadence is now the decoder's own speed: finish a pass, take everything
+/// that arrived while it ran, start the next. The floor below is what stops that
+/// from becoming a flicker on a fast model, and it is a READABILITY limit, not a
+/// safety one.
+///
+/// The cost this does buy is duty cycle: on a model whose decode exceeds the floor
+/// the worker now runs continuously for the length of a service. That is a real
+/// trade and it is why `MIN_STEP_SAMPLES` exists at all — on `base` and `small`
+/// the floor binds and the worker still idles most of the time.
+const STEP_SAFETY: f32 = 1.0;
 /// How fast the measured decode cost is allowed to move the cadence. Slow enough
 /// that one unlucky window does not halve the update rate; fast enough to settle
 /// within a few seconds of someone switching model.
@@ -89,6 +128,12 @@ pub struct TranscriptUpdate {
     pub language: String,
     pub is_final: bool,
     pub timestamp_ms: u64,
+    /// The decode pass this text came out of (`latency::begin_pass`). Rides to the
+    /// console and on to detection so ONE identifier spans microphone to
+    /// projector: without it every stage can be timed and none of them can be
+    /// tied to the same spoken words, which is how you end up with a fast median
+    /// at every stage and a slow pipeline.
+    pub trace_id: u64,
 }
 
 /// How many of the most recent FINAL windows the stability check looks at.
@@ -356,6 +401,20 @@ fn worker<F>(
     // `Deoverlap`, which owns that rule and is tested independently of a mic.
     let mut deoverlap = Deoverlap::default();
 
+    // WALL time the OLDEST audio still waiting to be transcribed reached this
+    // worker, and the wall time the gate opened the utterance being built. Both are
+    // latency instrumentation only — nothing downstream branches on them.
+    //
+    // Oldest, not newest, and the difference is the whole honesty of the number.
+    // A decode pass consumes everything that arrived since the last one, and the
+    // chunker delivers in 200 ms lumps — so measuring from the FRESHEST chunk in
+    // the batch reports how long the last two hundred milliseconds waited and says
+    // nothing about the word at the front of the batch, which waited longer and is
+    // the one the operator is looking for. A latency report should describe the
+    // word that waited longest, not the one that waited least.
+    let mut oldest_pending_us: Option<u64> = None;
+    let mut voice_opened_us: Option<u64> = None;
+
     // How far behind real time we have been running. Only used to warn.
     let mut lag_warned = false;
     let mut voiced = 0u64;
@@ -398,8 +457,28 @@ fn worker<F>(
         for chunk in std::iter::once(first).chain(rx.try_iter()) {
             drained += 1;
             last_ts_ms = chunk.timestamp_ms;
+            if oldest_pending_us.is_none() {
+                oldest_pending_us = Some(chunk.received_at_us);
+            }
 
             if chunk.is_voice {
+                // The gate opening on an empty window IS the start of an
+                // utterance, and it is the instant the end-to-end measurement
+                // runs from: everything before it is a room nobody was talking in.
+                if window.is_empty() && voice_opened_us.is_none() {
+                    // Back-dated by one chunk length. `received_at_us` is when the
+                    // chunk was ASSEMBLED, and a chunk is 400 ms of audio — so its
+                    // first sample, the one the speaker actually made first, is
+                    // 400 ms older than that stamp. An end-to-end number that
+                    // started at assembly time would quietly omit the capture
+                    // front-end and report the pipeline as 400 ms faster than a
+                    // person in the room experiences it.
+                    voice_opened_us = Some(
+                        chunk
+                            .received_at_us
+                            .saturating_sub(crate::audio::CHUNK_MS as u64 * 1_000),
+                    );
+                }
                 voiced += 1;
                 silence_run = 0;
             } else {
@@ -481,7 +560,12 @@ fn worker<F>(
         let is_final = want_final;
         let started = std::time::Instant::now();
         let window_ms = window.len() as u64 * 1000 / TARGET_RATE as u64;
+        let trace = crate::latency::begin_pass(
+            oldest_pending_us.unwrap_or_else(crate::latency::now_us),
+            voice_opened_us,
+        );
 
+        let mut emitted = false;
         if window.len() >= MIN_SAMPLES {
             let lang_opt = lang.lock().ok().and_then(|g| g.clone());
             let prompt_opt = prompt.lock().ok().and_then(|g| g.clone());
@@ -493,17 +577,40 @@ fn worker<F>(
                 prompt_opt.as_deref(),
                 DECODE,
             ) {
+                // Stamp BEFORE handing the text on. `on_update` is the whole
+                // downstream pipeline — detection, the router, the wall — and a
+                // transcript stamp taken after it would fold every one of those
+                // costs into "how long whisper took", which is the exact
+                // misattribution this module exists to end.
+                crate::latency::transcript_emitted(
+                    trace,
+                    started.elapsed().as_micros() as u64,
+                    window_ms,
+                    drained,
+                    is_final,
+                );
+                emitted = true;
                 on_update(TranscriptUpdate {
                     text,
                     language: detected,
                     is_final,
                     timestamp_ms: last_ts_ms,
+                    trace_id: trace,
                 });
             }
         }
+        // A pass that produced no text reaches no further stage. Retire it now, so
+        // its decode cost is still counted and it does not sit open until the ring
+        // evicts it.
+        if !emitted {
+            crate::latency::close(trace);
+        }
         new_since_step = 0;
+        oldest_pending_us = None;
         if is_final {
             window.clear();
+            // The utterance is closed; the next voiced chunk starts a new one.
+            voice_opened_us = None;
         }
 
         // Whisper cannot keep up with the preacher on this machine. Say so ONCE,
@@ -522,7 +629,15 @@ fn worker<F>(
         let realtime_budget_ms = STEP_SAMPLES as u64 * 1000 / TARGET_RATE as u64;
         if decode_ms > realtime_budget_ms && !lag_warned {
             lag_warned = true;
-            let advice = if cfg!(target_os = "macos") && !cfg!(feature = "metal") {
+            // `crate::sysprobe::gpu_backends` owns the "what is this binary
+            // actually built with" question, and owns it because reading
+            // `cfg!(feature = "metal")` here gets it WRONG on macOS: Cargo.toml
+            // pulls whisper-rs with the metal feature from the macOS *target*
+            // block, which links the backend without ever setting the feature on
+            // this crate. This branch had the bug the moment it was written — a
+            // Metal build was told, on every slow window, to go and rebuild with
+            // Metal. Same defect as the Hardware Check screen's, one file over.
+            let advice = if crate::sysprobe::gpu_backends().is_empty() {
                 "This build has no GPU backend. Rebuild with Metal — measured 2.8x on an \
                  M4 Pro (~1710ms -> ~602ms for large-v3-turbo)."
             } else {
@@ -1368,6 +1483,7 @@ mod deoverlap_tests {
     fn chunk(at_ms: u64, len: usize, rate: u32) -> AudioChunk {
         let first = at_ms as usize * rate as usize / 1000;
         AudioChunk {
+            received_at_us: crate::latency::now_us(),
             samples: (0..len).map(|i| (first + i) as f32).collect(),
             timestamp_ms: at_ms,
             sample_rate: rate,
@@ -1480,6 +1596,7 @@ mod deoverlap_tests {
         assert_eq!(d.tail(&good).len(), 3200);
 
         let bad = AudioChunk {
+            received_at_us: crate::latency::now_us(),
             samples: vec![0.0; 128],
             timestamp_ms: 200,
             sample_rate: 0,
@@ -1588,6 +1705,7 @@ mod tests {
         for i in 0..30 {
             let samples: Vec<f32> = (0..19200).map(|n| 0.3 * (n as f32 * 0.05).sin()).collect();
             tx.send(AudioChunk {
+                received_at_us: crate::latency::now_us(),
                 samples,
                 timestamp_ms: i * 400,
                 sample_rate: 48000,
@@ -2577,9 +2695,11 @@ mod adaptive_cadence {
     /// and it is what made the transcript feel like it arrived in blocks.
     #[test]
     fn a_fast_decoder_steps_at_the_floor_not_at_a_fixed_second() {
-        assert_eq!(ms(step_samples_for(59.0)), 250, "base on Metal");
-        assert_eq!(ms(step_samples_for(153.0)), 250, "small on Metal");
-        assert_eq!(ms(step_samples_for(602.0)), 903, "large-v3-turbo on Metal");
+        assert_eq!(ms(step_samples_for(59.0)), 200, "base on Metal");
+        assert_eq!(ms(step_samples_for(153.0)), 200, "small on Metal");
+        // Measured on this machine, 2026-08-23: 655ms for an 8s window. The step is
+        // now that number and not half again as much — see `STEP_SAFETY`.
+        assert_eq!(ms(step_samples_for(655.0)), 655, "large-v3-turbo on Metal");
     }
 
     /// A slow pairing must not be asked for a pass it cannot deliver.
@@ -2603,19 +2723,54 @@ mod adaptive_cadence {
     #[test]
     fn the_cadence_never_runs_faster_than_a_person_can_read() {
         assert_eq!(step_samples_for(0.0), MIN_STEP_SAMPLES);
-        assert_eq!(ms(step_samples_for(0.0)), 250);
+        assert_eq!(ms(step_samples_for(0.0)), 200);
         const { assert!(MIN_STEP_SAMPLES < STEP_SAMPLES) };
     }
 
-    /// Headroom is the point: a step equal to the decode time saturates the worker.
+    /// THE COUPLING, PINNED. The floor is one chunker hop because audio cannot
+    /// arrive in any finer unit. Set it to anything that is not a whole number of
+    /// hops and the cadence silently rounds UP to the next one — which is how a
+    /// 250 ms floor spent a year behaving as a 400 ms one.
     #[test]
-    fn the_cadence_leaves_room_for_a_slow_window() {
-        let decode = 500.0;
-        let step = ms(step_samples_for(decode));
-        assert!(
-            step > decode as u64,
-            "step {step}ms must exceed decode {decode}ms or there is no slack"
+    fn the_floor_is_exactly_one_hop_of_audio() {
+        let hop_samples = TARGET_RATE as usize * crate::audio::HOP_MS as usize / 1000;
+        assert_eq!(MIN_STEP_SAMPLES, hop_samples);
+        assert_eq!(
+            MIN_STEP_SAMPLES % hop_samples,
+            0,
+            "a floor that is not a whole number of hops costs the next whole one"
         );
+    }
+
+    /// THE REGRESSION THIS PINS. Between the floor and the ceiling the cadence must
+    /// equal the decode cost EXACTLY — the worker finishes a pass and starts the
+    /// next one on the audio that arrived while it ran.
+    ///
+    /// This test previously asserted the opposite: that the step must *exceed* the
+    /// decode, as slack against a slow window. That slack was idle time on a hot
+    /// path. It bought nothing — the loop's batching is what survives a backlog, and
+    /// it does so by consuming more audio per decode, not by having been asked for
+    /// less — and it cost a third of every cadence, twice over on a detection,
+    /// because a live reference needs a corroborating pass before it may fire.
+    ///
+    /// Re-introduce any headroom above 1.0 and this fails.
+    #[test]
+    fn the_cadence_is_the_decoders_own_speed_not_a_multiple_of_it() {
+        for decode in [300.0f32, 500.0, 655.0, 900.0] {
+            assert_eq!(
+                ms(step_samples_for(decode)),
+                decode as u64,
+                "a {decode}ms decode must set a {decode}ms cadence"
+            );
+        }
+    }
+
+    /// The floor and the ceiling are the only two things allowed to move the
+    /// cadence off the decode cost, and they must still bind.
+    #[test]
+    fn the_floor_and_the_ceiling_still_bind() {
+        assert_eq!(ms(step_samples_for(10.0)), 200, "floor: one chunker hop");
+        assert_eq!(ms(step_samples_for(5_000.0)), 1000, "ceiling: never worse");
     }
 }
 
@@ -2762,5 +2917,144 @@ mod e2e_latency {
                 println!("    {r:<18} first detected at audio {at:.1}s");
             }
         }
+    }
+}
+
+/// THE REAL-TIME RIG. The whole front half of the pipeline, at the speed a room
+/// runs at, measured by the instrument that ships.
+///
+/// ```text
+/// RELAY_BENCH_WAV=…/sermon.wav [RELAY_MODEL_PATH=…/ggml-small.bin] \
+///   cargo test --release realtime::live_transcript_latency -- --ignored --nocapture
+/// ```
+///
+/// Every other benchmark in this file measures a PIECE — one decode, one walk over
+/// a file as fast as the machine can go. None of them can answer the question a
+/// person in a pew asks, because none of them runs at the speed of speech. A rig
+/// that consumes a thirty-second file in four seconds never has a queue, never
+/// exercises the cadence, and cannot tell you whether the transcript falls behind:
+/// the thing being measured only exists in real time.
+///
+/// So this feeds the REAL worker through the REAL chunker at wall-clock pace, and
+/// then reads `latency::report()` — the same instrumentation the shipped app
+/// exposes to a field tester, so the number quoted here and the number a church
+/// sees are produced by the same code.
+///
+/// What it CANNOT tell you: word error rate, whether a Nigerian-accented preacher
+/// in a live room is heard at all, or anything about the second half of the chain
+/// (detection, the router, the wall) which needs an app. It measures microphone to
+/// transcript, which is where the delay was.
+#[cfg(test)]
+mod realtime {
+    use super::*;
+    use std::sync::{Arc, Mutex};
+    use std::time::{Duration, Instant};
+
+    fn load_f32(path: &str) -> Vec<f32> {
+        let bytes = std::fs::read(path).expect("read audio");
+        let start = if bytes.starts_with(b"RIFF") { 44 } else { 0 };
+        let (frames, _) = bytes[start..].as_chunks::<4>();
+        frames.iter().map(|c| f32::from_le_bytes(*c)).collect()
+    }
+
+    #[test]
+    #[ignore = "needs RELAY_BENCH_WAV and an installed model"]
+    fn live_transcript_latency() {
+        let Some(wav) = std::env::var_os("RELAY_BENCH_WAV") else {
+            eprintln!("set RELAY_BENCH_WAV to a raw/RIFF f32 mono 16k file");
+            return;
+        };
+        let model = default_model_path().expect("no STT model found");
+        let pcm = load_f32(&wav.to_string_lossy());
+        let secs = pcm.len() as f32 / TARGET_RATE as f32;
+        println!(
+            "\n  model {}\n  audio {secs:.1}s, fed at real time\n",
+            model.display()
+        );
+
+        crate::latency::reset();
+        crate::latency::set_enabled(true);
+
+        // Collect what the worker emits, and stamp the render the way the console
+        // does — this rig stands in for the webview, so `audio_to_visible` here is
+        // "audio in the worker → a consumer was handed the text", with no webview
+        // paint in it. The shipped console reports its own paint on top.
+        let seen: Arc<Mutex<Vec<(u128, bool)>>> = Arc::new(Mutex::new(Vec::new()));
+        let sink = seen.clone();
+        let t0 = Instant::now();
+        let engine = SttEngine::try_load(model.clone(), move |u| {
+            crate::latency::frontend_mark(
+                u.trace_id,
+                crate::latency::Stage::TranscriptRendered,
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_millis() as u64)
+                    .unwrap_or(0),
+            );
+            crate::latency::close(u.trace_id);
+            if let Ok(mut g) = sink.lock() {
+                g.push((t0.elapsed().as_millis(), u.is_final));
+            }
+        })
+        .expect("load model");
+        let tx = engine.sender();
+
+        // The REAL chunker and the REAL voice gate — not a hand-rolled hop. See
+        // `audio::chunks_as_captured`, which exists so a bench cannot drift from
+        // the pipeline it claims to describe.
+        let chunks = crate::audio::chunks_as_captured(&pcm, TARGET_RATE);
+        let hop = Duration::from_millis(crate::audio::CHUNK_MS as u64 / 2);
+        let feed = Instant::now();
+        for (i, mut c) in chunks.into_iter().enumerate() {
+            // Wall-clock pacing. Without this the rig hands the worker the whole
+            // sermon at once and measures a queue no room can produce.
+            let due = hop * i as u32;
+            if let Some(wait) = due.checked_sub(feed.elapsed()) {
+                std::thread::sleep(wait);
+            }
+            // Re-stamp: `chunks_as_captured` builds them all up front, so their
+            // arrival times would otherwise all be "when the test started".
+            c.received_at_us = crate::latency::now_us();
+            if tx.send(c).is_err() {
+                break;
+            }
+        }
+        // Let the tail drain — the last window still has a decode and a finalize
+        // in front of it.
+        std::thread::sleep(Duration::from_secs(3));
+        drop(engine);
+
+        let report = crate::latency::report(0);
+        println!(
+            "  {:<38} {:>7} {:>8} {:>8} {:>8}",
+            "", "n", "p50", "p95", "worst"
+        );
+        for m in &report.metrics {
+            if m.samples == 0 {
+                continue;
+            }
+            println!(
+                "  {:<38} {:>7} {:>7.0}ms {:>7.0}ms {:>7.0}ms",
+                m.metric,
+                m.samples,
+                m.p50_ms.unwrap_or(0.0),
+                m.p95_ms.unwrap_or(0.0),
+                m.worst_ms.unwrap_or(0.0),
+            );
+        }
+        println!(
+            "\n  transcript updates/s: {:.2}   dropped partials: {}",
+            report.transcript_updates_per_s.unwrap_or(0.0),
+            report.dropped_partials
+        );
+        // Does it get worse as it runs? A per-minute mean that climbs is the
+        // finding, whatever the overall P50 says.
+        for m in &report.metrics {
+            if m.per_minute_mean_ms.len() > 1 {
+                println!("  {} per minute: {:?}", m.metric, m.per_minute_mean_ms);
+            }
+        }
+        let n = seen.lock().map(|g| g.len()).unwrap_or(0);
+        println!("\n  {n} transcript updates over {secs:.1}s of audio\n");
     }
 }

@@ -867,6 +867,7 @@ fn a_spoken_reference_auto_fires_all_the_way_to_the_wall() {
         "turn with me to John chapter three verse sixteen",
         0,
         true,
+        None,
     );
     settle();
 
@@ -904,7 +905,7 @@ fn ordinary_church_announcements_reach_nobody() {
         let h = app.handle().clone();
         let wall = Wall::watch(&h);
 
-        emit_detections(&h, text, 0, true);
+        emit_detections(&h, text, 0, true, None);
         settle();
 
         assert_eq!(
@@ -932,6 +933,7 @@ fn a_paraphrase_never_auto_fires_through_the_real_transcript_path() {
         "because God loved the world so much that he gave his only son",
         0,
         true,
+        None,
     );
     settle();
 
@@ -968,6 +970,7 @@ fn nothing_the_ai_decides_escapes_a_rehearsal() {
         "turn with me to John chapter three verse sixteen",
         0,
         true,
+        None,
     );
     settle();
 
@@ -1089,6 +1092,7 @@ fn a_chapter_and_verse_reference_does_not_also_fire_verse_one() {
         "The Bible says in 1 Corinthians chapter 9 and verse 24. It says,",
         1_000,
         true,
+        None,
     );
     settle();
 
@@ -1123,6 +1127,7 @@ fn two_references_in_one_window_put_one_verse_on_the_wall() {
         "as it says in Matthew 13:10, and again in 2 Chronicles 15:12,",
         1_000,
         true,
+        None,
     );
     settle();
 
@@ -1132,5 +1137,132 @@ fn two_references_in_one_window_put_one_verse_on_the_wall() {
         "one window put {} verses on the wall: {:?}",
         wall.count(),
         wall.references()
+    );
+}
+
+// ── THE INSTRUMENT ITSELF ─────────────────────────────────────────────────────
+//
+// A latency report is only as true as its wiring, and wiring is exactly the class
+// of thing this repository keeps finding broken with every test still green: a
+// rule enforced on one surface and skipped on its twin (CLAUDE.md, "a guarantee is
+// only kept on the doors you checked"). An instrument that silently stops
+// reporting does not look broken — it looks fast, because the samples that would
+// have been slow are the ones that stopped arriving.
+//
+// So these drive the real fire path and assert that the pass which HEARD a verse
+// is still attached to it when it leaves the machine.
+
+/// The verse that reaches the wall carries the decode pass that heard it.
+///
+/// Without this, `output_rendered_at` can never be attributed and the last leg —
+/// fire sent to pixels on a projector — quietly stops being measured. That is the
+/// leg with the church's own network in it.
+#[test]
+fn a_verse_that_reaches_the_wall_carries_the_pass_that_heard_it() {
+    let app = app();
+    let h = app.handle().clone();
+    let wall = Wall::watch(&h);
+
+    let trace = crate::latency::begin_pass(crate::latency::now_us(), None);
+    super::emit_detections(
+        &h,
+        "turn with me to John chapter three verse sixteen",
+        0,
+        true,
+        Some(trace),
+    );
+    settle();
+
+    let shown = wall
+        .last()
+        .expect("the reference never reached the outputs");
+    assert_eq!(shown["reference"], "John 3:16");
+    assert_eq!(
+        shown["trace_id"].as_u64(),
+        Some(trace),
+        "the wall content lost the pass that heard it, so its render can never be timed"
+    );
+}
+
+/// A verse a HUMAN fired carries no pass, and must not.
+///
+/// The end-to-end percentile is a claim about how fast the AI is. An operator's
+/// own keypress is not part of that path, and folding it in would flatter every
+/// number in the report with the one action that never waits for a decoder.
+#[test]
+fn a_verse_a_human_fired_carries_no_pass() {
+    let app = app();
+    let h = app.handle().clone();
+    let wall = Wall::watch(&h);
+
+    let r = crate::detection::VerseRef {
+        book: "John".into(),
+        chapter: 3,
+        verse: 16,
+    };
+    assert!(super::fire_manual(
+        &h,
+        r,
+        1.0,
+        super::PassageUpdate::Note(None),
+        None,
+        None
+    ));
+    settle();
+
+    let shown = wall
+        .last()
+        .expect("a manual fire never reached the outputs");
+    assert_eq!(shown["reference"], "John 3:16");
+    assert!(
+        shown["trace_id"].is_null(),
+        "a human's own fire was attributed to a decode pass: {:?}",
+        shown["trace_id"]
+    );
+}
+
+/// The two halves of the chain are measured SEPARATELY, and the report says which
+/// is which.
+///
+/// This is the specific failure of the previous field test: one number, a healthy
+/// one, and no way to tell an STT problem from a routing problem. A span that is
+/// only ever reported as part of a total cannot be diagnosed.
+#[test]
+fn the_fire_half_of_the_chain_is_measured_on_its_own() {
+    // The recorder is process-wide and tests run in parallel — see `test_lock`.
+    let _recorder = crate::latency::test_lock();
+    crate::latency::reset();
+    let app = app();
+    let h = app.handle().clone();
+    let _wall = Wall::watch(&h);
+
+    let trace = crate::latency::begin_pass(crate::latency::now_us(), None);
+    crate::latency::transcript_emitted(trace, 1_000, 8_000, 1, true);
+    super::emit_detections(
+        &h,
+        "turn with me to John chapter three verse sixteen",
+        0,
+        true,
+        Some(trace),
+    );
+    settle();
+    crate::latency::close(trace);
+
+    let report = crate::latency::report(4);
+    let span = |name: &str| {
+        report
+            .metrics
+            .iter()
+            .find(|m| m.metric == name)
+            .map(|m| m.samples)
+            .unwrap_or(0)
+    };
+    assert!(
+        span("transcript_to_reference_detection") >= 1,
+        "the parser's share of the delay is not being measured"
+    );
+    assert!(
+        span("reference_detection_to_fire") >= 1,
+        "the router and the broadcast are not being measured"
     );
 }

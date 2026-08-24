@@ -1438,3 +1438,158 @@ passage is a product question and is not decided here.
 Nothing above was found by a test. It was found by watching a service and then
 reading Relay's own `detections` table, which is the instrument that exists for
 exactly this and had never been used that way.
+
+---
+
+## 38. The transcript was late because the pipeline was waiting, and nothing was measuring (2026-08-24)
+
+### The complaint
+
+The live transcript arrived noticeably after the words, and the verse arrived after
+that. This is the third time that complaint has been made and the second time it has
+been acted on — §36 found a build shipping without a GPU backend, fixed it, and
+measured a **0 ms mean backlog with a 15 ms worst case** in a real service.
+
+Both of those things were true at once, and that is the finding underneath this one.
+
+### A zero backlog is not a low latency, and the difference is the whole bug
+
+"Backlog" is the audio waiting to be decoded. Zero means the worker is not falling
+*further* behind. It says nothing about how far behind it already is, and a pipeline
+that is permanently one cadence step plus one decode plus one corroboration pass
+behind the preacher reports a zero backlog for the entire service while the operator
+watches text land a second and a half late.
+
+Every instrument Relay had measured a *piece*: one decode (`stt::decode_cost`), one
+walk over a file as fast as the machine could manage (`e2e_latency`), the queue depth
+in the worker. None of them ran at the speed of speech, and the thing being complained
+about only exists in real time. So the honest state of the evidence was: three green
+numbers, one unhappy operator, and no way to tell which stage owned the delay.
+
+### The instrument comes first
+
+`src-tauri/src/latency.rs` stamps nine named instants — audio received, voice
+detected, decode started, transcript emitted, transcript painted, reference detected,
+fire authorised, fire sent, output painted — on a monotonic clock, one trace per
+decode pass, and carries the trace id from the microphone to the projector.
+Percentiles are kept in millisecond histograms for the **whole service**, plus a
+per-minute mean series, because "did it get worse over ninety minutes" is the question
+a single P50 is structurally incapable of answering.
+
+It is **on by default and readable in Settings → Diagnostics on a packaged build**.
+A measurement that needs a developer build is a measurement no church will ever take.
+
+Three deliberate choices in it, each of which would otherwise flatter the numbers:
+
+- **A stage never reached is an absence, not a zero.** Most windows contain no
+  reference, so counting "detection → fire" as 0 ms on those passes would report a
+  0 ms median forever while a real fire took a second and a half.
+- **The clock starts at the OLDEST audio waiting, not the newest.** A decode consumes
+  everything that arrived since the last one, and audio arrives in 200 ms lumps.
+  Measuring from the freshest lump reports how long the last fifth of a second
+  waited and says nothing about the word at the front of the batch — which waited
+  longer, and is the one the operator is looking for. This alone moved the reported
+  base-model median from 158 ms to 349 ms; the pipeline had not changed.
+- **Frontend marks are reported, and the bridge is reported separately.** The console
+  and the output page stamp their own paint (`Date.now()`, placed on Rust's monotonic
+  timeline); Rust also stamps the arrival, and the difference is the IPC hop, shown
+  rather than folded in. A kiosk browser source has no bridge, so it reports back over
+  the same WebSocket the content arrived on — that is the only way to see the church's
+  real network in the number.
+
+### What the instrument found
+
+Measured on an M4 Pro (14 cores, Metal, release build) with `ggml-base`, real speech
+fed at wall-clock pace through the real chunker and the real voice gate:
+
+| stage | before | after |
+|---|---|---|
+| audio → transcript, median | 349 ms | **139 ms** |
+| audio → transcript, P95 | 548 ms | **339 ms** |
+| audio → transcript, worst | 741 ms | **543 ms** |
+| transcript updates / second | 2.43 | **4.74** |
+| of which, whisper decoding | 146 ms | 139 ms |
+
+Same audio, same binary, one pair of constants apart. **The decoder did not get
+faster; it stopped being made to wait.** Over five minutes of continuous speech the
+per-minute means were 156 · 172 · 188 · 185 · 158 · 144 ms — no growth, 1075 updates,
+no shed partials.
+
+**More than half of the delay was not the decoder.** Three causes, in order of size.
+
+**1. The cadence floor was expressed in a unit the pipeline cannot deliver.**
+`MIN_STEP_SAMPLES` was a flat 250 ms — "faster than a person can read revisions".
+Audio arrives from `audio::Chunker` in `HOP_MS` (200 ms) lumps and in no other size,
+so a 250 ms floor is not satisfied by one hop and *is* satisfied by two: the real
+cadence was 400 ms, and the oldest word in each pair sat waiting through 200 ms of it.
+A floor finer than the delivery granularity is unachievable; a floor between one hop
+and two costs two. It is now exactly one hop, and the coupling is written down and
+pinned by a test instead of being a coincidence of two constants in different files.
+
+**2. `STEP_SAFETY` was 1.5, and the headroom protected nothing.**
+The cadence was set to one and a half times the measured decode, as slack against a
+slow window. But the worker's loop already drains a whole batch and decodes it ONCE,
+so falling behind costs one decode however deep the queue, and the 8-second window
+cap discards genuinely old audio rather than paying to decode it again. Slack adds
+nothing to that; it only makes the worker idle. On `large-v3-turbo` it was a third of
+a second of doing nothing after every pass, paid twice on a detection because a live
+reference needs a corroborating pass before it may fire. The cadence is now the
+decoder's own speed: finish a pass, take what arrived while it ran, start the next.
+
+The cost is real and is recorded rather than glossed: on a model slower than one hop
+the worker now runs continuously for the length of a service. `MIN_STEP_SAMPLES` is
+what keeps `base` and `small` idle most of the time.
+
+**3. Detection ran on the decoder's thread.**
+The STT callback did everything — the semantic scan, three lock acquisitions, the
+verse lookup, a SQLite write, the Tauri emit and the kiosk fan-out — between one
+decode and the worker's next `recv()`. Deciding what the LAST window said is not a
+prerequisite for decoding the next one, and the answer is the same either way. It now
+runs on its own thread behind a **bounded** queue. Bounded, because an unbounded queue
+does not prevent falling behind, it hides it: a full queue sheds a PARTIAL (the same
+window is decoded again in a moment, so nothing is lost that cannot be re-supplied)
+and blocks on a FINAL (which carries persistence and the spoken commands). Shed
+partials are counted and shown, because silent shedding is how a pipeline reaches
+"fine" while missing half its work.
+
+### What did not change, deliberately
+
+No threshold moved. No corroboration was removed. `UncertainBook` still cannot
+auto-fire, the per-reference debounce still holds, one window still puts at most one
+verse on a wall, and a partial-window reference is still held at `Suggest` until a
+second pass agrees (§36). Making a pipeline faster by letting it be wrong more often
+is rule 10 in a different costume, and this is the second decision in a row to say so.
+
+The corroboration delay does shrink, and it shrinks *for free*: it costs exactly one
+cadence step, and the cadence got shorter. That is the difference between removing a
+safety rule and removing the wait in front of it.
+
+### What is still the bottleneck, and it is not fixable here
+
+Above `ggml-base` the decoder is the whole story, and no amount of pipeline work
+touches it:
+
+| model | decode (median) | audio → transcript (median / P95) | improvement |
+|---|---|---|---|
+| `ggml-base` (shipped default) | 139 ms | **139 ms / 339 ms** | −60% median |
+| `ggml-small` | 370 ms | 573 ms / 989 ms | −27% median |
+| `ggml-large-v3-turbo` | 1240 ms | 2360 ms / 2556 ms | −2% (decode-bound) |
+
+A batch decoder's floor is roughly one and a half times its decode cost, because the
+oldest audio in a pass has already waited through the previous one. Whisper pads its
+mel window internally, so a shorter window costs the same (§36) and there is no
+cheaper pass to be had. **`base` meets the live targets on this hardware; `small`
+misses the P95; `large-v3-turbo` misses everything by more than a second.** That is a
+trade an operator makes when they choose a bigger model for accuracy, and until now it
+was invisible to them. It is now on the Diagnostics screen, in milliseconds, measured
+on their machine.
+
+### What this does NOT establish
+
+Everything above is a development machine, a release binary run from `cargo`, and
+text-to-speech audio in no room at all. Word error rate is still unmeasured in every
+language. Nobody has run a service. The `end_to_end_speech_to_scripture` and
+`audio_to_visible_transcript` spans need a webview and an output page and therefore a
+real app, and no number for them appears here. See `docs/audits/PERF-2026-08-24.md`
+for exactly what was and was not measured, and Stage F of the human test script for
+what has to happen in a room.
