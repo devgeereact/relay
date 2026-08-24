@@ -1,6 +1,6 @@
 [package]
 name = "relay"
-version = "0.1.0-3"
+version = "0.1.0-4"
 description = "AI-assisted live presentation software for churches"
 edition = "2021"
 
