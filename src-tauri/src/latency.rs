@@ -931,8 +931,11 @@ mod tests {
             close(id);
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
-        // A long silence, then speech resumes.
-        std::thread::sleep(std::time::Duration::from_millis(60));
+        // A long silence, then speech resumes. It is an ORDER OF MAGNITUDE longer
+        // than the gaps above so that a loaded CI runner overrunning a 10ms sleep
+        // can never be mistaken for the pause having leaked in — the bound below
+        // sits in the empty space between the two populations, not next to one.
+        std::thread::sleep(std::time::Duration::from_millis(600));
         let id = begin_pass(0, None);
         transcript_emitted(id, 1_000, 8_000, 1, false);
         close(id);
@@ -946,7 +949,7 @@ mod tests {
         // partial→partial and partial→final. NOT final→partial.
         assert_eq!(c.samples, 2, "the silence was timed as if it were latency");
         assert!(
-            c.worst_ms.unwrap_or(0.0) < 50.0,
+            c.worst_ms.unwrap_or(0.0) < 300.0,
             "worst {:?} — the pause leaked in",
             c.worst_ms
         );
