@@ -36,7 +36,7 @@
     Math.round(
       (Object.keys(CATALOGUES[code] ?? {}).filter((k) => !k.startsWith('_')).length / TOTAL) * 100,
     );
-  import { capture, meter, templates, initAudio, startCapture, stopCapture, setThresholds, setSttLanguage, setInputDevice, listTranslations, getActiveTranslation, setActiveTranslation, localIp, loadTemplates, getContentTemplates, setContentTemplate, getCrashReporting, setCrashReporting, serviceTargetMinutes, loadServiceTarget, setServiceTarget, latencyReport, latencyReset, latencySetEnabled } from '../stores/capture.js';
+  import { capture, meter, templates, initAudio, startCapture, stopCapture, setThresholds, setSttLanguage, setInputDevice, listTranslations, getActiveTranslation, setActiveTranslation, localIp, loadTemplates, getContentTemplates, setContentTemplate, getCrashReporting, setCrashReporting, serviceTargetMinutes, loadServiceTarget, setServiceTarget, latencyReport, latencyReset, latencySetEnabled, serviceLock, loadServiceLock, setServiceLock } from '../stores/capture.js';
   import { diagnose, drift } from '../latency.js';
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -221,6 +221,23 @@
   // "not unlocked yet", NOT "this machine has no speakers" — the default output
   // always exists and always works, and stays selectable either way.
   $: outLocked = sinkOk && outDevices.length === 0;
+  // The lock is armed by Rust when recording starts, so the truth is over there.
+  // Read it when this screen opens rather than trusting a store that may have been
+  // set before the service began.
+  onMount(loadServiceLock);
+
+  let lockErr = '';
+  async function unlockService() {
+    lockErr = '';
+    try {
+      await setServiceLock(false);
+    } catch (e) {
+      // GROUP 1 throws. An unlock that failed must not leave the button claiming
+      // it worked while every protected action keeps refusing.
+      lockErr = humanError(e);
+    }
+  }
+
   onMount(async () => {
     sinkOk = supportsSinkId();
     await refreshOutputs();
@@ -971,6 +988,27 @@
           <b>New here?</b> The setup walk-through picks your projector, checks the microphone is actually hearing something, and ends by putting a real verse on your real screen — so you have <i>seen</i> it work before Sunday.
         </div>
         <button class="r-btn ghost sm s-mt" on:click={restartSetup}>Run the setup walk-through</button>
+
+        <hr class="s-rule" />
+        <!-- SERVICE LOCK. Reachable from the sentence the refusal itself prints,
+             which is the whole reason it lives here and not somewhere tidier. -->
+        {#if $serviceLock.engaged}
+          <p class="s-note">
+            <b style="color:var(--v-amber);">A service is being recorded.</b>
+            Relay is holding back a few things that cannot be undone, or that would take
+            the speech engine away mid-sermon: {$serviceLock.held_back.join(', ')}.
+            Firing, the transport, clearing and blacking out are unaffected.
+          </p>
+          <button class="r-btn ghost sm s-mt" on:click={unlockService}>Unlock for this service</button>
+          {#if lockErr}<p class="s-note" role="alert" style="color:var(--v-rose)">{lockErr}</p>{/if}
+        {:else}
+          <p class="s-note">
+            While a service is being recorded, Relay holds back deletions, speech-model
+            changes and imports — an accident at 10:31 has no undo. It arms itself when you
+            start listening and lifts when the service ends. Nothing on the live path is
+            ever held back.
+          </p>
+        {/if}
 
         {#if $safeMode}
           <hr class="s-rule" />

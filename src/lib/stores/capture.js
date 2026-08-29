@@ -495,7 +495,12 @@ export async function setRehearsal(on) {
 /** Start (or resume) recording a service. Returns its id. */
 export async function startService(title, date) {
   const call = await invoke();
-  return call('start_service', { title, date });
+  const id = await call('start_service', { title, date });
+  // Recording arms the lock in Rust. Read it back rather than assuming: an
+  // assumption here would show PROTECTED over a console that is not protecting
+  // anything, which is the same class of lie as a badge that cannot be wrong.
+  await loadServiceLock();
+  return id;
 }
 
 /** Stop recording the current service (history kept). */
@@ -506,6 +511,43 @@ export async function endService() {
   } catch {
     /* backend absent */
   }
+  await loadServiceLock();
+}
+
+// ── SERVICE LOCK ──────────────────────────────────────────────────────────────
+//
+// While a service is being recorded, Relay holds back a short list of actions that
+// are irreversible or that take the speech engine away mid-sermon. The list lives
+// in Rust (`servicelock::PROTECTED`) and rides here with the flag — a second copy
+// in the frontend would be a second answer to one question, and the two would drift.
+//
+// Nothing on the fire path is affected, and the operator can lift it in one action:
+// it exists to catch an ACCIDENT, not to overrule the person standing in the room.
+export const serviceLock = writable({ engaged: false, held_back: [] });
+
+/** Ask Rust whether a service is being protected. Never throws; a status readout
+ *  that can take the console down is worse than no status readout. */
+export async function loadServiceLock() {
+  const v = await guardedRead('serviceLock', (call) => call('service_lock'), {
+    engaged: false,
+    held_back: [],
+  });
+  serviceLock.set(v ?? { engaged: false, held_back: [] });
+  return v;
+}
+
+/**
+ * The operator lifts (or re-applies) the lock. GROUP 1 — THROWS.
+ *
+ * A failed unlock that reported success would leave a volunteer pressing a button
+ * that keeps refusing, with the UI insisting it is now unlocked. The store is set
+ * from the value RUST returns, never from what was asked for.
+ */
+export async function setServiceLock(on) {
+  const call = await invoke();
+  const engaged = await call('set_service_lock', { on: !!on });
+  serviceLock.set({ ...get(serviceLock), engaged: !!engaged });
+  return !!engaged;
 }
 
 /** All recorded services (Library list). */

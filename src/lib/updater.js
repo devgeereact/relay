@@ -19,7 +19,7 @@
 // look.
 
 import { writable, get } from 'svelte/store';
-import { capture } from './stores/capture.js';
+import { capture, serviceLock } from './stores/capture.js';
 
 /** { version, notes } when an update is waiting, else null. */
 export const updateAvailable = writable(null);
@@ -31,9 +31,13 @@ let pending = null; // the Update handle from the plugin
 
 /** Is it safe to touch the updater right now? */
 function idle() {
-  const c = get(capture);
-  // Mic live = a service is in progress (or being rehearsed). Hands off.
-  return !c.capturing;
+  // TWO facts, because the microphone alone was not enough. A service can be
+  // recording with the mic momentarily stopped — between readings, while the
+  // operator changes an input, after an `audio://error` — and every one of those
+  // is a moment when restarting the app is the worst thing Relay could offer.
+  // The service lock is armed for the whole of a recorded service, so it closes
+  // the gap the mic flag left open.
+  return !get(capture).capturing && !get(serviceLock).engaged;
 }
 
 /**
@@ -69,8 +73,13 @@ export async function checkForUpdate() {
 export async function installUpdate() {
   if (!pending) return;
   if (!idle()) {
+    // Names BOTH reasons, because the operator has to know which one to clear.
+    // "Stop listening" is unhelpful advice to someone whose microphone is already
+    // off and whose service is still recording.
     updateError.set(
-      "Relay won't update while you're listening. Stop listening first — an update restarts the app.",
+      get(serviceLock).engaged
+        ? "Relay won't update during a service — an update restarts the app. End the service first."
+        : "Relay won't update while you're listening. Stop listening first — an update restarts the app.",
     );
     return;
   }

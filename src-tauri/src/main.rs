@@ -38,6 +38,7 @@ mod qa_r5;
 #[cfg(test)]
 mod r6;
 mod router;
+mod servicelock;
 mod songs;
 mod stt;
 mod sysprobe;
@@ -149,6 +150,7 @@ fn main() {
         .manage(channels::Rehearsal::default())
         .manage(channels::WallState::default())
         .manage(channels::OutputHealth::default())
+        .manage(servicelock::ServiceLock::default())
         .manage(Session::default())
         .manage(models::DownloadState::default())
         .setup(|app| {
@@ -386,6 +388,8 @@ fn main() {
             channel_status,
             close_channel_output,
             output_beat,
+            service_lock,
+            set_service_lock,
             set_channel_template,
             list_monitors,
             open_channel_output,
@@ -1614,7 +1618,12 @@ fn create_plan(db: tauri::State<'_, Db>, title: String, date: String) -> error::
 
 /// Planner: delete a plan and its cues.
 #[tauri::command]
-fn delete_plan(db: tauri::State<'_, Db>, id: i64) -> error::Result<()> {
+fn delete_plan(
+    db: tauri::State<'_, Db>,
+    lock: tauri::State<'_, servicelock::ServiceLock>,
+    id: i64,
+) -> error::Result<()> {
+    lock.guard("delete_plan")?;
     let conn = db.0.lock()?;
     db::delete_plan(&conn, id).map_err(Into::into)
 }
@@ -1749,6 +1758,7 @@ fn get_song(db: tauri::State<'_, Db>, id: i64) -> error::Result<Option<db::Song>
 #[allow(clippy::too_many_arguments)]
 fn import_song(
     db: tauri::State<'_, Db>,
+    lock: tauri::State<'_, servicelock::ServiceLock>,
     title: String,
     author: String,
     ccli: String,
@@ -1757,6 +1767,7 @@ fn import_song(
     lyrics: String,
     date: String,
 ) -> error::Result<i64> {
+    lock.guard("import_song")?;
     let title = title.trim();
     if title.is_empty() {
         return Err(error::Error::refused("song needs a title"));
@@ -1829,7 +1840,12 @@ fn save_song(
 
 /// Lyrics: delete a song and its sections.
 #[tauri::command]
-fn delete_song(db: tauri::State<'_, Db>, id: i64) -> error::Result<()> {
+fn delete_song(
+    db: tauri::State<'_, Db>,
+    lock: tauri::State<'_, servicelock::ServiceLock>,
+    id: i64,
+) -> error::Result<()> {
+    lock.guard("delete_song")?;
     let conn = db.0.lock()?;
     db::delete_song(&conn, id).map_err(Into::into)
 }
@@ -1863,7 +1879,12 @@ fn save_arrangement(
 
 /// Arrangements: delete one.
 #[tauri::command]
-fn delete_arrangement(db: tauri::State<'_, Db>, id: i64) -> error::Result<()> {
+fn delete_arrangement(
+    db: tauri::State<'_, Db>,
+    lock: tauri::State<'_, servicelock::ServiceLock>,
+    id: i64,
+) -> error::Result<()> {
+    lock.guard("delete_arrangement")?;
     let conn = db.0.lock()?;
     db::delete_arrangement(&conn, id).map_err(Into::into)
 }
@@ -1901,7 +1922,12 @@ fn save_scripture(
 
 /// Scripture (Library): remove a saved verse.
 #[tauri::command]
-fn delete_saved_scripture(db: tauri::State<'_, Db>, id: i64) -> error::Result<()> {
+fn delete_saved_scripture(
+    db: tauri::State<'_, Db>,
+    lock: tauri::State<'_, servicelock::ServiceLock>,
+    id: i64,
+) -> error::Result<()> {
+    lock.guard("delete_saved_scripture")?;
     let conn = db.0.lock()?;
     db::delete_saved_scripture(&conn, id).map_err(Into::into)
 }
@@ -1940,7 +1966,12 @@ fn save_announcement(
 
 /// Announcements: delete one.
 #[tauri::command]
-fn delete_announcement(db: tauri::State<'_, Db>, id: i64) -> error::Result<()> {
+fn delete_announcement(
+    db: tauri::State<'_, Db>,
+    lock: tauri::State<'_, servicelock::ServiceLock>,
+    id: i64,
+) -> error::Result<()> {
+    lock.guard("delete_announcement")?;
     let conn = db.0.lock()?;
     db::delete_announcement(&conn, id).map_err(Into::into)
 }
@@ -1958,11 +1989,13 @@ fn list_media(db: tauri::State<'_, Db>) -> error::Result<Vec<db::MediaAsset>> {
 #[tauri::command]
 fn import_media(
     db: tauri::State<'_, Db>,
+    lock: tauri::State<'_, servicelock::ServiceLock>,
     kind: String,
     filename: String,
     data: String,
     date: String,
 ) -> error::Result<db::MediaAsset> {
+    lock.guard("import_media")?;
     use base64::Engine as _;
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(data.as_bytes())
@@ -1998,7 +2031,12 @@ fn import_media(
 
 /// Media (Library): delete an asset (row + file).
 #[tauri::command]
-fn delete_media(db: tauri::State<'_, Db>, id: i64) -> error::Result<()> {
+fn delete_media(
+    db: tauri::State<'_, Db>,
+    lock: tauri::State<'_, servicelock::ServiceLock>,
+    id: i64,
+) -> error::Result<()> {
+    lock.guard("delete_media")?;
     let path = {
         let conn = db.0.lock()?;
         db::delete_media(&conn, id)?
@@ -2098,9 +2136,11 @@ struct SaveSong {
 #[tauri::command]
 fn save_reviewed_songs(
     db: tauri::State<'_, Db>,
+    lock: tauri::State<'_, servicelock::ServiceLock>,
     songs: Vec<SaveSong>,
     date: String,
 ) -> error::Result<ImportResult> {
+    lock.guard("save_reviewed_songs")?;
     let conn = db.0.lock()?;
     let mut added = Vec::new();
     let mut replaced = Vec::new();
@@ -2142,10 +2182,12 @@ fn save_reviewed_songs(
 #[tauri::command]
 fn import_pro(
     db: tauri::State<'_, Db>,
+    lock: tauri::State<'_, servicelock::ServiceLock>,
     filename: String,
     data: String,
     date: String,
 ) -> error::Result<ImportResult> {
+    lock.guard("import_pro")?;
     use base64::Engine as _;
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(data.as_bytes())
@@ -2680,7 +2722,12 @@ fn get_active_translation(db: tauri::State<'_, Db>) -> error::Result<Option<i64>
 /// Choose which translation to read from. Every verse lookup (detection, nav,
 /// manual, output) then prefers it, falling back to any that has the verse.
 #[tauri::command]
-fn set_active_translation(db: tauri::State<'_, Db>, id: i64) -> error::Result<()> {
+fn set_active_translation(
+    db: tauri::State<'_, Db>,
+    lock: tauri::State<'_, servicelock::ServiceLock>,
+    id: i64,
+) -> error::Result<()> {
+    lock.guard("set_active_translation")?;
     let conn = db.0.lock()?;
     db::set_setting(&conn, "active_translation", &id.to_string()).map_err(Into::into)
 }
@@ -3374,6 +3421,8 @@ fn stt_model_setting(conn: &rusqlite::Connection) -> Option<String> {
 /// loading it are one action or the promise is false (see rule 15).
 #[tauri::command]
 fn select_stt_model(app: tauri::AppHandle, filename: Option<String>) -> error::Result<bool> {
+    app.state::<servicelock::ServiceLock>()
+        .guard("select_stt_model")?;
     {
         let db = app.state::<Db>();
         let conn = db.0.lock()?;
@@ -3390,6 +3439,10 @@ fn select_stt_model(app: tauri::AppHandle, filename: Option<String>) -> error::R
 /// live from the first word.
 #[tauri::command]
 fn load_stt_model(app: tauri::AppHandle) -> error::Result<bool> {
+    // Rebuilding the engine takes the ears away for as long as whisper takes to
+    // load, which on a big model is most of a paragraph.
+    app.state::<servicelock::ServiceLock>()
+        .guard("load_stt_model")?;
     let engine = build_stt(&app);
     let loaded = engine.is_some();
     {
@@ -3425,6 +3478,11 @@ fn list_models() -> Vec<models::ModelInfo> {
 /// Progress arrives as `model://progress`; completion as `model://done`.
 #[tauri::command]
 async fn download_model(app: tauri::AppHandle, id: String) -> error::Result<()> {
+    // A 1.6 GB download over a church's broadband, started by a mis-click during a
+    // sermon, competes with nothing else — but it does compete, and it cannot be
+    // undone quickly.
+    app.state::<servicelock::ServiceLock>()
+        .guard("download_model")?;
     models::download(app, id).await.map_err(Into::into)
 }
 
@@ -3546,11 +3604,13 @@ fn select_voice_profile(
 /// (a Default is re-seeded if it was the last) and is applied live.
 #[tauri::command]
 fn delete_voice_profile(
+    lock: tauri::State<'_, servicelock::ServiceLock>,
     stt: tauri::State<'_, Stt>,
     routing: tauri::State<'_, Routing>,
     db: tauri::State<'_, Db>,
     id: i64,
 ) -> error::Result<db::VoiceProfile> {
+    lock.guard("delete_voice_profile")?;
     let profile = {
         let conn = db.0.lock()?;
         db::delete_voice_profile(&conn, id)?;
@@ -3975,7 +4035,12 @@ fn add_channel(
 
 /// Delete an output channel.
 #[tauri::command]
-fn delete_channel(db: tauri::State<'_, Db>, id: i64) -> error::Result<()> {
+fn delete_channel(
+    db: tauri::State<'_, Db>,
+    lock: tauri::State<'_, servicelock::ServiceLock>,
+    id: i64,
+) -> error::Result<()> {
+    lock.guard("delete_channel")?;
     let conn = db.0.lock()?;
     db::delete_channel(&conn, id).map_err(Into::into)
 }
@@ -3997,7 +4062,12 @@ fn create_template(db: tauri::State<'_, Db>, name: Option<String>) -> error::Res
 
 /// Delete a template (unassigns it from any channel first).
 #[tauri::command]
-fn delete_template(db: tauri::State<'_, Db>, id: i64) -> error::Result<()> {
+fn delete_template(
+    db: tauri::State<'_, Db>,
+    lock: tauri::State<'_, servicelock::ServiceLock>,
+    id: i64,
+) -> error::Result<()> {
+    lock.guard("delete_template")?;
     let conn = db.0.lock()?;
     db::delete_template(&conn, id).map_err(Into::into)
 }
@@ -4200,6 +4270,7 @@ fn start_service(
     session: tauri::State<'_, Session>,
     db: tauri::State<'_, Db>,
     rehearsal: tauri::State<'_, channels::Rehearsal>,
+    lock: tauri::State<'_, servicelock::ServiceLock>,
     title: String,
     date: String,
 ) -> error::Result<i64> {
@@ -4212,6 +4283,10 @@ fn start_service(
             "Relay is in rehearsal mode. Turn rehearsal off to record a real service.".into(),
         );
     }
+    // From here on the console is a live control surface, not an editing one.
+    // Re-armed on EVERY start, so an override the operator made last Sunday does
+    // not silently carry into this one.
+    lock.arm();
     // db before session (consistent global lock order — see persist_transcript).
     let conn = db.0.lock()?;
     let mut sess = session.0.lock()?;
@@ -4240,9 +4315,47 @@ fn start_service(
 
 /// Stop recording the current service (history is kept).
 #[tauri::command]
-fn end_service(session: tauri::State<'_, Session>) -> error::Result<()> {
+fn end_service(
+    session: tauri::State<'_, Session>,
+    lock: tauri::State<'_, servicelock::ServiceLock>,
+) -> error::Result<()> {
     *session.0.lock()? = None;
+    lock.release();
     Ok(())
+}
+
+/// Is the console currently protecting a service, and what is being held back?
+///
+/// The list rides with the flag so the UI can say what is unavailable without
+/// keeping its own copy — a second list in the frontend is a second answer to one
+/// question, and the two would drift.
+#[derive(serde::Serialize)]
+struct ServiceLockState {
+    engaged: bool,
+    held_back: Vec<&'static str>,
+}
+
+#[tauri::command]
+fn service_lock(lock: tauri::State<'_, servicelock::ServiceLock>) -> ServiceLockState {
+    ServiceLockState {
+        engaged: lock.engaged(),
+        held_back: servicelock::PROTECTED
+            .iter()
+            .map(|(_, what)| *what)
+            .collect(),
+    }
+}
+
+/// The operator lifts (or re-applies) the lock.
+///
+/// "Operator override is a first-class control, never a fallback UI" (CLAUDE.md).
+/// The lock exists to catch an accident, not to overrule the person standing in the
+/// room, so this takes no confirmation from Rust and gives no argument back. It is
+/// scoped to the service it was made in: `start_service` re-arms.
+#[tauri::command]
+fn set_service_lock(lock: tauri::State<'_, servicelock::ServiceLock>, on: bool) -> bool {
+    lock.set(on);
+    lock.engaged()
 }
 
 /// All services for the Library list, newest first.

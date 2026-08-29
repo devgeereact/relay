@@ -528,6 +528,12 @@ body{ overflow:hidden; text-rendering:optimizeLegibility; -moz-osx-font-smoothin
   letter-spacing:.05em; text-transform:uppercase; color:var(--v-dim); }
 .mic-dot{ width:6px; height:6px; border-radius:50%; background:var(--v-emerald);
   box-shadow:0 0 6px var(--v-emerald); }
+/* SERVICE LOCK. Grey and quiet on purpose: it reports that the console is being
+   careful, not that anything is wrong, and it must never compete with the amber
+   that says a congregation is looking at something. */
+.lockchip{ display:inline-flex; align-items:center; font-size:9px; letter-spacing:.09em;
+  color:var(--v-dim); border:1px solid var(--v-line2); border-radius:5px;
+  padding:2px 7px; background:var(--v-surf2); flex:0 0 auto; }
 @media (prefers-reduced-motion: no-preference){
   .mic-dot{ animation:micpulse 1.8s ease-in-out infinite; }
   @keyframes micpulse{ 0%,100%{opacity:1} 50%{opacity:.45} }

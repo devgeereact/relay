@@ -2,7 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { trapFocus } from './lib/focus.js';
   import { t } from './lib/i18n.js';
-  import { capture, capturing, detectionOn, live, screenBlack, rehearsing, initAudio, autoOpenOutputs, setDetection, clearScreens, blackScreen, panicError, dismissPanicError } from './lib/stores/capture.js';
+  import { capture, capturing, detectionOn, live, screenBlack, rehearsing, initAudio, autoOpenOutputs, setDetection, clearScreens, blackScreen, panicError, dismissPanicError, serviceLock, loadServiceLock } from './lib/stores/capture.js';
   import { installShortcuts, cheatsheet, liveShortcuts } from './lib/shortcuts.js';
   import { installLeaveGuard } from './lib/crash.js';
   import { session, setSession, resolveActiveTab } from './lib/session.js';
@@ -203,6 +203,8 @@
     // on boot. This used to run unconditionally, one step ahead of the safe-mode
     // guard below — so "outputs disabled" showed over screens that had just opened.
     if (!$safeMode) autoOpenOutputs();
+    // A console reopened mid-service must not show an unprotected app.
+    loadServiceLock();
     try {
       const { invoke } = await import('@tauri-apps/api/core');
       await invoke('greet', { name: 'operator' });
@@ -390,6 +392,15 @@
       {#if $capturing}
         <span class="topbar-mic" title="Microphone is live">
           <span class="mic-dot"></span>Listening
+        </span>
+      {/if}
+      <!-- SERVICE LOCK. A quiet chip, deliberately AFTER the state ladder and never
+           part of it: it says something about the console, not about the wall, and
+           it must never displace or dilute the one indicator that says whether a
+           congregation is looking at something. Grey, because nothing is wrong. -->
+      {#if $serviceLock.engaged}
+        <span class="lockchip r-mono" title="Deletions, model changes and imports are held back while a service is recording. Nothing on the live path is affected. Lift it in Settings → Backup &amp; Recovery.">
+          PROTECTED
         </span>
       {/if}
       <span class="topbar-spring"></span>

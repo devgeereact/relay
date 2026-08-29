@@ -78,6 +78,13 @@ pub(crate) fn bare_app() -> tauri::App<tauri::test::MockRuntime> {
         // that drives the remote needs it managed or the remote answers "clear".
         .manage(channels::WallState::default())
         .manage(Session::default())
+        // Whether the screens are answering, and whether a recorded service is
+        // being protected. Both are managed by the real app at startup, so a
+        // fixture without them is not a fresh install — it is an app in a state no
+        // church could ever be in, and a command that reads either would panic
+        // rather than fail a test with a readable message.
+        .manage(channels::OutputHealth::default())
+        .manage(servicelock::ServiceLock::default())
         .manage(Semantic(SemanticIndex::build(&corpus)))
         .manage(Context(Mutex::new(ContextMemory::default())))
         // mock_context, NOT generate_context!(): the real macro embeds Info.plist as a
@@ -381,6 +388,7 @@ mod cold_start {
         //     it requires a FILE. See `the_paste_or_draft_song_menu_item_is_dead`.
         let saved = save_reviewed_songs(
             h.state::<Db>(),
+            h.state::<servicelock::ServiceLock>(),
             vec![SaveSong {
                 title: "Great Are You Lord".into(),
                 author: "All Sons & Daughters".into(),
@@ -424,7 +432,8 @@ mod cold_start {
             .expect("create_voice_profile");
 
         // --- app_settings: Settings → Bible translations (and every other pref)
-        set_active_translation(h.state::<Db>(), 1).expect("set_active_translation");
+        set_active_translation(h.state::<Db>(), h.state::<servicelock::ServiceLock>(), 1)
+            .expect("set_active_translation");
 
         // --- services: starting to listen starts recording (capture.js
         //     `startCapture` calls `start_service` before `start_capture`).
@@ -432,6 +441,7 @@ mod cold_start {
             h.state::<Session>(),
             h.state::<Db>(),
             h.state::<channels::Rehearsal>(),
+            h.state::<servicelock::ServiceLock>(),
             "Sunday Service".into(),
             "2026-08-16".into(),
         )
@@ -997,7 +1007,12 @@ mod cold_start {
         assert_eq!(shown["template_pinned"], true);
 
         // Now delete the template out from under it.
-        delete_template(h.state::<Db>(), doomed).unwrap();
+        delete_template(
+            h.state::<Db>(),
+            h.state::<servicelock::ServiceLock>(),
+            doomed,
+        )
+        .unwrap();
 
         // The cue still exists and still carries the dead id — no FK, no cascade.
         {
@@ -1064,7 +1079,8 @@ mod cold_start {
                 .collect()
         };
         for id in ids {
-            delete_channel(h.state::<Db>(), id).expect("deleting a screen is allowed");
+            delete_channel(h.state::<Db>(), h.state::<servicelock::ServiceLock>(), id)
+                .expect("deleting a screen is allowed");
         }
         {
             let conn = db.0.lock().unwrap();
@@ -1100,6 +1116,7 @@ mod cold_start {
 
         let saved = save_reviewed_songs(
             h.state::<Db>(),
+            h.state::<servicelock::ServiceLock>(),
             vec![SaveSong {
                 title: "Way Maker".into(),
                 author: "Sinach".into(),
@@ -1144,7 +1161,12 @@ mod cold_start {
         )
         .unwrap();
 
-        delete_song(h.state::<Db>(), song_id).unwrap();
+        delete_song(
+            h.state::<Db>(),
+            h.state::<servicelock::ServiceLock>(),
+            song_id,
+        )
+        .unwrap();
 
         let conn = db.0.lock().unwrap();
         assert_eq!(count(&conn, "songs"), 0);

@@ -57,6 +57,111 @@ fn app() -> tauri::App<tauri::test::MockRuntime> {
     app
 }
 
+/// RG-03 · SERVICE LOCK — held back, but never in the operator's way.
+///
+/// Driven through the real commands, on a real database, exactly as the frontend
+/// drives them. Two claims, and the second is the one that matters more:
+///
+/// 1. Starting a service holds back the irreversible things, with a message that
+///    names the action and says how to proceed.
+/// 2. **It cannot touch anything used to run the service.** A lock that could
+///    refuse a blackout would be a lock that can hurt a congregation, so the fire
+///    path, the transport and both panic controls are exercised here WHILE the lock
+///    is engaged — a unit test asserting "these names are not on the list" proves
+///    the list, not the wiring.
+#[test]
+fn a_recorded_service_holds_back_a_deletion_but_never_the_wall() {
+    let app = app();
+    let h = app.handle().clone();
+    let wall = Wall::watch(&h);
+    let lock = h.state::<servicelock::ServiceLock>();
+
+    // A template nobody minds losing, created before the service starts.
+    let doomed = create_template(h.state::<Db>(), Some("Scratch".into())).expect("create");
+    assert!(!lock.engaged(), "a fresh app is not protecting anything");
+
+    let svc = start_service(
+        h.state::<Session>(),
+        h.state::<Db>(),
+        h.state::<channels::Rehearsal>(),
+        h.state::<servicelock::ServiceLock>(),
+        "Sunday Service".into(),
+        "2026-08-29".into(),
+    )
+    .expect("start service");
+    assert!(svc > 0);
+    assert!(lock.engaged(), "recording a service arms the lock");
+
+    // 1 · The irreversible thing is refused, and the refusal is usable.
+    let err = delete_template(
+        h.state::<Db>(),
+        h.state::<servicelock::ServiceLock>(),
+        doomed,
+    )
+    .expect_err("deleting a template mid-service must be held back");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("deleting a template"),
+        "must name the action: {msg}"
+    );
+    assert!(msg.contains("unlock"), "must say how to proceed: {msg}");
+    // …and it really did not happen.
+    assert!(
+        get_template(h.state::<Db>(), doomed).is_ok(),
+        "the template must still be there"
+    );
+
+    // 2 · Everything the operator runs a service with still works, right now.
+    manual_fire(h.clone(), h.state::<Db>(), "John 3:16".into(), None, None)
+        .expect("the operator must always be able to fire");
+    settle();
+    assert_eq!(
+        wall.last().expect("nothing reached the wall")["reference"],
+        "John 3:16"
+    );
+
+    nav(h.clone(), "next".into()).expect("the transport must still walk");
+    settle();
+
+    clear_screens(h.clone()).expect("CLEAR must work while a service is locked");
+    blackout(h.clone()).expect("BLACKOUT must work while a service is locked");
+    settle();
+
+    // 3 · The person in the room outranks the lock.
+    assert!(!set_service_lock(
+        h.state::<servicelock::ServiceLock>(),
+        false
+    ));
+    delete_template(
+        h.state::<Db>(),
+        h.state::<servicelock::ServiceLock>(),
+        doomed,
+    )
+    .expect("an operator who lifts the lock may delete");
+
+    // 4 · …and the override is scoped to the service it was made in.
+    end_service(h.state::<Session>(), h.state::<servicelock::ServiceLock>()).expect("end");
+    let again = create_template(h.state::<Db>(), Some("Scratch 2".into())).expect("create");
+    start_service(
+        h.state::<Session>(),
+        h.state::<Db>(),
+        h.state::<channels::Rehearsal>(),
+        h.state::<servicelock::ServiceLock>(),
+        "Evening Service".into(),
+        "2026-08-29".into(),
+    )
+    .expect("start again");
+    assert!(
+        delete_template(
+            h.state::<Db>(),
+            h.state::<servicelock::ServiceLock>(),
+            again
+        )
+        .is_err(),
+        "an override made last service must not silently disarm Relay for the next one"
+    );
+}
+
 #[test]
 fn a_verse_the_operator_fires_reaches_the_congregation_with_its_text() {
     let app = app();
