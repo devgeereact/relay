@@ -39,6 +39,41 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
   when it has gone below a readable size, so you can pick a shorter passage or a
   roomier template.
 
+### Relay can now tell you what happened, and get your history back if an update goes wrong
+
+- **Updating copies your history first.** Every service, plan, song, saved verse and
+  template is copied before an update installs, and Relay keeps the last three copies.
+  If the new version comes up with a database that is not right, it says so on the next
+  launch and offers to put your history back — you decide, not Relay. The app itself can
+  always be reinstalled from a release page; your history cannot, which is why it is the
+  thing that gets copied. Settings → Updates shows whether it is safe to update *before*
+  you press anything.
+- **Service History now replays.** Click any moment in a service and see what was being
+  said around it, what Relay decided, who decided it, and how fast it was going.
+- **A report for each service.** How long, what Relay fired, what you fired, what it
+  suggested and what you took, panic controls that failed, screens that stopped, and
+  whether it slowed down over the service. **It also says what it does not tell you** —
+  including that nothing here checks whether the verse shown was the right one.
+- **Relay says when it is working at less than full strength.** One line at the bottom
+  of the window, on every tab. No speech model, noise reduction switched off because the
+  microphone will not run at 48 kHz, detection disarmed, a build without graphics
+  acceleration, a screen that stopped answering. Each one says what it means for the
+  service and what to do about it. All of these already happened; none of them used to
+  be visible, so "it isn't hearing anything" got blamed on the AI.
+- **Rooms.** Save the main hall — microphone, recognition language, planned length,
+  voice profile, and which display each screen uses — and put it back with one press
+  next Wednesday. **Audio levels are deliberately not saved**: Relay learns those fresh
+  every time, because a level measured three weeks ago in a room that now has the
+  heating on and forty more people in it is a guess, and guessing is what once made
+  Relay deaf to a quiet preacher.
+- **Settings → Languages.** What Relay actually knows about Yorùbá, Kiswahili and
+  Hausa, counted from the data it ships with. Two columns are empty on purpose:
+  nobody who speaks these languages has checked the book names yet, and accuracy has
+  never been measured in any language, including English. Both say so.
+- **Save a diagnostic file.** Settings → Diagnostics writes one file you can email when
+  something goes wrong. It contains no transcript, no verse text, no lyrics and no
+  service names — you can read it before you send it.
+
 ### 🚧 Nothing has been released to anyone yet.
 
 Relay has never shipped. Every tag so far (`v0.1.0-rc1` … `v0.1.0-4`) is a **draft pre-release** used to exercise the pipeline — they are unsigned, and an unsigned build is stopped dead by macOS Gatekeeper and warned about by Windows SmartScreen. A volunteer does not push past those screens, and should not be asked to.

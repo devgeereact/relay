@@ -35,6 +35,30 @@ asked, this file is what the repository answered.
 > rather than absorbed: §39 narrows one word of §35 (**when**, anonymously — never
 > *who*), §40 introduces a lock and then subordinates it to the operator, and §42 adds
 > a gate in front of the wall that deliberately cannot touch a panic control.
+>
+> ### P1 — RG-06 … RG-12, closed the same day
+>
+> | ID | What changed | Pinned by |
+> |---|---|---|
+> | **RG-06** | Preflight, snapshot (`VACUUM INTO`), verify-on-next-launch, and a restore that happens before the database is opened. **Not** binary rollback — the installers are public; the church's data is what cannot be got back | `updates.rs` (12), `updatesafety.test.js` (13) |
+> | **RG-07** | A timeline row opens to show what was being said around it, what Relay decided, and how fast it was going | `report.test.js` replay group |
+> | **RG-08** | The Sunday report, derived and never stored — and it names what it does **not** measure | `report.test.js` (23 total) |
+> | **RG-09** | The half-dozen graceful fallbacks are now one line in the shell, on every tab, opened for the detail | `degraded.test.js` (21) |
+> | **RG-10** | A room, remembered — microphone, language, length, voice profile, displays. **Not** the audio levels | `db::environments` (6), `rooms.test.js` (19) |
+> | **RG-11** | Settings → Languages, every number derived from the shipped data; accuracy and native review render as absences | `detection::language_report_tests` (4), `languages.test.js` (11) |
+> | **RG-12** | One file a church can send, composed as an allow-list, with the home directory scrubbed | `diagnostics.rs` (5), `diagnostic_bundle_tests` (2), `diagnostics.test.js` (11) |
+>
+> Six more decisions were earned and written up: §43 (the binary is replaceable, the
+> data is not) · §44 (only what was measured appears) · §45 (an invisible fallback is
+> indistinguishable from a fault) · §46 (a room may be remembered; its audio levels
+> may not) · §47 (the moat is measured from the shipped data) · §48 (the one artefact
+> meant to leave the building gets the strict rule).
+>
+> **RG-10 deliberately stops short of its most attractive option.** Seeding the audio
+> learner from a stored floor may well be right, and it is not being done, because the
+> instrument that could show it safe (`cargo test audio::gate -- --ignored`, against
+> real room audio) has never been pointed at a real room. That is Stage C, and it is
+> still unrun.
 
 ---
 
@@ -616,13 +640,13 @@ matter right now.
 | ✅ RG-03 | No Service Lock | A template edit or model change mid-service | grep: zero hits | Lock keyed on `Session`, not on the mic; every blocked action explains itself | — | P0 | M | e2e: start a service, assert the blocked commands refuse with a typed error |
 | ✅ RG-04 | No event timeline; latency dies on quit | No replay, no report, no human metric, no evidence from a church | `docs/data/schema.sql`, `latency.rs` | Append-only `service_events` + `perf_samples`; retryable migration | — | P0 | M | Migration retryability test (CLAUDE.md rule 25); a service produces an ordered event list |
 | ✅ RG-05 | No pre-air validation | Unfittable or unreachable content goes to air silently | `TemplateRender.svelte:131-160` | One validator in front of `Fire::output`; refuse and report | — | P0 | M | e2e: an over-long verse on a tiny template refuses rather than shrinking to unreadable |
-| RG-06 | No update rollback, no DB-compat preflight | A bad update bricks a church until someone drives there | grep: zero hits; `db/mod.rs:51` | Keep the previous bundle; health-check after relaunch; compare `SCHEMA_VERSION` before install | — | P1 | L | Install a deliberately broken build; assert recovery |
-| RG-07 | No service replay | Nothing can be reconstructed after Sunday | — | Timeline viewer over RG-04 | RG-04 | P1 | M | Replay a recorded service; every fire has a trace |
-| RG-08 | No Sunday report | Churches cannot report, and you cannot learn | — | Derived view over RG-04 | RG-04 | P1 | S | Only metrics actually measured appear |
-| RG-09 | No degraded state | Fallbacks are invisible to the operator | `dsp.rs:15`, `main.rs:2635`, `pipeline.rs:131` | One `Degraded` enum surfaced to the shell | — | P1 | S | Kill the model mid-service; assert the banner |
-| RG-10 | Room calibration is lost on every start | The hall is re-learned each Sunday | `audio.rs:145-148`, `dsp.rs:146-153` | `environment_profiles`; store the learned floor, never a fixed threshold | RG-04 | P1 | M | Reopen; assert the floor is restored and still adapts (DECISIONS §19 must survive) |
-| RG-11 | Language coverage is prose, not an instrument | The moat cannot be tracked or improved | `docs/LANGUAGES.md`, `numerals.json` | A per-language status view: aliases, numerals, review state, WER (or "not measured") | — | P1 | S | The view must render "NOT MEASURED" rather than a plausible number |
-| RG-12 | Diagnostics is a screen, not an export | A church cannot send you what you need | `Settings.svelte:998-1054` | Export a scrubbed bundle; never include audio or transcript unless ticked | — | P1 | S | Assert the bundle contains no verse, lyric, announcement or transcript text |
+| ✅ RG-06 | No update rollback, no DB-compat preflight | A bad update bricks a church until someone drives there | grep: zero hits; `db/mod.rs:51` | Keep the previous bundle; health-check after relaunch; compare `SCHEMA_VERSION` before install | — | P1 | L | Install a deliberately broken build; assert recovery |
+| ✅ RG-07 | No service replay | Nothing can be reconstructed after Sunday | — | Timeline viewer over RG-04 | RG-04 | P1 | M | Replay a recorded service; every fire has a trace |
+| ✅ RG-08 | No Sunday report | Churches cannot report, and you cannot learn | — | Derived view over RG-04 | RG-04 | P1 | S | Only metrics actually measured appear |
+| ✅ RG-09 | No degraded state | Fallbacks are invisible to the operator | `dsp.rs:15`, `main.rs:2635`, `pipeline.rs:131` | One `Degraded` enum surfaced to the shell | — | P1 | S | Kill the model mid-service; assert the banner |
+| ✅ RG-10 | Room calibration is lost on every start | The hall is re-learned each Sunday | `audio.rs:145-148`, `dsp.rs:146-153` | `environment_profiles`; store the learned floor, never a fixed threshold | RG-04 | P1 | M | Reopen; assert the floor is restored and still adapts (DECISIONS §19 must survive) |
+| ✅ RG-11 | Language coverage is prose, not an instrument | The moat cannot be tracked or improved | `docs/LANGUAGES.md`, `numerals.json` | A per-language status view: aliases, numerals, review state, WER (or "not measured") | — | P1 | S | The view must render "NOT MEASURED" rather than a plausible number |
+| ✅ RG-12 | Diagnostics is a screen, not an export | A church cannot send you what you need | `Settings.svelte:998-1054` | Export a scrubbed bundle; never include audio or transcript unless ticked | — | P1 | S | Assert the bundle contains no verse, lyric, announcement or transcript text |
 | RG-13 | 9 controls with no accessible name | Screen-reader users cannot operate Live | `qa-inventory.mjs` | Add labels | — | P2 | S | Re-run the inventory; zero |
 | RG-14 | No p99; no latency history | Tail behaviour and long-service drift are invisible after a restart | `latency.rs:728-729` | Report p99; persist samples | RG-04 | P2 | S | Diagnostics shows p99 and a prior-service comparison |
 | RG-15 | Readiness never tests the spoken path | Green checks, dead microphone chain | `boot/probes.js` | Synthetic "say John 3:16" walk | RG-01 | P2 | M | Fail it by unplugging the mic; assert it goes red |
@@ -673,8 +697,10 @@ service), and one church.
 ### Then — P0 engineering
 
 - [x] RG-01 · RG-02 · RG-03 · RG-04 · RG-05 — done 2026-08-29, see the fix log above
-- [ ] RG-06 … RG-12 (P1). RG-07 and RG-08 are now unblocked: they were waiting on
-      RG-04's record, and it exists.
+- [x] RG-06 … RG-12 (P1) — done 2026-08-29, same fix log
+- [ ] RG-13 … RG-19 (P2/P3). RG-14's persisted latency arrived with RG-04; what is
+      left of it is p99. RG-18 still needs a designer and a real projector, and RG-19
+      still needs RG-06's ground, which now exists.
 
 ### Always — before any of the above ships
 

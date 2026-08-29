@@ -1810,3 +1810,206 @@ as the wall, which is what makes the measurement the wall's rather than a guess 
   must not: a panic control a validator could block is a panic control that can fail.
 - **It does not guess at fit.** Guessing would refuse content that renders perfectly
   well.
+
+## 43. The binary is replaceable; the church's data is not (2026-08-29)
+
+The updater could deliver a fix and could not undo one. The obvious reading of that
+gap — keep a copy of the previous app bundle — solves the problem that is already
+solved: a previous *version* can always be got back, because the installers are
+public, signed, and reinstalling one is a five-minute job from a release page.
+
+What cannot be got back is the **database**: every service, transcript, plan, song,
+saved verse and template a church has built up, if a migration in a new version goes
+wrong on their particular data. There is no undo, there is no copy anywhere else —
+that is what offline-first means — and it happens on the launch *after* the update,
+when whoever pressed the button has gone home.
+
+So the order is preflight, snapshot, verify.
+
+**Preflight refuses an update onto a database that is not already healthy.** A
+half-migrated one, or one with a scratch table left behind by a rebuild that did not
+finish, is §25 one step earlier: an update is exactly when a pending problem gets
+stepped on. **Low disk warns and lets it through**, because an update that refuses
+over something survivable is an update a church stops attempting — and the next one
+they skip may be the security fix.
+
+**The snapshot uses `VACUUM INTO`, not a file copy.** A torn copy of a live database
+is worse than none, because it will be trusted. Three are kept: a church that updates
+twice in a fortnight and only notices the damage on the second Sunday needs the one
+from before the first update.
+
+**Verify does not act on its own conclusion.** Restoring replaces a church's entire
+history; that is a decision with a person's name on it. And "the same version after
+an attempt" is reported as *did not install*, not as broken — the operator may simply
+have quit before restarting, and sending somebody to restore over a perfectly good
+database is far worse than the thing being reported.
+
+**The restore is a request, not an action.** Copying a file over an open database
+corrupts both, so `db::open` acts on a marker before it opens anything — the one
+moment the file is provably unused. It copies the database being replaced aside
+first, because otherwise "try the restore" is an irreversible gamble and an operator
+would be right never to press it. The marker is consumed even when the restore fails,
+or one bad update becomes a machine that will not start.
+
+---
+
+## 44. Only what was measured appears, and an absence is never a zero (2026-08-29)
+
+The service record (§41) made a report possible. This is the rule that decides what
+may be in it.
+
+A report showing `0` for something nobody measured is a report that **improves as the
+pipeline gets worse** — and it is not hypothetical: a field test concluded "STT is
+fine" from a backlog number while the operator watched text land a second and a half
+late (§38). So every field in the Sunday report can be `null`, `null` renders as
+"—", and the derivations refuse the tempting shortcut in three specific places:
+
+- **Suggestion uptake is `null` when nothing was suggested.** `0%` reads as "the
+  operator rejected everything", which is a different and much worse claim than
+  "Relay offered nothing".
+- **"Did latency grow?" is `null` with only one sample.** `false` would be a claim
+  nobody checked.
+- **A metric whose stages were never reached is dropped**, not printed as zeros.
+
+**There is no crash-free line, deliberately.** Crashes are recorded per *launch* in
+`localStorage` (`boot.js`), not per service, and there is no honest way to attribute
+one to the service that was running. The report says nothing about it rather than
+something reassuring — and it names that omission out loud, alongside the two that
+matter more: nothing here checks whether the verse shown was the *right* one, and
+word error rate is still unmeasured in every language. **A report that lists only
+what it measured, without naming what it did not, invites somebody to read the
+absence as a pass.**
+
+The replay window (±20 s) is generous for the same reason. Detection runs on partial
+hypotheses and only FINAL transcripts are stored, so the line that triggered a fire
+can be stamped seconds away from it. Narrowing the window to look tidy would hide the
+very line the operator came for.
+
+---
+
+## 45. A graceful fallback nobody can see is indistinguishable from a fault (2026-08-29)
+
+Relay degrades gracefully in half a dozen places, and every one of them was
+invisible. The denoiser switches itself off on a microphone that will not run at
+48 kHz. With no speech model the app runs audio-only — a perfectly good manual tool
+that looks identical to a broken one. A build with no GPU backend decodes about three
+times slower on macOS (§36). Detection can be disarmed by a keypress nobody remembers
+pressing.
+
+In every case **Relay knew and the operator did not**, so the symptom — "it isn't
+hearing anything" — got attributed to the AI being bad. For a product whose whole
+proposition is an AI a volunteer has to trust, that is the most expensive possible
+misdiagnosis.
+
+One line in the shell, on every tab, opened for the detail. In the shell rather than
+on Live, because a volunteer may well be in Settings when the model fails to load.
+Collapsed until opened, because a permanent list of caveats across the top of a live
+console is a list an operator stops reading. Below the panic banner and above the
+update banners. Never amber (§22).
+
+Two rules, and the first is what stops it becoming noise:
+
+1. **Nothing is invented.** A row appears only when a fact Relay actually measured
+   says so. `undefined` produces no row — not before the first audio frame, not
+   before the hardware probe answers, not on a plain browser.
+2. **Every row says what it means and what to do.** "Degraded" on its own is a mood.
+   So "no speech model" says firing by hand still works exactly as normal, shed
+   updates say nothing final was lost, and the CPU-only build admits there is nothing
+   the operator can change.
+
+---
+
+## 46. A room may be remembered; its audio levels may not (2026-08-29)
+
+A church that runs in the main hall on Sunday and the youth room on Wednesday rebuilds
+the same configuration twice a week, and the microphone choice is not persisted
+anywhere at all — it lives in memory and is gone the moment Relay closes.
+
+Rooms remember the microphone, the recognition language, the planned length, the
+active voice profile, and which display each screen goes to. Screens are remembered by
+**name**, not id: ids are per-database, a name is what an operator recognises, and it
+survives a screen being deleted and re-added — which is what happens when somebody
+re-cables a room.
+
+**The audio thresholds are not remembered, and that is the decision.** §19 and rule 12
+exist because three individually-reasonable thresholds together made Relay *deaf to a
+quiet preacher, silently* — 94% voiced at studio level, 2% at a church-laptop level.
+A noise floor captured in this hall three weeks ago, applied today with the heating on
+and forty more people in it, is exactly the assumption that rule forbids.
+
+Seeding the learner from a stored floor — which still adapts, and so arguably is not
+"assuming" — may well be right. It is not being done **because the instrument that
+could show it safe has never been pointed at a real room**: `cargo test audio::gate --
+--ignored` needs church audio, and Stage C of the human test script has not been run.
+What the room observed is written down as prose for a person to read, and nothing
+reads it back. A test fails if a column that could become a threshold ever appears.
+
+Applying a room is a **list of steps, not one command**. Every setting already has a
+command with its own contract, and one "apply a room" would be a second implementation
+of each. The point is the failure case: a room applied where the projector moved and
+the microphone changed port restores four of six things, and **both halves are news** —
+the five-sixths that came back, and the one to go and fix.
+
+---
+
+## 47. The moat is measured from the shipped data, or it is not measured (2026-08-29)
+
+`docs/LANGUAGES.md` has always been honest in prose. Prose cannot be tracked: a
+contributor who fixes eleven Yorùbá book names has no way to see they moved anything,
+and a reader has no way to tell whether the document is still current.
+
+Settings → Languages shows the same facts as numbers **derived from the data the
+binary ships**, so the report cannot flatter the product — the only way to improve a
+figure is to improve the table the detector uses. It counts only books the detector
+can key on, because a typo in the data file is a name no transcript will ever match
+and counting it would make the report improve as the data got worse.
+
+**Two columns are always empty, and they are the two that matter.**
+
+*Checked by a speaker* reads "not yet" for every language, because nothing can observe
+a person's judgement and none has looked. That is the gap that matters most: a wrong
+alias does not fail safely — it puts the wrong scripture on a wall. The screen says
+fixing one is a one-line change to `book_aliases.json` with no code required.
+
+*Accuracy* reads "not measured", and the field is an `Option` that is always `None`,
+so there is nothing the view could print even if it tried. The screen says what
+closing it costs: about thirty minutes of real preaching on tape and somebody who
+speaks the language to write down what was actually said. **Any figure there today
+would be a guess wearing a percentage sign, and this is the moat.**
+
+An absence renders dim and italic, never red. Nobody has failed here; the work has not
+been done, and saying so is the entire point of the column.
+
+---
+
+## 48. The one artefact expected to leave the building gets the strict rule (2026-08-29)
+
+Settings → Diagnostics showed the right facts and was useless for the job it exists
+for: **nobody can email a screen.** What actually happens is somebody photographs it,
+losing half the table and all of the latency history.
+
+The diagnostic bundle is a file, and it is the only thing in Relay that is *expected*
+to be sent to a stranger. So it is composed as an **allow-list** — every field named
+on the way in, never a list of things to strip.
+
+`telemetry.rs` is the precedent, and it is a cautionary one: its doc comment promised
+"deliberately an ALLOW-LIST … a blocklist fails open, and the cost of failing open
+here is publishing somebody's sermon", and the implementation underneath was a
+blocklist that shipped every field nobody had thought of. **A blocklist here would
+leak whatever the next feature adds**, and by then nobody would be reading the
+comment.
+
+Present: versions, the machine, the model's *filename*, ports, current state, latency
+percentiles, the screens by name and status, the schema report, and whether an update
+is mid-flight. Absent: every transcript, verse, lyric, announcement, service title,
+plan name, song name, template name and media filename.
+
+**Home directories are personal too.** `/Users/ada/Library/…` names a person, so the
+whole document is scrubbed to `~` in one pass at the end rather than per field —
+the call site that forgets is the one that ships somebody's name to a stranger.
+Writing that scrub is how `db::path_rule` earned its keep: it failed the build because
+the new module read `HOME` directly, and it was right to. `db` owns OS paths (rule 9),
+prefers `USERPROFILE` on Windows (Git Bash sets `HOME` to `/c/Users/Ada`, which no
+Windows path contains, so scrubbing against it would silently redact nothing), and
+refuses a one-character home rather than turning every slash in the document into a
+tilde.
