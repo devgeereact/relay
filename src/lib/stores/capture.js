@@ -567,6 +567,17 @@ export async function servicePerf(id) {
   return guardedRead('servicePerf', (call) => call('service_perf', { id }), []);
 }
 
+/**
+ * The state of Relay's African-language support, measured from the shipped data.
+ *
+ * Read-only, so it swallows: a language report that could take Settings down would
+ * be worse than no language report. `wer` is always null and `native_reviewed`
+ * always false — both are absences, and the UI must render them as such.
+ */
+export async function languageReport() {
+  return guardedRead('languageReport', (call) => call('language_report'), []);
+}
+
 // ── ROOMS (RG-10) ────────────────────────────────────────────────────────────
 //
 // A church that runs in the main hall on Sunday and the youth room on Wednesday

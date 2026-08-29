@@ -391,6 +391,7 @@ fn main() {
             output_beat,
             service_timeline,
             service_perf,
+            language_report,
             list_environments,
             save_environment,
             use_environment,
@@ -2688,6 +2689,18 @@ fn migration_status(db: tauri::State<'_, Db>) -> error::Result<MigrationStatus> 
         manual_status,
         scratch_table,
     })
+}
+
+/// The state of Relay's African-language support, measured rather than asserted.
+///
+/// Derived from the data the binary actually ships, so the report cannot flatter
+/// the product: the only way to improve a number here is to improve the table the
+/// detector uses. `wer` is always null and `native_reviewed` always false, because
+/// neither has ever happened — and reporting either as a score would be the single
+/// most misleading thing in this product, since it is the moat.
+#[tauri::command]
+fn language_report() -> Vec<detection::LanguageReport> {
+    detection::language_report()
 }
 
 // ===== ROOM PROFILES (RG-10) =====

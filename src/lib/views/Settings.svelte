@@ -37,7 +37,7 @@
       (Object.keys(CATALOGUES[code] ?? {}).filter((k) => !k.startsWith('_')).length / TOTAL) * 100,
     );
   import { capture, meter, templates, initAudio, startCapture, stopCapture, setThresholds, setSttLanguage, setInputDevice, listTranslations, getActiveTranslation, setActiveTranslation, localIp, loadTemplates, getContentTemplates, setContentTemplate, getCrashReporting, setCrashReporting, serviceTargetMinutes, loadServiceTarget, setServiceTarget, latencyReport, latencyReset, latencySetEnabled, serviceLock, loadServiceLock, setServiceLock, rooms, loadRooms, saveRoom, useRoom, deleteRoom,
-    listOutputChannels, setChannelDisplay, activeVoiceProfile } from '../stores/capture.js';
+    listOutputChannels, setChannelDisplay, activeVoiceProfile, languageReport } from '../stores/capture.js';
   import { captureRoom, observedNote, applyRoom, describeApply } from '../rooms.js';
   import { snapshotPath, KEEP_SNAPSHOTS } from '../updater.js';
   import { diagnose, drift } from '../latency.js';
@@ -53,6 +53,7 @@
     { key: 'audio',     label: 'Audio',             desc: 'Microphone input, live level and video sound output', icon: 'mic' },
     { key: 'voice',     label: 'Voice Profiles',    desc: 'Per-preacher language, bias vocabulary and gate calibration', icon: 'user' },
     { key: 'scripture', label: 'Scripture & Bible', desc: 'Recognition language and Bible translations', icon: 'book' },
+    { key: 'languages', label: 'Languages',        desc: 'How much of each language Relay actually knows', icon: 'book' },
     { key: 'ai',        label: 'AI & Detection',    desc: 'Detection thresholds and the run engine', icon: 'sparkle' },
     { key: 'shortcuts', label: 'Shortcuts',         desc: 'Keyboard controls for the live desk', icon: 'keyboard' },
     { key: 'network',   label: 'Network',           desc: 'Kiosk, output and stage distribution', icon: 'nodes' },
@@ -239,6 +240,21 @@
   let roomMsg = '';
   let roomBusy = false;
   onMount(loadRooms);
+
+  // ── LANGUAGES ─────────────────────────────────────────────────────────────
+  //
+  // The moat, measured rather than asserted. Every number comes from the data the
+  // binary actually ships, so this cannot flatter the product — the only way to
+  // improve a figure here is to improve the table the detector uses.
+  //
+  // Two fields are deliberately ALWAYS empty: word error rate has never been
+  // measured in any language, and no native speaker has reviewed any of these
+  // tables. They render as "not measured" and "not reviewed", never as a score. A
+  // number in either would be the single most misleading thing in this product.
+  let langs = [];
+  onMount(async () => {
+    langs = await languageReport();
+  });
 
   async function doSaveRoom() {
     roomMsg = '';
@@ -1018,6 +1034,54 @@
         </div>
         <div class="s-tr-note r-mono">Only public-domain <b>KJV</b> is bundled. Additional versions need their verse data added to the corpus.</div>
 
+      {:else if section === 'languages'}
+        <p class="s-lead">
+          What Relay actually knows about each language, counted from the data it
+          ships with. Nothing here is a claim — improving a number means improving
+          the table the detector uses, which is a one-line change anyone who speaks
+          the language can make.
+        </p>
+        {#if langs.length}
+          <table class="s-lang">
+            <thead>
+              <tr><th>Language</th><th>Books</th><th>Ways to say them</th><th>Numbers in-language</th><th>Console text</th><th>Checked by a speaker</th><th>Accuracy</th></tr>
+            </thead>
+            <tbody>
+              {#each langs as l (l.code)}
+                <tr>
+                  <td><b>{l.name}</b> <span class="r-mono s-langcode">{l.code}</span></td>
+                  <td class="r-mono">{l.books} / {l.books_total}</td>
+                  <td class="r-mono">{l.aliases}</td>
+                  <!-- Yorùbá numerals are subtractive (16 = ẹrìndínlógún) and are
+                       not parsed. Saying "no" is the point of this column. -->
+                  <td class="r-mono" class:s-langgap={!l.numerals}>{l.numerals ? 'yes' : 'no'}</td>
+                  <td class="r-mono" class:s-langgap={coverage(l.code) === 0}>{coverage(l.code)}%</td>
+                  <!-- ABSENCES, not scores. Nothing observes a native speaker's
+                       judgement, and none has looked at these tables. -->
+                  <td class="r-mono s-langgap">not yet</td>
+                  <td class="r-mono s-langgap">not measured</td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+          <p class="s-note">
+            <b>“Accuracy” is empty because it has never been measured</b> — in any
+            language, including English. Measuring it needs about thirty minutes of
+            real preaching on tape and somebody who speaks the language to write down
+            what was actually said. Until that exists, any figure here would be a
+            guess wearing a percentage sign.
+          </p>
+          <p class="s-note">
+            Every book name came from a published translation, and <b>none has been
+            checked by somebody who speaks the language.</b> That is the gap that
+            matters most: a wrong alias does not fail safely — it puts the wrong
+            scripture on a wall. Fixing one is a one-line change to
+            <span class="r-mono">data/book_aliases.json</span>, no code required.
+          </p>
+        {:else}
+          <p class="s-note">The language tables could not be read.</p>
+        {/if}
+
       {:else if section === 'ai'}
         <div class="s-inline"><span class="s-count">self-calibrating</span></div>
         <div class="s-slider">
@@ -1515,6 +1579,15 @@
     .s-rowctl{ max-width:none; }
   }
   .s-roomrow{ align-items:flex-start; }
+  .s-lang{ width:100%; border-collapse:collapse; font-size:var(--v-fs-b2); margin-top:10px; }
+  .s-lang th{ text-align:left; font-weight:500; font-size:9px; letter-spacing:.06em;
+    text-transform:uppercase; color:var(--v-faint); padding:6px 8px;
+    border-bottom:1px solid var(--v-line); }
+  .s-lang td{ padding:7px 8px; border-bottom:1px solid var(--v-line2); color:var(--v-dim); }
+  .s-langcode{ color:var(--v-faint); font-size:10px; }
+  /* An absence is dim, not red: nobody has failed here — the work has not been
+     done, and saying so is the whole point of the column. */
+  .s-langgap{ color:var(--v-faint); font-style:italic; }
   .s-roomname{ flex:1; min-width:0; display:flex; flex-direction:column; gap:2px; }
   .s-roomnote{ font-size:var(--v-fs-cap); color:var(--v-faint); }
   @media (min-width:1px){
