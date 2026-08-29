@@ -2,6 +2,7 @@
   import { humanError } from '../../errors.js';
   import { onMount } from 'svelte';
   import { showsConfidence } from '../../detect.js';
+  import { sundayReport, replayAt } from '../../report.js';
   import Loading from '../../ui/Loading.svelte';
   import { capture, listServices, serviceDetail, serviceTimeline, servicePerf, endService, exportService } from '../../stores/capture.js';
 
@@ -62,6 +63,25 @@
   // A row that says something went wrong reads as one. Rose is the failure colour;
   // amber is never spent here, because nothing on this screen is on air.
   const isFault = (r) => r.kind === 'panic_failed' || r.kind === 'output_lost';
+
+  // ── THE REPORT ────────────────────────────────────────────────────────────
+  //
+  // Derived, never stored — so it cannot drift from the record it describes, and
+  // so an older service reports exactly what was captured at the time rather than
+  // a shape invented later. Every field can be null, and null renders "—".
+  $: report = timeline.length || perf.length ? sundayReport(timeline, perf, detail) : null;
+  const pct = (v) => (v === null ? '—' : `${Math.round(v * 100)}%`);
+  const num = (v) => (v === null || v === undefined ? '—' : String(v));
+
+  // ── THE REPLAY ────────────────────────────────────────────────────────────
+  //
+  // Pick a moment; see what was being said around it and what Relay did. The
+  // transcript context is the point: a fire on its own says WHAT went up, and the
+  // words either side say WHY — which is the question somebody actually has three
+  // days later.
+  let replayIdx = null;
+  $: replay = replayIdx === null ? null : replayAt(timeline[replayIdx], detail, perf);
+  const openReplay = (i) => (replayIdx = replayIdx === i ? null : i);
 
   // Keep the screen clean: 10 services per page, paginate the rest.
   let page = 0;
@@ -131,6 +151,7 @@
     loading = true;
     timeline = [];
     perf = [];
+    replayIdx = null;
     try {
       detail = await serviceDetail(svc.id);
       // Read-only history, and both degrade to [] rather than throwing — a
@@ -281,6 +302,58 @@
         </div>
       </div>
 
+      <!-- THE SUNDAY REPORT. Derived from the record, never stored — so it cannot
+           drift from what it describes, and an older service reports what was
+           actually captured at the time rather than a shape invented later. -->
+      {#if report}
+        <div class="lib-rep">
+          <div class="r-lbl lib-collabel">This service</div>
+          <div class="lib-rep-grid">
+            <div class="lib-rep-cell"><b>{report.durationMs === null ? '—' : fmtMs(report.durationMs)}</b><span>length</span></div>
+            <div class="lib-rep-cell"><b>{num(report.autoFired)}</b><span>fired by Relay</span></div>
+            <div class="lib-rep-cell"><b>{num(report.manualFired)}</b><span>fired by you</span></div>
+            <div class="lib-rep-cell"><b>{num(report.suggested)}</b><span>suggested</span></div>
+            <div class="lib-rep-cell"><b>{num(report.dismissed)}</b><span>dismissed</span></div>
+            <div class="lib-rep-cell"><b>{pct(report.suggestionUptake)}</b><span>suggestions taken</span></div>
+            <div class="lib-rep-cell" class:bad={report.panicFailures > 0}>
+              <b>{num(report.panicFailures)}</b><span>panic controls that failed</span>
+            </div>
+            <div class="lib-rep-cell" class:bad={report.outputsLost > 0}>
+              <b>{num(report.outputsLost)}</b><span>screens that stopped</span>
+            </div>
+          </div>
+
+          {#if report.latency.length}
+            <div class="r-lbl lib-collabel">Speed over the whole service</div>
+            <table class="lib-perf r-mono">
+              <thead><tr><th>stage</th><th>n</th><th>p50</th><th>p95</th><th>worst</th><th>grew?</th></tr></thead>
+              <tbody>
+                {#each report.latency as l (l.metric)}
+                  <tr>
+                    <td class="lib-perf-metric">{l.metric.replace(/_/g, ' ')}</td>
+                    <td>{l.samples}</td>
+                    <td>{l.p50_ms === null ? '—' : Math.round(l.p50_ms)}</td>
+                    <td>{l.p95_ms === null ? '—' : Math.round(l.p95_ms)}</td>
+                    <td>{l.worst_ms === null ? '—' : Math.round(l.worst_ms)}</td>
+                    <!-- A rising line is the finding whatever the median says. And
+                         `null` is "we did not look", which is not "it did not grow". -->
+                    <td class:bad={l.grew === true}>{l.grew === null ? '—' : l.grew ? 'yes' : 'no'}</td>
+                  </tr>
+                {/each}
+              </tbody>
+            </table>
+          {/if}
+
+          <!-- SAID OUT LOUD, not left for a reader to notice. A report that lists
+               only what it measured, without naming what it did not, invites
+               somebody to read the absence as a pass. -->
+          <p class="lib-rep-not">
+            <b>What this does not tell you:</b>
+            {report.notMeasured.join('. ')}.
+          </p>
+        </div>
+      {/if}
+
       <!-- WHAT ACTUALLY HAPPENED. The one view that can answer "the projector went
            blank for a bit, when?" — and the only place a panic control that failed
            is recorded after the operator dismissed the banner. -->
@@ -291,11 +364,66 @@
         {#if timeline.length}
           <ol class="lib-tl-list">
             {#each timeline as r, i (i)}
-              <li class="lib-tl-row" class:fault={isFault(r)}>
-                <span class="lib-tl-at r-mono">{fmtMs(r.at_ms)}</span>
-                <span class="lib-tl-src r-mono">{SOURCE_WORD[r.source] ?? r.source}</span>
-                <span class="lib-tl-what">{eventWord(r)}</span>
-                {#if r.detail}<span class="lib-tl-detail r-mono">{r.detail}</span>{/if}
+              <li>
+                <button
+                  type="button"
+                  class="lib-tl-row"
+                  class:fault={isFault(r)}
+                  class:open={replayIdx === i}
+                  aria-expanded={replayIdx === i}
+                  on:click={() => openReplay(i)}
+                >
+                  <span class="lib-tl-at r-mono">{fmtMs(r.at_ms)}</span>
+                  <span class="lib-tl-src r-mono">{SOURCE_WORD[r.source] ?? r.source}</span>
+                  <span class="lib-tl-what">{eventWord(r)}</span>
+                  {#if r.detail}<span class="lib-tl-detail r-mono">{r.detail}</span>{/if}
+                </button>
+                {#if replayIdx === i && replay}
+                  <div class="lib-rp">
+                    <div class="r-lbl">What was being said</div>
+                    {#if replay.lines.length}
+                      <ol class="lib-rp-lines">
+                        {#each replay.lines as l, li (li)}
+                          <li><span class="r-mono">{fmtMs(l.at_ms)}</span> {l.text}</li>
+                        {/each}
+                      </ol>
+                    {:else}
+                      <!-- An absence, said plainly. Only FINAL transcripts are
+                           stored, so a moment can genuinely have no line near it —
+                           which is different from the service having no transcript. -->
+                      <p class="r-empty">No transcript was recorded within 20 seconds of this.</p>
+                    {/if}
+
+                    {#if replay.detection}
+                      <div class="r-lbl">What Relay decided</div>
+                      <dl class="ch-info lib-rp-dl">
+                        <dt>Verse</dt><dd>{replay.detection.reference ?? 'unresolved'}</dd>
+                        <dt>How</dt><dd>{replay.detection.method}</dd>
+                        <dt>Who</dt>
+                        <dd>{replay.detection.status === 'manual' ? 'the operator' : 'Relay'}</dd>
+                        <!-- THE NUMBER RULE, in the archive as on the wall. A cosine
+                             does not become a probability by being a week old. -->
+                        <dt>Score</dt>
+                        <dd>
+                          {#if showsConfidence(replay.detection)}
+                            {replay.detection.confidence.toFixed(2)}
+                          {:else}
+                            no score — a guess
+                          {/if}
+                        </dd>
+                      </dl>
+                    {/if}
+
+                    {#if replay.latency}
+                      <div class="r-lbl">Speed at that point</div>
+                      <p class="r-mono lib-rp-lat">
+                        {replay.latency.metric.replace(/_/g, ' ')} ·
+                        p50 {replay.latency.p50_ms === null ? '—' : Math.round(replay.latency.p50_ms)}ms ·
+                        p95 {replay.latency.p95_ms === null ? '—' : Math.round(replay.latency.p95_ms)}ms
+                      </p>
+                    {/if}
+                  </div>
+                {/if}
               </li>
             {/each}
           </ol>
@@ -443,6 +571,35 @@
     border:1px solid color-mix(in srgb, var(--v-rose) 40%, transparent); }
   .lib-tl-row.fault .lib-tl-what{ color:var(--v-rose); }
   .lib-tl-perfhead{ margin-top:16px; }
+  /* The report. Numbers first, and the two that matter go rose when non-zero —
+     a panic control that failed is not a statistic. */
+  .lib-rep{ margin-top:18px; }
+  .lib-rep-grid{ display:grid; grid-template-columns:repeat(auto-fit, minmax(120px, 1fr));
+    gap:8px; margin-bottom:14px; }
+  .lib-rep-cell{ background:var(--v-surf2); border:1px solid var(--v-line);
+    border-radius:var(--v-r-sm); padding:9px 10px; display:flex; flex-direction:column; gap:2px; }
+  .lib-rep-cell b{ font-size:var(--v-fs-h3); font-weight:600; color:var(--v-txt); }
+  .lib-rep-cell span{ font-size:9px; letter-spacing:.05em; color:var(--v-faint);
+    text-transform:uppercase; }
+  .lib-rep-cell.bad{ border-color:color-mix(in srgb, var(--v-rose) 45%, transparent); }
+  .lib-rep-cell.bad b{ color:var(--v-rose); }
+  .lib-perf td.bad{ color:var(--v-rose); }
+  .lib-rep-not{ font-size:var(--v-fs-cap); color:var(--v-faint); margin-top:12px;
+    line-height:1.5; }
+  /* The replay. A timeline row is a button now, so it has to keep looking like a
+     row and gain a focus ring rather than a button's chrome. */
+  .lib-tl-row{ width:100%; text-align:left; border:1px solid transparent; cursor:pointer;
+    font:inherit; }
+  .lib-tl-row:hover{ background:var(--v-surf3); }
+  .lib-tl-row.open{ border-color:var(--v-line2); }
+  .lib-tl-list li{ list-style:none; }
+  .lib-rp{ margin:2px 0 8px 24px; padding:10px 12px; background:var(--v-surf2);
+    border-left:2px solid var(--v-line2); border-radius:var(--v-r-sm); }
+  .lib-rp-lines{ margin:4px 0 12px; padding-left:0; list-style:none;
+    display:flex; flex-direction:column; gap:3px; font-size:var(--v-fs-b2); }
+  .lib-rp-lines span{ color:var(--v-faint); margin-right:6px; font-size:10px; }
+  .lib-rp-dl{ margin-bottom:10px; }
+  .lib-rp-lat{ font-size:10px; color:var(--v-dim); }
   .lib-perf{ width:100%; border-collapse:collapse; font-size:10px; color:var(--v-dim); }
   .lib-perf th{ text-align:left; font-weight:500; color:var(--v-faint); padding:4px 6px;
     border-bottom:1px solid var(--v-line); }
