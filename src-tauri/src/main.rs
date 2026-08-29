@@ -569,10 +569,32 @@ enum PassageUpdate {
 /// and RELEASED (mapped to a value) before the broadcast emits — never held
 /// across an emit (CLAUDE.md rule #2). `try_state` so a context without a managed
 /// Session simply stamps nothing rather than panicking.
+/// THE ONE DOOR CONTENT LEAVES BY — and now the one place it is checked first.
+///
+/// `channels::broadcast_content` has exactly one caller, which is this, so a
+/// pre-air check here covers every path: the AI's, the operator's manual box, a
+/// spoken next/back, a plan cue, a media slide, the emergency announcement and
+/// the countdown. That is deliberate. A validator added at five call sites is a
+/// validator that will be missing from the sixth — this repository has produced
+/// four separate bugs of exactly that shape.
+///
+/// Returns `Err` when the payload would put something broken in front of a
+/// congregation. It refuses only the two things that are unambiguously broken and
+/// silently so; everything else it lets through and reports elsewhere. See
+/// `pipeline::preflight` for what it deliberately does NOT check.
 fn broadcast_with_clock<R: tauri::Runtime>(
     handle: &tauri::AppHandle<R>,
     mut content: channels::OutputContent,
-) {
+) -> error::Result<()> {
+    if let Err(bad) = pipeline::preflight(&content) {
+        // The screens are left exactly as they were. Doing nothing quietly is the
+        // failure being fixed, so this is said in three places: stdout for a
+        // developer, the panic banner for the operator watching the console, and
+        // the returned error for whichever caller can put it in front of them.
+        eprintln!("preflight refused a broadcast: {bad:?}");
+        let _ = handle.emit("output://panic_failed", bad.message());
+        return Err(error::Error::refused(bad.message()));
+    }
     if let Some(session) = handle.try_state::<Session>() {
         if let Ok(g) = session.0.lock() {
             if let Some(st) = g.as_ref() {
@@ -584,6 +606,7 @@ fn broadcast_with_clock<R: tauri::Runtime>(
         }
     }
     channels::broadcast_content(handle, content);
+    Ok(())
 }
 
 /// Put a verse on the screens because a HUMAN said so.
@@ -659,7 +682,12 @@ fn fire_manual<R: tauri::Runtime>(
         f
     }; // locks released BEFORE the emit below — CLAUDE.md rule #2.
 
-    broadcast_with_clock(handle, fire.output());
+    // A refused payload must not be followed by a `detection://match` saying it
+    // went out — that is the console reporting a success it did not achieve, in a
+    // new place (DECISIONS §20). Bail before the event.
+    if broadcast_with_clock(handle, fire.output()).is_err() {
+        return false;
+    }
     let _ = handle.emit("detection://match", fire.event());
     true
 }
@@ -975,7 +1003,11 @@ fn emit_detections<R: tauri::Runtime>(
 
     let sent_anything = !broadcasts.is_empty();
     for content in broadcasts {
-        broadcast_with_clock(handle, content);
+        // The detect thread has nobody to return an error to, and `preflight`
+        // has already raised the banner and printed the reason. Swallowed here
+        // and nowhere else, deliberately: the alternative is killing the
+        // detection thread over one unshowable payload.
+        let _ = broadcast_with_clock(handle, content);
     }
     for ev in events {
         let _ = handle.emit("detection://match", ev);
@@ -2335,7 +2367,7 @@ fn start_countdown(
             template_pinned: tpinned,
             ..Default::default()
         },
-    );
+    )?;
     persist_cue(&app, "countdown", None);
     Ok(())
 }
@@ -2387,7 +2419,7 @@ fn fire_content<R: tauri::Runtime>(
             stage_note: clean_note(stage_note),
             ..Default::default()
         },
-    );
+    )?;
     persist_cue(&app, "manual_override", Some(&label));
     Ok(())
 }
@@ -2436,7 +2468,7 @@ fn fire_media(
             template_pinned: tpinned,
             ..Default::default()
         },
-    );
+    )?;
     persist_cue(&app, "media", Some(&filename));
     Ok(())
 }
@@ -4376,7 +4408,7 @@ fn push_announcement(app: tauri::AppHandle, message: String) -> error::Result<()
             translation: None,
             ..Default::default()
         },
-    );
+    )?;
     persist_cue(&app, "announcement", Some(&message));
     Ok(())
 }

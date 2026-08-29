@@ -57,6 +57,106 @@ fn app() -> tauri::App<tauri::test::MockRuntime> {
     app
 }
 
+/// RG-05 · SAFE SCREEN — an unshowable cue leaves the wall alone, and says so.
+///
+/// Driven through `fire_content`, the real command the Planner and the Library use.
+/// The claim is the one that matters: a refused payload must leave the previous
+/// content exactly where it was, and must NOT be followed by anything telling the
+/// operator it went out.
+#[test]
+fn an_unshowable_cue_is_refused_and_the_wall_is_left_alone() {
+    let app = app();
+    let h = app.handle().clone();
+    let wall = Wall::watch(&h);
+
+    // Something real on the wall first, so "left alone" has something to mean.
+    manual_fire(h.clone(), h.state::<Db>(), "John 3:16".into(), None, None).expect("fire");
+    settle();
+    assert_eq!(
+        wall.last().expect("nothing on the wall")["reference"],
+        "John 3:16"
+    );
+    let before = wall.count();
+
+    // A cue with no label, no text and no media: it would paint an empty screen
+    // while the console reported a successful fire.
+    let err = fire_content(
+        h.clone(),
+        h.state::<Db>(),
+        "   ".into(),
+        "  \n ".into(),
+        "announce".into(),
+        None,
+        None,
+    )
+    .expect_err("an empty cue must not reach a congregation");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("empty screen"),
+        "must say what it means for the wall: {msg}"
+    );
+
+    settle();
+    assert_eq!(
+        wall.count(),
+        before,
+        "a refused cue must not send anything at all"
+    );
+    assert_eq!(
+        wall.last().expect("the wall")["reference"],
+        "John 3:16",
+        "the previous content must still be up — clearing it would be worse than refusing"
+    );
+
+    // A real announcement still goes out. The gate refuses the broken payload, not
+    // the feature.
+    fire_content(
+        h.clone(),
+        h.state::<Db>(),
+        "Car park".into(),
+        "Please move the blue Fiesta".into(),
+        "announce".into(),
+        None,
+        None,
+    )
+    .expect("a real announcement must still fire");
+    settle();
+    assert_eq!(
+        wall.last().expect("the wall")["text"],
+        "Please move the blue Fiesta"
+    );
+}
+
+/// A CUE WHOSE TEMPLATE CANNOT BE READ IS REFUSED, NOT SILENTLY RE-LOOKED.
+///
+/// The output page does not fail loudly on a broken template — it falls back. So
+/// the wall shows the right words in the wrong look and nobody is told, which is
+/// the same silence the panic-control rule exists to end.
+#[test]
+fn a_cue_carrying_a_broken_template_does_not_reach_the_wall() {
+    let app = app();
+    let h = app.handle().clone();
+    let wall = Wall::watch(&h);
+
+    // `fire_media` and `fire_content` take a template ID, not JSON, so the broken
+    // JSON is injected the only way a real one can arrive: through the payload the
+    // choke point sees.
+    let bad = channels::OutputContent {
+        kind: Some("announce".into()),
+        reference: "Notice".into(),
+        text: Some("The hall is open".into()),
+        template_json: Some("{\"regions\": ".into()),
+        template_pinned: true,
+        ..Default::default()
+    };
+    assert!(
+        broadcast_with_clock(&h, bad).is_err(),
+        "a template the output page cannot parse must not go out"
+    );
+    settle();
+    assert_eq!(wall.count(), 0, "nothing reached the wall");
+}
+
 /// RG-04 · THE SERVICE TIMELINE — what happened, kept past the end of the app.
 ///
 /// Driven through the real commands. The claim is not "the table exists" but "a

@@ -128,6 +128,31 @@
   // the base size first, so it grows back when a shorter verse fires or the
   // container gets bigger.
   let stageEl;
+
+  // ── THE FLOOR UNDER THE FIT ────────────────────────────────────────────────
+  //
+  // Shrinking until it stops overflowing always "succeeds" — there is no verse so
+  // long that 40 rounds of ×0.95 cannot squeeze it in, and the result is a wall of
+  // 2cqw text nobody past the third row can read. The loop was a fit algorithm
+  // with no notion of failure, so a template that had stopped working looked
+  // exactly like one that was working.
+  //
+  // It still shrinks, and it still shows the verse: blanking the screen would be
+  // strictly worse for the congregation, and refusing to render is not this
+  // component's call to make (`pipeline::preflight` owns refusals). What changes
+  // is that when it goes below a legible size it SAYS SO, once, to whoever is
+  // rendering it. The console and the Templates editor can then tell the operator
+  // while there is still time to pick a different look.
+  //
+  // 45% of the template's own chosen size is the line. Not an absolute point size,
+  // because the unit here is cqw — a share of the output's width — and a template
+  // designed at 6cqw is making a different claim from one designed at 3cqw. The
+  // question is "did we have to shrink this beyond what the designer intended",
+  // and that is a ratio.
+  const MIN_LEGIBLE_SCALE = 0.45;
+  /** Called with `{ scale, legible }` when a fit has been forced below the floor. */
+  export let onFit = null;
+
   function fitOne(box) {
     const verse = box.querySelector('.verse');
     const ref = box.querySelector('.reference');
@@ -151,12 +176,26 @@
       if (ref) ref.style.fontSize = `${refSize * scale}cqw`;
       guard++;
     }
+    return scale;
   }
   function fitText() {
     if (!stageEl) return;
     // During a crossfade the outgoing and incoming slides coexist — fit both so
     // whichever is on top is already sized correctly.
-    stageEl.querySelectorAll('.slide .content').forEach(fitOne);
+    let worst = 1;
+    stageEl.querySelectorAll('.slide .content').forEach((box) => {
+      worst = Math.min(worst, fitOne(box));
+    });
+    // Report the WORST of the slides on screen, and never throw: this runs inside
+    // a requestAnimationFrame on the page that is on the wall, and a listener that
+    // breaks must not take the render with it.
+    if (onFit) {
+      try {
+        onFit({ scale: worst, legible: worst >= MIN_LEGIBLE_SCALE });
+      } catch {
+        /* a report about legibility may not cost legibility */
+      }
+    }
   }
 
   // ── Fit scheduling (perf) ──────────────────────────────────────────────────

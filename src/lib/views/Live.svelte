@@ -226,6 +226,39 @@
     ),
   }));
 
+  // ── SAFE SCREEN — what the operator is told BEFORE the congregation notices ──
+  //
+  // Two things the console could never say, and both of them look to an operator
+  // exactly like Relay working:
+  //
+  //  1 · The verse is on the wall at a size nobody past the third row can read.
+  //      The fit loop always "succeeds" — 40 rounds of ×0.95 will squeeze anything
+  //      in — so a template that had stopped working looked like one that was.
+  //      `TemplateRender` now reports when it had to go below the size the
+  //      template's designer asked for, and this is where that lands. The program
+  //      pane renders through the SAME component as the wall, so the measurement
+  //      is the wall's rather than a guess about it.
+  //
+  //  2 · Nothing is attached to show it. REPORTED, never enforced: a service runs
+  //      on the console preview alone all the time — during setup, in rehearsal,
+  //      while somebody re-cables a projector — and refusing to fire because no
+  //      screen happens to be connected would take the operator's tool away at the
+  //      exact moment they are fixing the screen.
+  let fitWarning = '';
+  function noteFit(f) {
+    fitWarning = f.legible
+      ? ''
+      : `This is rendering at ${Math.round(f.scale * 100)}% of the template's size to fit — ` +
+        'it may not be readable from the back. Try a shorter passage or a template with more room.';
+  }
+  // Only while something is actually on air: a cleared wall with no screens
+  // attached is not a problem, it is a Tuesday.
+  $: nowhereToShow =
+    !!$live &&
+    !$rehearsing &&
+    outs.length > 0 &&
+    outs.every((o) => o.s.kind === 'down' || o.s.kind === 'idle' || o.s.kind === 'unknown');
+
   // A screen falling over mid-service is exactly the thing an operator finds out
   // about too late by looking. Announce it once, on the transition, through the
   // same polite region the AI's suggestions use — never repeatedly, which is how a
@@ -1018,7 +1051,11 @@
       </header>
       <div class="screen" class:lit={$live && !$rehearsing && !$screenBlack}>
         {#if $live}
-          <TemplateRender template={resolveOutputTemplate(previewTpl, $liveTemplateOverride, $liveTemplatePinned)} content={$liveContent} />
+          <TemplateRender
+            template={resolveOutputTemplate(previewTpl, $liveTemplateOverride, $liveTemplatePinned)}
+            content={$liveContent}
+            onFit={noteFit}
+          />
         {:else}
           <!-- Nothing is on the wall. Say so in words — a blank rectangle and a
                black-out look identical, and they are not the same fact. -->
@@ -1054,6 +1091,15 @@
           <EmptyState message="No screens yet — add one in the Outputs tab." />
         {/each}
       </div>
+      {#if nowhereToShow}
+        <p class="out-warn" role="status">
+          Something is on air, and no screen is reporting that it is showing it.
+          Relay is still sending — check the screens above.
+        </p>
+      {/if}
+      {#if fitWarning}
+        <p class="out-warn" role="status">{fitWarning}</p>
+      {/if}
       <p class="sr-only" aria-live="polite">{downAnnounce}</p>
       <footer class="pane-foot">
         <button class="wide" on:click={openMainOutput} disabled={!$capture.available}>Open main output</button>
@@ -1664,6 +1710,11 @@
   /* A screen that is not answering is a FAILURE, and the row says so without
      spending amber (which means on air, DECISIONS §22) or reading as decoration.
      The border is the signal; the badge carries the word. */
+  /* A warning, not a failure and not a live state. Amber would mean ON AIR here
+     and rose text would overstate it — Relay IS still sending. Dim text, rose rule. */
+  .out-warn{margin:8px 10px 0; padding:7px 9px; font-size:var(--v-fs-cap);
+    color:var(--v-dim); background:var(--v-surf2); border-radius:var(--v-r-sm);
+    border-left:2px solid var(--v-rose)}
   .out.down{border-color:color-mix(in srgb, var(--v-rose) 45%, transparent);
     background:color-mix(in srgb, var(--v-rose) 7%, var(--v-surf2))}
   .out.down .out-ic{color:var(--v-rose)}

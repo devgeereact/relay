@@ -171,6 +171,103 @@ impl Fire {
     }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// SAFE SCREEN — the last check before a congregation sees anything
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Why a payload was refused.
+///
+/// A closed set, because each one is a different sentence to an operator and
+/// "something went wrong" is not a sentence an operator can act on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Unsafe {
+    /// The payload would render an empty screen while the operator believes
+    /// something is up there.
+    Nothing,
+    /// A template was chosen for this cue and it is not valid JSON, so the output
+    /// page would silently fall back to a different look.
+    BrokenTemplate,
+}
+
+impl Unsafe {
+    /// What the operator is told. Names the problem and what it means for the
+    /// wall — never a Rust error, never "invalid input".
+    pub fn message(self) -> &'static str {
+        match self {
+            Unsafe::Nothing => {
+                "Nothing was sent to the screens — that cue has no text, no media and no \
+                 reference, so it would have shown an empty screen."
+            }
+            Unsafe::BrokenTemplate => {
+                "That cue's template could not be read, so the screens were left as they \
+                 were. Re-pick its template in the Planner, or clear the cue's own template \
+                 to use the screen's."
+            }
+        }
+    }
+}
+
+/// THE LAST CHECK BEFORE A CONGREGATION SEES ANYTHING.
+///
+/// ## Why this is worth a gate of its own
+///
+/// Relay has a gate that decides *whether the AI is allowed to speak*
+/// (`router.rs`) and one that decides *whether anything reaches a screen at all*
+/// (`channels::broadcast_content`, rehearsal). Neither asks the third question:
+/// **is the thing about to go up actually showable?**
+///
+/// Both failures it catches are silent, and both look identical to the operator:
+/// the console says the verse went out, the screen is blank, and nothing anywhere
+/// says why. A blank projector mid-service is indistinguishable from a crash from
+/// twenty rows back.
+///
+/// ## What it deliberately does NOT do
+///
+/// **It does not check that anything is attached to show the content.** A service
+/// runs with the console preview alone all the time — during setup, in rehearsal,
+/// while a projector is being re-cabled — and refusing to fire because no screen
+/// happens to be connected would take the operator's tool away at the exact moment
+/// they are fixing the screen. That fact is REPORTED (RG-01, output health), never
+/// enforced.
+///
+/// **It does not check that the text fits.** Fit is a layout question and only the
+/// renderer can answer it; `TemplateRender` measures and reports. Guessing here
+/// would mean refusing content that would have rendered perfectly well.
+///
+/// **It never refuses a clear or a blackout.** Those do not come through here at
+/// all, and they must not: a panic control that a validator could block would be a
+/// panic control that can fail (DECISIONS §20).
+pub fn preflight(content: &OutputContent) -> Result<(), Unsafe> {
+    // A cue that carries a countdown is showing the clock, and a countdown with no
+    // text is the normal case rather than an empty screen.
+    let is_countdown =
+        content.countdown_to.is_some() || content.kind.as_deref() == Some("countdown");
+    let has_text = content
+        .text
+        .as_deref()
+        .is_some_and(|t| !t.trim().is_empty());
+    let has_media = content
+        .media_url
+        .as_deref()
+        .is_some_and(|u| !u.trim().is_empty());
+    let has_reference = !content.reference.trim().is_empty();
+
+    if !is_countdown && !has_text && !has_media && !has_reference {
+        return Err(Unsafe::Nothing);
+    }
+
+    // A template the output page cannot parse does not fail loudly there — it
+    // falls back, so the wall shows the right words in the wrong look and nobody
+    // is told. Checked here, where there is still somebody to tell.
+    if let Some(j) = content.template_json.as_deref() {
+        if !j.trim().is_empty() && serde_json::from_str::<serde_json::Value>(j).is_err() {
+            return Err(Unsafe::BrokenTemplate);
+        }
+    }
+
+    Ok(())
+}
+
 /// A detection surfaced to the operator console (`detection://match`).
 ///
 /// `in_library` is false when the reference parsed cleanly but isn't in the
@@ -435,5 +532,118 @@ mod tests {
         let mut f = fire(FireStatus::Manual);
         f.matched_text = None;
         assert_eq!(f.event().matched_text, None);
+    }
+
+    // ── SAFE SCREEN ─────────────────────────────────────────────────────────
+
+    fn content() -> OutputContent {
+        OutputContent {
+            kind: Some("scripture".into()),
+            reference: "John 3:16".into(),
+            text: Some("For God so loved the world…".into()),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn ordinary_content_goes_out() {
+        assert!(preflight(&content()).is_ok());
+    }
+
+    /// A PAYLOAD WITH NOTHING IN IT IS REFUSED.
+    ///
+    /// The failure this catches is silent and looks like a crash from twenty rows
+    /// back: the console says the cue fired, the projector goes blank, and nothing
+    /// anywhere says why.
+    #[test]
+    fn a_payload_that_would_show_an_empty_screen_is_refused() {
+        let mut c = content();
+        c.text = None;
+        c.reference = String::new();
+        assert_eq!(preflight(&c), Err(Unsafe::Nothing));
+
+        // Whitespace is empty. A cue whose text is a stray newline renders exactly
+        // as blank as one with no text at all.
+        c.text = Some("   \n ".into());
+        assert_eq!(preflight(&c), Err(Unsafe::Nothing));
+    }
+
+    /// …BUT ANY ONE REAL THING IS ENOUGH.
+    #[test]
+    fn a_reference_or_media_alone_is_showable() {
+        let mut c = content();
+        c.text = None;
+        assert!(
+            preflight(&c).is_ok(),
+            "a reference alone still shows something"
+        );
+
+        c.reference = String::new();
+        c.media_url = Some("http://192.168.1.9:8032/media/12".into());
+        c.kind = Some("media".into());
+        assert!(
+            preflight(&c).is_ok(),
+            "a media slide has no text and that is normal"
+        );
+    }
+
+    /// A COUNTDOWN HAS NO TEXT, AND THAT IS THE NORMAL CASE.
+    ///
+    /// Refusing it would break the one cue whose whole content is a clock — and it
+    /// would do so at the top of a service, which is when countdowns are used.
+    #[test]
+    fn a_countdown_is_not_an_empty_screen() {
+        let mut c = content();
+        c.kind = Some("countdown".into());
+        c.reference = String::new();
+        c.text = None;
+        c.countdown_to = Some(1_700_000_000_000);
+        assert!(preflight(&c).is_ok());
+    }
+
+    /// A TEMPLATE THE OUTPUT PAGE CANNOT READ IS REFUSED HERE, WHERE SOMEBODY IS
+    /// STILL LISTENING.
+    ///
+    /// The output page does not fail loudly on a broken template — it falls back.
+    /// So the wall shows the right words in the wrong look and nobody is told,
+    /// which is the same class of silence the panic-control rule exists for.
+    #[test]
+    fn a_template_that_cannot_be_read_is_refused() {
+        let mut c = content();
+        c.template_json = Some("{not json".into());
+        assert_eq!(preflight(&c), Err(Unsafe::BrokenTemplate));
+
+        c.template_json = Some(r#"{"id":1,"name":"Sunday"}"#.into());
+        assert!(preflight(&c).is_ok());
+
+        // No template at all is the common case (the screen's own is used).
+        c.template_json = None;
+        assert!(preflight(&c).is_ok());
+        c.template_json = Some("   ".into());
+        assert!(
+            preflight(&c).is_ok(),
+            "an empty override is not a broken one"
+        );
+    }
+
+    /// EVERY REFUSAL SAYS SOMETHING AN OPERATOR CAN ACT ON.
+    ///
+    /// A gate that refuses without a usable sentence has moved the problem, not
+    /// solved it: the wall is still wrong and now the console is silent about it
+    /// too.
+    #[test]
+    fn every_refusal_is_a_sentence_not_an_error_code() {
+        for bad in [Unsafe::Nothing, Unsafe::BrokenTemplate] {
+            let m = bad.message();
+            assert!(m.len() > 40, "{bad:?}: too terse to act on");
+            assert!(
+                !m.contains("Err") && !m.contains("invalid") && !m.contains("None"),
+                "{bad:?}: reads like a Rust error, not a sentence"
+            );
+            assert!(
+                m.contains("screen"),
+                "{bad:?}: must say what it means for the wall"
+            );
+        }
     }
 }
