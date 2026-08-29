@@ -36,7 +36,9 @@
     Math.round(
       (Object.keys(CATALOGUES[code] ?? {}).filter((k) => !k.startsWith('_')).length / TOTAL) * 100,
     );
-  import { capture, meter, templates, initAudio, startCapture, stopCapture, setThresholds, setSttLanguage, setInputDevice, listTranslations, getActiveTranslation, setActiveTranslation, localIp, loadTemplates, getContentTemplates, setContentTemplate, getCrashReporting, setCrashReporting, serviceTargetMinutes, loadServiceTarget, setServiceTarget, latencyReport, latencyReset, latencySetEnabled, serviceLock, loadServiceLock, setServiceLock } from '../stores/capture.js';
+  import { capture, meter, templates, initAudio, startCapture, stopCapture, setThresholds, setSttLanguage, setInputDevice, listTranslations, getActiveTranslation, setActiveTranslation, localIp, loadTemplates, getContentTemplates, setContentTemplate, getCrashReporting, setCrashReporting, serviceTargetMinutes, loadServiceTarget, setServiceTarget, latencyReport, latencyReset, latencySetEnabled, serviceLock, loadServiceLock, setServiceLock, rooms, loadRooms, saveRoom, useRoom, deleteRoom,
+    listOutputChannels, setChannelDisplay, activeVoiceProfile } from '../stores/capture.js';
+  import { captureRoom, observedNote, applyRoom, describeApply } from '../rooms.js';
   import { snapshotPath, KEEP_SNAPSHOTS } from '../updater.js';
   import { diagnose, drift } from '../latency.js';
 
@@ -226,6 +228,76 @@
   // Read it when this screen opens rather than trusting a store that may have been
   // set before the service began.
   onMount(loadServiceLock);
+
+  // ── ROOMS ─────────────────────────────────────────────────────────────────
+  //
+  // Save what this space needs; put it back next time. Applying is a LIST of
+  // steps, not one call, and the result names every piece that did not take —
+  // a room applied on a machine where the projector moved will restore most of
+  // itself, and the operator needs to know which part to go and fix.
+  let roomName = '';
+  let roomMsg = '';
+  let roomBusy = false;
+  onMount(loadRooms);
+
+  async function doSaveRoom() {
+    roomMsg = '';
+    const name = roomName.trim();
+    if (!name) {
+      roomMsg = 'Give the room a name first.';
+      return;
+    }
+    roomBusy = true;
+    try {
+      const channels = await listOutputChannels();
+      const active = await activeVoiceProfile();
+      const settings = captureRoom({
+        inputDevice: $capture.inputDevice,
+        language: $capture.stt?.language ?? null,
+        targetMinutes: $serviceTargetMinutes,
+        voiceProfileId: active?.id,
+        channels,
+      });
+      await saveRoom(name, settings, observedNote($capture.quality));
+      roomMsg = `Saved “${name}”.`;
+      roomName = '';
+    } catch (e) {
+      roomMsg = humanError(e);
+    }
+    roomBusy = false;
+  }
+
+  async function doUseRoom(r) {
+    roomMsg = '';
+    roomBusy = true;
+    try {
+      const room = await useRoom(r.id);
+      const channels = await listOutputChannels();
+      const result = await applyRoom(JSON.parse(room.settings_json || '{}'), {
+        setInputDevice,
+        setSttLanguage,
+        setServiceTarget,
+        selectVoiceProfile,
+        setChannelDisplay,
+        channels,
+        humanError,
+      });
+      roomMsg = describeApply(result, `“${room.name}”`);
+    } catch (e) {
+      roomMsg = humanError(e);
+    }
+    roomBusy = false;
+  }
+
+  async function doDeleteRoom(r) {
+    roomMsg = '';
+    try {
+      await deleteRoom(r.id);
+      roomMsg = `Removed “${r.name}”.`;
+    } catch (e) {
+      roomMsg = humanError(e);
+    }
+  }
 
   // The update readiness readout. Read when this screen opens rather than polled:
   // a database does not become unhealthy while somebody looks at a settings page,
@@ -782,6 +854,34 @@
             browser sources are left muted — OBS mixes their audio itself.
           </p>
         {/if}
+
+        <hr class="s-rule" />
+        <div class="r-lbl">Rooms</div>
+        <p class="s-note">
+          Save this space — microphone, recognition language, planned length, voice
+          profile and which display each screen goes to — and put it all back with one
+          press next time. <b>The audio levels are not saved.</b> Relay learns those
+          fresh every time on purpose: a level measured three weeks ago, in a room
+          that now has the heating on and forty more people in it, is a guess, and
+          guessing is what once made Relay deaf to a quiet preacher.
+        </p>
+        <div class="s-row s-mt">
+          <input class="r-input" placeholder="Main hall" bind:value={roomName} aria-label="Room name" />
+          <button class="r-btn ghost sm" on:click={doSaveRoom} disabled={roomBusy}>Save this room</button>
+        </div>
+        {#each $rooms as r (r.id)}
+          <div class="s-row s-roomrow">
+            <span class="s-roomname">
+              <b>{r.name}</b>
+              {#if r.notes}<span class="s-roomnote">{r.notes}</span>{/if}
+            </span>
+            <button class="r-btn ghost sm" on:click={() => doUseRoom(r)} disabled={roomBusy}>Use</button>
+            <button class="r-btn ghost sm" on:click={() => doDeleteRoom(r)} disabled={roomBusy}>Remove</button>
+          </div>
+        {:else}
+          <p class="s-note">No rooms saved yet.</p>
+        {/each}
+        {#if roomMsg}<p class="s-note" role="status">{roomMsg}</p>{/if}
 
       {:else if section === 'voice'}
         <p class="s-lead">
@@ -1413,5 +1513,10 @@
     .s-railbtn{ width:auto; }
     .s-row{ flex-direction:column; align-items:stretch; gap:10px; }
     .s-rowctl{ max-width:none; }
+  }
+  .s-roomrow{ align-items:flex-start; }
+  .s-roomname{ flex:1; min-width:0; display:flex; flex-direction:column; gap:2px; }
+  .s-roomnote{ font-size:var(--v-fs-cap); color:var(--v-faint); }
+  @media (min-width:1px){
   }
 </style>

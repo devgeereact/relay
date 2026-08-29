@@ -248,6 +248,27 @@ CREATE TABLE perf_samples (
 );
 CREATE INDEX idx_perf_samples ON perf_samples(service_id, at_ms);
 
+-- ===== A room, remembered (db/environments.rs) =====
+--
+-- A church that runs in the main hall on Sunday and the youth room on Wednesday
+-- rebuilds the same configuration twice a week. This holds it: the microphone, the
+-- recognition language, the planned length, the active voice profile, and which
+-- display each screen goes to.
+--
+-- NOT the audio thresholds. DECISIONS §19 / CLAUDE.md rule 12: nothing may compare
+-- a signal to a stored level. A noise floor captured three weeks ago, applied to
+-- the same hall today with the heating on and forty more people in it, is exactly
+-- the assumption that rule forbids. Observed levels live in `notes`, for a person
+-- to read, and nothing reads them back.
+CREATE TABLE environment_profiles (
+    id            INTEGER PRIMARY KEY,
+    name          TEXT NOT NULL,
+    is_active     INTEGER NOT NULL DEFAULT 0,
+    settings_json TEXT NOT NULL DEFAULT '{}',   -- the remembered choices
+    notes         TEXT NOT NULL DEFAULT '',     -- what Relay observed, in words
+    updated_at    TEXT NOT NULL DEFAULT ''
+);
+
 -- ===== App settings (db/settings.rs) =====
 -- Small operator preferences (active translation, per-content-type default
 -- templates, …). Local-first key/value.

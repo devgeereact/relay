@@ -567,6 +567,51 @@ export async function servicePerf(id) {
   return guardedRead('servicePerf', (call) => call('service_perf', { id }), []);
 }
 
+// ── ROOMS (RG-10) ────────────────────────────────────────────────────────────
+//
+// A church that runs in the main hall on Sunday and the youth room on Wednesday
+// rebuilds the same configuration twice a week — and the microphone choice is not
+// persisted anywhere at all today, so it is gone every time Relay closes.
+//
+// Reads swallow (a room list that takes the Settings screen down is worse than no
+// room list); writes THROW, because an operator who is told their room was saved
+// and finds it gone next Sunday has been lied to about the one thing this feature
+// promises.
+export const rooms = writable([]);
+
+export async function loadRooms() {
+  const list = await guardedRead('rooms', (call) => call('list_environments'), []);
+  rooms.set(list ?? []);
+  return list ?? [];
+}
+
+/** GROUP 1 — THROWS. */
+export async function saveRoom(name, settings, notes = '') {
+  const call = await invoke();
+  const id = await call('save_environment', {
+    name,
+    settingsJson: JSON.stringify(settings ?? {}),
+    notes,
+  });
+  await loadRooms();
+  return id;
+}
+
+/** Switch to a room and get its settings back. GROUP 1 — THROWS. */
+export async function useRoom(id) {
+  const call = await invoke();
+  const room = await call('use_environment', { id });
+  await loadRooms();
+  return room;
+}
+
+/** GROUP 1 — THROWS. */
+export async function deleteRoom(id) {
+  const call = await invoke();
+  await call('delete_environment', { id });
+  await loadRooms();
+}
+
 /** All recorded services (Library list). */
 export async function listServices() {
   return guardedRead('listServices', (call) => call('list_services'), []);

@@ -391,6 +391,10 @@ fn main() {
             output_beat,
             service_timeline,
             service_perf,
+            list_environments,
+            save_environment,
+            use_environment,
+            delete_environment,
             update_preflight,
             update_begin,
             update_verify,
@@ -2684,6 +2688,75 @@ fn migration_status(db: tauri::State<'_, Db>) -> error::Result<MigrationStatus> 
         manual_status,
         scratch_table,
     })
+}
+
+// ===== ROOM PROFILES (RG-10) =====
+
+/// Every room this church has set up.
+#[tauri::command]
+fn list_environments(db: tauri::State<'_, Db>) -> error::Result<Vec<db::Environment>> {
+    let conn = db.0.lock()?;
+    db::list_environments(&conn).map_err(Into::into)
+}
+
+/// Remember this room, or update the one already called that.
+///
+/// The settings blob is composed by the CONSOLE, not here: it is a snapshot of
+/// choices the operator has already made through commands that each have their own
+/// validation, and re-validating them in a second place is how the two get to
+/// disagree about what is legal.
+#[tauri::command]
+fn save_environment(
+    db: tauri::State<'_, Db>,
+    name: String,
+    settings_json: String,
+    notes: String,
+) -> error::Result<i64> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err(error::Error::refused("A room needs a name."));
+    }
+    // The blob is stored verbatim and handed back verbatim, so it must at least be
+    // JSON — otherwise a corrupt row would silently fail to apply later, at the one
+    // moment the operator is relying on it.
+    if serde_json::from_str::<serde_json::Value>(&settings_json).is_err() {
+        return Err(error::Error::refused("Those settings could not be saved."));
+    }
+    let conn = db.0.lock()?;
+    let now = chrono_now();
+    db::save_environment(&conn, name, &settings_json, notes.trim(), &now).map_err(Into::into)
+}
+
+/// Switch to a room. Returns its settings so the console can apply them.
+///
+/// **It applies nothing itself, deliberately.** Every setting in the blob already
+/// has a command with its own contract — `set_stt_language`, `set_channel_display`,
+/// `select_voice_profile` — and applying them here would be a second implementation
+/// of each, with its own idea of what a failure means. The console drives them one
+/// at a time and reports which ones did not take, so a room that half-applied says
+/// so rather than reporting a success it did not achieve.
+#[tauri::command]
+fn use_environment(db: tauri::State<'_, Db>, id: i64) -> error::Result<db::Environment> {
+    let conn = db.0.lock()?;
+    db::set_active_environment(&conn, id)?;
+    // Read back the ACTIVE one rather than the one asked for: if the id no longer
+    // exists, `set_active_environment` marks nothing and this returns the refusal
+    // instead of a row that would claim a room was applied when none was.
+    db::active_environment(&conn)?
+        .filter(|e| e.id == id)
+        .ok_or_else(|| error::Error::refused("That room is no longer saved."))
+}
+
+#[tauri::command]
+fn delete_environment(db: tauri::State<'_, Db>, id: i64) -> error::Result<()> {
+    let conn = db.0.lock()?;
+    db::delete_environment(&conn, id).map_err(Into::into)
+}
+
+/// An ISO-ish timestamp, without pulling in a date crate for one field.
+fn chrono_now() -> String {
+    let ms = now_epoch_ms();
+    format!("{ms}")
 }
 
 // ===== UPDATE SAFETY (RG-06) =====

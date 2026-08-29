@@ -733,15 +733,20 @@ const FRONTEND = (() => {
   return out;
 })();
 
-describe('R3-12 · eight registered commands have no UI path', () => {
-  // CLAUDE.md: "No dead-but-built commands. Every one of the 114 registered
-  // #[tauri::command]s has a frontend caller." A store WRAPPER is not a caller in
-  // the sense that matters — `saveArrangement` has had one and no UI for months.
+describe('R3-12 · seven registered commands have no UI path', () => {
+  // CLAUDE.md: "No dead-but-built commands. Every registered #[tauri::command] has
+  // a frontend caller." A store WRAPPER is not a caller in the sense that matters —
+  // `saveArrangement` has had one and no UI for months.
   //
   // The chain that counts:
   //   #[tauri::command] → call('…') in capture.js → a wrapper some component imports
+  //
+  // CLOSED, and recorded rather than silently dropped from the list:
+  //   `active_voice_profile` — reached from 2026-08-29 by Settings → Audio → Rooms,
+  //   which reads the active profile in order to remember it with the room (RG-10).
+  //   It was on this list for months; it is a caller now, and the test would fail
+  //   if it were still here.
   const DEAD = {
-    active_voice_profile: 'activeVoiceProfile',
     create_template: 'createTemplate',
     delete_arrangement: 'deleteArrangement',
     import_pro: 'importProFile',

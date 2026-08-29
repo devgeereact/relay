@@ -10,6 +10,7 @@
 //! lives in — the split is for the people reading it, not for the call sites.
 
 mod channels;
+mod environments;
 mod library;
 mod plans;
 mod profiles;
@@ -20,6 +21,7 @@ mod templates;
 mod verses;
 
 pub use channels::*;
+pub use environments::*;
 pub use library::*;
 pub use plans::*;
 pub use profiles::*;
@@ -203,6 +205,7 @@ fn ensure_tables(conn: &Connection) -> rusqlite::Result<()> {
     ensure_media(conn)?;
     ensure_announcements(conn)?;
     ensure_service_events(conn)?; // the service timeline + latency snapshots
+    ensure_environment_profiles(conn)?; // a room, remembered
     Ok(())
 }
 
@@ -306,6 +309,7 @@ pub const MIGRATION_TABLES: &[(&str, &str)] = &[
     ("Announcements", "announcements"),
     ("Service timeline", "service_events"),
     ("Latency history", "perf_samples"),
+    ("Room profiles", "environment_profiles"),
 ];
 
 /// Does a table — or a `table.column` — exist right now?
