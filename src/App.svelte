@@ -2,7 +2,9 @@
   import { onMount, onDestroy } from 'svelte';
   import { trapFocus } from './lib/focus.js';
   import { t } from './lib/i18n.js';
-  import { capture, capturing, detectionOn, live, screenBlack, rehearsing, initAudio, autoOpenOutputs, setDetection, clearScreens, blackScreen, panicError, dismissPanicError, serviceLock, loadServiceLock, channelHealth, startChannelHealth, latencyReport } from './lib/stores/capture.js';
+  import { capture, capturing, detectionOn, live, screenBlack, rehearsing, initAudio, autoOpenOutputs, setDetection, clearScreens, blackScreen, panicError, dismissPanicError, serviceLock, loadServiceLock, channelHealth, startChannelHealth, latencyReport, onOperatorAction, noteOperatorAction } from './lib/stores/capture.js';
+  import * as training from './lib/training.js';
+  import { practice, stopPractice } from './lib/practice.js';
   import { degradations, worstLevel, summarise } from './lib/degraded.js';
   import { describeScreen } from './lib/outputHealth.js';
   import { installShortcuts, cheatsheet, liveShortcuts } from './lib/shortcuts.js';
@@ -63,6 +65,28 @@
     screensDown,
   });
   $: degLevel = worstLevel(degraded);
+
+  // ── PRACTICE ──────────────────────────────────────────────────────────────
+  //
+  // Drills with the REAL controls, so the strip has to be where the controls are —
+  // which is every tab. It is started from Help and lives here for the same reason
+  // the panic bar does: an operator part-way through a drill must not have to
+  // navigate away from the thing they are practising in order to read what to do.
+  //
+  // Rehearsal is forced on for the duration and restored after (RG-15's rule): the
+  // controls are real, so the sandbox has to be too.
+  let unlistenPractice = null;
+  $: drill = training.current($practice.session);
+
+  $: if ($practice.session.active && !unlistenPractice) {
+    unlistenPractice = onOperatorAction((e) => {
+      practice.update((p) => ({ ...p, session: training.observe(p.session, e) }));
+    });
+  }
+  $: if (!$practice.session.active && unlistenPractice) {
+    unlistenPractice();
+    unlistenPractice = null;
+  }
 
   let updMsg = '';
   async function doAccept() {
@@ -548,6 +572,24 @@
         <span>{$panicError}</span>
       </div>
       <button class="r-btn ghost sm" on:click={dismissPanicError}>Dismiss</button>
+    </div>
+  {/if}
+
+  <!-- PRACTICE. Above the degraded strip: while a volunteer is being taught, the
+       instruction is the most important thing on the screen. Amethyst, because it
+       is rehearsal — the same colour the top bar is already showing. -->
+  {#if $practice.session.active && drill}
+    <div class="prac" role="status">
+      <div class="prac-t">
+        <span class="r-mono prac-n">{$practice.session.index + 1} / {training.DRILLS.length}</span>
+        <b>{drill.title}</b>
+        <span>{drill.hint}</span>
+      </div>
+      {#if drill.id === 'rehearsal'}
+        <button class="r-btn sm" on:click={() => noteOperatorAction('acknowledge')}>I can see it</button>
+      {/if}
+      <button class="r-btn ghost sm" on:click={() => practice.update((p) => ({ ...p, session: training.skip(p.session) }))}>Skip</button>
+      <button class="r-btn ghost sm" on:click={stopPractice}>Stop</button>
     </div>
   {/if}
 

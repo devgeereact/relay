@@ -373,7 +373,7 @@ export async function initAudio() {
   if (!outputListenersUp) {
     try {
       const { listen } = await import('@tauri-apps/api/event');
-      await listen('output://content', (e) => { live.set(e.payload); screenBlack.set(false); });
+      await listen('output://content', (e) => { live.set(e.payload); screenBlack.set(false); noteOperatorAction('content', e.payload); });
       // `leavePlan()` HERE, not only in the wrappers — this is the half no wrapper
       // can reach. A clear that did not originate in this console still takes plan
       // content off the wall: `/api/clear` from the preacher's phone, the spoken
@@ -384,8 +384,8 @@ export async function initAudio() {
       // looking at — while the topbar, reading `$live`, simultaneously said the
       // screens were clear. Two indicators in one window, disagreeing, and amber
       // is never allowed to be the wrong one (CLAUDE.md §18).
-      await listen('output://clear', () => { live.set(null); screenBlack.set(false); leavePlan(); });
-      await listen('output://black', () => { screenBlack.set(true); leavePlan(); });
+      await listen('output://clear', () => { live.set(null); screenBlack.set(false); leavePlan(); noteOperatorAction('clear'); });
+      await listen('output://black', () => { screenBlack.set(true); leavePlan(); noteOperatorAction('black'); });
       // A SPOKEN "next"/"back" that did nothing. The STT thread has no caller to
       // return a NavResult to, so it pushes it here — the preacher says "next", the
       // wall does not move, and the console explains why instead of staying silent.
@@ -811,6 +811,10 @@ capture.update((s) => ({ ...s, thresholds }));
 /** Operator dismisses a suggestion → drop it + tighten the gate. */
 export async function dismissDetection(reference) {
 detections.update((list) => list.filter((d) => d.reference !== reference));
+// Noted before the round trip: dismissing is a decision the operator has already
+// made, and the practice drill is about the decision, not about whether the
+// calibration write succeeded.
+noteOperatorAction('dismiss', reference);
 try {
   const call = await invoke();
   const thresholds = await call('dismiss_detection');
@@ -1718,6 +1722,30 @@ await call('delete_channel', { id });
 // One poller, one store. Three timers asking the same question would triple the
 // work and let the three surfaces disagree about the same screen for up to two
 // seconds, which is the asymmetry RG-01 exists to end.
+// ── PRACTICE (RG-16) ─────────────────────────────────────────────────────────
+//
+// One stream of "the operator just did something", for the drills to watch. It
+// exists because the alternative is `training.js` importing four listeners of its
+// own, which would be a second set of subscriptions to the same events — and the
+// two would drift about what counts as a clear.
+//
+// Deliberately a plain event bus and not a store of state: a drill is satisfied by
+// an ACTION, and an action is a moment, not a value that can be read later.
+const operatorActions = new Set();
+export function onOperatorAction(fn) {
+  operatorActions.add(fn);
+  return () => operatorActions.delete(fn);
+}
+export function noteOperatorAction(kind, payload = null) {
+  for (const fn of operatorActions) {
+    try {
+      fn({ kind, payload });
+    } catch {
+      // A practice panel that threw must never take a live control with it.
+    }
+  }
+}
+
 export const channelHealth = writable({}); // channel id → ChannelLiveness
 /** When each channel was first seen attached but not answering. */
 export const channelWaiting = writable({});
@@ -1799,6 +1827,9 @@ const outcome = await call('nav', { direction });
 // exactly as they were, and clearing `onAir` on those would take the plan off
 // air because the operator pressed a key that did nothing.
 if (outcome?.kind === 'fired') leavePlan();
+// The DRILL is "you pressed the transport", and that is true whichever outcome
+// came back — reaching the end of a passage is a correct answer, not a miss.
+noteOperatorAction('nav', outcome);
 return outcome;
 }
 

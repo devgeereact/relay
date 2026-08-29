@@ -485,6 +485,21 @@ body{ overflow:hidden; text-rendering:optimizeLegibility; -moz-osx-font-smoothin
 /* ===== Update banner =================================================
    Sits at rest only. updater.js will not even check while the mic is live —
    an updater that interrupts a sermon is worse than no updater at all. */
+/* PRACTICE. Amethyst, because it IS rehearsal — the same colour the top bar is
+   already showing, so the two agree rather than competing. Above the degraded
+   strip: while a volunteer is being taught, the instruction is the most important
+   thing on the screen. */
+.prac{ position:fixed; left:50%; transform:translateX(-50%); bottom:74px; z-index:795;
+  display:flex; align-items:center; gap:10px;
+  max-width:min(720px, calc(100vw - 32px)); padding:10px 14px;
+  background:color-mix(in srgb, var(--v-amethyst) 12%, var(--v-surf2));
+  border:1px solid color-mix(in srgb, var(--v-amethyst) 45%, transparent);
+  border-radius:var(--v-r-md); box-shadow:0 8px 28px rgba(0,0,0,.35); }
+.prac-t{ flex:1; min-width:0; display:flex; flex-direction:column; gap:2px; }
+.prac-n{ font-size:9px; letter-spacing:.08em; color:var(--v-amethyst); }
+.prac-t b{ font-size:var(--v-fs-b2); font-weight:600; color:var(--v-txt); }
+.prac-t span{ font-size:var(--v-fs-cap); color:var(--v-dim); line-height:1.45; }
+
 /* DEGRADED. Quiet by default and never amber — amber means ON AIR, and nothing
    here is about what a congregation is looking at. A blocked capability gets a
    rose dot; a reduced one stays grey, because Relay is still doing the thing. */
