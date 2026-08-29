@@ -201,19 +201,82 @@ function balanced(rest) {
   return rest.trim();
 }
 
-/** The accessible name, as best a regex can judge it. */
-function labelFor(attrs, inner) {
-  const aria = attrs.match(/aria-label=["']([^"']+)["']/i);
-  if (aria) return aria[1];
-  const title = attrs.match(/title=["']([^"']+)["']/i);
+/**
+ * The accessible name, as best a regex can judge it.
+ *
+ * **A BOUND ATTRIBUTE COUNTS.** `aria-label={tg.title}` is a name; only a static
+ * string used to be, and that single omission produced four of the nine "controls
+ * with no accessible name" this report used to list — including the microphone
+ * toggle on the run surface and the Reset All Settings button, both of which have
+ * carried an `aria-label` all along.
+ *
+ * That matters more than the four rows: **a report with false findings is a report
+ * an operator learns to scroll past**, and this one exists to be believed. What a
+ * regex cannot do is evaluate the expression — so a bound label is reported as
+ * named, and whether it resolves to something useful is a question for a human
+ * reading the component, not for this script to guess at.
+ */
+function labelFor(attrs, inner, ctx = {}) {
+  // THE TWO NATIVE MECHANISMS COME FIRST, because they are the ones an author
+  // should be reaching for. `<label for=…>` and a wrapping `<label>` are how HTML
+  // names a form control; only `aria-label` used to count here, so a correctly
+  // labelled textarea was reported as unnamed — which pushes an author towards
+  // adding an `aria-label` that then has to be kept in step with the visible text.
+  // A report that recommends the worse of two correct options is worse than no
+  // report.
+  const id = (attrs.match(/\bid=["']([^"']+)["']/i) ?? [])[1];
+  if (id && ctx.labelledIds?.has(id)) return `label[for=${id}]`;
+  if (ctx.inLabel) return 'wrapping <label>';
+  const aria =
+    attrs.match(/aria-label=["']([^"']+)["']/i) ?? attrs.match(/aria-label=\{([^}]+)\}/i);
+  if (aria) return aria[1].trim();
+  // `aria-labelledby` names the control from another element. Following the id is
+  // beyond a regex; the presence of the attribute is not.
+  if (/aria-labelledby=/i.test(attrs)) return 'aria-labelledby';
+  const title =
+    attrs.match(/title=["']([^"']+)["']/i) ?? attrs.match(/title=\{([^}]+)\}/i);
   const text = (inner ?? '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
   if (text) return text.slice(0, 60);
-  if (title) return title[1];
+  if (title) return title[1].trim();
   return null;
 }
 
-function controlsIn(file, src, wrappers) {
-  const script = (src.match(/<script[^>]*>([\s\S]*?)<\/script>/) ?? [, ''])[1];
+/**
+ * Blank out HTML comments, keeping every byte in place.
+ *
+ * The scanner reads raw source, and this repository comments in prose — at length,
+ * about markup, quoting the markup. `VerseDeck.svelte` explains its keyboard rule in
+ * a comment containing the word `<button>`, and the scanner dutifully reported a
+ * handlerless button whose "label" was a fragment of the explanation. Replacing the
+ * comment with spaces rather than deleting it keeps every subsequent line and column
+ * correct, which is what makes the reported `file:line` worth clicking.
+ */
+function stripComments(src) {
+  return src.replace(/<!--[\s\S]*?-->/g, (m) => m.replace(/[^\n]/g, ' '));
+}
+
+/**
+ * Blank out the `<script>` block, keeping every byte in place.
+ *
+ * Controls live in the template; the script block only ever *talks* about them, and
+ * this repository talks about them at length. `VerseDeck.svelte` explains its
+ * keyboard rule in a JSDoc comment that says "the GRID card is a native `<button>`",
+ * and the scanner reported a handlerless button whose label was a fragment of that
+ * sentence — a finding about a paragraph.
+ *
+ * Blanked rather than removed, for the same reason as the comments: `file:line` has
+ * to stay clickable.
+ */
+function stripScript(src) {
+  return src.replace(/<script[\s\S]*?<\/script>/g, (m) => m.replace(/[^\n]/g, ' '));
+}
+
+function controlsIn(file, rawSrc, wrappers) {
+  // Two views of one file: `script` is where handlers are resolved, `src` is the
+  // TEMPLATE with the script and the comments blanked out, which is the only place
+  // a control can actually be.
+  const script = (rawSrc.match(/<script[^>]*>([\s\S]*?)<\/script>/) ?? [, ''])[1];
+  const src = stripScript(stripComments(rawSrc));
   // Which store wrappers this component imported — the vocabulary its handlers
   // can possibly speak.
   const imported = new Set();
@@ -223,6 +286,11 @@ function controlsIn(file, src, wrappers) {
     for (const name of m[1].split(',')) imported.add(name.trim().split(/\s+as\s+/)[0]);
   }
 
+  // Every id a `<label for=…>` in this file points at.
+  const labelledIds = new Set(
+    [...src.matchAll(/<label[^>]*\bfor=["']([^"']+)["']/gi)].map((m) => m[1]),
+  );
+
   const out = [];
   for (const m of src.matchAll(CONTROL_OPEN)) {
     const tag = m[1].toLowerCase();
@@ -231,6 +299,9 @@ function controlsIn(file, src, wrappers) {
     const after = src.slice(end);
     const close = after.indexOf(`</${tag}`);
     const inner = close === -1 ? '' : after.slice(0, close);
+
+    const before = src.slice(0, m.index);
+    const inLabel = before.lastIndexOf('<label') > before.lastIndexOf('</label>');
 
     const handler = attrs.match(/on:(?:click|change|input|submit)(?:\|\w+)*=\{([\s\S]*)/i);
     const handlerExpr = handler ? balanced(handler[1]) : null;
@@ -264,11 +335,19 @@ function controlsIn(file, src, wrappers) {
       file: rel(file),
       line: lineOf(src, m.index),
       tag: tag.toLowerCase(),
-      label: labelFor(attrs, inner),
+      label: labelFor(attrs, inner, { inLabel, labelledIds }),
       handler: handlerExpr,
       commands: [...reached],
-      disabled: /\bdisabled=/.test(attrs) ? (attrs.match(/disabled=\{([^}]*)\}/) ?? [, 'true'])[1] : null,
+      // `disabled` with no value is permanent; `disabled={…}` is conditional. The
+      // two mean different things to this report and used to collapse to one.
+      disabled: /\bdisabled\s*=\s*\{/.test(attrs)
+        ? (attrs.match(/disabled=\{([^}]*)\}/) ?? [, 'true'])[1]
+        : /\bdisabled(?![\w-])/.test(attrs)
+          ? 'always'
+          : null,
       type: (attrs.match(/type=["']([^"']+)["']/) ?? [])[1] ?? null,
+      // Is this control inside a `<form>`? A submit button's handler lives there.
+      inForm: before.lastIndexOf('<form') > before.lastIndexOf('</form>'),
     });
   }
   return out;
@@ -419,8 +498,27 @@ function build() {
     },
     orphanCommands: [...registered].filter((c) => !called.has(c)).sort(),
     ghostCommands: [...addressed].filter((c) => !registered.has(c)).sort(),
+    // A button with no handler, EXCEPT the two shapes where that is correct:
+    //
+    //  · `type="submit"` inside a form — its handler is the form's `on:submit`, and
+    //    reporting it pushes an author towards a click handler that would break
+    //    Enter-to-submit, which is worse than the finding.
+    //  · permanently `disabled` (a bare attribute, not `disabled={…}`) — a button
+    //    that is disabled by construction is a state readout, not a dead control.
+    //    `ModelSetup`'s "In use" is the example, and it is right as it is.
+    //
+    // Both exclusions are narrow on purpose: `disabled={expr}` is still reported,
+    // because a conditionally-disabled button with no handler does nothing when it
+    // becomes enabled, which is exactly the bug this list is for.
     inertControls: controls
-      .filter((c) => c.rendered && c.tag === 'button' && !c.handler)
+      .filter(
+        (c) =>
+          c.rendered &&
+          c.tag === 'button' &&
+          !c.handler &&
+          !(c.type === 'submit' && c.inForm) &&
+          c.disabled !== 'always',
+      )
       .map(({ file, line, label, type }) => ({ file, line, label, type })),
     unlabelledControls: controls
       .filter((c) => c.rendered && !c.label && c.tag !== 'input')

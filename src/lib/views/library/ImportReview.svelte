@@ -112,7 +112,16 @@
                   <button class="ir-mini" title="Down" disabled={j === song.sections.length - 1} on:click={() => moveSlide(song, j, 1)}>↓</button>
                   <button class="ir-mini danger" title="Remove" on:click={() => removeSlide(song, j)}>✕</button>
                 </div>
-                <textarea class="ir-lyrics" bind:value={s.lyrics} placeholder="Slide text…" rows="2"></textarea>
+                <!-- One of many identical boxes, so the name has to carry WHICH
+                     one: a screen reader announcing "Slide text" eleven times over
+                     tells somebody nothing about where they are. -->
+                <textarea
+                  class="ir-lyrics"
+                  bind:value={s.lyrics}
+                  placeholder="Slide text…"
+                  rows="2"
+                  aria-label="{song.title || 'Song'} — slide {j + 1} text"
+                ></textarea>
               </div>
             {/each}
             <button class="ir-addslide" on:click={() => addSlide(song)}>＋ Add slide</button>

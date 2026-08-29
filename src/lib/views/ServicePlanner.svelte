@@ -775,8 +775,11 @@
             {/each}
           </div>
         {:else}
-          <div class="r-lbl sp-flbl">Stage note</div>
-          <textarea class="r-input sp-note" rows="5" bind:value={noteDraft}
+          <!-- Named the native way (`for`/`id`) rather than with an aria-label:
+               the visible text and the accessible name are then the same string,
+               and cannot drift apart. -->
+          <label class="r-lbl sp-flbl" for="sp-stage-note">Stage note</label>
+          <textarea id="sp-stage-note" class="r-input sp-note" rows="5" bind:value={noteDraft}
             placeholder="Shows on the confidence monitor only, never on the congregation screen."
             on:blur={saveNote}></textarea>
           <p class="sp-fhelp">
