@@ -533,7 +533,18 @@ struct Beat {
 /// to know *which* device, that is the pairing proposal in `docs/RELAY_GAP.md` §20,
 /// and it needs a human first.
 #[derive(Clone, Default)]
-pub struct OutputHealth(Arc<Mutex<HashMap<i64, Beat>>>);
+pub struct OutputHealth {
+    beats: Arc<Mutex<HashMap<i64, Beat>>>,
+    /// What was last REPORTED about each channel, so an edge can be detected and
+    /// written to the service timeline exactly once.
+    ///
+    /// Separate from the beat itself because they answer different questions:
+    /// `beats` is "what did the screen last say", this is "what have we already
+    /// told the operator". Folding them together would log a screen as lost on
+    /// every poll for as long as it stayed lost, which is how a timeline becomes
+    /// something nobody reads.
+    reported: Arc<Mutex<HashMap<i64, bool>>>,
+}
 
 impl OutputHealth {
     /// Record that the screen for `channel_id` is alive and painting `state`.
@@ -543,7 +554,7 @@ impl OutputHealth {
         if channel_id <= 0 {
             return;
         }
-        if let Ok(mut m) = self.0.lock() {
+        if let Ok(mut m) = self.beats.lock() {
             m.insert(
                 channel_id,
                 Beat {
@@ -559,7 +570,7 @@ impl OutputHealth {
     /// channel has never reported — which is an ABSENCE, not a zero, and callers
     /// must render it as "no answer yet" rather than as a fresh beat.
     pub fn read(&self, channel_id: i64) -> Option<(u64, PaintState, &'static str)> {
-        let m = self.0.lock().ok()?;
+        let m = self.beats.lock().ok()?;
         let b = m.get(&channel_id)?;
         Some((b.at.elapsed().as_millis() as u64, b.state, b.transport))
     }
@@ -573,7 +584,36 @@ impl OutputHealth {
     /// reopened screen starts from "no answer yet" instead of inheriting a stale
     /// one that would read as freshly silent.
     pub fn forget(&self, channel_id: i64) {
-        if let Ok(mut m) = self.0.lock() {
+        if let Ok(mut m) = self.beats.lock() {
+            m.remove(&channel_id);
+        }
+        self.forget_transition(channel_id);
+    }
+
+    /// Has this channel's answering state CHANGED since the last time anyone
+    /// looked? Returns the new value on an edge, `None` otherwise.
+    ///
+    /// The status poll is what notices — there is no other regular tick on this
+    /// path, and adding a timer to watch screens that are already being watched
+    /// twice a second would be a second answer to one question. That means this
+    /// mutates from inside what reads like a query, which is worth stating plainly
+    /// rather than discovering: `channel_status` is the edge detector.
+    pub fn transition(&self, channel_id: i64, painting: bool) -> Option<bool> {
+        let mut m = self.reported.lock().ok()?;
+        match m.insert(channel_id, painting) {
+            Some(prev) if prev == painting => None,
+            // First sighting of a HEALTHY screen is not an event — it is the
+            // normal case, and a timeline that opens with "Main screen recovered"
+            // for every screen every service is noise.
+            None if painting => None,
+            _ => Some(painting),
+        }
+    }
+
+    /// Stop tracking a channel's edges — it is no longer attached, so neither
+    /// "lost" nor "recovered" would mean anything about it.
+    pub fn forget_transition(&self, channel_id: i64) {
+        if let Ok(mut m) = self.reported.lock() {
             m.remove(&channel_id);
         }
     }

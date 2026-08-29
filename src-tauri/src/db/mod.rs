@@ -202,6 +202,7 @@ fn ensure_tables(conn: &Connection) -> rusqlite::Result<()> {
     ensure_saved_scripture(conn)?; // Library
     ensure_media(conn)?;
     ensure_announcements(conn)?;
+    ensure_service_events(conn)?; // the service timeline + latency snapshots
     Ok(())
 }
 
@@ -290,6 +291,8 @@ pub const MIGRATION_TABLES: &[(&str, &str)] = &[
     ("Saved scripture", "saved_scripture"),
     ("Media", "media_assets"),
     ("Announcements", "announcements"),
+    ("Service timeline", "service_events"),
+    ("Latency history", "perf_samples"),
 ];
 
 /// Does a table — or a `table.column` — exist right now?

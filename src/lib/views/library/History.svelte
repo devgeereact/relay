@@ -3,7 +3,7 @@
   import { onMount } from 'svelte';
   import { showsConfidence } from '../../detect.js';
   import Loading from '../../ui/Loading.svelte';
-  import { capture, listServices, serviceDetail, endService, exportService } from '../../stores/capture.js';
+  import { capture, listServices, serviceDetail, serviceTimeline, servicePerf, endService, exportService } from '../../stores/capture.js';
 
   let exportMsg = '';
   async function doExport() {
@@ -22,7 +22,46 @@
   let services = [];
   let selected = null; // { id, title } of the open detail
   let detail = null; // { transcripts, detections }
+  let timeline = []; // the merged record: events + operator cues + detections
+  let perf = []; // latency snapshots taken during the service
   let loading = false;
+
+  // ── WHAT ACTUALLY HAPPENED ────────────────────────────────────────────────
+  //
+  // The transcript and the fired verses are two views of a service. Neither can
+  // answer the question a church actually asks afterwards — "the projector went
+  // blank for a bit, when was that?" — because nothing used to record it.
+  //
+  // Each row says which store it came from, and that is kept visible rather than
+  // flattened: an AI claim, an operator's press, and something Relay observed
+  // about itself carry different weight, and a replay that blurs them is a replay
+  // that quietly rewrites who did what.
+  const SOURCE_WORD = { event: 'Relay', cue: 'Operator', detection: 'Detection' };
+  const EVENT_WORD = {
+    service_started: 'Service started',
+    service_ended: 'Service ended',
+    rehearsal_on: 'Rehearsal on',
+    rehearsal_off: 'Rehearsal off',
+    panic_failed: 'A panic control did NOT reach the screens',
+    output_lost: 'Screen stopped responding',
+    output_recovered: 'Screen came back',
+    lock_lifted: 'Service lock lifted by the operator',
+    lock_restored: 'Service lock re-applied',
+    // From `cues` — the operator's own actions.
+    clear_screens: 'Screens cleared',
+    blackout: 'Blackout',
+    manual_override: 'Manual override',
+    // From `detections` — status is the useful word.
+    auto: 'Fired by Relay',
+    manual: 'Fired by the operator',
+    suggested: 'Suggested',
+    dismissed: 'Suggestion dismissed',
+  };
+  const eventWord = (r) => EVENT_WORD[r.kind] ?? r.kind.replace(/_/g, ' ');
+  const fmtMs = (ms) => fmtDur((ms || 0) / 1000);
+  // A row that says something went wrong reads as one. Rose is the failure colour;
+  // amber is never spent here, because nothing on this screen is on air.
+  const isFault = (r) => r.kind === 'panic_failed' || r.kind === 'output_lost';
 
   // Keep the screen clean: 10 services per page, paginate the rest.
   let page = 0;
@@ -90,8 +129,14 @@
     exportMsg = '';
     q = '';
     loading = true;
+    timeline = [];
+    perf = [];
     try {
       detail = await serviceDetail(svc.id);
+      // Read-only history, and both degrade to [] rather than throwing — a
+      // service whose timeline is missing must still show its transcript.
+      timeline = await serviceTimeline(svc.id);
+      perf = await servicePerf(svc.id);
     } catch (e) {
       // `error` is RENDERED now. It was set here and referenced nowhere in the
       // template, so a service whose detail failed to load was reported to the
@@ -235,6 +280,62 @@
           {/if}
         </div>
       </div>
+
+      <!-- WHAT ACTUALLY HAPPENED. The one view that can answer "the projector went
+           blank for a bit, when?" — and the only place a panic control that failed
+           is recorded after the operator dismissed the banner. -->
+      <div class="lib-tl">
+        <div class="r-lbl lib-collabel">
+          What happened <span class="lib-collabel-n">({timeline.length})</span>
+        </div>
+        {#if timeline.length}
+          <ol class="lib-tl-list">
+            {#each timeline as r, i (i)}
+              <li class="lib-tl-row" class:fault={isFault(r)}>
+                <span class="lib-tl-at r-mono">{fmtMs(r.at_ms)}</span>
+                <span class="lib-tl-src r-mono">{SOURCE_WORD[r.source] ?? r.source}</span>
+                <span class="lib-tl-what">{eventWord(r)}</span>
+                {#if r.detail}<span class="lib-tl-detail r-mono">{r.detail}</span>{/if}
+              </li>
+            {/each}
+          </ol>
+        {:else if detail?.error}
+          <div class="r-tile lib-emptytile" role="alert">
+            <span class="lib-detailerr">Could not open this service — {detail.error}</span>
+          </div>
+        {:else}
+          <div class="r-tile lib-emptytile">
+            <span class="r-empty">
+              No record for this service. Services recorded before this version of Relay
+              have no timeline — nothing was watching.
+            </span>
+          </div>
+        {/if}
+
+        {#if perf.length}
+          <!-- Latency, as it was measured DURING the service rather than as it is
+               now. Percentiles only; a trace carries what was heard. -->
+          <div class="r-lbl lib-collabel lib-tl-perfhead">Speed, as measured at the time</div>
+          <table class="lib-perf r-mono">
+            <thead><tr><th>at</th><th>stage</th><th>n</th><th>p50</th><th>p95</th><th>worst</th></tr></thead>
+            <tbody>
+              {#each perf as p, i (i)}
+                <tr>
+                  <td>{fmtMs(p.at_ms)}</td>
+                  <td class="lib-perf-metric">{p.metric.replace(/_/g, ' ')}</td>
+                  <td>{p.samples}</td>
+                  <!-- A stage never reached is an ABSENCE, not a zero. Printing 0
+                       here would make every service look instantaneous on the
+                       stages it never performed. -->
+                  <td>{p.p50_ms === null ? '—' : Math.round(p.p50_ms)}</td>
+                  <td>{p.p95_ms === null ? '—' : Math.round(p.p95_ms)}</td>
+                  <td>{p.worst_ms === null ? '—' : Math.round(p.worst_ms)}</td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        {/if}
+      </div>
     {/if}
   </div>
 {:else}
@@ -326,6 +427,28 @@
 {/if}
 
 <style>
+  /* THE TIMELINE. Quiet by default; a fault reads as one. Rose is the failure
+     colour — amber is never spent on this screen, because nothing here is on air. */
+  .lib-tl{ margin-top:18px; }
+  .lib-tl-list{ list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:2px; }
+  .lib-tl-row{ display:flex; align-items:baseline; gap:10px; padding:5px 8px;
+    border-radius:var(--v-r-sm); background:var(--v-surf2); font-size:var(--v-fs-b2); }
+  .lib-tl-at{ flex:0 0 52px; color:var(--v-faint); font-size:10px; }
+  .lib-tl-src{ flex:0 0 68px; color:var(--v-faint); font-size:9px; letter-spacing:.06em;
+    text-transform:uppercase; }
+  .lib-tl-what{ flex:1; min-width:0; color:var(--v-txt); }
+  .lib-tl-detail{ color:var(--v-dim); font-size:10px; overflow:hidden;
+    text-overflow:ellipsis; white-space:nowrap; max-width:40%; }
+  .lib-tl-row.fault{ background:color-mix(in srgb, var(--v-rose) 8%, var(--v-surf2));
+    border:1px solid color-mix(in srgb, var(--v-rose) 40%, transparent); }
+  .lib-tl-row.fault .lib-tl-what{ color:var(--v-rose); }
+  .lib-tl-perfhead{ margin-top:16px; }
+  .lib-perf{ width:100%; border-collapse:collapse; font-size:10px; color:var(--v-dim); }
+  .lib-perf th{ text-align:left; font-weight:500; color:var(--v-faint); padding:4px 6px;
+    border-bottom:1px solid var(--v-line); }
+  .lib-perf td{ padding:3px 6px; border-bottom:1px solid var(--v-line2); }
+  .lib-perf-metric{ color:var(--v-txt); }
+
   .lib-view{ display:flex; flex-direction:column; gap:18px; max-width:1080px; }
 
   /* ── List: action bar ── */

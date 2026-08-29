@@ -388,6 +388,8 @@ fn main() {
             channel_status,
             close_channel_output,
             output_beat,
+            service_timeline,
+            service_perf,
             service_lock,
             set_service_lock,
             set_channel_template,
@@ -1187,6 +1189,67 @@ fn persist_cue<R: tauri::Runtime>(
     if let Some(st) = sess.as_ref() {
         let ts = st.started.elapsed().as_secs_f64();
         let _ = db::insert_cue(&conn, st.id, cue_type, payload, ts);
+    }
+}
+
+/// Append one row to the service timeline.
+///
+/// Mirrors `persist_cue` in shape and in tolerance: **best-effort, and silent when
+/// there is no service.** A history that could take a live service down would be a
+/// worse trade than a history with a gap in it, and most of what this records
+/// happens at exactly the moments things are already going wrong.
+///
+/// Lock order `Db` before `Session`, like every other writer here (rule 6).
+fn log_event<R: tauri::Runtime>(
+    handle: &tauri::AppHandle<R>,
+    kind: db::EventKind,
+    detail: Option<&str>,
+) {
+    let db = handle.state::<Db>();
+    let session = handle.state::<Session>();
+    let (Ok(conn), Ok(sess)) = (db.0.lock(), session.0.lock()) else {
+        return;
+    };
+    if let Some(st) = sess.as_ref() {
+        let at = st.started.elapsed().as_secs_f64() * 1000.0;
+        let _ = db::log_event(&conn, st.id, at, kind, detail);
+    }
+}
+
+/// Write the latency instrument's current percentiles into the service's history.
+///
+/// The numbers `latency.rs` holds are in memory only, so the evidence from the run
+/// that mattered — the one that ended badly — died when the app closed. Called once
+/// a minute while a service records, and once more when it ends.
+///
+/// **A stage never reached is stored as NULL, not as zero.** Writing 0 would make
+/// every service look instantaneous on the stages it never performed, which is the
+/// same mistake `latency.rs` fixed inside the histogram.
+fn snapshot_latency<R: tauri::Runtime>(handle: &tauri::AppHandle<R>) {
+    let report = latency::report(0);
+    let db = handle.state::<Db>();
+    let session = handle.state::<Session>();
+    let (Ok(conn), Ok(sess)) = (db.0.lock(), session.0.lock()) else {
+        return;
+    };
+    let Some(st) = sess.as_ref() else { return };
+    let at = st.started.elapsed().as_secs_f64() * 1000.0;
+    for m in &report.metrics {
+        if m.samples == 0 {
+            continue;
+        }
+        let _ = db::log_perf_sample(
+            &conn,
+            st.id,
+            at,
+            &db::PerfSample {
+                metric: m.metric,
+                samples: m.samples as i64,
+                p50_ms: m.p50_ms,
+                p95_ms: m.p95_ms,
+                worst_ms: m.worst_ms,
+            },
+        );
     }
 }
 
@@ -2950,6 +3013,15 @@ fn set_rehearsal<R: tauri::Runtime>(
         // backend's actual mode — a worse lie than the one being fixed. The operator
         // is told the clear failed via the panic banner instead.
         clear_or_report(&app);
+        log_event(
+            &app,
+            if on {
+                db::EventKind::RehearsalOn
+            } else {
+                db::EventKind::RehearsalOff
+            },
+            None,
+        );
         let _ = app.emit("rehearsal://changed", on);
     }
     Ok(())
@@ -3327,6 +3399,32 @@ fn build_stt(handle: &tauri::AppHandle) -> Option<SttEngine> {
         .and_then(|db| db.0.lock().ok().and_then(|c| stt_model_setting(&c)));
     let path = stt::model_path_for(chosen.as_deref())?;
     let handle = handle.clone();
+
+    // KEEPING THE LATENCY EVIDENCE PAST THE END OF THE APP.
+    //
+    // `latency.rs` holds everything in memory, so the numbers from the run that
+    // matters most — the one that ended badly — died when the church closed Relay.
+    // A snapshot a minute, plus one at `end_service`, is enough to answer "did it
+    // get worse over the service" from history rather than from a screen somebody
+    // had to be looking at.
+    //
+    // Its OWN thread, deliberately not the detect thread (rule 33: the decoder
+    // decodes, and the thread behind it decides what was said — neither is a place
+    // to put a periodic chore) and not a timer on the frontend, which only ticks
+    // while somebody has the Diagnostics tab open. It does nothing at all when no
+    // service is recording, which is most of the time.
+    let historian = handle.clone();
+    if let Err(e) = std::thread::Builder::new()
+        .name("relay-history".into())
+        .spawn(move || loop {
+            std::thread::sleep(std::time::Duration::from_secs(60));
+            snapshot_latency(&historian);
+        })
+    {
+        // Non-fatal, and said out loud: the service still runs, the live Diagnostics
+        // screen still works, and only the after-the-fact record is missing.
+        eprintln!("history: could not start the latency recorder ({e}) — live diagnostics still work, but this service will keep no latency history");
+    }
 
     // The detection thread. See `handle_transcript` for why it is not the STT
     // thread. Bounded, so a stall here can never become unbounded memory growth
@@ -3855,6 +3953,37 @@ fn channel_status(
     let open = channels::open_channel_ids(&app);
     let clients = kiosk.clients_handle();
 
+    // A screen going quiet, and coming back, belong in the service's record — they
+    // are exactly what an operator is trying to reconstruct afterwards ("the
+    // projector was blank for a bit, when?"). This poll is the only regular tick on
+    // this path, so it is the edge detector; `transition` fires once per change,
+    // never once per poll.
+    for c in &list {
+        let attached = match c.render_target.as_str() {
+            "native_window" => open.contains(&c.id),
+            "network_client" => true,
+            _ => false,
+        };
+        if !attached {
+            // Not attached: neither "lost" nor "recovered" says anything true about
+            // it, and a window the operator closed on purpose must not read as a
+            // fault (RG-01's grace rule, one layer down).
+            health.forget_transition(c.id);
+            continue;
+        }
+        if let Some(now_painting) = health.transition(c.id, health.painting(c.id)) {
+            log_event(
+                &app,
+                if now_painting {
+                    db::EventKind::OutputRecovered
+                } else {
+                    db::EventKind::OutputLost
+                },
+                Some(&c.name),
+            );
+        }
+    }
+
     Ok(list
         .into_iter()
         .map(|c| match c.render_target.as_str() {
@@ -4197,6 +4326,11 @@ fn clear_or_report<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
         }
         Err(e) => {
             eprintln!("clear failed: {e}");
+            // The one row in this history that somebody will go looking for. A
+            // panic control that did not reach the screens is the worst thing
+            // Relay can do quietly, and until now the only record of it was a
+            // banner the operator dismissed.
+            log_event(app, db::EventKind::PanicFailed, Some("clear"));
             let _ = app.emit(
                 "output://panic_failed",
                 format!("Clear screens failed: {e}"),
@@ -4310,15 +4444,24 @@ fn start_service(
         target_ms,
         last_transcript: None,
     });
+    // First row of the timeline, at 0 ms, written while both locks are already
+    // held rather than through `log_event` — which would deadlock on them.
+    let _ = db::log_event(&conn, id, 0.0, db::EventKind::ServiceStarted, Some(&title));
     Ok(id)
 }
 
 /// Stop recording the current service (history is kept).
 #[tauri::command]
-fn end_service(
+fn end_service<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     session: tauri::State<'_, Session>,
     lock: tauri::State<'_, servicelock::ServiceLock>,
 ) -> error::Result<()> {
+    // ORDER MATTERS. Both of these read the session to find out which service they
+    // belong to, so they run BEFORE it is cleared — the reverse silently wrote
+    // nothing and the last minute of every service was the one minute never kept.
+    snapshot_latency(&app);
+    log_event(&app, db::EventKind::ServiceEnded, None);
     *session.0.lock()? = None;
     lock.release();
     Ok(())
@@ -4353,8 +4496,27 @@ fn service_lock(lock: tauri::State<'_, servicelock::ServiceLock>) -> ServiceLock
 /// room, so this takes no confirmation from Rust and gives no argument back. It is
 /// scoped to the service it was made in: `start_service` re-arms.
 #[tauri::command]
-fn set_service_lock(lock: tauri::State<'_, servicelock::ServiceLock>, on: bool) -> bool {
+fn set_service_lock<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    lock: tauri::State<'_, servicelock::ServiceLock>,
+    on: bool,
+) -> bool {
+    let was = lock.engaged();
     lock.set(on);
+    if was != on {
+        // Recorded because it changes what the rest of the service was protected
+        // from, and a replay that cannot see the override cannot explain what
+        // happened after it.
+        log_event(
+            &app,
+            if on {
+                db::EventKind::LockRestored
+            } else {
+                db::EventKind::LockLifted
+            },
+            None,
+        );
+    }
     lock.engaged()
 }
 
@@ -4363,6 +4525,25 @@ fn set_service_lock(lock: tauri::State<'_, servicelock::ServiceLock>, on: bool) 
 fn list_services(db: tauri::State<'_, Db>) -> error::Result<Vec<db::ServiceSummary>> {
     let conn = db.0.lock()?;
     db::list_services(&conn).map_err(Into::into)
+}
+
+/// Everything that happened in one service, in order — the replay's spine.
+///
+/// Merged from three tables rather than kept in a fourth: `detections` is what the
+/// AI claimed, `cues` is what the operator pressed, `service_events` is what Relay
+/// observed about itself, and each row says which it is. Flattening that away is
+/// how a replay starts to lie.
+#[tauri::command]
+fn service_timeline(db: tauri::State<'_, Db>, id: i64) -> error::Result<Vec<db::TimelineRow>> {
+    let conn = db.0.lock()?;
+    db::service_timeline(&conn, id).map_err(Into::into)
+}
+
+/// The latency snapshots kept for one service.
+#[tauri::command]
+fn service_perf(db: tauri::State<'_, Db>, id: i64) -> error::Result<Vec<db::PerfRow>> {
+    let conn = db.0.lock()?;
+    db::service_perf(&conn, id).map_err(Into::into)
 }
 
 /// Full transcript + fired detections for one service (Library detail view).

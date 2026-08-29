@@ -550,6 +550,23 @@ export async function setServiceLock(on) {
   return !!engaged;
 }
 
+/**
+ * Everything that happened in one service, in order — the replay's spine.
+ *
+ * Merged in Rust from three tables, each row saying which it came from: a
+ * `detection` is what the AI claimed, a `cue` is what the operator pressed, an
+ * `event` is what Relay observed about itself. Read-only history, so it degrades
+ * to an empty list rather than taking the Library down.
+ */
+export async function serviceTimeline(id) {
+  return guardedRead('serviceTimeline', (call) => call('service_timeline', { id }), []);
+}
+
+/** The latency snapshots kept for one service. Percentiles only, never traces. */
+export async function servicePerf(id) {
+  return guardedRead('servicePerf', (call) => call('service_perf', { id }), []);
+}
+
 /** All recorded services (Library list). */
 export async function listServices() {
   return guardedRead('listServices', (call) => call('list_services'), []);

@@ -57,6 +57,98 @@ fn app() -> tauri::App<tauri::test::MockRuntime> {
     app
 }
 
+/// RG-04 · THE SERVICE TIMELINE — what happened, kept past the end of the app.
+///
+/// Driven through the real commands. The claim is not "the table exists" but "a
+/// service that actually ran can be reconstructed afterwards" — which is the only
+/// version of this that helps a church say *"the projector was blank for a bit,
+/// when?"* three days later.
+#[test]
+fn a_service_records_what_happened_and_it_survives_the_service() {
+    let app = app();
+    let h = app.handle().clone();
+
+    let svc = start_service(
+        h.state::<Session>(),
+        h.state::<Db>(),
+        h.state::<channels::Rehearsal>(),
+        h.state::<servicelock::ServiceLock>(),
+        "Sunday Service".into(),
+        "2026-08-29".into(),
+    )
+    .expect("start");
+
+    // Things an operator does, and one thing Relay notices about itself.
+    manual_fire(h.clone(), h.state::<Db>(), "John 3:16".into(), None, None).expect("fire");
+    settle();
+    clear_screens(h.clone()).expect("clear");
+    set_service_lock(h.clone(), h.state::<servicelock::ServiceLock>(), false);
+    end_service(
+        h.clone(),
+        h.state::<Session>(),
+        h.state::<servicelock::ServiceLock>(),
+    )
+    .expect("end");
+
+    let rows = service_timeline(h.state::<Db>(), svc).expect("timeline");
+    let kinds: Vec<&str> = rows.iter().map(|r| r.kind.as_str()).collect();
+
+    assert_eq!(
+        rows.first().map(|r| r.kind.as_str()),
+        Some("service_started")
+    );
+    assert_eq!(rows.last().map(|r| r.kind.as_str()), Some("service_ended"));
+    assert!(
+        kinds.contains(&"lock_lifted"),
+        "the override belongs in the record: {kinds:?}"
+    );
+    assert!(
+        kinds.contains(&"clear_screens"),
+        "the operator's own actions merge in from `cues`: {kinds:?}"
+    );
+    // A human's fire is recorded AS a human's — never as the AI's. The router
+    // learns from that column, and a replay that confused the two would be
+    // describing a different service.
+    assert!(
+        rows.iter()
+            .any(|r| r.source == "detection" && r.kind == "manual"),
+        "a manual fire must appear as manual: {rows:?}"
+    );
+
+    // Ordered, and every row still knows which store it came from.
+    assert!(
+        rows.windows(2).all(|w| w[0].at_ms <= w[1].at_ms),
+        "the timeline must be in time order"
+    );
+
+    // Nothing the preacher said is in it. This is the part of the history most
+    // likely to be sent to somebody.
+    let dump = format!("{rows:?}");
+    assert!(
+        !dump.contains("For God so loved"),
+        "no verse text in the timeline"
+    );
+
+    // And the SECOND service keeps its own record rather than continuing the first.
+    let next = start_service(
+        h.state::<Session>(),
+        h.state::<Db>(),
+        h.state::<channels::Rehearsal>(),
+        h.state::<servicelock::ServiceLock>(),
+        "Evening".into(),
+        "2026-08-29".into(),
+    )
+    .expect("start again");
+    assert_ne!(next, svc);
+    assert_eq!(
+        service_timeline(h.state::<Db>(), next)
+            .expect("timeline")
+            .len(),
+        1,
+        "a new service starts a new record"
+    );
+}
+
 /// RG-03 · SERVICE LOCK — held back, but never in the operator's way.
 ///
 /// Driven through the real commands, on a real database, exactly as the frontend
@@ -129,6 +221,7 @@ fn a_recorded_service_holds_back_a_deletion_but_never_the_wall() {
 
     // 3 · The person in the room outranks the lock.
     assert!(!set_service_lock(
+        h.clone(),
         h.state::<servicelock::ServiceLock>(),
         false
     ));
@@ -140,7 +233,12 @@ fn a_recorded_service_holds_back_a_deletion_but_never_the_wall() {
     .expect("an operator who lifts the lock may delete");
 
     // 4 · …and the override is scoped to the service it was made in.
-    end_service(h.state::<Session>(), h.state::<servicelock::ServiceLock>()).expect("end");
+    end_service(
+        h.clone(),
+        h.state::<Session>(),
+        h.state::<servicelock::ServiceLock>(),
+    )
+    .expect("end");
     let again = create_template(h.state::<Db>(), Some("Scratch 2".into())).expect("create");
     start_service(
         h.state::<Session>(),
