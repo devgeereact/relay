@@ -258,9 +258,14 @@ describe('the beat interval is one decision held in two languages', () => {
     // are silent, which is why this is pinned across the files rather than trusted.
     const rs = read('src-tauri/src/channels.rs');
     const interval = Number(/BEAT_INTERVAL_MS: u64 = ([\d_]+)/.exec(rs)[1].replace(/_/g, ''));
-    const stale = Number(/BEAT_STALE_MS: u64 = ([\d_]+)/.exec(rs)[1].replace(/_/g, ''));
     expect(BEAT_INTERVAL_MS).toBe(interval);
-    expect(stale).toBeGreaterThanOrEqual(interval * 3);
+
+    // The staleness window must stay DERIVED from the interval rather than written
+    // beside it as its own number. Two independently-reasonable constants side by
+    // side is how they drift, and the drift is silent in both directions. The
+    // three-beats-of-grace arithmetic itself is pinned on the Rust side, where it
+    // can be evaluated instead of pattern-matched.
+    expect(rs).toMatch(/BEAT_STALE_MS: u64 = BEAT_INTERVAL_MS \* 3/);
   });
 });
 
