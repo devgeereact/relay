@@ -62,6 +62,7 @@
     { key: 'backup',    label: 'Backup & Recovery', desc: 'Setup walk-through and safe mode', icon: 'shield' },
     { key: 'updates',   label: 'Updates',           desc: 'App version and update channel', icon: 'refresh' },
     { key: 'diagnostics', label: 'Diagnostics',     desc: 'Live status for a support request', icon: 'terminal' },
+    { key: 'privacy',   label: 'Privacy',           desc: 'What is on this machine, and what can leave it', icon: 'shield' },
     { key: 'advanced',  label: 'Advanced',          desc: 'Crash reporting and privacy', icon: 'terminal' },
     { key: 'account',   label: 'Account',           desc: 'Licence and machine details', icon: 'user' },
   ];
@@ -154,6 +155,10 @@
   // ─────────────────────────────────────────────────────────────────────────
   let crash = { enabled: false, dsn: '' };
   let crashMsg = '';
+  // The Privacy screen reads the LIVE value, never a literal. A page that says
+  // "off" because somebody typed "off" is worth less than no page at all — it is
+  // the one row a person opens it to check.
+  $: crashOn = !!crash.enabled;
   async function toggleCrash(enabled) {
     crashMsg = '';
     try {
@@ -1339,6 +1344,69 @@
         </div>
         <p class="s-note">Measuring is on by default and costs a handful of timestamps per decode. Turning it off is here so a field test can prove the instrument is not the delay.</p>
 
+      {:else if section === 'privacy'}
+        <!-- WHAT IS LEAVING THIS MACHINE, ANSWERED FROM THE LIVE SETTINGS.
+             Relay's privacy story is the strongest thing about it and it has been
+             invisible — it lives in PRIVACY.md, which nobody in a booth reads. Every
+             row below is read from the actual state, never hardcoded: a screen that
+             says "off" because somebody typed "off" is worth less than no screen.
+             It also states the LAN exposure plainly, because a privacy page that
+             lists only the reassuring half is an advert. -->
+        <p class="s-lead">
+          Read from this machine right now — not from a promise. Nothing here is a
+          setting you change; it is a report on the settings you have.
+        </p>
+        <div class="s-cardbox">
+          <div class="s-netrow">
+            <span class="s-netk">What you say</span>
+            <span class="s-netv">Never leaves this computer. Audio is processed in memory and is not written to disk.</span>
+          </div>
+          <div class="s-netrow">
+            <span class="s-netk">Transcripts &amp; history</span>
+            <span class="s-netv">Stored on this computer only, in Relay's own database.</span>
+          </div>
+          <div class="s-netrow">
+            <span class="s-netk">Speech recognition</span>
+            <span class="s-netv">
+              {$capture.stt.loaded
+                ? 'Runs entirely on this machine. No audio is sent anywhere.'
+                : 'No model loaded — nothing is being transcribed.'}
+            </span>
+          </div>
+          <div class="s-netrow">
+            <span class="s-netk">Crash reporting</span>
+            <!-- The live value. This is the ONE thing Relay can send, and the one
+                 row somebody opens this page to check. -->
+            <span class="s-netv" class:on={crashOn}>
+              {crashOn
+                ? 'ON — a crash sends the error and where it happened. Never a transcript, verse, lyric or announcement.'
+                : 'OFF — nothing is sent when Relay crashes.'}
+            </span>
+          </div>
+          <div class="s-netrow">
+            <span class="s-netk">Accounts &amp; cloud</span>
+            <span class="s-netv">There are none. Relay has no account, no server, and works with the network unplugged.</span>
+          </div>
+          <div class="s-netrow">
+            <span class="s-netk">Your church network</span>
+            <!-- The unflattering half, in the same size type. -->
+            <span class="s-netv">
+              Relay serves your screens at <span class="r-mono">{lanIp || 'this computer'}:8032</span>.
+              Anyone already on the same WiFi can see what is on the projector — <b>and can
+              change it</b>: the preacher's remote has no password, by design. They cannot
+              reach your transcripts, plans or history.
+            </span>
+          </div>
+          <div class="s-netrow">
+            <span class="s-netk">Diagnostic file</span>
+            <span class="s-netv">Only written when you press the button in Diagnostics, and only where you can read it first.</span>
+          </div>
+        </div>
+        <p class="s-note">
+          The full account, including what would make the network tradeoff change, is
+          in <span class="r-mono">PRIVACY.md</span> and <span class="r-mono">docs/DECISIONS.md</span> §35.
+        </p>
+
       {:else if section === 'advanced'}
         <div class="s-grouphead first">Crash Reporting</div>
         <p class="s-tr-note">
@@ -1624,6 +1692,10 @@
   /* An absence is dim, not red: nobody has failed here — the work has not been
      done, and saying so is the whole point of the column. */
   .s-langgap{ color:var(--v-faint); font-style:italic; }
+  /* The one row on the Privacy page that can say something is leaving. Emerald is
+     "confirmed/connected" in the design system; here it marks the state that is
+     ACTIVE, not the state that is good — the copy carries the judgement. */
+  .s-netv.on{ color:var(--v-emerald); }
   .s-roomname{ flex:1; min-width:0; display:flex; flex-direction:column; gap:2px; }
   .s-roomnote{ font-size:var(--v-fs-cap); color:var(--v-faint); }
   @media (min-width:1px){
