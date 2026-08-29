@@ -918,21 +918,28 @@ describe('R3-12 · six views have no heading at all', () => {
   }
 });
 
-describe('R3-12 · the two genuinely unlabelled controls', () => {
-  // The inventory reported nine. Seven are false positives — `aria-label={expr}`,
-  // a wrapping <label>, or a real for/id pair — which the regex cannot see.
-  // These two are real.
-  it('the Planner stage-note textarea has no label, only a placeholder', () => {
+describe('R3-12 · the two genuinely unlabelled controls — CLOSED 2026-08-30', () => {
+  // The inventory reported nine. Seven were the scanner's own blind spots —
+  // `aria-label={expr}`, a wrapping `<label>`, a real for/id pair — and the scanner
+  // was taught about all three (`inventory.test.js`). These two were real, and both
+  // are fixed the NATIVE way rather than with an aria-label, so the visible text and
+  // the accessible name are the same string and cannot drift apart.
+  //
+  // Kept as regression tests rather than deleted: the assertions are inverted, so
+  // reintroducing either defect turns them red.
+  it('the Planner stage-note textarea is named by a real <label for>', () => {
     const t = src('src/lib/views/ServicePlanner.svelte');
-    expect(t).toMatch(/<div class="r-lbl sp-flbl">Stage note<\/div>/); // a div, not a <label for>
-    expect(t).toMatch(/<textarea class="r-input sp-note"/);
-    expect(t).not.toMatch(/for="sp-note"/);
+    expect(t).toMatch(/<label class="r-lbl sp-flbl" for="sp-stage-note">Stage note<\/label>/);
+    expect(t).toMatch(/<textarea id="sp-stage-note"/);
+    // …and NOT with an aria-label, which would be a second copy of the same words.
+    expect(t).not.toMatch(/sp-note[^>]*aria-label/);
   });
 
-  it('the ImportReview lyric textareas have no label, only a placeholder', () => {
+  it('the ImportReview lyric textareas say WHICH slide they are', () => {
+    // One of many identical boxes. "Slide text" announced eleven times over tells
+    // somebody using a screen reader nothing about where they are.
     const t = src('src/lib/views/library/ImportReview.svelte');
-    expect(t).toMatch(/<textarea class="ir-lyrics"[^>]*placeholder="Slide text…"/);
-    expect(t).not.toMatch(/aria-label[^>]*Slide text/);
+    expect(t).toMatch(/aria-label="\{song\.title \|\| 'Song'\} — slide \{j \+ 1\} text"/);
   });
 });
 
