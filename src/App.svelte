@@ -11,6 +11,7 @@
   import BootSequence from './lib/boot/BootSequence.svelte';
   import BrandMark from './lib/ui/BrandMark.svelte';
   import { safeMode } from './lib/boot/boot.js';
+  import { humanError } from './lib/errors.js';
   import {
     checkForUpdate,
     installUpdate,
@@ -18,7 +19,37 @@
     updateAvailable,
     updateProgress,
     updateError,
+    updateVerdict,
+    verifyLastUpdate,
+    acceptUpdate,
+    restoreSnapshot,
   } from './lib/updater.js';
+
+  // The two answers to the post-update banner. Both GROUP 1 (they throw), because a
+  // restore that silently failed would leave an operator waiting for a history that
+  // is never coming back.
+  let updMsg = '';
+  async function doAccept() {
+    updMsg = '';
+    try {
+      await acceptUpdate();
+    } catch (e) {
+      updMsg = humanError(e);
+    }
+  }
+  async function doRestore() {
+    updMsg = '';
+    try {
+      await restoreSnapshot($updateVerdict.snapshot);
+      // A REQUEST, and the operator has to be told so. Copying a file over an open
+      // database corrupts both, so it happens before the database is opened — and
+      // somebody who believes it has already happened will not restart, and will
+      // conclude Relay ignored them.
+      updMsg = 'Restored on the next launch. Close Relay and open it again.';
+    } catch (e) {
+      updMsg = humanError(e);
+    }
+  }
   // Views are CODE-SPLIT. Statically importing all eight put every tab — Live
   // (the heaviest), the Planner, Settings, all of them — into one 637 KB bundle
   // the webview had to parse before the first frame, on hardware that is often a
@@ -205,6 +236,10 @@
     if (!$safeMode) autoOpenOutputs();
     // A console reopened mid-service must not show an unprotected app.
     loadServiceLock();
+    // Did the LAST update work? Asked once, here, because the answer is only
+    // knowable on the launch after one — and the person who pressed the button may
+    // well have gone home before this launch happens.
+    verifyLastUpdate();
     try {
       const { invoke } = await import('@tauri-apps/api/core');
       await invoke('greet', { name: 'operator' });
@@ -458,6 +493,30 @@
         <span>{$panicError}</span>
       </div>
       <button class="r-btn ghost sm" on:click={dismissPanicError}>Dismiss</button>
+    </div>
+  {/if}
+
+  <!-- THE LAUNCH AFTER AN UPDATE.
+       Sits ABOVE the "an update is available" banner, because "the last one broke
+       your history" outranks "here is another one". Only the Broken case is loud:
+       an update that landed cleanly is confirmed once, quietly, and forgotten. -->
+  {#if $updateVerdict?.verdict === 'broken'}
+    <div class="upd upd-bad" role="alert">
+      <div class="upd-t">
+        <b>Relay updated from {$updateVerdict.from_version}, and its database is not right.</b>
+        <span>{$updateVerdict.reason} A copy of your history from before the update is still on this machine.</span>
+        {#if updMsg}<span class="upd-msg">{updMsg}</span>{/if}
+      </div>
+      <button class="r-btn sm" on:click={doRestore}>Restore my history</button>
+      <button class="r-btn ghost sm" on:click={doAccept}>Keep this and continue</button>
+    </div>
+  {:else if $updateVerdict?.verdict === 'landed'}
+    <div class="upd">
+      <div class="upd-t">
+        <b>Relay updated from {$updateVerdict.from_version}.</b>
+        <span>Your history came through intact.</span>
+      </div>
+      <button class="r-btn ghost sm" on:click={doAccept}>Dismiss</button>
     </div>
   {/if}
 

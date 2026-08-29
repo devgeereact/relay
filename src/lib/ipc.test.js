@@ -31,6 +31,10 @@ const probesJs = read('src/lib/boot/probes.js');
 // own. Added to the contract the moment it existed — a command called from a third
 // file that this test did not read is precisely the door nobody checks.
 const outputHealthJs = read('src/lib/outputHealth.js');
+// The updater is the fourth file that calls Tauri directly, for the same reason
+// again: an update-safety check routed through a wrapper that swallows failures
+// would be a safety check that cannot report its own.
+const updaterJs = read('src/lib/updater.js');
 const mainRs = read('src-tauri/src/main.rs');
 
 /** Every `call('name', …)` in the store, and every `invoke('name', …)` in the probes. */
@@ -43,6 +47,9 @@ function commandsCalledByFrontend() {
     names.add(m[1]);
   }
   for (const m of outputHealthJs.matchAll(/\binv\(\s*['"]([a-z0-9_]+)['"]/g)) {
+    names.add(m[1]);
+  }
+  for (const m of updaterJs.matchAll(/\binvoke\(\s*['"]([a-z0-9_]+)['"]/g)) {
     names.add(m[1]);
   }
   return [...names].sort();
@@ -75,6 +82,7 @@ describe('Tauri IPC contract', () => {
     // …and the output pages' beat, which is the third file that calls Tauri
     // without going through the store.
     expect(commandsCalledByFrontend()).toContain('output_beat');
+    expect(commandsCalledByFrontend()).toContain('update_verify');
   });
 
   it('every command the frontend calls is registered in Rust', () => {

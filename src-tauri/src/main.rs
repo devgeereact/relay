@@ -43,6 +43,7 @@ mod songs;
 mod stt;
 mod sysprobe;
 mod telemetry;
+mod updates;
 
 use audio::AudioEngine;
 use channels::OutputContent;
@@ -390,6 +391,11 @@ fn main() {
             output_beat,
             service_timeline,
             service_perf,
+            update_preflight,
+            update_begin,
+            update_verify,
+            update_accept,
+            update_restore,
             service_lock,
             set_service_lock,
             set_channel_template,
@@ -2678,6 +2684,98 @@ fn migration_status(db: tauri::State<'_, Db>) -> error::Result<MigrationStatus> 
         manual_status,
         scratch_table,
     })
+}
+
+// ===== UPDATE SAFETY (RG-06) =====
+
+/// Is it safe to start an update right now?
+///
+/// The service lock's answer comes first and is separate: "not during a service" is
+/// a different sentence from "not onto this database", and an operator needs to know
+/// which one they are looking at.
+#[tauri::command]
+fn update_preflight(
+    db: tauri::State<'_, Db>,
+    lock: tauri::State<'_, servicelock::ServiceLock>,
+) -> error::Result<UpdateReadiness> {
+    let free = sysprobe::read(&db::app_data_dir()).free_disk_bytes;
+    let conn = db.0.lock()?;
+    let p = updates::preflight(&conn, free);
+    Ok(UpdateReadiness {
+        ok: p.ok && !lock.engaged(),
+        during_service: lock.engaged(),
+        checks: p.checks,
+    })
+}
+
+#[derive(serde::Serialize)]
+struct UpdateReadiness {
+    ok: bool,
+    /// Reported separately from the checks: a service in progress is not a fault in
+    /// the database, and telling an operator their database is unhealthy when the
+    /// real answer is "wait twenty minutes" would send them debugging the wrong thing.
+    during_service: bool,
+    checks: Vec<updates::Check>,
+}
+
+/// Take the pre-update snapshot and record what we are updating from.
+///
+/// Called immediately before the download starts. Returns the snapshot's path so the
+/// operator can be told, in the moment, that their history has been copied — which is
+/// the difference between an update they will press and one they will not.
+#[tauri::command]
+fn update_begin(
+    db: tauri::State<'_, Db>,
+    lock: tauri::State<'_, servicelock::ServiceLock>,
+    from_version: String,
+) -> error::Result<String> {
+    if lock.engaged() {
+        return Err(error::Error::refused(
+            "A service is being recorded. Relay will not update until it ends — an update restarts the app.",
+        ));
+    }
+    let conn = db.0.lock()?;
+    let p = updates::preflight(&conn, u64::MAX);
+    if let Some(bad) = p.checks.iter().find(|c| c.state == "fail") {
+        return Err(error::Error::refused(format!(
+            "Relay will not update on top of this database yet: {}",
+            bad.note
+        )));
+    }
+    let path = updates::begin(&conn, &from_version)?;
+    Ok(path.to_string_lossy().to_string())
+}
+
+/// Did the last update actually work? Asked once, on the launch after one.
+#[tauri::command]
+fn update_verify(
+    db: tauri::State<'_, Db>,
+    current_version: String,
+) -> error::Result<updates::Verdict> {
+    let conn = db.0.lock()?;
+    Ok(updates::verify(&conn, &current_version))
+}
+
+/// The operator accepts the update — stop asking.
+#[tauri::command]
+fn update_accept(db: tauri::State<'_, Db>) -> error::Result<()> {
+    let conn = db.0.lock()?;
+    updates::clear(&conn).map_err(Into::into)
+}
+
+/// The operator wants their history back. Takes effect on the next launch.
+///
+/// A request, not an action, and the app says so — an operator who thinks it has
+/// already happened will not restart, and will conclude Relay ignored them.
+#[tauri::command]
+fn update_restore(db: tauri::State<'_, Db>, snapshot: String) -> error::Result<()> {
+    updates::request_restore(std::path::Path::new(&snapshot))
+        .map_err(|e| error::Error::refused(e.to_string()))?;
+    // Clear the pending record too: whatever happens next, this update has been
+    // answered, and asking again after a restore would be asking about a database
+    // that no longer exists.
+    let conn = db.0.lock()?;
+    updates::clear(&conn).map_err(Into::into)
 }
 
 /// This machine's LAN IPv4, so output URLs point at a real address other devices

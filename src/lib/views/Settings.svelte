@@ -37,6 +37,7 @@
       (Object.keys(CATALOGUES[code] ?? {}).filter((k) => !k.startsWith('_')).length / TOTAL) * 100,
     );
   import { capture, meter, templates, initAudio, startCapture, stopCapture, setThresholds, setSttLanguage, setInputDevice, listTranslations, getActiveTranslation, setActiveTranslation, localIp, loadTemplates, getContentTemplates, setContentTemplate, getCrashReporting, setCrashReporting, serviceTargetMinutes, loadServiceTarget, setServiceTarget, latencyReport, latencyReset, latencySetEnabled, serviceLock, loadServiceLock, setServiceLock } from '../stores/capture.js';
+  import { snapshotPath, KEEP_SNAPSHOTS } from '../updater.js';
   import { diagnose, drift } from '../latency.js';
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -225,6 +226,21 @@
   // Read it when this screen opens rather than trusting a store that may have been
   // set before the service began.
   onMount(loadServiceLock);
+
+  // The update readiness readout. Read when this screen opens rather than polled:
+  // a database does not become unhealthy while somebody looks at a settings page,
+  // and `update_begin` re-checks at the moment it matters anyway.
+  let updReady = null;
+  onMount(async () => {
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      updReady = await invoke('update_preflight');
+    } catch {
+      // No backend (a plain browser). Showing an empty checklist is better than
+      // showing a fabricated healthy one.
+      updReady = null;
+    }
+  });
 
   let lockErr = '';
   async function unlockService() {
@@ -1032,6 +1048,38 @@
           {checking ? 'Checking…' : 'Check for Updates'}
         </button>
         {#if updateMsg}<div class="s-note" style="margin-top:10px">{updateMsg}</div>{/if}
+
+        <!-- WHAT AN UPDATE WOULD DO TO YOUR HISTORY.
+             Shown before the operator presses anything, because the question they
+             actually have — "is this safe right now?" — was previously answerable
+             only by trying it. Nothing here refuses on its own; `update_begin`
+             re-runs the same checks at the moment of truth. -->
+        <hr class="s-rule" />
+        <div class="r-lbl">Before an update</div>
+        <p class="s-note">
+          Relay copies your entire history — services, plans, songs, saved verses and
+          templates — before it installs anything, and keeps the last
+          {KEEP_SNAPSHOTS} copies. The app itself can always be reinstalled from a
+          release page; your history cannot.
+        </p>
+        {#if updReady}
+          {#if updReady.during_service}
+            <p class="s-note"><b>A service is being recorded.</b> Relay will not update until it ends — an update restarts the app.</p>
+          {/if}
+          <div class="s-cardbox s-mt">
+            {#each updReady.checks as c (c.id)}
+              <div class="s-netrow">
+                <span class="s-netk">{c.label}</span>
+                <span class="s-netv r-mono" class:bad={c.state === 'fail'} class:warn={c.state === 'warn'}>
+                  {c.note}
+                </span>
+              </div>
+            {/each}
+          </div>
+        {/if}
+        {#if $snapshotPath}
+          <p class="s-note s-mt">Your history was copied to <span class="r-mono">{$snapshotPath}</span>.</p>
+        {/if}
 
       {:else if section === 'diagnostics'}
         <p class="s-lead">The facts a support request needs, in one place. Nothing here leaves this machine.</p>

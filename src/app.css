@@ -485,6 +485,11 @@ body{ overflow:hidden; text-rendering:optimizeLegibility; -moz-osx-font-smoothin
 /* ===== Update banner =================================================
    Sits at rest only. updater.js will not even check while the mic is live —
    an updater that interrupts a sermon is worse than no updater at all. */
+/* The post-update banner when the database did NOT survive. Rose is the failure
+   colour; amber is never spent here because nothing about this is on air. */
+.upd.upd-bad{ border-color:color-mix(in srgb, var(--v-rose) 50%, transparent);
+  background:color-mix(in srgb, var(--v-rose) 9%, var(--v-surf2)); }
+.upd .upd-msg{ display:block; color:var(--v-dim); margin-top:4px; }
 .upd{ position:fixed; left:50%; transform:translateX(-50%); bottom:18px; z-index:800;
   display:flex; align-items:center; gap:14px; max-width:min(760px,calc(100vw - 32px));
   background:var(--v-surf); border:1px solid var(--v-accent-line); border-radius:12px;

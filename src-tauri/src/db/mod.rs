@@ -218,6 +218,19 @@ pub fn open() -> rusqlite::Result<Connection> {
     if let Some(dir) = path.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
+    // A RESTORE HAPPENS HERE OR NOWHERE.
+    //
+    // Copying a file over a database that is open is how you get a corrupt database
+    // AND a corrupt backup, so a restore is a REQUEST (a marker file) that is acted
+    // on at the one moment the file is provably unused: before it is opened. The
+    // database being replaced is copied aside first, so pressing "restore" is never
+    // an irreversible gamble.
+    if let Some(from) = crate::updates::take_restore(&path) {
+        println!(
+            "db: restored from a pre-update snapshot ({})",
+            from.display()
+        );
+    }
     let fresh = !path.exists();
     let conn = Connection::open(&path)?;
     conn.execute_batch("PRAGMA foreign_keys = ON;")?;
@@ -541,6 +554,10 @@ fn downloads_root(os: &str, env: impl Fn(&str) -> Option<String>) -> Option<Path
 
 /// Resolve the default database file path per OS, honoring a RELAY_DB_PATH
 /// override (handy for tests and dev).
+pub fn db_path() -> PathBuf {
+    default_db_path()
+}
+
 fn default_db_path() -> PathBuf {
     if let Ok(p) = std::env::var("RELAY_DB_PATH") {
         return PathBuf::from(p);
