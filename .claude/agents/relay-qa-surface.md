@@ -49,9 +49,23 @@ the rows it passes.**
   and deleted once the inventory tool surfaced it. The count should be zero; if it is
   not, that is a finding, and the fact that fourteen passing tests were once written
   against the orphan is why it matters.
-- A command registered in Rust that nothing calls. CLAUDE.md claims all 114 have a
-  frontend caller; that is a claim with a date on it. Note that a *store wrapper* is not
+- A command registered in Rust that nothing calls. CLAUDE.md claims all 118 have a
+  frontend caller; that is a claim with a date on it — **re-derive the count, never quote
+  it** (`node scripts/qa-inventory.mjs`). Note that a *store wrapper* is not
   a caller in the sense that matters — `saveArrangement` has one and no UI reaches it.
+
+- **The launch/readiness surface is yours too, and it is not a tab.** `src/lib/boot/`
+  (`BootSequence`, `CheckList`, `HardwareCheck`, `PluginLoading`, `DatabaseMigration`,
+  `RecoverSession`, `CrashReportRecovery`, `SafeModeStartup`, `UpdateAvailable`) plus
+  `views/Dashboard.svelte`, which lives inside **Settings** and re-runs the same
+  `freshChecks()` through the same `makeProbes()`. The load-bearing rule is
+  `boot.js`'s: **a stub check may never render green.** Verify every row's severity is
+  earned by a real probe, and that the Dashboard's one-sentence verdict cannot say
+  "Ready for a service" while a `fail` row is present.
+- **Known open findings — confirm or retire them, do not re-file them as new.** The last
+  inventory reported **9 controls with no accessible name** (including the Live mic
+  toggle, `Live.svelte:1038`) and **4 buttons with no handler**, two of which are
+  `type=submit` inside a form and are false positives. See `docs/RELAY_GAP.md` §12.
 
 ## Step 3 — mount and assert
 

@@ -60,6 +60,18 @@ The rules that must survive even if that read fails:
   grown, (b) the code still matches the decision, and (c) `clear` and `black` from the
   LAN reach the same engine the console panic keys use.
 
+- **The update path has no way back.** The updater refuses to run while capturing
+  (`updater.js:33-37`) and the plugin verifies a minisign signature — but there is **no
+  rollback and no database-compatibility preflight**, and `SCHEMA_VERSION` is never
+  compared against an incoming build. A failed install leaves the operator with a
+  message and no recovery. Recorded as RG-06; confirm it still stands rather than
+  re-deriving it, and check the gate is keyed on something better than the microphone.
+- **Nothing survives a quit.** Every latency measurement lives in memory (`latency.rs`:
+  histograms plus a 256-entry ring), so the evidence a church would send you is gone
+  the moment they close the app, and no service event timeline exists to reconstruct it
+  from. When you break something on purpose, ask what a person could still show you
+  afterwards — for most of this pipeline the answer is currently "nothing".
+
 ## Integrations
 
 You may verify the code path, the error type, and that a failed connection produces a

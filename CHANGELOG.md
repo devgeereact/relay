@@ -12,11 +12,40 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 
 ### 🚧 Nothing has been released to anyone yet.
 
-Relay has never shipped. Every tag so far (`v0.1.0-rc1` … `v0.1.0-3`) is a **draft pre-release** used to exercise the pipeline — they are unsigned, and an unsigned build is stopped dead by macOS Gatekeeper and warned about by Windows SmartScreen. A volunteer does not push past those screens, and should not be asked to.
+Relay has never shipped. Every tag so far (`v0.1.0-rc1` … `v0.1.0-4`) is a **draft pre-release** used to exercise the pipeline — they are unsigned, and an unsigned build is stopped dead by macOS Gatekeeper and warned about by Windows SmartScreen. A volunteer does not push past those screens, and should not be asked to.
 
 **The first real release is blocked on one purchase: a Windows code-signing certificate** (~$10/month, Azure Trusted Signing). The release workflow now *refuses* to publish an unsigned Windows installer rather than doing it quietly — see `docs/RELEASING.md`.
 
 Everything below is what that first release will contain.
+
+---
+
+## [0.1.0-4] — 2026-08-24 · pre-release
+
+**The live transcript now arrives about two and a half times sooner, and for the
+first time you can see the delay for yourself.**
+
+- **Words appear on screen sooner.** Relay was waiting between decodes for two
+  reasons that turned out to protect nothing: it asked for work in a size the
+  microphone cannot deliver, and it left itself spare time it never needed. On the
+  default speech model the transcript went from arriving about a third of a second
+  after the words to about a seventh of a second, and it updates roughly twice as
+  often. **Nothing about safety changed** — no threshold moved, and Relay still
+  waits for a second look before it puts a heard reference on a screen.
+- **Deciding what was said no longer holds up hearing the next thing.** Looking up a
+  verse used to happen on the same thread that runs the speech model. It now runs
+  beside it, so a busy moment delays a lookup rather than the transcript.
+- **Settings → Diagnostics → Live latency.** New. It times nine points between the
+  microphone and the projector, on the machine in the room, and tells you in one
+  sentence whether the pipeline is keeping up, whether the speech model you chose is
+  the bottleneck, and whether the delay is growing over the length of a service. It
+  is on by default, because a measurement that needs a developer build is one no
+  church will ever take.
+
+**Read before you change models.** Diagnostics will now tell you plainly that on a
+bigger model the wait is the model itself and not something Relay can fix — a trade
+you were always making and could not previously see. Evidence, and everything these
+numbers do *not* prove: `docs/audits/PERF-2026-08-24.md`.
 
 ---
 
@@ -125,7 +154,7 @@ These were all found and fixed before a single church ran Relay. They are listed
 
 ## Notes for maintainers
 
-**Every release must have an entry here before it is tagged.** An updater that offers a church a restart, twenty minutes before a service, with no explanation of what changes, is asking them to gamble. If there is nothing worth telling them, there is nothing worth interrupting them for.
+**Every release must have an entry here before it is tagged.** `0.1.0-4` was tagged without one and the entry was written back five days later, from the commit — which is how it should never happen: the person who made the change is the only one who knows what it meant to an operator. An updater that offers a church a restart, twenty minutes before a service, with no explanation of what changes, is asking them to gamble. If there is nothing worth telling them, there is nothing worth interrupting them for.
 
 Write the entry for the operator. "Fixed a race in the router" is not a changelog entry; "the wrong verse could appear if two references were spoken in the same sentence" is.
 

@@ -22,10 +22,11 @@ code that would consume each already exists.
 
 | Item | Unblocks | Cost |
 |---|---|---|
-| **Windows code-signing certificate** | Windows can ship at all — the release gate now *refuses* to publish an unsigned Windows build (DECISIONS §23). Windows is the target market's dominant platform on cost grounds. | ~$10/month (Azure Trusted Signing) |
+| **Windows code-signing certificate** | Windows can ship at all — the release gate now *refuses* to publish an unsigned Windows build (CLAUDE.md rule 23; **not** DECISIONS §23, which is the voice gate). Windows is the target market's dominant platform on cost grounds. | ~$10/month (Azure Trusted Signing) |
 | **30 minutes of real sermon audio on tape** | Word error rate (never measured, any language), the dormant STT bench (`stt::bench`, already scores through the real detector), the fine-tune evaluation, and the decoder-bias-prompt question. **Every claim about the moat is currently an assertion.** | Time + a recorder; audio never enters the repo (`bench/.gitignore` refuses it) |
 | **Native-speaker review** | The 66×3 book aliases (unreviewed), Yorùbá numerals (unparsed, subtractive), and the three locale files (ship empty *on purpose*). This is the actual moat and no native speaker has read it. | Free — a language contribution, no code (see [../CONTRIBUTING.md](../CONTRIBUTING.md), [LANGUAGES.md](LANGUAGES.md)) |
 | **One observed end-to-end update install** | Confidence that the updater mechanism — capable but never watched — actually delivers a fix to a church. | 30 minutes on a real machine ([RELEASING.md](RELEASING.md)) |
+| **One full service on tape, watching Diagnostics — Stage F11** | The one performance question no benchmark can answer: with the cadence now running at the decoder's own speed, a model slower than one 200 ms chunker hop keeps the decoder busy continuously for a whole service. Thermal throttling would appear as a rising per-minute line in Settings → Diagnostics, and six minutes cannot produce it. Three documents call this the highest-value unrun item in the project ([audits/PERF-2026-08-24.md](audits/PERF-2026-08-24.md) §6, [audits/QA-2026-08-14.md](audits/QA-2026-08-14.md) §16 F11, CLAUDE.md rule 32) and until now no register held it. | A real service + the packaged build |
 | **Watch one full service run by a non-author operator** | The one thing no amount of engineering substitutes for. | A real Sunday |
 | **Brand / name decision** | README still says *"Working name — rename freely."* Decide **before** the first church installs, not after. | A decision, not a build |
 
@@ -103,8 +104,8 @@ were looked at and left for a stated reason.
 
 | Debt | State & reasoning | Effort if actioned |
 |---|---|---|
-| **`main.rs` — 4,024 lines / 114 commands** | A god-file holding the whole IPC surface + app state + some orchestration. **No longer a correctness issue** — the fire engine is generic over `tauri::Runtime` and covered by `e2e.rs`, which was the actual point of "split main.rs" (PRODUCT_AUDIT §10.2). A readability complaint now, and it has grown ~1,100 lines since that was written. | Medium; split commands into per-domain modules. Regression risk on live-critical code — do it with tests, not in a rush. |
-| **`Live.svelte` (1,877) & `stores/capture.js` (1,908)** | The frontend mirror of the same concentration. Works; large, and both have grown by ~700 lines. | Medium |
+| **`main.rs` — 4,369 lines / 118 commands** | A god-file holding the whole IPC surface + app state + some orchestration. **No longer a correctness issue** — the fire engine is generic over `tauri::Runtime` and covered by `e2e.rs`, which was the actual point of "split main.rs" (PRODUCT_AUDIT §10.2). A readability complaint now, and it has grown ~1,450 lines since that was written. | Medium; split commands into per-domain modules. Regression risk on live-critical code — do it with tests, not in a rush. |
+| **`Live.svelte` (1,877) & `stores/capture.js` (1,941)** | The frontend mirror of the same concentration. Works; large, and both have grown by ~700 lines. | Medium |
 | **`models.rs` name collision** | It is STT-model *download*, not domain *models*. A reader expects the wrong thing. | Small (rename) |
 | **`db/mod.rs` (2,230)** mixes migrations + platform paths + inline tests | Cohesive but large. | Small–medium |
 | **~150 lines of dead legacy CSS** (`--text-faint` et al.) | Can't be deleted without eyes on a running app — global (unscoped) rules with generic class names live components still carry ([DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) §6). The contrast failure is fixed; the rules stay. | Small, but needs a running app |

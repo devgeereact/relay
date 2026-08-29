@@ -39,6 +39,32 @@ The rules that must survive even if that read fails:
   right; R4 cannot know anything about audio.
 - Agreement between two agents that both read the same source file is one observation,
   not two.
+- **A number quoted from a document is not a measurement.** Re-derive every count you
+  repeat, and put the command beside it. This is not pedantry: on 2026-08-29 six files
+  said Relay had 114 Tauri commands and the code had 118 — and the file that was wrong
+  was `CLAUDE.md`, which every agent reads first, so the error propagated into each new
+  report that cited it. `docs/QA_HARNESS.md` §0 is the register of counts; everything
+  else should cite it rather than restate it.
+
+## Documentation drift is a finding, at its real severity
+
+**A stale doc in this repository is a live-safety issue, not a tidiness issue**, because
+the docs are how the safety rules are transmitted — to a contributor, to the next agent,
+and to you. Two known instances, both of which reached a report before they were caught:
+three code comments cited a `DECISIONS §47` that never existed, and `ROADMAP.md` cited
+`DECISIONS §23` (the voice gate) for the Windows signing gate. In both cases the citation
+is what made the claim look checked.
+
+So, every run:
+
+- **Check that every `§NN` cross-reference resolves**, in the docs *and* in code comments.
+- **Check the counts** (`node scripts/qa-inventory.mjs`, `npx vitest list | wc -l`,
+  `grep -c '#\[tauri::command\]' src-tauri/src/main.rs`, `wc -l` on the god-files).
+- **Grade it by what the drift would cause**, not by how small the edit is. A wrong
+  command count is cosmetic; a decision citation pointing at the wrong decision, or a
+  guarantee documented on one surface and broken on its twin, is a P1.
+- Do **not** re-file what `docs/RELAY_GAP.md` §26 already recorded and corrected. Confirm
+  it stayed fixed, then move on.
 
 ## The report
 
