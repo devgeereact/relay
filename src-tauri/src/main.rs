@@ -148,6 +148,7 @@ fn main() {
         .manage(Detecting(AtomicBool::new(true)))
         .manage(channels::Rehearsal::default())
         .manage(channels::WallState::default())
+        .manage(channels::OutputHealth::default())
         .manage(Session::default())
         .manage(models::DownloadState::default())
         .setup(|app| {
@@ -246,6 +247,7 @@ fn main() {
                 kiosk_templates,
                 kiosk_clients,
                 kiosk_themes,
+                app.state::<channels::OutputHealth>().inner().clone(),
                 8031,
             ));
             // Serve the output/stage pages over LAN HTTP so other devices load
@@ -383,6 +385,7 @@ fn main() {
             list_output_channels,
             channel_status,
             close_channel_output,
+            output_beat,
             set_channel_template,
             list_monitors,
             open_channel_output,
@@ -3753,6 +3756,28 @@ struct ChannelLiveness {
     /// False for a target Relay cannot drive at all (NDI is parked), so the UI can
     /// say "unavailable" rather than "offline" — a different claim.
     supported: bool,
+    /// The screen answered for itself within `channels::BEAT_STALE_MS`.
+    ///
+    /// This is the only field here that can tell a working screen from a frozen
+    /// one. `online` says Relay is holding a window or serving a URL, and both stay
+    /// true of a projector showing a dead renderer. `painting` is the screen's own
+    /// claim, and it goes false by itself when the screen stops.
+    painting: bool,
+    /// Age of the last beat, in milliseconds. **`None` means the screen has never
+    /// answered — an absence, not a zero** (`latency.rs` learned this the hard
+    /// way), and the UI must say so rather than render it as a fresh beat.
+    last_beat_ms: Option<u64>,
+    /// What that beat said the screen was showing — `content` / `clear` / `black`.
+    /// Parsed against a closed enum at the door; never free text off the LAN.
+    paint_state: Option<&'static str>,
+}
+
+/// The beat for one channel, flattened for `ChannelLiveness`.
+fn beat_of(health: &channels::OutputHealth, id: i64) -> (Option<u64>, Option<&'static str>) {
+    match health.read(id) {
+        Some((age, state, _)) => (Some(age), Some(state.as_str())),
+        None => (None, None),
+    }
 }
 
 /// Live status for every channel. Polled by the Channels screen.
@@ -3761,6 +3786,7 @@ fn channel_status(
     app: tauri::AppHandle,
     db: tauri::State<'_, Db>,
     kiosk: tauri::State<'_, channels::KioskHub>,
+    health: tauri::State<'_, channels::OutputHealth>,
 ) -> error::Result<Vec<ChannelLiveness>> {
     let list = {
         let conn = db.0.lock()?;
@@ -3773,17 +3799,33 @@ fn channel_status(
         .into_iter()
         .map(|c| match c.render_target.as_str() {
             "native_window" => {
+                // "The app is holding a window object" and "the projector is
+                // showing something" are different claims, and only the first was
+                // ever checked. A window whose webview has died or hung, or that
+                // sits on a display which went to sleep, keeps `online` true
+                // forever. So the window's own report decides the wording, and
+                // where the two disagree that is stated rather than smoothed over.
                 let online = open.contains(&c.id);
+                let (age, state) = beat_of(&health, c.id);
+                let painting = online && health.painting(c.id);
                 ChannelLiveness {
                     id: c.id,
                     online,
                     clients: 0,
-                    detail: if online {
-                        "Output window open".into()
-                    } else {
-                        "No output window open".into()
+                    detail: match (online, painting, age) {
+                        (false, _, _) => "No output window open".into(),
+                        (true, true, _) => "Output window open · screen responding".into(),
+                        (true, false, None) => {
+                            "Output window open · waiting for the screen to answer".into()
+                        }
+                        (true, false, Some(a)) => {
+                            format!("Output window open · NOT responding for {}s", a / 1000)
+                        }
                     },
                     supported: true,
+                    painting,
+                    last_beat_ms: age,
+                    paint_state: state,
                 }
             }
             "network_client" => {
@@ -3799,16 +3841,36 @@ fn channel_status(
                 // all live" confusion. A viewer count of 0 means "nobody watching
                 // yet", not "the output is off".
                 let n = c.template_id.map(|t| clients.count(t)).unwrap_or(0);
+                let (age, state) = beat_of(&health, c.id);
+                let painting = health.painting(c.id);
                 ChannelLiveness {
                     id: c.id,
                     online: true,
                     clients: n,
-                    detail: match n {
-                        0 => "Serving · no viewer connected yet".into(),
-                        1 => "Serving · 1 viewer".into(),
-                        n => format!("Serving · {n} viewers"),
+                    // The viewer count answers "did a browser connect". The beat
+                    // answers "is that browser still drawing", which is the actual
+                    // question — and a connected-but-frozen source is precisely the
+                    // case a count cannot see, because the socket stays open long
+                    // after the page stops.
+                    detail: match (painting, n, age) {
+                        (true, 0, _) => "Serving · screen responding".into(),
+                        (true, 1, _) => "Serving · 1 viewer · responding".into(),
+                        (true, n, _) => format!("Serving · {n} viewers · responding"),
+                        (false, 0, None) => "Serving · no viewer connected yet".into(),
+                        (false, n, None) => {
+                            format!("Serving · {n} connected · has never reported painting")
+                        }
+                        (false, 0, Some(a)) => {
+                            format!("Serving · NOT responding for {}s", a / 1000)
+                        }
+                        (false, n, Some(a)) => {
+                            format!("Serving · {n} connected · NOT responding for {}s", a / 1000)
+                        }
                     },
                     supported: true,
+                    painting,
+                    last_beat_ms: age,
+                    paint_state: state,
                 }
             }
             // NDI is parked, not broken — `open_ndi_output` says so too.
@@ -3818,6 +3880,9 @@ fn channel_status(
                 clients: 0,
                 detail: "NDI output is not available in this build".into(),
                 supported: false,
+                painting: false,
+                last_beat_ms: None,
+                paint_state: None,
             },
             other => ChannelLiveness {
                 id: c.id,
@@ -3825,14 +3890,53 @@ fn channel_status(
                 clients: 0,
                 detail: format!("Unknown render target '{other}'"),
                 supported: false,
+                painting: false,
+                last_beat_ms: None,
+                paint_state: None,
             },
         })
         .collect())
 }
 
+/// A screen reporting that it is still painting.
+///
+/// The native output window's half of `channels::OutputHealth` — the kiosk half
+/// arrives over the WebSocket. It is the same claim over a different transport, so
+/// it deliberately carries the same closed `state` enum and nothing else: no
+/// caption, no content, no identity.
+///
+/// Silent by design. It runs several times a minute for the length of a service,
+/// and a print here would bury every other line in stdout (rule 4's lesson, one
+/// layer up). Unlike `greet`, whose entire value is that it appears exactly once,
+/// this one's value is that it never appears at all.
+#[tauri::command]
+fn output_beat(
+    health: tauri::State<'_, channels::OutputHealth>,
+    channel_id: i64,
+    state: String,
+) -> error::Result<()> {
+    // An unparseable state is dropped, not defaulted. Defaulting would let a
+    // malformed beat keep a dead screen looking alive, which is the exact failure
+    // this whole mechanism exists to end.
+    if let Some(st) = channels::PaintState::parse(&state) {
+        health.beat(channel_id, st, "window");
+    }
+    Ok(())
+}
+
 /// Close a channel's native output window, if it has one open.
 #[tauri::command]
-fn close_channel_output(app: tauri::AppHandle, channel_id: i64) -> error::Result<()> {
+fn close_channel_output(
+    app: tauri::AppHandle,
+    health: tauri::State<'_, channels::OutputHealth>,
+    channel_id: i64,
+) -> error::Result<()> {
+    // Forget the beat as well as the window. A channel reopened later must start
+    // from "waiting for the screen to answer", not inherit the last beat of the
+    // window that was deliberately closed — which would read as a screen that just
+    // went silent, i.e. as a fault, immediately after the operator did something
+    // completely normal.
+    health.forget(channel_id);
     channels::close_window(&app, &channels::channel_label(channel_id)).map_err(Into::into)
 }
 

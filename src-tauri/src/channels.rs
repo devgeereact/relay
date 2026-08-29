@@ -440,6 +440,145 @@ pub fn list_open(app: &tauri::AppHandle) -> Vec<String> {
         .collect()
 }
 
+// ===== OUTPUT HEALTH — does the screen still paint? =====
+
+/// How often an output page reports that it is alive. Every output — the native
+/// window on the projector and every kiosk/OBS browser source — ticks at this
+/// rate.
+pub const BEAT_INTERVAL_MS: u64 = 2_000;
+
+/// How long a screen may go silent before Relay stops claiming it is painting.
+///
+/// **Derived from the interval, not written next to it.** Three beats of grace plus
+/// half a beat of slack: generous enough to survive a slow frame or a garbage
+/// collection, short enough that an operator glancing up during a service finds out
+/// before the congregation does. Two independently-reasonable numbers sitting side
+/// by side is how they drift, and both directions of drift are silent — too tight
+/// and every healthy screen flickers into NOT RESPONDING, which teaches an operator
+/// to ignore the one colour that matters; too loose and a dead projector reads
+/// healthy for most of a sermon.
+pub const BEAT_STALE_MS: u64 = BEAT_INTERVAL_MS * 3 + BEAT_INTERVAL_MS / 4;
+
+/// What a screen last reported it was showing. A closed enum on purpose: this
+/// value arrives over the WebSocket from a LAN client Relay does not authenticate
+/// (DECISIONS §35), and it is rendered in the operator's console. A free-text
+/// field here would be an injection surface into the one UI that must never lie —
+/// so the wire carries a state, never a caption, and anything unrecognised is
+/// dropped rather than displayed.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PaintState {
+    /// Content is on this screen.
+    Content,
+    /// The screen is intentionally empty.
+    Clear,
+    /// The screen is blacked out.
+    Black,
+}
+
+impl PaintState {
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "content" => Some(PaintState::Content),
+            "clear" => Some(PaintState::Clear),
+            "black" => Some(PaintState::Black),
+            _ => None,
+        }
+    }
+    pub fn as_str(self) -> &'static str {
+        match self {
+            PaintState::Content => "content",
+            PaintState::Clear => "clear",
+            PaintState::Black => "black",
+        }
+    }
+}
+
+struct Beat {
+    at: std::time::Instant,
+    state: PaintState,
+    transport: &'static str,
+}
+
+/// Liveness of every output, reported BY the output.
+///
+/// ## Why this exists, and what it is not
+///
+/// A screen's status used to be inferred: a native channel was "online" if the app
+/// still held a window object, and a networked channel was "online" unconditionally
+/// because Relay was serving its URL. Both facts are true of a screen that has
+/// frozen, crashed its renderer, or been unplugged — so the Live tab could read
+/// **On Air** over a projector showing nothing, which is the one thing an operator
+/// glances at the status pane to rule out.
+///
+/// The fix is that the screen answers for itself. Every output page ticks every
+/// `BEAT_INTERVAL_MS` over whatever transport it already has: the native window
+/// through the Tauri bridge, a kiosk/OBS source over the WebSocket it is already
+/// listening on. No new port, no new connection, no new permission.
+///
+/// ## This is NOT device identity, and must not become it
+///
+/// `channels.rs` has promised that "Relay does not record who connected, from what
+/// address, or when", and that promise is load-bearing — DECISIONS §35 accepted an
+/// unauthenticated LAN control plane partly BECAUSE nothing here is tracking
+/// anybody. This narrows exactly one word of it, deliberately and no further:
+///
+/// * **who** — still nothing. No address, no user agent, no id the client chose,
+///   no cookie, no fingerprint. A beat says "the screen for channel N painted",
+///   not "device X painted".
+/// * **when** — an in-memory `Instant` per CHANNEL, overwritten by the next beat.
+///   Not a history, not a log, never written to the database, gone on quit.
+///
+/// So this is anonymous liveness, and it stays that way. If a future change wants
+/// to know *which* device, that is the pairing proposal in `docs/RELAY_GAP.md` §20,
+/// and it needs a human first.
+#[derive(Clone, Default)]
+pub struct OutputHealth(Arc<Mutex<HashMap<i64, Beat>>>);
+
+impl OutputHealth {
+    /// Record that the screen for `channel_id` is alive and painting `state`.
+    /// A lock poisoned by a panicking reader must not take the wall's status with
+    /// it: a lost beat degrades to "silent", which is the safe direction.
+    pub fn beat(&self, channel_id: i64, state: PaintState, transport: &'static str) {
+        if channel_id <= 0 {
+            return;
+        }
+        if let Ok(mut m) = self.0.lock() {
+            m.insert(
+                channel_id,
+                Beat {
+                    at: std::time::Instant::now(),
+                    state,
+                    transport,
+                },
+            );
+        }
+    }
+
+    /// Age of the last beat in milliseconds, plus what it said. `None` means this
+    /// channel has never reported — which is an ABSENCE, not a zero, and callers
+    /// must render it as "no answer yet" rather than as a fresh beat.
+    pub fn read(&self, channel_id: i64) -> Option<(u64, PaintState, &'static str)> {
+        let m = self.0.lock().ok()?;
+        let b = m.get(&channel_id)?;
+        Some((b.at.elapsed().as_millis() as u64, b.state, b.transport))
+    }
+
+    /// True only if this channel reported within `BEAT_STALE_MS`.
+    pub fn painting(&self, channel_id: i64) -> bool {
+        matches!(self.read(channel_id), Some((age, _, _)) if age <= BEAT_STALE_MS)
+    }
+
+    /// Drop a channel's beat — called when its window is deliberately closed, so a
+    /// reopened screen starts from "no answer yet" instead of inheriting a stale
+    /// one that would read as freshly silent.
+    pub fn forget(&self, channel_id: i64) {
+        if let Ok(mut m) = self.0.lock() {
+            m.remove(&channel_id);
+        }
+    }
+}
+
 /// The label of the operator console window. Tauri gives the window declared in
 /// `tauri.conf.json` the default label "main".
 const CONSOLE: &str = "main";
@@ -705,9 +844,15 @@ pub struct KioskHub {
     /// channel?" — and `output_channels.status` was a column nothing ever wrote,
     /// so every channel read `offline` forever, including one filling a projector.
     ///
-    /// A count, not a client list: Relay does not record who connected, from what
-    /// address, or when. A count is the most that can be honestly known here, and
-    /// it is enough to answer the only question the operator is asking.
+    /// A count, not a client list: Relay does not record WHO connected, or from
+    /// what address — no identity, no address, nothing the client chose, nothing
+    /// persisted. That part of the promise is unchanged and load-bearing
+    /// (DECISIONS §35).
+    ///
+    /// The "or when" half was narrowed on purpose when outputs began reporting
+    /// that they are still painting: `OutputHealth` holds one in-memory instant
+    /// per CHANNEL, overwritten by the next beat and gone on quit. It answers
+    /// "is that screen alive", never "who is watching". See `OutputHealth`.
     clients: Arc<Mutex<HashMap<i64, usize>>>,
     /// The operator's CUSTOM themes, as a JSON array string (the `themes.custom`
     /// settings blob). Sent to every kiosk client on connect so a browser source
@@ -898,12 +1043,14 @@ fn bind_failure_message(what: &str, port: u16, e: &std::io::Error) -> String {
 /// honours is `hello` — so a stranger on the network can *read* the live content
 /// feed but can never push to the screens. Accepted for a LAN appliance;
 /// revisit if Relay ever runs somewhere the network isn't trusted.
+#[allow(clippy::too_many_arguments)]
 pub async fn run_kiosk_server(
     on_error: ErrorSink,
     tx: broadcast::Sender<String>,
     templates: Arc<Mutex<HashMap<i64, String>>>,
     clients: ClientRegistry,
     themes: Arc<Mutex<String>>,
+    health: OutputHealth,
     port: u16,
 ) {
     let listener = match tokio::net::TcpListener::bind(("0.0.0.0", port)).await {
@@ -922,6 +1069,7 @@ pub async fn run_kiosk_server(
         let templates = templates.clone();
         let clients = clients.clone();
         let themes = themes.clone();
+        let health = health.clone();
         tokio::spawn(async move {
             let ws = match tokio_tungstenite::accept_async(stream).await {
                 Ok(w) => w,
@@ -987,6 +1135,28 @@ pub async fn run_kiosk_server(
                                             crate::latency::Stage::OutputRendered,
                                             at,
                                         );
+                                    }
+                                }
+                                // A screen reporting that it is still painting.
+                                //
+                                // Same shape and the same guarantee as `rendered`
+                                // above: inert, read-only, unable to push anything
+                                // to any screen. The worst a hostile client on the
+                                // LAN can do with it is claim a channel is alive —
+                                // and a screen wrongly reported as HEALTHY is a
+                                // real (if small) harm, so this deliberately
+                                // carries no free text: `state` is parsed against a
+                                // closed enum and anything else is dropped, and the
+                                // channel is an integer that must already exist for
+                                // the status view to show it at all.
+                                if v.get("kind").and_then(|k| k.as_str()) == Some("beat") {
+                                    if let (Some(ch), Some(st)) = (
+                                        v.get("channel").and_then(|c| c.as_i64()),
+                                        v.get("state")
+                                            .and_then(|s| s.as_str())
+                                            .and_then(PaintState::parse),
+                                    ) {
+                                        health.beat(ch, st, "kiosk");
                                     }
                                 }
                                 if v.get("kind").and_then(|k| k.as_str()) == Some("hello") {
@@ -1440,6 +1610,7 @@ mod tests {
             hub.templates_handle(),
             hub.clients_handle(),
             hub.themes_handle(),
+            OutputHealth::default(),
             8200,
         ));
         tokio::time::sleep(std::time::Duration::from_millis(150)).await;
@@ -1480,6 +1651,7 @@ mod tests {
             hub.templates_handle(),
             hub.clients_handle(),
             hub.themes_handle(),
+            OutputHealth::default(),
             8203,
         ));
         tokio::time::sleep(std::time::Duration::from_millis(150)).await;
@@ -1526,6 +1698,7 @@ mod tests {
             hub.templates_handle(),
             hub.clients_handle(),
             hub.themes_handle(),
+            OutputHealth::default(),
             8199,
         ));
         // Give the listener a moment to bind.
@@ -1722,6 +1895,7 @@ mod tests {
             hub.templates_handle(),
             hub.clients_handle(),
             hub.themes_handle(),
+            OutputHealth::default(),
             8202,
         ));
         tokio::time::sleep(std::time::Duration::from_millis(150)).await;
@@ -1748,6 +1922,85 @@ mod tests {
         drop(_read);
         tokio::time::sleep(std::time::Duration::from_millis(300)).await;
         assert_eq!(clients.count(4), 0, "disconnect must not leak a client");
+    }
+
+    /// A KIOSK SCREEN REPORTS OVER THE SOCKET IT ALREADY HAS — and a malformed
+    /// report is dropped, not defaulted.
+    ///
+    /// This is the OBS/browser-source half of output health. Its twin is the
+    /// native window's `output_beat` command, and the two exist together on
+    /// purpose: a guarantee kept on one door and skipped on the other is the
+    /// single most repeated bug in this repository.
+    ///
+    /// The malformed half is the part worth testing. A beat arrives from a LAN
+    /// client Relay does not authenticate, so a junk `state` that fell through to
+    /// a default would let a hostile — or merely broken — client hold a dead
+    /// screen's light green for a whole service.
+    #[tokio::test]
+    async fn a_kiosk_screen_reports_that_it_is_painting_and_junk_is_ignored() {
+        let hub = KioskHub::default();
+        let health = OutputHealth::default();
+        tokio::spawn(run_kiosk_server(
+            log_only(),
+            hub.sender(),
+            hub.templates_handle(),
+            hub.clients_handle(),
+            hub.themes_handle(),
+            health.clone(),
+            8204,
+        ));
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+
+        let (ws, _) = tokio_tungstenite::connect_async("ws://127.0.0.1:8204")
+            .await
+            .expect("connect");
+        let (mut write, _read) = ws.split();
+
+        assert!(health.read(5).is_none(), "nothing has reported yet");
+
+        macro_rules! send {
+            ($m:expr) => {
+                write
+                    .send(tokio_tungstenite::tungstenite::Message::Text(
+                        $m.to_string(),
+                    ))
+                    .await
+                    .expect("send")
+            };
+        }
+
+        // A real beat lands.
+        send!(r#"{"kind":"beat","channel":5,"state":"content"}"#);
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        assert_eq!(
+            health.read(5).map(|(_, st, tr)| (st, tr)),
+            Some((PaintState::Content, "kiosk"))
+        );
+
+        // Junk in the state, a missing state, and a missing channel are each
+        // dropped — none of them may overwrite what the screen last really said.
+        for junk in [
+            r#"{"kind":"beat","channel":5,"state":"ON AIR"}"#,
+            r#"{"kind":"beat","channel":5}"#,
+            r#"{"kind":"beat","state":"black"}"#,
+            r#"{"kind":"beat","channel":"5","state":"black"}"#,
+        ] {
+            send!(junk);
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        assert_eq!(
+            health.read(5).map(|(_, st, _)| st),
+            Some(PaintState::Content),
+            "a malformed beat must not change what a screen is reported to be showing"
+        );
+
+        // And a beat still cannot push anything to any screen: the hub's inbound
+        // surface is unchanged in kind. Nothing was published.
+        assert_eq!(
+            hub.sender().receiver_count(),
+            1,
+            "only the server's own task"
+        );
     }
 
     #[test]
@@ -1809,6 +2062,119 @@ mod rehearsal_tests {
         // And the console must never collide with an output window's label, or a
         // rehearsal would emit straight onto a projector.
         assert!(!CONSOLE.starts_with(OUTPUT_PREFIX));
+    }
+
+    // ── OUTPUT HEALTH ────────────────────────────────────────────────────
+
+    /// THE BEAT MUST BE COMFORTABLY FASTER THAN THE STALENESS WINDOW.
+    ///
+    /// These two constants are one decision in two numbers, and getting the
+    /// relationship wrong is silent in both directions: too tight and every
+    /// healthy screen flickers into NOT RESPONDING on a slow frame, which teaches
+    /// an operator to ignore the one colour that matters; too loose and a dead
+    /// projector reads healthy for most of a sermon. Three beats of grace.
+    #[test]
+    fn the_beat_has_three_beats_of_grace_before_a_screen_is_called_silent() {
+        // Read through locals so clippy sees a runtime comparison rather than a
+        // const one — the assertion is the point, and `assertions_on_constants`
+        // would have us delete it.
+        let (interval, stale) = (BEAT_INTERVAL_MS, BEAT_STALE_MS);
+        assert!(
+            stale >= interval * 3,
+            "a screen must be allowed to miss two beats: interval {interval}ms, stale {stale}ms"
+        );
+        // And not so loose that a screen can be dead for most of a reading.
+        assert!(stale <= 10_000);
+    }
+
+    /// A SCREEN THAT HAS NEVER ANSWERED IS AN ABSENCE, NOT A ZERO.
+    ///
+    /// `latency.rs` learned this and it is the same mistake here: reporting an
+    /// unknown screen as "0 ms since its last beat" would render as the freshest
+    /// possible health, which is the exact inversion of the truth.
+    #[test]
+    fn a_screen_that_never_answered_is_absent_not_fresh() {
+        let h = OutputHealth::default();
+        assert!(h.read(7).is_none());
+        assert!(!h.painting(7), "silence must never read as painting");
+    }
+
+    #[test]
+    fn a_beat_makes_a_screen_painting_and_carries_what_it_said() {
+        let h = OutputHealth::default();
+        h.beat(7, PaintState::Content, "window");
+        assert!(h.painting(7));
+        let (age, state, transport) = h.read(7).expect("just beat");
+        assert!(age < 1_000);
+        assert_eq!(state, PaintState::Content);
+        assert_eq!(transport, "window");
+    }
+
+    /// CHANNEL 0 IS A TEMPLATE PREVIEW, NOT A SCREEN.
+    ///
+    /// `output.html` defaults `?channel=` to 0 when it is opened as a raw preview.
+    /// Recording a beat for it would invent a screen nobody configured, and it
+    /// would then appear in a status view as an output going silent.
+    #[test]
+    fn a_preview_with_no_channel_reports_nothing() {
+        let h = OutputHealth::default();
+        h.beat(0, PaintState::Content, "window");
+        h.beat(-1, PaintState::Content, "window");
+        assert!(h.read(0).is_none());
+        assert!(h.read(-1).is_none());
+    }
+
+    /// CLOSING A SCREEN ON PURPOSE MUST NOT LOOK LIKE ONE FAILING.
+    ///
+    /// Without this, reopening a channel inherits the beat of the window the
+    /// operator deliberately closed, so the row reads "NOT RESPONDING for 40s"
+    /// immediately after a completely normal action — and a status light that
+    /// cries wolf is worse than none.
+    #[test]
+    fn forgetting_a_channel_resets_it_to_no_answer_yet() {
+        let h = OutputHealth::default();
+        h.beat(3, PaintState::Black, "kiosk");
+        assert!(h.painting(3));
+        h.forget(3);
+        assert!(h.read(3).is_none());
+    }
+
+    /// THE WIRE CARRIES A STATE, NEVER A CAPTION.
+    ///
+    /// A kiosk beat crosses an unauthenticated LAN (DECISIONS §35) and lands in
+    /// the operator's status pane. Anything outside the closed set is dropped at
+    /// the door rather than defaulted — a malformed beat must not be able to keep
+    /// a dead screen looking alive, and free text must never reach that pane.
+    #[test]
+    fn only_the_three_paint_states_parse() {
+        assert_eq!(PaintState::parse("content"), Some(PaintState::Content));
+        assert_eq!(PaintState::parse("clear"), Some(PaintState::Clear));
+        assert_eq!(PaintState::parse("black"), Some(PaintState::Black));
+        for junk in [
+            "",
+            "CONTENT",
+            "on air",
+            "<script>alert(1)</script>",
+            "content ",
+            "1",
+        ] {
+            assert_eq!(PaintState::parse(junk), None, "{junk:?} must not parse");
+        }
+        // Round-trips, so the console renders the same word Rust matched on.
+        for st in [PaintState::Content, PaintState::Clear, PaintState::Black] {
+            assert_eq!(PaintState::parse(st.as_str()), Some(st));
+        }
+    }
+
+    /// A LATER BEAT REPLACES AN EARLIER ONE — a screen has one current state.
+    #[test]
+    fn the_latest_beat_wins() {
+        let h = OutputHealth::default();
+        h.beat(2, PaintState::Content, "window");
+        h.beat(2, PaintState::Black, "kiosk");
+        let (_, state, transport) = h.read(2).expect("beat");
+        assert_eq!(state, PaintState::Black);
+        assert_eq!(transport, "kiosk");
     }
 
     /// EVERY EXTENSION THE LIBRARY IMPORTS MUST HAVE A REAL MIME TYPE.

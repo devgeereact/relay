@@ -25,6 +25,12 @@ const captureJs = read('src/lib/stores/capture.js');
 // `fail` with a Tauri "command not found" string, on the first screen an
 // operator ever sees, and nothing would have caught it. Now it is covered.
 const probesJs = read('src/lib/boot/probes.js');
+// The output pages report that they are still painting by calling Tauri directly
+// too, for the same reason the probes do: a health signal routed through a store
+// wrapper that swallows failures would be a health signal that cannot report its
+// own. Added to the contract the moment it existed — a command called from a third
+// file that this test did not read is precisely the door nobody checks.
+const outputHealthJs = read('src/lib/outputHealth.js');
 const mainRs = read('src-tauri/src/main.rs');
 
 /** Every `call('name', …)` in the store, and every `invoke('name', …)` in the probes. */
@@ -34,6 +40,9 @@ function commandsCalledByFrontend() {
     names.add(m[1]);
   }
   for (const m of probesJs.matchAll(/\binvoke\(\s*['"]([a-z0-9_]+)['"]/g)) {
+    names.add(m[1]);
+  }
+  for (const m of outputHealthJs.matchAll(/\binv\(\s*['"]([a-z0-9_]+)['"]/g)) {
     names.add(m[1]);
   }
   return [...names].sort();
@@ -63,6 +72,9 @@ describe('Tauri IPC contract', () => {
     // this test must fail loudly rather than start covering nothing.
     expect(commandsCalledByFrontend()).toContain('data_health');
     expect(probesJs).toMatch(/invoke\(\s*['"]stt_status['"]/);
+    // …and the output pages' beat, which is the third file that calls Tauri
+    // without going through the store.
+    expect(commandsCalledByFrontend()).toContain('output_beat');
   });
 
   it('every command the frontend calls is registered in Rust', () => {

@@ -19,11 +19,18 @@
   // `output_channels.status` exists in the schema and is a trap: both INSERTs
   // hardcode 'offline' and nothing in the codebase ever updates it, so it read
   // `offline` for every screen forever — including one filling a projector.
-  // This screen asks `channel_status` instead, which derives liveness from two
-  // facts the running app actually has: which output windows are open, and how
-  // many kiosk clients are subscribed to each template.
+  // This screen asks `channel_status` instead, which derives liveness from facts
+  // the running app actually has: which output windows are open, how many kiosk
+  // clients are subscribed to each template — and, since the screens began
+  // answering for themselves, whether each one has reported that it is still
+  // PAINTING within the last few seconds. The first two are true of a frozen
+  // projector; only the third can go false on its own.
   import { onMount, onDestroy } from 'svelte';
   import QRCode from 'qrcode';
+  // The SAME rule Live uses. Two surfaces describing one screen must not be able
+  // to reach different conclusions about it — that asymmetry is how this
+  // repository has produced four separate bugs with one root cause.
+  import { screenFault, FAULT_WORD } from '../outputHealth.js';
   // Was: `error = String(err)`, rendered in a MONOSPACE font, five times over — a raw
   // Rust Err string shown to a church volunteer who has never seen one.
   import ErrorState from '../ui/ErrorState.svelte';
@@ -391,8 +398,13 @@
                 {/if}
               </span>
 
-              <span class="ch-status r-mono" class:on={st?.online} class:un={st && !st.supported}>
-                <span class="bd"></span>{st ? (!st.supported ? 'UNAVAILABLE' : st.online ? 'LIVE' : 'IDLE') : '—'}
+              <span
+                class="ch-status r-mono"
+                class:on={screenFault(st) === 'ok'}
+                class:un={screenFault(st) === 'unsupported'}
+                class:down={screenFault(st) === 'silent' || screenFault(st) === 'never'}
+              >
+                <span class="bd"></span>{FAULT_WORD[screenFault(st)]}
               </span>
 
               <span class="ch-rowbtns" on:click|stopPropagation role="presentation">
@@ -483,6 +495,16 @@
               <dt>Clients</dt><dd>{selStatus?.clients ?? 0}</dd>
             {/if}
             <dt>State</dt><dd>{selStatus?.detail ?? 'Unknown'}</dd>
+            <!-- The screen's own last word, kept separate from Relay's. When the
+                 two disagree, that disagreement is the finding. -->
+            <dt>Screen says</dt>
+            <dd>
+              {#if !selStatus}Unknown
+              {:else if !selStatus.supported}—
+              {:else if selStatus.last_beat_ms === null}has never reported painting
+              {:else}{selStatus.paint_state ?? 'unknown'} · {Math.round(selStatus.last_beat_ms / 1000)}s ago
+              {/if}
+            </dd>
           </dl>
 
           <div class="r-lbl ch-flbl">Template</div>
@@ -725,6 +747,9 @@
   /* Green = connected (the design sheet's own usage guide), not amber. */
   .ch-status.on{ color:var(--v-emerald); }
   .ch-status.un{ color:var(--v-500); }
+  /* A screen that stopped answering. Rose is the failure colour (DESIGN_SYSTEM);
+     amber is never spent here because amber means on air. */
+  .ch-status.down{ color:var(--v-rose); }
 
   .ch-rowbtns{ display:flex; gap:5px; justify-content:flex-end; align-items:center; }
 

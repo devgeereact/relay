@@ -27,6 +27,7 @@
   // BUILDING a plan is not this screen's job. That is the Planner: a different
   // task, done on a Tuesday, not with a congregation waiting.
   import { onMount, onDestroy, afterUpdate } from 'svelte';
+  import { describeScreen, SCREEN_BADGE } from '../outputHealth.js';
   import TemplateRender from '../TemplateRender.svelte';
   import { resolveOutputTemplate } from '../layers.js';
   import ModelSetup from '../ModelSetup.svelte';
@@ -61,6 +62,7 @@
     fireContent,
     fireMedia,
     listOutputChannels,
+    channelStatus,
     openChannelOutput,
     listMonitors,
     setChannelDisplay,
@@ -171,6 +173,74 @@
     rehBusy = false;
   }
 
+  // ── OUTPUT HEALTH — the screens answer for themselves ────────────────────
+  //
+  // This pane used to derive every badge from GLOBAL state: if content was live
+  // and we were not rehearsing or blacked out, every screen read **On Air**. That
+  // is not a status; it is a restatement of what Relay believes it sent, wearing
+  // the costume of a report about what happened. A projector whose window had
+  // frozen, an OBS source whose tab had been killed, a display that had gone to
+  // sleep — all three read On Air, in amber, forever, on the one surface an
+  // operator glances at during a service to rule exactly that out.
+  //
+  // Now each screen reports that it is painting (`outputBeat.js` → Rust
+  // `OutputHealth`), and this pane shows what the screen said. A badge that cannot
+  // detect its own failure is not a badge.
+  let chStatus = {}; // channel id → ChannelLiveness from the backend
+  let chPoll = null;
+  // When we first saw a channel as attached-but-not-yet-answering. A window that
+  // has just opened has not had time to report, and calling that a fault would
+  // teach an operator to ignore the one colour that matters. After a grace period
+  // silence stops being "not yet" and becomes the finding.
+  let awaitingSince = {};
+  const BEAT_GRACE_MS = 8000;
+
+  async function pollChannelHealth() {
+    const rows = await channelStatus();
+    const next = {};
+    for (const r of rows) next[r.id] = r;
+    const now = Date.now();
+    for (const r of rows) {
+      const attached = r.supported && r.online;
+      if (attached && !r.painting) {
+        if (!awaitingSince[r.id]) awaitingSince[r.id] = now;
+      } else {
+        delete awaitingSince[r.id];
+      }
+    }
+    chStatus = next;
+  }
+
+  // The badge rule itself lives in `lib/outputHealth.js` and is PURE, so it can be
+  // tested without mounting this view and so the Outputs inspector cannot end up
+  // saying something different about the same screen. All four inputs are named in
+  // this expression on purpose — a helper that closes over `chStatus` would not be
+  // tracked by Svelte's reactivity and the pane would freeze on its first reading,
+  // which is the same class of bug as the badge it replaces.
+  $: outs = channels.map((c) => ({
+    c,
+    s: describeScreen(
+      chStatus[c.id] ?? null,
+      { rehearsing: $rehearsing, live: !!$live, black: $screenBlack },
+      awaitingSince[c.id] ? Date.now() - awaitingSince[c.id] : 0,
+    ),
+  }));
+
+  // A screen falling over mid-service is exactly the thing an operator finds out
+  // about too late by looking. Announce it once, on the transition, through the
+  // same polite region the AI's suggestions use — never repeatedly, which is how a
+  // live region becomes noise an operator learns to tune out.
+  let downAnnounce = '';
+  let wasDown = {};
+  $: {
+    const nowDown = {};
+    for (const o of outs) if (o.s.kind === 'down') nowDown[o.c.id] = o.c.name;
+    const fresh = Object.keys(nowDown).filter((id) => !wasDown[id]);
+    if (fresh.length)
+      downAnnounce = `${fresh.map((id) => nowDown[id]).join(', ')} is not responding.`;
+    wasDown = nowDown;
+  }
+
   onMount(async () => {
     await loadRehearsal();
     getSensitivity().then((v) => (sensitivity = v));
@@ -179,6 +249,11 @@
     await loadTemplates().catch(() => {});
     await loadDefaultTemplate().catch(() => {});
     channels = await listOutputChannels().catch(() => []);
+    // Poll at the beat interval, so a screen that stops answering shows up within
+    // about three beats. One command, no payload — cheap enough to run for the
+    // length of a service on the surface that needs it most.
+    await pollChannelHealth();
+    chPoll = setInterval(pollChannelHealth, 2000);
     plans = await listPlans().catch(() => []);
     plansLoaded = true;
 
@@ -239,6 +314,7 @@
     clearTimeout(annArmT);
     clearTimeout(liveMsgT);
     clearTimeout(relatedT); // a pending poll must not fire into a destroyed view
+    clearInterval(chPoll);
   });
 
   // ── the transport ────────────────────────────────────────────────────────
@@ -961,27 +1037,24 @@
         <span class="r-mono cnt">{channels.length}</span>
       </header>
       <div class="pane-body outs">
-        {#each channels as c (c.id)}
-          <div class="out">
+        {#each outs as o (o.c.id)}
+          <div class="out" class:down={o.s.kind === 'down'}>
             <span class="out-ic" aria-hidden="true">
               <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
             </span>
             <span class="out-t">
-              <b>{c.name}</b>
-              <span class="r-mono">{c.render_target}</span>
+              <b>{o.c.name}</b>
+              <!-- The screen's OWN last word, not ours. When it disagrees with the
+                   badge, that disagreement is the finding. -->
+              <span class="r-mono">{o.s.note || o.c.render_target}</span>
             </span>
-            {#if $live && !$rehearsing && !$screenBlack}
-              <span class="r-badge amber sm-badge"><span class="bd"></span>On Air</span>
-            {:else if $rehearsing}
-              <span class="r-badge amethyst sm-badge"><span class="bd"></span>Rehearsal</span>
-            {:else}
-              <span class="r-badge grey sm-badge"><span class="bd"></span>Ready</span>
-            {/if}
+            <span class="r-badge {SCREEN_BADGE[o.s.kind]} sm-badge"><span class="bd"></span>{o.s.label}</span>
           </div>
         {:else}
           <EmptyState message="No screens yet — add one in the Outputs tab." />
         {/each}
       </div>
+      <p class="sr-only" aria-live="polite">{downAnnounce}</p>
       <footer class="pane-foot">
         <button class="wide" on:click={openMainOutput} disabled={!$capture.available}>Open main output</button>
       </footer>
@@ -1588,6 +1661,13 @@
   .out-t b{font-size:var(--v-fs-b2); font-weight:600; color:var(--v-txt);
     overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
   .out-t span{font-size:9px; letter-spacing:.05em; color:var(--v-faint)}
+  /* A screen that is not answering is a FAILURE, and the row says so without
+     spending amber (which means on air, DECISIONS §22) or reading as decoration.
+     The border is the signal; the badge carries the word. */
+  .out.down{border-color:color-mix(in srgb, var(--v-rose) 45%, transparent);
+    background:color-mix(in srgb, var(--v-rose) 7%, var(--v-surf2))}
+  .out.down .out-ic{color:var(--v-rose)}
+  .out.down .out-t span{color:var(--v-rose)}
   .sm-badge{padding:3px 8px; font-size:9px; letter-spacing:.07em; flex:0 0 auto}
   .sm-badge .bd{width:5px; height:5px}
 
