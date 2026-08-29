@@ -15,6 +15,27 @@ asked, this file is what the repository answered.
 > human, not work in progress. That is the brief's own §79 rule — *establish what exists, then
 > what is wrong, then what is missing, then implement* — and Relay's own scoping rule.
 
+> ## Fix log — 2026-08-29
+>
+> **RG-01 … RG-05 are closed**, in the order the register ranked them, with the
+> reasoning recorded as [DECISIONS](DECISIONS.md) §39–§42 and the tests named below.
+> Everything else in §23 stands. **The release decision is unchanged and is still
+> NO-GO**, for the reason §24 gives: none of this was a defect count, and none of it
+> is a Sunday.
+>
+> | ID | What changed | Pinned by |
+> |---|---|---|
+> | **RG-01** | Live shows real per-channel health; a screen that is not answering can never read amber. Live and the Outputs tab now decide from one backend fact through one shared helper | `outputhealth.test.js` (26), `describeScreen` |
+> | **RG-02** | Every output page reports that it is still painting — the native window over the bridge, kiosk/OBS over the socket it already has. Anonymous; §35's *who* and *where* untouched | `channels::tests` (6 new, incl. the WS round trip and the malformed-beat case) |
+> | **RG-03** | Service Lock: 17 irreversible or engine-stopping actions held back while a service records. Nothing on the fire path. The operator lifts it in one action | `servicelock.rs` (9), `e2e::a_recorded_service_holds_back_a_deletion_but_never_the_wall`, `servicelock.test.js` (12) |
+> | **RG-04** | `service_events` + `perf_samples`: an ordered record that survives the app, merged with detections and cues on the way out, carrying nothing a preacher said | `timeline_tests` (6), `e2e::a_service_records_what_happened_and_it_survives_the_service`, `timeline.test.js` (7) |
+> | **RG-05** | Safe Screen: the one door content leaves by now refuses a payload that would paint an empty screen or carry an unreadable template; the fit loop reports when it has shrunk below legibility | `pipeline::tests` (6 new), two `e2e` tests, `safescreen.test.js` (11) |
+>
+> Three of them changed what an existing decision had drawn, so each is written up
+> rather than absorbed: §39 narrows one word of §35 (**when**, anonymously — never
+> *who*), §40 introduces a lock and then subordinates it to the operator, and §42 adds
+> a gate in front of the wall that deliberately cannot touch a panic control.
+
 ---
 
 ## 0. Method, and what this report cannot see
@@ -590,11 +611,11 @@ matter right now.
 
 | ID | Gap | Impact | Evidence | Solution | Depends on | P | Complexity | Validation |
 |---|---|---|---|---|---|---|---|---|
-| RG-01 | Live's per-channel badge derives from global state | Operator believes a dead screen is On Air | `Live.svelte:973-979` vs `Channels.svelte:88-108` | Call `channelStatus()` on Live; badge per channel | RG-02 for truth | P0 | S | A component test that mounts Live and asserts a stale channel does not read On Air |
-| RG-02 | No output heartbeat; liveness is a client count | "LIVE" cannot detect a frozen browser source | `channels.rs:963-991`, `:741-763` | Periodic anonymous ping/pong; last-seen per connection | — | P0 | M | Kill a kiosk client; assert the status flips within one interval |
-| RG-03 | No Service Lock | A template edit or model change mid-service | grep: zero hits | Lock keyed on `Session`, not on the mic; every blocked action explains itself | — | P0 | M | e2e: start a service, assert the blocked commands refuse with a typed error |
-| RG-04 | No event timeline; latency dies on quit | No replay, no report, no human metric, no evidence from a church | `docs/data/schema.sql`, `latency.rs` | Append-only `service_events` + `perf_samples`; retryable migration | — | P0 | M | Migration retryability test (CLAUDE.md rule 25); a service produces an ordered event list |
-| RG-05 | No pre-air validation | Unfittable or unreachable content goes to air silently | `TemplateRender.svelte:131-160` | One validator in front of `Fire::output`; refuse and report | — | P0 | M | e2e: an over-long verse on a tiny template refuses rather than shrinking to unreadable |
+| ✅ RG-01 | Live's per-channel badge derives from global state | Operator believes a dead screen is On Air | `Live.svelte:973-979` vs `Channels.svelte:88-108` | Call `channelStatus()` on Live; badge per channel | RG-02 for truth | P0 | S | A component test that mounts Live and asserts a stale channel does not read On Air |
+| ✅ RG-02 | No output heartbeat; liveness is a client count | "LIVE" cannot detect a frozen browser source | `channels.rs:963-991`, `:741-763` | Periodic anonymous ping/pong; last-seen per connection | — | P0 | M | Kill a kiosk client; assert the status flips within one interval |
+| ✅ RG-03 | No Service Lock | A template edit or model change mid-service | grep: zero hits | Lock keyed on `Session`, not on the mic; every blocked action explains itself | — | P0 | M | e2e: start a service, assert the blocked commands refuse with a typed error |
+| ✅ RG-04 | No event timeline; latency dies on quit | No replay, no report, no human metric, no evidence from a church | `docs/data/schema.sql`, `latency.rs` | Append-only `service_events` + `perf_samples`; retryable migration | — | P0 | M | Migration retryability test (CLAUDE.md rule 25); a service produces an ordered event list |
+| ✅ RG-05 | No pre-air validation | Unfittable or unreachable content goes to air silently | `TemplateRender.svelte:131-160` | One validator in front of `Fire::output`; refuse and report | — | P0 | M | e2e: an over-long verse on a tiny template refuses rather than shrinking to unreadable |
 | RG-06 | No update rollback, no DB-compat preflight | A bad update bricks a church until someone drives there | grep: zero hits; `db/mod.rs:51` | Keep the previous bundle; health-check after relaunch; compare `SCHEMA_VERSION` before install | — | P1 | L | Install a deliberately broken build; assert recovery |
 | RG-07 | No service replay | Nothing can be reconstructed after Sunday | — | Timeline viewer over RG-04 | RG-04 | P1 | M | Replay a recorded service; every fire has a trace |
 | RG-08 | No Sunday report | Churches cannot report, and you cannot learn | — | Derived view over RG-04 | RG-04 | P1 | S | Only metrics actually measured appear |
@@ -649,9 +670,11 @@ service), and one church.
 - [x] `CHANGELOG.md` — add the missing `[0.1.0-4]` entry
 - [x] `docs/GPT.md` — track it, and fix the one stale number (`main.rs` ~4,000 → 4,369)
 
-### Then — P0 engineering (needs a human's go-ahead; not in this branch)
+### Then — P0 engineering
 
-- [ ] RG-01 · RG-02 · RG-03 · RG-04 · RG-05
+- [x] RG-01 · RG-02 · RG-03 · RG-04 · RG-05 — done 2026-08-29, see the fix log above
+- [ ] RG-06 … RG-12 (P1). RG-07 and RG-08 are now unblocked: they were waiting on
+      RG-04's record, and it exists.
 
 ### Always — before any of the above ships
 

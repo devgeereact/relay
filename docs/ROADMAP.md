@@ -104,8 +104,8 @@ were looked at and left for a stated reason.
 
 | Debt | State & reasoning | Effort if actioned |
 |---|---|---|
-| **`main.rs` — 4,369 lines / 118 commands** | A god-file holding the whole IPC surface + app state + some orchestration. **No longer a correctness issue** — the fire engine is generic over `tauri::Runtime` and covered by `e2e.rs`, which was the actual point of "split main.rs" (PRODUCT_AUDIT §10.2). A readability complaint now, and it has grown ~1,450 lines since that was written. | Medium; split commands into per-domain modules. Regression risk on live-critical code — do it with tests, not in a rush. |
-| **`Live.svelte` (1,877) & `stores/capture.js` (1,941)** | The frontend mirror of the same concentration. Works; large, and both have grown by ~700 lines. | Medium |
+| **`main.rs` — 4,799 lines / 123 commands** | A god-file holding the whole IPC surface + app state + some orchestration. **No longer a correctness issue** — the fire engine is generic over `tauri::Runtime` and covered by `e2e.rs`, which was the actual point of "split main.rs" (PRODUCT_AUDIT §10.2). A readability complaint now, and it has grown ~1,880 lines since that was written — `servicelock.rs` was split out rather than added to it, which is the shape future growth should take. | Medium; split commands into per-domain modules. Regression risk on live-critical code — do it with tests, not in a rush. |
+| **`Live.svelte` (2,008) & `stores/capture.js` (2,000)** | The frontend mirror of the same concentration. Works; large, and both have grown by ~700 lines. | Medium |
 | **`models.rs` name collision** | It is STT-model *download*, not domain *models*. A reader expects the wrong thing. | Small (rename) |
 | **`db/mod.rs` (2,230)** mixes migrations + platform paths + inline tests | Cohesive but large. | Small–medium |
 | **~150 lines of dead legacy CSS** (`--text-faint` et al.) | Can't be deleted without eyes on a running app — global (unscoped) rules with generic class names live components still carry ([DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) §6). The contrast failure is fixed; the rules stay. | Small, but needs a running app |

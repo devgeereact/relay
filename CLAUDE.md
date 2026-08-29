@@ -43,7 +43,7 @@ Tier 1: **Yoruba, Swahili, Hausa**, plus English. Code-switching (English mixed 
 npm install
 npm run tauri dev        # desktop app + Vite on :5032, kiosk WS on :8031
 
-npm test                 # vitest (594 tests)
+npm test                 # vitest (650 tests)
 npx vitest run src/lib/nav.test.js          # one file
 npx vitest run -t "Escape closes the cheat" # one test by name
 npm run build            # vite build — catches Svelte compile errors fast
@@ -58,7 +58,7 @@ Rust (**`whisper-rs` compiles whisper.cpp from source, so `cmake` must be on PAT
 cmake --version          # any 3.x. `brew install cmake` if it is missing;
                          # a machine without Homebrew needs its own prefix on PATH
 cd src-tauri
-cargo test                                   # 547 tests (519 run, 28 ignored)
+cargo test                                   # 580 tests (552 run, 28 ignored)
 cargo test e2e                               # the fire → nav → clear path (23 tests)
 cargo test detection::                       # one module
 cargo test the_macos_build -- --nocapture    # one test
@@ -98,7 +98,7 @@ Every audio bug so far was invisible in the code and reproducible only with a sp
 │   ├── relay.entitlements   — com.apple.security.device.audio-input. See §17.
 │   ├── tauri.conf.json      — base; tauri.updater.conf.json overlays it at release
 │   └── src/
-│       ├── main.rs          — Tauri commands + the live-fire engine (4.4k lines, 118 cmds)
+│       ├── main.rs          — Tauri commands + the live-fire engine (4.8k lines, 123 cmds)
 │       ├── qa.rs · qa_r5.rs · r6.rs — TEST-ONLY. qa.rs owns THE fixture: bare_app() =
 │       │                      a fresh install and nothing else, + Wall (Tauri events)
 │       │                      and Kiosk (the WS door). The other two are audit suites.
@@ -107,8 +107,10 @@ Every audio bug so far was invisible in the code and reproducible only with a sp
 │       ├── audio.rs · dsp.rs · stt.rs      — capture · denoise/gain · whisper worker
 │       ├── detection.rs     — direct + semantic (TF-IDF) + context memory. DB/IO-free, heavily tested
 │       ├── router.rs        — THE GATE: per-method routing, debounce, self-calibrating thresholds
+│       ├── servicelock.rs   — what may NOT happen while a service is recording (§40)
 │       ├── pipeline.rs      — the ONE place a verse becomes screen content (Fire → output + event)
-│       ├── channels.rs      — output render targets: native window + kiosk WS + LAN HTTP
+│       ├── channels.rs      — output render targets: native window + kiosk WS + LAN HTTP,
+│       │                      and OutputHealth: does the screen still say it is painting?
 │       ├── models.rs        — in-app STT model download (resumable, checksummed, cancellable)
 │       ├── error.rs          — the ONE typed error across the bridge { kind, message }
 │       ├── latency.rs        — nine named stamps per decode pass, mic → projector
@@ -126,6 +128,8 @@ Every audio bug so far was invisible in the code and reproducible only with a sp
         ├── stores/capture.js          — all Tauri commands + event listeners + stores
         ├── shortcuts.js               — the ONE global keydown listener (panic keys)
         ├── detect.js                  — heard vs guessed (the frontend half of the gate)
+        ├── outputHealth.js            — the beat a screen sends, and the ONE rule for
+        │                                what Live and Outputs may say about the answer
         ├── errors.js                  — the ONE backend-error humaniser
         ├── themes.js · layers.js       — the style layer beneath templates; layer starters
         ├── plan.js · cues.js · session.js · crash.js · updater.js
@@ -150,7 +154,7 @@ Shipping: in-app model download, first-run wizard, auto-updater, rehearsal mode,
 
 Parked, honestly (not faked): **NDI** (needs proprietary SDK — `open_ndi_output` returns a clear error), **neural paraphrase embedder** (TF-IDF is the seam behind `SemanticIndex::top_k`; the `verses.embedding` column exists and has never been written to), **African-language STT fine-tunes**.
 
-**No dead-but-built commands — with ONE known exception, recorded rather than hidden.** Every one of the 118 registered `#[tauri::command]`s has a frontend caller **in `capture.js`**; that is the level `ipc.test.js` checks, and it is not the level that matters. `save_arrangement` is the exception: the wrapper `saveArrangement` exists and **no component imports it**, so a user cannot save a song arrangement at all. Found by `scripts/qa-inventory.mjs`, which traces the chain one hop further — to a control something actually renders. Building the arrangement editor is a feature, not a fix; until it exists, this sentence is the honest version of the claim. The last thirteen were closed together: five superseded ones were deleted (`lookup_verse`, `close_output_window`, `current_service`, and the `*_template_active` pair — the console Output grid became per-channel templates), and eight were given the UI they had always lacked — voice profiles (SPEC §4.6), the emergency announcement, and the "shown earlier" badge. `related_scripture` was wired by the new-design merge.
+**No dead-but-built commands — with ONE known exception, recorded rather than hidden.** Every one of the 123 registered `#[tauri::command]`s has a frontend caller **in `capture.js`**; that is the level `ipc.test.js` checks, and it is not the level that matters. `save_arrangement` is the exception: the wrapper `saveArrangement` exists and **no component imports it**, so a user cannot save a song arrangement at all. Found by `scripts/qa-inventory.mjs`, which traces the chain one hop further — to a control something actually renders. Building the arrangement editor is a feature, not a fix; until it exists, this sentence is the honest version of the claim. The last thirteen were closed together: five superseded ones were deleted (`lookup_verse`, `close_output_window`, `current_service`, and the `*_template_active` pair — the console Output grid became per-channel templates), and eight were given the UI they had always lacked — voice profiles (SPEC §4.6), the emergency announcement, and the "shown earlier" badge. `related_scripture` was wired by the new-design merge.
 
 ## Architecture rules learned the HARD WAY — do not regress these
 
@@ -199,6 +203,9 @@ These caused real crashes, freezes, or silent failures in front of people. Keep 
 
 35. **A status badge that cannot detect its own failure is not a status badge.** `channel_status` is derived live from open windows and subscribed kiosk clients — but the **Live** tab's Output Status pane never calls it. It derives every per-channel badge from GLOBAL state (`$live && !$rehearsing && !$screenBlack`), so a kiosk browser source that went away still reads **On Air** on the one surface an operator watches during a service. The Outputs tab polls the real thing every 2 s and is honest about its limit ("LIVE means something is attached, not that the picture is good"); Live is not. Underneath, liveness is a *count* per template id — the hub records nothing about who connected, deliberately — and the one inbound frame a client sends (`rendered`) is a latency mark, documented as inert. **Anonymous heartbeats would make this real without touching DECISIONS §35.** Recorded as RG-01/RG-02 in `docs/RELAY_GAP.md`.
 
+36. **The choke point is where the check goes, not the call sites.** `broadcast_with_clock` is the ONE caller of `channels::broadcast_content`, which is why the pre-air validator (`pipeline::preflight`, DECISIONS §42) lives there and covers the AI path, the manual box, spoken nav, plan cues, media, the emergency announcement and the countdown at once. A validator added at five call sites is a validator that will be missing from the sixth — four separate bugs in this repository have that exact shape. Same reasoning as rehearsal gating at the publishers (§18) and `pipeline::Fire` being the only way to build output. **It refuses only what is unambiguously broken and silently so** (a payload that would paint an empty screen; a template the output page cannot parse). It never checks that a screen is attached — a service runs on the console preview alone all the time — and the panic controls do not pass through it at all, because a validator that could refuse a blackout is a blackout that can fail.
+37. **A fit loop with no notion of failure always succeeds, and that is the bug.** Forty rounds of ×0.95 will squeeze any verse into any box, so a template that had stopped working looked exactly like one that was working, at 2cqw. `TemplateRender` still shrinks and still shows the verse — blanking a screen is strictly worse for a congregation — but below **45% of the size the template's designer asked for** it reports, and Live says how small it went. The floor is a RATIO, not a point size: cqw is a share of the output's width, so a template designed at 6cqw makes a different claim from one at 3cqw. The console's program pane renders through the same component as the wall, which is what makes the measurement the wall's rather than a guess about it.
+
 ## Frontend shape
 
 - **Tabs: Live · Outputs · Templates · Themes · Library · Planner · Settings · Help.** (The Outputs tab's internal key is still `channels`, and its view file is `Channels.svelte` — the label is what an operator reads.) There is no Console tab — `Live` IS the console. **Themes** is the style layer beneath templates (DECISIONS §27): a theme sets default `style` keys, a template overrides them per key, and `TemplateRender` resolves a template's `style.themeRef` against builtins itself, so every surface is themed with no per-surface wiring. Layer colours may bind to theme tokens (`theme:accent`). Stage/confidence monitors are render-profiles of the one engine (starters in `layers.js`), not a parallel system — they show monitor-only fields (`next`, `note`, `elapsed`) that ride to output but no congregation template renders. **Build** a plan in Planner (a Tuesday job; nothing there can reach an output). **Run** it in Live (a Sunday job). The merge exists because an operator running a plan on a separate tab could not see the AI's suggestions — and the preacher going off-script is the entire product.
@@ -227,7 +234,7 @@ These caused real crashes, freezes, or silent failures in front of people. Keep 
 
 ## Testing
 
-**519 Rust** (28 ignored) + **594 frontend** (0 skipped), re-measured 2026-08-29. CI runs both on **macOS and Windows**, plus `fmt`, `clippy -D warnings`, the detection scorecard, and a release build.
+**552 Rust** (28 ignored) + **650 frontend** (0 skipped), re-measured 2026-08-29. CI runs both on **macOS and Windows**, plus `fmt`, `clippy -D warnings`, the detection scorecard, and a release build.
 
 - **`qa.rs` owns the fixture. Do not write another one.** `qa::bare_app()` is a fresh install and nothing else — real schema, real seed, no operator has touched it — and `qa::{Wall, Kiosk, settle}` are the two doors out of the machine plus the drain. `e2e::app()` is now `bare_app()` **plus one documented difference** (a content-look override, without which its template assertion is vacuous), which is exactly the shape a deviation should have: three visible lines, not a fifty-line copy that drifts. A second fixture is how two suites start disagreeing about what a fresh install contains. `the_bare_fixture_is_a_first_launch_and_nothing_more` is the tripwire; it is what caught that `tpl_song` **is** seeded on purpose (every other built-in is scripture-shaped, so a lyric rendered through one showed the song title instead of the words).
 - **The QA apparatus is documented, not folklore.** `docs/QA_HARNESS.md` — Part 0 the current counts (each with the command that reproduces it), Part 1 the design and the five evidence layers, Part 2 the shared preamble every `relay-qa-*` agent inherits verbatim, Part 3 the roster, **Part 4 what is already pinned — read it before filing anything, so you don't "find" a fixed bug**. Run `/qa-audit`; `node scripts/qa-inventory.mjs` prints the control/orphan/create-path report on its own.
@@ -236,6 +243,8 @@ These caused real crashes, freezes, or silent failures in front of people. Keep 
 - **`vitest.config.js` MUST set `resolve: { conditions: ['browser'] }`. Do not "tidy" it away.** Svelte 4 maps its `.` export to `src/runtime/ssr.js` under every condition except `browser`, and that file defines `onMount`, `beforeUpdate` and `afterUpdate` as literal empty functions. `environment: 'jsdom'` does not imply the condition. Without the line, a component is compiled for the DOM and handed the SSR stubs: it mounts, it renders, and it silently skips every load-on-mount path — no list fetches, no subscription runs, and the test passes by doing nothing. It hid for the entire life of the project because the asymmetry is invisible: `svelte/internal` has only a `default` condition, so rendering, `onDestroy` and `tick` were always real, and only the mount half was dead. Guarded from three directions now — `r6-lifecycle-probe.test.js` asserts the runtime, `r2livepath.test.js` asserts that mounting the run column actually reaches `list_output_channels`, and `surface.test.js`'s `LIFECYCLE_LIVE` gate reads the runtime so its tests skip loudly rather than pass vacuously.
 - **The frontend suite must pass on a CURRENT Node, not only on CI's Node 20.** Node ≥ 22 defines `localStorage`/`sessionStorage` on the global as own accessors that return `undefined` without `--localstorage-file`; vitest's jsdom environment leaves keys the global already owns, so Node's dead stub won and 60 tests — every one covering what an operator sees on relaunch — failed on a clean checkout with `Cannot read properties of undefined`. `src/test-setup.js` hands the global a real jsdom Storage when the ambient one is missing. Don't delete it because "jsdom provides that".
 
+- **`qa::bare_app()` manages `OutputHealth` and `ServiceLock` too.** A fixture without them is not a fresh install — it is an app in a state no church could be in, and a command reading either would panic rather than fail with a readable message.
+- **The service record may never carry what a preacher said.** `service_events.detail` is a phrase Relay composes ("Main screen", the service title) and `perf_samples` stores percentiles, not traces — this is the part of the history most likely to be emailed to somebody. Pinned from both sides (`timeline_tests::nothing_a_preacher_said_reaches_the_timeline`, `timeline.test.js`) so a future column cannot quietly widen it.
 - **`e2e.rs` is the one test that exercises what a congregation actually sees.** It drives the real commands (`manual_fire`, `nav`, `clear_screens`, `blackout`, `set_rehearsal`) against a real in-memory DB, through the real router and pipeline, and asserts on the events that leave the machine. Nothing is mocked but the window (`tauri::test::mock_builder`, dev-dependency `tauri/test`). **Add a test here whenever you touch the fire path.**
   - Use `mock_context(noop_assets())`, **not** `generate_context!()` — the real macro embeds `Info.plist` as a link symbol and expanding it twice fails with `_EMBED_INFO_PLIST is already defined`.
   - Template resolution reversed in **DECISIONS §29**: a SCREEN'S OWN template now WINS; a content-type default (a "content look") DEFERS to it, and a cue's deliberate choice is `template_pinned` and overrides. `resolveOutputTemplate(channelTpl, override, pinned)` is the one resolver; the console program pane and the Outputs inspector preview both call it so they cannot disagree with the wall.

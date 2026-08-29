@@ -10,6 +10,35 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 
 ## [Unreleased]
 
+### Relay now tells you when a screen has stopped listening to it
+
+- **Your screens report back.** Every output — the projector on HDMI and every browser
+  source in OBS — now tells Relay twice a second that it is still showing something.
+  If one stops, the Live tab says so, in red, within a few seconds. Before this,
+  a screen that had frozen, crashed or gone to sleep still read **On Air** in amber,
+  because Relay was only ever reporting what it had *sent*.
+- **During a service, Relay holds a few things back.** Deleting anything, changing or
+  downloading a speech model, and bulk imports are unavailable while you are recording
+  — an accident at 10:31 has no undo. **Nothing you use to run the service is affected:**
+  firing, next/back, clear, blackout and rehearsal all work exactly as before. You can
+  lift it in one click (Settings → Backup & Recovery) and it comes back for the next
+  service.
+- **Relay will not restart to update during a service.** It already refused while the
+  microphone was on; it now also refuses while a service is recording, which covers the
+  gaps between readings.
+- **Every service keeps a record of what happened.** Service History now shows an
+  ordered list: when it started, what fired and whether it was Relay or you, when the
+  screens were cleared, when a screen stopped responding and when it came back — and,
+  the one nobody had before, *a panic control that did not reach the screens*. Speed is
+  kept too, so you can see whether it slowed down over the service. **Nothing anyone
+  said is in it** — no transcript, no verse text, no lyrics.
+- **A cue that would show an empty screen no longer goes out.** It leaves what is on the
+  screens where it is and tells you why, instead of quietly blanking the projector.
+- **Relay warns when a verse is being squeezed to fit.** Long passages used to shrink
+  until they fitted, however small that got. The verse still goes up, but you are told
+  when it has gone below a readable size, so you can pick a shorter passage or a
+  roomier template.
+
 ### 🚧 Nothing has been released to anyone yet.
 
 Relay has never shipped. Every tag so far (`v0.1.0-rc1` … `v0.1.0-4`) is a **draft pre-release** used to exercise the pipeline — they are unsigned, and an unsigned build is stopped dead by macOS Gatekeeper and warned about by Windows SmartScreen. A volunteer does not push past those screens, and should not be asked to.

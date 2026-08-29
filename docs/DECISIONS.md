@@ -1593,3 +1593,220 @@ language. Nobody has run a service. The `end_to_end_speech_to_scripture` and
 real app, and no number for them appears here. See `docs/audits/PERF-2026-08-24.md`
 for exactly what was and was not measured, and Stage F of the human test script for
 what has to happen in a room.
+
+## 39. A status light that cannot detect its own failure is not a status light (2026-08-29)
+
+**The Live tab's Output Status pane derived every badge from global state:**
+
+```svelte
+{#if $live && !$rehearsing && !$screenBlack}   →   amber "On Air"
+```
+
+That is not a status. It is a restatement of what Relay believes it *sent*, wearing the
+costume of a report about what *happened* — and it is equally true of a projector whose
+window has frozen, an OBS source whose tab has been killed, and a display that has gone
+to sleep. All three read **On Air**, in amber, forever, on the one surface an operator
+glances at during a service to rule exactly that out.
+
+The rest of the app was no better placed to notice. A native channel was "online" if
+the app still held a window object; a networked channel was "online" unconditionally,
+because Relay was serving its URL. `output_channels.status` is a column nothing has
+ever written. The strongest thing the WebSocket hub knew was a *count* of connected
+clients, and a socket stays open long after the page behind it stops painting.
+
+### The decision: the screen answers for itself
+
+Every output page now reports, every two seconds, that it is still painting — over
+whatever transport it already has. The native window uses the Tauri bridge
+(`output_beat`), a kiosk or OBS source uses the WebSocket it is already listening on.
+No new port, no new connection, no new permission. When a screen stops, it stops
+answering, and after three missed beats the console says so — in **rose**, never in
+amber, because amber is spent only on air (§22).
+
+`BEAT_STALE_MS` is **derived** from `BEAT_INTERVAL_MS` rather than written beside it.
+Two independently-reasonable constants side by side is how they drift, and both
+directions of drift are silent: too tight and every healthy screen flickers into NOT
+RESPONDING, which teaches an operator to ignore the one colour that matters; too loose
+and a dead projector reads healthy for most of a sermon.
+
+**Both transports, deliberately.** A kiosk-only beat would have left the projector —
+the screen that matters most — with the status light that could not fail. That is the
+guarantee-kept-on-one-door mistake this repository has now made four times, and the
+Live/Outputs pair is the same shape: both surfaces now decide from the one backend
+fact (`painting`), through one shared helper, so they cannot reach different
+conclusions about the same screen.
+
+### What this narrows in §35, and what it does not
+
+`channels.rs` has promised that *"Relay does not record who connected, from what
+address, or when"*, and that promise is load-bearing: §35 accepted an unauthenticated
+LAN control plane partly **because** nothing here was tracking anybody. This narrows
+exactly one word of it:
+
+- **who** — unchanged. No address, no user agent, no id the client chose, no cookie,
+  no fingerprint. A beat says "the screen for channel N painted", not "device X
+  painted".
+- **when** — an in-memory `Instant` per **channel**, overwritten by the next beat, never
+  written to the database, gone on quit. Not a history, not a log.
+
+Anything that wants to know *which device* is the pairing proposal in
+`docs/RELAY_GAP.md` §20, and it needs a human first. **Anonymous heartbeats do not
+require that reversal**, which is why they were built and pairing was not.
+
+The wire carries a closed enum (`content` / `clear` / `black`), never a caption. A beat
+crosses an unauthenticated LAN and lands in the operator's status pane; free text there
+would be an injection surface into the one UI that must never lie. Anything else is
+dropped at the door rather than defaulted — a malformed beat must not be able to hold a
+dead screen's light green for a whole service.
+
+---
+
+## 40. The console is protecting a service, and the operator can always lift it (2026-08-29)
+
+The console is a full editing environment and a live control surface on one screen,
+operated by a volunteer under time pressure with a room watching. Settings, the Library
+and the Templates editor are one click from the transport. Nothing had ever stopped a
+mis-click from deleting the template that is on the projector, or starting a 1.6 GB
+model download over the church's broadband, in the middle of a sermon.
+
+**While a service is being recorded, seventeen actions are held back** — two kinds, and
+only two:
+
+1. **Irreversible.** Every `delete_*`. This product has no undo, and a deletion made by
+   accident at 10:31 is gone.
+2. **Takes the engine away mid-sermon.** Swapping or downloading the speech model, a
+   bulk import, changing the active translation. Each stops or stalls the thing that is
+   currently listening to a preacher.
+
+### Nothing on the fire path is protected, and that is the more important half
+
+Firing, nav, clear, blackout, rehearsal, sensitivity, cue control, opening and closing
+outputs, assigning a screen's template — all unaffected. **A lock that could refuse a
+blackout would be a lock that can hurt a congregation** (§20), so `e2e.rs` fires, walks
+the transport, clears and blacks out *while the lock is engaged*: asserting that those
+names are absent from a list proves the list, not the wiring.
+
+**Template editing is deliberately left alone too.** It re-renders the wall, which is a
+real hazard — and it is also the only way to fix a template that is failing in front of
+people. Blocking the repair to prevent the risk is the wrong trade at 10:31; the risk is
+visible on the operator's own preview and the repair is available nowhere else. A
+template *swap* is likewise live by design (§29) and is a repair tool.
+
+### The operator outranks it, always
+
+"Operator override is a first-class control, never a fallback UI." One action lifts the
+lock, it stays lifted for the rest of that service, and it re-arms on the next one — so
+an override made last Sunday cannot silently disarm Relay for this one. A lock the
+person in the room cannot lift would put a source file above them, which is precisely
+backwards: this exists to catch an **accident**, not to overrule a decision.
+
+**Over-blocking is the more dangerous of the two failures available here.** An operator
+who cannot do the thing they need at 10:31 has been harmed by the safety feature.
+
+Two failure modes are pinned rather than trusted. A name on the list with no guard at
+its call site is a lie in the worst direction — the UI says "held back", the operator
+believes it, the command runs anyway — so a test reads `main.rs` and fails if any
+protected name lacks its guard, or reaches the database before it. And every refusal
+names the action and says where to unlock, because **a refusal an operator cannot act on
+is a dead button with extra steps**; another test fails if that control is not where the
+sentence sends them.
+
+This also closes a gap the microphone flag left open in the updater: a service can be
+recording while `capturing` is false — between readings, while the operator changes an
+input, after an `audio://error` — and every one of those was a moment when Relay would
+offer a restart.
+
+---
+
+## 41. A service now leaves a record, and nothing a preacher said is in it (2026-08-29)
+
+Relay could tell you what a service transcribed and which verses fired. It could not
+answer the question a church actually asks three days later — *"the projector went blank
+for a bit, when was that?"* — because nothing was recording it. And every latency
+measurement lived in memory (§38), so the evidence from the run that matters most, the
+one that ended badly, died the moment they closed the app.
+
+**`service_events`** is an append-only log for the facts that had nowhere else to live:
+the service starting and ending, rehearsal going on and off, a screen going silent and
+coming back (§39 made that observable), the operator lifting the service lock, and — the
+row somebody will go looking for — **a panic control that did not reach the screens**.
+Until now the only record of that was a banner the operator dismissed.
+
+### It does not duplicate what already exists
+
+`detections` holds what the AI claimed; `cues` holds what the operator pressed. A second
+copy would be a second answer to one question. So the timeline is a **merge on the way
+out**, and every row still says which store it came from: *the AI fired this* and *a
+human fired this* are the two facts a replay exists to separate, and flattening them is
+how a record quietly rewrites who did what.
+
+`seq` is monotonic per service, so two events in the same millisecond still have an
+order. A real service produced two fires sharing a timestamp to the tenth of a second
+(§37) and afterwards nothing could say which came first.
+
+### The privacy line, drawn where it will be tested
+
+This is the part of the history most likely to travel — it is what a church sends back
+with "it went wrong at 10:31". So `detail` is a phrase **Relay composes** ("Main screen",
+the service title), never a transcript, a verse or a lyric, and `perf_samples` stores
+percentiles rather than traces, because a trace carries what was heard. Pinned from both
+sides so a future column cannot quietly widen it. *"Nothing leaves the device without an
+explicit, visible reason"* does not get an exception for being useful.
+
+Two rules carried forward rather than rediscovered: **a stage never reached is stored as
+NULL and printed as "—"** (writing 0 would make every service look instantaneous on the
+stages it never performed, and the report would improve as the pipeline got worse), and
+the migration is additive and retryable (§25) — `CREATE TABLE IF NOT EXISTS`, no
+rebuild, no intermediate state to leave behind.
+
+`end_service` snapshots and logs **before** clearing the session, because both read it to
+find out which service they belong to. The other order silently wrote nothing and lost
+the last minute of every service.
+
+---
+
+## 42. The last check before a congregation sees anything (2026-08-29)
+
+Relay had a gate deciding whether the AI may speak (`router.rs`) and one deciding
+whether anything reaches a screen at all (rehearsal, at the broadcast). Neither asked
+the third question: **is the thing about to go up actually showable?**
+
+Two failures, both silent, both indistinguishable to an operator from Relay working:
+
+- **A cue with no text, no media and no reference.** The console reported a successful
+  fire and the projector went blank, which from twenty rows back looks exactly like a
+  crash. It is now refused, the previous content is left exactly where it was (clearing
+  would be worse than refusing), and the operator is told what it means for the wall.
+- **A cue carrying a template the output page cannot parse.** The page does not fail
+  loudly on that — it falls back. So the wall showed the right words in the wrong look
+  and nobody was told, which is §20's silence in a different costume.
+
+The check sits in `broadcast_with_clock`, the single caller of
+`channels::broadcast_content`, so it covers every path at once. **A validator added at
+five call sites is a validator that will be missing from the sixth**, and this
+repository has produced four separate bugs of exactly that shape. A refused payload is
+also no longer followed by a `detection://match` claiming it went out.
+
+### Readability is a layout question, so it is answered where layout happens
+
+The fit loop always "succeeded" — there is no verse so long that forty rounds of ×0.95
+cannot squeeze it in — so a template that had stopped working looked exactly like one
+that was working, at 2cqw. It still shrinks and it still shows the verse (**blanking a
+screen would be strictly worse for the congregation**), but below 45% of the size the
+template's designer asked for it now reports, and Live says how small it went and what
+to do about it. The floor is a **ratio**, not an absolute point size: the unit is cqw, a
+share of the output's width, so a template designed at 6cqw is making a different claim
+from one designed at 3cqw. The console's program pane renders through the same component
+as the wall, which is what makes the measurement the wall's rather than a guess about it.
+
+### Three things it deliberately does not do
+
+- **It never checks that a screen is attached.** A service runs on the console preview
+  alone all the time — setup, rehearsal, somebody re-cabling a projector — and refusing
+  to fire because nothing is connected would take the operator's tool away at the exact
+  moment they are fixing the screen. Reported (§39), never enforced, and a test pins
+  that it is not a guard on any fire path.
+- **It never refuses a clear or a blackout.** Those do not pass through it at all, and
+  must not: a panic control a validator could block is a panic control that can fail.
+- **It does not guess at fit.** Guessing would refuse content that renders perfectly
+  well.
