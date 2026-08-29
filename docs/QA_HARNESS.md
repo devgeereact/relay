@@ -25,12 +25,12 @@ the command is named — a count you cannot reproduce is a rumour.
 
 | | Count | How to reproduce |
 |---|---|---|
-| Rust tests | **584 passing**, 28 ignored | `cd src-tauri && cargo test` |
-| Frontend tests | **747 passing**, 0 skipped, 55 files | `npx vitest run` — read the runner's own summary line. **Not** `vitest list \| wc -l`: that stream carries Svelte compiler warnings too and over-counted by 7 |
+| Rust tests | **587 passing**, 28 ignored | `cd src-tauri && cargo test` |
+| Frontend tests | **811 passing**, 0 skipped, 59 files | `npx vitest run` — read the runner's own summary line. **Not** `vitest list \| wc -l`: that stream carries Svelte compiler warnings too and over-counted by 7 |
 | `e2e.rs` tests | **32** (30 run, 2 ignored — R2-C and R2-D, both open defects) | `cd src-tauri && cargo test e2e::` |
-| Registered `#[tauri::command]` | **134** | `grep -c '#\[tauri::command\]' src-tauri/src/main.rs` |
+| Registered `#[tauri::command]` | **135** | `grep -c '#\[tauri::command\]' src-tauri/src/main.rs` |
 | `.svelte` files | **47**, 22 of them views | `find src -name '*.svelte' | wc -l` |
-| `<button>` occurrences | **331** | `grep -ro '<button' --include='*.svelte' src | wc -l` |
+| `<button>` occurrences | **336** | `grep -ro '<button' --include='*.svelte' src | wc -l` |
 | Tables in the schema | **21** | `grep -c 'CREATE TABLE' docs/data/schema.sql` |
 
 **Status: BUILT.** What shipped:
@@ -591,7 +591,7 @@ Every table above resolves to a create path except one:
 
 - **`song_arrangements` — no create path.** `save_arrangement` is registered, `saveArrangement`
   exists in the store, and **no component imports it**. If that holds, a user cannot save a
-  song arrangement at all, and CLAUDE.md's "every one of the 134 commands has a frontend
+  song arrangement at all, and CLAUDE.md's "every one of the 135 commands has a frontend
   caller" is true at the wrapper level and false at the level that matters. Filed as **F3** in
   §1.9.
 

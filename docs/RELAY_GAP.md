@@ -54,6 +54,26 @@ asked, this file is what the repository answered.
 > may not) · §47 (the moat is measured from the shipped data) · §48 (the one artefact
 > meant to leave the building gets the strict rule).
 >
+> ### P2 — RG-13 … RG-17, closed 2026-08-30
+>
+> | ID | What changed | Pinned by |
+> |---|---|---|
+> | **RG-13** | Both accessibility lists at zero — **and eleven of the thirteen findings were the instrument's own bugs**, which is the larger half of the fix | `inventory.test.js` (10), `surface.test.js` R3-12 inverted |
+> | **RG-14** | p99 live, stored and shown; week-on-week trend across services; and the live Diagnostics screen stopped printing an unreached stage as `0ms` | `timeline_tests` (+3), `report.test.js` (31 total) |
+> | **RG-15** | Say one verse, watch six stages. Runs in rehearsal or not at all | `pathcheck.test.js` (17) |
+> | **RG-16** | Six drills with the real controls, panic first. **Not** a simulated service | `training.test.js` (21) |
+> | **RG-17** | Settings → Privacy, read from the live settings, stating the LAN exposure in the same size type as the reassuring half | `privacy.test.js` (8) |
+>
+> Four more decisions: §49 (an instrument that cries wolf) · §50 (p95 and the worst
+> sample bracket the tail; neither answers it) · §51 (twenty-one checks that pass on
+> a machine where nothing works) · §52 (practice is drills, not a simulation).
+>
+> **RG-16 is deliberately narrower than the register described.** "Replay recorded
+> audio through the real pipeline" is not buildable here: Relay cannot produce a
+> sermon, and a simulation would teach a volunteer the shape of a fake. Replaying a
+> church's *own* recorded service audio would work — and needs the audio corpus that
+> Stage C has never produced. What shipped is the half that does not need it.
+>
 > **RG-10 deliberately stops short of its most attractive option.** Seeding the audio
 > learner from a stored floor may well be right, and it is not being done, because the
 > instrument that could show it safe (`cargo test audio::gate -- --ignored`, against
@@ -647,11 +667,11 @@ matter right now.
 | ✅ RG-10 | Room calibration is lost on every start | The hall is re-learned each Sunday | `audio.rs:145-148`, `dsp.rs:146-153` | `environment_profiles`; store the learned floor, never a fixed threshold | RG-04 | P1 | M | Reopen; assert the floor is restored and still adapts (DECISIONS §19 must survive) |
 | ✅ RG-11 | Language coverage is prose, not an instrument | The moat cannot be tracked or improved | `docs/LANGUAGES.md`, `numerals.json` | A per-language status view: aliases, numerals, review state, WER (or "not measured") | — | P1 | S | The view must render "NOT MEASURED" rather than a plausible number |
 | ✅ RG-12 | Diagnostics is a screen, not an export | A church cannot send you what you need | `Settings.svelte:998-1054` | Export a scrubbed bundle; never include audio or transcript unless ticked | — | P1 | S | Assert the bundle contains no verse, lyric, announcement or transcript text |
-| RG-13 | 9 controls with no accessible name | Screen-reader users cannot operate Live | `qa-inventory.mjs` | Add labels | — | P2 | S | Re-run the inventory; zero |
-| RG-14 | No p99; no latency history | Tail behaviour and long-service drift are invisible after a restart | `latency.rs:728-729` | Report p99; persist samples | RG-04 | P2 | S | Diagnostics shows p99 and a prior-service comparison |
-| RG-15 | Readiness never tests the spoken path | Green checks, dead microphone chain | `boot/probes.js` | Synthetic "say John 3:16" walk | RG-01 | P2 | M | Fail it by unplugging the mic; assert it goes red |
-| RG-16 | No training / simulation mode | A volunteer's first Sunday is their first attempt | — | Replay recorded audio through the real pipeline into a sandboxed UI | RG-07 | P2 | M | Nothing reaches a real output — watch the **hub**, not the wall |
-| RG-17 | No privacy screen | The best privacy story in the product is invisible | `PRIVACY.md` | One screen stating current state | — | P2 | S | Reflects the real setting, never a hardcoded "off" |
+| ✅ RG-13 | 9 controls with no accessible name | Screen-reader users cannot operate Live | `qa-inventory.mjs` | Add labels | — | P2 | S | Re-run the inventory; zero |
+| ✅ RG-14 | No p99; no latency history | Tail behaviour and long-service drift are invisible after a restart | `latency.rs:728-729` | Report p99; persist samples | RG-04 | P2 | S | Diagnostics shows p99 and a prior-service comparison |
+| ✅ RG-15 | Readiness never tests the spoken path | Green checks, dead microphone chain | `boot/probes.js` | Synthetic "say John 3:16" walk | RG-01 | P2 | M | Fail it by unplugging the mic; assert it goes red |
+| ✅ RG-16 | No training / simulation mode | A volunteer's first Sunday is their first attempt | — | Replay recorded audio through the real pipeline into a sandboxed UI | RG-07 | P2 | M | Nothing reaches a real output — watch the **hub**, not the wall |
+| ✅ RG-17 | No privacy screen | The best privacy story in the product is invisible | `PRIVACY.md` | One screen stating current state | — | P2 | S | Reflects the real setting, never a hardcoded "off" |
 | RG-18 | No contrast validation, distance preview or output accessibility mode | Unreadable from row 20, and nothing says so | grep: zero | Ratio check + a distance simulator | — | P3 | M | Needs a real projector |
 | RG-19 | No offline installer or language packs | A church with poor internet cannot install | `models.rs` | Bundle app + model + corpus; sign language packs | RG-06 | P3 | L | Install with the network cable out |
 | RG-20 | **Doc drift** — 114 / 4,024 / "35 decisions" / e2e layer count wrong across six files | `CLAUDE.md` is read first by every agent and is on the wrong side | §26 | Fix, and add the reproducing command beside every count | — | P0 | S | `grep -rn '114 cmds\|4,024\|4.0k lines\|35 decisions' CLAUDE.md docs/` returns nothing |
@@ -698,9 +718,10 @@ service), and one church.
 
 - [x] RG-01 · RG-02 · RG-03 · RG-04 · RG-05 — done 2026-08-29, see the fix log above
 - [x] RG-06 … RG-12 (P1) — done 2026-08-29, same fix log
-- [ ] RG-13 … RG-19 (P2/P3). RG-14's persisted latency arrived with RG-04; what is
-      left of it is p99. RG-18 still needs a designer and a real projector, and RG-19
-      still needs RG-06's ground, which now exists.
+- [x] RG-13 … RG-17 (P2) — done 2026-08-30, same fix log
+- [ ] RG-18 · RG-19 (P3). RG-18 still needs a designer and a real projector; RG-19
+      has RG-06's ground under it now and is the one remaining item with real market
+      value — a church with poor internet still cannot install Relay from a USB stick.
 
 ### Always — before any of the above ships
 

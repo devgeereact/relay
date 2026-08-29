@@ -74,6 +74,31 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
   something goes wrong. It contains no transcript, no verse text, no lyrics and no
   service names — you can read it before you send it.
 
+### Practice before Sunday, and a check that tests the whole path
+
+- **Test the whole path.** Settings → Dashboard has a new check: press start, say
+  "John chapter three, verse sixteen", and watch six stages light up — microphone,
+  voice heard, words, reference recognised, allowed through, on a screen. The startup
+  checks tell you each part is there; this tells you they work *together*, which is
+  the thing you actually want to know at 10:05. **Relay switches itself to rehearsal
+  first**, so the test cannot reach your screens — and if it cannot switch, it refuses
+  to run rather than firing a verse at your congregation to test itself.
+- **Practice before your first Sunday.** Help → six short drills using the real
+  controls: clearing the screens and blacking them out come first, because those are
+  the two that save a service. Relay stays in rehearsal the whole time. It is not a
+  pretend service — there is no preacher in there — it just makes sure your hands know
+  where the controls are before the moment you need them.
+- **Settings → Privacy.** One page answering "what is on this machine, and what can
+  leave it", read from your actual settings rather than from a promise. It includes
+  the uncomfortable part: anyone on your church WiFi can see what is on the projector
+  **and can change it**, because the preacher's remote has no password by design.
+- **Service History now shows the one-in-a-hundred figure**, and whether Relay is
+  getting slower week by week rather than only during one service. It stays quiet
+  until it has seen three services, because two is not a trend.
+- **Fixed:** the live speed readout showed `0ms` for a stage that never ran, which
+  made the part that did not happen look like the fastest thing on the screen.
+- **Fixed:** several buttons and text boxes had no name for screen readers.
+
 ### 🚧 Nothing has been released to anyone yet.
 
 Relay has never shipped. Every tag so far (`v0.1.0-rc1` … `v0.1.0-4`) is a **draft pre-release** used to exercise the pipeline — they are unsigned, and an unsigned build is stopped dead by macOS Gatekeeper and warned about by Windows SmartScreen. A volunteer does not push past those screens, and should not be asked to.

@@ -2013,3 +2013,137 @@ prefers `USERPROFILE` on Windows (Git Bash sets `HOME` to `/c/Users/Ada`, which 
 Windows path contains, so scrubbing against it would silently redact nothing), and
 refuses a one-character home rather than turning every slash in the document into a
 tilde.
+
+## 49. An instrument that cries wolf is worse than no instrument (2026-08-30)
+
+The surface inventory listed thirteen accessibility findings. **Eleven were the
+script being wrong**, and that is the more important half of what was fixed.
+
+`aria-label={tg.title}` did not count, because only a static string did — so the
+microphone toggle on the run surface and the Reset All Settings button were both
+reported as unnamed, and both have carried an `aria-label` all along.
+`<label for=…>` and a wrapping `<label>` did not count at all, which reported two
+correctly-labelled textareas as unnamed and pushed an author towards adding an
+`aria-label` that then has to be kept in step with the visible text — **the report
+was recommending the worse of two correct options.** The scanner read the `<script>`
+block, so a JSDoc comment in `VerseDeck` explaining a keyboard rule with the word
+`<button>` was reported as a handlerless button whose label was a fragment of the
+explanation: a finding about a paragraph. A `type="submit"` in a form was reported
+as handlerless, though its handler is the form's `on:submit`, and a click handler
+added to satisfy the report would break Enter-to-submit. A permanently `disabled`
+button was reported as handlerless, which it is, correctly.
+
+This repository already knows that a boot screen which paints normal conditions red
+teaches an operator to ignore red (`boot/probes.js`). **The same is true of a QA
+report**, and it is worse there, because the audience is the person who could fix
+the real one.
+
+Both exclusions are deliberately narrow. `disabled={expr}` is still reported: a
+conditionally-disabled button with no handler does nothing at the moment it becomes
+enabled, which is the bug the list exists for. Comments and the script block are
+**blanked rather than removed**, so every `file:line` stays clickable.
+
+The two real findings were fixed natively — a `<label for>` rather than an
+`aria-label`, so the visible text and the accessible name are one string and cannot
+drift — and both lists are now pinned at zero, with a guard on the guard: if the
+scanner ever stops finding controls at all, the count assertion fails rather than
+two empty lists quietly passing.
+
+---
+
+## 50. P95 and the worst sample bracket the tail; neither answers it (2026-08-30)
+
+P95 is still comfortable. The single worst sample is unrepeatable and easy to
+dismiss. **One window in a hundred, over a ninety-minute service, is roughly one
+visibly late verse** — which is exactly what a congregation notices and what a
+median cannot show. P99 is now reported live, stored per service, and shown in both
+tables.
+
+The second half is the question a single service cannot answer. §38 measures whether
+latency grew *during* one service. Nothing measured the slower thing a church
+actually lives with: a bigger model added in March, a laptop that fills up over a
+winter, a room that got louder. Every individual Sunday looks fine.
+
+`perf_history` takes one row per service — the **last** snapshot, because the
+percentiles are cumulative and averaging the snapshots would weight a service's
+first minute as heavily as its eightieth — and compares the latest against the
+**median** of the rest. Not the mean: one catastrophic Sunday, on a laptop that was
+compiling something, would otherwise either hide a real trend or invent one. It says
+nothing at all below three services, because two points are a line through anything
+and *"we have not seen enough yet"* is a different statement from *"it is not getting
+worse"*.
+
+**The bug this found:** Settings → Diagnostics printed `Math.round(m.p50_ms ?? 0)`,
+so a stage that was never reached rendered as `0ms` — the fastest number on the
+screen, on the one surface a field tester reads. The absence-is-not-a-zero rule
+(§38, §44) was enforced in the histogram, in the schema and on the history screen,
+and failed at the last hop in the live view.
+
+---
+
+## 51. Twenty-one checks that pass on a machine where nothing works (2026-08-30)
+
+`boot/probes.js` asks twenty-one good questions and every one of them is about a
+**part**: is there a microphone, is a model loaded, is the database there, is a
+window open. All twenty-one pass on a machine where nothing works end to end — a
+microphone the operating system has muted, a model that mishears everything, a gate
+calibrated to a room that has since filled with people, an output window on a
+display that is asleep.
+
+A church discovers that at 10:31. The path check finds it at 10:05: say one
+sentence, and watch six stages either light up or not.
+
+**It runs in rehearsal or it does not run.** The point is to fire a real verse
+through the real pipeline; the danger is doing exactly that twenty minutes before a
+service. Rehearsal is engaged before anything else, and if it will not take the walk
+is abandoned — *Relay will not fire a verse at your screens to test itself.* It puts
+the machine back as it found it, because a check that leaves the microphone live has
+created the fault it went looking for, and a failure to LEAVE rehearsal is reported
+rather than swallowed.
+
+Three things it is careful about, each of which is a rule from somewhere else
+arriving in a new place:
+
+- **A stage never reached shows no time at all**, not "0.0s", which would read as
+  instantaneous (§44).
+- **Only the first missing stage is named.** A check that lists five failures when
+  one thing is broken has told the operator nothing; four are consequences.
+- **"Relay recognised something" and "Relay recognised what you said" are separate
+  answers.** A pipeline that works and misheard is a different situation from a
+  broken one, and only one of them is fixed by looking at cables — so a complete
+  walk that got John 3:6 reports success *and* says what it heard.
+
+And a level meter moving is not "Relay heard a voice". The difference between those
+two is the whole of §19: the gate is learned, and a room can be loud while no speech
+ever opens it.
+
+---
+
+## 52. Practice is drills with the real controls, not a simulated service (2026-08-30)
+
+**Relay cannot simulate a service, and pretending otherwise would teach a volunteer
+the shape of a fake.** There is no preacher, no room, and no way to synthesise speech
+offline. So practice is six drills using the REAL controls on the REAL surfaces, in
+rehearsal — each one knows it was completed because the same event fired that would
+fire on a Sunday. The muscle memory is the point, and muscle memory is built on the
+actual key.
+
+**The order is the argument.** Clear and blackout come first, before anything about
+firing verses. An operator who can clear a screen is safe to leave alone; one who can
+fire beautifully and freezes when the wrong thing is up is not. Every sketch of
+operator training this product has produced put "accept a suggestion" first, and that
+is backwards.
+
+Only the **current** drill can be satisfied. Letting a later one complete out of order
+would let somebody finish the course without ever pressing the control it existed to
+teach — the failure mode of every checklist that scores itself generously. And a
+partial run is reported as one: skipping the panic drills and being told you are ready
+would be worse than being told nothing, because you would believe it.
+
+Rehearsal is forced on and restored, on §51's rule, and a failure to leave it is said
+out loud — leaving the app in rehearsal without telling anybody is how a Sunday
+morning starts with screens that never light up.
+
+One more thing it teaches deliberately: **dismissing a suggestion is not a failure.**
+A volunteer who believes it is will accept suggestions they do not want, and that is
+worse for a congregation than a blank screen.
