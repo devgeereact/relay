@@ -1630,6 +1630,54 @@ const call = await invoke();
 await call('delete_channel', { id });
 }
 
+// ── OUTPUT HEALTH, POLLED ONCE FOR THE WHOLE APP ─────────────────────────────
+//
+// `channel_status` is a poll, not a push: nothing raises an event when a browser
+// source connects or a window dies. Three surfaces want the answer — the Live run
+// pane, the Outputs table, and the shell's degraded banner (which has to be right
+// on every tab, because a volunteer may well be in Settings when a screen dies).
+//
+// One poller, one store. Three timers asking the same question would triple the
+// work and let the three surfaces disagree about the same screen for up to two
+// seconds, which is the asymmetry RG-01 exists to end.
+export const channelHealth = writable({}); // channel id → ChannelLiveness
+/** When each channel was first seen attached but not answering. */
+export const channelWaiting = writable({});
+let healthPoll = null;
+
+async function pollChannelHealth() {
+  const rows = await channelStatus();
+  const next = {};
+  for (const r of rows) next[r.id] = r;
+  const now = Date.now();
+  channelWaiting.update((w) => {
+    const out = { ...w };
+    for (const r of rows) {
+      const attached = r.supported && r.online;
+      if (attached && !r.painting) out[r.id] ??= now;
+      else delete out[r.id];
+    }
+    return out;
+  });
+  channelHealth.set(next);
+}
+
+/**
+ * Start polling, at the beat interval, so a screen that stops answering shows up
+ * within about three beats. Idempotent: called from the shell, and calling it again
+ * must not create a second timer.
+ */
+export function startChannelHealth() {
+  if (healthPoll) return;
+  pollChannelHealth();
+  healthPoll = setInterval(pollChannelHealth, 2000);
+}
+
+export function stopChannelHealth() {
+  clearInterval(healthPoll);
+  healthPoll = null;
+}
+
 /**
  * What is actually live on each channel, right now.
  *

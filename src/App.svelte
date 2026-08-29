@@ -2,7 +2,9 @@
   import { onMount, onDestroy } from 'svelte';
   import { trapFocus } from './lib/focus.js';
   import { t } from './lib/i18n.js';
-  import { capture, capturing, detectionOn, live, screenBlack, rehearsing, initAudio, autoOpenOutputs, setDetection, clearScreens, blackScreen, panicError, dismissPanicError, serviceLock, loadServiceLock } from './lib/stores/capture.js';
+  import { capture, capturing, detectionOn, live, screenBlack, rehearsing, initAudio, autoOpenOutputs, setDetection, clearScreens, blackScreen, panicError, dismissPanicError, serviceLock, loadServiceLock, channelHealth, startChannelHealth, latencyReport } from './lib/stores/capture.js';
+  import { degradations, worstLevel, summarise } from './lib/degraded.js';
+  import { describeScreen } from './lib/outputHealth.js';
   import { installShortcuts, cheatsheet, liveShortcuts } from './lib/shortcuts.js';
   import { installLeaveGuard } from './lib/crash.js';
   import { session, setSession, resolveActiveTab } from './lib/session.js';
@@ -28,6 +30,40 @@
   // The two answers to the post-update banner. Both GROUP 1 (they throw), because a
   // restore that silently failed would leave an operator waiting for a history that
   // is never coming back.
+  // ── DEGRADED — the fallbacks that already existed, made visible ────────────
+  //
+  // Relay degrades gracefully in half a dozen places and every one of them was
+  // invisible: the denoiser switching itself off on a microphone that will not run
+  // at 48 kHz, a CPU-only build decoding three times slower, no speech model at
+  // all. In each case Relay knew and the operator did not, so the symptom ("it
+  // isn't hearing anything") got attributed to the AI being bad — the most
+  // expensive possible misdiagnosis for this product.
+  //
+  // In the SHELL, not on Live, because a volunteer may be in Settings when the
+  // model fails to load. Collapsed to one line until opened: a permanent list of
+  // caveats across the top of a live console is a list an operator stops reading.
+  let gpuBackends = null; // null = not asked yet; a BUILD fact, not a hardware one
+  let droppedPartials = 0;
+  let degOpen = false;
+
+  $: screensDown = Object.values($channelHealth)
+    .filter((st) => describeScreen(st, {}, Number.MAX_SAFE_INTEGER).kind === 'down')
+    .map((st) => st.id);
+
+  $: degraded = degradations({
+    sttLoaded: $capture.stt?.loaded,
+    detectionOn: $capture.detectionOn,
+    capturing: $capturing,
+    safeMode: $safeMode,
+    // `undefined` until the first quality frame — no row until Relay has looked.
+    denoise: $capture.quality?.denoise,
+    gpuBackends,
+    macos: typeof navigator !== 'undefined' && /Mac/i.test(navigator.platform || ''),
+    droppedPartials,
+    screensDown,
+  });
+  $: degLevel = worstLevel(degraded);
+
   let updMsg = '';
   async function doAccept() {
     updMsg = '';
@@ -188,6 +224,7 @@
   let engineOnline = false;
   let teardownKeys;
   let teardownLeave;
+  let shedTimer;
 
   // ── Boot splash ────────────────────────────────────────────────────────────
   // Decoration over a fact, never a fact of its own. Two rules:
@@ -236,6 +273,23 @@
     if (!$safeMode) autoOpenOutputs();
     // A console reopened mid-service must not show an unprotected app.
     loadServiceLock();
+    // One poller for the whole app: Live, the Outputs table and the degraded
+    // banner all read the same store (see `startChannelHealth`).
+    startChannelHealth();
+    // The GPU backends whisper.cpp was COMPILED with. Read once — it cannot change
+    // while the app runs, and naming the GPU in this machine next to a CPU-only
+    // build would be the most convincing lie on the screen.
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      gpuBackends = (await invoke('system_hardware'))?.gpu_backends ?? [];
+    } catch {
+      gpuBackends = null; // not asked, so nothing is claimed
+    }
+    // Shed work, sampled rather than pushed. Cheap (an in-memory counter), and slow
+    // enough that it costs nothing over a service.
+    shedTimer = setInterval(async () => {
+      droppedPartials = (await latencyReport(0))?.dropped_partials ?? droppedPartials;
+    }, 15000);
     // Did the LAST update work? Asked once, here, because the answer is only
     // knowable on the launch after one — and the person who pressed the button may
     // well have gone home before this launch happens.
@@ -284,6 +338,7 @@
     clearTimeout(capTimer);
     teardownKeys?.();
     teardownLeave?.();
+    clearInterval(shedTimer);
   });
 </script>
 
@@ -493,6 +548,38 @@
         <span>{$panicError}</span>
       </div>
       <button class="r-btn ghost sm" on:click={dismissPanicError}>Dismiss</button>
+    </div>
+  {/if}
+
+  <!-- DEGRADED. One line, always, on every tab — opened for the detail. It sits
+       BELOW the panic banner (a panic control that failed outranks everything) and
+       ABOVE the update banners, because "something is working less well right now"
+       is more urgent than "there is a new version". -->
+  {#if degLevel}
+    <div class="deg" class:blocked={degLevel === 'blocked'} role="status">
+      <button
+        type="button"
+        class="deg-head"
+        aria-expanded={degOpen}
+        on:click={() => (degOpen = !degOpen)}
+      >
+        <span class="deg-dot"></span>
+        <span class="deg-sum">{summarise(degraded)}</span>
+        <span class="deg-more r-mono">{degOpen ? 'hide' : `${degraded.length} detail${degraded.length === 1 ? '' : 's'}`}</span>
+      </button>
+      {#if degOpen}
+        <ul class="deg-list">
+          {#each degraded as d (d.id)}
+            <li class="deg-item" class:blocked={d.level === 'blocked'}>
+              <b>{d.title}</b>
+              <span>{d.what}</span>
+              <!-- Every row says what to do, or admits there is nothing. "Degraded"
+                   on its own is a mood, not information. -->
+              <i>{d.fix}</i>
+            </li>
+          {/each}
+        </ul>
+      {/if}
     </div>
   {/if}
 

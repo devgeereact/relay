@@ -485,6 +485,31 @@ body{ overflow:hidden; text-rendering:optimizeLegibility; -moz-osx-font-smoothin
 /* ===== Update banner =================================================
    Sits at rest only. updater.js will not even check while the mic is live —
    an updater that interrupts a sermon is worse than no updater at all. */
+/* DEGRADED. Quiet by default and never amber — amber means ON AIR, and nothing
+   here is about what a congregation is looking at. A blocked capability gets a
+   rose dot; a reduced one stays grey, because Relay is still doing the thing. */
+.deg{ position:fixed; left:50%; transform:translateX(-50%); bottom:18px; z-index:790;
+  max-width:min(680px, calc(100vw - 32px)); background:var(--v-surf2);
+  border:1px solid var(--v-line2); border-radius:var(--v-r-md);
+  box-shadow:0 8px 28px rgba(0,0,0,.35); overflow:hidden; }
+.deg-head{ display:flex; align-items:center; gap:10px; width:100%; padding:9px 12px;
+  background:none; border:0; color:var(--v-txt); font:inherit; cursor:pointer;
+  text-align:left; }
+.deg-head:hover{ background:var(--v-surf3); }
+.deg-dot{ width:7px; height:7px; border-radius:50%; background:var(--v-dim); flex:0 0 auto; }
+.deg.blocked .deg-dot{ background:var(--v-rose); }
+.deg-sum{ flex:1; min-width:0; font-size:var(--v-fs-b2); overflow:hidden;
+  text-overflow:ellipsis; white-space:nowrap; }
+.deg-more{ font-size:9px; letter-spacing:.06em; color:var(--v-faint); flex:0 0 auto; }
+.deg-list{ list-style:none; margin:0; padding:0 12px 10px; display:flex;
+  flex-direction:column; gap:8px; }
+.deg-item{ display:flex; flex-direction:column; gap:2px; padding-left:10px;
+  border-left:2px solid var(--v-line2); }
+.deg-item.blocked{ border-left-color:var(--v-rose); }
+.deg-item b{ font-size:var(--v-fs-b2); font-weight:600; }
+.deg-item span{ font-size:var(--v-fs-cap); color:var(--v-dim); line-height:1.45; }
+.deg-item i{ font-size:var(--v-fs-cap); color:var(--v-faint); font-style:normal; }
+
 /* The post-update banner when the database did NOT survive. Rose is the failure
    colour; amber is never spent here because nothing about this is on air. */
 .upd.upd-bad{ border-color:color-mix(in srgb, var(--v-rose) 50%, transparent);

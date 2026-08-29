@@ -62,7 +62,8 @@
     fireContent,
     fireMedia,
     listOutputChannels,
-    channelStatus,
+    channelHealth,
+    channelWaiting,
     openChannelOutput,
     listMonitors,
     setChannelDisplay,
@@ -186,43 +187,23 @@
   // Now each screen reports that it is painting (`outputBeat.js` → Rust
   // `OutputHealth`), and this pane shows what the screen said. A badge that cannot
   // detect its own failure is not a badge.
-  let chStatus = {}; // channel id → ChannelLiveness from the backend
-  let chPoll = null;
-  // When we first saw a channel as attached-but-not-yet-answering. A window that
-  // has just opened has not had time to report, and calling that a fault would
-  // teach an operator to ignore the one colour that matters. After a grace period
-  // silence stops being "not yet" and becomes the finding.
-  let awaitingSince = {};
-  const BEAT_GRACE_MS = 8000;
-
-  async function pollChannelHealth() {
-    const rows = await channelStatus();
-    const next = {};
-    for (const r of rows) next[r.id] = r;
-    const now = Date.now();
-    for (const r of rows) {
-      const attached = r.supported && r.online;
-      if (attached && !r.painting) {
-        if (!awaitingSince[r.id]) awaitingSince[r.id] = now;
-      } else {
-        delete awaitingSince[r.id];
-      }
-    }
-    chStatus = next;
-  }
+  // The poll lives in the store (`startChannelHealth`, started by the shell), not
+  // here: the Outputs table and the shell's degraded banner want the same answer,
+  // and three timers asking one question would let three surfaces disagree about
+  // the same screen for up to two seconds — the asymmetry RG-01 exists to end.
 
   // The badge rule itself lives in `lib/outputHealth.js` and is PURE, so it can be
   // tested without mounting this view and so the Outputs inspector cannot end up
   // saying something different about the same screen. All four inputs are named in
-  // this expression on purpose — a helper that closes over `chStatus` would not be
+  // this expression on purpose — a helper that closed over the health map would not be
   // tracked by Svelte's reactivity and the pane would freeze on its first reading,
   // which is the same class of bug as the badge it replaces.
   $: outs = channels.map((c) => ({
     c,
     s: describeScreen(
-      chStatus[c.id] ?? null,
+      $channelHealth[c.id] ?? null,
       { rehearsing: $rehearsing, live: !!$live, black: $screenBlack },
-      awaitingSince[c.id] ? Date.now() - awaitingSince[c.id] : 0,
+      $channelWaiting[c.id] ? Date.now() - $channelWaiting[c.id] : 0,
     ),
   }));
 
@@ -282,11 +263,6 @@
     await loadTemplates().catch(() => {});
     await loadDefaultTemplate().catch(() => {});
     channels = await listOutputChannels().catch(() => []);
-    // Poll at the beat interval, so a screen that stops answering shows up within
-    // about three beats. One command, no payload — cheap enough to run for the
-    // length of a service on the surface that needs it most.
-    await pollChannelHealth();
-    chPoll = setInterval(pollChannelHealth, 2000);
     plans = await listPlans().catch(() => []);
     plansLoaded = true;
 
@@ -347,7 +323,6 @@
     clearTimeout(annArmT);
     clearTimeout(liveMsgT);
     clearTimeout(relatedT); // a pending poll must not fire into a destroyed view
-    clearInterval(chPoll);
   });
 
   // ── the transport ────────────────────────────────────────────────────────

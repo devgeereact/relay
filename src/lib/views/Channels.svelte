@@ -25,7 +25,7 @@
   // answering for themselves, whether each one has reported that it is still
   // PAINTING within the last few seconds. The first two are true of a frozen
   // projector; only the third can go false on its own.
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount } from 'svelte';
   import QRCode from 'qrcode';
   // The SAME rule Live uses. Two surfaces describing one screen must not be able
   // to reach different conclusions about it — that asymmetry is how this
@@ -53,7 +53,8 @@
     listMonitors,
     openChannelOutput,
     closeChannelOutput,
-    channelStatus,
+    channelHealth,
+    startChannelHealth,
     setChannelDisplay,
     addChannel,
     deleteChannel,
@@ -71,7 +72,6 @@
   // empty-state ("No screens yet") flashes during a normal cold open.
   let loading = true;
   let monitors = [];
-  let status = {}; // channel id → { online, clients, detail, supported }
   let error = null; // the TYPED error from Rust — ErrorState decides what to show
   let copiedId = null;
   let lanIp = 'localhost';
@@ -89,16 +89,12 @@
     channels = await listOutputChannels();
     if (selId && !channels.some((c) => c.id === selId)) selId = null;
   }
-  async function pollStatus() {
-    const rows = await channelStatus();
-    status = Object.fromEntries(rows.map((r) => [r.id, r]));
-  }
-
   // Liveness is polled, not pushed: a kiosk connecting or a window closing raises
-  // no event Relay listens for, so the honest options are polling or a status
-  // that goes stale. 2s is well under the time an operator takes to look away and
-  // back, and the call is two in-memory reads.
-  let poll;
+  // no event Relay listens for, so the honest options are polling or a status that
+  // goes stale. The poll itself lives in the store and is started by the shell —
+  // the Live pane and the degraded banner want the same answer, and three timers
+  // asking one question would let three surfaces disagree about one screen.
+  $: status = $channelHealth;
   onMount(async () => {
     // Guarded: an unguarded reject here aborted mount before the poll was ever
     // scheduled, leaving status blank with no reason shown.
@@ -108,15 +104,15 @@
       monitors = await listMonitors();
       lanIp = (await localIp()) || 'localhost';
       await refresh();
-      await pollStatus();
+      // Make sure the poller is running even if this tab was opened before the
+      // shell got there — idempotent, so this cannot create a second timer.
+      startChannelHealth();
     } catch (e) {
       error = e; // the TYPED error; ErrorState humanises it (matches act())
     } finally {
       loading = false;
     }
-    poll = setInterval(pollStatus, 2000);
   });
-  onDestroy(() => clearInterval(poll));
 
   const isNative = (c) => c.render_target === 'native_window';
   // NDI is parked (no proprietary SDK ships) and has no UI affordance, but an
@@ -207,7 +203,6 @@
     try {
       await fn();
       await refresh();
-      await pollStatus();
       error = null;
     } catch (err) {
       error = err;
