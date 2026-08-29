@@ -334,6 +334,14 @@
   // The update readiness readout. Read when this screen opens rather than polled:
   // a database does not become unhealthy while somebody looks at a settings page,
   // and `update_begin` re-checks at the moment it matters anyway.
+  /**
+   * Milliseconds, or an em dash. **A stage never reached is an absence, not a zero.**
+   *
+   * The same helper Rust's diagnostic bundle uses, for the same reason: printing
+   * `0ms` for a stage that never ran makes it the fastest number on the screen.
+   */
+  const msOrDash = (v) => (v === null || v === undefined ? '—' : `${Math.round(v)}ms`);
+
   let updReady = null;
   onMount(async () => {
     try {
@@ -1295,11 +1303,15 @@
         {/if}
         {#if latRows.length}
           <div class="s-cardbox">
-            <div class="s-netrow"><span class="s-netk">measurement</span><span class="s-netv r-mono">n · median · P95 · worst</span></div>
+            <div class="s-netrow"><span class="s-netk">measurement</span><span class="s-netv r-mono">n · median · P95 · P99 · worst</span></div>
             {#each latRows as m}
               <div class="s-netrow">
                 <span class="s-netk">{m.metric.replace(/_/g, ' ')}</span>
-                <span class="s-netv r-mono">{m.samples} · {Math.round(m.p50_ms ?? 0)}ms · {Math.round(m.p95_ms ?? 0)}ms · {Math.round(m.worst_ms ?? 0)}ms</span>
+                <!-- `?? 0` used to be here, and it rendered a stage that was never
+                     reached as `0ms` — the fastest thing on the screen. That is the
+                     absence-is-not-a-zero rule (DECISIONS §38, §44) failing at the
+                     last hop, on the one screen a field tester reads. -->
+                <span class="s-netv r-mono">{m.samples} · {msOrDash(m.p50_ms)} · {msOrDash(m.p95_ms)} · {msOrDash(m.p99_ms)} · {msOrDash(m.worst_ms)}</span>
               </div>
             {/each}
             <div class="s-netrow"><span class="s-netk">transcript updates / second</span><span class="s-netv r-mono">{(lat?.transcript_updates_per_s ?? 0).toFixed(2)}</span></div>

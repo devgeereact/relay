@@ -392,6 +392,7 @@ fn main() {
             output_beat,
             service_timeline,
             service_perf,
+            perf_history,
             export_diagnostics,
             language_report,
             list_environments,
@@ -1292,6 +1293,7 @@ fn snapshot_latency<R: tauri::Runtime>(handle: &tauri::AppHandle<R>) {
                 samples: m.samples as i64,
                 p50_ms: m.p50_ms,
                 p95_ms: m.p95_ms,
+                p99_ms: m.p99_ms,
                 worst_ms: m.worst_ms,
             },
         );
@@ -5065,6 +5067,23 @@ fn service_timeline(db: tauri::State<'_, Db>, id: i64) -> error::Result<Vec<db::
 fn service_perf(db: tauri::State<'_, Db>, id: i64) -> error::Result<Vec<db::PerfRow>> {
     let conn = db.0.lock()?;
     db::service_perf(&conn, id).map_err(Into::into)
+}
+
+/// One row per SERVICE for a metric, newest first — is it getting slower week by
+/// week?
+///
+/// The question a single service cannot answer. A church that adds a bigger model,
+/// or whose laptop fills up over a winter, degrades gradually and every individual
+/// Sunday looks fine.
+#[tauri::command]
+fn perf_history(
+    db: tauri::State<'_, Db>,
+    metric: String,
+    limit: Option<i64>,
+) -> error::Result<Vec<db::PerfTrend>> {
+    let conn = db.0.lock()?;
+    // Capped: an unbounded limit from the frontend is a query nobody sized.
+    db::perf_history(&conn, &metric, limit.unwrap_or(12).clamp(1, 52)).map_err(Into::into)
 }
 
 /// Full transcript + fired detections for one service (Library detail view).

@@ -641,6 +641,13 @@ pub struct MetricReport {
     pub mean_ms: Option<f64>,
     pub p50_ms: Option<f64>,
     pub p95_ms: Option<f64>,
+    /// The one in a hundred. **A tail is not an outlier when it happens every
+    /// hundred windows of a ninety-minute service** — that is roughly one visibly
+    /// late verse per service, which is exactly the thing a congregation notices
+    /// and a median cannot show. P95 and `worst_ms` bracket it from either side and
+    /// neither answers it: P95 is still comfortable, and the single worst sample is
+    /// unrepeatable and easy to dismiss.
+    pub p99_ms: Option<f64>,
     pub worst_ms: Option<f64>,
     /// Samples past the histogram ceiling. Non-zero means the tail is worse than
     /// the buckets can describe, and `worst_ms` is where to look.
@@ -727,6 +734,7 @@ pub fn report(recent_n: usize) -> Report {
                 mean_ms: h.mean().map(us_to_ms),
                 p50_ms: h.quantile(0.50).map(us_to_ms),
                 p95_ms: h.quantile(0.95).map(us_to_ms),
+                p99_ms: h.quantile(0.99).map(us_to_ms),
                 worst_ms: (h.count() > 0).then(|| us_to_ms(h.max)),
                 over_ceiling: h.over,
                 per_minute_mean_ms: per_minute,

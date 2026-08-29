@@ -2,9 +2,9 @@
   import { humanError } from '../../errors.js';
   import { onMount } from 'svelte';
   import { showsConfidence } from '../../detect.js';
-  import { sundayReport, replayAt } from '../../report.js';
+  import { sundayReport, replayAt, weekOnWeek, describeTrend } from '../../report.js';
   import Loading from '../../ui/Loading.svelte';
-  import { capture, listServices, serviceDetail, serviceTimeline, servicePerf, endService, exportService } from '../../stores/capture.js';
+  import { capture, listServices, serviceDetail, serviceTimeline, servicePerf, perfHistory, endService, exportService } from '../../stores/capture.js';
 
   let exportMsg = '';
   async function doExport() {
@@ -25,6 +25,11 @@
   let detail = null; // { transcripts, detections }
   let timeline = []; // the merged record: events + operator cues + detections
   let perf = []; // latency snapshots taken during the service
+  // One row per SERVICE, for the question a single service cannot answer: is Relay
+  // getting slower week by week? A church that adds a bigger model, or whose laptop
+  // fills up over a winter, degrades gradually and every Sunday looks fine.
+  let trendRows = [];
+  $: trend = weekOnWeek(trendRows);
   let loading = false;
 
   // ── WHAT ACTUALLY HAPPENED ────────────────────────────────────────────────
@@ -151,6 +156,7 @@
     loading = true;
     timeline = [];
     perf = [];
+    trendRows = [];
     replayIdx = null;
     try {
       detail = await serviceDetail(svc.id);
@@ -158,6 +164,7 @@
       // service whose timeline is missing must still show its transcript.
       timeline = await serviceTimeline(svc.id);
       perf = await servicePerf(svc.id);
+      trendRows = await perfHistory('audio_to_partial_transcript', 12);
     } catch (e) {
       // `error` is RENDERED now. It was set here and referenced nowhere in the
       // template, so a service whose detail failed to load was reported to the
@@ -326,7 +333,7 @@
           {#if report.latency.length}
             <div class="r-lbl lib-collabel">Speed over the whole service</div>
             <table class="lib-perf r-mono">
-              <thead><tr><th>stage</th><th>n</th><th>p50</th><th>p95</th><th>worst</th><th>grew?</th></tr></thead>
+              <thead><tr><th>stage</th><th>n</th><th>p50</th><th>p95</th><th>p99</th><th>worst</th><th>grew?</th></tr></thead>
               <tbody>
                 {#each report.latency as l (l.metric)}
                   <tr>
@@ -334,6 +341,9 @@
                     <td>{l.samples}</td>
                     <td>{l.p50_ms === null ? '—' : Math.round(l.p50_ms)}</td>
                     <td>{l.p95_ms === null ? '—' : Math.round(l.p95_ms)}</td>
+                    <!-- One window in a hundred: about one visibly late verse per
+                         service. "—" on a service recorded before p99 existed. -->
+                    <td>{l.p99_ms === null ? '—' : Math.round(l.p99_ms)}</td>
                     <td>{l.worst_ms === null ? '—' : Math.round(l.worst_ms)}</td>
                     <!-- A rising line is the finding whatever the median says. And
                          `null` is "we did not look", which is not "it did not grow". -->
@@ -342,6 +352,17 @@
                 {/each}
               </tbody>
             </table>
+          {/if}
+
+          {#if trend}
+            <!-- WEEK BY WEEK. Compared against the MEDIAN of the previous services,
+                 not their mean: one catastrophic Sunday — a laptop that was
+                 compiling something — would otherwise either hide a real trend or
+                 invent one. Silent below three services, because two points are a
+                 line through anything. -->
+            <p class="lib-rep-trend" class:bad={trend.slower}>
+              {describeTrend(trend, 'The transcript')}
+            </p>
           {/if}
 
           <!-- SAID OUT LOUD, not left for a reader to notice. A report that lists
@@ -445,7 +466,7 @@
                now. Percentiles only; a trace carries what was heard. -->
           <div class="r-lbl lib-collabel lib-tl-perfhead">Speed, as measured at the time</div>
           <table class="lib-perf r-mono">
-            <thead><tr><th>at</th><th>stage</th><th>n</th><th>p50</th><th>p95</th><th>worst</th></tr></thead>
+            <thead><tr><th>at</th><th>stage</th><th>n</th><th>p50</th><th>p95</th><th>p99</th><th>worst</th></tr></thead>
             <tbody>
               {#each perf as p, i (i)}
                 <tr>
@@ -457,6 +478,7 @@
                        stages it never performed. -->
                   <td>{p.p50_ms === null ? '—' : Math.round(p.p50_ms)}</td>
                   <td>{p.p95_ms === null ? '—' : Math.round(p.p95_ms)}</td>
+                  <td>{p.p99_ms === null ? '—' : Math.round(p.p99_ms)}</td>
                   <td>{p.worst_ms === null ? '—' : Math.round(p.worst_ms)}</td>
                 </tr>
               {/each}
@@ -584,6 +606,8 @@
   .lib-rep-cell.bad{ border-color:color-mix(in srgb, var(--v-rose) 45%, transparent); }
   .lib-rep-cell.bad b{ color:var(--v-rose); }
   .lib-perf td.bad{ color:var(--v-rose); }
+  .lib-rep-trend{ font-size:var(--v-fs-b2); color:var(--v-dim); margin-top:10px; }
+  .lib-rep-trend.bad{ color:var(--v-rose); }
   .lib-rep-not{ font-size:var(--v-fs-cap); color:var(--v-faint); margin-top:12px;
     line-height:1.5; }
   /* The replay. A timeline row is a button now, so it has to keep looking like a

@@ -562,6 +562,17 @@ export async function serviceTimeline(id) {
   return guardedRead('serviceTimeline', (call) => call('service_timeline', { id }), []);
 }
 
+/**
+ * Is Relay getting slower week by week?
+ *
+ * The question a single service cannot answer. A church that adds a bigger model,
+ * or whose laptop fills up over a winter, degrades gradually and every individual
+ * Sunday looks fine.
+ */
+export async function perfHistory(metric, limit) {
+  return guardedRead('perfHistory', (call) => call('perf_history', { metric, limit }), []);
+}
+
 /** The latency snapshots kept for one service. Percentiles only, never traces. */
 export async function servicePerf(id) {
   return guardedRead('servicePerf', (call) => call('service_perf', { id }), []);

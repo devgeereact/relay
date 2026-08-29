@@ -392,9 +392,18 @@ pub fn log_perf_sample(
     s: &PerfSample<'_>,
 ) -> rusqlite::Result<()> {
     conn.execute(
-        "INSERT INTO perf_samples (service_id, at_ms, metric, samples, p50_ms, p95_ms, worst_ms)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-        rusqlite::params![service_id, at_ms, s.metric, s.samples, s.p50_ms, s.p95_ms, s.worst_ms],
+        "INSERT INTO perf_samples (service_id, at_ms, metric, samples, p50_ms, p95_ms, p99_ms, worst_ms)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        rusqlite::params![
+            service_id,
+            at_ms,
+            s.metric,
+            s.samples,
+            s.p50_ms,
+            s.p95_ms,
+            s.p99_ms,
+            s.worst_ms
+        ],
     )?;
     Ok(())
 }
@@ -409,6 +418,9 @@ pub struct PerfSample<'a> {
     pub samples: i64,
     pub p50_ms: Option<f64>,
     pub p95_ms: Option<f64>,
+    /// One window in a hundred — roughly one visibly late verse per service, which
+    /// is the thing a congregation notices and a median cannot show.
+    pub p99_ms: Option<f64>,
     pub worst_ms: Option<f64>,
 }
 
@@ -420,12 +432,13 @@ pub struct PerfRow {
     pub samples: i64,
     pub p50_ms: Option<f64>,
     pub p95_ms: Option<f64>,
+    pub p99_ms: Option<f64>,
     pub worst_ms: Option<f64>,
 }
 
 pub fn service_perf(conn: &Connection, service_id: i64) -> rusqlite::Result<Vec<PerfRow>> {
     let mut st = conn.prepare(
-        "SELECT at_ms, metric, samples, p50_ms, p95_ms, worst_ms
+        "SELECT at_ms, metric, samples, p50_ms, p95_ms, p99_ms, worst_ms
            FROM perf_samples WHERE service_id = ?1 ORDER BY at_ms, metric",
     )?;
     let rows = st.query_map([service_id], |r| {
@@ -435,7 +448,56 @@ pub fn service_perf(conn: &Connection, service_id: i64) -> rusqlite::Result<Vec<
             samples: r.get(2)?,
             p50_ms: r.get(3)?,
             p95_ms: r.get(4)?,
-            worst_ms: r.get(5)?,
+            p99_ms: r.get(5)?,
+            worst_ms: r.get(6)?,
+        })
+    })?;
+    rows.collect()
+}
+
+/// One row per SERVICE for a metric — its last snapshot — newest first.
+///
+/// The question a single service cannot answer: **is this getting slower week by
+/// week?** A church that adds a bigger model, or whose laptop fills up over a
+/// winter, degrades gradually, and every individual Sunday looks fine. `latency.rs`
+/// answers "did it grow *during* this service"; this answers "did it grow across
+/// them".
+#[derive(Debug, Clone, Serialize)]
+pub struct PerfTrend {
+    pub service_id: i64,
+    pub date: String,
+    pub samples: i64,
+    pub p50_ms: Option<f64>,
+    pub p95_ms: Option<f64>,
+    pub p99_ms: Option<f64>,
+}
+
+pub fn perf_history(
+    conn: &Connection,
+    metric: &str,
+    limit: i64,
+) -> rusqlite::Result<Vec<PerfTrend>> {
+    // The LAST sample of each service. `latency.rs`'s percentiles are cumulative, so
+    // the final snapshot already covers everything before it — averaging the
+    // snapshots would weight a service's first minute as heavily as its eightieth.
+    let mut st = conn.prepare(
+        "SELECT p.service_id, s.date, p.samples, p.p50_ms, p.p95_ms, p.p99_ms
+           FROM perf_samples p
+           JOIN services s ON s.id = p.service_id
+          WHERE p.metric = ?1
+            AND p.at_ms = (SELECT MAX(at_ms) FROM perf_samples
+                            WHERE service_id = p.service_id AND metric = ?1)
+          ORDER BY p.service_id DESC
+          LIMIT ?2",
+    )?;
+    let rows = st.query_map(rusqlite::params![metric, limit], |r| {
+        Ok(PerfTrend {
+            service_id: r.get(0)?,
+            date: r.get(1)?,
+            samples: r.get(2)?,
+            p50_ms: r.get(3)?,
+            p95_ms: r.get(4)?,
+            p99_ms: r.get(5)?,
         })
     })?;
     rows.collect()
@@ -469,7 +531,20 @@ pub fn ensure_service_events(conn: &Connection) -> rusqlite::Result<()> {
             worst_ms   REAL
          );
          CREATE INDEX IF NOT EXISTS idx_perf_samples ON perf_samples(service_id, at_ms);",
-    )
+    )?;
+    // p99 arrived after the table did. A bare `ALTER TABLE ADD COLUMN` errors with
+    // "duplicate column name" on the second boot and panics the app before the
+    // window is shown (rule 25), so it is sniffed first — the same shape as
+    // `ensure_detection_evidence`.
+    let has_p99: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM pragma_table_info('perf_samples') WHERE name = 'p99_ms'",
+        [],
+        |r| r.get(0),
+    )?;
+    if has_p99 == 0 {
+        conn.execute_batch("ALTER TABLE perf_samples ADD COLUMN p99_ms REAL;")?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -599,6 +674,7 @@ mod timeline_tests {
                 samples: 0,
                 p50_ms: None,
                 p95_ms: None,
+                p99_ms: None,
                 worst_ms: None,
             },
         )
@@ -612,6 +688,7 @@ mod timeline_tests {
                 samples: 50,
                 p50_ms: Some(139.0),
                 p95_ms: Some(339.0),
+                p99_ms: Some(498.0),
                 worst_ms: Some(543.0),
             },
         )
@@ -627,6 +704,112 @@ mod timeline_tests {
             .find(|r| r.metric == "audio_to_partial_transcript")
             .unwrap();
         assert_eq!(reached.p50_ms, Some(139.0));
+    }
+
+    /// THE p99 COLUMN IS ADDED RETRYABLY.
+    ///
+    /// It arrived after the table did, and `ensure_service_events` runs on EVERY
+    /// boot. A bare `ALTER TABLE ADD COLUMN` errors with "duplicate column name" the
+    /// second time and panics the app before the window is shown — rule 25, one
+    /// layer down and for the third time.
+    #[test]
+    fn adding_p99_to_an_existing_table_is_retryable() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE services (id INTEGER PRIMARY KEY, date TEXT NOT NULL, title TEXT NOT NULL);
+             -- the table as it shipped BEFORE p99 existed
+             CREATE TABLE perf_samples (
+                id INTEGER PRIMARY KEY, service_id INTEGER NOT NULL, at_ms REAL NOT NULL,
+                metric TEXT NOT NULL, samples INTEGER NOT NULL,
+                p50_ms REAL, p95_ms REAL, worst_ms REAL);
+             INSERT INTO services (id, date, title) VALUES (1, '2026-08-29', 'Sunday');",
+        )
+        .unwrap();
+        ensure_service_events(&conn).unwrap();
+        ensure_service_events(&conn).unwrap();
+        ensure_service_events(&conn).unwrap();
+
+        // …and the old rows survive, reading p99 as the absence it is.
+        conn.execute(
+            "INSERT INTO perf_samples (service_id, at_ms, metric, samples, p50_ms, p95_ms, worst_ms)
+             VALUES (1, 0.0, 'm', 5, 100.0, 200.0, 300.0)",
+            [],
+        )
+        .unwrap();
+        let rows = service_perf(&conn, 1).unwrap();
+        assert_eq!(rows[0].p50_ms, Some(100.0));
+        assert!(
+            rows[0].p99_ms.is_none(),
+            "a column added later is absent, not zero"
+        );
+    }
+
+    /// THE TREND TAKES ONE ROW PER SERVICE, AND IT IS THE LAST ONE.
+    ///
+    /// The percentiles are cumulative, so a service's final snapshot already covers
+    /// everything before it. Averaging the snapshots would weight the first minute
+    /// of a service as heavily as the eightieth.
+    #[test]
+    fn the_trend_is_one_row_per_service_newest_first() {
+        let conn = db();
+        conn.execute(
+            "INSERT INTO services (id, date, title) VALUES (2, '2026-09-05', 'Next')",
+            [],
+        )
+        .unwrap();
+        let put = |svc: i64, at: f64, p50: f64| {
+            log_perf_sample(
+                &conn,
+                svc,
+                at,
+                &PerfSample {
+                    metric: "audio_to_partial_transcript",
+                    samples: 100,
+                    p50_ms: Some(p50),
+                    p95_ms: Some(p50 * 2.0),
+                    p99_ms: Some(p50 * 3.0),
+                    worst_ms: Some(p50 * 4.0),
+                },
+            )
+            .unwrap();
+        };
+        put(1, 60_000.0, 140.0);
+        put(1, 600_000.0, 152.0); // the one that counts for service 1
+        put(2, 60_000.0, 300.0);
+
+        let t = perf_history(&conn, "audio_to_partial_transcript", 12).unwrap();
+        assert_eq!(t.len(), 2, "one row per service, not one per snapshot");
+        assert_eq!(t[0].service_id, 2, "newest first");
+        assert_eq!(
+            t[1].p50_ms,
+            Some(152.0),
+            "the LAST snapshot of that service"
+        );
+        assert_eq!(t[0].date, "2026-09-05");
+    }
+
+    #[test]
+    fn the_trend_is_per_metric_and_bounded() {
+        let conn = db();
+        log_perf_sample(
+            &conn,
+            1,
+            0.0,
+            &PerfSample {
+                metric: "stt_decode",
+                samples: 10,
+                p50_ms: Some(140.0),
+                p95_ms: None,
+                p99_ms: None,
+                worst_ms: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(perf_history(&conn, "stt_decode", 12).unwrap().len(), 1);
+        assert!(perf_history(&conn, "audio_to_partial_transcript", 12)
+            .unwrap()
+            .is_empty());
+        assert!(perf_history(&conn, "stt_decode", 0).unwrap().is_empty());
     }
 
     /// THE TIMELINE CARRIES NO CONTENT.

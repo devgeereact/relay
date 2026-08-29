@@ -116,6 +116,11 @@ export function latencySummary(perf = []) {
       samples: last.samples,
       p50_ms: last.p50_ms ?? null,
       p95_ms: last.p95_ms ?? null,
+      // One window in a hundred. Over a ninety-minute service that is roughly one
+      // visibly late verse — the thing a congregation notices and a median cannot
+      // show. `null` on a service recorded before p99 existed, which is an absence
+      // and renders as one.
+      p99_ms: last.p99_ms ?? null,
       worst_ms: last.worst_ms ?? null,
       // "Did it get worse over the service?" — a rising line is the finding whatever
       // the median says (DECISIONS §38). Needs two real samples; null otherwise,
@@ -168,4 +173,51 @@ export function replayAt(row, detail = null, perf = [], windowMs = 20_000) {
     : null;
 
   return { row, lines, detection: det, latency: nearest };
+}
+
+/**
+ * WEEK BY WEEK — is it getting slower across services, not within one?
+ *
+ * `latencySummary` answers "did it grow during this service" (DECISIONS §38). This
+ * answers the slower question a church actually lives with: a bigger model added in
+ * March, a laptop that fills up over a winter, a room that got louder. Every
+ * individual Sunday looks fine.
+ *
+ * Rows arrive newest first. Returns `null` — not `false` — with fewer than three
+ * services, because two points are a line through anything and "we have not seen
+ * enough yet" is a different statement from "it is not getting worse".
+ */
+export function weekOnWeek(rows = [], field = 'p50_ms') {
+  const usable = (rows ?? []).filter((r) => r[field] != null);
+  if (usable.length < 3) return null;
+
+  // Compare the most recent against the median of the ones before it. A mean would
+  // let one catastrophic Sunday — a service run on a laptop that was compiling
+  // something — hide a real trend, or invent one.
+  const [latest, ...older] = usable;
+  const values = older.map((r) => r[field]).sort((a, b) => a - b);
+  const mid = values.length % 2
+    ? values[(values.length - 1) / 2]
+    : (values[values.length / 2 - 1] + values[values.length / 2]) / 2;
+
+  return {
+    latest: latest[field],
+    typical: mid,
+    services: usable.length,
+    // A quarter slower than usual is the point at which an operator would notice,
+    // and it is the same threshold `latency.js` uses for drift within a service —
+    // one number, two places, deliberately.
+    slower: latest[field] > mid * 1.25,
+    faster: latest[field] < mid * 0.8,
+  };
+}
+
+/** One sentence about the trend, or '' when there is not enough to say. */
+export function describeTrend(t, metricLabel = 'the transcript') {
+  if (!t) return '';
+  const pct = Math.round(Math.abs(t.latest - t.typical) / t.typical * 100);
+  if (t.slower)
+    return `${metricLabel} was about ${pct}% slower this time than the last ${t.services - 1} services.`;
+  if (t.faster) return `${metricLabel} was about ${pct}% faster this time than usual.`;
+  return `${metricLabel} was about the same as the last ${t.services - 1} services.`;
 }

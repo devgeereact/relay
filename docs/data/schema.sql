@@ -244,6 +244,9 @@ CREATE TABLE perf_samples (
     samples    INTEGER NOT NULL,
     p50_ms     REAL,                      -- null = the stage was never reached
     p95_ms     REAL,
+    -- One window in a hundred: roughly one visibly late verse per service, which is
+    -- what a congregation notices and a median cannot show.
+    p99_ms     REAL,
     worst_ms   REAL
 );
 CREATE INDEX idx_perf_samples ON perf_samples(service_id, at_ms);

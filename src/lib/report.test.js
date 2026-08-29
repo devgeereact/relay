@@ -12,7 +12,14 @@
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
-import { sundayReport, latencySummary, replayAt, fmtMs } from './report.js';
+import {
+  sundayReport,
+  latencySummary,
+  replayAt,
+  fmtMs,
+  weekOnWeek,
+  describeTrend,
+} from './report.js';
 
 const ROOT = path.resolve(__dirname, '../..');
 const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
@@ -221,5 +228,74 @@ describe('what the History screen may claim', () => {
   it('a timeline row is a real button, so it is reachable by keyboard', () => {
     expect(view).toMatch(/<button[\s\S]{0,200}class="lib-tl-row"/);
     expect(view).toMatch(/aria-expanded=\{replayIdx === i\}/);
+  });
+});
+
+// ── RG-14 · p99, and the week-by-week question ──────────────────────────────
+describe('p99 and the trend across services', () => {
+  it('carries p99 through the whole-service summary', () => {
+    // One window in a hundred. Over a ninety-minute service that is roughly one
+    // visibly late verse — what a congregation notices and a median cannot show.
+    const perf = [
+      { at_ms: 600_000, metric: 'm', samples: 900, p50_ms: 152, p95_ms: 360, p99_ms: 610, worst_ms: 740 },
+    ];
+    expect(latencySummary(perf)[0].p99_ms).toBe(610);
+  });
+
+  it('a service recorded before p99 existed reports an absence, not a zero', () => {
+    // The column was added later. Old rows read null, and null renders "—".
+    const perf = [{ at_ms: 1, metric: 'm', samples: 10, p50_ms: 140, p95_ms: 300, worst_ms: 400 }];
+    expect(latencySummary(perf)[0].p99_ms).toBeNull();
+  });
+
+  it('says nothing at all with fewer than three services', () => {
+    // Two points are a line through anything, and "we have not seen enough yet" is
+    // a different statement from "it is not getting worse".
+    expect(weekOnWeek([])).toBeNull();
+    expect(weekOnWeek([{ p50_ms: 140 }, { p50_ms: 900 }])).toBeNull();
+    expect(describeTrend(null)).toBe('');
+  });
+
+  it('compares the latest against the MEDIAN of the rest, not the mean', () => {
+    // One catastrophic Sunday — a laptop that was compiling something — would
+    // otherwise either hide a real trend or invent one.
+    const rows = [
+      { p50_ms: 150 }, // latest
+      { p50_ms: 140 },
+      { p50_ms: 145 },
+      { p50_ms: 4000 }, // the outlier a mean would follow
+    ];
+    const t = weekOnWeek(rows);
+    expect(t.typical).toBe(145);
+    expect(t.slower).toBe(false);
+  });
+
+  it('flags a real slowdown, and says how much in a sentence', () => {
+    const t = weekOnWeek([{ p50_ms: 400 }, { p50_ms: 150 }, { p50_ms: 140 }, { p50_ms: 160 }]);
+    expect(t.slower).toBe(true);
+    expect(describeTrend(t, 'The transcript')).toMatch(/slower this time than the last 3 services/);
+  });
+
+  it('says "about the same" rather than inventing a direction', () => {
+    const t = weekOnWeek([{ p50_ms: 148 }, { p50_ms: 150 }, { p50_ms: 145 }, { p50_ms: 152 }]);
+    expect(t.slower).toBe(false);
+    expect(t.faster).toBe(false);
+    expect(describeTrend(t)).toMatch(/about the same/);
+  });
+
+  it('ignores services with no measurement for that metric', () => {
+    const t = weekOnWeek([{ p50_ms: 150 }, { p50_ms: null }, { p50_ms: 140 }, { p50_ms: 145 }]);
+    expect(t.services).toBe(3);
+  });
+});
+
+describe('the live Diagnostics screen obeys the same rule', () => {
+  it('prints an unreached stage as "—", not as 0ms', () => {
+    // `?? 0` used to be there, which rendered a stage that never ran as the fastest
+    // number on the screen — on the one surface a field tester reads.
+    const view = read('src/lib/views/Settings.svelte');
+    expect(view).toMatch(/const msOrDash = \(v\) =>[\s\S]{0,80}'—'/);
+    expect(view).not.toMatch(/Math\.round\(m\.p50_ms \?\? 0\)/);
+    expect(view).toMatch(/msOrDash\(m\.p99_ms\)/);
   });
 });
