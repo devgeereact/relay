@@ -380,6 +380,8 @@ fn main() {
             set_crash_reporting,
             list_models,
             download_model,
+            find_model_files,
+            install_model_file,
             cancel_model_download,
             load_stt_model,
             select_stt_model,
@@ -4105,6 +4107,34 @@ async fn download_model(app: tauri::AppHandle, id: String) -> error::Result<()> 
     app.state::<servicelock::ServiceLock>()
         .guard("download_model")?;
     models::download(app, id).await.map_err(Into::into)
+}
+
+/// Install a speech model from a file this machine already has.
+///
+/// The half of offline installation that was missing: everything else a church
+/// needs already works without a network — the app is an installer, the KJV is
+/// compiled in — and the 148 MB model could only ever arrive over a connection they
+/// do not have.
+///
+/// Held back during a service like every other model change (§40): copying 148 MB
+/// and reloading whisper is exactly as disruptive from a USB stick as from the
+/// internet.
+#[tauri::command]
+fn install_model_file(
+    lock: tauri::State<'_, servicelock::ServiceLock>,
+    path: String,
+) -> error::Result<String> {
+    lock.guard("install_model_file")?;
+    models::install_from_file(std::path::Path::new(&path)).map_err(error::Error::refused)
+}
+
+/// Model files already sitting on this machine, waiting to be installed.
+///
+/// Read-only and cheap: three folders, no recursion, size as a pre-filter before
+/// anything is hashed.
+#[tauri::command]
+fn find_model_files() -> Vec<models::FoundModel> {
+    models::scan_for_models()
 }
 
 /// Cancel an in-flight model download.

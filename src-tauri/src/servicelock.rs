@@ -124,6 +124,10 @@ pub const PROTECTED: &[(&str, &str)] = &[
     ("download_model", "downloading a speech model"),
     ("select_stt_model", "changing the speech model"),
     ("load_stt_model", "reloading the speech model"),
+    (
+        "install_model_file",
+        "installing a speech model from a file",
+    ),
     ("set_active_translation", "changing the Bible translation"),
     ("import_song", "importing songs"),
     ("import_pro", "importing from ProPresenter"),

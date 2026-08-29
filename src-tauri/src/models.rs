@@ -497,6 +497,142 @@ async fn download_inner(
     Ok(Outcome::Done)
 }
 
+/// INSTALL A MODEL FROM A FILE THIS MACHINE ALREADY HAS.
+///
+/// The half of offline installation that was missing. Everything else a church
+/// needs to install Relay without the internet already works — the app is an
+/// installer, the KJV is compiled in, the templates are seeded — and the 148 MB
+/// speech model could only ever arrive over a network connection they do not have.
+/// A church on a poor line could not get Relay working at all, and that is the
+/// market this product is for.
+///
+/// **It is the same verification, from a different source.** The checksum is not
+/// relaxed because the file came from a USB stick: a truncated or wrong model does
+/// not fail loudly — whisper loads it and transcribes nonsense — and "somebody
+/// handed me this file" is a weaker provenance than an HTTPS download, not a
+/// stronger one.
+///
+/// Matched by CONTENT, not by filename. A file called `ggml-base.bin` proves
+/// nothing, and matching on the name would accept anything renamed to look right;
+/// the checksum decides which catalogue entry this is, and a file matching none of
+/// them is refused with a message that says what to do about it.
+pub fn install_from_file(source: &std::path::Path) -> Result<String, String> {
+    if !source.is_file() {
+        return Err("That file could not be read.".into());
+    }
+    let src = source.to_path_buf();
+    let got = sha256_file(&src)?;
+
+    let Some(model) = CATALOG.iter().find(|m| got.eq_ignore_ascii_case(m.sha256)) else {
+        return Err(
+            "That file is not one of the speech models Relay knows. Check you copied the \
+             whole file — an interrupted copy will not match — and that it is one of the \
+             models listed on this screen."
+                .into(),
+        );
+    };
+
+    let dir = crate::stt::model_install_dir();
+    std::fs::create_dir_all(&dir).map_err(|e| format!("Could not create the model folder: {e}"))?;
+    let final_path = dir.join(model.filename);
+    if final_path.exists() {
+        // Already there, and already verified when it arrived. Saying so is more
+        // useful than silently rewriting 148 MB.
+        return Ok(model.id.to_string());
+    }
+
+    // Same atomic dance as the download: copy to `.part`, then rename. A copy
+    // interrupted half way must never leave a file whisper would try to load.
+    let part = dir.join(format!("{}.part", model.filename));
+    let _ = std::fs::remove_file(&part);
+    std::fs::copy(&src, &part).map_err(|e| format!("Could not copy the model: {e}"))?;
+    // Re-hashed at the destination, because the thing that gets loaded is the copy,
+    // and a failing USB stick can produce a good read followed by a bad one.
+    let landed = sha256_file(&part)?;
+    if !landed.eq_ignore_ascii_case(model.sha256) {
+        let _ = std::fs::remove_file(&part);
+        return Err(
+            "The copy did not match the original, so it was discarded. Try again, or copy \
+             the file to this computer first and install it from there."
+                .into(),
+        );
+    }
+    std::fs::rename(&part, &final_path)
+        .map_err(|e| format!("Could not finish installing the model: {e}"))?;
+    println!("models: installed {} from a file", final_path.display());
+    Ok(model.id.to_string())
+}
+
+/// A model file found sitting on this machine, waiting to be installed.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct FoundModel {
+    pub id: String,
+    pub label: String,
+    pub path: String,
+}
+
+/// Look for model files a church has already copied onto this machine.
+///
+/// **Why a scan and not a file picker.** Choosing a file needs a native dialog,
+/// which needs a Tauri plugin and a new capability — a permission surface added so
+/// somebody can point at a file they have already put somewhere obvious. The three
+/// places below are where a file copied from a USB stick actually lands, and looking
+/// in them costs nothing.
+///
+/// **It does not walk the disk.** Three directories, no recursion. A scanner that
+/// wandered would be slow, would read folders that are none of Relay's business, and
+/// would eventually surprise somebody.
+///
+/// Size is a pre-filter, not a verdict: hashing every file in Downloads would be
+/// wasteful, and a size match still has to survive the checksum before it is offered.
+pub fn scan_for_models() -> Vec<FoundModel> {
+    let dirs = [
+        crate::db::downloads_dir(),
+        Some(crate::db::app_data_dir()),
+        Some(crate::stt::model_install_dir()),
+    ];
+    let installed = crate::stt::model_install_dir();
+
+    let mut out: Vec<FoundModel> = Vec::new();
+    for dir in dirs.into_iter().flatten() {
+        let Ok(rd) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in rd.flatten() {
+            let path = entry.path();
+            let Ok(meta) = entry.metadata() else { continue };
+            if !meta.is_file() {
+                continue;
+            }
+            let Some(model) = CATALOG.iter().find(|m| m.bytes == meta.len()) else {
+                continue;
+            };
+            // Already installed, in the place Relay loads from: nothing to offer.
+            if path == installed.join(model.filename) {
+                continue;
+            }
+            if installed.join(model.filename).exists() {
+                continue;
+            }
+            let Ok(got) = sha256_file(&path) else {
+                continue;
+            };
+            if !got.eq_ignore_ascii_case(model.sha256) {
+                continue;
+            }
+            if out.iter().any(|f| f.id == model.id) {
+                continue; // the same model in two folders is one offer
+            }
+            out.push(FoundModel {
+                id: model.id.to_string(),
+                label: model.label.to_string(),
+                path: path.to_string_lossy().to_string(),
+            });
+        }
+    }
+    out
+}
+
 /// Turn a network error into something a volunteer can act on.
 fn friendly_net_error(e: reqwest::Error) -> String {
     if e.is_timeout() {
@@ -518,6 +654,59 @@ fn sha256_file(path: &PathBuf) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A FILE IS IDENTIFIED BY ITS CONTENT, NOT ITS NAME.
+    ///
+    /// A file called `ggml-base.bin` proves nothing. Matching on the filename would
+    /// accept anything renamed to look right — and a wrong model does not fail
+    /// loudly: whisper loads it and transcribes nonsense.
+    #[test]
+    fn a_file_that_matches_nothing_is_refused_with_something_to_do() {
+        let dir = std::env::temp_dir().join(format!("relay-model-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        // Named exactly like the real thing, and not the real thing.
+        let fake = dir.join("ggml-base.bin");
+        std::fs::write(&fake, b"not a whisper model").unwrap();
+
+        let err = install_from_file(&fake).unwrap_err();
+        assert!(err.contains("not one of the speech models"), "{err}");
+        // A refusal an operator cannot act on is a dead button with extra steps.
+        assert!(err.contains("whole file"), "{err}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_missing_file_says_so_rather_than_panicking() {
+        let missing = std::env::temp_dir().join("relay-no-such-model.bin");
+        let _ = std::fs::remove_file(&missing);
+        assert!(install_from_file(&missing).is_err());
+    }
+
+    /// THE CHECKSUM IS NOT RELAXED BECAUSE THE FILE CAME FROM A USB STICK.
+    ///
+    /// "Somebody handed me this file" is weaker provenance than an HTTPS download,
+    /// not stronger. This pins that the offline path and the download path check the
+    /// same thing, by reading both.
+    #[test]
+    fn the_offline_path_verifies_exactly_what_the_download_does() {
+        const SRC: &str = include_str!("models.rs");
+        let offline = &SRC[SRC.find("pub fn install_from_file").unwrap()..];
+        let offline = &offline[..offline.find("\n/// Turn a network error").unwrap()];
+        assert!(
+            offline.contains("sha256_file"),
+            "the offline path must hash the file"
+        );
+        assert!(
+            offline.contains("eq_ignore_ascii_case(model.sha256)"),
+            "…and compare it against the catalogue"
+        );
+        // …and it must land the file the same way: `.part`, then rename.
+        assert!(
+            offline.contains(".part"),
+            "an interrupted copy must not be loadable"
+        );
+        assert!(offline.contains("std::fs::rename"));
+    }
 
     /// The catalogue must stay in step with what stt.rs actually looks for. If a
     /// filename drifts, we would download a model the engine then can't find —

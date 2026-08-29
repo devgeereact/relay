@@ -2147,3 +2147,58 @@ morning starts with screens that never light up.
 One more thing it teaches deliberately: **dismissing a suggestion is not a failure.**
 A volunteer who believes it is will accept suggestions they do not want, and that is
 worse for a congregation than a blank screen.
+
+## 53. Offline installation is one missing file, and language packs are not that (2026-08-30)
+
+Almost all of Relay already installs with no internet: the app is a single installer,
+the whole KJV is compiled into the binary, the templates and channels are seeded on
+first launch. **One thing was not, and it is 148 MB** — the speech model could only
+ever arrive over a connection the church does not have. For the market this product is
+for, that is not an edge case; it is a reason a church cannot use Relay at all.
+
+So Relay now installs a model from a file the machine already has, and
+`scripts/offline-bundle.mjs` assembles installers + model + a plain-language README
+onto a USB stick.
+
+Three things about how:
+
+**The checksum is not relaxed because the file came from a USB stick.** *"Somebody
+handed me this file"* is weaker provenance than an HTTPS download, not stronger — and
+a truncated model does not fail loudly: whisper loads it and transcribes nonsense. The
+file is matched **by content, not by filename**; a file called `ggml-base.bin` proves
+nothing, and matching on the name would accept anything renamed to look right.
+
+**A scan of three folders, not a file picker.** A native dialog needs a Tauri plugin
+and a new capability — a permission surface added so somebody can point at a file they
+have already put somewhere obvious. Downloads, the app-data folder and the model
+folder are where a file copied from a stick actually lands. No recursion: a scanner
+that wandered would be slow, would read folders that are none of Relay's business, and
+would eventually surprise somebody.
+
+**The bundle script refuses rather than warns.** A church cannot check a checksum and
+will not suspect the file, so a mismatch stops the build.
+
+### Signed language packs are NOT shipped, and this is the reason
+
+The register paired them with the offline installer, and they are a genuinely good
+idea: a Yorùbá speaker should be able to improve the book aliases without a pull
+request, and today the only route is a PR that a maintainer who does not speak the
+language merges on trust.
+
+**But an unsigned pack that can override the alias table is a wrong-scripture-on-a-wall
+vector**, and the word doing the work in "signed language packs" is *signed*. Signing
+needs a key, a ceremony for holding it, and a distribution channel — none of which
+exist. Relay has exactly one signing key today, the updater's minisign key, and reusing
+it would mean every language contribution passing through the same release process it
+was meant to avoid.
+
+The alternative — accept a pack the operator explicitly chose, the way an imported
+template is accepted — is not equivalent. A malicious template can be ugly or blank
+(and is sanitised at the boundary for exactly that reason, §29); a malicious or merely
+careless alias table puts **the wrong verse in front of a congregation**, silently and
+repeatedly, and the operator has no way to check 66 names in a language they may not
+read.
+
+So: **not built, and recorded as not built.** What it needs first is the thing §47
+already names — a native speaker who has actually reviewed the tables — because until
+one has, a pack format would be a distribution mechanism for unreviewed data.

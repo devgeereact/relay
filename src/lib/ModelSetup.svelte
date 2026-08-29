@@ -15,6 +15,8 @@
     modelProgress,
     modelError,
     capture,
+    findModelFiles,
+    installModelFile,
   } from './stores/capture.js';
 
   export let compact = false; // banner form (Console) vs full card (Settings)
@@ -22,9 +24,36 @@
   let models = [];
   let busy = false;
 
+  // ── OFFLINE (RG-19) ───────────────────────────────────────────────────────
+  //
+  // Everything else a church needs works without a network — the app is an
+  // installer, the KJV is compiled in, the templates are seeded — and the 148 MB
+  // speech model could only ever arrive over a connection they do not have. So
+  // Relay looks for one already on the machine: Downloads, its own data folder, and
+  // the model folder. Three directories, no recursion, and a size check before
+  // anything is hashed.
+  let found = [];
+  let installMsg = '';
+
   onMount(refresh);
   async function refresh() {
     models = await listModels();
+    found = await findModelFiles();
+  }
+
+  async function installFound(f) {
+    busy = true;
+    installMsg = '';
+    try {
+      await installModelFile(f.path);
+      installMsg = `Installed ${f.label}.`;
+    } catch (e) {
+      // The refusal is already written for a volunteer by `install_from_file` —
+      // "check you copied the whole file" — so it is shown as it is.
+      installMsg = e?.message ?? String(e);
+    }
+    await refresh();
+    busy = false;
   }
 
   async function get(id) {
@@ -146,6 +175,26 @@
     {/each}
   {/if}
 
+  <!-- ALREADY ON THIS MACHINE. Shown only when there is something to offer, so a
+       church with a working connection never sees it — and the one without a
+       connection finds it exactly when they need it. -->
+  {#if found.length}
+    <div class="ms-found">
+      <div class="r-lbl">Found on this computer</div>
+      <p class="ms-foundnote">
+        No internet needed. Relay checked the file against the one it expects, so this
+        is the same model it would have downloaded.
+      </p>
+      {#each found as f (f.id)}
+        <div class="ms-foundrow">
+          <span class="ms-foundname"><b>{f.label}</b><span class="r-mono">{f.path}</span></span>
+          <button class="r-btn sm" disabled={busy} on:click={() => installFound(f)}>Install</button>
+        </div>
+      {/each}
+    </div>
+  {/if}
+  {#if installMsg}<p class="ms-foundnote" role="status">{installMsg}</p>{/if}
+
   {#if $modelError}
     <!-- Dismissable. It used to have no way out, so a stale failure (or, before the
          fix, the operator's own Cancel) sat in a red box until the component
@@ -158,6 +207,34 @@
 </div>
 
 <style>
+  .ms-found { margin-top: 14px; }
+  .ms-foundnote {
+    font-size: var(--v-fs-cap);
+    color: var(--v-dim);
+    line-height: 1.45;
+    margin: 6px 0 8px;
+  }
+  .ms-foundrow {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 0;
+    border-top: 1px solid var(--v-line2);
+  }
+  .ms-foundname {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .ms-foundname span {
+    font-size: 10px;
+    color: var(--v-faint);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
   .ms {
     background: var(--v-accent-soft);
     border: 1px solid var(--v-accent-line);
