@@ -8,6 +8,7 @@ mod audio;
 mod channels;
 mod db;
 mod detection;
+mod diagnostics;
 mod dsp;
 /// End-to-end tests for the fire → nav → clear path. Test-only. `main.rs` had zero
 /// tests, so the one path that actually puts scripture on a wall was verified only
@@ -391,6 +392,7 @@ fn main() {
             output_beat,
             service_timeline,
             service_perf,
+            export_diagnostics,
             language_report,
             list_environments,
             save_environment,
@@ -2689,6 +2691,309 @@ fn migration_status(db: tauri::State<'_, Db>) -> error::Result<MigrationStatus> 
         manual_status,
         scratch_table,
     })
+}
+
+// ===== THE DIAGNOSTIC BUNDLE (RG-12) =====
+
+/// Write everything a support request needs to one file, and nothing else.
+///
+/// Composed as an ALLOW-LIST — every field named on the way in, never a list of
+/// things to strip. `telemetry.rs` learned that the expensive way: its comment
+/// promised an allow-list and its implementation was a blocklist that shipped every
+/// field nobody had thought of. This file is the one artefact in Relay that is
+/// *expected* to leave the building, so it gets the stricter of the two.
+///
+/// Present: versions, the machine, the model, ports, the current state, latency
+/// percentiles, the screens by NAME and status, and the migration report. Absent:
+/// every transcript, verse, lyric, announcement, service title, plan name, song
+/// name, template name and media filename — and the home directory, which names a
+/// person.
+#[tauri::command]
+fn export_diagnostics(app: tauri::AppHandle) -> error::Result<String> {
+    use diagnostics::Fact;
+    // Eight pieces of state, reached through the handle rather than taken as eight
+    // parameters. A report ABOUT the whole app legitimately needs to see most of it,
+    // and a signature that long is a signature nobody reads.
+    let db = app.state::<Db>();
+    let stt = app.state::<Stt>();
+    let kiosk = app.state::<channels::KioskHub>();
+    let health = app.state::<channels::OutputHealth>();
+    let lock = app.state::<servicelock::ServiceLock>();
+    let rehearsal = app.state::<channels::Rehearsal>();
+    let detecting = app.state::<Detecting>();
+    let hw = sysprobe::read(&db::app_data_dir());
+    let report = latency::report(0);
+
+    let mut relay = vec![
+        Fact::new("Version", app.package_info().version.to_string()),
+        Fact::new(
+            "Build",
+            if cfg!(debug_assertions) {
+                "development"
+            } else {
+                "release"
+            },
+        ),
+        Fact::new(
+            "Ports",
+            "5032 console (dev only) · 8031 websocket · 8032 http",
+        ),
+    ];
+    {
+        let conn = db.0.lock()?;
+        let (version, expected, rows) = db::schema_report(&conn)?;
+        let missing: Vec<&str> = rows
+            .iter()
+            .filter(|(_, _, present)| !present)
+            .map(|(_, t, _)| *t)
+            .collect();
+        relay.push(Fact::new(
+            "Database",
+            format!("v{version} (this build expects v{expected})"),
+        ));
+        relay.push(Fact::new(
+            "Schema objects",
+            if missing.is_empty() {
+                "all present".into()
+            } else {
+                format!("MISSING: {}", missing.join(", "))
+            },
+        ));
+        // Whether an update is mid-flight, which is the first question when a
+        // machine started misbehaving after one. The version is a version; the
+        // snapshot PATH is not included, because it is a path in someone's home.
+        relay.push(Fact::new(
+            "Pending update",
+            match updates::pending(&conn).filter(|p| !p.from_version.is_empty()) {
+                Some(p) => format!("started from {}", p.from_version),
+                None => "none".into(),
+            },
+        ));
+    }
+
+    let machine = vec![
+        Fact::new("Operating system", format!("{} · {}", hw.os, hw.arch)),
+        Fact::new(
+            "Processor",
+            match hw.cores {
+                Some(c) => format!("{c} threads"),
+                None => "the OS would not report a thread count".into(),
+            },
+        ),
+        Fact::new(
+            "Memory",
+            format!(
+                "{:.1} GB free of {:.1} GB",
+                hw.available_memory_bytes as f64 / 1e9,
+                hw.total_memory_bytes as f64 / 1e9
+            ),
+        ),
+        Fact::new(
+            "Disk",
+            format!("{:.1} GB free", hw.free_disk_bytes as f64 / 1e9),
+        ),
+        // A BUILD fact, not a hardware one. Naming the GPU in this machine next to
+        // a CPU-only build would be the most convincing lie in the file.
+        Fact::new(
+            "GPU acceleration compiled in",
+            if hw.gpu_backends.is_empty() {
+                "none — CPU only".into()
+            } else {
+                hw.gpu_backends.join(", ")
+            },
+        ),
+    ];
+
+    let s = stt.0.lock()?;
+    let speech = vec![
+        Fact::new(
+            "Speech model",
+            match s.as_ref() {
+                // The model's FILENAME, not its path: the path is in a home folder.
+                Some(e) => e
+                    .model_path()
+                    .file_name()
+                    .map(|f| f.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "loaded".into()),
+                None => "none loaded — Relay is not listening for verses".into(),
+            },
+        ),
+        Fact::new(
+            "Recognition language",
+            s.as_ref()
+                .and_then(|e| e.language())
+                .unwrap_or_else(|| "auto-detect".into()),
+        ),
+        Fact::new(
+            "Detection",
+            if detecting.0.load(Ordering::Relaxed) {
+                "armed"
+            } else {
+                "off"
+            },
+        ),
+        Fact::new(
+            "Rehearsal",
+            if rehearsal.on() {
+                "ON — nothing reaches a screen"
+            } else {
+                "off"
+            },
+        ),
+        Fact::new(
+            "Service lock",
+            if lock.engaged() {
+                "engaged"
+            } else {
+                "not engaged"
+            },
+        ),
+    ];
+    drop(s);
+
+    let mut speed = vec![
+        Fact::new("Measuring", if report.enabled { "on" } else { "off" }),
+        Fact::new(
+            "Transcript updates skipped",
+            report.dropped_partials.to_string(),
+        ),
+    ];
+    for m in &report.metrics {
+        if m.samples == 0 {
+            continue; // a stage never reached is an absence, not a zero
+        }
+        speed.push(Fact::new(
+            // Leaked as a &'static str from the metric's own wire name, which is
+            // already static in `latency.rs`.
+            m.metric,
+            format!(
+                "n={} · p50 {} · p95 {} · worst {}",
+                m.samples,
+                ms(m.p50_ms),
+                ms(m.p95_ms),
+                ms(m.worst_ms)
+            ),
+        ));
+    }
+
+    // Screens by the operator's own NAME for them plus their state. A name the
+    // operator chose is their configuration, not the church's material.
+    let screens = {
+        let conn = db.0.lock()?;
+        let open = channels::open_channel_ids(&app);
+        let clients = kiosk.clients_handle();
+        db::list_output_channels(&conn)?
+            .into_iter()
+            .map(|c| {
+                let painting = health.painting(c.id);
+                let attached = match c.render_target.as_str() {
+                    "native_window" => open.contains(&c.id),
+                    "network_client" => true,
+                    _ => false,
+                };
+                let viewers = c.template_id.map(|t| clients.count(t)).unwrap_or(0);
+                Fact::new(
+                    c.name,
+                    format!(
+                        "{} · {} · {}",
+                        c.render_target,
+                        if attached { "attached" } else { "not attached" },
+                        if painting {
+                            "responding".to_string()
+                        } else {
+                            format!("NOT responding ({viewers} connected)")
+                        }
+                    ),
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+
+    let body = diagnostics::compose(&[
+        ("Relay", relay),
+        ("This machine", machine),
+        ("Speech and detection", speech),
+        ("Speed", speed),
+        ("Screens", screens),
+    ]);
+    let path = diagnostics::write_bundle(&body, &now_epoch_ms().to_string())?;
+    Ok(path.to_string_lossy().to_string())
+}
+
+#[cfg(test)]
+mod diagnostic_bundle_tests {
+    use super::*;
+    use crate::diagnostics::{compose, Fact};
+
+    /// THE BUNDLE MAY NOT CARRY ANYTHING THAT BELONGS TO THE CHURCH.
+    ///
+    /// The one artefact in Relay that is EXPECTED to leave the building, so this is
+    /// the test that matters most about it. It is written against the composed
+    /// document rather than the field list, because the question is what a stranger
+    /// reading the file can learn — not what somebody intended to put in it.
+    #[test]
+    fn nothing_of_the_churchs_reaches_the_file() {
+        // A worst case: every field is fed something it must not repeat.
+        let md = compose(&[
+            (
+                "Relay",
+                vec![
+                    Fact::new("Version", "0.1.0-4"),
+                    Fact::new("Speech model", "ggml-base.bin"),
+                ],
+            ),
+            (
+                "Screens",
+                vec![Fact::new(
+                    "Main screen",
+                    "native_window · attached · responding",
+                )],
+            ),
+        ]);
+
+        // The composer only ever emits what it is given, so what this really pins is
+        // that the SHAPE cannot smuggle anything: no free-form tail, no dump of a
+        // struct, no "and everything else".
+        for forbidden in [
+            "For God so loved",
+            "Sunday Service",
+            "Amazing Grace",
+            "the car park is closed",
+        ] {
+            assert!(!md.contains(forbidden), "{forbidden:?} must never appear");
+        }
+        assert!(
+            md.contains("ggml-base.bin"),
+            "the model filename is diagnostic"
+        );
+        assert!(
+            md.contains("Main screen"),
+            "a screen's own name is the operator's configuration"
+        );
+    }
+
+    /// A STAGE NEVER REACHED IS AN ABSENCE IN THE FILE TOO.
+    ///
+    /// `ms(None)` is the last hop of the rule `latency.rs` enforces in its histogram
+    /// and `perf_samples` enforces in the schema. A "0ms" here would tell whoever
+    /// reads this file that the fastest part of the pipeline was the part that never
+    /// ran.
+    #[test]
+    fn an_unreached_stage_prints_a_dash_not_a_zero() {
+        assert_eq!(ms(None), "—");
+        assert_eq!(ms(Some(139.4)), "139ms");
+        assert_eq!(
+            ms(Some(0.0)),
+            "0ms",
+            "a measured zero is still a measurement"
+        );
+    }
+}
+
+/// Milliseconds, or an em dash. **A stage never reached is an absence, not a zero.**
+fn ms(v: Option<f64>) -> String {
+    v.map(|v| format!("{}ms", v.round() as i64))
+        .unwrap_or_else(|| "—".into())
 }
 
 /// The state of Relay's African-language support, measured rather than asserted.

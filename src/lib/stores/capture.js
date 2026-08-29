@@ -568,6 +568,17 @@ export async function servicePerf(id) {
 }
 
 /**
+ * Write the diagnostic bundle and return where it landed. GROUP 1 — THROWS.
+ *
+ * An export that silently failed would leave an operator hunting a Downloads folder
+ * for a file that was never written, while a support conversation waits on it.
+ */
+export async function exportDiagnostics() {
+  const call = await invoke();
+  return call('export_diagnostics');
+}
+
+/**
  * The state of Relay's African-language support, measured from the shipped data.
  *
  * Read-only, so it swallows: a language report that could take Settings down would

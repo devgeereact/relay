@@ -37,7 +37,7 @@
       (Object.keys(CATALOGUES[code] ?? {}).filter((k) => !k.startsWith('_')).length / TOTAL) * 100,
     );
   import { capture, meter, templates, initAudio, startCapture, stopCapture, setThresholds, setSttLanguage, setInputDevice, listTranslations, getActiveTranslation, setActiveTranslation, localIp, loadTemplates, getContentTemplates, setContentTemplate, getCrashReporting, setCrashReporting, serviceTargetMinutes, loadServiceTarget, setServiceTarget, latencyReport, latencyReset, latencySetEnabled, serviceLock, loadServiceLock, setServiceLock, rooms, loadRooms, saveRoom, useRoom, deleteRoom,
-    listOutputChannels, setChannelDisplay, activeVoiceProfile, languageReport } from '../stores/capture.js';
+    listOutputChannels, setChannelDisplay, activeVoiceProfile, languageReport, exportDiagnostics } from '../stores/capture.js';
   import { captureRoom, observedNote, applyRoom, describeApply } from '../rooms.js';
   import { snapshotPath, KEEP_SNAPSHOTS } from '../updater.js';
   import { diagnose, drift } from '../latency.js';
@@ -240,6 +240,22 @@
   let roomMsg = '';
   let roomBusy = false;
   onMount(loadRooms);
+
+  // The diagnostic bundle. Says where the file went, because "saved" with no path
+  // sends an operator hunting through a Downloads folder.
+  let diagBusy = false;
+  let diagMsg = '';
+  async function doExportDiagnostics() {
+    diagBusy = true;
+    diagMsg = '';
+    try {
+      const path = await exportDiagnostics();
+      diagMsg = `Saved to ${path}. It contains no transcript, verse text, lyric or service name — you can read it before you send it.`;
+    } catch (e) {
+      diagMsg = humanError(e);
+    }
+    diagBusy = false;
+  }
 
   // ── LANGUAGES ─────────────────────────────────────────────────────────────
   //
@@ -1246,7 +1262,15 @@
         {/if}
 
       {:else if section === 'diagnostics'}
-        <p class="s-lead">The facts a support request needs, in one place. Nothing here leaves this machine.</p>
+        <p class="s-lead">The facts a support request needs, in one place. Nothing here leaves this machine unless you send it.</p>
+        <!-- A FILE, NOT A SCREEN. This table has shown the right facts for a while
+             and been useless for the job it exists for: nobody can email a screen.
+             What actually happens is somebody photographs it, losing half the table
+             and all of the latency history. -->
+        <button class="r-btn ghost sm" on:click={doExportDiagnostics} disabled={diagBusy}>
+          {diagBusy ? 'Writing…' : 'Save a diagnostic file'}
+        </button>
+        {#if diagMsg}<p class="s-note" role="status">{diagMsg}</p>{/if}
         <div class="s-cardbox">
           <div class="s-netrow"><span class="s-netk">Backend</span><span class="s-netv r-mono">{$capture.available ? 'connected' : 'not connected'}</span></div>
           <div class="s-netrow"><span class="s-netk">Speech model</span><span class="s-netv r-mono">{$capture.stt.loaded ? ($capture.stt.model || 'loaded') : 'not loaded'}</span></div>

@@ -5355,15 +5355,16 @@ pub fn language_report() -> Vec<LanguageReport> {
         // nothing can be said about a file that would not parse.
         return Vec::new();
     };
-    let numerals: serde_json::Value =
-        serde_json::from_str(NUM).unwrap_or(serde_json::Value::Null);
+    let numerals: serde_json::Value = serde_json::from_str(NUM).unwrap_or(serde_json::Value::Null);
 
     let mut out = Vec::new();
     for (lang, books) in doc.as_object().into_iter().flatten() {
         if lang.starts_with('_') {
             continue;
         }
-        let Some(books) = books.as_object() else { continue };
+        let Some(books) = books.as_object() else {
+            continue;
+        };
 
         let mut with_alias = 0usize;
         let mut aliases = 0usize;

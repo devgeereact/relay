@@ -536,6 +536,35 @@ fn app_data_root(os: &str, env: impl Fn(&str) -> Option<String>) -> PathBuf {
     }
 }
 
+/// This user's home directory, for REDACTING it — never for building a path.
+///
+/// The diagnostic bundle is written to be sent, and
+/// `/Users/ada/Library/Application Support/…` names a person. Something has to know
+/// the string in order to replace it with `~`, and `path_rule` is right that the
+/// something must be this module: every other caller that reached for `HOME`
+/// directly got Windows wrong, which is how a packaged Windows build shipped with
+/// speech recognition silently dead.
+///
+/// Windows first via `USERPROFILE`, exactly as `downloads_root` does — Git Bash sets
+/// `HOME` to a Unix-shaped path (`/c/Users/Ada`) that no Windows path will ever
+/// contain, so scrubbing against it would silently redact nothing.
+pub fn home_dir() -> Option<String> {
+    home_of(std::env::consts::OS, |k| std::env::var(k).ok())
+}
+
+/// Pure, for the same reason as `app_data_root`: every platform's behaviour is
+/// testable from every platform, including the ones nobody here owns.
+fn home_of(os: &str, env: impl Fn(&str) -> Option<String>) -> Option<String> {
+    if os == "windows" {
+        env("USERPROFILE").or_else(|| env("HOME"))
+    } else {
+        env("HOME")
+    }
+    // A one- or two-character "home" is not a home, and replacing "/" everywhere in
+    // a document would turn every path in it into nonsense.
+    .filter(|h| h.len() > 3)
+}
+
 /// The user's Downloads folder, if it exists. `None` → the caller should fall back
 /// to app-data (never fail outright: exporting a service must not depend on the shape
 /// of someone's home directory).
@@ -2083,6 +2112,40 @@ mod tests {
 /// from whatever machine happens to be running the suite.
 #[cfg(test)]
 mod platform_paths {
+
+    /// THE HOME USED FOR REDACTION FOLLOWS THE SAME PLATFORM RULE AS EVERY OTHER
+    /// PATH IN THIS MODULE.
+    ///
+    /// Git Bash sets `HOME` to a Unix-shaped path (`/c/Users/Ada`) that no Windows
+    /// path will ever contain, so scrubbing a diagnostic bundle against it would
+    /// silently redact nothing and ship somebody's name to a stranger. Windows
+    /// consults `USERPROFILE` first, exactly as `downloads_root` does.
+    #[test]
+    fn the_redaction_home_prefers_userprofile_on_windows() {
+        let env = |k: &str| match k {
+            "HOME" => Some("/c/Users/Ada".to_string()),
+            "USERPROFILE" => Some(r"C:\Users\Ada".to_string()),
+            _ => None,
+        };
+        assert_eq!(
+            super::home_of("windows", env).as_deref(),
+            Some(r"C:\Users\Ada")
+        );
+        assert_eq!(
+            super::home_of("macos", env).as_deref(),
+            Some("/c/Users/Ada")
+        );
+    }
+
+    /// A DEGENERATE HOME IS NO HOME.
+    ///
+    /// `HOME=/` would replace every slash in a document with a tilde, turning a
+    /// diagnostic file into nonsense — a worse outcome than not redacting.
+    #[test]
+    fn a_one_character_home_is_refused() {
+        assert_eq!(super::home_of("macos", |_| Some("/".into())), None);
+        assert_eq!(super::home_of("macos", |_| None), None);
+    }
     use super::app_data_root;
     use std::path::PathBuf;
 
