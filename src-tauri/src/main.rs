@@ -4707,6 +4707,7 @@ fn open_output_window(
         format!("output-{n}")
     };
     channels::open_native_window(&app, &label, template_id, &name, monitor_index)?;
+    refresh_wake(&app);
     Ok(label)
 }
 
@@ -4789,6 +4790,11 @@ fn auto_open_outputs(
             opened.push(label);
         }
     }
+    // THIS is the path that runs at every launch — `App.svelte` calls it on mount —
+    // so it is the one that mattered most and the one that was missed. Outputs came
+    // back by themselves after a restart and nothing told the OS to keep the display
+    // up, which is the exact failure `wake.rs` exists to prevent.
+    refresh_wake(&app);
     Ok(opened)
 }
 
