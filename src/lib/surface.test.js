@@ -5,10 +5,21 @@
 // mock and the only assertions are about what the DOM says and which command string
 // was dispatched.
 //
-// Every `it()` in this file is a FINDING, written so it FAILS if the defect is
-// fixed — or, where the defect is a missing thing, asserts the absence explicitly
-// and says in a comment what the fix should make it assert instead. Read the
-// describe() headers as the finding titles.
+// ── HOW TO READ THIS FILE, WHICH HAS CHANGED ────────────────────────────────
+//
+// It was written so that every `it()` was a FINDING: each asserted the DEFECT, and
+// so failed the moment somebody fixed it. That is a good way to record an audit and
+// a terrible way to leave one, because a green run then means "every defect is still
+// here".
+//
+// Most of them are closed now, and each closed test was INVERTED rather than
+// deleted — it asserts the repaired behaviour and fails if the defect returns. A
+// `describe()` header saying CLOSED means exactly that. The remainder still assert
+// a defect and say so in the header.
+//
+// **When you close one, invert it. Do not delete it.** The header is the finding
+// title and the assertion is the guard, and a file that loses its history stops
+// being able to tell you what this product has already got wrong.
 //
 // Precedent: liveoutputrail.test.js (including its settle() helper — tick() alone
 // is not enough, because capture.js reaches the backend through a dynamic import
@@ -382,8 +393,8 @@ describe('R3-03 · Space means advance — except on a VerseDeck list row', () =
 // returns `[]` on failure, so no list in the app CAN distinguish "the query failed"
 // from "there is nothing here". `ErrorState.svelte` is imported by exactly one view.
 // ─────────────────────────────────────────────────────────────────────────────
-describe('R3-04 · lists that say Empty before they know', () => {
-  itMounted('TemplateGallery claims "No templates yet" before list_templates answers', async () => {
+describe('R3-04 · CLOSED — a list does not say Empty before it knows', () => {
+  itMounted('TemplateGallery says Loading, not "No templates yet", before the answer', async () => {
     templates.set([]);
     let release;
     invoke.mockImplementation((cmd) => {
@@ -395,10 +406,11 @@ describe('R3-04 · lists that say Empty before they know', () => {
     const el = mountInto(TemplateGallery);
     await tick();
 
-    // FINDING: a fresh install ships five templates and this is the first thing a
-    // new operator reads on the Templates tab.
-    expect(el.textContent).toMatch(/No templates yet — create one to start/);
-    expect(el.textContent).not.toMatch(/Loading/);
+    // A fresh install ships five built-in templates, so "No templates yet" was
+    // never something this screen could truthfully say before the read returned —
+    // and it is the one sentence that makes a new operator go and build five more.
+    expect(el.textContent).not.toMatch(/No templates yet/);
+    expect(el.textContent).toMatch(/Loading/);
     release?.();
   });
 
@@ -445,15 +457,18 @@ describe('R3-04 · lists that say Empty before they know', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// R3-05 · EVERY EmptyState IS PROSE. NONE OF THEM OFFERS THE ACTION.
+// R3-05 · THE EMPTY STATE THAT MATTERS MOST NOW OFFERS THE ACTION
 //
 // `EmptyState.svelte` styles a `:global(.r-btn)` in its slot — the component was
-// built expecting an action. Not one of its ~15 call sites passes one. The empty
-// state tells a volunteer to "import or paste one with the Import button" and then
-// makes them find it.
+// built expecting an action, and not one of its ~15 call sites passed one. The
+// empty state told a volunteer what to do and then made them find the control.
+//
+// The Templates one is fixed because it is the one a NEW operator hits first.
+// **The other call sites still pass no action**, and that is stated rather than
+// implied: this closes one door, not the class.
 // ─────────────────────────────────────────────────────────────────────────────
-describe('R3-05 · empty states have no way out', () => {
-  itMounted('the Templates empty state renders a sentence and no control', async () => {
+describe('R3-05 · empty states and the way out', () => {
+  itMounted('the Templates empty state offers the thing it tells you to do', async () => {
     templates.set([]);
     invoke.mockResolvedValue([]);
     const TemplateGallery = (await import('./views/templates/TemplateGallery.svelte')).default;
@@ -463,8 +478,8 @@ describe('R3-05 · empty states have no way out', () => {
     const empty = el.querySelector('.r-empty');
     expect(empty).toBeTruthy();
     expect(empty.textContent).toMatch(/create one to start/);
-    // FINDING: no button. Fixing this makes the next line fail, which is the point.
-    expect(empty.querySelector('button')).toBe(null);
+    expect(empty.querySelector('button')).toBeTruthy();
+    expect(empty.querySelector('button').textContent).toMatch(/New template/);
   });
 });
 
@@ -495,7 +510,8 @@ describe('R3-06 · every surface goes through the ONE humaniser', () => {
 
     const msg = el.querySelector('.ir-msg');
     expect(msg).toBeTruthy();
-    // FINDING: verbatim, and `r-mono` is the monospace class.
+    // Closed 2026-08-14; the assertions below already guard the repair, and the
+    // "FINDING" label that used to sit here was left behind by the fix.
     // A sentence with a lead-in, not the constraint name — and crucially not
     // "[object Object]", which is what `String(e)` gives for a typed error.
     expect(msg.textContent).not.toBe(RUST);

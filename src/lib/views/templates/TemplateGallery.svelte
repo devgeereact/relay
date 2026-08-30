@@ -8,6 +8,7 @@
   import { createEventDispatcher, onMount, onDestroy } from 'svelte';
   import TemplateRender from '../../TemplateRender.svelte';
   import EmptyState from '../../ui/EmptyState.svelte';
+  import Loading from '../../ui/Loading.svelte';
   import ErrorState from '../../ui/ErrorState.svelte';
   import { templateKind, kindsPresent, KIND_META } from '../../templateKind.js';
   import { STARTERS, isLayered, regionsToLayers, CONTENT_KINDS } from '../../layers.js';
@@ -63,8 +64,17 @@
     reference: 'Psalms 23:1-2 · KJV',
   };
 
+  // Have we ASKED yet? A fresh install ships five built-in templates, so an empty
+  // list before the first answer is not an empty list — it is a list nobody has
+  // read. Without this the first thing a new operator saw on the Templates tab was
+  // "No templates yet", which is the one sentence that makes somebody go and build
+  // five more. EmptyState's own doc says it: if you do not KNOW the list is empty,
+  // you are Loading.
+  let asked = false;
+
   onMount(async () => {
     await loadTemplates();
+    asked = true;
     await loadDefaultTemplate();
     await upgradeLegacyToLayers();
     channels = await listOutputChannels().catch(() => []);
@@ -340,6 +350,8 @@
             </div>
           {/each}
         </div>
+      {:else if !asked && !$readErrors.loadTemplates}
+        <Loading what="templates" />
       {:else if $readErrors.loadTemplates}
         <!-- THREE FACTS, NOT TWO. A fresh install ships five built-in templates, so
              "No templates yet — create one to start" was never a thing this screen
@@ -349,7 +361,18 @@
              used to discard. -->
         <ErrorState error={$readErrors.loadTemplates} onRetry={() => loadTemplates()} />
       {:else}
-        <EmptyState message={$templates.length ? 'No template matches this filter.' : 'No templates yet — create one to start.'} />
+        <!-- …and the empty state OFFERS the thing it is telling them to do.
+             `EmptyState` styles a button in its slot — it was built expecting an
+             action — and telling a volunteer to create one and then making them
+             find the control is the version of help that costs them a minute in a
+             dark booth. The filter case gets no button: the templates exist, the
+             filter is the problem, and a New button there would be an answer to a
+             question nobody asked. -->
+        <EmptyState message={$templates.length ? 'No template matches this filter.' : 'No templates yet — create one to start.'}>
+          {#if !$templates.length}
+            <button class="r-btn primary sm" on:click={() => (newOpen = true)}>New template</button>
+          {/if}
+        </EmptyState>
       {/if}
     </div>
 
