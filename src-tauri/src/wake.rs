@@ -266,6 +266,60 @@ use sys::{acquire, release};
 mod tests {
     use super::*;
 
+    /// EVERY DOOR THAT OPENS OR CLOSES A SCREEN MUST TELL THIS MODULE.
+    ///
+    /// Written after this exact rule was broken by the commit that introduced the
+    /// module. `refresh_wake` was added at the call sites — `open_channel_output`
+    /// and `close_channel_output` — and **two of the three functions that open a
+    /// native output window were missed**, including `auto_open_outputs`, which
+    /// `App.svelte` calls on mount and is therefore the path that runs at *every
+    /// launch*. Outputs came back by themselves after a restart and nothing told
+    /// the OS to keep the display up: the precise failure this module exists to
+    /// prevent, on the most common path there is.
+    ///
+    /// CLAUDE.md rule 36 says the check belongs at the choke point, and the choke
+    /// point here is inside `channels` — which cannot ask whether a microphone is
+    /// live or a service is recording, because those types live in `main`. So the
+    /// call sites stay, and this test enumerates them instead of a person doing it
+    /// from memory. Same shape as
+    /// `servicelock::every_protected_command_actually_guards_itself`.
+    #[test]
+    fn every_function_that_opens_or_closes_a_screen_refreshes_the_wake_state() {
+        let src = include_str!("main.rs");
+        let mut offenders = Vec::new();
+        // Walk the file function by function; a `fn` at column 0 starts a new one.
+        let mut current = "<top of file>";
+        let mut body = String::new();
+        let mut touches_windows = false;
+        let flush = |name: &str, body: &str, touches: bool, out: &mut Vec<String>| {
+            if touches && !body.contains("refresh_wake(") {
+                out.push(name.to_string());
+            }
+        };
+        for line in src.lines() {
+            if line.starts_with("fn ") || line.starts_with("async fn ") {
+                flush(current, &body, touches_windows, &mut offenders);
+                current = line.trim_start_matches("async ").trim_start_matches("fn ");
+                body.clear();
+                touches_windows = false;
+            }
+            if line.contains("channels::open_native_window(")
+                || line.contains("channels::close_window(")
+            {
+                touches_windows = true;
+            }
+            body.push_str(line);
+            body.push('\n');
+        }
+        flush(current, &body, touches_windows, &mut offenders);
+
+        assert!(
+            offenders.is_empty(),
+            "these open or close an output window and never call `refresh_wake`, so \
+             the display can sleep with a screen live: {offenders:?}"
+        );
+    }
+
     /// The rule, stated once. Any of the three; none means release.
     #[test]
     fn any_one_of_the_three_wants_the_screen_up() {
