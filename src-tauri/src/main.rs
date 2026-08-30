@@ -76,10 +76,6 @@ struct Stt(Mutex<Option<SttEngine>>);
 #[derive(Default)]
 struct Routing(Mutex<Router>);
 
-/// Monotonic counter for output-window labels (output-1, output-2, …).
-#[derive(Default)]
-struct Outputs(Mutex<u32>);
-
 /// The semantic (paraphrase) index, built once from the corpus at startup.
 struct Semantic(SemanticIndex);
 
@@ -148,7 +144,6 @@ fn main() {
         .manage(Db(Mutex::new(conn)))
         .manage(Audio::default())
         .manage(Routing::default())
-        .manage(Outputs::default())
         .manage(Detecting(AtomicBool::new(true)))
         .manage(channels::Rehearsal::default())
         .manage(channels::WallState::default())
@@ -332,14 +327,12 @@ fn main() {
             list_songs,
             search_songs,
             get_song,
-            import_song,
             save_song,
             delete_song,
             start_countdown,
             list_arrangements,
             save_arrangement,
             delete_arrangement,
-            import_pro,
             parse_import,
             save_reviewed_songs,
             list_saved_scripture,
@@ -387,8 +380,6 @@ fn main() {
             load_stt_model,
             select_stt_model,
             manual_fire,
-            open_output_window,
-            list_output_windows,
             list_output_channels,
             channel_status,
             close_channel_output,
@@ -429,7 +420,6 @@ fn main() {
             service_detail,
             export_service,
             list_templates,
-            create_template,
             delete_template,
             get_template,
             save_template,
@@ -2123,59 +2113,6 @@ fn get_song(db: tauri::State<'_, Db>, id: i64) -> error::Result<Option<db::Song>
     db::get_song(&conn, id).map_err(Into::into)
 }
 
-/// Lyrics: import a song from pasted text. The pure `songs` parser splits the
-/// lyrics into sections; nothing leaves the device.
-#[tauri::command]
-#[allow(clippy::too_many_arguments)]
-fn import_song(
-    db: tauri::State<'_, Db>,
-    lock: tauri::State<'_, servicelock::ServiceLock>,
-    title: String,
-    author: String,
-    ccli: String,
-    song_key: String,
-    bpm: Option<i64>,
-    lyrics: String,
-    date: String,
-) -> error::Result<i64> {
-    lock.guard("import_song")?;
-    let title = title.trim();
-    if title.is_empty() {
-        return Err(error::Error::refused("song needs a title"));
-    }
-    let sections = songs::parse_song(&lyrics);
-    if sections.is_empty() {
-        return Err(error::Error::refused("no lyrics found to import"));
-    }
-    let conn = db.0.lock()?;
-    // Dedupe by title: replace an existing song rather than duplicate it.
-    if let Some(id) = db::song_id_by_title(&conn, title)? {
-        db::update_song(
-            &conn,
-            id,
-            title,
-            author.trim(),
-            ccli.trim(),
-            song_key.trim(),
-            bpm,
-            &sections,
-        )?;
-        Ok(id)
-    } else {
-        db::import_song(
-            &conn,
-            title,
-            author.trim(),
-            ccli.trim(),
-            song_key.trim(),
-            bpm,
-            &date,
-            &sections,
-        )
-        .map_err(Into::into)
-    }
-}
-
 /// Lyrics: save edits to a song — metadata + the full ordered section list.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
@@ -2545,56 +2482,6 @@ fn save_reviewed_songs(
                 &s.sections,
             )?;
             added.push(title.to_string());
-        }
-    }
-    Ok(ImportResult { added, replaced })
-}
-
-#[tauri::command]
-fn import_pro(
-    db: tauri::State<'_, Db>,
-    lock: tauri::State<'_, servicelock::ServiceLock>,
-    filename: String,
-    data: String,
-    date: String,
-) -> error::Result<ImportResult> {
-    lock.guard("import_pro")?;
-    use base64::Engine as _;
-    let bytes = base64::engine::general_purpose::STANDARD
-        .decode(data.as_bytes())
-        .map_err(|e| format!("could not read file data: {e}"))?;
-    let songs = proimport::import_bytes(&filename, &bytes)?;
-    if songs.is_empty() {
-        return Err(error::Error::refused("no lyrics found in this file"));
-    }
-    let conn = db.0.lock()?;
-    let mut added = Vec::new();
-    let mut replaced = Vec::new();
-    for song in songs {
-        let sections: Vec<songs::ParsedSection> = song
-            .slides
-            .iter()
-            .enumerate()
-            .map(|(i, t)| songs::ParsedSection {
-                // Sequential slide numbers — ProPresenter group names (Verse/
-                // Chorus) aren't reliably in the file, so keep tags clean and
-                // let the operator relabel in the slide-flow editor.
-                tag: format!("{}", i + 1),
-                label: format!("Slide {}", i + 1),
-                lyrics: t.clone(),
-            })
-            .collect();
-        if sections.is_empty() {
-            continue;
-        }
-        // Dedupe by title: replace an existing song's slides (keeping any
-        // metadata the operator set), otherwise add it fresh.
-        if let Some(id) = db::song_id_by_title(&conn, &song.title)? {
-            db::replace_song_sections(&conn, id, &sections)?;
-            replaced.push(song.title);
-        } else {
-            db::import_song(&conn, &song.title, "", "", "", None, &date, &sections)?;
-            added.push(song.title);
         }
     }
     Ok(ImportResult { added, replaced })
@@ -4690,27 +4577,6 @@ fn manual_fire<R: tauri::Runtime>(
     Ok(())
 }
 
-/// Open a native fullscreen output window rendering template `template_id`.
-/// Returns the window's label. Multiple channels can be open at once.
-#[tauri::command]
-fn open_output_window(
-    app: tauri::AppHandle,
-    outputs: tauri::State<'_, Outputs>,
-    template_id: i64,
-    name: Option<String>,
-    monitor_index: Option<usize>,
-) -> error::Result<String> {
-    let name = name.unwrap_or_else(|| "Output".into());
-    let label = {
-        let mut n = outputs.0.lock()?;
-        *n += 1;
-        format!("output-{n}")
-    };
-    channels::open_native_window(&app, &label, template_id, &name, monitor_index)?;
-    refresh_wake(&app);
-    Ok(label)
-}
-
 /// Connected displays for HDMI screen assignment (Channels tab).
 #[tauri::command]
 fn list_monitors(app: tauri::AppHandle) -> Vec<channels::MonitorInfo> {
@@ -4723,7 +4589,6 @@ fn list_monitors(app: tauri::AppHandle) -> Vec<channels::MonitorInfo> {
 #[tauri::command]
 fn open_channel_output(
     app: tauri::AppHandle,
-    outputs: tauri::State<'_, Outputs>,
     db: tauri::State<'_, Db>,
     channel_id: i64,
 ) -> error::Result<String> {
@@ -4743,7 +4608,6 @@ fn open_channel_output(
     // fullscreen windows on the same projector.
     let label = channels::channel_label(channel_id);
     channels::open_native_window(&app, &label, template_id, &channel.name, monitor_index)?;
-    let _ = outputs; // labels no longer come from the counter
     refresh_wake(&app);
     Ok(label)
 }
@@ -5113,14 +4977,6 @@ fn list_templates(db: tauri::State<'_, Db>) -> error::Result<Vec<db::Template>> 
     db::list_templates(&conn).map_err(Into::into)
 }
 
-/// Create a new (blank-styled) template. Returns its id.
-#[tauri::command]
-fn create_template(db: tauri::State<'_, Db>, name: Option<String>) -> error::Result<i64> {
-    let conn = db.0.lock()?;
-    let name = name.unwrap_or_else(|| "New template".into());
-    db::create_template(&conn, name.trim()).map_err(Into::into)
-}
-
 /// Delete a template (unassigns it from any channel first).
 #[tauri::command]
 fn delete_template(
@@ -5163,12 +5019,6 @@ fn save_template(
     }
     let _ = app.emit("template://updated", id);
     Ok(id)
-}
-
-/// Labels of currently-open output windows.
-#[tauri::command]
-fn list_output_windows(app: tauri::AppHandle) -> Vec<String> {
-    channels::list_open(&app)
 }
 
 /// All configured output channels (Channels tab).

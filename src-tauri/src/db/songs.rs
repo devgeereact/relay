@@ -327,25 +327,6 @@ pub fn song_id_by_title(conn: &Connection, title: &str) -> rusqlite::Result<Opti
     .optional()
 }
 
-/// Replace only a song's sections (keeps its metadata). For re-importing a
-/// source file: fresh slides, but any author/key the operator set is preserved.
-pub fn replace_song_sections(
-    conn: &Connection,
-    id: i64,
-    sections: &[crate::songs::ParsedSection],
-) -> rusqlite::Result<()> {
-    let tx = conn.unchecked_transaction()?;
-    tx.execute("DELETE FROM song_sections WHERE song_id = ?1", [id])?;
-    for (i, s) in sections.iter().enumerate() {
-        tx.execute(
-            "INSERT INTO song_sections (song_id, position, tag, label, lyrics)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
-            (id, i as i64, &s.tag, &s.label, &s.lyrics),
-        )?;
-    }
-    tx.commit()
-}
-
 /// Update a song's metadata and replace all its sections in one transaction.
 /// The editor holds the full section list and saves it wholesale (simplest
 /// correct model — no per-row diffing). Positions are the array order.

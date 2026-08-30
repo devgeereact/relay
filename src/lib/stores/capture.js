@@ -1021,19 +1021,6 @@ const call = await invoke();
 return await call('get_song', { id });
 }
 
-/** Import a song from pasted lyrics; the backend parses sections. Returns id. */
-export async function importSong({ title, author, ccli, key, bpm, lyrics }) {
-const call = await invoke();
-return await call('import_song', {
-  title,
-  author: author ?? '',
-  ccli: ccli ?? '',
-  songKey: key ?? '',
-  bpm: bpm ?? null,
-  lyrics,
-  date: new Date().toISOString().slice(0, 10),
-});
-}
 
 /** Save edits to a song — metadata + full ordered section list. */
 export async function saveSong(song) {
@@ -1081,16 +1068,6 @@ if (!Array.isArray(sequence) || sequence.length === 0) return sections;
 return sequence.map((i) => sections[i]).filter(Boolean);
 }
 
-/** Import songs from a ProPresenter file. `dataB64` is the file's bytes, base64
- *  encoded by the webview (a .proplaylist yields many songs). Returns titles. */
-export async function importProFile(filename, dataB64) {
-const call = await invoke();
-return await call('import_pro', {
-  filename,
-  data: dataB64,
-  date: new Date().toISOString().slice(0, 10),
-});
-}
 
 /** True while a countdown is live on the outputs (its target is still in the
  *  future). Derived from the mirrored output content, so it clears the moment
@@ -1475,13 +1452,6 @@ const t = await resolveDefaultTemplate().catch(() => null);
 return t ? [t] : [];
 }
 
-/** Create a new template; returns its id and reloads the store. */
-export async function createTemplate(name) {
-const call = await invoke();
-const id = await call('create_template', { name });
-await loadTemplates();
-return id;
-}
 
 /** Delete a template; reloads the store. Also refreshes the content-look map —
  *  a content default (or a channel) may have pointed at the deleted template and
@@ -1614,10 +1584,6 @@ export async function importThemeFromFile(file) {
   return saveTheme(theme); // fresh positive id, persisted, pushed to kiosks
 }
 
-/** Labels of the output windows that are actually OPEN right now. */
-export async function listOutputWindows() {
-  return guardedRead('listOutputWindows', (call) => call('list_output_windows'), []);
-}
 
 /** All configured output channels. */
 export async function listOutputChannels() {
@@ -1632,11 +1598,6 @@ const call = await invoke();
 await call('set_channel_template', { id, templateId });
 }
 
-/** Open a native fullscreen output window for a template id. Returns its label. */
-export async function openOutput(templateId, name, monitorIndex) {
-const call = await invoke(); // throws in browser
-return call('open_output_window', { templateId, name, monitorIndex });
-}
 
 /** Connected physical displays for HDMI screen assignment. */
 export async function listMonitors() {

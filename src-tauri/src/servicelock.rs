@@ -129,8 +129,6 @@ pub const PROTECTED: &[(&str, &str)] = &[
         "installing a speech model from a file",
     ),
     ("set_active_translation", "changing the Bible translation"),
-    ("import_song", "importing songs"),
-    ("import_pro", "importing from ProPresenter"),
     ("import_media", "importing media"),
     ("save_reviewed_songs", "saving an import"),
 ];
@@ -197,7 +195,6 @@ mod tests {
             "close_channel_output",
             "set_channel_template",
             "save_template",
-            "create_template",
             "start_capture",
             "stop_capture",
             "end_service",

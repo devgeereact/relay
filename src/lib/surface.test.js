@@ -798,62 +798,62 @@ const FRONTEND = (() => {
   return out;
 })();
 
-describe('R3-12 · five registered commands have no UI path', () => {
+describe('R3-12 · CLOSED — no registered command is unreachable from the UI', () => {
   // CLAUDE.md: "No dead-but-built commands. Every registered #[tauri::command] has
   // a frontend caller." A store WRAPPER is not a caller in the sense that matters —
   // `saveArrangement` had one and no UI for months.
   //
-  // The chain that counts:
-  //   #[tauri::command] → call('…') in capture.js → a wrapper some component imports
+  // Five commands were addressed only by a wrapper nothing imported:
+  // `create_template`, `import_song`, `import_pro`, `list_output_windows` and
+  // `open_output_window`. **All five were deleted on 2026-08-30** rather than given
+  // a UI, because each was superseded by a path every control already used
+  // (`upsert_template`; `parse_import` → `save_reviewed_songs`; the channel-keyed
+  // output API). Precedent: the five deleted before them.
   //
-  // CLOSED, and recorded rather than silently dropped from the list:
-  //   `active_voice_profile` — reached from 2026-08-29 by Settings → Audio → Rooms,
-  //   which reads the active profile in order to remember it with the room (RG-10).
-  //   It was on this list for months; it is a caller now, and the test would fail
-  //   if it were still here.
+  // It is a security reduction as much as a tidy-up — every registered command is
+  // invokable from the webview, and `open_output_window` opened an arbitrary
+  // fullscreen window on any monitor.
   //
-  //   `save_arrangement` and `delete_arrangement` — reached from 2026-08-30 by
-  //   Library → Lyrics → Arrangements. These two were the reason this list exists:
-  //   a whole feature — the running order a worship team actually sings — had a
-  //   table, three commands, a store wrapper, a plan-cue expander and a picker in
-  //   the Planner, and no way for a person to make one. RG-21, DECISIONS §55.
-  const DEAD = {
-    create_template: 'createTemplate',
-    import_pro: 'importProFile',
-    import_song: 'importSong',
-    list_output_windows: 'listOutputWindows',
-    open_output_window: 'openOutput',
-  };
-
+  // Closures recorded rather than dropped from the list:
+  //   `active_voice_profile` — reached 2026-08-29 by Settings → Audio → Rooms (RG-10)
+  //   `save_arrangement` / `delete_arrangement` — reached 2026-08-30 by
+  //   Library → Lyrics → Arrangements (RG-21)
   const capture = src('src/lib/stores/capture.js');
   const mainRs = src('src-tauri/src/main.rs');
   const registered = new Set(
     mainRs
       .match(/generate_handler!\[([\s\S]*?)\]/)[1]
       .split(',')
-      .map((s) => s.trim()),
+      .map((s) => s.trim())
+      .filter(Boolean),
   );
 
-  for (const [cmd, wrapper] of Object.entries(DEAD)) {
-    it(`${cmd} is registered, wrapped, and reached by nothing`, () => {
-      expect(registered.has(cmd)).toBe(true);
-      expect(capture).toMatch(new RegExp(`export async function ${wrapper}\\b`));
-      // Nobody imports the wrapper. Checked against the actual import statements
-      // rather than a bare name grep, so a comment mentioning it does not count.
-      const importers = FRONTEND.filter(
-        ([f, text]) =>
-          !f.endsWith('capture.js') &&
-          [...text.matchAll(/import\s*\{([^}]+)\}\s*from\s*['"][^'"]*capture\.js['"]/g)].some((m) =>
-            m[1].split(',').some((n) => n.trim().split(/\s+as\s+/)[0] === wrapper),
-          ),
-      ).map(([f]) => f);
-      expect(importers).toEqual([]);
-    });
-  }
+  it('the five that had no UI path are gone, command and wrapper together', () => {
+    for (const cmd of [
+      'create_template',
+      'import_song',
+      'import_pro',
+      'list_output_windows',
+      'open_output_window',
+    ]) {
+      expect(registered.has(cmd), `${cmd} is registered again`).toBe(false);
+    }
+    for (const wrapper of [
+      'createTemplate',
+      'importSong',
+      'importProFile',
+      'listOutputWindows',
+      'openOutput',
+    ]) {
+      expect(capture, `${wrapper} outlived its command`).not.toMatch(
+        new RegExp(`export async function ${wrapper}\\b`),
+      );
+    }
+  });
 
-  // The other half of the same claim, and the one that actually protects an
-  // operator: the arrangement editor is REACHED. A test that only ever asserts
-  // absence cannot tell "this was fixed" from "this was deleted".
+  // The half that actually protects an operator: the arrangement editor is
+  // REACHED. A test that only ever asserts absence cannot tell "this was fixed"
+  // from "this was deleted".
   it('the arrangement editor is imported, rendered, and can write', () => {
     const importsWrapper = (wrapper) =>
       FRONTEND.filter(
@@ -864,14 +864,10 @@ describe('R3-12 · five registered commands have no UI path', () => {
           ),
       ).map(([f]) => f);
 
-    // FRONTEND carries absolute paths (the existing assertions above compare to
-    // `[]`, so they never had to care), hence the suffix match.
     const reaches = (wrapper) =>
       importsWrapper(wrapper).some((f) => f.endsWith('/views/library/Arrangements.svelte'));
     expect(reaches('saveArrangement')).toBe(true);
     expect(reaches('deleteArrangement')).toBe(true);
-    // …and something renders it. A component nothing renders is not covered,
-    // however green its tests.
     expect(src('src/lib/views/library/LyricsPane.svelte')).toMatch(/<Arrangements\b/);
   });
 });

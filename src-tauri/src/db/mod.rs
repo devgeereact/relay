@@ -1245,8 +1245,22 @@ mod tests {
         // Same title, any case, resolves to the existing id.
         assert_eq!(song_id_by_title(&conn, "way maker").unwrap(), Some(id));
 
-        // Re-import replaces sections but preserves the metadata.
-        replace_song_sections(&conn, id, &[sec("1", "x"), sec("2", "y")]).unwrap();
+        // Re-import replaces sections but preserves the metadata. `save_reviewed_songs`
+        // does this through `update_song`, which is the only replace path now —
+        // `replace_song_sections` was a second one, reachable only from the deleted
+        // `import_pro` command, and two ways to replace a song's sections is how the
+        // two start disagreeing about what survives.
+        update_song(
+            &conn,
+            id,
+            "Way Maker",
+            "Sinach",
+            "",
+            "E",
+            None,
+            &[sec("1", "x"), sec("2", "y")],
+        )
+        .unwrap();
         let song = get_song(&conn, id).unwrap().unwrap();
         assert_eq!(song.author, "Sinach");
         assert_eq!(song.song_key, "E");
