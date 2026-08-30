@@ -66,6 +66,14 @@ Things to attack there:
   Panic clears only `onAir`. After a panic, the next `→` must resume where it was and
   must not restart the plan at cue 1. A cue that is where `→` resumes but is not on
   screen reads CUED, in grey, never amber.
+- **A status badge on the run surface must be able to detect its own failure.** Live's
+  Output Status pane derives every per-channel badge from GLOBAL state
+  (`$live && !$rehearsing && !$screenBlack`, `Live.svelte:973-979`) and never calls
+  `channelStatus()`. The Outputs tab polls the real `channel_status` every 2 s and is
+  honest about its limit; Live is not, so a kiosk browser source that went away still
+  reads **On Air** on the one surface an operator watches during a service. Recorded as
+  RG-01 in `docs/RELAY_GAP.md`. Treat any *new* badge the same way: ask what would have
+  to be true for it to read wrong, and whether anything could tell.
 - **Panic controls may never report a success they did not achieve.** `clear_screens`
   and `blackout` return `Result`; the frontend wrappers return a boolean *and* set the
   `panicError` store. Both, because these fire from a global keydown handler and from a

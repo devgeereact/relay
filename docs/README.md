@@ -1,8 +1,9 @@
 # Relay — Documentation Index (Engineering Blueprint)
 
 This is the map. Every claim in these documents is **re-verified against the code**, and the
-date of the last sweep is stated rather than implied — last full sweep **2026-08-20**, against
-`07654a7`. That honesty is the point, not the paperwork.
+date of the last sweep is stated rather than implied. Last **full** sweep of every claim:
+**2026-08-20**, against `07654a7`. Last **counts-and-contradictions** sweep: **2026-08-29**,
+against `0338244` — what it found and corrected is [RELAY_GAP.md](RELAY_GAP.md) §0 and §26. That honesty is the point, not the paperwork.
 
 This index does one job: lay the docs out as a specification hierarchy so a new engineer,
 operator, or contributor can find any part of the spec without hunting, and see at a glance
@@ -57,9 +58,12 @@ real gaps.
 | **Decisions (ADR log)** | *Why is anything the way it is?* | [DECISIONS.md](DECISIONS.md) | Complete |
 | **Roadmap & tech debt** | *What is deferred, parked, or owed — and on whose authority?* | [ROADMAP.md](ROADMAP.md) | **NEW** |
 | **Data schema** | *The canonical on-device SQLite shape* | [data/schema.sql](data/schema.sql) | Refreshed |
+| **Gap register** | *What an outside product brief asked for vs what exists — and the two proposals that would reverse a recorded decision* | [RELAY_GAP.md](RELAY_GAP.md) | **NEW** |
+| **The model prompt** | *The self-contained brief that makes any capable model argue inside Relay's real constraints* | [GPT.md](GPT.md) | Input artifact |
 
 **On ADRs:** [DECISIONS.md](DECISIONS.md) *is* the architecture-decision record — a single
-narrative log with reasoning and explicit non-goals, 35 decisions deep. It is deliberately not
+narrative log with reasoning and explicit non-goals, 38 numbered decisions (§18–§38) deep,
+plus 28 earlier ones carried as table rows. It is deliberately not
 split into per-file `adr/NNNN-*.md` documents: the log is cross-referenced from code comments
 and the handbook, and one file keeps the *why* readable end to end. If the code ever
 contradicts it, the code is wrong — flag it, don't silently "fix" the decision.
@@ -128,7 +132,13 @@ Two documents, at two altitudes, and they disagree on purpose:
   It re-verifies every claim against a commit hash and retires findings as they are fixed.
 - **[audits/](audits/)** — dated machine audits, each frozen. They never rewrite their own
   findings; closures are recorded in the fix log at the top instead, because an audit that
-  edits its own history stops being evidence.
+  edits its own history stops being evidence. Two so far:
+  [QA-2026-08-14.md](audits/QA-2026-08-14.md) (six-agent full scope; §16 is the human test
+  script) and [PERF-2026-08-24.md](audits/PERF-2026-08-24.md) (real-time latency, and §6 is
+  what its numbers do **not** establish).
+- **[RELAY_GAP.md](RELAY_GAP.md)** — the third altitude, and unlike the audits it is meant to be
+  updated: an outside product brief scored item by item against the code, with a gap register
+  and the corrections this index's own counts needed.
 
 **Relay has never shipped, and the current release decision is NO-GO.** Every P0 and P1 raised
 by the last full audit is closed, but the condition that would block a GO regardless still

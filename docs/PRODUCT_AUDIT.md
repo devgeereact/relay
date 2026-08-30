@@ -14,9 +14,9 @@ Supersedes Revision 2 (2026-07-12) and Revision 1 (2026-07-05). Every claim was 
 >
 > | | Rev 3 said | Today |
 > |---|---|---|
-> | Tests | 250 Rust + 138 frontend | **478 Rust** (24 ignored) + **581 frontend** (0 skipped) |
-> | `main.rs` | 2,922 lines / 101 commands | **4,024 lines / 114 commands** |
-> | Decision log | 25 decisions | **35** |
+> | Tests | 250 Rust + 138 frontend | **519 Rust** run (28 ignored) + **594 frontend** (0 skipped) — re-measured 2026-08-29 |
+> | `main.rs` | 2,922 lines / 101 commands | **4,369 lines / 118 commands** — re-measured 2026-08-29 |
+> | Decision log | 25 decisions | **38** numbered (§18–§38), plus 28 earlier table rows |
 > | `Result<_, String>` in `main.rs` | replaced | **zero remain** — confirmed |
 > | Release decision | not stated | **NO-GO**, and it is a machine's, not this document's |
 >
@@ -33,6 +33,11 @@ Supersedes Revision 2 (2026-07-12) and Revision 1 (2026-07-05). Every claim was 
 > instrument here.* Audio in — 0%. Pixels out — 0%. Hardware — 0%. The packaged build — 0%.
 > A real congregation — 0%. That is `audits/QA-2026-08-14.md` §16, the human test script, and it
 > **has not been run**.
+>
+> A second, narrower sweep on **2026-08-29** re-measured the counts above and hunted contradictions
+> across the doc set; what it corrected, and an item-by-item scoring of an outside product-expansion
+> brief against the code, is [RELAY_GAP.md](RELAY_GAP.md). It raised no new P0 and did not move the
+> release decision.
 >
 > So the honest one-line summary of this document, updated: **the code is done and now genuinely
 > hardened; what is left needs a certificate, a microphone in a real church, a Yorùbá speaker,
@@ -137,7 +142,7 @@ Scored against the stated bar (*first 10 churches*), not against Stripe. Δ is t
 | **Onboarding / first-run** | **8 / 10** | ▲ +1 | The wizard now *proves* the microphone works — its meter was dead, so the one step whose entire purpose was proof proved nothing. Still cannot be re-run once skipped. |
 | **UX (live operation)** | **8 / 10** | ▲ +2 | Every control that lied has been fixed: the clear toast, the `B`-while-typing cheatsheet line, `Esc`-wipes-the-wall-from-inside-a-modal (which turned out to affect the arrangement pickers too, not just the cheatsheet), and the `nav` key that silently did nothing. The transport now follows **what is on the wall**, not what the operator intended. |
 | **UI / design language** | **8 / 10** | ▲ +1 | The dark/amber broadcast language remains correct and unmodernised. One `EmptyState`/`Loading`/`ErrorState` trio replaces four competing classes. The colour discipline held under pressure: a paraphrase got cyan, *not* amethyst, because amethyst already means rehearsal — a colour carrying a promise cannot be borrowed for a hunch. |
-| **Architecture** | **8 / 10** | ▲ +2 | The fire engine is now generic over `tauri::Runtime`, so the path that puts scripture on a wall can be driven **without a window** — which is the useful half of "split `main.rs`". Typed errors (`error.rs`) replace 88 × `Result<_, String>`, and **zero remain**. `main.rs` was 2,922 lines / 101 commands here and is **4,024 / 114** today — but it is no longer untestable, which was the actual problem. |
+| **Architecture** | **8 / 10** | ▲ +2 | The fire engine is now generic over `tauri::Runtime`, so the path that puts scripture on a wall can be driven **without a window** — which is the useful half of "split `main.rs`". Typed errors (`error.rs`) replace 88 × `Result<_, String>`, and **zero remain**. `main.rs` was 2,922 lines / 101 commands here and is **4,369 / 118** today — but it is no longer untestable, which was the actual problem. |
 | **Performance** | **9 / 10** | — | Unchanged. Measure-before-optimising is practised here, not preached: the semantic scan stays a linear scan and beam search stays unused, both because measurement said so. |
 | **Accessibility** | **8 / 10** | ▲ **+4** | Focus traps on all 5 dialogs, **with focus restore** (the half everyone forgets). A real heading structure. The AI suggestion feed, the transport and errors are all announced — the product's whole reason to exist used to arrive in total silence. Every text token passes WCAG AA. Not 10/10: ~150 lines of dead legacy CSS remain, deliberately (see §7). |
 | **Security** | **8 / 10** | ▲ +1 | A tag name is no longer interpolated into a release shell (a real injection vector CodeRabbit caught). LAN bind is unauthenticated, broadcast-only, bounded, and honestly documented. Unsigned Windows remains the exposure — but the pipeline now *refuses* to produce it rather than doing so quietly. |

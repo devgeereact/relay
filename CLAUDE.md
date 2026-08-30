@@ -8,7 +8,7 @@ Read this before touching code. It reflects real decisions made in real sessions
 
 Relay is AI-assisted live presentation software for churches. It listens to a live sermon, detects scripture references (direct quotes and paraphrases), and routes the right content to multiple independently-styled output screens in real time. It is built to interoperate with OBS, ATEM, and ProPresenter over NDI/HDMI/network — not to replace them.
 
-Full context: `docs/SPEC.md` (canonical spec), `docs/DECISIONS.md` (why, not just what), `docs/PRODUCT_AUDIT.md` (current health, honestly scored).
+Full context: `docs/SPEC.md` (canonical spec), `docs/DECISIONS.md` (why, not just what), `docs/PRODUCT_AUDIT.md` (current health, honestly scored), `docs/RELAY_GAP.md` (what a product-expansion brief asked for vs what actually exists, with the gap register and the two reversal proposals).
 
 ## Non-negotiable constraints
 
@@ -35,7 +35,7 @@ Full context: `docs/SPEC.md` (canonical spec), `docs/DECISIONS.md` (why, not jus
 
 Tier 1: **Yoruba, Swahili, Hausa**, plus English. Code-switching (English mixed mid-sentence with a local language) is the normal case, not an edge case — never write detection logic that assumes single-language input.
 
-**Be honest about the moat**: today it is a hand-curated multilingual *reference-parsing* table (66 books × 3 languages, in `data/book_aliases.json`) on top of stock Whisper base. No fine-tuned acoustic model ships, Yoruba numerals are not parsed, no native speaker has reviewed the aliases, and word error rate has never been measured in any language. `docs/LANGUAGES.md` says all of this plainly — **do not soften it.**
+**Be honest about the moat**: today it is a hand-curated multilingual *reference-parsing* table (66 books × 3 languages, in `src-tauri/data/book_aliases.json`) on top of stock Whisper base. No fine-tuned acoustic model ships, Yoruba numerals are not parsed, no native speaker has reviewed the aliases, and word error rate has never been measured in any language. `docs/LANGUAGES.md` says all of this plainly — **do not soften it.**
 
 ## Commands
 
@@ -98,7 +98,7 @@ Every audio bug so far was invisible in the code and reproducible only with a sp
 │   ├── relay.entitlements   — com.apple.security.device.audio-input. See §17.
 │   ├── tauri.conf.json      — base; tauri.updater.conf.json overlays it at release
 │   └── src/
-│       ├── main.rs          — Tauri commands + the live-fire engine (4.0k lines, 114 cmds)
+│       ├── main.rs          — Tauri commands + the live-fire engine (4.4k lines, 118 cmds)
 │       ├── qa.rs · qa_r5.rs · r6.rs — TEST-ONLY. qa.rs owns THE fixture: bare_app() =
 │       │                      a fresh install and nothing else, + Wall (Tauri events)
 │       │                      and Kiosk (the WS door). The other two are audit suites.
@@ -150,7 +150,7 @@ Shipping: in-app model download, first-run wizard, auto-updater, rehearsal mode,
 
 Parked, honestly (not faked): **NDI** (needs proprietary SDK — `open_ndi_output` returns a clear error), **neural paraphrase embedder** (TF-IDF is the seam behind `SemanticIndex::top_k`; the `verses.embedding` column exists and has never been written to), **African-language STT fine-tunes**.
 
-**No dead-but-built commands — with ONE known exception, recorded rather than hidden.** Every one of the 114 registered `#[tauri::command]`s has a frontend caller **in `capture.js`**; that is the level `ipc.test.js` checks, and it is not the level that matters. `save_arrangement` is the exception: the wrapper `saveArrangement` exists and **no component imports it**, so a user cannot save a song arrangement at all. Found by `scripts/qa-inventory.mjs`, which traces the chain one hop further — to a control something actually renders. Building the arrangement editor is a feature, not a fix; until it exists, this sentence is the honest version of the claim. The last thirteen were closed together: five superseded ones were deleted (`lookup_verse`, `close_output_window`, `current_service`, and the `*_template_active` pair — the console Output grid became per-channel templates), and eight were given the UI they had always lacked — voice profiles (SPEC §4.6), the emergency announcement, and the "shown earlier" badge. `related_scripture` was wired by the new-design merge.
+**No dead-but-built commands — with ONE known exception, recorded rather than hidden.** Every one of the 118 registered `#[tauri::command]`s has a frontend caller **in `capture.js`**; that is the level `ipc.test.js` checks, and it is not the level that matters. `save_arrangement` is the exception: the wrapper `saveArrangement` exists and **no component imports it**, so a user cannot save a song arrangement at all. Found by `scripts/qa-inventory.mjs`, which traces the chain one hop further — to a control something actually renders. Building the arrangement editor is a feature, not a fix; until it exists, this sentence is the honest version of the claim. The last thirteen were closed together: five superseded ones were deleted (`lookup_verse`, `close_output_window`, `current_service`, and the `*_template_active` pair — the console Output grid became per-channel templates), and eight were given the UI they had always lacked — voice profiles (SPEC §4.6), the emergency announcement, and the "shown earlier" badge. `related_scripture` was wired by the new-design merge.
 
 ## Architecture rules learned the HARD WAY — do not regress these
 
@@ -197,6 +197,8 @@ These caused real crashes, freezes, or silent failures in front of people. Keep 
 
 34. **Never make this path faster by making it less safe.** Rules 10, 28 and 30 all say a version of this and it keeps needing saying. The latency work moved no threshold, removed no corroboration, and did not let a partial reference fire. The corroboration delay shrank anyway — it costs exactly one cadence step, and the cadence got shorter. **Removing the wait in front of a safety rule is not the same as removing the rule**, and only one of the two is allowed.
 
+35. **A status badge that cannot detect its own failure is not a status badge.** `channel_status` is derived live from open windows and subscribed kiosk clients — but the **Live** tab's Output Status pane never calls it. It derives every per-channel badge from GLOBAL state (`$live && !$rehearsing && !$screenBlack`), so a kiosk browser source that went away still reads **On Air** on the one surface an operator watches during a service. The Outputs tab polls the real thing every 2 s and is honest about its limit ("LIVE means something is attached, not that the picture is good"); Live is not. Underneath, liveness is a *count* per template id — the hub records nothing about who connected, deliberately — and the one inbound frame a client sends (`rendered`) is a latency mark, documented as inert. **Anonymous heartbeats would make this real without touching DECISIONS §35.** Recorded as RG-01/RG-02 in `docs/RELAY_GAP.md`.
+
 ## Frontend shape
 
 - **Tabs: Live · Outputs · Templates · Themes · Library · Planner · Settings · Help.** (The Outputs tab's internal key is still `channels`, and its view file is `Channels.svelte` — the label is what an operator reads.) There is no Console tab — `Live` IS the console. **Themes** is the style layer beneath templates (DECISIONS §27): a theme sets default `style` keys, a template overrides them per key, and `TemplateRender` resolves a template's `style.themeRef` against builtins itself, so every surface is themed with no per-surface wiring. Layer colours may bind to theme tokens (`theme:accent`). Stage/confidence monitors are render-profiles of the one engine (starters in `layers.js`), not a parallel system — they show monitor-only fields (`next`, `note`, `elapsed`) that ride to output but no congregation template renders. **Build** a plan in Planner (a Tuesday job; nothing there can reach an output). **Run** it in Live (a Sunday job). The merge exists because an operator running a plan on a separate tab could not see the AI's suggestions — and the preacher going off-script is the entire product.
@@ -205,6 +207,7 @@ These caused real crashes, freezes, or silent failures in front of people. Keep 
 - One store: `src/lib/stores/capture.js` (`capture`, `transcript`, `detections` = pending suggestions only, `live` = what's on screen, `panicError`, `templates`). All Tauri command wrappers + event listeners live here.
 - **`src/lib/TemplateRender.svelte` is the ONE renderer** for the fullscreen output and the Templates editor preview → WYSIWYG by construction. Sizes are **cqw** so a template scales identically at any output size. The output page is **transparent** so a Transparent-background template keys out for OBS/ATEM.
 - **`src/lib/errors.js` is the ONE backend-error humaniser.** Never render a raw Rust `Err` string to a volunteer — Channels did, in monospace, five times.
+- **There is a readiness surface already, and it is not a tab.** `src/lib/boot/` is a launch ladder (`boot.js` STAGES `diagnostics · hardware · plugins · migration`, GATES `crash · recover · update · safemode`) with ~21 real probes in `boot/probes.js` — engine, database, STT model, mic, LAN, cores, memory, GPU-in-this-BUILD, disk, kiosk, HTTP, NDI, OBS, ATEM, schema version, tables present, `detections.status` accepts `'manual'`, and a leftover `detections_new` scratch table (rule 25). **A stub can never render green** (`boot.js`), and `views/Dashboard.svelte` — which lives inside Settings, not on the tab bar — re-runs the same `freshChecks()` through the same `makeProbes()` and rolls it up to one sentence. **Extend this; never fork it.** Liveness probes call `ping`, not `greet` (rule 26).
 - Tauri events: `audio://chunk`, `stt://transcript`, `detection://match`, `output://content`, `output://clear`, `output://black`, `output://panic_failed`, `nav://blocked`, `template://updated`, `audio://error`, `model://progress|done|error|cancelled`.
 
 ## Detection notes
@@ -224,7 +227,7 @@ These caused real crashes, freezes, or silent failures in front of people. Keep 
 
 ## Testing
 
-**519 Rust** (28 ignored) + **594 frontend** (0 skipped), re-measured 2026-08-24. CI runs both on **macOS and Windows**, plus `fmt`, `clippy -D warnings`, the detection scorecard, and a release build.
+**519 Rust** (28 ignored) + **594 frontend** (0 skipped), re-measured 2026-08-29. CI runs both on **macOS and Windows**, plus `fmt`, `clippy -D warnings`, the detection scorecard, and a release build.
 
 - **`qa.rs` owns the fixture. Do not write another one.** `qa::bare_app()` is a fresh install and nothing else — real schema, real seed, no operator has touched it — and `qa::{Wall, Kiosk, settle}` are the two doors out of the machine plus the drain. `e2e::app()` is now `bare_app()` **plus one documented difference** (a content-look override, without which its template assertion is vacuous), which is exactly the shape a deviation should have: three visible lines, not a fifty-line copy that drifts. A second fixture is how two suites start disagreeing about what a fresh install contains. `the_bare_fixture_is_a_first_launch_and_nothing_more` is the tripwire; it is what caught that `tpl_song` **is** seeded on purpose (every other built-in is scripture-shaped, so a lyric rendered through one showed the song title instead of the words).
 - **The QA apparatus is documented, not folklore.** `docs/QA_HARNESS.md` — Part 0 the current counts (each with the command that reproduces it), Part 1 the design and the five evidence layers, Part 2 the shared preamble every `relay-qa-*` agent inherits verbatim, Part 3 the roster, **Part 4 what is already pinned — read it before filing anything, so you don't "find" a fixed bug**. Run `/qa-audit`; `node scripts/qa-inventory.mjs` prints the control/orphan/create-path report on its own.
