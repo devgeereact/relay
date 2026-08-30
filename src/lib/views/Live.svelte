@@ -979,6 +979,25 @@
     </div>
   {/if}
 
+  <!-- THE ENGINE IS NOT ATTACHED.
+       Eighteen controls on this tab — Clear screens, Blackout, Fire, Rehearse, the
+       microphone — are `disabled={!$capture.available}`. Channels, ServicePlanner
+       and History each say why in that state; the RUN surface, the one an operator
+       is looking at when something goes wrong, said nothing at all and simply
+       appeared broken.
+       Rose, because it is a fault the operator must act on, and it names the one
+       thing that is still true: firing by hand needs the engine too, so there is no
+       reassuring half-truth to offer here. -->
+  {#if !$capture.available}
+    <div class="con-noengine" role="alert">
+      <span class="r-badge rose"><span class="bd"></span>Backend not attached</span>
+      <span>
+        Relay's engine is not running, so nothing on this tab can reach a screen —
+        including the manual controls. Reopen Relay from the app, not from a browser.
+      </span>
+    </div>
+  {/if}
+
   <!-- ══════ ROW A — the pair, the rack, and the outputs ══════ -->
   <div class="con-top">
     <!-- PREVIEW — what the next TAKE would put on the wall. Amethyst, because it
@@ -1626,6 +1645,11 @@
   .reh b{font-family:var(--f-mono); font-size:var(--v-fs-cap); font-weight:700;
     letter-spacing:.14em; color:var(--v-amethyst); flex:0 0 auto}
   .reh span:not(.reh-dot){flex:1}
+  .con-noengine{ display:flex; align-items:center; gap:10px; padding:9px 12px;
+    border:1px solid var(--v-rose); border-radius:var(--v-r-md);
+    background:var(--v-rose-soft); margin-bottom:10px }
+  .con-noengine span:last-child{ font-size:var(--v-fs-b2); color:var(--v-txt) }
+
   .reh-dot{width:8px; height:8px; border-radius:50%; flex:0 0 auto; background:var(--v-amethyst);
     box-shadow:0 0 9px var(--v-amethyst); animation:pulse 1.7s ease-in-out infinite}
   .reh-end{flex:0 0 auto; padding:7px 14px; border-radius:var(--v-r-md); cursor:pointer;
