@@ -24,6 +24,7 @@ import {
   BEAT_INTERVAL_MS,
   BEAT_GRACE_MS,
   PAINT_STATES,
+  screenSwitch,
 } from './outputHealth.js';
 
 const ROOT = path.resolve(__dirname, '../..');
@@ -293,5 +294,63 @@ describe('both surfaces read the same fact', () => {
     expect(page).toMatch(/getWs: \(\) => ws/);
     // Started on the shared path, so the desktop branch cannot skip it.
     expect(page.indexOf('startBeat(')).toBeGreaterThan(page.indexOf('startKiosk();'));
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RG-29 · switching one screen on or off from the run surface
+//
+// The Output Status pane's whole purpose is to report a screen that is down, and
+// it offered no way to bring one back — an operator who read "Not responding" had
+// to leave the run surface mid-service and hunt for the row in another tab.
+//
+// The rule is pure and shared with the Outputs tab, so the badge and the button
+// can never end up describing different screens.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const NATIVE = { id: 1, name: 'Main screen', render_target: 'native_window' };
+const KIOSK = { id: 2, name: 'OBS', render_target: 'network_client' };
+
+describe('RG-29 · turning a screen on and off', () => {
+  it('offers to turn ON a native screen with no window open', () => {
+    const w = screenSwitch({ supported: true, online: false }, NATIVE);
+    expect(w.action).toBe('on');
+    expect(w.label).toBe('Turn on');
+    expect(w.why).toMatch(/No window/);
+  });
+
+  it('offers to turn OFF a screen that has a window, answering or not', () => {
+    for (const st of [
+      { supported: true, online: true, painting: true, last_beat_ms: 100 },
+      // Not responding is still a window that exists — and turning it off and on
+      // again is the repair the pane exists to make possible.
+      { supported: true, online: true, painting: false, last_beat_ms: 999999 },
+    ]) {
+      expect(screenSwitch(st, NATIVE).action).toBe('off');
+    }
+  });
+
+  it('offers NOTHING for a browser source, and says where to go instead', () => {
+    const w = screenSwitch({ supported: true, online: true }, KIOSK);
+    expect(w.action).toBeNull();
+    // A handlerless button has shipped in this repository before. A control that
+    // cannot work must say why rather than look available.
+    expect(w.why).toMatch(/OBS|kiosk|phone/i);
+  });
+
+  it('offers nothing before the first health reading', () => {
+    // `unknown` is "not asked yet", not "off". Offering "Turn on" for a screen
+    // that may already be on would be a guess printed as a control.
+    const w = screenSwitch(null, NATIVE);
+    expect(w.action).toBeNull();
+    expect(w.label).toBe('Checking…');
+  });
+
+  it('agrees with the badge about the same screen', () => {
+    // The two must be derived from one fact. A screen with no window reads "No
+    // window" on the badge and "Turn on" on the button — never one of each.
+    const st = { supported: true, online: false };
+    expect(describeScreen(st, {}, 0).label).toBe('No window');
+    expect(screenSwitch(st, NATIVE).action).toBe('on');
   });
 });

@@ -1771,6 +1771,24 @@ export const channelHealth = writable({}); // channel id → ChannelLiveness
 export const channelWaiting = writable({});
 let healthPoll = null;
 
+/**
+ * Ask the backend what each screen is doing, once, now.
+ *
+ * The 2-second poller below covers the steady state. This exists for the moment
+ * an operator has just switched a screen on or off and needs the pane to answer
+ * from the backend rather than from the console's assumption that the command
+ * that returned did the thing.
+ */
+export async function refreshChannelHealth() {
+  try {
+    await pollChannelHealth();
+  } catch {
+    // GROUP 2: a health read never throws at a caller. The pane going stale is
+    // the correct failure — it degrades toward "not answering", never toward
+    // "all is well" (outputHealth.js rule 2).
+  }
+}
+
 async function pollChannelHealth() {
   const rows = await channelStatus();
   const next = {};

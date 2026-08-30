@@ -45,6 +45,7 @@ mod stt;
 mod sysprobe;
 mod telemetry;
 mod updates;
+mod wake;
 
 use audio::AudioEngine;
 use channels::OutputContent;
@@ -881,8 +882,23 @@ fn emit_detections<R: tauri::Runtime>(
                 matched: Some(m.matched_text),
             });
         }
+        // A reference named in THIS window outranks the one in memory. FIELD F-1:
+        // "…going through in Luke 10. If you read from verse 32, 37" put
+        // **Proverbs 3:32** on a congregation's wall, because Proverbs 3:6 had been
+        // fired by hand five minutes earlier and the bare 32 was resolved against
+        // it — with Luke 10 sitting in the same sentence.
+        //
+        // Memory is what Relay has when the words do not say. When the words do
+        // say, the words win.
+        let anchor = detection::anchor_for_bare_verses(text);
         for n in detection::detect_bare_verses(text) {
-            if let Some(r) = context.resolve_bare_verse(n) {
+            let from_window = anchor.as_ref().map(|a| detection::VerseRef {
+                book: a.book.clone(),
+                chapter: a.chapter,
+                verse: n,
+            });
+            let resolved = from_window.or_else(|| context.resolve_bare_verse(n));
+            if let Some(r) = resolved {
                 // "…and verse eighteen", resolved against the passage already on
                 // screen. The operator needs to see that this came from CONTEXT, not
                 // from a book name they never heard the preacher say.
@@ -1157,6 +1173,33 @@ fn announce_nav<R: tauri::Runtime>(
             let _ = handle.emit("output://panic_failed", e.to_string());
         }
     }
+}
+
+/// Tell the operating system whether Relay still needs the display up.
+///
+/// ONE caller decides, from the three facts as they are right now — the same
+/// choke-point reasoning as rule 36. A `wake::apply` sprinkled at six call sites
+/// is a `wake::apply` that will be missing from the seventh, and the symptom
+/// would be a projector going black in the one situation nobody added it to.
+///
+/// Reads each fact under its own lock and releases before calling out, because
+/// `wake::apply` talks to IOKit and nothing may hold a lock across a call into
+/// the platform (rule 2, in a different coat).
+fn refresh_wake<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    let capturing = app
+        .try_state::<Audio>()
+        .and_then(|a| a.0.lock().ok().map(|g| g.is_some()))
+        .unwrap_or(false);
+    let service_recording = app
+        .try_state::<Session>()
+        .and_then(|s| s.0.lock().ok().map(|g| g.is_some()))
+        .unwrap_or(false);
+    let outputs_open = !channels::list_open(app).is_empty();
+    wake::apply(wake::Need {
+        capturing,
+        service_recording,
+        outputs_open,
+    });
 }
 
 /// Spoken in-passage jump ("chapter 5 verse 1", "verse 4"): resolve the BOOK from
@@ -2854,6 +2897,21 @@ fn export_diagnostics(app: tauri::AppHandle) -> error::Result<String> {
                 format!("MISSING: {}", missing.join(", "))
             },
         ));
+        // Whether the display was being held awake. A church reporting "the
+        // projector went black in the middle of the sermon" needs this line: it
+        // separates a screen Relay let sleep from a screen that failed for some
+        // other reason, and it distinguishes both from a machine that REFUSED the
+        // assertion — which is a third thing and looks identical from the room.
+        relay.push(Fact::new(
+            "Display kept awake",
+            if wake::failed() {
+                "NO — this machine refused the request".into()
+            } else if wake::is_held() {
+                "yes".to_string()
+            } else {
+                "not needed right now".into()
+            },
+        ));
         // Whether an update is mid-flight, which is the first question when a
         // machine started misbehaving after one. The version is a version; the
         // snapshot PATH is not included, because it is a path in someone's home.
@@ -3340,16 +3398,26 @@ async fn start_capture(
         },
     );
     *slot = Some(engine);
+    // The lock is dropped before asking the OS to keep the display up, and the
+    // decision is `refresh_wake`'s, not this function's — a microphone starting is
+    // one of three reasons and none of them owns the answer.
+    drop(slot);
+    refresh_wake(&app);
     Ok(())
 }
 
 /// Stop the running capture, if any. Idempotent. Leaves the STT worker loaded.
 #[tauri::command]
-async fn stop_capture(audio: tauri::State<'_, Audio>) -> error::Result<()> {
+async fn stop_capture(app: tauri::AppHandle, audio: tauri::State<'_, Audio>) -> error::Result<()> {
     let mut slot = audio.0.lock()?;
     if let Some(engine) = slot.take() {
         engine.stop();
     }
+    drop(slot);
+    // Releasing matters as much as taking: a laptop that never sleeps again
+    // because Relay was opened once is the reason this is tied to the three facts
+    // and not to the process being alive.
+    refresh_wake(&app);
     Ok(())
 }
 
@@ -4459,6 +4527,7 @@ fn open_channel_output(
     let label = channels::channel_label(channel_id);
     channels::open_native_window(&app, &label, template_id, &channel.name, monitor_index)?;
     let _ = outputs; // labels no longer come from the counter
+    refresh_wake(&app);
     Ok(label)
 }
 
@@ -4763,7 +4832,11 @@ fn close_channel_output(
     // went silent, i.e. as a fault, immediately after the operator did something
     // completely normal.
     health.forget(channel_id);
-    channels::close_window(&app, &channels::channel_label(channel_id)).map_err(Into::into)
+    let r = channels::close_window(&app, &channels::channel_label(channel_id));
+    // After, not before: the answer depends on whether any window is left, and
+    // the window this closed has to be gone before that can be asked.
+    refresh_wake(&app);
+    r.map_err(Into::into)
 }
 
 /// Assign a physical display to a channel (HDMI). `display` is the monitor index
@@ -5037,7 +5110,8 @@ fn nav<R: tauri::Runtime>(app: tauri::AppHandle<R>, direction: String) -> error:
 /// Start (or resume) recording a service. If one is already active it's reused
 /// so pause/resume of capture doesn't fragment history. Returns the service id.
 #[tauri::command]
-fn start_service(
+fn start_service<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     session: tauri::State<'_, Session>,
     db: tauri::State<'_, Db>,
     rehearsal: tauri::State<'_, channels::Rehearsal>,
@@ -5084,6 +5158,11 @@ fn start_service(
     // First row of the timeline, at 0 ms, written while both locks are already
     // held rather than through `log_event` — which would deadlock on them.
     let _ = db::log_event(&conn, id, 0.0, db::EventKind::ServiceStarted, Some(&title));
+    // Both locks go before the OS call. A service is recording: the display stays
+    // up for its whole length, whether or not anyone touches the trackpad.
+    drop(sess);
+    drop(conn);
+    refresh_wake(&app);
     Ok(id)
 }
 
@@ -5101,6 +5180,7 @@ fn end_service<R: tauri::Runtime>(
     log_event(&app, db::EventKind::ServiceEnded, None);
     *session.0.lock()? = None;
     lock.release();
+    refresh_wake(&app);
     Ok(())
 }
 

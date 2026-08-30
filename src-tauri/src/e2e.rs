@@ -169,6 +169,7 @@ fn a_service_records_what_happened_and_it_survives_the_service() {
     let h = app.handle().clone();
 
     let svc = start_service(
+        h.clone(),
         h.state::<Session>(),
         h.state::<Db>(),
         h.state::<channels::Rehearsal>(),
@@ -231,6 +232,7 @@ fn a_service_records_what_happened_and_it_survives_the_service() {
 
     // And the SECOND service keeps its own record rather than continuing the first.
     let next = start_service(
+        h.clone(),
         h.state::<Session>(),
         h.state::<Db>(),
         h.state::<channels::Rehearsal>(),
@@ -273,6 +275,7 @@ fn a_recorded_service_holds_back_a_deletion_but_never_the_wall() {
     assert!(!lock.engaged(), "a fresh app is not protecting anything");
 
     let svc = start_service(
+        h.clone(),
         h.state::<Session>(),
         h.state::<Db>(),
         h.state::<channels::Rehearsal>(),
@@ -341,6 +344,7 @@ fn a_recorded_service_holds_back_a_deletion_but_never_the_wall() {
     .expect("end");
     let again = create_template(h.state::<Db>(), Some("Scratch 2".into())).expect("create");
     start_service(
+        h.clone(),
         h.state::<Session>(),
         h.state::<Db>(),
         h.state::<channels::Rehearsal>(),

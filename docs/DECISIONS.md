@@ -2328,3 +2328,90 @@ class of bug for a heuristic.
 disabled and both fail. `qa.rs::a_component_can_create_a_song_arrangement` now
 pins the closure from both ends — it asserts the editor exists **and** that
 something renders it, because a component nothing renders is not a create path.
+
+---
+
+## 56. What a demotion is, and what a bare verse belongs to (2026-08-30)
+
+Four defects, closed together because they are one idea seen from four sides: **a
+number that is honest about a parse says nothing about whether the thing parsed was
+ever said.** `UncertainBook` established that for a guessed word in 2026-08-14. This
+establishes it for guessed digits, and for a reference assembled out of memory.
+
+### A demotion expressed as a number is a demotion a dial can erase
+
+`parse_reference` demotes five shapes on purpose, each to 0.45 against a 0.50 default
+bar. That margin is 0.05 wide, and `Thresholds::from_sensitivity(100)` returns an
+auto-fire bar of **0.30** — which is the confidence FLOOR that `make_match` clamps to.
+So at the top of the operator's own sensitivity dial no direct match could ever be a
+suggestion, and **every deliberate demotion in the file was inert** (R4-03).
+
+`DetectionMethod::UncertainNumber` states the demotion as a kind of claim rather than a
+score. `may_auto_fire` already refuses everything that is not `Direct`, so the dial
+cannot reach it, the calibrator cannot drift into it, and no future threshold change can
+undo it. Five sites yield it: a run the book cannot support that was split (R4-01), a
+leftover number after the pair (R4-02), a whole chapter nobody named as one, a
+single-chapter book's lone number, and a bare pair in a single-chapter book.
+
+Two of those were measured putting verses on a wall in ordinary preaching:
+*"Nehemiah, fifty two days they built the wall"* → **Nehemiah 5:2** at 0.77, because the
+split repair was scored 0.83 while the reading it replaced was demoted to 0.45 — a
+number the parser could **not** read as a chapter made Relay more confident. And
+*"romans eight one two"* → **Romans 8:1**, because the garble guard was gated on digits
+while whisper writes words on accented speech, which is this product's entire market.
+
+A connector-less adjacent number is also no longer a range unless it is a digit token:
+that path exists only to recover `3:16-18`, whose hyphen `normalize` turns into
+whitespace, and a hyphen cannot survive into spelled-out words. Without that, the
+leftover number in "romans eight one two" was swallowed as a range end and could never
+be seen as leftover at all.
+
+### A bare verse belongs to the book this sentence names
+
+**Found in a live service, not in this repository** — `docs/audits/FIELD-2026-08-30.md`.
+
+The operator fired **Proverbs 3:6** by hand. Five minutes later the preacher said
+*"…what was going through in **Luke 10**. If you read from **verse 32**, 37."*
+`detect_bare_verses` saw 32, `ContextMemory::resolve_bare_verse` hung it on the
+remembered Proverbs 3, and **Proverbs 3:32 auto-fired at 0.88** — with Luke 10 in the
+same sentence.
+
+`detection::anchor_for_bare_verses` returns the LAST reference parsed from the window,
+and a bare verse hangs on that when there is one. Memory is the fallback, not the
+default. The case the path was built for — "and verse eighteen", no book named, walking
+a passage — has nothing to anchor to and is untouched.
+
+**The first diagnosis was wrong and is recorded rather than quietly replaced.** The
+parser was blamed; a regression test was written against that theory; it passed with the
+supposed fix reverted. A test that cannot fail is a theory that was never tested.
+
+### Left open, deliberately
+
+A context-resolved bare verse is pushed as `Direct` at a hardcoded `0.88`. Relay did not
+*hear* "Proverbs 3:32" — it heard "verse 32" and inferred the rest, so by rule 10's own
+principle that label is a lie and 0.88 is a constant rather than a measurement. It is not
+changed here: a preacher walking a passage saying "verse eighteen" is exactly what the
+path is for, and one service is not evidence enough to make all of those ask for a click.
+Recorded in the field audit as an open question so that silence is not mistaken for a
+decision.
+
+### And two things a room asked for
+
+**`wake.rs`** — an OS assertion holds the display up while the microphone is live, a
+service is recording, or an output window is open, and is released when none of the three
+is true. Not held merely because Relay is open: an app that disables sleep for as long as
+it is running flattens a battery in a bag. No new dependency (IOKit on macOS,
+`SetThreadExecutionState` on Windows), one decision point (`refresh_wake`) rather than a
+call at each of six sites, and the state appears in the diagnostic bundle — because
+"the projector went black" is answered differently depending on whether Relay was holding
+the screen up, chose not to, or **asked and was refused**.
+
+**Per-screen on/off on Live.** The Output Status pane was read-only on the argument that
+during a service the only question is "is it up?". That argument is half right and it left
+the pane at a dead end: its whole purpose is to report a screen that is down, and it
+offered no way to bring one back. Switching a screen is the repair for the state the pane
+reports; changing a display or a template is configuration and stays in the Outputs tab.
+One pure rule (`screenSwitch`) shared with that tab, so badge and button cannot disagree,
+and a browser source says where to go rather than showing a button that would do nothing.
+In the same service, `service_events` recorded the main screen **lost and recovered
+twice**.

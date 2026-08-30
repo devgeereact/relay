@@ -207,6 +207,53 @@ export function describeScreen(st, wall, waitedMs = 0) {
   return { kind: 'ready', label: wall?.black ? 'Blackout' : 'Ready', note: seen };
 }
 
+/**
+ * Can the operator switch this screen on or off from here, and what does the
+ * control say?
+ *
+ * ── Why this belongs on the run surface ──────────────────────────────────────
+ *
+ * The Output Status pane was read-only on the argument that "during a service the
+ * only question is: is it up?". That argument is half right — it IS the only
+ * question — and it left the pane at a dead end, because the pane's whole purpose
+ * is to report a screen that is down and it offered no way to bring one back. An
+ * operator who reads **Not responding** has to leave the run surface, find the
+ * Outputs tab and hunt for the row, mid-service, with a congregation waiting.
+ *
+ * Switching a screen on or off is not configuration — it is the repair for the
+ * state this pane exists to report. Changing a screen's DISPLAY or its template
+ * is configuration, and that stays in the Outputs tab.
+ *
+ * ── The three answers, and why "no control" is one of them ───────────────────
+ *
+ * A browser source (OBS, a kiosk tab, a phone) cannot be opened from this
+ * machine: it is a page on someone else's device, and the honest control is a
+ * sentence telling the operator where to go, not a button that would do nothing.
+ * This repository has shipped a handlerless button before; a disabled control
+ * that says why is the version that does not waste a service.
+ *
+ * `st` is the channel's health row, `channel` its record. Pure — the rule lives
+ * here so Live and the Outputs tab cannot disagree about the same screen.
+ */
+export function screenSwitch(st, channel) {
+  if (channel?.render_target !== 'native_window') {
+    return {
+      action: null,
+      label: 'Browser source',
+      why: 'Open or close this one where it runs — OBS, the kiosk tab, or the phone.',
+    };
+  }
+  const fault = screenFault(st);
+  // `unknown` is "we have not asked yet", not "it is off". Offering "Turn on" for
+  // a screen that may already be on would be a guess printed as a control.
+  if (fault === 'unknown') return { action: null, label: 'Checking…', why: '' };
+  if (fault === 'unsupported')
+    return { action: null, label: 'Unavailable', why: st?.detail ?? '' };
+  if (fault === 'offline')
+    return { action: 'on', label: 'Turn on', why: 'No window is open on this display.' };
+  return { action: 'off', label: 'Turn off', why: '' };
+}
+
 /** Badge class per kind. Rose is "a failure the operator must act on". */
 export const SCREEN_BADGE = {
   unknown: 'grey',
