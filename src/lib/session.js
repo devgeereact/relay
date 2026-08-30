@@ -79,7 +79,35 @@ function load() {
     //
     // Either way it must never block boot. A broken resume is recoverable; a
     // console that will not start is not.
-    return { ...EMPTY, activeTab: 'live' };
+    //
+    // ── AND `setupDone` SURVIVES IT, WHICH IS THE WHOLE POINT ────────────────
+    //
+    // This used to return `{ ...EMPTY, activeTab: 'live' }` — and `EMPTY.setupDone`
+    // is `false`, which IS the fresh-install signal and the only thing App.svelte
+    // reads. So the branch that exists to say "this is NOT a fresh install" said
+    // exactly that, and the six-step modal wizard opened over a console that may
+    // have been mid-service.
+    //
+    // **A key that exists is proof the app has run on this machine.** A genuinely
+    // fresh install has no key at all and is handled above. So the wizard — which
+    // is for somebody who has never set Relay up — is not what this operator needs;
+    // everything it configures also lives in Settings, and `restartFirstRun()` is
+    // one click away if they do want it.
+    //
+    // The unreadable bytes are KEPT, under a sidecar key, because
+    // `session.subscribe` persists on every change and fires immediately — so the
+    // fallback is written straight back over the corrupt payload before any other
+    // module gets a chance to look at it. That destroyed the very resume point the
+    // comment above is worried about. Nothing reads the sidecar yet, and that is
+    // stated rather than implied: it exists so the evidence survives, and so a
+    // future repair has something to repair FROM.
+    try {
+      localStorage.setItem(`${KEY}.corrupt`, raw);
+    } catch {
+      // Quota or private mode. Preserving the bytes is a courtesy, never a
+      // precondition for booting.
+    }
+    return { ...EMPTY, activeTab: 'live', setupDone: true };
   }
 }
 
