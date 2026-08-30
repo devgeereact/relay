@@ -1,9 +1,14 @@
 //! R5 · Failure & Boundaries — audit evidence.
 //!
 //! Test-only, and deliberately its own module rather than more tests inside
-//! `qa.rs`: these are the REPRODUCTIONS behind three findings, and two of them
-//! are expected to be RED until the findings are closed. Mixing a red-on-purpose
-//! test into the shared harness makes `cargo test` unreadable for everyone else.
+//! `qa.rs`: these began as the REPRODUCTIONS behind three findings, and two were
+//! expected to be RED until those findings were closed.
+//!
+//! **All three are closed, and every test here is green.** They were inverted
+//! rather than deleted, so each now guards the repair instead of recording the
+//! defect — and this header is corrected rather than left saying two of them
+//! should be failing, because a reader who takes that at face value reads a green
+//! run as proof the defects are still present.
 //!
 //! Fixture and assertion surfaces come from [`crate::qa`] — one fixture, no drift.
 
@@ -12,9 +17,9 @@ use super::*;
 
 // ── R5 · FAILURE & BOUNDARIES — audit evidence ──────────────────────────
 //
-// The three tests below were written by the failure-and-boundaries audit as
-// EVIDENCE for findings, not as fixes. Two of them FAIL on purpose: they are
-// the reproduction, and they should stay red until the finding is closed.
+// Written by the failure-and-boundaries audit as EVIDENCE for findings. Two of
+// them failed on purpose at the time; all are closed now and all are green, so
+// they hold the repair.
 
 /// R5-2 · The LAN remote's route surface, pinned.
 ///
