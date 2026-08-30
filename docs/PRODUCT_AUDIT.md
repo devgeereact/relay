@@ -14,9 +14,9 @@ Supersedes Revision 2 (2026-07-12) and Revision 1 (2026-07-05). Every claim was 
 >
 > | | Rev 3 said | Today |
 > |---|---|---|
-> | Tests | 250 Rust + 138 frontend | **590 Rust** run (28 ignored) + **845 frontend** (0 skipped) — re-measured 2026-08-30 |
-> | `main.rs` | 2,922 lines / 101 commands | **5,337 lines / 137 commands** — re-measured 2026-08-30 |
-> | Decision log | 25 decisions | **53** numbered (§18–§53), plus 28 earlier table rows |
+> | Tests | 250 Rust + 138 frontend | Run `cd src-tauri && cargo test` and `npx vitest run` — **a number written here was wrong within a week, three times** (RELAY_GAP §18) |
+> | `main.rs` | 2,922 lines / 101 commands | `wc -l src-tauri/src/main.rs` · `grep -c '#\[tauri::command\]' src-tauri/src/main.rs` — it has drifted past every number ever written here |
+> | Decision log | 25 decisions | **42** numbered (§18–§59), plus 28 earlier table rows |
 > | `Result<_, String>` in `main.rs` | replaced | **zero remain** — confirmed |
 > | Release decision | not stated | **NO-GO**, and it is a machine's, not this document's |
 >
@@ -30,18 +30,36 @@ Supersedes Revision 2 (2026-07-12) and Revision 1 (2026-07-05). Every claim was 
 >
 > **But the release decision is still NO-GO**, on the condition Rev 3 never scored:
 > *roughly half of Relay, as a volunteer experiences it, has never been reached by any
-> instrument here.* Audio in — 0%. Pixels out — 0%. Hardware — 0%. The packaged build — 0%.
-> A real congregation — 0%. That is `audits/QA-2026-08-14.md` §16, the human test script, and it
-> **has not been run**.
+> instrument here.*
 >
-> A second, narrower sweep on **2026-08-29** re-measured the counts above and hunted contradictions
-> across the doc set; what it corrected, and an item-by-item scoring of an outside product-expansion
-> brief against the code, is [RELAY_GAP.md](RELAY_GAP.md). It raised no new P0 and did not move the
+> **Two of those zeros moved on 2026-08-30, and the verdict did not.** Relay ran a live
+> sermon — 49.5 minutes, packaged build, `ggml-large-v3-turbo`
+> ([`audits/FIELD-2026-08-30.md`](audits/FIELD-2026-08-30.md)):
+>
+> | | Rev 3 / the 2026-08-20 banner | After the first real service |
+> |---|---|---|
+> | The packaged build | 0% | Built, installed, ran a service. Notarization still needs a certificate |
+> | Audio in | 0% | A real preacher transcribed for 49.5 min. **Word error rate still unmeasured, in every language** |
+> | Pixels out · hardware · a real congregation | 0% | Unchanged |
+> | Stage F11 (does latency drift over a long service?) | never run | **Run. No drift** — p50 held 627–699 ms across 2,423 decodes |
+>
+> **And that service is the argument FOR this banner, not against it.** Fifty minutes in a room
+> produced **seven findings** that months of reading source had not — a wrong verse on a
+> congregation's wall, an end-to-end metric that was measuring how long the preacher had been
+> talking, a service record pointing at the wrong sentence. One was withdrawn as wrong. Six are
+> closed. That ratio is what "half of this product has never been reached by an instrument"
+> means when somebody finally reaches it.
+>
+> The narrower sweeps of **2026-08-29** and **2026-08-30** re-measured the counts above, hunted
+> contradictions across the doc set, and closed forty-six register items;
+> [RELAY_GAP.md](RELAY_GAP.md) is the record. Neither raised a new P0, and neither moved the
 > release decision.
 >
-> So the honest one-line summary of this document, updated: **the code is done and now genuinely
-> hardened; what is left needs a certificate, a microphone in a real church, a Yorùbá speaker,
-> and a Sunday.** Nothing on that list is a commit — which is what Rev 3 said, and it was right.
+> So the honest one-line summary of this document, updated: **the code is done and genuinely
+> hardened, and it has now been run once in a real room by the person who wrote it; what is
+> left needs a certificate, a projector, a Yorùbá speaker, a second Sunday, and an operator who
+> is not the author.** Nothing on that list is a commit — which is what Rev 3 said, and it was
+> right.
 
 > **Revision 3 in one line: every finding in this document that could be closed by writing code has been closed. What is left cannot be — it needs money, a certificate, a native speaker, and thirty minutes of a real preacher on tape.**
 

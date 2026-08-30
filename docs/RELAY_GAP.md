@@ -6,10 +6,16 @@ This document answers one question: **the transformation brief proposes ~80 thin
 them already exist, which are half-built, which are missing, and which would break a decision
 this product has already made and recorded?**
 
-It is the *output* of `docs/GPT.md`, which is the *input* — a paste-into-any-model prompt that
-front-loads Relay's real constraints so a model argues inside the product's shape instead of
-recommending accounts, RBAC and cloud sync at it. Keep both: the prompt is how the question gets
-asked, this file is what the repository answered.
+It began as the *output* of `docs/GPT.md` — a paste-into-any-model prompt that front-loaded
+Relay's constraints so a model argued inside the product's shape instead of recommending
+accounts, RBAC and cloud sync at it.
+
+> **`docs/GPT.md` was deleted on 2026-08-30, deliberately.** It was 770 lines that restated
+> `CLAUDE.md`, `AGENTS.md` and this file for a model with no repository access — and it carried
+> its own copy of every count, all of which had drifted (§18). `AGENTS.md` is now the
+> tool-agnostic contract for an agent working IN the repo, and this document is what the
+> repository answered. A third copy of the same constraints was a third thing to keep true, and
+> it was already the least true of the three.
 
 > **This report changed no engine code.** Its §21 buckets and §25 checklist are proposals to a
 > human, not work in progress. That is the brief's own §79 rule — *establish what exists, then
@@ -572,12 +578,26 @@ CI; **F1–F5 and F9–F14 need a person, a room and a packaged build.**
 
 ## 16. Missing functionality — consolidated
 
-Service replay · Sunday report · service event timeline · output heartbeat + per-channel liveness
-on Live · Service Lock · update rollback · DB-compat preflight · offline installer · pre-air Safe
-Screen validation · contrast validation · distance preview · output accessibility mode · room /
-environment profiles · explicit room calibration · language quality centre · signed language packs
-· training mode · rehearsal replay · diagnostic bundle export · privacy screen · persisted latency
-· p99 · time-to-first-verse.
+> **Rewritten 2026-08-30. Everything the original list named is now built except three,
+> and leaving the old list in place would have made this document say "missing" about
+> features that shipped the same week — the exact failure §26 and RG-44/RG-46 are
+> about.** The original list is preserved below the line, because a register that
+> quietly loses what it used to claim cannot be checked.
+
+**Still missing, and each for a stated reason:**
+
+| Item | Why it is still missing |
+|---|---|
+| **Signed language packs** | The signing infrastructure does not exist, and an *unsigned* pack is a wrong-verse-on-a-wall vector. RG-19 shipped the offline bundle without them, deliberately |
+| **Explicit room calibration** | DECISIONS §19 / rule 12: nothing may compare a signal to a stored level. The instrument that could show a seeded floor safe (`cargo test audio::gate -- --ignored`, against real room audio) has never been pointed at a real room — Stage C |
+| **Time-to-first-verse** | A HUMAN metric: from the preacher saying it to the congregation reading it. `latency.rs` measures machine stages, and the one span that claimed to cover this end to end was measuring how long the preacher had been talking (FIELD F-6, RG-31). It needs a stopwatch in a room, not a commit |
+
+**Built since this list was written:** service replay · Sunday report · service event
+timeline · output heartbeat and per-channel liveness on Live · Service Lock · update
+rollback · DB-compat preflight · offline installer · pre-air Safe Screen validation ·
+contrast validation · distance preview · output accessibility mode · room / environment
+profiles · language quality centre · training mode · rehearsal replay · diagnostic bundle
+export · privacy screen · persisted latency · p99.
 
 ## 17. Redundant functionality — do not build
 
@@ -595,9 +615,29 @@ environment profiles · explicit room calibration · language quality centre · 
 
 ## 18. Technical debt
 
-No new debt is recorded here. `ROADMAP.md` §4 owns the register; the only correction this report
-makes to it is that `main.rs` is **4,369** lines / **118** commands, not 4,024 / 114, and
-`capture.js` is **1,941**, not 1,908.
+No new debt is recorded here. `ROADMAP.md` §4 owns the register.
+
+**The counts this report corrected have themselves drifted, which is worth more than the
+numbers.** RG-20 was filed because six documents disagreed about how big `main.rs` was;
+this report corrected them to 4,369 / 118 / 1,941 — and a week of work later those are
+wrong too:
+
+| | when RG-20 was filed | corrected to | **actually, 2026-08-30** |
+|---|---|---|---|
+| `main.rs` lines | 4,024 | 4,369 | **5,723** |
+| registered commands | 114 | 118 | **137** |
+| `capture.js` lines | 1,908 | 1,941 | **2,195** |
+
+A number in prose is wrong the moment somebody commits, and re-correcting it is not a
+fix — it is the same maintenance bill, paid again. **The durable version is the command
+beside the number**, which is why every count in this document and in `QA_HARNESS.md`
+Part 0 now carries one:
+
+```bash
+wc -l src-tauri/src/main.rs
+grep -c '#\[tauri::command\]' src-tauri/src/main.rs
+node scripts/qa-inventory.mjs
+```
 
 ---
 
@@ -789,7 +829,10 @@ recorded, and it is still the lowest number on the page.
 | ✅ RG-43 | **The empty state told a volunteer what to do and made them find the control.** `EmptyState` styles a button in its slot — it was built expecting an action — and **not one of ~15 call sites passed one** | A minute lost in a dark booth, at the one moment a new operator has no idea where anything is | `surface.test.js` R3-05 | The Templates one now offers **New template**. The FILTER case deliberately gets no button: the templates exist, the filter is the problem. **The other call sites still pass no action, and the test says so** — this closes one door, not the class | — | P2 | S | Inverted, and asserts the button's text |
 | ✅ RG-44 | **`surface.test.js` described itself as a file where every test asserts a DEFECT** — so a green run meant "every defect is still here". After this session most are closed | A future agent reads that header first and mistrusts every assertion in the file, or trusts the wrong ones | The header itself, plus one `FINDING` label left behind by a fix in August | Header rewritten to say what it is now: closed findings are INVERTED, never deleted, and a `CLOSED` header means the assertion guards the repair | — | P3 | S | 9 `CLOSED` headers; no stale `FINDING` labels remain || ✅ RG-45 | **A corrupt session payload turned the install into a fresh one — permanently.** `load()`'s corrupt branch is commented *"A CORRUPT payload is NOT a fresh install"* and returned `{...EMPTY}`, whose `setupDone: false` IS the fresh-install signal and the only thing `App.svelte` reads | The six-step modal wizard opens over a console that may be mid-service — and `session.subscribe` persists immediately, so the fallback was written back over the corrupt payload before anything could look at it | `coldstart.test.js`, and `session.test.js`'s own test was NAMED for the guarantee it asserted the opposite of | A key that EXISTS is proof the app has run here; a genuinely fresh install has no key and is handled a branch earlier. `setupDone` survives, and the unreadable bytes are kept under a sidecar key | — | P2 | S | Both tests inverted, and the mis-named one in `session.test.js` corrected rather than the finding being filed twice |
 | ✅ RG-46 | **Three test files described themselves as recording defects after those defects were fixed** — `surface.test.js`'s header, and two `THE FINDING` headers in `qa-r5-groups.test.js` over tests fixed in August | A reader takes the header first: a green run then appears to mean *"every defect is still here"*, and the assertions get mistrusted or trusted wrongly | The files themselves | Headers say what they are now. **Closed findings are INVERTED, never deleted** — the header is the finding title and the assertion is the guard | RG-44 | P3 | S | No `FINDING` label remains over a passing repair |
-| ✅ RG-44 | **`surface.test.js` described itself as a file where every test asserts a DEFECT** — so a green run meant "every defect is still here". After this session most are closed | A future agent reads that header first and mistrusts every assertion in the file, or trusts the wrong ones | The header itself, plus one `FINDING` label left behind by a fix in August | Header rewritten to say what it is now: closed findings are INVERTED, never deleted, and a `CLOSED` header means the assertion guards the repair | — | P3 | S | 9 `CLOSED` headers; no stale `FINDING` labels remain || ✅ RG-47 | **RG-28 was fixed at the call sites and two of three doors were missed** — including `auto_open_outputs`, which `App.svelte` calls on mount, so **every launch** reopened the projector windows without telling the OS to keep the display up | The exact failure `wake.rs` exists to prevent, on the most common path there is — and introduced by the commit that introduced the module | Found by applying CLAUDE.md's own rule to my own change: *enumerate every caller of the thing you fixed* | Both doors call `refresh_wake`, and a test now **enumerates them mechanically** instead of a person doing it from memory — same shape as `servicelock::every_protected_command_actually_guards_itself` | RG-28 | P1 | S | Re-run with the miss restored: the guard fails and names `auto_open_outputs` |
+
+
+| ✅ RG-47 | **RG-28 was fixed at the call sites and two of three doors were missed** — including `auto_open_outputs`, which `App.svelte` calls on mount, so **every launch** reopened the projector windows without telling the OS to keep the display up | The exact failure `wake.rs` exists to prevent, on the most common path there is — and introduced by the commit that introduced the module | Found by applying CLAUDE.md's own rule to my own change: *enumerate every caller of the thing you fixed* | Both doors call `refresh_wake`, and a test now **enumerates them mechanically** instead of a person doing it from memory — same shape as `servicelock::every_protected_command_actually_guards_itself` | RG-28 | P1 | S | Re-run with the miss restored: the guard fails and names `auto_open_outputs` |
+| ✅ RG-46 | **Three test files described themselves as recording defects after those defects were fixed** — `surface.test.js`'s header, and two `THE FINDING` headers in `qa-r5-groups.test.js` over tests fixed in August | A reader takes the header first: a green run then appears to mean *"every defect is still here"*, and the assertions get mistrusted or trusted wrongly | The files themselves | Headers say what they are now. **Closed findings are INVERTED, never deleted** — the header is the finding title and the assertion is the guard | RG-44 | P3 | S | No `FINDING` label remains over a passing repair || ✅ RG-48 | **This report had itself drifted.** §16 listed as "missing" twenty features that shipped during this session, and §18's corrected counts — the very numbers RG-20 was filed to fix — were wrong again: `main.rs` 4,369 → **5,723**, commands 118 → **137**, `capture.js` 1,941 → **2,195** | A gap register that says "missing" about built features is worse than no register: it is the same failure as a test file whose header says every defect is still present | The document itself, measured | §16 rewritten to the three that really are missing, each with the reason, and the old list preserved below the line. §18 states the drift as the finding rather than re-correcting the numbers a third time — **the durable form is the command beside the number, not the number** | RG-20 · RG-44 · RG-46 | P2 | S | The reproducing commands are in §18; run them |
 ---
 
 ## 24. GO / NO-GO
@@ -798,13 +841,29 @@ recorded, and it is still the lowest number on the page.
 `audits/PERF-2026-08-24.md` §7: **roughly half of Relay, as a volunteer experiences it, has never
 been reached by any instrument in this repository.**
 
-Nothing in this report changes that, and nothing in this report is a reason to change it. RG-01
-through RG-05 are real defects worth fixing, and fixing all five would still not produce a GO —
-because the condition is not a defect count, it is a Sunday.
+Nothing in this report changes that, and nothing in this report is a reason to change it. The
+forty-six closed register items are real defects worth fixing, and closing all of them would
+still not produce a GO — because the condition is not a defect count, it is a Sunday.
 
-**What would change it:** Stage A (a packaged, signed build that survives the microphone
-entitlement), Stage B (a projector), Stage C (a person at a microphone), Stage F11 (a full
-service), and one church.
+**Updated 2026-08-30.** Two of those stages have now been reached, and the verdict does not move:
+
+| Stage | Status |
+|---|---|
+| **Stage A** — a packaged build that survives the microphone entitlement | **Reached.** Built, installed to `/Applications`, ran a real service. `scripts/sign-local.sh` reproduces §17's conditions; a *notarized* build still needs a certificate |
+| **Stage F11** — a full service, watching for a rising line | **Reached, and answered: no drift.** `audits/FIELD-2026-08-30.md` |
+| **Stage B** — a projector | Not reached |
+| **Stage C** — a person at a microphone | **Partly.** A real preacher was transcribed for 49.5 minutes. The AUDIO half — word error rate, the gate against a real room — is untouched |
+| **One church** | Not reached. The service was run by the person who wrote the software |
+
+**And the first real service is itself the argument for NO-GO, not against it.** Fifty minutes
+in a room produced **seven findings** that months of reading source had not — including a wrong
+verse on a wall, an end-to-end metric that was measuring how long the preacher had been talking,
+and a service record that pointed at the wrong sentence. One of the seven was withdrawn as
+wrong. That ratio is what "half of this product has never been reached by an instrument" means
+in practice.
+
+**What would still change it:** Stage B, the audio half of Stage C, a second and third service,
+a Windows certificate, and one service run by somebody who did not write the software.
 
 ---
 
@@ -827,6 +886,8 @@ service), and one church.
 - [x] `docs/PRODUCT_AUDIT.md` — one line in the existing staleness banner. Do not rewrite Rev 3
 - [x] `CHANGELOG.md` — add the missing `[0.1.0-4]` entry
 - [x] `docs/GPT.md` — track it, and fix the one stale number (`main.rs` ~4,000 → 4,369)
+      *(the file was deleted on 2026-08-30 — see §26. This line is kept as the record of what
+      the first round did, not as a live instruction.)*
 
 ### Then — P0 engineering
 
@@ -837,24 +898,79 @@ service), and one church.
 - [x] RG-20 (doc drift) — done in the first round; the tick was missing, the work was not
 - [x] RG-21 · RG-22 — the arrangement editor and the index-drift rule, done 2026-08-30
 
+### Then — everything the register could reach from source
+
+- [x] RG-23 … RG-31 — the field audit's own findings, plus the three R4 detection
+      defects. 2026-08-30, DECISIONS §55–§57
+- [x] RG-33 … RG-35 — the confirm arm of the calibrator, the ranking comparator, and
+      the two Settings sliders. DECISIONS §58–§59
+- [x] RG-36 … RG-46 — the console's mixed signals, five untrapped modals, six views a
+      screen reader could not navigate, and three documents that lied about themselves
+- [x] RG-47 — a defect introduced by RG-28 and found by applying this repo's own rule
+      to my own change
+- [x] RG-48 — this report had drifted; §16 and §18 rewritten
+
 ### What is left, and none of it is a commit
 
-- [ ] **Stage C** — a person, a microphone, a real room. Blocks RG-10's audio seed,
-      RG-16's replay, and the word-error-rate measurement the moat rests on.
+- [x] ~~**Stage F11** — one full service, watching Diagnostics for a rising line.~~
+      **RUN 2026-08-30** — `audits/FIELD-2026-08-30.md`. The answer is no drift, across
+      49.5 minutes and 2,423 decodes. It also produced seven findings, six of which are
+      closed above and one withdrawn as wrong.
+- [ ] **Stage C** — a person, a microphone, a real room. The first minutes of it were
+      reached on 2026-08-30; what is still unreached is the AUDIO — word error rate in any
+      language, RG-10's audio seed, and replaying a recorded service.
 - [ ] **Stage B** — a projector, to check RG-18's thresholds against a wall.
-- [ ] **Stage F11** — one full service, watching Diagnostics for a rising line.
-- [ ] **A native speaker** — RG-19's language packs and §47's empty column.
+- [ ] **A native speaker** — signed language packs, Yorùbá numerals (`r4_05`), §47's
+      empty column.
 - [ ] **A Windows code-signing certificate** — the platform most churches are on.
+- [ ] **A second service, and a THIRD** — RG-32 is open on purpose and waits for them:
+      a context-resolved bare verse is labelled `Direct` at a hardcoded 0.88, which by
+      rule 10 is a lie, and one service is not enough evidence to make every in-passage
+      "verse eighteen" cost a click.
+- [ ] **One service run by a NON-AUTHOR operator.** Everything above was run by the
+      person who wrote the software.
 
 ### Always — before any of the above ships
 
-- [ ] Stage F11. Everything else is a smaller number than this one.
+- [ ] A service run by somebody else. Stage F11 has been answered; this one has not, and
+      it is now the largest unknown in the project.
 
 ---
 
 ## 26. Document actions — delete · merge · update
 
-### Delete: **nothing**
+> **Re-run 2026-08-30.** The original round's actions are all done and are kept below the
+> line. This is what a second pass over every tracked document found.
+
+### Delete: **`docs/GPT.md`** — done
+
+770 lines restating `CLAUDE.md`, `AGENTS.md` and this file for a model with **no repository
+access**. That audience was real when it was written and is not any more: `AGENTS.md` now
+carries the tool-agnostic contract, and it deliberately states **no counts at all** — which is
+the whole reason it does not drift. `GPT.md` carried its own copy of every count and every one
+of them was stale (§18).
+
+Three copies of one set of constraints is three things to keep true, and this was reliably the
+least true of the three. The question it existed to ask has been asked; the answer is this file.
+
+**Nothing else is deleted.** Every other tracked document was checked for inbound references:
+
+| Looks orphaned | Why it stays |
+|---|---|
+| `.claude/agents/relay-qa-*.md` (6) | Loaded by NAME by the `/qa-audit` command, not by link |
+| `.claude/commands/qa-audit.md` | A slash command; invoked, never referenced |
+| `.github/PULL_REQUEST_TEMPLATE.md` | GitHub loads it by path |
+| `PROMPT.md` | Cited by five Rust module docs and `capabilities/default.json` for its phase numbers. **Still must not be deleted** |
+| `docs/audits/*` (4) | Frozen evidence. An audit that edits its own history stops being evidence — closures go in its fix log, never in its findings |
+
+### Merge: two duplicates, both mine, both fixed
+
+| Duplicate | Resolution |
+|---|---|
+| **RG-44 appeared twice** in the register, and **RG-47's row was concatenated onto RG-44's line** with no newline — so the table rendered one malformed row and RG-47 was invisible | Both from a conflict I resolved badly while landing PR #35. De-duplicated by ID; the row split |
+| §16 listed twenty features as missing that were **built the same week** | Rewritten to the three genuinely missing, each with its reason; the original list kept below the line |
+
+### The first round's actions — all complete
 
 Verified with `git check-ignore -v`: `ruvector.db`, `.DS_Store`, `docs/.DS_Store` and
 `.claude/RESUME.md` are all untracked **and** gitignored. No stray file is tracked.
