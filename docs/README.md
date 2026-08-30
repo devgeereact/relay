@@ -66,6 +66,7 @@ real gaps.
 | **Decisions (ADR log)** | *Why is anything the way it is?* | [DECISIONS.md](DECISIONS.md) | Complete |
 | **Roadmap & tech debt** | *What is deferred, parked, or owed — and on whose authority?* | [ROADMAP.md](ROADMAP.md) | **NEW** |
 | **Data schema** | *The canonical on-device SQLite shape* | [data/schema.sql](data/schema.sql) | Refreshed |
+| **Schema baseline** | *The oldest schema Relay can upgrade from — checked in so a test can prove every column added since has a migration. **Never edit it***| [data/schema-baseline.sql](data/schema-baseline.sql) | **NEW** |
 | **Gap register** | *What an outside product brief asked for vs what exists — and the two proposals that would reverse a recorded decision* | [RELAY_GAP.md](RELAY_GAP.md) | **NEW** |
 
 **On ADRs:** [DECISIONS.md](DECISIONS.md) *is* the architecture-decision record — a single

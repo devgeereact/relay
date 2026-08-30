@@ -25,7 +25,7 @@ the command is named — a count you cannot reproduce is a rumour.
 
 | | Count | How to reproduce |
 |---|---|---|
-| Rust tests | **622 passing**, 18 ignored | `cd src-tauri && cargo test` |
+| Rust tests | **623 passing**, 18 ignored | `cd src-tauri && cargo test` |
 | Frontend tests | **874 passing**, 0 skipped, 63 files | `npx vitest run` — read the runner's own summary line. **Not** `vitest list \| wc -l`: that stream carries Svelte compiler warnings too and over-counted by 7 |
 | `e2e.rs` tests | **35** (35 run, 0 ignored — R2-C and R2-D closed, DECISIONS §54; three added for the calibrator and the service record) | `cd src-tauri && cargo test e2e::` |
 | Registered `#[tauri::command]` | **137** | `grep -c '#\[tauri::command\]' src-tauri/src/main.rs` |
