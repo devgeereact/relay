@@ -151,6 +151,8 @@ Two documents, at two altitudes, and they disagree on purpose:
   **[PERF-MODELS-2026-08-30.md](audits/PERF-MODELS-2026-08-30.md)**, what each speech model
   costs in transcript updates per second, which is the number a church actually chooses
   between.
+- **[RELAY_GAP.md](RELAY_GAP.md)** §19b — **decisions this report needs and cannot make.** One
+  is open: whether Relay ships a second Bible translation, an import path for one, or neither.
 - **[RELAY_GAP.md](RELAY_GAP.md)** — the third altitude, and unlike the audits it is meant to be
   updated: an outside product brief scored item by item against the code, with a gap register
   and the corrections this index's own counts needed.
