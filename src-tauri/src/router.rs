@@ -473,6 +473,13 @@ impl Router {
     /// Re-anchor the decay baseline WITHOUT disturbing the currently-learned
     /// thresholds — used when restoring a profile at startup, where the stored
     /// thresholds are the learned ones and the dial is the baseline they drift back to.
+    /// The anchor calibration decays toward. Readable so a test can assert that
+    /// moving a control moved the ANCHOR and not merely the gate — the half of
+    /// R4-10 that bites inside a single service rather than at the next launch.
+    pub fn baseline(&self) -> Thresholds {
+        self.baseline
+    }
+
     pub fn set_baseline(&mut self, t: Thresholds) {
         self.baseline = Thresholds {
             auto_fire: t.auto_fire.clamp(0.0, 1.0),

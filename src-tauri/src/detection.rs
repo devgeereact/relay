@@ -5232,24 +5232,26 @@ mod r4_audit {
         }
     }
 
-    // ── R4-07 · two references in one window land in random order ───────────
+    // ── R4-07 · CLOSED — two references in one window ───────────────────────
     //
-    // `main::emit_detections` dedups candidates into a `std::collections::HashMap`
-    // and then broadcasts `for (key, c) in best`. `detect_direct` returns matches
-    // left-to-right; the HashMap throws that ordering away and replaces it with
-    // SipHash order, which is seeded per map instance.
+    // `emit_detections` deduped candidates into a `std::collections::HashMap` and
+    // then ranked `best.into_iter()`. `detect_direct` returns matches left to
+    // right — the order the preacher said them — and the HashMap replaced that
+    // with SipHash order, seeded per map instance.
     //
-    // So when one transcript window carries two references — "turn to John 3:16
-    // and Romans 8:28" — both auto-fire, both broadcast, and WHICH ONE IS LEFT ON
-    // THE WALL is decided by hash order, not by what the preacher said last. The
-    // console's suggestion list is ordered by arrival too, so `A` (accept top)
-    // accepts an arbitrary one of a batch.
+    // `rank_for_wall`'s sort is STABLE, so this only mattered for ties — and a tie
+    // is the ordinary case: "turn to John 3:16 and Romans 8:28" yields two
+    // `Direct` candidates at the same score. A window may put at most ONE verse on
+    // a wall (DECISIONS §37), so the tie decided **what the congregation saw**,
+    // and two runs of the same sentence could differ.
     //
-    // This test does not touch `emit_detections` (see R4-08 — it cannot be driven
-    // from a test at all). It demonstrates the mechanism directly.
+    // The dedup is a `Vec` now, so ties break on what was said first. Asserted
+    // where it can actually be asserted — `main::rank_for_wall_tests`, against the
+    // real ranking function — rather than by a local re-implementation of a
+    // HashMap, which is what this test used to do and which could never have gone
+    // green no matter what the product did.
     #[test]
-    #[ignore]
-    fn r4_07_the_order_two_references_reach_the_wall_is_deterministic() {
+    fn r4_07_both_references_in_one_window_still_parse_in_spoken_order() {
         let text = "turn with me to John three sixteen and also Romans eight twenty eight";
         let parsed: Vec<String> = detect_direct(text)
             .iter()
@@ -5260,30 +5262,11 @@ mod r4_audit {
                 )
             })
             .collect();
-        assert_eq!(parsed.len(), 2, "both references parse: {parsed:?}");
-
-        // The order `emit_detections` actually broadcasts in.
-        let broadcast_order = |_seed: usize| -> Vec<String> {
-            let mut best: std::collections::HashMap<String, usize> =
-                std::collections::HashMap::new();
-            for (i, k) in parsed.iter().enumerate() {
-                best.insert(k.clone(), i);
-            }
-            best.into_keys().collect()
-        };
-        let first = broadcast_order(0);
-        for i in 1..200 {
-            assert_eq!(
-                broadcast_order(i),
-                first,
-                "the broadcast order of two references in one window changed \
-                 between runs — the verse left on the wall is chosen by hash \
-                 order, not by the sermon"
-            );
-        }
         assert_eq!(
-            first, parsed,
-            "the wall order does not match the order the preacher spoke them"
+            parsed,
+            vec!["John 3:16".to_string(), "Romans 8:28".to_string()],
+            "the parser's own order is the evidence everything downstream relies \
+             on for a tie-break"
         );
     }
 
@@ -5370,7 +5353,6 @@ mod r4_audit {
     // `apply_profile` re-anchors the baseline from that stale dial, so calibration
     // decays back toward a number the operator overruled.
     #[test]
-    #[ignore]
     fn r4_10_the_settings_sliders_leave_the_profile_in_a_state_the_router_was_in() {
         use tauri::Manager;
         let app = crate::qa::bare_app();
@@ -5379,6 +5361,7 @@ mod r4_audit {
         // The operator drags the two Settings sliders.
         crate::set_thresholds(
             h.state::<crate::Routing>(),
+            h.state::<crate::Db>(),
             Thresholds {
                 auto_fire: 0.80,
                 suggest: 0.60,
@@ -5399,16 +5382,49 @@ mod r4_audit {
             .unwrap()
             .expect("a fresh install has one active profile");
         let implied = Thresholds::from_sensitivity(p.sensitivity.clamp(0, 100) as u8);
+
+        // ONE DIAL STEP, not bit-exactness.
+        //
+        // `sensitivity` is an integer 0..=100 and the thresholds are floats, so a
+        // round trip through the dial cannot be exact and must not be made exact:
+        // snapping the operator's 0.80 to whatever the nearest dial position
+        // implies would silently move a number they set deliberately. On the
+        // cautious half the dial moves `auto_fire` by 0.40/50 = 0.008 per step, so
+        // one step is the tightest honest bound.
+        //
+        // The defect this guards against was never a rounding gap. It was a row
+        // reading `sensitivity = 50` (auto_fire 0.50) beside a stored auto_fire of
+        // 0.80 — a state the router was never in, and one that `apply_profile`
+        // re-anchors from at the next launch, decaying calibration back to the
+        // dial position the operator had just overruled.
+        let gap = (implied.auto_fire - p.auto_fire as f32).abs();
         assert!(
-            (implied.auto_fire - p.auto_fire as f32).abs() < 1e-4,
-            "profile says sensitivity={} (auto_fire {:.2}) beside a stored \
-             auto_fire of {:.2} — a state the router was never in. On the next \
-             launch apply_profile anchors the baseline at {:.2} and calibration \
-             decays back to the dial position the operator just overruled.",
+            gap <= 0.01,
+            "profile says sensitivity={} (auto_fire {:.3}) beside a stored \
+             auto_fire of {:.3} — a gap of {gap:.3}, far wider than the 0.008 one \
+             dial step can explain. That is a state the router was never in, and \
+             the next launch anchors the baseline at {:.3}.",
             p.sensitivity,
             implied.auto_fire,
             p.auto_fire,
             implied.auto_fire
+        );
+
+        // The other half, and the one that bites within the SAME session: the
+        // dial is the anchor self-calibration decays toward (DECISIONS §26). Set
+        // the gate without setting it and every later confirm or dismiss drags the
+        // gate back toward the position the operator just left.
+        let baseline = h
+            .state::<crate::Routing>()
+            .0
+            .lock()
+            .unwrap()
+            .baseline()
+            .auto_fire;
+        assert!(
+            (baseline - 0.80).abs() < 1e-4,
+            "the baseline is {baseline:.3}, not the 0.80 the operator set — the \
+             two Settings sliders moved the gate and left the anchor behind"
         );
     }
 }
