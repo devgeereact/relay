@@ -123,7 +123,19 @@
           {/if}
           <button class="vd-ic r-focus" class:on={savedRefs.has(v.reference)} aria-label="Favourite {v.reference}" on:click|stopPropagation={() => onSave(v)}>★</button>
           <button class="vd-ic r-focus" class:on={queuedRefs.has(v.reference)} aria-label="Queue {v.reference}" on:click|stopPropagation={() => onQueue(v)}>+</button>
-          <button class="vd-ic r-focus" aria-label="Put {v.reference} on the screens" disabled={$safeMode} on:click|stopPropagation={() => onFire(v)}>→</button>
+          <!-- The label must not promise what safe mode forbids. Disabled and
+               unexplained reads as a bug; disabled and still saying "Put John 3:16
+               on the screens" reads as a broken promise, which is worse. Same
+               wording as the grid card and the rail, so an operator learns one
+               sentence rather than three. -->
+          <button
+            class="vd-ic r-focus"
+            aria-label={$safeMode
+              ? `Safe mode — ${v.reference} cannot reach a screen`
+              : `Put ${v.reference} on the screens`}
+            title={$safeMode ? 'Safe mode is on — outputs are disarmed' : null}
+            disabled={$safeMode}
+            on:click|stopPropagation={() => onFire(v)}>→</button>
         </span>
       </div>
     {/each}
@@ -209,7 +221,13 @@
         {:else if busyRef === v.reference}
           <span class="r-badge grey vd-tally">Sending…</span>
         {:else if v.edited}
-          <span class="r-badge amethyst vd-tally">Edited</span>
+          <!-- EDITED is grey, and six lines above this file uses amethyst to mean
+               REHEARSAL. Two identical badges in one deck meaning two unrelated
+               things, one of them the safety signal that says nothing can reach the
+               congregation — a colour that means two things means neither
+               (DECISIONS §22). "Edited" is a fact about a slide, not a state of the
+               wall, so it joins Sending and Queued in the neutral bucket. -->
+          <span class="r-badge grey vd-tally">Edited</span>
         {:else if queuedRefs.has(v.reference)}
           <!-- QUEUED is grey. It is what happens next, which is not what the
                congregation is looking at, and amber may never lie. -->
@@ -232,8 +250,12 @@
                    decide whether Escape belongs to an overlay or to the panic key,
                    so a popup with no role let Escape wipe the wall. -->
               <div class="vd-menu" role="menu" tabindex="-1" on:keydown={menuEsc}>
-                <button class="vd-mi air" disabled={$safeMode} on:click={() => { menuFor = ''; onFire(v); }}>
-                  Take to screen
+                <button
+                  class="vd-mi air"
+                  disabled={$safeMode}
+                  title={$safeMode ? 'Safe mode is on — outputs are disarmed' : null}
+                  on:click={() => { menuFor = ''; onFire(v); }}>
+                  {$safeMode ? 'Take to screen — safe mode is on' : 'Take to screen'}
                 </button>
                 {#if can.queue}
                   <button class="vd-mi" on:click={() => { menuFor = ''; onQueue(v); }}>

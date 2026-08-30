@@ -574,15 +574,19 @@ describe('R3-07 · the run rail says a Take failed, out loud', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// R3-08 · AMETHYST MEANS REHEARSAL, AND VERSEDECK SPENDS IT ON "EDITED"
+// R3-08 · CLOSED — AMETHYST MEANS REHEARSAL AND NOTHING ELSE
 //
-// Six lines apart in the same file: the tally badge is amethyst when rehearsing,
-// and an edited slide is amethyst always. In a rehearsal the deck shows two
+// Six lines apart in the same file, the tally badge was amethyst when rehearsing
+// and amethyst for an edited slide ALWAYS. In a rehearsal the deck showed two
 // identical amethyst pills meaning two unrelated things, one of which is the
-// safety signal.
+// safety signal that says nothing can reach the congregation.
+//
+// "Edited" is a fact about a slide, not a state of the wall, so it is grey — with
+// Sending and Queued. The assertions below are inverted from the findings they
+// replace: they now fail if the colour is spent again.
 // ─────────────────────────────────────────────────────────────────────────────
-describe('R3-08 · a second meaning for the rehearsal colour', () => {
-  it('an EDITED slide wears the rehearsal badge colour while not rehearsing', async () => {
+describe('R3-08 · the rehearsal colour has exactly one meaning', () => {
+  it('an EDITED slide does NOT wear the rehearsal badge colour', async () => {
     const VerseDeck = (await import('./views/library/VerseDeck.svelte')).default;
     const el = mountInto(VerseDeck, {
       items: [{ reference: 'John 3:16', text: 'For God so loved…', slideNo: 1, edited: true }],
@@ -593,8 +597,10 @@ describe('R3-08 · a second meaning for the rehearsal colour', () => {
 
     const tally = el.querySelector('.vd-tally');
     expect(tally.textContent.trim()).toBe('Edited');
-    // FINDING: amethyst, with rehearsal off.
-    expect(tally.className).toMatch(/amethyst/);
+    expect(tally.className).not.toMatch(/amethyst/);
+    expect(tally.className).toMatch(/grey/);
+    // …and never amber either: amber is ON AIR and may not lie.
+    expect(tally.className).not.toMatch(/amber/);
   });
 
   it('…the same colour the same component uses to say "nobody is looking"', async () => {
@@ -614,15 +620,18 @@ describe('R3-08 · a second meaning for the rehearsal colour', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// R3-09 · A MODAL WITHOUT A FOCUS TRAP
+// R3-09 · CLOSED — THE LAST aria-modal WITHOUT A FOCUS TRAP
 //
 // focus.js is the ONE implementation and it is one attribute to opt in.
 // `TemplatePreviewOverlay` is a real full-screen modal (`position:fixed`,
-// `aria-modal="true"`) and does not use it, so Tab walks straight out of the
-// preview and into the app behind — and focus is not restored on close.
+// `aria-modal="true"`) and did not use it, so Tab walked straight out of the
+// preview and into the app behind — a keyboard operator driving controls they
+// cannot see, in a dialog they cannot leave — and focus was never restored.
+//
+// Inverted from the finding it replaces: it now fails if the trap is removed.
 // ─────────────────────────────────────────────────────────────────────────────
-describe('R3-09 · TemplatePreviewOverlay is aria-modal with no focus trap', () => {
-  it('does not move focus into itself, and Tab is unguarded', async () => {
+describe('R3-09 · TemplatePreviewOverlay traps focus like every other dialog', () => {
+  it('moves focus into itself on open', async () => {
     const opener = document.createElement('button');
     document.body.appendChild(opener);
     opener.focus();
@@ -633,9 +642,8 @@ describe('R3-09 · TemplatePreviewOverlay is aria-modal with no focus trap', () 
 
     const dlg = el.querySelector('[role="dialog"]');
     expect(dlg.getAttribute('aria-modal')).toBe('true');
-    // FINDING: focus never entered the modal. trapFocus would have moved it to the
-    // first control (`.tpv-scrimbtn`).
-    expect(document.activeElement).toBe(opener);
+    expect(document.activeElement).not.toBe(opener);
+    expect(dlg.contains(document.activeElement)).toBe(true);
   });
 });
 
@@ -674,15 +682,17 @@ describe('R3-10 · what is already right', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// R3-11 · SAFE MODE EXPLAINS ITSELF ON TWO OF VERSEDECK'S FOUR DOORS
+// R3-11 · CLOSED — SAFE MODE EXPLAINS ITSELF ON ALL FOUR OF VERSEDECK'S DOORS
 //
-// LiveOutputRail's Take relabels itself "Safe mode" when disabled — the repo's own
-// stated rule ("a disabled button with no explanation reads as a bug"). VerseDeck
-// has four fire controls. The GRID card carries the reason in its aria-label. The
-// LIST row's `→`, and the kebab's "Take to screen", do not — and the list row's
-// label still promises "Put John 3:16 on the screens", which it cannot do.
+// The rule is the repo's own: a disabled button with no explanation reads as a bug.
+// VerseDeck has four fire controls; two carried the reason and two did not — and
+// the list row's label still promised "Put John 3:16 on the screens", which it
+// could not do. Disabled and silent reads as broken; disabled and still promising
+// reads as a broken promise, which is worse.
+//
+// One sentence across all four, so an operator learns it once.
 // ─────────────────────────────────────────────────────────────────────────────
-describe('R3-11 · a disabled control that does not say why', () => {
+describe('R3-11 · every disabled fire control says why', () => {
   const ITEM = { reference: 'John 3:16', text: 'For God so loved…', slideNo: 1 };
 
   it('GRID card — disabled AND explained', async () => {
@@ -696,7 +706,7 @@ describe('R3-11 · a disabled control that does not say why', () => {
     setSafeMode(false);
   });
 
-  it('LIST row — disabled, unexplained, and the label now lies', async () => {
+  it('LIST row — disabled AND explained, and the label stops promising', async () => {
     const VerseDeck = (await import('./views/library/VerseDeck.svelte')).default;
     setSafeMode(true);
     const el = mountInto(VerseDeck, { items: [ITEM], layout: 'list' });
@@ -704,14 +714,16 @@ describe('R3-11 · a disabled control that does not say why', () => {
     const go = [...el.querySelectorAll('.vd-ic')].find((b) =>
       /Put John 3:16 on the screens/.test(b.getAttribute('aria-label') ?? ''),
     );
-    expect(go.disabled).toBe(true);
-    // FINDING: no reason anywhere on the control.
-    expect(go.getAttribute('aria-label')).not.toMatch(/Safe mode/);
-    expect(go.getAttribute('title')).toBe(null);
+    expect(go).toBeFalsy(); // the promising label is gone entirely
+    const arrow = [...el.querySelectorAll('.vd-ic')].find((b) =>
+      /Safe mode/.test(b.getAttribute('aria-label') ?? ''),
+    );
+    expect(arrow.disabled).toBe(true);
+    expect(arrow.getAttribute('title')).toMatch(/Safe mode/);
     setSafeMode(false);
   });
 
-  it('KEBAB "Take to screen" — disabled, unexplained', async () => {
+  it('KEBAB "Take to screen" — disabled AND explained', async () => {
     const VerseDeck = (await import('./views/library/VerseDeck.svelte')).default;
     setSafeMode(true);
     const el = mountInto(VerseDeck, { items: [ITEM], layout: 'grid' });
@@ -722,9 +734,26 @@ describe('R3-11 · a disabled control that does not say why', () => {
       /Take to screen/.test(b.textContent),
     );
     expect(take.disabled).toBe(true);
-    expect(take.textContent.trim()).toBe('Take to screen'); // not "Safe mode"
-    expect(take.getAttribute('title')).toBe(null);
+    expect(take.textContent.trim()).toMatch(/safe mode is on/i);
+    expect(take.getAttribute('title')).toMatch(/Safe mode/);
     setSafeMode(false);
+  });
+
+  it('…and says nothing extra when safe mode is off', async () => {
+    // The explanation must appear ONLY when it is true. A control that always
+    // mentions safe mode teaches an operator to stop reading it.
+    const VerseDeck = (await import('./views/library/VerseDeck.svelte')).default;
+    setSafeMode(false);
+    const el = mountInto(VerseDeck, { items: [ITEM], layout: 'grid' });
+    await tick();
+    el.querySelector('.vd-kebab').click();
+    await tick();
+    const take = [...el.querySelectorAll('.vd-mi')].find((b) =>
+      /Take to screen/.test(b.textContent),
+    );
+    expect(take.disabled).toBe(false);
+    expect(take.textContent.trim()).toBe('Take to screen');
+    expect(take.getAttribute('title')).toBe(null);
   });
 });
 
@@ -914,7 +943,7 @@ describe('R3-12 · every hand-rolled error line is announced', () => {
 });
 
 describe('R3-12 · dialogs and the panic-key guard', () => {
-  it('four boot gates are aria-modal with no focus trap', () => {
+  it('every boot gate traps focus — they are the first thing a keyboard reaches', () => {
     for (const f of [
       'src/lib/boot/RecoverSession.svelte',
       'src/lib/boot/UpdateAvailable.svelte',
@@ -923,14 +952,16 @@ describe('R3-12 · dialogs and the panic-key guard', () => {
     ]) {
       const t = src(f);
       expect(t).toMatch(/aria-modal="true"/);
-      expect(t).not.toMatch(/use:trapFocus/); // FINDING
+      // A boot gate appears BEFORE the app is ready. Without the trap, Tab walks
+      // out of it into a half-started application.
+      expect(t).toMatch(/use:trapFocus/);
     }
   });
 
-  it('TemplatePreviewOverlay is aria-modal with no focus trap', () => {
+  it('TemplatePreviewOverlay traps focus too', () => {
     const t = src('src/lib/TemplatePreviewOverlay.svelte');
     expect(t).toMatch(/aria-modal="true"/);
-    expect(t).not.toMatch(/use:trapFocus/);
+    expect(t).toMatch(/use:trapFocus/);
   });
 
   it('the Announcements editor no longer claims a role it cannot honour', () => {

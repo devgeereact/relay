@@ -1,4 +1,5 @@
 <script>
+  import { trapFocus } from '../focus.js';
   // LAUNCH & STARTUP · Crash Report Recovery
   //
   // Shown on the boot AFTER the crash guard fired. Its counterpart, lib/crash.js,
@@ -31,7 +32,11 @@
   $: firstLine = String(crash?.message ?? '').split('\n')[0] || 'Unknown error';
 </script>
 
-<div class="b-gate" role="alertdialog" aria-modal="true" aria-labelledby="b-crash-h">
+<!-- `use:trapFocus` — a boot gate is the FIRST thing a keyboard operator meets, and
+     without the trap Tab walks straight out of it into an app that is not ready yet.
+     `focus.js` is the one implementation; it deliberately does not bind Escape,
+     which stays in `shortcuts.js`. -->
+<div class="b-gate" role="alertdialog" aria-modal="true" aria-labelledby="b-crash-h" use:trapFocus>
   <div class="b-card">
     <p class="b-kicker" style="color:var(--v-red);"><span class="d"></span>Last session ended badly</p>
 

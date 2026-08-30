@@ -1,4 +1,5 @@
 <script>
+  import { trapFocus } from '../focus.js';
   // LAUNCH & STARTUP · Safe Mode Startup
   //
   // Offered after three bad exits in a row, and reachable any time the operator
@@ -17,7 +18,11 @@
   export let onNormal = () => {};
 </script>
 
-<div class="b-gate" role="dialog" aria-modal="true" aria-labelledby="b-safe-h">
+<!-- `use:trapFocus` — a boot gate is the FIRST thing a keyboard operator meets, and
+     without the trap Tab walks straight out of it into an app that is not ready yet.
+     `focus.js` is the one implementation; it deliberately does not bind Escape,
+     which stays in `shortcuts.js`. -->
+<div class="b-gate" role="dialog" aria-modal="true" aria-labelledby="b-safe-h" use:trapFocus>
   <div class="b-card">
     <p class="b-kicker" style="color:var(--v-amethyst);"><span class="d"></span>Safe mode</p>
 

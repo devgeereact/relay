@@ -1,4 +1,5 @@
 <script>
+  import { trapFocus } from '../focus.js';
   // LAUNCH & STARTUP · Update Available
   //
   // The LAUNCH-TIME face of lib/updater.js. The at-rest banner in App.svelte is
@@ -22,7 +23,11 @@
   export let onLater = () => {};
 </script>
 
-<div class="b-gate" role="dialog" aria-modal="true" aria-labelledby="b-upd-h">
+<!-- `use:trapFocus` — a boot gate is the FIRST thing a keyboard operator meets, and
+     without the trap Tab walks straight out of it into an app that is not ready yet.
+     `focus.js` is the one implementation; it deliberately does not bind Escape,
+     which stays in `shortcuts.js`. -->
+<div class="b-gate" role="dialog" aria-modal="true" aria-labelledby="b-upd-h" use:trapFocus>
   <div class="b-card">
     <p class="b-kicker" style="color:var(--v-amethyst);"><span class="d"></span>Update available</p>
 
