@@ -45,17 +45,6 @@ pub fn get_template(conn: &Connection, id: i64) -> rusqlite::Result<Option<Templ
     .optional()
 }
 
-/// Create a new template with sensible starting style. Returns its id.
-pub fn create_template(conn: &Connection, name: &str) -> rusqlite::Result<i64> {
-    let layout = r##"{"regions":["verse_text","reference"],"align":"center"}"##;
-    let style = r##"{"verseSize":6,"refSize":2.6,"verseColor":"#f4e4c8","accent":"#f5a623","background":"#0b0906","font":"Fraunces"}"##;
-    conn.execute(
-        "INSERT INTO templates (name, region_config_json, style_json) VALUES (?1, ?2, ?3)",
-        (name, layout, style),
-    )?;
-    Ok(conn.last_insert_rowid())
-}
-
 /// Delete a template. Any output channel pointing at it is unassigned first so
 /// the foreign key stays valid.
 pub fn delete_template(conn: &Connection, id: i64) -> rusqlite::Result<()> {

@@ -57,6 +57,28 @@ fn app() -> tauri::App<tauri::test::MockRuntime> {
     app
 }
 
+/// A throwaway template, created the way the app creates one.
+///
+/// `create_template` was a second create path for the same table and was deleted
+/// on 2026-08-30 — the gallery and the editor both go through `upsert_template`,
+/// and no control ever reached the other one. This helper keeps these tests using
+/// what the product actually uses.
+fn scratch_template<R: tauri::Runtime>(h: &tauri::AppHandle<R>, name: &str) -> i64 {
+    let db = h.state::<Db>();
+    let conn = db.0.lock().expect("db");
+    db::upsert_template(
+        &conn,
+        &db::Template {
+            id: 0,
+            name: name.into(),
+            layout: serde_json::json!({ "regions": ["verse_text"] }),
+            style: serde_json::json!({ "verseSize": 6 }),
+            active: false,
+        },
+    )
+    .expect("create")
+}
+
 /// RG-05 · SAFE SCREEN — an unshowable cue leaves the wall alone, and says so.
 ///
 /// Driven through `fire_content`, the real command the Planner and the Library use.
@@ -411,7 +433,7 @@ fn a_recorded_service_holds_back_a_deletion_but_never_the_wall() {
     let lock = h.state::<servicelock::ServiceLock>();
 
     // A template nobody minds losing, created before the service starts.
-    let doomed = create_template(h.state::<Db>(), Some("Scratch".into())).expect("create");
+    let doomed = scratch_template(&h, "Scratch");
     assert!(!lock.engaged(), "a fresh app is not protecting anything");
 
     let svc = start_service(
@@ -482,7 +504,7 @@ fn a_recorded_service_holds_back_a_deletion_but_never_the_wall() {
         h.state::<servicelock::ServiceLock>(),
     )
     .expect("end");
-    let again = create_template(h.state::<Db>(), Some("Scratch 2".into())).expect("create");
+    let again = scratch_template(&h, "Scratch 2");
     start_service(
         h.clone(),
         h.state::<Session>(),

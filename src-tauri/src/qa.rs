@@ -71,7 +71,6 @@ pub(crate) fn bare_app() -> tauri::App<tauri::test::MockRuntime> {
     mock_builder()
         .manage(Db(Mutex::new(conn)))
         .manage(Routing::default())
-        .manage(Outputs::default())
         .manage(Detecting(AtomicBool::new(true)))
         .manage(channels::Rehearsal::default())
         // What the congregation can actually see. `/api/live` reads it, so a test
@@ -747,50 +746,53 @@ mod cold_start {
         let _ = (&lyrics, &scripture);
     }
 
-    /// GAP: three commands are addressed only by a `capture.js` wrapper that no
-    /// component imports. "Every registered command has a frontend caller" is
-    /// therefore true only at the WRAPPER level, which is the level the contract
-    /// test checks and not the level that matters.
+    /// CLOSED — there is no command a rendered component cannot reach.
     ///
-    /// All three that remain are harmless leftovers, superseded by a better path.
-    /// The two that were not — `saveArrangement` and `deleteArrangement` — were
-    /// the arrangement gap, and they left this list when the editor shipped.
-    /// Listed together so a fourth appearing is loud.
+    /// Five were addressed only by a `capture.js` wrapper that nothing imported:
+    /// `create_template`, `import_song`, `import_pro`, `list_output_windows` and
+    /// `open_output_window`. "Every registered command has a frontend caller" was
+    /// therefore true only at the WRAPPER level — the level `ipc.test.js` checks,
+    /// and not the level that matters.
+    ///
+    /// **All five were deleted on 2026-08-30**, with their wrappers, rather than
+    /// given a UI: each was superseded by a better path that every control already
+    /// used (`upsert_template`; `parse_import` → `save_reviewed_songs`; the
+    /// channel-keyed output API). The precedent is the five deleted before them —
+    /// `lookup_verse`, `close_output_window`, `current_service` and the
+    /// `*_template_active` pair.
+    ///
+    /// It is a security reduction as much as a tidy-up: every registered command is
+    /// invokable from the webview, and `open_output_window` opened an arbitrary
+    /// fullscreen window on any monitor. A command nothing calls is attack surface
+    /// nobody is watching.
     #[test]
-    fn the_commands_no_rendered_component_can_reach() {
-        let comps = components();
-        // wrapper name → why it is here
-        let orphans = [
-            (
-                "createTemplate",
-                "the gallery/editor use saveTemplate instead",
-            ),
-            (
-                "importSong",
-                "superseded by parse_import → save_reviewed_songs",
-            ),
-            (
-                "importProFile",
-                "superseded by parse_import → save_reviewed_songs",
-            ),
-        ];
-        for (name, why) in orphans {
-            let users: Vec<&str> = comps
-                .iter()
-                .filter(|(_, s)| s.contains(name))
-                .map(|(p, _)| p.as_str())
-                .collect();
+    fn no_registered_command_is_unreachable_from_a_rendered_component() {
+        let main = std::fs::read_to_string("src/main.rs").unwrap();
+        for gone in [
+            "fn create_template",
+            "fn import_song",
+            "fn import_pro",
+            "fn list_output_windows",
+            "fn open_output_window",
+        ] {
             assert!(
-                users.is_empty(),
-                "{name} ({why}) is now imported by {users:?} — good; remove it \
-                 from this list"
+                !main.contains(gone),
+                "{gone} is back — if it has a UI now, say so here; if it does not, it \
+                 is attack surface nobody is watching"
             );
+        }
+
+        let store = std::fs::read_to_string("../src/lib/stores/capture.js").unwrap();
+        for gone in [
+            "function createTemplate",
+            "function importSong",
+            "function importProFile",
+            "function listOutputWindows",
+            "function openOutput",
+        ] {
             assert!(
-                std::fs::read_to_string("../src/lib/stores/capture.js")
-                    .unwrap()
-                    .contains(&format!("function {name}")),
-                "{name} is gone from the store entirely — remove it from this list \
-                 too, and check the command was deleted in Rust as well"
+                !store.contains(gone),
+                "the wrapper for {gone} outlived its command"
             );
         }
     }

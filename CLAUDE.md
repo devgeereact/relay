@@ -43,7 +43,7 @@ Tier 1: **Yoruba, Swahili, Hausa**, plus English. Code-switching (English mixed 
 npm install
 npm run tauri dev        # desktop app + Vite on :5032, kiosk WS on :8031
 
-npm test                 # vitest (864 tests)
+npm test                 # vitest (865 tests)
 npx vitest run src/lib/nav.test.js          # one file
 npx vitest run -t "Escape closes the cheat" # one test by name
 npm run build            # vite build — catches Svelte compile errors fast
@@ -99,7 +99,9 @@ Every audio bug so far was invisible in the code and reproducible only with a sp
 │   ├── relay.entitlements   — com.apple.security.device.audio-input. See §17.
 │   ├── tauri.conf.json      — base; tauri.updater.conf.json overlays it at release
 │   └── src/
-│       ├── main.rs          — Tauri commands + the live-fire engine (5.3k lines, 137 cmds)
+│       ├── main.rs          — Tauri commands + the live-fire engine
+│       │                     (`wc -l` · `grep -c '#[tauri::command]'` — it has outgrown
+│       │                      every number ever written here; RELAY_GAP §18)
 │       ├── qa.rs · qa_r5.rs · r6.rs — TEST-ONLY. qa.rs owns THE fixture: bare_app() =
 │       │                      a fresh install and nothing else, + Wall (Tauri events)
 │       │                      and Kiosk (the WS door). The other two are audit suites.
@@ -164,7 +166,7 @@ Shipping: in-app model download, first-run wizard, auto-updater, rehearsal mode,
 
 Parked, honestly (not faked): **NDI** (needs proprietary SDK — `open_ndi_output` returns a clear error), **neural paraphrase embedder** (TF-IDF is the seam behind `SemanticIndex::top_k`; the `verses.embedding` column exists and has never been written to), **African-language STT fine-tunes**.
 
-**No dead-but-built commands, and as of 2026-08-30 no known exception either.** Every one of the 137 registered `#[tauri::command]`s has a frontend caller **in `capture.js`**; that is the level `ipc.test.js` checks, and it is not the level that matters. `scripts/qa-inventory.mjs` traces the chain one hop further — to a control something actually renders — and the one command that failed at that level for months was `save_arrangement`: the wrapper existed, no component imported it, and a church could not save a song's running order at all. **The arrangement editor shipped** (`views/library/Arrangements.svelte`, RG-21, DECISIONS §55), so `song_arrangements` is a create path in the inventory rather than WRAPPER ONLY. Five wrappers remain unreached and every one is a superseded leftover, listed by name in `surface.test.js`'s `DEAD`. The last thirteen were closed together: five superseded ones were deleted (`lookup_verse`, `close_output_window`, `current_service`, and the `*_template_active` pair — the console Output grid became per-channel templates), and eight were given the UI they had always lacked — voice profiles (SPEC §4.6), the emergency announcement, and the "shown earlier" badge. `related_scripture` was wired by the new-design merge.
+**No dead-but-built commands — and as of 2026-08-30 the claim is unqualified, at the level that matters.** `ipc.test.js` checks that every registered `#[tauri::command]` has a caller in `capture.js`; `scripts/qa-inventory.mjs` traces one hop further, to a control something actually renders, and **that is the level where five commands were still unreachable**: `create_template`, `import_song`, `import_pro`, `list_output_windows`, `open_output_window`. All five were **deleted**, with their wrappers, rather than given a UI — each was superseded by a path every control already used (`upsert_template`; `parse_import` → `save_reviewed_songs`; the channel-keyed output API), which is the same precedent as the five deleted before them (`lookup_verse`, `close_output_window`, `current_service`, the `*_template_active` pair). **It is a security reduction as much as a tidy-up**: every registered command is invokable from the webview, and `open_output_window` opened an arbitrary fullscreen window on any monitor. A command nothing calls is attack surface nobody is watching. The two that got a UI instead were `save_arrangement`/`delete_arrangement` (RG-21) — the test to reach for is whether a rendered control can get there, not whether a wrapper exists.
 
 ## Architecture rules learned the HARD WAY — do not regress these
 
@@ -250,7 +252,7 @@ These caused real crashes, freezes, or silent failures in front of people. Keep 
 
 ## Testing
 
-**619 Rust** (18 ignored) + **864 frontend** (0 skipped), re-measured 2026-08-30. CI runs both on **macOS and Windows**, plus `fmt`, `clippy -D warnings`, the detection scorecard, and a release build.
+**619 Rust** (18 ignored) + **865 frontend** (0 skipped), re-measured 2026-08-30. CI runs both on **macOS and Windows**, plus `fmt`, `clippy -D warnings`, the detection scorecard, and a release build.
 
 - **`qa.rs` owns the fixture. Do not write another one.** `qa::bare_app()` is a fresh install and nothing else — real schema, real seed, no operator has touched it — and `qa::{Wall, Kiosk, settle}` are the two doors out of the machine plus the drain. `e2e::app()` is now `bare_app()` **plus one documented difference** (a content-look override, without which its template assertion is vacuous), which is exactly the shape a deviation should have: three visible lines, not a fifty-line copy that drifts. A second fixture is how two suites start disagreeing about what a fresh install contains. `the_bare_fixture_is_a_first_launch_and_nothing_more` is the tripwire; it is what caught that `tpl_song` **is** seeded on purpose (every other built-in is scripture-shaped, so a lyric rendered through one showed the song title instead of the words).
 - **The QA apparatus is documented, not folklore.** `docs/QA_HARNESS.md` — Part 0 the current counts (each with the command that reproduces it), Part 1 the design and the five evidence layers, Part 2 the shared preamble every `relay-qa-*` agent inherits verbatim, Part 3 the roster, **Part 4 what is already pinned — read it before filing anything, so you don't "find" a fixed bug**. Run `/qa-audit`; `node scripts/qa-inventory.mjs` prints the control/orphan/create-path report on its own.

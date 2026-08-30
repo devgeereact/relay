@@ -26,7 +26,7 @@ the command is named — a count you cannot reproduce is a rumour.
 | | Count | How to reproduce |
 |---|---|---|
 | Rust tests | **619 passing**, 18 ignored | `cd src-tauri && cargo test` |
-| Frontend tests | **864 passing**, 0 skipped, 62 files | `npx vitest run` — read the runner's own summary line. **Not** `vitest list \| wc -l`: that stream carries Svelte compiler warnings too and over-counted by 7 |
+| Frontend tests | **865 passing**, 0 skipped, 63 files | `npx vitest run` — read the runner's own summary line. **Not** `vitest list \| wc -l`: that stream carries Svelte compiler warnings too and over-counted by 7 |
 | `e2e.rs` tests | **35** (35 run, 0 ignored — R2-C and R2-D closed, DECISIONS §54; three added for the calibrator and the service record) | `cd src-tauri && cargo test e2e::` |
 | Registered `#[tauri::command]` | **137** | `grep -c '#\[tauri::command\]' src-tauri/src/main.rs` |
 | `.svelte` files | **47**, 22 of them views | `find src -name '*.svelte' | wc -l` |
@@ -625,11 +625,13 @@ the rows this passes** — a tool that agrees with you is not evidence.
 
 Every table above resolves to a create path except one:
 
-- **`song_arrangements` — no create path.** `save_arrangement` is registered, `saveArrangement`
-  exists in the store, and **no component imports it**. If that holds, a user cannot save a
-  song arrangement at all, and CLAUDE.md's "every one of the 137 commands has a frontend
-  caller" is true at the wrapper level and false at the level that matters. Filed as **F3** in
-  §1.9.
+- ~~**`song_arrangements` — no create path.**~~ **CLOSED 2026-08-30.** `save_arrangement` was
+  registered, `saveArrangement` existed in the store, and no component imported it — so a user
+  could not save a song arrangement at all, and "every registered command has a frontend
+  caller" was true at the wrapper level and false at the level that matters. The editor
+  shipped (RG-21). The other five commands in that state were **deleted** rather than given a
+  UI, so the claim is now unqualified: `qa-inventory.mjs` reports zero unreachable commands.
+  Was **F3** in §1.9.
 
 Still worth R1's attention even though the tool is content:
 
