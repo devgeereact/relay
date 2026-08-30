@@ -8,6 +8,7 @@ mod audio;
 mod channels;
 mod db;
 mod detection;
+mod diagnostics;
 mod dsp;
 /// End-to-end tests for the fire → nav → clear path. Test-only. `main.rs` had zero
 /// tests, so the one path that actually puts scripture on a wall was verified only
@@ -38,10 +39,12 @@ mod qa_r5;
 #[cfg(test)]
 mod r6;
 mod router;
+mod servicelock;
 mod songs;
 mod stt;
 mod sysprobe;
 mod telemetry;
+mod updates;
 
 use audio::AudioEngine;
 use channels::OutputContent;
@@ -148,6 +151,8 @@ fn main() {
         .manage(Detecting(AtomicBool::new(true)))
         .manage(channels::Rehearsal::default())
         .manage(channels::WallState::default())
+        .manage(channels::OutputHealth::default())
+        .manage(servicelock::ServiceLock::default())
         .manage(Session::default())
         .manage(models::DownloadState::default())
         .setup(|app| {
@@ -246,6 +251,7 @@ fn main() {
                 kiosk_templates,
                 kiosk_clients,
                 kiosk_themes,
+                app.state::<channels::OutputHealth>().inner().clone(),
                 8031,
             ));
             // Serve the output/stage pages over LAN HTTP so other devices load
@@ -374,6 +380,8 @@ fn main() {
             set_crash_reporting,
             list_models,
             download_model,
+            find_model_files,
+            install_model_file,
             cancel_model_download,
             load_stt_model,
             select_stt_model,
@@ -383,6 +391,23 @@ fn main() {
             list_output_channels,
             channel_status,
             close_channel_output,
+            output_beat,
+            service_timeline,
+            service_perf,
+            perf_history,
+            export_diagnostics,
+            language_report,
+            list_environments,
+            save_environment,
+            use_environment,
+            delete_environment,
+            update_preflight,
+            update_begin,
+            update_verify,
+            update_accept,
+            update_restore,
+            service_lock,
+            set_service_lock,
             set_channel_template,
             list_monitors,
             open_channel_output,
@@ -560,10 +585,32 @@ enum PassageUpdate {
 /// and RELEASED (mapped to a value) before the broadcast emits — never held
 /// across an emit (CLAUDE.md rule #2). `try_state` so a context without a managed
 /// Session simply stamps nothing rather than panicking.
+/// THE ONE DOOR CONTENT LEAVES BY — and now the one place it is checked first.
+///
+/// `channels::broadcast_content` has exactly one caller, which is this, so a
+/// pre-air check here covers every path: the AI's, the operator's manual box, a
+/// spoken next/back, a plan cue, a media slide, the emergency announcement and
+/// the countdown. That is deliberate. A validator added at five call sites is a
+/// validator that will be missing from the sixth — this repository has produced
+/// four separate bugs of exactly that shape.
+///
+/// Returns `Err` when the payload would put something broken in front of a
+/// congregation. It refuses only the two things that are unambiguously broken and
+/// silently so; everything else it lets through and reports elsewhere. See
+/// `pipeline::preflight` for what it deliberately does NOT check.
 fn broadcast_with_clock<R: tauri::Runtime>(
     handle: &tauri::AppHandle<R>,
     mut content: channels::OutputContent,
-) {
+) -> error::Result<()> {
+    if let Err(bad) = pipeline::preflight(&content) {
+        // The screens are left exactly as they were. Doing nothing quietly is the
+        // failure being fixed, so this is said in three places: stdout for a
+        // developer, the panic banner for the operator watching the console, and
+        // the returned error for whichever caller can put it in front of them.
+        eprintln!("preflight refused a broadcast: {bad:?}");
+        let _ = handle.emit("output://panic_failed", bad.message());
+        return Err(error::Error::refused(bad.message()));
+    }
     if let Some(session) = handle.try_state::<Session>() {
         if let Ok(g) = session.0.lock() {
             if let Some(st) = g.as_ref() {
@@ -575,6 +622,7 @@ fn broadcast_with_clock<R: tauri::Runtime>(
         }
     }
     channels::broadcast_content(handle, content);
+    Ok(())
 }
 
 /// Put a verse on the screens because a HUMAN said so.
@@ -650,7 +698,12 @@ fn fire_manual<R: tauri::Runtime>(
         f
     }; // locks released BEFORE the emit below — CLAUDE.md rule #2.
 
-    broadcast_with_clock(handle, fire.output());
+    // A refused payload must not be followed by a `detection://match` saying it
+    // went out — that is the console reporting a success it did not achieve, in a
+    // new place (DECISIONS §20). Bail before the event.
+    if broadcast_with_clock(handle, fire.output()).is_err() {
+        return false;
+    }
     let _ = handle.emit("detection://match", fire.event());
     true
 }
@@ -966,7 +1019,11 @@ fn emit_detections<R: tauri::Runtime>(
 
     let sent_anything = !broadcasts.is_empty();
     for content in broadcasts {
-        broadcast_with_clock(handle, content);
+        // The detect thread has nobody to return an error to, and `preflight`
+        // has already raised the banner and printed the reason. Swallowed here
+        // and nowhere else, deliberately: the alternative is killing the
+        // detection thread over one unshowable payload.
+        let _ = broadcast_with_clock(handle, content);
     }
     for ev in events {
         let _ = handle.emit("detection://match", ev);
@@ -1180,6 +1237,68 @@ fn persist_cue<R: tauri::Runtime>(
     if let Some(st) = sess.as_ref() {
         let ts = st.started.elapsed().as_secs_f64();
         let _ = db::insert_cue(&conn, st.id, cue_type, payload, ts);
+    }
+}
+
+/// Append one row to the service timeline.
+///
+/// Mirrors `persist_cue` in shape and in tolerance: **best-effort, and silent when
+/// there is no service.** A history that could take a live service down would be a
+/// worse trade than a history with a gap in it, and most of what this records
+/// happens at exactly the moments things are already going wrong.
+///
+/// Lock order `Db` before `Session`, like every other writer here (rule 6).
+fn log_event<R: tauri::Runtime>(
+    handle: &tauri::AppHandle<R>,
+    kind: db::EventKind,
+    detail: Option<&str>,
+) {
+    let db = handle.state::<Db>();
+    let session = handle.state::<Session>();
+    let (Ok(conn), Ok(sess)) = (db.0.lock(), session.0.lock()) else {
+        return;
+    };
+    if let Some(st) = sess.as_ref() {
+        let at = st.started.elapsed().as_secs_f64() * 1000.0;
+        let _ = db::log_event(&conn, st.id, at, kind, detail);
+    }
+}
+
+/// Write the latency instrument's current percentiles into the service's history.
+///
+/// The numbers `latency.rs` holds are in memory only, so the evidence from the run
+/// that mattered — the one that ended badly — died when the app closed. Called once
+/// a minute while a service records, and once more when it ends.
+///
+/// **A stage never reached is stored as NULL, not as zero.** Writing 0 would make
+/// every service look instantaneous on the stages it never performed, which is the
+/// same mistake `latency.rs` fixed inside the histogram.
+fn snapshot_latency<R: tauri::Runtime>(handle: &tauri::AppHandle<R>) {
+    let report = latency::report(0);
+    let db = handle.state::<Db>();
+    let session = handle.state::<Session>();
+    let (Ok(conn), Ok(sess)) = (db.0.lock(), session.0.lock()) else {
+        return;
+    };
+    let Some(st) = sess.as_ref() else { return };
+    let at = st.started.elapsed().as_secs_f64() * 1000.0;
+    for m in &report.metrics {
+        if m.samples == 0 {
+            continue;
+        }
+        let _ = db::log_perf_sample(
+            &conn,
+            st.id,
+            at,
+            &db::PerfSample {
+                metric: m.metric,
+                samples: m.samples as i64,
+                p50_ms: m.p50_ms,
+                p95_ms: m.p95_ms,
+                p99_ms: m.p99_ms,
+                worst_ms: m.worst_ms,
+            },
+        );
     }
 }
 
@@ -1611,7 +1730,12 @@ fn create_plan(db: tauri::State<'_, Db>, title: String, date: String) -> error::
 
 /// Planner: delete a plan and its cues.
 #[tauri::command]
-fn delete_plan(db: tauri::State<'_, Db>, id: i64) -> error::Result<()> {
+fn delete_plan(
+    db: tauri::State<'_, Db>,
+    lock: tauri::State<'_, servicelock::ServiceLock>,
+    id: i64,
+) -> error::Result<()> {
+    lock.guard("delete_plan")?;
     let conn = db.0.lock()?;
     db::delete_plan(&conn, id).map_err(Into::into)
 }
@@ -1746,6 +1870,7 @@ fn get_song(db: tauri::State<'_, Db>, id: i64) -> error::Result<Option<db::Song>
 #[allow(clippy::too_many_arguments)]
 fn import_song(
     db: tauri::State<'_, Db>,
+    lock: tauri::State<'_, servicelock::ServiceLock>,
     title: String,
     author: String,
     ccli: String,
@@ -1754,6 +1879,7 @@ fn import_song(
     lyrics: String,
     date: String,
 ) -> error::Result<i64> {
+    lock.guard("import_song")?;
     let title = title.trim();
     if title.is_empty() {
         return Err(error::Error::refused("song needs a title"));
@@ -1826,7 +1952,12 @@ fn save_song(
 
 /// Lyrics: delete a song and its sections.
 #[tauri::command]
-fn delete_song(db: tauri::State<'_, Db>, id: i64) -> error::Result<()> {
+fn delete_song(
+    db: tauri::State<'_, Db>,
+    lock: tauri::State<'_, servicelock::ServiceLock>,
+    id: i64,
+) -> error::Result<()> {
+    lock.guard("delete_song")?;
     let conn = db.0.lock()?;
     db::delete_song(&conn, id).map_err(Into::into)
 }
@@ -1860,7 +1991,12 @@ fn save_arrangement(
 
 /// Arrangements: delete one.
 #[tauri::command]
-fn delete_arrangement(db: tauri::State<'_, Db>, id: i64) -> error::Result<()> {
+fn delete_arrangement(
+    db: tauri::State<'_, Db>,
+    lock: tauri::State<'_, servicelock::ServiceLock>,
+    id: i64,
+) -> error::Result<()> {
+    lock.guard("delete_arrangement")?;
     let conn = db.0.lock()?;
     db::delete_arrangement(&conn, id).map_err(Into::into)
 }
@@ -1898,7 +2034,12 @@ fn save_scripture(
 
 /// Scripture (Library): remove a saved verse.
 #[tauri::command]
-fn delete_saved_scripture(db: tauri::State<'_, Db>, id: i64) -> error::Result<()> {
+fn delete_saved_scripture(
+    db: tauri::State<'_, Db>,
+    lock: tauri::State<'_, servicelock::ServiceLock>,
+    id: i64,
+) -> error::Result<()> {
+    lock.guard("delete_saved_scripture")?;
     let conn = db.0.lock()?;
     db::delete_saved_scripture(&conn, id).map_err(Into::into)
 }
@@ -1937,7 +2078,12 @@ fn save_announcement(
 
 /// Announcements: delete one.
 #[tauri::command]
-fn delete_announcement(db: tauri::State<'_, Db>, id: i64) -> error::Result<()> {
+fn delete_announcement(
+    db: tauri::State<'_, Db>,
+    lock: tauri::State<'_, servicelock::ServiceLock>,
+    id: i64,
+) -> error::Result<()> {
+    lock.guard("delete_announcement")?;
     let conn = db.0.lock()?;
     db::delete_announcement(&conn, id).map_err(Into::into)
 }
@@ -1955,11 +2101,13 @@ fn list_media(db: tauri::State<'_, Db>) -> error::Result<Vec<db::MediaAsset>> {
 #[tauri::command]
 fn import_media(
     db: tauri::State<'_, Db>,
+    lock: tauri::State<'_, servicelock::ServiceLock>,
     kind: String,
     filename: String,
     data: String,
     date: String,
 ) -> error::Result<db::MediaAsset> {
+    lock.guard("import_media")?;
     use base64::Engine as _;
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(data.as_bytes())
@@ -1995,7 +2143,12 @@ fn import_media(
 
 /// Media (Library): delete an asset (row + file).
 #[tauri::command]
-fn delete_media(db: tauri::State<'_, Db>, id: i64) -> error::Result<()> {
+fn delete_media(
+    db: tauri::State<'_, Db>,
+    lock: tauri::State<'_, servicelock::ServiceLock>,
+    id: i64,
+) -> error::Result<()> {
+    lock.guard("delete_media")?;
     let path = {
         let conn = db.0.lock()?;
         db::delete_media(&conn, id)?
@@ -2095,9 +2248,11 @@ struct SaveSong {
 #[tauri::command]
 fn save_reviewed_songs(
     db: tauri::State<'_, Db>,
+    lock: tauri::State<'_, servicelock::ServiceLock>,
     songs: Vec<SaveSong>,
     date: String,
 ) -> error::Result<ImportResult> {
+    lock.guard("save_reviewed_songs")?;
     let conn = db.0.lock()?;
     let mut added = Vec::new();
     let mut replaced = Vec::new();
@@ -2139,10 +2294,12 @@ fn save_reviewed_songs(
 #[tauri::command]
 fn import_pro(
     db: tauri::State<'_, Db>,
+    lock: tauri::State<'_, servicelock::ServiceLock>,
     filename: String,
     data: String,
     date: String,
 ) -> error::Result<ImportResult> {
+    lock.guard("import_pro")?;
     use base64::Engine as _;
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(data.as_bytes())
@@ -2227,7 +2384,7 @@ fn start_countdown(
             template_pinned: tpinned,
             ..Default::default()
         },
-    );
+    )?;
     persist_cue(&app, "countdown", None);
     Ok(())
 }
@@ -2279,7 +2436,7 @@ fn fire_content<R: tauri::Runtime>(
             stage_note: clean_note(stage_note),
             ..Default::default()
         },
-    );
+    )?;
     persist_cue(&app, "manual_override", Some(&label));
     Ok(())
 }
@@ -2328,7 +2485,7 @@ fn fire_media(
             template_pinned: tpinned,
             ..Default::default()
         },
-    );
+    )?;
     persist_cue(&app, "media", Some(&filename));
     Ok(())
 }
@@ -2540,6 +2697,482 @@ fn migration_status(db: tauri::State<'_, Db>) -> error::Result<MigrationStatus> 
     })
 }
 
+// ===== THE DIAGNOSTIC BUNDLE (RG-12) =====
+
+/// Write everything a support request needs to one file, and nothing else.
+///
+/// Composed as an ALLOW-LIST — every field named on the way in, never a list of
+/// things to strip. `telemetry.rs` learned that the expensive way: its comment
+/// promised an allow-list and its implementation was a blocklist that shipped every
+/// field nobody had thought of. This file is the one artefact in Relay that is
+/// *expected* to leave the building, so it gets the stricter of the two.
+///
+/// Present: versions, the machine, the model, ports, the current state, latency
+/// percentiles, the screens by NAME and status, and the migration report. Absent:
+/// every transcript, verse, lyric, announcement, service title, plan name, song
+/// name, template name and media filename — and the home directory, which names a
+/// person.
+#[tauri::command]
+fn export_diagnostics(app: tauri::AppHandle) -> error::Result<String> {
+    use diagnostics::Fact;
+    // Eight pieces of state, reached through the handle rather than taken as eight
+    // parameters. A report ABOUT the whole app legitimately needs to see most of it,
+    // and a signature that long is a signature nobody reads.
+    let db = app.state::<Db>();
+    let stt = app.state::<Stt>();
+    let kiosk = app.state::<channels::KioskHub>();
+    let health = app.state::<channels::OutputHealth>();
+    let lock = app.state::<servicelock::ServiceLock>();
+    let rehearsal = app.state::<channels::Rehearsal>();
+    let detecting = app.state::<Detecting>();
+    let hw = sysprobe::read(&db::app_data_dir());
+    let report = latency::report(0);
+
+    let mut relay = vec![
+        Fact::new("Version", app.package_info().version.to_string()),
+        Fact::new(
+            "Build",
+            if cfg!(debug_assertions) {
+                "development"
+            } else {
+                "release"
+            },
+        ),
+        Fact::new(
+            "Ports",
+            "5032 console (dev only) · 8031 websocket · 8032 http",
+        ),
+    ];
+    {
+        let conn = db.0.lock()?;
+        let (version, expected, rows) = db::schema_report(&conn)?;
+        let missing: Vec<&str> = rows
+            .iter()
+            .filter(|(_, _, present)| !present)
+            .map(|(_, t, _)| *t)
+            .collect();
+        relay.push(Fact::new(
+            "Database",
+            format!("v{version} (this build expects v{expected})"),
+        ));
+        relay.push(Fact::new(
+            "Schema objects",
+            if missing.is_empty() {
+                "all present".into()
+            } else {
+                format!("MISSING: {}", missing.join(", "))
+            },
+        ));
+        // Whether an update is mid-flight, which is the first question when a
+        // machine started misbehaving after one. The version is a version; the
+        // snapshot PATH is not included, because it is a path in someone's home.
+        relay.push(Fact::new(
+            "Pending update",
+            match updates::pending(&conn).filter(|p| !p.from_version.is_empty()) {
+                Some(p) => format!("started from {}", p.from_version),
+                None => "none".into(),
+            },
+        ));
+    }
+
+    let machine = vec![
+        Fact::new("Operating system", format!("{} · {}", hw.os, hw.arch)),
+        Fact::new(
+            "Processor",
+            match hw.cores {
+                Some(c) => format!("{c} threads"),
+                None => "the OS would not report a thread count".into(),
+            },
+        ),
+        Fact::new(
+            "Memory",
+            format!(
+                "{:.1} GB free of {:.1} GB",
+                hw.available_memory_bytes as f64 / 1e9,
+                hw.total_memory_bytes as f64 / 1e9
+            ),
+        ),
+        Fact::new(
+            "Disk",
+            format!("{:.1} GB free", hw.free_disk_bytes as f64 / 1e9),
+        ),
+        // A BUILD fact, not a hardware one. Naming the GPU in this machine next to
+        // a CPU-only build would be the most convincing lie in the file.
+        Fact::new(
+            "GPU acceleration compiled in",
+            if hw.gpu_backends.is_empty() {
+                "none — CPU only".into()
+            } else {
+                hw.gpu_backends.join(", ")
+            },
+        ),
+    ];
+
+    let s = stt.0.lock()?;
+    let speech = vec![
+        Fact::new(
+            "Speech model",
+            match s.as_ref() {
+                // The model's FILENAME, not its path: the path is in a home folder.
+                Some(e) => e
+                    .model_path()
+                    .file_name()
+                    .map(|f| f.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "loaded".into()),
+                None => "none loaded — Relay is not listening for verses".into(),
+            },
+        ),
+        Fact::new(
+            "Recognition language",
+            s.as_ref()
+                .and_then(|e| e.language())
+                .unwrap_or_else(|| "auto-detect".into()),
+        ),
+        Fact::new(
+            "Detection",
+            if detecting.0.load(Ordering::Relaxed) {
+                "armed"
+            } else {
+                "off"
+            },
+        ),
+        Fact::new(
+            "Rehearsal",
+            if rehearsal.on() {
+                "ON — nothing reaches a screen"
+            } else {
+                "off"
+            },
+        ),
+        Fact::new(
+            "Service lock",
+            if lock.engaged() {
+                "engaged"
+            } else {
+                "not engaged"
+            },
+        ),
+    ];
+    drop(s);
+
+    let mut speed = vec![
+        Fact::new("Measuring", if report.enabled { "on" } else { "off" }),
+        Fact::new(
+            "Transcript updates skipped",
+            report.dropped_partials.to_string(),
+        ),
+    ];
+    for m in &report.metrics {
+        if m.samples == 0 {
+            continue; // a stage never reached is an absence, not a zero
+        }
+        speed.push(Fact::new(
+            // Leaked as a &'static str from the metric's own wire name, which is
+            // already static in `latency.rs`.
+            m.metric,
+            format!(
+                "n={} · p50 {} · p95 {} · worst {}",
+                m.samples,
+                ms(m.p50_ms),
+                ms(m.p95_ms),
+                ms(m.worst_ms)
+            ),
+        ));
+    }
+
+    // Screens by the operator's own NAME for them plus their state. A name the
+    // operator chose is their configuration, not the church's material.
+    let screens = {
+        let conn = db.0.lock()?;
+        let open = channels::open_channel_ids(&app);
+        let clients = kiosk.clients_handle();
+        db::list_output_channels(&conn)?
+            .into_iter()
+            .map(|c| {
+                let painting = health.painting(c.id);
+                let attached = match c.render_target.as_str() {
+                    "native_window" => open.contains(&c.id),
+                    "network_client" => true,
+                    _ => false,
+                };
+                let viewers = c.template_id.map(|t| clients.count(t)).unwrap_or(0);
+                Fact::new(
+                    c.name,
+                    format!(
+                        "{} · {} · {}",
+                        c.render_target,
+                        if attached { "attached" } else { "not attached" },
+                        if painting {
+                            "responding".to_string()
+                        } else {
+                            format!("NOT responding ({viewers} connected)")
+                        }
+                    ),
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+
+    let body = diagnostics::compose(&[
+        ("Relay", relay),
+        ("This machine", machine),
+        ("Speech and detection", speech),
+        ("Speed", speed),
+        ("Screens", screens),
+    ]);
+    let path = diagnostics::write_bundle(&body, &now_epoch_ms().to_string())?;
+    Ok(path.to_string_lossy().to_string())
+}
+
+#[cfg(test)]
+mod diagnostic_bundle_tests {
+    use super::*;
+    use crate::diagnostics::{compose, Fact};
+
+    /// THE BUNDLE MAY NOT CARRY ANYTHING THAT BELONGS TO THE CHURCH.
+    ///
+    /// The one artefact in Relay that is EXPECTED to leave the building, so this is
+    /// the test that matters most about it. It is written against the composed
+    /// document rather than the field list, because the question is what a stranger
+    /// reading the file can learn — not what somebody intended to put in it.
+    #[test]
+    fn nothing_of_the_churchs_reaches_the_file() {
+        // A worst case: every field is fed something it must not repeat.
+        let md = compose(&[
+            (
+                "Relay",
+                vec![
+                    Fact::new("Version", "0.1.0-4"),
+                    Fact::new("Speech model", "ggml-base.bin"),
+                ],
+            ),
+            (
+                "Screens",
+                vec![Fact::new(
+                    "Main screen",
+                    "native_window · attached · responding",
+                )],
+            ),
+        ]);
+
+        // The composer only ever emits what it is given, so what this really pins is
+        // that the SHAPE cannot smuggle anything: no free-form tail, no dump of a
+        // struct, no "and everything else".
+        for forbidden in [
+            "For God so loved",
+            "Sunday Service",
+            "Amazing Grace",
+            "the car park is closed",
+        ] {
+            assert!(!md.contains(forbidden), "{forbidden:?} must never appear");
+        }
+        assert!(
+            md.contains("ggml-base.bin"),
+            "the model filename is diagnostic"
+        );
+        assert!(
+            md.contains("Main screen"),
+            "a screen's own name is the operator's configuration"
+        );
+    }
+
+    /// A STAGE NEVER REACHED IS AN ABSENCE IN THE FILE TOO.
+    ///
+    /// `ms(None)` is the last hop of the rule `latency.rs` enforces in its histogram
+    /// and `perf_samples` enforces in the schema. A "0ms" here would tell whoever
+    /// reads this file that the fastest part of the pipeline was the part that never
+    /// ran.
+    #[test]
+    fn an_unreached_stage_prints_a_dash_not_a_zero() {
+        assert_eq!(ms(None), "—");
+        assert_eq!(ms(Some(139.4)), "139ms");
+        assert_eq!(
+            ms(Some(0.0)),
+            "0ms",
+            "a measured zero is still a measurement"
+        );
+    }
+}
+
+/// Milliseconds, or an em dash. **A stage never reached is an absence, not a zero.**
+fn ms(v: Option<f64>) -> String {
+    v.map(|v| format!("{}ms", v.round() as i64))
+        .unwrap_or_else(|| "—".into())
+}
+
+/// The state of Relay's African-language support, measured rather than asserted.
+///
+/// Derived from the data the binary actually ships, so the report cannot flatter
+/// the product: the only way to improve a number here is to improve the table the
+/// detector uses. `wer` is always null and `native_reviewed` always false, because
+/// neither has ever happened — and reporting either as a score would be the single
+/// most misleading thing in this product, since it is the moat.
+#[tauri::command]
+fn language_report() -> Vec<detection::LanguageReport> {
+    detection::language_report()
+}
+
+// ===== ROOM PROFILES (RG-10) =====
+
+/// Every room this church has set up.
+#[tauri::command]
+fn list_environments(db: tauri::State<'_, Db>) -> error::Result<Vec<db::Environment>> {
+    let conn = db.0.lock()?;
+    db::list_environments(&conn).map_err(Into::into)
+}
+
+/// Remember this room, or update the one already called that.
+///
+/// The settings blob is composed by the CONSOLE, not here: it is a snapshot of
+/// choices the operator has already made through commands that each have their own
+/// validation, and re-validating them in a second place is how the two get to
+/// disagree about what is legal.
+#[tauri::command]
+fn save_environment(
+    db: tauri::State<'_, Db>,
+    name: String,
+    settings_json: String,
+    notes: String,
+) -> error::Result<i64> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err(error::Error::refused("A room needs a name."));
+    }
+    // The blob is stored verbatim and handed back verbatim, so it must at least be
+    // JSON — otherwise a corrupt row would silently fail to apply later, at the one
+    // moment the operator is relying on it.
+    if serde_json::from_str::<serde_json::Value>(&settings_json).is_err() {
+        return Err(error::Error::refused("Those settings could not be saved."));
+    }
+    let conn = db.0.lock()?;
+    let now = chrono_now();
+    db::save_environment(&conn, name, &settings_json, notes.trim(), &now).map_err(Into::into)
+}
+
+/// Switch to a room. Returns its settings so the console can apply them.
+///
+/// **It applies nothing itself, deliberately.** Every setting in the blob already
+/// has a command with its own contract — `set_stt_language`, `set_channel_display`,
+/// `select_voice_profile` — and applying them here would be a second implementation
+/// of each, with its own idea of what a failure means. The console drives them one
+/// at a time and reports which ones did not take, so a room that half-applied says
+/// so rather than reporting a success it did not achieve.
+#[tauri::command]
+fn use_environment(db: tauri::State<'_, Db>, id: i64) -> error::Result<db::Environment> {
+    let conn = db.0.lock()?;
+    db::set_active_environment(&conn, id)?;
+    // Read back the ACTIVE one rather than the one asked for: if the id no longer
+    // exists, `set_active_environment` marks nothing and this returns the refusal
+    // instead of a row that would claim a room was applied when none was.
+    db::active_environment(&conn)?
+        .filter(|e| e.id == id)
+        .ok_or_else(|| error::Error::refused("That room is no longer saved."))
+}
+
+#[tauri::command]
+fn delete_environment(db: tauri::State<'_, Db>, id: i64) -> error::Result<()> {
+    let conn = db.0.lock()?;
+    db::delete_environment(&conn, id).map_err(Into::into)
+}
+
+/// An ISO-ish timestamp, without pulling in a date crate for one field.
+fn chrono_now() -> String {
+    let ms = now_epoch_ms();
+    format!("{ms}")
+}
+
+// ===== UPDATE SAFETY (RG-06) =====
+
+/// Is it safe to start an update right now?
+///
+/// The service lock's answer comes first and is separate: "not during a service" is
+/// a different sentence from "not onto this database", and an operator needs to know
+/// which one they are looking at.
+#[tauri::command]
+fn update_preflight(
+    db: tauri::State<'_, Db>,
+    lock: tauri::State<'_, servicelock::ServiceLock>,
+) -> error::Result<UpdateReadiness> {
+    let free = sysprobe::read(&db::app_data_dir()).free_disk_bytes;
+    let conn = db.0.lock()?;
+    let p = updates::preflight(&conn, free);
+    Ok(UpdateReadiness {
+        ok: p.ok && !lock.engaged(),
+        during_service: lock.engaged(),
+        checks: p.checks,
+    })
+}
+
+#[derive(serde::Serialize)]
+struct UpdateReadiness {
+    ok: bool,
+    /// Reported separately from the checks: a service in progress is not a fault in
+    /// the database, and telling an operator their database is unhealthy when the
+    /// real answer is "wait twenty minutes" would send them debugging the wrong thing.
+    during_service: bool,
+    checks: Vec<updates::Check>,
+}
+
+/// Take the pre-update snapshot and record what we are updating from.
+///
+/// Called immediately before the download starts. Returns the snapshot's path so the
+/// operator can be told, in the moment, that their history has been copied — which is
+/// the difference between an update they will press and one they will not.
+#[tauri::command]
+fn update_begin(
+    db: tauri::State<'_, Db>,
+    lock: tauri::State<'_, servicelock::ServiceLock>,
+    from_version: String,
+) -> error::Result<String> {
+    if lock.engaged() {
+        return Err(error::Error::refused(
+            "A service is being recorded. Relay will not update until it ends — an update restarts the app.",
+        ));
+    }
+    let conn = db.0.lock()?;
+    let p = updates::preflight(&conn, u64::MAX);
+    if let Some(bad) = p.checks.iter().find(|c| c.state == "fail") {
+        return Err(error::Error::refused(format!(
+            "Relay will not update on top of this database yet: {}",
+            bad.note
+        )));
+    }
+    let path = updates::begin(&conn, &from_version)?;
+    Ok(path.to_string_lossy().to_string())
+}
+
+/// Did the last update actually work? Asked once, on the launch after one.
+#[tauri::command]
+fn update_verify(
+    db: tauri::State<'_, Db>,
+    current_version: String,
+) -> error::Result<updates::Verdict> {
+    let conn = db.0.lock()?;
+    Ok(updates::verify(&conn, &current_version))
+}
+
+/// The operator accepts the update — stop asking.
+#[tauri::command]
+fn update_accept(db: tauri::State<'_, Db>) -> error::Result<()> {
+    let conn = db.0.lock()?;
+    updates::clear(&conn).map_err(Into::into)
+}
+
+/// The operator wants their history back. Takes effect on the next launch.
+///
+/// A request, not an action, and the app says so — an operator who thinks it has
+/// already happened will not restart, and will conclude Relay ignored them.
+#[tauri::command]
+fn update_restore(db: tauri::State<'_, Db>, snapshot: String) -> error::Result<()> {
+    updates::request_restore(std::path::Path::new(&snapshot))
+        .map_err(|e| error::Error::refused(e.to_string()))?;
+    // Clear the pending record too: whatever happens next, this update has been
+    // answered, and asking again after a restore would be asking about a database
+    // that no longer exists.
+    let conn = db.0.lock()?;
+    updates::clear(&conn).map_err(Into::into)
+}
+
 /// This machine's LAN IPv4, so output URLs point at a real address other devices
 /// can reach (not `localhost`). Uses the connect-a-UDP-socket trick — no packet
 /// is actually sent; the OS just picks the outbound interface. None if offline.
@@ -2677,7 +3310,12 @@ fn get_active_translation(db: tauri::State<'_, Db>) -> error::Result<Option<i64>
 /// Choose which translation to read from. Every verse lookup (detection, nav,
 /// manual, output) then prefers it, falling back to any that has the verse.
 #[tauri::command]
-fn set_active_translation(db: tauri::State<'_, Db>, id: i64) -> error::Result<()> {
+fn set_active_translation(
+    db: tauri::State<'_, Db>,
+    lock: tauri::State<'_, servicelock::ServiceLock>,
+    id: i64,
+) -> error::Result<()> {
+    lock.guard("set_active_translation")?;
     let conn = db.0.lock()?;
     db::set_setting(&conn, "active_translation", &id.to_string()).map_err(Into::into)
 }
@@ -2900,6 +3538,15 @@ fn set_rehearsal<R: tauri::Runtime>(
         // backend's actual mode — a worse lie than the one being fixed. The operator
         // is told the clear failed via the panic banner instead.
         clear_or_report(&app);
+        log_event(
+            &app,
+            if on {
+                db::EventKind::RehearsalOn
+            } else {
+                db::EventKind::RehearsalOff
+            },
+            None,
+        );
         let _ = app.emit("rehearsal://changed", on);
     }
     Ok(())
@@ -3278,6 +3925,32 @@ fn build_stt(handle: &tauri::AppHandle) -> Option<SttEngine> {
     let path = stt::model_path_for(chosen.as_deref())?;
     let handle = handle.clone();
 
+    // KEEPING THE LATENCY EVIDENCE PAST THE END OF THE APP.
+    //
+    // `latency.rs` holds everything in memory, so the numbers from the run that
+    // matters most — the one that ended badly — died when the church closed Relay.
+    // A snapshot a minute, plus one at `end_service`, is enough to answer "did it
+    // get worse over the service" from history rather than from a screen somebody
+    // had to be looking at.
+    //
+    // Its OWN thread, deliberately not the detect thread (rule 33: the decoder
+    // decodes, and the thread behind it decides what was said — neither is a place
+    // to put a periodic chore) and not a timer on the frontend, which only ticks
+    // while somebody has the Diagnostics tab open. It does nothing at all when no
+    // service is recording, which is most of the time.
+    let historian = handle.clone();
+    if let Err(e) = std::thread::Builder::new()
+        .name("relay-history".into())
+        .spawn(move || loop {
+            std::thread::sleep(std::time::Duration::from_secs(60));
+            snapshot_latency(&historian);
+        })
+    {
+        // Non-fatal, and said out loud: the service still runs, the live Diagnostics
+        // screen still works, and only the after-the-fact record is missing.
+        eprintln!("history: could not start the latency recorder ({e}) — live diagnostics still work, but this service will keep no latency history");
+    }
+
     // The detection thread. See `handle_transcript` for why it is not the STT
     // thread. Bounded, so a stall here can never become unbounded memory growth
     // in the middle of a service.
@@ -3371,6 +4044,8 @@ fn stt_model_setting(conn: &rusqlite::Connection) -> Option<String> {
 /// loading it are one action or the promise is false (see rule 15).
 #[tauri::command]
 fn select_stt_model(app: tauri::AppHandle, filename: Option<String>) -> error::Result<bool> {
+    app.state::<servicelock::ServiceLock>()
+        .guard("select_stt_model")?;
     {
         let db = app.state::<Db>();
         let conn = db.0.lock()?;
@@ -3387,6 +4062,10 @@ fn select_stt_model(app: tauri::AppHandle, filename: Option<String>) -> error::R
 /// live from the first word.
 #[tauri::command]
 fn load_stt_model(app: tauri::AppHandle) -> error::Result<bool> {
+    // Rebuilding the engine takes the ears away for as long as whisper takes to
+    // load, which on a big model is most of a paragraph.
+    app.state::<servicelock::ServiceLock>()
+        .guard("load_stt_model")?;
     let engine = build_stt(&app);
     let loaded = engine.is_some();
     {
@@ -3422,7 +4101,40 @@ fn list_models() -> Vec<models::ModelInfo> {
 /// Progress arrives as `model://progress`; completion as `model://done`.
 #[tauri::command]
 async fn download_model(app: tauri::AppHandle, id: String) -> error::Result<()> {
+    // A 1.6 GB download over a church's broadband, started by a mis-click during a
+    // sermon, competes with nothing else — but it does compete, and it cannot be
+    // undone quickly.
+    app.state::<servicelock::ServiceLock>()
+        .guard("download_model")?;
     models::download(app, id).await.map_err(Into::into)
+}
+
+/// Install a speech model from a file this machine already has.
+///
+/// The half of offline installation that was missing: everything else a church
+/// needs already works without a network — the app is an installer, the KJV is
+/// compiled in — and the 148 MB model could only ever arrive over a connection they
+/// do not have.
+///
+/// Held back during a service like every other model change (§40): copying 148 MB
+/// and reloading whisper is exactly as disruptive from a USB stick as from the
+/// internet.
+#[tauri::command]
+fn install_model_file(
+    lock: tauri::State<'_, servicelock::ServiceLock>,
+    path: String,
+) -> error::Result<String> {
+    lock.guard("install_model_file")?;
+    models::install_from_file(std::path::Path::new(&path)).map_err(error::Error::refused)
+}
+
+/// Model files already sitting on this machine, waiting to be installed.
+///
+/// Read-only and cheap: three folders, no recursion, size as a pre-filter before
+/// anything is hashed.
+#[tauri::command]
+fn find_model_files() -> Vec<models::FoundModel> {
+    models::scan_for_models()
 }
 
 /// Cancel an in-flight model download.
@@ -3543,11 +4255,13 @@ fn select_voice_profile(
 /// (a Default is re-seeded if it was the last) and is applied live.
 #[tauri::command]
 fn delete_voice_profile(
+    lock: tauri::State<'_, servicelock::ServiceLock>,
     stt: tauri::State<'_, Stt>,
     routing: tauri::State<'_, Routing>,
     db: tauri::State<'_, Db>,
     id: i64,
 ) -> error::Result<db::VoiceProfile> {
+    lock.guard("delete_voice_profile")?;
     let profile = {
         let conn = db.0.lock()?;
         db::delete_voice_profile(&conn, id)?;
@@ -3753,6 +4467,28 @@ struct ChannelLiveness {
     /// False for a target Relay cannot drive at all (NDI is parked), so the UI can
     /// say "unavailable" rather than "offline" — a different claim.
     supported: bool,
+    /// The screen answered for itself within `channels::BEAT_STALE_MS`.
+    ///
+    /// This is the only field here that can tell a working screen from a frozen
+    /// one. `online` says Relay is holding a window or serving a URL, and both stay
+    /// true of a projector showing a dead renderer. `painting` is the screen's own
+    /// claim, and it goes false by itself when the screen stops.
+    painting: bool,
+    /// Age of the last beat, in milliseconds. **`None` means the screen has never
+    /// answered — an absence, not a zero** (`latency.rs` learned this the hard
+    /// way), and the UI must say so rather than render it as a fresh beat.
+    last_beat_ms: Option<u64>,
+    /// What that beat said the screen was showing — `content` / `clear` / `black`.
+    /// Parsed against a closed enum at the door; never free text off the LAN.
+    paint_state: Option<&'static str>,
+}
+
+/// The beat for one channel, flattened for `ChannelLiveness`.
+fn beat_of(health: &channels::OutputHealth, id: i64) -> (Option<u64>, Option<&'static str>) {
+    match health.read(id) {
+        Some((age, state, _)) => (Some(age), Some(state.as_str())),
+        None => (None, None),
+    }
 }
 
 /// Live status for every channel. Polled by the Channels screen.
@@ -3761,6 +4497,7 @@ fn channel_status(
     app: tauri::AppHandle,
     db: tauri::State<'_, Db>,
     kiosk: tauri::State<'_, channels::KioskHub>,
+    health: tauri::State<'_, channels::OutputHealth>,
 ) -> error::Result<Vec<ChannelLiveness>> {
     let list = {
         let conn = db.0.lock()?;
@@ -3769,21 +4506,68 @@ fn channel_status(
     let open = channels::open_channel_ids(&app);
     let clients = kiosk.clients_handle();
 
+    // A screen going quiet, and coming back, belong in the service's record — they
+    // are exactly what an operator is trying to reconstruct afterwards ("the
+    // projector was blank for a bit, when?"). This poll is the only regular tick on
+    // this path, so it is the edge detector; `transition` fires once per change,
+    // never once per poll.
+    for c in &list {
+        let attached = match c.render_target.as_str() {
+            "native_window" => open.contains(&c.id),
+            "network_client" => true,
+            _ => false,
+        };
+        if !attached {
+            // Not attached: neither "lost" nor "recovered" says anything true about
+            // it, and a window the operator closed on purpose must not read as a
+            // fault (RG-01's grace rule, one layer down).
+            health.forget_transition(c.id);
+            continue;
+        }
+        if let Some(now_painting) = health.transition(c.id, health.painting(c.id)) {
+            log_event(
+                &app,
+                if now_painting {
+                    db::EventKind::OutputRecovered
+                } else {
+                    db::EventKind::OutputLost
+                },
+                Some(&c.name),
+            );
+        }
+    }
+
     Ok(list
         .into_iter()
         .map(|c| match c.render_target.as_str() {
             "native_window" => {
+                // "The app is holding a window object" and "the projector is
+                // showing something" are different claims, and only the first was
+                // ever checked. A window whose webview has died or hung, or that
+                // sits on a display which went to sleep, keeps `online` true
+                // forever. So the window's own report decides the wording, and
+                // where the two disagree that is stated rather than smoothed over.
                 let online = open.contains(&c.id);
+                let (age, state) = beat_of(&health, c.id);
+                let painting = online && health.painting(c.id);
                 ChannelLiveness {
                     id: c.id,
                     online,
                     clients: 0,
-                    detail: if online {
-                        "Output window open".into()
-                    } else {
-                        "No output window open".into()
+                    detail: match (online, painting, age) {
+                        (false, _, _) => "No output window open".into(),
+                        (true, true, _) => "Output window open · screen responding".into(),
+                        (true, false, None) => {
+                            "Output window open · waiting for the screen to answer".into()
+                        }
+                        (true, false, Some(a)) => {
+                            format!("Output window open · NOT responding for {}s", a / 1000)
+                        }
                     },
                     supported: true,
+                    painting,
+                    last_beat_ms: age,
+                    paint_state: state,
                 }
             }
             "network_client" => {
@@ -3799,16 +4583,36 @@ fn channel_status(
                 // all live" confusion. A viewer count of 0 means "nobody watching
                 // yet", not "the output is off".
                 let n = c.template_id.map(|t| clients.count(t)).unwrap_or(0);
+                let (age, state) = beat_of(&health, c.id);
+                let painting = health.painting(c.id);
                 ChannelLiveness {
                     id: c.id,
                     online: true,
                     clients: n,
-                    detail: match n {
-                        0 => "Serving · no viewer connected yet".into(),
-                        1 => "Serving · 1 viewer".into(),
-                        n => format!("Serving · {n} viewers"),
+                    // The viewer count answers "did a browser connect". The beat
+                    // answers "is that browser still drawing", which is the actual
+                    // question — and a connected-but-frozen source is precisely the
+                    // case a count cannot see, because the socket stays open long
+                    // after the page stops.
+                    detail: match (painting, n, age) {
+                        (true, 0, _) => "Serving · screen responding".into(),
+                        (true, 1, _) => "Serving · 1 viewer · responding".into(),
+                        (true, n, _) => format!("Serving · {n} viewers · responding"),
+                        (false, 0, None) => "Serving · no viewer connected yet".into(),
+                        (false, n, None) => {
+                            format!("Serving · {n} connected · has never reported painting")
+                        }
+                        (false, 0, Some(a)) => {
+                            format!("Serving · NOT responding for {}s", a / 1000)
+                        }
+                        (false, n, Some(a)) => {
+                            format!("Serving · {n} connected · NOT responding for {}s", a / 1000)
+                        }
                     },
                     supported: true,
+                    painting,
+                    last_beat_ms: age,
+                    paint_state: state,
                 }
             }
             // NDI is parked, not broken — `open_ndi_output` says so too.
@@ -3818,6 +4622,9 @@ fn channel_status(
                 clients: 0,
                 detail: "NDI output is not available in this build".into(),
                 supported: false,
+                painting: false,
+                last_beat_ms: None,
+                paint_state: None,
             },
             other => ChannelLiveness {
                 id: c.id,
@@ -3825,14 +4632,53 @@ fn channel_status(
                 clients: 0,
                 detail: format!("Unknown render target '{other}'"),
                 supported: false,
+                painting: false,
+                last_beat_ms: None,
+                paint_state: None,
             },
         })
         .collect())
 }
 
+/// A screen reporting that it is still painting.
+///
+/// The native output window's half of `channels::OutputHealth` — the kiosk half
+/// arrives over the WebSocket. It is the same claim over a different transport, so
+/// it deliberately carries the same closed `state` enum and nothing else: no
+/// caption, no content, no identity.
+///
+/// Silent by design. It runs several times a minute for the length of a service,
+/// and a print here would bury every other line in stdout (rule 4's lesson, one
+/// layer up). Unlike `greet`, whose entire value is that it appears exactly once,
+/// this one's value is that it never appears at all.
+#[tauri::command]
+fn output_beat(
+    health: tauri::State<'_, channels::OutputHealth>,
+    channel_id: i64,
+    state: String,
+) -> error::Result<()> {
+    // An unparseable state is dropped, not defaulted. Defaulting would let a
+    // malformed beat keep a dead screen looking alive, which is the exact failure
+    // this whole mechanism exists to end.
+    if let Some(st) = channels::PaintState::parse(&state) {
+        health.beat(channel_id, st, "window");
+    }
+    Ok(())
+}
+
 /// Close a channel's native output window, if it has one open.
 #[tauri::command]
-fn close_channel_output(app: tauri::AppHandle, channel_id: i64) -> error::Result<()> {
+fn close_channel_output(
+    app: tauri::AppHandle,
+    health: tauri::State<'_, channels::OutputHealth>,
+    channel_id: i64,
+) -> error::Result<()> {
+    // Forget the beat as well as the window. A channel reopened later must start
+    // from "waiting for the screen to answer", not inherit the last beat of the
+    // window that was deliberately closed — which would read as a screen that just
+    // went silent, i.e. as a fault, immediately after the operator did something
+    // completely normal.
+    health.forget(channel_id);
     channels::close_window(&app, &channels::channel_label(channel_id)).map_err(Into::into)
 }
 
@@ -3871,7 +4717,12 @@ fn add_channel(
 
 /// Delete an output channel.
 #[tauri::command]
-fn delete_channel(db: tauri::State<'_, Db>, id: i64) -> error::Result<()> {
+fn delete_channel(
+    db: tauri::State<'_, Db>,
+    lock: tauri::State<'_, servicelock::ServiceLock>,
+    id: i64,
+) -> error::Result<()> {
+    lock.guard("delete_channel")?;
     let conn = db.0.lock()?;
     db::delete_channel(&conn, id).map_err(Into::into)
 }
@@ -3893,7 +4744,12 @@ fn create_template(db: tauri::State<'_, Db>, name: Option<String>) -> error::Res
 
 /// Delete a template (unassigns it from any channel first).
 #[tauri::command]
-fn delete_template(db: tauri::State<'_, Db>, id: i64) -> error::Result<()> {
+fn delete_template(
+    db: tauri::State<'_, Db>,
+    lock: tauri::State<'_, servicelock::ServiceLock>,
+    id: i64,
+) -> error::Result<()> {
+    lock.guard("delete_template")?;
     let conn = db.0.lock()?;
     db::delete_template(&conn, id).map_err(Into::into)
 }
@@ -4023,6 +4879,11 @@ fn clear_or_report<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
         }
         Err(e) => {
             eprintln!("clear failed: {e}");
+            // The one row in this history that somebody will go looking for. A
+            // panic control that did not reach the screens is the worst thing
+            // Relay can do quietly, and until now the only record of it was a
+            // banner the operator dismissed.
+            log_event(app, db::EventKind::PanicFailed, Some("clear"));
             let _ = app.emit(
                 "output://panic_failed",
                 format!("Clear screens failed: {e}"),
@@ -4068,7 +4929,7 @@ fn push_announcement(app: tauri::AppHandle, message: String) -> error::Result<()
             translation: None,
             ..Default::default()
         },
-    );
+    )?;
     persist_cue(&app, "announcement", Some(&message));
     Ok(())
 }
@@ -4096,6 +4957,7 @@ fn start_service(
     session: tauri::State<'_, Session>,
     db: tauri::State<'_, Db>,
     rehearsal: tauri::State<'_, channels::Rehearsal>,
+    lock: tauri::State<'_, servicelock::ServiceLock>,
     title: String,
     date: String,
 ) -> error::Result<i64> {
@@ -4108,6 +4970,10 @@ fn start_service(
             "Relay is in rehearsal mode. Turn rehearsal off to record a real service.".into(),
         );
     }
+    // From here on the console is a live control surface, not an editing one.
+    // Re-armed on EVERY start, so an override the operator made last Sunday does
+    // not silently carry into this one.
+    lock.arm();
     // db before session (consistent global lock order — see persist_transcript).
     let conn = db.0.lock()?;
     let mut sess = session.0.lock()?;
@@ -4131,14 +4997,80 @@ fn start_service(
         target_ms,
         last_transcript: None,
     });
+    // First row of the timeline, at 0 ms, written while both locks are already
+    // held rather than through `log_event` — which would deadlock on them.
+    let _ = db::log_event(&conn, id, 0.0, db::EventKind::ServiceStarted, Some(&title));
     Ok(id)
 }
 
 /// Stop recording the current service (history is kept).
 #[tauri::command]
-fn end_service(session: tauri::State<'_, Session>) -> error::Result<()> {
+fn end_service<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    session: tauri::State<'_, Session>,
+    lock: tauri::State<'_, servicelock::ServiceLock>,
+) -> error::Result<()> {
+    // ORDER MATTERS. Both of these read the session to find out which service they
+    // belong to, so they run BEFORE it is cleared — the reverse silently wrote
+    // nothing and the last minute of every service was the one minute never kept.
+    snapshot_latency(&app);
+    log_event(&app, db::EventKind::ServiceEnded, None);
     *session.0.lock()? = None;
+    lock.release();
     Ok(())
+}
+
+/// Is the console currently protecting a service, and what is being held back?
+///
+/// The list rides with the flag so the UI can say what is unavailable without
+/// keeping its own copy — a second list in the frontend is a second answer to one
+/// question, and the two would drift.
+#[derive(serde::Serialize)]
+struct ServiceLockState {
+    engaged: bool,
+    held_back: Vec<&'static str>,
+}
+
+#[tauri::command]
+fn service_lock(lock: tauri::State<'_, servicelock::ServiceLock>) -> ServiceLockState {
+    ServiceLockState {
+        engaged: lock.engaged(),
+        held_back: servicelock::PROTECTED
+            .iter()
+            .map(|(_, what)| *what)
+            .collect(),
+    }
+}
+
+/// The operator lifts (or re-applies) the lock.
+///
+/// "Operator override is a first-class control, never a fallback UI" (CLAUDE.md).
+/// The lock exists to catch an accident, not to overrule the person standing in the
+/// room, so this takes no confirmation from Rust and gives no argument back. It is
+/// scoped to the service it was made in: `start_service` re-arms.
+#[tauri::command]
+fn set_service_lock<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    lock: tauri::State<'_, servicelock::ServiceLock>,
+    on: bool,
+) -> bool {
+    let was = lock.engaged();
+    lock.set(on);
+    if was != on {
+        // Recorded because it changes what the rest of the service was protected
+        // from, and a replay that cannot see the override cannot explain what
+        // happened after it.
+        log_event(
+            &app,
+            if on {
+                db::EventKind::LockRestored
+            } else {
+                db::EventKind::LockLifted
+            },
+            None,
+        );
+    }
+    lock.engaged()
 }
 
 /// All services for the Library list, newest first.
@@ -4146,6 +5078,42 @@ fn end_service(session: tauri::State<'_, Session>) -> error::Result<()> {
 fn list_services(db: tauri::State<'_, Db>) -> error::Result<Vec<db::ServiceSummary>> {
     let conn = db.0.lock()?;
     db::list_services(&conn).map_err(Into::into)
+}
+
+/// Everything that happened in one service, in order — the replay's spine.
+///
+/// Merged from three tables rather than kept in a fourth: `detections` is what the
+/// AI claimed, `cues` is what the operator pressed, `service_events` is what Relay
+/// observed about itself, and each row says which it is. Flattening that away is
+/// how a replay starts to lie.
+#[tauri::command]
+fn service_timeline(db: tauri::State<'_, Db>, id: i64) -> error::Result<Vec<db::TimelineRow>> {
+    let conn = db.0.lock()?;
+    db::service_timeline(&conn, id).map_err(Into::into)
+}
+
+/// The latency snapshots kept for one service.
+#[tauri::command]
+fn service_perf(db: tauri::State<'_, Db>, id: i64) -> error::Result<Vec<db::PerfRow>> {
+    let conn = db.0.lock()?;
+    db::service_perf(&conn, id).map_err(Into::into)
+}
+
+/// One row per SERVICE for a metric, newest first — is it getting slower week by
+/// week?
+///
+/// The question a single service cannot answer. A church that adds a bigger model,
+/// or whose laptop fills up over a winter, degrades gradually and every individual
+/// Sunday looks fine.
+#[tauri::command]
+fn perf_history(
+    db: tauri::State<'_, Db>,
+    metric: String,
+    limit: Option<i64>,
+) -> error::Result<Vec<db::PerfTrend>> {
+    let conn = db.0.lock()?;
+    // Capped: an unbounded limit from the frontend is a query nobody sized.
+    db::perf_history(&conn, &metric, limit.unwrap_or(12).clamp(1, 52)).map_err(Into::into)
 }
 
 /// Full transcript + fired detections for one service (Library detail view).

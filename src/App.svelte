@@ -2,7 +2,11 @@
   import { onMount, onDestroy } from 'svelte';
   import { trapFocus } from './lib/focus.js';
   import { t } from './lib/i18n.js';
-  import { capture, capturing, detectionOn, live, screenBlack, rehearsing, initAudio, autoOpenOutputs, setDetection, clearScreens, blackScreen, panicError, dismissPanicError } from './lib/stores/capture.js';
+  import { capture, capturing, detectionOn, live, screenBlack, rehearsing, initAudio, autoOpenOutputs, setDetection, clearScreens, blackScreen, panicError, dismissPanicError, serviceLock, loadServiceLock, channelHealth, startChannelHealth, latencyReport, onOperatorAction, noteOperatorAction } from './lib/stores/capture.js';
+  import * as training from './lib/training.js';
+  import { practice, stopPractice } from './lib/practice.js';
+  import { degradations, worstLevel, summarise } from './lib/degraded.js';
+  import { describeScreen } from './lib/outputHealth.js';
   import { installShortcuts, cheatsheet, liveShortcuts } from './lib/shortcuts.js';
   import { installLeaveGuard } from './lib/crash.js';
   import { session, setSession, resolveActiveTab } from './lib/session.js';
@@ -11,6 +15,7 @@
   import BootSequence from './lib/boot/BootSequence.svelte';
   import BrandMark from './lib/ui/BrandMark.svelte';
   import { safeMode } from './lib/boot/boot.js';
+  import { humanError } from './lib/errors.js';
   import {
     checkForUpdate,
     installUpdate,
@@ -18,7 +23,93 @@
     updateAvailable,
     updateProgress,
     updateError,
+    updateVerdict,
+    verifyLastUpdate,
+    acceptUpdate,
+    restoreSnapshot,
   } from './lib/updater.js';
+
+  // The two answers to the post-update banner. Both GROUP 1 (they throw), because a
+  // restore that silently failed would leave an operator waiting for a history that
+  // is never coming back.
+  // ── DEGRADED — the fallbacks that already existed, made visible ────────────
+  //
+  // Relay degrades gracefully in half a dozen places and every one of them was
+  // invisible: the denoiser switching itself off on a microphone that will not run
+  // at 48 kHz, a CPU-only build decoding three times slower, no speech model at
+  // all. In each case Relay knew and the operator did not, so the symptom ("it
+  // isn't hearing anything") got attributed to the AI being bad — the most
+  // expensive possible misdiagnosis for this product.
+  //
+  // In the SHELL, not on Live, because a volunteer may be in Settings when the
+  // model fails to load. Collapsed to one line until opened: a permanent list of
+  // caveats across the top of a live console is a list an operator stops reading.
+  let gpuBackends = null; // null = not asked yet; a BUILD fact, not a hardware one
+  let droppedPartials = 0;
+  let degOpen = false;
+
+  $: screensDown = Object.values($channelHealth)
+    .filter((st) => describeScreen(st, {}, Number.MAX_SAFE_INTEGER).kind === 'down')
+    .map((st) => st.id);
+
+  $: degraded = degradations({
+    sttLoaded: $capture.stt?.loaded,
+    detectionOn: $capture.detectionOn,
+    capturing: $capturing,
+    safeMode: $safeMode,
+    // `undefined` until the first quality frame — no row until Relay has looked.
+    denoise: $capture.quality?.denoise,
+    gpuBackends,
+    macos: typeof navigator !== 'undefined' && /Mac/i.test(navigator.platform || ''),
+    droppedPartials,
+    screensDown,
+  });
+  $: degLevel = worstLevel(degraded);
+
+  // ── PRACTICE ──────────────────────────────────────────────────────────────
+  //
+  // Drills with the REAL controls, so the strip has to be where the controls are —
+  // which is every tab. It is started from Help and lives here for the same reason
+  // the panic bar does: an operator part-way through a drill must not have to
+  // navigate away from the thing they are practising in order to read what to do.
+  //
+  // Rehearsal is forced on for the duration and restored after (RG-15's rule): the
+  // controls are real, so the sandbox has to be too.
+  let unlistenPractice = null;
+  $: drill = training.current($practice.session);
+
+  $: if ($practice.session.active && !unlistenPractice) {
+    unlistenPractice = onOperatorAction((e) => {
+      practice.update((p) => ({ ...p, session: training.observe(p.session, e) }));
+    });
+  }
+  $: if (!$practice.session.active && unlistenPractice) {
+    unlistenPractice();
+    unlistenPractice = null;
+  }
+
+  let updMsg = '';
+  async function doAccept() {
+    updMsg = '';
+    try {
+      await acceptUpdate();
+    } catch (e) {
+      updMsg = humanError(e);
+    }
+  }
+  async function doRestore() {
+    updMsg = '';
+    try {
+      await restoreSnapshot($updateVerdict.snapshot);
+      // A REQUEST, and the operator has to be told so. Copying a file over an open
+      // database corrupts both, so it happens before the database is opened — and
+      // somebody who believes it has already happened will not restart, and will
+      // conclude Relay ignored them.
+      updMsg = 'Restored on the next launch. Close Relay and open it again.';
+    } catch (e) {
+      updMsg = humanError(e);
+    }
+  }
   // Views are CODE-SPLIT. Statically importing all eight put every tab — Live
   // (the heaviest), the Planner, Settings, all of them — into one 637 KB bundle
   // the webview had to parse before the first frame, on hardware that is often a
@@ -157,6 +248,7 @@
   let engineOnline = false;
   let teardownKeys;
   let teardownLeave;
+  let shedTimer;
 
   // ── Boot splash ────────────────────────────────────────────────────────────
   // Decoration over a fact, never a fact of its own. Two rules:
@@ -203,6 +295,29 @@
     // on boot. This used to run unconditionally, one step ahead of the safe-mode
     // guard below — so "outputs disabled" showed over screens that had just opened.
     if (!$safeMode) autoOpenOutputs();
+    // A console reopened mid-service must not show an unprotected app.
+    loadServiceLock();
+    // One poller for the whole app: Live, the Outputs table and the degraded
+    // banner all read the same store (see `startChannelHealth`).
+    startChannelHealth();
+    // The GPU backends whisper.cpp was COMPILED with. Read once — it cannot change
+    // while the app runs, and naming the GPU in this machine next to a CPU-only
+    // build would be the most convincing lie on the screen.
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      gpuBackends = (await invoke('system_hardware'))?.gpu_backends ?? [];
+    } catch {
+      gpuBackends = null; // not asked, so nothing is claimed
+    }
+    // Shed work, sampled rather than pushed. Cheap (an in-memory counter), and slow
+    // enough that it costs nothing over a service.
+    shedTimer = setInterval(async () => {
+      droppedPartials = (await latencyReport(0))?.dropped_partials ?? droppedPartials;
+    }, 15000);
+    // Did the LAST update work? Asked once, here, because the answer is only
+    // knowable on the launch after one — and the person who pressed the button may
+    // well have gone home before this launch happens.
+    verifyLastUpdate();
     try {
       const { invoke } = await import('@tauri-apps/api/core');
       await invoke('greet', { name: 'operator' });
@@ -247,6 +362,7 @@
     clearTimeout(capTimer);
     teardownKeys?.();
     teardownLeave?.();
+    clearInterval(shedTimer);
   });
 </script>
 
@@ -392,6 +508,15 @@
           <span class="mic-dot"></span>Listening
         </span>
       {/if}
+      <!-- SERVICE LOCK. A quiet chip, deliberately AFTER the state ladder and never
+           part of it: it says something about the console, not about the wall, and
+           it must never displace or dilute the one indicator that says whether a
+           congregation is looking at something. Grey, because nothing is wrong. -->
+      {#if $serviceLock.engaged}
+        <span class="lockchip r-mono" title="Deletions, model changes and imports are held back while a service is recording. Nothing on the live path is affected. Lift it in Settings → Backup &amp; Recovery.">
+          PROTECTED
+        </span>
+      {/if}
       <span class="topbar-spring"></span>
       <div class="topbar-icons">
         <span class="ib" title="Signal"><svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M4.9 16.1a10 10 0 0 1 14.2 0M8 13a5.5 5.5 0 0 1 8 0"/><circle cx="12" cy="19" r="1.4" fill="currentColor" stroke="none"/></svg></span>
@@ -447,6 +572,80 @@
         <span>{$panicError}</span>
       </div>
       <button class="r-btn ghost sm" on:click={dismissPanicError}>Dismiss</button>
+    </div>
+  {/if}
+
+  <!-- PRACTICE. Above the degraded strip: while a volunteer is being taught, the
+       instruction is the most important thing on the screen. Amethyst, because it
+       is rehearsal — the same colour the top bar is already showing. -->
+  {#if $practice.session.active && drill}
+    <div class="prac" role="status">
+      <div class="prac-t">
+        <span class="r-mono prac-n">{$practice.session.index + 1} / {training.DRILLS.length}</span>
+        <b>{drill.title}</b>
+        <span>{drill.hint}</span>
+      </div>
+      {#if drill.id === 'rehearsal'}
+        <button class="r-btn sm" on:click={() => noteOperatorAction('acknowledge')}>I can see it</button>
+      {/if}
+      <button class="r-btn ghost sm" on:click={() => practice.update((p) => ({ ...p, session: training.skip(p.session) }))}>Skip</button>
+      <button class="r-btn ghost sm" on:click={stopPractice}>Stop</button>
+    </div>
+  {/if}
+
+  <!-- DEGRADED. One line, always, on every tab — opened for the detail. It sits
+       BELOW the panic banner (a panic control that failed outranks everything) and
+       ABOVE the update banners, because "something is working less well right now"
+       is more urgent than "there is a new version". -->
+  {#if degLevel}
+    <div class="deg" class:blocked={degLevel === 'blocked'} role="status">
+      <button
+        type="button"
+        class="deg-head"
+        aria-expanded={degOpen}
+        on:click={() => (degOpen = !degOpen)}
+      >
+        <span class="deg-dot"></span>
+        <span class="deg-sum">{summarise(degraded)}</span>
+        <span class="deg-more r-mono">{degOpen ? 'hide' : `${degraded.length} detail${degraded.length === 1 ? '' : 's'}`}</span>
+      </button>
+      {#if degOpen}
+        <ul class="deg-list">
+          {#each degraded as d (d.id)}
+            <li class="deg-item" class:blocked={d.level === 'blocked'}>
+              <b>{d.title}</b>
+              <span>{d.what}</span>
+              <!-- Every row says what to do, or admits there is nothing. "Degraded"
+                   on its own is a mood, not information. -->
+              <i>{d.fix}</i>
+            </li>
+          {/each}
+        </ul>
+      {/if}
+    </div>
+  {/if}
+
+  <!-- THE LAUNCH AFTER AN UPDATE.
+       Sits ABOVE the "an update is available" banner, because "the last one broke
+       your history" outranks "here is another one". Only the Broken case is loud:
+       an update that landed cleanly is confirmed once, quietly, and forgotten. -->
+  {#if $updateVerdict?.verdict === 'broken'}
+    <div class="upd upd-bad" role="alert">
+      <div class="upd-t">
+        <b>Relay updated from {$updateVerdict.from_version}, and its database is not right.</b>
+        <span>{$updateVerdict.reason} A copy of your history from before the update is still on this machine.</span>
+        {#if updMsg}<span class="upd-msg">{updMsg}</span>{/if}
+      </div>
+      <button class="r-btn sm" on:click={doRestore}>Restore my history</button>
+      <button class="r-btn ghost sm" on:click={doAccept}>Keep this and continue</button>
+    </div>
+  {:else if $updateVerdict?.verdict === 'landed'}
+    <div class="upd">
+      <div class="upd-t">
+        <b>Relay updated from {$updateVerdict.from_version}.</b>
+        <span>Your history came through intact.</span>
+      </div>
+      <button class="r-btn ghost sm" on:click={doAccept}>Dismiss</button>
     </div>
   {/if}
 

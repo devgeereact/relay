@@ -206,6 +206,44 @@ export const BUILTIN_THEMES = [
       italicRef: false,
     },
   },
+  {
+    // HIGH VISIBILITY — the accessibility answer, as a THEME rather than a mode.
+    //
+    // DECISIONS §27: a theme is the style layer beneath templates, and every
+    // surface is themed with no per-surface wiring. A separate "accessibility
+    // mode" would be a parallel rendering system — exactly the `if channel_type ==`
+    // shape CLAUDE.md forbids — and it would need a decision at every render site.
+    // As a theme it works on the congregation wall, the stage monitor, the lower
+    // third and the editor preview on the day it is selected.
+    //
+    // Pure black behind pure white is the highest contrast a projector can make
+    // (21:1). The type is a third larger than Modern Dark's and the reference is
+    // deliberately the same white rather than an accent — a coloured reference on a
+    // black ground is the first thing to disappear for somebody with low vision or
+    // colour blindness, and it is the least important text on the screen.
+    id: -9,
+    name: 'High Visibility',
+    builtin: true,
+    style: {
+      font: 'var(--f-display)',
+      accent: '#ffffff',
+      verseColor: '#ffffff',
+      refColor: '#ffffff',
+      background: '#000000',
+      verseSize: '8',
+      refSize: '3.2',
+      verseLineHeight: '1.4',
+      refGap: '1.6',
+      // No shadow: a soft edge is a contrast reduction, and it is the wrong trade
+      // when the whole point is the hardest possible edge.
+      verseShadow: '0',
+      refShadow: '0',
+      // Motion is the other half of accessibility. A transition long enough to
+      // notice is a transition somebody can be disoriented by.
+      transitionMs: '0',
+      italicRef: false,
+    },
+  },
 ];
 
 export const DEFAULT_THEME = BUILTIN_THEMES[0];

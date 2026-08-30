@@ -201,6 +201,77 @@ CREATE TABLE cues (
     triggered_at REAL NOT NULL
 );
 
+-- ===== The service timeline (db/services.rs) =====
+--
+-- ONE ordered, append-only record of what happened during a service, for the
+-- facts that had no home anywhere else: the service starting and ending, the
+-- panic controls, rehearsal going on and off, a screen going silent and coming
+-- back, the operator lifting the service lock.
+--
+-- It does NOT duplicate `detections` or `cues`. Those already hold what the AI
+-- decided and what the operator pressed, and copying them here would create two
+-- answers to one question. The timeline READ merges all three; only the events
+-- with nowhere else to live are written here.
+--
+-- Append-only by convention and by the absence of any UPDATE or DELETE in the
+-- code. `seq` is monotonic per service so two events in the same millisecond
+-- still have an order — a service produced two fires sharing a timestamp to the
+-- tenth of a second once, and the ordering was unrecoverable afterwards.
+CREATE TABLE service_events (
+    id         INTEGER PRIMARY KEY,
+    service_id INTEGER NOT NULL REFERENCES services(id),
+    seq        INTEGER NOT NULL,          -- monotonic within a service
+    at_ms      REAL NOT NULL,             -- ms since service start
+    kind       TEXT NOT NULL,             -- see db::EventKind
+    detail     TEXT                       -- short human phrase; never verse text
+);
+CREATE INDEX idx_service_events ON service_events(service_id, seq);
+
+-- Latency, kept past the end of the app.
+--
+-- `latency.rs` measures nine stamps per decode pass and holds it all in memory,
+-- so the evidence a church would send back died the moment they closed Relay —
+-- and the run that matters most is the one that ended badly. A snapshot is taken
+-- once a minute while a service records, and once more when it ends.
+--
+-- Percentiles, not raw traces: a trace carries what was heard, and this table is
+-- the one thing here that might travel. Numbers only.
+CREATE TABLE perf_samples (
+    id         INTEGER PRIMARY KEY,
+    service_id INTEGER NOT NULL REFERENCES services(id),
+    at_ms      REAL NOT NULL,             -- ms since service start
+    metric     TEXT NOT NULL,             -- latency::Metric wire name
+    samples    INTEGER NOT NULL,
+    p50_ms     REAL,                      -- null = the stage was never reached
+    p95_ms     REAL,
+    -- One window in a hundred: roughly one visibly late verse per service, which is
+    -- what a congregation notices and a median cannot show.
+    p99_ms     REAL,
+    worst_ms   REAL
+);
+CREATE INDEX idx_perf_samples ON perf_samples(service_id, at_ms);
+
+-- ===== A room, remembered (db/environments.rs) =====
+--
+-- A church that runs in the main hall on Sunday and the youth room on Wednesday
+-- rebuilds the same configuration twice a week. This holds it: the microphone, the
+-- recognition language, the planned length, the active voice profile, and which
+-- display each screen goes to.
+--
+-- NOT the audio thresholds. DECISIONS §19 / CLAUDE.md rule 12: nothing may compare
+-- a signal to a stored level. A noise floor captured three weeks ago, applied to
+-- the same hall today with the heating on and forty more people in it, is exactly
+-- the assumption that rule forbids. Observed levels live in `notes`, for a person
+-- to read, and nothing reads them back.
+CREATE TABLE environment_profiles (
+    id            INTEGER PRIMARY KEY,
+    name          TEXT NOT NULL,
+    is_active     INTEGER NOT NULL DEFAULT 0,
+    settings_json TEXT NOT NULL DEFAULT '{}',   -- the remembered choices
+    notes         TEXT NOT NULL DEFAULT '',     -- what Relay observed, in words
+    updated_at    TEXT NOT NULL DEFAULT ''
+);
+
 -- ===== App settings (db/settings.rs) =====
 -- Small operator preferences (active translation, per-content-type default
 -- templates, …). Local-first key/value.

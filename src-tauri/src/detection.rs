@@ -5294,3 +5294,189 @@ mod chapter_and_verse {
         }
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THE LANGUAGE REPORT — the moat, measured rather than asserted
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// `docs/LANGUAGES.md` states the truth about Relay's African-language support in
+// prose, and it is unusually honest prose: 66 of 66 books in all three languages,
+// **none reviewed by anyone who speaks them**, word error rate **never measured, in
+// any language**, and Yorùbá numerals **not parsed at all**.
+//
+// Prose cannot be tracked. A contributor fixing eleven Yorùbá book names has no way
+// to see that they moved anything, and a reader has no way to tell whether the
+// document is current. This turns the same facts into numbers derived FROM THE
+// SHIPPED DATA — so the report cannot flatter the product, because the only way to
+// improve it is to improve the data the binary actually uses.
+//
+// **The two things it must never do**: report an unmeasured thing as a number, and
+// count a language as reviewed because somebody wrote a file. Native review is a
+// person's judgement and nothing here can observe it, so it is reported as an
+// absence with the number of aliases that are waiting.
+
+/// What is known about one language, all of it derived from the bundled data.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct LanguageReport {
+    /// The code a transcript carries (`yo`, `sw`, `ha`).
+    pub code: String,
+    /// The name in that language, from the data file.
+    pub name: String,
+    /// Books with at least one alias, out of 66.
+    pub books: usize,
+    pub books_total: usize,
+    /// How many spoken forms are recognised in total. A book with five aliases is
+    /// five ways a preacher can say it and be understood.
+    pub aliases: usize,
+    /// Does Relay parse numbers spoken IN this language ("sura ya tatu")? When
+    /// false, a reference in this language only resolves when the numbers are said
+    /// in English, which is common but not universal.
+    pub numerals: bool,
+    /// **Always false, and reported as an absence rather than a score.** No record
+    /// exists of a native speaker checking these, because none has. The day one
+    /// does, this becomes a real field and not before.
+    pub native_reviewed: bool,
+    /// **Always `None`.** Word error rate has never been measured in any language,
+    /// including English. `None` renders as "not measured"; a number here would be
+    /// the single most misleading thing in the product.
+    pub wer: Option<f32>,
+}
+
+/// The canonical book count every language is measured against.
+pub const BOOKS_IN_THE_BIBLE: usize = 66;
+
+/// Measure every tier-1 language against the data that actually ships.
+pub fn language_report() -> Vec<LanguageReport> {
+    const RAW: &str = include_str!("../data/book_aliases.json");
+    const NUM: &str = include_str!("../data/numerals.json");
+
+    let Ok(doc) = serde_json::from_str::<serde_json::Value>(RAW) else {
+        // The same failure `language_aliases` reports. An empty report is honest:
+        // nothing can be said about a file that would not parse.
+        return Vec::new();
+    };
+    let numerals: serde_json::Value = serde_json::from_str(NUM).unwrap_or(serde_json::Value::Null);
+
+    let mut out = Vec::new();
+    for (lang, books) in doc.as_object().into_iter().flatten() {
+        if lang.starts_with('_') {
+            continue;
+        }
+        let Some(books) = books.as_object() else {
+            continue;
+        };
+
+        let mut with_alias = 0usize;
+        let mut aliases = 0usize;
+        for (english, names) in books {
+            if english.starts_with('_') {
+                continue;
+            }
+            // Only count a book Relay can actually key on. A typo in the data file
+            // is a name no transcript will ever match, and counting it would make
+            // the report improve as the data got worse.
+            if !CANONICAL_BOOKS.iter().any(|b| b == english) {
+                continue;
+            }
+            let n = names.as_array().map(|a| a.len()).unwrap_or(0);
+            if n > 0 {
+                with_alias += 1;
+                aliases += n;
+            }
+        }
+
+        out.push(LanguageReport {
+            code: lang.clone(),
+            name: books
+                .get("_language")
+                .and_then(|v| v.as_str())
+                .unwrap_or(lang)
+                .to_string(),
+            books: with_alias,
+            books_total: BOOKS_IN_THE_BIBLE,
+            aliases,
+            numerals: numerals
+                .get(lang)
+                .and_then(|v| v.get("ones"))
+                .and_then(|v| v.as_object())
+                .is_some_and(|o| !o.is_empty()),
+            native_reviewed: false,
+            wer: None,
+        });
+    }
+    out.sort_by(|a, b| a.code.cmp(&b.code));
+    out
+}
+
+#[cfg(test)]
+mod language_report_tests {
+    use super::*;
+
+    #[test]
+    fn every_tier_one_language_is_measured_from_the_shipped_data() {
+        let r = language_report();
+        let codes: Vec<&str> = r.iter().map(|l| l.code.as_str()).collect();
+        assert_eq!(codes, vec!["ha", "sw", "yo"]);
+        for l in &r {
+            assert!(!l.name.is_empty(), "{} has no name", l.code);
+            assert!(l.books > 0, "{} has no books", l.code);
+            assert!(l.aliases >= l.books, "each book needs at least one alias");
+        }
+    }
+
+    /// THE REPORT MATCHES WHAT THE DETECTOR ACTUALLY LOADS.
+    ///
+    /// A report derived from a different reading of the same file would be a second
+    /// answer to one question — and this one exists precisely to be trusted about
+    /// the state of the data.
+    #[test]
+    fn the_count_is_the_detectors_own_view_of_the_data() {
+        let loaded = language_aliases();
+        let reported: usize = language_report().iter().map(|l| l.aliases).sum();
+        // `language_aliases` normalises and may collapse duplicates, so the loaded
+        // count can only ever be <= the reported one. It must never be MORE, which
+        // would mean the report is missing aliases the detector is using.
+        assert!(
+            loaded.len() <= reported,
+            "the report ({reported}) claims fewer aliases than the detector loaded ({})",
+            loaded.len()
+        );
+        assert!(reported > 150, "sanity: the table is not empty");
+    }
+
+    /// YORÙBÁ NUMERALS ARE NOT PARSED, AND THE REPORT SAYS SO.
+    ///
+    /// This is the single largest known gap in the tier-1 list — Yorùbá is
+    /// subtractive (16 = ẹrìndínlógún) and the largest addressable market of the
+    /// three. If somebody adds them, this test fails and the claim gets updated,
+    /// which is the correct direction for a test like this to break.
+    #[test]
+    fn the_report_names_the_numerals_gap_rather_than_hiding_it() {
+        let r = language_report();
+        let by = |c: &str| r.iter().find(|l| l.code == c).unwrap().numerals;
+        assert!(by("sw"), "Kiswahili numerals are parsed");
+        assert!(by("ha"), "Hausa numerals are parsed");
+        assert!(
+            !by("yo"),
+            "Yorùbá numerals are still unparsed — if this fails, update LANGUAGES.md and this test"
+        );
+    }
+
+    /// NOTHING UNMEASURED IS EVER REPORTED AS A NUMBER.
+    ///
+    /// Word error rate has never been measured in any language, and no native
+    /// speaker has reviewed any of these tables. A score in either field would be
+    /// the most misleading thing in the product — it is the moat, and the moat is
+    /// currently an assertion.
+    #[test]
+    fn unmeasured_things_are_absent_not_zero() {
+        for l in language_report() {
+            assert!(l.wer.is_none(), "{}: WER has never been measured", l.code);
+            assert!(
+                !l.native_reviewed,
+                "{}: no native speaker has reviewed this table",
+                l.code
+            );
+        }
+    }
+}

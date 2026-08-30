@@ -44,10 +44,103 @@
     startCapture,
     stopCapture,
     setRehearsal,
+    serviceLock,
   } from '../stores/capture.js';
+  import * as walk from '../pathcheck.js';
 
   let health = freshChecks().diagnostics;
   let checking = true;
+
+  // ── THE PATH CHECK ────────────────────────────────────────────────────────
+  //
+  // The twenty-one launch checks all ask about a PART, and every one of them can
+  // pass on a machine where nothing works end to end: a microphone the OS has
+  // muted, a model that mishears everything, an output window on a display that is
+  // asleep. A church finds that out at 10:31. This finds it at 10:05.
+  //
+  // It runs in REHEARSAL or it does not run at all — the point is to fire a real
+  // verse through the real pipeline, and the danger is doing that twenty minutes
+  // before a service. If rehearsal cannot be turned on, the walk is abandoned
+  // rather than run live.
+  let w = walk.newWalk();
+  let walking = false;
+  let walkTimedOut = false;
+  let unlisten = [];
+  let walkT0 = 0;
+  let walkTimer = null;
+  let restoreRehearsal = false;
+  let restoreCapture = false;
+
+  $: walkRows = walk.progress(w).rows;
+  $: walkVerdict = walk.verdict(w, walkTimedOut);
+
+  async function stopWalk() {
+    clearTimeout(walkTimer);
+    unlisten.forEach((u) => u());
+    unlisten = [];
+    walking = false;
+    // Put the machine back exactly as it was found, in the reverse order it was
+    // changed. A check that leaves the microphone live, or the app in rehearsal,
+    // has created the fault it was looking for.
+    try {
+      if (!restoreCapture && $capturing) await stopCapture();
+    } catch {
+      /* reported below by the restore of rehearsal, which matters more */
+    }
+    try {
+      if (!restoreRehearsal) await setRehearsal(false);
+    } catch (e) {
+      w = walk.onError(w, `Relay could not leave rehearsal: ${humanError(e)}`);
+    }
+  }
+
+  async function startWalk() {
+    if (walking) return stopWalk();
+    w = walk.newWalk();
+    walkTimedOut = false;
+    walking = true;
+    restoreRehearsal = $rehearsing;
+    restoreCapture = $capturing;
+
+    try {
+      // SANDBOX FIRST, and abandon if it will not take. Everything after this line
+      // puts a real verse through the real pipeline.
+      if (!$rehearsing) await setRehearsal(true);
+      if (!$rehearsing) throw new Error('rehearsal did not turn on');
+    } catch (e) {
+      w = walk.onError(
+        w,
+        `Relay would not switch to rehearsal, so the check was not run — it will not fire a verse at your screens to test itself. ${humanError(e)}`,
+      );
+      walking = false;
+      return;
+    }
+
+    const { listen } = await import('@tauri-apps/api/event');
+    walkT0 = Date.now();
+    const since = () => Date.now() - walkT0;
+    try {
+      unlisten = [
+        await listen('audio://chunk', (e) => (w = walk.onAudio(w, e.payload, since()))),
+        await listen('stt://transcript', (e) => (w = walk.onTranscript(w, e.payload, since()))),
+        await listen('detection://match', (e) => (w = walk.onDetection(w, e.payload, since()))),
+        await listen('output://content', (e) => (w = walk.onOutput(w, e.payload, since()))),
+      ];
+      if (!$capturing) await startCapture($capture.inputDevice || null);
+      w = walk.onStarted(w, since());
+    } catch (e) {
+      w = walk.onError(w, humanError(e));
+      await stopWalk();
+      return;
+    }
+
+    walkTimer = setTimeout(async () => {
+      walkTimedOut = true;
+      await stopWalk();
+    }, walk.WALK_TIMEOUT_MS);
+  }
+
+  $: if (walking && walk.isComplete(w)) stopWalk();
   let services = [];
   let plans = [];
   let channels = [];
@@ -194,6 +287,50 @@
     <section class="d-card d-health">
       <header><h3>System health</h3><span class="r-lbl">the startup checks, live</span></header>
       <CheckList items={healthRows} />
+    </section>
+
+    <!-- THE PATH CHECK. Below the part-by-part list, because it answers the
+         question that list cannot: do the parts work TOGETHER? -->
+    <section class="d-card d-walk">
+      <header>
+        <h3>Test the whole path</h3>
+        <span class="r-lbl">one sentence, end to end</span>
+      </header>
+      <p class="d-walknote">
+        Press start and say “<b>{walk.PHRASE}</b>”. Relay switches itself to
+        rehearsal first, so this cannot reach your screens.
+      </p>
+      {#if $serviceLock.engaged}
+        <p class="d-walknote">A service is being recorded — end it before running this.</p>
+      {/if}
+      <button
+        class="r-btn sm"
+        on:click={startWalk}
+        disabled={$safeMode || $serviceLock.engaged || !$capture.available}
+      >
+        {walking ? 'Listening… press to stop' : 'Start the check'}
+      </button>
+      {#if walking || walkTimedOut || w.error}
+        <ol class="d-walklist">
+          {#each walkRows as r (r.id)}
+            <li class:ok={r.state === 'ok'} class:miss={walkTimedOut && r.state !== 'ok'}>
+              <span class="d-walkdot"></span>
+              <span class="d-walklabel">{r.label}</span>
+              <!-- Reached at, or nothing. A stage never reached shows no time,
+                   because "0ms" would read as instant rather than absent. -->
+              <span class="r-mono d-walkat">{r.at === undefined ? '' : `${(r.at / 1000).toFixed(1)}s`}</span>
+            </li>
+          {/each}
+        </ol>
+      {/if}
+      {#if w.heard}
+        <p class="d-walknote">It heard: “{w.heard}”</p>
+      {/if}
+      {#if walkVerdict.sentence}
+        <p class="d-walkverdict" class:bad={walkVerdict.ok === false} role="status">
+          {walkVerdict.sentence}
+        </p>
+      {/if}
     </section>
 
     <div class="d-side">
@@ -394,6 +531,53 @@
     background: transparent;
     border-color: var(--v-line);
   }
+
+  /* THE PATH CHECK. Emerald for a stage reached (the design system's
+     "confirmed"), rose for one that was not — and a stage that has not been
+     reached YET, while the walk is still running, is neither: it is grey, because
+     "not yet" and "never" are different claims and the operator is watching. */
+  .d-walk { grid-column: 1 / -1; }
+  .d-walknote {
+    font-size: var(--v-fs-cap);
+    color: var(--v-dim);
+    margin: 0 0 10px;
+    line-height: 1.5;
+  }
+  .d-walklist {
+    list-style: none;
+    margin: 12px 0 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+  .d-walklist li {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    font-size: var(--v-fs-b2);
+    color: var(--v-faint);
+  }
+  .d-walkdot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--v-line2);
+    flex: 0 0 auto;
+  }
+  .d-walklist li.ok { color: var(--v-txt); }
+  .d-walklist li.ok .d-walkdot { background: var(--v-emerald); }
+  .d-walklist li.miss { color: var(--v-rose); }
+  .d-walklist li.miss .d-walkdot { background: var(--v-rose); }
+  .d-walklabel { flex: 1; min-width: 0; }
+  .d-walkat { font-size: 10px; color: var(--v-faint); }
+  .d-walkverdict {
+    margin: 12px 0 0;
+    font-size: var(--v-fs-b2);
+    color: var(--v-dim);
+    line-height: 1.5;
+  }
+  .d-walkverdict.bad { color: var(--v-rose); }
 
   .d-acts {
     display: flex;

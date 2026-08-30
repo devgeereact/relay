@@ -2,8 +2,9 @@
   import { humanError } from '../../errors.js';
   import { onMount } from 'svelte';
   import { showsConfidence } from '../../detect.js';
+  import { sundayReport, replayAt, weekOnWeek, describeTrend } from '../../report.js';
   import Loading from '../../ui/Loading.svelte';
-  import { capture, listServices, serviceDetail, endService, exportService } from '../../stores/capture.js';
+  import { capture, listServices, serviceDetail, serviceTimeline, servicePerf, perfHistory, endService, exportService } from '../../stores/capture.js';
 
   let exportMsg = '';
   async function doExport() {
@@ -22,7 +23,70 @@
   let services = [];
   let selected = null; // { id, title } of the open detail
   let detail = null; // { transcripts, detections }
+  let timeline = []; // the merged record: events + operator cues + detections
+  let perf = []; // latency snapshots taken during the service
+  // One row per SERVICE, for the question a single service cannot answer: is Relay
+  // getting slower week by week? A church that adds a bigger model, or whose laptop
+  // fills up over a winter, degrades gradually and every Sunday looks fine.
+  let trendRows = [];
+  $: trend = weekOnWeek(trendRows);
   let loading = false;
+
+  // ── WHAT ACTUALLY HAPPENED ────────────────────────────────────────────────
+  //
+  // The transcript and the fired verses are two views of a service. Neither can
+  // answer the question a church actually asks afterwards — "the projector went
+  // blank for a bit, when was that?" — because nothing used to record it.
+  //
+  // Each row says which store it came from, and that is kept visible rather than
+  // flattened: an AI claim, an operator's press, and something Relay observed
+  // about itself carry different weight, and a replay that blurs them is a replay
+  // that quietly rewrites who did what.
+  const SOURCE_WORD = { event: 'Relay', cue: 'Operator', detection: 'Detection' };
+  const EVENT_WORD = {
+    service_started: 'Service started',
+    service_ended: 'Service ended',
+    rehearsal_on: 'Rehearsal on',
+    rehearsal_off: 'Rehearsal off',
+    panic_failed: 'A panic control did NOT reach the screens',
+    output_lost: 'Screen stopped responding',
+    output_recovered: 'Screen came back',
+    lock_lifted: 'Service lock lifted by the operator',
+    lock_restored: 'Service lock re-applied',
+    // From `cues` — the operator's own actions.
+    clear_screens: 'Screens cleared',
+    blackout: 'Blackout',
+    manual_override: 'Manual override',
+    // From `detections` — status is the useful word.
+    auto: 'Fired by Relay',
+    manual: 'Fired by the operator',
+    suggested: 'Suggested',
+    dismissed: 'Suggestion dismissed',
+  };
+  const eventWord = (r) => EVENT_WORD[r.kind] ?? r.kind.replace(/_/g, ' ');
+  const fmtMs = (ms) => fmtDur((ms || 0) / 1000);
+  // A row that says something went wrong reads as one. Rose is the failure colour;
+  // amber is never spent here, because nothing on this screen is on air.
+  const isFault = (r) => r.kind === 'panic_failed' || r.kind === 'output_lost';
+
+  // ── THE REPORT ────────────────────────────────────────────────────────────
+  //
+  // Derived, never stored — so it cannot drift from the record it describes, and
+  // so an older service reports exactly what was captured at the time rather than
+  // a shape invented later. Every field can be null, and null renders "—".
+  $: report = timeline.length || perf.length ? sundayReport(timeline, perf, detail) : null;
+  const pct = (v) => (v === null ? '—' : `${Math.round(v * 100)}%`);
+  const num = (v) => (v === null || v === undefined ? '—' : String(v));
+
+  // ── THE REPLAY ────────────────────────────────────────────────────────────
+  //
+  // Pick a moment; see what was being said around it and what Relay did. The
+  // transcript context is the point: a fire on its own says WHAT went up, and the
+  // words either side say WHY — which is the question somebody actually has three
+  // days later.
+  let replayIdx = null;
+  $: replay = replayIdx === null ? null : replayAt(timeline[replayIdx], detail, perf);
+  const openReplay = (i) => (replayIdx = replayIdx === i ? null : i);
 
   // Keep the screen clean: 10 services per page, paginate the rest.
   let page = 0;
@@ -90,8 +154,17 @@
     exportMsg = '';
     q = '';
     loading = true;
+    timeline = [];
+    perf = [];
+    trendRows = [];
+    replayIdx = null;
     try {
       detail = await serviceDetail(svc.id);
+      // Read-only history, and both degrade to [] rather than throwing — a
+      // service whose timeline is missing must still show its transcript.
+      timeline = await serviceTimeline(svc.id);
+      perf = await servicePerf(svc.id);
+      trendRows = await perfHistory('audio_to_partial_transcript', 12);
     } catch (e) {
       // `error` is RENDERED now. It was set here and referenced nowhere in the
       // template, so a service whose detail failed to load was reported to the
@@ -235,6 +308,184 @@
           {/if}
         </div>
       </div>
+
+      <!-- THE SUNDAY REPORT. Derived from the record, never stored — so it cannot
+           drift from what it describes, and an older service reports what was
+           actually captured at the time rather than a shape invented later. -->
+      {#if report}
+        <div class="lib-rep">
+          <div class="r-lbl lib-collabel">This service</div>
+          <div class="lib-rep-grid">
+            <div class="lib-rep-cell"><b>{report.durationMs === null ? '—' : fmtMs(report.durationMs)}</b><span>length</span></div>
+            <div class="lib-rep-cell"><b>{num(report.autoFired)}</b><span>fired by Relay</span></div>
+            <div class="lib-rep-cell"><b>{num(report.manualFired)}</b><span>fired by you</span></div>
+            <div class="lib-rep-cell"><b>{num(report.suggested)}</b><span>suggested</span></div>
+            <div class="lib-rep-cell"><b>{num(report.dismissed)}</b><span>dismissed</span></div>
+            <div class="lib-rep-cell"><b>{pct(report.suggestionUptake)}</b><span>suggestions taken</span></div>
+            <div class="lib-rep-cell" class:bad={report.panicFailures > 0}>
+              <b>{num(report.panicFailures)}</b><span>panic controls that failed</span>
+            </div>
+            <div class="lib-rep-cell" class:bad={report.outputsLost > 0}>
+              <b>{num(report.outputsLost)}</b><span>screens that stopped</span>
+            </div>
+          </div>
+
+          {#if report.latency.length}
+            <div class="r-lbl lib-collabel">Speed over the whole service</div>
+            <table class="lib-perf r-mono">
+              <thead><tr><th>stage</th><th>n</th><th>p50</th><th>p95</th><th>p99</th><th>worst</th><th>grew?</th></tr></thead>
+              <tbody>
+                {#each report.latency as l (l.metric)}
+                  <tr>
+                    <td class="lib-perf-metric">{l.metric.replace(/_/g, ' ')}</td>
+                    <td>{l.samples}</td>
+                    <td>{l.p50_ms === null ? '—' : Math.round(l.p50_ms)}</td>
+                    <td>{l.p95_ms === null ? '—' : Math.round(l.p95_ms)}</td>
+                    <!-- One window in a hundred: about one visibly late verse per
+                         service. "—" on a service recorded before p99 existed. -->
+                    <td>{l.p99_ms === null ? '—' : Math.round(l.p99_ms)}</td>
+                    <td>{l.worst_ms === null ? '—' : Math.round(l.worst_ms)}</td>
+                    <!-- A rising line is the finding whatever the median says. And
+                         `null` is "we did not look", which is not "it did not grow". -->
+                    <td class:bad={l.grew === true}>{l.grew === null ? '—' : l.grew ? 'yes' : 'no'}</td>
+                  </tr>
+                {/each}
+              </tbody>
+            </table>
+          {/if}
+
+          {#if trend}
+            <!-- WEEK BY WEEK. Compared against the MEDIAN of the previous services,
+                 not their mean: one catastrophic Sunday — a laptop that was
+                 compiling something — would otherwise either hide a real trend or
+                 invent one. Silent below three services, because two points are a
+                 line through anything. -->
+            <p class="lib-rep-trend" class:bad={trend.slower}>
+              {describeTrend(trend, 'The transcript')}
+            </p>
+          {/if}
+
+          <!-- SAID OUT LOUD, not left for a reader to notice. A report that lists
+               only what it measured, without naming what it did not, invites
+               somebody to read the absence as a pass. -->
+          <p class="lib-rep-not">
+            <b>What this does not tell you:</b>
+            {report.notMeasured.join('. ')}.
+          </p>
+        </div>
+      {/if}
+
+      <!-- WHAT ACTUALLY HAPPENED. The one view that can answer "the projector went
+           blank for a bit, when?" — and the only place a panic control that failed
+           is recorded after the operator dismissed the banner. -->
+      <div class="lib-tl">
+        <div class="r-lbl lib-collabel">
+          What happened <span class="lib-collabel-n">({timeline.length})</span>
+        </div>
+        {#if timeline.length}
+          <ol class="lib-tl-list">
+            {#each timeline as r, i (i)}
+              <li>
+                <button
+                  type="button"
+                  class="lib-tl-row"
+                  class:fault={isFault(r)}
+                  class:open={replayIdx === i}
+                  aria-expanded={replayIdx === i}
+                  on:click={() => openReplay(i)}
+                >
+                  <span class="lib-tl-at r-mono">{fmtMs(r.at_ms)}</span>
+                  <span class="lib-tl-src r-mono">{SOURCE_WORD[r.source] ?? r.source}</span>
+                  <span class="lib-tl-what">{eventWord(r)}</span>
+                  {#if r.detail}<span class="lib-tl-detail r-mono">{r.detail}</span>{/if}
+                </button>
+                {#if replayIdx === i && replay}
+                  <div class="lib-rp">
+                    <div class="r-lbl">What was being said</div>
+                    {#if replay.lines.length}
+                      <ol class="lib-rp-lines">
+                        {#each replay.lines as l, li (li)}
+                          <li><span class="r-mono">{fmtMs(l.at_ms)}</span> {l.text}</li>
+                        {/each}
+                      </ol>
+                    {:else}
+                      <!-- An absence, said plainly. Only FINAL transcripts are
+                           stored, so a moment can genuinely have no line near it —
+                           which is different from the service having no transcript. -->
+                      <p class="r-empty">No transcript was recorded within 20 seconds of this.</p>
+                    {/if}
+
+                    {#if replay.detection}
+                      <div class="r-lbl">What Relay decided</div>
+                      <dl class="ch-info lib-rp-dl">
+                        <dt>Verse</dt><dd>{replay.detection.reference ?? 'unresolved'}</dd>
+                        <dt>How</dt><dd>{replay.detection.method}</dd>
+                        <dt>Who</dt>
+                        <dd>{replay.detection.status === 'manual' ? 'the operator' : 'Relay'}</dd>
+                        <!-- THE NUMBER RULE, in the archive as on the wall. A cosine
+                             does not become a probability by being a week old. -->
+                        <dt>Score</dt>
+                        <dd>
+                          {#if showsConfidence(replay.detection)}
+                            {replay.detection.confidence.toFixed(2)}
+                          {:else}
+                            no score — a guess
+                          {/if}
+                        </dd>
+                      </dl>
+                    {/if}
+
+                    {#if replay.latency}
+                      <div class="r-lbl">Speed at that point</div>
+                      <p class="r-mono lib-rp-lat">
+                        {replay.latency.metric.replace(/_/g, ' ')} ·
+                        p50 {replay.latency.p50_ms === null ? '—' : Math.round(replay.latency.p50_ms)}ms ·
+                        p95 {replay.latency.p95_ms === null ? '—' : Math.round(replay.latency.p95_ms)}ms
+                      </p>
+                    {/if}
+                  </div>
+                {/if}
+              </li>
+            {/each}
+          </ol>
+        {:else if detail?.error}
+          <div class="r-tile lib-emptytile" role="alert">
+            <span class="lib-detailerr">Could not open this service — {detail.error}</span>
+          </div>
+        {:else}
+          <div class="r-tile lib-emptytile">
+            <span class="r-empty">
+              No record for this service. Services recorded before this version of Relay
+              have no timeline — nothing was watching.
+            </span>
+          </div>
+        {/if}
+
+        {#if perf.length}
+          <!-- Latency, as it was measured DURING the service rather than as it is
+               now. Percentiles only; a trace carries what was heard. -->
+          <div class="r-lbl lib-collabel lib-tl-perfhead">Speed, as measured at the time</div>
+          <table class="lib-perf r-mono">
+            <thead><tr><th>at</th><th>stage</th><th>n</th><th>p50</th><th>p95</th><th>p99</th><th>worst</th></tr></thead>
+            <tbody>
+              {#each perf as p, i (i)}
+                <tr>
+                  <td>{fmtMs(p.at_ms)}</td>
+                  <td class="lib-perf-metric">{p.metric.replace(/_/g, ' ')}</td>
+                  <td>{p.samples}</td>
+                  <!-- A stage never reached is an ABSENCE, not a zero. Printing 0
+                       here would make every service look instantaneous on the
+                       stages it never performed. -->
+                  <td>{p.p50_ms === null ? '—' : Math.round(p.p50_ms)}</td>
+                  <td>{p.p95_ms === null ? '—' : Math.round(p.p95_ms)}</td>
+                  <td>{p.p99_ms === null ? '—' : Math.round(p.p99_ms)}</td>
+                  <td>{p.worst_ms === null ? '—' : Math.round(p.worst_ms)}</td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        {/if}
+      </div>
     {/if}
   </div>
 {:else}
@@ -326,6 +577,59 @@
 {/if}
 
 <style>
+  /* THE TIMELINE. Quiet by default; a fault reads as one. Rose is the failure
+     colour — amber is never spent on this screen, because nothing here is on air. */
+  .lib-tl{ margin-top:18px; }
+  .lib-tl-list{ list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:2px; }
+  .lib-tl-row{ display:flex; align-items:baseline; gap:10px; padding:5px 8px;
+    border-radius:var(--v-r-sm); background:var(--v-surf2); font-size:var(--v-fs-b2); }
+  .lib-tl-at{ flex:0 0 52px; color:var(--v-faint); font-size:10px; }
+  .lib-tl-src{ flex:0 0 68px; color:var(--v-faint); font-size:9px; letter-spacing:.06em;
+    text-transform:uppercase; }
+  .lib-tl-what{ flex:1; min-width:0; color:var(--v-txt); }
+  .lib-tl-detail{ color:var(--v-dim); font-size:10px; overflow:hidden;
+    text-overflow:ellipsis; white-space:nowrap; max-width:40%; }
+  .lib-tl-row.fault{ background:color-mix(in srgb, var(--v-rose) 8%, var(--v-surf2));
+    border:1px solid color-mix(in srgb, var(--v-rose) 40%, transparent); }
+  .lib-tl-row.fault .lib-tl-what{ color:var(--v-rose); }
+  .lib-tl-perfhead{ margin-top:16px; }
+  /* The report. Numbers first, and the two that matter go rose when non-zero —
+     a panic control that failed is not a statistic. */
+  .lib-rep{ margin-top:18px; }
+  .lib-rep-grid{ display:grid; grid-template-columns:repeat(auto-fit, minmax(120px, 1fr));
+    gap:8px; margin-bottom:14px; }
+  .lib-rep-cell{ background:var(--v-surf2); border:1px solid var(--v-line);
+    border-radius:var(--v-r-sm); padding:9px 10px; display:flex; flex-direction:column; gap:2px; }
+  .lib-rep-cell b{ font-size:var(--v-fs-h3); font-weight:600; color:var(--v-txt); }
+  .lib-rep-cell span{ font-size:9px; letter-spacing:.05em; color:var(--v-faint);
+    text-transform:uppercase; }
+  .lib-rep-cell.bad{ border-color:color-mix(in srgb, var(--v-rose) 45%, transparent); }
+  .lib-rep-cell.bad b{ color:var(--v-rose); }
+  .lib-perf td.bad{ color:var(--v-rose); }
+  .lib-rep-trend{ font-size:var(--v-fs-b2); color:var(--v-dim); margin-top:10px; }
+  .lib-rep-trend.bad{ color:var(--v-rose); }
+  .lib-rep-not{ font-size:var(--v-fs-cap); color:var(--v-faint); margin-top:12px;
+    line-height:1.5; }
+  /* The replay. A timeline row is a button now, so it has to keep looking like a
+     row and gain a focus ring rather than a button's chrome. */
+  .lib-tl-row{ width:100%; text-align:left; border:1px solid transparent; cursor:pointer;
+    font:inherit; }
+  .lib-tl-row:hover{ background:var(--v-surf3); }
+  .lib-tl-row.open{ border-color:var(--v-line2); }
+  .lib-tl-list li{ list-style:none; }
+  .lib-rp{ margin:2px 0 8px 24px; padding:10px 12px; background:var(--v-surf2);
+    border-left:2px solid var(--v-line2); border-radius:var(--v-r-sm); }
+  .lib-rp-lines{ margin:4px 0 12px; padding-left:0; list-style:none;
+    display:flex; flex-direction:column; gap:3px; font-size:var(--v-fs-b2); }
+  .lib-rp-lines span{ color:var(--v-faint); margin-right:6px; font-size:10px; }
+  .lib-rp-dl{ margin-bottom:10px; }
+  .lib-rp-lat{ font-size:10px; color:var(--v-dim); }
+  .lib-perf{ width:100%; border-collapse:collapse; font-size:10px; color:var(--v-dim); }
+  .lib-perf th{ text-align:left; font-weight:500; color:var(--v-faint); padding:4px 6px;
+    border-bottom:1px solid var(--v-line); }
+  .lib-perf td{ padding:3px 6px; border-bottom:1px solid var(--v-line2); }
+  .lib-perf-metric{ color:var(--v-txt); }
+
   .lib-view{ display:flex; flex-direction:column; gap:18px; max-width:1080px; }
 
   /* ── List: action bar ── */

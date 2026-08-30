@@ -27,6 +27,7 @@
   // BUILDING a plan is not this screen's job. That is the Planner: a different
   // task, done on a Tuesday, not with a congregation waiting.
   import { onMount, onDestroy, afterUpdate } from 'svelte';
+  import { describeScreen, SCREEN_BADGE } from '../outputHealth.js';
   import TemplateRender from '../TemplateRender.svelte';
   import { resolveOutputTemplate } from '../layers.js';
   import ModelSetup from '../ModelSetup.svelte';
@@ -61,6 +62,8 @@
     fireContent,
     fireMedia,
     listOutputChannels,
+    channelHealth,
+    channelWaiting,
     openChannelOutput,
     listMonitors,
     setChannelDisplay,
@@ -169,6 +172,87 @@
       errMsg = humanError(e);
     }
     rehBusy = false;
+  }
+
+  // ── OUTPUT HEALTH — the screens answer for themselves ────────────────────
+  //
+  // This pane used to derive every badge from GLOBAL state: if content was live
+  // and we were not rehearsing or blacked out, every screen read **On Air**. That
+  // is not a status; it is a restatement of what Relay believes it sent, wearing
+  // the costume of a report about what happened. A projector whose window had
+  // frozen, an OBS source whose tab had been killed, a display that had gone to
+  // sleep — all three read On Air, in amber, forever, on the one surface an
+  // operator glances at during a service to rule exactly that out.
+  //
+  // Now each screen reports that it is painting (`outputBeat.js` → Rust
+  // `OutputHealth`), and this pane shows what the screen said. A badge that cannot
+  // detect its own failure is not a badge.
+  // The poll lives in the store (`startChannelHealth`, started by the shell), not
+  // here: the Outputs table and the shell's degraded banner want the same answer,
+  // and three timers asking one question would let three surfaces disagree about
+  // the same screen for up to two seconds — the asymmetry RG-01 exists to end.
+
+  // The badge rule itself lives in `lib/outputHealth.js` and is PURE, so it can be
+  // tested without mounting this view and so the Outputs inspector cannot end up
+  // saying something different about the same screen. All four inputs are named in
+  // this expression on purpose — a helper that closed over the health map would not be
+  // tracked by Svelte's reactivity and the pane would freeze on its first reading,
+  // which is the same class of bug as the badge it replaces.
+  $: outs = channels.map((c) => ({
+    c,
+    s: describeScreen(
+      $channelHealth[c.id] ?? null,
+      { rehearsing: $rehearsing, live: !!$live, black: $screenBlack },
+      $channelWaiting[c.id] ? Date.now() - $channelWaiting[c.id] : 0,
+    ),
+  }));
+
+  // ── SAFE SCREEN — what the operator is told BEFORE the congregation notices ──
+  //
+  // Two things the console could never say, and both of them look to an operator
+  // exactly like Relay working:
+  //
+  //  1 · The verse is on the wall at a size nobody past the third row can read.
+  //      The fit loop always "succeeds" — 40 rounds of ×0.95 will squeeze anything
+  //      in — so a template that had stopped working looked like one that was.
+  //      `TemplateRender` now reports when it had to go below the size the
+  //      template's designer asked for, and this is where that lands. The program
+  //      pane renders through the SAME component as the wall, so the measurement
+  //      is the wall's rather than a guess about it.
+  //
+  //  2 · Nothing is attached to show it. REPORTED, never enforced: a service runs
+  //      on the console preview alone all the time — during setup, in rehearsal,
+  //      while somebody re-cables a projector — and refusing to fire because no
+  //      screen happens to be connected would take the operator's tool away at the
+  //      exact moment they are fixing the screen.
+  let fitWarning = '';
+  function noteFit(f) {
+    fitWarning = f.legible
+      ? ''
+      : `This is rendering at ${Math.round(f.scale * 100)}% of the template's size to fit — ` +
+        'it may not be readable from the back. Try a shorter passage or a template with more room.';
+  }
+  // Only while something is actually on air: a cleared wall with no screens
+  // attached is not a problem, it is a Tuesday.
+  $: nowhereToShow =
+    !!$live &&
+    !$rehearsing &&
+    outs.length > 0 &&
+    outs.every((o) => o.s.kind === 'down' || o.s.kind === 'idle' || o.s.kind === 'unknown');
+
+  // A screen falling over mid-service is exactly the thing an operator finds out
+  // about too late by looking. Announce it once, on the transition, through the
+  // same polite region the AI's suggestions use — never repeatedly, which is how a
+  // live region becomes noise an operator learns to tune out.
+  let downAnnounce = '';
+  let wasDown = {};
+  $: {
+    const nowDown = {};
+    for (const o of outs) if (o.s.kind === 'down') nowDown[o.c.id] = o.c.name;
+    const fresh = Object.keys(nowDown).filter((id) => !wasDown[id]);
+    if (fresh.length)
+      downAnnounce = `${fresh.map((id) => nowDown[id]).join(', ')} is not responding.`;
+    wasDown = nowDown;
   }
 
   onMount(async () => {
@@ -942,7 +1026,11 @@
       </header>
       <div class="screen" class:lit={$live && !$rehearsing && !$screenBlack}>
         {#if $live}
-          <TemplateRender template={resolveOutputTemplate(previewTpl, $liveTemplateOverride, $liveTemplatePinned)} content={$liveContent} />
+          <TemplateRender
+            template={resolveOutputTemplate(previewTpl, $liveTemplateOverride, $liveTemplatePinned)}
+            content={$liveContent}
+            onFit={noteFit}
+          />
         {:else}
           <!-- Nothing is on the wall. Say so in words — a blank rectangle and a
                black-out look identical, and they are not the same fact. -->
@@ -961,27 +1049,33 @@
         <span class="r-mono cnt">{channels.length}</span>
       </header>
       <div class="pane-body outs">
-        {#each channels as c (c.id)}
-          <div class="out">
+        {#each outs as o (o.c.id)}
+          <div class="out" class:down={o.s.kind === 'down'}>
             <span class="out-ic" aria-hidden="true">
               <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
             </span>
             <span class="out-t">
-              <b>{c.name}</b>
-              <span class="r-mono">{c.render_target}</span>
+              <b>{o.c.name}</b>
+              <!-- The screen's OWN last word, not ours. When it disagrees with the
+                   badge, that disagreement is the finding. -->
+              <span class="r-mono">{o.s.note || o.c.render_target}</span>
             </span>
-            {#if $live && !$rehearsing && !$screenBlack}
-              <span class="r-badge amber sm-badge"><span class="bd"></span>On Air</span>
-            {:else if $rehearsing}
-              <span class="r-badge amethyst sm-badge"><span class="bd"></span>Rehearsal</span>
-            {:else}
-              <span class="r-badge grey sm-badge"><span class="bd"></span>Ready</span>
-            {/if}
+            <span class="r-badge {SCREEN_BADGE[o.s.kind]} sm-badge"><span class="bd"></span>{o.s.label}</span>
           </div>
         {:else}
           <EmptyState message="No screens yet — add one in the Outputs tab." />
         {/each}
       </div>
+      {#if nowhereToShow}
+        <p class="out-warn" role="status">
+          Something is on air, and no screen is reporting that it is showing it.
+          Relay is still sending — check the screens above.
+        </p>
+      {/if}
+      {#if fitWarning}
+        <p class="out-warn" role="status">{fitWarning}</p>
+      {/if}
+      <p class="sr-only" aria-live="polite">{downAnnounce}</p>
       <footer class="pane-foot">
         <button class="wide" on:click={openMainOutput} disabled={!$capture.available}>Open main output</button>
       </footer>
@@ -1588,6 +1682,18 @@
   .out-t b{font-size:var(--v-fs-b2); font-weight:600; color:var(--v-txt);
     overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
   .out-t span{font-size:9px; letter-spacing:.05em; color:var(--v-faint)}
+  /* A screen that is not answering is a FAILURE, and the row says so without
+     spending amber (which means on air, DECISIONS §22) or reading as decoration.
+     The border is the signal; the badge carries the word. */
+  /* A warning, not a failure and not a live state. Amber would mean ON AIR here
+     and rose text would overstate it — Relay IS still sending. Dim text, rose rule. */
+  .out-warn{margin:8px 10px 0; padding:7px 9px; font-size:var(--v-fs-cap);
+    color:var(--v-dim); background:var(--v-surf2); border-radius:var(--v-r-sm);
+    border-left:2px solid var(--v-rose)}
+  .out.down{border-color:color-mix(in srgb, var(--v-rose) 45%, transparent);
+    background:color-mix(in srgb, var(--v-rose) 7%, var(--v-surf2))}
+  .out.down .out-ic{color:var(--v-rose)}
+  .out.down .out-t span{color:var(--v-rose)}
   .sm-badge{padding:3px 8px; font-size:9px; letter-spacing:.07em; flex:0 0 auto}
   .sm-badge .bd{width:5px; height:5px}
 

@@ -40,7 +40,7 @@ carries the command that reproduces it.
 |---|---|---|
 | `CLAUDE.md` (repo root) | Non-negotiable constraints, the 34 hard-won architecture rules, repo map, commands | **Highest** — operational law |
 | `docs/SPEC.md` | The founding brief; competitive framing; v1 success criteria | Historical; code wins on conflict |
-| `docs/DECISIONS.md` | 38 decisions with reasoning, plus explicit non-goals | **Highest** for "why" |
+| `docs/DECISIONS.md` | 53 decisions with reasoning, plus explicit non-goals | **Highest** for "why" |
 | `docs/ARCHITECTURE.md` | Process model, pipeline, cue model, rendering, data layer, invariants | Current |
 | `docs/DOMAIN_MODEL.md` | Entities, invariants, the fire path, event catalog | Current |
 | `docs/DESIGN_SYSTEM.md` | Tokens, type, the four safety-critical colours | Current (`src/app.css` is source of truth) |
@@ -279,7 +279,7 @@ There is **no public HTTP API and no cloud service.** The integration story is:
   `open_ndi_output` returns a clear error, because it needs a proprietary SDK. Do not fake it; do
   not delete the seam.
 
-Internally, the frontend↔core contract is **118 registered `#[tauri::command]`s**
+Internally, the frontend↔core contract is **137 registered `#[tauri::command]`s**
 (`grep -c '#\[tauri::command\]' src-tauri/src/main.rs`) and a fixed event catalog:
 `audio://chunk`, `audio://quality`, `audio://error`, `stt://transcript`, `detection://match`,
 `output://content`, `output://clear`, `output://black`, `output://panic_failed`, `nav://blocked`,
@@ -398,7 +398,7 @@ anything** — it is the evidence baseline, and an agent that skips it "finds" b
 
 ### A16. What has already been decided — do not re-litigate without a human
 
-`docs/DECISIONS.md` holds 38 numbered decisions with reasoning. The ones that constrain any
+`docs/DECISIONS.md` holds 53 numbered decisions with reasoning. The ones that constrain any
 transformation proposal:
 
 1. **No native SDI hardware integration.** Ever, unless a human explicitly reopens it. NDI + HDMI
@@ -491,7 +491,7 @@ ever added.
 
 | Debt | State |
 |---|---|
-| `main.rs` — 4,369 lines / 118 commands | No longer a correctness issue (the fire engine is generic over `tauri::Runtime` and covered by `e2e.rs`); a readability complaint |
+| `main.rs` — 5,337 lines / 137 commands | No longer a correctness issue (the fire engine is generic over `tauri::Runtime` and covered by `e2e.rs`); a readability complaint |
 | `Live.svelte` (1,877) and `stores/capture.js` (1,941) | The frontend mirror of the same concentration |
 | `models.rs` name collision | It is STT-model *download*, not domain models |
 | `db/mod.rs` (~2,230) mixes migrations, platform paths and inline tests | Cohesive but large |

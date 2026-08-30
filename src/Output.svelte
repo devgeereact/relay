@@ -6,6 +6,7 @@
   import { isKeyedTemplate, resolveOutputTemplate, templateShows } from './lib/layers.js';
   import { resolveThemed, parseThemes } from './lib/themes.js';
   import { markOutput } from './lib/latency.js';
+  import { startBeat, paintState } from './lib/outputHealth.js';
 
   // Two modes, ONE renderer (TemplateRender): desktop (Tauri — DB template,
   // live edits over events) and kiosk/OBS (plain browser — built-in template by
@@ -48,6 +49,8 @@
   // and degrades to its own look on a kiosk — never blanks (applyTheme is safe).
   // Style-only, so it can't change keyed-ness: isBand stays on activeTemplate.
   let customThemes = [];
+  // Set on mount; a no-op until then so onDestroy is safe if mounting threw.
+  let stopBeat = () => {};
   $: themedTemplate = resolveThemed(activeTemplate, customThemes);
   // "Keyed" for blackout purposes — resolved on what is ACTUALLY rendering.
   $: isBand = isKeyedTemplate(activeTemplate);
@@ -233,8 +236,27 @@
     } catch {
       startKiosk();
     }
+    // START REPORTING LAST, and start it on BOTH paths.
+    //
+    // Last, because a beat sent before the listeners (or the socket) are up would
+    // claim a screen was working during the one window in which it demonstrably was
+    // not yet. Both paths, because the projector on HDMI and the browser source in
+    // OBS fail in exactly the same invisible way, and a health signal that only
+    // covered one of them would be the "guarantee kept on one door" mistake this
+    // repository has now made four times.
+    //
+    // `ws` is read through a getter: the kiosk socket is replaced on every
+    // reconnect, so a captured reference would keep beating into a dead one.
+    stopBeat = startBeat({
+      channelId,
+      getState: () => paintState({ black, visible, content }),
+      getWs: () => ws,
+    });
   });
   onDestroy(() => {
+    // Stop reporting FIRST. Anything after this is a page on its way out, and a
+    // beat from it would say "still painting" about a screen that is closing.
+    stopBeat();
     unlisten.forEach((u) => u());
     kioskClosed = true;
     if (ws) ws.close();

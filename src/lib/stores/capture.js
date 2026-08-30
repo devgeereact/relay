@@ -373,7 +373,7 @@ export async function initAudio() {
   if (!outputListenersUp) {
     try {
       const { listen } = await import('@tauri-apps/api/event');
-      await listen('output://content', (e) => { live.set(e.payload); screenBlack.set(false); });
+      await listen('output://content', (e) => { live.set(e.payload); screenBlack.set(false); noteOperatorAction('content', e.payload); });
       // `leavePlan()` HERE, not only in the wrappers — this is the half no wrapper
       // can reach. A clear that did not originate in this console still takes plan
       // content off the wall: `/api/clear` from the preacher's phone, the spoken
@@ -384,8 +384,8 @@ export async function initAudio() {
       // looking at — while the topbar, reading `$live`, simultaneously said the
       // screens were clear. Two indicators in one window, disagreeing, and amber
       // is never allowed to be the wrong one (CLAUDE.md §18).
-      await listen('output://clear', () => { live.set(null); screenBlack.set(false); leavePlan(); });
-      await listen('output://black', () => { screenBlack.set(true); leavePlan(); });
+      await listen('output://clear', () => { live.set(null); screenBlack.set(false); leavePlan(); noteOperatorAction('clear'); });
+      await listen('output://black', () => { screenBlack.set(true); leavePlan(); noteOperatorAction('black'); });
       // A SPOKEN "next"/"back" that did nothing. The STT thread has no caller to
       // return a NavResult to, so it pushes it here — the preacher says "next", the
       // wall does not move, and the console explains why instead of staying silent.
@@ -495,7 +495,12 @@ export async function setRehearsal(on) {
 /** Start (or resume) recording a service. Returns its id. */
 export async function startService(title, date) {
   const call = await invoke();
-  return call('start_service', { title, date });
+  const id = await call('start_service', { title, date });
+  // Recording arms the lock in Rust. Read it back rather than assuming: an
+  // assumption here would show PROTECTED over a console that is not protecting
+  // anything, which is the same class of lie as a badge that cannot be wrong.
+  await loadServiceLock();
+  return id;
 }
 
 /** Stop recording the current service (history kept). */
@@ -506,6 +511,158 @@ export async function endService() {
   } catch {
     /* backend absent */
   }
+  await loadServiceLock();
+}
+
+// ── SERVICE LOCK ──────────────────────────────────────────────────────────────
+//
+// While a service is being recorded, Relay holds back a short list of actions that
+// are irreversible or that take the speech engine away mid-sermon. The list lives
+// in Rust (`servicelock::PROTECTED`) and rides here with the flag — a second copy
+// in the frontend would be a second answer to one question, and the two would drift.
+//
+// Nothing on the fire path is affected, and the operator can lift it in one action:
+// it exists to catch an ACCIDENT, not to overrule the person standing in the room.
+export const serviceLock = writable({ engaged: false, held_back: [] });
+
+/** Ask Rust whether a service is being protected. Never throws; a status readout
+ *  that can take the console down is worse than no status readout. */
+export async function loadServiceLock() {
+  const v = await guardedRead('serviceLock', (call) => call('service_lock'), {
+    engaged: false,
+    held_back: [],
+  });
+  serviceLock.set(v ?? { engaged: false, held_back: [] });
+  return v;
+}
+
+/**
+ * The operator lifts (or re-applies) the lock. GROUP 1 — THROWS.
+ *
+ * A failed unlock that reported success would leave a volunteer pressing a button
+ * that keeps refusing, with the UI insisting it is now unlocked. The store is set
+ * from the value RUST returns, never from what was asked for.
+ */
+export async function setServiceLock(on) {
+  const call = await invoke();
+  const engaged = await call('set_service_lock', { on: !!on });
+  serviceLock.set({ ...get(serviceLock), engaged: !!engaged });
+  return !!engaged;
+}
+
+/**
+ * Everything that happened in one service, in order — the replay's spine.
+ *
+ * Merged in Rust from three tables, each row saying which it came from: a
+ * `detection` is what the AI claimed, a `cue` is what the operator pressed, an
+ * `event` is what Relay observed about itself. Read-only history, so it degrades
+ * to an empty list rather than taking the Library down.
+ */
+export async function serviceTimeline(id) {
+  return guardedRead('serviceTimeline', (call) => call('service_timeline', { id }), []);
+}
+
+/**
+ * Is Relay getting slower week by week?
+ *
+ * The question a single service cannot answer. A church that adds a bigger model,
+ * or whose laptop fills up over a winter, degrades gradually and every individual
+ * Sunday looks fine.
+ */
+export async function perfHistory(metric, limit) {
+  return guardedRead('perfHistory', (call) => call('perf_history', { metric, limit }), []);
+}
+
+/** The latency snapshots kept for one service. Percentiles only, never traces. */
+export async function servicePerf(id) {
+  return guardedRead('servicePerf', (call) => call('service_perf', { id }), []);
+}
+
+/**
+ * Write the diagnostic bundle and return where it landed. GROUP 1 — THROWS.
+ *
+ * An export that silently failed would leave an operator hunting a Downloads folder
+ * for a file that was never written, while a support conversation waits on it.
+ */
+export async function exportDiagnostics() {
+  const call = await invoke();
+  return call('export_diagnostics');
+}
+
+/**
+ * The state of Relay's African-language support, measured from the shipped data.
+ *
+ * Read-only, so it swallows: a language report that could take Settings down would
+ * be worse than no language report. `wer` is always null and `native_reviewed`
+ * always false — both are absences, and the UI must render them as such.
+ */
+export async function languageReport() {
+  return guardedRead('languageReport', (call) => call('language_report'), []);
+}
+
+/**
+ * Model files already on this machine, waiting to be installed.
+ *
+ * The offline path: a church on a poor line copies the 148 MB model from a USB
+ * stick, and Relay finds it in Downloads or its own data folder. Read-only, so it
+ * swallows — a failed scan must show "none found", not take the screen down.
+ */
+export async function findModelFiles() {
+  return guardedRead('findModelFiles', (call) => call('find_model_files'), []);
+}
+
+/** Install one of them. GROUP 1 — THROWS: a silent failure here leaves an
+ *  operator believing they have a speech model when they do not. */
+export async function installModelFile(path) {
+  const call = await invoke();
+  const id = await call('install_model_file', { path });
+  await listModels();
+  return id;
+}
+
+// ── ROOMS (RG-10) ────────────────────────────────────────────────────────────
+//
+// A church that runs in the main hall on Sunday and the youth room on Wednesday
+// rebuilds the same configuration twice a week — and the microphone choice is not
+// persisted anywhere at all today, so it is gone every time Relay closes.
+//
+// Reads swallow (a room list that takes the Settings screen down is worse than no
+// room list); writes THROW, because an operator who is told their room was saved
+// and finds it gone next Sunday has been lied to about the one thing this feature
+// promises.
+export const rooms = writable([]);
+
+export async function loadRooms() {
+  const list = await guardedRead('rooms', (call) => call('list_environments'), []);
+  rooms.set(list ?? []);
+  return list ?? [];
+}
+
+/** GROUP 1 — THROWS. */
+export async function saveRoom(name, settings, notes = '') {
+  const call = await invoke();
+  const id = await call('save_environment', {
+    name,
+    settingsJson: JSON.stringify(settings ?? {}),
+    notes,
+  });
+  await loadRooms();
+  return id;
+}
+
+/** Switch to a room and get its settings back. GROUP 1 — THROWS. */
+export async function useRoom(id) {
+  const call = await invoke();
+  const room = await call('use_environment', { id });
+  await loadRooms();
+  return room;
+}
+
+/** GROUP 1 — THROWS. */
+export async function deleteRoom(id) {
+  const call = await invoke();
+  await call('delete_environment', { id });
+  await loadRooms();
 }
 
 /** All recorded services (Library list). */
@@ -674,6 +831,10 @@ capture.update((s) => ({ ...s, thresholds }));
 /** Operator dismisses a suggestion → drop it + tighten the gate. */
 export async function dismissDetection(reference) {
 detections.update((list) => list.filter((d) => d.reference !== reference));
+// Noted before the round trip: dismissing is a decision the operator has already
+// made, and the practice drill is about the decision, not about whether the
+// calibration write succeeded.
+noteOperatorAction('dismiss', reference);
 try {
   const call = await invoke();
   const thresholds = await call('dismiss_detection');
@@ -1571,6 +1732,78 @@ const call = await invoke();
 await call('delete_channel', { id });
 }
 
+// ── OUTPUT HEALTH, POLLED ONCE FOR THE WHOLE APP ─────────────────────────────
+//
+// `channel_status` is a poll, not a push: nothing raises an event when a browser
+// source connects or a window dies. Three surfaces want the answer — the Live run
+// pane, the Outputs table, and the shell's degraded banner (which has to be right
+// on every tab, because a volunteer may well be in Settings when a screen dies).
+//
+// One poller, one store. Three timers asking the same question would triple the
+// work and let the three surfaces disagree about the same screen for up to two
+// seconds, which is the asymmetry RG-01 exists to end.
+// ── PRACTICE (RG-16) ─────────────────────────────────────────────────────────
+//
+// One stream of "the operator just did something", for the drills to watch. It
+// exists because the alternative is `training.js` importing four listeners of its
+// own, which would be a second set of subscriptions to the same events — and the
+// two would drift about what counts as a clear.
+//
+// Deliberately a plain event bus and not a store of state: a drill is satisfied by
+// an ACTION, and an action is a moment, not a value that can be read later.
+const operatorActions = new Set();
+export function onOperatorAction(fn) {
+  operatorActions.add(fn);
+  return () => operatorActions.delete(fn);
+}
+export function noteOperatorAction(kind, payload = null) {
+  for (const fn of operatorActions) {
+    try {
+      fn({ kind, payload });
+    } catch {
+      // A practice panel that threw must never take a live control with it.
+    }
+  }
+}
+
+export const channelHealth = writable({}); // channel id → ChannelLiveness
+/** When each channel was first seen attached but not answering. */
+export const channelWaiting = writable({});
+let healthPoll = null;
+
+async function pollChannelHealth() {
+  const rows = await channelStatus();
+  const next = {};
+  for (const r of rows) next[r.id] = r;
+  const now = Date.now();
+  channelWaiting.update((w) => {
+    const out = { ...w };
+    for (const r of rows) {
+      const attached = r.supported && r.online;
+      if (attached && !r.painting) out[r.id] ??= now;
+      else delete out[r.id];
+    }
+    return out;
+  });
+  channelHealth.set(next);
+}
+
+/**
+ * Start polling, at the beat interval, so a screen that stops answering shows up
+ * within about three beats. Idempotent: called from the shell, and calling it again
+ * must not create a second timer.
+ */
+export function startChannelHealth() {
+  if (healthPoll) return;
+  pollChannelHealth();
+  healthPoll = setInterval(pollChannelHealth, 2000);
+}
+
+export function stopChannelHealth() {
+  clearInterval(healthPoll);
+  healthPoll = null;
+}
+
 /**
  * What is actually live on each channel, right now.
  *
@@ -1614,6 +1847,9 @@ const outcome = await call('nav', { direction });
 // exactly as they were, and clearing `onAir` on those would take the plan off
 // air because the operator pressed a key that did nothing.
 if (outcome?.kind === 'fired') leavePlan();
+// The DRILL is "you pressed the transport", and that is true whichever outcome
+// came back — reaching the end of a passage is a correct answer, not a miss.
+noteOperatorAction('nav', outcome);
 return outcome;
 }
 

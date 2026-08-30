@@ -51,9 +51,26 @@ it('R6-3: every kiosk client has a DECISION about every kind the hub publishes',
   // Derive the kinds from the Rust rather than hardcoding them. Hardcoding is what
   // made the original miss possible: a list of two, written by someone who had the
   // two in mind. This fails when a FIFTH kind is added and a client is forgotten.
-  const published = [...new Set([...rust.matchAll(/"kind"\s*:\s*"([a-z_]+)"/g)].map((m) => m[1]))]
-    .filter((k) => k !== 'hello') // inbound, client → hub
-    .sort();
+  const all = [...new Set([...rust.matchAll(/"kind"\s*:\s*"([a-z_]+)"/g)].map((m) => m[1]))];
+
+  // INBOUND kinds travel client → hub. A browser client having no branch for one
+  // is correct, not an oversight, so they are excluded here — but they are named
+  // explicitly rather than pattern-matched, because a list that silences a kind is
+  // exactly where an OUTBOUND kind could hide and reproduce the original finding.
+  // The assertion below is what stops that: each of these must appear on the
+  // server's READ path, which is the only place an inbound message is handled.
+  const INBOUND = ['hello', 'beat', 'rendered'];
+  const server = read('src-tauri/src/channels.rs');
+  for (const k of INBOUND) {
+    expect(
+      server,
+      `"${k}" is excused from the per-client contract as an INBOUND message, so it ` +
+        `must be handled on the hub's read path. If it is now published TO clients, ` +
+        `take it out of INBOUND and give every client a verdict.`,
+    ).toMatch(new RegExp(`Some\\("${k}"\\)`));
+  }
+
+  const published = all.filter((k) => !INBOUND.includes(k)).sort();
 
   // Every kind needs an explicit verdict PER CLIENT. "Not applicable" is a fine
   // answer; silence is not, because silence is indistinguishable from an oversight

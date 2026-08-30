@@ -10,6 +10,114 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 
 ## [Unreleased]
 
+### Relay now tells you when a screen has stopped listening to it
+
+- **Your screens report back.** Every output — the projector on HDMI and every browser
+  source in OBS — now tells Relay twice a second that it is still showing something.
+  If one stops, the Live tab says so, in red, within a few seconds. Before this,
+  a screen that had frozen, crashed or gone to sleep still read **On Air** in amber,
+  because Relay was only ever reporting what it had *sent*.
+- **During a service, Relay holds a few things back.** Deleting anything, changing or
+  downloading a speech model, and bulk imports are unavailable while you are recording
+  — an accident at 10:31 has no undo. **Nothing you use to run the service is affected:**
+  firing, next/back, clear, blackout and rehearsal all work exactly as before. You can
+  lift it in one click (Settings → Backup & Recovery) and it comes back for the next
+  service.
+- **Relay will not restart to update during a service.** It already refused while the
+  microphone was on; it now also refuses while a service is recording, which covers the
+  gaps between readings.
+- **Every service keeps a record of what happened.** Service History now shows an
+  ordered list: when it started, what fired and whether it was Relay or you, when the
+  screens were cleared, when a screen stopped responding and when it came back — and,
+  the one nobody had before, *a panic control that did not reach the screens*. Speed is
+  kept too, so you can see whether it slowed down over the service. **Nothing anyone
+  said is in it** — no transcript, no verse text, no lyrics.
+- **A cue that would show an empty screen no longer goes out.** It leaves what is on the
+  screens where it is and tells you why, instead of quietly blanking the projector.
+- **Relay warns when a verse is being squeezed to fit.** Long passages used to shrink
+  until they fitted, however small that got. The verse still goes up, but you are told
+  when it has gone below a readable size, so you can pick a shorter passage or a
+  roomier template.
+
+### Relay can now tell you what happened, and get your history back if an update goes wrong
+
+- **Updating copies your history first.** Every service, plan, song, saved verse and
+  template is copied before an update installs, and Relay keeps the last three copies.
+  If the new version comes up with a database that is not right, it says so on the next
+  launch and offers to put your history back — you decide, not Relay. The app itself can
+  always be reinstalled from a release page; your history cannot, which is why it is the
+  thing that gets copied. Settings → Updates shows whether it is safe to update *before*
+  you press anything.
+- **Service History now replays.** Click any moment in a service and see what was being
+  said around it, what Relay decided, who decided it, and how fast it was going.
+- **A report for each service.** How long, what Relay fired, what you fired, what it
+  suggested and what you took, panic controls that failed, screens that stopped, and
+  whether it slowed down over the service. **It also says what it does not tell you** —
+  including that nothing here checks whether the verse shown was the right one.
+- **Relay says when it is working at less than full strength.** One line at the bottom
+  of the window, on every tab. No speech model, noise reduction switched off because the
+  microphone will not run at 48 kHz, detection disarmed, a build without graphics
+  acceleration, a screen that stopped answering. Each one says what it means for the
+  service and what to do about it. All of these already happened; none of them used to
+  be visible, so "it isn't hearing anything" got blamed on the AI.
+- **Rooms.** Save the main hall — microphone, recognition language, planned length,
+  voice profile, and which display each screen uses — and put it back with one press
+  next Wednesday. **Audio levels are deliberately not saved**: Relay learns those fresh
+  every time, because a level measured three weeks ago in a room that now has the
+  heating on and forty more people in it is a guess, and guessing is what once made
+  Relay deaf to a quiet preacher.
+- **Settings → Languages.** What Relay actually knows about Yorùbá, Kiswahili and
+  Hausa, counted from the data it ships with. Two columns are empty on purpose:
+  nobody who speaks these languages has checked the book names yet, and accuracy has
+  never been measured in any language, including English. Both say so.
+- **Save a diagnostic file.** Settings → Diagnostics writes one file you can email when
+  something goes wrong. It contains no transcript, no verse text, no lyrics and no
+  service names — you can read it before you send it.
+
+### Practice before Sunday, and a check that tests the whole path
+
+- **Test the whole path.** Settings → Dashboard has a new check: press start, say
+  "John chapter three, verse sixteen", and watch six stages light up — microphone,
+  voice heard, words, reference recognised, allowed through, on a screen. The startup
+  checks tell you each part is there; this tells you they work *together*, which is
+  the thing you actually want to know at 10:05. **Relay switches itself to rehearsal
+  first**, so the test cannot reach your screens — and if it cannot switch, it refuses
+  to run rather than firing a verse at your congregation to test itself.
+- **Practice before your first Sunday.** Help → six short drills using the real
+  controls: clearing the screens and blacking them out come first, because those are
+  the two that save a service. Relay stays in rehearsal the whole time. It is not a
+  pretend service — there is no preacher in there — it just makes sure your hands know
+  where the controls are before the moment you need them.
+- **Settings → Privacy.** One page answering "what is on this machine, and what can
+  leave it", read from your actual settings rather than from a promise. It includes
+  the uncomfortable part: anyone on your church WiFi can see what is on the projector
+  **and can change it**, because the preacher's remote has no password by design.
+- **Service History now shows the one-in-a-hundred figure**, and whether Relay is
+  getting slower week by week rather than only during one service. It stays quiet
+  until it has seen three services, because two is not a trend.
+- **Fixed:** the live speed readout showed `0ms` for a stage that never ran, which
+  made the part that did not happen look like the fastest thing on the screen.
+- **Fixed:** several buttons and text boxes had no name for screen readers.
+
+### Installing without internet, and knowing the back row can read it
+
+- **Relay can now be installed with no internet at all.** Everything except the
+  speech model already worked offline — the whole Bible is inside the app. The model
+  is 148 MB and could only ever be downloaded, which meant a church on a poor line
+  could not get Relay working. Copy the model file onto the computer (Downloads is
+  fine) and Settings → Network offers to install it under **"Found on this
+  computer"**. Relay checks the file is exactly the one it expects first, so a copy
+  that went wrong tells you rather than mishearing everything afterwards.
+- **Templates now tell you whether the back row can read them.** The editor shows the
+  contrast between your text and its background, works out how tall the letters
+  actually are on your screen, and says whether that is big enough for the distance
+  you give it — plus a preview of how it looks from 5, 10, 15 and 20 metres. Over a
+  photograph or a video it says it **cannot** check, rather than guessing: only your
+  eyes can judge that one.
+- **A High Visibility theme.** White on black, larger type, no shadow and no
+  transition — the highest contrast a projector can produce. Pick it like any other
+  theme and every screen uses it.
+
 ### 🚧 Nothing has been released to anyone yet.
 
 Relay has never shipped. Every tag so far (`v0.1.0-rc1` … `v0.1.0-4`) is a **draft pre-release** used to exercise the pipeline — they are unsigned, and an unsigned build is stopped dead by macOS Gatekeeper and warned about by Windows SmartScreen. A volunteer does not push past those screens, and should not be asked to.

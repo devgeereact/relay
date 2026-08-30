@@ -15,6 +15,111 @@ asked, this file is what the repository answered.
 > human, not work in progress. That is the brief's own §79 rule — *establish what exists, then
 > what is wrong, then what is missing, then implement* — and Relay's own scoping rule.
 
+> ## Fix log — 2026-08-29
+>
+> **RG-01 … RG-05 are closed**, in the order the register ranked them, with the
+> reasoning recorded as [DECISIONS](DECISIONS.md) §39–§42 and the tests named below.
+> Everything else in §23 stands. **The release decision is unchanged and is still
+> NO-GO**, for the reason §24 gives: none of this was a defect count, and none of it
+> is a Sunday.
+>
+> | ID | What changed | Pinned by |
+> |---|---|---|
+> | **RG-01** | Live shows real per-channel health; a screen that is not answering can never read amber. Live and the Outputs tab now decide from one backend fact through one shared helper | `outputhealth.test.js` (26), `describeScreen` |
+> | **RG-02** | Every output page reports that it is still painting — the native window over the bridge, kiosk/OBS over the socket it already has. Anonymous; §35's *who* and *where* untouched | `channels::tests` (6 new, incl. the WS round trip and the malformed-beat case) |
+> | **RG-03** | Service Lock: 17 irreversible or engine-stopping actions held back while a service records. Nothing on the fire path. The operator lifts it in one action | `servicelock.rs` (9), `e2e::a_recorded_service_holds_back_a_deletion_but_never_the_wall`, `servicelock.test.js` (12) |
+> | **RG-04** | `service_events` + `perf_samples`: an ordered record that survives the app, merged with detections and cues on the way out, carrying nothing a preacher said | `timeline_tests` (6), `e2e::a_service_records_what_happened_and_it_survives_the_service`, `timeline.test.js` (7) |
+> | **RG-05** | Safe Screen: the one door content leaves by now refuses a payload that would paint an empty screen or carry an unreadable template; the fit loop reports when it has shrunk below legibility | `pipeline::tests` (6 new), two `e2e` tests, `safescreen.test.js` (11) |
+>
+> Three of them changed what an existing decision had drawn, so each is written up
+> rather than absorbed: §39 narrows one word of §35 (**when**, anonymously — never
+> *who*), §40 introduces a lock and then subordinates it to the operator, and §42 adds
+> a gate in front of the wall that deliberately cannot touch a panic control.
+>
+> ### P1 — RG-06 … RG-12, closed the same day
+>
+> | ID | What changed | Pinned by |
+> |---|---|---|
+> | **RG-06** | Preflight, snapshot (`VACUUM INTO`), verify-on-next-launch, and a restore that happens before the database is opened. **Not** binary rollback — the installers are public; the church's data is what cannot be got back | `updates.rs` (12), `updatesafety.test.js` (13) |
+> | **RG-07** | A timeline row opens to show what was being said around it, what Relay decided, and how fast it was going | `report.test.js` replay group |
+> | **RG-08** | The Sunday report, derived and never stored — and it names what it does **not** measure | `report.test.js` (23 total) |
+> | **RG-09** | The half-dozen graceful fallbacks are now one line in the shell, on every tab, opened for the detail | `degraded.test.js` (21) |
+> | **RG-10** | A room, remembered — microphone, language, length, voice profile, displays. **Not** the audio levels | `db::environments` (6), `rooms.test.js` (19) |
+> | **RG-11** | Settings → Languages, every number derived from the shipped data; accuracy and native review render as absences | `detection::language_report_tests` (4), `languages.test.js` (11) |
+> | **RG-12** | One file a church can send, composed as an allow-list, with the home directory scrubbed | `diagnostics.rs` (5), `diagnostic_bundle_tests` (2), `diagnostics.test.js` (11) |
+>
+> Six more decisions were earned and written up: §43 (the binary is replaceable, the
+> data is not) · §44 (only what was measured appears) · §45 (an invisible fallback is
+> indistinguishable from a fault) · §46 (a room may be remembered; its audio levels
+> may not) · §47 (the moat is measured from the shipped data) · §48 (the one artefact
+> meant to leave the building gets the strict rule).
+>
+> ### P2 — RG-13 … RG-17, closed 2026-08-30
+>
+> | ID | What changed | Pinned by |
+> |---|---|---|
+> | **RG-13** | Both accessibility lists at zero — **and eleven of the thirteen findings were the instrument's own bugs**, which is the larger half of the fix | `inventory.test.js` (10), `surface.test.js` R3-12 inverted |
+> | **RG-14** | p99 live, stored and shown; week-on-week trend across services; and the live Diagnostics screen stopped printing an unreached stage as `0ms` | `timeline_tests` (+3), `report.test.js` (31 total) |
+> | **RG-15** | Say one verse, watch six stages. Runs in rehearsal or not at all | `pathcheck.test.js` (17) |
+> | **RG-16** | Six drills with the real controls, panic first. **Not** a simulated service | `training.test.js` (21) |
+> | **RG-17** | Settings → Privacy, read from the live settings, stating the LAN exposure in the same size type as the reassuring half | `privacy.test.js` (8) |
+>
+> Four more decisions: §49 (an instrument that cries wolf) · §50 (p95 and the worst
+> sample bracket the tail; neither answers it) · §51 (twenty-one checks that pass on
+> a machine where nothing works) · §52 (practice is drills, not a simulation).
+>
+> ### P3 — RG-18 and RG-19, closed 2026-08-30. **The register is now empty.**
+>
+> | ID | What changed | Pinned by |
+> |---|---|---|
+> | **RG-18** | Contrast (exact over a solid background, **"cannot be checked" over a picture**), size at distance from two numbers only a person can know, a distance preview, and High Visibility as a THEME rather than a parallel renderer | `legibility.test.js` (21) |
+> | **RG-19** | Install a model from a file already on the machine, a three-folder scan, and `scripts/offline-bundle.mjs`. **Signed language packs deliberately NOT built** | `models::tests` (+3), `offline.test.js` (13) |
+>
+> One more decision: §53 (offline installation is one missing file, and language packs
+> are not that).
+>
+> **RG-18's thresholds are unverified and say so in the UI.** WCAG is a specification
+> for screens at arm's length and the character-height rule is broadcast practice;
+> neither has been checked against a projector in a church. That is Stage B, and the
+> caveat rides with the verdict rather than living here.
+>
+> **RG-19 shipped its offline half and refused its signed half.** The word doing the
+> work in "signed language packs" is *signed*, and signing needs a key, a ceremony and
+> a distribution channel that do not exist. An unsigned pack that can rewrite the book
+> aliases is a wrong-verse-on-a-wall vector, and the operator cannot check 66 names in
+> a language they may not read. It waits on the same thing §47 names: a native speaker
+> who has actually reviewed the tables.
+>
+> ### Where that leaves the register
+>
+> **Every RG item is closed.** Three of the nineteen shipped deliberately narrower than
+> written — RG-10's audio seed, RG-16's audio replay, RG-19's language packs — and all
+> three are waiting on the same thing, which is not a commit:
+>
+> | Waiting on | Blocks |
+> |---|---|
+> | **Stage C** — a person, a microphone, a real room | RG-10 (seeding the audio gate), RG-16 (replaying a service), the WER measurement that is the moat |
+> | **Stage B** — a projector | RG-18's thresholds |
+> | **Stage F11** — one full service | the long-service latency question |
+> | **A native speaker** | RG-19's language packs, and §47's empty column |
+> | **A Windows certificate** | shipping to the platform most churches are on |
+>
+> That is the same list `ROADMAP.md` §1 has carried since before any of this work, and
+> none of it moved. **The register being empty is not the same as being ready**, and
+> §24 below still says NO-GO for exactly that reason.
+>
+> **RG-16 is deliberately narrower than the register described.** "Replay recorded
+> audio through the real pipeline" is not buildable here: Relay cannot produce a
+> sermon, and a simulation would teach a volunteer the shape of a fake. Replaying a
+> church's *own* recorded service audio would work — and needs the audio corpus that
+> Stage C has never produced. What shipped is the half that does not need it.
+>
+> **RG-10 deliberately stops short of its most attractive option.** Seeding the audio
+> learner from a stored floor may well be right, and it is not being done, because the
+> instrument that could show it safe (`cargo test audio::gate -- --ignored`, against
+> real room audio) has never been pointed at a real room. That is Stage C, and it is
+> still unrun.
+
 ---
 
 ## 0. Method, and what this report cannot see
@@ -590,25 +695,25 @@ matter right now.
 
 | ID | Gap | Impact | Evidence | Solution | Depends on | P | Complexity | Validation |
 |---|---|---|---|---|---|---|---|---|
-| RG-01 | Live's per-channel badge derives from global state | Operator believes a dead screen is On Air | `Live.svelte:973-979` vs `Channels.svelte:88-108` | Call `channelStatus()` on Live; badge per channel | RG-02 for truth | P0 | S | A component test that mounts Live and asserts a stale channel does not read On Air |
-| RG-02 | No output heartbeat; liveness is a client count | "LIVE" cannot detect a frozen browser source | `channels.rs:963-991`, `:741-763` | Periodic anonymous ping/pong; last-seen per connection | — | P0 | M | Kill a kiosk client; assert the status flips within one interval |
-| RG-03 | No Service Lock | A template edit or model change mid-service | grep: zero hits | Lock keyed on `Session`, not on the mic; every blocked action explains itself | — | P0 | M | e2e: start a service, assert the blocked commands refuse with a typed error |
-| RG-04 | No event timeline; latency dies on quit | No replay, no report, no human metric, no evidence from a church | `docs/data/schema.sql`, `latency.rs` | Append-only `service_events` + `perf_samples`; retryable migration | — | P0 | M | Migration retryability test (CLAUDE.md rule 25); a service produces an ordered event list |
-| RG-05 | No pre-air validation | Unfittable or unreachable content goes to air silently | `TemplateRender.svelte:131-160` | One validator in front of `Fire::output`; refuse and report | — | P0 | M | e2e: an over-long verse on a tiny template refuses rather than shrinking to unreadable |
-| RG-06 | No update rollback, no DB-compat preflight | A bad update bricks a church until someone drives there | grep: zero hits; `db/mod.rs:51` | Keep the previous bundle; health-check after relaunch; compare `SCHEMA_VERSION` before install | — | P1 | L | Install a deliberately broken build; assert recovery |
-| RG-07 | No service replay | Nothing can be reconstructed after Sunday | — | Timeline viewer over RG-04 | RG-04 | P1 | M | Replay a recorded service; every fire has a trace |
-| RG-08 | No Sunday report | Churches cannot report, and you cannot learn | — | Derived view over RG-04 | RG-04 | P1 | S | Only metrics actually measured appear |
-| RG-09 | No degraded state | Fallbacks are invisible to the operator | `dsp.rs:15`, `main.rs:2635`, `pipeline.rs:131` | One `Degraded` enum surfaced to the shell | — | P1 | S | Kill the model mid-service; assert the banner |
-| RG-10 | Room calibration is lost on every start | The hall is re-learned each Sunday | `audio.rs:145-148`, `dsp.rs:146-153` | `environment_profiles`; store the learned floor, never a fixed threshold | RG-04 | P1 | M | Reopen; assert the floor is restored and still adapts (DECISIONS §19 must survive) |
-| RG-11 | Language coverage is prose, not an instrument | The moat cannot be tracked or improved | `docs/LANGUAGES.md`, `numerals.json` | A per-language status view: aliases, numerals, review state, WER (or "not measured") | — | P1 | S | The view must render "NOT MEASURED" rather than a plausible number |
-| RG-12 | Diagnostics is a screen, not an export | A church cannot send you what you need | `Settings.svelte:998-1054` | Export a scrubbed bundle; never include audio or transcript unless ticked | — | P1 | S | Assert the bundle contains no verse, lyric, announcement or transcript text |
-| RG-13 | 9 controls with no accessible name | Screen-reader users cannot operate Live | `qa-inventory.mjs` | Add labels | — | P2 | S | Re-run the inventory; zero |
-| RG-14 | No p99; no latency history | Tail behaviour and long-service drift are invisible after a restart | `latency.rs:728-729` | Report p99; persist samples | RG-04 | P2 | S | Diagnostics shows p99 and a prior-service comparison |
-| RG-15 | Readiness never tests the spoken path | Green checks, dead microphone chain | `boot/probes.js` | Synthetic "say John 3:16" walk | RG-01 | P2 | M | Fail it by unplugging the mic; assert it goes red |
-| RG-16 | No training / simulation mode | A volunteer's first Sunday is their first attempt | — | Replay recorded audio through the real pipeline into a sandboxed UI | RG-07 | P2 | M | Nothing reaches a real output — watch the **hub**, not the wall |
-| RG-17 | No privacy screen | The best privacy story in the product is invisible | `PRIVACY.md` | One screen stating current state | — | P2 | S | Reflects the real setting, never a hardcoded "off" |
-| RG-18 | No contrast validation, distance preview or output accessibility mode | Unreadable from row 20, and nothing says so | grep: zero | Ratio check + a distance simulator | — | P3 | M | Needs a real projector |
-| RG-19 | No offline installer or language packs | A church with poor internet cannot install | `models.rs` | Bundle app + model + corpus; sign language packs | RG-06 | P3 | L | Install with the network cable out |
+| ✅ RG-01 | Live's per-channel badge derives from global state | Operator believes a dead screen is On Air | `Live.svelte:973-979` vs `Channels.svelte:88-108` | Call `channelStatus()` on Live; badge per channel | RG-02 for truth | P0 | S | A component test that mounts Live and asserts a stale channel does not read On Air |
+| ✅ RG-02 | No output heartbeat; liveness is a client count | "LIVE" cannot detect a frozen browser source | `channels.rs:963-991`, `:741-763` | Periodic anonymous ping/pong; last-seen per connection | — | P0 | M | Kill a kiosk client; assert the status flips within one interval |
+| ✅ RG-03 | No Service Lock | A template edit or model change mid-service | grep: zero hits | Lock keyed on `Session`, not on the mic; every blocked action explains itself | — | P0 | M | e2e: start a service, assert the blocked commands refuse with a typed error |
+| ✅ RG-04 | No event timeline; latency dies on quit | No replay, no report, no human metric, no evidence from a church | `docs/data/schema.sql`, `latency.rs` | Append-only `service_events` + `perf_samples`; retryable migration | — | P0 | M | Migration retryability test (CLAUDE.md rule 25); a service produces an ordered event list |
+| ✅ RG-05 | No pre-air validation | Unfittable or unreachable content goes to air silently | `TemplateRender.svelte:131-160` | One validator in front of `Fire::output`; refuse and report | — | P0 | M | e2e: an over-long verse on a tiny template refuses rather than shrinking to unreadable |
+| ✅ RG-06 | No update rollback, no DB-compat preflight | A bad update bricks a church until someone drives there | grep: zero hits; `db/mod.rs:51` | Keep the previous bundle; health-check after relaunch; compare `SCHEMA_VERSION` before install | — | P1 | L | Install a deliberately broken build; assert recovery |
+| ✅ RG-07 | No service replay | Nothing can be reconstructed after Sunday | — | Timeline viewer over RG-04 | RG-04 | P1 | M | Replay a recorded service; every fire has a trace |
+| ✅ RG-08 | No Sunday report | Churches cannot report, and you cannot learn | — | Derived view over RG-04 | RG-04 | P1 | S | Only metrics actually measured appear |
+| ✅ RG-09 | No degraded state | Fallbacks are invisible to the operator | `dsp.rs:15`, `main.rs:2635`, `pipeline.rs:131` | One `Degraded` enum surfaced to the shell | — | P1 | S | Kill the model mid-service; assert the banner |
+| ✅ RG-10 | Room calibration is lost on every start | The hall is re-learned each Sunday | `audio.rs:145-148`, `dsp.rs:146-153` | `environment_profiles`; store the learned floor, never a fixed threshold | RG-04 | P1 | M | Reopen; assert the floor is restored and still adapts (DECISIONS §19 must survive) |
+| ✅ RG-11 | Language coverage is prose, not an instrument | The moat cannot be tracked or improved | `docs/LANGUAGES.md`, `numerals.json` | A per-language status view: aliases, numerals, review state, WER (or "not measured") | — | P1 | S | The view must render "NOT MEASURED" rather than a plausible number |
+| ✅ RG-12 | Diagnostics is a screen, not an export | A church cannot send you what you need | `Settings.svelte:998-1054` | Export a scrubbed bundle; never include audio or transcript unless ticked | — | P1 | S | Assert the bundle contains no verse, lyric, announcement or transcript text |
+| ✅ RG-13 | 9 controls with no accessible name | Screen-reader users cannot operate Live | `qa-inventory.mjs` | Add labels | — | P2 | S | Re-run the inventory; zero |
+| ✅ RG-14 | No p99; no latency history | Tail behaviour and long-service drift are invisible after a restart | `latency.rs:728-729` | Report p99; persist samples | RG-04 | P2 | S | Diagnostics shows p99 and a prior-service comparison |
+| ✅ RG-15 | Readiness never tests the spoken path | Green checks, dead microphone chain | `boot/probes.js` | Synthetic "say John 3:16" walk | RG-01 | P2 | M | Fail it by unplugging the mic; assert it goes red |
+| ✅ RG-16 | No training / simulation mode | A volunteer's first Sunday is their first attempt | — | Replay recorded audio through the real pipeline into a sandboxed UI | RG-07 | P2 | M | Nothing reaches a real output — watch the **hub**, not the wall |
+| ✅ RG-17 | No privacy screen | The best privacy story in the product is invisible | `PRIVACY.md` | One screen stating current state | — | P2 | S | Reflects the real setting, never a hardcoded "off" |
+| ✅ RG-18 | No contrast validation, distance preview or output accessibility mode | Unreadable from row 20, and nothing says so | grep: zero | Ratio check + a distance simulator | — | P3 | M | Needs a real projector |
+| ✅ RG-19 | No offline installer or language packs | A church with poor internet cannot install | `models.rs` | Bundle app + model + corpus; sign language packs | RG-06 | P3 | L | Install with the network cable out |
 | RG-20 | **Doc drift** — 114 / 4,024 / "35 decisions" / e2e layer count wrong across six files | `CLAUDE.md` is read first by every agent and is on the wrong side | §26 | Fix, and add the reproducing command beside every count | — | P0 | S | `grep -rn '114 cmds\|4,024\|4.0k lines\|35 decisions' CLAUDE.md docs/` returns nothing |
 
 ---
@@ -649,9 +754,21 @@ service), and one church.
 - [x] `CHANGELOG.md` — add the missing `[0.1.0-4]` entry
 - [x] `docs/GPT.md` — track it, and fix the one stale number (`main.rs` ~4,000 → 4,369)
 
-### Then — P0 engineering (needs a human's go-ahead; not in this branch)
+### Then — P0 engineering
 
-- [ ] RG-01 · RG-02 · RG-03 · RG-04 · RG-05
+- [x] RG-01 · RG-02 · RG-03 · RG-04 · RG-05 — done 2026-08-29, see the fix log above
+- [x] RG-06 … RG-12 (P1) — done 2026-08-29, same fix log
+- [x] RG-13 … RG-17 (P2) — done 2026-08-30, same fix log
+- [x] RG-18 · RG-19 (P3) — done 2026-08-30, same fix log
+
+### What is left, and none of it is a commit
+
+- [ ] **Stage C** — a person, a microphone, a real room. Blocks RG-10's audio seed,
+      RG-16's replay, and the word-error-rate measurement the moat rests on.
+- [ ] **Stage B** — a projector, to check RG-18's thresholds against a wall.
+- [ ] **Stage F11** — one full service, watching Diagnostics for a rising line.
+- [ ] **A native speaker** — RG-19's language packs and §47's empty column.
+- [ ] **A Windows code-signing certificate** — the platform most churches are on.
 
 ### Always — before any of the above ships
 

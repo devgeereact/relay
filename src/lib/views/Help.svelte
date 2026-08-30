@@ -8,6 +8,23 @@
   //
   // So: written for a volunteer, not a developer. Every answer says what to DO.
   import { SHORTCUTS } from '../shortcuts.js';
+  import * as training from '../training.js';
+  import { practice, startPractice } from '../practice.js';
+
+  // ── PRACTICE ──────────────────────────────────────────────────────────────
+  //
+  // Started here, run everywhere: the drills use the real controls on the real
+  // surfaces, so the instruction strip lives in the shell and follows the operator
+  // to whichever tab the control is on.
+  //
+  // It is NOT a simulation of a service. Relay cannot produce a sermon — there is
+  // no preacher, no room, and no way to synthesise speech offline — and anything
+  // claiming to simulate one would be teaching a volunteer the shape of a fake.
+  let startErr = '';
+  async function begin() {
+    startErr = '';
+    if (!(await startPractice())) startErr = $practice.error;
+  }
 
   let q = '';
   let open = null;
@@ -151,6 +168,37 @@
      Board first (Panic · Transport · Other), then the troubleshooting topics, which
      the reference does not show but which are this tab's other half. -->
 <div class="help">
+  <!-- BEFORE the shortcut board. Somebody who has never run a service does not yet
+       know which of these keys matter; ten minutes of drills tells them, and the
+       board becomes a reference rather than a wall of text. -->
+  <section class="pane hp-prac">
+    <header class="pane-head"><h2>Practice before your first Sunday</h2></header>
+    <div class="pane-body">
+      <p>
+        Six short drills using the real controls, in the order that matters — the two
+        that save a service come first. Relay switches itself to rehearsal for the
+        whole thing, so nothing you do can reach the congregation's screens.
+      </p>
+      <p class="hp-pracnote">
+        It cannot simulate a sermon — there is no preacher and no room in here. What
+        it can do is make sure your hands know where the controls are before the
+        moment you need them.
+      </p>
+      {#if $practice.session.active}
+        <p class="hp-pracnote">
+          Practice is running — the instruction is at the bottom of the window and
+          follows you between tabs.
+        </p>
+      {:else}
+        <button class="r-btn sm" on:click={begin}>Start practising</button>
+      {/if}
+      {#if training.summary($practice.session)}
+        <p class="hp-pracnote" role="status">{training.summary($practice.session)}</p>
+      {/if}
+      {#if startErr}<p class="hp-pracnote hp-bad" role="alert">{startErr}</p>{/if}
+    </div>
+  </section>
+
   <div class="board">
     <!-- ══ PANIC ══ Red, per the design system's Error/Panic. These are the only
          two controls in Relay that are wired straight to the store rather than
@@ -325,6 +373,10 @@
 </div>
 
 <style>
+  .hp-prac{ margin-bottom:16px; }
+  .hp-pracnote{ font-size:var(--v-fs-cap); color:var(--v-dim); line-height:1.5; margin-top:8px; }
+  .hp-bad{ color:var(--v-rose); }
+
   /* HELP / SHORTCUTS — the reference's three-column board, styled only from the
      --v-* design tokens. */
   .help{display:flex;flex-direction:column;gap:var(--v-sp-md)}

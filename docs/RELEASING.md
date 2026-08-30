@@ -229,6 +229,41 @@ certificate. The release notes then say, per platform, which half is unsigned.
 
 ---
 
+## 5. The offline bundle — for a church with no usable internet
+
+Almost all of Relay already installs offline: the app is a single installer, the whole
+KJV is compiled into the binary, the templates and channels are seeded on first launch.
+**One thing is not, and it is 148 MB** — the speech model, which until now could only
+arrive over a connection the church does not have. That is not an edge case in this
+market; it is a reason a church cannot use Relay at all.
+
+```bash
+# after `npm run tauri build`, with a model you have already downloaded
+node scripts/offline-bundle.mjs \
+  src-tauri/target/release/bundle/dmg/Relay_0.1.0_aarch64.dmg \
+  src-tauri/target/release/bundle/msi/Relay_0.1.0_x64_en-US.msi \
+  --model ~/Downloads/ggml-base.bin
+```
+
+It produces a folder that fits on a USB stick: the installers, the model, and a
+`READ ME FIRST.txt` written for whoever is standing in the building.
+
+**It refuses rather than warning.** The model is checked against the same checksum the
+app checks, read out of `models.rs` so there is no second copy to drift. A truncated
+model does not fail loudly — whisper loads it and transcribes nonsense — and a bundle
+handed to a church is the worst possible place to discover that, because nobody will
+suspect the file. A bad checksum stops the build.
+
+On the church's machine, the operator copies the model into Downloads and Relay offers
+it under **Settings → Network → "Found on this computer"**. It re-verifies before
+accepting: the checksum is not relaxed because the file came from a USB stick — *"somebody
+handed me this file"* is weaker provenance than an HTTPS download, not stronger.
+
+> **Ship the same installers you released.** The bundle is a convenience wrapper around
+> artefacts that have already been through the signing gate; building a special
+> "offline" binary would put an unsigned build in a church's hands with a friendly
+> filename on it.
+
 ## What the operator sees
 
 Relay checks for updates **once, on launch, and only when the microphone is off.**

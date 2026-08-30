@@ -54,9 +54,8 @@ const invoke = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...a) => invoke(...a) }));
 
 const { installShortcuts, registerContext, cheatsheet } = await import('./shortcuts.js');
-const { live, screenBlack, rehearsing, panicError, capture, templates } = await import(
-  './stores/capture.js'
-);
+const { live, screenBlack, rehearsing, panicError, capture, templates, readErrors } =
+  await import('./stores/capture.js');
 const { setSafeMode } = await import('./boot/boot.js');
 
 let host;
@@ -99,6 +98,27 @@ beforeEach(() => {
   registerContext({});
   setSafeMode(false);
   capture.update((s) => ({ ...s, available: true }));
+  // `readErrors` is app state that outlives a test, and it was the one store in this
+  // file that was never reset. That is not tidiness — it is a real isolation gap,
+  // and it fired on CI (a machine roughly 13x slower than this one) while passing
+  // here five runs in a row:
+  //
+  //     expected 'All Templates0 … Relay's engine is not running…'
+  //       to match /No templates yet — create one to start/
+  //
+  // TemplateGallery rendered ErrorState because `readErrors.loadTemplates` was
+  // already set when the test began — a failure belonging to an earlier test, which
+  // on a fast machine settles inside its own test and on a slow one does not.
+  //
+  // **The exact producer has not been pinned down**, and the fix does not depend on
+  // it: a store that survives `beforeEach` will eventually carry something from the
+  // test before, whichever call put it there. The two candidates, recorded so the
+  // next person does not start from nothing — `loadTemplates` does
+  // `templates.set(list)`, and a Svelte store propagates a THROWING SUBSCRIBER out
+  // of `.set`, so a component still subscribed from a previous test can turn a
+  // successful read into a recorded error; and `invoke.mockReset()` here makes the
+  // mock return `undefined`, which a late-resolving read then works with.
+  readErrors.set({});
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -733,15 +753,20 @@ const FRONTEND = (() => {
   return out;
 })();
 
-describe('R3-12 · eight registered commands have no UI path', () => {
-  // CLAUDE.md: "No dead-but-built commands. Every one of the 114 registered
-  // #[tauri::command]s has a frontend caller." A store WRAPPER is not a caller in
-  // the sense that matters — `saveArrangement` has had one and no UI for months.
+describe('R3-12 · seven registered commands have no UI path', () => {
+  // CLAUDE.md: "No dead-but-built commands. Every registered #[tauri::command] has
+  // a frontend caller." A store WRAPPER is not a caller in the sense that matters —
+  // `saveArrangement` has had one and no UI for months.
   //
   // The chain that counts:
   //   #[tauri::command] → call('…') in capture.js → a wrapper some component imports
+  //
+  // CLOSED, and recorded rather than silently dropped from the list:
+  //   `active_voice_profile` — reached from 2026-08-29 by Settings → Audio → Rooms,
+  //   which reads the active profile in order to remember it with the room (RG-10).
+  //   It was on this list for months; it is a caller now, and the test would fail
+  //   if it were still here.
   const DEAD = {
-    active_voice_profile: 'activeVoiceProfile',
     create_template: 'createTemplate',
     delete_arrangement: 'deleteArrangement',
     import_pro: 'importProFile',
@@ -913,21 +938,28 @@ describe('R3-12 · six views have no heading at all', () => {
   }
 });
 
-describe('R3-12 · the two genuinely unlabelled controls', () => {
-  // The inventory reported nine. Seven are false positives — `aria-label={expr}`,
-  // a wrapping <label>, or a real for/id pair — which the regex cannot see.
-  // These two are real.
-  it('the Planner stage-note textarea has no label, only a placeholder', () => {
+describe('R3-12 · the two genuinely unlabelled controls — CLOSED 2026-08-30', () => {
+  // The inventory reported nine. Seven were the scanner's own blind spots —
+  // `aria-label={expr}`, a wrapping `<label>`, a real for/id pair — and the scanner
+  // was taught about all three (`inventory.test.js`). These two were real, and both
+  // are fixed the NATIVE way rather than with an aria-label, so the visible text and
+  // the accessible name are the same string and cannot drift apart.
+  //
+  // Kept as regression tests rather than deleted: the assertions are inverted, so
+  // reintroducing either defect turns them red.
+  it('the Planner stage-note textarea is named by a real <label for>', () => {
     const t = src('src/lib/views/ServicePlanner.svelte');
-    expect(t).toMatch(/<div class="r-lbl sp-flbl">Stage note<\/div>/); // a div, not a <label for>
-    expect(t).toMatch(/<textarea class="r-input sp-note"/);
-    expect(t).not.toMatch(/for="sp-note"/);
+    expect(t).toMatch(/<label class="r-lbl sp-flbl" for="sp-stage-note">Stage note<\/label>/);
+    expect(t).toMatch(/<textarea id="sp-stage-note"/);
+    // …and NOT with an aria-label, which would be a second copy of the same words.
+    expect(t).not.toMatch(/sp-note[^>]*aria-label/);
   });
 
-  it('the ImportReview lyric textareas have no label, only a placeholder', () => {
+  it('the ImportReview lyric textareas say WHICH slide they are', () => {
+    // One of many identical boxes. "Slide text" announced eleven times over tells
+    // somebody using a screen reader nothing about where they are.
     const t = src('src/lib/views/library/ImportReview.svelte');
-    expect(t).toMatch(/<textarea class="ir-lyrics"[^>]*placeholder="Slide text…"/);
-    expect(t).not.toMatch(/aria-label[^>]*Slide text/);
+    expect(t).toMatch(/aria-label="\{song\.title \|\| 'Song'\} — slide \{j \+ 1\} text"/);
   });
 });
 

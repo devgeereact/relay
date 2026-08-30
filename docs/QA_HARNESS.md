@@ -25,13 +25,13 @@ the command is named — a count you cannot reproduce is a rumour.
 
 | | Count | How to reproduce |
 |---|---|---|
-| Rust tests | **519 passing**, 28 ignored | `cd src-tauri && cargo test` |
-| Frontend tests | **594 passing**, 0 skipped, 45 files | `npx vitest run` — read the runner's own summary line. **Not** `vitest list \| wc -l`: that stream carries Svelte compiler warnings too and over-counted by 7 |
-| `e2e.rs` tests | **28** (26 run, 2 ignored — R2-C and R2-D, both open defects) | `cd src-tauri && cargo test e2e::` |
-| Registered `#[tauri::command]` | **118** | `grep -c '#\[tauri::command\]' src-tauri/src/main.rs` |
+| Rust tests | **590 passing**, 28 ignored | `cd src-tauri && cargo test` |
+| Frontend tests | **845 passing**, 0 skipped, 61 files | `npx vitest run` — read the runner's own summary line. **Not** `vitest list \| wc -l`: that stream carries Svelte compiler warnings too and over-counted by 7 |
+| `e2e.rs` tests | **32** (30 run, 2 ignored — R2-C and R2-D, both open defects) | `cd src-tauri && cargo test e2e::` |
+| Registered `#[tauri::command]` | **137** | `grep -c '#\[tauri::command\]' src-tauri/src/main.rs` |
 | `.svelte` files | **47**, 22 of them views | `find src -name '*.svelte' | wc -l` |
-| `<button>` occurrences | **321** | `grep -ro '<button' --include='*.svelte' src | wc -l` |
-| Tables in the schema | **18** | `grep -c 'CREATE TABLE' docs/data/schema.sql` |
+| `<button>` occurrences | **338** | `grep -ro '<button' --include='*.svelte' src | wc -l` |
+| Tables in the schema | **21** | `grep -c 'CREATE TABLE' docs/data/schema.sql` |
 
 **Status: BUILT.** What shipped:
 
@@ -481,7 +481,7 @@ count. This is the audit's starting line.
 
 | Layer | Present today | Where |
 |---|---|---|
-| **A — Command E2E** | Yes. 28 tests (26 run, 2 ignored — R2-C and R2-D, both open defects) driving the real commands against a real in-memory DB through the real router and pipeline | `src-tauri/src/e2e.rs` |
+| **A — Command E2E** | Yes. 32 tests (30 run, 2 ignored — R2-C and R2-D, both open defects) driving the real commands against a real in-memory DB through the real router and pipeline | `src-tauri/src/e2e.rs` |
 | **B — Component mount** | Yes, and used — but only twice | `src/lib/inspector.test.js` mounts `DetectionInspector`; `src/lib/layers.test.js` mounts `TemplateRender` |
 | **C — Static contract** | Yes, one exemplar | `src/lib/ipc.test.js` — command names both directions, event listeners, and a `greet`-has-one-caller assertion |
 | **D — Live app** | Exists as a surface, is not exercised by any test | `channels.rs` serves `:8032`; `main.rs::remote_api` handles `search / fire / next / prev / clear / black / live`. Kiosk hub on `:8031` |
@@ -591,7 +591,7 @@ Every table above resolves to a create path except one:
 
 - **`song_arrangements` — no create path.** `save_arrangement` is registered, `saveArrangement`
   exists in the store, and **no component imports it**. If that holds, a user cannot save a
-  song arrangement at all, and CLAUDE.md's "every one of the 118 commands has a frontend
+  song arrangement at all, and CLAUDE.md's "every one of the 137 commands has a frontend
   caller" is true at the wrapper level and false at the level that matters. Filed as **F3** in
   §1.9.
 

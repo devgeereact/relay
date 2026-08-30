@@ -57,6 +57,309 @@ fn app() -> tauri::App<tauri::test::MockRuntime> {
     app
 }
 
+/// RG-05 · SAFE SCREEN — an unshowable cue leaves the wall alone, and says so.
+///
+/// Driven through `fire_content`, the real command the Planner and the Library use.
+/// The claim is the one that matters: a refused payload must leave the previous
+/// content exactly where it was, and must NOT be followed by anything telling the
+/// operator it went out.
+#[test]
+fn an_unshowable_cue_is_refused_and_the_wall_is_left_alone() {
+    let app = app();
+    let h = app.handle().clone();
+    let wall = Wall::watch(&h);
+
+    // Something real on the wall first, so "left alone" has something to mean.
+    manual_fire(h.clone(), h.state::<Db>(), "John 3:16".into(), None, None).expect("fire");
+    settle();
+    assert_eq!(
+        wall.last().expect("nothing on the wall")["reference"],
+        "John 3:16"
+    );
+    let before = wall.count();
+
+    // A cue with no label, no text and no media: it would paint an empty screen
+    // while the console reported a successful fire.
+    let err = fire_content(
+        h.clone(),
+        h.state::<Db>(),
+        "   ".into(),
+        "  \n ".into(),
+        "announce".into(),
+        None,
+        None,
+    )
+    .expect_err("an empty cue must not reach a congregation");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("empty screen"),
+        "must say what it means for the wall: {msg}"
+    );
+
+    settle();
+    assert_eq!(
+        wall.count(),
+        before,
+        "a refused cue must not send anything at all"
+    );
+    assert_eq!(
+        wall.last().expect("the wall")["reference"],
+        "John 3:16",
+        "the previous content must still be up — clearing it would be worse than refusing"
+    );
+
+    // A real announcement still goes out. The gate refuses the broken payload, not
+    // the feature.
+    fire_content(
+        h.clone(),
+        h.state::<Db>(),
+        "Car park".into(),
+        "Please move the blue Fiesta".into(),
+        "announce".into(),
+        None,
+        None,
+    )
+    .expect("a real announcement must still fire");
+    settle();
+    assert_eq!(
+        wall.last().expect("the wall")["text"],
+        "Please move the blue Fiesta"
+    );
+}
+
+/// A CUE WHOSE TEMPLATE CANNOT BE READ IS REFUSED, NOT SILENTLY RE-LOOKED.
+///
+/// The output page does not fail loudly on a broken template — it falls back. So
+/// the wall shows the right words in the wrong look and nobody is told, which is
+/// the same silence the panic-control rule exists to end.
+#[test]
+fn a_cue_carrying_a_broken_template_does_not_reach_the_wall() {
+    let app = app();
+    let h = app.handle().clone();
+    let wall = Wall::watch(&h);
+
+    // `fire_media` and `fire_content` take a template ID, not JSON, so the broken
+    // JSON is injected the only way a real one can arrive: through the payload the
+    // choke point sees.
+    let bad = channels::OutputContent {
+        kind: Some("announce".into()),
+        reference: "Notice".into(),
+        text: Some("The hall is open".into()),
+        template_json: Some("{\"regions\": ".into()),
+        template_pinned: true,
+        ..Default::default()
+    };
+    assert!(
+        broadcast_with_clock(&h, bad).is_err(),
+        "a template the output page cannot parse must not go out"
+    );
+    settle();
+    assert_eq!(wall.count(), 0, "nothing reached the wall");
+}
+
+/// RG-04 · THE SERVICE TIMELINE — what happened, kept past the end of the app.
+///
+/// Driven through the real commands. The claim is not "the table exists" but "a
+/// service that actually ran can be reconstructed afterwards" — which is the only
+/// version of this that helps a church say *"the projector was blank for a bit,
+/// when?"* three days later.
+#[test]
+fn a_service_records_what_happened_and_it_survives_the_service() {
+    let app = app();
+    let h = app.handle().clone();
+
+    let svc = start_service(
+        h.state::<Session>(),
+        h.state::<Db>(),
+        h.state::<channels::Rehearsal>(),
+        h.state::<servicelock::ServiceLock>(),
+        "Sunday Service".into(),
+        "2026-08-29".into(),
+    )
+    .expect("start");
+
+    // Things an operator does, and one thing Relay notices about itself.
+    manual_fire(h.clone(), h.state::<Db>(), "John 3:16".into(), None, None).expect("fire");
+    settle();
+    clear_screens(h.clone()).expect("clear");
+    set_service_lock(h.clone(), h.state::<servicelock::ServiceLock>(), false);
+    end_service(
+        h.clone(),
+        h.state::<Session>(),
+        h.state::<servicelock::ServiceLock>(),
+    )
+    .expect("end");
+
+    let rows = service_timeline(h.state::<Db>(), svc).expect("timeline");
+    let kinds: Vec<&str> = rows.iter().map(|r| r.kind.as_str()).collect();
+
+    assert_eq!(
+        rows.first().map(|r| r.kind.as_str()),
+        Some("service_started")
+    );
+    assert_eq!(rows.last().map(|r| r.kind.as_str()), Some("service_ended"));
+    assert!(
+        kinds.contains(&"lock_lifted"),
+        "the override belongs in the record: {kinds:?}"
+    );
+    assert!(
+        kinds.contains(&"clear_screens"),
+        "the operator's own actions merge in from `cues`: {kinds:?}"
+    );
+    // A human's fire is recorded AS a human's — never as the AI's. The router
+    // learns from that column, and a replay that confused the two would be
+    // describing a different service.
+    assert!(
+        rows.iter()
+            .any(|r| r.source == "detection" && r.kind == "manual"),
+        "a manual fire must appear as manual: {rows:?}"
+    );
+
+    // Ordered, and every row still knows which store it came from.
+    assert!(
+        rows.windows(2).all(|w| w[0].at_ms <= w[1].at_ms),
+        "the timeline must be in time order"
+    );
+
+    // Nothing the preacher said is in it. This is the part of the history most
+    // likely to be sent to somebody.
+    let dump = format!("{rows:?}");
+    assert!(
+        !dump.contains("For God so loved"),
+        "no verse text in the timeline"
+    );
+
+    // And the SECOND service keeps its own record rather than continuing the first.
+    let next = start_service(
+        h.state::<Session>(),
+        h.state::<Db>(),
+        h.state::<channels::Rehearsal>(),
+        h.state::<servicelock::ServiceLock>(),
+        "Evening".into(),
+        "2026-08-29".into(),
+    )
+    .expect("start again");
+    assert_ne!(next, svc);
+    assert_eq!(
+        service_timeline(h.state::<Db>(), next)
+            .expect("timeline")
+            .len(),
+        1,
+        "a new service starts a new record"
+    );
+}
+
+/// RG-03 · SERVICE LOCK — held back, but never in the operator's way.
+///
+/// Driven through the real commands, on a real database, exactly as the frontend
+/// drives them. Two claims, and the second is the one that matters more:
+///
+/// 1. Starting a service holds back the irreversible things, with a message that
+///    names the action and says how to proceed.
+/// 2. **It cannot touch anything used to run the service.** A lock that could
+///    refuse a blackout would be a lock that can hurt a congregation, so the fire
+///    path, the transport and both panic controls are exercised here WHILE the lock
+///    is engaged — a unit test asserting "these names are not on the list" proves
+///    the list, not the wiring.
+#[test]
+fn a_recorded_service_holds_back_a_deletion_but_never_the_wall() {
+    let app = app();
+    let h = app.handle().clone();
+    let wall = Wall::watch(&h);
+    let lock = h.state::<servicelock::ServiceLock>();
+
+    // A template nobody minds losing, created before the service starts.
+    let doomed = create_template(h.state::<Db>(), Some("Scratch".into())).expect("create");
+    assert!(!lock.engaged(), "a fresh app is not protecting anything");
+
+    let svc = start_service(
+        h.state::<Session>(),
+        h.state::<Db>(),
+        h.state::<channels::Rehearsal>(),
+        h.state::<servicelock::ServiceLock>(),
+        "Sunday Service".into(),
+        "2026-08-29".into(),
+    )
+    .expect("start service");
+    assert!(svc > 0);
+    assert!(lock.engaged(), "recording a service arms the lock");
+
+    // 1 · The irreversible thing is refused, and the refusal is usable.
+    let err = delete_template(
+        h.state::<Db>(),
+        h.state::<servicelock::ServiceLock>(),
+        doomed,
+    )
+    .expect_err("deleting a template mid-service must be held back");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("deleting a template"),
+        "must name the action: {msg}"
+    );
+    assert!(msg.contains("unlock"), "must say how to proceed: {msg}");
+    // …and it really did not happen.
+    assert!(
+        get_template(h.state::<Db>(), doomed).is_ok(),
+        "the template must still be there"
+    );
+
+    // 2 · Everything the operator runs a service with still works, right now.
+    manual_fire(h.clone(), h.state::<Db>(), "John 3:16".into(), None, None)
+        .expect("the operator must always be able to fire");
+    settle();
+    assert_eq!(
+        wall.last().expect("nothing reached the wall")["reference"],
+        "John 3:16"
+    );
+
+    nav(h.clone(), "next".into()).expect("the transport must still walk");
+    settle();
+
+    clear_screens(h.clone()).expect("CLEAR must work while a service is locked");
+    blackout(h.clone()).expect("BLACKOUT must work while a service is locked");
+    settle();
+
+    // 3 · The person in the room outranks the lock.
+    assert!(!set_service_lock(
+        h.clone(),
+        h.state::<servicelock::ServiceLock>(),
+        false
+    ));
+    delete_template(
+        h.state::<Db>(),
+        h.state::<servicelock::ServiceLock>(),
+        doomed,
+    )
+    .expect("an operator who lifts the lock may delete");
+
+    // 4 · …and the override is scoped to the service it was made in.
+    end_service(
+        h.clone(),
+        h.state::<Session>(),
+        h.state::<servicelock::ServiceLock>(),
+    )
+    .expect("end");
+    let again = create_template(h.state::<Db>(), Some("Scratch 2".into())).expect("create");
+    start_service(
+        h.state::<Session>(),
+        h.state::<Db>(),
+        h.state::<channels::Rehearsal>(),
+        h.state::<servicelock::ServiceLock>(),
+        "Evening Service".into(),
+        "2026-08-29".into(),
+    )
+    .expect("start again");
+    assert!(
+        delete_template(
+            h.state::<Db>(),
+            h.state::<servicelock::ServiceLock>(),
+            again
+        )
+        .is_err(),
+        "an override made last service must not silently disarm Relay for the next one"
+    );
+}
+
 #[test]
 fn a_verse_the_operator_fires_reaches_the_congregation_with_its_text() {
     let app = app();
