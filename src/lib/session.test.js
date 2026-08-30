@@ -27,12 +27,20 @@ describe('first-run gating', () => {
 
   /// A corrupt payload must not strand the operator in a permanent wizard, nor
   /// block boot.
+  ///
+  /// This test was NAMED for that guarantee and asserted its opposite: it required
+  /// `setupDone === false`, which is the fresh-install signal — the permanent
+  /// wizard it says must not happen. `coldstart.test.js` was written about exactly
+  /// this pairing, and the assertion is corrected here rather than the finding being
+  /// filed twice.
   it('a corrupt session falls back to a safe default', async () => {
     localStorage.setItem('relay.session.v1', 'not json{{{');
     const { session } = await import('./session.js?fresh3');
     let v;
     session.subscribe((s) => (v = s))();
-    expect(v.setupDone).toBe(false);
+    // Not a fresh install: a key existed, so this machine has been set up.
+    expect(v.setupDone).toBe(true);
+    // The run surface, because it may have been mid-service thirty seconds ago.
     expect(v.activeTab).toBe('live');
   });
 });

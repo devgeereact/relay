@@ -14,62 +14,68 @@ const KEY = 'relay.session.v1';
 describe('a corrupt session payload and the first-run wizard', () => {
   beforeEach(() => localStorage.clear());
 
-  /// THE FINDING.
+  /// CLOSED — the finding, inverted.
   ///
   /// `load()`'s corrupt branch is commented "A CORRUPT payload is NOT a fresh
-  /// install, and the difference matters" — and then returns `{ ...EMPTY,
+  /// install, and the difference matters" — and it used to return `{ ...EMPTY,
   /// activeTab: 'live' }`, whose `setupDone` is `false`, which IS the fresh-install
   /// signal and the only thing App.svelte reads.
   ///
-  /// Worse, `session.subscribe` persists on every change and fires IMMEDIATELY on
-  /// subscribe, so the fallback is written straight back over the corrupt payload.
-  /// One unreadable read is therefore not a one-launch inconvenience: the install is
-  /// permanently rewritten to "nobody has ever set this up", and the modal wizard
-  /// returns on every launch from then on.
+  /// And `session.subscribe` persists on every change and fires IMMEDIATELY, so
+  /// that fallback was written straight back over the corrupt payload. One
+  /// unreadable read was therefore not a one-launch inconvenience: the install was
+  /// rewritten to "nobody has ever set this up", and the six-step modal wizard
+  /// opened over a console that may have been mid-service.
   ///
-  /// If this test fails, the corrupt branch learned to preserve `setupDone` (or to
-  /// stop writing itself back) — good; delete it.
-  it('heals a corrupt payload into a PERMANENT "never set up" state', async () => {
+  /// A key that EXISTS is proof the app has run here. A genuinely fresh install has
+  /// no key and is handled a branch earlier.
+  it('a corrupt payload does not turn the install into a fresh one', async () => {
     localStorage.setItem(KEY, 'not json{{{');
 
     const { session } = await import('./session.js?coldstart1');
     let v;
     session.subscribe((s) => (v = s))();
 
-    // This launch shows the wizard...
-    expect(v.setupDone).toBe(false);
+    // No wizard: this machine has plainly been set up before.
+    expect(v.setupDone).toBe(true);
+    // …and the run surface, not a summary screen — it may be mid-service.
+    expect(v.activeTab).toBe('live');
 
-    // ...and the corrupt payload has already been replaced by one that says the
-    // same thing, so every future launch shows it too.
     const rewritten = JSON.parse(localStorage.getItem(KEY));
-    expect(rewritten.setupDone).toBe(false);
+    expect(rewritten.setupDone).toBe(true);
 
-    // Prove it is permanent: a second, clean load of the module reads what the
-    // first one wrote and still reports a fresh install.
+    // And it stays fixed: a second, clean load reads what the first one wrote.
     const again = await import('./session.js?coldstart2');
     let w;
     again.session.subscribe((s) => (w = s))();
-    expect(w.setupDone).toBe(false);
+    expect(w.setupDone).toBe(true);
   });
 
-  /// The same write-back destroys the resume point the corrupt branch's own comment
-  /// is worried about ("it may have been mid-service thirty seconds ago"). Nothing
-  /// can inspect or repair the original bytes afterwards, because they are gone
-  /// before any other module gets a chance to look.
-  it('overwrites the unreadable payload before anything can inspect it', async () => {
+  /// CLOSED — the same write-back used to destroy the resume point the corrupt
+  /// branch's own comment worries about ("it may have been mid-service thirty
+  /// seconds ago"). The bytes are kept under a sidecar key now.
+  ///
+  /// Nothing reads the sidecar yet, and the test says so rather than implying a
+  /// recovery feature that does not exist: it exists so the evidence survives, and
+  /// so a future repair has something to repair FROM.
+  it('keeps the unreadable payload instead of destroying it', async () => {
     const corrupt = '{"setupDone":true,"liveCueId":42,"serviceId":7'; // truncated write
     localStorage.setItem(KEY, corrupt);
 
     const { session } = await import('./session.js?coldstart3');
     session.subscribe(() => {})();
 
+    // The live payload is replaced — it has to be, it could not be parsed…
     expect(localStorage.getItem(KEY)).not.toBe(corrupt);
+    // …but the original bytes are still here, verbatim.
+    expect(localStorage.getItem(`${KEY}.corrupt`)).toBe(corrupt);
+
     const now = JSON.parse(localStorage.getItem(KEY));
+    // The resume point is genuinely gone: nothing guesses at half-written JSON.
     expect(now.liveCueId).toBe(null);
     expect(now.serviceId).toBe(null);
-    // `setupDone: true` was legible in the raw text and is discarded with the rest.
-    expect(corrupt).toContain('"setupDone":true');
-    expect(now.setupDone).toBe(false);
+    // And the wizard does not reopen over a service.
+    expect(now.setupDone).toBe(true);
   });
 
   /// A partial payload from an older build is merged over EMPTY, so a key that

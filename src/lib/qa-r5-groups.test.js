@@ -92,7 +92,11 @@ describe('GROUP 3 — the panic controls report, never throw', () => {
   });
 });
 
-// ── THE FINDING ─────────────────────────────────────────────────────────────
+// ── CLOSED 2026-08-14 (R5-4) · kept as the guard ────────────────────────────
+//
+// The finding, and the assertions below now hold the repair rather than record the
+// defect. A header still reading FINDING over a fixed test is how a reader comes to
+// believe a green run means every defect is still present.
 //
 // `setSensitivity` is the operator's single dial for how willing the AI is to put
 // a verse on the wall WITHOUT asking. DECISIONS §32.2 is entirely about this dial
@@ -134,7 +138,7 @@ describe('the sensitivity dial may not report a position it did not reach', () =
   });
 });
 
-// ── A SECOND, SMALLER ONE ───────────────────────────────────────────────────
+// ── A SECOND, SMALLER ONE · CLOSED 2026-08-14 (R5-8) ────────────────────────
 //
 // `setStageNext` publishes to (and clears) the preacher's stage monitor — a real
 // screen, on a stand, in front of a person. It is GROUP 2 (swallows). A failed
