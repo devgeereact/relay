@@ -25,8 +25,8 @@ the command is named — a count you cannot reproduce is a rumour.
 
 | | Count | How to reproduce |
 |---|---|---|
-| Rust tests | **592 passing**, 26 ignored | `cd src-tauri && cargo test` |
-| Frontend tests | **845 passing**, 0 skipped, 61 files | `npx vitest run` — read the runner's own summary line. **Not** `vitest list \| wc -l`: that stream carries Svelte compiler warnings too and over-counted by 7 |
+| Rust tests | **595 passing**, 26 ignored | `cd src-tauri && cargo test` |
+| Frontend tests | **857 passing**, 0 skipped, 62 files | `npx vitest run` — read the runner's own summary line. **Not** `vitest list \| wc -l`: that stream carries Svelte compiler warnings too and over-counted by 7 |
 | `e2e.rs` tests | **32** (32 run, 0 ignored — R2-C and R2-D were closed 2026-08-30, DECISIONS §54) | `cd src-tauri && cargo test e2e::` |
 | Registered `#[tauri::command]` | **137** | `grep -c '#\[tauri::command\]' src-tauri/src/main.rs` |
 | `.svelte` files | **47**, 22 of them views | `find src -name '*.svelte' | wc -l` |
@@ -561,6 +561,16 @@ Useful to know so no agent re-files them:
   `ensure_voice_profiles_is_idempotent`, and the schema-report tests that guard the Database
   Migration screen against drawing green ticks from a hard-coded list.
 - **macOS mic entitlement + usage string** — `models::config_boots`.
+- **A song's running order can be created, and something renders the editor** —
+  `qa.rs::a_component_can_create_a_song_arrangement` asserts both halves, because a
+  component nothing renders is not a create path. This was the repository's one dead
+  command (RG-21); `song_arrangements` is a create path in `qa-inventory.mjs` now.
+- **An arrangement whose sections moved is marked, not remapped** — on the editor,
+  in the Planner's picker, and on the plan cue that carries the same indices.
+  `db/mod.rs::a_lyric_edit_keeps_an_arrangement_and_a_structural_edit_flags_it`,
+  `::a_plan_cue_does_not_re_expand_through_a_drifted_arrangement`,
+  `::an_arrangement_with_no_recorded_shape_is_not_called_stale`,
+  `arrangements.test.js`. RG-22, DECISIONS §55.
 - **A spoken in-passage jump reports itself** — `e2e.rs::r2_a_spoken_passage_jump_that_cannot_move_must_say_so`.
   This was R2-C, an open defect until 2026-08-30; the jump was the fourth door into the bug
   `NavResult` exists to prevent.

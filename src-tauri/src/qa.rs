@@ -607,39 +607,57 @@ mod cold_start {
         out
     }
 
-    /// GAP (F3, independently verified). `save_arrangement` is registered, and
-    /// `saveArrangement` exists in the store — and **no component imports it**.
+    /// CLOSED (was a GAP: F3, independently verified). `save_arrangement` was
+    /// registered, `saveArrangement` existed in the store — and **no component
+    /// imported it**, so the one thing the whole chain was for could not be done.
     ///
-    /// The read half IS wired: `ServicePlanner.svelte` calls `listArrangements`
-    /// and opens a picker when the list is non-empty. Since the list can never be
-    /// non-empty, that picker is unreachable code and the branch that runs is
-    /// always "Standard".
+    /// The read half was wired the whole time: `ServicePlanner.svelte` calls
+    /// `listArrangements` and opens a picker when the list is non-empty. Since the
+    /// list could never be non-empty, that picker was unreachable code and the
+    /// branch that ran was always "Standard".
     ///
-    /// This is why "every registered command has a frontend caller" is true and
-    /// not sufficient: the caller is a wrapper nothing calls.
+    /// That is why "every registered command has a frontend caller" is true and
+    /// not sufficient: the caller was a wrapper nothing called. This test now pins
+    /// the closure from BOTH ends, so the editor cannot be deleted or orphaned
+    /// without something going red.
     #[test]
-    fn no_component_can_create_a_song_arrangement() {
+    fn a_component_can_create_a_song_arrangement() {
         let comps = components();
         let writers: Vec<&str> = comps
             .iter()
-            .filter(|(_, s)| s.contains("saveArrangement") || s.contains("deleteArrangement"))
+            .filter(|(_, s)| s.contains("saveArrangement"))
             .map(|(p, _)| p.as_str())
             .collect();
         assert!(
-            writers.is_empty(),
-            "an arrangement writer is now wired into {writers:?} — the gap is \
-             closed, delete this test and move `song_arrangements` in the matrix"
+            !writers.is_empty(),
+            "nothing can write an arrangement again — the picker in the Planner is \
+             unreachable code and `save_arrangement` is a dead command"
         );
 
-        // ...while the READER is wired, which is what makes the gap invisible.
+        // A component that writes but that nothing renders is the same gap one
+        // level along — the exact failure `qa-inventory.mjs` exists to catch.
+        let rendered: Vec<&str> = writers
+            .iter()
+            .filter(|w| {
+                let name = std::path::Path::new(w)
+                    .file_stem()
+                    .unwrap()
+                    .to_string_lossy();
+                comps
+                    .iter()
+                    .any(|(p, s)| p != *w && s.contains(&format!("<{name}")))
+            })
+            .copied()
+            .collect();
         assert!(
-            comps.iter().any(|(_, s)| s.contains("listArrangements")),
-            "nothing reads arrangements either — then the picker below is also \
-             gone and this test needs rewriting, not just deleting"
+            !rendered.is_empty(),
+            "an arrangement writer exists in {writers:?} but no component renders \
+             it — a control nobody can reach is not a create path"
         );
 
-        // And the wrapper really is there, so the break is provably in the
-        // component layer and not in the store or in Rust.
+        // The reader too, or the picker below is gone and this needs rewriting.
+        assert!(comps.iter().any(|(_, s)| s.contains("listArrangements")));
+
         let store = std::fs::read_to_string("../src/lib/stores/capture.js").unwrap();
         assert!(store.contains("export async function saveArrangement"));
         assert!(std::fs::read_to_string("src/main.rs")
@@ -700,19 +718,20 @@ mod cold_start {
         );
     }
 
-    /// GAP: five commands are addressed only by a `capture.js` wrapper that no
-    /// component imports. CLAUDE.md's "every one of the 114 registered commands
-    /// has a frontend caller" is therefore true only at the WRAPPER level.
+    /// GAP: three commands are addressed only by a `capture.js` wrapper that no
+    /// component imports. "Every registered command has a frontend caller" is
+    /// therefore true only at the WRAPPER level, which is the level the contract
+    /// test checks and not the level that matters.
     ///
-    /// Three of them are harmless leftovers (superseded by a better path); two
-    /// are the arrangement gap. Listed together so a sixth appearing is loud.
+    /// All three that remain are harmless leftovers, superseded by a better path.
+    /// The two that were not — `saveArrangement` and `deleteArrangement` — were
+    /// the arrangement gap, and they left this list when the editor shipped.
+    /// Listed together so a fourth appearing is loud.
     #[test]
     fn the_commands_no_rendered_component_can_reach() {
         let comps = components();
         // wrapper name → why it is here
         let orphans = [
-            ("saveArrangement", "no arrangement editor exists"),
-            ("deleteArrangement", "no arrangement editor exists"),
             (
                 "createTemplate",
                 "the gallery/editor use saveTemplate instead",

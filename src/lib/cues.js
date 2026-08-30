@@ -37,6 +37,13 @@ export function songCue(song, arr) {
       sections,
       arrangement_name: arr ? arr.name : 'Standard',
       arrangement_seq: arr ? arr.sequence : null,
+      // The song's STRUCTURE when this order was chosen. `sync_song_in_plans`
+      // compares it on every song edit: if the sections were reordered, added to,
+      // removed or renamed, the stored indices no longer name the sections the
+      // operator picked, and the cue falls back to the song's own order rather
+      // than putting the wrong words on a wall. See DECISIONS §55.
+      arrangement_shape: arr ? (arr.built_shape ?? null) : null,
+      arrangement_stale: false,
     },
   };
 }

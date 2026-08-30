@@ -2256,3 +2256,75 @@ announcing itself is one function, `announce_nav`, now used by both spoken doors
 Both tests were `#[ignore]`d because they failed. Both were re-run with the defect
 deliberately reintroduced and both fail again — the fix is tested, not the code around
 it. `cargo test e2e::` now runs 32 of 32.
+
+---
+
+## 55. An arrangement is a list of indices, so the ground can move under it (2026-08-30)
+
+Two register items, shipped as one change because shipping either alone would be
+worse than shipping neither.
+
+### RG-21 — the feature that had everything except a way in
+
+`song_arrangements` had a table, three registered commands, a store wrapper, an
+expander in `cues.js`, and a picker in the Planner that opens whenever a song has
+saved arrangements. It had no editor. Nothing anywhere could write the row that
+all of that read, so the picker's list was empty by construction, the branch that
+ran was always "Standard", and the running order a worship team actually sings —
+*verse, chorus, verse, chorus, bridge, chorus, chorus* — could not be expressed at
+all.
+
+It was the single dead command in the repository. `ipc.test.js` could not see it:
+that test asks whether a registered command has a caller in `capture.js`, and it
+did. `scripts/qa-inventory.mjs` traces one hop further — to a control something
+renders — which is the level at which the feature was missing. **That gap between
+the two levels is the finding, not just this one command.**
+
+### RG-22 — and why the editor could not ship on its own
+
+The sequence is stored as section **positions**. That is deliberate and right:
+fix a typo in verse two on Saturday night and every arrangement still plays verse
+two. Storing copied lyrics instead would break that, which is what the schema
+comment has always said.
+
+But it also means a *structural* edit — reordering, inserting, deleting or
+renaming a section — moves what index 3 points at, while the arrangement still
+claims to be the order somebody chose. The moment an editor existed, that became
+a live path to the wrong words on a wall, on a Sunday, with nothing saying so.
+
+**Relay does not guess which section was meant.** Each arrangement records
+`built_shape`: the song's `[[tag, label], …]` at build time, with the lyrics
+deliberately excluded so a word change costs nothing. Anything built against a
+different shape is *stale* — shown as NEEDS CHECKING in the editor, offered but
+disabled in the Planner's picker (hiding it would leave an operator hunting for an
+arrangement they know they made), and repaired by a person saving it again, which
+is the only moment somebody has actually looked at both.
+
+**The same guarantee is kept on the second door.** A plan cue carries the
+sequence too, and `sync_song_in_plans` re-expands through it on every song edit. A
+cue whose recorded `arrangement_shape` no longer matches falls back to the song's
+own order and is marked, because the song's own order is always the right WORDS
+even when it is not the intended repeats. This is rule 36 again: the check belongs
+where the content is rebuilt, not at whichever screen happens to display it.
+
+An arrangement or cue with no recorded shape is never called stale. Claiming
+staleness from an absence is the same lie as claiming freshness from one — the
+rule `latency.rs` states as "a stage never reached is an absence, not a zero".
+
+### What is deliberately not here
+
+No automatic remapping. Matching an old index to a new one requires guessing
+whether a section was moved or replaced, and a wrong guess is indistinguishable
+from a right one until it is on a screen in front of a congregation. A stale
+arrangement is a thirty-second job for the person who built it and an unfixable
+class of bug for a heuristic.
+
+### Evidence
+
+`db/mod.rs::a_lyric_edit_keeps_an_arrangement_and_a_structural_edit_flags_it`,
+`::a_plan_cue_does_not_re_expand_through_a_drifted_arrangement`,
+`::an_arrangement_with_no_recorded_shape_is_not_called_stale`, and
+`src/lib/arrangements.test.js` (13). Both Rust tests were re-run with the check
+disabled and both fail. `qa.rs::a_component_can_create_a_song_arrangement` now
+pins the closure from both ends — it asserts the editor exists **and** that
+something renders it, because a component nothing renders is not a create path.
