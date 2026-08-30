@@ -799,17 +799,87 @@ fn rank_for_wall(mut cands: Vec<(String, Cand)>) -> Vec<(String, Cand)> {
                 .iter()
                 .any(|(b, ch)| *b == c.r.book && *ch == c.r.chapter)
     });
-    // Strongest first. `better(a, b)` is "a beats b", so a is ordered before b.
+    // Strongest first, and TIES MUST COMPARE EQUAL.
+    //
+    // R4-07, and the HashMap was only half of it. This used to ask
+    // `pipeline::better` in both directions — but `better` is `>=`, "a is at least
+    // as good as b", which is the right question for the dedup that keeps the
+    // strongest evidence per verse and the WRONG one for a sort. On a tie it
+    // answered yes both ways, so the comparator claimed `a < b` **and** `b < a`.
+    // That violates the strict weak ordering `sort_by` requires, and a violated
+    // comparator makes "the sort is stable, so equal candidates keep their input
+    // order" a sentence with no meaning behind it: the result was simply
+    // unspecified.
+    //
+    // Two `Direct` candidates at the same score is the ordinary case — "turn to
+    // John 3:16 and Romans 8:28" — and rank 0 is the only one that may reach a
+    // wall (DECISIONS §37). So this decided what a congregation saw.
+    //
+    // Ordered explicitly, descending, ties Equal, which is what makes the stable
+    // sort keep the order the preacher spoke in.
     cands.sort_by(|(_, a), (_, b)| {
-        if pipeline::better(a, b) {
-            std::cmp::Ordering::Less
-        } else if pipeline::better(b, a) {
-            std::cmp::Ordering::Greater
-        } else {
-            std::cmp::Ordering::Equal
-        }
+        (b.method.may_auto_fire(), b.conf)
+            .partial_cmp(&(a.method.may_auto_fire(), a.conf))
+            .unwrap_or(std::cmp::Ordering::Equal)
     });
     cands
+}
+
+#[cfg(test)]
+mod rank_for_wall_tests {
+    use super::*;
+    use detection::{DetectionMethod, VerseRef};
+
+    fn cand(book: &str, ch: i64, v: i64, conf: f32) -> (String, Cand) {
+        let r = VerseRef {
+            book: book.into(),
+            chapter: ch,
+            verse: v,
+        };
+        (
+            Fire::key_for(&r),
+            Cand::single(r, conf, DetectionMethod::Direct, None),
+        )
+    }
+
+    /// R4-07 · WHICH VERSE THE CONGREGATION SEES MUST NOT DEPEND ON A HASH.
+    ///
+    /// A window may put at most one verse on a wall (DECISIONS §37): rank 0 fires,
+    /// everything else is offered. So when two candidates tie under
+    /// `pipeline::better` — the ordinary case for "turn to John 3:16 and Romans
+    /// 8:28", two `Direct` matches at the same score — the tie IS the decision.
+    ///
+    /// The sort is stable, so the answer is whatever order the caller passed in.
+    /// That used to be `HashMap::into_iter`, seeded per map instance, and two runs
+    /// of the same sentence could put different verses on the screen.
+    #[test]
+    fn a_tie_keeps_the_order_the_preacher_spoke_in() {
+        let spoken = vec![cand("John", 3, 16, 0.90), cand("Romans", 8, 28, 0.90)];
+        let ranked = rank_for_wall(spoken);
+        assert_eq!(
+            ranked.iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>(),
+            vec!["John 3:16", "Romans 8:28"],
+            "a tie must fall to what was said first"
+        );
+
+        // …and the same two the other way round come out the other way round.
+        // If this passed regardless, the assertion above would be meaningless.
+        let other = vec![cand("Romans", 8, 28, 0.90), cand("John", 3, 16, 0.90)];
+        assert_eq!(
+            rank_for_wall(other)
+                .iter()
+                .map(|(k, _)| k.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Romans 8:28", "John 3:16"]
+        );
+    }
+
+    /// Strength still beats order — the tie-break is only for ties.
+    #[test]
+    fn a_stronger_candidate_still_outranks_an_earlier_weaker_one() {
+        let spoken = vec![cand("John", 3, 16, 0.55), cand("Romans", 8, 28, 0.92)];
+        assert_eq!(rank_for_wall(spoken)[0].0, "Romans 8:28");
+    }
 }
 
 fn emit_detections<R: tauri::Runtime>(
@@ -954,14 +1024,36 @@ fn emit_detections<R: tauri::Runtime>(
 
         // Dedup by reference, keeping the strongest evidence per verse — see
         // pipeline::better for why this is NOT simply the highest confidence.
-        let mut best: std::collections::HashMap<String, Cand> = std::collections::HashMap::new();
+        //
+        // ── R4-07 · A VEC, NOT A HASHMAP, AND THAT IS THE WHOLE FIX ─────────
+        //
+        // `detect_direct` returns matches left to right — the order the preacher
+        // said them. A `HashMap` threw that away and replaced it with SipHash
+        // order, seeded per map instance. `rank_for_wall`'s sort is stable, so
+        // whenever two candidates tie under `pipeline::better` — same method, same
+        // confidence, which is the ordinary case for "turn to John 3:16 and
+        // Romans 8:28", both `Direct` at the same score — **which one was left on
+        // the wall was decided by a hash, and could differ between two runs of the
+        // same sentence.**
+        //
+        // A window may put at most one verse on a wall (DECISIONS §37), so this is
+        // not a cosmetic ordering question: it chooses what the congregation sees.
+        // Ties now break on what was said FIRST, which is the only defensible
+        // answer available and the one an operator would predict.
+        //
+        // The linear scan is deliberate: a window yields a handful of candidates,
+        // never a corpus, and the same reasoning as `detection.rs`'s 31k-verse
+        // linear scan applies — measure before optimising.
+        let mut best: Vec<(String, Cand)> = Vec::new();
         for c in candidates {
             let key = Fire::key_for(&c.r);
-            match best.get(&key) {
-                Some(existing) if pipeline::better(existing, &c) => {}
-                _ => {
-                    best.insert(key, c);
+            match best.iter_mut().find(|(k, _)| *k == key) {
+                Some((_, existing)) => {
+                    if !pipeline::better(existing, &c) {
+                        *existing = c;
+                    }
                 }
+                None => best.push((key, c)),
             }
         }
 
@@ -988,7 +1080,7 @@ fn emit_detections<R: tauri::Runtime>(
         //
         // A window is one hearing of one moment of speech. It may inform the
         // operator about several verses; it may put at most ONE on a wall.
-        let ranked = rank_for_wall(best.into_iter().collect());
+        let ranked = rank_for_wall(best);
 
         for (rank, (key, c)) in ranked.into_iter().enumerate() {
             // Everything after the strongest candidate in this window is offered,
@@ -2930,6 +3022,28 @@ fn export_diagnostics(app: tauri::AppHandle) -> error::Result<String> {
                 format!("MISSING: {}", missing.join(", "))
             },
         ));
+        // Where the gate sits, and what it is decaying TOWARD.
+        //
+        // Two different numbers and a church report needs both: "Relay stopped
+        // firing this morning" reads completely differently depending on whether
+        // the operator moved the dial or the self-calibration walked the bar up
+        // from a run of dismissals. The baseline is the anchor (DECISIONS §26).
+        if let Some(routing) = app.try_state::<Routing>() {
+            if let Ok(r) = routing.0.lock() {
+                let t = r.thresholds();
+                let b = r.baseline();
+                relay.push(Fact::new(
+                    "Gate",
+                    format!(
+                        "auto-fire {:.2}, suggest {:.2} (baseline {:.2}, dial {})",
+                        t.auto_fire,
+                        t.suggest,
+                        b.auto_fire,
+                        b.to_sensitivity()
+                    ),
+                ));
+            }
+        }
         // Whether the display was being held awake. A church reporting "the
         // projector went black in the middle of the sermon" needs this line: it
         // separates a screen Relay let sleep from a screen that failed for some
@@ -3931,11 +4045,60 @@ fn verse_repeat_count(
 #[tauri::command]
 fn set_thresholds(
     routing: tauri::State<'_, Routing>,
+    db: tauri::State<'_, Db>,
     thresholds: Thresholds,
 ) -> error::Result<Thresholds> {
-    let mut router = routing.0.lock()?;
-    router.set_thresholds(thresholds);
-    Ok(router.thresholds())
+    // R4-10: this used to move the gate and NOTHING else — no baseline, no
+    // profile row. Its twin `set_sensitivity` did all three, and its doc comment
+    // explains at length why doing one without the others leaves the profile
+    // "describing a state that never existed". The Settings two-slider control is
+    // the same act expressed more precisely, so it goes through the same door.
+    apply_thresholds(&routing, &db, thresholds)?;
+    Ok(routing.0.lock()?.thresholds())
+}
+
+/// Move the gate, the baseline, and the stored profile — together, always.
+///
+/// ── Why this is one function and not three lines copied twice ───────────────
+///
+/// `sensitivity` is defined as the anchor the self-calibration decays back toward
+/// (DECISIONS §26). Setting the gate without setting the anchor means every later
+/// operator decision drags the gate back to the position they just left; writing
+/// the thresholds to the profile without the dial leaves a row saying
+/// `sensitivity = 50` beside an `auto_fire` that 50 could never produce — a state
+/// the router was never in — and `apply_profile` re-anchors from that stale dial
+/// at the next launch.
+///
+/// `set_sensitivity` got all of this right after it was caught in a live service.
+/// `set_thresholds`, doing the same job from the other control, got none of it.
+/// **A rule kept on one of two doors is this repository's most repeated bug**, so
+/// the rule now lives in the doorway both use.
+///
+/// Returns the dial position that actually landed, recovered through
+/// `to_sensitivity` — the one inverse mapping, so the two directions cannot drift.
+fn apply_thresholds(
+    routing: &tauri::State<'_, Routing>,
+    db: &tauri::State<'_, Db>,
+    t: Thresholds,
+) -> error::Result<u8> {
+    let landed = {
+        let mut router = routing.0.lock()?;
+        router.set_thresholds(t);
+        router.set_baseline(t); // the dial IS the baseline
+        router.thresholds().to_sensitivity()
+    }; // lock released before touching the db — Db before Session, never nested here
+    if let Ok(conn) = db.0.lock() {
+        if let Ok(Some(p)) = db::active_voice_profile(&conn) {
+            let _ = db::save_profile_sensitivity(
+                &conn,
+                p.id,
+                landed as i64,
+                t.auto_fire as f64,
+                t.suggest as f64,
+            );
+        }
+    }
+    Ok(landed)
 }
 
 /// The single operator "sensitivity" dial (0..=100). Applies the SAME thresholds
@@ -3969,24 +4132,7 @@ fn set_sensitivity(
     sensitivity: u8,
 ) -> error::Result<u8> {
     let t = Thresholds::from_sensitivity(sensitivity.min(100));
-    let landed = {
-        let mut router = routing.0.lock()?;
-        router.set_thresholds(t);
-        router.set_baseline(t); // the dial IS the baseline
-        router.thresholds().to_sensitivity()
-    }; // lock released before touching the db — Db before Session, never nested here
-    if let Ok(conn) = db.0.lock() {
-        if let Ok(Some(p)) = db::active_voice_profile(&conn) {
-            let _ = db::save_profile_sensitivity(
-                &conn,
-                p.id,
-                landed as i64,
-                t.auto_fire as f64,
-                t.suggest as f64,
-            );
-        }
-    }
-    Ok(landed)
+    apply_thresholds(&routing, &db, t)
 }
 
 /// The current dial position, recovered from the live thresholds.

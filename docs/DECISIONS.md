@@ -2526,3 +2526,69 @@ The R4-09 test itself was rewritten rather than deleted. Its property — that a
 reference re-parses to a constant — was never the defect and is still true; it is
 exactly *why* that number could not be the evidence. It now says so, and points at the
 e2e test for the fix.
+
+---
+
+## 59. A comparator that says a < b and b < a (2026-08-30)
+
+**R4-07 and R4-10, closed.** Both are the same failure in different rooms: a rule that
+holds on one door and not its twin.
+
+### Which verse the congregation sees was decided by a hash — and then by nothing
+
+A window may put at most ONE verse on a wall (DECISIONS §37): `rank_for_wall` orders the
+candidates and only rank 0 may auto-fire. So when two candidates tie, the tie **is** the
+decision about what a congregation sees. "Turn to John 3:16 and Romans 8:28" produces
+exactly that: two `Direct` matches at the same score.
+
+Two causes, stacked, and the second is the one that matters:
+
+1. `emit_detections` deduped into a `std::collections::HashMap` and ranked
+   `best.into_iter()`. `detect_direct` returns matches left to right — the order the
+   preacher said them — and the map replaced it with SipHash order, seeded per instance.
+   It is a `Vec` now; the dedup keeps first-seen order, and the linear scan is deliberate
+   (a window yields a handful of candidates, never a corpus).
+
+2. **The sort comparator was inconsistent.** It asked `pipeline::better` in both
+   directions, and `better` is `>=` — "a is at least as good as b". That is the right
+   question for the dedup, which keeps the strongest evidence per verse, and the wrong
+   one for a sort: on a tie it answered yes both ways, so the comparator claimed
+   `a < b` **and** `b < a`. That violates the strict weak ordering `sort_by` requires,
+   which makes "the sort is stable, so ties keep their input order" a sentence with
+   nothing behind it — the result was unspecified. Fixing the HashMap alone would have
+   left it unspecified.
+
+Ordered explicitly now, descending on `(may_auto_fire, confidence)`, ties `Equal`. Ties
+fall to what was said first, which is the only defensible answer available and the one an
+operator would predict.
+
+### The two Settings sliders left the profile in a state the router was never in
+
+`set_sensitivity` moves the gate, moves the **baseline** — the anchor calibration decays
+toward (DECISIONS §26) — and writes `voice_profiles.sensitivity` beside the thresholds.
+Its doc comment explains at length why doing one without the others is a bug, because it
+was caught in a live service.
+
+`set_thresholds`, the same job from the other control, did only the first. So the gate
+moved and the anchor did not, and every later confirm or dismiss dragged the bar back
+toward the position the operator had just overruled — inside the same service. Then the
+next confirm persisted thresholds without the dial, leaving a row reading
+`sensitivity = 50` beside an `auto_fire` of 0.80, and `apply_profile` re-anchored from
+that stale dial at the next launch.
+
+Both commands now go through one `apply_thresholds`. **The rule lives in the doorway both
+use**, rather than being copied into two of them and kept in one — which is this
+repository's single most repeated bug shape.
+
+The test asserts consistency to within **one dial step**, not bit-exactness, and says
+why: `sensitivity` is an integer and the thresholds are floats, so the round trip cannot
+be exact and must not be forced — snapping the operator's deliberate 0.80 to whatever the
+nearest dial position implies would silently move a number they chose. The defect was
+never a rounding gap; it was 0.30 wide.
+
+### And a byproduct worth keeping
+
+`Router::baseline()` is readable now, and the diagnostic bundle reports the gate beside
+its anchor. "Relay stopped firing this morning" reads completely differently depending on
+whether the operator moved the dial or the calibration walked the bar up from a run of
+dismissals, and a church's report could not previously distinguish them.
