@@ -43,7 +43,7 @@ Tier 1: **Yoruba, Swahili, Hausa**, plus English. Code-switching (English mixed 
 npm install
 npm run tauri dev        # desktop app + Vite on :5032, kiosk WS on :8031
 
-npm test                 # vitest (811 tests)
+npm test                 # vitest (845 tests)
 npx vitest run src/lib/nav.test.js          # one file
 npx vitest run -t "Escape closes the cheat" # one test by name
 npm run build            # vite build — catches Svelte compile errors fast
@@ -58,7 +58,7 @@ Rust (**`whisper-rs` compiles whisper.cpp from source, so `cmake` must be on PAT
 cmake --version          # any 3.x. `brew install cmake` if it is missing;
                          # a machine without Homebrew needs its own prefix on PATH
 cd src-tauri
-cargo test                                   # 615 tests (587 run, 28 ignored)
+cargo test                                   # 618 tests (590 run, 28 ignored)
 cargo test e2e                               # the fire → nav → clear path (23 tests)
 cargo test detection::                       # one module
 cargo test the_macos_build -- --nocapture    # one test
@@ -91,6 +91,7 @@ Every audio bug so far was invisible in the code and reproducible only with a sp
 │          RELEASING · USER_GUIDE · AI_DISCLOSURE · data/schema.sql
 ├── scripts/version.mjs      — the ONLY place the version is read or written (3 files)
 │   scripts/qa-inventory.mjs — controls · orphan components · command map · create paths
+│   scripts/offline-bundle.mjs — installers + model + README on a USB stick (§53)
 ├── .github/workflows/       — ci.yml (fmt·clippy·tests·scorecard·build, macOS+Windows)
 │                              release.yml (per-platform signing gate; tags only)
 ├── src-tauri/
@@ -98,7 +99,7 @@ Every audio bug so far was invisible in the code and reproducible only with a sp
 │   ├── relay.entitlements   — com.apple.security.device.audio-input. See §17.
 │   ├── tauri.conf.json      — base; tauri.updater.conf.json overlays it at release
 │   └── src/
-│       ├── main.rs          — Tauri commands + the live-fire engine (5.3k lines, 135 cmds)
+│       ├── main.rs          — Tauri commands + the live-fire engine (5.3k lines, 137 cmds)
 │       ├── qa.rs · qa_r5.rs · r6.rs — TEST-ONLY. qa.rs owns THE fixture: bare_app() =
 │       │                      a fresh install and nothing else, + Wall (Tauri events)
 │       │                      and Kiosk (the WS door). The other two are audit suites.
@@ -136,6 +137,8 @@ Every audio bug so far was invisible in the code and reproducible only with a sp
         │                                Sunday report and replay (§44); a room (§46)
         ├── pathcheck.js · training.js · practice.js — say one verse and watch six
         │                                stages (§51); the drills, and their sandbox (§52)
+        ├── legibility.js              — contrast, size at distance, and the two it
+        │                                deliberately cannot answer (§18 · RG-18)
         ├── errors.js                  — the ONE backend-error humaniser
         ├── themes.js · layers.js       — the style layer beneath templates; layer starters
         ├── plan.js · cues.js · session.js · crash.js · updater.js
@@ -160,7 +163,7 @@ Shipping: in-app model download, first-run wizard, auto-updater, rehearsal mode,
 
 Parked, honestly (not faked): **NDI** (needs proprietary SDK — `open_ndi_output` returns a clear error), **neural paraphrase embedder** (TF-IDF is the seam behind `SemanticIndex::top_k`; the `verses.embedding` column exists and has never been written to), **African-language STT fine-tunes**.
 
-**No dead-but-built commands — with ONE known exception, recorded rather than hidden.** Every one of the 135 registered `#[tauri::command]`s has a frontend caller **in `capture.js`**; that is the level `ipc.test.js` checks, and it is not the level that matters. `save_arrangement` is the exception: the wrapper `saveArrangement` exists and **no component imports it**, so a user cannot save a song arrangement at all. Found by `scripts/qa-inventory.mjs`, which traces the chain one hop further — to a control something actually renders. Building the arrangement editor is a feature, not a fix; until it exists, this sentence is the honest version of the claim. The last thirteen were closed together: five superseded ones were deleted (`lookup_verse`, `close_output_window`, `current_service`, and the `*_template_active` pair — the console Output grid became per-channel templates), and eight were given the UI they had always lacked — voice profiles (SPEC §4.6), the emergency announcement, and the "shown earlier" badge. `related_scripture` was wired by the new-design merge.
+**No dead-but-built commands — with ONE known exception, recorded rather than hidden.** Every one of the 137 registered `#[tauri::command]`s has a frontend caller **in `capture.js`**; that is the level `ipc.test.js` checks, and it is not the level that matters. `save_arrangement` is the exception: the wrapper `saveArrangement` exists and **no component imports it**, so a user cannot save a song arrangement at all. Found by `scripts/qa-inventory.mjs`, which traces the chain one hop further — to a control something actually renders. Building the arrangement editor is a feature, not a fix; until it exists, this sentence is the honest version of the claim. The last thirteen were closed together: five superseded ones were deleted (`lookup_verse`, `close_output_window`, `current_service`, and the `*_template_active` pair — the console Output grid became per-channel templates), and eight were given the UI they had always lacked — voice profiles (SPEC §4.6), the emergency announcement, and the "shown earlier" badge. `related_scripture` was wired by the new-design merge.
 
 ## Architecture rules learned the HARD WAY — do not regress these
 
@@ -240,7 +243,7 @@ These caused real crashes, freezes, or silent failures in front of people. Keep 
 
 ## Testing
 
-**587 Rust** (28 ignored) + **811 frontend** (0 skipped), re-measured 2026-08-30. CI runs both on **macOS and Windows**, plus `fmt`, `clippy -D warnings`, the detection scorecard, and a release build.
+**590 Rust** (28 ignored) + **845 frontend** (0 skipped), re-measured 2026-08-30. CI runs both on **macOS and Windows**, plus `fmt`, `clippy -D warnings`, the detection scorecard, and a release build.
 
 - **`qa.rs` owns the fixture. Do not write another one.** `qa::bare_app()` is a fresh install and nothing else — real schema, real seed, no operator has touched it — and `qa::{Wall, Kiosk, settle}` are the two doors out of the machine plus the drain. `e2e::app()` is now `bare_app()` **plus one documented difference** (a content-look override, without which its template assertion is vacuous), which is exactly the shape a deviation should have: three visible lines, not a fifty-line copy that drifts. A second fixture is how two suites start disagreeing about what a fresh install contains. `the_bare_fixture_is_a_first_launch_and_nothing_more` is the tripwire; it is what caught that `tpl_song` **is** seeded on purpose (every other built-in is scripture-shaped, so a lyric rendered through one showed the song title instead of the words).
 - **The QA apparatus is documented, not folklore.** `docs/QA_HARNESS.md` — Part 0 the current counts (each with the command that reproduces it), Part 1 the design and the five evidence layers, Part 2 the shared preamble every `relay-qa-*` agent inherits verbatim, Part 3 the roster, **Part 4 what is already pinned — read it before filing anything, so you don't "find" a fixed bug**. Run `/qa-audit`; `node scripts/qa-inventory.mjs` prints the control/orphan/create-path report on its own.
