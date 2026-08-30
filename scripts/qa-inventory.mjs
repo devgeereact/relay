@@ -268,14 +268,18 @@ function stripComments(src) {
  * to stay clickable.
  */
 function stripScript(src) {
-  return src.replace(/<script[\s\S]*?<\/script>/g, (m) => m.replace(/[^\n]/g, ' '));
+  // Case-insensitive. Not because this is a sanitiser — it is a scanner over this
+  // repository's own Svelte files, and Svelte will not compile `<SCRIPT>` — but
+  // because a matcher that silently ignores a casing is a matcher that will one day
+  // read a script block as markup, and CodeQL is right to keep saying so.
+  return src.replace(/<script[\s\S]*?<\/script>/gi, (m) => m.replace(/[^\n]/g, ' '));
 }
 
 function controlsIn(file, rawSrc, wrappers) {
   // Two views of one file: `script` is where handlers are resolved, `src` is the
   // TEMPLATE with the script and the comments blanked out, which is the only place
   // a control can actually be.
-  const script = (rawSrc.match(/<script[^>]*>([\s\S]*?)<\/script>/) ?? [, ''])[1];
+  const script = (rawSrc.match(/<script[^>]*>([\s\S]*?)<\/script>/i) ?? [, ''])[1];
   const src = stripScript(stripComments(rawSrc));
   // Which store wrappers this component imported — the vocabulary its handlers
   // can possibly speak.

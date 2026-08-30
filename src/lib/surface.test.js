@@ -54,9 +54,8 @@ const invoke = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...a) => invoke(...a) }));
 
 const { installShortcuts, registerContext, cheatsheet } = await import('./shortcuts.js');
-const { live, screenBlack, rehearsing, panicError, capture, templates } = await import(
-  './stores/capture.js'
-);
+const { live, screenBlack, rehearsing, panicError, capture, templates, readErrors } =
+  await import('./stores/capture.js');
 const { setSafeMode } = await import('./boot/boot.js');
 
 let host;
@@ -99,6 +98,27 @@ beforeEach(() => {
   registerContext({});
   setSafeMode(false);
   capture.update((s) => ({ ...s, available: true }));
+  // `readErrors` is app state that outlives a test, and it was the one store in this
+  // file that was never reset. That is not tidiness — it is a real isolation gap,
+  // and it fired on CI (a machine roughly 13x slower than this one) while passing
+  // here five runs in a row:
+  //
+  //     expected 'All Templates0 … Relay's engine is not running…'
+  //       to match /No templates yet — create one to start/
+  //
+  // TemplateGallery rendered ErrorState because `readErrors.loadTemplates` was
+  // already set when the test began — a failure belonging to an earlier test, which
+  // on a fast machine settles inside its own test and on a slow one does not.
+  //
+  // **The exact producer has not been pinned down**, and the fix does not depend on
+  // it: a store that survives `beforeEach` will eventually carry something from the
+  // test before, whichever call put it there. The two candidates, recorded so the
+  // next person does not start from nothing — `loadTemplates` does
+  // `templates.set(list)`, and a Svelte store propagates a THROWING SUBSCRIBER out
+  // of `.set`, so a component still subscribed from a previous test can turn a
+  // successful read into a recorded error; and `invoke.mockReset()` here makes the
+  // mock return `undefined`, which a late-resolving read then works with.
+  readErrors.set({});
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
