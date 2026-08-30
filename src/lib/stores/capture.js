@@ -600,6 +600,26 @@ export async function languageReport() {
   return guardedRead('languageReport', (call) => call('language_report'), []);
 }
 
+/**
+ * Model files already on this machine, waiting to be installed.
+ *
+ * The offline path: a church on a poor line copies the 148 MB model from a USB
+ * stick, and Relay finds it in Downloads or its own data folder. Read-only, so it
+ * swallows — a failed scan must show "none found", not take the screen down.
+ */
+export async function findModelFiles() {
+  return guardedRead('findModelFiles', (call) => call('find_model_files'), []);
+}
+
+/** Install one of them. GROUP 1 — THROWS: a silent failure here leaves an
+ *  operator believing they have a speech model when they do not. */
+export async function installModelFile(path) {
+  const call = await invoke();
+  const id = await call('install_model_file', { path });
+  await listModels();
+  return id;
+}
+
 // ── ROOMS (RG-10) ────────────────────────────────────────────────────────────
 //
 // A church that runs in the main hall on Sunday and the youth room on Wednesday

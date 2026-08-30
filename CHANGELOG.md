@@ -99,6 +99,25 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
   made the part that did not happen look like the fastest thing on the screen.
 - **Fixed:** several buttons and text boxes had no name for screen readers.
 
+### Installing without internet, and knowing the back row can read it
+
+- **Relay can now be installed with no internet at all.** Everything except the
+  speech model already worked offline — the whole Bible is inside the app. The model
+  is 148 MB and could only ever be downloaded, which meant a church on a poor line
+  could not get Relay working. Copy the model file onto the computer (Downloads is
+  fine) and Settings → Network offers to install it under **"Found on this
+  computer"**. Relay checks the file is exactly the one it expects first, so a copy
+  that went wrong tells you rather than mishearing everything afterwards.
+- **Templates now tell you whether the back row can read them.** The editor shows the
+  contrast between your text and its background, works out how tall the letters
+  actually are on your screen, and says whether that is big enough for the distance
+  you give it — plus a preview of how it looks from 5, 10, 15 and 20 metres. Over a
+  photograph or a video it says it **cannot** check, rather than guessing: only your
+  eyes can judge that one.
+- **A High Visibility theme.** White on black, larger type, no shadow and no
+  transition — the highest contrast a projector can produce. Pick it like any other
+  theme and every screen uses it.
+
 ### 🚧 Nothing has been released to anyone yet.
 
 Relay has never shipped. Every tag so far (`v0.1.0-rc1` … `v0.1.0-4`) is a **draft pre-release** used to exercise the pipeline — they are unsigned, and an unsigned build is stopped dead by macOS Gatekeeper and warned about by Windows SmartScreen. A volunteer does not push past those screens, and should not be asked to.

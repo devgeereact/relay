@@ -14,9 +14,9 @@ Supersedes Revision 2 (2026-07-12) and Revision 1 (2026-07-05). Every claim was 
 >
 > | | Rev 3 said | Today |
 > |---|---|---|
-> | Tests | 250 Rust + 138 frontend | **587 Rust** run (28 ignored) + **811 frontend** (0 skipped) — re-measured 2026-08-30 |
-> | `main.rs` | 2,922 lines / 101 commands | **5,307 lines / 135 commands** — re-measured 2026-08-30 |
-> | Decision log | 25 decisions | **52** numbered (§18–§52), plus 28 earlier table rows |
+> | Tests | 250 Rust + 138 frontend | **590 Rust** run (28 ignored) + **845 frontend** (0 skipped) — re-measured 2026-08-30 |
+> | `main.rs` | 2,922 lines / 101 commands | **5,337 lines / 137 commands** — re-measured 2026-08-30 |
+> | Decision log | 25 decisions | **53** numbered (§18–§53), plus 28 earlier table rows |
 > | `Result<_, String>` in `main.rs` | replaced | **zero remain** — confirmed |
 > | Release decision | not stated | **NO-GO**, and it is a machine's, not this document's |
 >
@@ -142,7 +142,7 @@ Scored against the stated bar (*first 10 churches*), not against Stripe. Δ is t
 | **Onboarding / first-run** | **8 / 10** | ▲ +1 | The wizard now *proves* the microphone works — its meter was dead, so the one step whose entire purpose was proof proved nothing. Still cannot be re-run once skipped. |
 | **UX (live operation)** | **8 / 10** | ▲ +2 | Every control that lied has been fixed: the clear toast, the `B`-while-typing cheatsheet line, `Esc`-wipes-the-wall-from-inside-a-modal (which turned out to affect the arrangement pickers too, not just the cheatsheet), and the `nav` key that silently did nothing. The transport now follows **what is on the wall**, not what the operator intended. |
 | **UI / design language** | **8 / 10** | ▲ +1 | The dark/amber broadcast language remains correct and unmodernised. One `EmptyState`/`Loading`/`ErrorState` trio replaces four competing classes. The colour discipline held under pressure: a paraphrase got cyan, *not* amethyst, because amethyst already means rehearsal — a colour carrying a promise cannot be borrowed for a hunch. |
-| **Architecture** | **8 / 10** | ▲ +2 | The fire engine is now generic over `tauri::Runtime`, so the path that puts scripture on a wall can be driven **without a window** — which is the useful half of "split `main.rs`". Typed errors (`error.rs`) replace 88 × `Result<_, String>`, and **zero remain**. `main.rs` was 2,922 lines / 101 commands here and is **5,307 / 135** today — but it is no longer untestable, which was the actual problem. |
+| **Architecture** | **8 / 10** | ▲ +2 | The fire engine is now generic over `tauri::Runtime`, so the path that puts scripture on a wall can be driven **without a window** — which is the useful half of "split `main.rs`". Typed errors (`error.rs`) replace 88 × `Result<_, String>`, and **zero remain**. `main.rs` was 2,922 lines / 101 commands here and is **5,337 / 137** today — but it is no longer untestable, which was the actual problem. |
 | **Performance** | **9 / 10** | — | Unchanged. Measure-before-optimising is practised here, not preached: the semantic scan stays a linear scan and beam search stays unused, both because measurement said so. |
 | **Accessibility** | **8 / 10** | ▲ **+4** | Focus traps on all 5 dialogs, **with focus restore** (the half everyone forgets). A real heading structure. The AI suggestion feed, the transport and errors are all announced — the product's whole reason to exist used to arrive in total silence. Every text token passes WCAG AA. Not 10/10: ~150 lines of dead legacy CSS remain, deliberately (see §7). |
 | **Security** | **8 / 10** | ▲ +1 | A tag name is no longer interpolated into a release shell (a real injection vector CodeRabbit caught). LAN bind is unauthenticated, broadcast-only, bounded, and honestly documented. Unsigned Windows remains the exposure — but the pipeline now *refuses* to produce it rather than doing so quietly. |

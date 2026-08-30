@@ -62,7 +62,7 @@ real gaps.
 | **The model prompt** | *The self-contained brief that makes any capable model argue inside Relay's real constraints* | [GPT.md](GPT.md) | Input artifact |
 
 **On ADRs:** [DECISIONS.md](DECISIONS.md) *is* the architecture-decision record — a single
-narrative log with reasoning and explicit non-goals, 52 numbered decisions (§18–§52) deep,
+narrative log with reasoning and explicit non-goals, 53 numbered decisions (§18–§53) deep,
 plus 28 earlier ones carried as table rows. It is deliberately not
 split into per-file `adr/NNNN-*.md` documents: the log is cross-referenced from code comments
 and the handbook, and one file keeps the *why* readable end to end. If the code ever

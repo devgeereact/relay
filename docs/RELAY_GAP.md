@@ -68,6 +68,46 @@ asked, this file is what the repository answered.
 > sample bracket the tail; neither answers it) · §51 (twenty-one checks that pass on
 > a machine where nothing works) · §52 (practice is drills, not a simulation).
 >
+> ### P3 — RG-18 and RG-19, closed 2026-08-30. **The register is now empty.**
+>
+> | ID | What changed | Pinned by |
+> |---|---|---|
+> | **RG-18** | Contrast (exact over a solid background, **"cannot be checked" over a picture**), size at distance from two numbers only a person can know, a distance preview, and High Visibility as a THEME rather than a parallel renderer | `legibility.test.js` (21) |
+> | **RG-19** | Install a model from a file already on the machine, a three-folder scan, and `scripts/offline-bundle.mjs`. **Signed language packs deliberately NOT built** | `models::tests` (+3), `offline.test.js` (13) |
+>
+> One more decision: §53 (offline installation is one missing file, and language packs
+> are not that).
+>
+> **RG-18's thresholds are unverified and say so in the UI.** WCAG is a specification
+> for screens at arm's length and the character-height rule is broadcast practice;
+> neither has been checked against a projector in a church. That is Stage B, and the
+> caveat rides with the verdict rather than living here.
+>
+> **RG-19 shipped its offline half and refused its signed half.** The word doing the
+> work in "signed language packs" is *signed*, and signing needs a key, a ceremony and
+> a distribution channel that do not exist. An unsigned pack that can rewrite the book
+> aliases is a wrong-verse-on-a-wall vector, and the operator cannot check 66 names in
+> a language they may not read. It waits on the same thing §47 names: a native speaker
+> who has actually reviewed the tables.
+>
+> ### Where that leaves the register
+>
+> **Every RG item is closed.** Three of the nineteen shipped deliberately narrower than
+> written — RG-10's audio seed, RG-16's audio replay, RG-19's language packs — and all
+> three are waiting on the same thing, which is not a commit:
+>
+> | Waiting on | Blocks |
+> |---|---|
+> | **Stage C** — a person, a microphone, a real room | RG-10 (seeding the audio gate), RG-16 (replaying a service), the WER measurement that is the moat |
+> | **Stage B** — a projector | RG-18's thresholds |
+> | **Stage F11** — one full service | the long-service latency question |
+> | **A native speaker** | RG-19's language packs, and §47's empty column |
+> | **A Windows certificate** | shipping to the platform most churches are on |
+>
+> That is the same list `ROADMAP.md` §1 has carried since before any of this work, and
+> none of it moved. **The register being empty is not the same as being ready**, and
+> §24 below still says NO-GO for exactly that reason.
+>
 > **RG-16 is deliberately narrower than the register described.** "Replay recorded
 > audio through the real pipeline" is not buildable here: Relay cannot produce a
 > sermon, and a simulation would teach a volunteer the shape of a fake. Replaying a
@@ -672,8 +712,8 @@ matter right now.
 | ✅ RG-15 | Readiness never tests the spoken path | Green checks, dead microphone chain | `boot/probes.js` | Synthetic "say John 3:16" walk | RG-01 | P2 | M | Fail it by unplugging the mic; assert it goes red |
 | ✅ RG-16 | No training / simulation mode | A volunteer's first Sunday is their first attempt | — | Replay recorded audio through the real pipeline into a sandboxed UI | RG-07 | P2 | M | Nothing reaches a real output — watch the **hub**, not the wall |
 | ✅ RG-17 | No privacy screen | The best privacy story in the product is invisible | `PRIVACY.md` | One screen stating current state | — | P2 | S | Reflects the real setting, never a hardcoded "off" |
-| RG-18 | No contrast validation, distance preview or output accessibility mode | Unreadable from row 20, and nothing says so | grep: zero | Ratio check + a distance simulator | — | P3 | M | Needs a real projector |
-| RG-19 | No offline installer or language packs | A church with poor internet cannot install | `models.rs` | Bundle app + model + corpus; sign language packs | RG-06 | P3 | L | Install with the network cable out |
+| ✅ RG-18 | No contrast validation, distance preview or output accessibility mode | Unreadable from row 20, and nothing says so | grep: zero | Ratio check + a distance simulator | — | P3 | M | Needs a real projector |
+| ✅ RG-19 | No offline installer or language packs | A church with poor internet cannot install | `models.rs` | Bundle app + model + corpus; sign language packs | RG-06 | P3 | L | Install with the network cable out |
 | RG-20 | **Doc drift** — 114 / 4,024 / "35 decisions" / e2e layer count wrong across six files | `CLAUDE.md` is read first by every agent and is on the wrong side | §26 | Fix, and add the reproducing command beside every count | — | P0 | S | `grep -rn '114 cmds\|4,024\|4.0k lines\|35 decisions' CLAUDE.md docs/` returns nothing |
 
 ---
@@ -719,9 +759,16 @@ service), and one church.
 - [x] RG-01 · RG-02 · RG-03 · RG-04 · RG-05 — done 2026-08-29, see the fix log above
 - [x] RG-06 … RG-12 (P1) — done 2026-08-29, same fix log
 - [x] RG-13 … RG-17 (P2) — done 2026-08-30, same fix log
-- [ ] RG-18 · RG-19 (P3). RG-18 still needs a designer and a real projector; RG-19
-      has RG-06's ground under it now and is the one remaining item with real market
-      value — a church with poor internet still cannot install Relay from a USB stick.
+- [x] RG-18 · RG-19 (P3) — done 2026-08-30, same fix log
+
+### What is left, and none of it is a commit
+
+- [ ] **Stage C** — a person, a microphone, a real room. Blocks RG-10's audio seed,
+      RG-16's replay, and the word-error-rate measurement the moat rests on.
+- [ ] **Stage B** — a projector, to check RG-18's thresholds against a wall.
+- [ ] **Stage F11** — one full service, watching Diagnostics for a rising line.
+- [ ] **A native speaker** — RG-19's language packs and §47's empty column.
+- [ ] **A Windows code-signing certificate** — the platform most churches are on.
 
 ### Always — before any of the above ships
 

@@ -14,6 +14,7 @@
   // The preview is the SAME TemplateRender as the wall — WYSIWYG by construction.
   import { createEventDispatcher, onMount, onDestroy } from 'svelte';
   import TemplateRender from '../../TemplateRender.svelte';
+  import { review, PREVIEW_DISTANCES_M, previewScale } from '../../legibility.js';
   import TemplatePreviewOverlay from '../../TemplatePreviewOverlay.svelte';
   import { testTemplateOnOutputs } from '../../templateTest.js';
   import { humanError } from '../../errors.js';
@@ -72,6 +73,25 @@
   // the editor preview is WYSIWYG including the theme. Layout/layers are shared
   // by reference (a theme only fills style), so drag/selection still target edit.
   $: themedEdit = edit ? resolveThemed(edit, $customThemes) : edit;
+
+  // ── CAN THE BACK ROW READ THIS? (RG-18) ───────────────────────────────────
+  //
+  // Here, in the editor, because this is where a designer works — on a Tuesday,
+  // with time to change it. A warning on Sunday morning is a warning about
+  // something nobody is going to fix at 10:29.
+  //
+  // Two of the three answers are computable and the third is not, and the third is
+  // said as loudly as the other two: over a photograph or a video, Relay cannot
+  // know what is behind the words, and a green tick there would be worse than no
+  // tick at all.
+  //
+  // The room numbers come from the active room (RG-10) when there is one, so a
+  // church that told Relay about its hall once gets the distance answer for free.
+  let screenWidthM = '';
+  let backRowM = '';
+  $: room = { screenWidthM: Number(screenWidthM), backRowM: Number(backRowM) };
+  $: legible = themedEdit ? review(themedEdit.style ?? {}, previewContent, room) : null;
+  let showDistances = false;
   onDestroy(() => clearTimeout(liveTimer));
 
   function load(id) {
@@ -601,10 +621,55 @@
           {#if !layers.length}<div class="te-hint r-mono">No layers — use ＋ to add one.</div>{/if}
         </div>
         <p class="te-panenote">Top of the list is the front. Drag layers on the canvas to move them.</p>
+
+        <!-- READABILITY. Under the layer list, in the panel a designer already has
+             open, rather than behind a button they would have to know about. -->
+        {#if legible}
+          <div class="r-lbl te-legtitle">Readability</div>
+          <ul class="te-leg">
+            {#each [['Verse', legible.verse], ['Reference', legible.reference], ['From the back', legible.distance]] as [label, c] (label)}
+              <li class="te-legrow" class:bad={c.state === 'low' || c.state === 'small'} class:unknown={c.state === 'unknown'}>
+                <b>{label}</b>
+                <span>{c.note}</span>
+              </li>
+            {/each}
+          </ul>
+          <div class="te-legroom">
+            <label class="te-leglab" for="te-scr">Screen width (m)</label>
+            <input id="te-scr" class="r-input te-legin" inputmode="decimal" bind:value={screenWidthM} placeholder="4" />
+            <label class="te-leglab" for="te-back">Back row (m)</label>
+            <input id="te-back" class="r-input te-legin" inputmode="decimal" bind:value={backRowM} placeholder="18" />
+          </div>
+          <button class="r-btn ghost sm te-legbtn" on:click={() => (showDistances = !showDistances)}>
+            {showDistances ? 'Hide' : 'Show'} how it looks from further back
+          </button>
+          <!-- THE CAVEAT RIDES WITH THE VERDICT. The person reading it is deciding
+               whether to trust it right now, and it has never been checked against
+               a projector in a church. -->
+          <p class="te-panenote">{legible.caveat}</p>
+        {/if}
       </aside>
 
       <!-- ══ CANVAS ══ -->
       <section class="te-canvas">
+        {#if showDistances}
+          <!-- STEPPING BACK, simulated. Shrinking the render by the ratio of the
+               distances is exactly what a person does when they walk away from a
+               screen. It is a demonstration, not a measurement — the numbers above
+               are the measurement. -->
+          <div class="te-dists">
+            {#each PREVIEW_DISTANCES_M as d (d)}
+              <figure class="te-dist">
+                <div class="te-distbox">
+                  <div class="te-distinner" style="transform:scale({previewScale(d)})">
+                    <TemplateRender template={themedEdit} content={previewContent} />
+                  </div>
+                </div>
+                <figcaption class="r-mono">{d}m</figcaption>
+              </figure>
+            {/each}
+          </div>
+        {/if}
         <div class="te-stage">
           <div class="te-board-wrap" style="width:{zoom}%">
             {#if !previewMode}
@@ -813,6 +878,31 @@
 </div>
 
 <style>
+  /* READABILITY. A problem is rose; something Relay CANNOT check is dim and
+     italic — the same treatment the language table gives an absence, because it is
+     the same kind of answer: nobody has failed, the question cannot be answered
+     from here. */
+  .te-legtitle{ margin-top:16px; }
+  .te-leg{ list-style:none; margin:6px 0 0; padding:0; display:flex;
+    flex-direction:column; gap:6px; }
+  .te-legrow{ display:flex; flex-direction:column; gap:1px; }
+  .te-legrow b{ font-size:var(--v-fs-cap); color:var(--v-txt); font-weight:600; }
+  .te-legrow span{ font-size:var(--v-fs-cap); color:var(--v-dim); line-height:1.4; }
+  .te-legrow.bad span{ color:var(--v-rose); }
+  .te-legrow.unknown span{ color:var(--v-faint); font-style:italic; }
+  .te-legroom{ display:grid; grid-template-columns:1fr auto; gap:6px 8px;
+    align-items:center; margin-top:10px; }
+  .te-leglab{ font-size:var(--v-fs-cap); color:var(--v-dim); }
+  .te-legin{ width:70px; text-align:right; }
+  .te-legbtn{ margin-top:10px; width:100%; }
+  .te-dists{ display:flex; gap:12px; margin-bottom:12px; flex-wrap:wrap; }
+  .te-dist{ margin:0; }
+  .te-distbox{ width:190px; aspect-ratio:16/9; overflow:hidden; position:relative;
+    background:#000; border:1px solid var(--v-line); border-radius:var(--v-r-sm); }
+  .te-distinner{ position:absolute; inset:0; transform-origin:center; }
+  .te-dist figcaption{ font-size:10px; color:var(--v-faint); text-align:center;
+    margin-top:4px; }
+
   .te-shell{ display:flex; flex-direction:column; height:100%; min-height:0; gap:12px; }
   .te-spring{ flex:1; }
   .te-top{ display:flex; align-items:center; gap:10px; flex:0 0 auto; }
