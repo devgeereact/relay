@@ -8,6 +8,7 @@
   // [role="dialog"] is mounted (rule 16), so Esc dismisses THIS preview instead
   // of clearing the congregation's screens. The keydown below closes it.
   import { onMount, onDestroy } from 'svelte';
+  import { trapFocus } from './focus.js';
   import TemplateRender from './TemplateRender.svelte';
   import { SAMPLE_TEST_CONTENT } from './templateTest.js';
 
@@ -21,7 +22,13 @@
   onDestroy(() => window.removeEventListener('keydown', onKey, true));
 </script>
 
-<div class="tpv-scrim" role="dialog" aria-modal="true" aria-label="Template preview">
+<!-- `use:trapFocus` is not decoration on an `aria-modal` element: without it Tab
+     walks straight out of the preview into the app behind — a keyboard operator
+     driving controls they cannot see, in a dialog they cannot leave — and focus is
+     never restored to whatever opened it. `focus.js` is the one implementation and
+     deliberately does NOT bind Escape; that stays in `shortcuts.js`, because two
+     opinions about a panic key is how a wall gets wiped by accident. -->
+<div class="tpv-scrim" role="dialog" aria-modal="true" aria-label="Template preview" use:trapFocus>
   <button class="tpv-scrimbtn" aria-label="Close preview" on:click={onClose}></button>
   <div class="tpv-frame">
     <TemplateRender {template} content={SAMPLE_TEST_CONTENT} />

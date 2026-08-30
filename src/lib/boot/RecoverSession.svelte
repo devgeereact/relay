@@ -1,4 +1,5 @@
 <script>
+  import { trapFocus } from '../focus.js';
   // LAUNCH & STARTUP · Recover Previous Session
   //
   // Relay persists a tiny, content-free resume point (lib/session.js): the tab,
@@ -23,7 +24,11 @@
   $: summary = describeResume(session);
 </script>
 
-<div class="b-gate" role="dialog" aria-modal="true" aria-labelledby="b-recover-h">
+<!-- `use:trapFocus` — a boot gate is the FIRST thing a keyboard operator meets, and
+     without the trap Tab walks straight out of it into an app that is not ready yet.
+     `focus.js` is the one implementation; it deliberately does not bind Escape,
+     which stays in `shortcuts.js`. -->
+<div class="b-gate" role="dialog" aria-modal="true" aria-labelledby="b-recover-h" use:trapFocus>
   <div class="b-card">
     <p class="b-kicker" style="color:var(--v-grey);">
       <span class="d"></span>Previous session
