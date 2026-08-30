@@ -611,6 +611,28 @@ fn broadcast_with_clock<R: tauri::Runtime>(
         let _ = handle.emit("output://panic_failed", bad.message());
         return Err(error::Error::refused(bad.message()));
     }
+    // R2-D · A PASSAGE MUST NOT OUTLIVE THE CONTENT THAT REPLACED IT.
+    //
+    // `Context` was written only by scripture fires and cleared by nothing, so a
+    // song, a notice, a picture or a countdown left the previous reading armed for
+    // the rest of the service. `nav` would then walk a passage the congregation
+    // stopped looking at twenty minutes earlier and report `Fired` — true of the
+    // wall, false of the sermon — and the operator reaches that state by an ordinary
+    // route: blackout clears `planOnAir` while leaving `$live` set, which flips the
+    // transport from SLIDE to VERSE without them asking.
+    //
+    // Here, at the one door content leaves by, so every path is covered at once
+    // (rule 36) and a new content kind added tomorrow is disarmed by construction.
+    // The lock is taken and RELEASED before the broadcast below — never held across
+    // an emit (rule 2).
+    if content.kind.as_deref().is_some_and(|k| k != "scripture") {
+        if let Some(ctx) = handle.try_state::<Context>() {
+            if let Ok(mut c) = ctx.0.lock() {
+                c.forget();
+            }
+        }
+    }
+
     if let Some(session) = handle.try_state::<Session>() {
         if let Ok(g) = session.0.lock() {
             if let Some(st) = g.as_ref() {
@@ -1113,22 +1135,81 @@ fn handle_nav<R: tauri::Runtime>(
     }
 }
 
+/// Tell the operator what a SPOKEN navigation did, when it did not move the wall.
+///
+/// The preacher is talking; there is no caller to return a result to and nobody is
+/// looking at a return value. `Fired` needs no announcement — the wall changed, and
+/// that IS the announcement. Everything else is pushed.
+///
+/// One function, because there is more than one spoken door and the last time a
+/// rule was written per-door it held on three of four.
+fn announce_nav<R: tauri::Runtime>(
+    handle: &tauri::AppHandle<R>,
+    outcome: error::Result<NavResult>,
+) {
+    match outcome {
+        Ok(NavResult::Fired { .. }) => {}
+        Ok(blocked) => {
+            let _ = handle.emit("nav://blocked", blocked);
+        }
+        Err(e) => {
+            eprintln!("spoken nav failed: {e}");
+            let _ = handle.emit("output://panic_failed", e.to_string());
+        }
+    }
+}
+
 /// Spoken in-passage jump ("chapter 5 verse 1", "verse 4"): resolve the BOOK from
 /// the current context and fire book chapter:verse, keeping the operator inside
 /// the same passage. Chapter-only defaults to verse 1; verse-only keeps the
-/// current chapter. Returns true if it fired.
-fn handle_passage_nav<R: tauri::Runtime>(handle: &tauri::AppHandle<R>, text: &str) -> bool {
-    let Some(nav) = detection::detect_passage_nav(text) else {
-        return false;
-    };
+/// current chapter.
+///
+/// ## R2-C · IT USED TO RETURN `bool`, AND THAT WAS THE BUG
+///
+/// This is the FOURTH door into the same failure `NavResult` was built to close.
+/// `handle_nav` distinguishes four outcomes and pushes `nav://blocked` for every
+/// one that does not move the wall, because the preacher is speaking and there is
+/// nobody to return a result to. This function collapsed all of them into `false` —
+/// so "verse ninety nine" in a six-verse psalm, or "verse four" before anything had
+/// been fired, left the wall unmoved with **no toast, no banner and no log line**.
+/// That is the original bug verbatim, on a door nobody had listed.
+///
+/// It announces its own outcome rather than returning it, because — unlike
+/// `handle_nav`, which is also a command with an operator waiting on it — this has
+/// exactly one caller and it is the transcript thread. Reporting at the call site
+/// would put the guarantee on the door instead of in the room, and the next caller
+/// added would silently not have it.
+///
+/// `None` means the text was not a jump at all, so the caller falls through to
+/// detection. `Some(())` means it WAS a jump and has been dealt with — and a jump
+/// phrase can never also be a reference, because `detect_passage_nav` returns
+/// `None` the moment a book is named.
+fn handle_passage_nav<R: tauri::Runtime>(handle: &tauri::AppHandle<R>, text: &str) -> Option<()> {
+    let outcome = passage_nav_outcome(handle, text)?;
+    announce_nav(handle, outcome);
+    Some(())
+}
+
+fn passage_nav_outcome<R: tauri::Runtime>(
+    handle: &tauri::AppHandle<R>,
+    text: &str,
+) -> Option<error::Result<NavResult>> {
+    let nav = detection::detect_passage_nav(text)?;
     let target = {
         let ctx = handle.state::<Context>();
-        let Ok(context) = ctx.0.lock() else {
-            return false;
+        let context = match ctx.0.lock() {
+            Ok(c) => c,
+            Err(_) => {
+                return Some(Err("Relay lost track of the passage it was reading."
+                    .to_string()
+                    .into()))
+            }
         };
-        // No current passage → there is no book to resolve the jump against.
+        // No current passage → there is no book to resolve the jump against. Said
+        // out loud rather than swallowed: from the operator's seat "nothing is
+        // staged" and "Relay did not hear you" look identical.
         let Some(cur) = context.current() else {
-            return false;
+            return Some(Ok(NavResult::NoPassage));
         };
         VerseRef {
             book: cur.book.clone(),
@@ -1136,7 +1217,17 @@ fn handle_passage_nav<R: tauri::Runtime>(handle: &tauri::AppHandle<R>, text: &st
             verse: nav.verse.unwrap_or(1),
         }
     };
-    fire_manual(handle, target, 1.0, PassageUpdate::Jump, None, None)
+    let reference = Fire::key_for(&target);
+    Some(Ok(
+        if fire_manual(handle, target, 1.0, PassageUpdate::Jump, None, None) {
+            NavResult::Fired { reference }
+        } else {
+            // The verse parsed and is not in the corpus. Firing it would blank the
+            // wall (`Fire::may_broadcast`), so the screen is left alone — and the
+            // operator is told which verse it was.
+            NavResult::NotInLibrary { reference }
+        },
+    ))
 }
 
 /// Persist a finalized transcript line into the current service (if recording),
@@ -3868,16 +3959,7 @@ fn handle_transcript(
         // nothing is PUSHED to the operator rather than swallowed: the preacher
         // says "next", the wall does not move, and the console says why.
         if let Some(cmd) = detection::detect_command(&update.text) {
-            match handle_nav(handle, cmd) {
-                Ok(NavResult::Fired { .. }) => {}
-                Ok(blocked) => {
-                    let _ = handle.emit("nav://blocked", blocked);
-                }
-                Err(e) => {
-                    eprintln!("nav failed: {e}");
-                    let _ = handle.emit("output://panic_failed", e.to_string());
-                }
-            }
+            announce_nav(handle, handle_nav(handle, cmd));
             latency::close(update.trace_id);
             return;
         }
@@ -3887,8 +3969,10 @@ fn handle_transcript(
             latency::close(update.trace_id);
             return;
         }
-        // Spoken in-passage jump — "chapter 5 verse 1", "verse 4".
-        if handle_passage_nav(handle, &update.text) {
+        // Spoken in-passage jump — "chapter 5 verse 1", "verse 4". Handled exactly
+        // like the spoken next/back above it, because it fails in exactly the same
+        // ways and the preacher has no console to look at either.
+        if handle_passage_nav(handle, &update.text).is_some() {
             latency::close(update.trace_id);
             return;
         }

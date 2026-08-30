@@ -119,6 +119,25 @@ asked, this file is what the repository answered.
 > instrument that could show it safe (`cargo test audio::gate -- --ignored`, against
 > real room audio) has never been pointed at a real room. That is Stage C, and it is
 > still unrun.
+>
+> ---
+>
+> ## Fix log — 2026-08-30 · the two open defects
+>
+> With the register empty, the only in-repo work left that was **not** blocked on the
+> world was the pair of defects `e2e.rs` had been carrying as `#[ignore]`d tests since
+> the R2 audit — each with its own repair direction written into the test. Both are
+> closed, reasoning in [DECISIONS](DECISIONS.md) §54, and `e2e.rs` now has **no ignored
+> tests at all**.
+>
+> | ID | The defect | Fix |
+> |---|---|---|
+> | **R2-C** | A spoken in-passage jump that could not move said nothing — no toast, no banner, no log line. The fourth door into the bug `NavResult` was built to prevent | It reports `NoPassage`/`NotInLibrary`, and **announces its own outcome** rather than returning it to its one caller |
+> | **R2-D** | A song, notice, picture or countdown left the previous reading armed, so `nav("next")` walked a passage the congregation had stopped looking at and answered `Fired` | `ContextMemory::forget`, called at `broadcast_with_clock` — the choke point, so every content path is covered at once |
+>
+> Both tests were re-run with the defect deliberately reintroduced, and both fail again.
+> **The release decision is still NO-GO**, unchanged and for the unchanged reason: two
+> closed defects are not a Sunday.
 
 ---
 

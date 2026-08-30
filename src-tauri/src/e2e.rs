@@ -1037,7 +1037,6 @@ fn r2_the_remote_must_say_a_rehearsal_fire_reached_nobody() {
 /// Repair direction: return a `NavResult` (or fold the jump into `handle_nav`)
 /// and emit `nav://blocked` for every non-firing outcome.
 #[test]
-#[ignore = "R2-C: known defect — a spoken in-passage jump that cannot move says nothing"]
 fn r2_a_spoken_passage_jump_that_cannot_move_must_say_so() {
     let app = app();
     let h = app.handle().clone();
@@ -1061,10 +1060,13 @@ fn r2_a_spoken_passage_jump_that_cannot_move_must_say_so() {
     let before = wall.count();
 
     // … but Psalm 23 has six verses, so it cannot be fired.
-    let moved = super::handle_passage_nav(&h, "verse ninety nine");
+    let handled = super::handle_passage_nav(&h, "verse ninety nine");
     settle();
 
-    assert!(!moved, "precondition: it did not move");
+    assert!(
+        handled.is_some(),
+        "precondition: it was recognised as a jump"
+    );
     assert_eq!(
         wall.count(),
         before,
@@ -1097,7 +1099,6 @@ fn r2_a_spoken_passage_jump_that_cannot_move_must_say_so() {
 ///
 /// This test asserts only the backend half, which is the part layer A can see.
 #[test]
-#[ignore = "R2-D: known defect — a stale passage stays armed under non-scripture content"]
 fn r2_a_passage_must_not_stay_armed_under_unrelated_content() {
     let app = app();
     let h = app.handle().clone();

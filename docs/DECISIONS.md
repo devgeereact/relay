@@ -2202,3 +2202,57 @@ read.
 So: **not built, and recorded as not built.** What it needs first is the thing §47
 already names — a native speaker who has actually reviewed the tables — because until
 one has, a pack format would be a distribution mechanism for unreviewed data.
+
+---
+
+## 54. A passage may not outlive the content that replaced it, and a spoken jump that cannot move must say so (2026-08-30)
+
+Two open defects, R2-C and R2-D, carried in `e2e.rs` as `#[ignore]`d tests with their
+own repair directions since the R2 audit. Both closed here. They are one entry because
+they are one failure wearing two coats: **a spoken control that changes nothing, and
+tells nobody.**
+
+### R2-D — the stale passage
+
+`ContextMemory.current` was written by every scripture fire and cleared by nothing. So
+after a verse, a song — or a notice, a picture, a countdown — took the wall, and the
+passage the congregation had stopped looking at twenty minutes earlier was still armed.
+`nav("next")` then walked it and returned `Fired`. That return value is true of the wall
+and false of the sermon, which is the worst kind of true.
+
+An operator reaches this by an ordinary route, not a strange one: blackout clears
+`planOnAir` while leaving `$live` set, which flips the transport from SLIDE to VERSE
+without anybody asking it to.
+
+The fix is a `ContextMemory::forget`, called from **`broadcast_with_clock`** — the one
+caller of `channels::broadcast_content` — whenever the content on its way out is not
+scripture. Rule 36: the check goes at the choke point, so the AI path, the manual box,
+plan cues, media, the emergency announcement and the countdown are all covered at once,
+and a content kind added next year is disarmed by construction rather than by somebody
+remembering. The lock is taken and released **before** the broadcast (rule 2).
+
+### R2-C — the jump that said nothing
+
+`handle_passage_nav` — the spoken in-passage jump, "verse four", "chapter five verse
+one" — returned `bool`. `NavResult` exists precisely because nav must never again
+silently do nothing, and this was the **fourth door** into that bug: "verse ninety nine"
+in a six-verse psalm, or a jump before anything had been fired, left the wall unmoved
+with no toast, no banner and no log line. Same shape as the LAN remote throwing a
+`NavResult` away with `Ok(_)`.
+
+It now reports `NoPassage` when there is no book to resolve against, and
+`NotInLibrary` when the verse parses but is not in the corpus — the second of which is
+the *correct* outcome to have, since firing it would blank the screen.
+
+**It announces itself rather than returning the outcome to its caller.** Unlike
+`handle_nav`, which is also a command with an operator waiting on a return value, this
+has exactly one caller and it is the transcript thread. Putting the report at the call
+site would put the guarantee on the door instead of in the room, and the next caller
+added would quietly not have it — which is, verbatim, how the other three happened. The
+announcing itself is one function, `announce_nav`, now used by both spoken doors.
+
+### Evidence
+
+Both tests were `#[ignore]`d because they failed. Both were re-run with the defect
+deliberately reintroduced and both fail again — the fix is tested, not the code around
+it. `cargo test e2e::` now runs 32 of 32.

@@ -1804,6 +1804,19 @@ impl ContextMemory {
         self.current = Some(r.clone());
     }
 
+    /// Forget the passage entirely.
+    ///
+    /// Called when something that is NOT scripture takes the wall — a song, a
+    /// notice, a picture, a countdown. Until this existed, `current` was written
+    /// only by scripture fires and cleared by nothing, so a passage stayed armed
+    /// for the rest of the service: `next` would walk a reading the congregation
+    /// stopped looking at twenty minutes earlier and report that it had FIRED,
+    /// which is true of the wall and false of the sermon.
+    pub fn forget(&mut self) {
+        self.current = None;
+        self.span_end = None;
+    }
+
     /// Resolve a bare verse number against the current passage, if any.
     pub fn resolve_bare_verse(&self, verse: i64) -> Option<VerseRef> {
         self.current.as_ref().map(|c| VerseRef {
