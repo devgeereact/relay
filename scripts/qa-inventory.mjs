@@ -268,19 +268,26 @@ function stripComments(src) {
  * to stay clickable.
  */
 function stripScript(src) {
-  // Case-insensitive, and tolerant of `</script >`. Not because this is a sanitiser
-  // — it is a scanner over this repository's own Svelte files — but because a
-  // matcher that silently ignores a casing or a stray space is one that will
-  // eventually read a script block as markup, which is the exact bug `stripScript`
-  // exists to prevent. CodeQL raised both, in that order, and was right twice.
-  return src.replace(/<script[\s\S]*?<\/script\s*>/gi, (m) => m.replace(/[^\n]/g, ' '));
+  // `</script…>` rather than `</script>`, and case-insensitive.
+  //
+  // HTML's end-tag grammar allows anything up to the `>` — `</script >`,
+  // `</SCRIPT>`, even `</script\tfoo="bar">`, all of which a browser accepts. Three
+  // separate CodeQL findings walked through those in turn, which is the rule making
+  // its own point: matching HTML with a regex is a losing game played one variant at
+  // a time. So this matches the grammar rather than a literal.
+  //
+  // Not a sanitiser — a scanner over this repository's own Svelte files, which will
+  // not compile most of those forms anyway. The reason to get it right is the same
+  // reason `stripScript` exists: a matcher that misses an end tag reads the rest of
+  // the file's script as markup, and reports findings about a paragraph.
+  return src.replace(/<script[\s\S]*?<\/script[^>]*>/gi, (m) => m.replace(/[^\n]/g, ' '));
 }
 
 function controlsIn(file, rawSrc, wrappers) {
   // Two views of one file: `script` is where handlers are resolved, `src` is the
   // TEMPLATE with the script and the comments blanked out, which is the only place
   // a control can actually be.
-  const script = (rawSrc.match(/<script[^>]*>([\s\S]*?)<\/script\s*>/i) ?? [, ''])[1];
+  const script = (rawSrc.match(/<script[^>]*>([\s\S]*?)<\/script[^>]*>/i) ?? [, ''])[1];
   const src = stripScript(stripComments(rawSrc));
   // Which store wrappers this component imported — the vocabulary its handlers
   // can possibly speak.
