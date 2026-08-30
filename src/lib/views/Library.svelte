@@ -312,6 +312,11 @@
 </script>
 
 <div class="lib-shell">
+  <!-- A screen-reader operator navigates by heading. This tab had none at all,
+       so there was nothing to jump to and no way to tell where you had landed.
+       Visually hidden because the tab bar is already the visible title — the
+       heading is for the reader that cannot see it. -->
+  <h1 class="sr-only">Library</h1>
 {#if reviewing}
   <ImportReview songs={reviewSongs} on:done={onReviewDone} on:cancel={() => (reviewing = false)} />
 {:else}

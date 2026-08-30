@@ -860,12 +860,13 @@ describe('R3-12 · five registered commands have no UI path', () => {
   });
 });
 
-describe('R3-12 · Live is the only major view that does not say the engine is missing', () => {
+describe('R3-12 · CLOSED — every major view says when the engine is missing', () => {
   // 18 controls on Live — Clear screens, Blackout, Fire, Rehearse, the mic — are
   // `disabled={!$capture.available}`. Channels, ServicePlanner and History each
-  // render a rose "Backend not attached" badge in that state. Live renders nothing,
-  // so the run surface simply appears broken.
-  it('Channels, ServicePlanner and History explain it; Live does not', () => {
+  // render a rose "Backend not attached" badge in that state. Live rendered
+  // nothing, so the RUN surface — the one an operator is looking at when something
+  // has gone wrong — simply appeared broken.
+  it('Live explains it too, on the surface where it matters most', () => {
     for (const f of [
       'src/lib/views/Channels.svelte',
       'src/lib/views/ServicePlanner.svelte',
@@ -875,7 +876,9 @@ describe('R3-12 · Live is the only major view that does not say the engine is m
     }
     const live = src('src/lib/views/Live.svelte');
     expect(live).toMatch(/disabled=\{!\$capture\.available\}/); // it does disable
-    expect(live).not.toMatch(/Backend not attached/); // FINDING: and says nothing
+    expect(live).toMatch(/Backend not attached/); // …and now says so
+    // An alert, not a quiet note: every control on the tab is dead.
+    expect(live).toMatch(/con-noengine[^>]*role="alert"|role="alert"/);
   });
 });
 
@@ -980,19 +983,35 @@ describe('R3-12 · dialogs and the panic-key guard', () => {
   });
 });
 
-describe('R3-12 · six views have no heading at all', () => {
+describe('R3-12 · CLOSED — every view a screen reader lands on has a heading', () => {
   // A screen-reader operator navigates by heading. The whole Library tab — five
-  // sub-views and the deck — has none, and neither does Themes.
+  // sub-views and the deck — had none, and neither did Themes or Templates.
+  //
+  // Inverted from the findings it replaces: these now fail if a heading is removed.
   for (const f of [
     'src/lib/views/Library.svelte',
-    'src/lib/views/Themes.svelte',
-    'src/lib/views/Templates.svelte',
     'src/lib/views/themes/ThemeGallery.svelte',
     'src/lib/views/themes/ThemeEditor.svelte',
+    'src/lib/views/templates/TemplateGallery.svelte',
     'src/lib/views/library/Scripture.svelte',
   ]) {
-    it(`${f.split('/').pop()} renders no <h1>–<h6>`, () => {
-      expect(src(f)).not.toMatch(/<h[1-6][\s>]/);
+    it(`${f.split('/').pop()} renders a heading`, () => {
+      expect(src(f)).toMatch(/<h[1-6][\s>]/);
+    });
+  }
+
+  // `Themes.svelte` and `Templates.svelte` are ROUTERS — three lines that pick a
+  // child. They were on the original list, and putting a heading in them would
+  // have produced two headings for one screen, which is worse than none: a reader
+  // jumping by heading would land twice on the same view.
+  //
+  // The requirement belongs to the children, and both children are asserted above.
+  // Recorded rather than silently dropped from the list.
+  for (const f of ['src/lib/views/Themes.svelte', 'src/lib/views/Templates.svelte']) {
+    it(`${f.split('/').pop()} is a router and correctly has none`, () => {
+      const t = src(f);
+      expect(t).not.toMatch(/<h[1-6][\s>]/);
+      expect(t).toMatch(/mode === 'editor'/); // it really is just the switch
     });
   }
 });

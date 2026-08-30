@@ -155,7 +155,11 @@
   <section class="sv-panel">
     <header class="sv-head">
       <div class="sv-where">
-        <b>{searchMode ? 'Search results' : 'Saved scripture'}</b>
+        <!-- A real heading, not a bold span. It sits inside Library's h1, and it
+             is the VISIBLE title — so the accessible name and the text on screen
+             are the same string and cannot drift apart, which is the same reason
+             the two unlabelled controls above were fixed natively. -->
+        <h2>{searchMode ? 'Search results' : 'Saved scripture'}</h2>
         <span>
           {searchMode
             ? `${numbered.length} match${numbered.length === 1 ? '' : 'es'} · star one to keep it`
@@ -234,7 +238,9 @@
   .sv-head { display: flex; align-items: center; gap: 12px; padding: 11px 14px;
     border-bottom: 1px solid var(--v-line); }
   .sv-where { flex: 1; min-width: 0; }
-  .sv-where b { display: block; font-size: 15px; font-weight: 600; color: var(--v-txt); }
+  /* Was a <b>; it is an <h2> now (R3-12). Same pixels, so the change is purely
+     what a screen reader is told. */
+  .sv-where h2 { display: block; margin: 0; font-size: 15px; font-weight: 600; color: var(--v-txt); }
   .sv-where span { font-size: var(--v-fs-cap); color: var(--v-faint); }
   .sv-body { flex: 1; min-height: 0; overflow-y: auto; padding: 12px; }
   .sv-pager { display: flex; align-items: center; gap: 12px; padding: 10px 14px;

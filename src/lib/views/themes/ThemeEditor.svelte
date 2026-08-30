@@ -78,6 +78,10 @@
     <div class="te-loading">Loading theme…</div>
   {:else}
     <header class="te-head">
+  <!-- A screen-reader operator navigates by heading; this view had none.
+       Visually hidden because the tab bar and the header already carry the
+       visible title — the heading exists for the reader that cannot see them. -->
+      <h1 class="sr-only">Theme editor</h1>
       <button class="r-btn ghost sm" on:click={() => dispatch('back')}>‹ Themes</button>
       <input class="r-input te-name" bind:value={draft.name} on:input={() => (dirty = true)}
         aria-label="Theme name" disabled={readonly} />

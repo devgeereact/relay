@@ -246,6 +246,10 @@
 </script>
 
 <div class="tg-shell">
+  <!-- A screen-reader operator navigates by heading; this view had none.
+       Visually hidden because the tab bar already carries the visible title —
+       the heading exists for the reader that cannot see it. -->
+  <h1 class="sr-only">Templates</h1>
   <section class="tg-main">
     <!-- Type tabs — DERIVED from each template's shape, so a tab can never claim a
          template it isn't. Only kinds that actually occur are shown; there is no
