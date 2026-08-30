@@ -2415,3 +2415,64 @@ One pure rule (`screenSwitch`) shared with that tab, so badge and button cannot 
 and a browser source says where to go rather than showing a button that would do nothing.
 In the same service, `service_events` recorded the main screen **lost and recovered
 twice**.
+
+---
+
+## 57. The record and the instruments, corrected by a real service (2026-08-30)
+
+Three defects found by pointing `docs/audits/FIELD-2026-08-30.md`'s own numbers at the
+code that produced them. None of them could have been found from source, and none of
+them is in the pipeline — **all three are in what Relay writes down about itself.**
+
+### The end-to-end number was measuring how long the preacher had been talking
+
+`end_to_end_speech_to_scripture` reported **39–90 seconds** in a real service, while
+every stage it spans summed to about 1.1 s. A metric that disagrees with the sum of its
+own parts by a factor of forty is measuring something else.
+
+It ran from `VoiceDetected` — "the instant the gate opened this utterance". But
+`voice_opened_us` is set when the gate opens on an empty window and cleared only when
+the utterance CLOSES, so an unbroken speech run pins it for its whole length. A verse
+quoted sixty seconds into continuous preaching was reported as sixty seconds of Relay
+latency.
+
+It now runs from `AudioReceived` — the oldest audio still waiting in the window that
+produced the reference. That is the same conservative choice `AudioToPartial` and
+`AudioToVisible` already make (rule 31: measuring from the freshest 200 ms lump moved a
+median from 349 ms to 158 ms and would have been a lie), and it is bounded by the window
+rather than by a sermon. The cost is stated rather than hidden: `capture_front_end_ms` is
+no longer inside it and must be added by anyone comparing against a stopwatch.
+
+**This was the one number a church would quote.** Quoting it would have been indefensible.
+
+### The per-minute line existed and was never written down
+
+Stage F11 asks whether latency RISES over a long service. `perf_samples` persists
+percentiles from `latency::report(0)` — cumulative since app start — and a cumulative
+percentile is structurally unable to answer that: `worst_ms` only rises, and a p50
+diluted by thirty good minutes barely moves when the last five are bad. Answering F11 in
+the field meant *inferring* from a flat p50 under a denominator that grew 280×.
+
+The per-minute means were in the live report the whole time (`Drift`,
+`per_minute_mean_ms`) and simply vanished on quit — which is the defect RG-04 was created
+to fix, one level in. `perf_samples.last_minute_ms` persists the last COMPLETE bucket;
+the one still filling would read as a dip, and a dip is exactly the shape somebody would
+mistake for good news. Retryable migration, and a row from before the column reports an
+absence rather than a zero — a 0 ms minute would read as the fastest of the service.
+
+### A detection pointed at a sentence that did not produce it
+
+Only FINAL transcripts are persisted, and a detection born in a PARTIAL window was
+attached to whatever final happened to be last. In the field that put a verse beside a
+sentence containing no book, no number and no keyword: **72 finals in that service
+contained "verse", "chapter" or "bible" exactly zero times**, while the detections'
+`heard_text` contained all three.
+
+Every history and replay surface is built on `detections → transcripts`, so all of them
+were reporting the wrong sentence, and anything that ever scores accuracy from that join
+scores the wrong text. `persist_fire` now reuses the last final only when it really is
+the words the detector read, and otherwise persists the window in its own right. Six
+extra rows in a fifty-minute service.
+
+`persist_transcript` and `channels::list_open` became generic over `tauri::Runtime` on
+the way — rule 24, and the reason the test for this could be written at all.

@@ -234,7 +234,26 @@ impl Metric {
             Metric::AudioToVisible => (Stage::AudioReceived, Stage::TranscriptRendered),
             Metric::TranscriptToReference => (Stage::PartialTranscript, Stage::ReferenceDetected),
             Metric::ReferenceToFire => (Stage::ReferenceDetected, Stage::FireSent),
-            Metric::SpeechToScripture => (Stage::VoiceDetected, Stage::OutputRendered),
+            // ── FIELD F-6 · 2026-08-30 ──────────────────────────────────────
+            // This used to run from `VoiceDetected`, "the instant the gate opened
+            // this utterance". In a real service it reported **39-90 SECONDS**
+            // while every stage it is supposed to span summed to about 1.1 s.
+            //
+            // `voice_opened_us` is set when the gate opens on an EMPTY window and
+            // cleared only when the utterance CLOSES. A preacher talking without a
+            // pause produces no final for a long time, so it stays pinned at the
+            // start of that whole speech run — and a verse quoted sixty seconds in
+            // was reported as sixty seconds of Relay latency. It was measuring how
+            // long the person had been talking.
+            //
+            // It runs from `AudioReceived` instead: the OLDEST audio still waiting
+            // in the window that produced this reference, which is the same
+            // conservative choice `AudioToPartial` and `AudioToVisible` already
+            // make and is bounded by the window length rather than by a sermon.
+            // The capture front-end is no longer inside it — `capture_front_end_ms`
+            // is reported separately and must now be ADDED to this number, which
+            // is the price of it meaning anything at all.
+            Metric::SpeechToScripture => (Stage::AudioReceived, Stage::OutputRendered),
             // Not a span between two stages — recorded directly.
             Metric::Decode | Metric::Cadence => return None,
         };
@@ -671,7 +690,9 @@ pub struct Report {
     ///
     /// Stated rather than folded in, because `audio_received_at` means what it
     /// says. Anyone comparing this report against a stopwatch held in a room has
-    /// to add it, and `end_to_end_speech_to_scripture` already has.
+    /// to add it — **including to `end_to_end_speech_to_scripture`**, which used
+    /// to include it and no longer does. See FIELD F-6: starting that span at the
+    /// voice gate meant it measured how long the preacher had been talking.
     pub capture_front_end_ms: u64,
     pub metrics: Vec<MetricReport>,
     /// Transcript updates per second, over the whole session. The inverse of the
@@ -811,6 +832,38 @@ mod tests {
         for (i, m) in Metric::ALL.iter().enumerate() {
             assert_eq!(*m as usize, i, "{} is out of order", m.label());
         }
+    }
+
+    /// FIELD F-6 · the end-to-end number must not measure how long the preacher
+    /// has been talking.
+    ///
+    /// `voice_opened_us` is set when the gate opens on an empty window and cleared
+    /// only when the utterance CLOSES, so an unbroken speech run pins it for its
+    /// whole length. In a real service this span reported **39-90 seconds** while
+    /// every stage it spans summed to about 1.1 s.
+    #[test]
+    fn the_end_to_end_span_starts_at_this_windows_audio_not_at_the_utterance() {
+        let _l = guard();
+        // The gate opened 60 s ago and the preacher has not paused since. The audio
+        // that produced THIS reference arrived a second ago.
+        let voice_opened = 1_000_000u64;
+        let audio_received = 61_000_000u64;
+        let id = begin_pass(audio_received, Some(voice_opened));
+        stamp_at(id, Stage::OutputRendered, 61_400_000);
+        close(id);
+        let r = report(4);
+        let m = r
+            .metrics
+            .iter()
+            .find(|m| m.metric == "end_to_end_speech_to_scripture")
+            .expect("the metric is reported");
+        let worst = m.worst_ms.expect("one sample");
+        assert!(
+            worst < 1_000.0,
+            "reported {worst} ms — it is measuring from the start of the utterance \
+             again, which in a real service read as sixty seconds of Relay latency"
+        );
+        assert!(worst >= 400.0, "and it must still measure the real 400 ms");
     }
 
     #[test]
