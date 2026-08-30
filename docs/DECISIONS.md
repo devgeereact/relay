@@ -2476,3 +2476,53 @@ extra rows in a fifty-minute service.
 
 `persist_transcript` and `channels::list_open` became generic over `tauri::Runtime` on
 the way — rule 24, and the reason the test for this could be written at all.
+
+---
+
+## 58. The confirm arm of the self-calibrating gate never fired (2026-08-30)
+
+**R4-09, closed.** The gate advertises itself as self-calibrating: the operator
+confirms a suggestion, and the auto-fire bar comes down toward the score that only
+reached them as a suggestion. That is the whole mechanism by which Relay learns a
+particular preacher.
+
+On the confirm side it could not work, and had never worked.
+
+`confirm_detection` received only the reference **string**. It re-parsed it with
+`detect_direct` and fed *that* parse's confidence to `record_feedback` as "the score
+the operator agreed with". A canonical `Book C:V` always re-parses through the
+colon-pair branch at one number, for all 66 books — so the calibrator learned a
+constant. And because `record_feedback` corrects only when the confidence is **below**
+the auto-fire bar (0.50 at the default dial, 0.90 at the most cautious), that constant
+was always above it and **the correction never fired at all**. Every confirmation was
+pure decay toward baseline.
+
+`router.rs::confirming_a_suggestion_lowers_the_auto_bar_toward_it` passed throughout,
+because it calls `record_feedback` directly. **The bug was one call site up**, which is
+this repository's most repeated shape: a guarantee proven at the unit and thrown away at
+the door. `NavResult`'s `Ok(_)` in the LAN remote, the rehearsal gate on three of four
+kiosk publishers, `stopCapture` in the throw group — and this.
+
+The console always knew the suggestion's own confidence and method. It sent neither.
+Now it sends both, and:
+
+* the confidence is **clamped** to 0..1 — it crosses the bridge, and a value outside
+  that range is not a confidence and must not drag the gate anywhere;
+* a **paraphrase carries no number**. A semantic "confidence" is a raw cosine, a
+  distance in an arbitrary vector space rather than a probability (rule 10), so letting
+  it teach the auto-fire bar would be a category error dressed as calibration.
+  Confirming one is still a confirmation; it simply carries no score;
+* an **unknown method is treated as `Semantic`** — the cautious reading. The question
+  is "may this number teach the bar", and an unrecognised method has not earned a yes;
+* both parameters are **optional**, so the LAN remote and any older caller still work
+  and simply get the old behaviour. Honest, rather than silently better.
+
+`e2e::confirming_a_suggestion_teaches_the_gate_what_was_accepted` drives the real
+command and asserts the bar moves toward what was accepted and **not onto it** — one
+confirmation is evidence, not a new baseline. Its twin asserts a cosine moves nothing.
+Both were re-run with the defect reintroduced; the first fails.
+
+The R4-09 test itself was rewritten rather than deleted. Its property — that a canonical
+reference re-parses to a constant — was never the defect and is still true; it is
+exactly *why* that number could not be the evidence. It now says so, and points at the
+e2e test for the fix.

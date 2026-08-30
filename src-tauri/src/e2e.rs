@@ -251,6 +251,93 @@ fn a_service_records_what_happened_and_it_survives_the_service() {
     );
 }
 
+/// R4-09 · the self-calibrating gate must learn from what was ACCEPTED.
+///
+/// `confirm_detection` used to receive only the reference string, re-parse it, and
+/// feed that parse's confidence to `record_feedback`. Every canonical "Book C:V"
+/// re-parses to the same number, and `record_feedback` only corrects when the
+/// confidence is BELOW the auto-fire bar — so the confirm arm of the calibration
+/// could never fire. The gate advertised itself as self-calibrating and, on the
+/// confirm side, was not.
+///
+/// Driven through the real command, because the defect was never in the router:
+/// `router.rs::confirming_a_suggestion_lowers_the_auto_bar_toward_it` passed the
+/// whole time by calling `record_feedback` directly. The bug was one call site up.
+#[test]
+fn confirming_a_suggestion_teaches_the_gate_what_was_accepted() {
+    let app = app();
+    let h = app.handle().clone();
+
+    let before = {
+        let r = h.state::<Routing>();
+        let g = r.0.lock().unwrap();
+        g.thresholds()
+    };
+
+    // The operator accepts a suggestion that only ever reached them AS a
+    // suggestion — it scored below the auto-fire bar. That is evidence the bar
+    // sits too high, and it is the only kind of evidence this arm can act on.
+    let low = before.auto_fire - 0.20;
+    let after = confirm_detection(
+        h.clone(),
+        h.state::<Db>(),
+        h.state::<Routing>(),
+        h.state::<channels::Rehearsal>(),
+        "John 3:16".into(),
+        Some(low),
+        Some("direct".into()),
+    )
+    .expect("accepting a real suggestion fires");
+    settle();
+
+    assert!(
+        after.auto_fire < before.auto_fire,
+        "the bar did not move: {} -> {} after confirming at {low} — the confirm arm \
+         of the self-calibrating gate is still learning a re-parsed constant",
+        before.auto_fire,
+        after.auto_fire
+    );
+    assert!(
+        after.auto_fire > low,
+        "it moved TOWARD what was accepted, not onto it — one confirmation is not \
+         a new baseline"
+    );
+}
+
+/// …and a PARAPHRASE carries no number into the gate.
+///
+/// A semantic "confidence" is a raw cosine — a distance in an arbitrary vector
+/// space, not a probability (rule 10). Confirming one is still a confirmation; it
+/// simply cannot teach the auto-fire bar where to sit, and letting it would be a
+/// category error dressed up as calibration.
+#[test]
+fn confirming_a_paraphrase_does_not_drag_the_auto_fire_bar() {
+    let app = app();
+    let h = app.handle().clone();
+    let before = {
+        let r = h.state::<Routing>();
+        let g = r.0.lock().unwrap();
+        g.thresholds()
+    };
+    let after = confirm_detection(
+        h.clone(),
+        h.state::<Db>(),
+        h.state::<Routing>(),
+        h.state::<channels::Rehearsal>(),
+        "John 3:16".into(),
+        Some(before.auto_fire - 0.30),
+        Some("semantic".into()),
+    )
+    .expect("accepting a paraphrase still fires it");
+    settle();
+    assert!(
+        after.auto_fire >= before.auto_fire,
+        "a cosine moved the auto-fire bar: {} -> {}",
+        before.auto_fire,
+        after.auto_fire
+    );
+}
+
 /// FIELD F-2 · a detection must point at the words it actually read.
 ///
 /// Only FINAL transcripts are persisted, and a detection born in a PARTIAL window
@@ -1375,6 +1462,8 @@ fn accepting_a_suggestion_that_cannot_fire_says_so() {
         h.state::<Routing>(),
         h.state::<channels::Rehearsal>(),
         "John 3:16".into(),
+        None,
+        None,
     )
     .expect("accepting a real suggestion must fire");
     settle();
@@ -1391,6 +1480,8 @@ fn accepting_a_suggestion_that_cannot_fire_says_so() {
         h.state::<Routing>(),
         h.state::<channels::Rehearsal>(),
         "Psalms 23:99".into(),
+        None,
+        None,
     )
     .expect_err("accepting a verse outside the corpus must NOT report success");
     assert!(
@@ -1416,6 +1507,8 @@ fn accepting_a_suggestion_that_cannot_fire_says_so() {
         h.state::<Routing>(),
         h.state::<channels::Rehearsal>(),
         "the pastor's third point".into(),
+        None,
+        None,
     )
     .expect_err("an unreadable reference must NOT report success");
     assert!(

@@ -3557,7 +3557,26 @@ fn confirm_detection<R: tauri::Runtime>(
     routing: tauri::State<'_, Routing>,
     rehearsal: tauri::State<'_, channels::Rehearsal>,
     reference: String,
+    confidence: Option<f32>,
+    method: Option<String>,
 ) -> error::Result<Thresholds> {
+    // The confidence of the SUGGESTION the operator accepted, and how it was
+    // found. Both were known to the console and thrown away at the call site.
+    //
+    // R4-09: without them this re-parsed the reference STRING and fed that
+    // parse's score to `record_feedback` as "the score the operator agreed
+    // with". A canonical "Book C:V" always re-parses through the colon-pair
+    // branch at the same number, for all 66 books — so the confirm arm of the
+    // self-calibrating gate always learned the same constant, and because
+    // `record_feedback` only corrects when `c < auto_fire` (0.50 at the default
+    // dial, 0.90 at the most cautious) the correction never fired at all. Every
+    // confirm was pure decay toward baseline. `router.rs`'s own unit test passed
+    // because it calls `record_feedback` directly.
+    //
+    // Optional so the LAN remote and older callers still work; when absent the
+    // re-parse is used and the old behaviour stands, which is honest rather than
+    // silently better.
+
     // The confidence of the suggestion the operator just accepted — this is the
     // evidence the self-calibrating gate learns from, so it has to outlive the
     // `if let` that parses the reference.
@@ -3589,10 +3608,28 @@ fn confirm_detection<R: tauri::Runtime>(
                 "could not read a reference from \"{reference}\" — nothing was put on the screens"
             ))
         })?;
-    // Always Some now: the parse is a hard precondition rather than an `if let`
-    // that could quietly do nothing. `record_feedback` still takes an Option
-    // because the router's own tests exercise the None arm.
-    let confirmed_conf = Some(m.confidence);
+    // What the operator actually agreed with, when the console told us.
+    //
+    // Clamped, because this crosses the bridge: a value outside 0..1 is not a
+    // confidence and must not be allowed to drag the gate anywhere.
+    //
+    // And ONLY when the suggestion could have auto-fired. A paraphrase's
+    // "confidence" is a raw cosine — a distance in an arbitrary vector space, not
+    // a probability (rule 10) — so feeding it into the auto-fire bar would be a
+    // category error dressed as calibration. Confirming one still counts as a
+    // confirmation; it just carries no number, which `record_feedback` already
+    // handles.
+    let accepted_method = method
+        .as_deref()
+        .map(detection::DetectionMethod::from_wire)
+        .unwrap_or(detection::DetectionMethod::Direct);
+    let confirmed_conf = match confidence {
+        Some(c) if accepted_method.may_auto_fire() => Some(c.clamp(0.0, 1.0)),
+        Some(_) => None,
+        // No confidence supplied: fall back to the re-parse, which is what this
+        // always did. Not better, but not a lie either.
+        None => Some(m.confidence),
+    };
     {
         // Stage the passage span, then fire through the one shared manual path —
         // the operator accepting a suggestion IS a human decision, so it records
