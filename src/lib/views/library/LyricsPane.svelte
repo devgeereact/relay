@@ -21,6 +21,7 @@
   //    song is live, the editor says so out loud.
   import { onMount } from 'svelte';
   import VerseDeck from './VerseDeck.svelte';
+  import Arrangements from './Arrangements.svelte';
   import EmptyState from '../../ui/EmptyState.svelte';
   import Loading from '../../ui/Loading.svelte';
   import { humanError } from '../../errors.js';
@@ -57,6 +58,10 @@
   let loading = true;
   let loadingSong = false;
   let editing = false;
+  // The running-order editor. A separate mode from the lyric editor rather than a
+  // pane beside it: they are different jobs (what the song SAYS vs what order you
+  // sing it in), and on a laptop screen a three-way split is unreadable.
+  let arranging = false;
   let saving = false;
   let error = '';
   let msg = '';
@@ -331,8 +336,11 @@
             </button>
           </div>
 
-          <button class="r-btn ghost sm" on:click={() => (editing = !editing)}>
+          <button class="r-btn ghost sm" on:click={() => { editing = !editing; if (editing) arranging = false; }}>
             {editing ? 'Done' : 'Edit lyrics'}
+          </button>
+          <button class="r-btn ghost sm" class:on={arranging} on:click={() => { arranging = !arranging; if (arranging) editing = false; }}>
+            {arranging ? 'Done' : 'Arrangements'}
           </button>
           {#if dirty}
             <button class="r-btn primary sm" disabled={saving} on:click={save}>
@@ -359,7 +367,12 @@
         </div>
       {/if}
 
-      <div class="ly-body" class:split={editing}>
+      <div class="ly-body" class:split={editing || arranging}>
+        {#if arranging}
+          <div class="ly-edit">
+            <Arrangements {song} onMessage={(m) => (msg = m)} />
+          </div>
+        {/if}
         {#if editing}
           <div class="ly-edit">
             <label class="r-lbl" for="ly-text">Lyrics</label>

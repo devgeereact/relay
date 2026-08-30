@@ -1326,6 +1326,176 @@ mod tests {
         assert!(list_arrangements(&conn, id).unwrap().is_empty());
     }
 
+    /// RG-22 · AN ARRANGEMENT IS A LIST OF INDICES, AND INDICES MOVE.
+    ///
+    /// Editing the WORDS of a section must not disturb an arrangement — that is
+    /// the whole reason the schema stores indices instead of copied lyrics, and
+    /// an operator fixing a typo on Saturday night must not silently lose the
+    /// running order they built on Tuesday.
+    ///
+    /// Reordering, inserting, deleting or renaming a section is the other case:
+    /// index 3 stops meaning what the person who chose it meant. Relay does not
+    /// guess which section they wanted — it says the arrangement needs checking.
+    #[test]
+    fn a_lyric_edit_keeps_an_arrangement_and_a_structural_edit_flags_it() {
+        use crate::songs::ParsedSection;
+        let conn = fresh_db();
+        ensure_songs(&conn).unwrap();
+        let sec = |t: &str, l: &str| ParsedSection {
+            tag: t.into(),
+            label: t.into(),
+            lyrics: l.into(),
+        };
+        let id = import_song(
+            &conn,
+            "Great Are You Lord",
+            "",
+            "",
+            "",
+            None,
+            "d",
+            &[sec("V1", "one"), sec("C", "chorus"), sec("V2", "two")],
+        )
+        .unwrap();
+        save_arrangement(&conn, id, None, "Live", &[0, 1, 2, 1]).unwrap();
+        assert!(!list_arrangements(&conn, id).unwrap()[0].stale);
+
+        // A LYRIC edit — same sections, different words. Nothing moved.
+        update_song(
+            &conn,
+            id,
+            "Great Are You Lord",
+            "",
+            "",
+            "",
+            None,
+            &[
+                sec("V1", "one, corrected"),
+                sec("C", "chorus"),
+                sec("V2", "two"),
+            ],
+        )
+        .unwrap();
+        assert!(
+            !list_arrangements(&conn, id).unwrap()[0].stale,
+            "fixing a typo must not cost the operator their running order"
+        );
+
+        // A STRUCTURAL edit — a bridge inserted before the chorus. Index 1 now
+        // names a section nobody chose.
+        update_song(
+            &conn,
+            id,
+            "Great Are You Lord",
+            "",
+            "",
+            "",
+            None,
+            &[
+                sec("V1", "one"),
+                sec("B", "bridge"),
+                sec("C", "chorus"),
+                sec("V2", "two"),
+            ],
+        )
+        .unwrap();
+        let arr = &list_arrangements(&conn, id).unwrap()[0];
+        assert!(arr.stale, "the sections moved under it");
+        assert_eq!(
+            arr.sequence,
+            vec![0, 1, 2, 1],
+            "what they chose is kept, not rewritten — Relay flags it, it does not guess"
+        );
+
+        // Saving it again is the repair: a person has now looked at both.
+        save_arrangement(&conn, id, Some(arr.id), "Live", &[0, 2, 3, 2]).unwrap();
+        assert!(!list_arrangements(&conn, id).unwrap()[0].stale);
+    }
+
+    /// An arrangement written before `built_shape` existed carries no record of
+    /// what it was built against. Reporting it stale would be a claim from an
+    /// absence — the same lie in the other direction.
+    #[test]
+    fn an_arrangement_with_no_recorded_shape_is_not_called_stale() {
+        use crate::songs::ParsedSection;
+        let conn = fresh_db();
+        ensure_songs(&conn).unwrap();
+        let sec = |t: &str| ParsedSection {
+            tag: t.into(),
+            label: t.into(),
+            lyrics: t.into(),
+        };
+        let id = import_song(&conn, "S", "", "", "", None, "d", &[sec("V1"), sec("C")]).unwrap();
+        conn.execute(
+            "INSERT INTO song_arrangements (song_id, name, sequence, built_shape)
+             VALUES (?1, 'Old', '[0,1]', '')",
+            [id],
+        )
+        .unwrap();
+        assert!(!list_arrangements(&conn, id).unwrap()[0].stale);
+    }
+
+    /// The same defect, one door along: a PLAN CUE carries the arrangement's
+    /// indices too, and `sync_song_in_plans` re-expands through them on every
+    /// song edit. Through a drifted arrangement that puts the wrong words on a
+    /// wall — so the cue falls back to the song's own order, which is always the
+    /// right words, and says that it did.
+    #[test]
+    fn a_plan_cue_does_not_re_expand_through_a_drifted_arrangement() {
+        use crate::songs::ParsedSection;
+        let conn = fresh_db();
+        ensure_service_plans(&conn).unwrap();
+        ensure_songs(&conn).unwrap();
+        let sec = |t: &str, l: &str| ParsedSection {
+            tag: t.into(),
+            label: t.into(),
+            lyrics: l.into(),
+        };
+        let start = [sec("V1", "one"), sec("C", "chorus"), sec("V2", "two")];
+        let sid = import_song(&conn, "Way Maker", "", "", "", None, "d", &start).unwrap();
+        let shape = crate::db::songs::shape_of_parsed(&start);
+        let pid = create_plan(&conn, "Sunday", "d").unwrap();
+        let payload = format!(
+            r#"{{"song_id":{sid},"title":"Way Maker","arrangement_name":"Live",
+                 "arrangement_seq":[0,1,2,1],"arrangement_shape":{shape:?},"sections":[]}}"#
+        );
+        add_plan_item(&conn, pid, "song", "Way Maker", &payload, None).unwrap();
+
+        // A lyric edit: the cue still plays the chosen order, chorus repeated.
+        let edited = [sec("V1", "one!"), sec("C", "chorus"), sec("V2", "two")];
+        update_song(&conn, sid, "Way Maker", "", "", "", None, &edited).unwrap();
+        sync_song_in_plans(&conn, sid, "Way Maker", &edited).unwrap();
+        let item = &plan_items(&conn, pid).unwrap()[0];
+        let v: serde_json::Value = serde_json::from_str(&item.payload_json).unwrap();
+        assert_eq!(v["sections"].as_array().unwrap().len(), 4, "V1 C V2 C");
+        assert_eq!(v["arrangement_stale"], serde_json::json!(false));
+
+        // A structural edit: a bridge inserted. The indices now name other
+        // sections, so the cue reverts to the song's order and says so.
+        let moved = [
+            sec("V1", "one!"),
+            sec("B", "bridge"),
+            sec("C", "chorus"),
+            sec("V2", "two"),
+        ];
+        update_song(&conn, sid, "Way Maker", "", "", "", None, &moved).unwrap();
+        sync_song_in_plans(&conn, sid, "Way Maker", &moved).unwrap();
+        let item = &plan_items(&conn, pid).unwrap()[0];
+        let v: serde_json::Value = serde_json::from_str(&item.payload_json).unwrap();
+        assert_eq!(
+            v["sections"].as_array().unwrap().len(),
+            4,
+            "the song's own four sections, once each — not the arrangement's four"
+        );
+        assert_eq!(v["sections"][1]["lyrics"], "bridge");
+        assert_eq!(v["arrangement_stale"], serde_json::json!(true));
+        assert_eq!(
+            v["arrangement_seq"],
+            serde_json::json!([0, 1, 2, 1]),
+            "what was chosen is kept so the operator can repair it, not erased"
+        );
+    }
+
     #[test]
     fn editing_a_song_propagates_to_plans() {
         use crate::songs::ParsedSection;

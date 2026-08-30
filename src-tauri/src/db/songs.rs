@@ -71,7 +71,48 @@ pub fn ensure_songs(conn: &Connection) -> rusqlite::Result<()> {
             sequence TEXT NOT NULL DEFAULT '[]'
          );
          CREATE INDEX IF NOT EXISTS idx_song_arrangements ON song_arrangements(song_id);",
-    )
+    )?;
+    // `built_shape` arrived after the table did. Sniffed rather than a bare
+    // `ALTER TABLE ADD COLUMN`, which errors with "duplicate column name" on the
+    // second boot and panics the app before the window is shown (rule 25).
+    let has_shape: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM pragma_table_info('song_arrangements') WHERE name = 'built_shape'",
+        [],
+        |r| r.get(0),
+    )?;
+    if has_shape == 0 {
+        conn.execute_batch(
+            "ALTER TABLE song_arrangements ADD COLUMN built_shape TEXT NOT NULL DEFAULT '';",
+        )?;
+    }
+    Ok(())
+}
+
+/// The STRUCTURAL fingerprint of a section list — its tags and labels, in order.
+///
+/// **The lyrics are deliberately excluded.** Editing the words of a verse must
+/// not invalidate an arrangement: storing indices rather than copied lyrics is
+/// the whole reason the schema is shaped this way, and a lyric edit really does
+/// re-expand into the right slots. What this catches is the other case —
+/// reordering, inserting, deleting or renaming a section — where index 3 quietly
+/// stops meaning what it meant when somebody chose it.
+pub fn shape_of_parsed(sections: &[crate::songs::ParsedSection]) -> String {
+    shape_of(sections.iter().map(|s| (s.tag.as_str(), s.label.as_str())))
+}
+
+fn shape_of<'a>(sections: impl IntoIterator<Item = (&'a str, &'a str)>) -> String {
+    let pairs: Vec<[&str; 2]> = sections.into_iter().map(|(t, l)| [t, l]).collect();
+    serde_json::to_string(&pairs).unwrap_or_default()
+}
+
+/// The shape a song has in the database right now.
+pub fn current_shape(conn: &Connection, song_id: i64) -> rusqlite::Result<String> {
+    let mut stmt =
+        conn.prepare("SELECT tag, label FROM song_sections WHERE song_id = ?1 ORDER BY position")?;
+    let rows: Vec<(String, String)> = stmt
+        .query_map([song_id], |r| Ok((r.get(0)?, r.get(1)?)))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(shape_of(rows.iter().map(|(t, l)| (t.as_str(), l.as_str()))))
 }
 
 /// A named play-order for a song (ProPresenter arrangements). `sequence` is the
@@ -81,19 +122,35 @@ pub struct Arrangement {
     pub id: i64,
     pub name: String,
     pub sequence: Vec<i64>,
+    /// The song's structure when this arrangement was built — see `shape_of_parsed`.
+    pub built_shape: String,
+    /// The song's sections have been reordered, added to, removed or renamed
+    /// since. The stored indices therefore point at different sections than the
+    /// person who built it chose, and Relay will not guess which.
+    ///
+    /// An arrangement written before this column existed carries an empty
+    /// `built_shape` and is reported as NOT stale: nothing recorded what it was
+    /// built against, and claiming staleness from an absence is the same lie as
+    /// claiming freshness from one.
+    pub stale: bool,
 }
 
 /// All arrangements for a song.
 pub fn list_arrangements(conn: &Connection, song_id: i64) -> rusqlite::Result<Vec<Arrangement>> {
+    let now = current_shape(conn, song_id)?;
     let mut stmt = conn.prepare(
-        "SELECT id, name, sequence FROM song_arrangements WHERE song_id = ?1 ORDER BY id",
+        "SELECT id, name, sequence, built_shape FROM song_arrangements
+         WHERE song_id = ?1 ORDER BY id",
     )?;
     let rows = stmt.query_map([song_id], |r| {
         let seq: String = r.get(2)?;
+        let built_shape: String = r.get(3)?;
         Ok(Arrangement {
             id: r.get(0)?,
             name: r.get(1)?,
             sequence: serde_json::from_str(&seq).unwrap_or_default(),
+            stale: !built_shape.is_empty() && built_shape != now,
+            built_shape,
         })
     })?;
     rows.collect()
@@ -108,18 +165,24 @@ pub fn save_arrangement(
     sequence: &[i64],
 ) -> rusqlite::Result<i64> {
     let seq = serde_json::to_string(sequence).unwrap_or_else(|_| "[]".into());
+    // Saving is also how a stale arrangement is repaired: it is re-recorded
+    // against the song as it is NOW, which is the only moment a person has
+    // actually looked at both.
+    let shape = current_shape(conn, song_id)?;
     match id {
         Some(aid) => {
             conn.execute(
-                "UPDATE song_arrangements SET name = ?1, sequence = ?2 WHERE id = ?3 AND song_id = ?4",
-                (name, &seq, aid, song_id),
+                "UPDATE song_arrangements SET name = ?1, sequence = ?2, built_shape = ?3
+                 WHERE id = ?4 AND song_id = ?5",
+                (name, &seq, &shape, aid, song_id),
             )?;
             Ok(aid)
         }
         None => {
             conn.execute(
-                "INSERT INTO song_arrangements (song_id, name, sequence) VALUES (?1, ?2, ?3)",
-                (song_id, name, &seq),
+                "INSERT INTO song_arrangements (song_id, name, sequence, built_shape)
+                 VALUES (?1, ?2, ?3, ?4)",
+                (song_id, name, &seq, &shape),
             )?;
             Ok(conn.last_insert_rowid())
         }
@@ -353,6 +416,7 @@ pub fn sync_song_in_plans(
         .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
         .collect::<rusqlite::Result<Vec<_>>>()?;
     drop(stmt);
+    let shape = shape_of_parsed(sections);
     let tx = conn.unchecked_transaction()?;
     let mut n = 0;
     for (item_id, payload) in rows {
@@ -361,7 +425,28 @@ pub fn sync_song_in_plans(
             v["title"] = Value::String(title.to_string());
             // Re-expand through the cue's arrangement so a lyric edit lands in
             // the right (possibly repeated) slots; no arrangement → straight order.
-            v["sections"] = expand_sections(sections, v.get("arrangement_seq"));
+            //
+            // UNLESS the song's STRUCTURE changed. The cue stores indices, so a
+            // reorder or an inserted section makes index 3 mean a different verse
+            // than the person who built the arrangement chose — and re-expanding
+            // through it would put the wrong words on a wall, on a Sunday, with
+            // nothing anywhere saying so. Relay will not guess which section was
+            // meant: the cue falls back to the song's own order, which is always
+            // the right WORDS even if it is not the intended repeats, and it is
+            // marked so the Planner can say it out loud.
+            //
+            // A cue with no recorded shape is left alone rather than assumed
+            // stale — the same rule the column follows. (No such cue can exist in
+            // the wild: nothing could create an arrangement until the editor did.)
+            let built = v.get("arrangement_shape").and_then(Value::as_str);
+            let drifted = built.is_some_and(|b| !b.is_empty() && b != shape);
+            if drifted {
+                v["sections"] = expand_sections(sections, None);
+                v["arrangement_stale"] = Value::Bool(true);
+            } else {
+                v["sections"] = expand_sections(sections, v.get("arrangement_seq"));
+                v["arrangement_stale"] = Value::Bool(false);
+            }
             tx.execute(
                 "UPDATE plan_items SET label = ?1, payload_json = ?2 WHERE id = ?3",
                 (title, v.to_string(), item_id),

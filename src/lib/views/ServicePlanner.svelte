@@ -761,7 +761,18 @@
         {:else if inspTab === 'slides'}
           <div class="sp-slidemeta r-mono">
             {#if selCue.cue_type === 'song'}
-              <span class="sp-chip">ARRANGEMENT: {(payloadOf(selCue).arrangement_name || 'Standard').toUpperCase()}</span>
+              {#if payloadOf(selCue).arrangement_stale}
+                <!-- The song's sections moved after this cue was built, so the
+                     slides below are the song's own order, NOT the arrangement
+                     named on the cue. Saying the arrangement's name here would be
+                     the badge lying about what is in the plan. -->
+                <span class="sp-chip stale">
+                  ARRANGEMENT: {(payloadOf(selCue).arrangement_name || 'Standard').toUpperCase()} — NEEDS
+                  CHECKING, PLAYING IN THE SONG’S OWN ORDER
+                </span>
+              {:else}
+                <span class="sp-chip">ARRANGEMENT: {(payloadOf(selCue).arrangement_name || 'Standard').toUpperCase()}</span>
+              {/if}
             {/if}
             <span class="sp-chip">{selSlides.length} {selCue.cue_type === 'song' ? 'SECTIONS' : 'SLIDE' + (selSlides.length === 1 ? '' : 'S')}</span>
           </div>
@@ -810,9 +821,23 @@
         <span class="sp-arroptseq r-mono">{arrPick.song.sections.length} sections · in order</span>
       </button>
       {#each arrPick.arrangements as a (a.id)}
-        <button class="sp-arropt r-focus" on:click={() => commitSong(arrPick.song, a)}>
+        <!-- A stale arrangement is offered but not choosable, and it says why.
+             Its indices no longer name the sections the operator picked, so
+             adding it would put the wrong words in the plan; quietly hiding it
+             would leave them hunting for an arrangement they know they made. -->
+        <button
+          class="sp-arropt r-focus"
+          class:stale={a.stale}
+          disabled={a.stale}
+          on:click={() => commitSong(arrPick.song, a)}>
           <span class="sp-arroptname">{a.name}</span>
           <span class="sp-arroptseq r-mono">{a.sequence.map((i) => (arrPick.song.sections[i]?.tag ?? '?')).join(' · ')}</span>
+          {#if a.stale}
+            <span class="sp-arrstale">
+              The song’s sections changed since this was built — open it in Library →
+              Lyrics → Arrangements and check it.
+            </span>
+          {/if}
         </button>
       {/each}
       <button class="r-btn ghost sm sp-arrcancel" on:click={() => (arrPick = null)}>Cancel</button>
@@ -1063,6 +1088,12 @@
     border-radius:var(--v-r-md); background:var(--v-surf2); border:1px solid var(--v-line); color:var(--v-txt);
     cursor:pointer; transition:.12s; }
   .sp-arropt:hover{ border-color:var(--v-accent); background:var(--v-accent-soft); }
+  /* Rose, never amber: this is a thing that is wrong, not a thing that is live
+     (DECISIONS §22). */
+  .sp-arropt.stale{ border-color:var(--v-rose,#e0526a); opacity:.75; cursor:not-allowed; }
+  .sp-arropt.stale:hover{ border-color:var(--v-rose,#e0526a); background:transparent; }
+  .sp-arrstale{ font-size:11px; color:var(--v-rose,#e0526a); }
+  .sp-chip.stale{ color:var(--v-rose,#e0526a); border-color:currentColor; }
   .sp-arroptname{ font-weight:600; font-size:var(--v-fs-b1); }
   .sp-arroptseq{ font-size:var(--v-fs-cap); letter-spacing:.03em; color:var(--v-faint);
     white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }

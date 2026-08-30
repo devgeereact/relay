@@ -753,10 +753,10 @@ const FRONTEND = (() => {
   return out;
 })();
 
-describe('R3-12 · seven registered commands have no UI path', () => {
+describe('R3-12 · five registered commands have no UI path', () => {
   // CLAUDE.md: "No dead-but-built commands. Every registered #[tauri::command] has
   // a frontend caller." A store WRAPPER is not a caller in the sense that matters —
-  // `saveArrangement` has had one and no UI for months.
+  // `saveArrangement` had one and no UI for months.
   //
   // The chain that counts:
   //   #[tauri::command] → call('…') in capture.js → a wrapper some component imports
@@ -766,14 +766,18 @@ describe('R3-12 · seven registered commands have no UI path', () => {
   //   which reads the active profile in order to remember it with the room (RG-10).
   //   It was on this list for months; it is a caller now, and the test would fail
   //   if it were still here.
+  //
+  //   `save_arrangement` and `delete_arrangement` — reached from 2026-08-30 by
+  //   Library → Lyrics → Arrangements. These two were the reason this list exists:
+  //   a whole feature — the running order a worship team actually sings — had a
+  //   table, three commands, a store wrapper, a plan-cue expander and a picker in
+  //   the Planner, and no way for a person to make one. RG-21, DECISIONS §55.
   const DEAD = {
     create_template: 'createTemplate',
-    delete_arrangement: 'deleteArrangement',
     import_pro: 'importProFile',
     import_song: 'importSong',
     list_output_windows: 'listOutputWindows',
     open_output_window: 'openOutput',
-    save_arrangement: 'saveArrangement',
   };
 
   const capture = src('src/lib/stores/capture.js');
@@ -801,6 +805,30 @@ describe('R3-12 · seven registered commands have no UI path', () => {
       expect(importers).toEqual([]);
     });
   }
+
+  // The other half of the same claim, and the one that actually protects an
+  // operator: the arrangement editor is REACHED. A test that only ever asserts
+  // absence cannot tell "this was fixed" from "this was deleted".
+  it('the arrangement editor is imported, rendered, and can write', () => {
+    const importsWrapper = (wrapper) =>
+      FRONTEND.filter(
+        ([f, text]) =>
+          !f.endsWith('capture.js') &&
+          [...text.matchAll(/import\s*\{([^}]+)\}\s*from\s*['"][^'"]*capture\.js['"]/g)].some(
+            (m) => m[1].split(',').some((n) => n.trim().split(/\s+as\s+/)[0] === wrapper),
+          ),
+      ).map(([f]) => f);
+
+    // FRONTEND carries absolute paths (the existing assertions above compare to
+    // `[]`, so they never had to care), hence the suffix match.
+    const reaches = (wrapper) =>
+      importsWrapper(wrapper).some((f) => f.endsWith('/views/library/Arrangements.svelte'));
+    expect(reaches('saveArrangement')).toBe(true);
+    expect(reaches('deleteArrangement')).toBe(true);
+    // …and something renders it. A component nothing renders is not covered,
+    // however green its tests.
+    expect(src('src/lib/views/library/LyricsPane.svelte')).toMatch(/<Arrangements\b/);
+  });
 });
 
 describe('R3-12 · Live is the only major view that does not say the engine is missing', () => {

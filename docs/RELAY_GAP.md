@@ -138,6 +138,39 @@ asked, this file is what the repository answered.
 > Both tests were re-run with the defect deliberately reintroduced, and both fail again.
 > **The release decision is still NO-GO**, unchanged and for the unchanged reason: two
 > closed defects are not a Sunday.
+>
+> ---
+>
+> ## Fix log — 2026-08-30 · RG-21 · RG-22 · the packaged build
+>
+> **The application was rebuilt and re-verified from source** before this round:
+> `npm run tauri build` produced `Relay.app` and `Relay_0.1.0-4_aarch64.dmg`, and
+> `./scripts/sign-local.sh` reproduced §17's conditions on the bundle — hardened
+> runtime ON, microphone entitlement present, usage string present. That is the
+> check that cannot be made from source, because the trap it exists to catch only
+> appears on a signed build.
+>
+> Two new register entries, closed together. **RG-20 (doc drift) is also ticked** —
+> its own validation command has returned nothing since the first round and had
+> simply never been marked.
+>
+> | ID | What changed | Pinned by |
+> |---|---|---|
+> | **RG-21** | A song's running order can be built at all — the editor the whole arrangement chain was missing. `song_arrangements` moves from WRAPPER ONLY to a create path, and the repository has no dead command left | `arrangements.test.js` (13), `qa.rs::a_component_can_create_a_song_arrangement`, `surface.test.js` R3-12 |
+> | **RG-22** | An arrangement whose sections moved is marked, refused into a plan, and repaired by a person — never remapped by guessing. The same rule on the plan-cue door | `db/mod.rs` (3 new), both re-run with the check disabled and failing |
+>
+> **They had to ship together.** RG-22 was latent only because nothing could create
+> an arrangement; the editor is what would have made it reachable. Shipping RG-21
+> alone would have introduced a path to the wrong words on a wall.
+>
+> **What was deliberately not built: automatic remapping.** Matching an old section
+> index to a new one means guessing whether a section was moved or replaced, and a
+> wrong guess is indistinguishable from a right one until it is on a screen in front
+> of a congregation. DECISIONS §55.
+>
+> Counts after: **595 Rust** (26 ignored) + **857 frontend**, `fmt` and
+> `clippy -D warnings` clean, inventory at zero unnamed controls and zero
+> handlerless buttons. **Still NO-GO** — the list below did not move.
 
 ---
 
@@ -733,7 +766,9 @@ matter right now.
 | ✅ RG-17 | No privacy screen | The best privacy story in the product is invisible | `PRIVACY.md` | One screen stating current state | — | P2 | S | Reflects the real setting, never a hardcoded "off" |
 | ✅ RG-18 | No contrast validation, distance preview or output accessibility mode | Unreadable from row 20, and nothing says so | grep: zero | Ratio check + a distance simulator | — | P3 | M | Needs a real projector |
 | ✅ RG-19 | No offline installer or language packs | A church with poor internet cannot install | `models.rs` | Bundle app + model + corpus; sign language packs | RG-06 | P3 | L | Install with the network cable out |
-| RG-20 | **Doc drift** — 114 / 4,024 / "35 decisions" / e2e layer count wrong across six files | `CLAUDE.md` is read first by every agent and is on the wrong side | §26 | Fix, and add the reproducing command beside every count | — | P0 | S | `grep -rn '114 cmds\|4,024\|4.0k lines\|35 decisions' CLAUDE.md docs/` returns nothing |
+| ✅ RG-20 | **Doc drift** — 114 / 4,024 / "35 decisions" / e2e layer count wrong across six files | `CLAUDE.md` is read first by every agent and is on the wrong side | §26 | Fix, and add the reproducing command beside every count | — | P0 | S | `grep -rn '114 cmds\|4,024\|4.0k lines\|35 decisions' CLAUDE.md docs/` returns nothing — **verified clean 2026-08-30** |
+| ✅ RG-21 | **No arrangement editor** — the one dead command. A song's running order (verse · chorus · verse · chorus · bridge) could not be created at all | A worship team cannot express how they actually sing a song; the Planner's picker is unreachable code and always falls to "Standard" | `qa-inventory.mjs` (`song_arrangements`: WRAPPER ONLY); `qa.rs::no_component_can_create_a_song_arrangement` | Build the editor in Library → Lyrics; it is the only missing link in a chain that already had a table, three commands, a wrapper, an expander and a picker | — | P1 | M | The inventory reports a create path, and a test asserts something RENDERS the editor — not merely that it exists |
+| ✅ RG-22 | **Arrangement index drift** — the sequence is section positions, so reordering, inserting, deleting or renaming a section silently repoints it | The wrong words on a wall, on a Sunday, with nothing saying so. Latent until RG-21 shipped, which is why they shipped together | `db/songs.rs` (`sync_song_in_plans` re-expanded through stored indices unconditionally) | Record `built_shape` per arrangement and per plan cue; mark drift, refuse it into a plan, fall a drifted cue back to the song's own order. Never remap by guessing | RG-21 | P1 | M | Both Rust tests fail with the check disabled; the picker offers a stale arrangement and will not add it |
 
 ---
 
@@ -779,6 +814,8 @@ service), and one church.
 - [x] RG-06 … RG-12 (P1) — done 2026-08-29, same fix log
 - [x] RG-13 … RG-17 (P2) — done 2026-08-30, same fix log
 - [x] RG-18 · RG-19 (P3) — done 2026-08-30, same fix log
+- [x] RG-20 (doc drift) — done in the first round; the tick was missing, the work was not
+- [x] RG-21 · RG-22 — the arrangement editor and the index-drift rule, done 2026-08-30
 
 ### What is left, and none of it is a commit
 

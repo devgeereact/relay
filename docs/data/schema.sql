@@ -122,7 +122,13 @@ CREATE TABLE song_arrangements (
     id       INTEGER PRIMARY KEY,
     song_id  INTEGER NOT NULL REFERENCES songs(id) ON DELETE CASCADE,
     name     TEXT NOT NULL,
-    sequence TEXT NOT NULL DEFAULT '[]'   -- JSON array of section indices
+    sequence TEXT NOT NULL DEFAULT '[]',  -- JSON array of section indices
+    -- The song's STRUCTURE when this order was built: [[tag, label], …], lyrics
+    -- excluded on purpose. A lyric edit must not disturb an arrangement (that is
+    -- what storing indices buys); a reorder, insert, delete or rename must, because
+    -- index 3 then names a section nobody chose. Empty = built before this column,
+    -- and is never reported stale — a claim from an absence. DECISIONS §55.
+    built_shape TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX idx_song_arrangements ON song_arrangements(song_id);
 
