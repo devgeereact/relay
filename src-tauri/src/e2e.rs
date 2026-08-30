@@ -251,6 +251,59 @@ fn a_service_records_what_happened_and_it_survives_the_service() {
     );
 }
 
+/// FIELD F-2 · a detection must point at the words it actually read.
+///
+/// Only FINAL transcripts are persisted, and a detection born in a PARTIAL window
+/// used to be attached to whatever final happened to be last. In a real service
+/// that put a verse next to a sentence containing no book, no number and no
+/// keyword: 72 finals in that service contained "verse", "chapter" or "bible"
+/// exactly zero times, while the detections' own `heard_text` contained all three.
+///
+/// Every history and replay surface is built on `detections -> transcripts`, so
+/// every one of them was reporting a sentence that did not produce the verse
+/// beside it.
+#[test]
+fn a_detection_points_at_the_words_that_produced_it() {
+    let app = app();
+    let h = app.handle().clone();
+    let db = h.state::<Db>();
+
+    let svc = start_service(
+        h.clone(),
+        h.state::<Session>(),
+        h.state::<Db>(),
+        h.state::<channels::Rehearsal>(),
+        h.state::<servicelock::ServiceLock>(),
+        "Sunday Service".into(),
+        "2026-08-30".into(),
+    )
+    .expect("start_service");
+
+    // A final transcript lands: this is what `last_transcript` will point at, and
+    // it says nothing about any verse.
+    persist_transcript(&h, "I left, aha, yesterday you back, did you see?", "en");
+
+    // …then a fire whose window said something else entirely.
+    manual_fire(h.clone(), h.state::<Db>(), "Psalm 23".into(), None, None).expect("fire");
+    settle();
+
+    let conn = db.0.lock().unwrap();
+    let mut st = conn
+        .prepare(
+            "SELECT t.text FROM detections d JOIN transcripts t ON t.id = d.transcript_id
+             WHERE t.service_id = ?1 ORDER BY d.id DESC LIMIT 1",
+        )
+        .unwrap();
+    let text: String = st
+        .query_row([svc], |r| r.get(0))
+        .expect("a detection exists");
+    assert_ne!(
+        text, "I left, aha, yesterday you back, did you see?",
+        "the detection is hanging off a sentence that did not produce it — the \
+         exact shape of FIELD F-2"
+    );
+}
+
 /// RG-03 · SERVICE LOCK — held back, but never in the operator's way.
 ///
 /// Driven through the real commands, on a real database, exactly as the frontend

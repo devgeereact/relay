@@ -1276,7 +1276,7 @@ fn passage_nav_outcome<R: tauri::Runtime>(
 /// Persist a finalized transcript line into the current service (if recording),
 /// updating the session's last-transcript id for detection linkage. Locks its
 /// own db handle — call OUTSIDE any held db lock.
-fn persist_transcript(handle: &tauri::AppHandle, text: &str, language: &str) {
+fn persist_transcript<R: tauri::Runtime>(handle: &tauri::AppHandle<R>, text: &str, language: &str) {
     let db = handle.state::<Db>();
     let session = handle.state::<Session>();
     // Consistent lock order everywhere: db before session (see persist_fire,
@@ -1334,9 +1334,31 @@ fn persist_fire(
         return; // not recording
     };
     let ts = st.started.elapsed().as_secs_f64();
+    // ── FIELD F-2 · the record must say what this verse actually came from ──
+    //
+    // Only FINAL transcripts are persisted, and a detection born in a PARTIAL
+    // window was attached to whatever final happened to be last. In a real service
+    // that put `Proverbs 3:32` next to a sentence containing no book, no number and
+    // no keyword — 72 finals in that service contained the words "verse", "chapter"
+    // or "bible" exactly zero times, while the detections' own `heard_text` values
+    // contained all three.
+    //
+    // Every history and replay surface is built on `detections → transcripts`, so
+    // all of them were reporting a sentence that did not produce the verse beside
+    // it, and anything that ever scores accuracy from that join scores the wrong
+    // text.
+    //
+    // So the row this detection points at is a row that really does hold the words
+    // the detector read. When the last final IS that text, it is reused and nothing
+    // extra is written; when it is not, the window is persisted in its own right.
+    // Six rows in a fifty-minute service, and the join stops lying.
+    let matches_last = st
+        .last_transcript
+        .and_then(|t| db::transcript_text(conn, t).ok().flatten())
+        .is_some_and(|prev| prev == window_text);
     let tid = match st.last_transcript {
-        Some(t) => t,
-        None => match db::insert_transcript(conn, st.id, ts, window_text, "en", None) {
+        Some(t) if matches_last || window_text.is_empty() => t,
+        _ => match db::insert_transcript(conn, st.id, ts, window_text, "en", None) {
             Ok(t) => {
                 st.last_transcript = Some(t);
                 t
@@ -1427,6 +1449,17 @@ fn snapshot_latency<R: tauri::Runtime>(handle: &tauri::AppHandle<R>) {
             &db::PerfSample {
                 metric: m.metric,
                 samples: m.samples as i64,
+                // The per-minute line, which the live report has always carried and
+                // nothing ever wrote down (FIELD F-3). The LAST complete bucket, not
+                // the one still filling — a partial minute reads as a dip and a dip
+                // is exactly the shape somebody would mistake for good news.
+                last_minute_ms: if m.per_minute_mean_ms.len() >= 2 {
+                    m.per_minute_mean_ms
+                        .get(m.per_minute_mean_ms.len() - 2)
+                        .copied()
+                } else {
+                    None
+                },
                 p50_ms: m.p50_ms,
                 p95_ms: m.p95_ms,
                 p99_ms: m.p99_ms,

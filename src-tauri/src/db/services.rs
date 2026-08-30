@@ -4,7 +4,7 @@
 //! human). The self-calibrating router learns from that column, so the
 //! distinction is load-bearing, not archival colour.
 
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 use serde::Serialize;
 
 /// A row for the Library service list. `duration_secs` is derived from the last
@@ -48,6 +48,19 @@ pub fn create_service(conn: &Connection, date: &str, title: &str) -> rusqlite::R
 }
 
 /// Insert a transcript line; returns its id.
+/// The text of one transcript row, if it still exists.
+///
+/// Used to decide whether a detection's window is the same words as the last
+/// persisted transcript — see FIELD F-2. Returns `None` for a missing row rather
+/// than erroring: a detection must never fail to be recorded because its
+/// provenance could not be checked.
+pub fn transcript_text(conn: &Connection, id: i64) -> rusqlite::Result<Option<String>> {
+    conn.query_row("SELECT text FROM transcripts WHERE id = ?1", [id], |r| {
+        r.get(0)
+    })
+    .optional()
+}
+
 pub fn insert_transcript(
     conn: &Connection,
     service_id: i64,
@@ -392,8 +405,9 @@ pub fn log_perf_sample(
     s: &PerfSample<'_>,
 ) -> rusqlite::Result<()> {
     conn.execute(
-        "INSERT INTO perf_samples (service_id, at_ms, metric, samples, p50_ms, p95_ms, p99_ms, worst_ms)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        "INSERT INTO perf_samples
+           (service_id, at_ms, metric, samples, p50_ms, p95_ms, p99_ms, worst_ms, last_minute_ms)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
         rusqlite::params![
             service_id,
             at_ms,
@@ -402,7 +416,8 @@ pub fn log_perf_sample(
             s.p50_ms,
             s.p95_ms,
             s.p99_ms,
-            s.worst_ms
+            s.worst_ms,
+            s.last_minute_ms
         ],
     )?;
     Ok(())
@@ -422,6 +437,19 @@ pub struct PerfSample<'a> {
     /// is the thing a congregation notices and a median cannot show.
     pub p99_ms: Option<f64>,
     pub worst_ms: Option<f64>,
+    /// The mean of the most recent complete MINUTE, not of the whole service.
+    ///
+    /// FIELD F-3: everything else in this row is cumulative since app start
+    /// (`latency::report(0)`), and a cumulative percentile is structurally
+    /// insensitive to drift — `worst_ms` can only ever rise, and a p50 diluted by
+    /// thirty earlier minutes barely moves when the last five get worse. Stage
+    /// F11 asks precisely whether the per-minute line RISES, and answering it
+    /// meant inferring from a flat p50 under a growing denominator.
+    ///
+    /// The per-minute means already existed in the live report and were simply
+    /// never written down, so they vanished on quit — which is the same defect
+    /// RG-04 was created to fix, one level in.
+    pub last_minute_ms: Option<f64>,
 }
 
 /// Every latency snapshot for one service, oldest first.
@@ -434,11 +462,15 @@ pub struct PerfRow {
     pub p95_ms: Option<f64>,
     pub p99_ms: Option<f64>,
     pub worst_ms: Option<f64>,
+    /// The mean of the most recent complete minute — the per-minute line Stage F11
+    /// actually asks about. Null on rows written before the column existed, and
+    /// that is an absence, not a zero.
+    pub last_minute_ms: Option<f64>,
 }
 
 pub fn service_perf(conn: &Connection, service_id: i64) -> rusqlite::Result<Vec<PerfRow>> {
     let mut st = conn.prepare(
-        "SELECT at_ms, metric, samples, p50_ms, p95_ms, p99_ms, worst_ms
+        "SELECT at_ms, metric, samples, p50_ms, p95_ms, p99_ms, worst_ms, last_minute_ms
            FROM perf_samples WHERE service_id = ?1 ORDER BY at_ms, metric",
     )?;
     let rows = st.query_map([service_id], |r| {
@@ -450,6 +482,7 @@ pub fn service_perf(conn: &Connection, service_id: i64) -> rusqlite::Result<Vec<
             p95_ms: r.get(4)?,
             p99_ms: r.get(5)?,
             worst_ms: r.get(6)?,
+            last_minute_ms: r.get(7)?,
         })
     })?;
     rows.collect()
@@ -544,6 +577,17 @@ pub fn ensure_service_events(conn: &Connection) -> rusqlite::Result<()> {
     if has_p99 == 0 {
         conn.execute_batch("ALTER TABLE perf_samples ADD COLUMN p99_ms REAL;")?;
     }
+    // `last_minute_ms` arrived later still, and by the same rule: sniffed, never a
+    // bare ALTER, or the second boot dies with "duplicate column name" before the
+    // window is shown (rule 25).
+    let has_minute: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM pragma_table_info('perf_samples') WHERE name = 'last_minute_ms'",
+        [],
+        |r| r.get(0),
+    )?;
+    if has_minute == 0 {
+        conn.execute_batch("ALTER TABLE perf_samples ADD COLUMN last_minute_ms REAL;")?;
+    }
     Ok(())
 }
 
@@ -585,6 +629,55 @@ mod timeline_tests {
         ensure_service_events(&conn).unwrap();
         log_event(&conn, 1, 0.0, EventKind::ServiceStarted, Some("Sunday")).unwrap();
         assert_eq!(service_timeline(&conn, 1).unwrap().len(), 1);
+    }
+
+    /// FIELD F-3 · the per-minute line has to survive a quit.
+    ///
+    /// Everything else in a `perf_samples` row is cumulative since app start, and
+    /// a cumulative percentile cannot answer "did it get worse" — `worst_ms` only
+    /// rises, and a p50 diluted by thirty good minutes barely moves when the last
+    /// five are bad. Stage F11 asks exactly that question, and answering it in the
+    /// field meant inferring from a flat p50 under a growing denominator.
+    #[test]
+    fn a_perf_sample_carries_the_last_minute_not_only_the_whole_service() {
+        let conn = db();
+        ensure_service_events(&conn).unwrap();
+        log_perf_sample(
+            &conn,
+            1,
+            60_000.0,
+            &PerfSample {
+                metric: "stt_decode",
+                samples: 100,
+                p50_ms: Some(687.0),
+                p95_ms: Some(2673.0),
+                p99_ms: Some(2801.0),
+                worst_ms: Some(3016.0),
+                last_minute_ms: Some(1490.0),
+            },
+        )
+        .unwrap();
+        let rows = service_perf(&conn, 1).unwrap();
+        assert_eq!(rows.len(), 1);
+        // The cumulative p50 says the service is fine. The last minute says it is
+        // not, and only one of those two is the question F11 asks.
+        assert_eq!(rows[0].p50_ms, Some(687.0));
+        assert_eq!(rows[0].last_minute_ms, Some(1490.0));
+    }
+
+    /// A row written before the column existed reports an ABSENCE, not a zero.
+    /// A 0 ms minute would read as the fastest minute of the service.
+    #[test]
+    fn a_perf_row_from_before_the_column_says_nothing_rather_than_zero() {
+        let conn = db();
+        ensure_service_events(&conn).unwrap();
+        conn.execute(
+            "INSERT INTO perf_samples (service_id, at_ms, metric, samples, p50_ms)
+             VALUES (1, 0.0, 'stt_decode', 5, 700.0)",
+            [],
+        )
+        .unwrap();
+        assert_eq!(service_perf(&conn, 1).unwrap()[0].last_minute_ms, None);
     }
 
     /// TWO EVENTS IN THE SAME MILLISECOND STILL HAVE AN ORDER.
@@ -675,6 +768,7 @@ mod timeline_tests {
                 p50_ms: None,
                 p95_ms: None,
                 p99_ms: None,
+                last_minute_ms: None,
                 worst_ms: None,
             },
         )
@@ -689,6 +783,7 @@ mod timeline_tests {
                 p50_ms: Some(139.0),
                 p95_ms: Some(339.0),
                 p99_ms: Some(498.0),
+                last_minute_ms: None,
                 worst_ms: Some(543.0),
             },
         )
@@ -768,6 +863,7 @@ mod timeline_tests {
                     p50_ms: Some(p50),
                     p95_ms: Some(p50 * 2.0),
                     p99_ms: Some(p50 * 3.0),
+                    last_minute_ms: None,
                     worst_ms: Some(p50 * 4.0),
                 },
             )
@@ -801,6 +897,7 @@ mod timeline_tests {
                 p50_ms: Some(140.0),
                 p95_ms: None,
                 p99_ms: None,
+                last_minute_ms: None,
                 worst_ms: None,
             },
         )

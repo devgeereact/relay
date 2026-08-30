@@ -253,7 +253,11 @@ CREATE TABLE perf_samples (
     -- One window in a hundred: roughly one visibly late verse per service, which is
     -- what a congregation notices and a median cannot show.
     p99_ms     REAL,
-    worst_ms   REAL
+    worst_ms   REAL,
+    -- The mean of the most recent complete MINUTE. Everything else in this row is
+    -- cumulative since app start, and a cumulative percentile cannot answer "did it
+    -- get worse" — which is the only question Stage F11 asks. See FIELD F-3.
+    last_minute_ms REAL
 );
 CREATE INDEX idx_perf_samples ON perf_samples(service_id, at_ms);
 
