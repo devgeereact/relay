@@ -30,6 +30,27 @@
 // Pure, so the wording and the thresholds can be tested without a backend.
 
 /**
+ * Is a CPU-only build a REDUCED capability on this platform?
+ *
+ * Exported because two surfaces answer this question and they were answering it
+ * differently: `degraded.js` called a CPU-only macOS build **reduced** — the
+ * transcript will lag the preacher on anything but the smallest model — while the
+ * launch screen's GPU row reported the identical fact as **ok**, in green, on the
+ * one screen an operator reads before a service.
+ *
+ * One fact, two verdicts, is this repository's most repeated bug wearing yet
+ * another coat. The rule lives here, and the probe asks it.
+ *
+ * macOS only, and that narrowness is the point: CLAUDE.md rule 27 measured
+ * ~1710 ms per window CPU-only against a ~1000 ms budget — slower than real time
+ * — versus ~602 ms with Metal. No equivalent measurement exists for Windows, so
+ * claiming it there would be an assertion rather than a finding.
+ */
+export function gpuIsReduced({ macos, gpuBackends } = {}) {
+  return !!macos && Array.isArray(gpuBackends) && gpuBackends.length === 0;
+}
+
+/**
  * Severity, and it is only ever these two.
  *
  * There is no "error" level: an actual failure is not a degradation — it is a
@@ -106,7 +127,7 @@ export function degradations(s = {}) {
 
   // A BUILD fact, not a hardware one. Naming the GPU in this machine next to a
   // CPU-only build would be the most convincing lie on the screen.
-  if (s.macos && Array.isArray(s.gpuBackends) && s.gpuBackends.length === 0) {
+  if (gpuIsReduced(s)) {
     out.push({
       id: 'gpu',
       level: 'reduced',

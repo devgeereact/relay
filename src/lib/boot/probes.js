@@ -15,6 +15,7 @@
 // Every command name used here is asserted by src/lib/ipc.test.js.
 
 import { invoke as tauriInvoke } from '@tauri-apps/api/core';
+import { gpuIsReduced } from '../degraded.js';
 
 /** Bytes → the unit a human uses when deciding if there is enough. */
 function gb(bytes) {
@@ -159,9 +160,24 @@ export function makeProbes({ invoke = tauriInvoke, getVersion } = {}) {
       // machine next to a CPU-only build would be the most convincing lie on the
       // screen — so this reports what whisper.cpp was actually compiled with.
       if (!h.gpu_backends?.length) {
-        // Short enough to sit on one line in the note column — the two-line
-        // version orphaned the word "in" on its own right-aligned row.
-        return { state: 'ok', note: 'CPU only — no GPU backend in this build' };
+        // ONE RULE, ASKED — not a second opinion. `degraded.js` calls a CPU-only
+        // macOS build *reduced* ("roughly three times slower — the transcript will
+        // lag the preacher"), and this row used to call the identical fact `ok`,
+        // in green, on the screen an operator reads before a service. Rule 27
+        // measured it: ~1710 ms per window against a ~1000 ms budget, which is
+        // slower than real time.
+        //
+        // Elsewhere it stays `ok`: no equivalent measurement exists off macOS, and
+        // a warning nobody measured is one an operator learns to scroll past.
+        const macos = /mac|darwin/i.test(h.os ?? '');
+        return gpuIsReduced({ macos, gpuBackends: h.gpu_backends ?? [] })
+          ? {
+              state: 'warn',
+              note: 'CPU only — speech decoding is ~3x slower in this build',
+            }
+          : // Short enough to sit on one line in the note column — the two-line
+            // version orphaned the word "in" on its own right-aligned row.
+            { state: 'ok', note: 'CPU only — no GPU backend in this build' };
       }
       return { state: 'ok', note: `${h.gpu_backends.join(', ')} compiled in` };
     },
