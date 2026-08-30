@@ -125,6 +125,20 @@ impl DetectionMethod {
         matches!(self, DetectionMethod::Direct)
     }
 
+    /// Parse the wire name the console sends back when an operator accepts a
+    /// suggestion. Anything unrecognised is treated as the most cautious reading —
+    /// `Semantic` — because the question this answers is "may this number teach the
+    /// auto-fire bar", and an unknown method has not earned a yes.
+    pub fn from_wire(s: &str) -> Self {
+        match s {
+            "direct" => DetectionMethod::Direct,
+            "ambiguous" => DetectionMethod::Ambiguous,
+            "uncertain_book" => DetectionMethod::UncertainBook,
+            "uncertain_number" => DetectionMethod::UncertainNumber,
+            _ => DetectionMethod::Semantic,
+        }
+    }
+
     /// Demote a match whose NUMBERS were inferred rather than heard.
     ///
     /// Applied at the five sites in `parse_reference` that already demoted by
@@ -5302,40 +5316,43 @@ mod r4_audit {
         }
     }
 
-    // ── R4-09 · what `confirm_detection` teaches the gate is invented ───────
+    // ── R4-09 · CLOSED — what `confirm_detection` teaches the gate ──────────
     //
-    // The operator accepts a suggestion. `confirm_detection` receives only the
-    // reference STRING, re-parses it with `detect_direct`, and feeds THAT parse's
-    // confidence to `router::record_feedback` as "the score the operator agreed
-    // with". The suggestion's own confidence — and its METHOD — are known to the
-    // console and thrown away at the call site.
+    // It received only the reference STRING and re-parsed it with `detect_direct`,
+    // feeding THAT parse's confidence to `record_feedback` as "the score the
+    // operator agreed with". A canonical "Book C:V" always re-parses through the
+    // colon-pair branch at the same number, for all 66 books — so the confirm arm
+    // of the self-calibrating gate always learned one constant, and because
+    // `record_feedback` only corrects when `c < auto_fire` (0.50 at the default
+    // dial, 0.90 at the most cautious) the correction never fired at all. Every
+    // confirm was pure decay toward baseline. `router.rs`'s own unit test passed
+    // throughout, because it calls `record_feedback` directly.
     //
-    // A canonical "Book C:V" always re-parses through the colon-pair branch at
-    // 0.96, for all 66 books. So the confirm arm of the self-calibrating gate
-    // always learns c = 0.96, whatever was actually accepted; and because
-    // `record_feedback` only corrects when `c < auto_fire`, and auto_fire is 0.50
-    // at the default dial and 0.90 at the most cautious, the correction never
-    // fires. `router.rs::confirming_a_suggestion_lowers_the_auto_bar_toward_it`
-    // passes because it calls `record_feedback` directly; in the product, every
-    // confirm is pure decay toward baseline.
+    // The console always knew the suggestion's own confidence and method and threw
+    // both away at the call site — the same shape as `NavResult`'s `Ok(_)`.
+    //
+    // The property below is unchanged and was never the defect: a canonical
+    // reference really does re-parse to a constant. That is exactly why it could
+    // not be the thing fed to the calibrator. The FIX is asserted end to end in
+    // `e2e::confirming_a_suggestion_teaches_the_gate_what_was_accepted`, because
+    // this is a claim about a command, not about the parser.
     #[test]
-    #[ignore]
-    fn r4_09_confirming_a_suggestion_does_not_feed_the_gate_a_reparsed_constant() {
-        let mut scores = std::collections::BTreeSet::new();
-        for b in CANONICAL_BOOKS {
-            let s = format!("{b} 1:1");
-            let m = detect_direct(&s)
+    fn r4_09_a_canonical_reference_reparses_to_a_constant_which_is_why_it_is_not_evidence() {
+        let mut scores = std::collections::HashSet::new();
+        for b in ["John", "Romans", "Psalms", "Jude", "1 John", "Revelation"] {
+            let sref = format!("{b} 1:1");
+            let m = detect_direct(&sref)
                 .into_iter()
                 .next()
-                .unwrap_or_else(|| panic!("{s:?} did not re-parse — confirm would silently no-op"));
+                .unwrap_or_else(|| panic!("{sref:?} did not re-parse"));
             scores.insert(format!("{:.2}", m.confidence));
         }
-        assert!(
-            scores.len() > 1,
-            "every reference re-parses at exactly {:?}, so `confirm_detection` \
-             feeds `record_feedback` a constant rather than the score of the \
-             suggestion the operator accepted",
-            scores
+        assert_eq!(
+            scores.len(),
+            1,
+            "a canonical reference is expected to re-parse to ONE number ({scores:?}) — \
+             if this ever becomes several, the reasoning in the comment above needs \
+             revisiting, not the fix"
         );
     }
 
