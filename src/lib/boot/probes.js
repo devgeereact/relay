@@ -187,10 +187,32 @@ export function makeProbes({ invoke = tauriInvoke, getVersion } = {}) {
     // shipped integrations can actually do today.
     async kiosk() {
       const channels = await invoke('list_output_channels');
+      const hub = await port('Relay kiosk hub');
+      const browsers = (channels ?? []).filter((c) => c.render_target === 'network_client').length;
+      // This row used to count channels and print the URL — neither of which is a
+      // fact about whether anything is LISTENING. Binding 8031 can fail on a
+      // volunteer's laptop (another program has it, or a security tool refuses),
+      // and when it does every OBS browser source goes dead while this screen
+      // says the setup is fine.
+      if (!hub?.listening) {
+        return browsers
+          ? { state: 'fail', note: `nothing is listening on :8031 — ${browsers} browser source(s) cannot connect` }
+          : { state: 'warn', note: 'nothing is listening on :8031 — no browser source needs it yet' };
+      }
       return { state: 'ok', note: `${channels?.length ?? 0} channel(s) · ws://…:8031` };
     },
     async http() {
       const ip = await invoke('local_ip');
+      const server = await port('Relay HTTP');
+      // Same rule as the kiosk row above: printing a URL is not the same as
+      // knowing something answers on it, and this is the URL an operator copies
+      // into OBS and types into the preacher's phone.
+      if (!server?.listening) {
+        return {
+          state: 'fail',
+          note: 'nothing is listening on :8032 — output pages, the stage page and media will not load',
+        };
+      }
       return { state: 'ok', note: `:8032 — ${ip ? `http://${ip}:8032` : 'localhost only'}` };
     },
     async propresenter() {

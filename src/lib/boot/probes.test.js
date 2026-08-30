@@ -218,3 +218,84 @@ describe('diagnostics probes', () => {
     expect((await p.audio()).state).toBe('fail');
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RG-53 · THE TWO ROWS THAT COULD ONLY EVER SAY "ok"
+//
+// The kiosk row counted configured channels and printed `ws://…:8031`. The HTTP
+// row printed `http://<ip>:8032`. Neither asked whether anything was LISTENING —
+// so both were structurally incapable of reporting a failure, on the one screen
+// whose entire job is answering "is this machine going to work?".
+//
+// They are ordinary TCP ports on a volunteer's laptop and binding them can fail:
+// another program has them, or a security tool refuses. When that happens every
+// OBS browser source and the preacher's stage page go dead, and the operator has
+// just been told the setup is fine.
+//
+// Same rule as `channel_status` and the output heartbeat: a control that cannot
+// detect its own failure is not a control.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const HUB_UP = { label: 'Relay kiosk hub', port: 8031, listening: true };
+const HUB_DOWN = { label: 'Relay kiosk hub', port: 8031, listening: false };
+const HTTP_UP = { label: 'Relay HTTP', port: 8032, listening: true };
+const HTTP_DOWN = { label: 'Relay HTTP', port: 8032, listening: false };
+
+/** The kiosk row also needs the channel list. */
+const withPorts = (ports, channels = []) =>
+  makeProbes({
+    invoke: backend({
+      probe_integrations: ports,
+      list_output_channels: channels,
+      local_ip: '192.168.1.9',
+    }),
+    getVersion: async () => '0.1.0',
+  });
+
+describe('RG-53 · the kiosk hub and the HTTP server are actually probed', () => {
+  it('kiosk FAILS when nothing is listening and a browser source needs it', async () => {
+    const p = withPorts([HUB_DOWN, HTTP_UP], [{ render_target: 'network_client' }]);
+    const r = await p.kiosk();
+    expect(r.state).toBe('fail');
+    expect(r.note).toMatch(/nothing is listening on :8031/);
+    // Name the consequence, not the port: an operator needs to know what breaks.
+    expect(r.note).toMatch(/browser source/);
+  });
+
+  it('…and only WARNS when nothing is using it yet', async () => {
+    // A church running one HDMI projector and no OBS loses nothing. Painting that
+    // red teaches an operator to ignore red, which is how a real fault gets past.
+    const p = withPorts([HUB_DOWN, HTTP_UP], [{ render_target: 'native_window' }]);
+    const r = await p.kiosk();
+    expect(r.state).toBe('warn');
+    expect(r.note).toMatch(/no browser source needs it yet/);
+  });
+
+  it('kiosk is ok when the hub answers', async () => {
+    const p = withPorts([HUB_UP, HTTP_UP], [{ render_target: 'network_client' }]);
+    expect((await p.kiosk()).state).toBe('ok');
+  });
+
+  it('HTTP fails when nothing is listening, and says what stops working', async () => {
+    const p = withPorts([HUB_UP, HTTP_DOWN]);
+    const r = await p.http();
+    expect(r.state).toBe('fail');
+    // This is the URL an operator copies into OBS and types into a phone.
+    expect(r.note).toMatch(/output pages, the stage page and media/);
+  });
+
+  it('HTTP is ok when the server answers', async () => {
+    const p = withPorts([HUB_UP, HTTP_UP]);
+    const r = await p.http();
+    expect(r.state).toBe('ok');
+    expect(r.note).toMatch(/192\.168\.1\.9:8032/);
+  });
+
+  it('neither row can report ok without the port answering', async () => {
+    // The regression that matters: if somebody restores the old body, both of
+    // these go green with the hub and the server dead.
+    const p = withPorts([HUB_DOWN, HTTP_DOWN], [{ render_target: 'network_client' }]);
+    expect((await p.kiosk()).state).not.toBe('ok');
+    expect((await p.http()).state).not.toBe('ok');
+  });
+});

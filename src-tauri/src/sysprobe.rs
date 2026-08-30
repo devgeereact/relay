@@ -152,18 +152,56 @@ pub fn port_open(port: u16) -> bool {
     TcpStream::connect_timeout(&addr, PORT_TIMEOUT).is_ok()
 }
 
-/// The default ports of the integrations Relay is built to sit alongside.
-pub fn probe_integrations() -> Vec<PortProbe> {
-    // OBS WebSocket 5.x defaults to 4455; ATEM's control protocol is 9910.
-    // Both are the stock values — an operator who moved them will read
-    // "not detected", which is why the screen says which port it looked at.
-    [("OBS WebSocket", 4455u16), ("ATEM", 9910u16)]
+/// Relay's OWN listeners: the kiosk hub and the LAN HTTP server.
+///
+/// ── Why these are probed at all ──────────────────────────────────────────────
+///
+/// The launch screen used to report both as `ok` **having asked neither**. The
+/// kiosk row listed how many channels were configured and printed `ws://…:8031`;
+/// the HTTP row printed `http://<ip>:8032`. Neither is a fact about whether
+/// anything is listening on those ports.
+///
+/// They are ordinary TCP ports on a volunteer's laptop and binding them can fail
+/// — another program already has them, or a security tool refuses. When that
+/// happens every OBS browser source and the preacher's stage page go dead, the
+/// operator copies a URL that cannot answer, and the one screen whose job is to
+/// say "is this machine going to work?" says yes.
+///
+/// A check that cannot fail is not a check.
+pub const KIOSK_PORT: u16 = 8031;
+pub const HTTP_PORT: u16 = 8032;
+
+pub fn probe_own_ports() -> Vec<PortProbe> {
+    [("Relay kiosk hub", KIOSK_PORT), ("Relay HTTP", HTTP_PORT)]
         .into_iter()
         .map(|(label, port)| PortProbe {
             label,
             port,
             listening: port_open(port),
         })
+        .collect()
+}
+
+/// The default ports of the integrations Relay is built to sit alongside.
+pub fn probe_integrations() -> Vec<PortProbe> {
+    // OBS WebSocket 5.x defaults to 4455; ATEM's control protocol is 9910.
+    // Both are the stock values — an operator who moved them will read
+    // "not detected", which is why the screen says which port it looked at.
+    //
+    // Relay's own listeners ride along, so the launch screen can ask about them
+    // in the same round trip it already makes. They are labelled `Relay …` so a
+    // reader can tell "somebody else's software" from "ours".
+    probe_own_ports()
+        .into_iter()
+        .chain(
+            [("OBS WebSocket", 4455u16), ("ATEM", 9910u16)]
+                .into_iter()
+                .map(|(label, port)| PortProbe {
+                    label,
+                    port,
+                    listening: port_open(port),
+                }),
+        )
         .collect()
 }
 
@@ -291,11 +329,51 @@ mod tests {
     #[test]
     fn probes_both_integrations_and_names_their_ports() {
         // Does not assert on `listening` — that depends on what the developer
-        // happens to be running. It asserts the CONTRACT: both are probed, and
+        // happens to be running. It asserts the CONTRACT: each is probed, and
         // each carries the port it looked at, because the screen shows it.
         let probes = probe_integrations();
-        assert_eq!(probes.len(), 2);
-        assert!(probes.iter().any(|p| p.port == 4455));
-        assert!(probes.iter().any(|p| p.port == 9910));
+        assert_eq!(probes.len(), 4, "two integrations and Relay's own two");
+        assert!(probes.iter().any(|p| p.port == 4455)); // OBS
+        assert!(probes.iter().any(|p| p.port == 9910)); // ATEM
+    }
+
+    /// RELAY'S OWN LISTENERS ARE PROBED TOO, AND LABELLED AS OURS.
+    ///
+    /// The launch screen reported the kiosk hub and the HTTP server as `ok`
+    /// having asked neither — it printed the URL and counted channels, which are
+    /// not facts about whether anything is listening. Binding either port can
+    /// fail on a volunteer's laptop, and when it does every OBS browser source
+    /// and the preacher's stage page go dead while the screen says it is fine.
+    #[test]
+    fn relays_own_ports_are_probed_and_named_as_ours() {
+        let own = probe_own_ports();
+        assert_eq!(own.len(), 2);
+        assert!(own
+            .iter()
+            .any(|p| p.port == KIOSK_PORT && p.label.starts_with("Relay ")));
+        assert!(own
+            .iter()
+            .any(|p| p.port == HTTP_PORT && p.label.starts_with("Relay ")));
+
+        // …and they arrive on the same command the launch screen already calls,
+        // so the two rows cost no extra round trip.
+        let all = probe_integrations();
+        for p in own {
+            assert!(
+                all.iter().any(|q| q.label == p.label),
+                "{} is missing from probe_integrations — the launch rows read that one",
+                p.label
+            );
+        }
+    }
+
+    /// A port that IS listening reads as listening. Without this the probe could
+    /// return `false` for everything and every assertion above would still pass.
+    #[test]
+    fn a_real_listener_is_detected() {
+        let l = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = l.local_addr().unwrap().port();
+        assert!(port_open(port), "a bound port read as closed");
+        drop(l);
     }
 }
