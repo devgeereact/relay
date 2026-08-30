@@ -132,10 +132,17 @@ Two documents, at two altitudes, and they disagree on purpose:
   It re-verifies every claim against a commit hash and retires findings as they are fixed.
 - **[audits/](audits/)** — dated machine audits, each frozen. They never rewrite their own
   findings; closures are recorded in the fix log at the top instead, because an audit that
-  edits its own history stops being evidence. Two so far:
+  edits its own history stops being evidence. Four so far:
   [QA-2026-08-14.md](audits/QA-2026-08-14.md) (six-agent full scope; §16 is the human test
-  script) and [PERF-2026-08-24.md](audits/PERF-2026-08-24.md) (real-time latency, and §6 is
-  what its numbers do **not** establish).
+  script), [PERF-2026-08-24.md](audits/PERF-2026-08-24.md) (real-time latency, and §6 is
+  what its numbers do **not** establish),
+  **[FIELD-2026-08-30.md](audits/FIELD-2026-08-30.md)** — *the first real service*: a live
+  sermon, 49.5 minutes, packaged build. Stage F11 answered (no drift), five of six
+  auto-fires correct, **one wrong verse on a real wall**, and six findings of which one was
+  later withdrawn as wrong — and
+  **[PERF-MODELS-2026-08-30.md](audits/PERF-MODELS-2026-08-30.md)**, what each speech model
+  costs in transcript updates per second, which is the number a church actually chooses
+  between.
 - **[RELAY_GAP.md](RELAY_GAP.md)** — the third altitude, and unlike the audits it is meant to be
   updated: an outside product brief scored item by item against the code, with a gap register
   and the corrections this index's own counts needed.
