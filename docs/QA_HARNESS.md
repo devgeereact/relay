@@ -27,7 +27,7 @@ the command is named — a count you cannot reproduce is a rumour.
 |---|---|---|
 | Rust tests | **619 passing**, 18 ignored | `cd src-tauri && cargo test` |
 | Frontend tests | **864 passing**, 0 skipped, 62 files | `npx vitest run` — read the runner's own summary line. **Not** `vitest list \| wc -l`: that stream carries Svelte compiler warnings too and over-counted by 7 |
-| `e2e.rs` tests | **32** (32 run, 0 ignored — R2-C and R2-D were closed 2026-08-30, DECISIONS §54) | `cd src-tauri && cargo test e2e::` |
+| `e2e.rs` tests | **35** (35 run, 0 ignored — R2-C and R2-D closed, DECISIONS §54; three added for the calibrator and the service record) | `cd src-tauri && cargo test e2e::` |
 | Registered `#[tauri::command]` | **137** | `grep -c '#\[tauri::command\]' src-tauri/src/main.rs` |
 | `.svelte` files | **47**, 22 of them views | `find src -name '*.svelte' | wc -l` |
 | `<button>` occurrences | **338** | `grep -ro '<button' --include='*.svelte' src | wc -l` |
@@ -561,6 +561,25 @@ Useful to know so no agent re-files them:
   `ensure_voice_profiles_is_idempotent`, and the schema-report tests that guard the Database
   Migration screen against drawing green ticks from a hard-coded list.
 - **macOS mic entitlement + usage string** — `models::config_boots`.
+- **The display cannot sleep while a screen or a microphone is live** — and the rule is
+  enforced by ENUMERATION, not by memory:
+  `wake::every_function_that_opens_or_closes_a_screen_refreshes_the_wake_state` walks `main.rs`
+  and fails by name if a function touching `open_native_window`/`close_window` forgets. It was
+  written because the original wiring missed `auto_open_outputs`, the path that runs at every
+  launch (RG-47). Same shape as `servicelock::every_protected_command_actually_guards_itself`.
+- **Ordinary preaching does not auto-fire a verse** — `r4_01` · `r4_02` · `r4_03`, all three
+  formerly `#[ignore]`d defects. The repair is `DetectionMethod::UncertainNumber`, refused by
+  `may_auto_fire` at any score and any dial: **a demotion expressed as a number is a demotion a
+  dial can erase** (DECISIONS §56).
+- **A bare verse belongs to the book this sentence names** — `anchor_for_bare_verses`; memory is
+  the fallback, not the default. From a real service, where a five-minute-old passage beat the
+  book named in the same breath (FIELD F-1).
+- **Confirming a suggestion teaches the gate what was ACCEPTED** —
+  `e2e::confirming_a_suggestion_teaches_the_gate_what_was_accepted`, and its twin proving a
+  paraphrase's cosine moves nothing. The router's own unit test passed throughout; the bug was
+  one call site up (DECISIONS §58).
+- **A tie in `rank_for_wall` falls to what was said first** — asserted in BOTH directions, so it
+  cannot pass vacuously. The comparator used to claim `a < b` and `b < a` (DECISIONS §59).
 - **A song's running order can be created, and something renders the editor** —
   `qa.rs::a_component_can_create_a_song_arrangement` asserts both halves, because a
   component nothing renders is not a create path. This was the repository's one dead

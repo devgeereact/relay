@@ -2,8 +2,16 @@
 
 This is the map. Every claim in these documents is **re-verified against the code**, and the
 date of the last sweep is stated rather than implied. Last **full** sweep of every claim:
-**2026-08-20**, against `07654a7`. Last **counts-and-contradictions** sweep: **2026-08-29**,
-against `0338244` — what it found and corrected is [RELAY_GAP.md](RELAY_GAP.md) §0 and §26. That honesty is the point, not the paperwork.
+**2026-08-20**, against `07654a7`. Last **counts-and-contradictions** sweep: **2026-08-30** —
+what it found and corrected is [RELAY_GAP.md](RELAY_GAP.md) §0, §18 and §26.
+
+> **Counts live beside the command that produces them, and nowhere else.** Three sweeps have
+> now corrected the same three numbers (`main.rs` lines, registered commands, `capture.js`
+> lines) and all three were wrong again within the week — [RELAY_GAP.md](RELAY_GAP.md) §18 is
+> the record of that. A number in prose is wrong the moment somebody commits; re-correcting it
+> is the same bill paid twice. If you need one, run the command.
+
+That honesty is the point, not the paperwork.
 
 This index does one job: lay the docs out as a specification hierarchy so a new engineer,
 operator, or contributor can find any part of the spec without hunting, and see at a glance
@@ -59,10 +67,9 @@ real gaps.
 | **Roadmap & tech debt** | *What is deferred, parked, or owed — and on whose authority?* | [ROADMAP.md](ROADMAP.md) | **NEW** |
 | **Data schema** | *The canonical on-device SQLite shape* | [data/schema.sql](data/schema.sql) | Refreshed |
 | **Gap register** | *What an outside product brief asked for vs what exists — and the two proposals that would reverse a recorded decision* | [RELAY_GAP.md](RELAY_GAP.md) | **NEW** |
-| **The model prompt** | *The self-contained brief that makes any capable model argue inside Relay's real constraints* | [GPT.md](GPT.md) | Input artifact |
 
 **On ADRs:** [DECISIONS.md](DECISIONS.md) *is* the architecture-decision record — a single
-narrative log with reasoning and explicit non-goals, 53 numbered decisions (§18–§53) deep,
+narrative log with reasoning and explicit non-goals, 42 numbered decisions (§18–§59) deep,
 plus 28 earlier ones carried as table rows. It is deliberately not
 split into per-file `adr/NNNN-*.md` documents: the log is cross-referenced from code comments
 and the handbook, and one file keeps the *why* readable end to end. If the code ever

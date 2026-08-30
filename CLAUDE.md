@@ -111,6 +111,7 @@ Every audio bug so far was invisible in the code and reproducible only with a sp
 │       ├── servicelock.rs   — what may NOT happen while a service is recording (§40)
 │       ├── updates.rs       — preflight · snapshot · verify · the way back (§43)
 │       ├── diagnostics.rs   — the ONE artefact meant to leave the building (§48)
+│       ├── wake.rs          — the display stays up while a screen or a mic is live (§56)
 │       ├── pipeline.rs      — the ONE place a verse becomes screen content (Fire → output + event)
 │       ├── channels.rs      — output render targets: native window + kiosk WS + LAN HTTP,
 │       │                      and OutputHealth: does the screen still say it is painting?

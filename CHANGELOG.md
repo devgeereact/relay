@@ -10,6 +10,36 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 
 ## [Unreleased]
 
+### The first real service, and the eight things it changed
+
+Relay listened to a live sermon for the first time — fifty minutes, a real preacher, a
+real room. Five of the six references it put up on its own were right. Everything below
+came out of that morning or out of checking the rest of the code against it.
+
+- **A verse nobody said no longer reaches the screen.** The preacher said "look at Luke
+  10, read from verse 32" and Relay put up Proverbs 3:32 — because a passage the operator
+  had put up by hand half an hour earlier was still what a bare verse number attached to.
+  Relay now uses the book named in the sentence it is listening to, and only falls back on
+  memory when no book was said.
+- **Ordinary preaching no longer puts a verse up by itself.** "Nehemiah, fifty two days
+  they built the wall" used to put Nehemiah 5:2 on the screen. So did "Romans eight one
+  two". And at the top of the sensitivity slider, every one of these protections stopped
+  working entirely.
+- **The screen stays awake** while the microphone is on, a service is recording, or an
+  output window is open — including when Relay reopens your screens by itself at startup,
+  which is the case that matters most and the one that was missed first time.
+- **You can switch a screen on or off from the Live tab.** The status panel could tell you
+  a screen had stopped responding and gave you nowhere to press.
+- **Accepting a suggestion now actually teaches Relay.** It is supposed to learn your
+  preacher, and on that side it never had.
+- **Song running orders.** You can build one — verse, chorus, verse, chorus, bridge — and
+  Relay tells you when the song has changed underneath it rather than quietly playing the
+  wrong parts.
+- **A damaged settings file no longer makes Relay forget your machine was ever set up**,
+  and the first-run wizard stops appearing over a service.
+- **Relay says when its engine is not running**, on the Live tab, instead of just going
+  grey. And a screen reader can now navigate the app: six screens had no headings at all.
+
 ### Relay now tells you when a screen has stopped listening to it
 
 - **Your screens report back.** Every output — the projector on HDMI and every browser

@@ -6,10 +6,16 @@ This document answers one question: **the transformation brief proposes ~80 thin
 them already exist, which are half-built, which are missing, and which would break a decision
 this product has already made and recorded?**
 
-It is the *output* of `docs/GPT.md`, which is the *input* — a paste-into-any-model prompt that
-front-loads Relay's real constraints so a model argues inside the product's shape instead of
-recommending accounts, RBAC and cloud sync at it. Keep both: the prompt is how the question gets
-asked, this file is what the repository answered.
+It began as the *output* of `docs/GPT.md` — a paste-into-any-model prompt that front-loaded
+Relay's constraints so a model argued inside the product's shape instead of recommending
+accounts, RBAC and cloud sync at it.
+
+> **`docs/GPT.md` was deleted on 2026-08-30, deliberately.** It was 770 lines that restated
+> `CLAUDE.md`, `AGENTS.md` and this file for a model with no repository access — and it carried
+> its own copy of every count, all of which had drifted (§18). `AGENTS.md` is now the
+> tool-agnostic contract for an agent working IN the repo, and this document is what the
+> repository answered. A third copy of the same constraints was a third thing to keep true, and
+> it was already the least true of the three.
 
 > **This report changed no engine code.** Its §21 buckets and §25 checklist are proposals to a
 > human, not work in progress. That is the brief's own §79 rule — *establish what exists, then
@@ -835,13 +841,29 @@ recorded, and it is still the lowest number on the page.
 `audits/PERF-2026-08-24.md` §7: **roughly half of Relay, as a volunteer experiences it, has never
 been reached by any instrument in this repository.**
 
-Nothing in this report changes that, and nothing in this report is a reason to change it. RG-01
-through RG-05 are real defects worth fixing, and fixing all five would still not produce a GO —
-because the condition is not a defect count, it is a Sunday.
+Nothing in this report changes that, and nothing in this report is a reason to change it. The
+forty-six closed register items are real defects worth fixing, and closing all of them would
+still not produce a GO — because the condition is not a defect count, it is a Sunday.
 
-**What would change it:** Stage A (a packaged, signed build that survives the microphone
-entitlement), Stage B (a projector), Stage C (a person at a microphone), Stage F11 (a full
-service), and one church.
+**Updated 2026-08-30.** Two of those stages have now been reached, and the verdict does not move:
+
+| Stage | Status |
+|---|---|
+| **Stage A** — a packaged build that survives the microphone entitlement | **Reached.** Built, installed to `/Applications`, ran a real service. `scripts/sign-local.sh` reproduces §17's conditions; a *notarized* build still needs a certificate |
+| **Stage F11** — a full service, watching for a rising line | **Reached, and answered: no drift.** `audits/FIELD-2026-08-30.md` |
+| **Stage B** — a projector | Not reached |
+| **Stage C** — a person at a microphone | **Partly.** A real preacher was transcribed for 49.5 minutes. The AUDIO half — word error rate, the gate against a real room — is untouched |
+| **One church** | Not reached. The service was run by the person who wrote the software |
+
+**And the first real service is itself the argument for NO-GO, not against it.** Fifty minutes
+in a room produced **seven findings** that months of reading source had not — including a wrong
+verse on a wall, an end-to-end metric that was measuring how long the preacher had been talking,
+and a service record that pointed at the wrong sentence. One of the seven was withdrawn as
+wrong. That ratio is what "half of this product has never been reached by an instrument" means
+in practice.
+
+**What would still change it:** Stage B, the audio half of Stage C, a second and third service,
+a Windows certificate, and one service run by somebody who did not write the software.
 
 ---
 
@@ -864,6 +886,8 @@ service), and one church.
 - [x] `docs/PRODUCT_AUDIT.md` — one line in the existing staleness banner. Do not rewrite Rev 3
 - [x] `CHANGELOG.md` — add the missing `[0.1.0-4]` entry
 - [x] `docs/GPT.md` — track it, and fix the one stale number (`main.rs` ~4,000 → 4,369)
+      *(the file was deleted on 2026-08-30 — see §26. This line is kept as the record of what
+      the first round did, not as a live instruction.)*
 
 ### Then — P0 engineering
 
@@ -874,24 +898,79 @@ service), and one church.
 - [x] RG-20 (doc drift) — done in the first round; the tick was missing, the work was not
 - [x] RG-21 · RG-22 — the arrangement editor and the index-drift rule, done 2026-08-30
 
+### Then — everything the register could reach from source
+
+- [x] RG-23 … RG-31 — the field audit's own findings, plus the three R4 detection
+      defects. 2026-08-30, DECISIONS §55–§57
+- [x] RG-33 … RG-35 — the confirm arm of the calibrator, the ranking comparator, and
+      the two Settings sliders. DECISIONS §58–§59
+- [x] RG-36 … RG-46 — the console's mixed signals, five untrapped modals, six views a
+      screen reader could not navigate, and three documents that lied about themselves
+- [x] RG-47 — a defect introduced by RG-28 and found by applying this repo's own rule
+      to my own change
+- [x] RG-48 — this report had drifted; §16 and §18 rewritten
+
 ### What is left, and none of it is a commit
 
-- [ ] **Stage C** — a person, a microphone, a real room. Blocks RG-10's audio seed,
-      RG-16's replay, and the word-error-rate measurement the moat rests on.
+- [x] ~~**Stage F11** — one full service, watching Diagnostics for a rising line.~~
+      **RUN 2026-08-30** — `audits/FIELD-2026-08-30.md`. The answer is no drift, across
+      49.5 minutes and 2,423 decodes. It also produced seven findings, six of which are
+      closed above and one withdrawn as wrong.
+- [ ] **Stage C** — a person, a microphone, a real room. The first minutes of it were
+      reached on 2026-08-30; what is still unreached is the AUDIO — word error rate in any
+      language, RG-10's audio seed, and replaying a recorded service.
 - [ ] **Stage B** — a projector, to check RG-18's thresholds against a wall.
-- [ ] **Stage F11** — one full service, watching Diagnostics for a rising line.
-- [ ] **A native speaker** — RG-19's language packs and §47's empty column.
+- [ ] **A native speaker** — signed language packs, Yorùbá numerals (`r4_05`), §47's
+      empty column.
 - [ ] **A Windows code-signing certificate** — the platform most churches are on.
+- [ ] **A second service, and a THIRD** — RG-32 is open on purpose and waits for them:
+      a context-resolved bare verse is labelled `Direct` at a hardcoded 0.88, which by
+      rule 10 is a lie, and one service is not enough evidence to make every in-passage
+      "verse eighteen" cost a click.
+- [ ] **One service run by a NON-AUTHOR operator.** Everything above was run by the
+      person who wrote the software.
 
 ### Always — before any of the above ships
 
-- [ ] Stage F11. Everything else is a smaller number than this one.
+- [ ] A service run by somebody else. Stage F11 has been answered; this one has not, and
+      it is now the largest unknown in the project.
 
 ---
 
 ## 26. Document actions — delete · merge · update
 
-### Delete: **nothing**
+> **Re-run 2026-08-30.** The original round's actions are all done and are kept below the
+> line. This is what a second pass over every tracked document found.
+
+### Delete: **`docs/GPT.md`** — done
+
+770 lines restating `CLAUDE.md`, `AGENTS.md` and this file for a model with **no repository
+access**. That audience was real when it was written and is not any more: `AGENTS.md` now
+carries the tool-agnostic contract, and it deliberately states **no counts at all** — which is
+the whole reason it does not drift. `GPT.md` carried its own copy of every count and every one
+of them was stale (§18).
+
+Three copies of one set of constraints is three things to keep true, and this was reliably the
+least true of the three. The question it existed to ask has been asked; the answer is this file.
+
+**Nothing else is deleted.** Every other tracked document was checked for inbound references:
+
+| Looks orphaned | Why it stays |
+|---|---|
+| `.claude/agents/relay-qa-*.md` (6) | Loaded by NAME by the `/qa-audit` command, not by link |
+| `.claude/commands/qa-audit.md` | A slash command; invoked, never referenced |
+| `.github/PULL_REQUEST_TEMPLATE.md` | GitHub loads it by path |
+| `PROMPT.md` | Cited by five Rust module docs and `capabilities/default.json` for its phase numbers. **Still must not be deleted** |
+| `docs/audits/*` (4) | Frozen evidence. An audit that edits its own history stops being evidence — closures go in its fix log, never in its findings |
+
+### Merge: two duplicates, both mine, both fixed
+
+| Duplicate | Resolution |
+|---|---|
+| **RG-44 appeared twice** in the register, and **RG-47's row was concatenated onto RG-44's line** with no newline — so the table rendered one malformed row and RG-47 was invisible | Both from a conflict I resolved badly while landing PR #35. De-duplicated by ID; the row split |
+| §16 listed twenty features as missing that were **built the same week** | Rewritten to the three genuinely missing, each with its reason; the original list kept below the line |
+
+### The first round's actions — all complete
 
 Verified with `git check-ignore -v`: `ruvector.db`, `.DS_Store`, `docs/.DS_Store` and
 `.claude/RESUME.md` are all untracked **and** gitignored. No stray file is tracked.
