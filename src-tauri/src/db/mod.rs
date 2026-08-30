@@ -1578,6 +1578,125 @@ mod tests {
         assert!(lookup_verse(&conn, "John", 3, 16).unwrap().is_some());
     }
 
+    /// EVERY COLUMN AN UPGRADE ADDS MUST ACTUALLY REACH AN OLD DATABASE.
+    ///
+    /// `schema.sql` is the fresh-install shape and is `include_str!`d, so it
+    /// cannot drift from the code. The **upgrade** path is separate — a sniffed
+    /// `ALTER TABLE … ADD COLUMN` per late-arriving column — and nothing compared
+    /// the two.
+    ///
+    /// The asymmetry is invisible where it is written. Every test database and
+    /// every developer database is FRESH, so a column added to `schema.sql` whose
+    /// `ALTER` was forgotten works perfectly here and is missing on every machine
+    /// that has ever run an older build. The first symptom is a church's laptop
+    /// failing on a query that works everywhere else.
+    ///
+    /// So this builds an OLD database honestly: take a fresh one, **drop every
+    /// column that an `ALTER` claims to add**, wind `user_version` back to 0, and
+    /// run the real `migrate`. Every dropped column must come back.
+    ///
+    /// The `ALTER` list is read out of the source rather than typed here, so a
+    /// new one is covered the day it is written — the same technique as
+    /// `servicelock::every_protected_command_actually_guards_itself`.
+    ///
+    /// ── WHAT THIS DOES NOT CATCH, STATED PLAINLY ────────────────────────────
+    ///
+    /// It reads the `ALTER`s that EXIST. A column added to `schema.sql` whose
+    /// `ALTER` was never written is invisible to it — there is nothing to find,
+    /// nothing to drop, and the test passes. **Verified, not assumed:** deleting
+    /// the `last_minute_ms` migration outright leaves this green.
+    ///
+    /// What it does catch is the failure mode that has actually bitten this
+    /// repository — a migration that is present and does not run. Breaking the
+    /// pragma sniff in front of that same `ALTER` (a typo'd column name, so the
+    /// guard always reports "already there") fails it immediately.
+    ///
+    /// Closing the other half needs a copy of the OLD schema to diff against, and
+    /// this repo does not keep one. That is a gap, and it is written down rather
+    /// than papered over.
+    #[test]
+    fn every_column_an_upgrade_adds_reaches_a_database_that_predates_it() {
+        // The `ALTER`s live across the db modules; read them the way the code
+        // ships rather than maintaining a second list.
+        const SOURCES: &[&str] = &[
+            include_str!("mod.rs"),
+            include_str!("services.rs"),
+            include_str!("songs.rs"),
+            include_str!("templates.rs"),
+            include_str!("profiles.rs"),
+            include_str!("library.rs"),
+            include_str!("plans.rs"),
+            include_str!("environments.rs"),
+            include_str!("settings.rs"),
+        ];
+        let mut adds: Vec<(String, String)> = Vec::new();
+        for src in SOURCES {
+            for line in src.lines() {
+                let Some(at) = line.find("ALTER TABLE ") else {
+                    continue;
+                };
+                let rest = &line[at + "ALTER TABLE ".len()..];
+                let mut it = rest.split_whitespace();
+                let (Some(table), Some(a), Some(c), Some(col)) =
+                    (it.next(), it.next(), it.next(), it.next())
+                else {
+                    continue;
+                };
+                if a == "ADD" && c == "COLUMN" {
+                    adds.push((table.to_string(), col.to_string()));
+                }
+            }
+        }
+        assert!(
+            adds.len() >= 3,
+            "found only {} ALTER…ADD COLUMN in the db modules — the parse is wrong \
+             and every assertion below is vacuous",
+            adds.len()
+        );
+
+        let conn = Connection::open_in_memory().unwrap();
+        migrate(&conn, true).expect("fresh install");
+
+        // Make it old: remove the columns the upgrade path is responsible for.
+        let mut dropped = Vec::new();
+        for (table, col) in &adds {
+            let sql = format!("ALTER TABLE {table} DROP COLUMN {col}");
+            if conn.execute_batch(&sql).is_ok() {
+                dropped.push((table.clone(), col.clone()));
+            }
+            // A column SQLite refuses to drop (an index or a CHECK depends on it)
+            // is skipped rather than silently counted as tested — the assertion
+            // below is over what was ACTUALLY removed.
+        }
+        assert!(
+            !dropped.is_empty(),
+            "no column could be dropped, so this test proved nothing"
+        );
+        set_user_version(&conn, 0).unwrap();
+
+        migrate(&conn, false).expect("upgrade an old database");
+
+        let mut still_missing = Vec::new();
+        for (table, col) in &dropped {
+            let n: i64 = conn
+                .query_row(
+                    &format!("SELECT COUNT(*) FROM pragma_table_info('{table}') WHERE name = ?1"),
+                    [col],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            if n == 0 {
+                still_missing.push(format!("{table}.{col}"));
+            }
+        }
+        assert!(
+            still_missing.is_empty(),
+            "these columns exist on a fresh install and an upgrade never restores \
+             them: {still_missing:?} — every machine that has run an older build is \
+             missing them, and no other test would notice"
+        );
+    }
+
     #[test]
     fn migrates_pre_console_active_db() {
         // Simulate a DB created BEFORE the console_active column existed (the
