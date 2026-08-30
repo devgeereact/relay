@@ -88,13 +88,38 @@ describe('hardware probes', () => {
     expect(r.note).toMatch(/close other apps/i);
   });
 
-  it('reports GPU as a BUILD fact, and says CPU when nothing is compiled in', async () => {
+  it('reports GPU as a BUILD fact, never as a fact about the machine', async () => {
     // The bug this exists for: printing the machine's GPU next to a CPU-only
     // build. It would be the most convincing lie on the screen.
     const r = await probesWith({ gpu_backends: [] }).gpu();
-    expect(r.state).toBe('ok');
     expect(r.note).toMatch(/CPU/);
+  });
+
+  it('WARNS about a CPU-only build on macOS — the same verdict degraded.js gives', async () => {
+    // One fact, one verdict. `degraded.js` calls this "reduced" — the transcript
+    // will lag the preacher on anything but the smallest model — and the launch
+    // screen used to call the identical fact `ok`, in green, on the screen an
+    // operator reads before a service. Rule 27 measured it: ~1710 ms per window
+    // against a ~1000 ms budget, which is slower than real time.
+    const r = await probesWith({ gpu_backends: [], os: 'macOS 15.0' }).gpu();
+    expect(r.state).toBe('warn');
+    expect(r.note).toMatch(/3x slower/);
+  });
+
+  it('…and stays ok off macOS, where nobody has measured it', async () => {
+    // A warning nobody measured is a warning an operator learns to scroll past.
+    const r = await probesWith({ gpu_backends: [], os: 'Windows 11' }).gpu();
+    expect(r.state).toBe('ok');
     expect(r.note).toMatch(/no GPU backend in this build/);
+  });
+
+  it('the two surfaces cannot disagree — they ask the same function', async () => {
+    const { gpuIsReduced } = await import('../degraded.js');
+    const { degradations } = await import('../degraded.js');
+    const state = { macos: true, gpuBackends: [] };
+    expect(gpuIsReduced(state)).toBe(true);
+    expect(degradations({ ...state, sttLoaded: true }).some((d) => d.id === 'gpu')).toBe(true);
+    expect((await probesWith({ gpu_backends: [], os: 'macOS 15.0' }).gpu()).state).toBe('warn');
   });
 
   it('names the compiled backends when there are some', async () => {
