@@ -1697,6 +1697,121 @@ mod tests {
         );
     }
 
+    /// …AND NO COLUMN ADDED SINCE THE BEGINNING IS MISSING A MIGRATION.
+    ///
+    /// The other half of the test above, and the half it explicitly could not
+    /// reach: it can prove the migrations that EXIST run on an old database, but
+    /// not that one was written at all. A column added to `schema.sql` with no
+    /// `ALTER` behind it leaves nothing to find.
+    ///
+    /// That was recorded as unclosable for want of an old schema to diff
+    /// against — **wrongly, because git had one all along.** The schema as it
+    /// stood at the first commit that had one is checked in beside the live one
+    /// as `schema-baseline.sql`, and this diffs them.
+    ///
+    /// Only tables present in BOTH are compared. A table that did not exist then
+    /// is created whole by an `ensure_*`, columns and all, so there is nothing for
+    /// an `ALTER` to add — and the test above already proves those tables arrive.
+    #[test]
+    fn every_column_added_since_the_baseline_has_a_migration() {
+        const BASELINE: &str = include_str!("../../../docs/data/schema-baseline.sql");
+        const LIVE: &str = include_str!("../../../docs/data/schema.sql");
+
+        /// table -> columns, read the way SQLite would: the first word of each
+        /// line inside `CREATE TABLE (...)`, minus comments and table constraints.
+        fn columns(sql: &str) -> std::collections::BTreeMap<String, Vec<String>> {
+            let mut out: std::collections::BTreeMap<String, Vec<String>> = Default::default();
+            let mut table: Option<String> = None;
+            for raw in sql.lines() {
+                let line = raw.split("--").next().unwrap_or("").trim();
+                if let Some(rest) = line.strip_prefix("CREATE TABLE ") {
+                    let name = rest
+                        .trim_start_matches("IF NOT EXISTS ")
+                        .split(['(', ' '])
+                        .next()
+                        .unwrap_or("")
+                        .to_string();
+                    if !name.is_empty() {
+                        out.entry(name.clone()).or_default();
+                        table = Some(name);
+                    }
+                    continue;
+                }
+                let Some(t) = table.clone() else { continue };
+                if line.starts_with(')') {
+                    table = None;
+                    continue;
+                }
+                let Some(word) = line.split([' ', '\t']).next() else {
+                    continue;
+                };
+                let word = word.trim_end_matches(',');
+                if word.is_empty()
+                    || matches!(
+                        word.to_ascii_uppercase().as_str(),
+                        "PRIMARY" | "FOREIGN" | "UNIQUE" | "CHECK" | "CONSTRAINT"
+                    )
+                {
+                    continue;
+                }
+                out.entry(t).or_default().push(word.to_string());
+            }
+            out
+        }
+
+        let then = columns(BASELINE);
+        let now = columns(LIVE);
+        assert!(
+            then.len() >= 5 && now.len() > then.len(),
+            "the schema parse is wrong — then={} now={} — and every assertion \
+             below would be vacuous",
+            then.len(),
+            now.len()
+        );
+
+        // Every `ALTER … ADD COLUMN` the db modules contain, in one place.
+        const SOURCES: &[&str] = &[
+            include_str!("mod.rs"),
+            include_str!("services.rs"),
+            include_str!("songs.rs"),
+            include_str!("templates.rs"),
+            include_str!("profiles.rs"),
+            include_str!("library.rs"),
+            include_str!("plans.rs"),
+            include_str!("environments.rs"),
+            include_str!("settings.rs"),
+        ];
+        let migrated: Vec<String> = SOURCES
+            .iter()
+            .flat_map(|s| s.lines())
+            .filter_map(|l| {
+                let at = l.find("ALTER TABLE ")?;
+                let mut it = l[at + "ALTER TABLE ".len()..].split_whitespace();
+                match (it.next(), it.next(), it.next(), it.next()) {
+                    (Some(t), Some("ADD"), Some("COLUMN"), Some(c)) => Some(format!("{t}.{c}")),
+                    _ => None,
+                }
+            })
+            .collect();
+
+        let mut orphans = Vec::new();
+        for (table, cols) in &now {
+            let Some(was) = then.get(table) else { continue };
+            for c in cols {
+                if !was.contains(c) && !migrated.contains(&format!("{table}.{c}")) {
+                    orphans.push(format!("{table}.{c}"));
+                }
+            }
+        }
+        assert!(
+            orphans.is_empty(),
+            "these columns were added to a table that already existed, and NOTHING \
+             adds them to a database created before they were: {orphans:?} — give \
+             each one an `ALTER TABLE … ADD COLUMN` behind a pragma sniff (rule 25). \
+             Editing schema-baseline.sql instead would be editing the past."
+        );
+    }
+
     #[test]
     fn migrates_pre_console_active_db() {
         // Simulate a DB created BEFORE the console_active column existed (the
