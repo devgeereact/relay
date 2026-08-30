@@ -528,17 +528,23 @@ mod cold_start {
         assert!(ch > 0 && plan > 0 && cue > 0);
     }
 
-    /// GAP: the two tables an operator cannot fill from any control.
+    /// GAP, now one table rather than two: **`translations`**.
     ///
-    /// This is the whole point of the cold-start mandate, asserted rather than
-    /// argued. It passes *because the gap is open*.
+    /// This is the cold-start mandate asserted rather than argued — what a fresh
+    /// install cannot be brought to contain by any control an operator can reach.
     ///
-    /// When it fails:
-    ///   - `song_arrangements` non-empty → an arrangement editor shipped. Delete
-    ///     that half of this test and move the row in the matrix.
-    ///   - `translations` > 1 → a translation importer shipped. Same.
+    /// `song_arrangements` **left this test on 2026-08-30**: the arrangement editor
+    /// shipped (RG-21), and `a_component_can_create_a_song_arrangement` now pins the
+    /// create path from both ends. What remains here about it is the fresh-install
+    /// claim — a new install still seeds none, which is correct and is not a gap.
+    ///
+    /// `translations` is still real: there is no `add_translation` command at all,
+    /// and Settings says so plainly. A church wanting a version other than KJV
+    /// cannot get one, and no amount of UI would help — the corpus has to arrive.
+    ///
+    /// When the translation half fails, an importer shipped: move the matrix row.
     #[test]
-    fn song_arrangements_and_translations_cannot_be_created_from_a_fresh_install() {
+    fn a_fresh_install_still_cannot_be_given_a_second_translation() {
         let app = bare_app();
         let h = app.handle().clone();
         let db = h.state::<Db>();
@@ -555,9 +561,11 @@ mod cold_start {
             "a fresh install ships exactly one translation (KJV)"
         );
 
-        // Both CAN be written — the db layer and the command layer are complete.
-        // The break is further up: no rendered component imports `saveArrangement`,
-        // and there is no `add_translation` command at all.
+        // The TABLE was never the problem, for either of them. For arrangements the
+        // break used to be one level up — a wrapper no component imported — and
+        // that is closed. For translations the break is at the command layer: there
+        // is no `add_translation` at all, and behind it the verse corpus for a
+        // second version does not exist to import.
         drop(conn);
         let conn = db.0.lock().unwrap();
         conn.execute_batch(
@@ -666,19 +674,26 @@ mod cold_start {
             .contains("fn save_arrangement"));
     }
 
-    /// GAP: two of the three entries in Library → **New Item** do nothing.
+    /// CLOSED — all three entries in Library → **New Item** now do something.
     ///
-    /// `newPasteSong()` sets `lyricAction` and `newSaveScripture()` sets
-    /// `scriptureAction`, and neither variable is ever passed to the pane it is
-    /// meant to drive — `<LyricsPane>` and `<Scripture>` declare no such prop.
-    /// The third, `newDraftAnnouncement()`, IS wired (`startDraft={announceAction}`),
-    /// which is what makes the other two look correct at a glance.
+    /// `newPasteSong()` set `lyricAction` and `newSaveScripture()` set
+    /// `scriptureAction`, and neither variable was ever passed to the pane it was
+    /// meant to drive — `<LyricsPane>` and `<Scripture>` declared no such prop. The
+    /// third, "Draft announcement", IS wired, which is exactly what made the other
+    /// two look correct at a glance.
     ///
-    /// The consequence for cold start: "Paste / draft song" is the only create
-    /// path for `songs` that does not require a FILE, so a church whose lyrics
-    /// live on a website has no way to add a song at all.
+    /// It mattered most for songs: **"Paste / draft song" is the only create path
+    /// for `songs` that does not require a FILE**, so a church whose lyrics live on
+    /// a website had no way in at all.
+    ///
+    /// Both are wired to the thing that actually does the work, rather than to a
+    /// flag: pasting opens a sheet and hands the text to the SAME `parse_import`
+    /// review a file goes through, and "Save scripture" puts the cursor in the
+    /// search box on the Saved tab, because saving a verse happens by starring a
+    /// result and inventing a second editor would be a second create path for a
+    /// table that already has a good one.
     #[test]
-    fn two_of_the_three_new_item_menu_entries_are_dead() {
+    fn all_three_new_item_menu_entries_do_something() {
         let lib = std::fs::read_to_string("../src/lib/views/Library.svelte").unwrap();
         let lyrics = std::fs::read_to_string("../src/lib/views/library/LyricsPane.svelte").unwrap();
         let scripture =
@@ -695,28 +710,41 @@ mod cold_start {
         assert!(lib.contains("startDraft={announceAction}"));
         assert!(announcements.contains("export let startDraft"));
 
-        // The two that do not. `lyricAction` / `scriptureAction` are assigned and
-        // never read by anything.
-        assert!(lib.contains("lyricAction = 'paste'"));
-        assert!(lib.contains("scriptureAction = true"));
+        // The dead flags are GONE — not merely unread, deleted. A variable that is
+        // assigned and never read is the shape this defect had, and leaving one
+        // behind would let it come back looking wired.
+        //
+        // Match the ASSIGNMENT, not the word. The file explains in prose why these
+        // flags are gone, and a bare-word grep fails on the explanation itself —
+        // the same trap the Announcements assertion below already records.
         assert!(
-            !lib.contains("{lyricAction}") && !lib.contains("={lyricAction}"),
-            "`lyricAction` is now passed to a child — the gap is closed, update \
-             the matrix row for `songs`"
+            !lib.contains("lyricAction =") && !lib.contains("scriptureAction ="),
+            "the dead flags are back — they were assigned and read by nothing, \
+             which is exactly how two menu entries came to do nothing"
+        );
+
+        // Pasting opens a sheet and goes through the SAME review a file import
+        // does. A second, shorter path to `songs` is how two ways of creating one
+        // start disagreeing about what a section is.
+        assert!(lib.contains("function commitPaste"), "no paste handler");
+        assert!(
+            lib.contains("parseImport(") && lib.contains("reviewing = true"),
+            "pasting must land in the same review as a file import"
         );
         assert!(
-            !lib.contains("{scriptureAction}") && !lib.contains("={scriptureAction}"),
-            "`scriptureAction` is now passed to a child — the gap is closed"
+            lib.contains("aria-label=\"Paste a song\"") && lib.contains("use:trapFocus"),
+            "the paste sheet is a real modal and must trap focus like every other"
         );
+
+        // …and "Save scripture" puts the cursor where the work happens.
         assert!(
-            !lyrics.contains("export let action") && !lyrics.contains("export let startDraft"),
-            "LyricsPane grew the prop — wire the matrix row up"
+            lib.contains("searchEl?.focus()") && lib.contains("bind:this={searchEl}"),
+            "Save scripture must land the operator in the search box"
         );
-        assert!(
-            !scripture.contains("export let action")
-                && !scripture.contains("export let startDraft"),
-            "Scripture grew the prop — wire the matrix row up"
-        );
+
+        // Neither pane grew a prop for this: the wiring is in the Library, which is
+        // where the menu lives.
+        let _ = (&lyrics, &scripture);
     }
 
     /// GAP: three commands are addressed only by a `capture.js` wrapper that no

@@ -214,8 +214,6 @@
   let reviewing = false;
 
   // pane actions passed on (re)mount
-  let lyricAction = null; // 'paste' when New → paste/draft song
-  let scriptureAction = false; // true when New → save scripture
   let announceAction = false; // true when New → draft announcement
 
   function goTab(t) {
@@ -288,19 +286,76 @@
     goTab('lyrics');
   }
 
-  async function newPasteSong() {
+  // ── TWO MENU ENTRIES THAT DID NOTHING ──────────────────────────────────────
+  //
+  // `newPasteSong` set `lyricAction` and `newSaveScripture` set `scriptureAction`,
+  // and neither variable was ever passed to the pane it was meant to drive —
+  // `<LyricsPane>` and `<Scripture>` declared no such prop. The third entry,
+  // "Draft announcement", IS wired, which is exactly what made the other two look
+  // correct at a glance.
+  //
+  // It mattered most for songs: **pasting was the only way to add one without a
+  // FILE**, so a church whose lyrics live on a website had no way in at all.
+  let searchEl;
+
+  /** New → "Paste / draft song". Opens the paste sheet below. */
+  function newPasteSong() {
     showNew = false;
-    lyricAction = 'paste';
     goTab('lyrics');
-    await tick();
-    lyricAction = null;
+    pasting = { title: '', text: '' };
   }
+
+  /**
+   * New → "Save scripture".
+   *
+   * Saving a verse happens by starring a search result — there is no separate
+   * "new scripture" editor and inventing one would be a second create path for a
+   * table that already has a good one. So this puts the operator where the work
+   * happens: the Saved tab, cursor already in the search box.
+   */
   async function newSaveScripture() {
     showNew = false;
-    scriptureAction = true;
     goTab('scripture');
     await tick();
-    scriptureAction = false;
+    searchEl?.focus();
+  }
+
+  // ── PASTING A SONG ─────────────────────────────────────────────────────────
+  //
+  // Deliberately routed through the SAME review that a file import uses: the text
+  // is handed to `parse_import` as a `.txt`, comes back as review rows, and is
+  // committed by `save_reviewed_songs`. A second, shorter path to the same table
+  // is how two ways of creating a song start disagreeing about what a section is.
+  let pasting = null; // { title, text } while the sheet is open
+  let pasteBusy = false;
+
+  async function commitPaste() {
+    const title = (pasting?.title ?? '').trim();
+    const text = pasting?.text ?? '';
+    if (!title) {
+      errMsg = 'Give the song a title.';
+      return;
+    }
+    if (!text.trim()) {
+      errMsg = 'Paste the words first.';
+      return;
+    }
+    pasteBusy = true;
+    errMsg = '';
+    try {
+      const b64 = btoa(unescape(encodeURIComponent(text)));
+      const got = await parseImport(`${title}.txt`, b64);
+      if (!got.length) {
+        errMsg = 'Nothing in that looked like song words.';
+      } else {
+        reviewSongs = got;
+        reviewing = true;
+        pasting = null;
+      }
+    } catch (err) {
+      errMsg = humanError(err);
+    }
+    pasteBusy = false;
   }
   async function newDraftAnnouncement() {
     showNew = false;
@@ -311,12 +366,58 @@
   }
 </script>
 
+<!-- Escape closes the paste sheet, bound at the window like the Planner's
+     arrangement picker. `shortcuts.js` already refuses to clear the wall while any
+     [role="dialog"] is mounted (rule 16), so this dismisses the sheet and nothing
+     else — a modal dismissal is not a live action. -->
+<svelte:window on:keydown={(e) => pasting && e.key === 'Escape' && (pasting = null)} />
+
 <div class="lib-shell">
   <!-- A screen-reader operator navigates by heading. This tab had none at all,
        so there was nothing to jump to and no way to tell where you had landed.
        Visually hidden because the tab bar is already the visible title — the
        heading is for the reader that cannot see it. -->
   <h1 class="sr-only">Library</h1>
+<!-- PASTE A SONG. The one create path for `songs` that needs no file — for a
+     church whose lyrics live on a website. It hands the text to the same parser a
+     file goes through and lands in the same review. -->
+{#if pasting}
+  <!-- Escape rides on `<svelte:window>`, the same way the Planner's arrangement
+       picker does, rather than on the sheet: a `role="dialog"` div carrying its own
+       mouse and key listeners is what Svelte's a11y rules object to, and
+       `shortcuts.js` already refuses to clear the wall while any [role="dialog"] is
+       mounted (rule 16), so Escape here dismisses the sheet and nothing else.
+       The scrim closes only on a click that landed ON the scrim. -->
+  <div
+    class="lib-scrim"
+    role="presentation"
+    on:click={(e) => e.target === e.currentTarget && (pasting = null)}>
+    <div class="lib-sheet" role="dialog" aria-modal="true" aria-label="Paste a song" use:trapFocus>
+      <h2 class="lib-sheeth">Paste a song</h2>
+      <label class="r-lbl" for="lib-paste-title">Title</label>
+      <input id="lib-paste-title" class="r-input" bind:value={pasting.title} placeholder="Great Are You Lord" />
+      <label class="r-lbl" for="lib-paste-text">Words</label>
+      <textarea
+        id="lib-paste-text"
+        class="r-input lib-pastebox"
+        bind:value={pasting.text}
+        spellcheck="false"
+        placeholder={'[Verse 1]\nline one\nline two\n\n[Chorus]\nsing it'}></textarea>
+      <p class="lib-pastehelp">
+        A blank line starts a new section. <code>[Chorus]</code>, <code>Chorus</code> or
+        <code>V2</code> on its own line names one. You will see it before anything is saved.
+      </p>
+      <div class="lib-sheetacts">
+        <button class="r-btn ghost sm" on:click={() => (pasting = null)}>Cancel</button>
+        <span class="lib-spring"></span>
+        <button class="r-btn primary sm" disabled={pasteBusy} on:click={commitPaste}>
+          {pasteBusy ? 'Reading…' : 'Continue'}
+        </button>
+      </div>
+    </div>
+  </div>
+{/if}
+
 {#if reviewing}
   <ImportReview songs={reviewSongs} on:done={onReviewDone} on:cancel={() => (reviewing = false)} />
 {:else}
@@ -402,6 +503,7 @@
       <input
         class="r-input"
         type="search"
+        bind:this={searchEl}
         bind:value={query}
         on:input={onSearch}
         {placeholder}
@@ -485,6 +587,19 @@
 
 <style>
   .lib-shell{ display:flex; flex-direction:column; gap:14px; min-height:0; }
+  /* The paste sheet. Same shape as the Planner's arrangement picker, so a modal in
+     this app looks like every other modal in this app. */
+  .lib-scrim{ position:fixed; inset:0; z-index:60; display:grid; place-items:center;
+    background:rgba(0,0,0,.55) }
+  .lib-sheet{ width:min(620px,92vw); max-height:86vh; overflow:auto; display:flex;
+    flex-direction:column; gap:8px; padding:18px; border-radius:var(--v-r-lg);
+    border:1px solid var(--v-line); background:var(--v-bg) }
+  .lib-sheeth{ margin:0 0 4px; font-size:var(--v-fs-h3); font-weight:600 }
+  .lib-pastebox{ min-height:220px; resize:vertical; font-family:var(--f-mono,monospace);
+    font-size:12px; line-height:1.55 }
+  .lib-pastehelp{ margin:0; font-size:11px; color:var(--v-faint) }
+  .lib-sheetacts{ display:flex; align-items:center; gap:8px; margin-top:6px }
+  .lib-spring{ flex:1 }
   /* ONE layout for every content type: the catalogue, and the live column. */
   .lib-body{ display:grid; grid-template-columns:minmax(0,1fr) 400px; gap:12px; min-height:0;
     height:clamp(420px, calc(100vh - 296px), 900px); }
