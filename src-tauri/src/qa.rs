@@ -438,6 +438,7 @@ mod cold_start {
         // --- services: starting to listen starts recording (capture.js
         //     `startCapture` calls `start_service` before `start_capture`).
         let svc = start_service(
+            h.clone(),
             h.state::<Session>(),
             h.state::<Db>(),
             h.state::<channels::Rehearsal>(),

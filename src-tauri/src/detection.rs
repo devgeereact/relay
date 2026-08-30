@@ -62,6 +62,51 @@ pub enum DetectionMethod {
     /// was heard exactly and only the digit was in doubt.
     #[serde(rename = "uncertain_book")]
     UncertainBook,
+
+    /// The book was heard; the NUMBERS were inferred, repaired, or did not line up.
+    ///
+    /// ── Why this variant exists (R4-01 · R4-02 · R4-03) ─────────────────────
+    ///
+    /// `UncertainBook` closed the case where Relay guessed the word. This closes
+    /// the case where it guessed the digits — and the two failed for exactly the
+    /// same reason: the confidence was a real parse confidence, honest about the
+    /// parse, silent about whether the thing parsed was ever said.
+    ///
+    /// Four shapes reach it, all of them ordinary preaching:
+    ///
+    /// * **A run the book cannot support, split.** `split_run_into_chapter_verse`
+    ///   exists because whisper writes "six sixty three" as `663` — but nothing
+    ///   required the sentence to be reference-shaped, and the repair was handed
+    ///   0.83 where the keyword-less reading it replaced is deliberately demoted
+    ///   to 0.45. So a number the parser could NOT read as a chapter made Relay
+    ///   MORE confident: *"Nehemiah, thirteen days they built the wall"* asked a
+    ///   human at 0.45, and *"Nehemiah, fifty two days they built the wall"* put
+    ///   **Nehemiah 5:2** on the wall at 0.77.
+    /// * **A leftover number.** "Psalms 2, 3, 1" parses 2:3 and strands a "1" no
+    ///   range could absorb — the shape of garbled speech, and already demoted
+    ///   when whisper wrote digits. It writes WORDS on a large share of accented
+    ///   decodes, which is this product's entire market, and the identical garble
+    ///   spelled out scored 0.90 and went straight to the congregation.
+    /// * **A whole chapter nobody named as one.** "Matthew, one of the twelve
+    ///   disciples" → Matthew 1:1. The verse was supplied by Relay, not heard.
+    /// * **A single-chapter book's lone number.** "jude four men came in" →
+    ///   Jude 1:4. The chapter was supplied.
+    ///
+    /// Each of those was already demoted **as a score** — 0.45, against a 0.50
+    /// default bar. That margin is 0.05 wide and the operator's own sensitivity
+    /// dial closes it: `from_sensitivity(100)` returns an auto-fire bar of 0.30,
+    /// which is the confidence FLOOR, so at the top of the dial no direct match
+    /// could ever be a suggestion and every deliberate demotion in this file was
+    /// inert. **A demotion expressed as a number is a demotion a dial can erase.**
+    /// Expressed as a method, the router refuses it at any score and any dial —
+    /// the same repair `UncertainBook` got, for the same reason.
+    ///
+    /// Deliberately NOT here: a bare pair that ends cleanly ("psalm 23 1"), and a
+    /// number word the FSM repaired inside a complete reference ("john free
+    /// sixteen"). Both numbers were heard in those; only the rendering was in
+    /// doubt.
+    #[serde(rename = "uncertain_number")]
+    UncertainNumber,
 }
 
 impl DetectionMethod {
@@ -78,6 +123,18 @@ impl DetectionMethod {
     /// the word that was spoken. See the variant's doc comment.
     pub fn may_auto_fire(&self) -> bool {
         matches!(self, DetectionMethod::Direct)
+    }
+
+    /// Demote a match whose NUMBERS were inferred rather than heard.
+    ///
+    /// Applied at the five sites in `parse_reference` that already demoted by
+    /// score. It never overwrites `UncertainBook`: a guessed book name is the
+    /// larger doubt and has its own sentence on screen, and stacking them would
+    /// tell the operator the smaller of the two things that is wrong.
+    fn uncertain_number(m: &mut RefMatch) {
+        if m.method == DetectionMethod::Direct {
+            m.method = DetectionMethod::UncertainNumber;
+        }
     }
 
     /// The value written to `detections.method`, which is constrained to
@@ -97,7 +154,8 @@ impl DetectionMethod {
         match self {
             DetectionMethod::Direct
             | DetectionMethod::Ambiguous
-            | DetectionMethod::UncertainBook => "direct",
+            | DetectionMethod::UncertainBook
+            | DetectionMethod::UncertainNumber => "direct",
             DetectionMethod::Semantic => "semantic",
         }
     }
@@ -1060,21 +1118,24 @@ fn parse_reference(
             // SAYS "Psalms two three" — they say "Psalms two verse three". So a bare
             // pair now suggests, and a human decides.
             let base = if kw2 { 0.92 } else { 0.45 };
-            return Some((
-                make_match(
-                    canonical,
-                    n1,
-                    n2,
-                    tokens,
-                    book_start,
-                    after2,
-                    base,
-                    kw2,
-                    ph1 || ph2,
-                    book_ev,
-                ),
+            let mut m = make_match(
+                canonical,
+                n1,
+                n2,
+                tokens,
+                book_start,
                 after2,
-            ));
+                base,
+                kw2,
+                ph1 || ph2,
+                book_ev,
+            );
+            if !kw2 {
+                // Nobody says "Psalms two three". The score said so already; the
+                // method says it in a way the sensitivity dial cannot erase.
+                DetectionMethod::uncertain_number(&mut m);
+            }
+            return Some((m, after2));
         }
         // TRUNCATED MID-REFERENCE, single-chapter twin. "Jude chapter 1 verse" —
         // the marker was consumed and the number never came, so falling through to
@@ -1110,6 +1171,11 @@ fn parse_reference(
         let mut m = make_match(
             canonical, 1, n1, tokens, book_start, after1, base, used_kw, ph1, book_ev,
         );
+        if !used_kw {
+            // "jude four men came in" — the CHAPTER was supplied by Relay, not
+            // heard. Every single-chapter book is also an ordinary English word.
+            DetectionMethod::uncertain_number(&mut m);
+        }
         let mut end_idx = after1;
         if let Some((e, after)) = parse_range_end(tokens, after1, n1) {
             m.verse_end = Some(e);
@@ -1237,15 +1303,27 @@ fn parse_reference(
             // A REPAIRED reference, so it is charged like one: `phonetic` costs
             // confidence downstream, and the run being unreadable as a chapter is
             // hard evidence the number was misheard.
-            let m = make_match(
-                canonical, c, v, tokens, book_start, after_ch, 0.83, used_kw, true, book_ev,
+            //
+            // R4-01: it used to be charged 0.83 — MORE than the 0.45 given to the
+            // keyword-less reading it replaced, so a number the parser could not
+            // read as a chapter made Relay more confident rather than less. It is
+            // now scored in the same band as that reading, and marked, because
+            // splitting a run the book cannot support is a guess about what the
+            // speaker said, not a fact about the book.
+            let mut m = make_match(
+                canonical, c, v, tokens, book_start, after_ch, 0.45, used_kw, true, book_ev,
             );
+            DetectionMethod::uncertain_number(&mut m);
             return Some((m, after_ch));
         }
         let base = if used_kw { 0.88 } else { 0.45 };
         let mut m = make_match(
             canonical, chapter, 1, tokens, book_start, after_ch, base, false, phonetic, book_ev,
         );
+        if !used_kw {
+            // "Matthew, one of the twelve disciples" — the VERSE was supplied.
+            DetectionMethod::uncertain_number(&mut m);
+        }
         m.whole_chapter = true;
         return Some((m, after_ch));
     };
@@ -1286,7 +1364,15 @@ fn parse_reference(
     // install (low dial, auto-fire 0.90) demotes bare pairs exactly as before.
     let bare_digits = chapter_was_digit && verse_was_digit && !used_kw;
     let trailing_number = parse_number(tokens, end_idx).is_some();
-    let base = if bare_digits && trailing_number {
+    // R4-02: the leftover number is the garble signal, and it does not care how
+    // whisper spelled it. This was gated on `bare_digits`, so it only ever saw
+    // `23`-style tokens — while whisper writes spoken numbers as WORDS on a large
+    // share of accented decodes, which is this product's entire market. The
+    // identical garble, spelled out, scored 0.90 and went straight to the
+    // congregation. A KEYWORD still exempts it: "Psalm 23 verse 1" states
+    // referential intent, and nobody says that by accident.
+    let garbled = trailing_number && !used_kw;
+    let base = if garbled {
         0.45 // the garble shape — reaches the operator, never the congregation
     } else if bare_digits {
         0.55 // above the default auto-fire (0.50), still dial-controllable
@@ -1298,6 +1384,9 @@ fn parse_reference(
     let mut m = make_match(
         canonical, chapter, verse, tokens, book_start, after_vs, base, used_kw, phonetic, book_ev,
     );
+    if garbled {
+        DetectionMethod::uncertain_number(&mut m);
+    }
     if let Some((e, _)) = range {
         m.verse_end = Some(e);
     }
@@ -1377,6 +1466,16 @@ fn parse_range_end(tokens: &[&str], idx: usize, start: i64) -> Option<(i64, usiz
     // Without a connector word, only an IMMEDIATELY adjacent number counts (the
     // hyphen-range case) — otherwise a following number is a separate reference.
     if !connector && j != idx {
+        return None;
+    }
+    // ...and that adjacent-number case exists for ONE reason: "3:16-18" tokenizes
+    // to adjacent numbers because `normalize` turns the hyphen into whitespace.
+    // A hyphen cannot survive into spelled-out words, so a bare adjacent number
+    // WORD is not a recovered range — it is a third number in a row, which is the
+    // garble shape (R4-02). "romans eight one two" was being read as Romans 8:1-2
+    // and auto-fired; the leftover "two" could not be seen as leftover because the
+    // range had already swallowed it.
+    if !connector && !tokens.get(j).is_some_and(|t| t.parse::<i64>().is_ok()) {
         return None;
     }
     let (end, after, _) = parse_number(tokens, j)?;
@@ -2000,6 +2099,35 @@ pub fn detect_clear(text: &str) -> bool {
 
 /// Find bare verse references ("verse 4", "verse twenty-eight") in `text`.
 /// Returns the verse numbers; the caller resolves them via ContextMemory.
+/// The reference this window names ITSELF, for a bare verse number to hang on.
+///
+/// ── FIELD F-1 · 2026-08-30 · a wrong verse on a real wall ───────────────────
+///
+/// A bare "verse 32" is resolved against `ContextMemory` — the passage last put
+/// on screen. That is right for the case it was written for: a preacher reading
+/// through Romans 8 who says "and verse eighteen".
+///
+/// It is wrong the moment the sentence names its own book. In a live service the
+/// operator had manually fired **Proverbs 3:6** five minutes earlier; the preacher
+/// moved on and said *"…what was going through in **Luke 10**. If you read from
+/// **verse 32, 37**."* The bare 32 was resolved against the remembered Proverbs 3
+/// and **Proverbs 3:32 auto-fired at 0.88**, unattended, while Luke 10 was sitting
+/// in the very same window.
+///
+/// Memory is what Relay has when the words do not say. When the words DO say, the
+/// words win — a reference named in this breath beats one from five minutes ago,
+/// always, and no confidence number was ever going to express that.
+///
+/// Returns the LAST reference parsed from `text`, because a sentence that names
+/// two moves forward through them: "we were in Romans 8, now turn to Luke 10,
+/// verse 32" means Luke.
+pub fn anchor_for_bare_verses(text: &str) -> Option<VerseRef> {
+    detect_direct(text)
+        .into_iter()
+        .next_back()
+        .map(|m| m.reference)
+}
+
 pub fn detect_bare_verses(text: &str) -> Vec<i64> {
     let norm = normalize(text);
     let tokens: Vec<&str> = norm.split_whitespace().collect();
@@ -4755,6 +4883,129 @@ mod r4_audit {
         wall(text, dial).0.into_iter().map(|(k, _)| k).collect()
     }
 
+    // ═══ FIELD · 2026-08-30 · A REAL SERVICE ════════════════════════════════
+    //
+    // Six references, transcribed by `ggml-large-v3-turbo` from a live sermon and
+    // taken VERBATIM from `detections.heard_text` — the column that exists because
+    // a service once put wrong verses on a wall and the log could not say what it
+    // had heard. Full write-up: `docs/audits/FIELD-2026-08-30.md`.
+    //
+    // These are not invented sentences. Every earlier case in this file was written
+    // by someone imagining how a preacher talks; these are how one actually did,
+    // through a real microphone, in a real room, with real ASR errors in them.
+    //
+    // **Four of the five correct fires are the bare "Book 15, 7" shape** — no
+    // chapter or verse keyword, deliberately scored 0.55, deliberately still
+    // firing at the default dial over the standing objection that nobody speaks
+    // that way. This preacher speaks that way, four times in thirty minutes. That
+    // demotion must not be tightened without this evidence in front of you.
+
+    /// The five the product got RIGHT, and they must stay right.
+    ///
+    /// A regression here is not a failed assertion, it is a church losing the
+    /// thing it installed Relay for.
+    #[test]
+    fn field_the_references_a_real_preacher_spoke_still_reach_the_wall() {
+        for (heard, want) in [
+            (
+                "David did the same thing in 2 Samuel 24, 24. When will this scripture be fulfilled in Yahweh?",
+                "2 Samuel 24:24",
+            ),
+            (
+                "Here we sing now. If your heart is enlarged, your hand will open. Look at Deuteronomy 15, 7 to 8.",
+                "Deuteronomy 15:7",
+            ),
+            (
+                "in the days of old and it got to a point the bible says exodus 35 verse 21 the bible",
+                "Exodus 35:21",
+            ),
+            (
+                "The church creates more than enough. Look at what the Bible says in 2 Corinthians 9, 8. Look at the word.",
+                "2 Corinthians 9:8",
+            ),
+            (
+                "Abundance is coming. But you have to enlarge your 10. That's why Isaiah 54, 2 to 3 was screaming at us.",
+                "Isaiah 54:2",
+            ),
+        ] {
+            let got = fired(heard, 50);
+            assert!(
+                got.iter().any(|k| k == want),
+                "{want} was spoken and did not reach the wall — fired {got:?}"
+            );
+        }
+    }
+
+    /// FIELD F-1 · the mechanism, isolated.
+    ///
+    /// The wrong verse did NOT come from the parser mis-reading a sentence — the
+    /// first diagnosis, and it was wrong. `detect_direct` never produces Proverbs
+    /// from this text at all. It came from the bare-verse path: "verse 32" hung on
+    /// `ContextMemory`, which still held **Proverbs 3:6** from a manual fire five
+    /// minutes earlier, while **Luke 10** sat in the same sentence.
+    ///
+    /// This test states the repair as a fact about the text alone, which is why it
+    /// can be a unit test at all: whatever memory holds, this window names Luke 10,
+    /// and a bare verse in it belongs to Luke 10.
+    #[test]
+    fn field_a_bare_verse_belongs_to_the_book_this_sentence_names() {
+        let heard = "The man that was wounded. That man was going through what was \
+                     going through in Luke 10. If you read from verse 32, 37.";
+        let anchor = anchor_for_bare_verses(heard).expect("this sentence names a reference");
+        assert_eq!(
+            anchor.book, "Luke",
+            "the book named in this breath, not one from memory"
+        );
+        assert_eq!(anchor.chapter, 10);
+        assert!(
+            detect_bare_verses(heard).contains(&32),
+            "precondition: 32 is seen as a bare verse"
+        );
+    }
+
+    /// …and the case the bare-verse path was WRITTEN for still works.
+    ///
+    /// A preacher reading through a passage says "and verse eighteen" and names no
+    /// book. Nothing in the window to anchor to, so memory is exactly right, and
+    /// the repair above must not have taken it away.
+    #[test]
+    fn field_a_bare_verse_with_nothing_to_anchor_to_still_falls_back_to_memory() {
+        assert!(
+            anchor_for_bare_verses("and if you look at verse eighteen").is_none(),
+            "no reference is named here — memory is all Relay has, and should be used"
+        );
+        assert!(detect_bare_verses("and if you look at verse eighteen").contains(&18));
+    }
+
+    /// FIELD F-1 · the one that was WRONG, in front of a congregation.
+    ///
+    /// The preacher cited **Luke 10:32-37** — the Good Samaritan, which is also
+    /// what the sentence around it is about. Relay put **Proverbs 3:32** on the
+    /// screen at 0.88 against a 0.50 bar, unattended.
+    ///
+    /// Two things make this worth a test of its own rather than a line in an
+    /// audit. The correct reference was IN THE SAME WINDOW and lost the ranking
+    /// (`rank_for_wall`, rule 29) to the wrong one. And the failure is not a
+    /// threshold: 0.88 is above every bar the dial can set short of its most
+    /// cautious end, and that end would also have held back four of the five
+    /// correct fires above.
+    ///
+    /// The assertion is deliberately about what must NOT happen, not about what
+    /// must: getting `Luke 10` onto the wall from this sentence would be a fine
+    /// outcome and is not required. Putting a verse nobody said onto it is the
+    /// defect.
+    #[test]
+    fn field_a_verse_nobody_said_does_not_reach_the_wall() {
+        let heard = "The man that was wounded. That man was going through what was \
+                     going through in Luke 10. If you read from verse 32, 37.";
+        let got = fired(heard, 50);
+        assert!(
+            !got.iter().any(|k| k == "Proverbs 3:32"),
+            "FIELD F-1 reproduced: Proverbs 3:32 auto-fired from a sentence citing \
+             Luke 10:32-37 — fired {got:?}"
+        );
+    }
+
     // ── R4-01 · ordinary sermon speech auto-fires a wrong verse ────────────
     //
     // Two repairs meet, and both of them raise the score of the LESS plausible
@@ -4783,7 +5034,6 @@ mod r4_audit {
     // All three sentences below are ordinary preaching. All three put a verse in
     // front of a congregation at the shipped default dial, with no human asked.
     #[test]
-    #[ignore]
     fn r4_01_ordinary_sermon_speech_does_not_auto_fire_a_verse() {
         // The control: the same shape, with a number that IS a real chapter.
         assert!(
@@ -4813,7 +5063,6 @@ mod r4_audit {
     // especially on accented speech — which is the market. The identical garble,
     // rendered in words, scores 0.90 and goes straight to the congregation.
     #[test]
-    #[ignore]
     fn r4_02_a_trailing_loose_number_is_a_garble_signal_in_words_too() {
         // The digit rendering is correctly demoted...
         assert!(fired("Psalms 2 3 1", 50).is_empty());
@@ -4843,7 +5092,6 @@ mod r4_audit {
     // These are the exact sentences the demotions were written for, taken from
     // the comments in `parse_reference`.
     #[test]
-    #[ignore]
     fn r4_03_the_deliberate_demotions_survive_the_top_of_the_sensitivity_dial() {
         for line in [
             "Matthew one of the twelve disciples",
@@ -4950,7 +5198,6 @@ mod r4_audit {
     // market (CLAUDE.md), so a preacher who says "mstari wa nne" mid-passage gets
     // nothing where "verse four" would have moved the wall.
     #[test]
-    #[ignore]
     fn r4_06_in_language_verse_and_chapter_words_reach_the_nav_entry_points() {
         // Swahili "mstari"/"aya" = verse, "sura" = chapter. Hausa "aya", "sura".
         assert_eq!(detect_bare_verses("verse four"), vec![4], "control");
@@ -5041,7 +5288,6 @@ mod r4_audit {
     // drive `manual_fire`, and the ONE path that puts scripture on a wall with no
     // human in the loop has no end-to-end coverage at all.
     #[test]
-    #[ignore]
     fn r4_08_the_ai_fire_path_is_generic_over_the_runtime_like_every_other() {
         let src = include_str!("main.rs");
         for f in ["fn emit_detections", "fn confirm_detection"] {

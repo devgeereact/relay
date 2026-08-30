@@ -27,7 +27,7 @@
   // BUILDING a plan is not this screen's job. That is the Planner: a different
   // task, done on a Tuesday, not with a congregation waiting.
   import { onMount, onDestroy, afterUpdate } from 'svelte';
-  import { describeScreen, SCREEN_BADGE } from '../outputHealth.js';
+  import { describeScreen, SCREEN_BADGE, screenSwitch } from '../outputHealth.js';
   import TemplateRender from '../TemplateRender.svelte';
   import { resolveOutputTemplate } from '../layers.js';
   import ModelSetup from '../ModelSetup.svelte';
@@ -65,6 +65,8 @@
     channelHealth,
     channelWaiting,
     openChannelOutput,
+    closeChannelOutput,
+    refreshChannelHealth,
     listMonitors,
     setChannelDisplay,
     clearScreens,
@@ -205,7 +207,37 @@
       { rehearsing: $rehearsing, live: !!$live, black: $screenBlack },
       $channelWaiting[c.id] ? Date.now() - $channelWaiting[c.id] : 0,
     ),
+    // Same health row, same pure rule, so the badge and the button can never
+    // describe different screens.
+    w: screenSwitch($channelHealth[c.id] ?? null, c),
   }));
+
+  // ── SWITCHING A SCREEN ON OR OFF ────────────────────────────────────────────
+  //
+  // Exempt from the Service Lock on purpose (`servicelock.rs`): a screen that has
+  // to be restored mid-service is exactly the case the lock must not block.
+  //
+  // It is NOT a panic control and must never read like one — it acts on one
+  // screen, it is not on a key, and it does not touch what is on air. Blackout
+  // and Clear remain the two things that do.
+  let switching = null;
+  let screenMsg = '';
+  async function toggleScreen(c, action) {
+    switching = c.id;
+    screenMsg = '';
+    try {
+      if (action === 'on') await openChannelOutput(c.id);
+      else await closeChannelOutput(c.id);
+      // Ask the backend what actually happened rather than assuming the command
+      // that returned did the thing. The pane's whole point is that a screen
+      // answers for itself.
+      await refreshChannelHealth();
+      screenMsg = `${c.name} ${action === 'on' ? 'opened' : 'closed'}.`;
+    } catch (e) {
+      screenMsg = humanError(e);
+    }
+    switching = null;
+  }
 
   // ── SAFE SCREEN — what the operator is told BEFORE the congregation notices ──
   //
@@ -1040,8 +1072,12 @@
       </div>
     </section>
 
-    <!-- OUTPUT STATUS. Read-only on purpose: during a service the only question is
-         "is it up?". Changing a target is the Outputs tab's job. -->
+    <!-- OUTPUT STATUS. During a service the only question is "is it up?" — and
+         until now the pane could report a screen that was down and offer no way to
+         bring it back, which sent the operator to another tab mid-service with a
+         congregation waiting. Switching a screen on or off is the REPAIR for the
+         state this pane reports, not configuration; changing a screen's display or
+         its template is configuration and stays in the Outputs tab. -->
     <section class="pane">
       <header class="pane-head">
         <h2>Output Status</h2>
@@ -1061,6 +1097,17 @@
               <span class="r-mono">{o.s.note || o.c.render_target}</span>
             </span>
             <span class="r-badge {SCREEN_BADGE[o.s.kind]} sm-badge"><span class="bd"></span>{o.s.label}</span>
+            {#if o.w.action}
+              <button
+                class="out-sw"
+                title={o.w.why}
+                disabled={!$capture.available || switching === o.c.id}
+                on:click={() => toggleScreen(o.c, o.w.action)}>
+                {switching === o.c.id ? '…' : o.w.label}
+              </button>
+            {:else}
+              <span class="out-sw-off" title={o.w.why}>{o.w.label}</span>
+            {/if}
           </div>
         {:else}
           <EmptyState message="No screens yet — add one in the Outputs tab." />
@@ -1074,6 +1121,9 @@
       {/if}
       {#if fitWarning}
         <p class="out-warn" role="status">{fitWarning}</p>
+      {/if}
+      {#if screenMsg}
+        <p class="out-warn" role="status">{screenMsg}</p>
       {/if}
       <p class="sr-only" aria-live="polite">{downAnnounce}</p>
       <footer class="pane-foot">
@@ -1679,6 +1729,14 @@
   .out-ic{flex:0 0 auto; width:28px; height:28px; border-radius:var(--v-r-sm); display:grid;
     place-items:center; background:var(--v-surf3); color:var(--v-dim)}
   .out-t{flex:1; min-width:0; display:flex; flex-direction:column; gap:2px}
+  /* Deliberately quiet. This is a repair for one screen, not a panic control —
+     Clear and Blackout are the loud pair and nothing else may look like them. */
+  .out-sw{flex:0 0 auto; font:inherit; font-size:10px; letter-spacing:.04em;
+    padding:3px 8px; border-radius:var(--v-r-sm); cursor:pointer;
+    background:transparent; color:var(--v-faint); border:1px solid var(--v-line)}
+  .out-sw:hover:not(:disabled){color:var(--v-txt); border-color:var(--v-txt-dim)}
+  .out-sw:disabled{opacity:.45; cursor:not-allowed}
+  .out-sw-off{flex:0 0 auto; font-size:9px; letter-spacing:.05em; color:var(--v-faint)}
   .out-t b{font-size:var(--v-fs-b2); font-weight:600; color:var(--v-txt);
     overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
   .out-t span{font-size:9px; letter-spacing:.05em; color:var(--v-faint)}

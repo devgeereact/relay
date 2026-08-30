@@ -433,7 +433,11 @@ pub fn close_window(app: &tauri::AppHandle, label: &str) -> Result<(), String> {
 }
 
 /// Labels of all currently-open output windows.
-pub fn list_open(app: &tauri::AppHandle) -> Vec<String> {
+// Generic over the runtime, like everything else on this path (CLAUDE.md rule
+// 24). It was welded to the concrete desktop runtime, which meant nothing that
+// runs under `tauri::test::mock_builder` could ask whether an output window was
+// open — and `refresh_wake` has to ask exactly that.
+pub fn list_open<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Vec<String> {
     app.webview_windows()
         .into_keys()
         .filter(|k| k.starts_with(OUTPUT_PREFIX))

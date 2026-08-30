@@ -43,7 +43,7 @@ Tier 1: **Yoruba, Swahili, Hausa**, plus English. Code-switching (English mixed 
 npm install
 npm run tauri dev        # desktop app + Vite on :5032, kiosk WS on :8031
 
-npm test                 # vitest (857 tests)
+npm test                 # vitest (862 tests)
 npx vitest run src/lib/nav.test.js          # one file
 npx vitest run -t "Escape closes the cheat" # one test by name
 npm run build            # vite build — catches Svelte compile errors fast
@@ -58,7 +58,7 @@ Rust (**`whisper-rs` compiles whisper.cpp from source, so `cmake` must be on PAT
 cmake --version          # any 3.x. `brew install cmake` if it is missing;
                          # a machine without Homebrew needs its own prefix on PATH
 cd src-tauri
-cargo test                                   # 621 tests (595 run, 26 ignored)
+cargo test                                   # 628 tests (607 run, 21 ignored)
 cargo test e2e                               # the fire → nav → clear path (23 tests)
 cargo test detection::                       # one module
 cargo test the_macos_build -- --nocapture    # one test
@@ -219,6 +219,8 @@ These caused real crashes, freezes, or silent failures in front of people. Keep 
 
 39. **An arrangement is a list of indices, so the ground can move under it.** `song_arrangements.sequence` stores section POSITIONS, not copied words — which is exactly right for a lyric edit (fix a typo in verse two and every arrangement still plays verse two, which is why the schema is shaped this way) and exactly wrong for a structural one. Reorder, insert, delete or rename a section and index 3 names a section nobody chose. **Relay does not guess which one was meant.** Each arrangement records `built_shape` — the song's `[[tag, label], …]` at build time, lyrics deliberately excluded — and anything built against a different shape is marked stale, shown as needing checking, and refused entry to a plan until a person has looked; saving it again IS the repair. The same guarantee is kept on the second door: a plan cue carries `arrangement_shape`, and `sync_song_in_plans` falls back to the song's own order rather than re-expanding through indices that moved, because the song's own order is always the right WORDS even when it is not the intended repeats. An empty `built_shape` is never called stale — that would be a claim from an absence, the same lie in the other direction. DECISIONS §55.
 
+40. **Memory is what Relay has when the words do not say — when the words DO say, the words win.** A bare "verse 32" is resolved against `ContextMemory`, the passage last put on screen, and that is right for the case it was written for: a preacher walking Romans 8 who says "and verse eighteen". It is wrong the moment the sentence names its own book. **Found in a live service** (`docs/audits/FIELD-2026-08-30.md`): the operator fired Proverbs 3:6 by hand, five minutes later the preacher said *"…going through in **Luke 10**. If you read from **verse 32**, 37"*, and **Proverbs 3:32 auto-fired at 0.88** with Luke 10 sitting in the same window. `detection::anchor_for_bare_verses` takes the LAST reference parsed from the window and a bare verse hangs on that; memory is the fallback, not the default, so "verse eighteen" with no book named still works exactly as before. **The first diagnosis of this was wrong** — the parser was blamed, a regression test was written against that theory, and it passed with the supposed fix reverted. A test that cannot fail is a theory that was never tested; the real path was `detect_bare_verses` → `resolve_bare_verse` → a hardcoded 0.88 and a hardcoded `Direct`. That label is still there and is still a lie (Relay inferred the book, it did not hear it) — left deliberately, recorded in the audit, because one service is not enough evidence to make every in-passage "verse eighteen" ask for a click.
+
 ## Frontend shape
 
 - **Tabs: Live · Outputs · Templates · Themes · Library · Planner · Settings · Help.** (The Outputs tab's internal key is still `channels`, and its view file is `Channels.svelte` — the label is what an operator reads.) There is no Console tab — `Live` IS the console. **Themes** is the style layer beneath templates (DECISIONS §27): a theme sets default `style` keys, a template overrides them per key, and `TemplateRender` resolves a template's `style.themeRef` against builtins itself, so every surface is themed with no per-surface wiring. Layer colours may bind to theme tokens (`theme:accent`). Stage/confidence monitors are render-profiles of the one engine (starters in `layers.js`), not a parallel system — they show monitor-only fields (`next`, `note`, `elapsed`) that ride to output but no congregation template renders. **Build** a plan in Planner (a Tuesday job; nothing there can reach an output). **Run** it in Live (a Sunday job). The merge exists because an operator running a plan on a separate tab could not see the AI's suggestions — and the preacher going off-script is the entire product.
@@ -247,7 +249,7 @@ These caused real crashes, freezes, or silent failures in front of people. Keep 
 
 ## Testing
 
-**595 Rust** (26 ignored) + **857 frontend** (0 skipped), re-measured 2026-08-30. CI runs both on **macOS and Windows**, plus `fmt`, `clippy -D warnings`, the detection scorecard, and a release build.
+**607 Rust** (21 ignored) + **862 frontend** (0 skipped), re-measured 2026-08-30. CI runs both on **macOS and Windows**, plus `fmt`, `clippy -D warnings`, the detection scorecard, and a release build.
 
 - **`qa.rs` owns the fixture. Do not write another one.** `qa::bare_app()` is a fresh install and nothing else — real schema, real seed, no operator has touched it — and `qa::{Wall, Kiosk, settle}` are the two doors out of the machine plus the drain. `e2e::app()` is now `bare_app()` **plus one documented difference** (a content-look override, without which its template assertion is vacuous), which is exactly the shape a deviation should have: three visible lines, not a fifty-line copy that drifts. A second fixture is how two suites start disagreeing about what a fresh install contains. `the_bare_fixture_is_a_first_launch_and_nothing_more` is the tripwire; it is what caught that `tpl_song` **is** seeded on purpose (every other built-in is scripture-shaped, so a lyric rendered through one showed the song title instead of the words).
 - **The QA apparatus is documented, not folklore.** `docs/QA_HARNESS.md` — Part 0 the current counts (each with the command that reproduces it), Part 1 the design and the five evidence layers, Part 2 the shared preamble every `relay-qa-*` agent inherits verbatim, Part 3 the roster, **Part 4 what is already pinned — read it before filing anything, so you don't "find" a fixed bug**. Run `/qa-audit`; `node scripts/qa-inventory.mjs` prints the control/orphan/create-path report on its own.
