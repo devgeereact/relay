@@ -5125,13 +5125,22 @@ mod r4_audit {
         }
     }
 
-    // ── R4-04 · the SPEC gate is measured at one dial position ──────────────
+    // ── R4-04 · CLOSED — the SPEC gate now covers the WHOLE dial ────────────
     //
-    // `eval.rs::run` builds `Router::default()`, so the CI wrong-verse gate scores
-    // the corpus at sensitivity 50 and nowhere else. A church that moves the dial
-    // is running a configuration nothing has ever measured.
+    // `eval.rs::run` builds `Router::default()`, so the CI wrong-verse gate scored
+    // the corpus at sensitivity 50 and nowhere else. **A church that moved the dial
+    // was running a configuration nothing had ever measured** — and R4-03 was the
+    // proof that mattered: at dial 100 the auto-fire bar is 0.30, which IS the
+    // confidence floor, so every deliberate demotion in this file was inert and the
+    // one gate that would have noticed was not looking there.
+    //
+    // This was `#[ignore]`d as "a measurement". It costs 20 milliseconds and it
+    // asserts SPEC's <5% at SIX dial positions including both ends, so leaving it
+    // out of CI was leaving the operator's own control ungated. It runs now.
+    //
+    // Measured 2026-08-31, on the corpus including the six real sermon lines:
+    // **0.0% at every position, 0 through 100.**
     #[test]
-    #[ignore]
     fn r4_04_measure_the_wrong_verse_rate_across_the_whole_dial() {
         #[derive(serde::Deserialize)]
         struct Case {

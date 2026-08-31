@@ -52,7 +52,16 @@
     "That negative guards the PARSER against producing Proverbs from those words; the",
     "context path it actually failed on is guarded in `detection.rs`",
     "(`field_a_bare_verse_belongs_to_the_book_this_sentence_names`) and in `main.rs`.",
-    "A green scorecard is not evidence about the context path."
+    "A green scorecard is not evidence about the context path.",
+    "ORDINARY PREACHING THAT USED TO FIRE — `source: R4-audit`.",
+    "Eleven negatives that are not garble and not edge cases. They are plain sermon",
+    "sentences, and every one of them put a verse on a wall before the",
+    "`UncertainNumber` repair: \"Nehemiah, fifty two days they built the wall\" became",
+    "Nehemiah 5:2 at 0.77, \"romans eight one two\" became Romans 8:1, and at the TOP of",
+    "the sensitivity dial every deliberate demotion in detection.rs was inert.",
+    "They are here rather than only in detection.rs because the dial sweep",
+    "(`r4_04`) scores this corpus at six positions from 0 to 100 — so these are what",
+    "makes that sweep bite. Without them it passed with the repair removed."
   ],
   "cases": [
     {
@@ -565,6 +574,83 @@
       "lang": "en",
       "source": "FIELD-2026-08-30",
       "text": "The man that was wounded. That man was going through what was going through in Luke 10. If you read from verse 32, 37.",
+      "expect": []
+    },
+    {
+      "id": "r4-nehemiah-days",
+      "lang": "en",
+      "source": "R4-audit",
+      "text": "Nehemiah, fifty two days they built the wall",
+      "expect": []
+    },
+    {
+      "id": "r4-mary-years",
+      "lang": "en",
+      "source": "R4-audit",
+      "text": "Mary, twenty two years of age, stood there",
+      "expect": []
+    },
+    {
+      "id": "r4-mary-chapter",
+      "lang": "en",
+      "source": "R4-audit",
+      "text": "Mary, chapter two of her life had begun",
+      "expect": []
+    },
+    {
+      "id": "r4-psalms-garble-words",
+      "lang": "en",
+      "source": "R4-audit",
+      "text": "Psalms two three one",
+      "expect": []
+    },
+    {
+      "id": "r4-romans-garble-words",
+      "lang": "en",
+      "source": "R4-audit",
+      "text": "romans eight one two",
+      "expect": []
+    },
+    {
+      "id": "r4-acts-garble-words",
+      "lang": "en",
+      "source": "R4-audit",
+      "text": "acts two thirty eight forty",
+      "expect": []
+    },
+    {
+      "id": "r4-matthew-twelve",
+      "lang": "en",
+      "source": "R4-audit",
+      "text": "Matthew one of the twelve disciples",
+      "expect": []
+    },
+    {
+      "id": "r4-jonah-days",
+      "lang": "en",
+      "source": "R4-audit",
+      "text": "Jonah three days in the belly of the fish",
+      "expect": []
+    },
+    {
+      "id": "r4-jude-four-men",
+      "lang": "en",
+      "source": "R4-audit",
+      "text": "jude four men came in",
+      "expect": []
+    },
+    {
+      "id": "r4-james-brothers",
+      "lang": "en",
+      "source": "R4-audit",
+      "text": "James two of the brothers were there",
+      "expect": []
+    },
+    {
+      "id": "r4-job-one-day",
+      "lang": "en",
+      "source": "R4-audit",
+      "text": "Job one day said to his friends",
       "expect": []
     }
   ]
