@@ -10,6 +10,27 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 
 ## [Unreleased]
 
+### Relay may now be used in a church — with someone watching
+
+The decision on whether Relay is fit to run a service used to be an open-ended
+"not yet". It is now specific: **not for general release, yes for a supervised
+pilot** — two churches, a named operator at each, and every service watched by
+somebody who can clear the wall by hand.
+
+What that means if you are the operator: Relay is good enough to help you, and it
+is not good enough to leave alone. It put a wrong verse on a screen during its
+first real service. That particular fault is fixed and cannot come back without a
+test failing, but nobody has yet measured how well it hears in any language, and
+you would be the first person outside its author to run a service on it.
+
+Before your first live use: run a rehearsal, use the path check, and read
+Settings → Diagnostics afterwards. If a wrong verse does reach the screen, the
+"heard" text beside it in the service history is exactly what is needed to stop
+it happening again — that is how the one from the first service became a
+permanent test.
+
+Windows is not signed yet, so this applies to macOS only.
+
 ### The first real service, and the eight things it changed
 
 Relay listened to a live sermon for the first time — fifty minutes, a real preacher, a

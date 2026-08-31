@@ -135,9 +135,17 @@ load-bearing, not modesty. Preserve it.
 - **"Not measured" is a valid answer and the correct one when nothing measured it.** Word error
   rate has never been measured in any language. No native speaker has reviewed the book aliases.
   Do not soften either sentence.
-- **BLOCKED is a real outcome**, and it is a deliverable, not an excuse. Half of this product —
-  audio in, pixels out, hardware, a packaged build, a congregation — has never been reached by
-  any instrument in this repository. You cannot claim it from source.
+- **BLOCKED is a real outcome**, and it is a deliverable, not an excuse. Much of this product —
+  **pixels out, hardware, a congregation** — has never been reached by any instrument in this
+  repository. You cannot claim it from source.
+  **Two of those blockers fell on 2026-08-30** and it is worth knowing how: the packaged build
+  and audio-in were reached by *running a real service*, not by writing more tests. It produced
+  seven findings in fifty minutes that months of source-reading had not.
+- **"Blocked" is a claim, and it gets the same scrutiny as any other.** Three "blocked" entries
+  in `RELAY_GAP.md` did not survive it: an old schema the repo supposedly did not keep (git had
+  it), five commands documented as acceptably dead (they were deletable), and a licensing
+  reason that was simply wrong (DECISIONS §32.4 says the opposite). **A wrong reason in a
+  register parks the work forever**, because nobody re-examines something already explained.
 - **Never imply you ran, clicked, saw or heard something you did not.**
 - A count you cannot reproduce is a rumour.
 

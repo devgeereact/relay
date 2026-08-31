@@ -2592,3 +2592,59 @@ never a rounding gap; it was 0.30 wide.
 its anchor. "Relay stopped firing this morning" reads completely differently depending on
 whether the operator moved the dial or the calibration walked the bar up from a run of
 dismissals, and a church's report could not previously distinguish them.
+
+---
+
+## 60. Not general release, and not an indefinite no either (2026-08-31)
+
+**The release decision, made.** It belongs here and not only in `RELAY_GAP.md` §24, because
+it is a decision with reasoning and an explicit non-goal, which is what this file is for.
+
+> **⛔ NO-GO for general release · ✅ GO for a supervised pilot.**
+> Two churches. Named operators. Every service watched by somebody who can take the wall back
+> by hand. For the length of one season.
+
+### What it replaces
+
+An open-ended **NO-GO**, correct when it was written — nothing had ever run in a room — and
+wrong to leave standing afterwards. **An indefinite NO-GO is not caution; it is a way of never
+being wrong.** A product that is never let out never gets the only evidence that would let it
+out, and the register proves the shape of that trap: twenty-one merged pull requests in one
+week moved field validation and the language moat by **zero points**, and they never could
+have. One live service moved field validation off zero and produced seven findings.
+
+### Why not general release
+
+One line decides it: **on 2026-08-30 Relay put a verse nobody said in front of a
+congregation.** A preacher cited Luke 10:32–37; the wall showed Proverbs 3:32. The cause is
+fixed, pinned by a test and now a CI corpus case — but the *class* is not closed, and closing
+it needs services rather than commits.
+
+Three more, each sufficient alone: **word error rate has never been measured in any
+language**, so the product's entire premise is an assertion; there is **no Windows
+certificate**, and Windows is where most churches are; and **nobody but the author has ever
+run a service**, so every claim about whether a volunteer can work this under pressure is a
+claim about the person who wrote it.
+
+### Why a pilot is the right call rather than the brave one
+
+The evidence the blockers need cannot be manufactured here. Word error rate needs real
+preaching on tape. Whether a volunteer can run it needs a volunteer. The second and third
+services RG-32 waits on need second and third services.
+
+And the risk is **bounded in a way general release is not.** With an operator watching and one
+key that clears the wall, the worst outcome is a wrong verse for a few seconds and an entry in
+the register. Without a pilot the worst outcome is the same wrong verse, in a church nobody is
+watching, discovered by nobody, fixed never.
+
+### The conditions are the deliverable
+
+An operator at the desk every service; **`RELAY_RECORD_WAV` set for at least one full
+service** — one environment variable, and the highest-value item in the project, because it is
+what turns the moat's 3/10 from an assertion into a number; a rehearsal before first live use;
+Diagnostics read afterwards; every wrong verse written into the register verbatim from
+`heard_text`; macOS only, because Windows is unsigned.
+
+**Any one missing and it is NO-GO again.** `RELAY_GAP.md` §24 holds the five conditions that
+convert a pilot into a general release, and **anyone quoting "GO" from this without the word
+"pilot" is quoting it wrong.**

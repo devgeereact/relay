@@ -3,10 +3,10 @@
 **Revision 3 · 2026-07-13 · verified against `cfa2aa5`**
 Supersedes Revision 2 (2026-07-12) and Revision 1 (2026-07-05). Every claim was re-verified against the code that exists today; nothing is carried forward on trust. Line references are live.
 
-> ## ⚠️ Status as of 2026-08-20 — read this before the scorecard
+> ## ⚠️ Status as of 2026-08-31 — read this before the scorecard
 >
-> **This revision is five weeks and ~40 commits behind `07654a7`, and it predates the first
-> full machine audit entirely.** The scorecard below is still the right *shape* — the strategy,
+> **This revision is seven weeks behind, predates the first full machine audit entirely, and
+> predates the first time Relay ever ran in a real room.** The scorecard below is still the right *shape* — the strategy,
 > the scope decisions and the §13 NOT-APPLICABLE reasoning all stand — but treat its numbers and
 > its "what's left" list as a snapshot of 2026-07-13, not as today.
 >
@@ -36,7 +36,7 @@ Supersedes Revision 2 (2026-07-12) and Revision 1 (2026-07-05). Every claim was 
 > sermon — 49.5 minutes, packaged build, `ggml-large-v3-turbo`
 > ([`audits/FIELD-2026-08-30.md`](audits/FIELD-2026-08-30.md)):
 >
-> | | Rev 3 / the 2026-08-20 banner | After the first real service |
+> | | Rev 3 / the earlier banner | After the first real service |
 > |---|---|---|
 > | The packaged build | 0% | Built, installed, ran a service. Notarization still needs a certificate |
 > | Audio in | 0% | A real preacher transcribed for 49.5 min. **Word error rate still unmeasured, in every language** |
@@ -50,7 +50,7 @@ Supersedes Revision 2 (2026-07-12) and Revision 1 (2026-07-05). Every claim was 
 > closed. That ratio is what "half of this product has never been reached by an instrument"
 > means when somebody finally reaches it.
 >
-> The narrower sweeps of **2026-08-29** and **2026-08-30** re-measured the counts above, hunted
+> The narrower sweeps of **2026-08-29 through 2026-08-31** re-measured the counts above, hunted
 > contradictions across the doc set, and closed forty-six register items;
 > [RELAY_GAP.md](RELAY_GAP.md) is the record. Neither raised a new P0, and neither moved the
 > release decision.
@@ -137,6 +137,11 @@ What that produced is a product with an unusual property for its stage: **its fa
 The engine underneath is strong and now genuinely covered (**250 Rust + 138 frontend tests** when this was written; **478 + 581** today), zero panic sites in any module that runs during a service, a detection benchmark that fails CI on regression, an end-to-end test that drives the real fire → nav → clear path, and a gate that makes "the AI put the wrong verse on the wall" structurally unrepresentable rather than merely unlikely.
 
 **So the honest position is now a shopping list, not an engineering plan:**
+
+> **Updated 2026-08-31.** Item 3 is no longer a purchase — it is one environment variable.
+> `RELAY_RECORD_WAV=/path/x.wav` writes the cleaned audio stream a service actually heard, and
+> the release decision (RELAY_GAP §24) now permits supervised pilot services in which to set it.
+> **The tape is the single highest-leverage thing on this page and it is now free to obtain.**
 
 1. **~$10/month for a Windows code-signing certificate.** The gate now *refuses* to ship unsigned rather than doing it quietly — so until this is bought, Windows cannot ship at all. Windows is the platform most of the target market is on, for cost reasons.
 2. **GitHub Actions billing.** The repo is private, so every macOS runner minute bills at ×10. Relay is MIT and open-source *by recorded decision* — making the repo public makes this problem disappear permanently and costs nothing that was being kept.

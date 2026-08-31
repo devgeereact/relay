@@ -556,7 +556,7 @@ machine.
 | Book aliases | 68 entries | 69 | 69 |
 | In-language numerals | ✅ (`numerals.json` `sw`) | ❌ **absent** | ✅ (`ha`) |
 | Native-speaker review | ❌ | ❌ | ❌ |
-| WER | never measured | never measured | never measured |
+| WER | never measured | never measured | never measured | *(unchanged 2026-08-31 — a supervised pilot with `RELAY_RECORD_WAV` set is what turns these three cells into numbers; §24, §25)* |
 | UI locale file | 1 key (ships near-empty on purpose) | 1 key | 1 key |
 
 The brief's §42 "Language Quality Centre" is the right instrument and it does not exist. The brief's

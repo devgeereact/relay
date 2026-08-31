@@ -70,7 +70,7 @@ real gaps.
 | **Gap register** | *What an outside product brief asked for vs what exists — and the two proposals that would reverse a recorded decision* | [RELAY_GAP.md](RELAY_GAP.md) | **NEW** |
 
 **On ADRs:** [DECISIONS.md](DECISIONS.md) *is* the architecture-decision record — a single
-narrative log with reasoning and explicit non-goals, 42 numbered decisions (§18–§59) deep,
+narrative log with reasoning and explicit non-goals, 43 numbered decisions (§18–§60) deep,
 plus 28 earlier ones carried as table rows. It is deliberately not
 split into per-file `adr/NNNN-*.md` documents: the log is cross-referenced from code comments
 and the handbook, and one file keeps the *why* readable end to end. If the code ever
