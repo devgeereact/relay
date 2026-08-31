@@ -126,8 +126,11 @@ requirement that does not exist.
 
 The version of your question that *does* apply, and applies hard:
 
-> **Which of the 18 tables in `docs/data/schema.sql` can only be filled by the seeder or by an
+> **Which of the tables in `docs/data/schema.sql` can only be filled by the seeder or by an
 > importer — with no path a new user can reach from a rendered control?**
+
+(`grep -c 'CREATE TABLE' docs/data/schema.sql`, and `node scripts/qa-inventory.mjs` prints the
+verdict per table. The count is not written here for the reason §0 gives.)
 
 That is mechanically answerable, and it is the first job of agent R1. The chain, per table:
 
@@ -449,9 +452,9 @@ and a question nobody else can answer.
 
 | | Agent | Layers | Owns | Forbidden to claim |
 |---|---|---|---|---|
-| **R1** | Cold Start | A, C | The empty-system build: create-path matrix for all 18 tables, seed audit, persistence across a real reopen, first-run order, migration retryability | That a screen "works". It never sees one |
+| **R1** | Cold Start | A, C | The empty-system build: a create-path matrix for **every** table in the schema, seed audit, persistence across a real reopen, first-run order, migration retryability | That a screen "works". It never sees one |
 | **R2** | Live Path | A, D | The six distinctions, the transport, panic, rehearsal containment, recovery after a kill, `NavResult` on every surface that exposes nav | That an operator *understood* anything. Legibility is R3's |
-| **R3** | Surface Inventory | B, C | Every control in 47 files: enumerated, classified, mounted where mountable. Dead controls, missing empty/loading/error states, focus order, colour semantics, the humaniser on every error path | That any backend call succeeded. Its backend is a mock |
+| **R3** | Surface Inventory | B, C | Every control in every `.svelte` file: enumerated, classified, mounted where mountable. Dead controls, missing empty/loading/error states, focus order, colour semantics, the humaniser on every error path | That any backend call succeeded. Its backend is a mock |
 | **R4** | Detection & Language | A | Scoring **through the router**, never by reading the transcript. False positives, ambiguity, code-switching, the paraphrase-shows-no-percentage rule, honesty about Yorùbá numerals and unmeasured WER | Any claim about audio or accents. WER over speech is layer E |
 | **R5** | Failure & Boundaries | A, D | Offline, process kill mid-service, poisoned locks, migration retry, concurrent writes, injection through text fields, unicode round-trips, and whether the LAN remote's *decided* threat model still holds | That an integration passes. OBS/ATEM/ProPresenter hardware is BLOCKED, always |
 | **R6** | Independent Auditor | all | Runs last, reads none of R1–R5 until it has produced its own list, then reconciles and writes the report and the GO / NO-GO | Nothing. It is the one allowed to contradict the others |

@@ -174,9 +174,11 @@ accounts, RBAC and cloud sync at it.
 > wrong guess is indistinguishable from a right one until it is on a screen in front
 > of a congregation. DECISIONS §55.
 >
-> Counts after: **595 Rust** (26 ignored) + **857 frontend**, `fmt` and
-> `clippy -D warnings` clean, inventory at zero unnamed controls and zero
-> handlerless buttons. **Still NO-GO** — the list below did not move.
+> Counts **on 2026-08-30**, and left at that date on purpose: 595 Rust (26 ignored)
+> + 857 frontend, `fmt` and `clippy -D warnings` clean, inventory at zero unnamed
+> controls and zero handlerless buttons. A fix log is a dated record, so its numbers
+> are not maintained — §0 holds the current ones and the commands that produce them.
+> **Still NO-GO** — the list below did not move.
 
 ---
 

@@ -247,7 +247,8 @@ Panic keys clear only `onAir`; wiping the position would restart the plan at cue
 
 Consolidated here as *domain facts*; the code-level statements and their war stories live in
 [../CLAUDE.md](../CLAUDE.md) "Architecture rules learned the HARD WAY" and
-[DECISIONS.md](DECISIONS.md) §18–§25. This list references them — it does not fork them.
+[DECISIONS.md](DECISIONS.md) — the numbered log now runs §18–§62. This list references
+those decisions; it does not fork them.
 
 1. **Only `Direct` auto-fires.** A cosine is not a probability. `Semantic`/`Ambiguous` are
    capped at `Suggest` structurally, not numerically.
