@@ -201,6 +201,7 @@ the table it counts is the easiest possible thing to check automatically.*
 | ⚠️ **RG-41** | Not work. A correction kept on the record: two of six views were wrong to "fix" — they are routers, and a heading there would give one screen two |
 | ⏳ **RG-32** | **Open on purpose.** A context-resolved bare verse is labelled `Direct` at a hardcoded 0.88 — by rule 10 that label is a lie, because Relay inferred the book rather than hearing it. Changing it makes every in-passage *"verse eighteen"* cost a click, and **one service is not enough evidence to spend that**. Wants a second and third Sunday |
 | ⚠️ **RG-50** | **Needs a human, not a commit.** `translations` is the last table an operator cannot fill. The reason first recorded here was wrong — see §19b for the decision it actually needs |
+| ❓ **§19b** | **Two open questions, neither a commit.** The translation one above, and — added 2026-08-31 — whether a detection should carry the audio quality it was heard in. The measurement exists (`dsp::AudioQuality`); this report previously said it did not, and that error is corrected in place |
 
 ### What is left is not a list of bugs
 
@@ -376,7 +377,7 @@ Legend: **EXISTS** (implemented and reachable from a rendered control) · **PART
 | 10 | Hard latency acceptance targets | **EXISTS** | `audits/PERF-2026-08-24.md` §5 scores against a target table per model and marks three rows **MISS** and four **NOT MEASURED** rather than rounding them off; `audits/PERF-MODELS-2026-08-30.md` adds what each model costs an operator in cadence | Targets on **church hardware**. Every number is one M4 Pro (§72) |
 | 11 | Adaptive inference | **PARTIAL — superseded** | The cadence adapts to measured decode cost (`step_samples_for`, EMA, clamped to one chunker hop … 1000 ms). That is the lever that moved 349 ms → 139 ms (DECISIONS §38) | `sysprobe.rs` is **advisory only** — nothing in the pipeline branches on probed hardware. `gpu_backends` is a compile-time fact, deliberately (DECISIONS §36) |
 | 12 | Scripture candidate prefetch during the utterance | **DECLINED** | Detection already runs off the decoder's thread behind a bounded queue (CLAUDE.md rule 33) and costs ~2.6 ms/query on 31k verses | Prefetch optimises the cheapest stage in the pipeline. §3 and CLAUDE.md rule 31 |
-| 13 | Voice confidence shown separately from claim type | **PARTIAL** | Claim type is first-class and correct: amber chip + meter for Direct, cyan chip and **no number at all** for a guess (`detect.js`, `Live.svelte`; DECISIONS §21). RG-63 added the second question beside it — *is there a verse behind this reference at all?* — because a confidently-heard "Psalms 23:99" is a claim the operator could not previously distinguish from a working one | There is still no **voice** confidence. Audio quality is surfaced as warnings (clipping / too quiet / noisy), not as a per-detection signal-strength claim. It would need a per-utterance SNR the decoder does not currently expose |
+| 13 | Voice confidence shown separately from claim type | **PARTIAL** | Claim type is first-class and correct: amber chip + meter for Direct, cyan chip and **no number at all** for a guess (`detect.js`, `Live.svelte`; DECISIONS §21). RG-63 added the second question beside it — *is there a verse behind this reference at all?* — because a confidently-heard "Psalms 23:99" is a claim the operator could not previously distinguish from a working one | There is still no **voice** confidence *per detection*. Audio quality is surfaced continuously (clipping / too quiet / noisy) but is never attached to the claim it was measured beside. **An earlier draft of this row said that would need an SNR "the decoder does not currently expose" — that was wrong and is corrected here rather than quietly amended:** `dsp::AudioQuality` already carries `snr_db`, `clip_ratio`, `speech_prob` and a `warning` naming the single most important thing wrong right now. What is missing is a *decision*, not a measurement — see §19b |
 | 14 | Explainable detection — "why this verse?" | **EXISTS** | `DetectionInspector.svelte`, opened from Live. Renders real evidence only — the parsed span, or the shared rare-word chips — and explicitly refuses to fabricate reasoning. `inspector.test.js` | Nothing |
 | 15 | One Scripture Safety Firewall | **EXISTS** | Closed by RG-05. `Fire` is constructed only via `resolve_fire`; `broadcast_with_clock` is the **one** caller of `channels::broadcast_content`, and `pipeline::preflight` sits in it — so the AI path, the manual box, spoken nav, plan cues, media, the emergency announcement and the countdown are validated by one gate (CLAUDE.md rule 36, DECISIONS §42) | Nothing. It refuses only what is unambiguously broken and silently so; it never checks that a screen is attached, and the panic controls do not pass through it at all — both deliberate |
 | 27 | Church-local vocabulary learning | **PARTIAL** | `voice_profiles.bias_terms` is editable in Settings and feeds whisper's decoder prompt | No learning. Nothing observes what this church actually says and adapts ranking. Blocked on the same thing as §43: nobody has measured whether it would help |
@@ -828,6 +829,8 @@ Every one of these was reaffirmed by this audit, and each is cited by code:
 
 ## 19b. Decisions this report needs and cannot make
 
+**Two open. Neither is a commit.**
+
 **One, added 2026-08-30.**
 
 > **Should Relay ship a second Bible translation, an import path for one, or neither?**
@@ -852,6 +855,49 @@ Every one of these was reaffirmed by this audit, and each is cited by code:
 > DECISIONS it has not been made, and an agent's job is to ask rather than assume — and
 > the last time this report reasoned about it unprompted, it got the reason backwards
 > (see RG-50).
+
+**Two, added 2026-08-31.**
+
+> **Should a detection carry the audio quality it was heard in?**
+>
+> The brief's §13 asks for voice confidence shown separately from claim type. Claim type
+> is built and is stricter than proposed. The other half is not built — and the reason
+> this report previously gave for that was **wrong**: it said the measurement did not
+> exist. It does. `dsp::AudioQuality` carries `snr_db`, `clip_ratio`, `speech_prob` and
+> a `warning` that already names *the single most important thing wrong right now*, and
+> it reaches the console continuously on `audio://quality`.
+>
+> What is missing is the join: the quality is shown for **now**, and never attached to
+> the claim it was measured beside. So an operator reading *"heard the reference · 91%"*
+> cannot tell whether Relay heard it cleanly or through a clipping microphone — and the
+> field service's wrong verse is exactly the case where somebody would want to know.
+>
+> **Why this is a decision and not a task.** Three of this product's hardest-won rules
+> pull against each other here:
+>
+> 1. **A number that lies is worse than no number** (DECISIONS §21). `snr_db` is
+>    documented as "rough". Printing *"SNR 12 dB"* beside a verse invites a volunteer to
+>    read it as a probability, which is the paraphrase-percentage mistake in a new
+>    costume. A *word* — "heard in a noisy signal" — carries the fact without the false
+>    precision, and is what §45 does for degradation already.
+> 2. **An instrument that cries wolf stops being read** (DECISIONS §49). A church PA
+>    feed may sit near a warning threshold for a whole service. A caveat on every
+>    suggestion is a caveat on none, and this repo already has one finding about
+>    warnings an operator learns to scroll past.
+> 3. **Only what was measured appears** (DECISIONS §44). The quality is sampled
+>    continuously; a detection spans a window. "The quality when the window closed" and
+>    "the worst quality during the window" are different claims and only one of them can
+>    be called *the* audio the verse was heard in.
+>
+> So the shape is genuinely open: a chip only when the window carried a real warning; or
+> a field on the detection that only the inspector shows; or nothing on the live surface
+> and the quality recorded to the service record instead, where a post-mortem would find
+> it and a Sunday operator would not be interrupted.
+>
+> **This report does not choose**, for the same reason as the one above — and
+> specifically because option 2's failure mode is invisible until a real service in a
+> real room, which is Stage C. It is written down so the next reader inherits the
+> question rather than the wrong reason.
 
 ---
 
@@ -923,7 +969,7 @@ hand-off naming three instruments and the tab each lives on, rather than three m
 |---|---|---|
 | **P2** | **Prototype the stripped Sunday layout** (§38/49) | Live has density and full-screen; the brief's layout is a different proposal. It should be judged by an operator who is not the author, which makes it a pilot question rather than a design one |
 | **P3** | **Release channels** (§47) | Low value before a first release exists |
-| **P3** | **Per-detection voice confidence** (§13) | Needs a per-utterance SNR the decoder does not currently expose. Claim *type* is already first-class and stricter than the brief proposed |
+| — | ~~**Per-detection voice confidence** (§13)~~ | **Moved to §19b — it is a decision, not a task.** The measurement exists (`dsp::AudioQuality` carries `snr_db`, `clip_ratio`, `speech_prob` and a named warning); what is unresolved is what an operator should be shown, and three recorded rules pull against each other over it (§21 a number that lies, §49 an instrument that cries wolf, §44 only what was measured). **This row previously said the measurement did not exist. It was wrong** |
 | **P3** | **Token-level streaming decode** (§9) | A whisper.cpp capability question, not a Relay wiring question. The cadence work already took the latency it would have bought |
 
 **Deliberately not in this bucket, and each recorded as DECLINED in §2 with its reason:** a STABLE
