@@ -5,6 +5,11 @@ Supersedes Revision 2 (2026-07-12) and Revision 1 (2026-07-05). Every claim was 
 
 > ## ⚠️ Status as of 2026-08-31 — read this before the scorecard
 >
+> **The current per-dimension scores are `RELAY_GAP.md` §22, not the table below.** That one
+> was re-scored twice on 2026-08-31 and states plainly that **not one score moved on the second
+> pass** — because a readiness score tracks evidence, not effort. This document's scorecard is a
+> 2026-07-13 snapshot and is kept for its *shape* and its §13 reasoning.
+>
 > **This revision is seven weeks behind, predates the first full machine audit entirely, and
 > predates the first time Relay ever ran in a real room.** The scorecard below is still the right *shape* — the strategy,
 > the scope decisions and the §13 NOT-APPLICABLE reasoning all stand — but treat its numbers and

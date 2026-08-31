@@ -1017,32 +1017,67 @@ path, or neither, is a product decision `DECISIONS.md` does not contain. §19b h
 ## 22. Production readiness — scored per dimension, no hiding average
 
 Scored against **the first ten churches**, not against enterprise scale.
-**Re-scored 2026-08-31**, after one live service and 56 closed register entries. The previous score is kept beside each so the movement is visible rather than asserted.
+**Re-scored 2026-08-31 (second pass)**, after one live service and **66 closed** register entries of 70.
+Each row keeps the previous score beside it so movement is visible rather than asserted.
 
-| Dimension | Was | Now | Why it moved |
+> ### Not one score moved this pass, and that is the result
+>
+> **24 commits** landed between the first re-score and this one (`git log --oneline 436050c..HEAD`).
+> **Nothing in the table changed**, because a score here is meant to track *evidence*, not effort — and the evidence
+> that would move any row is a room, a certificate, a native speaker or a second Sunday. A
+> readiness table that rises whenever somebody is busy is a morale chart.
+>
+> Two rows would have been *entitled* to rise on the work done, and are deliberately held:
+> Documentation (its guarantees became machine-checked) and Security (its posture became
+> reviewable). Both are argued in place below. Raising them would have widened the gap between
+> the ten rows that read 8–9 and the two that decide anything, which is the failure this table's
+> last paragraph already warns about.
+
+> ### The caveat that changed, even though no number did
+>
+> **Nine of this pass's closures were defects in the instruments, not in the product** — a
+> contract test that scanned one Rust file, its other half reading four frontend files out of
+> nine, a CI job on a single Node version, an edit-time gate whose watch list had drifted behind
+> four safety files, an agent brief describing a deleted component, four dead `DECISIONS §N`
+> citations and sixteen dead `docs/…` paths.
+>
+> That matters *here* more than anywhere else in this document, because **several of these scores
+> were partly self-reported by those instruments.** They were not wrong in a way that made the
+> product worse — every gap they missed turned out to be closed or benign — but the confidence
+> behind the high rows was resting, in part, on checks that were reading less than they claimed.
+> They now read what they claim, and each is pinned so it cannot narrow again. **Read the 8s and
+> 9s below as better-founded than they were, not as higher.**
+
+| Dimension | Was | Now | Why it did or did not move |
 |---|---|---|---|
-| Code | 9 | **9 / 10** | Unchanged and deliberately so. Five dead commands deleted, so no registered command is unreachable — a security reduction as much as a tidy-up. Still one 5.7k-line `main.rs` |
-| Performance | 8 | **9 / 10** | Stage F11 answered in a real room: **no drift across 49.5 minutes and 2,423 decodes**. Every model on this machine measured, and the bench predicted the room within 15%. Not 10: one machine, and `end_to_end_speech_to_scripture` was found measuring the wrong thing |
-| Live safety | 9 | **9 / 10** | Three real auto-fire defects closed (`UncertainNumber`), a stale passage disarmed, a bare verse anchored to the sentence that names it — but **a wrong verse reached a real congregation on 2026-08-30**, and only a second service can show that class is closed |
-| UX | 8 | **9 / 10** | The output badge, the unnamed controls, five untrapped modals, six headingless views, disabled controls that would not say why, and two dead menu entries — all closed. Loses a point for surfaces no instrument here has ever seen |
-| Security | 7 | **8 / 10** | Five webview-invokable commands removed, one of which opened a fullscreen window on any monitor named. The LAN control plane is still unauthenticated by decision (§35) |
-| Privacy | 9 | **9 / 10** | Unchanged. Scrubbed, opt-in, offline-normal; the field audit's quoting rule was written down |
-| Reliability / recovery | 7 | **9 / 10** | Rollback, DB-compat preflight, Service Lock, degraded state, a corrupt session no longer erasing the install — and the migration path now **proved** against a database that predates it, from both sides |
-| Distribution | 5 | **6 / 10** | An offline installer exists and the packaged build has now run a real service. Still no Windows certificate, and no update has ever been watched installing on a machine that is not this one |
-| **Language (the moat)** | 3 | **3 / 10** | **Unmoved, and this is the honest number.** Yorùbá numerals are still unparsed, no native speaker has reviewed the aliases, and **word error rate has never been measured in any language.** Six real sermon lines entered the corpus — the first real-world data it has ever had — but they are English and they measure detection over TEXT, not hearing over AUDIO |
-| Observability | 7 | **9 / 10** | The per-minute line persists, p99 ships, the diagnostic bundle exports, the service record points at the words that produced it — and the two instruments that were lying (an end-to-end span measuring how long the preacher had talked; launch checks that could not fail) were caught by using them |
-| Documentation | 8 | **9 / 10** | Three files that described defects already fixed, a report that listed twenty shipped features as missing, a register table this report corrupted itself, a status matrix a week out of date, and a README line four documents quoted after it was deleted — all corrected, and **the register's own summary counts are now asserted against the table by `relaygap.test.js`**. Counts are stated as the command that produces them, because correcting them failed three times |
-| **Field validation** | 0 → 2 | **2 / 10** | One real service, 49.5 minutes, packaged build, instrumented — [audits/FIELD-2026-08-30.md](audits/FIELD-2026-08-30.md). Stage F11 answered; 5 of 6 auto-fires correct; **one wrong verse reached a congregation**. Still one church, one preacher, one language, one machine, and an operator who wrote the software |
+| Code | 9 | **9 / 10** | Held. 260 lines of dead component CSS deleted — proved inert by rebuilding and diffing the emitted bundle, not assumed — and the repository carries **zero** `TODO`/`FIXME` markers and zero unused CSS selectors. Against that: RG-62 found that two of `detections.status`'s four documented values were **structurally unwritable**, which is a correctness defect that lived a long time in a heavily-tested area. Fixed, but the ceiling is unchanged: one god-file (`wc -l src-tauri/src/main.rs`) |
+| Performance | 8 | **9 / 10** | Held, and nothing was measured this pass. Stage F11 still answers it: **no drift across 49.5 minutes and 2,423 decodes** in a real room, every model on this machine measured, the bench predicting the room within 15%. Not 10 for the unchanged reason — one machine |
+| Live safety | 9 | **9 / 10** | Held. RG-63 closed a real defect on the path the operator actually touches: a suggestion for a verse that does not exist rendered an identical amber Approve and failed *after* the click. That is the console's version of a badge that cannot detect its own failure. It does not move the score, because **a wrong verse reached a real congregation on 2026-08-30** and only a second service can show that class is closed |
+| UX | 8 | **9 / 10** | Held. RG-61 gave the setup walk-through the hand-off it never had — the drills, the six-stage path check and rehearsal, each named with its tab — and RG-63 made a dead control say why it is dead rather than merely go grey. Still loses a point for surfaces no instrument here has ever seen |
+| Security | 7 | **8 / 10** | **Held on purpose, and this is the row most tempting to raise.** `SECURITY.md` now carries the T1–T10 threat model (RG-60), and two of its rows are honest absences rather than mitigations. But a threat model documents a posture; it does not change one. The LAN control plane is still unauthenticated by decision (§35), and that is the ceiling. The one genuine hardening was small and is counted under Privacy |
+| Privacy | 9 | **9 / 10** | Held — with a near-miss recorded rather than smoothed over. RG-62's first cut passed a **raw string from the webview** into `cues.payload_json`, which `service_timeline` reads back and which is the part of the history most likely to be emailed. Every other cue writer guarantees its shape by construction; that one would have trusted it. Caught in review before it shipped, now parsed to a canonical reference or not stored at all, and pinned by a third e2e test |
+| Reliability / recovery | 7 | **9 / 10** | Held, untouched this pass. Rollback, DB-compat preflight, Service Lock, degraded state, and a migration path proved from both sides against a database that predates it |
+| Distribution | 5 | **6 / 10** | Held, and it cannot move from here. Still **no Windows certificate**, and no update has ever been watched installing on a machine that is not this one. CI now builds the Windows MSI on every push, which is why the *build* is not the risk — the *install* is, and nobody has seen one |
+| **Language (the moat)** | 3 | **3 / 10** | **Unmoved, twice running, and this is the honest number.** Yorùbá numerals are still unparsed, no native speaker has reviewed the aliases, and **word error rate has never been measured in any language.** Nothing in twenty-six commits could touch it, and nothing in the next twenty-six will either |
+| Observability | 7 | **9 / 10** | Held, and the 9 is better-founded than it was. RG-62 found the Sunday report printing **`0 suggested · 0 dismissed` for every service ever recorded** — a number for something nothing was recording, which is an observability defect of the worst kind: it reads as a measurement. Now it records what the operator actually did, and **names its own denominator** ("of the suggestions you answered") instead of implying the larger one |
+| Documentation | 8 | **9 / 10** | **Held, and this is the other row that could have risen.** The change is real and structural: documentation stopped being *corrected by sweeps* and started being *checked by tests* — cross-references in three dimensions (`DECISIONS §N`, `RG-` ids, `docs/…` paths), the register's shape and its own summary counts, the AI disclosure against the app, and the edit-time gate's watch list. This pass alone that machinery caught a fourth dead citation a careful hand-sweep had missed. It stays at 9 because prose accuracy about *behaviour* is still unmechanised, and because a 10 next to a 3 is how a table like this starts lying |
+| **Field validation** | 0 → 2 | **2 / 10** | **Unmoved.** One real service, 49.5 minutes, packaged build, instrumented — [audits/FIELD-2026-08-30.md](audits/FIELD-2026-08-30.md). Stage F11 answered; 5 of 6 auto-fires correct; **one wrong verse reached a congregation**. Still one church, one preacher, one language, one machine, and an operator who wrote the software |
 
-**No overall score is given.** An average would hide the **3** and the **2**, which are still the
-only two that decide anything. Nine dimensions moved this week and neither of those did — because
-neither is a code problem, and twenty-one merged pull requests could not touch them.
+**No overall score is given.** An average would hide the **3** and the **2**, which remain the only
+two that decide anything. Twelve dimensions, two passes, and those two have not moved once —
+because neither is a code problem, and **45 merged pull requests** (`gh pr list --state merged --jq length`) could not touch them.
 
-> **The trap in this table.** Ten of twelve rows now read 8 or 9, which is exactly the shape that
-> makes somebody ship. **Do not read it that way.** The two low rows are not weak spots in an
-> otherwise finished product — they are the two that say whether it works at all in a room, and
-> the strongest evidence in this document is that fifty minutes in one produced seven findings
-> that months of reading source had not.
+> **The trap in this table.** Ten of twelve rows read 8 or 9, which is exactly the shape that makes
+> somebody ship. **Do not read it that way.** The two low rows are not weak spots in an otherwise
+> finished product — they are the two that say whether it works at all in a room, and the strongest
+> evidence in this document is still that fifty minutes in one produced seven findings that months
+> of reading source had not.
+>
+> **And the second pass adds a sharper version of the same warning.** Nine of its closures were
+> defects in Relay's own instruments. If the checks that produce this table were reading less than
+> they claimed, the honest inference is not that the product is worse than the scores say — it is
+> that **a high score is a statement about what has been looked at, and the looking is younger than
+> it appears.**
 
 ---
 
