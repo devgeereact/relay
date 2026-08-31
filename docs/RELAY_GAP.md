@@ -196,7 +196,7 @@ the table it counts is the easiest possible thing to check automatically.*
 
 | | |
 |---|---|
-| ✅ **64 closed** | Every gap this report could reach from the code. The last twenty-one were not in the original brief at all — they were found by auditing the things that audit Relay: test files that described defects already fixed, a launch screen whose checks could not fail, a register table this report corrupted itself |
+| ✅ **64 closed** | Every gap this report could reach from the code. **The last twenty-one were not in the brief at all — they were found by auditing the things that audit Relay**, and that is now the most productive seam in the project: a contract test that scanned one Rust file, another that read four frontend files out of nine, a CI job that ran one Node version so the fix for every other one was never exercised, a launch screen whose checks could not fail, an agent brief describing a deleted component and a closed defect, four citations pointing at a section that does not exist, and a register table this report corrupted itself. **The instrument is wrong more often than the code it audits.** |
 | ~~1 withdrawn~~ | **RG-27** was filed from a mid-service snapshot and was wrong. Struck through, not deleted |
 | ⚠️ **RG-41** | Not work. A correction kept on the record: two of six views were wrong to "fix" — they are routers, and a heading there would give one screen two |
 | ⏳ **RG-32** | **Open on purpose.** A context-resolved bare verse is labelled `Direct` at a hardcoded 0.88 — by rule 10 that label is a lie, because Relay inferred the book rather than hearing it. Changing it makes every in-passage *"verse eighteen"* cost a click, and **one service is not enough evidence to spend that**. Wants a second and third Sunday |
@@ -205,7 +205,7 @@ the table it counts is the easiest possible thing to check automatically.*
 
 ### What is left is not a list of bugs
 
-Nothing in the five rows above is what stands between Relay and a church. **This is:**
+Nothing in the six rows above is what stands between Relay and a church. **This is:**
 
 | | Why no commit closes it |
 |---|---|

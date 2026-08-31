@@ -155,6 +155,14 @@ load-bearing, not modesty. Preserve it.
 - **Resolving something by deciding not to build it is a result, and it gets written down like a
   build** — the verdict, the reason, and the condition that would reverse it. "Not now" is how a
   decision decays back into a gap nobody re-argues and everybody re-files. See DECISIONS §62.
+- **Audit the instruments, not only the code — it is the most productive seam in this
+  repository and it is not close.** In one pass: a contract test that scanned one Rust file
+  while claiming to cover the repository, its other half reading four frontend files out of
+  nine, a CI job on a single Node version so the fix protecting every other one was never
+  exercised, an agent brief describing a deleted component and a closed defect, and four
+  citations pointing at a section that does not exist. Eleven of thirteen findings in the
+  accessibility pass were the scanner's own bugs. **When a check says everything is fine, ask
+  what it actually reads.** A scanner that quietly narrows passes everything.
 - **Never imply you ran, clicked, saw or heard something you did not.**
 - A count you cannot reproduce is a rumour.
 
