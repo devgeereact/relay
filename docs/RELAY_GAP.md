@@ -180,6 +180,49 @@ accounts, RBAC and cloud sync at it.
 
 ---
 
+## WHERE THIS IS UP TO — read this first
+
+*Regenerate the counts with `npx vitest run src/lib/relaygap.test.js` (it checks the table)
+and by reading §23. Last updated 2026-08-31.*
+
+**56 entries. 51 closed, 1 withdrawn as wrong, 4 not closed — and only two of those four are
+work.**
+
+| | |
+|---|---|
+| ✅ **51 closed** | Every gap this report could reach from the code. The last eleven were not in the original brief at all — they were found by auditing the things that audit Relay: test files that described defects already fixed, a launch screen whose checks could not fail, a register table this report corrupted itself |
+| ~~1 withdrawn~~ | **RG-27** was filed from a mid-service snapshot and was wrong. Struck through, not deleted |
+| ⚠️ **RG-41 · RG-52** | Not work. Both are corrections kept on the record: two views were wrong to "fix", and this table was broken by my own merge conflicts and now has a test |
+| ⏳ **RG-32** | **Open on purpose.** A context-resolved bare verse is labelled `Direct` at a hardcoded 0.88 — by rule 10 that label is a lie, because Relay inferred the book rather than hearing it. Changing it makes every in-passage *"verse eighteen"* cost a click, and **one service is not enough evidence to spend that**. Wants a second and third Sunday |
+| ⚠️ **RG-50** | **Needs a human, not a commit.** `translations` is the last table an operator cannot fill. The reason first recorded here was wrong — see §19b for the decision it actually needs |
+
+### What is left is not a list of bugs
+
+Nothing in the five rows above is what stands between Relay and a church. **This is:**
+
+| | Why no commit closes it |
+|---|---|
+| **A projector** | RG-18's contrast and distance thresholds have never been checked against a wall |
+| **The audio half of a real room** | A preacher has now been transcribed for 49.5 minutes — but **word error rate has never been measured, in any language.** That is the moat, and it is still an assertion |
+| **A Yorùbá speaker** | The numerals are unparsed and the alias table is unreviewed. A wrong numeral does not fail safely; it silently shows a different verse |
+| **A Windows certificate** | The platform most churches are on cannot receive a signed build |
+| **A second and third service** | RG-32 waits on them, and so does any claim that 2026-08-30 was typical |
+| **One service run by somebody who did not write Relay** | The largest unknown in the project |
+
+### The one number that moved
+
+**Field validation, 0 → 2 / 10.** Relay ran a live sermon on 2026-08-30
+([`audits/FIELD-2026-08-30.md`](audits/FIELD-2026-08-30.md)): Stage F11 answered — **no
+drift** across 49.5 minutes and 2,423 decodes — and five of six auto-fires correct.
+
+**That morning is the argument for NO-GO, not against it.** Fifty minutes in a room produced
+**seven findings** that months of reading source had not, including a wrong verse on a
+congregation's wall. One of the seven was itself wrong and was withdrawn. That ratio is what
+"half of this product has never been reached by an instrument" means when somebody finally
+reaches it.
+
+---
+
 ## 0. Method, and what this report cannot see
 
 **How every claim here was produced:**
@@ -868,7 +911,7 @@ recorded, and it is still the lowest number on the page.
 | ✅ RG-49 | **Two of the three entries in Library → New Item did nothing.** `newPasteSong` set `lyricAction` and `newSaveScripture` set `scriptureAction`, and neither was ever passed to the pane it was meant to drive — `<LyricsPane>` and `<Scripture>` declared no such prop. The third IS wired, which is what made the other two look correct at a glance | **A cold-start blocker**: "Paste / draft song" is the only create path for `songs` that does not need a FILE, so a church whose lyrics live on a website had no way to add a song at all | `qa.rs::two_of_the_three_new_item_menu_entries_are_dead`, a GAP asserted as open since the cold-start audit | Wired to the work, not to a flag: pasting opens a sheet and hands the text to the **same `parse_import` review a file goes through**; "Save scripture" puts the cursor in the search box on the Saved tab, because saving happens by starring a result and a second editor would be a second create path for a table that already has a good one. The dead flags are **deleted**, not left unread | — | P1 | M | Test inverted; it asserts the assignment is gone, the review path is shared, and the sheet traps focus |
 | ⚠️ RG-50 | **`translations` is the last table an operator cannot fill** — there is no `add_translation` command, so a church cannot add a Bible version even when it is free to | **The reason I first recorded was WRONG and is corrected here rather than quietly amended.** I wrote that no corpus exists to import and called it "a rights question before it is a code question". DECISIONS **§32.4** says the opposite in as many words: **WEB, ASV, YLT and BBE are public domain and addable as data today, no licence.** The legal blocker applies to TPT, MSG, NIV and ESV — I took the licensed case's reasoning and applied it to the whole table | `qa.rs::a_fresh_install_still_cannot_be_given_a_second_translation`; DECISIONS §32.4 | **Not built, and deliberately not decided by me.** Whether Relay ships a second public-domain corpus, or an import path, or neither, is a product decision and DECISIONS does not contain it. CLAUDE.md: *if the decision isn't there, it hasn't been made — ask, don't assume.* **Flagged for a human** | — | P3 | M | The test fails the day an importer ships. A wrong reason in a register parks work forever, which is why this row now carries the correction and not the tidier sentence |
 | ✅ RG-51 | **Five registered commands no rendered control could reach** — `create_template`, `import_song`, `import_pro`, `list_output_windows`, `open_output_window`. `ipc.test.js` checks wrappers; `qa-inventory.mjs` traces one hop further, and that is the level they failed at | **A security reduction, not only a tidy-up**: every registered command is invokable from the webview, and `open_output_window` opened an arbitrary fullscreen window on any monitor. A command nothing calls is attack surface nobody is watching | `qa.rs::the_commands_no_rendered_component_can_reach`, a GAP asserted as open since the cold-start audit | **Deleted**, with their wrappers, their Service-Lock entries, the `Outputs` label counter and two db functions left dead behind them — rather than given a UI, because each was superseded by a path every control already used. Same precedent as the five deleted before them | — | P2 | M | Both tests inverted; `qa-inventory.mjs` reports **0** unreachable commands, 132 registered |
-| ⚠️ RG-52 | **The register table itself was corrupted by my own conflict resolutions.** Nine rows had been concatenated onto the end of a neighbour's line, so the table rendered them as one cell and the entry was invisible; three were outright duplicated | A gap register whose rows silently vanish is not a register. RG-47 was unreadable for two merges and I only noticed because a rebase conflicted on it | The file, checked by ID: RG-01…RG-51 with no gaps and no repeats | Split and de-duplicated. **The trap is that the "depends on" column reads `\| RG-02 \|`** — identical to a row start — so the first repair split rows at their own dependency cells. A row start is now identified by its STATUS MARKER, never by the id alone | — | P2 | S | **`src/lib/relaygap.test.js`** — five assertions: one contiguous table, nothing glued, ids complete AND in order, full cell count, and an open entry must carry its reason. It found three more faults the moment it ran |
+| ✅ RG-52 | **The register table itself was corrupted by my own conflict resolutions.** Nine rows had been concatenated onto the end of a neighbour's line, so the table rendered them as one cell and the entry was invisible; three were outright duplicated | A gap register whose rows silently vanish is not a register. RG-47 was unreadable for two merges and I only noticed because a rebase conflicted on it | The file, checked by ID: RG-01…RG-51 with no gaps and no repeats | Split and de-duplicated. **The trap is that the "depends on" column reads `\| RG-02 \|`** — identical to a row start — so the first repair split rows at their own dependency cells. A row start is now identified by its STATUS MARKER, never by the id alone | — | P2 | S | **`src/lib/relaygap.test.js`** — five assertions: one contiguous table, nothing glued, ids complete AND in order, full cell count, and an open entry must carry its reason. It found three more faults the moment it ran |
 | ✅ RG-53 | **Two launch-screen rows could only ever say `ok`.** The kiosk row counted configured channels and printed `ws://…:8031`; the HTTP row printed `http://<ip>:8032`. **Neither asked whether anything was listening** | On the one screen whose job is answering "is this machine going to work?". These are ordinary TCP ports on a volunteer's laptop and binding can fail — and when it does, every OBS browser source and the preacher's stage page are dead while the check says fine | `probes.js`; `sysprobe::probe_integrations` probed OBS and ATEM but not Relay's own ports | `probe_own_ports` rides on the command the launch screen already calls. The kiosk row **fails** when a browser source needs the hub and only **warns** when none does — painting red at a church with one HDMI projector teaches an operator to ignore red | RG-01 | P1 | S | Six tests including "neither row can report ok without the port answering", plus a Rust test that a really-bound port reads as listening — without it the prober could return false for everything and every other assertion would still pass |
 | ✅ RG-54 | **`qa_r5.rs` said two of its tests were expected to be RED.** All three findings are closed and all six tests are green | A reader takes the header first: it says a green run is wrong, so either the tests get mistrusted or the closures go unnoticed | The module header | Corrected, with the same rule as RG-46: closed findings are inverted, never deleted | RG-46 | P3 | S | No file in the suite now claims a defect that is fixed |
 | ✅ RG-55 | **One fact, two verdicts.** `degraded.js` calls a CPU-only macOS build *reduced* — "roughly three times slower, the transcript will lag the preacher" — and the launch screen's GPU row reported the identical fact as **`ok`, in green**, on the screen an operator reads before a service | CLAUDE.md rule 27 measured it: **~1710 ms per window against a ~1000 ms budget**, which is slower than real time. A green row over that is the launch screen's own version of a badge that cannot be wrong | `probes.js::gpu` vs `degraded.js` | The rule is exported once (`gpuIsReduced`) and **asked** by both, so they cannot drift. macOS only, deliberately: no equivalent measurement exists off it, and a warning nobody measured is one an operator learns to scroll past | RG-09 · RG-53 | P2 | S | Four tests, including one that asserts both surfaces agree by calling the same function |
