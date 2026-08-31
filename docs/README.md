@@ -101,8 +101,14 @@ contradicts it, the code is wrong — flag it, don't silently "fix" the decision
 
 **A designer / UI contributor**
 1. [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) — tokens, type, the load-bearing colour meanings.
-2. [design/](design/) — rendered screen references (PNG). A record of intent, not a spec:
-   where a reference and `src/app.css` disagree, the stylesheet is what shipped.
+2. [design/](design/) — thirteen rendered screen references (PNG, ~19 MB). A record of
+   intent, not a spec: where a reference and `src/app.css` disagree, the stylesheet is
+   what shipped. Six are cited by name from source comments and seven are not; **the whole
+   set is kept deliberately**, because a half-set described as "the rendered screen
+   references" is more misleading than a complete one that costs disk. **The directory is
+   `design/`** — sixteen comments once cited a `relaydesign/` that has never existed here
+   (RG-70), and `crossrefs.test.js` now fails on a citation to any `docs/…` file that is
+   not there.
 
 **An AI coding agent**
 - [../CLAUDE.md](../CLAUDE.md) first, every session. Then this index, then the volume you need.
