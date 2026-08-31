@@ -40,6 +40,20 @@ function citingFiles() {
     }
   };
   walk('.');
+  // `.claude/` is skipped by the dot-directory rule above, and it is exactly where
+  // the last stale citation was found: an agent brief that pointed at a deleted
+  // component and told the agent not to file a defect that was already fixed
+  // (RG-68). Instruction files are read by something that ACTS on them, so a dead
+  // reference there is worse than one in prose.
+  for (const dir of ['.claude/agents', '.claude/commands']) {
+    try {
+      for (const e of readdirSync(resolve(root, dir), { withFileTypes: true })) {
+        if (e.isFile() && e.name.endsWith('.md')) out.push([join(dir, e.name), read(join(dir, e.name))]);
+      }
+    } catch {
+      // Not every checkout has them; their absence is not a failure of this test.
+    }
+  }
   return out;
 }
 
@@ -51,6 +65,8 @@ describe('RG-67 · every cross-reference resolves', () => {
     expect(FILES.length).toBeGreaterThan(50);
     expect(FILES.some(([f]) => f.endsWith('CLAUDE.md'))).toBe(true);
     expect(FILES.some(([f]) => f.endsWith('main.rs'))).toBe(true);
+    // And the agent briefs, which the dot-directory rule would otherwise skip.
+    expect(FILES.some(([f]) => f.includes('.claude/agents'))).toBe(true);
   });
 
   it('every "DECISIONS §N" points at a numbered decision that exists', () => {
