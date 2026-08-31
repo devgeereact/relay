@@ -32,7 +32,7 @@ and the command is named — a count you cannot reproduce is a rumour.
 | | Count | How to reproduce |
 |---|---|---|
 | Rust tests | **626 passing**, 17 ignored (643 declared) | `cd src-tauri && cargo test` |
-| Frontend tests | **899 passing**, 0 skipped, 64 files | `npx vitest run` — read the runner's own summary line. **Not** `vitest list \| wc -l`: that stream carries Svelte compiler warnings too and over-counted by 7 |
+| Frontend tests | **900 passing**, 0 skipped, 64 files | `npx vitest run` — read the runner's own summary line. **Not** `vitest list \| wc -l`: that stream carries Svelte compiler warnings too and over-counted by 7 |
 | `e2e.rs` tests | **37** (37 run, 0 ignored — R2-C and R2-D closed, DECISIONS §54; three added for the calibrator and the service record) | `cd src-tauri && cargo test e2e::` |
 | Registered `#[tauri::command]` | **132** (five dead ones deleted 2026-08-30) | `grep -c '#\[tauri::command\]' src-tauri/src/main.rs` |
 | `.svelte` files | **48**, 22 of them views | `find src -name '*.svelte' | wc -l` |

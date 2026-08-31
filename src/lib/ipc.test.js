@@ -37,20 +37,53 @@ const outputHealthJs = read('src/lib/outputHealth.js');
 const updaterJs = read('src/lib/updater.js');
 const mainRs = read('src-tauri/src/main.rs');
 
-/** Every `call('name', …)` in the store, and every `invoke('name', …)` in the probes. */
+/**
+ * Every frontend source file, discovered rather than listed.
+ *
+ * The list used to be written out by hand — `capture.js`, `probes.js`,
+ * `outputHealth.js`, `updater.js` — and grew by one entry each time somebody
+ * noticed another file calling Tauri directly. This file's own comments record
+ * three of those discoveries, each phrased as *"added the moment it existed"*, and
+ * the last one says it plainly: **a command called from a file this test does not
+ * read is precisely the door nobody checks.**
+ *
+ * There were **nine** such files by the time that was written and the list had
+ * four. Nothing was broken — all six commands outside the contract do exist — but
+ * "nothing was broken" is what an unchecked door looks like right up until it is
+ * not, and this is the same failure as the event scanner reading only `main.rs`.
+ *
+ * So the inputs are now derived from the tree. A tenth file joins the contract by
+ * existing.
+ */
+function frontendSources() {
+  const out = [];
+  const walk = (dir) => {
+    for (const e of readdirSync(resolve(root, dir), { withFileTypes: true })) {
+      const rel = `${dir}/${e.name}`;
+      if (e.isDirectory()) walk(rel);
+      else if (/\.(js|svelte)$/.test(e.name) && !e.name.includes('.test.')) {
+        out.push([rel, read(rel)]);
+      }
+    }
+  };
+  walk('src');
+  return out;
+}
+
+/**
+ * Every Tauri command name the frontend calls, from every file that can call one.
+ *
+ * Scoped to files that import `@tauri-apps/api/core`, because `call(` and `inv(`
+ * are ordinary names — matching them everywhere would sweep up unrelated helpers
+ * and turn this contract into noise.
+ */
 function commandsCalledByFrontend() {
   const names = new Set();
-  for (const m of captureJs.matchAll(/\bcall\(\s*['"]([a-z0-9_]+)['"]/g)) {
-    names.add(m[1]);
-  }
-  for (const m of probesJs.matchAll(/\binvoke\(\s*['"]([a-z0-9_]+)['"]/g)) {
-    names.add(m[1]);
-  }
-  for (const m of outputHealthJs.matchAll(/\binv\(\s*['"]([a-z0-9_]+)['"]/g)) {
-    names.add(m[1]);
-  }
-  for (const m of updaterJs.matchAll(/\binvoke\(\s*['"]([a-z0-9_]+)['"]/g)) {
-    names.add(m[1]);
+  for (const [, text] of frontendSources()) {
+    if (!text.includes('@tauri-apps/api/core')) continue;
+    for (const m of text.matchAll(/\b(?:call|invoke|inv)\(\s*['"]([a-z0-9_]+)['"]/g)) {
+      names.add(m[1]);
+    }
   }
   return [...names].sort();
 }
@@ -85,6 +118,18 @@ describe('Tauri IPC contract', () => {
     expect(commandsCalledByFrontend()).toContain('update_verify');
   });
 
+  it('the contract reads every file that can call Tauri, not a hand-written list', () => {
+    // Guards the discovery, which is now the load-bearing part. These four commands
+    // are each called from a file the old hand-written list did not include —
+    // `App.svelte`, `FirstRun.svelte`, `latency.js`, `Settings.svelte`, `Output.svelte`.
+    // If the inputs are ever narrowed again, they vanish and every other assertion
+    // in this block still passes.
+    const called = commandsCalledByFrontend();
+    for (const c of ['system_hardware', 'latency_mark', 'update_preflight', 'get_template']) {
+      expect(called, `${c} is called from a file outside the old list`).toContain(c);
+    }
+  });
+
   it('every command the frontend calls is registered in Rust', () => {
     const registered = new Set(commandsRegisteredInRust());
     const missing = commandsCalledByFrontend().filter((c) => !registered.has(c));
@@ -105,14 +150,12 @@ describe('Tauri IPC contract', () => {
   //
   // Liveness probes call `ping` (silent). This keeps it that way.
   it('the boot heartbeat (greet) is called from exactly one place', () => {
-    const sources = [
-      ['src/App.svelte', read('src/App.svelte')],
-      ['src/lib/boot/probes.js', probesJs],
-      ['src/lib/stores/capture.js', captureJs],
-      ['src/lib/boot/BootSequence.svelte', read('src/lib/boot/BootSequence.svelte')],
-      ['src/lib/views/Dashboard.svelte', read('src/lib/views/Dashboard.svelte')],
-    ];
-    const callers = sources.filter(([, text]) => /['"]greet['"]/.test(text)).map(([f]) => f);
+    // Every source file, not a list of five. The count IS the instrument here, so
+    // a `greet` added to a sixth file is exactly what this must catch — and a
+    // hand-written list cannot, by construction.
+    const callers = frontendSources()
+      .filter(([, text]) => /['"]greet['"]/.test(text))
+      .map(([f]) => f);
     expect(
       callers,
       `greet is the boot heartbeat and must have ONE caller (App.svelte). ` +
