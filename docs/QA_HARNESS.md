@@ -47,7 +47,7 @@ and the command is named — a count you cannot reproduce is a rumour.
 | Surface inventory | `node scripts/qa-inventory.mjs` — controls, orphans, command map, create-path chain |
 | Six agents | `.claude/agents/relay-qa-{cold-start,live-path,surface,detection,failure,auditor}.md` |
 | The command | `/qa-audit` — changed-surface by default, `--full`, `--live` |
-| The hook | `.claude/hooks/relay-fast-gate.mjs` — path-filtered, report-only (§1.6). **Its watch list is itself pinned** (`fastgate.test.js`, RG-69): a rule whose path stops matching does not error, it goes quiet, and four safety files had already gained tests without gaining a rule |
+| The hook | `.claude/hooks/relay-fast-gate.mjs` — path-filtered, report-only (§1.6). **Off until installed**: it lives in `.claude/settings.json`, which is gitignored because it is per machine, so a fresh clone does not have it — `npm run hooks:install` (idempotent), `npm run hooks:check` to see. **Its watch list is itself pinned** (`fastgate.test.js`, RG-69): a rule whose path stops matching does not error, it goes quiet, and four safety files had already gained tests without gaining a rule |
 
 ---
 

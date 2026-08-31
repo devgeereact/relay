@@ -50,6 +50,10 @@ npm run build            # vite build — catches Svelte compile errors fast
 
 npm run version:check    # the 3 version files agree (CI runs this)
 npm run version:set -- 0.2.0
+
+npm run qa:inventory     # controls · orphans · command map · create paths
+npm run hooks:install    # wire the edit-time fast gate (per machine — .claude/settings.json
+npm run hooks:check      #   is gitignored, so a fresh clone does NOT have it)
 ```
 
 Rust (**`whisper-rs` compiles whisper.cpp from source, so `cmake` must be on PATH**):
