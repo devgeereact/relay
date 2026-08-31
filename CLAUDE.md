@@ -185,6 +185,8 @@ Parked, honestly (not faked): **NDI** (needs proprietary SDK — `open_ndi_outpu
 
 These caused real crashes, freezes, or silent failures in front of people. Keep them.
 
+**Five of them are now pinned by `hardrules.test.js`** — 1 (`tick()` in a reactive block), 3 (the 16 MB STT stack), 9 (no hand-rolled `$HOME` app-data path), 24 (the fire path stays generic over `tauri::Runtime`) and 36 (`broadcast_content` has exactly one caller, inside `broadcast_with_clock`). Rule 26 is pinned by `ipc.test.js`. **The other thirty-four are judgement and deliberately have no test** — one that guessed would fail on legitimate code, get weakened, and take the real ones with it.
+
 1. **Never call `tick()` inside a reactive `$:` block** (Svelte) — re-enters the scheduler and infinite-loops the webview JS thread → hard freeze, no error. Use `afterUpdate`.
 2. **Never hold a `Mutex` across `handle.emit` / `channels::broadcast_content`** — deadlocks the macOS main run loop against a command wanting the same lock. Compute under lock, release, THEN emit.
 3. **The STT worker thread needs a big stack** (16MB via `thread::Builder`). `whisper_full()` is stack-hungry; the default 2MB overflows → silent SIGSEGV after the first transcript.
