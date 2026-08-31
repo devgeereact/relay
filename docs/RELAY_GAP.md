@@ -972,6 +972,13 @@ hand-off naming three instruments and the tab each lives on, rather than three m
 | — | ~~**Per-detection voice confidence** (§13)~~ | **Moved to §19b — it is a decision, not a task.** The measurement exists (`dsp::AudioQuality` carries `snr_db`, `clip_ratio`, `speech_prob` and a named warning); what is unresolved is what an operator should be shown, and three recorded rules pull against each other over it (§21 a number that lies, §49 an instrument that cries wolf, §44 only what was measured). **This row previously said the measurement did not exist. It was wrong** |
 | **P3** | **Token-level streaming decode** (§9) | A whisper.cpp capability question, not a Relay wiring question. The cadence work already took the latency it would have bought |
 
+> **"Nearly empty" is about PRODUCT features, and it should not be read as "nothing left to do".**
+> Nine of the entries closed on 2026-08-31 came from auditing the instruments rather than the
+> product — contract tests that scanned one file, a CI job on one Node version, an edit-time gate
+> whose watch list had drifted behind four safety files, an agent brief describing a deleted
+> component, citations pointing at a section that does not exist. **That seam is still open**, and
+> it is not listed as a task here because it is not one: it is a habit. AGENTS.md carries it.
+
 **Deliberately not in this bucket, and each recorded as DECLINED in §2 with its reason:** a STABLE
 transcript state (§7), candidate prefetch (§12), device identity and a security event log
 (§19–§22), a tamper-evident record (§24), and an engine-side health state (§4 · DECISIONS §61).
