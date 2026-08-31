@@ -1060,7 +1060,15 @@ Each row keeps the previous score beside it so movement is visible rather than a
 >   with five shipped rules using that pairing.
 >
 > **So the honest statement is the stronger one: two unchecked claims were load-bearing and wrong,
-> and both were found only by building the instrument that could disagree with them.** Neither
+> and both were found only by building the instrument that could disagree with them.**
+>
+> **The rest of §16 was then checked the same way, and the rest of it holds.** In-app model
+> download really is resumable, SHA-256-verified and cancellable (`sha2::{Digest, Sha256}`,
+> per-model constants, verified before the rename); crash reporting really is opt-in
+> (`telemetry::tests::disabled_by_default`, and the gate requires the setting to be exactly
+> `"1"`, so an absent setting is off); the LICENSE really does name a copyright holder. **Two
+> wrong ticks out of twenty-three is the finding — not "the checklist was fiction", and not
+> "the checklist was fine."** Neither
 > moved a score — the first is counted under Distribution, which was already held down for exactly
 > this, and the second was one marginal token, now fixed and measured. But "we checked and it was
 > fine" would have been the comfortable sentence, and it was not true.
