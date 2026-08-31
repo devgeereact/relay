@@ -440,11 +440,6 @@
   /* The "wall live" chip sits BESIDE the pane's own badge, and is deliberately the
      smaller of the two: it is a second fact, not a competing headline. It must not
      wrap the header onto a second line on a narrow rail. */
-  .lo-behind {
-    flex: 0 0 auto;
-    padding: 4px 9px;
-    font-size: 9px;
-  }
   .lo-pad .r-lbl {
     margin: 0;
   }
@@ -513,27 +508,6 @@
     line-height: 1.5;
     color: var(--v-dim);
     text-align: center;
-  }
-  .lo-take {
-    display: block;
-    width: calc(100% - 20px);
-    margin: 10px;
-    height: 36px;
-    border-radius: var(--v-r-md);
-    background: var(--v-surf2);
-    border: 1px solid var(--v-line2);
-    color: var(--v-accent2);
-    font-family: var(--f-body);
-    font-size: 13px;
-    font-weight: 600;
-    cursor: pointer;
-  }
-  .lo-take:hover:not(:disabled) {
-    background: var(--v-surf3);
-  }
-  .lo-take:disabled {
-    color: var(--v-faint);
-    cursor: not-allowed;
   }
 
   .lo-none {

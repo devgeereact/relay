@@ -258,20 +258,6 @@
   .sv-ctl .r-select { width: auto; height: 30px; padding: 0 30px 0 10px; font-size: 12px;
     background-position: calc(100% - 14px) 13px, calc(100% - 9px) 13px; }
 
-  .sv-modal { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center;
-    background: rgba(0, 0, 0, 0.6); padding: 24px; }
-  .sv-sheet { width: min(560px, 100%); display: flex; flex-direction: column; gap: 12px;
-    padding: 18px; background: var(--v-surf); border: 1px solid var(--v-line2);
-    border-radius: var(--v-r-xl); box-shadow: var(--v-shadow-lg); }
-  .sv-sheet header { display: flex; align-items: center; gap: 8px; }
-  .sv-sheet header .r-lbl { margin: 0; }
-  .sv-spring { flex: 1; }
-  .sv-field { display: flex; flex-direction: column; gap: 5px; }
-  .sv-text { height: auto; padding: 11px 13px; line-height: 1.6; resize: vertical;
-    font-family: var(--f-body); font-size: 13.5px; }
-  .sv-fine { margin: 0; font-size: var(--v-fs-cap); line-height: 1.6; color: var(--v-faint); }
-  .sv-fine b { color: var(--v-dim); }
-
   .sv-msg, .sv-err { margin: 0; font-size: var(--v-fs-b2); }
   .sv-msg { color: var(--v-emerald); }
   .sv-err { color: var(--v-red); }

@@ -477,105 +477,23 @@
   .br-where { flex: 1; min-width: 0; }
   .br-where b { display: block; font-size: 15px; font-weight: 600; color: var(--v-txt); }
   .br-where span { font-size: var(--v-fs-cap); color: var(--v-faint); }
-  .br-step { display: flex; align-items: center; gap: 4px; }
-  .br-step span { font-size: 10.5px; color: var(--v-faint); min-width: 84px; text-align: center; }
-  .br-step button {
-    width: 24px; height: 24px; border-radius: var(--v-r-sm); border: 1px solid var(--v-line2);
-    background: var(--v-surf2); color: var(--v-dim); cursor: pointer; font-size: 13px; line-height: 1;
-  }
-  .br-step button:hover:not(:disabled) { color: var(--v-txt); }
-  .br-step button:disabled { opacity: 0.4; cursor: not-allowed; }
   .br-body {
     flex: 1; min-height: 0; overflow-y: auto; padding: 12px;
     display: flex; flex-direction: column; gap: 8px;
   }
 
-  .br-card {
-    position: relative; display: grid; grid-template-columns: 30px minmax(0, 1fr) auto;
-    gap: 12px; align-items: start; width: 100%; padding: 13px 15px; text-align: left;
-    background: var(--v-surf); border: 1px solid var(--v-line); border-radius: var(--v-r-md);
-    cursor: pointer; transition: border-color 0.14s, background 0.14s;
-  }
-  .br-card:hover { border-color: var(--v-line2); background: var(--v-surf2); }
-  .br-card.on { border-color: var(--v-accent-line); background: var(--v-accent-soft); }
   /* ON AIR is an amber bar and an amber badge, never an amber field behind body
      text: gold under 13px type is unreadable, and the badge carries the meaning. */
-  .br-card.air { border-color: rgba(255, 176, 0, 0.42); background: rgba(255, 176, 0, 0.05); }
-  .br-card.air::before {
-    content: ''; position: absolute; left: 0; top: 10px; bottom: 10px; width: 3px;
-    border-radius: 0 3px 3px 0; background: var(--v-amber);
-  }
-  .br-n { font-size: 14px; color: var(--v-faint); padding-top: 1px; text-align: right; }
-  .br-card.air .br-n { color: var(--v-amber); }
-  .br-c { display: flex; flex-direction: column; gap: 9px; min-width: 0; }
-  .br-t { font-size: 13.5px; line-height: 1.55; color: var(--v-txt); }
-  .br-chips { display: flex; flex-wrap: wrap; gap: 6px; }
-  .br-cardact { display: flex; align-items: center; gap: 4px; }
-  .br-ic {
-    width: 26px; height: 26px; display: grid; place-items: center; border: 0;
-    border-radius: var(--v-r-sm); background: transparent; color: var(--v-faint);
-    cursor: pointer; transition: color 0.14s, background 0.14s;
-  }
-  .br-ic:hover:not(:disabled) { color: var(--v-txt); background: var(--v-surf3); }
-  .br-ic.on { color: var(--v-accent2); }
-  .br-ic:disabled { opacity: 0.4; cursor: not-allowed; }
 
   /* ── Read ──────────────────────────────────────────────────────────────── */
-  .br-read { font-size: 15px; line-height: 1.8; color: var(--v-txt); max-width: 68ch; padding: 4px 2px; }
-  .br-rv { cursor: pointer; border-radius: var(--v-r-sm); transition: background 0.14s; }
-  .br-rv sup { font-size: 9.5px; color: var(--v-faint); padding-right: 4px; vertical-align: super; }
-  .br-rv:hover { background: var(--v-surf2); }
-  .br-rv.on { background: var(--v-accent-soft); }
-  .br-rv.air { background: var(--v-amber-soft); color: var(--v-amber2); }
 
   /* ── Table ─────────────────────────────────────────────────────────────── */
-  .br-table { width: 100%; border-collapse: collapse; font-size: var(--v-fs-b2); }
-  .br-table th {
-    text-align: left; padding: 0 10px 8px; font-family: var(--f-mono); font-size: 10px;
-    font-weight: 600; letter-spacing: 0.16em; text-transform: uppercase; color: var(--v-faint);
-    border-bottom: 1px solid var(--v-line);
-  }
-  .br-table td { padding: 9px 10px; border-bottom: 1px solid var(--v-line); color: var(--v-dim); vertical-align: top; }
-  .br-table td.tx { color: var(--v-txt); line-height: 1.5; }
-  .br-table .num { text-align: right; }
-  .br-table tbody tr { cursor: pointer; }
-  .br-table tbody tr:hover td { background: var(--v-surf2); }
-  .br-table tbody tr.on td { background: var(--v-accent-soft); }
-  .br-table tbody tr.air td { background: var(--v-amber-soft); }
 
   /* ── Pager ─────────────────────────────────────────────────────────────── */
   .br-pager { display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-top: 1px solid var(--v-line); }
-  .br-pages { display: flex; align-items: center; gap: 4px; flex: 1; }
-  .br-pg {
-    min-width: 28px; height: 28px; padding: 0 7px; border-radius: var(--v-r-sm); border: 0;
-    background: transparent; color: var(--v-dim); font-family: var(--f-mono); font-size: 12px;
-    font-variant-numeric: tabular-nums; cursor: pointer;
-  }
-  .br-pg:hover:not(:disabled):not(.on) { background: var(--v-surf2); color: var(--v-txt); }
-  .br-pg.on { background: var(--v-accent-fill); color: var(--v-accent-ink); font-weight: 600; }
-  .br-pg:disabled { opacity: 0.35; cursor: not-allowed; }
-  .br-gap { color: var(--v-faint); padding: 0 2px; }
   .br-count { font-size: var(--v-fs-cap); color: var(--v-faint); }
 
-  .br-modal {
-    position: fixed; inset: 0; z-index: 60; display: grid; place-items: center;
-    background: rgba(0, 0, 0, 0.6); padding: 24px;
-  }
-  .br-sheet {
-    width: min(560px, 100%); display: flex; flex-direction: column; gap: 12px;
-    padding: 18px; background: var(--v-surf); border: 1px solid var(--v-line2);
-    border-radius: var(--v-r-xl); box-shadow: var(--v-shadow-lg);
-  }
-  .br-sheet header { display: flex; align-items: center; gap: 8px; }
   .br-sheet header .r-lbl { margin: 0; }
-  .br-spring { flex: 1; }
-  .br-field { display: flex; flex-direction: column; gap: 5px; }
-  .br-text {
-    height: auto; padding: 11px 13px; line-height: 1.6; resize: vertical;
-    font-family: var(--f-body); font-size: 13.5px;
-  }
-  .br-fine { margin: 0; font-size: var(--v-fs-cap); line-height: 1.6; color: var(--v-faint); }
-  .br-fine b { color: var(--v-dim); }
 
   .br-msg, .br-err { margin: 0; font-size: var(--v-fs-b2); line-height: 1.6; }
   .br-msg { color: var(--v-emerald); }

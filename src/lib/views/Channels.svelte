@@ -666,15 +666,6 @@
   .ch-main{ display:flex; flex-direction:column; min-height:0; gap:12px; }
 
   /* ── tabs ── */
-  .ch-tabs{ display:flex; align-items:center; gap:6px; flex:0 0 auto; flex-wrap:wrap; }
-  .ch-tab{ display:inline-flex; align-items:center; gap:7px; padding:7px 13px; border-radius:var(--v-r-md);
-    background:var(--v-surf); border:1px solid var(--v-line); color:var(--v-dim); cursor:pointer;
-    font-size:var(--v-fs-b2); font-weight:500; transition:.12s; }
-  .ch-tab:hover{ border-color:var(--v-line2); color:var(--v-txt); }
-  .ch-tab.on{ background:var(--v-accent-fill); border-color:var(--v-accent-fill); color:var(--v-accent-ink); }
-  .ch-tabn{ font-size:var(--v-fs-cap); padding:1px 6px; border-radius:99px;
-    background:var(--v-surf3); color:var(--v-dim); }
-  .ch-tab.on .ch-tabn{ background:rgba(0,0,0,.28); color:var(--v-accent-ink); }
   .ch-spring{ flex:1; }
 
   .ch-toolbar{ display:flex; align-items:center; gap:10px; flex:0 0 auto; }
