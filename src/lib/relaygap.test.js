@@ -110,6 +110,40 @@ describe('RG-52 · the gap register is one readable table', () => {
     expect(wrong, `rows with the wrong cell count: ${wrong.join(', ')}`).toEqual([]);
   });
 
+  it('the summary at the top counts the same table it summarises', () => {
+    // This block said "54 closed" and "51 closed" in consecutive sentences for two
+    // merges. A count in prose sitting directly above the table it counts is the
+    // cheapest thing in this repository to check, and the most reliably wrong when
+    // it is not checked: every row added has to be remembered in four places.
+    const { all } = register();
+    const total = all.length;
+    const withdrawn = all.filter((l) => /\| ~~/.test(l)).length;
+    const open = all.filter((l) => /\| ⏳/.test(l)).length;
+    const flagged = all.filter((l) => /\| ⚠️/.test(l)).length;
+    const closed = all.filter((l) => /\| ✅/.test(l)).length;
+    expect(closed + withdrawn + open + flagged, 'a row carries no status marker').toBe(total);
+
+    const head = DOC.slice(
+      DOC.indexOf('## WHERE THIS IS UP TO'),
+      DOC.indexOf('## 0. Method'),
+    );
+    const claim = head.match(/\*\*(\d+) entries\. (\d+) closed, (\d+) withdrawn as wrong, (\d+) not closed/);
+    expect(claim, 'the summary sentence has changed shape — update this test with it').toBeTruthy();
+    const [, cTotal, cClosed, cWithdrawn, cOpen] = claim.map(Number);
+    expect(cTotal, 'entry count').toBe(total);
+    expect(cClosed, 'closed count').toBe(closed);
+    expect(cWithdrawn, 'withdrawn count').toBe(withdrawn);
+    // "not closed" is the open one plus the flagged ones — the two kinds are
+    // separated in the table below the sentence, never in the sentence itself.
+    expect(cOpen, 'not-closed count').toBe(open + flagged);
+
+    // And the roll-up row under it, which is where the two numbers disagreed.
+    expect(
+      head.includes(`✅ **${closed} closed**`),
+      `the roll-up row does not say ${closed}`,
+    ).toBe(true);
+  });
+
   it('every row carries a status, and only the recorded ones are unresolved', () => {
     const { all } = register();
     const open = all.filter((l) => /\| ⏳/.test(l)).map((l) => l.match(/RG-\d+/)[0]);

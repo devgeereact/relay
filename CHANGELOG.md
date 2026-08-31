@@ -31,6 +31,22 @@ permanent test.
 
 Windows is not signed yet, so this applies to macOS only.
 
+### Relay now tells you, in the app, what it is bad at
+
+- **Help has a new topic: "What the AI is bad at."** It says four things plainly, and they
+  are the four a church should hear before it trusts this: Relay **never writes scripture**
+  (the words are read verbatim from the bundled King James Version, so a wrong verse means
+  a wrong *reference*, never invented text); **African-language listening is the weakest
+  part of the product**, and it is also the headline claim; **nobody has measured how often
+  it mishears**, in any language, English included; and therefore keep `Esc` under your
+  hand and watch the wall rather than the app.
+- **Why this is a change worth reading.** All of that was already written down — honestly,
+  at length — in a file on the internet that no operator was ever going to open. What the
+  app itself carried was the reassuring half: the rule that a guess never reaches a screen
+  on its own. Publishing only the reassuring half is worse than publishing neither, and it
+  is the same failure as a status light that cannot detect its own fault. Both halves are
+  now in the app, offline, in the search box on the Help tab.
+
 ### The first real service, and the eight things it changed
 
 Relay listened to a live sermon for the first time — fifty minutes, a real preacher, a

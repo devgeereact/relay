@@ -39,7 +39,7 @@ code that would consume each already exists.
 | **One observed end-to-end update install** | Confidence that the updater mechanism — capable but never watched — actually delivers a fix to a church. | 30 minutes on a real machine ([RELEASING.md](RELEASING.md)) |
 | ~~**One full service on tape, watching Diagnostics — Stage F11**~~ — **RUN 2026-08-30** | **The answer is no drift.** `stt_decode` p50 held at **686–697 ms across ~40 minutes and 1,900+ samples**, p95 flat, `worst` unmoved since minute four, **0 dropped partials**, on the packaged build in a real service with `ggml-large-v3-turbo`. The thermal-throttling line this stage was written to look for is not there. Three documents called it the highest-value unrun item; it has been run — see [audits/FIELD-2026-08-30.md](audits/FIELD-2026-08-30.md). **It also produced four defects nothing in this repository could have found from source**, RG-24 … RG-27, one of them a wrong verse on a real wall. | *Done — one machine, one model, one service* |
 | **Watch one full service run by a non-author operator** | The one thing no amount of engineering substitutes for. | A real Sunday |
-| **Brand / name decision** | README still says *"Working name — rename freely."* Decide **before** the first church installs, not after. | A decision, not a build |
+| **Brand / name decision** | Still undecided. *(The old *"Working name — rename freely"* line is **gone from `README.md`** — several documents quoted it for a week after it was removed. `docs/SPEC.md` §"Relay was a placeholder" is the current statement.)* Decide **before** the first church installs, not after. | A decision, not a build |
 
 ---
 
@@ -103,8 +103,14 @@ Each contradicts the offline-first, single-operator, one-church-one-machine shap
 | A general-purpose AI assistant | Scope discipline. Relay is one live-service workflow tool, not a platform. |
 
 ### Candidate, undecided
-- **Post-service summary.** History stores everything; today's export is a raw markdown dump,
-  not a summary. Maybe — low priority.
+- ~~**Post-service summary.**~~ **BUILT 2026-08-30** (RG-08). `report.js::sundayReport`, shown in
+  Library → History: derived and never stored, every field able to come back `null`, and `null`
+  renders as "—" and never as 0 (DECISIONS §44). It names what it does **not** measure, and it
+  deliberately has no "crash-free" line, because crashes are recorded per launch and there is no
+  honest way to attribute one to a service. The raw markdown export still exists beside it.
+
+**Nothing is currently in this bucket.** Kept as a heading so the next undecided candidate has a
+place to be recorded rather than argued in a pull request.
 
 ---
 
@@ -116,11 +122,11 @@ were looked at and left for a stated reason.
 | Debt | State & reasoning | Effort if actioned |
 |---|---|---|
 | **`main.rs`** — `wc -l src-tauri/src/main.rs` · `grep -c '#\[tauri::command\]' src-tauri/src/main.rs` | A god-file holding the whole IPC surface + app state + some orchestration. **No longer a correctness issue** — the fire engine is generic over `tauri::Runtime` and covered by `e2e.rs`, which was the actual point of "split main.rs" (PRODUCT_AUDIT §10.2). A readability complaint now, and it has grown ~1,880 lines since that was written — `servicelock.rs` was split out rather than added to it, which is the shape future growth should take. | Medium; split commands into per-domain modules. Regression risk on live-critical code — do it with tests, not in a rush. |
-| **`Live.svelte` (1,983) & `stores/capture.js` (2,115)** | The frontend mirror of the same concentration. Works; large, and both have grown by ~700 lines. | Medium |
+| **`Live.svelte` & `stores/capture.js`** — `wc -l src/lib/views/Live.svelte src/lib/stores/capture.js` | The frontend mirror of the same concentration. Works; large, and both keep growing. **The sizes are deliberately not written here** — the pair has been restated and gone stale in six documents (RELAY_GAP §18); run the command. | Medium |
 | **`models.rs` name collision** | It is STT-model *download*, not domain *models*. A reader expects the wrong thing. | Small (rename) |
-| **`db/mod.rs` (2,230)** mixes migrations + platform paths + inline tests | Cohesive but large. | Small–medium |
+| **`db/mod.rs`** mixes migrations + platform paths + inline tests — `wc -l src-tauri/src/db/mod.rs` | Cohesive but large. | Small–medium |
 | **~150 lines of dead legacy CSS** (`--text-faint` et al.) | Can't be deleted without eyes on a running app — global (unscoped) rules with generic class names live components still carry ([DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) §6). The contrast failure is fixed; the rules stay. | Small, but needs a running app |
-| **First-run wizard can't be re-run** | Everything in it lives in Settings, but a skipper must know that. | Small |
+| ~~**First-run wizard can't be re-run**~~ | **Closed.** Settings → Backup & Recovery has *"Run the setup walk-through"* (`restartSetup`), and the wizard now ends by putting a real verse on a real screen. Retired here rather than deleted, so "fixed" is distinguishable from "forgotten". | — |
 | **`docs/data/schema.sql` is hand-maintained** | It is not documentation — `db/mod.rs` does `include_str!` on it, so it **is** the baseline schema the binary ships. The `ensure_*` rungs in `db/*.rs` are what evolve it afterwards, and keeping the two agreeing is manual. | Small (a generated check that the file and the rungs agree) |
 
 ### Retired from this register

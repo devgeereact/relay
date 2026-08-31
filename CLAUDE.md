@@ -43,7 +43,7 @@ Tier 1: **Yoruba, Swahili, Hausa**, plus English. Code-switching (English mixed 
 npm install
 npm run tauri dev        # desktop app + Vite on :5032, kiosk WS on :8031
 
-npm test                 # vitest (874 tests)
+npm test                 # vitest (884 tests)
 npx vitest run src/lib/nav.test.js          # one file
 npx vitest run -t "Escape closes the cheat" # one test by name
 npm run build            # vite build — catches Svelte compile errors fast
@@ -59,7 +59,7 @@ cmake --version          # any 3.x. `brew install cmake` if it is missing;
                          # a machine without Homebrew needs its own prefix on PATH
 cd src-tauri
 cargo test                                   # 641 tests (624 run, 17 ignored)
-cargo test e2e                               # the fire → nav → clear path (23 tests)
+cargo test e2e                               # the fire → nav → clear path (35 tests, 0 ignored)
 cargo test detection::                       # one module
 cargo test the_macos_build -- --nocapture    # one test
 cargo fmt --all && cargo clippy --all-targets -- -D warnings   # CI enforces both
@@ -88,7 +88,10 @@ Every audio bug so far was invisible in the code and reproducible only with a sp
 ├── CLAUDE.md · README.md · LICENSE · PRIVACY.md · SECURITY.md
 ├── docs/  README (index) · SPEC · DECISIONS · ARCHITECTURE · DOMAIN_MODEL
 │          DESIGN_SYSTEM · PRODUCT_AUDIT · ROADMAP · LANGUAGES · QA_HARNESS
-│          RELEASING · USER_GUIDE · AI_DISCLOSURE · data/schema.sql
+│          RELEASING · USER_GUIDE · AI_DISCLOSURE · RELAY_GAP
+│          audits/ — FROZEN evidence; closures go in a fix log, never in the findings
+│          data/schema.sql — `include_str!`d, so it IS the shipped baseline schema
+│          data/schema-baseline.sql — the oldest schema Relay can upgrade FROM. Never edit
 ├── scripts/version.mjs      — the ONLY place the version is read or written (3 files)
 │   scripts/qa-inventory.mjs — controls · orphan components · command map · create paths
 │   scripts/offline-bundle.mjs — installers + model + README on a USB stick (§53)
@@ -164,7 +167,11 @@ Every audio bug so far was invisible in the code and reproducible only with a sp
 
 Full pipeline works end to end: **listen → transcribe (local whisper) → detect (direct + semantic + context) → gate (router) → render on independently-templated outputs (native window + kiosk/OBS over WebSocket)**, fully offline.
 
-Shipping: in-app model download, first-run wizard, auto-updater, rehearsal mode, crash recovery, service history, template engine, ProPresenter import, CI-gated detection benchmark, opt-in scrubbed telemetry.
+Shipping: in-app model download, first-run wizard, auto-updater, rehearsal mode, crash recovery, service history, template engine, ProPresenter import, CI-gated detection benchmark, opt-in scrubbed telemetry — and, since the 2026-08-29→31 register sweep: **Service Lock** (`servicelock.rs`), **output heartbeats and real per-channel health on Live**, the **pre-air validator** (`pipeline::preflight`), the **service event timeline + persisted latency** (`service_events`, `perf_samples`, p99, week-on-week), **replay and the Sunday report**, **update preflight / snapshot / restore** (the data, never the binary), the **degraded-state line in the shell**, **rooms**, the **Language Quality Centre**, the **path check**, **practice drills**, the **privacy screen**, the **diagnostic bundle export**, **legibility + distance preview + a High Visibility theme**, and the **offline installer**.
+
+**Declined rather than built, each with the reason recorded in `docs/RELAY_GAP.md` §2 and `DECISIONS.md` §62:** a STABLE transcript state (the corroboration rule already gates that harm), scripture candidate prefetch (it optimises a 2.6 ms stage inside a 144 ms budget), LAN device identity and a security event log (both require reversing DECISIONS §35), a tamper-evident record (it would claim a guarantee against the one actor `SECURITY.md` T10 says Relay does not defend against), and an engine-side health state (DECISIONS §61 — its only possible action is refusing the wall, which §20 and §42 both forbid).
+
+**`SECURITY.md` carries the threat register, T1–T10**, and two of its rows are honest absences rather than mitigations. Cite a T-number when you touch the LAN surface, the update channel, model integrity or anything that renders untrusted text.
 
 Parked, honestly (not faked): **NDI** (needs proprietary SDK — `open_ndi_output` returns a clear error), **neural paraphrase embedder** (TF-IDF is the seam behind `SemanticIndex::top_k`; the `verses.embedding` column exists and has never been written to), **African-language STT fine-tunes**.
 
@@ -254,7 +261,7 @@ These caused real crashes, freezes, or silent failures in front of people. Keep 
 
 ## Testing
 
-**624 Rust** (17 ignored) + **874 frontend** (0 skipped), re-measured 2026-08-31 — and the durable form is the command, not the number (`cd src-tauri && cargo test`, `npx vitest run`): the same three counts were corrected three times in a week and were wrong again each time (RELAY_GAP §18). CI runs both on **macOS and Windows**, plus `fmt`, `clippy -D warnings`, the detection scorecard, and a release build.
+**624 Rust** (17 ignored) + **884 frontend** (0 skipped), re-measured 2026-08-31 — and the durable form is the command, not the number (`cd src-tauri && cargo test`, `npx vitest run`): the same three counts were corrected three times in a week and were wrong again each time (RELAY_GAP §18). CI runs both on **macOS and Windows**, plus `fmt`, `clippy -D warnings`, the detection scorecard, and a release build.
 
 - **`qa.rs` owns the fixture. Do not write another one.** `qa::bare_app()` is a fresh install and nothing else — real schema, real seed, no operator has touched it — and `qa::{Wall, Kiosk, settle}` are the two doors out of the machine plus the drain. `e2e::app()` is now `bare_app()` **plus one documented difference** (a content-look override, without which its template assertion is vacuous), which is exactly the shape a deviation should have: three visible lines, not a fifty-line copy that drifts. A second fixture is how two suites start disagreeing about what a fresh install contains. `the_bare_fixture_is_a_first_launch_and_nothing_more` is the tripwire; it is what caught that `tpl_song` **is** seeded on purpose (every other built-in is scripture-shaped, so a lyric rendered through one showed the song title instead of the words).
 - **The QA apparatus is documented, not folklore.** `docs/QA_HARNESS.md` — Part 0 the current counts (each with the command that reproduces it), Part 1 the design and the five evidence layers, Part 2 the shared preamble every `relay-qa-*` agent inherits verbatim, Part 3 the roster, **Part 4 what is already pinned — read it before filing anything, so you don't "find" a fixed bug**. Run `/qa-audit`; `node scripts/qa-inventory.mjs` prints the control/orphan/create-path report on its own.

@@ -2648,3 +2648,85 @@ Diagnostics read afterwards; every wrong verse written into the register verbati
 **Any one missing and it is NO-GO again.** `RELAY_GAP.md` §24 holds the five conditions that
 convert a pilot into a general release, and **anyone quoting "GO" from this without the word
 "pilot" is quoting it wrong.**
+
+---
+
+## 61. Readiness is a surface fact, not an engine fact (2026-08-31)
+
+**The brief's §4 asked for "one unified READY / DEGRADED / ACTION REQUIRED state", and the gap
+report carried that row as PARTIAL for the stated reason that "Rust has no health state at all".
+That reason was a description, not an argument, and the row is now closed the other way: an
+engine-side health state is deliberately not built.**
+
+Relay does answer the question, in three layers that agree with each other: twenty-one launch
+probes on a four-level severity ladder (`boot/probes.js`), a rolled-up verdict on the readiness
+screen (`views/Dashboard.svelte`), and a live one-line degraded state in the shell on every tab
+(`degraded.js`, §45). All three run in the webview.
+
+### Why moving it into Rust is not an improvement
+
+Ask what the engine would *do* with the state. There is exactly one candidate action — refuse to
+put content on a screen when the machine is unhealthy — and it is forbidden twice over:
+
+* **§20.** A panic control may never report a success it did not achieve, and a control that can
+  be *refused* by a health gate is worse than one that lies: `Esc` has to clear the wall in every
+  state, including the broken ones. A gate that could hold back a blackout is a blackout that can
+  fail.
+* **§42.** The pre-air validator refuses only what is unambiguously broken **and silently so** — a
+  payload that would paint an empty screen, a template the output page cannot parse. It
+  deliberately does not check that a screen is attached, because a service runs on the console
+  preview all the time. "The machine is degraded" is precisely the class of judgement §42 refuses
+  to make on the operator's behalf.
+
+Everything else the state could drive is a *sentence shown to a person*, and a person is on the
+other side of the bridge already.
+
+### What the cost would have been
+
+A second implementation of the same judgement, in a language that cannot see two thirds of its
+inputs. Nine of the twenty-one probes are browser facts — a window, a display, a kiosk client, a
+paint. Rust would either re-derive them badly or be told them by the webview, at which point the
+webview is still the source of truth and the engine copy is a cache that can be stale during
+exactly the incident it exists for.
+
+This repository has four separate bugs with the shape *a rule enforced on one surface and skipped
+on its twin*. A second readiness verdict is that bug pre-built.
+
+### What this does not say
+
+It does not say the engine should be silent. The engine already *reports* — `audio://error`,
+`model://error`, `stt://language_unstable`, `OutputHealth`, `channel_status`, the shed-partial
+counter — and every one of those is an input to the one verdict. **Reporting a fact and holding a
+verdict are different jobs, and only the second one is duplicated by moving it.**
+
+**So `readiness://changed` has no producer, on purpose** (RELAY_GAP §14), and §4 is EXISTS rather
+than PARTIAL.
+
+---
+
+## 62. A gap can be closed by deciding not to build it, and that has to be written like a build (2026-08-31)
+
+**Four rows of the brief's requirement matrix are now answered `DECLINED` rather than `MISSING`.
+The distinction is the whole point of the verdict: MISSING says nobody has got to it, DECLINED
+says somebody did, and here is what they concluded.**
+
+A register in which nothing is ever declined has one of two problems — either it is a wish list
+being copied forward untouched, or the declines are happening in someone's head and being
+rendered as neglect. Both make the document less true than the code.
+
+The four, each with the reason recorded in its own row:
+
+| Brief | Declined because |
+|---|---|
+| **§7 · a STABLE transcript state** | It describes the *text*; the harm is a wrong *verse*. `Router::decide_live` already holds a reference from a partial window at `Suggest` until a second pass agrees (rule 28, §38). A text-level state would be a third vocabulary for the same fact and could gate nothing the corroboration rule does not |
+| **§12 · scripture candidate prefetch** | It optimises a 2.6 ms stage inside a 144 ms budget, on a thread that is already not the decoder's. Rule 31 exists because this project has twice answered "STT is slow" and twice been more than half wrong |
+| **§19–§22 · device identity and a security event log** | Both require reversing §35, which is written up as a proposal (RELAY_GAP §20 a) and not adopted. §39 narrowed §35 by exactly one word — *when*, anonymously — and that was the whole budget. A security log whose every entry is attributed to nobody is not a security log |
+| **§24 · a tamper-evident service record** | Its prerequisite (§23) now exists, so it became cheap — and cheap is not the test. A hash chain defends against somebody holding the machine, and `SECURITY.md` T10 already says plainly that Relay is not hardened against a malicious operator. Building it would claim a guarantee against the single actor the product has declared out of scope |
+
+### The rule this sets
+
+**A decline is recorded with the same weight as a build: the verdict, the reason, and the
+condition that would reverse it.** Two of the four name a document that would have to change
+first (§35, T10); the other two name a mechanism that already covers the harm. None of them says
+"not now", because "not now" is how a decline decays back into a gap that nobody re-argues and
+everybody re-files.

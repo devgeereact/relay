@@ -65,6 +65,35 @@ running Relay.
 
 ---
 
+## Threat model — T1–T10
+
+The three sections above are the *priorities*. This table is the whole surface, so
+that a gap is visible as a row rather than as an absence. **Where a row says
+ACCEPTED it is a recorded decision, not an oversight** — the reasoning is in
+[`docs/DECISIONS.md`](docs/DECISIONS.md), and the conditions that would change it
+are written there too.
+
+| | Threat | Where it lands | State |
+|---|---|---|---|
+| **T1** | Sermon content — transcript, verse, lyric, announcement, plan, service title — leaves the machine | Crash reports, the diagnostic bundle, any future export | **MITIGATED.** Offline by construction; crash reporting is opt-in, off by default and has no DSN in an OSS build; the scrubber drops free text wholesale rather than sifting it; the diagnostic bundle is composed as an **allow-list**, never a blocklist (`diagnostics.rs`). Pinned from both sides — `timeline_tests::nothing_a_preacher_said_reaches_the_timeline`, `timeline.test.js` |
+| **T2** | Somebody on the church network changes what is on the projector | `:8032` HTTP control plane (`fire`, `next`, `prev`, `clear`, `black`) | **ACCEPTED — DECISIONS §35.** It is unauthenticated because the preacher's phone is a device on that network and has no way to hold a credential. Do not report it; read §35 for the conditions that would reverse it |
+| **T3** | A *bystander's browser* is used as the weapon — a drive-by from an unrelated web page, with no attacker on the LAN at all | `<img src="http://<relay>:8032/api/black">` | **CLOSED 2026-08-20.** Mutating routes require `POST` and answer without the CORS wildcard. An image, script, stylesheet, prefetch or plain link can only ever issue `GET`. This is *not* authentication and does not pretend to be |
+| **T4** | Content pushed through the kiosk/OBS socket | `:8031` WebSocket hub | **MITIGATED.** Broadcast-only. Exactly three inbound message kinds are honoured — `hello` (registers, and is answered with the template), `beat` (a liveness mark, anonymous) and `rendered` (a latency mark, documented as inert). None of them can carry content. Everything else is ignored. A way to push content through this socket is critical; please report it |
+| **T5** | Reading something other than the outputs — a transcript, a plan, the database, an arbitrary file | `:8032` routes, `/media/<id>` | **MITIGATED.** Path traversal is rejected; `/media/` takes only leading digits as an id and resolves inside `media_dir()`. A route that escapes either is critical |
+| **T6** | Hostile text reaching the wall as markup rather than as words — a song title, an imported lyric, a template field | The output page and `TemplateRender` | **MITIGATED.** No `{@html}` in any renderer that reaches a screen (`TemplateRender.svelte`, `Output.svelte`, `Stage.svelte`), enforced by an allow-list test; the kiosk page sets a CSP and `X-Content-Type-Options: nosniff`. Pinned by `qa-r5-template-injection.test.js` |
+| **T7** | Relay installs code the maintainer did not sign | The auto-updater | **MITIGATED.** The payload is minisign-verified by the Tauri updater plugin against a public key committed in the repo, and the release gate refuses a real tag that is not signed **on both platforms independently** (CLAUDE.md rule 23). A way to make Relay install unsigned code is critical |
+| **T8** | A corrupted or substituted speech model | In-app download, and install-from-file | **MITIGATED.** SHA-256 verified against the published digest before the file is renamed into place; a failed check leaves the previous model untouched. A way to make Relay accept a model we did not publish is critical |
+| **T9** | A hostile language pack silently remapping book names, so a *different verse* reaches the wall | Would be the alias table | **DOES NOT EXIST YET, ON PURPOSE.** RG-19 shipped the offline bundle and **refused** the signed-language-pack half: signing needs a key, a ceremony and a distribution channel that do not exist, and an operator cannot proof-read 66 book names in a language they may not read. Until that exists, the aliases ship in the binary and this row has no attack surface |
+| **T10** | A malicious operator | The console itself | **OUT OF SCOPE.** The person running Relay can already put anything they like on the screen — that is the job |
+
+**What has no mitigation, and is a consequence of T2 rather than an oversight:**
+there is **no device identity** on the LAN (the hub counts clients and deliberately
+records nothing about *who* connected — [DECISIONS §35](docs/DECISIONS.md), narrowed
+by §39 to record only *when*, anonymously), and therefore **no security event log**.
+Both would become possible, and worth building, only if §35 is reversed;
+[`docs/RELAY_GAP.md`](docs/RELAY_GAP.md) §20 (a) is the written-up reversal proposal
+and it is not adopted.
+
 ## Known and accepted
 
 These are **recorded tradeoffs**, not undiscovered bugs. Reporting them is welcome

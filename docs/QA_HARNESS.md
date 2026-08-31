@@ -20,17 +20,23 @@ every edit: `.claude/hooks/relay-fast-gate.mjs`, path-filtered and report-only (
 
 ## 0. Current inventory
 
-Re-measured **2026-08-29** against `0338244`. Every number here is produced by a command, and
-the command is named — a count you cannot reproduce is a rumour.
+Re-measured **2026-08-31** against the working tree. Every number here is produced by a command,
+and the command is named — a count you cannot reproduce is a rumour.
+
+> **Expect these to be wrong, and reach for the command rather than the value.** Every count in
+> this repository has been corrected three times in a week and been wrong again each time; two of
+> those corrections were wrong because a plausible one-liner was believed over the tool that
+> actually knows. `RELAY_GAP.md` §18 keeps the evidence. **This table is the register of counts
+> for the whole repository** — other documents cite it rather than restating it.
 
 | | Count | How to reproduce |
 |---|---|---|
-| Rust tests | **624 passing**, 17 ignored | `cd src-tauri && cargo test` |
-| Frontend tests | **874 passing**, 0 skipped, 63 files | `npx vitest run` — read the runner's own summary line. **Not** `vitest list \| wc -l`: that stream carries Svelte compiler warnings too and over-counted by 7 |
+| Rust tests | **624 passing**, 17 ignored (641 declared) | `cd src-tauri && cargo test` |
+| Frontend tests | **884 passing**, 0 skipped, 64 files | `npx vitest run` — read the runner's own summary line. **Not** `vitest list \| wc -l`: that stream carries Svelte compiler warnings too and over-counted by 7 |
 | `e2e.rs` tests | **35** (35 run, 0 ignored — R2-C and R2-D closed, DECISIONS §54; three added for the calibrator and the service record) | `cd src-tauri && cargo test e2e::` |
-| Registered `#[tauri::command]` | **137** | `grep -c '#\[tauri::command\]' src-tauri/src/main.rs` |
-| `.svelte` files | **47**, 22 of them views | `find src -name '*.svelte' | wc -l` |
-| `<button>` occurrences | **338** | `grep -ro '<button' --include='*.svelte' src | wc -l` |
+| Registered `#[tauri::command]` | **132** (five dead ones deleted 2026-08-30) | `grep -c '#\[tauri::command\]' src-tauri/src/main.rs` |
+| `.svelte` files | **48**, 22 of them views | `find src -name '*.svelte' | wc -l` |
+| `<button>` occurrences | **352** | `grep -ro '<button' --include='*.svelte' src | wc -l` |
 | Tables in the schema | **21** | `grep -c 'CREATE TABLE' docs/data/schema.sql` |
 
 **Status: BUILT.** What shipped:
@@ -481,8 +487,8 @@ count. This is the audit's starting line.
 
 | Layer | Present today | Where |
 |---|---|---|
-| **A — Command E2E** | Yes. 32 tests (32 run, 0 ignored) driving the real commands against a real in-memory DB through the real router and pipeline | `src-tauri/src/e2e.rs` |
-| **B — Component mount** | Yes, and used — but only twice | `src/lib/inspector.test.js` mounts `DetectionInspector`; `src/lib/layers.test.js` mounts `TemplateRender` |
+| **A — Command E2E** | Yes. **35 tests, 0 ignored** (`cargo test e2e::`) driving the real commands against a real in-memory DB through the real router and pipeline | `src-tauri/src/e2e.rs` |
+| **B — Component mount** | Yes, and **no longer under-used: 14 files mount a real component** (`grep -rln 'new [A-Z][A-Za-z]*({' src/lib/*.test.js`) | `inspector`, `layers`, `liveoutputrail`, `arrangements`, `firstrunmic`, `lowerthird`, `qa-r5-onair`, `qa-r5-template-injection`, `r2livepath`, `r6-lifecycle-probe`, `rendercontent`, `templatestyle`, `themerender`, `surface` |
 | **C — Static contract** | Yes, one exemplar | `src/lib/ipc.test.js` — command names both directions, event listeners, and a `greet`-has-one-caller assertion |
 | **D — Live app** | Exists as a surface, is not exercised by any test | `channels.rs` serves `:8032`; `main.rs::remote_api` handles `search / fire / next / prev / clear / black / live`. Kiosk hub on `:8031` |
 | **E — Human** | The bench harness is built and pointed at nothing | `bench/README.md` says what to record; `bench/.gitignore` refuses to let sermon audio into the repo |
@@ -498,8 +504,13 @@ and Stage F of the human test script for the part that needs a room.
 
 Totals are in §0 and are re-measured, not inherited.
 
-Layer B is the biggest under-used asset in the repo. The pattern works, it is proven twice, and
-it is the only instrument that can see a control at all.
+**Layer B was the biggest under-used asset in the repo and is not any more** — it went from two
+files to fourteen, and it is still the only instrument that can see a control at all. Two rules
+came out of using it, and both are load-bearing: **`vitest.config.js` must set
+`resolve: { conditions: ['browser'] }`**, or Svelte hands the test the SSR stubs and every
+load-on-mount path silently does nothing while the test passes; and **a component nothing renders
+is not covered, however green its tests** — fourteen passing tests were written against
+`PreviewProgram.svelte` before `qa-inventory.mjs` reported that nothing imported it.
 
 ---
 
@@ -683,6 +694,14 @@ the rehearsal-containment tests built on `qa::Kiosk` cannot start passing by see
 This list is the audit's most valuable output, not its excuse. Each item is BLOCKED and needs a
 person.
 
+> **Two rows left this list on 2026-08-30 and are recorded rather than deleted.** *Audio in* —
+> a real preacher was transcribed for 49.5 minutes in a real room, and the packaged, ad-hoc-signed
+> build ran the whole service ([`audits/FIELD-2026-08-30.md`](audits/FIELD-2026-08-30.md)). **That
+> morning produced seven findings that months of reading source had not**, one of them a wrong
+> verse on a congregation's wall — which is the argument for taking the rest of this table
+> seriously, not for trusting it less. *Word error rate is still on the list*: being transcribed
+> is not the same as being measured.
+
 | Area | Why it is blocked | What a human must do |
 |---|---|---|
 | Anything visual | This machine cannot screenshot the app | Open the app; check layout, contrast, spacing, the dark palette, and that amber only ever appears when something is genuinely live |
@@ -694,6 +713,8 @@ person.
 | NDI | Parked by decision — needs a proprietary SDK; `open_ndi_output` returns a clear error on purpose | Nothing. Confirm the error is still clear and still honest |
 | The macOS microphone under a signed build | The mic dies on the **first correctly-signed build**: notarization forces the hardened runtime, under which opening an input device without `com.apple.security.device.audio-input` is TCC-killed, and without `NSMicrophoneUsageDescription` the app is terminated the instant it asks. `tauri dev` and unsigned pre-releases both work fine | `npm run tauri build && ./scripts/sign-local.sh`, then actually speak into it |
 | CSP | `tauri dev` does not exercise it — Tauri loads the Vite `devUrl`, and `app.security.csp` only applies to bundled assets | `npm run tauri build`, then run the packaged binary |
+| Pixels out | Nothing here has ever measured what a projector actually showed | A projector, and RG-18's contrast and distance thresholds checked against a real wall — they are WCAG (a spec for screens at arm's length) and broadcast safe-title practice, neither verified in a hall |
+| An operator who did not write Relay | — | **The largest unknown in the project.** One person, one service |
 | An actual congregation | — | A Sunday |
 
 ---

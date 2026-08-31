@@ -146,6 +146,15 @@ load-bearing, not modesty. Preserve it.
   it), five commands documented as acceptably dead (they were deletable), and a licensing
   reason that was simply wrong (DECISIONS §32.4 says the opposite). **A wrong reason in a
   register parks the work forever**, because nobody re-examines something already explained.
+- **A STATUS goes stale exactly like a count, and it is more dangerous when it does.** On
+  2026-08-31 `RELAY_GAP.md` §2 still said **MISSING** about thirty-one requirements that had
+  shipped that same week — directly underneath a fix log saying they had shipped. A wrong number
+  reads as a number; a wrong status reads as a *decision*. If you are editing a document that
+  scores the product, re-derive the rows you touch from the code, and cite a **file and a
+  symbol** rather than a line number, because line numbers rot faster and rot invisibly.
+- **Resolving something by deciding not to build it is a result, and it gets written down like a
+  build** — the verdict, the reason, and the condition that would reverse it. "Not now" is how a
+  decision decays back into a gap nobody re-argues and everybody re-files. See DECISIONS §62.
 - **Never imply you ran, clicked, saw or heard something you did not.**
 - A count you cannot reproduce is a rumour.
 

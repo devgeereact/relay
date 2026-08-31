@@ -72,6 +72,26 @@ If the bar does not move, Relay cannot hear, and nothing else on this page will 
 
 > Leaving rehearsal **clears the screens**. That is on purpose: they have been showing whatever was on them before you started, and handing you back a live wall you have not looked at in twenty minutes is how the wrong thing ends up in front of a congregation.
 
+**Two things worth doing once, before your first Sunday:**
+
+- **Practise the drills.** The **Help** tab has six of them, and they use the real controls on the
+  real surface, in rehearsal. The panic controls come first — before anything about firing
+  verses — because the key you need under pressure is the one you should not be reading about at
+  the time. It is not a simulated service: Relay cannot produce a sermon, and practising against
+  a fake would teach you the shape of the fake.
+- **Run the path check.** **Settings → Dashboard → say one verse.** Relay watches the six stages
+  between the microphone and the screen and tells you which of them were reached. The twenty-one
+  launch checks can all pass on a machine where nothing works end to end — a microphone the
+  operating system has muted, an output window on a display that is asleep. This is the thing
+  that finds that at 10:05 instead of 10:31. It only runs in rehearsal.
+
+**Save your room.** **Settings → Audio → Rooms → Save this room** remembers the microphone,
+the language, the service length, the voice profile and which display each screen is on. Applying
+it back reports **which pieces did not take** — a projector that moved to another port comes back
+as four of six restored, named, rather than as a green tick over a dark wall. It deliberately does
+**not** store the audio levels: Relay learns those live, every service, because a level that was
+right in an empty hall is wrong once it fills with people.
+
 ### During the service — you live on one tab
 
 **Live** is the only tab you need. Everything is on it.
@@ -135,8 +155,50 @@ You will not need these during a service.
 - **Outputs** — three panes: **Screens** (one row per output screen — the projector, a stage monitor, OBS, the preacher's phone), **Content looks** (which template scripture, lyrics, media and announcements wear by default), and **Sharing** (the LAN address and the preacher's stage remote). Set up once.
 - **Templates** — what scripture *looks like* on the wall. What you see in the editor is exactly what the projector shows. **Import** a design someone shared, or **Export** one of yours to a file (⋮ menu / the preview panel) to hand to another church.
 - **Themes** — the *look beneath* your templates: fonts, colours, spacing, motion. Pick a theme (eight are built in), tweak a copy in the theme editor, then apply it to a template — the template inherits the theme and you override only what you want. Themes export and import as files too. A theme never reaches a screen on its own; it dresses a template, and the template is what fires.
-- **Settings** — audio, speech model, sensitivity, console language, privacy.
-- **Help** — the same guide, inside the app, where you can read it without the internet.
+- **Settings** — audio, speech model, sensitivity, console language, and eight more sections. The
+  four worth knowing about: **Dashboard** (is this machine ready, and the path check above),
+  **Languages** (how much of Yorùbá, Kiswahili and Hausa Relay actually knows — including the
+  columns that are honestly empty), **Privacy** (what is on this machine and what can leave it),
+  and **Diagnostics** (the live numbers, and a **one-file export** you can attach to an email
+  when something goes wrong — it contains nothing about your church, by construction).
+- **Help** — the same guide, inside the app, where you can read it without the internet, plus the
+  six practice drills and an honest account of **what the AI is bad at**.
+
+### Two things you will notice mid-service and should not worry about
+
+**Some buttons stop working while a service is recording.** Every **Delete**, and anything that
+would take the speech engine away — changing or downloading a speech model, switching the Bible
+translation, importing media — is held back until the service ends. It tells you why, and you can
+lift it in one action. **Nothing you use to run a service is affected**: firing, the arrow keys,
+clear, blackout, rehearsal, the sensitivity dial, opening and closing screens, and changing a
+screen's template all work exactly as normal — including editing a template, because an
+unreadable verse on the wall is fixed by changing its look, during the service, which is when you
+find out.
+
+**A verse can be reported as "shrunk".** Relay fits text by shrinking it until it stops
+overflowing, and it will always still show the verse rather than blanking a screen. But if it has
+had to shrink below **45% of the size your template asked for**, it says so and tells you how
+small it went — because a template that had quietly stopped working used to look exactly like one
+that was working. If you see it, that passage is longer than the template was designed for.
+
+---
+
+## Afterwards
+
+**Library → History** holds every service. Open one and you get:
+
+- **The Sunday report** — how long, how many verses, how many Relay decided by itself versus how
+  many you fired, and how fast the transcript was keeping up. **Only what was actually measured
+  appears.** A blank is shown as "—" and never as 0, because a report that shows zero for
+  something nobody measured is a report that gets better as the system gets worse.
+- **Replay** — click any line in the timeline to see what was being said around it, what Relay
+  decided, and how fast it was going. It replays the *record*, not the audio: Relay never stores
+  what was said aloud.
+- **Week on week** — whether the transcript is keeping up better or worse than last Sunday.
+
+**If something went wrong, send the diagnostic file** (Settings → Diagnostics → export) rather
+than a photograph of the screen. It is built by naming every field that may be in it, so it
+cannot leak a transcript, a verse, a lyric, an announcement or your service titles.
 
 ---
 

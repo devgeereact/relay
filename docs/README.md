@@ -2,8 +2,9 @@
 
 This is the map. Every claim in these documents is **re-verified against the code**, and the
 date of the last sweep is stated rather than implied. Last **full** sweep of every claim:
-**2026-08-20**, against `07654a7`. Last **counts-and-contradictions** sweep: **2026-08-30** —
-what it found and corrected is [RELAY_GAP.md](RELAY_GAP.md) §0, §18 and §26.
+**2026-08-31** — the pass that rewrote [RELAY_GAP.md](RELAY_GAP.md) §0–§2 and §6–§18 against the
+working tree, after thirty-one status rows had gone stale while the fix logs directly above them
+said so. What it found and corrected is [RELAY_GAP.md](RELAY_GAP.md) §0, §18 and §26.
 
 > **Counts live beside the command that produces them, and nowhere else.** Three sweeps have
 > now corrected the same three numbers (`main.rs` lines, registered commands, `capture.js`
@@ -70,7 +71,7 @@ real gaps.
 | **Gap register** | *What an outside product brief asked for vs what exists — and the two proposals that would reverse a recorded decision* | [RELAY_GAP.md](RELAY_GAP.md) | **NEW** |
 
 **On ADRs:** [DECISIONS.md](DECISIONS.md) *is* the architecture-decision record — a single
-narrative log with reasoning and explicit non-goals, 43 numbered decisions (§18–§60) deep,
+narrative log with reasoning and explicit non-goals, 45 numbered decisions (§18–§62) deep,
 plus 28 earlier ones carried as table rows. It is deliberately not
 split into per-file `adr/NNNN-*.md` documents: the log is cross-referenced from code comments
 and the handbook, and one file keeps the *why* readable end to end. If the code ever
@@ -159,7 +160,7 @@ Two documents, at two altitudes, and they disagree on purpose:
 
 **Relay has never shipped. As of 2026-08-31: NO-GO for general release, GO for a supervised
 pilot** — two churches, named operators, every service watched. Every P0 and P1 from the last
-full audit is closed and 51 register entries with them, but four things block a general
+full audit is closed and 56 register entries with them, but four things block a general
 release and none is a commit: a **wrong verse reached a real congregation** on 2026-08-30,
 **word error rate has never been measured in any language**, there is no Windows certificate,
 and nobody but the author has ever run a service. The decision, its conditions, and the five

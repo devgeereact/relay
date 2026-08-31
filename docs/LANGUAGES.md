@@ -78,6 +78,17 @@ All three are complete and every name came from a published translation — **bu
 none has been checked by someone who actually speaks the language.** That is the
 gap that matters now, and it is the one thing no amount of engineering closes.
 
+> **The same table is now in the app**, at **Settings → Languages**, and every number
+> in it is derived from the shipped data files rather than typed in — so this page
+> and the running application cannot disagree about how many aliases exist or which
+> numerals parse. **Its two most important columns are empty on purpose:** native
+> review and word error rate render as *absences*, not as zeroes, because a screen
+> that shows 0% accuracy and a screen that shows "never measured" say opposite
+> things to a church deciding whether to trust this.
+>
+> Alias counts, live: `python3 -c "import json;d=json.load(open('src-tauri/data/book_aliases.json'));print({k:len(v) for k,v in d.items() if k!='_readme'})"`
+> — 66 canonical books in each, with some carrying more than one accepted name.
+
 **Yorùbá carries two translations at once.** Biblica's *Yoruba Contemporary Bible*
 calls Psalms **Sáàmù**; the older *Bibeli Mímọ́* calls it **Psalmu**; many churches
 say **Orin Dáfídì**. A preacher says whatever their own Bible says, so all three

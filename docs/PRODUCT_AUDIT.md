@@ -16,7 +16,7 @@ Supersedes Revision 2 (2026-07-12) and Revision 1 (2026-07-05). Every claim was 
 > |---|---|---|
 > | Tests | 250 Rust + 138 frontend | Run `cd src-tauri && cargo test` and `npx vitest run` — **a number written here was wrong within a week, three times** (RELAY_GAP §18) |
 > | `main.rs` | 2,922 lines / 101 commands | `wc -l src-tauri/src/main.rs` · `grep -c '#\[tauri::command\]' src-tauri/src/main.rs` — it has drifted past every number ever written here |
-> | Decision log | 25 decisions | **42** numbered (§18–§59), plus 28 earlier table rows |
+> | Decision log | 25 decisions | **45** numbered (§18–§62), plus 28 earlier table rows — `grep -cE '^## [0-9]' docs/DECISIONS.md` |
 > | `Result<_, String>` in `main.rs` | replaced | **zero remain** — confirmed |
 > | Release decision | not stated | **NO-GO for general release, GO for a supervised pilot** (2026-08-31) — RELAY_GAP §24 owns it, not this document |
 >
@@ -51,9 +51,18 @@ Supersedes Revision 2 (2026-07-12) and Revision 1 (2026-07-05). Every claim was 
 > means when somebody finally reaches it.
 >
 > The narrower sweeps of **2026-08-29 through 2026-08-31** re-measured the counts above, hunted
-> contradictions across the doc set, and closed forty-six register items;
-> [RELAY_GAP.md](RELAY_GAP.md) is the record. Neither raised a new P0, and neither moved the
-> release decision.
+> contradictions across the doc set, and closed **56** register items;
+> [RELAY_GAP.md](RELAY_GAP.md) is the record. None raised a new P0, and none moved the release
+> decision.
+>
+> **The last of those sweeps was aimed at this document set rather than at the code**, and what
+> it found is worth stating here because this banner is exactly the kind of thing it catches:
+> `RELAY_GAP.md` §2 — the item-by-item status matrix — still said **MISSING** about thirty-one
+> requirements that had shipped during the same week, *directly underneath a fix log saying they
+> had shipped*. Four documents also quoted a line from `README.md` that had been deleted. Both
+> are corrected, and the register's own summary counts are now asserted against its table by a
+> test, because prose that counts something it sits beside is the cheapest thing in this
+> repository to check and the most reliably wrong when it is not checked.
 >
 > So the honest one-line summary of this document, updated: **the code is done and genuinely
 > hardened, and it has now been run once in a real room by the person who wrote it; what is
@@ -108,7 +117,7 @@ Revision 1 named three critical blockers and called them "one epic". **That epic
 |---|---|
 | 🔴 C1 — no in-app model download; user must run `curl` | **SHIPPED.** `models.rs:140` — resumable, SHA-256 verified, atomic `.part` rename, progress bar, cancellable. Reachable from first run, Settings, *and* a Live banner. |
 | 🔴 C2 — no code signing | **HALF-SHIPPED.** macOS signing + notarization are wired (`release.yml:114-163`). **Windows is not signed at all** — see 🔴 D1. |
-| 🔴 C3 — no auto-updater | **SHIPPED — and inert.** Plugin, pubkey, launch-check and never-during-a-service gating all exist. It cannot currently deliver an update — see 🔴 D2. |
+| 🔴 C3 — no auto-updater | **SHIPPED.** Plugin, pubkey, launch-check and never-during-a-service gating all exist. *(This row read "and inert — it cannot currently deliver an update" for a week after 🔴 D2 was fixed in the table above it: the three version files now agree, asserted in CI and against the tag. Since then RG-06 added preflight, a database snapshot before the update, verification on the next launch, and a restore that runs before the database is opened.)* |
 | First-run wizard missing | **SHIPPED.** `FirstRun.svelte` — screen → microphone → fire a verse. |
 | Console + Planner must merge | **SHIPPED, properly.** `Console.svelte` is gone; `ServicePlanner` imports *zero* fire commands (`ServicePlanner.svelte:19-38`). Live is the run surface. Planner cannot reach a screen. |
 | Rehearsal mode | **SHIPPED**, gated at the broadcast choke point (DECISIONS §18). |
@@ -165,7 +174,7 @@ Scored against the stated bar (*first 10 churches*), not against Stripe. Δ is t
 | **Onboarding / first-run** | **8 / 10** | ▲ +1 | The wizard now *proves* the microphone works — its meter was dead, so the one step whose entire purpose was proof proved nothing. Still cannot be re-run once skipped. |
 | **UX (live operation)** | **8 / 10** | ▲ +2 | Every control that lied has been fixed: the clear toast, the `B`-while-typing cheatsheet line, `Esc`-wipes-the-wall-from-inside-a-modal (which turned out to affect the arrangement pickers too, not just the cheatsheet), and the `nav` key that silently did nothing. The transport now follows **what is on the wall**, not what the operator intended. |
 | **UI / design language** | **8 / 10** | ▲ +1 | The dark/amber broadcast language remains correct and unmodernised. One `EmptyState`/`Loading`/`ErrorState` trio replaces four competing classes. The colour discipline held under pressure: a paraphrase got cyan, *not* amethyst, because amethyst already means rehearsal — a colour carrying a promise cannot be borrowed for a hunch. |
-| **Architecture** | **8 / 10** | ▲ +2 | The fire engine is now generic over `tauri::Runtime`, so the path that puts scripture on a wall can be driven **without a window** — which is the useful half of "split `main.rs`". Typed errors (`error.rs`) replace 88 × `Result<_, String>`, and **zero remain**. `main.rs` was 2,922 lines / 101 commands here and is **5,337 / 137** today — but it is no longer untestable, which was the actual problem. |
+| **Architecture** | **8 / 10** | ▲ +2 | The fire engine is now generic over `tauri::Runtime`, so the path that puts scripture on a wall can be driven **without a window** — which is the useful half of "split `main.rs`". Typed errors (`error.rs`) replace 88 × `Result<_, String>`, and **zero remain**. `main.rs` was 2,922 lines / 101 commands here and is **5,573 / 132** at the time of writing — reproduce it with `wc -l` and `grep -c`, because that pair has been wrong within a week every time it has been written down (RELAY_GAP §18) — but it is no longer untestable, which was the actual problem. |
 | **Performance** | **9 / 10** | — | Unchanged. Measure-before-optimising is practised here, not preached: the semantic scan stays a linear scan and beam search stays unused, both because measurement said so. |
 | **Accessibility** | **8 / 10** | ▲ **+4** | Focus traps on all 5 dialogs, **with focus restore** (the half everyone forgets). A real heading structure. The AI suggestion feed, the transport and errors are all announced — the product's whole reason to exist used to arrive in total silence. Every text token passes WCAG AA. Not 10/10: ~150 lines of dead legacy CSS remain, deliberately (see §7). |
 | **Security** | **8 / 10** | ▲ +1 | A tag name is no longer interpolated into a release shell (a real injection vector CodeRabbit caught). LAN bind is unauthenticated, broadcast-only, bounded, and honestly documented. Unsigned Windows remains the exposure — but the pipeline now *refuses* to produce it rather than doing so quietly. |
@@ -173,7 +182,7 @@ Scored against the stated bar (*first 10 churches*), not against Stripe. Δ is t
 | **Testing** | **9 / 10** | ▲ **+3** | **250 Rust + 138 frontend** at the time of writing; **478 + 581** today. The gap was never the count — it was that `main.rs` had zero tests and no e2e existed, so the fire → nav → clear path was verified only by hand. `e2e.rs` now drives the real commands against a real DB. And the culture shifted: several fixes were **mutation-verified** — the test was checked to *fail* when the original bug was reintroduced. Two tests in this repo initially passed on broken code; both were caught that way. |
 | **Developer experience** | **9 / 10** | ▲ +2 | CI, CodeRabbit, `clippy -D warnings`, a decision log 25 rules deep (**35** today). `scripts/version.mjs` makes releasing a one-liner. CONTRIBUTING / CoC / CHANGELOG / issue forms / PR template all ship — and the PR checklist is the project's *real* rules (no `unwrap()` in a live path, no borrowed tally colours, *reintroduce the bug and check your test fails*), not a generic one. |
 | **AI readiness** | **6 / 10** | ▲ +1 | The operator can finally *see* what kind of claim the AI is making, and `related_scripture` — built, tested, and called by nothing for months — is surfaced. The gate remains excellent. But paraphrase is still TF-IDF, `verses.embedding` has still never been written to, and **the acoustic layer is still unmeasured**. Blocked on audio, not on code. |
-| **Brand** | **4 / 10** | — | Unchanged and now the weakest column. Still no logo, no tagline, no positioning line. README still says *"Working name — rename freely."* |
+| **Brand** | **4 / 10** | — | Unchanged and now the weakest column. Still no logo, no tagline, no positioning line, and the name is still undecided (`docs/SPEC.md`). **The old *"Working name — rename freely"* line is no longer in `README.md`** — this row quoted it for a week after it was removed |
 | **Business model** | **N/A** | — | Deliberately free/MIT. Sustainability parked, not decided. |
 | **Documentation** | **9 / 10** | ▲ **+4** | CLAUDE.md, DECISIONS.md (§20–§25) and RELEASING.md are current and unusually honest — each rule is a bug that reached, or would have reached, a congregation. **USER_GUIDE.md is rewritten for a volunteer**: the speech model first, a real troubleshooting table, and no tab that does not exist. CHANGELOG is written for the *operator*, because that is who reads it in the update banner. `bench/README.md` tells someone exactly how to measure the moat. The only doc still missing is the one that cannot be written yet — a real number for word error rate. |
 | **Legal compliance** | **9 / 10** | ▲ +3 | `LICENSE` names its holder. PRIVACY / SECURITY / AI_DISCLOSURE / CONTRIBUTING / CODE_OF_CONDUCT / CHANGELOG all ship and are accurate. KJV-only with no import path for any other translation, so no exposure. WCAG now largely passes. Complete. |
@@ -206,7 +215,7 @@ Revision 2 listed ten. **Seven are fixed.** What is left is real, and — with t
 4. **The first-run wizard cannot be re-run.** An operator who skips it cannot get it back; everything in it lives in Settings, but they have to know that.
 5. **~150 lines of dead legacy CSS remain**, including a colour that failed AA (now fixed in value, not removed). Deleting it needs eyes on a running app — Svelte does not scope a global stylesheet, and those rules use generic class names (`.tab`, `.dot`, `.live`) that live components still carry. See §7.
 6. **`main.rs` is still 2,922 lines and 101 commands.** No longer *untestable* — the fire engine is runtime-generic and covered by `e2e.rs` — but still a single file holding both the IPC surface and the live engine.
-7. **Brand is untouched.** Still no logo, no tagline, no positioning line, and a README that says *"Working name — rename freely."*
+7. **Brand is untouched.** Still no logo, no tagline, no positioning line, and a name that is still undecided — stated in `docs/SPEC.md`, no longer in `README.md`.
 
 ---
 
@@ -359,6 +368,31 @@ The merge was executed properly. Not "Live gained some Planner features" — `Se
 
 ### Fix the three lies (see D3). Then:
 
+> **Status, 2026-08-31 — every recommendation in this section is actioned except one, which is
+> recorded as deliberate debt.** They are kept in place, unedited, because a scorecard that
+> quietly loses what it used to claim cannot be checked — the same rule `docs/audits/` runs on.
+> **Read the paragraphs below in the past tense.**
+>
+> Closed: the first-run mic meter · the mobile bottom nav · the false empty state · the
+> `EmptyState` / `Loading` / `ErrorState` trio (`src/lib/ui/`) · `aria-live` beyond one region ·
+> the unoperable `role="button"` divs · focus trap and restore on every dialog (`focus.js`) · an
+> `<h1>` in the shell and on every view · the `Stage.svelte` contrast · a humanised error layer
+> everywhere (`errors.js`, the ONE humaniser).
+>
+> **Still open, on purpose:** *"delete the dead legacy token set"*. The **contrast failure is
+> fixed** — `--text-faint` now aliases `--v-faint` — but the ~150 lines stay, because they are
+> global unscoped rules with generic class names that live components may still carry, and
+> deleting them safely needs eyes on a running app this machine cannot see. `ROADMAP.md` §4 owns
+> it as accepted debt.
+>
+> Two paragraphs in particular read as present-tense defects and are not:
+>
+> | Was | Now |
+> |---|---|
+> | *"The first-run mic meter is dead"* | Fixed, and it turned out to hide a second fault: the wizard cleared its own `micOn` flag **before** awaiting `stopCapture`, so a failed stop printed "off" over a live microphone and the wizard opened a second capture on top of it. Pinned by `firstrunmic.test.js` |
+> | *"The mobile bottom nav is broken"* | Fixed. The bottom nav calls `go()`, like the desktop sidebar, and `App.svelte` carries the comment saying why — `active` is a derivation of `$session`, so assigning to it is discarded by the next `setSession()`, which Live fires on every slide |
+
+
 **Show the operator which kind of match they are being offered (D4).** This is a UX fix, not an AI fix. The data is already in the payload.
 
 **The first-run mic meter is dead.** `FirstRun.svelte:152-156` promises *"a moving bar proves the microphone is actually hearing something"* — and the bar is fed by an `audio://chunk` listener that only registers inside `startCapture()`, which FirstRun never calls (`capture.js:313`). The one step whose entire purpose is proof, proves nothing. It silently falls through to *"You can test this from the Live tab."*
@@ -489,7 +523,7 @@ Only where it earns its place.
 
 Genuinely weak, and cheap to fix.
 
-- **The name.** README **still says** *"Working name — rename freely."* SPEC still says *"'Relay' is a placeholder product name."* "Relay" is generic, unsearchable, and already taken across broadcast and networking. Decide **before** the first church installs it, not after.
+- **The name.** `README.md` no longer carries the *"Working name — rename freely"* line; `docs/SPEC.md` states the position correctly — *"Relay" was a placeholder product name. It is still undecided.* "Relay" is generic, unsearchable, and already taken across broadcast and networking. Decide **before** the first church installs it, not after.
 - **No logo, no tagline, no positioning line** exists anywhere in the repo. The icon set is complete but generic — there is no mark behind it.
 - **The in-app header says "Relay Console"** (`App.svelte:133`) — a tab that no longer exists.
 - **The positioning is strong and unstated.** Suggested: *"It hears the verse. It puts it on screen. Even when the internet doesn't."* Offline-first and African-language-first are the two things no competitor is saying.
@@ -605,7 +639,7 @@ Everything that a commit can tick is ticked. The four unticked boxes in the firs
 - [x] Crash reporting verified opt-in
 - [x] Bible translation licensing confirmed (KJV only, no import path)
 - [x] Typed errors, an e2e test, and a migration that can be retried
-- [ ] Rename decided *(README still says "working name — rename freely")*
+- [ ] Rename decided *(still undecided — `docs/SPEC.md`, not README, is where that is now stated)*
 - [x] CONTRIBUTING.md *(leads with the two contributions that need no code)*
 - [x] CODE_OF_CONDUCT.md *(Contributor Covenant 2.1, unmodified)*
 - [x] CHANGELOG.md *(written for the operator — it is what the update banner shows)*

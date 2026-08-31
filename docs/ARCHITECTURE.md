@@ -56,11 +56,18 @@ Relay is a **Tauri v2 desktop app** — one native window per machine.
 The core loop, fully local:
 
 ```
-mic ─▶ audio.rs ─▶ stt.rs ─▶ detection.rs ─▶ router.rs ─▶ channels.rs ─▶ outputs
-      capture+VAD  whisper    direct+semantic  confidence   broadcast    every screen
-      +overlap     +resample  +context memory  gating       (event + WS)  (own template)
-      chunker      +language                   +debounce
+mic ─▶ audio.rs ─▶ stt.rs ─┊─▶ detection.rs ─▶ router.rs ─▶ pipeline.rs ─▶ channels.rs ─▶ outputs
+      capture+VAD  whisper  ┊   direct+semantic  confidence   Fire +         broadcast     every screen
+      +overlap     +resample┊   +context memory  gating       preflight      (event + WS)  (own template)
+      chunker      +language┊                    +debounce    (DECISIONS §42)
+                            ┊
+              the `relay-detect` thread boundary (CLAUDE.md rule 33):
+              a bounded queue, a shed PARTIAL is counted, a FINAL never dropped
 ```
+
+`latency.rs` stamps **nine named instants per decode pass on one monotonic clock** and carries a
+trace id from the microphone to the projector, across every box above. A stage never reached is
+recorded as an **absence**, never as a zero.
 
 1. **`audio.rs`** — `cpal` microphone capture on a dedicated thread. A voice-activity gate drops silence; an **overlapping chunker** emits ~50%-overlapping windows so a reference spanning a chunk boundary is never lost. `dsp.rs` adds noise suppression, auto-gain, and quality metrics (`audio://quality`). Capture start is **non-blocking** — the command spawns the thread and returns immediately; device errors come back on `audio://error`.
 2. **`stt.rs`** — a `whisper.cpp`-class local model (`whisper-rs`) transcribes on a **big-stack worker thread** (16 MB — `whisper_full()` is stack-hungry). It is fed the **non-overlapping tail** of each chunk (feeding the overlapping chunks verbatim garbles whisper). Multilingual, tuned first for **Yoruba, Swahili, Hausa + English**, with **code-switching as the normal case**. Emits `stt://transcript`.
@@ -69,7 +76,8 @@ mic ─▶ audio.rs ─▶ stt.rs ─▶ detection.rs ─▶ router.rs ─▶ ch
    - **Semantic** — a TF-IDF `SemanticIndex.top_k` turns paraphrases ("there is therefore no condemnation…") into the real verse (Romans 8:1). This is the seam where a neural embedder will later drop in.
    - **Context memory** — recent passages bias interpretation and enable "next"/"back" navigation.
 4. **`router.rs`** — confidence gating with **self-calibrating thresholds** (config, not hardcoded — seed `0.50`/`0.35` at sensitivity 50, the single baseline `Thresholds::default()`; see [DECISIONS.md](DECISIONS.md) §16), debounce, and the decision of what actually fires. High-confidence auto-fires; mid-confidence becomes an operator *suggestion*; low is dropped. Only `Direct` matches may auto-fire (see [DOMAIN_MODEL.md](DOMAIN_MODEL.md) §6).
-5. **`channels.rs`** — one `broadcast_content()` pushes the chosen content to **every** output: a Tauri event (`output://content`) for native windows **and** a JSON frame over the kiosk WS for networked clients. N independently-styled renders from one broadcast; the pipeline never formats per channel.
+5. **`pipeline.rs`** — the ONE place a verse becomes screen content. `pipeline::Fire` is the only way an `OutputContent` or a `DetectionEvent` is built (five hand-rolled copies once drifted apart and two silently dropped the scripture template), and `pipeline::preflight` is the **pre-air validator**: it refuses a payload that would paint an empty screen, or one carrying a template the output page cannot parse, and leaves the screens exactly as they were ([DECISIONS.md](DECISIONS.md) §42). It lives at the one choke point, so the AI path, the manual box, spoken nav, plan cues, media, announcements and the countdown are covered at once — and the panic controls deliberately do not pass through it, because a validator that could refuse a blackout is a blackout that can fail.
+6. **`channels.rs`** — one `broadcast_content()` pushes the chosen content to **every** output: a Tauri event (`output://content`) for native windows **and** a JSON frame over the kiosk WS for networked clients. N independently-styled renders from one broadcast; the pipeline never formats per channel. It also owns **`OutputHealth`**: every output page beats back that it is still painting — the native window over the bridge, kiosk/OBS over the socket it already has — so a screen that has gone away can be *detected* rather than assumed. The beat is anonymous by construction: it says "the screen for channel N painted", never who or from where ([DECISIONS.md](DECISIONS.md) §39).
 
 **Operator override is first-class**, never a fallback — reachable in one action at every stage. Manual fire, confirm/dismiss suggestion, prev/next nav, clear, and blackout all go through the same broadcast path.
 
@@ -136,8 +144,18 @@ SQLite via `rusqlite` (bundled), at `~/Library/Application Support/com.relay.app
 | `media_assets` | Imported image/video/document pointers (files on disk) |
 | `announcements` | Notice slides (title + body) |
 | `services`, `cues`, `transcripts`, `detections` | Service-session history (what was said, detected, fired) |
+| `service_events` | The ordered service record — an append-only timeline that survives the app. **It carries nothing a preacher said**: `detail` is a phrase Relay composes, and that is pinned from both sides |
+| `perf_samples` | Latency that survives a quit — percentiles, never traces. Written by the engine; read through `service_events` |
+| `environment_profiles` | A room, remembered: microphone, language, service length, voice profile, displays, and the two numbers legibility needs. **Not** the audio levels ([DECISIONS.md](DECISIONS.md) §46) |
 | `voice_profiles` | Per-operator STT/threshold profiles |
 | `app_settings` | Key/value (active translation, per-content-type template map, …) |
+
+Count them with `grep -c 'CREATE TABLE' docs/data/schema.sql` — the number is deliberately not
+written here, because every count restated in prose in this repository has drifted
+([RELAY_GAP.md](RELAY_GAP.md) §18). `docs/data/schema.sql` is not documentation: `db/mod.rs`
+`include_str!`s it, so it **is** the baseline schema the binary ships, and
+`docs/data/schema-baseline.sql` is the oldest schema Relay can upgrade from — checked in so a
+test can prove every column added since has a migration behind it.
 
 ### Scripture search (`search_scripture`)
 
@@ -157,29 +175,57 @@ The KJV importer strips translator **marginal glosses** (`{green…: Heb. pastur
 
 Frontend↔core contract. Commands are `invoke()` (camelCase JS args → snake_case Rust); events are `listen()`.
 
-**Events (core → UI/outputs):** `audio://chunk` (throttled level meter), `audio://quality`, `audio://error`, `stt://transcript`, `detection://match`, `output://content`, `output://clear`, `output://black`, `template://updated`. Networked clients get the equivalent as JSON frames over the WS hub (`{kind:"content"|"clear"|"black"|"stage_next", …}`).
+> **The authoritative list is the code, and this section deliberately does not restate it.** An
+> earlier version of this page listed nine commands that no longer exist — `lookup_verse`,
+> `create_template`, `import_song`, `import_pro`, `open_output_window`, `close_output_window`,
+> `list_output_windows`, `current_service` and the `*_template_active` pair — every one deleted
+> because nothing could reach it, which is a security reduction as much as a tidy-up
+> ([RELAY_GAP.md](RELAY_GAP.md) RG-51). A list of commands in prose is the single fastest-rotting
+> thing in this repository. Read it live:
+>
+> ```bash
+> grep -n '#\[tauri::command\]' -A1 src-tauri/src/main.rs   # every command, in order
+> node scripts/qa-inventory.mjs                              # and which rendered control reaches it
+> ```
+>
+> Two tests keep the contract honest, and between them they mean the list cannot silently rot:
+> `ipc.test.js` fails if the frontend calls a command Rust does not register (or the reverse), and
+> `qa-inventory.mjs` traces one hop further — to a control something actually renders.
 
-**Commands by area:**
+**Areas, which do not rot:** audio & STT · detection & routing · scripture search · outputs and
+channels · templates and themes · planner · lyrics and arrangements · library (saved scripture,
+announcements, media) · service history and the service record · voice profiles · rooms ·
+service lock · update safety · diagnostics · models.
 
-- *Audio / STT:* `list_audio_devices`, `start_capture`, `stop_capture`, `stt_status`, `set_stt_language`
-- *Detection / routing:* `set_detection_enabled`, `get_detection_enabled`, `confirm_detection`, `dismiss_detection`, `get_thresholds`, `set_thresholds`, `manual_fire`, `nav`, `related_scripture`, `verse_repeat_count`
-- *Scripture / search:* `lookup_verse`, `search_scripture`, `list_translations`, `get_active_translation`, `set_active_translation`
-- *Output / channels:* `clear_screens`, `blackout`, `start_countdown`, `set_stage_next`, `open_output_window`, `close_output_window`, `list_output_windows`, `list_output_channels`, `add_channel`, `delete_channel`, `set_channel_template`, `set_channel_display`, `open_channel_output`, `list_monitors`, `local_ip`
-- *Templates:* `list_templates`, `list_active_templates`, `set_template_active`, `create_template`, `delete_template`, `get_template`, `save_template`, `get_content_templates`, `set_content_template`
-- *Planner:* `list_plans`, `create_plan`, `delete_plan`, `duplicate_plan`, `plan_items`, `add_plan_item`, `remove_plan_item`, `move_plan_item`, `reorder_plan`, `set_plan_note`
-- *Lyrics:* `list_songs`, `search_songs`, `get_song`, `import_song`, `save_song`, `delete_song`, `import_pro`, `parse_import`, `save_reviewed_songs`, `list_arrangements`, `save_arrangement`, `delete_arrangement`
-- *Library (other):* `list_saved_scripture`, `save_scripture`, `delete_saved_scripture`, `list_announcements`, `save_announcement`, `delete_announcement`, `list_media`, `import_media`, `delete_media`, `push_announcement`
-- *Service history:* `start_service`, `end_service`, `current_service`, `list_services`, `service_detail`, `export_service`, `data_health`
-- *Voice profiles:* `list_voice_profiles`, `active_voice_profile`, `create_voice_profile`, `update_voice_profile`, `select_voice_profile`, `delete_voice_profile`
+**Events (core → UI/outputs):**
+
+| Event | Carries |
+|---|---|
+| `audio://chunk` · `audio://quality` · `audio://error` | Throttled level meter · clipping/quiet/noise assessment · a device failure, because capture start is non-blocking |
+| `stt://transcript` | A whole-window transcript with `is_final`. **Deliberately one event, not two** — splitting it would be a second vocabulary for the same fact |
+| `stt://language_unstable` | Auto language detection is flapping, which the operator should know before blaming the AI |
+| `detection://match` | A candidate, with `matched_text` and `method` — so the operator can see *which kind* of claim is being made ([DECISIONS.md](DECISIONS.md) §21) |
+| `output://content` · `output://clear` · `output://black` | The three things a screen can be told |
+| `output://panic_failed` | A panic control that did **not** achieve what it claimed ([DECISIONS.md](DECISIONS.md) §20) |
+| `nav://blocked` | A nav that could not move, and which of the four reasons it was |
+| `template://updated` | A template changed; every surface re-renders from one engine |
+| `model://progress` · `done` · `error` · `cancelled` | The in-app STT model download |
+
+Networked clients get the content events as JSON frames over the WS hub
+(`{kind:"content"|"clear"|"black"|"stage_next"|"channel_template", …}`), and send exactly three
+kinds back — `hello`, `beat`, `rendered` — none of which can carry content
+([SECURITY.md](../SECURITY.md) T4).
 
 ---
 
 ## 7. Frontend shape
 
-- **One store** — `src/lib/stores/capture.js` — holds all writable stores (`capture`, `transcript`, `detections` = pending suggestions, `live` = what's on screen, `templates`, `screenBlack`) plus every command wrapper and event listener.
+- **One store** — `src/lib/stores/capture.js` — holds all writable stores (`capture`, `transcript`, `detections` = pending suggestions, `live` = what's on screen, `templates`, `screenBlack`, `panicError`, `serviceLock`) plus every command wrapper and event listener. The file's header states which wrappers **throw** and which **swallow**, and a test holds each one in its group — a contract stated only in a comment was false for `stopCapture` for as long as the comment existed.
 - **`TemplateRender.svelte`** is the single renderer (see §4).
-- **Views** — `Console`, `Library` (Scripture / Lyrics / Media / Announcements / History sub-tabs + `SongEditor`, `ImportReview`), `ServicePlanner`, `Channels`, `Templates`, `Settings`; plus standalone `Output` and `Stage` pages.
-- **Design system** — global `--v-*` tokens in `src/app.css`; all views (Console included) share them.
+- **Tabs** — **Live · Outputs · Templates · Themes · Library · Planner · Settings · Help.** There is **no Console tab**: `Live` *is* the console, and the plan runs there, because an operator running a plan on a separate tab could not see the AI's suggestions — and the preacher going off-script is the entire product. (The Outputs tab's internal key is still `channels` and its file is `Channels.svelte`; the label is what an operator reads.)
+- **Sub-surfaces** — `Library` (Scripture / Lyrics / Media / Announcements / History, plus `SongEditor`, `ImportReview`, the arrangement editor and the Sunday report), `Settings` (18 sections, including **Dashboard** — the readiness screen, which is inside Settings and not on the tab bar — **Languages**, **Privacy** and **Diagnostics**); plus standalone `Output` and `Stage` pages.
+- **Cross-cutting shell state** — the panic bar, the rehearsal band, the update banner, and the one-line **degraded** state are mounted once in `App.svelte`, on every tab, never per view. So is `shortcuts.js`, the single global keydown listener.
+- **Design system** — global `--v-*` tokens in `src/app.css`; every view shares them, and the four promise-carrying colours are defined once (amber = on air, amethyst = rehearsal, cyan = a guess, grey = cued).
 
 ---
 
@@ -210,3 +256,23 @@ Not faked — clearly bounded. The full deferral + technical-debt register is [R
 - **African-language STT fine-tunes** — base multilingual model is weak on Yoruba/Hausa; fine-tunes pending.
 - **Document (PDF/PPTX) rendering** — stored as media pointers; slide extraction/presentation is a later phase.
 - **Detection-history writes** are service-session scoped.
+- **Signed language packs** — refused rather than deferred: signing needs a key, a ceremony and a distribution channel that do not exist, and an unsigned pack that can rewrite the book aliases is a wrong-verse-on-a-wall vector ([SECURITY.md](../SECURITY.md) T9). The *offline* half shipped: install a model from a file, and `scripts/offline-bundle.mjs`.
+- **Binary update rollback** — deliberately not built. The installers are public and signed; what cannot be got back is the church's database, and that is what `updates.rs` protects ([DECISIONS.md](DECISIONS.md) §43).
+- **Device identity on the LAN** — declined, not missing. `:8032` is an unauthenticated control plane by decision, because the preacher's phone has no way to hold a credential ([DECISIONS.md](DECISIONS.md) §35, narrowed by §39 to record *when* a screen painted and never *who*).
+
+### Supporting modules, and the single question each answers
+
+Not on the fire path, and each exists because something failed in front of people:
+
+| Module | The one question |
+|---|---|
+| `servicelock.rs` | What may **not** happen while a service is recording? (16 actions; nothing on the fire path) |
+| `updates.rs` | Is this update safe to attempt, and what is the way back? (the data, not the binary) |
+| `diagnostics.rs` | What can a church send when something went wrong? (one file, composed as an allow-list) |
+| `wake.rs` | Is a screen or a microphone live, and should the display therefore stay up? |
+| `latency.rs` | Where did the time actually go, microphone to projector? |
+| `sysprobe.rs` | Can this machine run this model? (advisory only — nothing branches on it) |
+| `error.rs` | Is pressing it again worth the operator's time? (the one typed error across the bridge) |
+| `telemetry.rs` | Opt-in, scrubbed, no DSN in an OSS build |
+| `eval.rs` | Did detection quality regress? (a CI build gate over a labelled corpus, scored through the real router) |
+| `qa.rs` · `qa_r5.rs` · `r6.rs` · `e2e.rs` | Test-only. `qa::bare_app()` is **the** fixture — a fresh install and nothing else |

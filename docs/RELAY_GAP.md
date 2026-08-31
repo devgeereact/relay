@@ -185,12 +185,16 @@ accounts, RBAC and cloud sync at it.
 *Regenerate the counts with `npx vitest run src/lib/relaygap.test.js` (it checks the table)
 and by reading §23. Last updated 2026-08-31.*
 
-**58 entries. 54 closed, 1 withdrawn as wrong, 3 not closed — and only two of those three are
+**60 entries. 56 closed, 1 withdrawn as wrong, 3 not closed — and only two of those three are
 work** (RG-32 open, RG-41 and RG-50 flagged).
+
+*These four numbers are asserted against the table itself by `relaygap.test.js`; they drifted
+apart twice (this block once said 54 and 51 in consecutive sentences) and a count in prose beside
+the table it counts is the easiest possible thing to check automatically.*
 
 | | |
 |---|---|
-| ✅ **51 closed** | Every gap this report could reach from the code. The last eleven were not in the original brief at all — they were found by auditing the things that audit Relay: test files that described defects already fixed, a launch screen whose checks could not fail, a register table this report corrupted itself |
+| ✅ **56 closed** | Every gap this report could reach from the code. The last thirteen were not in the original brief at all — they were found by auditing the things that audit Relay: test files that described defects already fixed, a launch screen whose checks could not fail, a register table this report corrupted itself |
 | ~~1 withdrawn~~ | **RG-27** was filed from a mid-service snapshot and was wrong. Struck through, not deleted |
 | ⚠️ **RG-41** | Not work. A correction kept on the record: two of six views were wrong to "fix" — they are routers, and a heading there would give one screen two |
 | ⏳ **RG-32** | **Open on purpose.** A context-resolved bare verse is labelled `Direct` at a hardcoded 0.88 — by rule 10 that label is a lie, because Relay inferred the book rather than hearing it. Changing it makes every in-passage *"verse eighteen"* cost a click, and **one service is not enough evidence to spend that**. Wants a second and third Sunday |
@@ -229,52 +233,55 @@ reaches it.
 
 | Kind of claim | How it was established |
 |---|---|
-| Counts | A command, named beside the number. Re-run it; if it disagrees, this file is the bug |
-| "EXISTS / PARTIAL / MISSING" | Read the code, and cite `file:line`. Every reference below resolves at `0338244` |
-| Latency figures | Quoted from `audits/PERF-2026-08-24.md`, not re-measured. That document's own §6 states what its numbers do not establish, and none of that changed |
-| Detection behaviour | Quoted from the existing corpus gate (`eval.rs`) and the closed findings in `audits/QA-2026-08-14.md` |
+| Counts | A command, named beside the number. Re-run it; if it disagrees, this file is the bug — and see the standing note below about what that disagreement means |
+| "EXISTS / PARTIAL / MISSING / DECLINED" | Read the code, and cite a **file and a symbol** — never a line number (§2's preamble says why) |
+| Latency figures | Quoted from `audits/PERF-2026-08-24.md` and `audits/PERF-MODELS-2026-08-30.md`, not re-measured. Those documents state what their own numbers do not establish, and none of that changed |
+| Detection behaviour | Quoted from the corpus gate (`eval.rs`), the closed findings in `audits/QA-2026-08-14.md`, and the one live service in `audits/FIELD-2026-08-30.md` |
 
-**Counts, re-measured 2026-08-29:**
+**Counts, re-measured 2026-08-31:**
 
 | | Count | Command |
 |---|---|---|
-| Registered `#[tauri::command]` | **118** | `grep -c '#\[tauri::command\]' src-tauri/src/main.rs` |
-| `main.rs` | **4,369** lines | `wc -l src-tauri/src/main.rs` |
-| `stores/capture.js` | **1,941** lines | `wc -l src/lib/stores/capture.js` |
-| Rust tests | **547** declared (519 run, 28 ignored) | `cd src-tauri && cargo test` |
-| Frontend tests | **594** passing, 0 skipped, 45 files | `npx vitest run` — the runner's summary line |
-| Svelte components | **47** (46 reachable) | `node scripts/qa-inventory.mjs` |
-| Controls | **426**, 0 in unrendered components | `node scripts/qa-inventory.mjs` |
-| Tables in the schema | **18** (+1 FTS virtual) | `grep -c 'CREATE TABLE' docs/data/schema.sql` |
-| Decisions | **38** numbered (§18–§38) + 28 unnumbered table rows | `grep -cE '^## [0-9]' docs/DECISIONS.md` |
+| Registered `#[tauri::command]` | **132** | `grep -c '#\[tauri::command\]' src-tauri/src/main.rs` |
+| `main.rs` | **5,573** lines | `wc -l src-tauri/src/main.rs` |
+| `stores/capture.js` | **2,156** lines | `wc -l src/lib/stores/capture.js` |
+| Rust tests | **641** declared (624 run, 17 ignored) | `cd src-tauri && cargo test` |
+| Frontend tests | **884** passing, 0 skipped, 64 files | `npx vitest run` — the runner's summary line |
+| Svelte components | **48** (47 reachable; the orphan is a test probe) | `node scripts/qa-inventory.mjs` |
+| Controls | **462**, 0 in unrendered components, 0 without an accessible name, 0 without a handler | `node scripts/qa-inventory.mjs` |
+| Tables in the schema | **21** (+1 FTS virtual) | `grep -c 'CREATE TABLE' docs/data/schema.sql` |
+| Decisions | **45** numbered (§18–§62) + the unnumbered brainstorm table | `grep -cE '^## [0-9]' docs/DECISIONS.md` |
+| Labelled detection cases | **74** | `python3 -c "import json;print(len(json.load(open('src-tauri/data/eval_corpus.json'))['cases']))"` |
 
-> **Two counts in this report were wrong on the first pass, and both are recorded rather than
-> quietly fixed, because they are the same lesson twice.**
+> ### The standing note about counts — read this before "correcting" one
 >
-> 1. **Frontend tests.** `npx vitest list | wc -l` gave **601**; the runner gives **594**. The
->    difference is seven Svelte compiler warnings on the same stream. The docs were right and
->    this report was wrong. **The command is `npx vitest run`, and the number is the runner's
->    own summary line.**
-> 2. **`e2e.rs` ignored tests.** `grep -n '#\[ignore'` returns five lines; only **two** are
->    attributes — the other three are inside doc-comments *describing* tests that were
->    un-ignored. `QA_HARNESS.md` §0 was right at 26 run / 2 ignored.
+> **Every number in that table was wrong within a week, twice, and both times the correction
+> was itself wrong within a week.** That is not carelessness; it is what a number in prose
+> *is*. RG-20 was filed because six documents disagreed about the size of `main.rs`; this
+> report corrected them to 4,369 / 118 / 1,941 on 2026-08-29; §18 corrected *those* to
+> 5,723 / 137 / 2,195 on 2026-08-30; and the table above — measured on 2026-08-31, after five
+> dead commands were deleted — says 5,573 / 132 / 2,156.
 >
-> In both cases a plausible one-liner disagreed with the tool that actually knows, and the
-> plausible one-liner was believed. **A count is only as good as the command beside it, and a
-> grep is not a test runner.**
+> **The durable half of every row is the command, not the value.** Three counts in this
+> repository were also wrong because a plausible one-liner was believed over the tool that
+> actually knows: `npx vitest list | wc -l` counts compiler warnings on the same stream, and
+> `grep -n '#\[ignore'` counts the phrase inside doc comments (`e2e.rs` has **three** such
+> lines and **zero** ignored tests). **A grep is not a test runner.**
 
 **What no instrument in this repository reached, and this report therefore does not claim:**
 
-audio in · pixels out · hardware · a packaged build · a real congregation. Unchanged from
-`audits/QA-2026-08-14.md` §16 and `audits/PERF-2026-08-24.md` §6. Anything below marked
-**BLOCKED** is blocked on that, not on a commit.
+pixels out · hardware other than one M4 Pro · a second operator · a congregation that did not
+know it was a test. **Audio in and a packaged build are no longer on that list** — a live
+sermon was transcribed for 49.5 minutes on 2026-08-30 (`audits/FIELD-2026-08-30.md`) and the
+signed-bundle conditions were reproduced on a real `.dmg` with `scripts/sign-local.sh`.
+Anything below marked **BLOCKED** is blocked on the world, not on a commit.
 
 ---
 
 ## 1. The verdict, on one page
 
 **The brief's single highest-priority recommendation — "Phase 1: make Relay extremely fast",
-"⚡ Real-Time Speech Engine 2.0", "faster partial transcription (P0, build now)" — is already
+"⚡ Real-Time Speech Engine 2.0", "faster partial transcription (P0, build now)" — was already
 built, already measured, and already hit most of the brief's own targets five days before the
 brief was written.**
 
@@ -283,144 +290,161 @@ brief was written.**
 | First visible partial ≤ 300 ms | **139 ms** median on `ggml-base` | PERF §4 |
 | Perceived transcript lag ≤ 1 s | **P95 339 ms** on `base` | PERF §4 |
 | Dropped partials < 1 % | **0 of 1075** passes | PERF §4 |
-| Real-time factor < 0.7 | decode 144 ms per 200 ms cadence step → **~0.72 duty**, and the cadence *is* the decoder's own speed by construction (`stt.rs:89`) | DECISIONS §38 |
-| Mic → screen ≤ 2 s p95 | **NOT MEASURED** — needs an app, an output page and a room | PERF §5 |
+| Real-time factor < 0.7 | decode 144 ms per 200 ms cadence step → **~0.72 duty**, and the cadence *is* the decoder's own speed by construction | DECISIONS §38 |
+| Mic → screen ≤ 2 s p95 | still **NOT MEASURED** — it needs a stopwatch in a room, not an instrument (§61) | PERF §5 |
 
-So the brief's Phase 1 is largely a lap already run. Two of its specific mechanisms are worse
-than what shipped: a **two-speed / short-window fast path** (§6, §8) buys nothing, because
-whisper pads its mel window internally and an 8 s and a 4 s window cost the same (DECISIONS §36);
-and **adaptive window sizing** (§11) is already superseded by adapting the *cadence* to measured
-decode cost, which is the lever that actually moved 349 ms → 139 ms.
+Two of the brief's specific mechanisms are worse than what shipped: a **two-speed / short-window
+fast path** (§6, §8) buys nothing, because whisper pads its mel window internally and an 8 s and
+a 4 s window cost the same (DECISIONS §36); and **adaptive window sizing** (§11) is superseded by
+adapting the *cadence* to measured decode cost, which is the lever that actually moved 349 ms →
+139 ms.
 
-**Where the brief is right, and Relay is genuinely weak, is everything downstream of "it works":**
+**The five weaknesses this section named on 2026-08-29 have all been closed.** They are listed
+here rather than deleted, because a verdict page that quietly loses what it used to claim cannot
+be checked:
 
-1. **Output truth.** Live's Output Status pane derives every badge from *global* state
-   (`Live.svelte:973-979`) and never asks `channel_status`. A kiosk that went away still reads
-   **On Air**. This is the exact failure the brief's §17 names, and it is real.
-2. **Nothing survives a quit.** Every latency measurement is in-memory (`latency.rs`), so the
-   number a church would send you dies when they close the app. There is no service event
-   timeline, no replay, no post-service report.
-3. **No rollback.** The updater is gated against running during a service (`updater.js:33-37`)
-   and its payload is minisign-verified by the plugin — but a bad install has no way back.
-4. **No pre-air content validation.** Text *fit* is measured properly (`TemplateRender.svelte:131-160`);
-   fit, contrast and output-reachability are never *validated before* content goes to air.
-5. **The moat is still unmeasured.** WER: zero, in every language. Native-speaker review: zero.
-   Yorùbá numerals: absent (`numerals.json` has `sw` and `ha` only).
+| What was weak on 2026-08-29 | Now |
+|---|---|
+| **Output truth** — Live derived every badge from global state, so a kiosk that went away still read *On Air* | Closed, RG-01/RG-02. Live and the Outputs tab read one backend fact through one helper, and every output page reports that it is still painting |
+| **Nothing survived a quit** — every latency measurement died with the app; no timeline, no replay, no report | Closed, RG-04/RG-07/RG-08/RG-14. `service_events` + `perf_samples`, a replay, a Sunday report, p99 and a week-on-week trend |
+| **No rollback** — a bad install had no way back | Closed, RG-06 — for the **data**, which is the half that cannot be got back. Binary rollback is deliberately not built (DECISIONS §43) |
+| **No pre-air validation** — fit was measured, never *validated before* air | Closed, RG-05. One validator at the one door content leaves by (DECISIONS §42) |
+| **The moat is unmeasured** | **Unchanged, and it is now the whole list.** WER: zero, in every language. Native-speaker review: zero. Yorùbá numerals: absent |
 
-**And two of its proposals would reverse recorded decisions** — LAN device pairing (DECISIONS §35)
-and an optional cloud layer (ROADMAP §3). Both are written up as reversal *proposals* in §20.
-Neither is adopted here.
+**And two of the brief's proposals would reverse recorded decisions** — LAN device pairing
+(DECISIONS §35) and an optional cloud layer (ROADMAP §3). Both are written up as reversal
+*proposals* in §20. Neither is adopted, and §2 now records them as **DECLINED** with the reason
+in the row rather than as gaps.
 
-**Release decision: NO-GO, unchanged.** Not because of anything in this report — because
-`audits/QA-2026-08-14.md` §16 Stage F has not been run.
+**So the honest one-line summary has inverted since the first pass.** On 2026-08-29 this report
+said *the fast half is done, the trustworthy half is thin*. Both halves are now built, and
+**every remaining item is blocked on something that is not a commit**: a projector, a Yorùbá
+speaker, a Windows certificate, and nine more Sundays.
+
+**Release decision: NO-GO for general release · GO for a supervised pilot** — made on
+2026-08-31, recorded in §24 and DECISIONS §60, and unchanged by this pass. Not because of
+anything in this report: because one service, watched by the person who wrote the software, is
+one service.
 
 ---
 
 ## 2. Status matrix — the brief's §4–§77, one row each
 
-Legend: **EXISTS** (implemented and reachable) · **PARTIAL** · **BROKEN** · **MISSING** ·
-**DUPLICATE** (already provided elsewhere) · **N/A** (conflicts with the product's scope) ·
-**FUTURE** (valid, deferred).
+*Re-verified 2026-08-31 against the working tree, after RG-01 … RG-22 and the two `e2e`
+defects closed. **31 rows moved.** The 2026-08-29 version of this matrix is not preserved:
+every row it got wrong it got wrong by being a week old, and a stale matrix beside a current
+one is two answers to the same question.*
+
+> **The evidence column names a FILE and a SYMBOL, never a line number.** §18 is the reason:
+> this document has already corrected three counts that were wrong again within the week, and
+> `file:line` rots the same way — faster, and more convincingly, because a wrong line number
+> still looks like a citation. A symbol survives an edit above it; where a test pins the claim,
+> the test is named instead, because that one cannot rot silently at all.
+
+Legend: **EXISTS** (implemented and reachable from a rendered control) · **PARTIAL** ·
+**BROKEN** · **MISSING** · **DECLINED** (would build the wrong thing, with the reason) ·
+**N/A** (conflicts with the product's scope) · **FUTURE** (valid, deferred) ·
+**BLOCKED** (waits on the world, not on a commit).
 
 ### Reliability, readiness and the live-service envelope
 
 | § | Requirement | Status | Evidence | What is actually missing |
 |---|---|---|---|---|
-| 4 | Relay Reliability Engine — one unified READY / DEGRADED / ACTION REQUIRED state | **PARTIAL** | 21 probes with a 4-level severity ladder (`boot/boot.js:129-171`, `boot/probes.js`); a rolled-up verdict already exists (`Dashboard.svelte:136-176`) | Rust has **no** health state at all (grep: zero hits for readiness/degraded/service lock). The roll-up is frontend, launch-time + Dashboard, and nothing in the pipeline consults it |
-| 5 | Sunday Readiness screen | **PARTIAL** | Same as §4. The Dashboard hero already says "Ready for a service." / "N things not working." | No **synthetic end-to-end test** ("say John 3:16", verify mic→audio→STT→detection→router→output). The pieces exist — `FirstRun.svelte:212-222` already fires a real `manualFire('John 3:16')` — but nothing walks the *spoken* path |
-| 6 | Service Lock — block destructive config while live | **MISSING** | The only two analogues: `set_rehearsal` refuses while a service is recording (`main.rs:2872-2881`), and `updater.js:33-37` refuses while capturing | No lock state, no blocked-action explanation, no protection of model changes / template editing / DB maintenance during a service |
-| 30/63 | Graceful degradation + a formal failure matrix | **PARTIAL** | Real fallbacks exist and are documented in code: denoise off below 48 kHz (`dsp.rs:15`), audio-only with no model (`main.rs:2635`), heard-but-unresolvable → suggestion (`pipeline.rs:131`), rehearsal fail-**open** (`channels.rs:505-509`), safe mode after 3 crashes (`boot.js:215`) | There is **no `Degraded` type, flag or state** anywhere. Each fallback is local and invisible. No failure matrix document |
-| 31/32 | Automatic recovery, operator-confirmed | **EXISTS** | `RecoverSession.svelte:36-51` — a modal with Resume / Start fresh that restores **position only** and states "nothing is put back on any screen". `liveOnAir` is a separate fact precisely so it cannot be restored | Rust-side `SessionState` (`main.rs:92-118`) is not persisted — a crashed service leaves an open `services` row with no resume |
-| 33/50 | Panic system: Clear · Black · Restore, and never claim an unachieved success | **EXISTS** | DECISIONS §20. `panicRun` returns a boolean **and** sets `panicError` (`capture.js:1712-1732`); shell-level panic bar (`App.svelte:443-451`); `shortcuts.js` suppresses Esc while a dialog is mounted | **Restore** does not exist as a control (Clear and Black do) |
-| 34/46 | Emergency manual mode when the AI is unavailable | **PARTIAL** | Manual fire is first-class and always present (`Live.svelte:1183-1195`); detection can be disarmed (`toggleDetection`); safe mode disarms detection wholesale | There is no *state* called manual mode and no banner that says "AI detection unavailable — you are driving" when STT dies |
+| 4 | Relay Reliability Engine — one unified READY / DEGRADED / ACTION REQUIRED state | **EXISTS** | Three layers, one answer: 21 launch probes on a 4-level severity ladder (`boot/probes.js`, `boot/boot.js`), a rolled-up verdict on the readiness screen (`views/Dashboard.svelte`), and — since RG-09 — a live one-line degraded state in the **shell**, on every tab, opened for the detail (`degraded.js`, mounted in `App.svelte`; DECISIONS §45) | Nothing that should be built. **An engine-side health state is deliberately NOT built** — see DECISIONS §61. The only thing Rust could do with one is refuse to put content on a screen, and a gate that can refuse the wall is the failure mode §20 and §42 both exist to prevent |
+| 5 | Sunday Readiness screen | **EXISTS** | The Dashboard hero says "Ready for a service." / "N things not working." over the same `makeProbes()` the launch ladder runs — and RG-15 added the part that was actually missing: **say one verse and watch six stages** between a microphone and a screen (`pathcheck.js`, driven from `Dashboard.svelte`, pinned by `pathcheck.test.js`). It runs in rehearsal or not at all | Nothing. The 21 probes can all pass on a machine where nothing works end to end; that is precisely what the walk exists to catch, and it says which stage was not reached rather than blaming the next one |
+| 6 | Service Lock — block destructive config while live | **EXISTS** | `servicelock.rs`. **16 actions** held back while a service records — nine `delete_*`, plus the six that take the engine away mid-sermon (model download / swap / reload / install-from-file, the Bible translation, media import, saving an import). Enumerated, never predicate-matched. The operator lifts it in one action. `e2e::a_recorded_service_holds_back_a_deletion_but_never_the_wall`, `servicelock.test.js` | Nothing. **Nothing on the fire path is protected and that is the design** (DECISIONS §40) — panic, nav, fire, rehearsal, sensitivity, template swap and template editing are all deliberately unaffected, because each is a repair tool at 10:31 |
+| 30/63 | Graceful degradation + a formal failure matrix | **EXISTS** | RG-09. Every fallback that was previously silent now produces a row saying what it costs the service and what to do: denoise off below 48 kHz, audio-only with no model, a CPU-only build, detection disarmed, safe mode, rehearsal. **Nothing is inferred** — a row appears only when something Relay measured says so (`degraded.js`, `degraded.test.js`; DECISIONS §45) | Nothing. The failure matrix the brief asked for is this table plus SECURITY.md's T1–T10, both in-repo |
+| 31/32 | Automatic recovery, operator-confirmed | **EXISTS** | `RecoverSession.svelte` restores **position only** and says so; `liveOnAir` is a separate fact precisely so it cannot be restored (`qa-r5-onair.test.js`). Since RG-04 the service's own record survives the crash as well (`service_events`) | A crashed service still leaves an open `services` row with no in-app way to close it. It is cosmetic in the history list and has never cost anything live |
+| 33/50 | Panic system: Clear · Black · Restore, and never claim an unachieved success | **EXISTS** | DECISIONS §20. `panicRun` returns a boolean **and** sets `panicError`; shell-level panic bar in `App.svelte`; `shortcuts.js` suppresses `Esc` while a dialog is mounted; the pre-air validator deliberately cannot touch a panic control (DECISIONS §42) | **Restore-what-was-there is still not a control, deliberately.** Putting back content the operator cleared, without them choosing it again, is the one panic action that can itself put a wrong verse on a wall. Clearing is safe by construction; un-clearing is not |
+| 34/46 | Emergency manual mode when the AI is unavailable | **EXISTS** | Manual fire is first-class and always present (`Live.svelte`); detection can be disarmed (`toggleDetection`); safe mode disarms it wholesale — and RG-09 is what closed this: a lost model, a disarmed detector or a CPU-only build now each say so **in the shell, on every tab**, in the operator's words | Nothing. There is still no *mode* called "manual", and there should not be: manual is not a mode in Relay, it is the floor the product stands on |
 
 ### Speech, transcription and detection
 
 | § | Requirement | Status | Evidence | What is actually missing |
 |---|---|---|---|---|
-| 7 | PARTIAL / STABLE / FINAL transcript states | **PARTIAL** | PARTIAL and FINAL exist end to end: `TranscriptUpdate.is_final` (`stt.rs:129`), reducer `applyTranscript` (`capture.js:147-157`), and a visually distinct render — partial in `<mark>` with a caret, finals as timestamped rows (`Live.svelte:1004-1025`) | **STABLE does not exist.** There is no stable-prefix detection and no reconciliation between passes. The nearest thing is the router's corroboration count (`router.rs:268-297`), which is a sighting counter, not a text state |
-| 6/8 | Two-speed transcription (fast path + accuracy path) | **N/A as framed** | DECISIONS §36 and PERF §4: whisper pads the mel window internally, so a shorter window costs the same; audio→transcript settles at 1.0–1.6 × decode cost, and above `base` **the model is the entire remaining latency** | A genuinely cheaper second decoder would be a different *model*, not a different window. That is a real (large) piece of work and is not what §8 describes |
-| 9 | Streaming / rolling / incremental decoding | **MISSING** | Every emission is a whole-window `state.full()` re-decode (`stt.rs:895-901`) | Real token-level streaming is a whisper.cpp capability question, not a Relay wiring question |
-| 10 | Hard latency acceptance targets | **EXISTS** | PERF §5 already scores against a target table, per model, and marks three rows **MISS** and four **NOT MEASURED** rather than rounding them off | Targets on **church hardware**; every number is one M4 Pro |
-| 11 | Adaptive inference | **PARTIAL — superseded** | The cadence adapts to measured decode cost: `step_samples_for` (`stt.rs:109-113`), EMA at `stt.rs:623-628`, clamped `MIN_STEP_SAMPLES` (one chunker hop = 200 ms) to 1000 ms | `sysprobe.rs` is **advisory only** — nothing in the pipeline branches on probed hardware; its two consumers set a warning string (`models.rs:191`) and pick warning wording (`stt.rs:640`). Also: `gpu_backends` is a **compile-time** fact, deliberately (DECISIONS §36) |
-| 12 | Scripture candidate prefetch during the utterance | **MISSING** | Detection runs per completed decode pass on `relay-detect` behind a bounded queue (`main.rs:3176`, `:3284-3298`) | Detection is already off the decoder's thread and costs 2.6 ms/query on 31k verses (`detection.rs` benchmark). **Prefetch would optimise the cheapest stage in the pipeline** — see §3 |
-| 13 | Voice confidence shown separately from claim type | **PARTIAL** | Claim type is first-class and correct: `detect.js:24-53`, amber chip + meter for Direct, cyan chip and **no number at all** for a guess (`Live.svelte:1086-1101`). DECISIONS §21 | There is no **voice** confidence anywhere. Audio quality is surfaced as warnings (clipping/too quiet/noisy, `Live.svelte:642-668`), not as a per-detection signal-strength claim |
-| 14 | Explainable detection — "why this verse?" | **EXISTS** | `DetectionInspector.svelte` (517 lines), opened from Live (`:1131-1133`). Renders real evidence only — the parsed span, or the shared rare-word chips — and explicitly refuses to fabricate reasoning (`:10-22`, `:182-212`). Pinned by `inspector.test.js` (11 tests) | Nothing |
-| 15 | One Scripture Safety Firewall | **PARTIAL, and honestly documented** | `Fire` is constructed in exactly **two** places, both via `resolve_fire` (`main.rs:604`, `:920`); `broadcast_content` has exactly **one** caller (`main.rs:577`). But content leaves through **four** gated publishers plus a fifth *pull* door — `channels.rs:469-488` names all four, and records that `stage_next` leaked during a rehearsal because it was not on the list | The routing gate applies **only** to the AI path (`main.rs:911`); every human path bypasses the router by design. That is correct — but it means "one choke point" is not true and should not be claimed. §16's pre-air checks are the thing that would make it one |
-| 27 | Church-local vocabulary learning | **PARTIAL** | `voice_profiles.bias_terms` exists and is editable (`Settings.svelte:753-856`), and feeds whisper's decoder prompt | No learning. Nothing observes what this church actually says and adapts ranking |
-| 28 | Speaker profiles | **PARTIAL** | `voice_profiles`: name, language, bias vocabulary, sensitivity, learned `auto_fire`/`suggest` pair (read-only in the UI) | No speaking-rate, no typical-volume, no microphone, no common-books calibration |
+| 7 | PARTIAL / STABLE / FINAL transcript states | **DECLINED** | PARTIAL and FINAL exist end to end (`TranscriptUpdate.is_final`, `applyTranscript`, and a visually distinct render — partial in `<mark>` with a caret, finals as timestamped rows) | **STABLE is the wrong instrument for the problem it was proposed to solve.** A stable-prefix state describes the *text*; the harm is a wrong *verse*, and the router already holds a reference from a partial window at `Suggest` until a second pass agrees (`router::decide_live`, CLAUDE.md rule 28). A text-level state would add a third vocabulary to the same fact and could not gate anything the corroboration rule does not already gate |
+| 6/8 | Two-speed transcription (fast path + accuracy path) | **N/A as framed** | DECISIONS §36 and PERF §4: whisper pads the mel window internally, so a shorter window costs the same; above `base` the model is the entire remaining latency | A genuinely cheaper second decoder is a different *model*, not a different window — a large piece of work, and not what §8 describes |
+| 9 | Streaming / rolling / incremental decoding | **MISSING** | Every emission is a whole-window `state.full()` re-decode (`stt.rs`) | Token-level streaming is a whisper.cpp capability question, not a Relay wiring question |
+| 10 | Hard latency acceptance targets | **EXISTS** | `audits/PERF-2026-08-24.md` §5 scores against a target table per model and marks three rows **MISS** and four **NOT MEASURED** rather than rounding them off; `audits/PERF-MODELS-2026-08-30.md` adds what each model costs an operator in cadence | Targets on **church hardware**. Every number is one M4 Pro (§72) |
+| 11 | Adaptive inference | **PARTIAL — superseded** | The cadence adapts to measured decode cost (`step_samples_for`, EMA, clamped to one chunker hop … 1000 ms). That is the lever that moved 349 ms → 139 ms (DECISIONS §38) | `sysprobe.rs` is **advisory only** — nothing in the pipeline branches on probed hardware. `gpu_backends` is a compile-time fact, deliberately (DECISIONS §36) |
+| 12 | Scripture candidate prefetch during the utterance | **DECLINED** | Detection already runs off the decoder's thread behind a bounded queue (CLAUDE.md rule 33) and costs ~2.6 ms/query on 31k verses | Prefetch optimises the cheapest stage in the pipeline. §3 and CLAUDE.md rule 31 |
+| 13 | Voice confidence shown separately from claim type | **PARTIAL** | Claim type is first-class and correct: amber chip + meter for Direct, cyan chip and **no number at all** for a guess (`detect.js`, `Live.svelte`; DECISIONS §21) | There is still no **voice** confidence. Audio quality is surfaced as warnings (clipping / too quiet / noisy), not as a per-detection signal-strength claim. It would need a per-utterance SNR the decoder does not currently expose |
+| 14 | Explainable detection — "why this verse?" | **EXISTS** | `DetectionInspector.svelte`, opened from Live. Renders real evidence only — the parsed span, or the shared rare-word chips — and explicitly refuses to fabricate reasoning. `inspector.test.js` | Nothing |
+| 15 | One Scripture Safety Firewall | **EXISTS** | Closed by RG-05. `Fire` is constructed only via `resolve_fire`; `broadcast_with_clock` is the **one** caller of `channels::broadcast_content`, and `pipeline::preflight` sits in it — so the AI path, the manual box, spoken nav, plan cues, media, the emergency announcement and the countdown are validated by one gate (CLAUDE.md rule 36, DECISIONS §42) | Nothing. It refuses only what is unambiguously broken and silently so; it never checks that a screen is attached, and the panic controls do not pass through it at all — both deliberate |
+| 27 | Church-local vocabulary learning | **PARTIAL** | `voice_profiles.bias_terms` is editable in Settings and feeds whisper's decoder prompt | No learning. Nothing observes what this church actually says and adapts ranking. Blocked on the same thing as §43: nobody has measured whether it would help |
+| 28 | Speaker profiles | **PARTIAL** | `voice_profiles`: name, language, bias vocabulary, sensitivity, learned `auto_fire`/`suggest` pair. RG-10 attaches one to a room | No speaking-rate, typical-volume, microphone or common-books calibration |
 
 ### Outputs, screens and templates
 
 | § | Requirement | Status | Evidence | What is actually missing |
 |---|---|---|---|---|
-| 16 | Safe Screen — validate before air | **MISSING** | Fit is *measured*: `fitOne` shrinks until it stops overflowing in **both** dimensions (`TemplateRender.svelte:131-160`), and layered templates binary-search (`:557-590`) | Nothing **blocks** a render. There is no pre-air check that the reference is valid, the template is sane, the text fits, the contrast is legible or the output is reachable — and no path that refuses to fire when it is not |
-| 17 | Output health monitoring | **PARTIAL — and this is the report's most actionable finding** | `channel_status` (`main.rs:3760-3800`) is derived live from open windows + subscribed clients, deliberately not from the dead `output_channels.status` column. Outputs tab polls it every 2 s (`Channels.svelte:88-108`) and shows LIVE / IDLE / UNAVAILABLE + client count | **Live never calls it.** `Live.svelte:973-979` derives every per-channel badge from `$live && !$rehearsing && !$screenBlack`. A screen that vanished still reads *On Air* on the one surface an operator watches during a service. Also: no last-seen, no reconnect count, and `network_client` online is **always true** ("it is being served") |
-| 18 | Output heartbeats | **MISSING** | The WS hub honours exactly two inbound kinds: `hello` and `rendered` — and `rendered` is a latency mark documented as *"deliberately inert"* (`channels.rs:963-991`). No ping/pong, no idle timeout, no keepalive | A heartbeat is the mechanism that would make §17 true rather than inferred |
-| 35 | Automatic text-fit safety | **PARTIAL** | See §16 — fit is real and well engineered | Fit that *shrinks forever* is not the same as fit that *refuses*. A 40-iteration cap exists; what happens at the cap is "very small text", silently |
-| 36 | Distance preview (5/10/15/20 m) | **MISSING** | Grep across `src/`: zero hits for distance/legibility simulation | — |
-| 37 | Accessibility mode (high visibility) | **PARTIAL** | The **operator console** is served: `sr-only` live regions, `role="meter"`, `trapFocus`, reduced-motion on the crawl. The **output** has none | No high-contrast or large-text output mode, no contrast **validation** (contrast is a render control — scrim, plate, shadow — never a checked ratio; the only ratio arithmetic in the repo is in comments) |
-| 54 | Signed template library / marketplace | **FUTURE** | Already deferred with reasoning (`ROADMAP.md:67-75`) — plugins must never modify the presentation engine | Agreed; not v1 |
-| 44/45 | Distance/fit/contrast gate before air | **MISSING** | Consolidates §16, §35, §36, §37 | One pre-air validator, one refusal path, one honest message |
+| 16 | Safe Screen — validate before air | **EXISTS** | RG-05. `pipeline::preflight` refuses a payload that would paint an empty screen, or one carrying a template the output page cannot parse, at the single choke point — and the screens are left exactly as they were (DECISIONS §42). `safescreen.test.js`, two `e2e` tests | Nothing that should be added. It deliberately does **not** refuse for an unreachable screen (a service runs on the console preview all the time) and deliberately cannot refuse a panic control |
+| 17 | Output health monitoring | **EXISTS** | RG-01. Live and the Outputs tab now decide from one backend fact through one shared helper (`outputHealth.js::describeScreen`, imported by `views/Live.svelte`), so a screen that is not answering can never read amber on the one surface an operator watches. `outputhealth.test.js` | Nothing. `network_client` is still reported as served-not-seen, which is what it is |
+| 18 | Output heartbeats | **EXISTS** | RG-02. Every output page reports that it is still painting — the native window over the bridge (`output_beat`), kiosk/OBS over the socket it already has (`{"kind":"beat"}`). The grace window is derived from the interval, not written beside it, and a lost beat degrades to "silent", the safe direction (`channels.rs::OutputHealth`) | Nothing. It is **anonymous by construction** — a beat says "the screen for channel N painted", never who or from where (DECISIONS §39 narrows §35 by one word: *when*, never *who*) |
+| 35 | Automatic text-fit safety | **EXISTS** | Fit is measured, not assumed (`TemplateRender.svelte::fitOne`, binary search for layered templates) — and since RG-05 a fit that has shrunk below **45 % of the size the template's designer asked for** reports it, and Live says how small it went. The floor is a RATIO, because cqw is a share of the output's width (CLAUDE.md rule 37) | Nothing. It still shrinks and still shows the verse below the floor — blanking a screen is strictly worse for a congregation |
+| 36 | Distance preview (5/10/15/20 m) | **EXISTS** | RG-18. `legibility.js::PREVIEW_DISTANCES_M` + `previewScale`, rendered in `views/templates/TemplateEditor.svelte`. The arithmetic uses two numbers only a person can know — image width and back-row distance — remembered with the room, and with no numbers there is **no verdict** rather than a guess | **The thresholds are unverified and the UI says so.** WCAG is a specification for screens at arm's length and the character-height rule is broadcast practice; neither has been checked against a projector. Stage B |
+| 37 | Accessibility mode (high visibility) | **EXISTS** | RG-18. High Visibility is a **theme** (`themes.js`), not a parallel renderer — so it inherits the one template engine and cannot drift from it (`legibility.test.js`). Contrast is computed exactly over a solid background and reported as **"cannot be checked"** over a picture, never guessed. The console side was already served: `sr-only` live regions, `role="meter"`, `trapFocus`, reduced motion | Nothing in the product. The same Stage B caveat as §36 |
+| 54 | Signed template library / marketplace | **FUTURE** | Deferred with reasoning (`ROADMAP.md`) — plugins must never modify the presentation engine | Agreed; not v1. Blocked on the same absent signing ceremony as §44 |
+| 44/45 | Distance/fit/contrast gate before air | **EXISTS** | Consolidates §16, §35, §36, §37 — one validator (`pipeline::preflight`), one refusal path, one honest message, plus the editor-side review that catches it before Sunday | Nothing |
 
 ### Security, privacy and trust
 
 | § | Requirement | Status | Evidence | What is actually missing |
 |---|---|---|---|---|
-| 19/20/21 | Local device pairing · trusted devices · authenticated LAN | **MISSING — and reverses DECISIONS §35** | The HTTP control plane on `:8032` is unauthenticated **deliberately** (`main.rs:1398-1401`, `channels.rs:1207-1211`). The WS hub on `:8031` is broadcast-only and counts clients without recording who they are (`channels.rs:706-711`). What *was* fixed on 2026-08-20: mutating routes require `POST` and are denied the CORS wildcard, killing the `<img src=…/api/black>` drive-by | See **§20 (a)** — a reversal proposal, not a task |
-| 22 | Local security event log | **MISSING** | No table, no events | Depends on §19 having identities to log |
-| 23 | Service history as an event timeline | **PARTIAL** | `services`, `transcripts`, `detections` (with `status` ∈ auto/suggested/dismissed/**manual** and `heard_text`), `cues` (operator actions with `payload_json` + `triggered_at`). A markdown export exists (`export_service`) | No **single ordered timeline**. Output-lost / output-recovered are not events at all, because nothing detects them (§17/§18) |
-| 24 | Tamper-evident service record | **FUTURE** | — | Sequence + hash chain over an append-only event table. Cheap *once §23 exists*; meaningless before |
-| 25 | Service replay | **MISSING** | Zero hits for replay across `src/` | The single highest-value item in the brief that is genuinely absent and genuinely buildable from data Relay already stores |
-| 26 | Sunday report | **MISSING** | The data mostly exists (detections with status, service duration); the latency half does **not survive a quit** | See §23 and RG-04 |
-| 56 | Diagnostic bundle | **PARTIAL** | Settings → Diagnostics shows version, OS, model, language, mic, ports, uptime, and the full latency table (`Settings.svelte:998-1054`) | It is a screen, not an export. Nothing produces a file a church can attach to an email |
-| 57 | Privacy centre | **PARTIAL** | `PRIVACY.md` is thorough and honest; crash reporting is opt-in, off by default, and content-scrubbed (`telemetry.rs:1-28`); Settings → Advanced states it plainly | Not a single screen answering "what is leaving this machine right now" |
-| 58 | AI transparency centre | **EXISTS** | `docs/AI_DISCLOSURE.md` plus the per-detection inspector (§14) | A link from Help to AI_DISCLOSURE would close it |
-| 64 | Security threat model T1–T10 | **PARTIAL** | `SECURITY.md` covers the LAN surface, ports, the origin of the CORS fix, and template injection (pinned by `qa-r5-template-injection.test.js`, 5 tests) | Not in the T1–T10 shape; no malicious-language-pack or corrupted-update rows (neither exists yet) |
+| 19/20/21 | Local device pairing · trusted devices · authenticated LAN | **DECLINED — would reverse DECISIONS §35** | The `:8032` control plane is unauthenticated **deliberately**; the `:8031` hub is broadcast-only and counts clients without recording who they are. What *was* closed (2026-08-20) is the bystander-browser vector: mutating routes require `POST` and are denied the CORS wildcard (SECURITY.md T2, T3) | Nothing to build. §20 (a) is the written-up reversal proposal and it is **not adopted** — the preacher's phone has no way to hold a credential |
+| 22 | Local security event log | **DECLINED — follows §19** | No table, no events | It would log an identity that, by §35 and §39, is deliberately never established. A log of anonymous events is a log of nothing |
+| 23 | Service history as an event timeline | **EXISTS** | RG-04. `service_events` + `perf_samples` — an ordered record that survives the app, merged with detections and cues on the way out (`db/services.rs`, `views/library/History.svelte`). Output-lost and output-recovered are real events now that §18 detects them | Nothing. **It carries nothing a preacher said**, pinned from both sides (`timeline_tests::nothing_a_preacher_said_reaches_the_timeline`, `timeline.test.js`) |
+| 24 | Tamper-evident service record | **DECLINED** | The prerequisite (§23) now exists, so this became cheap — and cheap is not the test | A hash chain defends against somebody with the machine, and the malicious operator is explicitly out of scope (SECURITY.md T10). Building it would claim a guarantee against the one actor Relay has already said it does not defend against |
+| 25 | Service replay | **EXISTS** | RG-07. A timeline row opens to show what was being said around it, what Relay decided, and how fast it was going (`report.js::replayAt`, `History.svelte`) | Nothing. It replays the **record**, not the audio — Relay never stores audio (SECURITY.md T1) |
+| 26 | Sunday report | **EXISTS** | RG-08. `report.js::sundayReport`, derived and never stored, and it names what it does **not** measure. Every field can come back `null`, and `null` renders as "—", never as 0 (DECISIONS §44) | Nothing. There is deliberately no "crash-free" line: crashes are recorded per launch, not per service, and there is no honest way to attribute one |
+| 56 | Diagnostic bundle | **EXISTS** | RG-12. `diagnostics.rs` — one file a church can send, composed as an **allow-list**, with the home directory scrubbed (DECISIONS §48). `diagnostics.test.js` | Nothing. `telemetry.rs` learned the blocklist lesson expensively and this is the correction |
+| 57 | Privacy centre | **EXISTS** | RG-17. Settings → Privacy, read from the live settings, stating the LAN exposure in the same size type as the reassuring half (`privacy.test.js`) | Nothing |
+| 58 | AI transparency centre | **EXISTS** | `docs/AI_DISCLOSURE.md`, the per-detection inspector (§14) — and, as of this pass, the honest half **in the app and offline**: Help's *"What the AI is bad at"* carries the never-generates-text rule, the African-language weakness and the unmeasured word error rate. `aidisclosure.test.js` (RG-59) fails if either document loses a claim the other keeps | Nothing. A link to a docs file would have been useless: the operator who needs this is offline in a hall |
+| 64 | Security threat model T1–T10 | **EXISTS** | `SECURITY.md` now carries the T1–T10 table: content leaving the device, LAN screen control (accepted), the closed drive-by, the broadcast-only hub, path traversal, template injection, the update channel, model integrity, language packs (no surface yet, on purpose) and the malicious operator (out of scope) | Nothing. Two rows are honest absences rather than mitigations, and say so |
 
 ### Environment, language and operators
 
 | § | Requirement | Status | Evidence | What is actually missing |
 |---|---|---|---|---|
-| 29 | Room / environment profiles | **MISSING** | The VAD noise floor and AGC state are per-process and reset every start (`audio.rs:145-148`, `dsp.rs:146-153`) | Nothing persists a room. A church re-learns its own hall every Sunday — which *works* (DECISIONS §19) but costs the first minutes of every service |
-| 30 | Automatic room calibration | **PARTIAL** | Levels are **learned, never assumed** — this is DECISIONS §19 and CLAUDE.md rule 12, and it is load-bearing. `FirstRun.svelte` step 3 already runs a live meter | No explicit "calibrate now" pass that measures ambient noise, clipping and speech level and *stores* the result |
-| 41 | Language Mode (primary + secondary + code-switching) | **PARTIAL** | Recognition language is a single choice: Auto / en / yo / sw / ha (`Settings.svelte:858-886`). Auto-detect is real and instability is surfaced (`stt://language_unstable`) | No declared primary/secondary pair. CLAUDE.md says code-switching is the normal case; the settings model says one language |
-| 42 | Language Quality Centre | **MISSING** | `docs/LANGUAGES.md` states the truth in prose: 66/66 books in all three, **none native-reviewed**, WER **unmeasured**, Yorùbá numerals absent (`numerals.json` has `sw` + `ha` only; `book_aliases.json` has `sw` 68, `yo` 69, `ha` 69) | A measured, in-app status per language. The honesty exists; the instrument does not |
-| 43 | African-language validation programme | **BLOCKED** | ROADMAP §1: 30 minutes of real sermon audio + a native speaker. `bench/.gitignore` refuses audio into the repo by design | Not a coding task. This is the moat and it is entirely unmeasured |
-| 44 | Signed language packs | **FUTURE** | Locale files ship near-empty on purpose (`ha`/`sw`/`yo` have 1 key each); aliases are one JSON file | Would let a contributor improve a language without Rust. Real value, after §43 |
-| 39/40/48 | Operator training mode · live simulation · rehearsal replay | **MISSING** | Rehearsal mode exists and is properly gated (DECISIONS §18) — but it needs a live preacher | A recorded-audio simulation would be the same rig as `stt::realtime::live_transcript_latency`, pointed at the UI instead of a report |
-| 59/60 | Church onboarding · saved environment | **PARTIAL** | 6-step first-run wizard (`FirstRun.svelte:62-69`), re-runnable from Settings → Backup | Steps 5–10 of the brief's list (stage display, template, test scripture, readiness check, rehearsal) are not in the wizard |
-| 61 | Time-to-first-verse metric | **MISSING** | — | Cheap once §23 exists |
+| 29 | Room / environment profiles | **EXISTS** | RG-10. `environment_profiles` + `rooms.js` — microphone, language, service length, voice profile, displays, and the two room numbers §36 needs. Applying is a **list, not a call**, so a room applied to a machine where the projector moved reports which four of six pieces took (DECISIONS §46) | Nothing that should be added yet — see §30 |
+| 30 | Automatic room calibration | **PARTIAL, deliberately** | Levels are **learned, never assumed** (DECISIONS §19, CLAUDE.md rule 12) and that is load-bearing: three individually-reasonable absolute thresholds once made Relay deaf to a quiet preacher, silently. `FirstRun` step 3 runs a live meter | **The audio floor is deliberately not seeded from a stored room.** It may well be right, and the instrument that could show it safe (`cargo test audio::gate -- --ignored`, against real room audio) has never been pointed at a real room. Stage C |
+| 41 | Language Mode (primary + secondary + code-switching) | **N/A as framed** | Recognition language is a single choice — Auto / en / yo / sw / ha — because that is what the decoder accepts: whisper takes **one** language token per decode. `Auto` *is* the code-switching path, and instability is surfaced (`stt://language_unstable`) | A declared primary/secondary pair would be a setting the model cannot consume. What genuinely helps a bilingual congregation already exists and is per-preacher: `bias_terms` (§27) |
+| 42 | Language Quality Centre | **EXISTS** | RG-11. Settings → Languages, every number derived from the shipped data — 66/66 books in all three, alias counts, which numerals are parsed — and **accuracy and native review render as absences, not as zeroes** (`detection::language_report_tests`, `languages.test.js`; DECISIONS §47) | Nothing. The instrument now exists and its most important column is empty on purpose |
+| 43 | African-language validation programme | **BLOCKED** | ROADMAP §1: 30 minutes of real sermon audio and a native speaker. `bench/.gitignore` refuses audio into the repo by design | Not a coding task. **This is the moat and it is entirely unmeasured** |
+| 44 | Signed language packs | **FUTURE — refused on purpose** | RG-19 shipped the offline half and refused this one | The word doing the work is *signed*: signing needs a key, a ceremony and a distribution channel that do not exist. An unsigned pack that can rewrite the book aliases is a wrong-verse-on-a-wall vector (SECURITY.md T9), and an operator cannot proof-read 66 names in a language they may not read |
+| 39/40/48 | Operator training mode · live simulation · rehearsal replay | **EXISTS — narrower than written, deliberately** | RG-15/RG-16. Six drills with the **real** controls on the **real** surface, in rehearsal, panic first — and each knows it was done because the same event fired that would fire on a Sunday (`training.js`, `practice.js`, driven from `Help.svelte`; `training.test.js`; DECISIONS §52) | **Not a simulated service.** Relay cannot produce a sermon, and a simulation would teach a volunteer the shape of a fake. Replaying a church's *own* recorded service audio would work and needs the corpus Stage C has never produced |
+| 59/60 | Church onboarding · saved environment | **PARTIAL** | The 6-step first-run wizard (welcome · screen · audio · model · language · finish), re-runnable from Settings → Backup, plus RG-10's rooms for the saved half | The brief's later steps — a stage display, a template choice, a test scripture, a readiness check, a rehearsal — exist as controls but are not **in** the wizard. Both instruments that would carry them now exist (§5's walk, §29's rooms); wiring them in is the smallest remaining onboarding gap |
+| 61 | Time-to-first-verse metric | **MISSING — needs a stopwatch, not a commit** | — | It is a **human** span: from the preacher saying it to the congregation reading it. `latency.rs` measures machine stages, and the one span that claimed to cover this end to end was measuring how long the preacher had been talking (FIELD F-6, RG-31) |
 
 ### Distribution, updates and the cloud question
 
 | § | Requirement | Status | Evidence | What is actually missing |
 |---|---|---|---|---|
-| 32/48 | Update preflight (signature · platform · integrity · DB compat) | **PARTIAL** | The Tauri updater plugin verifies a minisign signature against `pubkey` (`tauri.updater.conf.json`); a test pins that the base config must always carry an updater block or the app panics (`models.rs:747-780`). Model downloads are separately SHA-256 verified before rename (`models.rs:475-479`) | No **database-compatibility** preflight and no explicit preflight screen. `SCHEMA_VERSION` exists (`db/mod.rs:51`) and nothing compares it to the incoming build |
-| 33 | Never update during a service | **EXISTS** | `updater.js:33-37` — `idle()` is `!capturing`, checked on both check and install; the banner only renders when not capturing (`App.svelte:455-471`) | It is frontend-only and keyed on the microphone, not on `Session`. A recorded service with the mic momentarily stopped is not protected |
-| 49 | Update rollback | **MISSING** | Grep for rollback across `src-tauri/src` and `src`: **zero hits**. On failure the app says *"Relay will keep working on this version."* | The whole mechanism. Also: no migration rollback path, although migrations are individually retryable (CLAUDE.md rule 25) |
+| 32/48 | Update preflight (signature · platform · integrity · DB compat) | **EXISTS** | RG-06. `updates::preflight` refuses to start an update onto a database that is not already healthy, and checks free disk against the snapshot it is about to take; the payload's minisign signature is verified by the updater plugin; model downloads are separately SHA-256 verified before rename. `updatesafety.test.js` | Nothing |
+| 33 | Never update during a service | **EXISTS** | `updater.js::idle()` is now `!capturing && !serviceLock.engaged`, checked on both check and install — so a recorded service with the microphone momentarily stopped is protected, which is the gap this row used to name | Nothing |
+| 49 | Update rollback | **EXISTS — and it rolls back the right thing** | RG-06. Snapshot (`VACUUM INTO`) before, verify on the next launch, and a restore that happens **before the database is opened**. DECISIONS §43 | **Binary rollback is deliberately not built.** The installers are public and signed; reinstalling a previous version is a five-minute job. What cannot be got back is the church's database, and that is what this protects |
 | 47 | Release channels (stable/beta/nightly) | **FUTURE** | One endpoint: `releases/latest/download/latest.json` | Low value before there is a first release |
-| 45 | Offline / air-gapped installation | **MISSING** | Models are downloaded in-app (`models.rs`), resumable and checksummed. KJV is bundled (`include_str!`) | A church with poor internet cannot receive app + model + corpus on a USB stick. **High fit with the actual market** |
-| 46 | Signed distribution, both platforms | **BLOCKED** | macOS signing + notarization + the hardened-runtime entitlement chain are wired and pinned (`models::config_boots`, `scripts/sign-local.sh`). The release gate is **per-platform** and refuses a real tag that is not covered on both (DECISIONS, CLAUDE.md rule 23) | A Windows code-signing certificate (~$10/mo). ROADMAP §1 |
-| 55 | Deliverability as its own discipline | **PARTIAL** | `docs/RELEASING.md` (413 lines) covers signing, the gate, the updater and the version-in-three-files rule | Rollback, offline installer, channels, migration preflight |
-| 34–38, 50–53, 77 | Relay Cloud · church account · device registry · fleet management · multi-campus · optional backup | **N/A — already declined, with reasoning** | `ROADMAP.md:77-91` declines cloud sync, accounts, RBAC/SSO, multi-tenancy, analytics dashboards, marketplaces, billing, and compliance — each with a stated reason. `PRODUCT_AUDIT.md` §13 marks the same set NOT APPLICABLE | See **§20 (b)** if this is to be reopened |
-| 51 | Cloud must never become a live dependency | **EXISTS — as the product's shape** | Offline-first is enforced by construction; `probes.js` reports offline as **ok**, not as a problem: *"offline — every core feature still works"* | Nothing |
-| 76 | Do-not-build list | **EXISTS** | ROADMAP §3 and §5 already hold it | Nothing |
+| 45 | Offline / air-gapped installation | **EXISTS** | RG-19. Install a model from a file already on the machine, a three-folder scan, and `scripts/offline-bundle.mjs` — installers + model + README on a USB stick (`offline.test.js`) | Nothing. The signed-language-pack half was refused, separately: §44 |
+| 46 | Signed distribution, both platforms | **BLOCKED** | macOS signing, notarization and the hardened-runtime entitlement chain are wired and pinned (`models::config_boots`, `scripts/sign-local.sh`), and the release gate is **per-platform** and refuses a real tag not covered on both (CLAUDE.md rule 23) | A Windows code-signing certificate. ROADMAP §1 — and it blocks the platform most churches are on |
+| 55 | Deliverability as its own discipline | **EXISTS** | `docs/RELEASING.md` covers signing, the gate, the updater and the version-in-three-files rule; RG-06 and RG-19 added the data-rollback and offline halves this row used to be missing | One **observed** end-to-end install on a machine that is not this one. That is Stage A, not a commit |
+| 34–38, 50–53, 77 | Relay Cloud · church account · device registry · fleet management · multi-campus · optional backup | **N/A — declined, with reasoning** | `ROADMAP.md` declines cloud sync, accounts, RBAC/SSO, multi-tenancy, analytics dashboards, marketplaces, billing and compliance, each with a stated reason; `PRODUCT_AUDIT.md` marks the same set NOT APPLICABLE | §20 (b) is the written-up reversal proposal if this is ever reopened. It is not adopted |
+| 51 | Cloud must never become a live dependency | **EXISTS — as the product's shape** | Offline-first is enforced by construction; `probes.js` reports offline as **ok**, not as a problem | Nothing |
+| 76 | Do-not-build list | **EXISTS** | `ROADMAP.md` §3 and §5 | Nothing |
 
 ### Process, IA and measurement
 
 | § | Requirement | Status | Evidence | What is actually missing |
 |---|---|---|---|---|
-| 38/49 | Sunday-mode / simplified live screen | **PARTIAL** | Live already has a density toggle (Normal/Compact) and full-screen mode (`Live.svelte:841-849`) | The brief's stripped layout is a *different* proposal from density. Worth prototyping, not obviously better than what shipped |
-| 65 | Database audit | **See §13 below** | 18 tables + 1 FTS | 5 concepts have no home |
-| 66 | Event architecture audit | **See §14 below** | 15 events today | 6 candidate events, 4 of which have no producer |
-| 67 | UI information architecture | **EXISTS** | 8 tabs (`App.svelte:46-78`), 16 Settings sections (`Settings.svelte:46-63`), retired keys remapped rather than 404'd (`session.js:118-140`) | The brief's suggested Settings → Devices / Security / Languages are the right shape **if** §19/§22/§42 are ever built |
-| 68/69 | Live screen states · design system colour law | **EXISTS** | The four promise-carrying colours are defined once (`src/app.css:117-131`) and the six distinctions are each pinned by tests (QA_HARNESS §4.2). Cued is grey and never amber; a guess is cyan and never amethyst | Nothing. This is one of the strongest parts of the product |
-| 70/71 | Performance observability + per-stage budgets | **EXISTS** | Nine named stamps on one monotonic clock, one trace id from microphone to projector (`latency.rs:131-166`), 7 metrics, 1 ms-bucket histograms with counted tails, per-minute drift, and four anti-flattery properties each pinned by a test | **p99 is not reported** (p50/p95/worst/over-ceiling only, `latency.rs:728-729`) and **nothing persists** |
-| 72 | Hardware matrix | **BLOCKED** | Every figure is one M4 Pro | Windows low/mid/high, a real church laptop |
-| 73/74 | Real church field test · first ten churches | **BLOCKED** | `audits/QA-2026-08-14.md` §16 is the script, unrun | A room, a person, a Sunday |
-| 75 | Feature priority model (P0/P1/P2/P3/REFUSE) | **EXISTS in substance** | ROADMAP already sorts into blocked-on-world / parked / deferred / declined | Adopting the brief's live-critical / operator-critical / service-support / admin labels would be an improvement to `CONTRIBUTING.md` |
-| 62 | Success metrics | **PARTIAL** | Latency: instrumented. Detection: `eval.rs` is a CI build gate over a labelled corpus (`src-tauri/data/eval_corpus.json` — count it) scored **through the real router**, failing above SPEC's 5 % wrong-verse rate | Human metrics (override rate, acceptance, time-to-first-verse) need §23. Language metrics need §43 |
+| 38/49 | Sunday-mode / simplified live screen | **PARTIAL** | Live has a density toggle (Normal/Compact) and a full-screen mode | The brief's stripped layout is a *different* proposal from density. Worth prototyping against a real operator — which is a pilot question (§24), not a design one |
+| 65 | Database audit | **See §13** | 21 tables + 1 FTS | Two concepts have no home, and both are declined rather than missing |
+| 66 | Event architecture audit | **See §14** | Producers now exist for four of the six candidates | Two remain producerless, and both follow §19 |
+| 67 | UI information architecture | **EXISTS** | 8 tabs, **18** Settings sections — Languages (§42) and Privacy (§57) are two of them — retired keys remapped rather than 404'd (`session.js`) | The brief's suggested Settings → Devices would need §19, which is declined |
+| 68/69 | Live screen states · design system colour law | **EXISTS** | The four promise-carrying colours are defined once (`src/app.css`) and the six distinctions are each pinned by tests (QA_HARNESS §4.2). Cued is grey and never amber; a guess is cyan and never amethyst | Nothing. This remains one of the strongest parts of the product |
+| 70/71 | Performance observability + per-stage budgets | **EXISTS** | Nine named stamps on one monotonic clock, one trace id from microphone to projector (`latency.rs`), 1 ms-bucket histograms with counted tails, and four anti-flattery properties each pinned by a test. RG-14 added **p99**, persisted it to `perf_samples`, and stopped the live Diagnostics screen printing an unreached stage as `0ms` | Nothing. A stage never reached is an ABSENCE, not a zero — in the histogram, in the table, and in the report |
+| 72 | Hardware matrix | **BLOCKED** | Every figure is one M4 Pro | Windows low/mid/high, and a real church laptop |
+| 73/74 | Real church field test · first ten churches | **PARTIAL — 2 / 10** | Relay ran a live sermon on 2026-08-30 (`audits/FIELD-2026-08-30.md`): Stage F11 answered, no drift across 49.5 minutes and 2,423 decodes, five of six auto-fires correct — **and one wrong verse reached a congregation** | Nine more services, and at least one run by somebody who did not write Relay. That is the largest unknown in the project |
+| 75 | Feature priority model (P0/P1/P2/P3/REFUSE) | **EXISTS in substance** | ROADMAP sorts into blocked-on-world / parked / deferred / declined, and this matrix now carries **DECLINED** as a first-class verdict with the reason in the row | Adopting the brief's live-critical / operator-critical labels in `CONTRIBUTING.md` would be an improvement, not a gap |
+| 62 | Success metrics | **PARTIAL** | Latency is instrumented **and persisted**, with a week-on-week trend (`report.js::weekOnWeek`). Detection is a CI build gate over a labelled corpus scored **through the real router**, failing above SPEC's 5 % wrong-verse rate — and since #46 that gate runs across the whole sensitivity slider, not one setting | Human metrics (override rate, acceptance, time-to-first-verse §61) need services, not code. Language metrics need §43 |
 
 ---
 
@@ -451,13 +475,24 @@ than one 200 ms hop, and thermal throttling cannot be produced in six minutes.
 | Current latency | `base` P50 **139 ms**, P95 339 ms, worst 543 ms (PERF §4). `small` 573/989. `turbo` 2360/2556 |
 | Partial behaviour | Whole-window re-decode on a cadence of `clamp(decode_ema, 200 ms, 1000 ms)`; a partial *replaces*, a final *appends* and is capped at 12 lines (`capture.js:311`) |
 | Final transcript | Closed by `SILENCE_FINALIZE = 7` (~1.4 s of silence), then the window is cleared |
-| Queue behaviour | `sync_channel(8)`. A full queue **sheds a PARTIAL** and **blocks on a FINAL** — finals carry persistence and spoken commands and are never dropped (`main.rs:3313-3336`) |
-| Dropped partials | Counted (`latency.rs:453-457`) and shown in Diagnostics. 0 in 1075 passes on a dev machine |
+| Queue behaviour | `sync_channel(8)`. A full queue **sheds a PARTIAL** and **blocks on a FINAL** — finals carry persistence and spoken commands and are never dropped (`main.rs`, the `relay-detect` handoff) |
+| Dropped partials | Counted (`latency.rs`) and shown in Diagnostics. 0 in 1075 passes on a dev machine, 0 across a real 49.5-minute service |
 | RTF | Not reported as a named metric; derivable from `stt_decode` median vs the cadence |
 | Bottleneck | The model, above `base`. Below that, the batch decoder's floor of 1.0–1.6 × decode cost |
 
-**Gap:** no STABLE state, no p99, nothing persisted, and no measurement with a webview in the
-path — `audio_to_visible_transcript` in the rig means "a consumer was handed the text".
+**Gaps, corrected 2026-08-31.** Two of the four this row used to name are closed: **p99 ships**
+and **samples persist** to `perf_samples`, with a week-on-week trend (RG-14). What remains:
+
+- **No STABLE state — and it is now DECLINED rather than missing** (§2 row 7). The corroboration
+  rule already holds a reference from a partial window at `Suggest` until a second pass agrees,
+  which is the harm STABLE was proposed to prevent.
+- **No measurement with a webview in the path.** `audio_to_visible_transcript` in the rig means
+  *"a consumer was handed the text"*, not *"a person could read it"*. Closing that needs a camera
+  pointed at a screen, which is the same blocker as **pixels out** — §15, and it is why §61
+  (time-to-first-verse) needs a stopwatch rather than a commit.
+- **RTF is still not a named metric**, and deliberately: it is derivable from `stt_decode` median
+  against the cadence, and the cadence *is* the decoder's own speed by construction (DECISIONS
+  §38), so a reported RTF would be a restatement rather than a measurement.
 
 ## 5. Detection audit
 
@@ -486,161 +521,212 @@ pages, `/media/<id>`, and the seven-route preacher API).
 
 | Property | State |
 |---|---|
-| Content delivery | Fire-and-forget `broadcast::Sender`; `Lagged` silently skipped (`channels.rs:956`) |
-| Client → server | Two message kinds only: `hello` (registers, replies with template + themes) and `rendered` (a latency mark, *deliberately inert*). Everything else ignored (`channels.rs:1023`) |
-| Liveness | Inferred from a **count** per `template_id` (`channels.rs:741-763`). `network_client` online is hardcoded true |
-| Identity | None, by design: *"Relay does not record who connected, from what address, or when"* (`channels.rs:706-711`) |
-| `output_channels.status` | A dead column — seeded `'offline'`, never written at runtime |
-| Where health is shown | Outputs tab, polled 2 s. **Not on Live** |
-| Honesty | The Outputs tab already says the right thing: *"A screen reading LIVE means something is attached, not that the picture is good."* (`Channels.svelte:524-539`) |
+| Content delivery | Fire-and-forget `broadcast::Sender`; `Lagged` silently skipped |
+| Client → server | Three inbound kinds, none of which can carry content: `hello` (registers, answered with the template and themes), `beat` (RG-02 — "the screen for channel N painted", anonymous) and `rendered` (a latency mark, documented as inert). Everything else ignored |
+| Liveness | **Real, since RG-02.** A per-channel beat with a grace window derived from the interval rather than written beside it; a lost beat degrades to "silent", which is the safe direction |
+| Identity | Still none, by design. The hub records *when* a screen last painted and never *who* connected or from where (DECISIONS §35, narrowed by §39) |
+| `output_channels.status` | Still a dead column — seeded `'offline'`, never written at runtime. Health is derived live, deliberately |
+| Where health is shown | Outputs tab (polled), **and Live** — both through `outputHealth.js::describeScreen`, so they cannot disagree |
+| Pre-air validation | `pipeline::preflight` at `broadcast_with_clock`, the one caller of `broadcast_content` (RG-05, DECISIONS §42) |
+| Honesty | Unchanged and still right: *"A screen reading LIVE means something is attached, not that the picture is good."* |
 
-**Finding RG-01 is here**, and it is the one place where the brief's diagnosis lands exactly on
-a real defect: an operator watching Live during a service is shown a badge that cannot detect the
-failure it appears to be reporting.
+**RG-01 and RG-02 were the report's most actionable findings and both are closed.** The failure
+this section used to describe — an operator watching Live during a service, shown a badge that
+could not detect the failure it appeared to be reporting — cannot happen now, and the test that
+proves it (`outputhealth.test.js`) was re-run with the old global-state derivation restored and
+fails.
 
 ## 7. Security audit
 
 The LAN posture is deliberate, recorded (DECISIONS §35), and correctly described in `SECURITY.md`
-and `PRIVACY.md` — both of which were repaired on 2026-08-14 after they had repeated an outdated
-claim for months. `:8031` is broadcast-only; `:8032` is an unauthenticated control plane; mutating
+and `PRIVACY.md`. `:8031` is broadcast-only; `:8032` is an unauthenticated control plane; mutating
 routes require `POST` and are denied the CORS wildcard, which closed the bystander-browser vector
 without pretending to be authentication.
 
-Template injection is treated as untrusted input reaching the wall and is pinned by five tests.
+Template injection is treated as untrusted input reaching the wall and is pinned by five tests,
+plus an allow-list test that fails if `{@html}` appears in any renderer that reaches a screen.
 The kiosk CSP and `X-Content-Type-Options: nosniff` are set; path traversal is rejected; `/media/`
 takes only leading digits as an id.
 
-**Gaps:** no device identity (§19), no security event log (§22), no threat-model document in the
-T1–T10 shape (§64). All three are consequences of the §35 decision, not oversights.
+**`SECURITY.md` now carries the T1–T10 threat model** the brief's §64 asked for — including the
+two rows that are honest absences rather than mitigations. **No device identity (§19) and no
+security event log (§22) are consequences of §35, and §2 now records both as DECLINED rather than
+missing**: a log of events attributed to nobody is a log of nothing, and building the identity
+first is the reversal §20 (a) proposes and this report does not adopt.
 
 ## 8. Privacy audit
 
-Strong, and the strongest-documented part of the product. Crash reporting is off by default, has
-no DSN in OSS builds, is scrubbed of transcript, verse, lyric, announcement, service and plan text
-(`telemetry.rs:21-28`), and is compiled out of release unless configured. `session.js` persists
-position and never content. `crash.js` renders technical detail with `textContent`, never
-`innerHTML`. Offline is reported as a **normal** state, not a fault.
+Still the strongest-documented part of the product, and no longer only documented. Crash
+reporting is off by default, has no DSN in OSS builds, is scrubbed of transcript, verse, lyric,
+announcement, service and plan text, and is compiled out of release unless configured.
+`session.js` persists position and never content. `crash.js` renders technical detail with
+`textContent`, never `innerHTML`. Offline is reported as a **normal** state, not a fault.
 
-**Gap:** a single Privacy screen (§57) and a diagnostic *export* (§56). Neither changes what
-leaves the machine; both change whether an operator can see that nothing does.
+**Both gaps are closed.** RG-17 added Settings → Privacy — one screen answering "what is on this
+machine, and what can leave it", read from the live settings, stating the LAN exposure in the
+same size type as the reassuring half. RG-12 added the diagnostic **export**: one file a church
+can attach to an email, composed as an allow-list with the home directory scrubbed
+(DECISIONS §48). Neither changed what leaves the machine; both changed whether an operator can
+see that nothing does.
 
 ## 9. Reliability and recovery audit
 
 | Mechanism | State |
 |---|---|
-| Crash boundary | Plain-DOM, deliberately not Svelte, because Svelte may be what broke (`crash.js:17-19`). Says *"Your output screens are still live."* |
+| Crash boundary | Plain-DOM, deliberately not Svelte, because Svelte may be what broke. Says *"Your output screens are still live."* |
 | Crash record | `localStorage['relay.boot.v1']`: `cleanExit`, `lastCrash`, `crashStreak`, `safeMode` |
-| Safe mode | Auto-offered after 3 crashes (`boot.js:215`); disarms outputs and detection; banner on the shell |
+| Safe mode | Auto-offered after 3 crashes; disarms outputs and detection; banner on the shell |
 | Session resume | Operator-confirmed modal; **position only**, never on-air. Pinned by `qa-r5-onair.test.js` |
 | Leave guard | `markCleanExit()` always; `preventDefault` only while the mic is live |
-| Migrations | Individually retryable, with `DROP TABLE IF EXISTS` on the scratch table and rollback on failure (CLAUDE.md rule 25) |
-| Rust-side session | **Not persisted.** A crashed service leaves an open `services` row |
-| Latency history | **Lost on quit** |
+| Migrations | Individually retryable, with `DROP TABLE IF EXISTS` on the scratch table and rollback on failure (CLAUDE.md rule 25) — and since #41/#42 a test proves an old database really receives the columns a new one has |
+| Service lock | **New (RG-03).** 16 irreversible or engine-stopping actions held back while a service records; nothing on the fire path |
+| Degraded state | **New (RG-09).** Every silent fallback now says what it costs and what to do, in the shell, on every tab |
+| Update safety | **New (RG-06).** Preflight, snapshot, verify-on-next-launch, restore before the database is opened |
+| Latency history | **Survives a quit (RG-14)** — `perf_samples`, with p99 and a week-on-week trend |
+| Rust-side session | Still not persisted. A crashed service leaves an open `services` row — cosmetic in the history list, never observed to cost anything live |
 
 ## 10. Update / distribution audit
 
 Wired: minisign-verified payload, per-platform release gate, three-file version agreement asserted
 in CI and against the tag, resumable checksummed model downloads, an in-app update banner that
-never appears while capturing.
+never appears while capturing **or while a service is locked**, a database-compatibility preflight,
+a snapshot-and-restore path for the data, and an offline USB bundle (`scripts/offline-bundle.mjs`).
 
-Missing: rollback, DB-compat preflight, offline installer, release channels — and one observed
-end-to-end install, which ROADMAP §1 already lists as blocked on thirty minutes with a real
-machine.
+Still missing: release **channels** (deferred, low value before a first release), and **one
+observed end-to-end install on a machine that is not this one** — which ROADMAP §1 lists as
+blocked on thirty minutes with a real machine, not on code.
+
+Deliberately not built: **binary rollback.** The installers are public and signed; what cannot be
+got back is the church's database, and that is what RG-06 protects (DECISIONS §43).
 
 ## 11. Language audit
 
-`docs/LANGUAGES.md` is honest and should not be softened. Verified against the data files:
+`docs/LANGUAGES.md` is honest and should not be softened. Verified against the data files, and
+the same numbers are now derived live in **Settings → Languages** (RG-11) rather than only
+written down here:
 
 | | Kiswahili | Yorùbá | Hausa |
 |---|---|---|---|
 | Book aliases | 68 entries | 69 | 69 |
 | In-language numerals | ✅ (`numerals.json` `sw`) | ❌ **absent** | ✅ (`ha`) |
 | Native-speaker review | ❌ | ❌ | ❌ |
-| WER | never measured | never measured | never measured | *(unchanged 2026-08-31 — a supervised pilot with `RELAY_RECORD_WAV` set is what turns these three cells into numbers; §24, §25)* |
+| WER | never measured | never measured | never measured |
 | UI locale file | 1 key (ships near-empty on purpose) | 1 key | 1 key |
 
-The brief's §42 "Language Quality Centre" is the right instrument and it does not exist. The brief's
-§43 validation programme is correct and is **blocked on the world**, not on code.
+*(Unchanged 2026-08-31. A supervised pilot with `RELAY_RECORD_WAV` set is what turns the WER row
+into numbers — §24, §25.)*
+
+The brief's §42 "Language Quality Centre" **now exists**, and its most important column is empty
+on purpose: accuracy and native review render as absences, not as zeroes (DECISIONS §47). The
+brief's §43 validation programme is correct and is **blocked on the world**. The moat is the
+one thing on this page that no commit has moved.
 
 ## 12. UI / UX audit
 
-47 components, 46 reachable (the one orphan is a test probe). 426 controls, none in an unrendered
-component. From `node scripts/qa-inventory.mjs`, two real defect classes remain:
+48 components, 47 reachable (the one orphan is a test probe). 462 controls, none in an unrendered
+component. From `node scripts/qa-inventory.mjs`:
 
-- **4 buttons with no handler** — `Stage.svelte:223` and `ServicePlanner.svelte:482` are
-  `type=submit` inside forms (false positives); `ModelSetup.svelte:131` ("In use") and the
-  `VerseDeck.svelte:52` match are worth a look.
-- **9 controls with no accessible name**, including `Live.svelte:1038` (the mic toggle) and two
-  Settings buttons. These are real accessibility findings on the run surface.
+- **0 buttons with no handler.**
+- **0 controls with no accessible name.**
+- **0 commands registered in Rust that no frontend caller addresses**, and 0 in the other
+  direction.
+
+**Both lists reached zero at RG-13, and eleven of the thirteen findings that stood here were the
+instrument's own bugs** — `type=submit` inside a form counted as handlerless, a label supplied by
+`aria-labelledby` counted as unnamed. Fixing the instrument was the larger half of that work, and
+it is why the numbers above can be trusted now: a scanner that cries wolf is a scanner whose
+zero means nothing (DECISIONS §49).
 
 Colour law, empty/loading/error separation, error humanisation and the six live distinctions are
 all pinned by tests and are in good shape.
 
 ## 13. Database audit
 
-18 tables + 1 FTS virtual table. Present and adequate for: services, transcripts, detections,
-cues, plans, songs, arrangements, saved scripture, announcements, media, templates, channels,
-settings, voice profiles, translations, verses.
+**21 tables + 1 FTS virtual table.** Present and adequate for: services, transcripts, detections,
+cues, plans, songs, sections, arrangements, saved scripture, announcements, media, templates,
+channels, settings, voice profiles, translations, verses — **and the three this section used to
+list as absent**:
 
-**Absent, and each is a prerequisite for a brief feature:**
-
-| Concept | Needed by | Note |
+| Concept | Added by | Note |
 |---|---|---|
-| `service_events` (append-only timeline) | §23 replay, §24 tamper-evidence, §26 report, §61 metric | The single highest-leverage table. `cues` + `detections` + `transcripts` are three partial views of it |
-| `devices` | §19 pairing, §20 trusted devices, §22 security log | Only if §35 is reversed |
-| `security_events` | §22 | Depends on `devices` |
-| `perf_samples` | §26, §70 persistence | Latency is currently in-memory only |
-| `environment_profiles` | §29, §30 | Room calibration that survives a restart |
+| `service_events` | RG-04 | The append-only ordered record §23/§25/§26/§61 all needed. It carries nothing a preacher said, pinned from both sides |
+| `perf_samples` | RG-04 / RG-14 | Latency that survives a quit; percentiles, never traces |
+| `environment_profiles` | RG-10 | A room that survives a restart — **without** its audio levels (DECISIONS §46) |
 
-`song_arrangements` remains the one table with a wrapper (`saveArrangement`) that **no rendered
-component imports** — the arrangement editor is a feature, not a fix, and CLAUDE.md already
-records it honestly.
+**Still absent, and both declined rather than missing:**
+
+| Concept | Why not |
+|---|---|
+| `devices` | Requires reversing DECISIONS §35. §20 (a) is the proposal; it is not adopted |
+| `security_events` | Follows `devices`. Events attributed to nobody are not a security log |
+
+`perf_samples` is written by the backend and reached by no command, which
+`scripts/qa-inventory.mjs` correctly reports as **BACKEND ONLY** — that is right for a table the
+engine samples into and the report reads through `service_events`, and it is recorded here so the
+next reader does not "fix" it.
 
 ## 14. Event architecture audit
 
-15 Tauri events today. Candidates from the brief, and whether they have a producer:
+Candidates from the brief, and whether they have a producer **now**:
 
 | Proposed event | Producer exists? |
 |---|---|
 | `stt://partial` / `stt://final` | **Already covered** — `stt://transcript` carries `is_final`. Do not split it |
-| `stt://stable` | No producer. Requires §7 |
-| `output://heartbeat` | No producer. Requires §18 |
-| `device://connected` / `disconnected` | No producer — the hub counts, it does not identify |
-| `readiness://changed` | No producer — readiness is frontend-only |
-| `service://locked` / `unlocked` | No producer — no lock exists |
+| `stt://stable` | No producer, and **declined** — the corroboration rule already gates what STABLE was proposed to gate (§2 row 7) |
+| `output://heartbeat` | **Producer exists (RG-02)** — every output page beats, and the state reaches Live through one helper |
+| `service://locked` / `unlocked` | **Producer exists (RG-03)** — the lock is engaged and lifted through `set_service_lock`, and its state is recorded in `service_events` |
+| `readiness://changed` | No producer — readiness is frontend-only, deliberately (DECISIONS §61) |
+| `device://connected` / `disconnected` | No producer, and **declined** — the hub counts, it does not identify (DECISIONS §35 / §39) |
 
-**Recommendation:** add no events until their producers exist. Five of six would be decorative.
+**Recommendation unchanged in shape, inverted in effect:** add no event until its producer
+exists. Four of the six now have one, and the two that do not are the two the product has
+decided against.
 
 ## 15. Field-readiness audit
 
-Unchanged: **0 %** on audio in, pixels out, hardware, packaged build, and a real congregation.
-`audits/QA-2026-08-14.md` §16 Stages A–F is the script. F6/F7/F8 are regression tests and green in
-CI; **F1–F5 and F9–F14 need a person, a room and a packaged build.**
+**Moved for the first time: 2 / 10.** Relay ran a live sermon on 2026-08-30
+(`audits/FIELD-2026-08-30.md`) — Stage F11 answered, no drift across 49.5 minutes and 2,423
+decodes, five of six auto-fires correct, and **one wrong verse reached a congregation**. The
+signed-bundle conditions were separately reproduced on a real `.dmg` with
+`scripts/sign-local.sh`.
+
+Still at zero: **pixels out** (nothing has ever measured what a projector actually showed),
+**hardware other than one M4 Pro**, **a second operator**, and **nine more services**.
+`audits/QA-2026-08-14.md` §16 Stages A–F remains the script; F6/F7/F8 are regression tests and
+green in CI.
+
+**Fifty minutes in a room produced seven findings that months of reading source had not.** That
+ratio is the argument for the pilot in §24, and it is also the argument against calling anything
+here finished.
 
 ---
 
 ## 16. Missing functionality — consolidated
 
-> **Rewritten 2026-08-30. Everything the original list named is now built except three,
-> and leaving the old list in place would have made this document say "missing" about
-> features that shipped the same week — the exact failure §26 and RG-44/RG-46 are
-> about.** The original list is preserved below the line, because a register that
-> quietly loses what it used to claim cannot be checked.
+> **Rewritten 2026-08-30, re-checked 2026-08-31.** Everything the original list named is
+> now built except three, and leaving the old list in place would have made this document
+> say "missing" about features that shipped the same week — the exact failure §26 is about.
 
 **Still missing, and each for a stated reason:**
 
 | Item | Why it is still missing |
 |---|---|
-| **Signed language packs** | The signing infrastructure does not exist, and an *unsigned* pack is a wrong-verse-on-a-wall vector. RG-19 shipped the offline bundle without them, deliberately |
+| **Signed language packs** | The signing infrastructure does not exist, and an *unsigned* pack is a wrong-verse-on-a-wall vector (SECURITY.md T9). RG-19 shipped the offline bundle without them, deliberately |
 | **Explicit room calibration** | DECISIONS §19 / rule 12: nothing may compare a signal to a stored level. The instrument that could show a seeded floor safe (`cargo test audio::gate -- --ignored`, against real room audio) has never been pointed at a real room — Stage C |
 | **Time-to-first-verse** | A HUMAN metric: from the preacher saying it to the congregation reading it. `latency.rs` measures machine stages, and the one span that claimed to cover this end to end was measuring how long the preacher had been talking (FIELD F-6, RG-31). It needs a stopwatch in a room, not a commit |
 
 **Built since this list was written:** service replay · Sunday report · service event
 timeline · output heartbeat and per-channel liveness on Live · Service Lock · update
-rollback · DB-compat preflight · offline installer · pre-air Safe Screen validation ·
+data-rollback · DB-compat preflight · offline installer · pre-air Safe Screen validation ·
 contrast validation · distance preview · output accessibility mode · room / environment
-profiles · language quality centre · training mode · rehearsal replay · diagnostic bundle
-export · privacy screen · persisted latency · p99.
+profiles · language quality centre · training drills · diagnostic bundle export · privacy
+screen · persisted latency · p99 · the T1–T10 threat model · the AI's own weaknesses stated
+in the app, offline.
+
+**Three things in §2 moved to DECLINED rather than being built**, and that is a result, not
+an omission: STABLE transcript state (§7), candidate prefetch (§12), and the device
+identity / security event log pair (§19, §22). Each row carries the reason. A register
+where nothing is ever declined is a register that has not been read.
 
 ## 17. Redundant functionality — do not build
 
@@ -648,37 +734,45 @@ export · privacy screen · persisted latency · p99.
 |---|---|
 | §6/§8 two-speed transcription | The window is not the lever (DECISIONS §36) |
 | §11 adaptive window sizing | Superseded by adaptive **cadence** (DECISIONS §38) |
-| §12 candidate prefetch | Optimises a 2.6 ms stage inside a 144 ms budget |
+| §12 candidate prefetch | Optimises a 2.6 ms stage inside a 144 ms budget (CLAUDE.md rule 31) |
 | §7 splitting `stt://transcript` into two events | `is_final` already carries it |
+| §7 a STABLE text state | The corroboration rule already gates the harm STABLE was proposed to gate (CLAUDE.md rule 28) |
 | §5 a second readiness implementation | `boot/probes.js` is the implementation; extend it, do not fork it |
+| §4 an engine-side health state | Its only possible action is refusing the wall, which §20 and §42 both forbid (DECISIONS §61) |
 | §14 explainable detection | Built: `DetectionInspector.svelte` |
-| §33 never update during a service | Built: `updater.js:33-37` |
+| §33 never update during a service | Built: `updater.js::idle()`, and it now reads the service lock as well as the microphone |
 | §13 claim-type display | Built, and stricter than proposed (DECISIONS §21) |
 | §69 design system | Built, and pinned by tests |
+| §24 tamper-evident record | Would claim a guarantee against the one actor Relay says it does not defend against (SECURITY.md T10) |
 
 ## 18. Technical debt
 
 No new debt is recorded here. `ROADMAP.md` §4 owns the register.
 
-**The counts this report corrected have themselves drifted, which is worth more than the
-numbers.** RG-20 was filed because six documents disagreed about how big `main.rs` was;
-this report corrected them to 4,369 / 118 / 1,941 — and a week of work later those are
-wrong too:
+**The one piece of debt this document is itself responsible for is counts in prose, and the
+history below is kept as evidence rather than maintained.** RG-20 was filed because six
+documents disagreed about how big `main.rs` was. Every correction since has been wrong within
+the week:
 
-| | when RG-20 was filed | corrected to | **actually, 2026-08-30** |
-|---|---|---|---|
-| `main.rs` lines | 4,024 | 4,369 | **5,723** |
-| registered commands | 114 | 118 | **137** |
-| `capture.js` lines | 1,908 | 1,941 | **2,195** |
+| | RG-20 filed | 1st correction | 2nd correction | 2026-08-31 |
+|---|---|---|---|---|
+| `main.rs` lines | 4,024 | 4,369 | 5,723 | **5,573** |
+| registered commands | 114 | 118 | 137 | **132** |
+| `capture.js` lines | 1,908 | 1,941 | 2,195 | **2,156** |
 
-A number in prose is wrong the moment somebody commits, and re-correcting it is not a
-fix — it is the same maintenance bill, paid again. **The durable version is the command
-beside the number**, which is why every count in this document and in `QA_HARNESS.md`
-Part 0 now carries one:
+**This table is deliberately not maintained past this row.** Its point is the shape, not the
+values: three of the four columns went up and the last went *down*, because five dead commands
+were deleted — so even the direction of drift is not guessable. A number in prose is wrong the
+moment somebody commits, and re-correcting it is not a fix, it is the same bill paid again.
+
+**The durable version is the command beside the number.** Every count in §0, in `QA_HARNESS.md`
+Part 0 and in `CLAUDE.md` now carries one:
 
 ```bash
 wc -l src-tauri/src/main.rs
 grep -c '#\[tauri::command\]' src-tauri/src/main.rs
+cd src-tauri && cargo test          # the runner's own summary line, not a grep
+npx vitest run                      # likewise
 node scripts/qa-inventory.mjs
 ```
 
@@ -789,53 +883,63 @@ Every one of these was reaffirmed by this audit, and each is cited by code:
 
 ## 21. Prioritised plan, in the three buckets the brief asks for
 
+> **Rewritten 2026-08-31. The first bucket used to hold RG-01 … RG-19 as work to start; all
+> nineteen shipped.** Leaving them listed as "can start today" is the exact failure §16 and §26
+> are about, so what shipped moved to the closed register (§23) and this bucket now holds only
+> what is genuinely un-started.
+
 ### BLOCKED ON CODE — can start today, no external dependency
 
-| P | Item | Why now |
+**The bucket is nearly empty, and that is the finding.** Nothing below is on the critical path to
+a pilot; §24's conditions are all about rooms, not commits.
+
+| P | Item | Why, and why it is not urgent |
 |---|---|---|
-| **P0** | **RG-01** Live shows real per-channel output health | A badge that cannot detect its own failure is worse than no badge. The backend command already exists |
-| **P0** | **RG-02** Anonymous output heartbeat + last-seen | Makes RG-01 true instead of inferred. Not a §35 reversal |
-| **P0** | **RG-03** Service Lock | Blocks model changes, template edits, DB maintenance and updates while a service is recording |
-| **P0** | **RG-04** `service_events` table + persist latency samples | The prerequisite for replay, the Sunday report, and any human metric |
-| **P0** | **RG-05** Safe Screen — validate before air | Reference · template · fit · output reachable. Refuse, and say so |
-| **P1** | **RG-06** Update rollback + DB-compat preflight | The updater can deliver a fix; it cannot undo one |
-| **P1** | **RG-07** Service replay | Built entirely from RG-04's data |
-| **P1** | **RG-08** Sunday report | Same |
-| **P1** | **RG-09** Degraded-mode state + banner | Make the fallbacks that already exist *visible* |
-| **P1** | **RG-10** Room / environment profiles | Persist what the gate already learns |
-| **P1** | **RG-11** Language Quality Centre | Turns LANGUAGES.md's honesty into an instrument |
-| **P1** | **RG-12** Diagnostic bundle export | A file, not a screen |
-| **P2** | **RG-13** 9 unnamed controls + the 2 real handlerless buttons | Accessibility, on the run surface |
-| **P2** | **RG-14** p99 + persisted latency history | One line in `latency.rs`, plus RG-04 |
-| **P2** | **RG-15** Synthetic end-to-end readiness test | Extends `boot/probes.js`; do not fork it |
-| **P2** | **RG-16** Training mode / rehearsal replay | Same rig as `stt::realtime`, pointed at the UI |
-| **P2** | **RG-17** Privacy screen | Answers "what is leaving this machine" in one place |
-| **P3** | **RG-18** Contrast validation · distance preview · output accessibility mode | Needs a designer and a real projector |
-| **P3** | **RG-19** Offline installer + signed language packs | High market fit; do after RG-06 |
+| **P2** | **Finish the onboarding wizard** (§59/60) | The brief's later steps — a stage display, a template choice, a test scripture, a readiness check, a rehearsal — all exist as controls, and both instruments that would carry them now exist too (§5's six-stage walk, §29's rooms). It is wiring, and it is the smallest remaining gap in the product |
+| **P2** | **Prototype the stripped Sunday layout** (§38/49) | Live has density and full-screen; the brief's layout is a different proposal. It should be judged by an operator who is not the author, which makes it a pilot question rather than a design one |
+| **P3** | **Release channels** (§47) | Low value before a first release exists |
+| **P3** | **Per-detection voice confidence** (§13) | Needs a per-utterance SNR the decoder does not currently expose. Claim *type* is already first-class and stricter than the brief proposed |
+| **P3** | **Token-level streaming decode** (§9) | A whisper.cpp capability question, not a Relay wiring question. The cadence work already took the latency it would have bought |
+
+**Deliberately not in this bucket, and each recorded as DECLINED in §2 with its reason:** a STABLE
+transcript state (§7), candidate prefetch (§12), device identity and a security event log
+(§19–§22), a tamper-evident record (§24), and an engine-side health state (§4 · DECISIONS §61).
+
+**Open on purpose, not un-started:** RG-32 — a context-resolved bare verse is labelled `Direct` at
+a hardcoded 0.88, and by rule 10 that label is a lie. Changing it makes every in-passage
+*"verse eighteen"* cost a click, and one service is not enough evidence to spend that. It wants a
+second and third Sunday, which puts it in the next bucket rather than this one.
+
+**Flagged for a human:** RG-50 — whether Relay ships a second public-domain corpus, an import
+path, or neither, is a product decision `DECISIONS.md` does not contain. §19b holds it.
 
 ### BLOCKED ON REAL-WORLD VALIDATION — no commit can close these
 
-- **Stage F11** — a full service, watching for a rising per-minute line. *The highest-value unrun
-  item in the project*, named as such by three documents and by none of the registers.
+- **Stage F11 — answered.** One full service, 49.5 minutes, 2,423 decodes, no drift
+  (`audits/FIELD-2026-08-30.md`). Kept here because one service is one service.
 - Stages F1–F5, F9–F10, F12–F14 — church hardware, a quiet room, a noisy room, a quiet speaker.
-- Stages A–E — the packaged build, the projector, the ATEM, the eyes.
-- Word error rate, any language. Thirty minutes of real preaching on tape.
-- One observed end-to-end update install.
-- One full service run by a **non-author** operator.
+- Stages A–E — the projector, the ATEM, the eyes. **Pixels out remains at zero.**
+- **Word error rate, any language.** Thirty minutes of real preaching on tape. This is the moat
+  and it is the highest-value unrun item in the project.
+- One observed end-to-end update install, on a machine that is not this one.
+- **One full service run by a non-author operator.** The largest unknown in the project.
+- RG-18's contrast and distance thresholds, against a real wall.
+- RG-32's second and third services.
 
 ### BLOCKED ON EXTERNAL DEPENDENCY
 
-- Windows code-signing certificate (~$10/month, Azure Trusted Signing) — ROADMAP §1.
-- A native speaker of Yorùbá, Kiswahili or Hausa, for the alias table and Yorùbá numerals.
-- A decision on the product's name (README still says *"working name — rename freely"*).
+- **Windows code-signing certificate** (~$10/month, Azure Trusted Signing) — ROADMAP §1. It
+  blocks the platform most churches are on.
+- **A native speaker** of Yorùbá, Kiswahili or Hausa, for the alias table and Yorùbá numerals —
+  and, until one exists, §44's signed language packs stay refused.
+- **A decision on the product's name**, due before the first church installs.
 
 ---
 
 ## 22. Production readiness — scored per dimension, no hiding average
 
 Scored against **the first ten churches**, not against enterprise scale.
-**Re-scored 2026-08-31**, after 21 pull requests, one live service, and 51 closed register
-entries. The previous score is kept beside each so the movement is visible rather than asserted.
+**Re-scored 2026-08-31**, after one live service and 56 closed register entries. The previous score is kept beside each so the movement is visible rather than asserted.
 
 | Dimension | Was | Now | Why it moved |
 |---|---|---|---|
@@ -849,7 +953,7 @@ entries. The previous score is kept beside each so the movement is visible rathe
 | Distribution | 5 | **6 / 10** | An offline installer exists and the packaged build has now run a real service. Still no Windows certificate, and no update has ever been watched installing on a machine that is not this one |
 | **Language (the moat)** | 3 | **3 / 10** | **Unmoved, and this is the honest number.** Yorùbá numerals are still unparsed, no native speaker has reviewed the aliases, and **word error rate has never been measured in any language.** Six real sermon lines entered the corpus — the first real-world data it has ever had — but they are English and they measure detection over TEXT, not hearing over AUDIO |
 | Observability | 7 | **9 / 10** | The per-minute line persists, p99 ships, the diagnostic bundle exports, the service record points at the words that produced it — and the two instruments that were lying (an end-to-end span measuring how long the preacher had talked; launch checks that could not fail) were caught by using them |
-| Documentation | 8 | **9 / 10** | Three files that described defects already fixed, a report that listed twenty shipped features as missing, and a register table this report corrupted itself — all corrected, and the register now has a test. Counts are stated as the command that produces them, because correcting them failed three times |
+| Documentation | 8 | **9 / 10** | Three files that described defects already fixed, a report that listed twenty shipped features as missing, a register table this report corrupted itself, a status matrix a week out of date, and a README line four documents quoted after it was deleted — all corrected, and **the register's own summary counts are now asserted against the table by `relaygap.test.js`**. Counts are stated as the command that produces them, because correcting them failed three times |
 | **Field validation** | 0 → 2 | **2 / 10** | One real service, 49.5 minutes, packaged build, instrumented — [audits/FIELD-2026-08-30.md](audits/FIELD-2026-08-30.md). Stage F11 answered; 5 of 6 auto-fires correct; **one wrong verse reached a congregation**. Still one church, one preacher, one language, one machine, and an operator who wrote the software |
 
 **No overall score is given.** An average would hide the **3** and the **2**, which are still the
@@ -926,6 +1030,8 @@ neither is a code problem, and twenty-one merged pull requests could not touch t
 | ✅ RG-56 | **Nothing compared a FRESH install's schema to an UPGRADED one.** `schema.sql` is `include_str!`d so it cannot drift from the code; the upgrade path — a sniffed `ALTER … ADD COLUMN` per late column — is separate and was unchecked | Invisible exactly where it is written: every test and developer database is fresh, so a forgotten migration works perfectly here and is missing on every machine that has run an older build. The first symptom is a church's laptop failing a query that works everywhere else | `db/mod.rs`; per-column migration tests existed, no comparison did | **Two tests, and the second closes what the first could not.** One builds an old database honestly — drop every column an `ALTER` claims to add, wind `user_version` to 0, run the real `migrate`, require them all back. The other diffs today's schema against `schema-baseline.sql` — the schema at the project's first commit, checked in — and fails if a column was added to an existing table with no migration behind it | RG-04 | P2 | M | Breaking a pragma sniff fails the first; adding a column with no `ALTER` fails the second. **I recorded this as unclosable for want of an old schema — wrongly, git had one all along** |
 | ✅ RG-57 | **The CI detection gate contained only invented sentences.** 57 cases, every one written by somebody imagining how a preacher talks, guarding SPEC's <5% wrong-verse rate | The gate that decides whether detection quality regressed had never seen a real ASR transcript. The only real-world data the project has was sitting in `detections.heard_text` and in one Rust test | `eval_corpus.json`; `audits/FIELD-2026-08-30.md` | Six verbatim lines added, `source: FIELD-2026-08-30` — five references the preacher really made, and the Luke 10 line that produced a wrong verse, as a NEGATIVE. The corpus note also records what the scorer **cannot** see: it drives `detect_direct` and the router, not `ContextMemory`, so a green scorecard is not evidence about the path that actually failed | RG-24 | P2 | S | 63 cases, 100% recall, 0 wrong verses, 0 paraphrase auto-fires — `cargo test eval::tests::print_scorecard -- --nocapture` |
 | ✅ RG-58 | **The wrong-verse gate ran at ONE dial position.** `eval::run` builds `Router::default()`, so SPEC's <5% was enforced at sensitivity 50 and nowhere else — while R4-03 had just proved that at dial 100 the auto-fire bar equals the confidence floor and every deliberate demotion goes inert | A church that moves the slider was running a configuration nothing had ever measured, and the one check that would have noticed was not looking there | `r4_04`, `#[ignore]`d as "a measurement" since the R4 audit | Un-ignored — it costs 20 ms and asserts six positions from 0 to 100. **And it needed teeth:** run as it was, it passed with the `UncertainNumber` repair torn out, because no corpus case fires without it. Eleven ordinary-preaching negatives added (`source: R4-audit`) — the sentences that really did put verses on walls | RG-23 · RG-57 | P1 | S | With the repair removed the gate reports **11.8% at dial 63** and fails — the band where the demotion sits. 74 cases, 0.0% at every position |
+| ✅ RG-59 | **The AI disclosure never reached the operator.** `docs/AI_DISCLOSURE.md` is the honest account of what the AI does and where it is weak, and it was readable only from the repository. In the app, Help carried the reassuring half — the never-guess rule — and none of the honest half | A church that never opens GitHub was shown only the part that builds confidence. Publishing the reassuring half alone is worse than publishing neither: it is the same asymmetry as a status badge that cannot detect its own failure | `Help.svelte` TOPICS vs `docs/AI_DISCLOSURE.md`; no link, and a link would have been useless — the operator who needs this is offline in a hall | A Help topic, **What the AI is bad at**: Relay never writes scripture and reads the KJV verbatim; African-language listening is the weakest part *and* the headline claim; word error rate has never been measured in any language; keep `Esc` under your hand | RG-11 · §58 | P2 | S | `aidisclosure.test.js` — four claims, asserted in **both** documents by substance rather than wording, so the prose can improve and only deleting a claim breaks it |
+| ✅ RG-60 | **No threat model in the shape the brief asked for.** `SECURITY.md` argued three priorities well and left the rest of the surface as an absence rather than as rows | An absence cannot be reviewed. Two of the ten rows are honest gaps that follow DECISIONS §35, and they were indistinguishable from oversights until they were written down as decisions | `SECURITY.md` before this pass: no T1–T10 table; RELAY_GAP §2 §64 read PARTIAL | T1–T10 added: content leaving the device · LAN screen control (ACCEPTED, §35) · the closed drive-by · the broadcast-only hub · path traversal · template injection · the update channel · model integrity · language packs (no surface yet, on purpose) · the malicious operator (out of scope) | RG-19 for T9 | P2 | S | Each row names the mechanism or the test that holds it; T9 and T10 are recorded as absences with the condition that would change them |
 ---
 
 ## 24. GO / NO-GO — the decision, made
@@ -1039,8 +1145,8 @@ matters, and **not one line of it is a commit.**
       Public-domain corpora are addable today with no licence (DECISIONS §32.4). This report
       got that reason wrong once (RG-50) and will not decide it.
 - [ ] **A projector**, for RG-18's contrast and distance thresholds.
-- [ ] **The product's name.** `README.md` still says *"working name — rename freely"*, and §24
-      now permits real churches to install it.
+- [ ] **The product's name.** Still undecided (`docs/SPEC.md`), and §24 now permits real
+      churches to install it. The old README line four documents kept quoting is gone.
 
 ### Done, and kept here so the shape of the week is legible
 
@@ -1105,29 +1211,30 @@ here so a future tidy-up does not remove the target of live citations.
 (frozen machine audits) are deliberately different altitudes, and `docs/README.md` records why an
 audit that edits its own history stops being evidence. This file joins them; it replaces none.
 
-### Update: the drift table
+### Update: the drift table — executed, and deliberately not maintained
 
-| File · line | Says | Should say |
-|---|---|---|
-| `CLAUDE.md:101` | `4.0k lines, 114 cmds` | `4,369 lines, 118 cmds` |
-| `CLAUDE.md:153` | "the 114 registered commands" | 118 |
-| `docs/QA_HARNESS.md:29` | 594 frontend | **594 is correct — keep it**, and name `npx vitest run` as the command. See the box in §0 |
-| `docs/ROADMAP.md:25` | "(DECISIONS §23)" for the Windows signing gate | §23 is the voice gate — cite the live-safety table row, not §23 |
-| `docs/ROADMAP.md:106` | `4,024 lines / 114 commands` | `4,369 / 118` |
-| `docs/ROADMAP.md:107` | `capture.js` 1,908 | 1,941 |
-| `docs/ROADMAP.md` §1 | — | Add Stage F11 |
-| `docs/README.md:4` | "last full sweep 2026-08-20, against `07654a7`" | Re-stamp |
-| `docs/README.md:62` | "35 decisions deep" | 38 numbered (+28 unnumbered rows) |
-| `docs/README.md` §hierarchy | — | Index `GPT.md`, `RELAY_GAP.md`, `audits/PERF-2026-08-24.md` |
-| `docs/QA_HARNESS.md:479` | e2e "23 tests" | **28 (26 run, 2 ignored)** — §0 line 30 is the reproducible one and was right. A first pass here got this backwards by counting `#[ignore]` inside doc-comments: `grep -n '#\[ignore' src-tauri/src/e2e.rs` returns 5 lines and only 2 are attributes |
-| `docs/QA_HARNESS.md:32` | 319 buttons | 321 |
-| `docs/QA_HARNESS.md:589` | quotes CLAUDE.md's 114 as current | 118 |
-| `docs/PRODUCT_AUDIT.md:18` | `4,024 / 114` | Add a current column to the existing banner |
-| `CHANGELOG.md` | no `[0.1.0-4]` | Add it |
-| `docs/GPT.md:489` | `main.rs` "~4,000 lines" | 4,369 (its e2e figure at `:332` is correct — it copied the right table) |
+The 2026-08-30 pass listed sixteen file-and-line corrections. **All sixteen were applied, and
+every one of the values in them is already stale** — including two that named `docs/GPT.md`, a
+file that no longer exists. The table is not reproduced here, because reproducing it would be the
+seventeenth wrong number in a document about wrong numbers.
 
-**The rule this drift earns, and it is the one worth keeping:** *a count that appears in more than
-one file will drift, and the copy that drifts is the one an agent reads first.* `QA_HARNESS.md`
-§0 is the register of counts, and every count carries its command. Other documents should cite
-that table rather than restating it — which is exactly why the new `AGENTS.md` states no numbers
-at all.
+**What was done instead of maintaining it:**
+
+| Change | Effect |
+|---|---|
+| `CLAUDE.md` stopped stating `main.rs`'s size and command count | It now says the file *"has outgrown every number ever written here"* and names `wc -l` and `grep -c`. A line that cannot drift |
+| `QA_HARNESS.md` §0 became **the** register of counts | Every row carries the command that produces it, and every other document cites the table rather than restating the values |
+| `AGENTS.md` states **no counts at all** | Which is why it is the only document that has never drifted |
+| `relaygap.test.js` grew a sixth assertion | The register's own summary sentence — entries, closed, withdrawn, not closed — is now checked against the table it summarises. It had said 54 and 51 in consecutive sentences |
+| Four documents stopped quoting a deleted README line | `README.md` has not said *"Working name — rename freely"* for some time; `RELAY_GAP`, `ROADMAP` and `PRODUCT_AUDIT` (×4) all still quoted it as current. Corrected to cite `docs/SPEC.md`, where the position actually lives |
+
+**The rule this earns, and it is the one worth keeping:** *a count that appears in more than one
+file will drift, and the copy that drifts is the one an agent reads first.* The correction is not
+a better number — it is one register, one command per row, and a citation everywhere else.
+
+**And the same rule applies to a status, not only to a count.** §2 of this document carried
+thirty-one rows that were true on 2026-08-29 and false a week later, while the fix logs directly
+above them said so. A stale matrix is more dangerous than a stale number, because it reads as a
+decision rather than as a measurement — which is why §2 now cites a **file and a symbol** instead
+of a line number, and why every row that resolved by *deciding not to build* says **DECLINED**
+rather than going quiet.
