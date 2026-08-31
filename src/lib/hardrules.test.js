@@ -100,6 +100,37 @@ describe('RG-76 · the mechanically checkable hard-way rules', () => {
     ).toEqual([]);
   });
 
+  // ── Rule 41 ───────────────────────────────────────────────────────────────
+  it('rule 41 — no native confirm(), alert() or prompt()', () => {
+    // Tauri's webview does not implement them. `confirm()` returns **false without
+    // ever showing a dialog**, so a two-step delete guarded by one deletes nothing
+    // and reports success — a control that lies. `prompt()` blocks the webview's own
+    // event loop.
+    //
+    // Six files already document this in comments, which is how it was found: it was
+    // the one invariant living in `docs/ARCHITECTURE.md` §8 and NOT in CLAUDE.md's
+    // numbered list. Now it is rule 41, and now it is checked.
+    const bad = [];
+    for (const [file, src] of SVELTE) {
+      // Strip comments first — every current mention is a comment explaining why
+      // these are not used, and flagging those would make the test cry wolf.
+      const code = src
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .replace(/<!--[\s\S]*?-->/g, '')
+        .split('\n')
+        .filter((l) => !/^\s*(\/\/|\*)/.test(l))
+        .join('\n');
+      for (const m of code.matchAll(/(^|[^.\w])(confirm|alert|prompt)\s*\(/g)) {
+        bad.push(`${file}: ${m[2]}()`);
+      }
+    }
+    expect(
+      bad,
+      `Tauri's webview returns false without showing a dialog — use a two-step ` +
+        `arm/confirm or a mounted [role="dialog"]: ${bad.join(', ')}`,
+    ).toEqual([]);
+  });
+
   // ── Not a numbered rule: a trap this session nearly walked into ──────────
   it('the files in docs/ that the Rust build compiles in still exist', () => {
     // **`docs/` is not purely documentation.** `db/mod.rs` does

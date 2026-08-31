@@ -231,9 +231,32 @@ kinds back — `hello`, `beat`, `rendered` — none of which can carry content
 
 ---
 
-## 8. Invariants — the rules that keep it from breaking
+## 8. Invariants — the ARCHITECTURAL ones
 
 These were learned the hard way (hours-long freezes/crashes). Do not regress them.
+
+> ### This is a SUBSET, and the ones it leaves out are the more dangerous half
+>
+> **`CLAUDE.md`'s "Architecture rules learned the HARD WAY" is the full list** —
+> count it with `grep -cE '^[0-9]+\. \*\*' CLAUDE.md`. The eleven below are the ones
+> that belong to *this* document's subject: the process model, threading, lock order,
+> the audio path. They are here because an engineer reading about the architecture
+> needs them in front of them.
+>
+> **The rules NOT below are the ones that decide whether a wrong verse reaches a
+> congregation**, and a reader who takes this section for the whole set will miss
+> every one of them:
+>
+> * only `DetectionMethod::Direct` may auto-fire — and "Direct" means Relay *heard*
+>   it, not that it parsed confidently;
+> * audio levels are **learned, never assumed** — three individually-reasonable
+>   absolute thresholds once made Relay deaf to a quiet preacher, silently;
+> * a panic control may never report a success it did not achieve;
+> * a migration must be **retryable**, or a failed one bricks every subsequent boot;
+> * the choke point is *where the check goes* — a validator added at five call sites
+>   will be missing from the sixth.
+>
+> Read `CLAUDE.md` first. This section is a convenience, not a contract.
 
 1. **Never call `tick()` inside a reactive `$:` block** (Svelte) — it re-enters the scheduler and hard-freezes the webview. Use `afterUpdate` for DOM side-effects; use `setInterval` (not `tick`) for clocks.
 2. **Never hold a `Mutex` lock across `emit` / `broadcast_content`** on a background thread — deadlocks the macOS main run loop. Compute under lock, release, *then* emit.
@@ -245,7 +268,7 @@ These were learned the hard way (hours-long freezes/crashes). Do not regress the
 8. **Feed STT the non-overlapping tail** of each chunk (the detection chunker's overlap garbles whisper).
 9. **No `unwrap()` in live paths** — a panic mid-sermon is the worst failure. Surface errors to the operator.
 10. **No per-channel-type rendering branches** — output differences are template *configuration*, never `if channel_type == …` in render code.
-11. **No native `confirm()`/`alert()`** — Tauri's webview doesn't implement them (returns false). Use in-app two-step confirmations.
+11. **No native `confirm()`/`alert()`/`prompt()`** — Tauri's webview doesn't implement them: `confirm()` returns `false` **without ever showing a dialog**, so a two-step delete guarded by one deletes nothing and reports success. Use in-app two-step confirmations. *(This was the one invariant that lived here and **not** in `CLAUDE.md`; it is now rule 41 there, and pinned by `hardrules.test.js`.)*
 
 ---
 
