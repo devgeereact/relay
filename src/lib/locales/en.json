@@ -60,6 +60,7 @@
   "live.start_listening_to_transcribe": "Start listening to transcribe live.",
   "live.no_model": "No speech model loaded — see Settings. Manual override still works.",
   "live.now_live": "Now live: {reference}",
+  "live.not_in_bible": "{reference} is not in your Bible — Relay parsed that reference but no such verse exists, which usually means it misheard a number. Nothing was sent.",
   "live.screens_cleared": "Screens cleared",
   "live.rehearsal_on": "Rehearsal — nothing reaches the screens",
   "live.rehearsal_off": "Live. Screens cleared.",

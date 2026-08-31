@@ -35,7 +35,7 @@
   import { t } from '../i18n.js';
   import EmptyState from '../ui/EmptyState.svelte';
   import Loading from '../ui/Loading.svelte';
-  import { heard, methodKey } from '../detect.js';
+  import { heard, methodKey, inLibrary } from '../detect.js';
   import DetectionInspector from '../DetectionInspector.svelte';
   import { humanError as humanErrorBase } from '../errors.js';
   import { TYPE, payloadOf, slidesOf, slideAccent, cueSub, nextOf, stepFrom } from '../plan.js';
@@ -513,6 +513,14 @@
   async function acceptTop() {
     const d = dets[0];
     if (!d) return;
+    // A reference that parsed but resolves to no verse cannot be fired, and the
+    // backend already knows — it marks the suggestion `in_library: false`. Without
+    // this the `A` key still reached `confirm_detection` and failed after the
+    // press, so the keyboard bypassed the very warning the card renders.
+    if (!inLibrary(d)) {
+      flash($t('live.not_in_bible', { reference: d.reference }));
+      return;
+    }
     try {
       await confirmDetection(d.reference);
       flash($t('live.now_live', { reference: d.reference }));
@@ -1279,9 +1287,24 @@
               <div><span class="klbl">Reference</span><b>{d.reference}</b></div>
             </div>
 
+            <!-- PARSED, BUT THERE IS NO SUCH VERSE. Relay keeps showing it — the
+                 suggestion is the operator's evidence that a number was misheard,
+                 and dropping it would be silence. What it must not do is offer an
+                 amber Accept that looks exactly like a working one and fails after
+                 the click. The disabled control says WHY, because a disabled
+                 control that does not is its own finding. -->
+            {#if !inLibrary(d)}
+              <p class="claim-absent">
+                {$t('live.not_in_bible', { reference: d.reference })}
+              </p>
+            {/if}
             <div class="acts">
-              <button class="act go" on:click={acceptTop}>
-                <b>Accept &amp; fire</b><span>Send to outputs</span>
+              <button class="act go" on:click={acceptTop} disabled={!inLibrary(d)}>
+                {#if inLibrary(d)}
+                  <b>Accept &amp; fire</b><span>Send to outputs</span>
+                {:else}
+                  <b>Nothing to send</b><span>That verse does not exist</span>
+                {/if}
               </button>
               <button class="act no" on:click={dismissTop}>
                 <b>Dismiss</b><span>Not this verse</span>
@@ -1315,8 +1338,13 @@
               <span class="mchip sm" class:guess={!heard(x)}>
                 {$t(methodKey(x))}{#if heard(x)} {Math.round(x.confidence * 100)}%{/if}
               </span>
+              {#if !inLibrary(x)}
+                <span class="rc-absent">not in your Bible</span>
+              {/if}
               <span class="spring"></span>
-              <button class="mini" on:click={() => pushRef(x.reference)}>Fire</button>
+              <button class="mini" on:click={() => pushRef(x.reference)} disabled={!inLibrary(x)}>
+                Fire
+              </button>
               <button class="mini ghost" on:click={() => dismissDetection(x.reference)}>Dismiss</button>
             </div>
           {/each}
@@ -1861,6 +1889,11 @@
   .mt-q{margin:5px 0 0; font-size:var(--v-fs-b1); line-height:1.55; color:var(--v-txt)}
   .claim-verse{margin:10px 0 0; font-family:var(--f-serif); font-style:italic;
     font-size:var(--v-fs-b2); line-height:1.55; color:var(--v-dim)}
+  /* No verse behind the reference. Rose is the failure colour on this screen;
+     amber is never spent here, because nothing about this is on air. */
+  .claim-absent{margin:10px 0 0; font-size:var(--v-fs-cap); line-height:1.5;
+    color:var(--v-rose)}
+  .rc-absent{font-size:var(--v-fs-cap); color:var(--v-rose)}
   .meta2{display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:14px;
     padding-top:12px; border-top:1px solid var(--v-line)}
   .meta2 b{display:block; margin-top:3px; font-size:var(--v-fs-b2); font-weight:500; color:var(--v-txt)}

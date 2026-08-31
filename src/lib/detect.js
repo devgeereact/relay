@@ -51,3 +51,25 @@ export function methodKey(d) {
  * a number that lies is worse than no number, because it looks like information.
  */
 export const showsConfidence = (d) => heard(d);
+
+/**
+ * Is there actually a verse behind this reference?
+ *
+ * `emit_detections` deliberately does NOT drop a reference that parsed cleanly but
+ * resolves to nothing — "Psalms 23:99" out of garbled speech, or a book/chapter
+ * pair that does not exist. Silence would be worse: the operator would never learn
+ * that Relay is mishearing numbers, which is the single most useful thing that
+ * suggestion can tell them. So it is demoted to a suggestion and marked
+ * `in_library: false` (`pipeline.rs`).
+ *
+ * **Nothing on the frontend read that flag.** The suggestion rendered exactly like
+ * a real one, with the same amber Accept button beside it — and accepting it
+ * failed, after the click, with "…isn't in the Bible text". A control that looks
+ * identical to its working neighbours and cannot work is the same defect class as
+ * a status badge that cannot detect its own failure.
+ *
+ * **Absent means yes**, deliberately: an older payload, the LAN remote, or any
+ * producer that does not set the field must not have its suggestions greyed out on
+ * a guess. This can only ever add a warning where the backend explicitly said so.
+ */
+export const inLibrary = (d) => d?.in_library !== false;

@@ -43,6 +43,7 @@
     stopCapture,
     listOutputChannels,
   } from '../../stores/capture.js';
+  import { inLibrary } from '../../detect.js';
 
   export let template = null;
   export let allTemplates = [];
@@ -107,6 +108,14 @@
   }
 
   async function accept(d) {
+    // Parsed cleanly, resolves to no verse — the backend says so with
+    // `in_library: false`. The button below is disabled for it; this is the second
+    // door, because a guard rendered only in markup is a guard the next caller
+    // walks past.
+    if (!inLibrary(d)) {
+      error = `${d.reference} is not in your Bible — Relay misheard a number. Nothing was sent.`;
+      return;
+    }
     busyRef = d.reference;
     error = '';
     try {
@@ -240,12 +249,15 @@
               </span>
             </div>
             {#if d.matched_text}<p class="lo-heard">“{d.matched_text}”</p>{/if}
+            {#if !inLibrary(d)}
+              <p class="lo-absent">Not in your Bible — Relay misheard a number.</p>
+            {/if}
             <div class="lo-sugacts">
               <button
                 class="r-btn amber sm"
-                disabled={busyRef === d.reference || $safeMode}
+                disabled={busyRef === d.reference || $safeMode || !inLibrary(d)}
                 on:click={() => accept(d)}>
-                {busyRef === d.reference ? 'Sending…' : 'Approve'}
+                {#if !inLibrary(d)}Nothing to send{:else if busyRef === d.reference}Sending…{:else}Approve{/if}
               </button>
               <button class="r-btn ghost sm" on:click={() => dismissDetection(d.reference)}>
                 Dismiss
@@ -562,6 +574,13 @@
     line-height: 1.5;
     color: var(--v-faint);
     font-style: italic;
+  }
+  /* Rose, never amber: nothing about a reference with no verse behind it is live. */
+  .lo-absent {
+    margin: 6px 0 0;
+    font-size: var(--v-fs-cap);
+    line-height: 1.5;
+    color: var(--v-rose);
   }
   .lo-sugacts {
     display: grid;

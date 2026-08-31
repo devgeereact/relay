@@ -31,6 +31,22 @@ permanent test.
 
 Windows is not signed yet, so this applies to macOS only.
 
+### A suggestion for a verse that does not exist now says so
+
+When speech is garbled Relay sometimes parses a reference that is real-looking and
+does not exist — "Psalms 23:99". It deliberately still shows you that suggestion,
+because it is the clearest possible sign that it misheard a number, and hiding it
+would leave you guessing.
+
+What it should not have done is offer an **Approve** button that looked exactly
+like a working one. Pressing it failed a moment later with an error, and pressing
+<kbd>A</kbd> did the same.
+
+Now the suggestion is marked before you touch it — "Not in your Bible — Relay
+misheard a number" — the Approve button is disabled and says *why* rather than just
+going grey, and the keyboard shortcut will not fire it either. The suggestion stays
+on screen, because it is still telling you something worth knowing.
+
 ### Your service report can finally say whether Relay was any use
 
 The report after a service used to say **0 suggested · 0 dismissed** — for every
