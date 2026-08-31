@@ -130,6 +130,7 @@ Live software fails live. These are the things that actually happen.
 | **The bar doesn't move when someone speaks** | Relay cannot hear. Nothing else will work. | Settings → Audio. Try a different input. Check the cable and that the desk is sending. |
 | **The transcript is nonsense** | Usually the mic is too quiet, not the AI being bad. | Get a stronger feed. Relay adapts to a quiet room, but it cannot invent a signal that is not there. |
 | **"Relay keeps changing its mind about the language"** | On a strong accent, leaving the language on **Auto** makes Relay re-guess every few seconds — and a wrong guess garbles the transcript, which is where most wrong verses come from. | **Settings → Scripture & Bible → Recognition Language.** Pick the language instead of Auto. This is the single biggest accuracy win for an accented preacher. |
+| **A suggestion says "Not in your Bible"** | Relay parsed a real-looking reference out of garbled speech — "Psalms 23:99" — and that verse does not exist. It is telling you it misheard a **number**. | Nothing to do about that one; its Approve button is deliberately dead. If it keeps happening, the microphone is the cause, not the AI — see the two rows above. |
 | **Wrong verses keep appearing on the wall** | Relay heard a book name and a number in ordinary speech — *"Matthew, one of the twelve"*, *"number one… number two…"*. | Turn the **sensitivity dial down** on Live. If it is still noisy, press the **Armed** chip to disarm auto-fire — everything else keeps working and you fire by hand. And fix the language above first, because that is usually the real cause. |
 | **"No speech model loaded"** | Step 2 above never happened. | Settings → Speech → Download. Manual override still works meanwhile. |
 | **Nothing appears on the projector** | The output window is not open, or it is on the wrong display. | Outputs → Screens → pick the display → **Open**. |
@@ -187,10 +188,16 @@ that was working. If you see it, that passage is longer than the template was de
 
 **Library → History** holds every service. Open one and you get:
 
-- **The Sunday report** — how long, how many verses, how many Relay decided by itself versus how
-  many you fired, and how fast the transcript was keeping up. **Only what was actually measured
-  appears.** A blank is shown as "—" and never as 0, because a report that shows zero for
-  something nobody measured is a report that gets better as the system gets worse.
+- **The Sunday report** — how long, how many verses, how many Relay put up by itself versus how
+  many you fired, **how many of its suggestions you took and how many you turned down**, and how
+  fast the transcript was keeping up. **Only what was actually measured appears.** A blank is
+  shown as "—" and never as 0, because a report that shows zero for something nobody measured is
+  a report that gets better as the system gets worse — and until recently the suggestion figures
+  did exactly that, showing 0 for something nothing was recording.
+
+  The percentage is **of the suggestions you answered**, not of every suggestion Relay made. One
+  that scrolled past while you were busy is not counted anywhere, and the report says so rather
+  than folding it in.
 - **Replay** — click any line in the timeline to see what was being said around it, what Relay
   decided, and how fast it was going. It replays the *record*, not the audio: Relay never stores
   what was said aloud.
