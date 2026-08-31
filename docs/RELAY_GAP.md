@@ -1042,18 +1042,35 @@ Each row keeps the previous score beside it so movement is visible rather than a
 > citations and sixteen dead `docs/…` paths.
 >
 > That matters *here* more than anywhere else in this document, because **several of these scores
-> were partly self-reported by those instruments.** They were not wrong in a way that made the
-> product worse — every gap they missed turned out to be closed or benign — but the confidence
-> behind the high rows was resting, in part, on checks that were reading less than they claimed.
-> They now read what they claim, and each is pinned so it cannot narrow again. **Read the 8s and
-> 9s below as better-founded than they were, not as higher.**
+> were partly self-reported by those instruments.** The confidence behind the high rows was
+> resting, in part, on checks that were reading less than they claimed. They now read what they
+> claim, and each is pinned so it cannot narrow again. **Read the 8s and 9s below as
+> better-founded than they were, not as higher.**
+>
+> **An earlier version of this paragraph said the missed gaps "turned out to be closed or benign".
+> Two hours later that was false, and it is corrected here rather than quietly dropped** — which
+> is the rule the rest of this document runs on:
+>
+> * **RG-73** — the readiness checklist ticked *"Signed + notarized macOS build"*. **No Apple
+>   certificate has ever existed**; all four releases went out unsigned. That is release-blocking,
+>   it was hiding on the page a release decision is read from, and rule 17's
+>   first-signed-build trap is therefore still ahead of this project.
+> * **RG-74** — *"every text token at AA"* had been ticked since July and measured by nothing.
+>   When finally measured it was **false**: `--v-faint` sat at 4.38:1 on `--v-surf2`, below AA,
+>   with five shipped rules using that pairing.
+>
+> **So the honest statement is the stronger one: two unchecked claims were load-bearing and wrong,
+> and both were found only by building the instrument that could disagree with them.** Neither
+> moved a score — the first is counted under Distribution, which was already held down for exactly
+> this, and the second was one marginal token, now fixed and measured. But "we checked and it was
+> fine" would have been the comfortable sentence, and it was not true.
 
 | Dimension | Was | Now | Why it did or did not move |
 |---|---|---|---|
 | Code | 9 | **9 / 10** | Held. 260 lines of dead component CSS deleted — proved inert by rebuilding and diffing the emitted bundle, not assumed — and the repository carries **zero** `TODO`/`FIXME` markers and zero unused CSS selectors. Against that: RG-62 found that two of `detections.status`'s four documented values were **structurally unwritable**, which is a correctness defect that lived a long time in a heavily-tested area. Fixed, but the ceiling is unchanged: one god-file (`wc -l src-tauri/src/main.rs`) |
 | Performance | 8 | **9 / 10** | Held, and nothing was measured this pass. Stage F11 still answers it: **no drift across 49.5 minutes and 2,423 decodes** in a real room, every model on this machine measured, the bench predicting the room within 15%. Not 10 for the unchanged reason — one machine |
 | Live safety | 9 | **9 / 10** | Held. RG-63 closed a real defect on the path the operator actually touches: a suggestion for a verse that does not exist rendered an identical amber Approve and failed *after* the click. That is the console's version of a badge that cannot detect its own failure. It does not move the score, because **a wrong verse reached a real congregation on 2026-08-30** and only a second service can show that class is closed |
-| UX | 8 | **9 / 10** | Held. RG-61 gave the setup walk-through the hand-off it never had — the drills, the six-stage path check and rehearsal, each named with its tab — and RG-63 made a dead control say why it is dead rather than merely go grey. Still loses a point for surfaces no instrument here has ever seen |
+| UX | 8 | **9 / 10** | Held, and now partly measured rather than asserted. RG-61 gave the setup walk-through the hand-off it never had; RG-63 made a dead control say why it is dead rather than merely go grey; **RG-74 found a real WCAG AA failure in shipped text** (`--v-faint` at 4.38:1 on `--v-surf2`, five rules using it) that a ticked box had covered since July — fixed, and every text token is now checked against every surface it is placed on. Still loses a point for surfaces no instrument here has ever seen, which is the same reason it does not gain one |
 | Security | 7 | **8 / 10** | **Held on purpose, and this is the row most tempting to raise.** `SECURITY.md` now carries the T1–T10 threat model (RG-60), and two of its rows are honest absences rather than mitigations. But a threat model documents a posture; it does not change one. The LAN control plane is still unauthenticated by decision (§35), and that is the ceiling. The one genuine hardening was small and is counted under Privacy |
 | Privacy | 9 | **9 / 10** | Held — with a near-miss recorded rather than smoothed over. RG-62's first cut passed a **raw string from the webview** into `cues.payload_json`, which `service_timeline` reads back and which is the part of the history most likely to be emailed. Every other cue writer guarantees its shape by construction; that one would have trusted it. Caught in review before it shipped, now parsed to a canonical reference or not stored at all, and pinned by a third e2e test |
 | Reliability / recovery | 7 | **9 / 10** | Held, untouched this pass. Rollback, DB-compat preflight, Service Lock, degraded state, and a migration path proved from both sides against a database that predates it |
