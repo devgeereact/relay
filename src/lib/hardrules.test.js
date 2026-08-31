@@ -131,6 +131,47 @@ describe('RG-76 · the mechanically checkable hard-way rules', () => {
     ).toEqual([]);
   });
 
+  // ── Not a numbered rule: a constant four documents hard-code ─────────────
+  it('the docs cite the same default sensitivity the router actually uses', () => {
+    // `Thresholds::default()` calls `from_sensitivity(DEFAULT_SENSITIVITY)`, so the
+    // "exactly ONE baseline" invariant is unrepresentable otherwise — good. But four
+    // documents write the NUMBER out as `from_sensitivity(50)`, and the seed
+    // thresholds they quote beside it (0.50 auto-fire / 0.35 suggest) are the
+    // safety-relevant half.
+    //
+    // Two baselines once existed and disagreed (0.50/0.35 vs 0.90/0.60), and a
+    // profile save silently snapped the live gate from one scale to the other,
+    // wiping the operator's calibration. Changing the constant without the docs
+    // would put that number back into circulation on paper.
+    //
+    // Reads the constant and requires the docs to agree — drift in EITHER direction
+    // fails, and nothing here needs updating when the constant legitimately moves.
+    const router = read('src-tauri/src/router.rs');
+    const m = router.match(/DEFAULT_SENSITIVITY:\s*u8\s*=\s*(\d+)/);
+    expect(m, 'DEFAULT_SENSITIVITY is gone or no longer a literal').toBeTruthy();
+    const actual = m[1];
+
+    // ONLY the "one baseline" claim — `default() == from_sensitivity(N)`. A bare
+    // `from_sensitivity(100)` is a legitimate and different statement about the TOP
+    // of the dial, and the first version of this test flagged one, which would have
+    // shipped a false failure. Match the claim, not the call.
+    const wrong = [];
+    const CLAIM = /default\(\)\s*==\s*from_sensitivity\((\d+)\)/g;
+    let checked = 0;
+    for (const doc of ['CLAUDE.md', 'docs/DOMAIN_MODEL.md', 'docs/DECISIONS.md', 'docs/ARCHITECTURE.md']) {
+      for (const c of read(doc).matchAll(CLAIM)) {
+        checked += 1;
+        if (c[1] !== actual) wrong.push(`${doc} says default() == from_sensitivity(${c[1]})`);
+      }
+    }
+    // The claim is load-bearing enough that its disappearance is also a finding.
+    expect(checked, 'no document states the one-baseline claim any more').toBeGreaterThan(1);
+    expect(
+      wrong,
+      `the router's DEFAULT_SENSITIVITY is ${actual}: ${wrong.join(', ')}`,
+    ).toEqual([]);
+  });
+
   // ── Not a numbered rule: a trap this session nearly walked into ──────────
   it('the files in docs/ that the Rust build compiles in still exist', () => {
     // **`docs/` is not purely documentation.** `db/mod.rs` does
