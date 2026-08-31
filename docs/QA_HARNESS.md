@@ -32,7 +32,7 @@ and the command is named — a count you cannot reproduce is a rumour.
 | | Count | How to reproduce |
 |---|---|---|
 | Rust tests | **627 passing**, 17 ignored (644 declared) | `cd src-tauri && cargo test` |
-| Frontend tests | **903 passing**, 0 skipped, 65 files | `npx vitest run` — read the runner's own summary line. **Not** `vitest list \| wc -l`: that stream carries Svelte compiler warnings too and over-counted by 7 |
+| Frontend tests | **907 passing**, 0 skipped, 66 files | `npx vitest run` — read the runner's own summary line. **Not** `vitest list \| wc -l`: that stream carries Svelte compiler warnings too and over-counted by 7 |
 | `e2e.rs` tests | **38** (38 run, **0 ignored** — the file has carried no ignored test since R2-C and R2-D closed, DECISIONS §54) | `cd src-tauri && cargo test e2e::` |
 | Registered `#[tauri::command]` | **132** (five dead ones deleted 2026-08-30) | `grep -c '#\[tauri::command\]' src-tauri/src/main.rs` |
 | `.svelte` files | **48**, 22 of them views | `find src -name '*.svelte' | wc -l` |
@@ -47,7 +47,7 @@ and the command is named — a count you cannot reproduce is a rumour.
 | Surface inventory | `node scripts/qa-inventory.mjs` — controls, orphans, command map, create-path chain |
 | Six agents | `.claude/agents/relay-qa-{cold-start,live-path,surface,detection,failure,auditor}.md` |
 | The command | `/qa-audit` — changed-surface by default, `--full`, `--live` |
-| The hook | `.claude/hooks/relay-fast-gate.mjs` — path-filtered, report-only (§1.6) |
+| The hook | `.claude/hooks/relay-fast-gate.mjs` — path-filtered, report-only (§1.6). **Its watch list is itself pinned** (`fastgate.test.js`, RG-69): a rule whose path stops matching does not error, it goes quiet, and four safety files had already gained tests without gaining a rule |
 
 ---
 
