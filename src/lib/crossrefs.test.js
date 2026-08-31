@@ -147,6 +147,19 @@ describe('RG-67 · every cross-reference resolves', () => {
     // A register row whose evidence cannot be found reads as an unproven claim, and
     // the reader has no way to tell "the test was renamed" from "there was no test".
     const rust = RUST_SOURCES.join('\n');
+
+    // Named absences, each with its reason. NOT a keyword allowance: the first
+    // version of this excused any citation whose LINE contained a word like
+    // "deleted" or "renamed", and register rows are single enormous lines that
+    // almost always contain one — it blunted the check completely, and a genuinely
+    // stale citation stopped being caught. A short explicit list cannot do that.
+    const KNOWN_ABSENT = new Set([
+      // F8 of the 2026-08-14 audit names this as a second pin. It has never existed
+      // — the R4 tests run r4_01 … r4_06 — and that audit may not be edited, so the
+      // correction lives in its fix log and this register records it. Recording it
+      // is the point, so it must not fail here.
+      'detection::r4_07',
+    ]);
     // Only citations into OUR OWN modules are checkable. An allow-list of external
     // crates would need extending every time somebody cites `fs::write` or
     // `usize::MAX`, and would go quiet the moment it fell behind — the exact failure
@@ -171,13 +184,26 @@ describe('RG-67 · every cross-reference resolves', () => {
         // `detection::r4_07`, which has never existed.)
         if (file.includes('docs/audits/')) continue;
         const declared = new RegExp(`\\b(fn|struct|enum|const|static|type|mod)\\s+${item}\\b`);
-        if (!declared.test(rust)) dangling.push(`${file} → ${mod}::${item}`);
+        if (declared.test(rust)) continue;
+        if (KNOWN_ABSENT.has(`${mod}::${item}`)) continue;
+        dangling.push(`${file} → ${mod}::${item}`);
       }
     }
     expect(
       dangling,
       `citations into the Rust tree that resolve to nothing: ${[...new Set(dangling)].join(', ')}`,
     ).toEqual([]);
+  });
+
+  it('every known-absent citation is still genuinely absent', () => {
+    // An exception that outlives its reason is a hole. If `detection::r4_07` is ever
+    // written, this list must lose it rather than silently permit a real citation.
+    const rust = RUST_SOURCES.join('\n');
+    for (const ref of ['detection::r4_07']) {
+      const item = ref.split('::')[1];
+      const declared = new RegExp(`\\b(fn|struct|enum|const|static|type|mod)\\s+${item}\\b`);
+      expect(declared.test(rust), `${ref} now exists — remove it from KNOWN_ABSENT`).toBe(false);
+    }
   });
 
   it('every RG- id mentioned anywhere exists in the register', () => {
