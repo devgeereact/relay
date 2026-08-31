@@ -100,6 +100,27 @@ describe('RG-76 · the mechanically checkable hard-way rules', () => {
     ).toEqual([]);
   });
 
+  // ── Not a numbered rule: a trap this session nearly walked into ──────────
+  it('the files in docs/ that the Rust build compiles in still exist', () => {
+    // **`docs/` is not purely documentation.** `db/mod.rs` does
+    // `include_str!("../../../docs/data/schema.sql")` and the same for
+    // `schema-baseline.sql`, so those two files are compiled into the binary —
+    // `schema.sql` IS the shipped baseline schema, and the baseline is what proves
+    // every column added since has a migration behind it.
+    //
+    // Deleting or moving them breaks `cargo build` and **nothing in the frontend
+    // suite would notice** — which is the asymmetry that hides things. This session
+    // was asked to delete unneeded folders under `docs/`; it checked first, and the
+    // next person might not.
+    const mod = read('src-tauri/src/db/mod.rs');
+    const cited = [...mod.matchAll(/include_str!\("([^"]*docs\/[^"]+)"\)/g)].map((m) => m[1]);
+    expect(cited.length, 'db/mod.rs no longer compiles anything in from docs/').toBeGreaterThan(0);
+    for (const rel of cited) {
+      const path = rel.replace(/^(\.\.\/)+/, '');
+      expect(() => read(path), `${rel} is include_str!'d by the Rust build and is gone`).not.toThrow();
+    }
+  });
+
   // ── Rule 36 ───────────────────────────────────────────────────────────────
   it('rule 36 — `broadcast_content` has exactly one caller, inside `broadcast_with_clock`', () => {
     // The choke point. It is why the pre-air validator (DECISIONS §42) covers the AI

@@ -96,6 +96,9 @@ Every audio bug so far was invisible in the code and reproducible only with a sp
 │          audits/ — FROZEN evidence; closures go in a fix log, never in the findings
 │          data/schema.sql — `include_str!`d, so it IS the shipped baseline schema
 │          data/schema-baseline.sql — the oldest schema Relay can upgrade FROM. Never edit
+│          ⚠️ BOTH are compiled into the binary by `db/mod.rs`. `docs/` is NOT purely
+│             documentation: delete either and `cargo build` fails while the whole
+│             frontend suite stays green. Pinned by `hardrules.test.js`
 ├── scripts/version.mjs      — the ONLY place the version is read or written (3 files)
 │   scripts/qa-inventory.mjs — controls · orphan components · command map · create paths
 │   scripts/offline-bundle.mjs — installers + model + README on a USB stick (§53)
