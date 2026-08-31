@@ -305,6 +305,17 @@ fn resume_plan(part_len: u64, model_bytes: u64) -> Resume {
 /// Emits `model://progress` throughout, then exactly one of `model://done`,
 /// `model://cancelled` or `model://error`. Runs on the async runtime; never blocks
 /// the UI thread.
+///
+/// **`model://done` deliberately has no listener**, and that is not an oversight to
+/// be tidied up in either direction. This function only returns `Ok(Outcome::Done)`
+/// once the file is installed and its checksum verified, so `download_model`'s own
+/// resolution already carries the fact; a listener as well would handle it twice and
+/// the two could disagree about ordering. `cancelled` and `error` DO have listeners,
+/// because they arrive while the caller is still awaiting.
+///
+/// It stays emitted because the trio is the protocol this comment documents, and an
+/// outbound event nobody consumes costs nothing — unlike a registered command nobody
+/// calls, which is webview-invokable attack surface (RELAY_GAP RG-51).
 pub async fn download(app: tauri::AppHandle, id: String) -> Result<(), String> {
     let model = find(&id).ok_or_else(|| format!("unknown model '{id}'"))?;
     let state = app.state::<DownloadState>();

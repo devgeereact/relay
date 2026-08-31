@@ -209,7 +209,9 @@ service lock · update safety · diagnostics · models.
 | `output://panic_failed` | A panic control that did **not** achieve what it claimed ([DECISIONS.md](DECISIONS.md) §20) |
 | `nav://blocked` | A nav that could not move, and which of the four reasons it was |
 | `template://updated` | A template changed; every surface re-renders from one engine |
-| `model://progress` · `done` · `error` · `cancelled` | The in-app STT model download |
+| `model://progress` · `done` · `error` · `cancelled` | The in-app STT model download. **`done` has no listener on purpose** — `download_model` resolves when the file is installed and verified, so the command's own return *is* the completion signal; a listener as well would handle it twice |
+| `channel://retemplate` | A screen's template was reassigned. The native output filters it by its own `channel` id, which is why a template swap is live and needs no new URL (DECISIONS §29) |
+| `rehearsal://changed` | Rehearsal was turned on or off. Pushed rather than polled, because every surface must agree about it at the same instant |
 
 Networked clients get the content events as JSON frames over the WS hub
 (`{kind:"content"|"clear"|"black"|"stage_next"|"channel_template", …}`), and send exactly three

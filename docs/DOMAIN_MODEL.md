@@ -297,6 +297,15 @@ actually surfaces.
 | `model://error` | models → Settings/first-run | download failed (dismissable) |
 | `model://cancelled` | models → Settings/first-run | operator cancelled — **not** an error; keeps the `.part` |
 | `stt://language_unstable` | stt worker → console | auto language detection is flapping — the operator should know before blaming the AI |
+| `channel://retemplate` | main → native output window | this screen's template changed; the page filters by its own `channel` id so a swap is live with no new URL (DECISIONS §29) |
+| `rehearsal://changed` | main → every console surface | rehearsal on/off, pushed so no surface can be a poll interval behind the others |
+
+**`model://done` is emitted and deliberately has no listener.** `download_model`
+resolves only once the file is installed and checksum-verified, so the command's own
+return is the completion signal; adding a listener would handle the same fact twice.
+It stays because the trio `done`/`cancelled`/`error` is the protocol `models.rs`
+documents, and an outbound event with no consumer costs nothing — unlike a *command*
+nothing calls, which is attack surface (RG-51).
 
 Two events encode safety, not just plumbing: `output://panic_failed` exists because the panic
 controls fire from a global keydown handler and a shell button that **cannot `catch`** — a

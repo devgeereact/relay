@@ -187,7 +187,7 @@ accounts, RBAC and cloud sync at it.
 *Regenerate the counts with `npx vitest run src/lib/relaygap.test.js` (it checks the table)
 and by reading §23. Last updated 2026-08-31.*
 
-**63 entries. 59 closed, 1 withdrawn as wrong, 3 not closed — and only two of those three are
+**64 entries. 60 closed, 1 withdrawn as wrong, 3 not closed — and only two of those three are
 work** (RG-32 open, RG-41 and RG-50 flagged).
 
 *These four numbers are asserted against the table itself by `relaygap.test.js`; they drifted
@@ -196,7 +196,7 @@ the table it counts is the easiest possible thing to check automatically.*
 
 | | |
 |---|---|
-| ✅ **59 closed** | Every gap this report could reach from the code. The last sixteen were not in the original brief at all — they were found by auditing the things that audit Relay: test files that described defects already fixed, a launch screen whose checks could not fail, a register table this report corrupted itself |
+| ✅ **60 closed** | Every gap this report could reach from the code. The last seventeen were not in the original brief at all — they were found by auditing the things that audit Relay: test files that described defects already fixed, a launch screen whose checks could not fail, a register table this report corrupted itself |
 | ~~1 withdrawn~~ | **RG-27** was filed from a mid-service snapshot and was wrong. Struck through, not deleted |
 | ⚠️ **RG-41** | Not work. A correction kept on the record: two of six views were wrong to "fix" — they are routers, and a heading there would give one screen two |
 | ⏳ **RG-32** | **Open on purpose.** A context-resolved bare verse is labelled `Direct` at a hardcoded 0.88 — by rule 10 that label is a lie, because Relay inferred the book rather than hearing it. Changing it makes every in-passage *"verse eighteen"* cost a click, and **one service is not enough evidence to spend that**. Wants a second and third Sunday |
@@ -248,7 +248,7 @@ reaches it.
 | `main.rs` | **5,573** lines | `wc -l src-tauri/src/main.rs` |
 | `stores/capture.js` | **2,156** lines | `wc -l src/lib/stores/capture.js` |
 | Rust tests | **643** declared (626 run, 17 ignored) | `cd src-tauri && cargo test` |
-| Frontend tests | **897** passing, 0 skipped, 64 files | `npx vitest run` — the runner's summary line |
+| Frontend tests | **899** passing, 0 skipped, 64 files | `npx vitest run` — the runner's summary line |
 | Svelte components | **48** (47 reachable; the orphan is a test probe) | `node scripts/qa-inventory.mjs` |
 | Controls | **462**, 0 in unrendered components, 0 without an accessible name, 0 without a handler | `node scripts/qa-inventory.mjs` |
 | Tables in the schema | **21** (+1 FTS virtual) | `grep -c 'CREATE TABLE' docs/data/schema.sql` |
@@ -689,6 +689,17 @@ Candidates from the brief, and whether they have a producer **now**:
 exists. Four of the six now have one, and the two that do not are the two the product has
 decided against.
 
+**The full catalogue is larger than this table and was not being checked.** `ipc.test.js`
+asserts that every emitted event has a frontend listener, and until RG-64 it built its list
+from `main.rs` alone — so `models.rs`'s four events and everything `channels.rs` emits were
+outside it. Two events are listened for and were missing from every document until this pass:
+`channel://retemplate` (a screen's template was reassigned; the output filters by its own
+channel id, which is what makes a template swap live — DECISIONS §29) and `rehearsal://changed`
+(pushed, so no surface can be a poll interval behind the others). And **`model://done` is
+emitted with no listener on purpose**, because `download_model` resolves only once the file is
+installed and verified — allow-listed with that reason, and a test requires it to still be
+both emitted and unheard, so the exception cannot outlive it.
+
 ## 15. Field-readiness audit
 
 **Moved for the first time: 2 / 10.** Relay ran a live sermon on 2026-08-30
@@ -1043,6 +1054,7 @@ neither is a code problem, and twenty-one merged pull requests could not touch t
 | ✅ RG-61 | **A volunteer finishing the first-run wizard had no way to learn that the practice drills, the six-stage path check and rehearsal exist.** All three shipped; nothing pointed at any of them | The wizard is the last moment somebody is guaranteed to be looking. An instrument nobody can find is an instrument nobody runs — and the path check in particular is the one thing that catches a chain that fails end to end while every part passes | `FirstRun.svelte` STEPS; brief §59/60, carried as PARTIAL in §2 | A hand-off block on the finish step, under the verse it just fired: each instrument named **with the tab it lives on**, plus a line saying this is not the operator's last chance to find them. **Not three more steps** — the wizard's own rule is that it asks as little as it can, and a drill is a thing to do on another day | RG-15 · RG-16 · RG-10 | P2 | S | `firstrunmic.test.js` — four tests: all three named with their location, the path-check sentence that stops it reading as a duplicate of the wizard, the not-your-last-chance line, and **that the step count is still six** |
 | ✅ RG-62 | **Two of `detections.status`'s four values had never been written, and the Sunday report counted them anyway.** The only production insert is inside `persist_fire`, which runs for a fire that reaches a screen — so a real service can write `'auto'` or `'manual'` and nothing else. `'suggested'` and `'dismissed'` were structurally unreachable | The report printed **`0 suggested · 0 dismissed`** for every service ever recorded. Zero is a claim, and it reads as *"Relay never offered you anything"* — the exact inversion DECISIONS §44 forbids, broken two fields away from where it was written. It hid because the report's own tests fed it synthetic rows the product cannot produce: **a test whose fixture is impossible is not a test** | `persist_fire` call sites (`main.rs`), `report.js::sundayReport`, `report.test.js`'s `det(…, 'suggested', …)` | Record **what the operator did**, not what the AI offered: `confirm_detection` writes a `suggestion_accepted` cue, `dismiss_detection` a `suggestion_dismissed` cue, neither during a rehearsal. Uptake is of the suggestions **answered**, and the report names that limit itself. **Persisting suggestions was rejected** — they are not debounced (rule 28), so one paraphrase writes hundreds of rows a minute | RG-04 · RG-08 | P1 | M | Two `e2e` tests, both re-run with the defect reintroduced and both failing; plus a `report.test.js` case that feeds the OLD impossible rows and requires `null`, so the previous shape cannot come back by accident |
 | ✅ RG-63 | **A suggestion whose verse does not exist looked exactly like one that does.** `emit_detections` deliberately keeps a reference that parsed cleanly but resolves to nothing ("Psalms 23:99" out of garbled speech) and marks it `in_library: false` — **and no frontend file read the flag** | The card rendered with the same amber Approve beside it, and the click failed *afterwards* with a backend error. A control that looks identical to its working neighbours and cannot work is the RG-01 defect class on the console instead of the wall. `main.rs` carried a comment naming this exact case, unfixed | `pipeline.rs` sets it; `grep in_library src/` returned only the unrelated `not_in_library` nav result | `detect.js::inLibrary`, read by Live's primary card, its "also pending" rows and `LiveOutputRail`. The suggestion **stays visible** — it is the operator's evidence that a number was misheard, and dropping it would be silence — but the Approve is disabled and **says why**, and `acceptTop`/`accept` refuse it so the `A` key cannot walk past the warning the markup renders | RG-13 | P2 | S | `detect.test.js` (3) — including that an ABSENT flag means present, so the warning can only ever be added on evidence; `liveoutputrail.test.js` (4), mounted, incl. that the handler refuses even when called directly |
+| ✅ RG-64 | **The event contract test scanned one file.** `ipc.test.js` asserts that every event the backend emits is listened for on the frontend — and built its list from `main.rs` alone, so the four `model://` events and everything `channels.rs` emits were outside a contract whose entire claim is exhaustiveness | The second version of the same mistake: this test had already been widened once, because its regex did not allow `_` and had silently excluded `stt://language_unstable` and `output://panic_failed` — **a panic path**. A scanner that reads one file cannot report on a repository, and eleven of thirteen findings in the accessibility pass were the instrument's own bugs | `const emitted = … mainRs.matchAll(…)`; `models.rs` emits four events | Scan **every** `src-tauri/src/*.rs`. `model://done` turned out to be genuinely unheard and is allow-listed **with its reason** — `download_model` resolves only on success, so a listener would double-handle it — and documented at `models.rs::download`, in `ARCHITECTURE.md` and in `DOMAIN_MODEL.md` | RG-53 · RG-13 | P2 | S | A test that the scanner sees `model://*` at all (so a re-narrowing to `main.rs` fails), a test that each allow-listed event is **still emitted and still unheard** (so the list cannot outlive its reason), and a bogus event added to `channels.rs` — which the widened scanner caught and the old one could not have |
 ---
 
 ## 24. GO / NO-GO — the decision, made

@@ -10,7 +10,7 @@
 // Rust's `invoke_handler!`, and (the other direction) every event the backend
 // emits must be listened for somewhere.
 
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, it, expect } from 'vitest';
 
@@ -134,9 +134,37 @@ describe('Tauri event contract', () => {
   // and `output://panic_failed` — the second being a PANIC path, the one place a
   // dropped event is least affordable. They matched nothing, so they were never
   // checked, and the test still passed and still looked exhaustive.
+  //
+  // ── AND IT SCANNED ONE FILE ────────────────────────────────────────────────
+  //
+  // The second version of that same mistake: `emitted` was built from `main.rs`
+  // alone, so anything emitted from another module was outside a contract whose
+  // whole claim is exhaustiveness. `models.rs` emits four events and `channels.rs`
+  // is the output hub; none of them were ever checked. **A scanner that reads one
+  // file cannot report on a repository**, and eleven of thirteen findings in the
+  // last accessibility pass were the instrument's own bugs (RG-13) — the pattern is
+  // that the tool is wrong more often than the code it audits.
+  const rustFiles = readdirSync(resolve(root, 'src-tauri/src'))
+    .filter((f) => f.endsWith('.rs'))
+    .map((f) => read(`src-tauri/src/${f}`));
   const emitted = new Set(
-    [...mainRs.matchAll(/emit\(\s*"([a-z_]+:\/\/[a-z_]+)"/g)].map((m) => m[1]),
+    rustFiles.flatMap((src) =>
+      [...src.matchAll(/emit\(\s*"([a-z_]+:\/\/[a-z_]+)"/g)].map((m) => m[1]),
+    ),
   );
+
+  // Emitted on purpose with nobody listening. Each entry needs a REASON here, not
+  // just a name — an allow-list without one becomes the place failures go to be
+  // forgotten, which is how the "no dead commands" claim stayed true-sounding while
+  // five commands were unreachable.
+  const DELIBERATELY_UNHEARD = {
+    // `download_model` only resolves once the file is installed and its checksum
+    // verified, so the command's own return already carries completion. A listener
+    // as well would handle the same fact twice, and the two could disagree about
+    // ordering. `cancelled` and `error` DO have listeners, because they arrive
+    // while the caller is still awaiting. See `models.rs::download`.
+    'model://done': 'the download command resolves on success; a listener would double-handle it',
+  };
 
   it('finds the emitted events', () => {
     expect(emitted.size).toBeGreaterThan(3);
@@ -150,9 +178,32 @@ describe('Tauri event contract', () => {
     );
   });
 
+  // Guards the WIDENING, for the same reason. If this ever reads only main.rs
+  // again, these two vanish and every other assertion here still passes.
+  it('the scanner reads every Rust module, not just main.rs', () => {
+    expect([...emitted]).toEqual(
+      expect.arrayContaining(['model://progress', 'model://done']),
+    );
+  });
+
   it('every event the backend emits is listened for on the frontend', () => {
-    const unheard = [...emitted].filter((e) => !listeners.includes(e));
+    const unheard = [...emitted].filter(
+      (e) => !listeners.includes(e) && !(e in DELIBERATELY_UNHEARD),
+    );
     expect(unheard, `backend emits events nobody listens to: ${unheard.join(', ')}`).toEqual([]);
+  });
+
+  it('every allowed exception is still actually emitted, and still actually unheard', () => {
+    // An allow-list that outlives its entry is a lie in the other direction: it
+    // would silently permit a future event that happens to reuse the name, and it
+    // would hide the day somebody DOES wire a listener up.
+    for (const [name, why] of Object.entries(DELIBERATELY_UNHEARD)) {
+      expect(emitted.has(name), `${name} is allow-listed but nothing emits it`).toBe(true);
+      expect(
+        listeners.includes(name),
+        `${name} now HAS a listener — remove it from the allow-list (${why})`,
+      ).toBe(false);
+    }
   });
 });
 
