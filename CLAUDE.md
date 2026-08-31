@@ -81,7 +81,7 @@ cargo test eval::tests::print_scorecard -- --nocapture         # detection score
 
 Every audio bug so far was invisible in the code and reproducible only with a specific mic in a specific room.
 
-- `RELAY_RECORD_WAV=/path/x.wav` — write the CLEANED stream (what the VAD and whisper actually see) on Stop. Off by default, never uploaded.
+- `RELAY_RECORD_WAV=/path/x.wav` — write the CLEANED stream (what the VAD and whisper actually see) on Stop. Off by default, never uploaded. **Two things a pilot church must be told**, because this is the instruction that turns the moat from an assertion into a number: it **buffers the whole service in RAM** (48 kHz mono f32 ≈ **570 MB for 50 minutes**) and writes once, at Stop — so **press Stop, never force-quit**, or the recording is gone. The hand-rolled RIFF header is pinned by `audio::gate::the_debug_recorder_writes_a_wav_that_can_be_read_back`; a single wrong field yields a file that opens as noise, after the service, with no second take.
 - `RELAY_STT_TIMING=1`, `RELAY_AUDIO_RMS=1` — decode lag / what the voice gate sees. Content-free.
 - `RELAY_SENTRY_DSN=…` — **debug builds only** — point crash reporting at your own Sentry project without touching Settings. Still scrubbed; compiled out of release. Empty = unset.
 - `RELAY_BENCH_WAV=… cargo test audio::gate stt::bench -- --ignored --nocapture` — replay real speech through the real front-end at any mic level (`RELAY_BENCH_SCALE`) and noise (`RELAY_BENCH_NOISE`). This is how the "deaf to a quiet preacher" bug was proved.

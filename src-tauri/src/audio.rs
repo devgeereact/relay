@@ -923,6 +923,77 @@ mod gate {
             .collect()
     }
 
+    /// RG-77 — the debug recorder is the pilot's single highest-value instruction,
+    /// and its WAV writer had no test at all.
+    ///
+    /// `RELAY_RECORD_WAV` is what turns *"word error rate has never been measured in
+    /// any language"* — the sentence the moat's 3/10 rests on — into a number.
+    /// `ROADMAP.md` §1 calls it the highest-value line on that page, and `RELAY_GAP.md`
+    /// §24 makes it a condition of the supervised pilot.
+    ///
+    /// The writer underneath is a hand-rolled 44-byte RIFF header. **A single wrong
+    /// field produces a file that opens as noise, or does not open at all — and the
+    /// church has already given the service.** There is no second take.
+    ///
+    /// Round-trips through this module's own `load_f32`, which is the reader every
+    /// bench in here uses, so the format is checked by the thing that consumes it.
+    #[test]
+    fn the_debug_recorder_writes_a_wav_that_can_be_read_back() {
+        let dir = std::env::temp_dir().join(format!("relay-wav-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("tmpdir");
+        let path = dir.join("rec.wav");
+
+        // Values a real capture produces: full scale, silence, and negatives.
+        let samples: Vec<f32> = (0..2048)
+            .map(|i| ((i as f32) / 2048.0 * std::f32::consts::TAU).sin() * 0.75)
+            .collect();
+        write_wav_f32(&path, &samples, 48_000).expect("write");
+
+        let bytes = std::fs::read(&path).expect("read back");
+        assert!(bytes.starts_with(b"RIFF"), "not a RIFF file");
+        assert_eq!(&bytes[8..12], b"WAVE", "not a WAVE file");
+        // Format 3 = IEEE float, mono, 48 kHz, 32-bit. A player that trusts the header
+        // and gets these wrong renders the sermon as static.
+        assert_eq!(
+            u16::from_le_bytes([bytes[20], bytes[21]]),
+            3,
+            "format must be IEEE float"
+        );
+        assert_eq!(
+            u16::from_le_bytes([bytes[22], bytes[23]]),
+            1,
+            "must be mono"
+        );
+        assert_eq!(
+            u32::from_le_bytes([bytes[24], bytes[25], bytes[26], bytes[27]]),
+            48_000,
+            "sample rate in the header must be the capture rate"
+        );
+        assert_eq!(
+            u16::from_le_bytes([bytes[34], bytes[35]]),
+            32,
+            "32 bits per sample"
+        );
+        // The RIFF size field is `36 + data`, not the file length — getting this wrong
+        // is the classic hand-rolled-header bug and truncates playback.
+        assert_eq!(
+            u32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]) as usize,
+            36 + samples.len() * 4,
+            "RIFF size field"
+        );
+
+        let read = load_f32(path.to_str().unwrap());
+        assert_eq!(
+            read.len(),
+            samples.len(),
+            "sample count survived the round trip"
+        );
+        for (a, b) in samples.iter().zip(read.iter()) {
+            assert!((a - b).abs() < f32::EPSILON, "sample changed: {a} != {b}");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     #[ignore]
     fn voiced_ratio_on_real_speech() {

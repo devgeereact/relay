@@ -30,6 +30,12 @@ code that would consume each already exists.
 > **The single highest-value line on this page is now `RELAY_RECORD_WAV`.** It is one
 > environment variable, set for one service, and it converts *"word error rate has never been
 > measured in any language"* — the sentence the 3/10 moat rests on — into a number.
+>
+> **Tell the operator two things, or the service is wasted.** It buffers the whole recording in
+> RAM — 48 kHz mono float is about **570 MB for a 50-minute service** — and writes the file
+> **once, at Stop**. A force-quit or a crash loses all of it, which is exactly the morning you
+> most wanted it. So: end the service with **Stop**, then check the file exists before closing
+> the laptop.
 
 | Item | Unblocks | Cost |
 |---|---|---|
