@@ -136,9 +136,33 @@ jobs:
           path: src-tauri/target/release/bundle/msi/*.msi
           if-no-files-found: error
 
+  # THE NODE MATRIX IS NOT DECORATION — DO NOT TRIM IT TO ONE.
+  #
+  # `npm test` passed on Node 20, which is all CI ran, and failed on Node 22 and
+  # newer with 60 red tests on a clean checkout: `TypeError: Cannot read properties
+  # of undefined (reading 'clear')` on the first `localStorage.clear()`.
+  #
+  # Node >= 22 defines `localStorage`/`sessionStorage` on the global as OWN accessor
+  # properties which return `undefined` without `--localstorage-file`, and vitest's
+  # jsdom environment leaves keys the global already owns — so Node's dead stub won
+  # over jsdom's real Storage. The 60 tests are exactly the ones covering what an
+  # operator sees when the app relaunches: the session, the crash record, the
+  # first-run flag.
+  #
+  # `src/test-setup.js` fixes it, and CLAUDE.md says in as many words: "Don't delete
+  # it because 'jsdom provides that'." **Nothing in CI exercised that fix.** Deleting
+  # the shim would have left this workflow green while every contributor on a current
+  # Node saw a broken checkout — the shape of a guard that guards nothing.
+  #
+  # 20 is the floor the Rust job also uses; 22 is where the break was; 24 is a
+  # current runtime, so the fix is proved forward and not only backward.
   frontend:
-    name: Frontend
+    name: Frontend (Node ${{ matrix.node }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [20, 22, 24]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -146,7 +170,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: ${{ matrix.node }}
           cache: npm
       - run: npm ci
       # Relay's version lives in three files (tauri.conf.json, package.json,
