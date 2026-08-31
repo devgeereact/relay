@@ -590,6 +590,13 @@ Useful to know so no agent re-files them:
   `::a_plan_cue_does_not_re_expand_through_a_drifted_arrangement`,
   `::an_arrangement_with_no_recorded_shape_is_not_called_stale`,
   `arrangements.test.js`. RG-22, DECISIONS §55.
+- **Six real sermon lines are in the CI detection gate** — `eval_corpus.json`,
+  `source: FIELD-2026-08-30`, verbatim from `detections.heard_text`. Five references a preacher
+  really made, and the Luke 10 line that produced a wrong verse, as a NEGATIVE. **Four of the
+  five correct ones are the bare "Deuteronomy 15, 7" shape this codebase demotes on purpose** —
+  do not tighten that demotion without reading the corpus note.
+  The corpus also says what it CANNOT see: the scorer drives `detect_direct` and the router, not
+  `ContextMemory`, so a green scorecard is not evidence about the context path that actually failed.
 - **A spoken in-passage jump reports itself** — `e2e.rs::r2_a_spoken_passage_jump_that_cannot_move_must_say_so`.
   This was R2-C, an open defect until 2026-08-30; the jump was the fourth door into the bug
   `NavResult` exists to prevent.
