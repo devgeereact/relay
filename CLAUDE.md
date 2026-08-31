@@ -167,7 +167,7 @@ Every audio bug so far was invisible in the code and reproducible only with a sp
 
 ## Build status
 
-**Release decision, 2026-08-31: NO-GO for general release · GO for a supervised pilot** — two churches, named operators, every service watched by somebody who can take the wall back by hand. Relay ran a live sermon on 2026-08-30 (`docs/audits/FIELD-2026-08-30.md`): Stage F11 answered, no drift across 49.5 minutes, five of six auto-fires correct — **and one wrong verse reached a congregation**. Word error rate is still unmeasured in every language, there is no Windows certificate, and nobody but the author has run a service. `docs/RELAY_GAP.md` §24 owns the decision and the five conditions that convert it.
+**Release decision, 2026-08-31: NO-GO for general release · GO for a supervised pilot** — two churches, named operators, every service watched by somebody who can take the wall back by hand. Relay ran a live sermon on 2026-08-30 (`docs/audits/FIELD-2026-08-30.md`): Stage F11 answered, no drift across 49.5 minutes, five of six auto-fires correct — **and one wrong verse reached a congregation**. Word error rate is still unmeasured in every language, **neither platform has a code-signing certificate** (all four releases went out unsigned on the pre-release path — RG-73, so rule 17's trap is still ahead), and nobody but the author has run a service. `docs/RELAY_GAP.md` §24 owns the decision and the five conditions that convert it.
 
 Full pipeline works end to end: **listen → transcribe (local whisper) → detect (direct + semantic + context) → gate (router) → render on independently-templated outputs (native window + kiosk/OBS over WebSocket)**, fully offline.
 

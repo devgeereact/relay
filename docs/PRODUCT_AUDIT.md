@@ -628,13 +628,15 @@ Genuinely weak, and cheap to fix.
 
 ## 16. Production Readiness Checklist
 
-Everything that a commit can tick is ticked. The four unticked boxes in the first list are the entire remaining distance between this repo and a church, and **none of them is code.**
+Everything that a commit can tick is ticked. The unticked boxes in the first list are the entire remaining distance between this repo and a church, and **none of them is code.**
+
+> **One box was ticked and should not have been** — a signed + notarized macOS build. Corrected 2026-08-31 (RG-73). It is the only wrong tick found in this checklist, and it mattered: it made a *release-blocking* absence look closed on the page a release decision would be read from.
 
 **Blocking a first church:**
 - [x] In-app model download *(resumable, checksummed, cancellable — and it can no longer hang or brick)*
-- [x] Signed + notarized macOS build
+- [ ] 🍎 **A signed + notarized macOS build** — *this was ticked and should not have been. The chain is **wired and locally reproducible** (`relay.entitlements`, `Info.plist`, `scripts/sign-local.sh`, pinned by `models::config_boots`), and the release gate refuses a real tag that is not covered — but **no Apple certificate exists**. `gh secret list` holds only the two `TAURI_SIGNING_PRIVATE_KEY*` updater keys; the gate wants six `APPLE_*` secrets and finds none, so every release so far went out on the unsigned pre-release path. **CLAUDE.md rule 17's trap is therefore still ahead of this project, not behind it.***
 - [x] **macOS microphone entitlement** *(without it, the first correctly-signed build is the first one that cannot hear the preacher)*
-- [ ] 💳 **A Windows code-signing certificate** — *~$10/mo (Azure Trusted Signing). The gate now refuses to ship without it, so Windows cannot release at all until this is bought.*
+- [ ] 💳 **A Windows code-signing certificate** — *~$10/mo (Azure Trusted Signing). The gate refuses to ship a real tag without it.* **Neither platform has a certificate**, which the line above used to hide by being ticked.
 - [x] Auto-updater *(version enforced against the tag in CI and at release)*
 - [ ] 👁 **One update actually installed, end to end, on a real machine** — *the path is capable of it; nobody has watched it happen*
 - [x] First-run wizard *(and its microphone meter now actually moves — it was dead)*

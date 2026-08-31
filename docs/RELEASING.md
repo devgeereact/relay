@@ -286,6 +286,7 @@ Relay checks for updates **once, on launch, and only when the microphone is off.
 - [ ] Public key pasted into `src-tauri/tauri.updater.conf.json` and committed
 - [ ] Apple Developer Program joined; 6 Apple secrets set
 - [ ] Windows certificate obtained; 2 Windows secrets set
+- [ ] **Apple certificate obtained; the six `APPLE_*` secrets set** — absent today, which is why every release so far went out on the unsigned pre-release path (RG-73). The gate is per-platform: it refuses a *real* tag not covered on **both**
 - [ ] Tag pushed, draft release built
 - [ ] **Downloaded the artifact on a machine that has never seen Relay, and opened it without a single OS warning**
 

@@ -168,7 +168,7 @@ Two documents, at two altitudes, and they disagree on purpose:
 pilot** — two churches, named operators, every service watched. Every P0 and P1 from the last
 full audit is closed and 56 register entries with them, but four things block a general
 release and none is a commit: a **wrong verse reached a real congregation** on 2026-08-30,
-**word error rate has never been measured in any language**, there is no Windows certificate,
+**word error rate has never been measured in any language**, **neither platform has a code-signing certificate** (RG-73 — all four releases went out unsigned),
 and nobody but the author has ever run a service. The decision, its conditions, and the five
 things that convert it into a general release are [RELAY_GAP.md](RELAY_GAP.md) §24.
 
