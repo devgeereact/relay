@@ -47,10 +47,15 @@ Thumbs.db
 !/.claude/commands/qa-audit.md
 !/.claude/hooks/
 
-# settings.json stays out on purpose — it is one developer's claude-flow wiring (12
-# hook points, a status line, daemon schedules), not Relay's, and committing it would
-# hand every contributor a machine configuration they did not ask for. A hook can only
-# be declared in a settings file, so registration is per machine and one command:
+# settings.json stays out on purpose — it is a MACHINE configuration, not Relay's,
+# and committing it would hand every contributor whatever wiring one developer happened
+# to have. Its contents differ per machine by definition, which is why this comment no
+# longer describes them: an earlier version said "12 hook points, a status line, daemon
+# schedules", and the file in this checkout holds exactly ONE entry — Relay's own fast
+# gate. Check yours with `python3 -m json.tool .claude/settings.json`.
+#
+# A hook can only be declared in a settings file, so registration is per machine and
+# one command:
 #     npm run hooks:install     # idempotent; adds one entry, touches nothing else
 #     npm run hooks:check       # exits 1 if it is not registered
 

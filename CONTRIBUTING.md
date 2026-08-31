@@ -63,7 +63,7 @@ Audio is **never** committed to this repository — `PRIVACY.md` promises a chur
 
 ### Before you start
 
-Read **[`CLAUDE.md`](CLAUDE.md)**. It is the real map, and its "Architecture rules learned the HARD WAY" section is 25 numbered rules — **each one is a bug that reached, or would have reached, a congregation.** They are not style preferences. Regressing one of them is how a wrong verse ends up on a wall.
+Read **[`CLAUDE.md`](CLAUDE.md)**. It is the real map, and its "Architecture rules learned the HARD WAY" section is **forty** numbered rules (`grep -cE '^[0-9]+\. \*\*' CLAUDE.md` — it grows, so count rather than trust this sentence) — **each one is a bug that reached, or would have reached, a congregation.** They are not style preferences. Regressing one of them is how a wrong verse ends up on a wall.
 
 Read **[`docs/DECISIONS.md`](docs/DECISIONS.md)** before proposing a feature. If a decision is not in there, it has not been made yet — ask, don't assume. If the code contradicts it, the **code** is wrong: flag it, don't silently "fix" the decision.
 
@@ -84,8 +84,8 @@ You need **cmake** (whisper.cpp compiles from source) and a Rust toolchain. The 
 ```bash
 cd src-tauri
 cargo fmt --all && cargo clippy --all-targets -- -D warnings   # CI enforces both
-cargo test                                                     # 250 tests
-cd .. && npm test                                              # 138 tests
+cargo test                    # the runner prints the count; do not trust one written here
+cd .. && npm test             # likewise. Both are re-measured in docs/QA_HARNESS.md §0
 ```
 
 Beyond green:
