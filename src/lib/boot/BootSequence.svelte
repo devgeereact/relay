@@ -1,7 +1,8 @@
 <script>
   // LAUNCH & STARTUP — the sequencer.
   //
-  // Owns the order of section 1 of docs/relaydesign/relayscreens.md:
+  // Owns the launch order. The reference document this once cited is not in this
+  // repository; `boot/boot.js` STAGES is the source of truth:
   //
   //   Splash  →  [gate: crash / safe mode]  →  Diagnostics  →  Hardware
   //           →  Integrations  →  Database  →  [gate: update]  →  [gate: recover]

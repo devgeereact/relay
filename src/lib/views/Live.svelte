@@ -950,7 +950,7 @@
 </script>
 
 
-<!-- LIVE — laid out to docs/relaydesign/relay-console-screen.png.
+<!-- LIVE — laid out to docs/design/relay-console-screen.png.
      Row A: PREVIEW · take rack · PROGRAM · OUTPUT STATUS
      Row B: 1 Live Transcript · 2 AI Detection · 3 Service Plan · 4 Quick Controls
      Everything below is a re-dressing of the controls that were already here — no
@@ -1619,7 +1619,7 @@
 </div>
 
 <style>
-  /* LIVE — laid out to docs/relaydesign/relay-console-screen.png, styled entirely
+  /* LIVE — laid out to docs/design/relay-console-screen.png, styled entirely
      from the --v-* design tokens in app.css. No raw hex, no arbitrary px: every
      colour is a token and every gap comes off the 8pt scale. */
   .inspect-link{ align-self:flex-start; margin-top:9px; background:none; border:0; padding:0;

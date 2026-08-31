@@ -126,7 +126,7 @@
 
   // ── THE SHORTCUT BOARD ────────────────────────────────────────────────────
   //
-  // Laid out to docs/relaydesign/relay-helpandshortcut-screen.png. The LAYOUT is
+  // Laid out to docs/design/relay-helpandshortcut-screen.png. The LAYOUT is
   // the reference's. The KEYS are not, and must never be: every row below is
   // generated from `SHORTCUTS` in lib/shortcuts.js — the same table the keydown
   // handler reads — so this screen cannot drift from the real bindings.
@@ -175,7 +175,7 @@
   $: other = SHORTCUTS.filter((s) => s.always && !s.keys.some((k) => PANIC_KEYS[k]));
 </script>
 
-<!-- HELP / SHORTCUTS — laid out to docs/relaydesign/relay-helpandshortcut-screen.png.
+<!-- HELP / SHORTCUTS — laid out to docs/design/relay-helpandshortcut-screen.png.
      Board first (Panic · Transport · Other), then the troubleshooting topics, which
      the reference does not show but which are this tab's other half. -->
 <div class="help">

@@ -8,14 +8,15 @@
   //
   // Everything else in the app is optional refinement. THIS is the path.
   //
-  // ── Shape: docs/relaydesign/relay-production-interface.png, panel 2 ─────────
+  // ── Shape: docs/design/relay-production-interface.png, panel 2 ─────────
   //
   // A vertical step rail on the left, one content pane on the right, Back and
   // Continue at the bottom. The reference's rail is Welcome · Audio Input ·
   // Model Download · Language · Finish.
   //
-  // Two deliberate deviations from it, both logged in
-  // docs/relaydesign/.loop/firstrun-log.md:
+  // Two deliberate deviations from it. (They were logged in a working design log
+  // that is not in this repository, so they are written out here instead — a
+  // citation to a file nobody can open is worse than no citation.)
   //
   //   1. A SCREEN step is added. The reference has none, and without it the
   //      wizard never does the one thing it exists for — put a verse on the

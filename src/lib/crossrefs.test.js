@@ -18,7 +18,7 @@
 //
 // Static and fast: it reads files, mounts nothing, and touches no product code.
 import { describe, it, expect } from 'vitest';
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 
 const root = resolve(__dirname, '../..');
@@ -88,6 +88,37 @@ describe('RG-67 · every cross-reference resolves', () => {
     expect(
       dangling,
       `citations point at DECISIONS sections that do not exist: ${dangling.join(', ')}`,
+    ).toEqual([]);
+  });
+
+  it('every `docs/…` path cited anywhere is a file that exists', () => {
+    // The third kind of dead citation, and the one that had the most instances:
+    // **sixteen source comments cited `docs/relaydesign/`, a directory that is not
+    // in this repository.** Six were the right file under the wrong directory name
+    // (`docs/design/`), one had also been renamed, and four named documents that
+    // were never here at all — a design log, a screens reference, an HTML mock.
+    //
+    // A comment pointing at a file nobody can open is worse than no comment: it
+    // reads as "the reasoning is written down over there" and sends the next
+    // person looking for it.
+    const HISTORICAL = /\bdelete[ds]?\b|superseded|supersedes|no longer|not in this repo|is gone|are gone/i;
+    const dangling = [];
+    for (const [file, text] of FILES) {
+      const lines = text.split('\n');
+      lines.forEach((line, i) => {
+        for (const m of line.matchAll(/docs\/[A-Za-z0-9_./-]+\.(?:png|md|html|sql|json)/g)) {
+          if (existsSync(resolve(root, m[0]))) continue;
+          // A citation may name a file that is gone, as long as it SAYS so — the
+          // register records deletions on purpose, and losing that would be worse.
+          const window = lines.slice(Math.max(0, i - 2), i + 3).join(' ');
+          if (HISTORICAL.test(window)) continue;
+          dangling.push(`${file}:${i + 1} → ${m[0]}`);
+        }
+      });
+    }
+    expect(
+      dangling,
+      `citations to files that do not exist: ${dangling.join(', ')}`,
     ).toEqual([]);
   });
 

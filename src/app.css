@@ -1,6 +1,7 @@
 /* Relay — global design system.
  *
- * Ported from docs/design/relay-app-screens.html. This is the shared visual
+ * Ported from the design references in `docs/design/` (the working HTML mock they
+ * came from is not in this repository). This is the shared visual
  * language (tokens + reusable component classes). Per-screen markup lives in
  * src/lib/views/*.svelte; anything reused across screens lives here so Svelte's
  * per-component style scoping doesn't strip it.
@@ -97,7 +98,7 @@ body{ margin:0; background:var(--bg); color:var(--text); font-family:var(--f-bod
    this file via output.js and relies on --f-serif/--bg) is never disturbed.
    ══════════════════════════════════════════════════════════════════════════ */
 :root{
-  /* ── Design-system palette (docs/relaydesign/relay-designsystem.png v1.0) ──
+  /* ── Design-system palette (docs/design/relay-designsystem.png v1.0) ──
      The token NAMES are unchanged so every consumer (console, Output window via
      output.js, Stage via stage.js) moves together; only the hexes were retuned
      to the published system. Neutrals are the 8-step ramp 950→500. */
@@ -357,7 +358,7 @@ body{ overflow:hidden; text-rendering:optimizeLegibility; -moz-osx-font-smoothin
 .r-row .bar{ position:absolute; left:0; top:12px; bottom:12px; width:3px; border-radius:0 3px 3px 0; }
 
 /* ── Pills, segments, chips ────────────────────────────────────────────────
-   The Library reference (docs/relaydesign/relay-library-screen.png) introduces
+   The Library reference (docs/design/relay-main-library-screen.png) introduces
    three small controls that are not one-offs: the content-type PILL row, the
    view SEGMENT control, and the metadata CHIP. They live here so the Library,
    the Planner and anything after them cannot drift apart on radius or height. */
@@ -586,7 +587,8 @@ body{ overflow:hidden; text-rendering:optimizeLegibility; -moz-osx-font-smoothin
 
 /* ══════════════════════════════════════════════════════════════════════════
    LAUNCH & STARTUP (.b-*) — the shared chrome for section 1 of
-   docs/relaydesign/relayscreens.md: Boot Diagnostics, Hardware Check, Plugin
+   the launch-screen reference set — NOT in this repository; the shipped order is
+   `boot/boot.js` STAGES, which is the source of truth: Boot Diagnostics, Hardware Check, Plugin
    Loading, Database Migration, and the four decision gates.
 
    It lives here, not in a component, for the same reason .r-* does: eight

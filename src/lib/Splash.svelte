@@ -1,5 +1,5 @@
 <script>
-  // The boot screen — docs/relaydesign/relay-splash-screen.png.
+  // The boot screen — docs/design/relay-splash-screen.png.
   //
   // It is DECORATION OVER A FACT, never a fact of its own. It covers the shell
   // only while the engine is being attached, and App.svelte drops it on a hard

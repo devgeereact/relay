@@ -1,5 +1,5 @@
 <script>
-  // LIBRARY → BIBLE. Rebuilt from docs/relaydesign/relay-library-screen.png.
+  // LIBRARY → BIBLE. Rebuilt from docs/design/relay-main-library-screen.png.
   //
   //   BOOKS rail  ·  the chapter  ·  the verse inspector
   //

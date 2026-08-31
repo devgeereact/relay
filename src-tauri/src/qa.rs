@@ -1572,7 +1572,8 @@ mod cold_start {
     /// What a church actually receives, item by item, so a change to the seed is
     /// a decision and not an accident.
     ///
-    /// The counts are the claim in `docs/Working-Agent-PROMPT.md` §R1. If one
+    /// The counts are the R1 claim, now in `docs/QA_HARNESS.md` Part 3 — it
+    /// superseded the three Working-Agent documents, which are gone. If one
     /// moves, the audit's seed section is out of date.
     #[test]
     fn the_seed_is_exactly_what_the_audit_says_it_is() {
