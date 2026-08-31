@@ -59,6 +59,20 @@ function citingFiles() {
 
 const FILES = citingFiles();
 
+/** Every Rust source file, for resolving `module::item` citations. */
+const RUST_SOURCES = (() => {
+  const out = [];
+  const walk = (dir) => {
+    for (const e of readdirSync(resolve(root, dir), { withFileTypes: true })) {
+      const rel = join(dir, e.name);
+      if (e.isDirectory()) walk(rel);
+      else if (e.name.endsWith('.rs')) out.push(read(rel));
+    }
+  };
+  walk('src-tauri/src');
+  return out;
+})();
+
 describe('RG-67 · every cross-reference resolves', () => {
   it('reads a real slice of the repository (the guard on the two below)', () => {
     // Both assertions would also pass if this found nothing at all.
@@ -119,6 +133,50 @@ describe('RG-67 · every cross-reference resolves', () => {
     expect(
       dangling,
       `citations to files that do not exist: ${dangling.join(', ')}`,
+    ).toEqual([]);
+  });
+
+  it('every `module::item` citation into the Rust tree resolves', () => {
+    // The fourth dimension, and the subtlest. This repository **inverts a test's
+    // name when the defect it describes closes** — `two_of_the_three_new_item_menu_
+    // entries_are_dead` became `all_three_new_item_menu_entries_do_something`, which
+    // is exactly the right thing to do (RG-46: closed findings are inverted, never
+    // deleted). But the register rows that cited the old names were not updated, so
+    // three entries pointed their *validation* at functions that no longer exist.
+    //
+    // A register row whose evidence cannot be found reads as an unproven claim, and
+    // the reader has no way to tell "the test was renamed" from "there was no test".
+    const rust = RUST_SOURCES.join('\n');
+    // Only citations into OUR OWN modules are checkable. An allow-list of external
+    // crates would need extending every time somebody cites `fs::write` or
+    // `usize::MAX`, and would go quiet the moment it fell behind — the exact failure
+    // this file exists to catch. The module set is derived from the tree instead, so
+    // it maintains itself.
+    const OURS = new Set(
+      readdirSync(resolve(root, 'src-tauri/src'), { withFileTypes: true })
+        .filter((e) => e.isFile() && e.name.endsWith('.rs'))
+        .map((e) => e.name.replace(/\.rs$/, '')),
+    );
+    const dangling = [];
+    for (const [file, text] of FILES) {
+      for (const m of text.matchAll(/`([a-z_]+)(?:\.rs)?::([a-zA-Z0-9_]+)`/g)) {
+        const [, mod, item] = m;
+        if (!OURS.has(mod)) continue;
+        // `db::mod` names the file `db/mod.rs`, not an item in it.
+        if (item === 'mod') continue;
+        // `docs/audits/` is frozen evidence — those documents may not be edited, so a
+        // dangling citation there cannot be fixed in place and must not fail this
+        // test. It is reported in the audit's own fix log instead, which is the
+        // mechanism they already use for closures. (There is one: F8 cites
+        // `detection::r4_07`, which has never existed.)
+        if (file.includes('docs/audits/')) continue;
+        const declared = new RegExp(`\\b(fn|struct|enum|const|static|type|mod)\\s+${item}\\b`);
+        if (!declared.test(rust)) dangling.push(`${file} → ${mod}::${item}`);
+      }
+    }
+    expect(
+      dangling,
+      `citations into the Rust tree that resolve to nothing: ${[...new Set(dangling)].join(', ')}`,
     ).toEqual([]);
   });
 
