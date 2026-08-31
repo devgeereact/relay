@@ -20,6 +20,17 @@ the reasoning that first set them, [DECISIONS.md](DECISIONS.md).
 The highest-leverage items, and **not one of them is a coding task** (PRODUCT_AUDIT §1). The
 code that would consume each already exists.
 
+> **2026-08-31 — the release decision changed, and it changes what this list is for.**
+> `RELAY_GAP.md` §24 now reads **NO-GO for general release · GO for a supervised pilot**: two
+> churches, named operators, every service watched. That is not a softening — it is how the
+> items below stop being blocked. Twenty-one merged pull requests in one week moved field
+> validation and the language moat by **zero points**, and they never could have; one live
+> service moved field validation off zero and produced seven findings.
+>
+> **The single highest-value line on this page is now `RELAY_RECORD_WAV`.** It is one
+> environment variable, set for one service, and it converts *"word error rate has never been
+> measured in any language"* — the sentence the 3/10 moat rests on — into a number.
+
 | Item | Unblocks | Cost |
 |---|---|---|
 | **Windows code-signing certificate** | Windows can ship at all — the release gate now *refuses* to publish an unsigned Windows build (CLAUDE.md rule 23; **not** DECISIONS §23, which is the voice gate). Windows is the target market's dominant platform on cost grounds. | ~$10/month (Azure Trusted Signing) |

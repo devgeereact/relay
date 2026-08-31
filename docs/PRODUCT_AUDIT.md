@@ -18,7 +18,7 @@ Supersedes Revision 2 (2026-07-12) and Revision 1 (2026-07-05). Every claim was 
 > | `main.rs` | 2,922 lines / 101 commands | `wc -l src-tauri/src/main.rs` · `grep -c '#\[tauri::command\]' src-tauri/src/main.rs` — it has drifted past every number ever written here |
 > | Decision log | 25 decisions | **42** numbered (§18–§59), plus 28 earlier table rows |
 > | `Result<_, String>` in `main.rs` | replaced | **zero remain** — confirmed |
-> | Release decision | not stated | **NO-GO**, and it is a machine's, not this document's |
+> | Release decision | not stated | **NO-GO for general release, GO for a supervised pilot** (2026-08-31) — RELAY_GAP §24 owns it, not this document |
 >
 > **The load-bearing change is the audit this revision could not have seen.**
 > [`audits/QA-2026-08-14.md`](audits/QA-2026-08-14.md) was a six-agent full-scope run. It raised
@@ -28,7 +28,7 @@ Supersedes Revision 2 (2026-07-12) and Revision 1 (2026-07-05). Every claim was 
 > if it returns), and the repair for the P0 was structural — a `DetectionMethod::UncertainBook`
 > that no confidence score, sensitivity dial or calibrator drift can undo (CLAUDE.md rule 10).
 >
-> **But the release decision is still NO-GO**, on the condition Rev 3 never scored:
+> **The release decision is now NO-GO for general release and GO for a supervised pilot** (RELAY_GAP §24), on the condition Rev 3 never scored:
 > *roughly half of Relay, as a volunteer experiences it, has never been reached by any
 > instrument here.*
 >
@@ -118,7 +118,7 @@ Revision 1 named three critical blockers and called them "one epic". **That epic
 | `--v-faint` fails WCAG AA at 3.4:1 | **FIXED.** Now `#88888d` — 4.55–5.61:1 across every surface it sits on. All pass. |
 | PRIVACY.md / SECURITY.md / AI disclosure missing | **SHIPPED, all three.** PRIVACY.md is the best document in the repo and it discloses the unauthenticated LAN broadcast honestly. |
 | Five data-integrity gaps | **ALL FIVE FIXED.** `reimport_full_kjv` is transactional (`db/verses.rs:318`); `import_song` is transactional (`db/songs.rs:238`); `delete_media` cascades to plan cues (`db/library.rs:266`); `move_plan_item` finds neighbours by ordering, not `position ± 1` (`db/plans.rs:202`); the Lower-Third forward-fill is id-scoped (`db/mod.rs:115`). |
-| No way to measure detection accuracy | **SHIPPED.** `eval.rs` + a 50-case labelled corpus, **scored through the real router**, CI-gated to fail the build above SPEC's 5% wrong-verse rate. |
+| No way to measure detection accuracy | **SHIPPED.** `eval.rs` + a labelled corpus (`eval_corpus.json`), **scored through the real router**, CI-gated to fail the build above SPEC's 5% wrong-verse rate. |
 
 That is an unusually complete execution of an audit. The scorecard moves accordingly.
 

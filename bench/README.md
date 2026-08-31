@@ -146,4 +146,4 @@ Every one of those is currently an assertion in a document. Thirty minutes of ta
 
 ## Also useful, and also missing
 
-Real transcripts from a service — even without the audio — would let `eval.rs`'s 50-case corpus grow from hand-written examples into **things a preacher actually said**. Its ten most valuable cases today are the garbled ones taken from a real rehearsal, and it shows.
+~~Real transcripts from a service — even without the audio — would let `eval.rs`'s corpus grow from hand-written examples into **things a preacher actually said**.~~ **Done, 2026-08-30:** six verbatim lines from a live service are in the corpus (`source: FIELD-2026-08-30`), taken from `detections.heard_text`. **The audio is still missing, and that is the gap that matters** — transcripts measure detection over TEXT; word error rate needs the WAV. Set `RELAY_RECORD_WAV` for one service and that changes.

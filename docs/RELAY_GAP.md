@@ -185,14 +185,14 @@ accounts, RBAC and cloud sync at it.
 *Regenerate the counts with `npx vitest run src/lib/relaygap.test.js` (it checks the table)
 and by reading §23. Last updated 2026-08-31.*
 
-**56 entries. 51 closed, 1 withdrawn as wrong, 4 not closed — and only two of those four are
-work.**
+**57 entries. 53 closed, 1 withdrawn as wrong, 3 not closed — and only two of those three are
+work** (RG-32 open, RG-41 and RG-50 flagged).
 
 | | |
 |---|---|
 | ✅ **51 closed** | Every gap this report could reach from the code. The last eleven were not in the original brief at all — they were found by auditing the things that audit Relay: test files that described defects already fixed, a launch screen whose checks could not fail, a register table this report corrupted itself |
 | ~~1 withdrawn~~ | **RG-27** was filed from a mid-service snapshot and was wrong. Struck through, not deleted |
-| ⚠️ **RG-41 · RG-52** | Not work. Both are corrections kept on the record: two views were wrong to "fix", and this table was broken by my own merge conflicts and now has a test |
+| ⚠️ **RG-41** | Not work. A correction kept on the record: two of six views were wrong to "fix" — they are routers, and a heading there would give one screen two |
 | ⏳ **RG-32** | **Open on purpose.** A context-resolved bare verse is labelled `Direct` at a hardcoded 0.88 — by rule 10 that label is a lie, because Relay inferred the book rather than hearing it. Changing it makes every in-passage *"verse eighteen"* cost a click, and **one service is not enough evidence to spend that**. Wants a second and third Sunday |
 | ⚠️ **RG-50** | **Needs a human, not a commit.** `translations` is the last table an operator cannot fill. The reason first recorded here was wrong — see §19b for the decision it actually needs |
 
@@ -420,7 +420,7 @@ Legend: **EXISTS** (implemented and reachable) · **PARTIAL** · **BROKEN** · *
 | 72 | Hardware matrix | **BLOCKED** | Every figure is one M4 Pro | Windows low/mid/high, a real church laptop |
 | 73/74 | Real church field test · first ten churches | **BLOCKED** | `audits/QA-2026-08-14.md` §16 is the script, unrun | A room, a person, a Sunday |
 | 75 | Feature priority model (P0/P1/P2/P3/REFUSE) | **EXISTS in substance** | ROADMAP already sorts into blocked-on-world / parked / deferred / declined | Adopting the brief's live-critical / operator-critical / service-support / admin labels would be an improvement to `CONTRIBUTING.md` |
-| 62 | Success metrics | **PARTIAL** | Latency: instrumented. Detection: `eval.rs` is a CI build gate over a 50-case labelled corpus scored **through the real router**, failing above SPEC's 5 % wrong-verse rate | Human metrics (override rate, acceptance, time-to-first-verse) need §23. Language metrics need §43 |
+| 62 | Success metrics | **PARTIAL** | Latency: instrumented. Detection: `eval.rs` is a CI build gate over a labelled corpus (`src-tauri/data/eval_corpus.json` — count it) scored **through the real router**, failing above SPEC's 5 % wrong-verse rate | Human metrics (override rate, acceptance, time-to-first-verse) need §23. Language metrics need §43 |
 
 ---
 
@@ -834,25 +834,33 @@ Every one of these was reaffirmed by this audit, and each is cited by code:
 ## 22. Production readiness — scored per dimension, no hiding average
 
 Scored against **the first ten churches**, not against enterprise scale.
+**Re-scored 2026-08-31**, after 21 pull requests, one live service, and 51 closed register
+entries. The previous score is kept beside each so the movement is visible rather than asserted.
 
-| Dimension | Score | Note |
-|---|---|---|
-| Code | **9 / 10** | Typed errors, generic fire path, zero `unwrap` in the seven service modules |
-| Performance | **8 / 10** | Excellent and measured — on one dev machine, on TTS audio, with no webview |
-| Live safety | **9 / 10** | The strongest part. Six distinctions, each pinned |
-| UX | **8 / 10** | Loses a point for the Live output badge and 9 unnamed controls |
-| Security | **7 / 10** | Deliberate posture, honestly documented, correctly fixed once. No identity, no log |
-| Privacy | **9 / 10** | Scrubbed, opt-in, offline-normal |
-| Reliability / recovery | **7 / 10** | Good crash story. No rollback, no persisted history, no degraded state |
-| Distribution | **5 / 10** | Blocked on a certificate; no rollback, no offline installer |
-| Language (the moat) | **3 / 10** | Complete alias tables, zero measurement, zero native review, no Yorùbá numerals |
-| Observability | **7 / 10** | A genuinely good instrument that forgets everything on quit |
-| Documentation | **8 / 10** | Excellent, and drifting — see §26 |
-| **Field validation** | **2 / 10** | Was 0. One real service, ~40 minutes, packaged build, instrumented — [audits/FIELD-2026-08-30.md](audits/FIELD-2026-08-30.md). Stage F11 answered (no drift); 5 of 6 auto-fires correct; **one wrong verse reached a congregation**. Still one church, one preacher, one language, one machine, and an operator who wrote the software |
+| Dimension | Was | Now | Why it moved |
+|---|---|---|---|
+| Code | 9 | **9 / 10** | Unchanged and deliberately so. Five dead commands deleted, so no registered command is unreachable — a security reduction as much as a tidy-up. Still one 5.7k-line `main.rs` |
+| Performance | 8 | **9 / 10** | Stage F11 answered in a real room: **no drift across 49.5 minutes and 2,423 decodes**. Every model on this machine measured, and the bench predicted the room within 15%. Not 10: one machine, and `end_to_end_speech_to_scripture` was found measuring the wrong thing |
+| Live safety | 9 | **9 / 10** | Three real auto-fire defects closed (`UncertainNumber`), a stale passage disarmed, a bare verse anchored to the sentence that names it — but **a wrong verse reached a real congregation on 2026-08-30**, and only a second service can show that class is closed |
+| UX | 8 | **9 / 10** | The output badge, the unnamed controls, five untrapped modals, six headingless views, disabled controls that would not say why, and two dead menu entries — all closed. Loses a point for surfaces no instrument here has ever seen |
+| Security | 7 | **8 / 10** | Five webview-invokable commands removed, one of which opened a fullscreen window on any monitor named. The LAN control plane is still unauthenticated by decision (§35) |
+| Privacy | 9 | **9 / 10** | Unchanged. Scrubbed, opt-in, offline-normal; the field audit's quoting rule was written down |
+| Reliability / recovery | 7 | **9 / 10** | Rollback, DB-compat preflight, Service Lock, degraded state, a corrupt session no longer erasing the install — and the migration path now **proved** against a database that predates it, from both sides |
+| Distribution | 5 | **6 / 10** | An offline installer exists and the packaged build has now run a real service. Still no Windows certificate, and no update has ever been watched installing on a machine that is not this one |
+| **Language (the moat)** | 3 | **3 / 10** | **Unmoved, and this is the honest number.** Yorùbá numerals are still unparsed, no native speaker has reviewed the aliases, and **word error rate has never been measured in any language.** Six real sermon lines entered the corpus — the first real-world data it has ever had — but they are English and they measure detection over TEXT, not hearing over AUDIO |
+| Observability | 7 | **9 / 10** | The per-minute line persists, p99 ships, the diagnostic bundle exports, the service record points at the words that produced it — and the two instruments that were lying (an end-to-end span measuring how long the preacher had talked; launch checks that could not fail) were caught by using them |
+| Documentation | 8 | **9 / 10** | Three files that described defects already fixed, a report that listed twenty shipped features as missing, and a register table this report corrupted itself — all corrected, and the register now has a test. Counts are stated as the command that produces them, because correcting them failed three times |
+| **Field validation** | 0 → 2 | **2 / 10** | One real service, 49.5 minutes, packaged build, instrumented — [audits/FIELD-2026-08-30.md](audits/FIELD-2026-08-30.md). Stage F11 answered; 5 of 6 auto-fires correct; **one wrong verse reached a congregation**. Still one church, one preacher, one language, one machine, and an operator who wrote the software |
 
-**No overall score is given.** An average would hide the 2 and the 3, which are the only two that
-matter right now. Field validation moving 0 → 2 is the largest single change this document has
-recorded, and it is still the lowest number on the page.
+**No overall score is given.** An average would hide the **3** and the **2**, which are still the
+only two that decide anything. Nine dimensions moved this week and neither of those did — because
+neither is a code problem, and twenty-one merged pull requests could not touch them.
+
+> **The trap in this table.** Ten of twelve rows now read 8 or 9, which is exactly the shape that
+> makes somebody ship. **Do not read it that way.** The two low rows are not weak spots in an
+> otherwise finished product — they are the two that say whether it works at all in a room, and
+> the strongest evidence in this document is that fifty minutes in one produced seven findings
+> that months of reading source had not.
 
 ---
 
@@ -916,109 +924,136 @@ recorded, and it is still the lowest number on the page.
 | ✅ RG-54 | **`qa_r5.rs` said two of its tests were expected to be RED.** All three findings are closed and all six tests are green | A reader takes the header first: it says a green run is wrong, so either the tests get mistrusted or the closures go unnoticed | The module header | Corrected, with the same rule as RG-46: closed findings are inverted, never deleted | RG-46 | P3 | S | No file in the suite now claims a defect that is fixed |
 | ✅ RG-55 | **One fact, two verdicts.** `degraded.js` calls a CPU-only macOS build *reduced* — "roughly three times slower, the transcript will lag the preacher" — and the launch screen's GPU row reported the identical fact as **`ok`, in green**, on the screen an operator reads before a service | CLAUDE.md rule 27 measured it: **~1710 ms per window against a ~1000 ms budget**, which is slower than real time. A green row over that is the launch screen's own version of a badge that cannot be wrong | `probes.js::gpu` vs `degraded.js` | The rule is exported once (`gpuIsReduced`) and **asked** by both, so they cannot drift. macOS only, deliberately: no equivalent measurement exists off it, and a warning nobody measured is one an operator learns to scroll past | RG-09 · RG-53 | P2 | S | Four tests, including one that asserts both surfaces agree by calling the same function |
 | ✅ RG-56 | **Nothing compared a FRESH install's schema to an UPGRADED one.** `schema.sql` is `include_str!`d so it cannot drift from the code; the upgrade path — a sniffed `ALTER … ADD COLUMN` per late column — is separate and was unchecked | Invisible exactly where it is written: every test and developer database is fresh, so a forgotten migration works perfectly here and is missing on every machine that has run an older build. The first symptom is a church's laptop failing a query that works everywhere else | `db/mod.rs`; per-column migration tests existed, no comparison did | **Two tests, and the second closes what the first could not.** One builds an old database honestly — drop every column an `ALTER` claims to add, wind `user_version` to 0, run the real `migrate`, require them all back. The other diffs today's schema against `schema-baseline.sql` — the schema at the project's first commit, checked in — and fails if a column was added to an existing table with no migration behind it | RG-04 | P2 | M | Breaking a pragma sniff fails the first; adding a column with no `ALTER` fails the second. **I recorded this as unclosable for want of an old schema — wrongly, git had one all along** |
+| ✅ RG-57 | **The CI detection gate contained only invented sentences.** 57 cases, every one written by somebody imagining how a preacher talks, guarding SPEC's <5% wrong-verse rate | The gate that decides whether detection quality regressed had never seen a real ASR transcript. The only real-world data the project has was sitting in `detections.heard_text` and in one Rust test | `eval_corpus.json`; `audits/FIELD-2026-08-30.md` | Six verbatim lines added, `source: FIELD-2026-08-30` — five references the preacher really made, and the Luke 10 line that produced a wrong verse, as a NEGATIVE. The corpus note also records what the scorer **cannot** see: it drives `detect_direct` and the router, not `ContextMemory`, so a green scorecard is not evidence about the path that actually failed | RG-24 | P2 | S | 63 cases, 100% recall, 0 wrong verses, 0 paraphrase auto-fires — `cargo test eval::tests::print_scorecard -- --nocapture` |
 ---
 
-## 24. GO / NO-GO
+## 24. GO / NO-GO — the decision, made
 
-**NO-GO**, unchanged, and for the same reason as `audits/QA-2026-08-14.md` §20 and
-`audits/PERF-2026-08-24.md` §7: **roughly half of Relay, as a volunteer experiences it, has never
-been reached by any instrument in this repository.**
+**Decided 2026-08-31.** Earlier revisions of this section said **NO-GO** and left it there.
+That was right when nothing had ever run in a room and wrong to leave standing now, because a
+product that is never allowed out never gets the only evidence that would let it out. **An
+indefinite NO-GO is not caution; it is a way of never being wrong.**
 
-Nothing in this report changes that, and nothing in this report is a reason to change it. The
-forty-six closed register items are real defects worth fixing, and closing all of them would
-still not produce a GO — because the condition is not a defect count, it is a Sunday.
+### The decision
 
-**Updated 2026-08-30.** Two of those stages have now been reached, and the verdict does not move:
+> ## ⛔ NO-GO for general release · ✅ GO for a supervised pilot
+>
+> **Two churches. Named operators. Every service supervised by someone who can take the wall
+> back by hand. For the length of one season.**
 
-| Stage | Status |
+Both halves are load-bearing, and neither is a compromise between them.
+
+### Why NOT general release
+
+Relay is not shippable to a church that finds it and installs it alone, and one line decides
+that: **on 2026-08-30 it put a verse nobody said in front of a congregation.** A preacher
+cited Luke 10:32–37; the wall showed Proverbs 3:32. The cause is fixed and pinned, but the
+*class* is not closed — closing it needs services, not commits.
+
+Three more, each sufficient on its own:
+
+- **Word error rate has never been measured, in any language.** The product's entire premise
+  is that it hears well enough. That is an assertion, and the moat scores 3/10 because of it.
+- **No Windows certificate.** Most churches are on the platform Relay cannot sign for.
+- **Nobody but the author has ever run a service on it.** Every claim about whether a
+  volunteer can operate this under pressure is a claim about a person who wrote it.
+
+### Why GO for a pilot, and why that is the *right* call rather than the brave one
+
+The evidence that would move any of the four blockers **cannot be manufactured here**. Word
+error rate needs real preaching on tape. Whether a volunteer can run it needs a volunteer. The
+second and third services that RG-32 waits on need second and third services. Twenty-one merged
+pull requests this week did not move field validation or language by a single point, and they
+never could have.
+
+Against that, the one service that did happen produced **seven findings** — a wrong verse, an
+end-to-end metric measuring how long the preacher had been talking, a service record pointing
+at the wrong sentence — that months of reading source had not. **That ratio is the argument.**
+Fifty minutes in a room is worth more than another week of audit, and the next fifty will be too.
+
+And the risk is bounded in a way that general release is not: with an operator watching and one
+key that clears the wall, the worst outcome is a wrong verse for a few seconds and a note in the
+register. Without a pilot the worst outcome is the same wrong verse, in a church nobody is
+watching, discovered by nobody, fixed never.
+
+### The conditions, and they are the deliverable
+
+A pilot is **GO only with all of these.** Any one missing and it is NO-GO again:
+
+| | |
 |---|---|
-| **Stage A** — a packaged build that survives the microphone entitlement | **Reached.** Built, installed to `/Applications`, ran a real service. `scripts/sign-local.sh` reproduces §17's conditions; a *notarized* build still needs a certificate |
-| **Stage F11** — a full service, watching for a rising line | **Reached, and answered: no drift.** `audits/FIELD-2026-08-30.md` |
-| **Stage B** — a projector | Not reached |
-| **Stage C** — a person at a microphone | **Partly.** A real preacher was transcribed for 49.5 minutes. The AUDIO half — word error rate, the gate against a real room — is untouched |
-| **One church** | Not reached. The service was run by the person who wrote the software |
+| **An operator at the desk, every service** | Not a fallback. The panic keys are the product's honesty, and they need a hand |
+| **`RELAY_RECORD_WAV` set for at least one full service** | This is how word error rate stops being an assertion. It is one environment variable and it is the single highest-value thing on this page |
+| **Rehearsal before the first live use** | The path check exists for this; run it |
+| **Diagnostics read after every service** | The per-minute line persists now. A rising one is the thing F11 could only answer once |
+| **Every wrong verse written into `RELAY_GAP.md`** | Verbatim from `heard_text`. The Luke 10 case became a regression test and a CI corpus case; the next one should too |
+| **macOS only** | Windows is unsigned. Do not hand out an unsigned build |
 
-**And the first real service is itself the argument for NO-GO, not against it.** Fifty minutes
-in a room produced **seven findings** that months of reading source had not — including a wrong
-verse on a wall, an end-to-end metric that was measuring how long the preacher had been talking,
-and a service record that pointed at the wrong sentence. One of the seven was withdrawn as
-wrong. That ratio is what "half of this product has never been reached by an instrument" means
-in practice.
+### What converts a pilot into GO for general release
 
-**What would still change it:** Stage B, the audio half of Stage C, a second and third service,
-a Windows certificate, and one service run by somebody who did not write the software.
+Not a date and not a feeling. **All five:**
+
+1. **Word error rate measured** on real sermon audio, in at least English and one Tier-1 language.
+2. **A native speaker** has reviewed the Yorùbá, Kiswahili and Hausa alias tables.
+3. **Six consecutive services with no wrong verse on a wall**, across at least two churches.
+4. **A Windows code-signing certificate**, and one update watched installing on a machine that is not the author's.
+5. **Three services run end to end by an operator who did not write Relay**, without the author in the room.
+
+Until then this section says exactly what it says now, and **anyone quoting "GO" from it without
+the word "pilot" is quoting it wrong.**
 
 ---
 
 ## 25. Checklist
 
-### Do now — documentation truth (this branch)
+**Rewritten 2026-08-31.** The old checklist tracked a report being written and P0–P3 buckets
+being cleared. Both are finished. What follows is what is actually left, in the order it
+matters, and **not one line of it is a commit.**
 
-- [x] Write this report
-- [x] `CLAUDE.md` — 114 → 118 (two places), 4.0k → 4,369
-- [x] `CLAUDE.md` — document the boot ladder + Dashboard readiness surface under *Frontend shape*
-- [x] `CLAUDE.md` — add rule 35 (the Live output badge), and a pointer to this file
-- [x] `AGENTS.md` — create; tool-agnostic; restates **no** counts
-- [x] `.claude/agents/relay-qa-live-path.md` — add the Live-vs-Outputs health asymmetry
-- [x] `.claude/agents/relay-qa-surface.md` — add the boot/Dashboard readiness surface and the inventory's open findings
-- [x] `.claude/agents/relay-qa-failure.md` — add "no rollback" and "latency dies on quit"
-- [x] `.claude/agents/relay-qa-auditor.md` — make doc drift a first-class finding class
-- [x] `docs/README.md` — index `GPT.md`, `RELAY_GAP.md`, `audits/PERF-2026-08-24.md`; 35 → 38; re-stamp the sweep
-- [x] `docs/ROADMAP.md` — fix the §23 miscitation; 4,024 → 4,369; 114 → 118; capture.js 1,908 → 1,941; add Stage F11 to §1
-- [x] `docs/QA_HARNESS.md` — §4.1's "23 tests" → 28 (26 run, 2 ignored); drop the stale 114 quote; buttons 319 → 321; name the right command for the frontend count
-- [x] `docs/PRODUCT_AUDIT.md` — one line in the existing staleness banner. Do not rewrite Rev 3
-- [x] `CHANGELOG.md` — add the missing `[0.1.0-4]` entry
-- [x] `docs/GPT.md` — track it, and fix the one stale number (`main.rs` ~4,000 → 4,369)
-      *(the file was deleted on 2026-08-30 — see §26. This line is kept as the record of what
-      the first round did, not as a live instruction.)*
+### Do next — the pilot (§24), in order
 
-### Then — P0 engineering
+- [ ] **Pick two churches and name the operator at each.** The conditions in §24 are the
+      deliverable, not the software.
+- [ ] **Set `RELAY_RECORD_WAV` for one full service.** One environment variable. It converts
+      *"word error rate has never been measured"* — the sentence behind the moat's 3/10 — into
+      a number, and nothing else on this page does that.
+- [ ] **Run the path check in rehearsal before the first live use.** It exists for this.
+- [ ] **Read Settings → Diagnostics after every service.** The per-minute line persists now;
+      a rising one is what Stage F11 could only answer once.
+- [ ] **Write every wrong verse into §23, verbatim from `heard_text`.** The Luke 10 case became
+      a regression test *and* a CI corpus case. The next one should too.
 
-- [x] RG-01 · RG-02 · RG-03 · RG-04 · RG-05 — done 2026-08-29, see the fix log above
-- [x] RG-06 … RG-12 (P1) — done 2026-08-29, same fix log
-- [x] RG-13 … RG-17 (P2) — done 2026-08-30, same fix log
-- [x] RG-18 · RG-19 (P3) — done 2026-08-30, same fix log
-- [x] RG-20 (doc drift) — done in the first round; the tick was missing, the work was not
-- [x] RG-21 · RG-22 — the arrangement editor and the index-drift rule, done 2026-08-30
+### Then — what converts the pilot into general release
 
-### Then — everything the register could reach from source
+- [ ] Word error rate measured on real audio, English **and** one Tier-1 language.
+- [ ] A native speaker has reviewed the Yorùbá, Kiswahili and Hausa alias tables — and Yorùbá
+      numerals (`r4_05`), which are still unparsed.
+- [ ] Six consecutive services, two churches, no wrong verse on a wall.
+- [ ] A Windows code-signing certificate, and one update watched installing elsewhere.
+- [ ] Three services run end to end by an operator who did not write Relay.
 
-- [x] RG-23 … RG-31 — the field audit's own findings, plus the three R4 detection
-      defects. 2026-08-30, DECISIONS §55–§57
-- [x] RG-33 … RG-35 — the confirm arm of the calibrator, the ranking comparator, and
-      the two Settings sliders. DECISIONS §58–§59
-- [x] RG-36 … RG-46 — the console's mixed signals, five untrapped modals, six views a
-      screen reader could not navigate, and three documents that lied about themselves
-- [x] RG-47 — a defect introduced by RG-28 and found by applying this repo's own rule
-      to my own change
-- [x] RG-48 — this report had drifted; §16 and §18 rewritten
+### Needs a person, not a Sunday
 
-### What is left, and none of it is a commit
+- [ ] **§19b — should Relay ship a second Bible translation, an import path, or neither?**
+      Public-domain corpora are addable today with no licence (DECISIONS §32.4). This report
+      got that reason wrong once (RG-50) and will not decide it.
+- [ ] **A projector**, for RG-18's contrast and distance thresholds.
+- [ ] **The product's name.** `README.md` still says *"working name — rename freely"*, and §24
+      now permits real churches to install it.
 
-- [x] ~~**Stage F11** — one full service, watching Diagnostics for a rising line.~~
-      **RUN 2026-08-30** — `audits/FIELD-2026-08-30.md`. The answer is no drift, across
-      49.5 minutes and 2,423 decodes. It also produced seven findings, six of which are
-      closed above and one withdrawn as wrong.
-- [ ] **Stage C** — a person, a microphone, a real room. The first minutes of it were
-      reached on 2026-08-30; what is still unreached is the AUDIO — word error rate in any
-      language, RG-10's audio seed, and replaying a recorded service.
-- [ ] **Stage B** — a projector, to check RG-18's thresholds against a wall.
-- [ ] **A native speaker** — signed language packs, Yorùbá numerals (`r4_05`), §47's
-      empty column.
-- [ ] **A Windows code-signing certificate** — the platform most churches are on.
-- [ ] **A second service, and a THIRD** — RG-32 is open on purpose and waits for them:
-      a context-resolved bare verse is labelled `Direct` at a hardcoded 0.88, which by
-      rule 10 is a lie, and one service is not enough evidence to make every in-passage
-      "verse eighteen" cost a click.
-- [ ] **One service run by a NON-AUTHOR operator.** Everything above was run by the
-      person who wrote the software.
+### Done, and kept here so the shape of the week is legible
 
-### Always — before any of the above ships
-
-- [ ] A service run by somebody else. Stage F11 has been answered; this one has not, and
-      it is now the largest unknown in the project.
-
----
+- [x] The report, `AGENTS.md`, and the doc corrections — 2026-08-29
+- [x] **RG-01 … RG-22** — the register as originally filed, P0 through P3
+- [x] **RG-23 … RG-31** — the field service's own findings, plus the three R4 detection defects
+- [x] **RG-33 … RG-48** — the calibrator that never calibrated, a comparator that said `a < b`
+      and `b < a`, five untrapped modals, six headingless views, and three documents that
+      described defects already fixed
+- [x] **RG-49 … RG-56** — two dead menu entries, five unreachable commands deleted, launch
+      checks that could not fail, and the migration path proved from both sides
+- [x] **Stage F11** — run 2026-08-30. No drift across 49.5 minutes and 2,423 decodes
+- [x] **Six real sermon lines in the CI detection corpus** — the first real-world data it has
+      ever contained
 
 ## 26. Document actions — delete · merge · update
 

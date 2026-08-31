@@ -157,12 +157,18 @@ Two documents, at two altitudes, and they disagree on purpose:
   updated: an outside product brief scored item by item against the code, with a gap register
   and the corrections this index's own counts needed.
 
-**Relay has never shipped, and the current release decision is NO-GO.** Every P0 and P1 raised
-by the last full audit is closed, but the condition that would block a GO regardless still
-stands: roughly half of the product as a volunteer experiences it — audio in, pixels out,
-hardware, a packaged build — has never been reached by any instrument here. See
-[audits/QA-2026-08-14.md](audits/QA-2026-08-14.md) §16, which is the human test script that has
-not been run.
+**Relay has never shipped. As of 2026-08-31: NO-GO for general release, GO for a supervised
+pilot** — two churches, named operators, every service watched. Every P0 and P1 from the last
+full audit is closed and 51 register entries with them, but four things block a general
+release and none is a commit: a **wrong verse reached a real congregation** on 2026-08-30,
+**word error rate has never been measured in any language**, there is no Windows certificate,
+and nobody but the author has ever run a service. The decision, its conditions, and the five
+things that convert it into a general release are [RELAY_GAP.md](RELAY_GAP.md) §24.
+
+The packaged build **has** now been reached by an instrument — a live sermon, 49.5 minutes
+([audits/FIELD-2026-08-30.md](audits/FIELD-2026-08-30.md)). Pixels out, hardware, and a
+congregation still have not: [audits/QA-2026-08-14.md](audits/QA-2026-08-14.md) §16 is the
+human test script and it has not been run.
 
 What remains open is captured, with reasoning, in [ROADMAP.md](ROADMAP.md) — and most of it is
 blocked on the world (a certificate, a native speaker, thirty minutes of a real sermon on tape),

@@ -23,7 +23,36 @@
     "",
     "ADDING CASES IS THE MOST USEFUL THING YOU CAN DO. Especially: real sermon",
     "lines in Yorùbá, Kiswahili and Hausa, and real ASR mistakes. A case that",
-    "fails is not a problem — it is the point. See docs/LANGUAGES.md."
+    "fails is not a problem — it is the point. See docs/LANGUAGES.md.",
+    "",
+    "REAL SERMON LINES — `source: FIELD-2026-08-30`.",
+    "",
+    "Six cases are not written by anyone. They are verbatim ASR output from a live",
+    "service (docs/audits/FIELD-2026-08-30.md), taken from `detections.heard_text` —",
+    "the column that exists because a service once put wrong verses on a wall and the",
+    "log could not say what it had heard.",
+    "",
+    "Five are references the preacher really made and Relay really caught. Four of",
+    "those five are the bare \"Deuteronomy 15, 7\" shape that this codebase demotes on",
+    "purpose, over the standing objection that nobody speaks that way. This preacher",
+    "did, four times in thirty minutes. DO NOT TIGHTEN THAT DEMOTION WITHOUT READING",
+    "THIS PARAGRAPH.",
+    "",
+    "The sixth is the one that went wrong: the preacher cited Luke 10:32-37 and Relay",
+    "put Proverbs 3:32 on the wall, because a passage fired by hand half an hour",
+    "earlier was still what a bare verse number attached to. It is a NEGATIVE — nothing",
+    "may fire from it. Getting Luke 10 onto the wall would be a fine outcome and is not",
+    "required; putting up a verse nobody said is the defect.",
+    "",
+    "AND WHAT THIS CORPUS CANNOT SEE, SAID HERE RATHER THAN ASSUMED.",
+    "",
+    "The scorer drives `detect_direct` and the real router. It does NOT drive",
+    "`ContextMemory`, so a case cannot exercise a bare verse number resolved against",
+    "a passage fired earlier — which is exactly how the Luke 10 line went wrong.",
+    "That negative guards the PARSER against producing Proverbs from those words; the",
+    "context path it actually failed on is guarded in `detection.rs`",
+    "(`field_a_bare_verse_belongs_to_the_book_this_sentence_names`) and in `main.rs`.",
+    "A green scorecard is not evidence about the context path."
   ],
   "cases": [
     {
@@ -485,6 +514,58 @@
         "Song of Solomon 2:12"
       ],
       "note": "The other control: an ordinary-word book name WITH explicit reference language is unambiguous and still auto-fires."
+    },
+    {
+      "id": "field-2sam-24-24",
+      "lang": "en",
+      "source": "FIELD-2026-08-30",
+      "text": "David did the same thing in 2 Samuel 24, 24. When will this scripture be fulfilled in Yahweh?",
+      "expect": [
+        "2 Samuel 24:24"
+      ]
+    },
+    {
+      "id": "field-deut-15-7",
+      "lang": "en",
+      "source": "FIELD-2026-08-30",
+      "text": "Here we sing now. If your heart is enlarged, your hand will open. Look at Deuteronomy 15, 7 to 8.",
+      "expect": [
+        "Deuteronomy 15:7"
+      ]
+    },
+    {
+      "id": "field-exod-35-21",
+      "lang": "en",
+      "source": "FIELD-2026-08-30",
+      "text": "in the days of old and it got to a point the bible says exodus 35 verse 21 the bible",
+      "expect": [
+        "Exodus 35:21"
+      ]
+    },
+    {
+      "id": "field-2cor-9-8",
+      "lang": "en",
+      "source": "FIELD-2026-08-30",
+      "text": "The church creates more than enough. Look at what the Bible says in 2 Corinthians 9, 8. Look at the word.",
+      "expect": [
+        "2 Corinthians 9:8"
+      ]
+    },
+    {
+      "id": "field-isa-54-2",
+      "lang": "en",
+      "source": "FIELD-2026-08-30",
+      "text": "Abundance is coming. But you have to enlarge your 10. That's why Isaiah 54, 2 to 3 was screaming at us.",
+      "expect": [
+        "Isaiah 54:2"
+      ]
+    },
+    {
+      "id": "field-luke-10-not-proverbs",
+      "lang": "en",
+      "source": "FIELD-2026-08-30",
+      "text": "The man that was wounded. That man was going through what was going through in Luke 10. If you read from verse 32, 37.",
+      "expect": []
     }
   ]
 }
