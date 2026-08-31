@@ -185,7 +185,7 @@ accounts, RBAC and cloud sync at it.
 *Regenerate the counts with `npx vitest run src/lib/relaygap.test.js` (it checks the table)
 and by reading §23. Last updated 2026-08-31.*
 
-**60 entries. 56 closed, 1 withdrawn as wrong, 3 not closed — and only two of those three are
+**61 entries. 57 closed, 1 withdrawn as wrong, 3 not closed — and only two of those three are
 work** (RG-32 open, RG-41 and RG-50 flagged).
 
 *These four numbers are asserted against the table itself by `relaygap.test.js`; they drifted
@@ -194,7 +194,7 @@ the table it counts is the easiest possible thing to check automatically.*
 
 | | |
 |---|---|
-| ✅ **56 closed** | Every gap this report could reach from the code. The last thirteen were not in the original brief at all — they were found by auditing the things that audit Relay: test files that described defects already fixed, a launch screen whose checks could not fail, a register table this report corrupted itself |
+| ✅ **57 closed** | Every gap this report could reach from the code. The last fourteen were not in the original brief at all — they were found by auditing the things that audit Relay: test files that described defects already fixed, a launch screen whose checks could not fail, a register table this report corrupted itself |
 | ~~1 withdrawn~~ | **RG-27** was filed from a mid-service snapshot and was wrong. Struck through, not deleted |
 | ⚠️ **RG-41** | Not work. A correction kept on the record: two of six views were wrong to "fix" — they are routers, and a heading there would give one screen two |
 | ⏳ **RG-32** | **Open on purpose.** A context-resolved bare verse is labelled `Direct` at a hardcoded 0.88 — by rule 10 that label is a lie, because Relay inferred the book rather than hearing it. Changing it makes every in-passage *"verse eighteen"* cost a click, and **one service is not enough evidence to spend that**. Wants a second and third Sunday |
@@ -246,7 +246,7 @@ reaches it.
 | `main.rs` | **5,573** lines | `wc -l src-tauri/src/main.rs` |
 | `stores/capture.js` | **2,156** lines | `wc -l src/lib/stores/capture.js` |
 | Rust tests | **641** declared (624 run, 17 ignored) | `cd src-tauri && cargo test` |
-| Frontend tests | **884** passing, 0 skipped, 64 files | `npx vitest run` — the runner's summary line |
+| Frontend tests | **888** passing, 0 skipped, 64 files | `npx vitest run` — the runner's summary line |
 | Svelte components | **48** (47 reachable; the orphan is a test probe) | `node scripts/qa-inventory.mjs` |
 | Controls | **462**, 0 in unrendered components, 0 without an accessible name, 0 without a handler | `node scripts/qa-inventory.mjs` |
 | Tables in the schema | **21** (+1 FTS virtual) | `grep -c 'CREATE TABLE' docs/data/schema.sql` |
@@ -413,7 +413,7 @@ Legend: **EXISTS** (implemented and reachable from a rendered control) · **PART
 | 43 | African-language validation programme | **BLOCKED** | ROADMAP §1: 30 minutes of real sermon audio and a native speaker. `bench/.gitignore` refuses audio into the repo by design | Not a coding task. **This is the moat and it is entirely unmeasured** |
 | 44 | Signed language packs | **FUTURE — refused on purpose** | RG-19 shipped the offline half and refused this one | The word doing the work is *signed*: signing needs a key, a ceremony and a distribution channel that do not exist. An unsigned pack that can rewrite the book aliases is a wrong-verse-on-a-wall vector (SECURITY.md T9), and an operator cannot proof-read 66 names in a language they may not read |
 | 39/40/48 | Operator training mode · live simulation · rehearsal replay | **EXISTS — narrower than written, deliberately** | RG-15/RG-16. Six drills with the **real** controls on the **real** surface, in rehearsal, panic first — and each knows it was done because the same event fired that would fire on a Sunday (`training.js`, `practice.js`, driven from `Help.svelte`; `training.test.js`; DECISIONS §52) | **Not a simulated service.** Relay cannot produce a sermon, and a simulation would teach a volunteer the shape of a fake. Replaying a church's *own* recorded service audio would work and needs the corpus Stage C has never produced |
-| 59/60 | Church onboarding · saved environment | **PARTIAL** | The 6-step first-run wizard (welcome · screen · audio · model · language · finish), re-runnable from Settings → Backup, plus RG-10's rooms for the saved half | The brief's later steps — a stage display, a template choice, a test scripture, a readiness check, a rehearsal — exist as controls but are not **in** the wizard. Both instruments that would carry them now exist (§5's walk, §29's rooms); wiring them in is the smallest remaining onboarding gap |
+| 59/60 | Church onboarding · saved environment | **EXISTS** | The 6-step first-run wizard (welcome · screen · audio · model · language · finish), re-runnable from Settings → Backup; RG-10's rooms for the saved half; the wizard's last step already **fires a real verse to the real screen**, which is the brief's "test scripture"; and RG-61 added the hand-off it was missing — the drills, the six-stage path check and rehearsal, each named with the tab it lives on (`firstrunmic.test.js`) | Nothing. **The three remaining items were deliberately NOT made into wizard steps.** This wizard's rule is that it asks as little as it can — Welcome and Finish ask nothing — and a drill, a path check and a rehearsal are things to *do* on another day, not answers to give now. The gap was never the features: all three shipped. It was that nothing told a new volunteer they existed |
 | 61 | Time-to-first-verse metric | **MISSING — needs a stopwatch, not a commit** | — | It is a **human** span: from the preacher saying it to the congregation reading it. `latency.rs` measures machine stages, and the one span that claimed to cover this end to end was measuring how long the preacher had been talking (FIELD F-6, RG-31) |
 
 ### Distribution, updates and the cloud question
@@ -891,11 +891,12 @@ Every one of these was reaffirmed by this audit, and each is cited by code:
 ### BLOCKED ON CODE — can start today, no external dependency
 
 **The bucket is nearly empty, and that is the finding.** Nothing below is on the critical path to
-a pilot; §24's conditions are all about rooms, not commits.
+a pilot; §24's conditions are all about rooms, not commits. The one item that *was* on it —
+finishing the onboarding wizard — shipped as RG-61, and shipped **narrower than written**: a
+hand-off naming three instruments and the tab each lives on, rather than three more wizard steps.
 
 | P | Item | Why, and why it is not urgent |
 |---|---|---|
-| **P2** | **Finish the onboarding wizard** (§59/60) | The brief's later steps — a stage display, a template choice, a test scripture, a readiness check, a rehearsal — all exist as controls, and both instruments that would carry them now exist too (§5's six-stage walk, §29's rooms). It is wiring, and it is the smallest remaining gap in the product |
 | **P2** | **Prototype the stripped Sunday layout** (§38/49) | Live has density and full-screen; the brief's layout is a different proposal. It should be judged by an operator who is not the author, which makes it a pilot question rather than a design one |
 | **P3** | **Release channels** (§47) | Low value before a first release exists |
 | **P3** | **Per-detection voice confidence** (§13) | Needs a per-utterance SNR the decoder does not currently expose. Claim *type* is already first-class and stricter than the brief proposed |
@@ -1032,6 +1033,7 @@ neither is a code problem, and twenty-one merged pull requests could not touch t
 | ✅ RG-58 | **The wrong-verse gate ran at ONE dial position.** `eval::run` builds `Router::default()`, so SPEC's <5% was enforced at sensitivity 50 and nowhere else — while R4-03 had just proved that at dial 100 the auto-fire bar equals the confidence floor and every deliberate demotion goes inert | A church that moves the slider was running a configuration nothing had ever measured, and the one check that would have noticed was not looking there | `r4_04`, `#[ignore]`d as "a measurement" since the R4 audit | Un-ignored — it costs 20 ms and asserts six positions from 0 to 100. **And it needed teeth:** run as it was, it passed with the `UncertainNumber` repair torn out, because no corpus case fires without it. Eleven ordinary-preaching negatives added (`source: R4-audit`) — the sentences that really did put verses on walls | RG-23 · RG-57 | P1 | S | With the repair removed the gate reports **11.8% at dial 63** and fails — the band where the demotion sits. 74 cases, 0.0% at every position |
 | ✅ RG-59 | **The AI disclosure never reached the operator.** `docs/AI_DISCLOSURE.md` is the honest account of what the AI does and where it is weak, and it was readable only from the repository. In the app, Help carried the reassuring half — the never-guess rule — and none of the honest half | A church that never opens GitHub was shown only the part that builds confidence. Publishing the reassuring half alone is worse than publishing neither: it is the same asymmetry as a status badge that cannot detect its own failure | `Help.svelte` TOPICS vs `docs/AI_DISCLOSURE.md`; no link, and a link would have been useless — the operator who needs this is offline in a hall | A Help topic, **What the AI is bad at**: Relay never writes scripture and reads the KJV verbatim; African-language listening is the weakest part *and* the headline claim; word error rate has never been measured in any language; keep `Esc` under your hand | RG-11 · §58 | P2 | S | `aidisclosure.test.js` — four claims, asserted in **both** documents by substance rather than wording, so the prose can improve and only deleting a claim breaks it |
 | ✅ RG-60 | **No threat model in the shape the brief asked for.** `SECURITY.md` argued three priorities well and left the rest of the surface as an absence rather than as rows | An absence cannot be reviewed. Two of the ten rows are honest gaps that follow DECISIONS §35, and they were indistinguishable from oversights until they were written down as decisions | `SECURITY.md` before this pass: no T1–T10 table; RELAY_GAP §2 §64 read PARTIAL | T1–T10 added: content leaving the device · LAN screen control (ACCEPTED, §35) · the closed drive-by · the broadcast-only hub · path traversal · template injection · the update channel · model integrity · language packs (no surface yet, on purpose) · the malicious operator (out of scope) | RG-19 for T9 | P2 | S | Each row names the mechanism or the test that holds it; T9 and T10 are recorded as absences with the condition that would change them |
+| ✅ RG-61 | **A volunteer finishing the first-run wizard had no way to learn that the practice drills, the six-stage path check and rehearsal exist.** All three shipped; nothing pointed at any of them | The wizard is the last moment somebody is guaranteed to be looking. An instrument nobody can find is an instrument nobody runs — and the path check in particular is the one thing that catches a chain that fails end to end while every part passes | `FirstRun.svelte` STEPS; brief §59/60, carried as PARTIAL in §2 | A hand-off block on the finish step, under the verse it just fired: each instrument named **with the tab it lives on**, plus a line saying this is not the operator's last chance to find them. **Not three more steps** — the wizard's own rule is that it asks as little as it can, and a drill is a thing to do on another day | RG-15 · RG-16 · RG-10 | P2 | S | `firstrunmic.test.js` — four tests: all three named with their location, the path-check sentence that stops it reading as a duplicate of the wizard, the not-your-last-chance line, and **that the step count is still six** |
 ---
 
 ## 24. GO / NO-GO — the decision, made

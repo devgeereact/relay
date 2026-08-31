@@ -31,6 +31,25 @@ permanent test.
 
 Windows is not signed yet, so this applies to macOS only.
 
+### The setup walk-through now tells you what to do before your first Sunday
+
+Relay has practice drills, a check that says whether the whole chain from the
+microphone to the screen actually works, and a rehearsal mode that runs a full
+service without touching the projector. All three have been there for a while, and
+nothing told a new operator any of them existed.
+
+The last step of the setup walk-through — the one where a verse goes up on your
+real screen — now names all three and says which tab each one is on. It does not
+add any more questions to the walk-through: they are things to do on another day,
+not answers to give now, and everything in there is still in Settings afterwards.
+
+The one worth doing first is the chain check (**Settings → Dashboard**): say one
+verse out loud, and Relay tells you which of the six stages between your
+microphone and your screen were reached. Everything the walk-through sets up can
+pass on a machine where the chain still does not work end to end — a microphone
+the operating system has muted, an output window on a display that is asleep. That
+is the difference between finding out at 10:05 and finding out at 10:31.
+
 ### Relay now tells you, in the app, what it is bad at
 
 - **Help has a new topic: "What the AI is bad at."** It says four things plainly, and they
