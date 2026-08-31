@@ -7,9 +7,17 @@
 //
 // ── The constraint that shapes everything here is LATENCY ────────────────────
 //
-// `.claude/settings.json` already wires twelve hook points. A hook that adds more
-// than a few seconds to every edit gets disabled within a week, and a disabled
-// safety net is worse than none, because you still believe it is there. So:
+// This is wired on `PostToolUse` for `Write|Edit|MultiEdit` — so it runs on EVERY
+// edit to any file, and the path filter below is the only thing keeping that cheap.
+// A hook that adds more than a few seconds to every edit gets disabled within a
+// week, and a disabled safety net is worse than none, because you still believe it
+// is there. So:
+//
+// (An earlier version of this comment said `.claude/settings.json` "already wires
+// twelve hook points". It wires ONE — this one. The latency argument never depended
+// on the number, but the number was the premise it was written as, and a false fact
+// at the top of a file is exactly what this repository keeps finding inside its own
+// instruments. Corrected rather than deleted, per RG-46.)
 //
 //   1. Path filter FIRST. Almost every edit exits in under a millisecond.
 //   2. Only vitest. `cargo test` takes ~50s in this repo — for a Rust fire-path
