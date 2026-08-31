@@ -99,7 +99,15 @@ is the deepest step.
 | `--v-500` | `#4d4d4d` | Hairline emphasis |
 | `--v-line` / `--v-line2` | `rgba(255,255,255,.075)` / `.13` | Borders |
 
-Text: `--v-txt` `#f2f2f2` · `--v-dim` `#b3b3b3` · `--v-faint` `#8a8a8a` · `--v-disabled` `#555`.
+Text: `--v-txt` `#f2f2f2` · `--v-dim` `#b3b3b3` · `--v-faint` `#8c8c8c` · `--v-disabled` `#555`.
+
+> **`--v-faint` is `#8c8c8c`, not `#8a8a8a`, and the two steps are load-bearing.** At
+> `#8a8a8a` it was **4.38:1 on `--v-surf2`** — below WCAG AA — with five rules putting
+> muted text on chips and badges there. `#8c8c8c` is 4.50:1 and looks identical.
+> **Do not round it back.** `tokencontrast.test.js` measures every text token against
+> every surface it is placed on and will fail (RG-74); the comment beside the token in
+> `app.css` carries the full matrix. Muted is deliberately kept off `--v-surf3`
+> (3.76:1) — that exclusion is asserted, not assumed.
 
 **Every text token passes WCAG AA on every surface it sits on.** `--v-faint` was `#5f6470`
 (2.27:1, a failure everywhere); it is now 4.54:1 at worst. Do not darken a text token without

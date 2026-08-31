@@ -649,7 +649,7 @@ Everything that a commit can tick is ticked. The unticked boxes in the first lis
 **Before public release:**
 - [x] Method + `matched_text` visible live
 - [x] `LICENSE` names a copyright holder
-- [x] WCAG: focus traps + restore, operable controls, `<h1>`, every text token at AA
+- [x] WCAG: focus traps + restore, operable controls, `<h1>`, every text token at AA *(**and it is now measured rather than asserted** — `tokencontrast.test.js`, RG-74. When it was first measured it was false: `--v-faint` sat at 4.38:1 on `--v-surf2` with five rules using that pairing. Token moved two steps to `#8c8c8c`.)*
 - [x] Crash reporting verified opt-in
 - [x] Bible translation licensing confirmed (KJV only, no import path)
 - [x] Typed errors, an e2e test, and a migration that can be retried

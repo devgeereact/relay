@@ -109,11 +109,23 @@ body{ margin:0; background:var(--bg); color:var(--text); font-family:var(--f-bod
   --v-surf3:#333333;  /* 600 — hover / lightest chrome                */
   --v-500:#4d4d4d;    /* 500 — hairline emphasis                      */
   --v-line:rgba(255,255,255,.075); --v-line2:rgba(255,255,255,.13);
-  /* Text ramp: Primary / Secondary / Muted. Muted is the design's #8A8A8A (was
-     #88888d — same lightness). NOTE: it passes WCAG AA on --v-surf/--v-bg (~5:1)
-     but sits ~3.8:1 on the newly-lighter --v-surf3 (#333333); faint text is not
-     placed on surf3 in the app, but keep new surf3-background text out of it. */
-  --v-txt:#f2f2f2; --v-dim:#b3b3b3; --v-faint:#8a8a8a;
+  /* Text ramp: Primary / Secondary / Muted.
+     Muted was the design's #8A8A8A and is now #8C8C8C — two steps, invisible to the
+     eye, and the difference between failing and passing WCAG AA on --v-surf2.
+
+     THE COMMENT THIS REPLACES KNEW ABOUT THE WRONG SURFACE. It said muted "passes
+     AA on --v-surf/--v-bg (~5:1)" and warned only about --v-surf3 — where faint text
+     is not in fact placed anywhere. It never checked --v-surf2 (#262626), where the
+     ratio was 4.38:1, and where five real rules put muted text on chips and badges.
+     A hand analysis that names two of four surfaces reads exactly like one that
+     names all four; that is why this is now a test (tokencontrast.test.js, RG-74).
+
+     The measured matrix, at AA's 4.5:1 body bar:
+       --v-faint on --v-void #0a0a0a  · --v-bg #141414 · --v-surf #1b1b1b · --v-surf2 #262626  → all ≥ 4.50
+       --v-faint on --v-surf3 #333333 → 3.79, and NOTHING pairs them; the test asserts
+       that stays true, because fixing surf3 would need #9B9B9B and collapse the ramp
+       into --v-dim. */
+  --v-txt:#f2f2f2; --v-dim:#b3b3b3; --v-faint:#8c8c8c;
   --v-disabled:#555555; --v-inverse:#141414;
   /* Semantic — the mode law (CLAUDE.md): amber ON AIR · amethyst rehearsal ·
      cyan guess · green confirmed · red panic · grey cued. */

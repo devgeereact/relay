@@ -1560,9 +1560,12 @@
   .s-toggle.on .s-knob{ transform:translateX(20px); }
   .s-toggle:disabled{ opacity:.4; cursor:not-allowed; }
 
-  /* "Soon" — a control shown for shape but not yet wired, marked so it can't lie. */
+  /* "Soon" — a control shown for shape but not yet wired, marked so it can't lie.
+     Sits on --v-surf2, not --v-surf3: muted text on surf3 is 3.76:1, below WCAG AA,
+     and this was the only rule in the app that did it (RG-74). Surf2 is 4.50:1 and
+     the pill still reads as the lightest chrome on the page. */
   .s-soon{ display:inline-block; margin-left:8px; padding:1px 7px; border-radius:99px;
-    background:var(--v-surf3); border:1px solid var(--v-line2); color:var(--v-faint);
+    background:var(--v-surf2); border:1px solid var(--v-line2); color:var(--v-faint);
     font-family:var(--f-mono); font-size:var(--v-fs-cap); letter-spacing:.04em; vertical-align:middle; }
   .s-dim{ color:var(--v-faint); }
 
