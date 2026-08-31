@@ -240,33 +240,39 @@ reaches it.
 | Latency figures | Quoted from `audits/PERF-2026-08-24.md` and `audits/PERF-MODELS-2026-08-30.md`, not re-measured. Those documents state what their own numbers do not establish, and none of that changed |
 | Detection behaviour | Quoted from the corpus gate (`eval.rs`), the closed findings in `audits/QA-2026-08-14.md`, and the one live service in `audits/FIELD-2026-08-30.md` |
 
-**Counts, re-measured 2026-08-31:**
+**Counts: this document does not keep its own copy any more.**
 
-| | Count | Command |
-|---|---|---|
-| Registered `#[tauri::command]` | **132** | `grep -c '#\[tauri::command\]' src-tauri/src/main.rs` |
-| `main.rs` | **5,573** lines | `wc -l src-tauri/src/main.rs` |
-| `stores/capture.js` | **2,156** lines | `wc -l src/lib/stores/capture.js` |
-| Rust tests | **644** declared (627 run, 17 ignored) | `cd src-tauri && cargo test` |
-| Frontend tests | **900** passing, 0 skipped, 64 files | `npx vitest run` — the runner's summary line |
-| Svelte components | **48** (47 reachable; the orphan is a test probe) | `node scripts/qa-inventory.mjs` |
-| Controls | **462**, 0 in unrendered components, 0 without an accessible name, 0 without a handler | `node scripts/qa-inventory.mjs` |
-| Tables in the schema | **21** (+1 FTS virtual) | `grep -c 'CREATE TABLE' docs/data/schema.sql` |
-| Decisions | **46** numbered (§18–§63) + the unnumbered brainstorm table | `grep -cE '^## [0-9]' docs/DECISIONS.md` |
-| Labelled detection cases | **74** | `python3 -c "import json;print(len(json.load(open('src-tauri/data/eval_corpus.json'))['cases']))"` |
+[`QA_HARNESS.md`](QA_HARNESS.md) §0 is **the** register of counts for this repository —
+every row there carries the command that reproduces it. This section used to restate a
+dozen of those values and, on 2026-08-31, restated them wrongly **within the same day**:
+`main.rs` was measured at 5,573 lines in the morning and was 5,640 by the afternoon,
+because the afternoon's own commits changed it. That is the fifth time these numbers have
+been corrected in a week (§18) and the fourth time this document did the correcting.
+
+So the two that drift fastest are named by their command and nothing else:
+
+| | Command |
+|---|---|
+| `main.rs` size · registered `#[tauri::command]` | `wc -l src-tauri/src/main.rs` · `grep -c '#\[tauri::command\]' src-tauri/src/main.rs` |
+| `stores/capture.js` size | `wc -l src/lib/stores/capture.js` |
+| Rust and frontend test totals | `cd src-tauri && cargo test` · `npx vitest run` — **the runner's own summary line**, never a grep |
+| Components · controls · the command map | `node scripts/qa-inventory.mjs` |
+| Tables in the schema | `grep -c 'CREATE TABLE' docs/data/schema.sql` |
+| Numbered decisions | `grep -cE '^## [0-9]' docs/DECISIONS.md` |
+| Labelled detection cases | `python3 -c "import json;print(len(json.load(open('src-tauri/data/eval_corpus.json'))['cases']))"` |
 
 > ### The standing note about counts — read this before "correcting" one
 >
-> **Every number in that table was wrong within a week, twice, and both times the correction
-> was itself wrong within a week.** That is not carelessness; it is what a number in prose
-> *is*. RG-20 was filed because six documents disagreed about the size of `main.rs`; this
-> report corrected them to 4,369 / 118 / 1,941 on 2026-08-29; §18 corrected *those* to
-> 5,723 / 137 / 2,195 on 2026-08-30; and the table above — measured on 2026-08-31, after five
-> dead commands were deleted — says 5,573 / 132 / 2,156.
+> **Every number this document ever wrote down was wrong within a week, and twice within
+> a day.** That is not carelessness; it is what a number in prose *is*. RG-20 was filed
+> because six documents disagreed about the size of `main.rs`; this report corrected them
+> to 4,369 / 118 / 1,941 on 2026-08-29; §18 corrected *those* to 5,723 / 137 / 2,195 on
+> 2026-08-30; a fourth pass said 5,573 / 132 / 2,156 on 2026-08-31 — and by that
+> afternoon it was 5,640 / 132 / 2,159.
 >
-> **The durable half of every row is the command, not the value.** Three counts in this
-> repository were also wrong because a plausible one-liner was believed over the tool that
-> actually knows: `npx vitest list | wc -l` counts compiler warnings on the same stream, and
+> **The durable half of every row is the command, not the value.** Three counts here were
+> also wrong because a plausible one-liner was believed over the tool that actually knows:
+> `npx vitest list | wc -l` counts compiler warnings on the same stream, and
 > `grep -n '#\[ignore'` counts the phrase inside doc comments (`e2e.rs` has **three** such
 > lines and **zero** ignored tests). **A grep is not a test runner.**
 
