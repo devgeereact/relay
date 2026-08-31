@@ -2730,3 +2730,87 @@ condition that would reverse it.** Two of the four name a document that would ha
 first (§35, T10); the other two name a mechanism that already covers the harm. None of them says
 "not now", because "not now" is how a decline decays back into a gap that nobody re-argues and
 everybody re-files.
+
+---
+
+## 63. What gets recorded about a suggestion is what the operator did with it (2026-08-31)
+
+**`detections.status` permits four values. Two of them have never been written by
+the running application, and the Sunday report counted them anyway and printed 0.**
+
+`docs/data/schema.sql` enforces `CHECK (status IN ('auto','suggested','dismissed','manual'))`,
+`db/services.rs` documents all four, `service_timeline` reads them, and
+`report.js` reported `suggested` and `dismissed` as service statistics. But the only
+production insert into `detections` is inside `persist_fire`, and `persist_fire` is
+called from exactly two places: `fire_manual`, and the AI path **inside
+`if fire.may_broadcast()`**. A `Suggested` fire does not broadcast, by construction
+(`Fire::may_broadcast`). So a real service can only ever write `'auto'` or
+`'manual'`, and the other two were structurally unreachable.
+
+### Why that is worse than a missing feature
+
+The report showed **`0 suggested · 0 dismissed`** for every service ever recorded.
+Zero is a claim. It reads as *"Relay never offered you anything and you never
+turned anything down"* — which about an AI-assistance product is close to the
+opposite of the truth, and it is exactly the inversion §44 exists to forbid: *only
+metrics that were actually measured appear, and a blank renders as "—", never as
+0.* The rule was written for latency and was being broken two fields away.
+
+It also hid: the report's own tests fed it synthetic timeline rows carrying
+`status: 'suggested'`, so they passed against data the product cannot produce. That
+is the same failure as the fourteen tests written against a component nothing
+rendered, and the `#[ignore]`d test that passed with its own fix reverted. **A test
+whose fixture is impossible is not a test.**
+
+### Why the fix is not "persist the suggestions"
+
+That is the obvious repair and it is wrong. **Suggestions are deliberately not
+debounced** — CLAUDE.md rule 28: the debounce and the corroboration rule apply to
+what may reach a wall, and *"suggestions are never gated"*, because an operator
+should see a candidate the instant Relay has one. Detection runs on every decode
+pass, so one spoken paraphrase produces a suggestion every cadence step — hundreds
+of rows a minute, none of which a person experienced as separate events. The table
+would fill with an artefact of the decoder's cadence, and the "suggestions offered"
+figure would measure how fast the machine is rather than how often it interrupted
+anybody.
+
+### What is recorded instead
+
+**What the operator did**, which is bounded, deliberate, and exactly what the
+metric is about: `confirm_detection` writes a `suggestion_accepted` cue and
+`dismiss_detection` writes a `suggestion_dismissed` cue.
+
+Three things follow from that choice, and each is load-bearing:
+
+1. **They are `cues`, not `service_events`.** `service_events` is documented as the
+   home for *"facts that had no home anywhere else"* and explicitly must not
+   duplicate `detections` or `cues`. These are things the operator pressed; `cues`
+   is what the operator pressed.
+2. **Accepting still records the fire as `'manual'`.** The cue says *whose idea it
+   was*; it does not change *who decided*. A human accepting a suggestion is a human
+   decision (rule 14), and the self-calibrating router learns from that column.
+   Before this, an accepted suggestion and a verse typed into the box by hand were
+   indistinguishable in the record — so the service history could say how many
+   verses a human put up and could not say how many of them Relay had proposed,
+   which is the one number that says whether the AI is earning its place.
+3. **Neither is written during a rehearsal**, for the same reason `record_feedback`
+   is not: a volunteer practising accepts verses they picked themselves, and an
+   acceptance rate inflated by practice would make the AI look validated by a
+   morning where nobody tested it.
+
+### And the denominator is named rather than assumed
+
+Uptake is now **accepted ÷ (accepted + rejected)** — *of the suggestions the
+operator answered*, not of everything Relay offered. A suggestion that scrolls away
+unanswered is recorded nowhere, so the honest figure is the one over answers, and
+`report.js`'s `notMeasured` list says so in the report itself. Reporting it as a
+share of all suggestions would need the suggestion count this decision has just
+refused to collect, and quietly using the smaller denominator while implying the
+larger one is the same class of lie as the 0 it replaced.
+
+**Pinned by** `e2e::what_the_operator_did_with_a_suggestion_reaches_the_record` and
+`e2e::a_rehearsed_decision_is_not_counted_as_one` (both re-run with the defect
+reintroduced, and both fail), plus `report.test.js` — including a test that feeds
+the report the old impossible `'suggested'`/`'dismissed'` detection rows and
+requires them to come back **null**, so the previous shape cannot be restored by
+accident.

@@ -202,7 +202,8 @@ CREATE TABLE detections (
 CREATE TABLE cues (
     id           INTEGER PRIMARY KEY,
     service_id   INTEGER NOT NULL REFERENCES services(id),
-    type         TEXT NOT NULL,           -- e.g. "manual_override", "clear_screens", "template_change"
+    type         TEXT NOT NULL,           -- e.g. "manual_override", "clear_screens", "blackout",
+                                          -- "suggestion_accepted", "suggestion_dismissed"
     payload_json TEXT,
     triggered_at REAL NOT NULL
 );

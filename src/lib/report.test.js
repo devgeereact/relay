@@ -26,14 +26,17 @@ const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
 
 const ev = (at, kind, detail = null) => ({ at_ms: at, source: 'event', kind, detail });
 const det = (at, kind, detail = null) => ({ at_ms: at, source: 'detection', kind, detail });
-const cue = (at, kind) => ({ at_ms: at, source: 'cue', kind, detail: null });
+const cue = (at, kind, detail = null) => ({ at_ms: at, source: 'cue', kind, detail });
 
 const SERVICE = [
   ev(0, 'service_started', 'Sunday Service'),
   det(30_000, 'auto', 'John 3:16'),
-  det(60_000, 'suggested', 'Romans 8:28'),
+  // Accepting a suggestion fires as `'manual'` AND leaves a cue saying whose idea
+  // it was. The detection row alone cannot tell an accepted suggestion from a
+  // verse typed into the box by hand.
+  cue(60_000, 'suggestion_accepted', 'Romans 8:28'),
   det(65_000, 'manual', 'Romans 8:28'),
-  det(90_000, 'dismissed', 'Psalms 23:1'),
+  cue(90_000, 'suggestion_dismissed', 'Psalms 23:1'),
   ev(100_000, 'output_lost', 'Main screen'),
   ev(112_000, 'output_recovered', 'Main screen'),
   cue(120_000, 'clear_screens'),
@@ -49,8 +52,38 @@ describe('the Sunday report', () => {
     // A report that merged them would describe a service that did not happen.
     expect(r.autoFired).toBe(1);
     expect(r.manualFired).toBe(1);
-    expect(r.suggested).toBe(1);
-    expect(r.dismissed).toBe(1);
+    expect(r.suggestionsAccepted).toBe(1);
+    expect(r.suggestionsRejected).toBe(1);
+  });
+
+  it('reads the operator decisions from cues, because detections cannot hold them', () => {
+    // The regression this replaced: these two came from `count('suggested')` and
+    // `count('dismissed')` over `detections`, and were ALWAYS 0 in production —
+    // `persist_fire` is the only insert and it runs only for a fire that reaches a
+    // screen, so the column can only ever hold 'auto' or 'manual'. The report was
+    // printing 0 for something nothing recorded, which reads as "Relay never
+    // offered you anything".
+    const detOnly = sundayReport([
+      ev(0, 'service_started'),
+      det(10, 'suggested', 'Romans 8:28'),
+      det(20, 'dismissed', 'Psalms 23:1'),
+    ]);
+    expect(detOnly.suggestionsAccepted).toBeNull();
+    expect(detOnly.suggestionsRejected).toBeNull();
+    expect(detOnly.suggestionUptake).toBeNull();
+  });
+
+  it('uptake is out of the ones the operator ANSWERED, and says so', () => {
+    const mixed = sundayReport([
+      ev(0, 'service_started'),
+      cue(10, 'suggestion_accepted', 'John 3:16'),
+      cue(20, 'suggestion_dismissed', 'Psalms 23:1'),
+      cue(30, 'suggestion_dismissed', 'Numbers 3:16'),
+    ]);
+    expect(mixed.suggestionUptake).toBeCloseTo(1 / 3);
+    // And the denominator's limit is named in the report rather than left for a
+    // reader to infer.
+    expect(mixed.notMeasured.join(' ')).toMatch(/never acted on/);
   });
 
   it('counts the things that had no other home', () => {
@@ -77,7 +110,7 @@ describe('the Sunday report', () => {
     expect(empty.transcriptLines).toBeNull();
   });
 
-  it('uptake is null when nothing was suggested — not 0%', () => {
+  it('uptake is null when the operator answered nothing — not 0%', () => {
     // 0% reads as "the operator rejected everything", which is a different and
     // much worse claim than "Relay offered nothing".
     const quiet = sundayReport([ev(0, 'service_started'), det(10, 'auto', 'John 1:1')]);

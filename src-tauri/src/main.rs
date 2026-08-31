@@ -3665,6 +3665,25 @@ fn confirm_detection<R: tauri::Runtime>(
                 "{key} isn't in the Bible text — check the reference"
             )));
         }
+        // ── THE OPERATOR'S DECISION, RECORDED ───────────────────────────────
+        //
+        // Accepting a suggestion fires through `fire_manual`, which records the
+        // detection as `'manual'` — correct, and indistinguishable from a verse
+        // typed into the box by hand. So the service record could say how many
+        // verses a human put up and could NOT say how many of them were Relay's
+        // idea, which is the one number that says whether the AI is earning its
+        // place.
+        //
+        // A cue, not a `service_event`: `service_events` explicitly does not
+        // duplicate what `cues` already holds, and `cues` is what the operator
+        // pressed.
+        //
+        // Not during a rehearsal, for the same reason `record_feedback` is not —
+        // a rehearsal is not evidence, and an acceptance rate inflated by
+        // practice is worse than none.
+        if !rehearsal.on() {
+            persist_cue(&app, "suggestion_accepted", Some(&key));
+        }
     }
     let t = {
         let mut router = routing.0.lock()?;
@@ -3687,14 +3706,41 @@ fn confirm_detection<R: tauri::Runtime>(
     Ok(t)
 }
 
-/// Operator rejected an auto-fired detection (undo). Tightens the gate and
-/// persists the nudge onto the active profile.
+/// Operator rejected an auto-fired detection (undo). Tightens the gate,
+/// persists the nudge onto the active profile, and — since the rejection is the
+/// half of the acceptance rate that was invisible — records that it happened.
+///
+/// ## Why a rejection had no record at all
+///
+/// `detections.status` permits `'suggested'` and `'dismissed'`, `db/services.rs`
+/// documents all four, and `service_timeline` reads them — but **the only
+/// production insert runs inside `persist_fire`, which is called only for a fire
+/// that reaches a screen.** So in a real service the column can only ever hold
+/// `'auto'` or `'manual'`, and two of its four documented values were structurally
+/// unreachable. The Sunday report counted them anyway and reported **0**, which
+/// reads as *"Relay never offered you anything"* rather than *"nothing records
+/// that"* — the exact inversion DECISIONS §44 exists to forbid.
+///
+/// **Persisting every suggestion is not the fix.** Suggestions are deliberately
+/// not debounced (CLAUDE.md rule 28), so one spoken paraphrase yields a suggestion
+/// on every decode pass — hundreds of rows a minute, none of which a person saw as
+/// separate. What is bounded, meaningful and exactly what the metric needs is what
+/// the OPERATOR did, so that is what is recorded, here and in `confirm_detection`.
+///
+/// `reference` is optional so the LAN remote and any older caller keep working —
+/// the same precedent as `confidence`/`method` above. Absent, the rejection is
+/// still counted; only the *which verse* is lost.
 #[tauri::command]
-fn dismiss_detection(
+fn dismiss_detection<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     routing: tauri::State<'_, Routing>,
     db: tauri::State<'_, Db>,
     rehearsal: tauri::State<'_, channels::Rehearsal>,
+    reference: Option<String>,
 ) -> error::Result<Thresholds> {
+    if !rehearsal.on() {
+        persist_cue(&app, "suggestion_dismissed", reference.as_deref());
+    }
     let t = {
         let mut router = routing.0.lock()?;
         // No argument: the router remembers what it last auto-fired, so the

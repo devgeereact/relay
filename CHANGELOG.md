@@ -31,6 +31,31 @@ permanent test.
 
 Windows is not signed yet, so this applies to macOS only.
 
+### Your service report can finally say whether Relay was any use
+
+The report after a service used to say **0 suggested · 0 dismissed** — for every
+service, always. Not because Relay never suggested anything, but because nothing
+was writing it down. A zero there does not read as "we didn't record that". It
+reads as "Relay never offered you anything", which is close to the opposite of
+what happened.
+
+Now Relay records what **you** did: when you took a suggestion, and when you turned
+one down. Rejecting one used to leave no trace anywhere at all.
+
+Two numbers come out of that, and they are the ones that say whether the AI is
+earning its place:
+
+- **Suggestions taken** — separated from verses you typed in yourself. Before this,
+  the history could tell you how many verses a person put up and could not tell you
+  how many of them were Relay's idea.
+- **Suggestions rejected**, and what share of the ones you answered you took.
+
+Two things it deliberately does not do. It does not count suggestions that scrolled
+past while you were busy — those are genuinely not recorded, and the report says so
+rather than folding them into the percentage. And **nothing is counted during a
+rehearsal**: practising means accepting verses you chose yourself, and a score
+inflated by practice is worse than no score.
+
 ### The setup walk-through now tells you what to do before your first Sunday
 
 Relay has practice drills, a check that says whether the whole chain from the

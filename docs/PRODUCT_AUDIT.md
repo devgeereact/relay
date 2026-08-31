@@ -16,7 +16,7 @@ Supersedes Revision 2 (2026-07-12) and Revision 1 (2026-07-05). Every claim was 
 > |---|---|---|
 > | Tests | 250 Rust + 138 frontend | Run `cd src-tauri && cargo test` and `npx vitest run` — **a number written here was wrong within a week, three times** (RELAY_GAP §18) |
 > | `main.rs` | 2,922 lines / 101 commands | `wc -l src-tauri/src/main.rs` · `grep -c '#\[tauri::command\]' src-tauri/src/main.rs` — it has drifted past every number ever written here |
-> | Decision log | 25 decisions | **45** numbered (§18–§62), plus 28 earlier table rows — `grep -cE '^## [0-9]' docs/DECISIONS.md` |
+> | Decision log | 25 decisions | **46** numbered (§18–§63), plus 28 earlier table rows — `grep -cE '^## [0-9]' docs/DECISIONS.md` |
 > | `Result<_, String>` in `main.rs` | replaced | **zero remain** — confirmed |
 > | Release decision | not stated | **NO-GO for general release, GO for a supervised pilot** (2026-08-31) — RELAY_GAP §24 owns it, not this document |
 >

@@ -57,7 +57,11 @@
     clear_screens: 'Screens cleared',
     blackout: 'Blackout',
     manual_override: 'Manual override',
-    // From `detections` — status is the useful word.
+    suggestion_accepted: 'Took Relay\u2019s suggestion',
+    suggestion_dismissed: 'Rejected Relay\u2019s suggestion',
+    // From `detections` — status is the useful word. `suggested` and `dismissed`
+    // are kept because the column permits them and an old database may hold them;
+    // nothing has written either since `persist_fire` became the only insert.
     auto: 'Fired by Relay',
     manual: 'Fired by the operator',
     suggested: 'Suggested',
@@ -319,9 +323,9 @@
             <div class="lib-rep-cell"><b>{report.durationMs === null ? '—' : fmtMs(report.durationMs)}</b><span>length</span></div>
             <div class="lib-rep-cell"><b>{num(report.autoFired)}</b><span>fired by Relay</span></div>
             <div class="lib-rep-cell"><b>{num(report.manualFired)}</b><span>fired by you</span></div>
-            <div class="lib-rep-cell"><b>{num(report.suggested)}</b><span>suggested</span></div>
-            <div class="lib-rep-cell"><b>{num(report.dismissed)}</b><span>dismissed</span></div>
-            <div class="lib-rep-cell"><b>{pct(report.suggestionUptake)}</b><span>suggestions taken</span></div>
+            <div class="lib-rep-cell"><b>{num(report.suggestionsAccepted)}</b><span>suggestions taken</span></div>
+            <div class="lib-rep-cell"><b>{num(report.suggestionsRejected)}</b><span>suggestions rejected</span></div>
+            <div class="lib-rep-cell"><b>{pct(report.suggestionUptake)}</b><span>of the ones you answered</span></div>
             <div class="lib-rep-cell" class:bad={report.panicFailures > 0}>
               <b>{num(report.panicFailures)}</b><span>panic controls that failed</span>
             </div>

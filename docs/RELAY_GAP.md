@@ -187,7 +187,7 @@ accounts, RBAC and cloud sync at it.
 *Regenerate the counts with `npx vitest run src/lib/relaygap.test.js` (it checks the table)
 and by reading §23. Last updated 2026-08-31.*
 
-**61 entries. 57 closed, 1 withdrawn as wrong, 3 not closed — and only two of those three are
+**62 entries. 58 closed, 1 withdrawn as wrong, 3 not closed — and only two of those three are
 work** (RG-32 open, RG-41 and RG-50 flagged).
 
 *These four numbers are asserted against the table itself by `relaygap.test.js`; they drifted
@@ -196,7 +196,7 @@ the table it counts is the easiest possible thing to check automatically.*
 
 | | |
 |---|---|
-| ✅ **57 closed** | Every gap this report could reach from the code. The last fourteen were not in the original brief at all — they were found by auditing the things that audit Relay: test files that described defects already fixed, a launch screen whose checks could not fail, a register table this report corrupted itself |
+| ✅ **58 closed** | Every gap this report could reach from the code. The last fifteen were not in the original brief at all — they were found by auditing the things that audit Relay: test files that described defects already fixed, a launch screen whose checks could not fail, a register table this report corrupted itself |
 | ~~1 withdrawn~~ | **RG-27** was filed from a mid-service snapshot and was wrong. Struck through, not deleted |
 | ⚠️ **RG-41** | Not work. A correction kept on the record: two of six views were wrong to "fix" — they are routers, and a heading there would give one screen two |
 | ⏳ **RG-32** | **Open on purpose.** A context-resolved bare verse is labelled `Direct` at a hardcoded 0.88 — by rule 10 that label is a lie, because Relay inferred the book rather than hearing it. Changing it makes every in-passage *"verse eighteen"* cost a click, and **one service is not enough evidence to spend that**. Wants a second and third Sunday |
@@ -247,12 +247,12 @@ reaches it.
 | Registered `#[tauri::command]` | **132** | `grep -c '#\[tauri::command\]' src-tauri/src/main.rs` |
 | `main.rs` | **5,573** lines | `wc -l src-tauri/src/main.rs` |
 | `stores/capture.js` | **2,156** lines | `wc -l src/lib/stores/capture.js` |
-| Rust tests | **641** declared (624 run, 17 ignored) | `cd src-tauri && cargo test` |
-| Frontend tests | **888** passing, 0 skipped, 64 files | `npx vitest run` — the runner's summary line |
+| Rust tests | **643** declared (626 run, 17 ignored) | `cd src-tauri && cargo test` |
+| Frontend tests | **890** passing, 0 skipped, 64 files | `npx vitest run` — the runner's summary line |
 | Svelte components | **48** (47 reachable; the orphan is a test probe) | `node scripts/qa-inventory.mjs` |
 | Controls | **462**, 0 in unrendered components, 0 without an accessible name, 0 without a handler | `node scripts/qa-inventory.mjs` |
 | Tables in the schema | **21** (+1 FTS virtual) | `grep -c 'CREATE TABLE' docs/data/schema.sql` |
-| Decisions | **45** numbered (§18–§62) + the unnumbered brainstorm table | `grep -cE '^## [0-9]' docs/DECISIONS.md` |
+| Decisions | **46** numbered (§18–§63) + the unnumbered brainstorm table | `grep -cE '^## [0-9]' docs/DECISIONS.md` |
 | Labelled detection cases | **74** | `python3 -c "import json;print(len(json.load(open('src-tauri/data/eval_corpus.json'))['cases']))"` |
 
 > ### The standing note about counts — read this before "correcting" one
@@ -446,7 +446,7 @@ Legend: **EXISTS** (implemented and reachable from a rendered control) · **PART
 | 72 | Hardware matrix | **BLOCKED** | Every figure is one M4 Pro | Windows low/mid/high, and a real church laptop |
 | 73/74 | Real church field test · first ten churches | **PARTIAL — 2 / 10** | Relay ran a live sermon on 2026-08-30 (`audits/FIELD-2026-08-30.md`): Stage F11 answered, no drift across 49.5 minutes and 2,423 decodes, five of six auto-fires correct — **and one wrong verse reached a congregation** | Nine more services, and at least one run by somebody who did not write Relay. That is the largest unknown in the project |
 | 75 | Feature priority model (P0/P1/P2/P3/REFUSE) | **EXISTS in substance** | ROADMAP sorts into blocked-on-world / parked / deferred / declined, and this matrix now carries **DECLINED** as a first-class verdict with the reason in the row | Adopting the brief's live-critical / operator-critical labels in `CONTRIBUTING.md` would be an improvement, not a gap |
-| 62 | Success metrics | **PARTIAL** | Latency is instrumented **and persisted**, with a week-on-week trend (`report.js::weekOnWeek`). Detection is a CI build gate over a labelled corpus scored **through the real router**, failing above SPEC's 5 % wrong-verse rate — and since #46 that gate runs across the whole sensitivity slider, not one setting | Human metrics (override rate, acceptance, time-to-first-verse §61) need services, not code. Language metrics need §43 |
+| 62 | Success metrics | **PARTIAL** | Latency is instrumented **and persisted**, with a week-on-week trend (`report.js::weekOnWeek`). Detection is a CI build gate over a labelled corpus scored **through the real router**, failing above SPEC's 5 % wrong-verse rate, across the whole sensitivity slider. **Acceptance and override are now real** (RG-62, DECISIONS §63): the report separates a verse the operator typed from a suggestion they took, and counts the rejections — which were previously recorded nowhere at all, while the report printed `0` for them | Time-to-first-verse (§61) still needs a stopwatch. **The acceptance denominator is answers, not offers** — a suggestion that scrolls away unanswered is deliberately not recorded, because suggestions are not debounced and one paraphrase would write hundreds of rows a minute. The report says so itself. Language metrics need §43 |
 
 ---
 
@@ -661,6 +661,11 @@ list as absent**:
 |---|---|
 | `devices` | Requires reversing DECISIONS §35. §20 (a) is the proposal; it is not adopted |
 | `security_events` | Follows `devices`. Events attributed to nobody are not a security log |
+
+`cues` gained two kinds on 2026-08-31 — `suggestion_accepted` and
+`suggestion_dismissed` — because the operator's answer to a suggestion was recorded
+**nowhere**: not in `detections` (whose only insert runs for a fire that reaches a
+screen), not in `cues`, not in `service_events`. DECISIONS §63.
 
 `perf_samples` is written by the backend and reached by no command, which
 `scripts/qa-inventory.mjs` correctly reports as **BACKEND ONLY** — that is right for a table the
@@ -1036,6 +1041,7 @@ neither is a code problem, and twenty-one merged pull requests could not touch t
 | ✅ RG-59 | **The AI disclosure never reached the operator.** `docs/AI_DISCLOSURE.md` is the honest account of what the AI does and where it is weak, and it was readable only from the repository. In the app, Help carried the reassuring half — the never-guess rule — and none of the honest half | A church that never opens GitHub was shown only the part that builds confidence. Publishing the reassuring half alone is worse than publishing neither: it is the same asymmetry as a status badge that cannot detect its own failure | `Help.svelte` TOPICS vs `docs/AI_DISCLOSURE.md`; no link, and a link would have been useless — the operator who needs this is offline in a hall | A Help topic, **What the AI is bad at**: Relay never writes scripture and reads the KJV verbatim; African-language listening is the weakest part *and* the headline claim; word error rate has never been measured in any language; keep `Esc` under your hand | RG-11 · §58 | P2 | S | `aidisclosure.test.js` — four claims, asserted in **both** documents by substance rather than wording, so the prose can improve and only deleting a claim breaks it |
 | ✅ RG-60 | **No threat model in the shape the brief asked for.** `SECURITY.md` argued three priorities well and left the rest of the surface as an absence rather than as rows | An absence cannot be reviewed. Two of the ten rows are honest gaps that follow DECISIONS §35, and they were indistinguishable from oversights until they were written down as decisions | `SECURITY.md` before this pass: no T1–T10 table; RELAY_GAP §2 §64 read PARTIAL | T1–T10 added: content leaving the device · LAN screen control (ACCEPTED, §35) · the closed drive-by · the broadcast-only hub · path traversal · template injection · the update channel · model integrity · language packs (no surface yet, on purpose) · the malicious operator (out of scope) | RG-19 for T9 | P2 | S | Each row names the mechanism or the test that holds it; T9 and T10 are recorded as absences with the condition that would change them |
 | ✅ RG-61 | **A volunteer finishing the first-run wizard had no way to learn that the practice drills, the six-stage path check and rehearsal exist.** All three shipped; nothing pointed at any of them | The wizard is the last moment somebody is guaranteed to be looking. An instrument nobody can find is an instrument nobody runs — and the path check in particular is the one thing that catches a chain that fails end to end while every part passes | `FirstRun.svelte` STEPS; brief §59/60, carried as PARTIAL in §2 | A hand-off block on the finish step, under the verse it just fired: each instrument named **with the tab it lives on**, plus a line saying this is not the operator's last chance to find them. **Not three more steps** — the wizard's own rule is that it asks as little as it can, and a drill is a thing to do on another day | RG-15 · RG-16 · RG-10 | P2 | S | `firstrunmic.test.js` — four tests: all three named with their location, the path-check sentence that stops it reading as a duplicate of the wizard, the not-your-last-chance line, and **that the step count is still six** |
+| ✅ RG-62 | **Two of `detections.status`'s four values had never been written, and the Sunday report counted them anyway.** The only production insert is inside `persist_fire`, which runs for a fire that reaches a screen — so a real service can write `'auto'` or `'manual'` and nothing else. `'suggested'` and `'dismissed'` were structurally unreachable | The report printed **`0 suggested · 0 dismissed`** for every service ever recorded. Zero is a claim, and it reads as *"Relay never offered you anything"* — the exact inversion DECISIONS §44 forbids, broken two fields away from where it was written. It hid because the report's own tests fed it synthetic rows the product cannot produce: **a test whose fixture is impossible is not a test** | `persist_fire` call sites (`main.rs`), `report.js::sundayReport`, `report.test.js`'s `det(…, 'suggested', …)` | Record **what the operator did**, not what the AI offered: `confirm_detection` writes a `suggestion_accepted` cue, `dismiss_detection` a `suggestion_dismissed` cue, neither during a rehearsal. Uptake is of the suggestions **answered**, and the report names that limit itself. **Persisting suggestions was rejected** — they are not debounced (rule 28), so one paraphrase writes hundreds of rows a minute | RG-04 · RG-08 | P1 | M | Two `e2e` tests, both re-run with the defect reintroduced and both failing; plus a `report.test.js` case that feeds the OLD impossible rows and requires `null`, so the previous shape cannot come back by accident |
 ---
 
 ## 24. GO / NO-GO — the decision, made

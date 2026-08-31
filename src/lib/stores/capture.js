@@ -837,7 +837,10 @@ detections.update((list) => list.filter((d) => d.reference !== reference));
 noteOperatorAction('dismiss', reference);
 try {
   const call = await invoke();
-  const thresholds = await call('dismiss_detection');
+  // The reference rides to the backend so the rejection lands in the service
+  // record as a rejection OF SOMETHING. It was already in this function's
+  // signature and was being dropped on the floor at the one line that mattered.
+  const thresholds = await call('dismiss_detection', { reference });
   capture.update((s) => ({ ...s, thresholds }));
 } catch {
   /* backend absent */
