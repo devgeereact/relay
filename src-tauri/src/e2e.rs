@@ -1840,6 +1840,74 @@ fn what_the_operator_did_with_a_suggestion_reaches_the_record() {
     );
 }
 
+/// A rejection carries a canonical reference or nothing — never a sentence.
+///
+/// `cues.payload_json` is read back by `service_timeline`, which is the part of the
+/// history most likely to be emailed to somebody. Every other cue writer satisfies
+/// `db/services.rs`'s "a short phrase Relay composes" by construction — `manual_fire`
+/// builds its key from an already-parsed `VerseRef`. `dismiss_detection` takes a
+/// string across the bridge, so it would have been the first cue payload whose shape
+/// was trusted rather than guaranteed.
+#[test]
+fn a_rejection_records_a_reference_and_never_a_sentence() {
+    let app = app();
+    let h = app.handle().clone();
+
+    let svc = start_service(
+        h.clone(),
+        h.state::<Session>(),
+        h.state::<Db>(),
+        h.state::<channels::Rehearsal>(),
+        h.state::<servicelock::ServiceLock>(),
+        "Sunday Service".into(),
+        "2026-08-29".into(),
+    )
+    .expect("start");
+
+    // A whole sentence with a reference buried in it: the reference survives,
+    // canonicalised. The sentence does not.
+    dismiss_detection(
+        h.clone(),
+        h.state::<Routing>(),
+        h.state::<Db>(),
+        h.state::<channels::Rehearsal>(),
+        Some("and beloved if you turn with me to psalm twenty three verse one".into()),
+    )
+    .expect("dismiss");
+    // And something with no reference in it at all stores no payload — the
+    // rejection is still counted; only the "which verse" is lost.
+    dismiss_detection(
+        h.clone(),
+        h.state::<Routing>(),
+        h.state::<Db>(),
+        h.state::<channels::Rehearsal>(),
+        Some("the sermon text nobody may export".into()),
+    )
+    .expect("dismiss");
+
+    let rows = service_timeline(h.state::<Db>(), svc).expect("timeline");
+    let dump = format!("{rows:?}");
+    assert!(
+        !dump.contains("beloved") && !dump.contains("turn with me"),
+        "a sentence reached the service record: {dump}"
+    );
+    assert!(
+        !dump.contains("sermon text nobody may export"),
+        "free text reached the service record: {dump}"
+    );
+    assert!(
+        dump.contains("Psalms 23:1"),
+        "the reference itself should survive, canonicalised: {dump}"
+    );
+    assert_eq!(
+        rows.iter()
+            .filter(|r| r.kind == "suggestion_dismissed")
+            .count(),
+        2,
+        "both rejections are counted, even the one that named no verse"
+    );
+}
+
 /// A rehearsal is not evidence, and that has to hold for the acceptance rate too.
 ///
 /// `record_feedback` already refuses to learn from a rehearsal. The same reasoning

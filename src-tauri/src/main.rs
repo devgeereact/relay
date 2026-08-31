@@ -3730,6 +3730,21 @@ fn confirm_detection<R: tauri::Runtime>(
 /// `reference` is optional so the LAN remote and any older caller keep working —
 /// the same precedent as `confidence`/`method` above. Absent, the rejection is
 /// still counted; only the *which verse* is lost.
+///
+/// ## The reference is CANONICALISED, never stored as given
+///
+/// It arrives as a string across the bridge, and `cues.payload_json` is read back
+/// by `service_timeline` — the part of the history most likely to be sent to
+/// somebody for support. `db/services.rs` is explicit that what goes in there is
+/// *"a short phrase Relay composes … never verse text, never a transcript"*, and
+/// every other writer satisfies that by construction: `manual_fire` builds its key
+/// from an already-parsed `VerseRef`, so it cannot be a sentence.
+///
+/// A raw string from the webview would be the first cue payload whose shape was
+/// *trusted* rather than *guaranteed* — and "a future column could quietly widen
+/// this" is the exact risk the two-sided privacy tests exist for. So the reference
+/// is parsed and the canonical `Book C:V` is stored; anything that does not parse
+/// stores nothing at all, and the rejection is still counted.
 #[tauri::command]
 fn dismiss_detection<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
@@ -3739,7 +3754,13 @@ fn dismiss_detection<R: tauri::Runtime>(
     reference: Option<String>,
 ) -> error::Result<Thresholds> {
     if !rehearsal.on() {
-        persist_cue(&app, "suggestion_dismissed", reference.as_deref());
+        let canonical = reference.as_deref().and_then(|r| {
+            detection::detect_direct(r)
+                .into_iter()
+                .next()
+                .map(|m| pipeline::Fire::key_for(&m.reference))
+        });
+        persist_cue(&app, "suggestion_dismissed", canonical.as_deref());
     }
     let t = {
         let mut router = routing.0.lock()?;
