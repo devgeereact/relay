@@ -300,6 +300,15 @@
                     {/if}
                     <span class="lib-detect-fired">fired {fmtTs(d.fired_at)}</span>
                   </div>
+                  <!-- THE EVIDENCE. The exact words the detector was looking at when it
+                       decided — not the transcript, which in a real service is routinely
+                       a different moment entirely (nine auto-fires were once logged
+                       against a final from three minutes earlier). This is what §24's
+                       pilot condition means by "verbatim from `heard_text`", and until
+                       now it could only be read by opening the database by hand. -->
+                  {#if d.heard_text}
+                    <p class="lib-detect-heard">“{d.heard_text}”</p>
+                  {/if}
                 </div>
               {/each}
             </div>
@@ -712,6 +721,10 @@
   .lib-detect-method{ text-transform:uppercase; }
   .lib-detect-bottom{ display:flex; align-items:center; justify-content:space-between; font-size:10px; color:var(--v-faint); }
   .lib-detect-conf{ color:var(--v-accent); }
+  /* The evidence, quoted. Serif and italic like every other quotation of speech in
+     this app, and quiet: it is context for the reference above it, not a headline. */
+  .lib-detect-heard{ margin:6px 0 0; font-family:var(--f-serif); font-style:italic;
+    font-size:var(--v-fs-cap); line-height:1.5; color:var(--v-dim); }
 
   .lib-emptytile{ padding:18px 16px; }
 

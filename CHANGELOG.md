@@ -31,6 +31,31 @@ permanent test.
 
 Windows is not signed yet, so this applies to macOS only.
 
+### Service history now shows what Relay actually heard
+
+When a wrong verse goes up, the useful question is *what words made it think that*
+— and Relay has been recording exactly that on every fire since the first real
+service. It just had no way to show you: the answer was in the database and nowhere
+on screen.
+
+Now it sits under the reference in **Library → History**, in quotation marks. It is
+not the transcript. Relay decides on what it has heard *so far*, so the transcript
+line nearest a detection is often a completely different moment — this is the
+sentence the detector was actually looking at.
+
+If a verse you did not want appears during a service, this is the line to copy into
+a bug report. It is what turned the one wrong verse from the first real service into
+a permanent test.
+
+**It stays on your machine.** It is not in the service timeline, not in the
+diagnostic file you can send for support, and not in a crash report.
+
+### Small text is a little lighter
+
+Captions and labels on raised panels were very slightly below the accessibility
+contrast standard. They are two shades lighter now — you are unlikely to see the
+difference, and a screen reader user or anyone in a bright room will.
+
 ### A suggestion for a verse that does not exist now says so
 
 When speech is garbled Relay sometimes parses a reference that is real-looking and

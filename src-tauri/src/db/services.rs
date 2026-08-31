@@ -36,6 +36,25 @@ pub struct ServiceDetection {
     pub confidence: f32,
     pub status: String,
     pub fired_at: f64,
+    /// **The evidence.** The exact text the detector was looking at when it decided
+    /// — written since the field service, and until now readable only by opening the
+    /// SQLite file by hand.
+    ///
+    /// `RELAY_GAP.md` §24 makes *"write every wrong verse into the register, verbatim
+    /// from `heard_text`"* a condition of the supervised pilot, and that condition
+    /// was unimplementable: the column was in every INSERT and in no SELECT.
+    ///
+    /// It is deliberately NOT the transcript. Detection runs on every partial STT
+    /// hypothesis and only finals are persisted, so in a real service the two
+    /// routinely have nothing to do with each other — nine auto-fires were once
+    /// logged against a final from three minutes earlier which, replayed through the
+    /// detector, produces no matches at all. The transcript says where the service
+    /// was; only this says what was heard.
+    ///
+    /// **Stays out of the timeline and the diagnostic bundle**: this is a fragment of
+    /// what a preacher said, so it belongs on the local history screen and nowhere
+    /// that leaves the machine (`timeline_tests::nothing_a_preacher_said_reaches_the_timeline`).
+    pub heard_text: Option<String>,
 }
 
 /// Create a service and return its id.
@@ -176,7 +195,8 @@ pub fn service_detections(
     service_id: i64,
 ) -> rusqlite::Result<Vec<ServiceDetection>> {
     let mut stmt = conn.prepare(
-        "SELECT v.book, v.chapter, v.verse, d.method, d.confidence, d.status, d.fired_at
+        "SELECT v.book, v.chapter, v.verse, d.method, d.confidence, d.status, d.fired_at,
+                d.heard_text
            FROM detections d
            JOIN transcripts t ON t.id = d.transcript_id
            LEFT JOIN verses v ON v.id = d.verse_id
@@ -197,6 +217,7 @@ pub fn service_detections(
             confidence: r.get(4)?,
             status: r.get(5)?,
             fired_at: r.get::<_, Option<f64>>(6)?.unwrap_or(0.0),
+            heard_text: r.get(7)?,
         })
     })?;
     rows.collect()
@@ -915,6 +936,48 @@ mod timeline_tests {
     /// would send back with "it went wrong at 10:31". PRIVACY.md's promise does not
     /// get an exception for being useful, so `detail` is a phrase Relay composes,
     /// never something a preacher said.
+    #[test]
+    /// RG-81 — the evidence must reach the OPERATOR and nothing else.
+    ///
+    /// `heard_text` was written on every fire and returned by no query: `RELAY_GAP.md`
+    /// §24 makes *"write every wrong verse into the register, verbatim from
+    /// `heard_text`"* a pilot condition, and it could only be satisfied by opening the
+    /// SQLite file by hand.
+    ///
+    /// Adding it to `service_detections` is the fix. **The risk it creates is the one
+    /// this module is most careful about**: it is a fragment of what a preacher said,
+    /// so it must reach the local history screen and NOT the timeline, which is the
+    /// part of the record most likely to be sent to somebody. Both halves are asserted
+    /// here, in one test, so neither can be satisfied alone.
+    #[test]
+    fn the_evidence_reaches_the_history_screen_and_not_the_timeline() {
+        let conn = db();
+        conn.execute_batch(
+            "INSERT INTO transcripts (id, service_id, timestamp, text, language)
+                VALUES (200, 1, 30.0, 'a final from three minutes ago', 'en');
+             INSERT INTO detections (transcript_id, verse_id, method, confidence, status,
+                fired_at, heard_text)
+                VALUES (200, NULL, 'direct', 0.9, 'auto', 30.5,
+                        'turn with me to psalm twenty three');",
+        )
+        .unwrap();
+
+        // The operator CAN read it — this is the pilot condition.
+        let dets = service_detections(&conn, 1).unwrap();
+        let found = dets
+            .iter()
+            .find_map(|d| d.heard_text.as_deref())
+            .expect("heard_text must be readable without opening the database by hand");
+        assert_eq!(found, "turn with me to psalm twenty three");
+
+        // …and it still does not reach the timeline.
+        let dump = format!("{:?}", service_timeline(&conn, 1).unwrap());
+        assert!(
+            !dump.contains("turn with me"),
+            "heard_text must never reach the timeline: {dump}"
+        );
+    }
+
     #[test]
     fn nothing_a_preacher_said_reaches_the_timeline() {
         let conn = db();
