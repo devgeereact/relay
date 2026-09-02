@@ -930,13 +930,6 @@ mod timeline_tests {
         assert!(perf_history(&conn, "stt_decode", 0).unwrap().is_empty());
     }
 
-    /// THE TIMELINE CARRIES NO CONTENT.
-    ///
-    /// This is the part of the history most likely to travel — it is what a church
-    /// would send back with "it went wrong at 10:31". PRIVACY.md's promise does not
-    /// get an exception for being useful, so `detail` is a phrase Relay composes,
-    /// never something a preacher said.
-    #[test]
     /// RG-81 — the evidence must reach the OPERATOR and nothing else.
     ///
     /// `heard_text` was written on every fire and returned by no query: `RELAY_GAP.md`
@@ -978,6 +971,12 @@ mod timeline_tests {
         );
     }
 
+    /// THE TIMELINE CARRIES NO CONTENT.
+    ///
+    /// This is the part of the history most likely to travel — it is what a church
+    /// would send back with "it went wrong at 10:31". PRIVACY.md's promise does not
+    /// get an exception for being useful, so `detail` is a phrase Relay composes,
+    /// never something a preacher said.
     #[test]
     fn nothing_a_preacher_said_reaches_the_timeline() {
         let conn = db();
