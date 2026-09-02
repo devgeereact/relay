@@ -32,7 +32,7 @@ and the command is named — a count you cannot reproduce is a rumour.
 | | Count | How to reproduce |
 |---|---|---|
 | Rust tests | **629 passing**, 17 ignored (646 declared) | `cd src-tauri && cargo test`. It read **630 / 647** until 2026-09-02, and the extra one was not a test: a duplicated `#[test]` attribute in `db/services.rs` registered one function twice. The same duplicate made `cargo clippy --all-targets -- -D warnings` fail, which is a CI gate — so the count register and the build gate were wrong in the same place, for the same reason |
-| Frontend tests | **926 passing**, 0 skipped, 68 files | `npx vitest run` — read the runner's own summary line. **Not** `vitest list \| wc -l`: that stream carries Svelte compiler warnings too and over-counted by 7 |
+| Frontend tests | **927 passing**, 0 skipped, 68 files | `npx vitest run` — read the runner's own summary line. **Not** `vitest list \| wc -l`: that stream carries Svelte compiler warnings too and over-counted by 7 |
 | `e2e.rs` tests | **38** (38 run, **0 ignored** — the file has carried no ignored test since R2-C and R2-D closed, DECISIONS §54) | `cd src-tauri && cargo test e2e::` |
 | Registered `#[tauri::command]` | **132** (five dead ones deleted 2026-08-30) | `grep -c '#\[tauri::command\]' src-tauri/src/main.rs` |
 | `.svelte` files | **48**, 22 of them views | `find src -name '*.svelte' | wc -l` |
