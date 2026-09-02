@@ -233,6 +233,6 @@ key is deliberately total, so it clears *everything*, monitor timers included.
 ## Things Relay promises you
 
 - **It works with the internet unplugged.** All of it. The listening, the detecting, the screens.
-- **Your sermon audio never leaves the computer.** It is transcribed on the machine and thrown away. See [PRIVACY.md](../PRIVACY.md), which says exactly what is and is not sent, and means it.
+- **Your sermon audio never leaves the computer.** It is transcribed on the machine and thrown away. See [PRIVACY.md](PRIVACY.md), which says exactly what is and is not sent, and means it.
 - **It will not put a verse on the wall because it *guessed*.** Only because it *heard*, or because you told it to.
 - **It tells you when something failed.** A control that lies is worse than one that breaks, and this is software that fails in front of five hundred people.

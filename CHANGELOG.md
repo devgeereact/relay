@@ -392,7 +392,7 @@ The first thing a church could actually use.
 
 ### Your privacy
 
-- **Sermon audio never leaves the device.** It is transcribed on your computer and thrown away. See [PRIVACY.md](PRIVACY.md).
+- **Sermon audio never leaves the device.** It is transcribed on your computer and thrown away. See [PRIVACY.md](docs/PRIVACY.md).
 - **Crash reporting is off by default**, has no destination in the open-source build, and *drops* free text rather than trying to filter it — so a transcript, a verse or a lyric cannot leak through it even by accident.
 
 ### Fixed before anyone was hurt by them

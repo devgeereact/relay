@@ -68,7 +68,7 @@ clear.
 
 There is no safe way to sift content out of a field that is *allowed* to contain
 content. So it isn't sifted — **it is dropped.** The error type and the stack trace
-are enough to fix a crash. (`src-tauri/src/telemetry.rs`, and the tests beneath it.)
+are enough to fix a crash. (`../src-tauri/src/telemetry.rs`, and the tests beneath it.)
 
 ---
 
@@ -91,7 +91,7 @@ means, because it is more than reading:
   Nothing leaves your computer either way.
 
 That second point is a deliberate tradeoff for a device on a church's own network,
-and it is recorded as one — see **[DECISIONS §35](docs/DECISIONS.md)**, which also
+and it is recorded as one — see **[DECISIONS §35](DECISIONS.md)**, which also
 lists what would make us change it. It is written here in plain words because a
 privacy document that undersells the exposure is worse than one that says nothing.
 

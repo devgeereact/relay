@@ -216,7 +216,7 @@ service lock · update safety · diagnostics · models.
 Networked clients get the content events as JSON frames over the WS hub
 (`{kind:"content"|"clear"|"black"|"stage_next"|"channel_template", …}`), and send exactly three
 kinds back — `hello`, `beat`, `rendered` — none of which can carry content
-([SECURITY.md](../SECURITY.md) T4).
+([SECURITY.md](SECURITY.md) T4).
 
 ---
 
@@ -281,7 +281,7 @@ Not faked — clearly bounded. The full deferral + technical-debt register is [R
 - **African-language STT fine-tunes** — base multilingual model is weak on Yoruba/Hausa; fine-tunes pending.
 - **Document (PDF/PPTX) rendering** — stored as media pointers; slide extraction/presentation is a later phase.
 - **Detection-history writes** are service-session scoped.
-- **Signed language packs** — refused rather than deferred: signing needs a key, a ceremony and a distribution channel that do not exist, and an unsigned pack that can rewrite the book aliases is a wrong-verse-on-a-wall vector ([SECURITY.md](../SECURITY.md) T9). The *offline* half shipped: install a model from a file, and `scripts/offline-bundle.mjs`.
+- **Signed language packs** — refused rather than deferred: signing needs a key, a ceremony and a distribution channel that do not exist, and an unsigned pack that can rewrite the book aliases is a wrong-verse-on-a-wall vector ([SECURITY.md](SECURITY.md) T9). The *offline* half shipped: install a model from a file, and `scripts/offline-bundle.mjs`.
 - **Binary update rollback** — deliberately not built. The installers are public and signed; what cannot be got back is the church's database, and that is what `updates.rs` protects ([DECISIONS.md](DECISIONS.md) §43).
 - **Device identity on the LAN** — declined, not missing. `:8032` is an unauthenticated control plane by decision, because the preacher's phone has no way to hold a credential ([DECISIONS.md](DECISIONS.md) §35, narrowed by §39 to record *when* a screen painted and never *who*).
 

@@ -52,7 +52,7 @@ The rules that must survive even if that read fails:
   reaches a wall in front of people.
 - **Secrets and logs.** Telemetry is opt-in, content-scrubbed, and carries no DSN in OSS
   builds. Verify no transcript text, no verse content and no file path leaks into
-  telemetry, a crash report, or stdout. `PRIVACY.md`'s promise is not conditional.
+  telemetry, a crash report, or stdout. `../../docs/PRIVACY.md`'s promise is not conditional.
 - **The LAN remote.** `main.rs::remote_api` serves `search / fire / next / prev / clear /
   black / live` on `:8032`, with **no authentication, deliberately**: anyone already on
   the church network can drive the wall, and `docs/DECISIONS.md` owns that call. Your

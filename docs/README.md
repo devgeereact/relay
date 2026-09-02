@@ -62,7 +62,7 @@ real gaps.
 | **3 · UX & design system** | *How does it look and behave — tokens, type, colour meaning, components?* | [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) · [design/](design/) references | Complete |
 | **4 · System architecture** | *How is it built — process model, pipeline, rendering, data layer, invariants?* | [ARCHITECTURE.md](ARCHITECTURE.md) | Complete |
 | **5 · AI specification** | *What does the AI decide, what will it never do, where is it honestly weak?* | [AI_DISCLOSURE.md](AI_DISCLOSURE.md) · [LANGUAGES.md](LANGUAGES.md) | Complete |
-| **6 · Engineering handbook** | *How do we work — conventions, the rules learned the hard way, contribution bar?* | [../CLAUDE.md](../CLAUDE.md) · [../CONTRIBUTING.md](../CONTRIBUTING.md) | Complete |
+| **6 · Engineering handbook** | *How do we work — conventions, the rules learned the hard way, contribution bar?* | [../CLAUDE.md](../CLAUDE.md) · [CONTRIBUTING.md](CONTRIBUTING.md) | Complete |
 | **7 · Operations manual** | *How is it released, signed, updated, and operated on a Sunday?* | [RELEASING.md](RELEASING.md) · [USER_GUIDE.md](USER_GUIDE.md) | Complete |
 | **Decisions (ADR log)** | *Why is anything the way it is?* | [DECISIONS.md](DECISIONS.md) | Complete |
 | **Roadmap & tech debt** | *What is deferred, parked, or owed — and on whose authority?* | [ROADMAP.md](ROADMAP.md) | **NEW** |
@@ -91,10 +91,10 @@ contradicts it, the code is wrong — flag it, don't silently "fix" the decision
 **An operator / church volunteer**
 1. [USER_GUIDE.md](USER_GUIDE.md) — 10-minute setup and the Sunday-morning path.
 2. [AI_DISCLOSURE.md](AI_DISCLOSURE.md) — what the AI does, and what it will never do.
-3. [../PRIVACY.md](../PRIVACY.md) — nothing you say, sing, or show leaves your computer.
+3. [PRIVACY.md](PRIVACY.md) — nothing you say, sing, or show leaves your computer.
 
 **A contributor (code or language)**
-1. [../CONTRIBUTING.md](../CONTRIBUTING.md) — the two contributions that need **no code**
+1. [CONTRIBUTING.md](CONTRIBUTING.md) — the two contributions that need **no code**
    (book aliases, locale files) come first.
 2. [LANGUAGES.md](LANGUAGES.md) — Yorùbá / Kiswahili / Hausa; fix a book name in a one-line PR.
 3. [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) — before you touch any UI.

@@ -14,7 +14,7 @@ Built out into a lightweight presentation suite: a **Content Library** (saved sc
 1. **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — how the app works, in detail (process model, pipeline, cue model, rendering, data layer, command/event reference, invariants).
 2. **[docs/USER_GUIDE.md](docs/USER_GUIDE.md)** — how to operate it: every screen and the typical Sunday flow.
 3. `CLAUDE.md` — working conventions and non-negotiable constraints; read first if you're using an AI coding agent in this repo.
-4. `PROMPT.md` — the build-phase reference (the module docs cite its phase numbers); the full brief now lives in `docs/SPEC.md`.
+4. `docs/PROMPT.md` — the build-phase reference (the module docs cite its phase numbers); the full brief now lives in `docs/SPEC.md`.
 5. `docs/SPEC.md` — canonical technical spec (original brief). `docs/DECISIONS.md` — every major decision, with reasoning.
 6. **[docs/DESIGN_SYSTEM.md](docs/DESIGN_SYSTEM.md)** — tokens, type, and the four colours that carry a promise (amber = on air, amethyst = rehearsal, cyan = a guess, grey = cued). Read before touching any UI. `docs/design/` holds the rendered screen references.
 
@@ -32,8 +32,8 @@ Rust core · Tauri v2 shell · Svelte + Vite frontend · SQLite (`rusqlite`) · 
 
 ## Privacy, security, and what the AI does
 
-- **[PRIVACY.md](PRIVACY.md)** — *nothing you say, sing or show leaves your computer.* No accounts, no cloud, no server. The audio is never even saved.
-- **[SECURITY.md](SECURITY.md)** — how to report a vulnerability, and what we consider most serious (anything that leaks sermon content, or puts content on a screen the operator didn't choose).
+- **[PRIVACY.md](docs/PRIVACY.md)** — *nothing you say, sing or show leaves your computer.* No accounts, no cloud, no server. The audio is never even saved.
+- **[SECURITY.md](docs/SECURITY.md)** — how to report a vulnerability, and what we consider most serious (anything that leaks sermon content, or puts content on a screen the operator didn't choose).
 - **[docs/AI_DISCLOSURE.md](docs/AI_DISCLOSURE.md)** — what the AI decides by itself, what it will **never** do (a paraphrase never reaches a congregation without a human agreeing), and where it is honestly weak.
 - **[docs/LANGUAGES.md](docs/LANGUAGES.md)** — Yorùbá / Kiswahili / Hausa. Fix a book name in a one-line PR, no Rust required.
 

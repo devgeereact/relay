@@ -11,7 +11,7 @@ No hedging below. If a line here is wrong, that's a bug — please report it.
 ## What the AI actually does
 
 1. **It listens.** A speech model running *on your machine* turns the preacher's
-   voice into text. Nothing is uploaded. (See [`PRIVACY.md`](../PRIVACY.md).)
+   voice into text. Nothing is uploaded. (See [`PRIVACY.md`](PRIVACY.md).)
 2. **It looks for scripture references** in that text — *"John chapter three verse
    sixteen"*, *"Sáàmù 23:1"*, *"Zabura sura ta ashirin da uku"*.
 3. **It decides** whether it is confident enough to put the verse on screen by

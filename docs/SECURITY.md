@@ -49,7 +49,7 @@ The **HTTP API** (`:8032/api/…`) is a different matter and is deliberately a
 control plane: `fire`, `next`, `prev`, `clear`, `black`, `live`, `search`, with no
 authentication, because it is what the preacher's phone talks to. Anyone on the
 church network can therefore change what is on the wall. **That is a known,
-recorded design decision ([DECISIONS §35](docs/DECISIONS.md)), not a
+recorded design decision ([DECISIONS §35](DECISIONS.md)), not a
 vulnerability** — please do not spend your time reporting it.
 
 What we *do* want to hear about on that surface: a route that reaches something
@@ -70,7 +70,7 @@ running Relay.
 The three sections above are the *priorities*. This table is the whole surface, so
 that a gap is visible as a row rather than as an absence. **Where a row says
 ACCEPTED it is a recorded decision, not an oversight** — the reasoning is in
-[`docs/DECISIONS.md`](docs/DECISIONS.md), and the conditions that would change it
+[`DECISIONS.md`](DECISIONS.md), and the conditions that would change it
 are written there too.
 
 | | Threat | Where it lands | State |
@@ -88,16 +88,16 @@ are written there too.
 
 **What has no mitigation, and is a consequence of T2 rather than an oversight:**
 there is **no device identity** on the LAN (the hub counts clients and deliberately
-records nothing about *who* connected — [DECISIONS §35](docs/DECISIONS.md), narrowed
+records nothing about *who* connected — [DECISIONS §35](DECISIONS.md), narrowed
 by §39 to record only *when*, anonymously), and therefore **no security event log**.
 Both would become possible, and worth building, only if §35 is reversed;
-[`docs/RELAY_GAP.md`](docs/RELAY_GAP.md) §20 (a) is the written-up reversal proposal
+[`RELAY_GAP.md`](RELAY_GAP.md) §20 (a) is the written-up reversal proposal
 and it is not adopted.
 
 ## Known and accepted
 
 These are **recorded tradeoffs**, not undiscovered bugs. Reporting them is welcome
-but they are already understood — see [`docs/DECISIONS.md`](docs/DECISIONS.md).
+but they are already understood — see [`DECISIONS.md`](DECISIONS.md).
 
 - **The LAN servers (ports 8031/8032) bind `0.0.0.0` with no authentication.**
   Kiosk screens, OBS machines and the preacher's phone are *other devices* on the
@@ -105,7 +105,7 @@ but they are already understood — see [`docs/DECISIONS.md`](docs/DECISIONS.md)
   church WiFi can see the verse already on the projector — **and can also drive the
   screens**, via the same unauthenticated remote the preacher uses. Path traversal
   is defended; screen control is not, on purpose. Full reasoning and the conditions
-  that would change it: [DECISIONS §35](docs/DECISIONS.md).
+  that would change it: [DECISIONS §35](DECISIONS.md).
 - **A web page can no longer drive the screens — closed 2026-08-20.** It used to:
   every action was a side-effecting `GET` answered with
   `Access-Control-Allow-Origin: *`, so `<img src="http://<relay>:8032/api/black">`
