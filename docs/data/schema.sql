@@ -10,7 +10,7 @@
 -- `PRAGMA user_version` ladder (`db::SCHEMA_VERSION`) evolve a database created
 -- from this baseline. A column added by a rung will not appear here, and that is
 -- correct — but keeping the two agreeing is manual, and that is tracked as debt
--- in docs/ROADMAP.md §4.
+-- in docs/KNOWN_ISSUES.md §4.
 --
 -- Rule of thumb: a NEW table or column for a fresh install belongs here AND in a
 -- rung (so existing installs get it too). To dump what a live database actually
@@ -42,7 +42,7 @@ CREATE TABLE verses (
     chapter        INTEGER NOT NULL,
     verse          INTEGER NOT NULL,
     text           TEXT NOT NULL,
-    embedding      BLOB                   -- precomputed vector for semantic match; NEVER YET WRITTEN (see docs/ROADMAP.md)
+    embedding      BLOB                   -- precomputed vector for semantic match; NEVER YET WRITTEN (see docs/KNOWN_ISSUES.md)
 );
 CREATE INDEX idx_verses_lookup ON verses(translation_id, book, chapter, verse);
 
@@ -81,7 +81,7 @@ CREATE TABLE service_plans (
 );
 
 -- One polymorphic cue for every content type. cue_type selects how payload_json
--- is read; template_id is an optional per-content-type override. See docs/DOMAIN_MODEL.md §4.
+-- is read; template_id is an optional per-content-type override. See docs/DATA_MODEL.md §4.
 CREATE TABLE plan_items (
     id           INTEGER PRIMARY KEY,
     plan_id      INTEGER NOT NULL REFERENCES service_plans(id) ON DELETE CASCADE,

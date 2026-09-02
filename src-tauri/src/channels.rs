@@ -534,7 +534,7 @@ struct Beat {
 ///   Not a history, not a log, never written to the database, gone on quit.
 ///
 /// So this is anonymous liveness, and it stays that way. If a future change wants
-/// to know *which* device, that is the pairing proposal in `docs/RELAY_GAP.md` §20,
+/// to know *which* device, that is the pairing proposal in `docs/qa/RELAY_GAP.md` §20,
 /// and it needs a human first.
 #[derive(Clone, Default)]
 pub struct OutputHealth {

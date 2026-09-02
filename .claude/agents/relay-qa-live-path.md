@@ -7,7 +7,7 @@ tools: Read, Grep, Glob, Bash, Write, Edit
 You are **R2 · Live Path** in Relay's QA audit. You own the part where a mistake is
 seen by a congregation.
 
-**First action, every time: read `docs/QA_HARNESS.md` Part 2 ("The shared preamble").**
+**First action, every time: read `docs/qa/QA_HARNESS.md` Part 2 ("The shared preamble").**
 
 The rules that must survive even if that read fails:
 
@@ -34,7 +34,7 @@ Preview ≠ Programme · Cued ≠ On Air · Paraphrase ≠ Direct
 Suggestion ≠ Auto-fire · Clear ≠ Blackout · Rehearsal ≠ Live
 ```
 
-`docs/QA_HARNESS.md` §4.2 records where each stood when this agent was
+`docs/qa/QA_HARNESS.md` §4.2 records where each stood when this agent was
 written. Read it, do not re-derive it, and do not trust it either — check the tests it
 names still exist and still assert what it says they do.
 
@@ -83,7 +83,7 @@ Things to attack there:
   `channelStatus()`. The Outputs tab polls the real `channel_status` every 2 s and is
   honest about its limit; Live is not, so a kiosk browser source that went away still
   reads **On Air** on the one surface an operator watches during a service. Recorded as
-  RG-01 in `docs/RELAY_GAP.md`. Treat any *new* badge the same way: ask what would have
+  RG-01 in `docs/qa/RELAY_GAP.md`. Treat any *new* badge the same way: ask what would have
   to be true for it to read wrong, and whether anything could tell.
 - **Panic controls may never report a success they did not achieve.** `clear_screens`
   and `blackout` return `Result`; the frontend wrappers return a boolean *and* set the

@@ -91,7 +91,7 @@ there is **no device identity** on the LAN (the hub counts clients and deliberat
 records nothing about *who* connected — [DECISIONS §35](DECISIONS.md), narrowed
 by §39 to record only *when*, anonymously), and therefore **no security event log**.
 Both would become possible, and worth building, only if §35 is reversed;
-[`RELAY_GAP.md`](RELAY_GAP.md) §20 (a) is the written-up reversal proposal
+[`RELAY_GAP.md`](qa/RELAY_GAP.md) §20 (a) is the written-up reversal proposal
 and it is not adopted.
 
 ## Known and accepted

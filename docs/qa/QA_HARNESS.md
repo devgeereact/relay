@@ -1,8 +1,8 @@
 # Relay — the QA harness
 
 How Relay is audited, by whom, with which instrument, and what the repository can already
-prove. This is not part of the specification hierarchy — [SPEC.md](SPEC.md),
-[DECISIONS.md](DECISIONS.md) and [PRODUCT_AUDIT.md](PRODUCT_AUDIT.md) own the product; this
+prove. This is not part of the specification hierarchy — [SPEC.md](../SPEC.md),
+[DECISIONS.md](../DECISIONS.md) and [PRODUCT_AUDIT.md](audits/PRODUCT-2026-07-13.md) own the product; this
 document owns how it gets checked.
 
 It supersedes `Working-Agent.md`, `Working-Agent-PROMPT.md` and `Working-Agent-COVERAGE.md`,
@@ -278,7 +278,7 @@ Your report structure survives, with two changes:
    ordered, specific, "plug in the ATEM, do this, expect that". That list is the actual output
    of an honest audit of a desktop app on a machine with no screen.
 
-Written to `docs/audits/QA-<ISO date>.md`. It never touches `PRODUCT_AUDIT.md` — that document
+Written to `docs/qa/audits/QA-<ISO date>.md`. It never touches `PRODUCT_AUDIT.md` — that document
 is a human's, written at a different altitude, and an agent overwriting it would be the worst
 kind of quiet damage.
 
@@ -306,7 +306,7 @@ kind of quiet damage.
 | **8.1** | Where the agents live | **Committed.** `.gitignore` un-ignores exactly the eight QA files and nothing else; the claude-flow scratch stays out |
 | **8.2** | Default scope | **Changed-surface**, computed from `git diff --name-only main...HEAD`; `--full` for a release |
 | **8.3** | May it drive the running app? | **Yes, behind `--live`.** R2 and R5 get layer D only when the flag is passed, and are told when it is off |
-| **8.4** | Report location | **Committed**, `docs/audits/QA-<ISO date>.md` |
+| **8.4** | Report location | **Committed**, `docs/qa/audits/QA-<ISO date>.md` |
 | **8.5** | Does the hook block? | **Report only.** It never exits 2 |
 
 ---

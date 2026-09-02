@@ -158,7 +158,7 @@ describe('RG-76 · the mechanically checkable hard-way rules', () => {
     const wrong = [];
     const CLAIM = /default\(\)\s*==\s*from_sensitivity\((\d+)\)/g;
     let checked = 0;
-    for (const doc of ['CLAUDE.md', 'docs/DOMAIN_MODEL.md', 'docs/DECISIONS.md', 'docs/ARCHITECTURE.md']) {
+    for (const doc of ['CLAUDE.md', 'docs/DATA_MODEL.md', 'docs/DECISIONS.md', 'docs/ARCHITECTURE.md']) {
       for (const c of read(doc).matchAll(CLAIM)) {
         checked += 1;
         if (c[1] !== actual) wrong.push(`${doc} says default() == from_sensitivity(${c[1]})`);

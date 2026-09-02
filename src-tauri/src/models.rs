@@ -101,7 +101,7 @@ pub struct ModelInfo {
 /// ── WHY THERE IS MORE THAN `base` HERE ──────────────────────────────────────
 ///
 /// Relay shipped only `base` — the smallest useful whisper — for its entire life,
-/// while `docs/PRODUCT_AUDIT.md` called African-language accuracy the biggest
+/// while `docs/qa/audits/PRODUCT-2026-07-13.md` called African-language accuracy the biggest
 /// weakness in the product. Those two facts were never connected, because nothing
 /// had ever measured what a larger model buys. `stt::bench::engine_shootout` is
 /// that measurement, and these are the models it has to choose between.

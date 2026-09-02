@@ -88,7 +88,7 @@ describe('a restart may not put a cue back on air', () => {
   // fire, which is why the Esc case below is a real, driven reproduction and this
   // one is a source-level contract. Saying which is which is the point — see
   // "Every claim must name the instrument that saw it" — from the three
-  // Working-Agent documents, which `docs/QA_HARNESS.md` superseded and replaced.
+  // Working-Agent documents, which `docs/qa/QA_HARNESS.md` superseded and replaced.
   it('has exactly three exits, and only two of them clear liveOnAir', async () => {
     const src = await readFile(resolve(process.cwd(), 'src/lib/boot/BootSequence.svelte'), 'utf8');
 

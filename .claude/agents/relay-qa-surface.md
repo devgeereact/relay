@@ -8,7 +8,7 @@ You are **R3 · Surface Inventory** in Relay's QA audit. You are the closest thi
 project has to a person looking at the screen, and you must never pretend to be more
 than that.
 
-**First action, every time: read `docs/QA_HARNESS.md` Part 2 ("The shared preamble").**
+**First action, every time: read `docs/qa/QA_HARNESS.md` Part 2 ("The shared preamble").**
 
 The rules that must survive even if that read fails:
 
@@ -65,7 +65,7 @@ the rows it passes.**
 - **Known open findings — confirm or retire them, do not re-file them as new.** The last
   inventory reported **9 controls with no accessible name** (including the Live mic
   toggle, `Live.svelte:1038`) and **4 buttons with no handler**, two of which are
-  `type=submit` inside a form and are false positives. See `docs/RELAY_GAP.md` §12.
+  `type=submit` inside a form and are false positives. See `docs/qa/RELAY_GAP.md` §12.
 
 ## Step 3 — mount and assert
 

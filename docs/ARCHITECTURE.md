@@ -1,6 +1,6 @@
 # Relay — Architecture & How It Works
 
-How the application is built and how the pieces fit together, end to end. For the *why* behind decisions see [DECISIONS.md](DECISIONS.md); for the entities, invariants, and event catalog see [DOMAIN_MODEL.md](DOMAIN_MODEL.md); for the visual/interaction system see [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md); for operating the app see [USER_GUIDE.md](USER_GUIDE.md); for the original brief see [SPEC.md](SPEC.md); for what is deferred see [ROADMAP.md](ROADMAP.md). The whole doc hierarchy is indexed in [README.md](README.md).
+How the application is built and how the pieces fit together, end to end. For the *why* behind decisions see [DECISIONS.md](DECISIONS.md); for the entities, invariants, and event catalog see [DATA_MODEL.md](DATA_MODEL.md); for the visual/interaction system see [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md); for operating the app see [USER_GUIDE.md](USER_GUIDE.md); for the original brief see [SPEC.md](SPEC.md); for what is deferred see [KNOWN_ISSUES.md](KNOWN_ISSUES.md). The whole doc hierarchy is indexed in [README.md](README.md).
 
 Relay is **AI-assisted live presentation software for churches**. It listens to a live sermon, detects scripture references (direct quotes *and* paraphrases), and routes the right content to multiple independently-styled output screens in real time — built to sit **above** the AV chain (OBS, ATEM, ProPresenter) over NDI/HDMI/network, not replace it. Everything core runs **fully offline**.
 
@@ -75,7 +75,7 @@ recorded as an **absence**, never as a zero.
    - **Direct** — book aliases (full names, numbered `1 John`/`first john`/`1jn`, fast abbreviations `ps 23 1`, ASR mishears like `sam`→Psalms), a spoken-number FSM (`three sixteen`→3:16), single-chapter books (`Jude 4`→1:4), ambiguity handling (`revelation 22`→suggests 22:1 *and* 2:2).
    - **Semantic** — a TF-IDF `SemanticIndex.top_k` turns paraphrases ("there is therefore no condemnation…") into the real verse (Romans 8:1). This is the seam where a neural embedder will later drop in.
    - **Context memory** — recent passages bias interpretation and enable "next"/"back" navigation.
-4. **`router.rs`** — confidence gating with **self-calibrating thresholds** (config, not hardcoded — seed `0.50`/`0.35` at sensitivity 50, the single baseline `Thresholds::default()`; see the "Confidence-threshold mechanism" row under *Build-out decisions* in [DECISIONS.md](DECISIONS.md) — the numbered log starts at §18, and this decision predates it), debounce, and the decision of what actually fires. High-confidence auto-fires; mid-confidence becomes an operator *suggestion*; low is dropped. Only `Direct` matches may auto-fire (see [DOMAIN_MODEL.md](DOMAIN_MODEL.md) §6).
+4. **`router.rs`** — confidence gating with **self-calibrating thresholds** (config, not hardcoded — seed `0.50`/`0.35` at sensitivity 50, the single baseline `Thresholds::default()`; see the "Confidence-threshold mechanism" row under *Build-out decisions* in [DECISIONS.md](DECISIONS.md) — the numbered log starts at §18, and this decision predates it), debounce, and the decision of what actually fires. High-confidence auto-fires; mid-confidence becomes an operator *suggestion*; low is dropped. Only `Direct` matches may auto-fire (see [DATA_MODEL.md](DATA_MODEL.md) §6).
 5. **`pipeline.rs`** — the ONE place a verse becomes screen content. `pipeline::Fire` is the only way an `OutputContent` or a `DetectionEvent` is built (five hand-rolled copies once drifted apart and two silently dropped the scripture template), and `pipeline::preflight` is the **pre-air validator**: it refuses a payload that would paint an empty screen, or one carrying a template the output page cannot parse, and leaves the screens exactly as they were ([DECISIONS.md](DECISIONS.md) §42). It lives at the one choke point, so the AI path, the manual box, spoken nav, plan cues, media, announcements and the countdown are covered at once — and the panic controls deliberately do not pass through it, because a validator that could refuse a blackout is a blackout that can fail.
 6. **`channels.rs`** — one `broadcast_content()` pushes the chosen content to **every** output: a Tauri event (`output://content`) for native windows **and** a JSON frame over the kiosk WS for networked clients. N independently-styled renders from one broadcast; the pipeline never formats per channel. It also owns **`OutputHealth`**: every output page beats back that it is still painting — the native window over the bridge, kiosk/OBS over the socket it already has — so a screen that has gone away can be *detected* rather than assumed. The beat is anonymous by construction: it says "the screen for channel N painted", never who or from where ([DECISIONS.md](DECISIONS.md) §39).
 
@@ -152,7 +152,7 @@ SQLite via `rusqlite` (bundled), at `~/Library/Application Support/com.relay.app
 
 Count them with `grep -c 'CREATE TABLE' docs/data/schema.sql` — the number is deliberately not
 written here, because every count restated in prose in this repository has drifted
-([RELAY_GAP.md](RELAY_GAP.md) §18). `docs/data/schema.sql` is not documentation: `db/mod.rs`
+([RELAY_GAP.md](qa/RELAY_GAP.md) §18). `docs/data/schema.sql` is not documentation: `db/mod.rs`
 `include_str!`s it, so it **is** the baseline schema the binary ships, and
 `docs/data/schema-baseline.sql` is the oldest schema Relay can upgrade from — checked in so a
 test can prove every column added since has a migration behind it.
@@ -180,7 +180,7 @@ Frontend↔core contract. Commands are `invoke()` (camelCase JS args → snake_c
 > `create_template`, `import_song`, `import_pro`, `open_output_window`, `close_output_window`,
 > `list_output_windows`, `current_service` and the `*_template_active` pair — every one deleted
 > because nothing could reach it, which is a security reduction as much as a tidy-up
-> ([RELAY_GAP.md](RELAY_GAP.md) RG-51). A list of commands in prose is the single fastest-rotting
+> ([RELAY_GAP.md](qa/RELAY_GAP.md) RG-51). A list of commands in prose is the single fastest-rotting
 > thing in this repository. Read it live:
 >
 > ```bash
@@ -274,7 +274,7 @@ These were learned the hard way (hours-long freezes/crashes). Do not regress the
 
 ## 9. Parked / honest limits
 
-Not faked — clearly bounded. The full deferral + technical-debt register is [ROADMAP.md](ROADMAP.md); the highlights:
+Not faked — clearly bounded. The full deferral + technical-debt register is [KNOWN_ISSUES.md](KNOWN_ISSUES.md); the highlights:
 
 - **NDI output** — needs the proprietary SDK; `open_ndi_output` returns a clear error. NDI + HDMI only; **no native SDI** (served by existing ATEM/converter hardware).
 - **Neural paraphrase embedder** — TF-IDF is the current seam behind `SemanticIndex::top_k`.

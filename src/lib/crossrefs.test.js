@@ -105,6 +105,34 @@ describe('RG-67 · every cross-reference resolves', () => {
     ).toEqual([]);
   });
 
+  // Where a document went when the tree was reorganised.
+  //
+  // `docs/qa/audits/*` are frozen — an audit that edits its own history stops being
+  // evidence — so when a file they cite moves, the citation cannot be repaired in
+  // place. Six citations across two of those documents were in exactly that
+  // position. A redirect is the honest repair: the reader is told where the file
+  // went, and the test below refuses to let the entry outlive its reason by
+  // checking BOTH ends — the old path must be gone AND the new path must exist.
+  //
+  // Prefix entries end in `/`; everything else is an exact path.
+  const MOVED = new Map([
+    ['docs/audits/', 'docs/qa/audits/'],
+    ['docs/RELAY_GAP.md', 'docs/qa/RELAY_GAP.md'],
+    ['docs/PRODUCT_AUDIT.md', 'docs/qa/audits/PRODUCT-2026-07-13.md'],
+  ]);
+
+  /** The path a moved citation now names, or `null` if it did not move. */
+  const redirect = (cited) => {
+    for (const [from, to] of MOVED) {
+      if (from.endsWith('/')) {
+        if (cited.startsWith(from)) return to + cited.slice(from.length);
+      } else if (cited === from) {
+        return to;
+      }
+    }
+    return null;
+  };
+
   it('every `docs/…` path cited anywhere is a file that exists', () => {
     // The third kind of dead citation, and the one that had the most instances:
     // **sixteen source comments cited `docs/relaydesign/`, a directory that is not
@@ -119,9 +147,15 @@ describe('RG-67 · every cross-reference resolves', () => {
     const dangling = [];
     for (const [file, text] of FILES) {
       const lines = text.split('\n');
+      const frozen = file.includes('docs/qa/audits/');
       lines.forEach((line, i) => {
         for (const m of line.matchAll(/docs\/[A-Za-z0-9_./-]+\.(?:png|md|html|sql|json)/g)) {
           if (existsSync(resolve(root, m[0]))) continue;
+          // A frozen audit CANNOT be edited to follow a file that moved, so a
+          // redirect is the only honest repair available to it. Honoured for those
+          // documents and nowhere else: everywhere a stale path fails today, it
+          // still fails. See `MOVED` and the test that keeps it true.
+          if (frozen && redirect(m[0])) continue;
           // A citation may name a file that is gone, as long as it SAYS so — the
           // register records deletions on purpose, and losing that would be worse.
           const window = lines.slice(Math.max(0, i - 2), i + 3).join(' ');
@@ -134,6 +168,23 @@ describe('RG-67 · every cross-reference resolves', () => {
       dangling,
       `citations to files that do not exist: ${dangling.join(', ')}`,
     ).toEqual([]);
+  });
+
+  it('every redirect is still needed, and still points somewhere real', () => {
+    // The same shape as `KNOWN_ABSENT`'s guard below, and for the same reason: an
+    // exception that outlives its reason is a hole. If a moved file is ever put
+    // back, or moved again, this fails rather than quietly forgiving a citation
+    // that has become genuinely wrong.
+    const broken = [];
+    for (const [from, to] of MOVED) {
+      if (existsSync(resolve(root, from))) {
+        broken.push(`${from} exists again — drop the redirect`);
+      }
+      if (!existsSync(resolve(root, to))) {
+        broken.push(`${from} → ${to}, which does not exist`);
+      }
+    }
+    expect(broken, `redirects that no longer hold: ${broken.join(', ')}`).toEqual([]);
   });
 
   it('every `module::item` citation into the Rust tree resolves', () => {
@@ -177,12 +228,12 @@ describe('RG-67 · every cross-reference resolves', () => {
         if (!OURS.has(mod)) continue;
         // `db::mod` names the file `db/mod.rs`, not an item in it.
         if (item === 'mod') continue;
-        // `docs/audits/` is frozen evidence — those documents may not be edited, so a
+        // `docs/qa/audits/` is frozen evidence — those documents may not be edited, so a
         // dangling citation there cannot be fixed in place and must not fail this
         // test. It is reported in the audit's own fix log instead, which is the
         // mechanism they already use for closures. (There is one: F8 cites
         // `detection::r4_07`, which has never existed.)
-        if (file.includes('docs/audits/')) continue;
+        if (file.includes('docs/qa/audits/')) continue;
         const declared = new RegExp(`\\b(fn|struct|enum|const|static|type|mod)\\s+${item}\\b`);
         if (declared.test(rust)) continue;
         if (KNOWN_ABSENT.has(`${mod}::${item}`)) continue;
@@ -207,7 +258,7 @@ describe('RG-67 · every cross-reference resolves', () => {
   });
 
   it('every RG- id mentioned anywhere exists in the register', () => {
-    const doc = read('docs/RELAY_GAP.md');
+    const doc = read('docs/qa/RELAY_GAP.md');
     const start = doc.indexOf('## 23. Gap register');
     const end = doc.indexOf('## 24. GO / NO-GO');
     expect(start, 'the register is gone').toBeGreaterThan(-1);

@@ -305,7 +305,7 @@ first time you can see the delay for yourself.**
 **Read before you change models.** Diagnostics will now tell you plainly that on a
 bigger model the wait is the model itself and not something Relay can fix — a trade
 you were always making and could not previously see. Evidence, and everything these
-numbers do *not* prove: `docs/audits/PERF-2026-08-24.md`.
+numbers do *not* prove: `docs/qa/audits/PERF-2026-08-24.md`.
 
 ---
 

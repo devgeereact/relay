@@ -3,7 +3,7 @@
 The visual and interaction language: tokens, type, the load-bearing colour meanings, and the
 component vocabulary. For the *why* behind any rule here follow the link into
 [DECISIONS.md](DECISIONS.md); for how the pieces fit see [ARCHITECTURE.md](ARCHITECTURE.md);
-for the entities being rendered see [DOMAIN_MODEL.md](DOMAIN_MODEL.md).
+for the entities being rendered see [DATA_MODEL.md](DATA_MODEL.md).
 
 **The source of truth is [`src/app.css`](../src/app.css), not this page.** That file is the
 shipped stylesheet and it carries the reasoning inline, at each token. This document is the map
@@ -224,7 +224,7 @@ is still on an element silently restyles the app, and verifying that needs eyes 
 window — which the build machine cannot produce.
 
 So the gun is unloaded rather than removed: the contrast failure is fixed, and the rules stay
-until someone can look at a running app. Tracked in [ROADMAP.md](ROADMAP.md) §4.
+until someone can look at a running app. Tracked in [KNOWN_ISSUES.md](KNOWN_ISSUES.md) §4.
 
 ---
 

@@ -33,7 +33,7 @@ Implement `db.rs` against `data/schema.sql`. Seed with one translation (KJV) and
 `detection.rs`: regex-based reference detection against the seeded verse data. This alone should already demo the core loop end-to-end: speak "John 3:16," see it appear.
 
 **Phase 6 — content router + confidence gating**
-`router.rs`: implement the two-tier gating and debounce logic. Wire the auto-fire vs suggested-chip distinction into the console UI. (Seed thresholds: the "Confidence-threshold mechanism" row in [docs/DECISIONS.md](DECISIONS.md) — an unnumbered row, because the numbered log starts at §18. The "only Direct auto-fires" rule: [docs/DOMAIN_MODEL.md](DOMAIN_MODEL.md) §6.)
+`router.rs`: implement the two-tier gating and debounce logic. Wire the auto-fire vs suggested-chip distinction into the console UI. (Seed thresholds: the "Confidence-threshold mechanism" row in [docs/DECISIONS.md](DECISIONS.md) — an unnumbered row, because the numbered log starts at §18. The "only Direct auto-fires" rule: [docs/DATA_MODEL.md](DATA_MODEL.md) §6.)
 
 **Phase 7 — output channels, one render target at a time**
 `channels.rs`: start with the native-window (HDMI) render target only — it's the simplest. Get one real second screen showing a live-updating template before adding NDI encode or the WebSocket/kiosk path.

@@ -928,7 +928,7 @@ mod gate {
     ///
     /// `RELAY_RECORD_WAV` is what turns *"word error rate has never been measured in
     /// any language"* — the sentence the moat's 3/10 rests on — into a number.
-    /// `ROADMAP.md` §1 calls it the highest-value line on that page, and `RELAY_GAP.md`
+    /// `KNOWN_ISSUES.md` §1 calls it the highest-value line on that page, and `RELAY_GAP.md`
     /// §24 makes it a condition of the supervised pilot.
     ///
     /// The writer underneath is a hand-rolled 44-byte RIFF header. **A single wrong

@@ -85,7 +85,7 @@ You need **cmake** (whisper.cpp compiles from source) and a Rust toolchain. The 
 cd src-tauri
 cargo fmt --all && cargo clippy --all-targets -- -D warnings   # CI enforces both
 cargo test                    # the runner prints the count; do not trust one written here
-cd .. && npm test             # likewise. Both are re-measured in docs/QA_HARNESS.md §0
+cd .. && npm test             # likewise. Both are re-measured in docs/qa/QA_HARNESS.md §0
 ```
 
 Beyond green:

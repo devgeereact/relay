@@ -2,9 +2,9 @@
 
 **Status: the original brief, kept as the founding document — not a description of the code as it stands.** Written 2026-07-02 from a brainstorm session, before anything was built. It is preserved because it is where the product's shape was decided and because the module docs cite its section numbers.
 
-Where this document and the code disagree, **the code wins and the disagreement is marked inline below**. For what is actually built, read [ARCHITECTURE.md](ARCHITECTURE.md); for what is parked and why, [ROADMAP.md](ROADMAP.md); for the decisions that amended this brief, [DECISIONS.md](DECISIONS.md).
+Where this document and the code disagree, **the code wins and the disagreement is marked inline below**. For what is actually built, read [ARCHITECTURE.md](ARCHITECTURE.md); for what is parked and why, [KNOWN_ISSUES.md](KNOWN_ISSUES.md); for the decisions that amended this brief, [DECISIONS.md](DECISIONS.md).
 
-*"Relay" was a placeholder product name. It is still undecided, and [ROADMAP.md](ROADMAP.md) §1 lists that decision as due before the first church installs.*
+*"Relay" was a placeholder product name. It is still undecided, and [KNOWN_ISSUES.md](KNOWN_ISSUES.md) §1 lists that decision as due before the first church installs.*
 
 ## 1. Overview & positioning
 
@@ -28,7 +28,7 @@ Relay's wedge is not rebuilding all four categories to parity. It's the combinat
 
 ### v1 success criteria
 
-> ⚠️ **None of these has been measured against real live-room audio.** Detection is measured over *text* (`eval.rs`, CI-gated at SPEC's 5% wrong-verse rate); word error rate over *speech* has never been measured, in any language. Every row below is still a target, not a result — see [ROADMAP.md](ROADMAP.md) §1.
+> ⚠️ **None of these has been measured against real live-room audio.** Detection is measured over *text* (`eval.rs`, CI-gated at SPEC's 5% wrong-verse rate); word error rate over *speech* has never been measured, in any language. Every row below is still a target, not a result — see [KNOWN_ISSUES.md](KNOWN_ISSUES.md) §1.
 
 - ≥90% correct verse ID on direct quotes, ≥75% on paraphrase, <3s (p50), real live-room audio
 - Wrong-verse rate <5% of AI triggers, always-visible one-tap operator override
@@ -81,7 +81,7 @@ Audio input           Manual control
 2. **Streaming STT** — local whisper.cpp-class model → rolling partial + final transcript, per-chunk language ID (code-switching is the normal case in target-market preaching).
 3. **Direct pattern match** — regex for `<book> <chapter>:<verse>` shapes, multilingual book-name alias tables per priority language, phonetic-ASR-error tolerance (e.g. "John free sixteen" → John 3:16).
 4. **Semantic match** — embed the rolling window, vector-similarity search against a pre-embedded verse corpus, top-k candidates with confidence score. Catches paraphrase and topical reference.
-   > ⚠️ **As built, this is TF-IDF, not embeddings.** The seam is `SemanticIndex::top_k` in `detection.rs`; the `verses.embedding` column exists in the schema and **has never been written to**. A neural embedder is parked, not pending — see [ROADMAP.md](ROADMAP.md) §2. A TF-IDF cosine is not a probability, which is why §4.6's cap on this method is structural rather than a threshold ([DECISIONS.md](DECISIONS.md) §21).
+   > ⚠️ **As built, this is TF-IDF, not embeddings.** The seam is `SemanticIndex::top_k` in `detection.rs`; the `verses.embedding` column exists in the schema and **has never been written to**. A neural embedder is parked, not pending — see [KNOWN_ISSUES.md](KNOWN_ISSUES.md) §2. A TF-IDF cosine is not a probability, which is why §4.6's cap on this method is structural rather than a threshold ([DECISIONS.md](DECISIONS.md) §21).
 5. **Context memory** — track "current passage" state; a bare "verse 4" resolves against the last active book/chapter rather than requiring a fresh full reference.
 6. **Confidence gating, two-tier, self-calibrating** — seed defaults: auto-fire ≥0.50, suggest ≥0.35 (the sensitivity-50 baseline; the "Confidence-threshold mechanism" row in [DECISIONS.md](DECISIONS.md) records why the originally-logged 0.90/0.60 was amended — it is one of the unnumbered rows, because the numbered log starts at §18). Mid confidence surfaces as a one-tap operator-confirmable chip, never auto-touches output; low confidence dropped silently. Thresholds nudge per install based on operator confirm/reject signal over the first few live services. Manual override slider always available.
 7. **Debounce** — ~4–6s cooldown on repeat auto-fire of the same verse, overridden instantly by any new explicit direct-quote match.
@@ -148,7 +148,7 @@ See `docs/data/schema.sql` for the DDL, and `src-tauri/src/db/` for the queries 
 | Speech-to-text | whisper.cpp-class, local-first | Offline reliability; optional cloud fallback; open path to community African-language fine-tunes |
 | Local data | SQLite (`rusqlite`) | Local-first trust posture |
 | Local distribution | WebSocket (`tokio-tungstenite`) | Powers networked-browser-client output channels |
-| Video-over-IP | NDI SDK via Rust FFI — **parked, not built** | Chosen for interop, but it needs a proprietary SDK. `open_ndi_output` returns a clear error on purpose; see §9 and [ROADMAP.md](ROADMAP.md) §2. NDI/HDMI output today is the native window + the LAN browser client |
+| Video-over-IP | NDI SDK via Rust FFI — **parked, not built** | Chosen for interop, but it needs a proprietary SDK. `open_ndi_output` returns a clear error on purpose; see §9 and [KNOWN_ISSUES.md](KNOWN_ISSUES.md) §2. NDI/HDMI output today is the native window + the LAN browser client |
 | Platforms | Windows + macOS, day one | Near-free with Rust+Tauri |
 | License | MIT | Free / open source (see decision log) |
 
@@ -173,7 +173,7 @@ Community datasets to evaluate: Masakhane (African NLP research), Mozilla Common
 ## 10. Roadmap & open items
 
 > This is the *original brief's* roadmap. The current, authoritative deferral +
-> technical-debt register is [ROADMAP.md](ROADMAP.md); where the two differ, ROADMAP.md wins.
+> technical-debt register is [KNOWN_ISSUES.md](KNOWN_ISSUES.md); where the two differ, KNOWN_ISSUES.md wins.
 
 ### Parked, not eliminated
 - Native SDI hardware output — revisit only if a real target segment has SDI gear with no ATEM/converter at all
@@ -183,7 +183,7 @@ Community datasets to evaluate: Masakhane (African NLP research), Mozilla Common
 
 ### Still needs real data, not guessable in a spec
 - ~~Exact confidence-score seed numbers~~ — **decided**: auto-fire 0.50 / suggest 0.35 at the sensitivity-50 baseline ([DECISIONS.md](DECISIONS.md), "Confidence-threshold mechanism").
-- Book-name alias tables + phonetic-error tolerance lists for the three tier-1 languages (shipped and hand-curated; native-speaker review still pending — see [LANGUAGES.md](LANGUAGES.md), [ROADMAP.md](ROADMAP.md))
+- Book-name alias tables + phonetic-error tolerance lists for the three tier-1 languages (shipped and hand-curated; native-speaker review still pending — see [LANGUAGES.md](LANGUAGES.md), [KNOWN_ISSUES.md](KNOWN_ISSUES.md))
 
 ## Glossary
 

@@ -1,6 +1,6 @@
 // RG-52 — the gap register has to be readable, and I kept breaking it.
 //
-// `docs/RELAY_GAP.md` §23 is the register: one row per gap, forty-plus of them,
+// `docs/qa/RELAY_GAP.md` §23 is the register: one row per gap, forty-plus of them,
 // and it is the document a person opens to ask "what is left?".
 //
 // ── Why this is a test and not a promise ──────────────────────────────────────
@@ -32,7 +32,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-const DOC = readFileSync(resolve(process.cwd(), 'docs/RELAY_GAP.md'), 'utf8');
+const DOC = readFileSync(resolve(process.cwd(), 'docs/qa/RELAY_GAP.md'), 'utf8');
 
 /** A register row starts with a status marker. `| RG-02 |` is a dependency cell. */
 const ROW_START = /\| (?:✅|⏳|⚠️|~~)\s?RG-\d+/;
