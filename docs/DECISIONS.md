@@ -963,6 +963,12 @@ carefully as the changes, because the refusals are the harder half.
 naming book, chapter and verse. It scores the parser. It says nothing about the
 other half of the product: recognising a verse the preacher never named.
 
+> **That 50 is the number on the day this decision was made, and it is left there.**
+> The corpus is 74 cases now, and the live figure lives beside the command that
+> produces it — `QA_HARNESS.md` §0. A decision log records what was true when the
+> decision was taken; re-pointing its numbers at today would make the reasoning
+> unreadable and would drift again by Sunday.
+
 That half was entirely unmeasured, and it showed. The operator's words:
 
 > *"I don't want the AI to just detect a word and match the word to the whole

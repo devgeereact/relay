@@ -38,6 +38,15 @@ and the command is named — a count you cannot reproduce is a rumour.
 | `.svelte` files | **48**, 22 of them views | `find src -name '*.svelte' | wc -l` |
 | `<button>` occurrences | **352** | `grep -ro '<button' --include='*.svelte' src | wc -l` |
 | Tables in the schema | **21** | `grep -c 'CREATE TABLE' docs/data/schema.sql` |
+| Cases in the detection gate | **74** | `python3 -c "import json;print(len(json.load(open('src-tauri/data/eval_corpus.json'))['cases']))"` — it was 50, then 57, then 63; three documents still quoted an older one |
+| Modal surfaces that trap focus | **10** | `grep -rl trapFocus src \| grep -c svelte` — **not** a `role="dialog"` grep, which counts a comment and misses an `alertdialog` |
+
+> **`node scripts/qa-inventory.mjs` reports `perf_samples` as BACKEND ONLY — no command reaches
+> the insert. That is correct and it is not a defect.** The table is written by the
+> `relay-history` thread every 60 seconds and once more at `end_service` (`main::snapshot_latency`
+> → `db::log_perf_sample`); there is deliberately no command, because latency history is not
+> something an operator authors. It is listed here so the red flag reads as understood rather
+> than as unnoticed.
 
 **Status: BUILT.** What shipped:
 

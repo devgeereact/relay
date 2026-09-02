@@ -466,7 +466,7 @@ The one thing worth adding, because the brief asks for optimisations that would 
 
 **Do not prefetch scripture candidates (brief §12) and do not shorten the window (§6, §8, §11).**
 Detection is not the bottleneck and has not been since 2026-08-24. It costs ~2.6 ms per query on
-a 31k-verse linear scan, runs on its own thread behind a bounded queue (`main.rs:3176`), and shed
+a 31k-verse linear scan, runs on its own thread behind a bounded queue (`main::DETECT_QUEUE`), and shed
 **zero** partials across 1075 passes. Above `ggml-base`, PERF §4 is explicit: *the model is the
 entire remaining latency.* Optimising the 2.6 ms stage to make the 144 ms stage feel faster is
 the classic version of this mistake, and CLAUDE.md rule 31 exists because this project already
@@ -507,16 +507,16 @@ and **samples persist** to `perf_samples`, with a week-on-week trend (RG-14). Wh
 
 | Method | May auto-fire | Where capped |
 |---|---|---|
-| `Direct` | **Yes**, and only when corroborated by a second pass unless the window is FINAL | `router.rs:268-277` |
-| `Semantic` | No — `Suggest` at any score | `detection.rs:79-81`, `router.rs:307-313` |
+| `Direct` | **Yes**, and only when corroborated by a second pass unless the window is FINAL | `router::decide_live` |
+| `Semantic` | No — `Suggest` at any score | `detection::may_auto_fire`, `router::decide` |
 | `Ambiguous` | No | same |
 | `UncertainBook` | No — added after the "hymn number three sixteen" → **Numbers 3:16** P0 | same; CLAUDE.md rule 10 |
 
 One window may inform about several verses and put **at most one** on a wall (`rank_for_wall`,
-`main.rs:714-737`, `:902-905`). The debounce is per-reference and derived from the window
+`main::rank_for_wall`, `main::emit_detections`). The debounce is per-reference and derived from the window
 (`DEFAULT_DEBOUNCE_MS = (WINDOW_SECS + 2) × 1000`). Manual fires are recorded as `'manual'`, and
 rehearsal feedback is explicitly excluded from calibration — *"a rehearsal is not evidence"*
-(`main.rs:2803-2814`).
+(`router::DEFAULT_DEBOUNCE_MS`).
 
 **This is the strongest subsystem in the product and the brief adds nothing to it.** Its §14
 (explainability) is already built; its §7 (safety) is already stricter than proposed. The gap is
@@ -814,11 +814,11 @@ Every one of these was reaffirmed by this audit, and each is cited by code:
 | Operator override is first-class | DECISIONS §20, §21 |
 | One template engine; output channels are render targets | CLAUDE.md, `TemplateRender.svelte` |
 | Local-first data | `PRIVACY.md`, `telemetry.rs` |
-| Only `Direct` may auto-fire; a cosine is not a probability | DECISIONS §21, `detection.rs:79-81` |
-| Rehearsal gates at the broadcast, not the caller | DECISIONS §18, `channels.rs:469-488` |
+| Only `Direct` may auto-fire; a cosine is not a probability | DECISIONS §21, `detection::may_auto_fire` |
+| Rehearsal gates at the broadcast, not the caller | DECISIONS §18, `channels::rehearsing` |
 | Never report a success that did not happen | DECISIONS §20, `capture.js:1712-1732` |
 | Audio levels are learned, never assumed | DECISIONS §19, CLAUDE.md rule 12 |
-| One window, one wall | DECISIONS §37, `main.rs:714-737` |
+| One window, one wall | DECISIONS §37, `main::rank_for_wall` |
 | Never make the live path faster by making it less safe | CLAUDE.md rule 34 |
 | Planner builds; Live runs; Planner cannot reach an output | `ServicePlanner.svelte:1-18` |
 | Relay sits above OBS/ATEM/ProPresenter, never replaces them | SPEC §9, ROADMAP §5 |
@@ -918,7 +918,7 @@ Every one of these was reaffirmed by this audit, and each is cited by code:
 - **Cost.** A new `devices` table and token lifecycle; a pairing step in the preacher's-phone flow
   that must survive a dead battery ten minutes before a service; and the sticky-note failure the
   original decision names. It also contradicts *"Relay does not record who connected"*
-  (`channels.rs:706-711`), which is currently a privacy guarantee.
+  (`channels::kiosk_content_json`), which is currently a privacy guarantee.
 - **New risks.** A church that cannot pair a phone at 10:29 loses the remote entirely. Token
   expiry during a 90-minute service. A revoke UI a volunteer can misuse.
 - **Evidence required before deciding.** One church actually asking for it; or Relay being run on
@@ -1090,7 +1090,7 @@ Each row keeps the previous score beside it so movement is visible rather than a
 
 **No overall score is given.** An average would hide the **3** and the **2**, which remain the only
 two that decide anything. Twelve dimensions, two passes, and those two have not moved once —
-because neither is a code problem, and **45 merged pull requests** (`gh pr list --state merged --jq length`) could not touch them.
+because neither is a code problem, and **45 merged pull requests** (`gh pr list --state merged --limit 500 --json number --jq length` — **the `--limit` is not optional**: `gh pr list` defaults to 30, so the obvious form of this command answers `30` and quietly contradicts the sentence it is evidence for) could not touch them.
 
 > **The trap in this table.** Ten of twelve rows read 8 or 9, which is exactly the shape that makes
 > somebody ship. **Do not read it that way.** The two low rows are not weak spots in an otherwise
@@ -1111,19 +1111,19 @@ because neither is a code problem, and **45 merged pull requests** (`gh pr list 
 | ID | Gap | Impact | Evidence | Solution | Depends on | P | Complexity | Validation |
 |---|---|---|---|---|---|---|---|---|
 | ✅ RG-01 | Live's per-channel badge derives from global state | Operator believes a dead screen is On Air | `Live.svelte:973-979` vs `Channels.svelte:88-108` | Call `channelStatus()` on Live; badge per channel | RG-02 for truth | P0 | S | A component test that mounts Live and asserts a stale channel does not read On Air |
-| ✅ RG-02 | No output heartbeat; liveness is a client count | "LIVE" cannot detect a frozen browser source | `channels.rs:963-991`, `:741-763` | Periodic anonymous ping/pong; last-seen per connection | — | P0 | M | Kill a kiosk client; assert the status flips within one interval |
+| ✅ RG-02 | No output heartbeat; liveness is a client count | "LIVE" cannot detect a frozen browser source | `channels::ClientRegistry`, `channels::OutputHealth` | Periodic anonymous ping/pong; last-seen per connection | — | P0 | M | Kill a kiosk client; assert the status flips within one interval |
 | ✅ RG-03 | No Service Lock | A template edit or model change mid-service | grep: zero hits | Lock keyed on `Session`, not on the mic; every blocked action explains itself | — | P0 | M | e2e: start a service, assert the blocked commands refuse with a typed error |
 | ✅ RG-04 | No event timeline; latency dies on quit | No replay, no report, no human metric, no evidence from a church | `docs/data/schema.sql`, `latency.rs` | Append-only `service_events` + `perf_samples`; retryable migration | — | P0 | M | Migration retryability test (CLAUDE.md rule 25); a service produces an ordered event list |
 | ✅ RG-05 | No pre-air validation | Unfittable or unreachable content goes to air silently | `TemplateRender.svelte:131-160` | One validator in front of `Fire::output`; refuse and report | — | P0 | M | e2e: an over-long verse on a tiny template refuses rather than shrinking to unreadable |
-| ✅ RG-06 | No update rollback, no DB-compat preflight | A bad update bricks a church until someone drives there | grep: zero hits; `db/mod.rs:51` | Keep the previous bundle; health-check after relaunch; compare `SCHEMA_VERSION` before install | — | P1 | L | Install a deliberately broken build; assert recovery |
+| ✅ RG-06 | No update rollback, no DB-compat preflight | A bad update bricks a church until someone drives there | grep: zero hits; `db::SCHEMA_VERSION` | Keep the previous bundle; health-check after relaunch; compare `SCHEMA_VERSION` before install | — | P1 | L | Install a deliberately broken build; assert recovery |
 | ✅ RG-07 | No service replay | Nothing can be reconstructed after Sunday | — | Timeline viewer over RG-04 | RG-04 | P1 | M | Replay a recorded service; every fire has a trace |
 | ✅ RG-08 | No Sunday report | Churches cannot report, and you cannot learn | — | Derived view over RG-04 | RG-04 | P1 | S | Only metrics actually measured appear |
-| ✅ RG-09 | No degraded state | Fallbacks are invisible to the operator | `dsp.rs:15`, `main.rs:2635`, `pipeline.rs:131` | One `Degraded` enum surfaced to the shell | — | P1 | S | Kill the model mid-service; assert the banner |
-| ✅ RG-10 | Room calibration is lost on every start | The hall is re-learned each Sunday | `audio.rs:145-148`, `dsp.rs:146-153` | `environment_profiles`; store the learned floor, never a fixed threshold | RG-04 | P1 | M | Reopen; assert the floor is restored and still adapts (DECISIONS §19 must survive) |
+| ✅ RG-09 | No degraded state | Fallbacks are invisible to the operator | `dsp::FrontEnd`, `main::fire_media`, `pipeline::Fire` | One `Degraded` enum surfaced to the shell | — | P1 | S | Kill the model mid-service; assert the banner |
+| ✅ RG-10 | Room calibration is lost on every start | The hall is re-learned each Sunday | `audio::Vad`, `dsp::FrontEnd` | `environment_profiles`; store the learned floor, never a fixed threshold | RG-04 | P1 | M | Reopen; assert the floor is restored and still adapts (DECISIONS §19 must survive) |
 | ✅ RG-11 | Language coverage is prose, not an instrument | The moat cannot be tracked or improved | `docs/LANGUAGES.md`, `numerals.json` | A per-language status view: aliases, numerals, review state, WER (or "not measured") | — | P1 | S | The view must render "NOT MEASURED" rather than a plausible number |
 | ✅ RG-12 | Diagnostics is a screen, not an export | A church cannot send you what you need | `Settings.svelte:998-1054` | Export a scrubbed bundle; never include audio or transcript unless ticked | — | P1 | S | Assert the bundle contains no verse, lyric, announcement or transcript text |
 | ✅ RG-13 | 9 controls with no accessible name | Screen-reader users cannot operate Live | `qa-inventory.mjs` | Add labels | — | P2 | S | Re-run the inventory; zero |
-| ✅ RG-14 | No p99; no latency history | Tail behaviour and long-service drift are invisible after a restart | `latency.rs:728-729` | Report p99; persist samples | RG-04 | P2 | S | Diagnostics shows p99 and a prior-service comparison |
+| ✅ RG-14 | No p99; no latency history | Tail behaviour and long-service drift are invisible after a restart | `latency::report` | Report p99; persist samples | RG-04 | P2 | S | Diagnostics shows p99 and a prior-service comparison |
 | ✅ RG-15 | Readiness never tests the spoken path | Green checks, dead microphone chain | `boot/probes.js` | Synthetic "say John 3:16" walk | RG-01 | P2 | M | Fail it by unplugging the mic; assert it goes red |
 | ✅ RG-16 | No training / simulation mode | A volunteer's first Sunday is their first attempt | — | Replay recorded audio through the real pipeline into a sandboxed UI | RG-07 | P2 | M | Nothing reaches a real output — watch the **hub**, not the wall |
 | ✅ RG-17 | No privacy screen | The best privacy story in the product is invisible | `PRIVACY.md` | One screen stating current state | — | P2 | S | Reflects the real setting, never a hardcoded "off" |

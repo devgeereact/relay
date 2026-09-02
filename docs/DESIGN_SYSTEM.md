@@ -195,7 +195,12 @@ read *"the screens may still be live"* is motion for its own sake.
 - **Focus is always visible.** `outline: 2px solid var(--v-accent2)` with `2px` offset, on every
   interactive class (`.r-btn`, `.r-iconbtn`, `.nav-item`, `.r-input`, `.r-select`, `.r-switch`,
   `.r-focus`). Never remove an outline without replacing it with an equally visible one.
-- **All five dialogs trap focus and restore it on close** (`src/lib/focus.js`, `use:trapFocus`).
+- **Every modal surface traps focus and restores it on close** (`src/lib/focus.js`,
+  `use:trapFocus`). This line used to say *five*; it is ten now and will be wrong again, so
+  count rather than trust it: `grep -rl trapFocus src | grep -c svelte`. Note that grepping for
+  `role="dialog"` instead gives a different and misleading answer — `Announcements.svelte`
+  carries the string only inside a comment explaining why that panel is deliberately **not** a
+  dialog, and `CrashReportRecovery.svelte` is an `alertdialog`.
   Restore is the half everyone forgets.
 - **`Esc` must not clear the screens while a dialog is open.** `shortcuts.js` checks for a
   mounted `[role="dialog"]`. Dismissing a help overlay is not a live action (CLAUDE.md §16).

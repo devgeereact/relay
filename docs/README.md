@@ -166,7 +166,9 @@ Two documents, at two altitudes, and they disagree on purpose:
 
 **Relay has never shipped. As of 2026-08-31: NO-GO for general release, GO for a supervised
 pilot** — two churches, named operators, every service watched. Every P0 and P1 from the last
-full audit is closed and 56 register entries with them, but four things block a general
+full audit is closed and 56 register entries with them (the register itself is **81 entries,
+77 closed** — [qa/RELAY_GAP.md](qa/RELAY_GAP.md) §0 owns that count and `relaygap.test.js`
+asserts it against the table), but four things block a general
 release and none is a commit: a **wrong verse reached a real congregation** on 2026-08-30,
 **word error rate has never been measured in any language**, **neither platform has a code-signing certificate** (RG-73 — all four releases went out unsigned),
 and nobody but the author has ever run a service. The decision, its conditions, and the five
