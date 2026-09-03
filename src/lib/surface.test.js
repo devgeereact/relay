@@ -84,6 +84,28 @@ async function settle() {
   await tick();
 }
 
+/**
+ * Wait until the DOM says what the test is waiting for, or give up.
+ *
+ * A single `await tick()` flushes one Svelte scheduler pass, which is enough on an
+ * idle machine and not always enough when vitest is running seventy files in
+ * parallel: `onMount` runs, its first `await` yields, and the assertion reads the
+ * DOM one microtask before the component had set `loading`. That produced a real
+ * intermittent failure in this file — roughly one full-suite run in five — on an
+ * assertion whose subject had not changed.
+ *
+ * A flaky test is worse than a missing one. It is the same defect this whole file
+ * is about, turned on the instrument: a check that sometimes does not check, and
+ * that trains whoever sees it red to run it again rather than read it.
+ */
+async function until(predicate, what, tries = 50) {
+  for (let i = 0; i < tries; i += 1) {
+    if (predicate()) return;
+    await settle();
+  }
+  throw new Error(`timed out waiting for: ${what}`);
+}
+
 /** A keydown that behaves like a real one: dispatched at the focused element. */
 function press(key, target = document.body) {
   const e = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true });
@@ -404,7 +426,10 @@ describe('R3-04 · CLOSED — a list does not say Empty before it knows', () => 
 
     const TemplateGallery = (await import('./views/templates/TemplateGallery.svelte')).default;
     const el = mountInto(TemplateGallery);
-    await tick();
+    // The read never resolves until `release()`, so this can only ever settle on
+    // the loading state — waiting for it cannot mask a regression, and asserting
+    // one scheduler pass after mount could and occasionally did.
+    await until(() => /Loading/.test(el.textContent), 'TemplateGallery to show Loading');
 
     // A fresh install ships five built-in templates, so "No templates yet" was
     // never something this screen could truthfully say before the read returned —
@@ -434,25 +459,36 @@ describe('R3-04 · CLOSED — a list does not say Empty before it knows', () => 
     expect(el.textContent).toMatch(/database is locked|didn't work|try/i);
   });
 
-  itMounted('History claims "No services yet" before list_services answers', async () => {
+  itMounted('History says Loading, not "No services yet", before list_services answers', async () => {
+    // INVERTED 2026-09-03. This test used to assert the defect, and the defect was
+    // the last screen still conflating all three facts: it said **"No services yet
+    // — press Start listening on the Live tab to record one."** before the read had
+    // answered, when the read had answered with nothing, and when the read had
+    // FAILED. `listServices` is a GROUP 2 read returning `[]` on failure, so the
+    // array itself carried no information about which had happened.
+    //
+    // It mattered more here than on the two screens fixed in August: the sentence
+    // is a confident claim that a church has never recorded a service, shown to a
+    // church whose database did not open.
     invoke.mockImplementation(() => new Promise(() => {})); // never resolves
     const History = (await import('./views/library/History.svelte')).default;
     const el = mountInto(History);
-    await tick();
+    await until(() => /Loading/.test(el.textContent), 'History to show Loading');
 
-    expect(el.textContent).toMatch(/No services yet/);
-    expect(el.textContent).not.toMatch(/Loading/);
+    expect(el.textContent).not.toMatch(/No services yet/);
   });
 
-  itMounted('…and the identical sentence when list_services FAILS', async () => {
+  itMounted('…and says the REASON, not that sentence, when list_services FAILS', async () => {
     invoke.mockRejectedValue('disk I/O error');
     const History = (await import('./views/library/History.svelte')).default;
     const el = mountInto(History);
     await settle();
     await settle();
 
-    expect(el.textContent).toMatch(/No services yet/);
-    expect(el.querySelector('[role="alert"]')).toBe(null);
+    expect(el.textContent).not.toMatch(/No services yet/);
+    // Assertive, so a screen reader hears it too — same as TemplateGallery above.
+    expect(el.querySelector('[role="alert"]')).toBeTruthy();
+    expect(el.textContent).toMatch(/disk I\/O error|didn't work|try/i);
   });
 });
 

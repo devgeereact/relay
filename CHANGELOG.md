@@ -10,6 +10,44 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 
 ## [Unreleased]
 
+### You can now delete a service — and a big file no longer takes Relay down with it
+
+**Erasing a sermon.** Until now, the only way to remove a recorded service was to
+quit Relay and delete the folder holding *every* service you had ever recorded.
+There was no middle setting. If a pastoral conversation was read into the room, or
+a visiting speaker asked, the answer was all of it or none of it.
+
+Open a service in **Library → History** and there is now an **Erase service**
+button. It removes that service's transcript, the verses that were detected in it,
+what you pressed during it, its timeline and its timing samples — and it tells you
+how many transcript lines went. Click once to arm it, once more to confirm. It
+cannot be undone and there is no hidden copy, which is the point; export the
+service to Markdown first if you want to keep a record. Like every other delete, it
+is refused while a service is being recorded.
+
+**Importing a large file.** Dragging a big video into the Library used to make
+Relay disappear — no error, no message, nothing in any log, usually while somebody
+was setting up on a Saturday. Relay now says how big the file is and what its limit
+is (256 MB), and carries on. And if a file cannot be written — a full disk is the
+usual reason — the Library no longer keeps an entry pointing at a file that is not
+there, which used to show up on Sunday as a screen that stayed blank.
+
+**"Up to date" now means somebody actually asked.** The Updates screen said *up to
+date* whether there was genuinely no new version, or you were offline, or nothing
+had checked yet, or the update server had never once answered. It now says which,
+and says so in plain words. Nothing about this interrupts you during a service — it
+never did and it still does not.
+
+**History no longer says you have no services while it is still looking.** If the
+list is loading it says so, and if it could not be read it says why, instead of
+telling you that you have never recorded a service.
+
+Under the hood, and only worth knowing if something goes wrong: Relay now counts
+audio it had to drop because a queue filled up, and shows it in
+**Settings → Diagnostics** as *audio dropped (never heard)*. It should always be
+zero. If it is not, part of the sermon did not reach the transcript, and now you
+can see that instead of guessing.
+
 ### Relay may now be used in a church — with someone watching
 
 The decision on whether Relay is fit to run a service used to be an open-ended

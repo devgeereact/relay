@@ -170,6 +170,89 @@ describe('RG-67 · every cross-reference resolves', () => {
     ).toEqual([]);
   });
 
+  it('every relative Markdown link resolves to a file that exists', () => {
+    // RG-87. The fifth kind of dead citation, and the only one with no instrument:
+    // `[text](path.md)`.
+    //
+    // The other four checks read PROSE — a `§N`, an `RG-` id, a `docs/…` path, a
+    // `module::item`. A Markdown link target is none of those shapes, so twenty-eight
+    // of them broke in the 2026-09-02 reorganisation and every test in this file
+    // stayed green. They were found by a throwaway script that was then thrown away,
+    // which is the same as not having found them: the next move breaks more, silently,
+    // and these documents are load-bearing enough that four tests already exist to
+    // protect their other references.
+    //
+    // A broken link is worse than a bare filename in prose for the same reason a dead
+    // `§16` is worse than an uncited claim: it presents as navigation that works.
+    // A link inside a code span or a fenced block is not a link — it is a document
+    // showing what link syntax looks like, which is exactly what a report about
+    // broken links ends up doing. Strip both before scanning, or the checker
+    // reports its own example.
+    const prose = (text) =>
+      text.replace(/```[\s\S]*?```/g, '').replace(/`[^`\n]*`/g, '');
+
+    const dangling = [];
+    for (const [file, raw] of FILES) {
+      if (!file.endsWith('.md')) continue;
+      const text = prose(raw);
+      const dir = file.split('/').slice(0, -1).join('/') || '.';
+      // A FROZEN audit's links were written where that document used to live, and it
+      // may not be edited to follow a file that moved (see `MOVED` above). So its
+      // links are resolved from its ORIGINAL directory as well — the same redirect,
+      // applied to navigation rather than to prose, and honoured nowhere else.
+      const frozen = file.includes('docs/qa/audits/');
+      const wasAt = frozen
+        ? [...MOVED].find(([, to]) => to === file.replace(/^\.\//, ''))?.[0]
+        : null;
+      const oldDir = wasAt ? wasAt.split('/').slice(0, -1).join('/') : null;
+
+      for (const m of text.matchAll(/\[[^\]]*\]\(([^)\s]+)\)/g)) {
+        const target = m[1];
+        // External and same-page links are somebody else's problem.
+        if (/^(https?:|mailto:|#)/.test(target)) continue;
+        const [pathPart] = target.split('#');
+        if (!pathPart) continue;
+        const cited = decodeURIComponent(pathPart);
+        if (existsSync(resolve(root, dir, cited))) continue;
+        if (oldDir) {
+          const asWritten = join(oldDir, cited).replace(/\\/g, '/');
+          const moved = redirect(asWritten) ?? asWritten;
+          if (existsSync(resolve(root, moved))) continue;
+        }
+        dangling.push(`${file} → ${target}`);
+      }
+    }
+    expect(
+      dangling,
+      `Markdown links that go nowhere: ${dangling.join(', ')}`,
+    ).toEqual([]);
+  });
+
+  it('the Markdown link check is actually reading links (the guard on the one above)', () => {
+    // The failure mode of every scanner in this repository has been the same: it
+    // narrows, keeps passing, and stops checking what it claims to. `ipc.test.js`
+    // has done it twice. Count the links so a regex that matches nothing cannot
+    // masquerade as a clean bill of health.
+    const prose = (text) =>
+      text.replace(/```[\s\S]*?```/g, '').replace(/`[^`\n]*`/g, '');
+    let links = 0;
+    for (const [file, raw] of FILES) {
+      if (!file.endsWith('.md')) continue;
+      for (const m of prose(raw).matchAll(/\[[^\]]*\]\(([^)\s]+)\)/g)) {
+        if (!/^(https?:|mailto:|#)/.test(m[1])) links += 1;
+      }
+    }
+    expect(links).toBeGreaterThan(100);
+
+    // And the code-span stripping must not have swallowed the document. If a
+    // regex ever eats more than it should, the link count collapses and the check
+    // above passes over nothing — the same narrowing failure the scanner guards
+    // in `hardrules.test.js` and `ipc.test.js`.
+    const audit = FILES.find(([f]) => f.endsWith('RELAY_V1_AUDIT.md'));
+    expect(audit, 'the audit is no longer being read').toBeTruthy();
+    expect(prose(audit[1]).length).toBeGreaterThan(audit[1].length * 0.5);
+  });
+
   it('every redirect is still needed, and still points somewhere real', () => {
     // The same shape as `KNOWN_ABSENT`'s guard below, and for the same reason: an
     // exception that outlives its reason is a hole. If a moved file is ever put

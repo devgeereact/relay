@@ -19,15 +19,18 @@ Last run: **2026-09-02**, against `0.1.0-4`. Findings live in
 
 | | Gate | How |
 |---|---|---|
-| ✅ | Frontend suite passes | `npx vitest run` → 927 passing, 68 files |
-| ✅ | Rust suite passes | `cd src-tauri && cargo test` → 629 passing, 17 ignored |
+| ✅ | Frontend suite passes | `npx vitest run` → 942 passing, 70 files |
+| ✅ | Rust suite passes | `cd src-tauri && cargo test` → 644 passing, 17 ignored |
 | ✅ | Formatting | `cargo fmt --all -- --check` |
 | ✅ | Lints, warnings denied | `cargo clippy --all-targets -- -D warnings` — **this failed on 2026-09-02 and was fixed (RG-82). Run it; do not assume it** |
 | ✅ | Frontend builds | `npm run build` |
 | ✅ | The three version files agree | `npm run version:check` |
-| ✅ | No dead commands, no orphan controls | `node scripts/qa-inventory.mjs` → 132/132, 1 intentional orphan |
+| ✅ | No dead commands, no orphan controls | `node scripts/qa-inventory.mjs` → 133/133, 1 intentional orphan |
 | ✅ | Every citation resolves | `npx vitest run src/lib/crossrefs.test.js` |
-| ⬜ | The packaged binary builds and launches | `npm run tauri build` — **CI's macOS job is compile-only and says so** |
+| ✅ | The packaged binary builds and launches | `npm run tauri build` → `.app` + `.dmg`, 0 warnings; launched 2026-09-03 with an isolated `RELAY_DB_PATH` and printed **exactly one** boot heartbeat. **CI's macOS job is still compile-only and says so** — this box is ticked by a human running the command |
+| ✅ | The hardened runtime does not kill the microphone | `./scripts/sign-local.sh` → `flags=0x10002(adhoc,runtime)`, mic entitlement present, usage string present. **Rule 17's trap reproduced without a certificate** |
+| ✅ | The LAN surface behaves in production, not just in tests | `curl` against the running bundle: `output.html` 200 + kiosk CSP + `nosniff`; `GET /api/black` → **405, `Allow: POST`, no CORS wildcard**; traversal → 404 |
+| ⬜ | The update channel resolves | `npm run updater:check` — **currently HTTP 404 on both configured endpoints (RG-83). Publish a full, non-prerelease release and re-run** |
 | ⬜ | A clean machine installs it | never done |
 
 ## 2. The live path

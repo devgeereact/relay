@@ -20,7 +20,7 @@ every edit: `.claude/hooks/relay-fast-gate.mjs`, path-filtered and report-only (
 
 ## 0. Current inventory
 
-Re-measured **2026-08-31** against the working tree. Every number here is produced by a command,
+Re-measured **2026-09-03** against the working tree. Every number here is produced by a command,
 and the command is named — a count you cannot reproduce is a rumour.
 
 > **Expect these to be wrong, and reach for the command rather than the value.** Every count in
@@ -31,12 +31,12 @@ and the command is named — a count you cannot reproduce is a rumour.
 
 | | Count | How to reproduce |
 |---|---|---|
-| Rust tests | **629 passing**, 17 ignored (646 declared) | `cd src-tauri && cargo test`. It read **630 / 647** until 2026-09-02, and the extra one was not a test: a duplicated `#[test]` attribute in `db/services.rs` registered one function twice. The same duplicate made `cargo clippy --all-targets -- -D warnings` fail, which is a CI gate — so the count register and the build gate were wrong in the same place, for the same reason |
-| Frontend tests | **927 passing**, 0 skipped, 68 files | `npx vitest run` — read the runner's own summary line. **Not** `vitest list \| wc -l`: that stream carries Svelte compiler warnings too and over-counted by 7 |
+| Rust tests | **644 passing**, 17 ignored (661 declared) | `cd src-tauri && cargo test`. It read **629 / 646** before the 2026-09-03 fix pass, which added 15 (5 import guard, 4 service erase, 3 history indexes, 3 LAN server). It read **630 / 647** until 2026-09-02, and that extra one was not a test: a duplicated `#[test]` attribute in `db/services.rs` registered one function twice. The same duplicate made `cargo clippy --all-targets -- -D warnings` fail, which is a CI gate — so the count register and the build gate were wrong in the same place, for the same reason |
+| Frontend tests | **942 passing**, 0 skipped, 70 files | `npx vitest run` — read the runner's own summary line. **Not** `vitest list \| wc -l`: that stream carries Svelte compiler warnings too and over-counted by 7. It read **927 / 68** before the 2026-09-03 fix pass (+5 `mediaimport`, +7 `updatechannel`, +2 `crossrefs`, +1 `hardrules`) |
 | `e2e.rs` tests | **38** (38 run, **0 ignored** — the file has carried no ignored test since R2-C and R2-D closed, DECISIONS §54) | `cd src-tauri && cargo test e2e::` |
-| Registered `#[tauri::command]` | **132** (five dead ones deleted 2026-08-30) | `grep -c '#\[tauri::command\]' src-tauri/src/main.rs` |
+| Registered `#[tauri::command]` | **133** (five dead ones deleted 2026-08-30; `delete_service` added 2026-09-03, RG-89) | `grep -c '#\[tauri::command\]' src-tauri/src/main.rs` |
 | `.svelte` files | **48**, 22 of them views | `find src -name '*.svelte' | wc -l` |
-| `<button>` occurrences | **352** | `grep -ro '<button' --include='*.svelte' src | wc -l` |
+| `<button>` occurrences | **353** | `grep -ro '<button' --include='*.svelte' src | wc -l` |
 | Tables in the schema | **21** | `grep -c 'CREATE TABLE' docs/data/schema.sql` |
 | Cases in the detection gate | **74** | `python3 -c "import json;print(len(json.load(open('src-tauri/data/eval_corpus.json'))['cases']))"` — it was 50, then 57, then 63; three documents still quoted an older one |
 | Modal surfaces that trap focus | **10** | `grep -rl trapFocus src \| grep -c svelte` — **not** a `role="dialog"` grep, which counts a comment and misses an `alertdialog` |

@@ -670,6 +670,20 @@ export async function listServices() {
   return guardedRead('listServices', (call) => call('list_services'), []);
 }
 
+/**
+ * Erase one recorded service — transcript, detections, operator actions, timeline,
+ * latency samples. Returns how many transcript rows went, so the caller can say
+ * what it did rather than claim a success in the abstract.
+ *
+ * GROUP 1 — THROWS. It is irreversible, it is refused outright while a service is
+ * recording, and a delete that silently did nothing is the worst outcome available
+ * on this screen: the operator would believe a sermon had been erased.
+ */
+export async function deleteService(id) {
+const call = await invoke();
+return await call('delete_service', { id });
+}
+
 /** Transcript + fired detections for one service. */
 export async function serviceDetail(id) {
 const call = await invoke();
@@ -1313,7 +1327,49 @@ return await call('save_reviewed_songs', { songs, date: new Date().toISOString()
 }
 
 // Read a File (from an <input type=file>) as base64 for the import commands.
+/**
+ * THE LARGEST FILE THE LIBRARY WILL ACCEPT — and the reason there is a limit.
+ *
+ * An imported file does not arrive as a path. The webview's `<input type=file>`
+ * hands back bytes, so this function builds the WHOLE file as a binary string,
+ * then as a base64 string, and Tauri then serialises that string across the IPC
+ * bridge for Rust to decode into a third complete copy before writing it to disk.
+ * Four copies of one file exist at the peak.
+ *
+ * For a 1.5 GB service video on a church laptop that is not a slow import. It is
+ * the operating system killing Relay, with no error, no message and nothing in
+ * any log, while a volunteer is setting up for Sunday. Refusing the file is a
+ * worse experience than importing it and an enormously better one than dying.
+ *
+ * Must equal `main::MAX_IMPORT_BYTES`; `mediaimport.test.js` fails if they drift.
+ */
+export const MAX_IMPORT_BYTES = 256 * 1024 * 1024;
+
+/** Human size, for the sentence the operator reads. */
+function mib(bytes) {
+  return `${Math.round((bytes / (1024 * 1024)) * 10) / 10} MB`;
+}
+
+/**
+ * Read a file as base64 for the import bridge.
+ *
+ * THE CHOKE POINT. Media, graphics, documents and lyric files all import through
+ * here, so the size guard lives here rather than at the four call sites — the same
+ * reasoning as `broadcast_with_clock` holding the pre-air validator (CLAUDE.md
+ * rule 36). A guard added per call site is a guard that will be missing from the
+ * fifth one.
+ *
+ * Throws a REFUSAL — the shape `humanError` prints verbatim — before allocating
+ * anything, because the allocation is the failure.
+ */
 export async function fileToBase64(file) {
+const size = file?.size ?? 0;
+if (size > MAX_IMPORT_BYTES) {
+  const msg =
+    `${file?.name ?? 'That file'} is ${mib(size)}, and Relay imports files up to ` +
+    `${mib(MAX_IMPORT_BYTES)}. Shorten or compress it and try again.`;
+  throw Object.assign(new Error(msg), { kind: 'refused', message: msg });
+}
 const buf = new Uint8Array(await file.arrayBuffer());
 let bin = '';
 const chunk = 0x8000;

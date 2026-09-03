@@ -28,6 +28,22 @@ Everything is in one folder:
 Delete that folder and every trace of every service is gone. There is no copy
 anywhere else, because there is nowhere else.
 
+### Erasing one service, from inside Relay
+
+Deleting the folder was, until 2026-09-03, the **only** answer this page had — and
+it is a bad one. It means every service Relay has ever recorded, or none. A church
+that wants one sermon gone, because a pastoral conversation was read into the room
+or a visiting speaker asked, could not have it.
+
+**Library → History → open the service → Erase service.** Two clicks, the second
+one confirming, and it removes that service's transcript, the detections under it,
+the operator's actions, the timeline and the latency samples — in one transaction,
+so there is no half-erased state. Relay tells you how many transcript lines went.
+
+It is **not** reversible and there is no undo, which is the point: the words are
+gone from the database, not hidden in it. Export first (**Export .md**) if you want
+a copy. Like every other delete, it is refused while a service is being recorded.
+
 ---
 
 ## The speech model runs on your machine

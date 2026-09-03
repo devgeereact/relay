@@ -175,6 +175,14 @@ CREATE TABLE transcripts (
     confidence REAL                       -- STT confidence, 0-1
 );
 
+-- Every history query starts from a service and walks down. Without these,
+-- `service_transcripts`, `service_detections`, the timeline merge, the replay and
+-- `delete_service` all scan the whole table — and these are the two tables that
+-- grow without limit, one row per utterance, for as long as a church keeps using
+-- Relay. A year of Sundays is six figures of rows.
+--
+-- SQLite creates an index for a PRIMARY KEY and for a UNIQUE constraint. It does
+-- NOT create one for a REFERENCES clause, which is what these three columns are.
 CREATE TABLE detections (
     id            INTEGER PRIMARY KEY,
     transcript_id INTEGER NOT NULL REFERENCES transcripts(id),
@@ -198,6 +206,9 @@ CREATE TABLE detections (
     heard_text    TEXT
 );
 
+CREATE INDEX idx_transcripts_service ON transcripts(service_id);
+CREATE INDEX idx_detections_transcript ON detections(transcript_id);
+
 -- Operator-action log for a running service (distinct from a plan_items cue).
 CREATE TABLE cues (
     id           INTEGER PRIMARY KEY,
@@ -207,6 +218,8 @@ CREATE TABLE cues (
     payload_json TEXT,
     triggered_at REAL NOT NULL
 );
+
+CREATE INDEX idx_cues_service ON cues(service_id);
 
 -- ===== The service timeline (db/services.rs) =====
 --

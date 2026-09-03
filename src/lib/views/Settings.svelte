@@ -1,5 +1,6 @@
 <script>
   import { onMount, onDestroy } from 'svelte';
+  import { get } from 'svelte/store';
   import ModelSetup from '../ModelSetup.svelte';
   import History from './library/History.svelte';
   import Dashboard from './Dashboard.svelte';
@@ -7,7 +8,7 @@
   import { restartSetup, setSession } from '../session.js';
   import { humanError } from '../errors.js';
   import { safeMode, setSafeMode } from '../boot/boot.js';
-  import { checkForUpdate, updateAvailable } from '../updater.js';
+  import { checkForUpdate, updateAvailable, updateChannel, describeChannel } from '../updater.js';
   import {
     listVoiceProfiles,
     createVoiceProfile,
@@ -529,7 +530,17 @@
     updateMsg = '';
     try {
       const v = await checkForUpdate();
-      updateMsg = v ? `Relay ${v} is available.` : "You're on the latest version.";
+      // The check can complete without having reached anything. Saying "you're on
+      // the latest version" after a failed check is the same lie the status row
+      // used to tell, moved into a button.
+      const ch = get(updateChannel);
+      updateMsg = v
+        ? `Relay ${v} is available.`
+        : ch.state === 'failed'
+          ? "Relay could not reach the update server, so it does not know whether there is a newer version. This is normal offline — if you are online, the update channel may be broken."
+          : ch.state === 'unavailable'
+            ? 'This build has no update channel.'
+            : "You're on the latest version.";
     } catch (e) {
       updateMsg = humanError(e);
     }
@@ -1235,7 +1246,17 @@
         <div class="s-cardbox">
           <div class="s-netrow"><span class="s-netk">Installed version</span><span class="s-netv r-mono">{appVersion || '—'}</span></div>
           <div class="s-netrow"><span class="s-netk">Environment</span><span class="s-netv r-mono">{environment}</span></div>
-          <div class="s-netrow"><span class="s-netk">Update status</span><span class="s-netv r-mono">{$updateAvailable ? `${$updateAvailable.version} available` : 'up to date'}</span></div>
+          <!-- The status of the CHANNEL, not the absence of news. This row used to
+               read "up to date" whenever nothing was waiting — which was also what
+               it said when the check had never run, when the laptop was offline,
+               and when the update manifest had been returning 404 since the day
+               Relay was installed. A badge that cannot detect its own failure
+               (CLAUDE.md rule 35), on the one path by which a fix reaches a church
+               that already has Relay. -->
+          <div class="s-netrow"><span class="s-netk">Update status</span><span class="s-netv r-mono" class:s-netbad={$updateChannel.state === 'failed'}>{describeChannel($updateChannel)}</span></div>
+          {#if $updateChannel.state === 'failed'}
+            <div class="s-netrow"><span class="s-netk">Last attempt</span><span class="s-netv r-mono">{$updateChannel.detail || 'no reason given'}</span></div>
+          {/if}
         </div>
         <button class="r-btn primary sm s-mt" on:click={doCheckUpdates} disabled={checking}>
           {checking ? 'Checking…' : 'Check for Updates'}
@@ -1321,6 +1342,12 @@
             {/each}
             <div class="s-netrow"><span class="s-netk">transcript updates / second</span><span class="s-netv r-mono">{(lat?.transcript_updates_per_s ?? 0).toFixed(2)}</span></div>
             <div class="s-netrow"><span class="s-netk">partials dropped (queue full)</span><span class="s-netv r-mono">{lat?.dropped_partials ?? 0}</span></div>
+            <!-- RG-84. A shed PARTIAL is re-decoded a moment later; shed AUDIO is a
+                 piece of the sermon Relay never heard. Both queues in front of the
+                 decoder were unbounded — a stall became memory and a transcript
+                 minutes behind, rather than a number. Non-zero here is worse news
+                 than the row above it, so it is coloured and the row above is not. -->
+            <div class="s-netrow"><span class="s-netk">audio dropped (never heard)</span><span class="s-netv r-mono" class:s-netbad={(lat?.dropped_audio ?? 0) > 0}>{lat?.dropped_audio ?? 0}</span></div>
           </div>
         {:else}
           <p class="s-note">Nothing measured yet. Start listening and speak for a few seconds.</p>
@@ -1575,6 +1602,8 @@
     padding:12px 14px; border-radius:var(--v-r-md); background:var(--v-surf2); border:1px solid var(--v-line); }
   .s-netk{ font-size:13px; color:var(--v-dim); }
   .s-netv{ font-size:11px; color:var(--v-txt); }
+  /* Rose, not amber: amber means ON AIR and is never spent on anything else. */
+  .s-netbad{ color:var(--v-rose); }
 
   .s-note{ margin:14px 0 0; font-size:12px; line-height:1.6; color:var(--v-dim); }
   .s-note b{ color:var(--v-accent); }

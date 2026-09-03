@@ -82,7 +82,7 @@ both expect it.
 | [qa/QA_HARNESS.md](qa/QA_HARNESS.md) | The QA apparatus, and **§0 is the register of counts for the whole repository** — every row beside the command that produces it |
 | [qa/RELAY_GAP.md](qa/RELAY_GAP.md) | The `RG-` gap register. Meant to be updated, unlike the audits |
 | [qa/LAUNCH_CHECKLIST.md](qa/LAUNCH_CHECKLIST.md) | One release gate list. Every box names its command or says it has never been checked |
-| [RELAY_V1_AUDIT.md](RELAY_V1_AUDIT.md) | The V1 production audit: the decision, the scorecard, and all 85 brief phases dispositioned |
+| [RELAY_V1_AUDIT.md](RELAY_V1_AUDIT.md) | The V1 production audit: the decision, three scorecards, the fix process, and every phase of both briefs dispositioned |
 | [qa/audits/](qa/audits/) | **Frozen.** Five dated audits, including the retired product audit. Closures go in a fix log at the top, never into the findings |
 
 **On ADRs:** [DECISIONS.md](DECISIONS.md) *is* the architecture-decision record — a single
@@ -158,10 +158,12 @@ drive the running app over `:8032`). The cheap half runs on every edit:
 
 Three documents, at three altitudes, and they are meant to disagree on scope rather than on fact:
 
-- **[RELAY_V1_AUDIT.md](RELAY_V1_AUDIT.md)** — the V1 production audit, 2026-09-02. It owns the
-  **decision**, the **scorecard**, and the disposition of all 85 phases of the production brief.
-  Where a phase could not be reached from this machine it says **UNVERIFIED** and names the
-  instrument that would answer it.
+- **[RELAY_V1_AUDIT.md](RELAY_V1_AUDIT.md)** — the V1 production audit, last run 2026-09-03. It
+  owns the **decision**, the **three scorecards**, the **fix process** (ten defects, each with
+  the test that would fail if it came back), and the disposition of every phase of both briefs —
+  a 42-phase PWA brief and a 105-section live-service brief. Where a phase could not be reached
+  from this machine it says **UNVERIFIED** and names the instrument that would answer it; where
+  a phase assumes a kind of program Relay is not, it says **N/A** and says why.
 - **[qa/RELAY_GAP.md](qa/RELAY_GAP.md)** — the `RG-` register, and unlike the audits it is meant
   to be updated. §19b holds the decisions the report needs and cannot make; one is open —
   whether Relay ships a second Bible translation, an import path for one, or neither.

@@ -475,6 +475,27 @@ pub fn note_dropped_partial() {
 
 static DROPPED_PARTIALS: AtomicU64 = AtomicU64::new(0);
 
+/// Count a lump of raw audio shed because a queue in FRONT of the decoder was full.
+///
+/// RG-84. The two hops before `DETECT_QUEUE` — the capture callback into the
+/// clean/chunk thread, and that thread into the whisper worker — were plain
+/// unbounded `mpsc::channel`s, and CLAUDE.md rule 33 described the path as bounded
+/// with a shed counter. That was true of the third hop only.
+///
+/// An unbounded queue in front of a decoder does not prevent a backlog; it converts
+/// one into memory, and then into a transcript arriving minutes after the sentence
+/// (rule 31 — a pipeline permanently behind reports a zero backlog for a whole
+/// service). Bounding it trades those minutes for a gap, which is the right trade
+/// for something an operator is watching live — but only if the gap is COUNTED.
+/// Silent shedding is how a pipeline reaches "fine" while missing half its work.
+///
+/// Non-zero here means Relay stopped hearing part of a sermon. It should be zero.
+pub fn note_dropped_audio() {
+    DROPPED_AUDIO.fetch_add(1, Ordering::Relaxed);
+}
+
+static DROPPED_AUDIO: AtomicU64 = AtomicU64::new(0);
+
 pub fn set_enabled(on: bool) {
     recorder().enabled.store(on, Ordering::Relaxed);
 }
@@ -705,6 +726,11 @@ pub struct Report {
     /// zero; a number that climbs during a service is the pipeline telling you
     /// detection has stopped keeping up with the decoder.
     pub dropped_partials: u64,
+    /// Raw audio shed because a queue in FRONT of the decoder was full (RG-84).
+    /// Should be zero, and it means something worse than `dropped_partials` does:
+    /// a shed partial is re-decoded a moment later, and shed audio is a piece of
+    /// the sermon Relay never heard at all.
+    pub dropped_audio: u64,
     /// Traces still waiting on a stage. A number that sits near the ring size
     /// means marks are not coming back — a console or output page that stopped
     /// reporting, not a pipeline that got slow.
@@ -726,6 +752,7 @@ pub fn report(recent_n: usize) -> Report {
             transcript_updates_per_s: None,
             recent: Vec::new(),
             dropped_partials: DROPPED_PARTIALS.load(Ordering::Relaxed),
+            dropped_audio: DROPPED_AUDIO.load(Ordering::Relaxed),
             open_traces: 0,
         };
     };
@@ -776,6 +803,7 @@ pub fn report(recent_n: usize) -> Report {
         transcript_updates_per_s: ups,
         recent,
         dropped_partials: DROPPED_PARTIALS.load(Ordering::Relaxed),
+        dropped_audio: DROPPED_AUDIO.load(Ordering::Relaxed),
         open_traces: g.open.len(),
     }
 }
@@ -793,6 +821,7 @@ pub fn reset() {
         g.last_partial_was_final = false;
     }
     DROPPED_PARTIALS.store(0, Ordering::Relaxed);
+    DROPPED_AUDIO.store(0, Ordering::Relaxed);
 }
 
 /// The recorder is a PROCESS-WIDE singleton, and `cargo test` runs tests in
