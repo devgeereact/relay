@@ -228,6 +228,46 @@ describe('RG-67 · every cross-reference resolves', () => {
     ).toEqual([]);
   });
 
+  it('every in-document anchor link points at a heading that exists', () => {
+    // The sixth dimension, and the one a table of contents rots by. `[…](#a-heading)`
+    // is skipped by the check above — it has no path — so a document can grow a
+    // contents table, have its headings renamed underneath it, and go on presenting
+    // twenty links that quietly land at the top of the page.
+    //
+    // Same principle as the rest of this file: a reference that LOOKS like navigation
+    // and is not is worse than no reference. GitHub's slug rule is lowercase, strip
+    // everything that is not a word character, space or hyphen, then spaces to
+    // hyphens — which is why an em dash between two words leaves TWO hyphens.
+    const slug = (h) =>
+      h
+        .trim()
+        .toLowerCase()
+        .replace(/[^\p{L}\p{N}\s_-]/gu, '')
+        .replace(/\s/g, '-');
+
+    const dangling = [];
+    let checked = 0;
+    for (const [file, text] of FILES) {
+      if (!file.endsWith('.md')) continue;
+      const headings = new Set(
+        [...text.matchAll(/^#{1,6}\s+(.*)$/gm)].map((m) => slug(m[1])),
+      );
+      for (const m of text.matchAll(/\]\(#([^)\s]+)\)/g)) {
+        checked += 1;
+        if (!headings.has(decodeURIComponent(m[1]).toLowerCase())) {
+          dangling.push(`${file} → #${m[1]}`);
+        }
+      }
+    }
+    expect(
+      dangling,
+      `anchor links that land nowhere: ${dangling.join(', ')}`,
+    ).toEqual([]);
+    // The guard, for the same reason as every other scanner here: this would also
+    // pass over a regex that had stopped matching.
+    expect(checked, 'the anchor scanner found no anchors at all').toBeGreaterThan(10);
+  });
+
   it('the Markdown link check is actually reading links (the guard on the one above)', () => {
     // The failure mode of every scanner in this repository has been the same: it
     // narrows, keeps passing, and stops checking what it claims to. `ipc.test.js`

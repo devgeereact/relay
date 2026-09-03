@@ -3,7 +3,7 @@
 **2026-09-03 · branch `audit/v1-production-sweep` · version `0.1.0-4`.**
 
 Two production-readiness briefs, answered against the code that exists rather than the code
-described — a 42-phase **PWA master audit** and a 105-section **Relay live-service audit** —
+described — a 42-phase **PWA master audit** and a **Relay live-service audit** numbered §00–§105 —
 and then, unlike the pass before it, **acted on**. Fourteen defects were found; ten were fixed,
 tested, and verified by reintroducing the original defect and watching the new test fail. Four
 were deliberately left open with the reasoning recorded.
@@ -21,13 +21,52 @@ names the instrument that would answer it. Nothing is scored around.
 
 ---
 
+## Contents
+
+**If you read three sections, read [§1](#1-executive-summary-and-the-production-decision) (the
+decision), [§6](#6-the-fix-process-start-to-finish) (what was actually changed) and
+[§16](#16-remaining-risks--what-could-not-be-verified) (what nobody has verified).**
+
+| | | |
+|---|---|---|
+| [0](#0-method--and-what-it-could-not-reach) | Method | Every command that ran, and what could not be reached |
+| [1](#1-executive-summary-and-the-production-decision) | **The decision** | NOT READY general · READY WITH CONDITIONS for a pilot, and the five blockers |
+| [2](#2-what-relay-is--and-what-the-two-briefs-assume-it-is) | Relay is not a PWA | Why a third of one brief is N/A, said with the reason |
+| [3](#3-architecture-as-discovered) | Architecture | Layers, threads, the event bus, the data flow |
+| [4](#4-surface-inventory--the-routes-a-desktop-app-has-instead-of-routes) | Surfaces | Eight tabs, three served pages, one LAN control plane |
+| [5](#5-the-live-path-boundary-by-boundary) | The live path | Microphone to wall, every queue and bound drawn |
+| [6](#6-the-fix-process-start-to-finish) | **The fixes** | Ten, each with the test that fails if it comes back |
+| [7](#7-regression-results) | Regression | Before and after, every gate |
+| [8](#8-the-packaged-build--what-was-verified-against-a-real-binary) | The packaged build | Signed, launched and probed — what the last pass could not do |
+| [9](#9-security-audit) | Security | The threat model, and what was hardened around it |
+| [10](#10-data-integrity-and-the-database) | Data integrity | Orphans, indexes, transactions, retention |
+| [11](#11-offline-network-and-recovery) | Offline & recovery | Why most of the sync brief is N/A by design |
+| [12](#12-performance-and-long-service-behaviour) | Performance | Measured latency, and the two hours nobody has run |
+| [13](#13-accessibility-responsiveness-and-ux) | Accessibility & UX | |
+| [14](#14-privacy-retention-and-observability) | Privacy | What leaves the device, and what can now be erased |
+| [15](#15-the-scorecards) | **The scorecards** | Three, because one average hides what matters |
+| [16](#16-remaining-risks--what-could-not-be-verified) | **Remaining risks** | Eleven, named plainly |
+| [17](#17-brief-disposition--every-phase-both-briefs) | Brief disposition | Every PWA phase 01–42 and every Relay section 00–105 |
+| [18](#18-recommended-next-steps-in-order) | Next steps | In order, and none of them is a large piece of engineering |
+| [19](#19-the-launch-decision) | The launch decision | |
+
+> **This document is checked by a test.** `src/lib/v1audit.test.js` asserts that every PWA phase
+> 01–42 appears exactly once, that §17.2's ranges cover the Relay brief's sections 00–105 with no
+> gap and no overlap, that each scorecard's rows add up to the total printed beside it, that every
+> fix in §6 says what it changed and how it was proved, and that the counts quoted here match
+> [qa/QA_HARNESS.md](qa/QA_HARNESS.md) §0 rather than restating them. **Two of the three scorecard
+> totals were wrong in the first draft** — which is why the test exists rather than a promise to
+> be careful.
+
+---
+
 ## 0. Method — and what it could not reach
 
 **What ran, in this session, on this machine.**
 
 | | Command | Result |
 |---|---|---|
-| Frontend suite | `npx vitest run` | **942 passed**, 0 skipped, 70 files |
+| Frontend suite | `npx vitest run` | **952 passed**, 0 skipped, 71 files |
 | Rust suite | `cd src-tauri && cargo test` | **644 passed**, 0 failed, 17 ignored |
 | End-to-end fire path | `cargo test e2e::` | **38 passed, 0 ignored** |
 | Format gate | `cargo fmt --all -- --check` | clean |
@@ -131,7 +170,7 @@ over a real network to real browsers:
   is nothing to reach.
 - **Update safety** is real and is the subject of blocker #5.
 
-The Relay-specific brief is the one that fits, and §17 answers all 105 of its sections.
+The Relay-specific brief is the one that fits, and §17 answers every one of its sections, §00 to §105.
 
 ---
 
@@ -201,6 +240,51 @@ says what that does and does not cost, and what was hardened around it.
 ---
 
 ## 5. The live path, boundary by boundary
+
+Every arrow is a failure point, and the brief's closing rule is that each one needs **detection →
+state → feedback → recovery → verification**. This is that path with the queues drawn in, because
+the queues are where this audit found work:
+
+```
+  microphone
+      │
+      ▼  cpal real-time callback
+  ╔═══════════════════════════════╗
+  ║ CAPTURE_QUEUE   512 buffers   ║  ← was UNBOUNDED (F-06). Sheds, never blocks:
+  ╚═══════════════════════════════╝    blocking a device callback kills the stream
+      │
+      ▼  relay-audio: RNNoise · auto-gain · VAD · 400 ms chunks, 200 ms hop
+  ╔═══════════════════════════════╗
+  ║ STT_QUEUE       256 chunks    ║  ← was UNBOUNDED (F-06). ≈ 51 s of grace,
+  ╚═══════════════════════════════╝    ~13 MB ceiling instead of a growing one
+      │
+      ▼  relay-stt: whisper, 16 MiB stack, cadence = this machine's own decode cost
+      │
+      ├──────────────▶ emit stt://transcript ──▶ the operator's eyes
+      │                (the ONE thing that runs on the decoder's thread, rule 33)
+      ▼
+  ╔═══════════════════════════════╗
+  ║ DETECT_QUEUE    8 updates     ║   sheds a PARTIAL, blocks on a FINAL
+  ╚═══════════════════════════════╝
+      │
+      ▼  relay-detect: direct + semantic (TF-IDF) + context memory
+      │
+      ▼  router::decide — ONLY DetectionMethod::Direct may auto-fire,
+      │                   checked BEFORE any threshold is consulted
+      ▼
+   pipeline::Fire ──▶ broadcast_with_clock ──▶ pipeline::preflight
+                          (one caller)            (the pre-air validator)
+                              │
+          ┌───────────────────┼───────────────────┐
+          ▼                   ▼                   ▼
+   native window      kiosk WS :8031       LAN HTTP :8032
+          │                   │                   │
+          └────── heartbeat every 2 s, stale after three ──────▶ OutputHealth
+```
+
+Every shed above is **counted**. Nine named latency stamps ride the whole chain on one monotonic
+clock, and the trace id survives to the output page so the last leg — fire sent to pixels on a
+projector — is measured rather than assumed.
 
 | Boundary | Bound | What happens when it is exceeded | Counted? |
 |---|---|---|---|
@@ -441,9 +525,14 @@ assertive, so a screen reader hears it too.
 
 **Files.** `src/lib/views/library/History.svelte`, `src/lib/surface.test.js`.
 
-**Proved real.** The two pinning tests failed the moment the fix landed, and were then inverted.
-That ordering is the proof: the fix was confirmed by the defect's own tests before they were
-rewritten.
+**Tests.** The two `surface.test.js` cases that had pinned the defect, **inverted**:
+*"History says Loading, not 'No services yet', before list_services answers"* and *"…and says the
+REASON, not that sentence, when list_services FAILS"*. The second asserts `[role="alert"]`, so a
+screen reader hears the failure too.
+
+**Proved real.** The two pinning tests failed the moment the fix landed, and were only then
+inverted. That ordering *is* the proof: the fix was confirmed by the defect's own tests before
+they were rewritten to describe the guarantee.
 
 ### F-09 · The Rust suite could silently talk to somebody else's web server — P2 · RG-94
 
@@ -461,7 +550,12 @@ it.
 
 **Files.** `src-tauri/src/channels.rs`.
 
-**Result.** The whole Rust suite passes with the PHP server still running on 8199.
+**Test.** There is no new assertion, and adding one would be theatre: the guarantee is that the
+tests no longer *name* a port, and a test asserting that would be asserting the absence of a
+literal. The evidence is the suite itself — **all 644 Rust tests pass with the foreign PHP server
+still listening on 8199**, which is the exact condition that broke them.
+
+**Result.** Green, with the collision still present on the machine.
 
 ### F-10 · Missing indexes on the three foreign keys every history query walks — P2 · RG-91
 
@@ -506,7 +600,7 @@ Run after the last change, in this order, from a clean tree:
 | `cargo clippy --all-targets -- -D warnings` | clean | **clean** |
 | `cargo test` | 629 passed / 17 ignored | **644 passed / 0 failed / 17 ignored** |
 | `cargo test e2e::` | 38 / 0 ignored | **38 / 0 ignored** |
-| `npx vitest run` | 927 in 68 files | **942 in 70 files, 0 failed** |
+| `npx vitest run` | 927 in 68 files | **952 in 71 files, 0 failed** |
 | `npm run build` | clean | **clean** |
 | `npm run tauri build` | not attempted by the previous pass | **`.app` + `.dmg`, zero warnings** |
 | `npm run version:check` | consistent | **consistent** |
@@ -811,7 +905,7 @@ Stated plainly, because a risk that is not named is a risk that is being hidden.
 |---|---|
 | 01 Project discovery | **DONE** — §3. Framework, runtime, build, data, integrations, environment all mapped |
 | 02 Route & page audit | **DONE as surfaces** — §4. There is no router, no URL and no deep link; the equivalents are eight tabs and three served pages, each with its auth, offline and error posture recorded |
-| 03 Functional QA | **DONE** — 942 frontend and 644 Rust tests, 38 of them driving the real fire path against a real database. Duplicate submission is guarded by busy flags on every async control; destructive actions are two-step |
+| 03 Functional QA | **DONE** — 952 frontend and 644 Rust tests, 38 of them driving the real fire path against a real database. Duplicate submission is guarded by busy flags on every async control; destructive actions are two-step |
 | 04 PWA installability | **N/A — there is no manifest and there should not be one.** Relay installs as a signed `.dmg`/`.msi`. Scored as distribution in §15.1 |
 | 05 Service worker audit | **N/A — there is no service worker.** Nothing intercepts fetches; the LAN server serves from an embedded bundle with `Cache-Control: no-cache` |
 | 06 Offline-first audit | **DONE** — §11. Offline is the resting state, not a fallback |
@@ -849,12 +943,14 @@ Stated plainly, because a risk that is not named is a risk that is being hidden.
 | 38 Code quality | **DONE** — 0 clippy warnings at `-D warnings`, 0 dead commands, 0 dead controls, 1 deliberate test-only orphan component. One dead accessor introduced by this pass was removed rather than left |
 | 39 Priority system | **APPLIED** — §6 is ordered P1 first |
 | 40 Do not overengineer | **APPLIED** — one dev-only dependency feature was added (`tokio/test-util`, so a five-second timeout can be tested without a five-second test). No new runtime dependency. Three proposed sweeps were **declined** and recorded rather than performed |
-| 41 Final production score | **§15** |
-| 42 Final report | **This document** |
+| 41 Final production score | **DONE** — §15, three scorecards, and the sums are checked by `v1audit.test.js` because the first draft got two of them wrong |
+| 42 Final report | **DONE** — this document |
 
 ### 17.2 The Relay live-service audit, sections 00–105
 
-Grouped, because 105 rows of "EXISTS" is not a report. Every section is accounted for.
+Grouped, because a hundred rows of "EXISTS" is not a report. **Every section from §00 to §105 is
+accounted for by exactly one row, with no gap and no overlap** — which is a claim about
+arithmetic, so `v1audit.test.js` checks it rather than asking you to.
 
 | Sections | Disposition |
 |---|---|
@@ -865,7 +961,7 @@ Grouped, because 105 rows of "EXISTS" is not a report. Every section is accounte
 | **15–19** Network state, offline architecture, queue, sync, idempotency | **N/A by design**, §11/§17.1-07. The one idempotency question that *does* arise — a double-press on a fire — is answered by the router's per-reference debounce and by the transport's mode awareness |
 | **20–24** Scripture detection, parsing, confidence, database, routing | **EXISTS, strongest area.** Recognition, interpretation, validation and routing are four separate stages with a gate between the last two. 100 % recall and 0 wrong verses on the labelled gate. RG-32 is the one honest hole: a context-resolved bare verse wears a `Direct` label it did not earn |
 | **25–29** Presentation output, command state, OBS, ATEM, ProPresenter | **PARTIAL and honest about it.** OBS and kiosk are real and heartbeat-verified. ATEM and ProPresenter are **not driven** — bridging hardware is the recorded strategy (SDI is a permanent non-goal), and `open_ndi_output` returns a clear error rather than pretending |
-| **30–34** Health centre, dashboard, operator control, manual override, automation safety | **EXISTS.** ~21 launch probes on a four-level severity ladder, a one-sentence readiness verdict, manual fire always present, detection disarmable, safe mode. Automation cannot act above `Suggest` unless Relay *heard* the reference |
+| **30–34** Health centre, dashboard, operator control, manual override, automation safety | **EXISTS.** **23** launch probes on a four-level severity ladder, a one-sentence readiness verdict, manual fire always present, detection disarmable, safe mode. Automation cannot act above `Suggest` unless Relay *heard* the reference |
 | **35–37** Transcript editing, session history, audit log | **EXISTS / N/A.** There is no transcript editing and none is proposed — editing a record of what was said is a different product. History and the event timeline are real and survive a quit |
 | **38–40** Database integrity, concurrency, data loss | **DONE, two defects fixed** — §10 |
 | **41–44** Manifest, service worker, cache strategy, update safety | **N/A / N/A / N/A / PARTIAL** — §17.1-04/05/08 |

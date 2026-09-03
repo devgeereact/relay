@@ -161,7 +161,7 @@ Three documents, at three altitudes, and they are meant to disagree on scope rat
 - **[RELAY_V1_AUDIT.md](RELAY_V1_AUDIT.md)** — the V1 production audit, last run 2026-09-03. It
   owns the **decision**, the **three scorecards**, the **fix process** (ten defects, each with
   the test that would fail if it came back), and the disposition of every phase of both briefs —
-  a 42-phase PWA brief and a 105-section live-service brief. Where a phase could not be reached
+  a 42-phase PWA brief and a live-service brief numbered §00–§105. Where a phase could not be reached
   from this machine it says **UNVERIFIED** and names the instrument that would answer it; where
   a phase assumes a kind of program Relay is not, it says **N/A** and says why.
 - **[qa/RELAY_GAP.md](qa/RELAY_GAP.md)** — the `RG-` register, and unlike the audits it is meant
