@@ -304,6 +304,14 @@ reporting success.
 **Tests.** `db::services::erase_tests` (4), run against the **real schema with foreign keys ON**
 — a delete tested with foreign keys off is a delete whose ordering was never checked.
 
+**The question a reviewer should ask, answered.** *Can this erase the service Relay is currently
+writing to?* No, from two directions. The service lock refuses it for the whole of a recording;
+and `Session` — the only thing that carries a service id into a transcript insert — is written
+in exactly one place (`start_service`, which creates a fresh row) and cleared in exactly one
+(`end_service`, before the lock is released). Between services it is `None`, so there is no id
+left pointing at a row that has gone. Frontend crash recovery restores position only and never
+re-attaches a service id, which is the same separation that stops it restoring on-air-ness.
+
 **Proved real.** Dropping the `WHERE service_id = ?1` from one child delete:
 `erasing_one_service_leaves_the_others_untouched` fails.
 
@@ -560,7 +568,7 @@ mitigations.
 | | Finding |
 |---|---|
 | Secrets in the repository | **None.** `.env` is gitignored and ignored-status confirmed; the only key material referenced is the updater signing key, which lives at `~/.relay/updater.key` and whose **public** half is committed on purpose |
-| Production dependencies | **0 vulnerabilities** (`npm audit --omit=dev`), 35 direct Rust dependencies |
+| Production dependencies | **0 vulnerabilities** (`npm audit --omit=dev`). **25** direct Rust dependencies (21 cross-platform + 4 macOS-only), 4 npm runtime dependencies. Every one of them has a stated reason at its line in `Cargo.toml` |
 | Dev dependencies | **10 vulnerabilities, all dev-only** — and two of them are reachable while `npm run tauri dev` runs, because that dev server is deliberately LAN-bound. Every fix is a semver major. **RG-98, left open with the reasoning at the line** |
 | Path traversal | Rejected before touching disk in the dev-only branch; the embedded bundle is traversal-safe by construction. Verified `404` against the packaged binary |
 | Media by id | The request is reduced to leading digits before it reaches the filesystem, so `../` cannot escape the media directory |
@@ -687,7 +695,7 @@ evidence that exists.
 Three, because the briefs ask for three and because a single average hides exactly the thing
 that matters.
 
-### 15.1 PWA master audit — 82/100
+### 15.1 PWA master audit — 81/100
 
 Scored on the brief's own ten axes. **Where a phase is structurally N/A for a desktop
 application, the axis is scored on the equivalent Relay actually has**, and the row says which.
@@ -705,11 +713,11 @@ application, the axis is scored on the equivalent Relay actually has**, and the 
 | UX | **8**/10 | Mode-aware transport, panic controls that cannot lie, honest degradation. −2 for RG-95 |
 | Reliability | **8**/10 | Service lock, heartbeats, pre-air validation, crash recovery that refuses to restore on-air-ness. −2 because one wrong verse reached a real congregation and one service is one sample |
 
-**79 of a possible 90 → 82/100 normalised.** SEO is excluded from the denominator rather than
+**73 of a possible 90 → 81/100 normalised.** SEO is excluded from the denominator rather than
 scored 0/10: a private local application has no indexable surface, and awarding it zero would
 report a failure where there is no requirement. That is stated rather than buried.
 
-### 15.2 Relay production score — 78/100
+### 15.2 Relay production score — 80/100
 
 | Area | Score | Note |
 |---|---|---|
@@ -734,7 +742,7 @@ report a failure where there is no requirement. That is stated rather than burie
 | Observability | **9**/10 | Two new instruments; the report names what it cannot see |
 | Long-service stability | **6**/10 | 49.5 minutes of real evidence. Two hours is untested |
 
-**Total: 157/200 → 78/100.**
+**Total: 159/200 → 80/100.**
 
 ### 15.3 Live-service reliability — 63/80
 
@@ -873,7 +881,7 @@ Grouped, because 105 rows of "EXISTS" is not a report. Every section is accounte
 | **79–81** False-positive dataset, transcription dataset, integration matrix | **PARTIAL.** The false-positive dataset exists and is a CI gate (74 cases, four languages). **The transcription dataset does not exist** — that is the WER hole. The integration matrix exists for OBS/kiosk and is marked BLOCKED for ATEM/ProPresenter rather than passed |
 | **82** Twelve critical journeys | **10 of 12 covered by tests.** Journeys 7–8 (network failure and recovery) are structurally trivial here — nothing on the live path uses a network. Journeys 11–12 (device restart, multi-hour run) are **UNVERIFIED** |
 | **83–86** P0/P1/P2/P3 blocker lists | **APPLIED** — §1 and §6 |
-| **87–99** Regression, production build, console, storage, memory, CPU, installation, deep links, back/forward, crash recovery, security regression, performance regression | **DONE where reachable.** §7 and §8 cover regression, the production build, a clean console on a packaged launch, and browser storage (there is none — the console uses `localStorage` only for per-view conveniences). Deep links and back/forward are N/A. **CPU/battery/thermal over hours is UNVERIFIED** |
+| **87–99** Regression, production build, console, storage, memory, CPU, installation, deep links, back/forward, crash recovery, security regression, performance regression | **DONE where reachable.** §7 and §8 cover regression, the production build and a clean console on a packaged launch. **Browser storage was audited and is small and deliberate**: `localStorage` holds one key (`relay.session.v1`) carrying the active tab, the open plan, the cue and slide position and the first-run flag — **ids and positions only, content-free by design**, so a reload mid-service does not drop the operator back on the Console tab with no idea where they were; plus the crash breadcrumb that reads the same key, the boot flags, and the operator's audio-output choice (which lives there because the fullscreen output window shares an origin with the console and that is how the choice reaches it). No `sessionStorage`, no IndexedDB, no cookies, no cache storage. Transcript and verse text are never in any of it — they stay in SQLite, per the local-first rule. Deep links and back/forward are N/A. **CPU/battery/thermal over hours is UNVERIFIED** |
 | **100–102** The three scores and the final report | **§15 and this document** |
 | **103–105** The release gate, the golden test, the engineering rule | **The golden test has been run once, in a real service, and it is `FIELD-2026-08-30.md`.** Relay knew what was happening, the operator knew, the operator could continue, and one wrong verse still reached a congregation. That is the whole basis of the supervised-pilot decision |
 
