@@ -29,7 +29,7 @@ jobs:
       matrix:
         os: [macos-latest, windows-latest]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # Don't leave GITHUB_TOKEN on disk for the rest of the job.
           persist-credentials: false
@@ -46,7 +46,7 @@ jobs:
       # Tauri's Linux deps aren't needed (we build macOS + Windows only), but the
       # frontend must exist: channels.rs `include_dir!`s ../dist at compile time,
       # so the Rust build FAILS without a built frontend. Not optional.
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 20
           cache: npm
@@ -130,7 +130,7 @@ jobs:
 
       - name: Upload the Windows installer
         if: matrix.os == 'windows-latest'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: relay-windows-msi
           path: src-tauri/target/release/bundle/msi/*.msi
@@ -164,11 +164,11 @@ jobs:
       matrix:
         node: [20, 22, 24]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # Don't leave GITHUB_TOKEN on disk for the rest of the job.
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ matrix.node }}
           cache: npm
