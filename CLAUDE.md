@@ -54,6 +54,11 @@ npm run version:set -- 0.2.0
 npm run qa:inventory     # controls · orphans · command map · create paths
 npm run hooks:install    # wire the edit-time fast gate (per machine — .claude/settings.json
 npm run hooks:check      #   is gitignored, so a fresh clone does NOT have it)
+
+npm run updater:check    # does the update channel actually RESOLVE? (RG-83) It reads the
+                         # endpoint out of the Tauri config rather than restating it, fetches
+                         # it, and reports what a shipped copy of Relay would find there.
+                         # `node scripts/check-updater.mjs --strict` exits 1 on a dead channel.
 ```
 
 Rust (**`whisper-rs` compiles whisper.cpp from source, so `cmake` must be on PATH**):
@@ -112,6 +117,8 @@ Every audio bug so far was invisible in the code and reproducible only with a sp
 ├── scripts/version.mjs      — the ONLY place the version is read or written (3 files)
 │   scripts/qa-inventory.mjs — controls · orphan components · command map · create paths
 │   scripts/offline-bundle.mjs — installers + model + README on a USB stick (§53)
+│   scripts/check-updater.mjs — the update channel, fetched from the config (RG-83)
+│   scripts/sign-local.sh    — reproduce rule 17's macOS mic death WITHOUT a certificate
 ├── .github/workflows/       — ci.yml (fmt·clippy·tests·scorecard·build, macOS+Windows)
 │                              release.yml (per-platform signing gate; tags only)
 ├── src-tauri/
@@ -180,7 +187,9 @@ Every audio bug so far was invisible in the code and reproducible only with a sp
 
 ## Build status
 
-**Release decision, 2026-08-31: NO-GO for general release · GO for a supervised pilot** — two churches, named operators, every service watched by somebody who can take the wall back by hand. Relay ran a live sermon on 2026-08-30 (`docs/qa/audits/FIELD-2026-08-30.md`): Stage F11 answered, no drift across 49.5 minutes, five of six auto-fires correct — **and one wrong verse reached a congregation**. Word error rate is still unmeasured in every language, **neither platform has a code-signing certificate** (all four releases went out unsigned on the pre-release path — RG-73, so rule 17's trap is still ahead), and nobody but the author has run a service. `docs/qa/RELAY_GAP.md` §24 owns the decision and the five conditions that convert it.
+**Release decision: NO-GO for general release · GO for a supervised pilot** — two churches, named operators, every service watched by somebody who can take the wall back by hand. Taken 2026-08-31 (`docs/qa/RELAY_GAP.md` §24) and re-verified on 2026-09-03 against a packaged binary. Relay ran a live sermon on 2026-08-30 (`docs/qa/audits/FIELD-2026-08-30.md`): Stage F11 answered, no drift across 49.5 minutes, five of six auto-fires correct — **and one wrong verse reached a congregation** (root-caused and fixed, `detection::anchor_for_bare_verses`; one service is one sample). Word error rate is still unmeasured in every language, **neither platform has a code-signing certificate** (`gh secret list` holds zero of the fourteen; every release went out unsigned on the pre-release path — RG-73), **the auto-updater's manifest URL still returns 404** so no installed copy can ever update (RG-83 — a *publishing* action, not a commit; `npm run updater:check` is the instrument), and nobody but the author has run a service. Rule 17's trap is no longer merely ahead: the packaged build has now been signed under the hardened runtime with the microphone entitlement intact, booted, and probed, so the failure is reproducible locally without a certificate.
+
+**`docs/RELAY_V1_AUDIT.md` owns the decision, the scorecards and the brief disposition; it is the current blocker list** (one blocker removed and one added since 2026-08-31 — the verdict did not move). `docs/qa/RELAY_GAP.md` remains the `RG-` register where findings are filed, `docs/qa/QA_HARNESS.md` §0 the register of counts, `docs/qa/audits/` the frozen evidence. **Do not restate any of the four in a fifth place** — that is how they came to disagree.
 
 Full pipeline works end to end: **listen → transcribe (local whisper) → detect (direct + semantic + context) → gate (router) → render on independently-templated outputs (native window + kiosk/OBS over WebSocket)**, fully offline.
 

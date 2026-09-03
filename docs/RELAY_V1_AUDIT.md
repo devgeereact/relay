@@ -932,7 +932,7 @@ Stated plainly, because a risk that is not named is a risk that is being hidden.
 | 27 Analytics & monitoring | **DONE** — §14. Opt-in, off by default, scrubbed |
 | 28 Privacy | **DONE, a gap found and closed** — §14, F-03. Deletion existed only as "delete the folder" |
 | 29 UI consistency | **DONE** — one design system, one renderer, one error humaniser, one colour semantics rule |
-| 30 Content audit | **DONE** — no lorem ipsum, no fake testimonials, no dummy contact details. British English throughout. `TODO`/`FIXME` markers exist only inside doc comments explaining *why* something is deferred, and `KNOWN_ISSUES.md` owns those |
+| 30 Content audit | **DONE** — no lorem ipsum, no fake testimonials, no fabricated statistics, no dummy contact details. **Zero `TODO` and zero `FIXME` in `src/` or `src-tauri/src/`** — deferred work lives in `KNOWN_ISSUES.md` and the `RG-` register, where it has an owner, rather than in a marker nobody greps. British English in operator-facing text, checked against the usual tells (*behavior*, *optimize*, *canceled*, *catalog*) in `locales/en.json` and the Svelte tree: no hits |
 | 31 Navigation | **DONE** — eight tabs, no dead links; the Markdown links in the documentation are now checked by a test (RG-87) |
 | 32 UX friction | **DONE** — the Live/Planner merge exists precisely because an operator running a plan on a separate tab could not see the AI's suggestions |
 | 33 Data-loss prevention | **DONE** — crash recovery, plan drafts in the database rather than in memory, snapshot before update, and the debug recorder's *press Stop, never force-quit* warning is in `CLAUDE.md` and the user guide |
@@ -988,6 +988,11 @@ arithmetic, so `v1audit.test.js` checks it rather than asking you to.
 **Nothing on this list is a large piece of engineering. That is the point: what stands between
 Relay and a church is evidence, a certificate and a published release — not code.**
 
+0. **Before anything else, on this branch: press Start Listening, say a verse, then open
+   Settings → Diagnostics and confirm *audio dropped (never heard)* reads 0.** It takes two
+   minutes and it closes the one change in this pass that no instrument here could reach
+   (the eleventh remaining risk in [§16](#16-remaining-risks--what-could-not-be-verified)).
+   Everything below assumes it does.
 1. **Record thirty minutes of a real sermon and measure word error rate**, in at least one Tier-1
    language. The ruler exists (`stt::realtime::live_transcript_latency`, `eval.rs`, and the
    debug recorder). This is the single highest-value action available and it needs a microphone
