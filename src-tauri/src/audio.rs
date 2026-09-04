@@ -405,7 +405,7 @@ where
             .ok_or_else(|| "no default input device".to_string())?,
     };
     let preferred = pick_input_config(&device)?;
-    let (tx, rx) = mpsc::channel::<Vec<f32>>();
+    let (tx, rx) = mpsc::sync_channel::<Vec<f32>>(CAPTURE_QUEUE);
 
     // Prefer the 48 kHz config (RNNoise runs frame-aligned), but if that exact
     // config can't actually be opened on this device — common with USB mics,
@@ -558,13 +558,33 @@ fn write_wav_f32(path: &std::path::Path, samples: &[f32], rate: u32) -> std::io:
     f.flush()
 }
 
+/// How many raw capture buffers may wait for the clean/chunk thread.
+///
+/// RG-84. This was an UNBOUNDED `mpsc::channel` fed from the cpal callback, which
+/// is a real-time thread. An unbounded queue in front of a consumer does not
+/// prevent a backlog — it converts one into memory, and then into a transcript
+/// arriving minutes after the sentence (CLAUDE.md rule 31: a pipeline permanently
+/// behind reports a *zero backlog* for a whole service). And CLAUDE.md rule 33
+/// described this path as bounded with a shed counter, which was true of the third
+/// hop only.
+///
+/// cpal delivers buffers of a few milliseconds and the consumer does denoise, gain,
+/// VAD and chunking — work measured in microseconds — so in normal operation this
+/// queue holds one or two. 512 buffers is several seconds of grace: far more than
+/// any scheduling hiccup needs, and a hard ceiling on what a genuine stall can cost.
+///
+/// A full queue DROPS, and drops are counted (`latency::note_dropped_audio`). It is
+/// never allowed to block: blocking here would stall the audio device's own
+/// callback, which is how a capture stream is killed outright.
+const CAPTURE_QUEUE: usize = 512;
+
 /// Build a cpal input stream for `supported`, downmixing to mono and forwarding
 /// samples over `tx`. Kept separate so the caller can try a preferred config and
 /// fall back to the device default if the preferred one won't open.
 fn build_stream(
     device: &cpal::Device,
     supported: &cpal::SupportedStreamConfig,
-    tx: &mpsc::Sender<Vec<f32>>,
+    tx: &mpsc::SyncSender<Vec<f32>>,
 ) -> Result<cpal::Stream, String> {
     let sample_format = supported.sample_format();
     let config: cpal::StreamConfig = supported.clone().into();
@@ -576,7 +596,17 @@ fn build_stream(
             device.build_input_stream(
                 &config,
                 move |data: &[f32], _: &cpal::InputCallbackInfo| {
-                    let _ = tx.send(downmix_f32(data, channels));
+                    // NEVER block: this is the device's real-time callback, and
+                    // stalling it kills the capture stream. FULL means the
+                    // clean/chunk thread has stopped keeping up — a gap in the
+                    // sermon, and counted as one. DISCONNECTED is the ordinary end
+                    // of a capture and is not counted, or every Stop would put a
+                    // four-figure number in the report.
+                    if let Err(mpsc::TrySendError::Full(_)) =
+                        tx.try_send(downmix_f32(data, channels))
+                    {
+                        crate::latency::note_dropped_audio();
+                    }
                 },
                 err_fn,
                 None,
@@ -587,7 +617,17 @@ fn build_stream(
             device.build_input_stream(
                 &config,
                 move |data: &[i16], _: &cpal::InputCallbackInfo| {
-                    let _ = tx.send(downmix_i16(data, channels));
+                    // NEVER block: this is the device's real-time callback, and
+                    // stalling it kills the capture stream. FULL means the
+                    // clean/chunk thread has stopped keeping up — a gap in the
+                    // sermon, and counted as one. DISCONNECTED is the ordinary end
+                    // of a capture and is not counted, or every Stop would put a
+                    // four-figure number in the report.
+                    if let Err(mpsc::TrySendError::Full(_)) =
+                        tx.try_send(downmix_i16(data, channels))
+                    {
+                        crate::latency::note_dropped_audio();
+                    }
                 },
                 err_fn,
                 None,
@@ -598,7 +638,17 @@ fn build_stream(
             device.build_input_stream(
                 &config,
                 move |data: &[u16], _: &cpal::InputCallbackInfo| {
-                    let _ = tx.send(downmix_u16(data, channels));
+                    // NEVER block: this is the device's real-time callback, and
+                    // stalling it kills the capture stream. FULL means the
+                    // clean/chunk thread has stopped keeping up — a gap in the
+                    // sermon, and counted as one. DISCONNECTED is the ordinary end
+                    // of a capture and is not counted, or every Stop would put a
+                    // four-figure number in the report.
+                    if let Err(mpsc::TrySendError::Full(_)) =
+                        tx.try_send(downmix_u16(data, channels))
+                    {
+                        crate::latency::note_dropped_audio();
+                    }
                 },
                 err_fn,
                 None,
@@ -928,7 +978,7 @@ mod gate {
     ///
     /// `RELAY_RECORD_WAV` is what turns *"word error rate has never been measured in
     /// any language"* — the sentence the moat's 3/10 rests on — into a number.
-    /// `ROADMAP.md` §1 calls it the highest-value line on that page, and `RELAY_GAP.md`
+    /// `KNOWN_ISSUES.md` §1 calls it the highest-value line on that page, and `RELAY_GAP.md`
     /// §24 makes it a condition of the supervised pilot.
     ///
     /// The writer underneath is a hand-rolled 44-byte RIFF header. **A single wrong

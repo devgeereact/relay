@@ -120,6 +120,7 @@ pub const PROTECTED: &[(&str, &str)] = &[
     ("delete_announcement", "deleting an announcement"),
     ("delete_media", "deleting a media file"),
     ("delete_voice_profile", "deleting a voice profile"),
+    ("delete_service", "erasing a recorded service"),
     // ── Takes the engine away mid-sermon ────────────────────────────────────
     ("download_model", "downloading a speech model"),
     ("select_stt_model", "changing the speech model"),

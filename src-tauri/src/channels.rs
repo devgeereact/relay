@@ -534,7 +534,7 @@ struct Beat {
 ///   Not a history, not a log, never written to the database, gone on quit.
 ///
 /// So this is anonymous liveness, and it stays that way. If a future change wants
-/// to know *which* device, that is the pairing proposal in `docs/RELAY_GAP.md` §20,
+/// to know *which* device, that is the pairing proposal in `docs/qa/RELAY_GAP.md` §20,
 /// and it needs a human first.
 #[derive(Clone, Default)]
 pub struct OutputHealth {
@@ -1055,6 +1055,28 @@ pub fn report_to(handle: &tauri::AppHandle) -> ErrorSink {
     })
 }
 
+/// A port nothing else on this machine is using.
+///
+/// These tests used to bind FIXED ports (8199–8205). On 2026-09-03 the whole Rust
+/// suite failed on `kiosk_ws_forwards_published_content` with a response carrying
+/// `x-powered-by: PHP/8.5.9` — an unrelated PHP dev server for a different project
+/// already held `127.0.0.1:8199`. Relay's server bound `0.0.0.0:8199` and
+/// *succeeded* (tokio sets `SO_REUSEADDR`), the more specific loopback binding won
+/// the connection, and the test spent its life talking to somebody else's web
+/// server.
+///
+/// That is worse than a port clash: nothing errored, the server printed that it was
+/// listening, and the failure read as a regression in code that had not changed.
+/// Asking the OS for a port removes the whole class, and the port it returns is
+/// loopback-specific, so a foreign wildcard listener cannot shadow it either.
+#[cfg(test)]
+fn free_port() -> u16 {
+    let l = std::net::TcpListener::bind("127.0.0.1:0").expect("a free port");
+    let port = l.local_addr().expect("addr").port();
+    drop(l);
+    port
+}
+
 /// A sink that only logs — for tests, where there is no UI to tell.
 #[cfg(test)]
 fn log_only() -> ErrorSink {
@@ -1370,6 +1392,7 @@ async fn serve_media_file<S>(id_part: &str, stream: &mut S)
 where
     S: tokio::io::AsyncWrite + Unpin,
 {
+    use tokio::io::AsyncReadExt;
     use tokio::io::AsyncWriteExt;
     let id: String = id_part.chars().take_while(|c| c.is_ascii_digit()).collect();
     let found = if id.is_empty() {
@@ -1386,16 +1409,49 @@ where
             })
         })
     };
-    match found.and_then(|p| std::fs::read(&p).ok().map(|b| (p, b))) {
-        Some((path, body)) => {
+    // Open and measure; do NOT read. This used to be `std::fs::read` — the whole
+    // file into a `Vec<u8>` before a single byte went out — so a 400 MB background
+    // loop cost 400 MB of resident memory PER REQUEST, and a wall, a stage screen
+    // and an OBS machine asking for the same clip during a service cost three
+    // copies of it on the laptop running the sermon. The bytes are the same; where
+    // they live while they travel is not.
+    let opened = match found {
+        Some(p) => match tokio::fs::File::open(&p).await {
+            Ok(f) => match f.metadata().await {
+                Ok(m) => Some((p, f, m.len())),
+                Err(_) => None,
+            },
+            Err(_) => None,
+        },
+        None => None,
+    };
+    match opened {
+        Some((path, mut file, len)) => {
             let mime = mime_for(&path.to_string_lossy());
             let header = format!(
-                "HTTP/1.1 200 OK\r\nContent-Type: {}\r\nContent-Length: {}\r\nAccess-Control-Allow-Origin: *\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n",
-                mime,
-                body.len()
+                "HTTP/1.1 200 OK\r\nContent-Type: {}\r\nContent-Length: {}\r\nAccess-Control-Allow-Origin: *\r\nX-Content-Type-Options: nosniff\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n",
+                mime, len
             );
-            let _ = stream.write_all(header.as_bytes()).await;
-            let _ = stream.write_all(&body).await;
+            if stream.write_all(header.as_bytes()).await.is_err() {
+                return;
+            }
+            let mut buf = vec![0u8; 64 * 1024];
+            loop {
+                match file.read(&mut buf).await {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        // A screen that closed its tab mid-clip is an ordinary end,
+                        // not an error to report anywhere.
+                        if stream.write_all(&buf[..n]).await.is_err() {
+                            return;
+                        }
+                    }
+                    // Truncated rather than wrong: the header already promised
+                    // `len`, so the client sees a short read and retries. Inventing
+                    // padding would hand a player a corrupt file.
+                    Err(_) => break,
+                }
+            }
         }
         None => {
             let msg = b"Media not found";
@@ -1444,7 +1500,33 @@ pub struct ApiReply {
 
 pub type ApiSink = std::sync::Arc<dyn Fn(&str, &str) -> Option<ApiReply> + Send + Sync>;
 
+/// How long a connection has to send its request line before Relay drops it.
+///
+/// Far longer than a LAN request takes, far shorter than a service lasts.
+pub(crate) const REQUEST_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
 pub async fn run_output_http_server(on_error: ErrorSink, api: ApiSink, port: u16) {
+    run_output_http_server_with_timeout(on_error, api, port, REQUEST_READ_TIMEOUT).await
+}
+
+/// The same server, with the idle-connection deadline as a parameter.
+///
+/// The parameter exists so a test can assert the BEHAVIOUR in milliseconds instead
+/// of seconds. The first attempt used tokio's paused clock, and it was flaky: with
+/// two tasks holding timers, auto-advance can reach the client's deadline before
+/// the server task has registered its own, so the test failed about one run in ten
+/// on code that was correct. A flaky test on a timeout is worse than no test — it
+/// teaches whoever sees it red to run it again.
+///
+/// `run_output_http_server` above is the only production caller and it passes
+/// `REQUEST_READ_TIMEOUT`, so the constant is still the shipped value and this
+/// indirection cannot drift away from it.
+pub async fn run_output_http_server_with_timeout(
+    on_error: ErrorSink,
+    api: ApiSink,
+    port: u16,
+    read_timeout: std::time::Duration,
+) {
     let listener = match tokio::net::TcpListener::bind(("0.0.0.0", port)).await {
         Ok(l) => l,
         Err(e) => {
@@ -1461,7 +1543,20 @@ pub async fn run_output_http_server(on_error: ErrorSink, api: ApiSink, port: u16
         tokio::spawn(async move {
             use tokio::io::AsyncReadExt;
             let mut buf = [0u8; 8192];
-            let Ok(n) = stream.read(&mut buf).await else {
+            // A CONNECTION THAT NEVER SPEAKS MUST NOT BE HELD FOREVER.
+            //
+            // This awaited the first read with no deadline, so a socket that
+            // connected and then said nothing kept a task, an 8 KiB buffer and a
+            // file descriptor for the length of the process. Nothing malicious is
+            // required to produce one: a browser that opens a speculative
+            // connection, a kiosk that sleeps between the TCP handshake and the
+            // request, a port scanner sweeping the church LAN. They accumulate
+            // silently across a service and are freed only by quitting Relay.
+            //
+            // Five seconds is far longer than a LAN request line takes and far
+            // shorter than a service.
+            let read = tokio::time::timeout(read_timeout, stream.read(&mut buf)).await;
+            let Ok(Ok(n)) = read else {
                 return;
             };
             if n == 0 {
@@ -1532,7 +1627,7 @@ where
         ""
     };
     let resp = format!(
-        "HTTP/1.1 {} {}\r\nContent-Type: application/json\r\n{}{}Cache-Control: no-store\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        "HTTP/1.1 {} {}\r\nContent-Type: application/json\r\nX-Content-Type-Options: nosniff\r\n{}{}Cache-Control: no-store\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
         reply.status,
         phrase,
         cors,
@@ -1610,10 +1705,11 @@ mod tests {
     async fn output_http_serves_embedded_pages() {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         let no_api: ApiSink = std::sync::Arc::new(|_: &str, _: &str| None);
-        tokio::spawn(run_output_http_server(log_only(), no_api, 8201));
+        let port = free_port();
+        tokio::spawn(run_output_http_server(log_only(), no_api, port));
         tokio::time::sleep(std::time::Duration::from_millis(150)).await;
 
-        let mut s = tokio::net::TcpStream::connect("127.0.0.1:8201")
+        let mut s = tokio::net::TcpStream::connect(("127.0.0.1", port))
             .await
             .expect("connect");
         s.write_all(b"GET /stage.html HTTP/1.1\r\nHost: x\r\n\r\n")
@@ -1629,7 +1725,7 @@ mod tests {
         );
         assert!(resp.contains("text/html"));
 
-        let mut s2 = tokio::net::TcpStream::connect("127.0.0.1:8201")
+        let mut s2 = tokio::net::TcpStream::connect(("127.0.0.1", port))
             .await
             .expect("connect");
         s2.write_all(b"GET /nope.xyz HTTP/1.1\r\n\r\n")
@@ -1639,10 +1735,109 @@ mod tests {
         assert!(String::from_utf8_lossy(&buf[..n2]).starts_with("HTTP/1.1 404"));
     }
 
+    /// A CONNECTION THAT NEVER SPEAKS MUST NOT BE HELD FOREVER.
+    ///
+    /// The first read had no deadline, so a socket that connected and then said
+    /// nothing kept a task, an 8 KiB buffer and a file descriptor for the whole
+    /// life of the process. Nothing hostile is needed to make one — a browser
+    /// opening a speculative connection, a kiosk sleeping between the handshake
+    /// and the request, a port scanner on the church LAN — and they accumulate
+    /// silently across a service, freed only by quitting Relay.
+    ///
+    /// Driven with a 200 ms deadline instead of the shipped five seconds, so the
+    /// assertion costs no wall time and — unlike the first attempt, which used
+    /// tokio's paused clock — cannot race. With two tasks holding timers,
+    /// auto-advance can reach the CLIENT's deadline before the server has
+    /// registered its own, and that version failed about one run in ten on correct
+    /// code. A flaky test about a timeout is worse than no test: it teaches whoever
+    /// sees it red to run it again rather than read it.
+    #[tokio::test]
+    async fn a_connection_that_never_speaks_is_dropped() {
+        use tokio::io::AsyncReadExt;
+        let no_api: ApiSink = std::sync::Arc::new(|_: &str, _: &str| None);
+        let port = free_port();
+        tokio::spawn(run_output_http_server_with_timeout(
+            log_only(),
+            no_api,
+            port,
+            std::time::Duration::from_millis(200),
+        ));
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+
+        let mut s = tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .expect("connect");
+        // Say nothing at all, then wait for the server to give up on us.
+        //
+        // The client's own deadline exists so that a REGRESSION is a failing test
+        // rather than a hung one: without the server-side timeout this read never
+        // returns, and a test that hangs forever in CI is worse than no test.
+        let mut buf = [0u8; 64];
+        let n = tokio::time::timeout(std::time::Duration::from_secs(10), s.read(&mut buf))
+            .await
+            .expect("the server never dropped an idle connection")
+            .expect("read");
+        assert_eq!(n, 0, "the server should have closed the connection");
+
+        // And the SHIPPED deadline is the constant, not this test's 200 ms. The
+        // production entry point takes no timeout argument precisely so there is
+        // one value; this asserts it is still a real one.
+        assert_eq!(REQUEST_READ_TIMEOUT, std::time::Duration::from_secs(5));
+    }
+
+    /// A JSON reply must carry `nosniff` like every other reply this server sends.
+    ///
+    /// The static path set it and the control plane did not, so the one surface
+    /// that answers with attacker-influenceable strings (a search query echoes
+    /// through `json_str`) was the one a browser was still free to sniff a content
+    /// type for. The header costs nothing and closes the asymmetry.
+    #[tokio::test]
+    async fn a_json_reply_is_never_content_sniffed() {
+        let mut sink: Vec<u8> = Vec::new();
+        serve_json(
+            &ApiReply {
+                status: 200,
+                body: "{\"ok\":true}".into(),
+                cors: true,
+            },
+            &mut sink,
+        )
+        .await;
+        let resp = String::from_utf8_lossy(&sink);
+        assert!(resp.contains("X-Content-Type-Options: nosniff"), "{resp}");
+        assert!(resp.contains("Access-Control-Allow-Origin: *"), "{resp}");
+        assert!(resp.contains("Cache-Control: no-store"), "{resp}");
+    }
+
+    /// A mutating route still withholds the wildcard, nosniff or not. Guards the
+    /// header addition against having widened what a cross-origin caller can read.
+    #[tokio::test]
+    async fn a_mutating_reply_still_withholds_the_cors_wildcard() {
+        let mut sink: Vec<u8> = Vec::new();
+        serve_json(
+            &ApiReply {
+                status: 405,
+                body: "{\"ok\":false}".into(),
+                cors: false,
+            },
+            &mut sink,
+        )
+        .await;
+        let resp = String::from_utf8_lossy(&sink);
+        assert!(
+            resp.starts_with("HTTP/1.1 405 Method Not Allowed"),
+            "{resp}"
+        );
+        assert!(resp.contains("Allow: POST"), "{resp}");
+        assert!(!resp.contains("Access-Control-Allow-Origin"), "{resp}");
+        assert!(resp.contains("X-Content-Type-Options: nosniff"), "{resp}");
+    }
+
     /// The #1 fix: a browser client (OBS/kiosk) says hello and gets back the REAL
     /// cached template, so it renders exactly what the editor shows.
     #[tokio::test]
     async fn kiosk_hello_returns_cached_template() {
+        let port = free_port();
         let hub = KioskHub::default();
         hub.cache_template(
             7,
@@ -1655,11 +1850,11 @@ mod tests {
             hub.clients_handle(),
             hub.themes_handle(),
             OutputHealth::default(),
-            8200,
+            port,
         ));
         tokio::time::sleep(std::time::Duration::from_millis(150)).await;
 
-        let (ws, _) = tokio_tungstenite::connect_async("ws://127.0.0.1:8200")
+        let (ws, _) = tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{port}"))
             .await
             .expect("connect");
         let (mut write, mut read) = ws.split();
@@ -1687,6 +1882,7 @@ mod tests {
     /// can resolve a template that pins a custom theme (builtins it bundles).
     #[tokio::test]
     async fn a_kiosk_client_receives_the_custom_themes_on_hello() {
+        let port = free_port();
         let hub = KioskHub::default();
         hub.cache_themes(r##"[{"id":3,"name":"Sanctuary","style":{"accent":"#abc"}}]"##);
         tokio::spawn(run_kiosk_server(
@@ -1696,11 +1892,11 @@ mod tests {
             hub.clients_handle(),
             hub.themes_handle(),
             OutputHealth::default(),
-            8203,
+            port,
         ));
         tokio::time::sleep(std::time::Duration::from_millis(150)).await;
 
-        let (ws, _) = tokio_tungstenite::connect_async("ws://127.0.0.1:8203")
+        let (ws, _) = tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{port}"))
             .await
             .expect("connect");
         let (mut write, mut read) = ws.split();
@@ -1734,6 +1930,7 @@ mod tests {
     /// is published, and the client receives it.
     #[tokio::test]
     async fn kiosk_ws_forwards_published_content() {
+        let port = free_port();
         let hub = KioskHub::default();
         let tx = hub.sender();
         tokio::spawn(run_kiosk_server(
@@ -1743,12 +1940,12 @@ mod tests {
             hub.clients_handle(),
             hub.themes_handle(),
             OutputHealth::default(),
-            8199,
+            port,
         ));
         // Give the listener a moment to bind.
         tokio::time::sleep(std::time::Duration::from_millis(150)).await;
 
-        let (ws, _) = tokio_tungstenite::connect_async("ws://127.0.0.1:8199")
+        let (ws, _) = tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{port}"))
             .await
             .expect("connect");
         let (_write, mut read) = ws.split();
@@ -1928,6 +2125,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_kiosk_client_is_counted_while_connected_and_not_after() {
+        let port = free_port();
         // The leak this guards: without the drop-guard, a kiosk screen that
         // reconnects across a service leaves a phantom client counted on every
         // previous connection, and the channel reads ONLINE with a dead screen.
@@ -1940,13 +2138,13 @@ mod tests {
             hub.clients_handle(),
             hub.themes_handle(),
             OutputHealth::default(),
-            8202,
+            port,
         ));
         tokio::time::sleep(std::time::Duration::from_millis(150)).await;
 
         assert_eq!(clients.count(4), 0, "nothing connected yet");
 
-        let (ws, _) = tokio_tungstenite::connect_async("ws://127.0.0.1:8202")
+        let (ws, _) = tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{port}"))
             .await
             .expect("connect");
         let (mut write, _read) = ws.split();
@@ -1982,6 +2180,7 @@ mod tests {
     /// screen's light green for a whole service.
     #[tokio::test]
     async fn a_kiosk_screen_reports_that_it_is_painting_and_junk_is_ignored() {
+        let port = free_port();
         let hub = KioskHub::default();
         let health = OutputHealth::default();
         tokio::spawn(run_kiosk_server(
@@ -1991,11 +2190,11 @@ mod tests {
             hub.clients_handle(),
             hub.themes_handle(),
             health.clone(),
-            8204,
+            port,
         ));
         tokio::time::sleep(std::time::Duration::from_millis(150)).await;
 
-        let (ws, _) = tokio_tungstenite::connect_async("ws://127.0.0.1:8204")
+        let (ws, _) = tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{port}"))
             .await
             .expect("connect");
         let (mut write, _read) = ws.split();

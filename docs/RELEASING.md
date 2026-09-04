@@ -425,6 +425,38 @@ release, so the happy path is:
 **tag `v0.2.0` → workflow opens a draft → you check it → you publish it → every install
 offers the update on next launch.**
 
+#### Prove it, don't assume it
+
+```bash
+npm run updater:check
+```
+
+Reads the endpoint **out of both Tauri configs** — never a second copy of the URL —
+fetches it, and reports what a shipped copy of Relay would actually find:
+
+```
+  ✗ https://github.com/devgeereact/relay/releases/latest/download/latest.json
+      (src-tauri/tauri.conf.json) HTTP 404 — GitHub's /releases/latest/ excludes
+      PRE-RELEASES. Publish a full release, or point at a tag.
+```
+
+That is the state as this is written (RG-83), and it is the reason the check exists.
+The updater is complete — built, wired, signed with a real minisign key, covered by
+tests — and it resolves to **nothing**. Which means every copy of Relay that has ever
+shipped is un-updatable, and no test anywhere could have said so, because the failure
+is not in the code.
+
+**Run it immediately after publishing a release**, before you tell anyone the release
+exists. It is deliberately NOT a CI gate on every push: until a full release is
+published the endpoint is *legitimately* 404, and a red build on every unrelated pull
+request is a red build people stop reading. `--strict` makes it exit non-zero, for
+when you do want it to fail something.
+
+The other half of the same guarantee lives in the app: **Settings → Updates** now
+reports the *channel*, not the absence of news. It used to say "up to date" whenever
+nothing was waiting — which was also what it said when the check had never run, when
+the laptop was offline, and when the manifest had been 404 since installation.
+
 ### How to actually test the updater before you own certificates
 
 Build a local app that is *older* than the pre-release and point it at that

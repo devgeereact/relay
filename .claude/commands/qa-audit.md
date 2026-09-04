@@ -8,7 +8,7 @@ allowed-tools: Read, Grep, Glob, Bash, Write, Edit, Agent
 
 Arguments: `$ARGUMENTS`
 
-Run the audit described in `docs/QA_HARNESS.md`. You are the orchestrator; the six
+Run the audit described in `docs/qa/QA_HARNESS.md`. You are the orchestrator; the six
 `relay-qa-*` agents do the work. **You do not audit anything yourself** — an
 orchestrator that starts investigating stops orchestrating, and its opinions then leak
 into R6's control group.
@@ -17,9 +17,9 @@ into R6's control group.
 
 Read, in this order, before dispatching anything:
 
-- `docs/QA_HARNESS.md` — the five evidence layers and the roster.
-- `docs/QA_HARNESS.md` Part 2 — the shared preamble the agents inherit.
-- `docs/QA_HARNESS.md` Part 4 — what is already pinned. An audit that re-derives
+- `docs/qa/QA_HARNESS.md` — the five evidence layers and the roster.
+- `docs/qa/QA_HARNESS.md` Part 2 — the shared preamble the agents inherit.
+- `docs/qa/QA_HARNESS.md` Part 4 — what is already pinned. An audit that re-derives
   this burns a run rediscovering deliberate decisions, and may "find" a fixed bug.
 
 ## 2 · Decide the scope
@@ -71,7 +71,7 @@ reads first, the run has produced five opinions and an echo.
 
 ## 5 · Report back
 
-R6 writes `docs/audits/QA-<ISO date>.md`. In the terminal, give the human:
+R6 writes `docs/qa/audits/QA-<ISO date>.md`. In the terminal, give the human:
 
 - the release decision (GO / GO WITH CONDITIONS / NO-GO) and the one sentence behind it,
 - every P0 and P1, in full,
@@ -88,4 +88,4 @@ Do not print the whole report to the terminal. It is a document; they will read 
   during a week they are not about to run a service.
 - **BLOCKED is never PASS.** If a run comes back with no BLOCKED items on a desktop app
   that cannot be seen, screenshotted, or heard on this machine, the run is wrong.
-- **Nothing writes to `docs/PRODUCT_AUDIT.md`.**
+- **Nothing writes to `docs/qa/audits/PRODUCT-2026-07-13.md`.**

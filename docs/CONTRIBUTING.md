@@ -18,7 +18,7 @@ Everything below is a **JSON file**. No Rust. No Svelte. No build. No developmen
 
 These files ship **empty on purpose.** They were not written by an AI or a non-speaker, and they will not be.
 
-Copy any key you like from `src/lib/locales/en.json`, paste it in, and translate the **value**:
+Copy any key you like from `../src/lib/locales/en.json`, paste it in, and translate the **value**:
 
 ```json
 {
@@ -31,13 +31,13 @@ Leave a key out and it simply stays English — so **one key is a useful pull re
 
 Keep every `{placeholder}` — word order may change, the placeholder must survive.
 
-### The book names — `src-tauri/data/book_aliases.json`
+### The book names — `../src-tauri/data/book_aliases.json`
 
 66 books × 3 languages, and **not one of them has been checked by a native speaker.** They were assembled from public sources by someone who does not speak these languages. Some are probably wrong.
 
 A wrong book name does not fail loudly. It fails **silently**: the preacher says the name, Relay hears it perfectly, matches nothing, and no verse ever reaches the screen. Nobody knows why. This table *is* the moat, and it is unreviewed.
 
-### The numbers — `src-tauri/data/numerals.json`
+### The numbers — `../src-tauri/data/numerals.json`
 
 Swahili and Hausa are done. **Yorùbá is not, and it is the hard one.**
 
@@ -53,7 +53,7 @@ Relay's word error rate has **never been measured. In any language. Including En
 
 The ruler is built, unit-tested, and runs in CI. There has simply never been a recording to point it at, and a developer reading verses into a MacBook in a quiet room measures nothing — the whole audio front-end had to be rebuilt once because a *quiet preacher* was silently undetectable and nobody noticed for months.
 
-**[`bench/README.md`](bench/README.md) tells you exactly what to record and how to run it.** It is about an hour of work and it unblocks the entire African-language differentiator.
+**[`../bench/README.md`](../bench/README.md) tells you exactly what to record and how to run it.** It is about an hour of work and it unblocks the entire African-language differentiator.
 
 Audio is **never** committed to this repository — `PRIVACY.md` promises a church that their sermon stays on their device, and that promise is not conditional. Keep the recording. Commit the number.
 
@@ -63,9 +63,9 @@ Audio is **never** committed to this repository — `PRIVACY.md` promises a chur
 
 ### Before you start
 
-Read **[`CLAUDE.md`](CLAUDE.md)**. It is the real map, and its "Architecture rules learned the HARD WAY" section is **forty** numbered rules (`grep -cE '^[0-9]+\. \*\*' CLAUDE.md` — it grows, so count rather than trust this sentence) — **each one is a bug that reached, or would have reached, a congregation.** They are not style preferences. Regressing one of them is how a wrong verse ends up on a wall.
+Read **[`../CLAUDE.md`](../CLAUDE.md)**. It is the real map, and its "Architecture rules learned the HARD WAY" section is **forty** numbered rules (`grep -cE '^[0-9]+\. \*\*' CLAUDE.md` — it grows, so count rather than trust this sentence) — **each one is a bug that reached, or would have reached, a congregation.** They are not style preferences. Regressing one of them is how a wrong verse ends up on a wall.
 
-Read **[`docs/DECISIONS.md`](docs/DECISIONS.md)** before proposing a feature. If a decision is not in there, it has not been made yet — ask, don't assume. If the code contradicts it, the **code** is wrong: flag it, don't silently "fix" the decision.
+Read **[`DECISIONS.md`](DECISIONS.md)** before proposing a feature. If a decision is not in there, it has not been made yet — ask, don't assume. If the code contradicts it, the **code** is wrong: flag it, don't silently "fix" the decision.
 
 ### Setup
 
@@ -85,7 +85,7 @@ You need **cmake** (whisper.cpp compiles from source) and a Rust toolchain. The 
 cd src-tauri
 cargo fmt --all && cargo clippy --all-targets -- -D warnings   # CI enforces both
 cargo test                    # the runner prints the count; do not trust one written here
-cd .. && npm test             # likewise. Both are re-measured in docs/QA_HARNESS.md §0
+cd .. && npm test             # likewise. Both are re-measured in docs/qa/QA_HARNESS.md §0
 ```
 
 Beyond green:
@@ -99,7 +99,7 @@ Beyond green:
 
 - **A number that means one thing in one place and another somewhere else.** A TF-IDF cosine is not a probability, and rendering it as a percentage next to a real confidence is how the wrong verse reaches a wall.
 - **Borrowing a colour that already carries a promise.** Amber means ON AIR. Amethyst means REHEARSAL. A tally light that lies is worse than no tally light.
-- **Swallowing an error on any path the congregation can see.** `src/lib/stores/capture.js` states the contract at the top: *can the congregation see the difference?*
+- **Swallowing an error on any path the congregation can see.** `../src/lib/stores/capture.js` states the contract at the top: *can the congregation see the difference?*
 - **Adding a dependency for something that is 60 lines.** This app runs offline on a donated laptop.
 
 ---
@@ -114,7 +114,7 @@ Beyond green:
 
 If it happened **during a live service**, say so — that moves it to the front of the queue, every time.
 
-Please include what was on the screen, what you expected, and what Relay told you (or didn't). If it was an audio or detection problem, `CLAUDE.md` documents the environment variables that make it reproducible without a human at the microphone.
+Please include what was on the screen, what you expected, and what Relay told you (or didn't). If it was an audio or detection problem, `../CLAUDE.md` documents the environment variables that make it reproducible without a human at the microphone.
 
 Security issues go to **[SECURITY.md](SECURITY.md)**, privately, not to the issue tracker.
 

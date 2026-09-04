@@ -963,6 +963,12 @@ carefully as the changes, because the refusals are the harder half.
 naming book, chapter and verse. It scores the parser. It says nothing about the
 other half of the product: recognising a verse the preacher never named.
 
+> **That 50 is the number on the day this decision was made, and it is left there.**
+> The corpus is 74 cases now, and the live figure lives beside the command that
+> produces it — `QA_HARNESS.md` §0. A decision log records what was true when the
+> decision was taken; re-pointing its numbers at today would make the reasoning
+> unreadable and would drift again by Sunday.
+
 That half was entirely unmeasured, and it showed. The operator's words:
 
 > *"I don't want the AI to just detect a word and match the word to the whole
@@ -1590,7 +1596,7 @@ Everything above is a development machine, a release binary run from `cargo`, an
 text-to-speech audio in no room at all. Word error rate is still unmeasured in every
 language. Nobody has run a service. The `end_to_end_speech_to_scripture` and
 `audio_to_visible_transcript` spans need a webview and an output page and therefore a
-real app, and no number for them appears here. See `docs/audits/PERF-2026-08-24.md`
+real app, and no number for them appears here. See `docs/qa/audits/PERF-2026-08-24.md`
 for exactly what was and was not measured, and Stage F of the human test script for
 what has to happen in a room.
 
@@ -1650,7 +1656,7 @@ exactly one word of it:
   written to the database, gone on quit. Not a history, not a log.
 
 Anything that wants to know *which device* is the pairing proposal in
-`docs/RELAY_GAP.md` §20, and it needs a human first. **Anonymous heartbeats do not
+`docs/qa/RELAY_GAP.md` §20, and it needs a human first. **Anonymous heartbeats do not
 require that reversal**, which is why they were built and pairing was not.
 
 The wire carries a closed enum (`content` / `clear` / `black`), never a caption. A beat
@@ -2368,7 +2374,7 @@ be seen as leftover at all.
 
 ### A bare verse belongs to the book this sentence names
 
-**Found in a live service, not in this repository** — `docs/audits/FIELD-2026-08-30.md`.
+**Found in a live service, not in this repository** — `docs/qa/audits/FIELD-2026-08-30.md`.
 
 The operator fired **Proverbs 3:6** by hand. Five minutes later the preacher said
 *"…what was going through in **Luke 10**. If you read from **verse 32**, 37."*
@@ -2420,7 +2426,7 @@ twice**.
 
 ## 57. The record and the instruments, corrected by a real service (2026-08-30)
 
-Three defects found by pointing `docs/audits/FIELD-2026-08-30.md`'s own numbers at the
+Three defects found by pointing `docs/qa/audits/FIELD-2026-08-30.md`'s own numbers at the
 code that produced them. None of them could have been found from source, and none of
 them is in the pipeline — **all three are in what Relay writes down about itself.**
 

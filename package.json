@@ -14,7 +14,8 @@
     "version:set": "node scripts/version.mjs --set",
     "hooks:install": "node scripts/install-claude-hooks.mjs",
     "hooks:check": "node scripts/install-claude-hooks.mjs --check",
-    "qa:inventory": "node scripts/qa-inventory.mjs"
+    "qa:inventory": "node scripts/qa-inventory.mjs",
+    "updater:check": "node scripts/check-updater.mjs"
   },
   "devDependencies": {
     "@fontsource/fraunces": "^5.2.9",

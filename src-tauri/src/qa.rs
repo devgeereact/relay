@@ -1285,74 +1285,61 @@ mod cold_start {
         }
     }
 
-    /// A media import that fails half-way leaves a row with no file behind it,
-    /// and nothing in the app can tell it apart from a good one.
+    /// A media import that fails half-way leaves NOTHING behind.
     ///
-    /// `import_media` (main.rs) does, in this order and with no transaction:
+    /// ── What this test used to assert, and why it was right to ─────────────
+    ///
+    /// It was named `a_half_finished_media_import_leaves_a_row_that_serves_a_404`
+    /// and it pinned the defect rather than the fix. `import_media` did, in this
+    /// order and with no transaction:
     ///
     /// ```text
     ///   db::insert_media(...)          ← committed immediately
-    ///   std::fs::write(path, bytes)?   ← disk full / permissions / long name → returns Err
+    ///   std::fs::write(path, bytes)?   ← disk full / permissions → returns Err
     ///   db::set_media_path(...)        ← never reached
     /// ```
     ///
-    /// The `?` propagates and the operator sees an error — but the row is already
-    /// there, with `path = ''`. `list_media` shows it in the Media library like any
-    /// other asset, and `serve_media_file` does not consult `path` at all: it scans
-    /// `media_dir()` for a `{id}_` prefix, finds nothing, and answers **404**.
+    /// The `?` propagated and the operator saw an error — but the row was already
+    /// there with `path = ''`. `list_media` showed it in the Media library like any
+    /// healthy asset, and `serve_media_file` does not consult `path` at all: it
+    /// scans `media_dir()` for a `{id}_` prefix, finds nothing, and answers **404**.
+    /// So the failure surfaced on Sunday, as a blank output, with no message.
     ///
-    /// So the failure surfaces on Sunday, as a blank output, with no message —
-    /// which is the failure mode this codebase has fixed several times elsewhere.
+    /// ── What closed it ─────────────────────────────────────────────────────
     ///
-    /// Tested at the db layer plus a static read of the command, deliberately:
-    /// forcing the real `fs::write` to fail means pointing `RELAY_DB_PATH` at a
-    /// scratch dir, and `db::mod`'s `open_creates_and_seeds_a_real_file_db`
-    /// already sets that variable with no lock — two tests racing on one process
-    /// env is a flake, not evidence.
+    /// The row still has to be inserted first — its id is half the on-disk name —
+    /// so the ordering could not be reversed. `write_media_file` instead UNDOES the
+    /// row when the write fails, and is a separate function precisely so that
+    /// branch can be executed by a test (`import_guard_tests`) rather than reasoned
+    /// about. Inverted, not deleted: the shape of the defect is the reason the
+    /// guarantee exists.
     #[test]
-    fn a_half_finished_media_import_leaves_a_row_that_serves_a_404() {
+    fn a_half_finished_media_import_leaves_no_row_behind() {
         let app = bare_app();
         let h = app.handle().clone();
         let db = h.state::<Db>();
         let conn = db.0.lock().unwrap();
 
-        // Exactly the state `import_media` leaves when `fs::write` fails.
+        // The state the old code left: a row whose file never landed.
         let id = db::insert_media(&conn, "image", "backdrop.png", "2026-08-16").unwrap();
+        assert_eq!(db::list_media(&conn).unwrap().len(), 1);
 
-        let listed = db::list_media(&conn).unwrap();
-        let row = listed.iter().find(|m| m.id == id).unwrap();
-        assert_eq!(
-            row.path, "",
-            "if this is no longer empty, insert_media learned to write the path \
-             and the window between the two statements has closed"
-        );
-        assert_eq!(
-            listed.len(),
-            1,
-            "the Media library lists it exactly like a healthy asset — there is no \
-             `path == \"\"` filter anywhere"
-        );
-
-        // The command still inserts before it writes, and still is not a transaction.
-        let cmd = std::fs::read_to_string("src/main.rs").unwrap();
-        let body = cmd
-            .split("fn import_media(")
-            .nth(1)
-            .and_then(|s| s.split("\n}\n").next())
-            .expect("import_media");
-        let insert_at = body.find("db::insert_media").expect("insert");
-        let write_at = body.find("std::fs::write").expect("write");
+        // The write fails the way a full disk fails. The row must not survive it.
+        let nowhere = std::path::Path::new("/relay-no-such-directory-7c1b/media");
+        let err = crate::write_media_file(&conn, nowhere, id, "backdrop.png", b"x")
+            .expect_err("the write must fail");
         assert!(
-            insert_at < write_at,
-            "the row is now written after the file — the gap is closed, delete this test"
+            !matches!(err, crate::error::Error::Refused { .. }),
+            "a disk that said no is a fault, not a refusal the operator can fix"
         );
         assert!(
-            !body.contains("unchecked_transaction"),
-            "import_media is now transactional — good; delete this test"
+            db::list_media(&conn).unwrap().is_empty(),
+            "the Media library must not list an asset whose file never landed —              there is still no `path == \"\"` filter anywhere, and the media server              still ignores `path` entirely, so a row that survives here is a blank              output on Sunday with no message"
         );
 
-        // And the server that OBS and the native window both hit ignores `path`,
-        // so a repair that only fixed the column would fix nothing.
+        // The second half of the original finding, unchanged and still true: the
+        // server OBS and the native window both hit does not read the DB at all, so
+        // a repair that only fixed the column would have fixed nothing.
         let ch = std::fs::read_to_string("src/channels.rs").unwrap();
         let serve = ch
             .split("async fn serve_media_file")
@@ -1572,7 +1559,7 @@ mod cold_start {
     /// What a church actually receives, item by item, so a change to the seed is
     /// a decision and not an accident.
     ///
-    /// The counts are the R1 claim, now in `docs/QA_HARNESS.md` Part 3 — it
+    /// The counts are the R1 claim, now in `docs/qa/QA_HARNESS.md` Part 3 — it
     /// superseded the three Working-Agent documents, which are gone. If one
     /// moves, the audit's seed section is out of date.
     #[test]

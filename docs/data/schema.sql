@@ -10,7 +10,7 @@
 -- `PRAGMA user_version` ladder (`db::SCHEMA_VERSION`) evolve a database created
 -- from this baseline. A column added by a rung will not appear here, and that is
 -- correct — but keeping the two agreeing is manual, and that is tracked as debt
--- in docs/ROADMAP.md §4.
+-- in docs/KNOWN_ISSUES.md §4.
 --
 -- Rule of thumb: a NEW table or column for a fresh install belongs here AND in a
 -- rung (so existing installs get it too). To dump what a live database actually
@@ -42,7 +42,7 @@ CREATE TABLE verses (
     chapter        INTEGER NOT NULL,
     verse          INTEGER NOT NULL,
     text           TEXT NOT NULL,
-    embedding      BLOB                   -- precomputed vector for semantic match; NEVER YET WRITTEN (see docs/ROADMAP.md)
+    embedding      BLOB                   -- precomputed vector for semantic match; NEVER YET WRITTEN (see docs/KNOWN_ISSUES.md)
 );
 CREATE INDEX idx_verses_lookup ON verses(translation_id, book, chapter, verse);
 
@@ -81,7 +81,7 @@ CREATE TABLE service_plans (
 );
 
 -- One polymorphic cue for every content type. cue_type selects how payload_json
--- is read; template_id is an optional per-content-type override. See docs/DOMAIN_MODEL.md §4.
+-- is read; template_id is an optional per-content-type override. See docs/DATA_MODEL.md §4.
 CREATE TABLE plan_items (
     id           INTEGER PRIMARY KEY,
     plan_id      INTEGER NOT NULL REFERENCES service_plans(id) ON DELETE CASCADE,
@@ -175,6 +175,14 @@ CREATE TABLE transcripts (
     confidence REAL                       -- STT confidence, 0-1
 );
 
+-- Every history query starts from a service and walks down. Without these,
+-- `service_transcripts`, `service_detections`, the timeline merge, the replay and
+-- `delete_service` all scan the whole table — and these are the two tables that
+-- grow without limit, one row per utterance, for as long as a church keeps using
+-- Relay. A year of Sundays is six figures of rows.
+--
+-- SQLite creates an index for a PRIMARY KEY and for a UNIQUE constraint. It does
+-- NOT create one for a REFERENCES clause, which is what these three columns are.
 CREATE TABLE detections (
     id            INTEGER PRIMARY KEY,
     transcript_id INTEGER NOT NULL REFERENCES transcripts(id),
@@ -198,6 +206,9 @@ CREATE TABLE detections (
     heard_text    TEXT
 );
 
+CREATE INDEX idx_transcripts_service ON transcripts(service_id);
+CREATE INDEX idx_detections_transcript ON detections(transcript_id);
+
 -- Operator-action log for a running service (distinct from a plan_items cue).
 CREATE TABLE cues (
     id           INTEGER PRIMARY KEY,
@@ -207,6 +218,8 @@ CREATE TABLE cues (
     payload_json TEXT,
     triggered_at REAL NOT NULL
 );
+
+CREATE INDEX idx_cues_service ON cues(service_id);
 
 -- ===== The service timeline (db/services.rs) =====
 --

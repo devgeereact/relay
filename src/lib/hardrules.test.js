@@ -158,7 +158,7 @@ describe('RG-76 · the mechanically checkable hard-way rules', () => {
     const wrong = [];
     const CLAIM = /default\(\)\s*==\s*from_sensitivity\((\d+)\)/g;
     let checked = 0;
-    for (const doc of ['CLAUDE.md', 'docs/DOMAIN_MODEL.md', 'docs/DECISIONS.md', 'docs/ARCHITECTURE.md']) {
+    for (const doc of ['CLAUDE.md', 'docs/DATA_MODEL.md', 'docs/DECISIONS.md', 'docs/ARCHITECTURE.md']) {
       for (const c of read(doc).matchAll(CLAIM)) {
         checked += 1;
         if (c[1] !== actual) wrong.push(`${doc} says default() == from_sensitivity(${c[1]})`);
@@ -224,5 +224,72 @@ describe('RG-76 · the mechanically checkable hard-way rules', () => {
       enclosing,
       'the single call moved out of broadcast_with_clock — the preflight is there',
     ).toMatch(/fn broadcast_with_clock/);
+  });
+
+  // ── Rule 33, the two hops it did not cover ────────────────────────────────
+  it('rule 33 — no unbounded queue anywhere on the audio path', () => {
+    // RG-84. Rule 33 describes the queue into detection as bounded, shedding
+    // partials and COUNTING what it sheds. That was true of the third hop. The two
+    // in front of it — the capture callback into the clean/chunk thread, and that
+    // thread into the whisper worker — were plain `mpsc::channel()` with no
+    // capacity and no counter, and the handbook's wording read as though the whole
+    // path was bounded.
+    //
+    // An unbounded queue in front of a decoder does not prevent a backlog. It
+    // converts one into memory, and then into a transcript arriving minutes after
+    // the sentence — which is rule 31's failure exactly: a pipeline permanently
+    // behind reports a *zero backlog* for a whole service, and every instrument
+    // reads green.
+    //
+    // Checked here rather than in Rust because it is a claim about the SHAPE of the
+    // code, and the shape is what regressed. `mpsc::channel` is a one-word edit away
+    // from returning.
+    const AUDIO_PATH = ['src-tauri/src/audio.rs', 'src-tauri/src/stt.rs'];
+    const unbounded = [];
+    for (const [file, src] of RUST) {
+      if (!AUDIO_PATH.includes(file)) continue;
+      src.split('\n').forEach((line, i) => {
+        // `sync_channel(N)` is the bounded one. Anything else that constructs an
+        // mpsc channel here is not.
+        // The turbofish may itself contain `>` (`::<Vec<f32>>`), so this must not
+        // be `[^>]*`. It was, and the check silently matched nothing — the same
+        // way every other scanner in this repository has failed: by narrowing and
+        // staying green. The guard below counts what it found for that reason.
+        if (/mpsc::channel\s*(::<.*>)?\s*\(/.test(line)) {
+          unbounded.push(`${file}:${i + 1}`);
+        }
+      });
+    }
+    expect(
+      unbounded,
+      `unbounded mpsc channels on the audio path: ${unbounded.join(', ')}`,
+    ).toEqual([]);
+
+    // THE GUARD ON THE ASSERTION ABOVE. It would also pass over a regex that
+    // matches nothing, which is precisely how it was first written. Both files must
+    // still construct the BOUNDED form, so a scanner that has stopped seeing
+    // channels fails here instead of reporting a clean path.
+    const bounded = [];
+    for (const [file, src] of RUST) {
+      if (!AUDIO_PATH.includes(file)) continue;
+      if (/mpsc::sync_channel\s*(::<.*>)?\s*\(/.test(src)) bounded.push(file);
+    }
+    expect(bounded.sort(), 'the scanner can no longer see either audio queue').toEqual(
+      [...AUDIO_PATH].sort(),
+    );
+
+    // A bound with no counter is worse than no bound: it turns unbounded memory
+    // into a silent gap in the sermon. Both producers must count what they shed.
+    const audio = read('src-tauri/src/audio.rs');
+    const main = read('src-tauri/src/main.rs');
+    expect(audio, 'the capture callback sheds without counting').toMatch(
+      /note_dropped_audio/,
+    );
+    expect(main, 'the chunk hand-off to whisper sheds without counting').toMatch(
+      /note_dropped_audio/,
+    );
+    // And the capture callback must never BLOCK — stalling a device's real-time
+    // callback is how a capture stream is killed outright.
+    expect(audio).toMatch(/try_send/);
   });
 });

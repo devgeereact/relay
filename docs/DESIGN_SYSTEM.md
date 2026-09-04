@@ -3,7 +3,7 @@
 The visual and interaction language: tokens, type, the load-bearing colour meanings, and the
 component vocabulary. For the *why* behind any rule here follow the link into
 [DECISIONS.md](DECISIONS.md); for how the pieces fit see [ARCHITECTURE.md](ARCHITECTURE.md);
-for the entities being rendered see [DOMAIN_MODEL.md](DOMAIN_MODEL.md).
+for the entities being rendered see [DATA_MODEL.md](DATA_MODEL.md).
 
 **The source of truth is [`src/app.css`](../src/app.css), not this page.** That file is the
 shipped stylesheet and it carries the reasoning inline, at each token. This document is the map
@@ -195,7 +195,12 @@ read *"the screens may still be live"* is motion for its own sake.
 - **Focus is always visible.** `outline: 2px solid var(--v-accent2)` with `2px` offset, on every
   interactive class (`.r-btn`, `.r-iconbtn`, `.nav-item`, `.r-input`, `.r-select`, `.r-switch`,
   `.r-focus`). Never remove an outline without replacing it with an equally visible one.
-- **All five dialogs trap focus and restore it on close** (`src/lib/focus.js`, `use:trapFocus`).
+- **Every modal surface traps focus and restores it on close** (`src/lib/focus.js`,
+  `use:trapFocus`). This line used to say *five*; it is ten now and will be wrong again, so
+  count rather than trust it: `grep -rl trapFocus src | grep -c svelte`. Note that grepping for
+  `role="dialog"` instead gives a different and misleading answer — `Announcements.svelte`
+  carries the string only inside a comment explaining why that panel is deliberately **not** a
+  dialog, and `CrashReportRecovery.svelte` is an `alertdialog`.
   Restore is the half everyone forgets.
 - **`Esc` must not clear the screens while a dialog is open.** `shortcuts.js` checks for a
   mounted `[role="dialog"]`. Dismissing a help overlay is not a live action (CLAUDE.md §16).
@@ -224,7 +229,7 @@ is still on an element silently restyles the app, and verifying that needs eyes 
 window — which the build machine cannot produce.
 
 So the gun is unloaded rather than removed: the contrast failure is fixed, and the rules stay
-until someone can look at a running app. Tracked in [ROADMAP.md](ROADMAP.md) §4.
+until someone can look at a running app. Tracked in [KNOWN_ISSUES.md](KNOWN_ISSUES.md) §4.
 
 ---
 

@@ -9,7 +9,7 @@ body:
 
         **You do not need to be a programmer to file a useful bug.** "The screen went blank when the preacher said John 3:16" is a better report than most stack traces. Tell us what you saw.
 
-        ⚠️ **Security issues do not go here.** Report those privately — see [SECURITY.md](https://github.com/devgeereact/relay/blob/main/SECURITY.md).
+        ⚠️ **Security issues do not go here.** Report those privately — see [SECURITY.md](https://github.com/devgeereact/relay/blob/main/docs/SECURITY.md).
 
   - type: dropdown
     id: live
@@ -94,5 +94,5 @@ body:
       description: |
         Optional, and only if you're comfortable with a terminal. `CLAUDE.md` documents environment variables (`RELAY_STT_TIMING`, `RELAY_AUDIO_RMS`) that make audio problems reproducible without a human at the microphone.
 
-        **Do not attach sermon audio.** We can't accept it — [PRIVACY.md](https://github.com/devgeereact/relay/blob/main/PRIVACY.md) promises a church their audio never leaves their device, and that promise is not conditional. If you have a recording you *want* analysed, see [bench/README.md](https://github.com/devgeereact/relay/blob/main/bench/README.md): you run the measurement locally and send us the number.
+        **Do not attach sermon audio.** We can't accept it — [PRIVACY.md](https://github.com/devgeereact/relay/blob/main/docs/PRIVACY.md) promises a church their audio never leaves their device, and that promise is not conditional. If you have a recording you *want* analysed, see [bench/README.md](https://github.com/devgeereact/relay/blob/main/bench/README.md): you run the measurement locally and send us the number.
       render: shell

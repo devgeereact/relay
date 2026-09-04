@@ -1,4 +1,4 @@
-# Relay — Domain Model & Event Architecture
+# Relay — Data Model & Event Architecture
 
 *What Relay **is**, as opposed to what it does.* This document centralizes the entities, their
 lifecycle, the invariants that govern them, and the events that connect the Rust core to the
@@ -68,7 +68,7 @@ path for a second translation — which is also why there is no licensing exposu
 ### Verse — `db/verses.rs` `VerseRow`
 A single verse: `translation_id, book` (canonical name), `chapter, verse, text`, and
 `embedding BLOB`. **The `embedding` column exists and has never been written to** — it is the
-waiting seam for a future neural paraphrase model (see [ROADMAP.md](ROADMAP.md)). Lookup is
+waiting seam for a future neural paraphrase model (see [KNOWN_ISSUES.md](KNOWN_ISSUES.md)). Lookup is
 indexed by `(translation_id, book, chapter, verse)`; full-text recall rides an FTS5 virtual
 table `verses_fts` *behind* the reference/phrase/semantic ranker (DECISIONS: "FTS5 added behind
 the existing ranker").
@@ -95,7 +95,7 @@ network_client}`, an assigned `template_id`, a `display_target` (display index /
 kiosk id), and `status ∈ {online, offline}`. **Any channel can carry any template**; the render
 target and template are *configuration*, never per-type code (a core non-negotiable). `ndi_encode`
 is a valid target in the schema but returns a clear "not built" error at runtime — an honest
-seam, not a lie (see [ROADMAP.md](ROADMAP.md)).
+seam, not a lie (see [KNOWN_ISSUES.md](KNOWN_ISSUES.md)).
 
 **`OutputContent`** (`channels.rs` `OutputContent`) is the runtime payload actually broadcast to
 a channel; **`MonitorInfo`** (`channels.rs` `MonitorInfo`) is the stage-monitor view.

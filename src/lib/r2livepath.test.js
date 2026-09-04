@@ -14,7 +14,7 @@
 //   npx vitest run src/lib/r2livepath.test.js
 //
 //   CLAUDE.md (frontend shape · §11 · §15 · §16 · §18) · docs/DECISIONS.md §20
-//   the coverage matrix, now `docs/QA_HARNESS.md` Part 4 (it superseded the three
+//   the coverage matrix, now `docs/qa/QA_HARNESS.md` Part 4 (it superseded the three
 //   Working-Agent documents, which are no longer in the repository)
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';

@@ -930,13 +930,6 @@ mod timeline_tests {
         assert!(perf_history(&conn, "stt_decode", 0).unwrap().is_empty());
     }
 
-    /// THE TIMELINE CARRIES NO CONTENT.
-    ///
-    /// This is the part of the history most likely to travel — it is what a church
-    /// would send back with "it went wrong at 10:31". PRIVACY.md's promise does not
-    /// get an exception for being useful, so `detail` is a phrase Relay composes,
-    /// never something a preacher said.
-    #[test]
     /// RG-81 — the evidence must reach the OPERATOR and nothing else.
     ///
     /// `heard_text` was written on every fire and returned by no query: `RELAY_GAP.md`
@@ -978,6 +971,12 @@ mod timeline_tests {
         );
     }
 
+    /// THE TIMELINE CARRIES NO CONTENT.
+    ///
+    /// This is the part of the history most likely to travel — it is what a church
+    /// would send back with "it went wrong at 10:31". PRIVACY.md's promise does not
+    /// get an exception for being useful, so `detail` is a phrase Relay composes,
+    /// never something a preacher said.
     #[test]
     fn nothing_a_preacher_said_reaches_the_timeline() {
         let conn = db();
@@ -998,6 +997,291 @@ mod timeline_tests {
         assert!(
             !all.contains("exact words"),
             "no heard_text in the timeline"
+        );
+    }
+}
+
+/// Index the foreign keys every history query walks down.
+///
+/// `transcripts.service_id`, `detections.transcript_id` and `cues.service_id` had
+/// no index. SQLite indexes a PRIMARY KEY and a UNIQUE constraint automatically; it
+/// does **not** index a `REFERENCES` column. So opening a service in History,
+/// building its timeline, replaying a moment in it, and erasing it all scanned the
+/// whole table — and `transcripts` and `detections` are the two tables that grow
+/// without limit, one row per utterance, for as long as a church keeps using Relay.
+///
+/// RETRYABLE and additive only: `CREATE INDEX IF NOT EXISTS`, no table rebuild,
+/// nothing dropped, no intermediate state to strand (CLAUDE.md rule 25).
+///
+/// Also in `docs/data/schema.sql`, which IS the shipped baseline — so a fresh
+/// install gets them at creation and an existing one gets them on the next boot.
+pub fn ensure_history_indexes(conn: &Connection) -> rusqlite::Result<()> {
+    conn.execute_batch(
+        "CREATE INDEX IF NOT EXISTS idx_transcripts_service ON transcripts(service_id);
+         CREATE INDEX IF NOT EXISTS idx_detections_transcript ON detections(transcript_id);
+         CREATE INDEX IF NOT EXISTS idx_cues_service ON cues(service_id);",
+    )
+}
+
+/// Erase one service and everything recorded under it.
+///
+/// ## Why this exists
+///
+/// Relay's most sensitive holding is not a password. It is `transcripts.text` —
+/// verbatim, near-real-time text of what a preacher said to their congregation,
+/// plus `detections.heard_text`, the exact sentence behind every verse that went
+/// on a wall. Every document in this repository says that content never leaves the
+/// device. None of them said how to get rid of it, because there was no way:
+/// `PRIVACY.md` answered the question with *"delete that folder"* — quit Relay,
+/// find `~/Library/Application Support/com.relay.app`, and delete the database
+/// holding every service ever recorded, or nothing.
+///
+/// "All of it, from the Finder" is not a deletion feature. A church that wants one
+/// sermon gone — a pastoral conversation read into the room, a visiting speaker
+/// who asked, a service recorded by mistake — could not have it.
+///
+/// ## What it removes, and the order it has to remove it in
+///
+/// Children first: `detections` hang off `transcripts`, and the rest hang off
+/// `services`. Foreign keys are ON (`db/mod.rs`), so a wrong order is a constraint
+/// error rather than a silent orphan — but the order is written out rather than
+/// discovered, because the error would arrive at a person pressing Delete.
+///
+/// All of it in ONE transaction. A half-deleted service is a worse state than
+/// either end: the timeline would render, the transcript behind it would not, and
+/// nothing would say why.
+///
+/// Returns the number of transcript rows removed, so the surface that asked can
+/// say what it did rather than claiming a success in the abstract.
+pub fn delete_service(conn: &Connection, id: i64) -> rusqlite::Result<i64> {
+    let tx = conn.unchecked_transaction()?;
+    let transcripts: i64 = tx.query_row(
+        "SELECT COUNT(*) FROM transcripts WHERE service_id = ?1",
+        [id],
+        |r| r.get(0),
+    )?;
+    tx.execute(
+        "DELETE FROM detections
+          WHERE transcript_id IN (SELECT id FROM transcripts WHERE service_id = ?1)",
+        [id],
+    )?;
+    tx.execute("DELETE FROM transcripts WHERE service_id = ?1", [id])?;
+    tx.execute("DELETE FROM cues WHERE service_id = ?1", [id])?;
+    tx.execute("DELETE FROM service_events WHERE service_id = ?1", [id])?;
+    tx.execute("DELETE FROM perf_samples WHERE service_id = ?1", [id])?;
+    tx.execute("DELETE FROM services WHERE id = ?1", [id])?;
+    tx.commit()?;
+    Ok(transcripts)
+}
+
+#[cfg(test)]
+mod erase_tests {
+    use super::*;
+    use rusqlite::Connection;
+
+    /// The real schema, and foreign keys ON — the same two conditions the app runs
+    /// under. A delete tested with FKs off is a delete whose ORDER was never checked.
+    fn db() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(include_str!("../../../docs/data/schema.sql"))
+            .unwrap();
+        conn.pragma_update(None, "foreign_keys", true).unwrap();
+        conn
+    }
+
+    /// Populate one service with a row in every table that hangs off it.
+    fn service_with_everything(conn: &Connection, title: &str) -> i64 {
+        let id = create_service(conn, "2026-09-02", title).unwrap();
+        let t = insert_transcript(conn, id, 1.0, "and if you turn to romans eight", "en", None)
+            .unwrap();
+        insert_detection(
+            conn,
+            t,
+            None,
+            "direct",
+            0.9,
+            "auto",
+            Some(1.5),
+            Some("romans eight"),
+        )
+        .unwrap();
+        insert_cue(conn, id, "manual_override", None, 2.0).unwrap();
+        log_event(conn, id, 0.0, EventKind::ServiceStarted, Some("Sunday")).unwrap();
+        log_perf_sample(
+            conn,
+            id,
+            60_000.0,
+            &PerfSample {
+                metric: "fire",
+                samples: 12,
+                p50_ms: Some(1.0),
+                p95_ms: Some(2.0),
+                p99_ms: Some(3.0),
+                worst_ms: Some(4.0),
+                last_minute_ms: Some(1.5),
+            },
+        )
+        .unwrap();
+        id
+    }
+
+    fn count(conn: &Connection, sql: &str) -> i64 {
+        conn.query_row(sql, [], |r| r.get(0)).unwrap()
+    }
+
+    /// THE GAP. There was no way, from inside Relay, to remove a recorded sermon.
+    /// PRIVACY.md's only answer was "delete that folder" — every service or none.
+    #[test]
+    fn erasing_a_service_removes_every_trace_of_it() {
+        let conn = db();
+        let id = service_with_everything(&conn, "Sunday");
+        assert_eq!(count(&conn, "SELECT COUNT(*) FROM transcripts"), 1);
+
+        let gone = delete_service(&conn, id).unwrap();
+        assert_eq!(gone, 1, "reports what it removed, not just that it worked");
+
+        for table in [
+            "services",
+            "transcripts",
+            "detections",
+            "cues",
+            "service_events",
+            "perf_samples",
+        ] {
+            assert_eq!(
+                count(&conn, &format!("SELECT COUNT(*) FROM {table}")),
+                0,
+                "{table} still holds a row from the erased service"
+            );
+        }
+    }
+
+    /// Erasing one sermon must not erase the year. The children are found by
+    /// `service_id` (and, for detections, by their transcript's), so a query that
+    /// forgot its WHERE would take everything and the operator would be told the
+    /// same cheerful sentence either way.
+    #[test]
+    fn erasing_one_service_leaves_the_others_untouched() {
+        let conn = db();
+        let a = service_with_everything(&conn, "The one to erase");
+        let b = service_with_everything(&conn, "The one to keep");
+
+        delete_service(&conn, a).unwrap();
+
+        assert_eq!(count(&conn, "SELECT COUNT(*) FROM services"), 1);
+        assert_eq!(count(&conn, "SELECT COUNT(*) FROM transcripts"), 1);
+        assert_eq!(count(&conn, "SELECT COUNT(*) FROM detections"), 1);
+        assert_eq!(count(&conn, "SELECT COUNT(*) FROM cues"), 1);
+        assert_eq!(count(&conn, "SELECT COUNT(*) FROM service_events"), 1);
+        assert_eq!(count(&conn, "SELECT COUNT(*) FROM perf_samples"), 1);
+        let kept: i64 = conn
+            .query_row("SELECT service_id FROM transcripts", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(kept, b);
+    }
+
+    /// A service that recorded nothing is still a row, and still erasable. The
+    /// count it reports is honestly zero rather than a failure.
+    #[test]
+    fn an_empty_service_erases_cleanly() {
+        let conn = db();
+        let id = create_service(&conn, "2026-09-02", "Cancelled").unwrap();
+        assert_eq!(delete_service(&conn, id).unwrap(), 0);
+        assert_eq!(count(&conn, "SELECT COUNT(*) FROM services"), 0);
+    }
+
+    /// Erasing something that is not there is not an error — two clicks on the same
+    /// armed button, or two windows open on the same service, must not produce a
+    /// failure the operator has to interpret.
+    #[test]
+    fn erasing_a_service_that_is_already_gone_is_not_a_failure() {
+        let conn = db();
+        let id = service_with_everything(&conn, "Sunday");
+        delete_service(&conn, id).unwrap();
+        assert_eq!(delete_service(&conn, id).unwrap(), 0);
+    }
+}
+
+#[cfg(test)]
+mod index_tests {
+    use super::*;
+    use rusqlite::Connection;
+
+    fn indexes(conn: &Connection) -> Vec<String> {
+        let mut st = conn
+            .prepare("SELECT name FROM sqlite_master WHERE type = 'index' ORDER BY name")
+            .unwrap();
+        let rows = st.query_map([], |r| r.get::<_, String>(0)).unwrap();
+        rows.filter_map(|r| r.ok()).collect()
+    }
+
+    /// The three foreign keys every history query walks down. SQLite indexes a
+    /// PRIMARY KEY and a UNIQUE constraint on its own; it does NOT index a
+    /// `REFERENCES` column, and these three had nothing — so opening a service,
+    /// building its timeline, replaying a moment and erasing it all scanned the two
+    /// tables that grow one row per utterance for the life of the installation.
+    #[test]
+    fn the_shipped_baseline_indexes_the_history_foreign_keys() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(include_str!("../../../docs/data/schema.sql"))
+            .unwrap();
+        let have = indexes(&conn);
+        for want in [
+            "idx_transcripts_service",
+            "idx_detections_transcript",
+            "idx_cues_service",
+        ] {
+            assert!(have.iter().any(|n| n == want), "missing {want} in {have:?}");
+        }
+    }
+
+    /// An existing installation gets them on the next boot, and the rung is
+    /// RETRYABLE (CLAUDE.md rule 25) — run it repeatedly and nothing errors and
+    /// nothing accumulates.
+    #[test]
+    fn the_rung_adds_them_to_an_old_database_and_survives_being_run_again() {
+        let conn = Connection::open_in_memory().unwrap();
+        // A database from before the indexes existed: the same tables, no indexes.
+        conn.execute_batch(
+            "CREATE TABLE services (id INTEGER PRIMARY KEY, date TEXT NOT NULL, title TEXT NOT NULL);
+             CREATE TABLE transcripts (id INTEGER PRIMARY KEY, service_id INTEGER NOT NULL,
+                timestamp REAL NOT NULL, text TEXT NOT NULL, language TEXT NOT NULL, confidence REAL);
+             CREATE TABLE detections (id INTEGER PRIMARY KEY, transcript_id INTEGER NOT NULL,
+                verse_id INTEGER, method TEXT NOT NULL, confidence REAL NOT NULL,
+                status TEXT NOT NULL, fired_at REAL, heard_text TEXT);
+             CREATE TABLE cues (id INTEGER PRIMARY KEY, service_id INTEGER NOT NULL,
+                type TEXT NOT NULL, payload_json TEXT, triggered_at REAL NOT NULL);",
+        )
+        .unwrap();
+        assert!(indexes(&conn).is_empty());
+
+        ensure_history_indexes(&conn).unwrap();
+        let after_once = indexes(&conn);
+        assert_eq!(after_once.len(), 3, "{after_once:?}");
+
+        ensure_history_indexes(&conn).unwrap();
+        ensure_history_indexes(&conn).unwrap();
+        assert_eq!(indexes(&conn), after_once, "the rung is not idempotent");
+    }
+
+    /// And the planner actually USES one — an index nothing plans over is an index
+    /// that was added on a hunch. `EXPLAIN QUERY PLAN` is the only witness that can
+    /// tell a created index from a used one.
+    #[test]
+    fn the_transcript_lookup_stops_scanning_the_table() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(include_str!("../../../docs/data/schema.sql"))
+            .unwrap();
+        let plan: String = conn
+            .query_row(
+                "EXPLAIN QUERY PLAN SELECT id FROM transcripts WHERE service_id = 1",
+                [],
+                |r| r.get(3),
+            )
+            .unwrap();
+        assert!(
+            plan.contains("idx_transcripts_service"),
+            "the planner still scans transcripts: {plan}"
         );
     }
 }

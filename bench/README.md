@@ -14,7 +14,7 @@ That is not because the measurement is hard. **The ruler is built, unit-tested, 
 
 `bench/.gitignore` refuses `*.wav`, `*.f32`, `*.mp3`, `*.m4a` and `*.txt`. **Do not override it.**
 
-`PRIVACY.md` promises a church that sermon audio never leaves their device. That promise is not conditional on the device being a church's — it is the promise. A recording of a real congregation, in a public repository, would break it in the most literal way possible, and no amount of "it was only for testing" repairs that.
+`../docs/PRIVACY.md` promises a church that sermon audio never leaves their device. That promise is not conditional on the device being a church's — it is the promise. A recording of a real congregation, in a public repository, would break it in the most literal way possible, and no amount of "it was only for testing" repairs that.
 
 Keep the file locally. Point the bench at it. Commit **the number**, never the recording.
 

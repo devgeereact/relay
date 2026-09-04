@@ -53,7 +53,21 @@ jobs:
             args: ''
 
     steps:
-      - uses: actions/checkout@v4
+      # ⚠️ NOTHING HERE IS EXERCISED UNTIL A TAG IS PUSHED.
+      #
+      # `ci.yml` runs on every push and proves the shared actions
+      # (checkout, setup-node, rust-toolchain, get-cmake, rust-cache) still work.
+      # This file runs ONLY on a real tag, so anything unique to it — the signing
+      # steps, tauri-action, the notarization env — is unverified between releases.
+      # Bumping an action here is therefore a change you find out about fifteen
+      # minutes into a release, which is exactly how the MSI bundler's rejection of
+      # a named pre-release identifier was found (CLAUDE.md rule 20).
+      #
+      # Action majors were bumped 2026-09-03 (checkout v4 → v7, setup-node v4 → v7)
+      # because the runners had begun forcing them off deprecated Node 20. The same
+      # bump in `ci.yml` is green on macOS and Windows, which is the only evidence
+      # there is for these two until the next tag.
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
 
@@ -66,7 +80,7 @@ jobs:
       - name: Install CMake
         uses: lukka/get-cmake@latest
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 20
           cache: npm

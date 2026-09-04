@@ -15,7 +15,7 @@ contact_links:
     about: Relay's word error rate has never been measured, in any language. The measuring tool is built and tested — there has simply never been a recording to point it at. You run it locally; the audio never leaves your machine.
 
   - name: 🗣️ You want to translate Relay
-    url: https://github.com/devgeereact/relay/blob/main/CONTRIBUTING.md
+    url: https://github.com/devgeereact/relay/blob/main/docs/CONTRIBUTING.md
     about: It's a JSON file. No code, no build, no development environment — edit it in your browser. One word is a useful contribution.
 
   - name: 📖 How do I run a service with this?

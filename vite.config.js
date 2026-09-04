@@ -45,6 +45,23 @@ export default defineConfig({
     strictPort: true,
     // Bind all interfaces so LAN devices (kiosk screens, OBS on another machine)
     // can load the output page over http://<this-machine-ip>:5032 during dev.
+    //
+    // ⚠️ WEIGH THIS BEFORE RUNNING `tauri dev` ON A CHURCH NETWORK (RG-98).
+    // `npm audit` reports ten vulnerabilities and **every one of them is in a dev
+    // tool** — production dependencies are clean (`npm audit --omit=dev` → 0). Two
+    // of them are reachable precisely because of this line: Vite's path traversal
+    // in optimized-deps `.map` handling (HIGH), and esbuild's "any website can send
+    // any request to the dev server and read the response" (MODERATE). Both are
+    // dev-server bugs, and this dev server is deliberately on the LAN.
+    //
+    // Every fix is a semver MAJOR (vite 5 → 8, vitest 2 → 4, svelte 4 → 5), so none
+    // of them is an audit-pass edit — svelte 4 is a recorded stack choice and a
+    // runes migration would touch every component. **The exposure only exists while
+    // `npm run tauri dev` is running**, and a packaged Relay has no server on 5032
+    // at all. Leaving the default LAN-bound is a deliberate choice, not an
+    // oversight: set `host: 'localhost'` here for a session on a network you do not
+    // control, and accept that an OBS machine can no longer reach the dev output
+    // page while you do.
     host: true,
   },
   // Same port as dev: `vite preview` otherwise drifts to the shared 4173,

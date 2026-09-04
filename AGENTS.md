@@ -18,14 +18,14 @@ Gemini, Aider, Claude Code, or whatever comes next. It is tool-agnostic on purpo
 2. **`docs/README.md`** — the documentation index; it says which document owns which question.
 3. **`docs/DECISIONS.md`** — *why*. **If a decision is not in there, it has not been made.
    Ask; do not assume.**
-4. The volume you actually need: `ARCHITECTURE.md`, `DOMAIN_MODEL.md`, `DESIGN_SYSTEM.md`,
+4. The volume you actually need: `ARCHITECTURE.md`, `DATA_MODEL.md`, `DESIGN_SYSTEM.md`,
    `LANGUAGES.md`, `RELEASING.md`, `QA_HARNESS.md`.
 
-Auditing rather than building? **`docs/QA_HARNESS.md` Part 4 first** — it is what the tests
+Auditing rather than building? **`docs/qa/QA_HARNESS.md` Part 4 first** — it is what the tests
 already pin. An agent that skips it burns its run "finding" a bug that was fixed in July.
 
-Wondering whether a feature is missing or refused? **`docs/RELAY_GAP.md`** §2 and §17, and
-**`docs/ROADMAP.md`** §3. A great many obvious-looking gaps are recorded refusals.
+Wondering whether a feature is missing or refused? **`docs/qa/RELAY_GAP.md`** §2 and §17, and
+**`docs/KNOWN_ISSUES.md`** §3. A great many obvious-looking gaps are recorded refusals.
 
 ---
 
@@ -123,7 +123,7 @@ You may. Some of them should be reopened eventually. But do it in the open:
 
 Write that, put it in front of a human, and stop. **Do not silently reverse a decision, and do
 not implement one "to show what it would look like".** Two worked examples of the format live in
-`docs/RELAY_GAP.md` §20.
+`docs/qa/RELAY_GAP.md` §20.
 
 ---
 

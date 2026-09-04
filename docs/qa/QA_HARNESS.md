@@ -1,8 +1,8 @@
 # Relay — the QA harness
 
 How Relay is audited, by whom, with which instrument, and what the repository can already
-prove. This is not part of the specification hierarchy — [SPEC.md](SPEC.md),
-[DECISIONS.md](DECISIONS.md) and [PRODUCT_AUDIT.md](PRODUCT_AUDIT.md) own the product; this
+prove. This is not part of the specification hierarchy — [SPEC.md](../SPEC.md),
+[DECISIONS.md](../DECISIONS.md) and [PRODUCT_AUDIT.md](audits/PRODUCT-2026-07-13.md) own the product; this
 document owns how it gets checked.
 
 It supersedes `Working-Agent.md`, `Working-Agent-PROMPT.md` and `Working-Agent-COVERAGE.md`,
@@ -20,7 +20,7 @@ every edit: `.claude/hooks/relay-fast-gate.mjs`, path-filtered and report-only (
 
 ## 0. Current inventory
 
-Re-measured **2026-08-31** against the working tree. Every number here is produced by a command,
+Re-measured **2026-09-03** against the working tree. Every number here is produced by a command,
 and the command is named — a count you cannot reproduce is a rumour.
 
 > **Expect these to be wrong, and reach for the command rather than the value.** Every count in
@@ -31,13 +31,22 @@ and the command is named — a count you cannot reproduce is a rumour.
 
 | | Count | How to reproduce |
 |---|---|---|
-| Rust tests | **630 passing**, 17 ignored (647 declared) | `cd src-tauri && cargo test` |
-| Frontend tests | **926 passing**, 0 skipped, 68 files | `npx vitest run` — read the runner's own summary line. **Not** `vitest list \| wc -l`: that stream carries Svelte compiler warnings too and over-counted by 7 |
+| Rust tests | **644 passing**, 17 ignored (661 declared) | `cd src-tauri && cargo test`. It read **629 / 646** before the 2026-09-03 fix pass, which added 15 (5 import guard, 4 service erase, 3 history indexes, 3 LAN server). It read **630 / 647** until 2026-09-02, and that extra one was not a test: a duplicated `#[test]` attribute in `db/services.rs` registered one function twice. The same duplicate made `cargo clippy --all-targets -- -D warnings` fail, which is a CI gate — so the count register and the build gate were wrong in the same place, for the same reason |
+| Frontend tests | **952 passing**, 0 skipped, 71 files | `npx vitest run` — read the runner's own summary line. **Not** `vitest list \| wc -l`: that stream carries Svelte compiler warnings too and over-counted by 7. It read **927 / 68** before the 2026-09-03 fix pass (+5 `mediaimport`, +7 `updatechannel`, +3 `crossrefs`, +1 `hardrules`, +9 `v1audit` — the last of which holds the audit document to its own arithmetic, because two of its three scorecard totals were wrong in the first draft) |
 | `e2e.rs` tests | **38** (38 run, **0 ignored** — the file has carried no ignored test since R2-C and R2-D closed, DECISIONS §54) | `cd src-tauri && cargo test e2e::` |
-| Registered `#[tauri::command]` | **132** (five dead ones deleted 2026-08-30) | `grep -c '#\[tauri::command\]' src-tauri/src/main.rs` |
+| Registered `#[tauri::command]` | **133** (five dead ones deleted 2026-08-30; `delete_service` added 2026-09-03, RG-89) | `grep -c '#\[tauri::command\]' src-tauri/src/main.rs` |
 | `.svelte` files | **48**, 22 of them views | `find src -name '*.svelte' | wc -l` |
-| `<button>` occurrences | **352** | `grep -ro '<button' --include='*.svelte' src | wc -l` |
+| `<button>` occurrences | **353** | `grep -ro '<button' --include='*.svelte' src | wc -l` |
 | Tables in the schema | **21** | `grep -c 'CREATE TABLE' docs/data/schema.sql` |
+| Cases in the detection gate | **74** | `python3 -c "import json;print(len(json.load(open('src-tauri/data/eval_corpus.json'))['cases']))"` — it was 50, then 57, then 63; three documents still quoted an older one |
+| Modal surfaces that trap focus | **10** | `grep -rl trapFocus src \| grep -c svelte` — **not** a `role="dialog"` grep, which counts a comment and misses an `alertdialog` |
+
+> **`node scripts/qa-inventory.mjs` reports `perf_samples` as BACKEND ONLY — no command reaches
+> the insert. That is correct and it is not a defect.** The table is written by the
+> `relay-history` thread every 60 seconds and once more at `end_service` (`main::snapshot_latency`
+> → `db::log_perf_sample`); there is deliberately no command, because latency history is not
+> something an operator authors. It is listed here so the red flag reads as understood rather
+> than as unnoticed.
 
 **Status: BUILT.** What shipped:
 
@@ -278,7 +287,7 @@ Your report structure survives, with two changes:
    ordered, specific, "plug in the ATEM, do this, expect that". That list is the actual output
    of an honest audit of a desktop app on a machine with no screen.
 
-Written to `docs/audits/QA-<ISO date>.md`. It never touches `PRODUCT_AUDIT.md` — that document
+Written to `docs/qa/audits/QA-<ISO date>.md`. It never touches `PRODUCT_AUDIT.md` — that document
 is a human's, written at a different altitude, and an agent overwriting it would be the worst
 kind of quiet damage.
 
@@ -306,7 +315,7 @@ kind of quiet damage.
 | **8.1** | Where the agents live | **Committed.** `.gitignore` un-ignores exactly the eight QA files and nothing else; the claude-flow scratch stays out |
 | **8.2** | Default scope | **Changed-surface**, computed from `git diff --name-only main...HEAD`; `--full` for a release |
 | **8.3** | May it drive the running app? | **Yes, behind `--live`.** R2 and R5 get layer D only when the flag is passed, and are told when it is off |
-| **8.4** | Report location | **Committed**, `docs/audits/QA-<ISO date>.md` |
+| **8.4** | Report location | **Committed**, `docs/qa/audits/QA-<ISO date>.md` |
 | **8.5** | Does the hook block? | **Report only.** It never exits 2 |
 
 ---
