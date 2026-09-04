@@ -20,7 +20,7 @@ every edit: `.claude/hooks/relay-fast-gate.mjs`, path-filtered and report-only (
 
 ## 0. Current inventory
 
-Re-measured **2026-09-03** against the working tree. Every number here is produced by a command,
+Re-measured **2026-09-04** against the working tree. Every number here is produced by a command,
 and the command is named — a count you cannot reproduce is a rumour.
 
 > **Expect these to be wrong, and reach for the command rather than the value.** Every count in
@@ -31,7 +31,7 @@ and the command is named — a count you cannot reproduce is a rumour.
 
 | | Count | How to reproduce |
 |---|---|---|
-| Rust tests | **644 passing**, 17 ignored (661 declared) | `cd src-tauri && cargo test`. It read **629 / 646** before the 2026-09-03 fix pass, which added 15 (5 import guard, 4 service erase, 3 history indexes, 3 LAN server). It read **630 / 647** until 2026-09-02, and that extra one was not a test: a duplicated `#[test]` attribute in `db/services.rs` registered one function twice. The same duplicate made `cargo clippy --all-targets -- -D warnings` fail, which is a CI gate — so the count register and the build gate were wrong in the same place, for the same reason |
+| Rust tests | **649 passing**, 17 ignored (666 declared) | `cd src-tauri && cargo test`. It read **644 / 661** before the 2026-09-04 corpus pass, which added 5 (4 in `db::verses::corpus_tests` pinning the bundled KJV to the KJV's own versification and the gloss rule to the fifteen verses it got wrong, 1 asserting no bundled verse is empty). It read **629 / 646** before the 2026-09-03 fix pass, which added 15 (5 import guard, 4 service erase, 3 history indexes, 3 LAN server). It read **630 / 647** until 2026-09-02, and that extra one was not a test: a duplicated `#[test]` attribute in `db/services.rs` registered one function twice. The same duplicate made `cargo clippy --all-targets -- -D warnings` fail, which is a CI gate — so the count register and the build gate were wrong in the same place, for the same reason |
 | Frontend tests | **952 passing**, 0 skipped, 71 files | `npx vitest run` — read the runner's own summary line. **Not** `vitest list \| wc -l`: that stream carries Svelte compiler warnings too and over-counted by 7. It read **927 / 68** before the 2026-09-03 fix pass (+5 `mediaimport`, +7 `updatechannel`, +3 `crossrefs`, +1 `hardrules`, +9 `v1audit` — the last of which holds the audit document to its own arithmetic, because two of its three scorecard totals were wrong in the first draft) |
 | `e2e.rs` tests | **38** (38 run, **0 ignored** — the file has carried no ignored test since R2-C and R2-D closed, DECISIONS §54) | `cd src-tauri && cargo test e2e::` |
 | Registered `#[tauri::command]` | **133** (five dead ones deleted 2026-08-30; `delete_service` added 2026-09-03, RG-89) | `grep -c '#\[tauri::command\]' src-tauri/src/main.rs` |
@@ -124,7 +124,7 @@ You are right that a system which only looks alive because someone pre-filled it
 defect, and right that it is the single most under-tested thing in most apps. But Relay's
 fresh install is not a demo fixture. `db::init_fresh` seeds:
 
-- 31,100 KJV verses and their translation row (bundled, `include_str!`, required to build)
+- 31,102 KJV verses and their translation row (bundled, `include_str!`, required to build)
 - 5 built-in templates plus the presets
 - the default output channels
 - one active voice profile
@@ -637,7 +637,7 @@ From `db::init_fresh` — schema, then `seed`, then `ensure_tables`, then a stam
 
 | Seeded | Why it is content, not demo data |
 |---|---|
-| 31,100 KJV verses + the translation row | Bundled at `src-tauri/data/kjv.json` via `include_str!`, required to build. A church with an empty verse table has a broken install |
+| 31,102 KJV verses + the translation row | Bundled at `src-tauri/data/kjv.json` via `include_str!`, required to build. A church with an empty verse table has a broken install |
 | 5 built-in templates + presets | `templates.rs::seed_templates`. Includes "Worship Lyrics", added because every earlier built-in was scripture-shaped and put the song title where the words should be |
 | Default output channels | `channels.rs::seed_channels` |
 | One active voice profile | `ensure_tables` guarantees it even on a bare in-memory DB |

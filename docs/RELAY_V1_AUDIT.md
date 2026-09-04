@@ -67,7 +67,7 @@ decision), [§6](#6-the-fix-process-start-to-finish) (what was actually changed)
 | | Command | Result |
 |---|---|---|
 | Frontend suite | `npx vitest run` | **952 passed**, 0 skipped, 71 files |
-| Rust suite | `cd src-tauri && cargo test` | **644 passed**, 0 failed, 17 ignored |
+| Rust suite | `cd src-tauri && cargo test` | **649 passed**, 0 failed, 17 ignored |
 | End-to-end fire path | `cargo test e2e::` | **38 passed, 0 ignored** |
 | Format gate | `cargo fmt --all -- --check` | clean |
 | Lint gate (a CI gate on both platforms) | `cargo clippy --all-targets -- -D warnings` | clean |
@@ -590,6 +590,70 @@ times against a pre-index database.
 
 ---
 
+### F-11 · The bundled KJV was six verses short, so correct references put the next verse on the wall — P0 · RG-99
+
+**Problem.** `src-tauri/data/kjv.json` held **31,100** verses. The KJV has **31,102**. Six verses
+were missing (Matthew 2:16, 22:1, 26:38; Mark 4:40, 7:11, 8:8) and four were split into two
+(1 Samuel 20:42, 1 Kings 22:43, 3 John 14, and Revelation 13:1, whose opening clause stood alone
+as a nineteenth "Revelation 12:18"). The two errors very nearly cancelled, which is how the total
+stayed plausible.
+
+**Root cause.** `import_full_kjv` numbers a verse by its POSITION in the array — `vi + 1`. A
+chapter missing a verse therefore does not lose its last verse; it **renumbers every verse after
+the gap**. "Matthew 22:37" — the great commandment, and about as commonly preached as a verse
+gets — returned the words of 22:38. "Matthew 2:23" did not exist at all. Nothing caught it because
+both instruments were derived from the same file: `db::tests::seeds_full_kjv` asserted
+`> 31_000` beside a comment recording that the bundled file held 31,100 as though that were a
+rounding difference, and `detection::VERSES_PER_CHAPTER` had been regenerated FROM the broken
+corpus and was pinned to it by a test. Two green checks, both agreeing with the defect.
+
+**Change.** The corpus was repaired verse by verse against an independent public-domain KJV whose
+verses carry explicit NUMBERS rather than positions: the six missing verses inserted, the four
+splits merged, Revelation 12 back to 17 verses and Revelation 13:1 whole. `detection::VERSES_PER_CHAPTER`
+regenerated from the repaired file. `db::migrate` gained a forward-fill rung — any database whose
+verse count is not exactly 31,102 is re-imported once, so an install made before today is repaired
+on next launch rather than staying wrong until somebody reinstalls.
+
+**Files.** `src-tauri/data/kjv.json`, `src-tauri/src/db/verses.rs`, `src-tauri/src/db/mod.rs`,
+`src-tauri/src/detection.rs`, `src-tauri/src/qa.rs`.
+
+**Test.** `db::verses::corpus_tests::the_bundled_kjv_matches_the_kjvs_own_versification` pins all
+**1,189 chapters** against the KJV's own versification, taken from outside this repository — the
+pin had to come from outside, because every table inside it was derived from the file it would be
+checking. `the_repaired_references_hold_their_own_words` asserts the ten repaired references by
+their words. Both were watched to fail: stashing the old `kjv.json` turns them red with
+*"1 Samuel 20 has 43 verses, the KJV has 42"* and *"assertion failed: at(40, 2, 16).starts_with…"*.
+`db::tests::seeds_full_kjv` now asserts `== 31_102`, and `qa::cold_start`'s seed audit with it.
+
+**Result.** 649 Rust tests pass, 0 failed. The detection gate is unchanged at 74 cases · 100 %
+recall · 0 wrong verses · 0 paraphrases auto-fired.
+
+### F-12 · Marginal notes reached the wall as scripture, and supplied words were deleted from it — P1 · RG-100
+
+**Problem.** Two failures of the same rule, in opposite directions. Eight verses rendered a
+translator's note as though it were the text — Luke 17:36 ended *"…and the other left. this verse
+is not found in most of the Greek copies"* — and seven verses had real words removed, so Genesis
+30:27 read *"if I have found favour in thine eyes, I have learned by experience"* with "tarry: for"
+gone.
+
+**Root cause.** `verses::is_gloss` decided by wording: a brace group was a marginal note if it
+contained `": "`. Seven verses carry a colon inside their italicised supplied words
+(`{tarry: for}`, `{men: so}`, `{any: he is}`, and four more), and eight notes carry no colon at all
+(`{feed or, rule}`). No wording rule separates the two classes, because the corpus does not mark
+them.
+
+**Change.** Position decides. Every marginal note in `kjv.json` sits in the run of brace groups at
+the END of a verse — checked group by group over all 31,102 — so `is_trailing_run` identifies them,
+and the wording markers are kept only for the single note that appears mid-verse (Hebrews 10:34,
+caught by its `...` lead-in).
+
+**Files.** `src-tauri/src/db/verses.rs`.
+
+**Test.** `corpus_tests::supplied_words_containing_a_colon_survive` and
+`corpus_tests::a_trailing_note_is_never_scripture_however_it_is_worded`. Restoring
+`inner.contains(": ")` turns both red, verified. The whole corpus was then re-diffed against the
+independent KJV: **15 verses changed and no others** — 7 restored, 8 cleaned.
+
 ## 7. Regression results
 
 Run after the last change, in this order, from a clean tree:
@@ -598,7 +662,7 @@ Run after the last change, in this order, from a clean tree:
 |---|---|---|
 | `cargo fmt --all -- --check` | clean | **clean** |
 | `cargo clippy --all-targets -- -D warnings` | clean | **clean** |
-| `cargo test` | 629 passed / 17 ignored | **644 passed / 0 failed / 17 ignored** |
+| `cargo test` | 629 passed / 17 ignored | **649 passed / 0 failed / 17 ignored** |
 | `cargo test e2e::` | 38 / 0 ignored | **38 / 0 ignored** |
 | `npx vitest run` | 927 in 68 files | **952 in 71 files, 0 failed** |
 | `npm run build` | clean | **clean** |

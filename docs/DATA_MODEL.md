@@ -61,7 +61,7 @@ Relay may compare a signal to a stored level ([DECISIONS.md](DECISIONS.md) §19,
 
 ### Translation — `db/verses.rs` `Translation`
 The Bible translation a verse belongs to. Bundled corpus today is **KJV only** (66 books,
-31,100 verses, committed at `src-tauri/data/kjv.json`, glosses stripped at import). Fields:
+31,102 verses, committed at `src-tauri/data/kjv.json`, glosses stripped at import). Fields:
 `id, name, abbreviation, language` (ISO code), `license_type`. There is deliberately no import
 path for a second translation — which is also why there is no licensing exposure.
 

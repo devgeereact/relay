@@ -1041,7 +1041,7 @@ TF-IDF is lexical overlap. Its ceiling is visible in the benchmark it just got:
 
 **No amount of tuning fixes a vocabulary mismatch.** Only a semantic embedder
 does, and CLAUDE.md has listed it as parked since the beginning — the seam is
-`SemanticIndex::top_k`, and `verses.embedding` exists with 0 of 31,100 rows
+`SemanticIndex::top_k`, and `verses.embedding` exists with 0 of 31,102 rows
 written.
 
 It was not built here, and the reason is sequencing, not appetite. An embedder

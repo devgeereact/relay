@@ -134,7 +134,7 @@ SQLite via `rusqlite` (bundled), at `~/Library/Application Support/com.relay.app
 
 | Table | Holds |
 |-------|-------|
-| `translations`, `verses` | Bible corpus (full KJV bundled, 66 books / 31,100 verses) |
+| `translations`, `verses` | Bible corpus (full KJV bundled, 66 books / 31,102 verses) |
 | `verses_fts` | FTS5 index over `verses` (external-content, `porter unicode61`) |
 | `templates` | Output templates (region + style JSON); `is_active` for the console's 4 monitors |
 | `output_channels` | Configured render targets (native window / network client) |

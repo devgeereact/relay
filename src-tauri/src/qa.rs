@@ -1569,11 +1569,11 @@ mod cold_start {
         let db = h.state::<Db>();
         let conn = db.0.lock().unwrap();
 
-        assert_eq!(db::verse_count(&conn).unwrap(), 31_100, "the bundled KJV");
+        assert_eq!(db::verse_count(&conn).unwrap(), 31_102, "the bundled KJV");
         assert_eq!(count(&conn, "translations"), 1);
         assert_eq!(
             count(&conn, "verses_fts"),
-            31_100,
+            31_102,
             "the FTS mirror is built"
         );
         // Five built-ins + the ready-to-use presets. The exact total is asserted

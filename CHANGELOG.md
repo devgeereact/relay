@@ -10,6 +10,34 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 
 ## [Unreleased]
 
+### Six verses were missing from the bundled Bible, and it shifted the ones after them
+
+**This is the important one.** Relay's copy of the King James Version was short six
+verses — Matthew 2:16, Matthew 22:1, Matthew 26:38, Mark 4:40, Mark 7:11 and Mark
+8:8 — and four other verses had been split in two. Because Relay numbers a verse by
+where it sits in the file, a missing verse does not just go missing: **everything
+after it in that chapter moves up by one.**
+
+What that meant in a service: asking for **Matthew 22:37** ("Thou shalt love the
+Lord thy God…") put the words of 22:38 on the screen. **Matthew 2:23** could not be
+found at all. The same shift ran through the rest of Matthew 2, Matthew 22, the
+Gethsemane passage in Matthew 26, and three chapters of Mark. Everything else in
+the Bible was correct, and no other book was affected.
+
+It is fixed. Every one of the 1,189 chapters now matches the King James Version's
+own verse numbering, checked verse by verse against an independent copy. **You do
+not need to do anything**: the next time you open Relay it repairs its own copy of
+the Bible, once, and then never again. Your services, plans, templates and settings
+are untouched.
+
+**Also fixed, in the same sweep.** A handful of verses carried the translators'
+margin notes into the verse itself — Luke 17:36 ended with "this verse is not found
+in most of the Greek copies" as though that were scripture — and seven other verses
+had real words dropped, so Genesis 30:27 read "if I have found favour in thine eyes,
+I have learned by experience" with "tarry: for" missing. Fifteen verses in total
+now read as they should.
+
+
 ### You can now delete a service — and a big file no longer takes Relay down with it
 
 **Erasing a sermon.** Until now, the only way to remove a recorded service was to

@@ -137,8 +137,16 @@ fn baseline_forward_fill(conn: &Connection) -> rusqlite::Result<()> {
         if cn == 0 {
             seed_channels(conn)?;
         }
-        // Forward-fill the full Bible for DBs created with the old 15-verse seed.
-        if verse_count(conn)? < 30_000 {
+        // Forward-fill the full Bible. Two populations need this, and one exact
+        // number covers both: DBs created with the old 15-verse dev seed, and
+        // every DB seeded before 2026-09-04, when the bundled corpus was six
+        // verses short (Matthew 2:16, 22:1, 26:38, Mark 4:40, 7:11, 8:8) and
+        // carried four split ones. A verse number in that corpus is a POSITION,
+        // so a chapter short a verse renumbers every verse after the gap: a
+        // church that installed Relay last month has "Matthew 22:37" pointing at
+        // the words of 22:38 until this rung runs. It re-imports once, then the
+        // count matches and it never runs again.
+        if verse_count(conn)? != 31_102 {
             reimport_full_kjv(conn)?;
         }
         // One-time re-clean: DBs imported before the gloss stripper baked the KJV
@@ -821,8 +829,13 @@ mod tests {
     #[test]
     fn seeds_full_kjv() {
         let conn = fresh_db();
-        // Full KJV is 31,102 verses; the bundled file has 31,100.
-        assert!(verse_count(&conn).unwrap() > 31_000);
+        // 31,102 — the KJV's own count, exactly. This used to read `> 31_000`,
+        // beside a comment noting the bundled file held 31,100 as though that
+        // were a rounding difference. It was six missing verses and four split
+        // ones, and a chapter that is short a verse renumbers every verse after
+        // the gap. `verses::the_bundled_kjv_matches_the_kjvs_own_versification`
+        // is the test that says WHICH chapter when this one goes red.
+        assert_eq!(verse_count(&conn).unwrap(), 31_102);
     }
 
     #[test]
