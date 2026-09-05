@@ -1,16 +1,29 @@
 #!/usr/bin/env node
 // DOES THE UPDATE CHANNEL ACTUALLY RESOLVE?
 //
-// RG-83. Both Tauri configs point the updater at
+// RG-83. Both Tauri configs used to point the updater at
 // `https://github.com/<owner>/<repo>/releases/latest/download/latest.json`.
 // GitHub's `/releases/latest/` **excludes pre-releases**, and every Relay release
-// so far is a pre-release — so the manifest resolves to nothing and returns 404.
-//
-// The updater is otherwise complete: built, wired, signed with a real minisign key,
-// covered by tests. It resolves to nothing, and every installed copy is therefore
-// un-updatable. That is invisible from the source, green in every test, and total
-// in the field — which is exactly the class of failure that needs an instrument
+// so far is a pre-release — so the manifest resolved to nothing and returned 404,
+// for months. The updater was otherwise complete: built, wired, signed with a real
+// minisign key, covered by tests. It resolved to nothing, and every installed copy
+// was therefore un-updatable. Invisible from the source, green in every test, and
+// total in the field — exactly the class of failure that needs an instrument
 // rather than a reader.
+//
+// **CLOSED 2026-09-05 by pinning the endpoint at a TAG** —
+// `…/releases/download/v<version>/latest.json` — which is the other half of what
+// RG-83 always proposed. The alternative, publishing a full release, is refused by
+// `release.yml` while either platform is unsigned (RG-73), and it should be: a full
+// release of an unsigned build is a build a church cannot open, presented as the
+// stable one.
+//
+// The pin has its own failure mode and its own guard: a version bump that leaves
+// the pin behind ships an updater looking at the PREVIOUS release for ever, and
+// silently, because the manifest still resolves. `scripts/version.mjs` therefore
+// owns the pin — `--set` moves it, and `--check` (a CI gate on every PR) refuses
+// to pass while it disagrees with the three version files, or while an endpoint has
+// drifted back to the `/latest/` shape that caused this in the first place.
 //
 // This is that instrument. It reads the endpoint OUT OF THE CONFIG rather than
 // restating it (a second copy of a URL is the next thing to drift), fetches it, and
@@ -19,10 +32,13 @@
 //   node scripts/check-updater.mjs          # report, exit 0 unless the channel is dead
 //   node scripts/check-updater.mjs --strict # exit 1 on anything but a live manifest
 //
-// It is NOT in CI on every push, deliberately: until a non-prerelease is published
-// the endpoint is legitimately 404, and a red build on every unrelated PR is a red
-// build people learn to ignore. It belongs to the release ceremony — see
-// docs/RELEASING.md — and to anyone asking "can a church actually receive a fix?".
+// It is NOT in CI on every push, deliberately, and the reason has changed shape:
+// between bumping the version and publishing that release, the pin points at a tag
+// that does not exist yet and this check is legitimately red. A red build on every
+// unrelated PR is a red build people learn to ignore. It belongs to the release
+// ceremony — see docs/RELEASING.md — and to anyone asking "can a church actually
+// receive a fix?". The **Update channel** workflow runs it on demand from the
+// Actions tab, which is when the answer matters.
 import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -107,7 +123,7 @@ for (const [file, url] of rows) {
     dead += 1;
     console.error(`  ✗ ${url}\n      (${file}) HTTP ${res.status}${
       res.status === 404 && url.includes('/releases/latest/')
-        ? ' — GitHub\'s /releases/latest/ excludes PRE-RELEASES. Publish a full release, or point at a tag.'
+        ? " — GitHub's /releases/latest/ excludes PRE-RELEASES. Pin the endpoint at a tag instead: npm run version:set -- <version> rewrites it."
         : ''
     }`);
     continue;

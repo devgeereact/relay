@@ -87,7 +87,7 @@ decision), [§6](#6-the-fix-process-start-to-finish) (what was actually changed)
 | Production dependencies | `npm audit --omit=dev` | **0 vulnerabilities** — now a CI gate |
 | All dependencies | `npm audit` | 10, **every one in dev tooling** — see RG-98 |
 | **Rust dependencies** | `cargo audit` (installed 2026-09-04 — it had **never been run**) | 3 advisories on the first run; **0 vulnerabilities after 2026-09-05**, all three cleared by lockfile updates. Now a CI gate — RG-101 |
-| Update channel | `npm run updater:check` (written by this pass) | **HTTP 404 — the endpoint resolves to nothing** |
+| Update channel | `npm run updater:check` (written by this pass) | **HTTP 404 — the endpoint resolves to nothing.** Closed 2026-09-05: pinned at a tag, now **2 endpoints live** |
 
 **Re-run and added on 2026-09-05.** Every row above was re-run; these are the ones that are new
 or that changed their answer:
@@ -157,7 +157,7 @@ hardened runtime with the microphone entitlement intact, boots, serves its LAN s
 right headers, and refuses the drive-by**, all verified against the packaged binary rather than
 against a test double.
 
-**What blocks a general release.**
+**What blocks a general release. Four now, not five.**
 
 | | Blocker | Status |
 |---|---|---|
@@ -165,7 +165,7 @@ against a test double.
 | 2 | **Word error rate has never been measured, in any language** | Needs 30 minutes of real sermon audio. The ruler is built and runs in CI |
 | 3 | **Neither platform has a code-signing certificate** | `gh secret list` holds zero of the fourteen. Every release so far went out unsigned, on both platforms |
 | 4 | **Nobody but the author has ever run a service** | Needs a Sunday |
-| 5 | **The auto-updater points at a URL that returns 404** | Verified again on 2026-09-05. Still true — it is a *publishing* action, not a commit. Every release so far is both a draft and a pre-release, and GitHub's `/releases/latest/` excludes both |
+| 5 | ~~**The auto-updater points at a URL that returns 404**~~ | **CLOSED 2026-09-05 (RG-83), and not by publishing anything.** The endpoint is pinned at `…/releases/download/v0.1.0-4/latest.json` — a release that is already published and already carries a signed `latest.json`. `npm run updater:check` reports **2 update endpoints live**. Promoting a release to non-prerelease instead was refused by `release.yml`, correctly: an unsigned build presented as the stable release is one a church cannot open |
 
 **No sixth blocker was added, and one nearly was.** The corpus defect (RG-99 … RG-105) is the
 only thing found since that could have put a wrong verse on a wall — a correct reference, heard
@@ -175,13 +175,17 @@ it is a **condition**, and it is condition 8 in [§19](#19-the-launch-decision):
 never run on a real church database, and one `sqlite3` line before and after an upgrade settles
 that in a minute.
 
-**What changed about #5, and why it is no longer invisible.** It is the same 404, but it can no
-longer hide. `npm run updater:check` reads the endpoint out of both Tauri configs and fetches
+**What changed about #5.** It is closed. For three passes it was *"the same 404, but it can no
+longer hide"* — `npm run updater:check` reads the endpoint out of both Tauri configs and fetches
 it, and **Settings → Updates** now reports the state of the *channel* rather than the absence of
 news. That row used to say *"up to date"* when no check had ever run, when the laptop was
 offline, and when the manifest had been 404 since the day Relay was installed. One reassuring
 sentence over four different situations, on the one path by which a fix reaches a church that
-already has Relay.
+already has Relay. **On 2026-09-05 the channel itself went live**, by pinning the endpoint at the
+tag of a release that already existed rather than by publishing a new one — so an installed copy
+can now receive a fix, and the pin is owned by `version.mjs` so a bump cannot silently leave it
+behind. The blocker that remains in its place is the one underneath it all along: **the builds
+that release would carry are unsigned on both platforms.**
 
 **And the one this pass removed from the informal list**: a church now has a way to **erase a
 recorded sermon** from inside Relay. Until 2026-09-03, [PRIVACY.md](PRIVACY.md)'s only answer to
@@ -1027,9 +1031,11 @@ Stated plainly, because a risk that is not named is a risk that is being hidden.
 4. **Two code-signing certificates.** Neither platform has one. Every release so far is unsigned
    on both. `sign-local.sh` reproduces the *conditions* ad hoc and passes; it cannot reproduce
    Gatekeeper.
-5. **The updater endpoint.** Still 404. Now instrumented from three directions — the script, the
-   Settings row, and a workflow you can run from the Actions tab — but instrumenting a dead
-   channel does not make it live.
+5. **The updater endpoint is live, and no update has ever been watched installing.** The channel
+   resolves (RG-83, closed 2026-09-05) and the manifest is signed, but nobody has taken a machine
+   on an older version and watched Relay fetch, verify and apply an update. That is the row in
+   [qa/LAUNCH_CHECKLIST.md](qa/LAUNCH_CHECKLIST.md) §5 that still reads ⬜, and it needs two
+   versions and a laptop, not a commit.
 6. **Windows.** Not built or run in this session. CI covers compile, format, lint and tests;
    nothing here covers behaviour.
 7. **A second and third service, and one run by somebody who did not write Relay.** The largest
@@ -1210,9 +1216,10 @@ Relay and a church is evidence, a certificate and a published release — not co
 The conditions are [qa/RELAY_GAP.md](qa/RELAY_GAP.md) §24's five, unchanged, plus the two this
 audit added on 2026-09-03 and two more on 2026-09-05:
 
-6. **Publish a full release before handing any build to a church**, so that installation is not
-   also a commitment to never receiving a fix. When you do, run the **Update channel** workflow
-   from the Actions tab and watch it go green — that is the whole of blocker 5.
+6. **Watch one update install, once, before handing a build to a church.** Blocker 5 is closed —
+   the channel resolves and the manifest is signed — but *"the endpoint returns 200"* and
+   *"a church receives a fix"* are different claims, and only the first has evidence. Install the
+   previous version on a spare machine, publish the next one, and watch it arrive.
 7. **Tell the pilot churches, in writing, that Settings → Updates now reports the update channel
    honestly** — and ask them to look at it, because that row is the only thing in the product
    that can tell them their copy has gone stale.

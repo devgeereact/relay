@@ -30,7 +30,7 @@ Last run: **2026-09-05**, against `0.1.0-4`. Findings live in
 | ✅ | The packaged binary builds and launches | `npm run tauri build` → `.app` + `.dmg`, 0 warnings; launched 2026-09-03 with an isolated `RELAY_DB_PATH` and printed **exactly one** boot heartbeat. **CI's macOS job is still compile-only and says so** — this box is ticked by a human running the command |
 | ✅ | The hardened runtime does not kill the microphone | `./scripts/sign-local.sh` → `flags=0x10002(adhoc,runtime)`, mic entitlement present, usage string present. **Rule 17's trap reproduced without a certificate** |
 | ✅ | The LAN surface behaves in production, not just in tests | `curl` against the running bundle, re-run 2026-09-05 on a build carrying the ranged-media change: `output.html` 200 + kiosk CSP + `nosniff`; `GET /api/black` → **405, `Allow: POST`, no CORS wildcard**; traversal → 404; `/media/<id>` 200 + `Accept-Ranges`, `Range: bytes=500-599` → **206 + `Content-Range: bytes 500-599/1024`, byte-exact**, and a range past the end → **416** |
-| ❌ | The update channel resolves | `npm run updater:check` — **HTTP 404 on both configured endpoints (RG-83)**, re-verified 2026-09-05. Every release so far is a draft AND a pre-release, and GitHub's `/releases/latest/` excludes both. Publish a full release, then run the **Update channel** workflow from the Actions tab and watch it go green |
+| ✅ | The update channel resolves | `npm run updater:check` → **2 update endpoints live** (RG-83, closed 2026-09-05). Pinned at `…/releases/download/v0.1.0-4/latest.json`, a release that was already published with a signed manifest — so nothing new was shipped to make this true. `npm run version:check` fails if a version bump leaves the pin behind, or if an endpoint drifts back to the `/latest/` shape that caused the 404 |
 | ⬜ | A clean machine installs it | never done |
 
 ## 2. The live path
@@ -79,7 +79,7 @@ Last run: **2026-09-05**, against `0.1.0-4`. Findings live in
 | ❌ | **A macOS code-signing certificate exists** | `gh secret list` → **zero of the six `APPLE_*`** |
 | ❌ | **A Windows code-signing certificate exists** | `gh secret list` → **zero of the eight `AZURE_*`/`WINDOWS_*`** |
 | ✅ | The updater manifest is signed | `TAURI_SIGNING_PRIVATE_KEY` is set |
-| ❌ | **The updater endpoint resolves** | `curl -sI …/releases/latest/download/latest.json` → **HTTP/2 404** (RG-83) |
+| ✅ | **The updater endpoint resolves** | `npm run updater:check` → 2 live, 2026-09-05 (RG-83). The **Update channel** workflow runs the same check on demand from the Actions tab |
 | ⬜ | An update has been watched installing, once | never |
 | ⬜ | The microphone survives the first correctly-signed macOS build | `npm run tauri build && ./scripts/sign-local.sh` — **free, and it reproduces rule 17's trap without a certificate. Run it before buying anything** |
 | ⬜ | The offline bundle onto a stick, carried to a machine with no internet | `node scripts/offline-bundle.mjs` |
