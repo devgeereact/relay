@@ -430,22 +430,35 @@ Every Relay release is a pre-release, because the signing gate refuses a plain t
 either platform is unsigned (RG-73) — so `/latest/` never resolved to anything, and no
 installed copy could ever receive a fix (RG-83).
 
-**Since 2026-09-05 the endpoint is pinned at a TAG instead**, in both configs:
+**Since 2026-09-05 the endpoint is one permanent address**, identical in both configs and
+in every build ever shipped:
 
 ```
-https://github.com/devgeereact/relay/releases/download/v<version>/latest.json
+https://github.com/devgeereact/relay/releases/download/updates/latest.json
 ```
 
-which is served for a **published** release whether or not it is a pre-release. The pin is
-written by `npm run version:set`, and `npm run version:check` — a CI gate on every PR —
-fails if a bump leaves it behind or if it drifts back to the `/latest/` shape. So the happy
-path is:
+`updates` is a release that exists only to hold `latest.json`. It is created once, and
+`.github/workflows/update-channel-promote.yml` re-uploads that one asset **every time a
+release is published** — so the address never changes and always describes the newest
+release.
 
-**bump (pin moves with it) → tag → workflow opens a draft → you check it → you publish it
-→ every install offers the update on next launch.**
+> **The obvious alternative is wrong, and it was tried first.** Pinning the endpoint at
+> each release's own tag (`…/download/v0.2.0-1/latest.json`) *resolves*, which is what made
+> it look right. It does not work: a build asks its own release's manifest, is told its own
+> version, and concludes it is up to date **for ever**. The next release lives at a URL it
+> has never heard of. `0.2.0-1` was built with that flaw, caught before publication, and
+> never released.
 
-Between the bump and the publish, the pinned URL 404s: the tag does not exist yet. That is
-expected, and it is the safe direction — an install sees no update rather than the wrong one.
+`npm run version:check` — a CI gate on every PR — refuses both drifts: back to `/latest/`
+(a 404 in the field) and forward to a version tag (a manifest that resolves and never
+advertises anything newer). The second is the dangerous one, because it looks healthy.
+
+So the happy path is:
+
+**bump → tag → workflow opens a draft → you check it → you publish it → the promote
+workflow points the channel at it → every install offers the update on next launch.**
+
+The endpoint does **not** move with the version. Publishing is what repoints the channel.
 
 #### Prove it, don't assume it
 
@@ -457,8 +470,8 @@ Reads the endpoint **out of both Tauri configs** — never a second copy of the 
 fetches it, and reports what a shipped copy of Relay would actually find:
 
 ```
-  ✓ https://github.com/devgeereact/relay/releases/download/v0.1.0-4/latest.json
-      version 0.1.0-4 · platforms: windows-x86_64, darwin-aarch64, darwin-x86_64, …
+  ✓ https://github.com/devgeereact/relay/releases/download/updates/latest.json
+      version 0.2.0-2 · platforms: windows-x86_64, darwin-aarch64, darwin-x86_64, …
 
   2 update endpoints live.
 ```

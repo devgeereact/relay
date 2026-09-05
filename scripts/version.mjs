@@ -102,30 +102,33 @@ function validate(v, where) {
 }
 
 /**
- * THE ENDPOINT IS PINNED AT A TAG, SO THE VERSION OWNS IT TOO.
+ * THE ENDPOINT IS A CONSTANT, AND IT HAS TO STAY ONE.
  *
- * `…/releases/latest/download/latest.json` returns 404 while every release is a
- * pre-release — GitHub's `/latest/` excludes them — so both configs point at
- * `…/releases/download/v<version>/latest.json` instead (RG-83). That is correct
- * and it has one failure mode: **a version bump that leaves the pin behind ships
- * a build whose updater looks at the PREVIOUS release for ever.** Silently: the
- * manifest resolves, it just never advertises anything newer.
+ * `…/releases/latest/download/latest.json` returns 404 here — GitHub's `/latest/`
+ * excludes pre-releases, and the signing gate refuses a real release tag while
+ * either platform is unsigned (RG-73). The first repair pinned the endpoint at
+ * each release's own tag, which **resolves and does not work**: a build asks its
+ * own release's manifest, is told its own version, and concludes it is up to date
+ * for ever. The next release lives at a URL it has never heard of.
  *
- * So the pin is part of the version, not a thing to remember. `--set` moves it and
- * `--check` refuses to pass while it disagrees.
+ * So the endpoint is one permanent address — a release tagged `updates` whose only
+ * asset is `latest.json`, re-uploaded by `.github/workflows/update-channel-promote.yml`
+ * every time a release is published. Every build ever shipped asks the same
+ * question of the same place.
+ *
+ * Both drifts are silent and both are checked here: back to `/latest/` (a 404 in
+ * the field, and nothing on screen says so), or forward to a version tag (a
+ * manifest that resolves and never advertises anything newer). The second is worse
+ * precisely because it looks healthy.
  */
-const PIN = /releases\/download\/v([^/]+)\/latest\.json/;
+const CHANNEL = 'https://github.com/devgeereact/relay/releases/download/updates/latest.json';
 
-function pinnedTags() {
+function endpoints() {
   const found = {};
   for (const f of UPDATER_CONFS) {
     const eps = JSON.parse(read(f))?.plugins?.updater?.endpoints ?? [];
-    for (const url of eps) {
-      const m = PIN.exec(url);
-      // An endpoint that is not pinned at all is reported as such rather than
-      // skipped — `/latest/` is exactly the shape that was 404 for months.
-      found[f] = m ? m[1] : url;
-    }
+    if (!eps.length) found[f] = '(no endpoint configured)';
+    for (const url of eps) found[f] = url;
   }
   return found;
 }
@@ -162,20 +165,21 @@ function check(expected) {
     );
   }
 
-  const pins = Object.entries(pinnedTags());
-  const wrong = pins.filter(([, tag]) => tag !== values[0]);
+  const eps = Object.entries(endpoints());
+  const wrong = eps.filter(([, url]) => url !== CHANNEL);
   if (wrong.length) {
-    const list = wrong.map(([f, tag]) => `      ${String(tag).padEnd(12)} ${f}`).join('\n');
+    const list = wrong.map(([f, url]) => `      ${f}\n        ${url}`).join('\n');
     fail(
-      `The updater endpoint is pinned at a different version than the repo (${values[0]}):\n\n` +
-        list,
-      `Fix with:  npm run version:set -- ${values[0]}\n  ` +
-        '           …which rewrites the pin as well as the three version files.',
+      'The updater endpoint is not the update channel:\n\n' +
+        list +
+        `\n\n      it must be exactly:\n        ${CHANNEL}`,
+      'A version tag resolves and never advertises anything newer; `/releases/latest/`\n  ' +
+        '           404s because every release here is a pre-release. Neither says so at runtime.',
     );
   }
 
   console.log(`  ✓ version ${values[0]} — consistent across all three files`);
-  console.log(`  ✓ updater endpoint pinned at v${values[0]} in ${pins.length} config(s)`);
+  console.log(`  ✓ updater endpoint is the channel, in ${eps.length} config(s)`);
 }
 
 function set(v) {
@@ -193,25 +197,10 @@ function set(v) {
   if (!CARGO_VERSION.test(cargo)) fail(`Could not find a [package] version in ${CARGO}.`);
   writeFileSync(CARGO, cargo.replace(CARGO_VERSION, `version = "${v}"`));
 
-  // …and the endpoint pinned at the tag, because a version that moves without it
-  // ships an updater pointed at the previous release.
-  let pinned = 0;
-  for (const f of UPDATER_CONFS) {
-    const before = read(f);
-    const after = before.replace(
-      /releases\/download\/v[^/]+\/latest\.json/g,
-      `releases/download/v${v}/latest.json`,
-    );
-    if (after !== before) {
-      writeFileSync(f, after);
-      pinned += 1;
-    }
-  }
-
   console.log(`  ✓ set version ${v} in all three files`);
-  console.log(`  ✓ repointed the updater endpoint at v${v} in ${pinned} config(s)`);
   console.log('    Commit this before you tag — the release gate compares the tag to the repo.');
-  console.log(`    The endpoint 404s until the v${v} release is published; that is expected.`);
+  console.log('    The updater endpoint is a constant and does NOT move with the version:');
+  console.log('    publishing the release is what repoints the channel at it.');
 }
 
 const [mode, arg] = process.argv.slice(2);
