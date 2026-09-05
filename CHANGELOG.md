@@ -10,6 +10,83 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 
 ## [Unreleased]
 
+_Nothing yet._
+
+---
+
+## [0.2.0-1] — 2026-09-05 · pre-release
+
+**A pre-release, not a release**, and the reason has not changed: neither the macOS
+nor the Windows build carries a code-signing certificate, so macOS will say *"Relay
+is damaged and can't be opened"* and Windows SmartScreen will warn. That is expected
+and it is why this is not offered as a general download. It is for the supervised
+pilot described below, on macOS, with somebody watching.
+
+### Relay can receive a fix now
+
+Every copy of Relay ever installed has been **unable to update itself**. The updater
+was built, wired and signed — and the address it looked at returned "not found",
+every time, since the day it was written. Nothing said so: the screen simply never
+offered an update, which looks exactly like being up to date.
+
+The address is fixed. Nothing about your copy changes today, but the next version
+can actually reach you, and **Settings → Updates** will tell you the truth about the
+channel either way — including when it cannot reach it at all.
+
+### A list that fails to load no longer tells you it is empty
+
+If Relay could not read your songs, your media, your saved verses, your
+announcements, your service plans or a chapter of the Bible, it said *"No songs yet
+— import or paste one"*, *"No plans yet"*, *"That chapter is empty"*. Every one of
+those sentences invites you to do work you have already done, and one of them is a
+claim about scripture rather than about a database.
+
+Eleven screens now say **why** the read failed, and offer to try again — including
+the plan rail on the Live tab and the cue list in the Planner, which are the two you
+would be looking at ten minutes before a service. The model chooser used to show a
+blank panel in the same situation; it now says what went wrong.
+
+Errors in the template and theme editors used to appear as `[object Object]`. They
+are sentences now. The one you are most likely to have seen is Relay refusing to
+delete something while a service is recording, which was always meant to explain
+itself.
+
+### Announcements and confirmations are spoken aloud
+
+*"John 3:16 is on the screens"* — the line that confirms content reached a
+congregation — was invisible to a screen reader on six screens. It is announced now.
+A save that failed on the Announcements screen used to appear in the same green as a
+save that worked, and a delete that was refused said nothing at all.
+
+### Video on a kiosk screen or OBS can be scrubbed
+
+A clip served to a browser source could not be seeked or resumed — dragging the
+position bar started it again from the beginning. It behaves properly now.
+
+### ⚠️ If your kiosk screen is not served by Relay, it needs one setting
+
+Relay's output pages are normally loaded **from Relay** — an OBS browser source or a
+kiosk screen pointed at `http://<relay-ip>:8032/output.html`. Those are unaffected.
+
+If your church serves its own page from somewhere else — a Raspberry Pi, an existing
+signage box — it will now be refused, because Relay no longer accepts a connection
+from a page it did not serve. That is deliberate: anyone on the church wifi could
+previously open a page on their phone and receive the service feed, **including the
+preacher's stage notes and the verse coming next**.
+
+To allow your own page again, start Relay with `RELAY_KIOSK_ANY_ORIGIN=1`. Relay
+prints the reason and that setting whenever it refuses a connection, so if a screen
+goes blank the answer is in the log rather than in a guess. **Find out on the
+Saturday, not on the Sunday.**
+
+### Under the hood
+
+The Bible repair described below now actually reaches a copy of Relay you already
+have — the version that shipped it could not, on any machine, which was found and
+fixed before this build. It also keeps the verse references in your service history
+intact while it repairs itself; the first attempt would have blanked every one of
+them.
+
 ### Six verses were missing from the bundled Bible, and it shifted the ones after them
 
 **This is the important one.** Relay's copy of the King James Version was short six
