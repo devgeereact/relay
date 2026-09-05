@@ -165,7 +165,7 @@ against a test double.
 | 2 | **Word error rate has never been measured, in any language** | Needs 30 minutes of real sermon audio. The ruler is built and runs in CI |
 | 3 | **Neither platform has a code-signing certificate** | `gh secret list` holds zero of the fourteen. Every release so far went out unsigned, on both platforms |
 | 4 | **Nobody but the author has ever run a service** | Needs a Sunday |
-| 5 | ~~**The auto-updater points at a URL that returns 404**~~ | **CLOSED 2026-09-05 (RG-83), and not by publishing anything.** The endpoint is pinned at `…/releases/download/v0.1.0-4/latest.json` — a release that is already published and already carries a signed `latest.json`. `npm run updater:check` reports **2 update endpoints live**. Promoting a release to non-prerelease instead was refused by `release.yml`, correctly: an unsigned build presented as the stable release is one a church cannot open |
+| 5 | ~~**The auto-updater points at a URL that returns 404**~~ | **CLOSED 2026-09-05 (RG-83), at the second attempt (RG-114), and not by publishing anything.** The first fix pinned the endpoint at a version tag, which resolves and leaves every build able to learn about **only its own version** — green on every instrument, useless in the field. The endpoint is now one permanent address, `…/releases/download/updates/latest.json`, re-uploaded whenever a release is published. Promoting a release to non-prerelease instead was refused by `release.yml`, correctly: an unsigned build presented as the stable release is one a church cannot open |
 
 **No sixth blocker was added, and one nearly was.** The corpus defect (RG-99 … RG-105) is the
 only thing found since that could have put a wrong verse on a wall — a correct reference, heard
@@ -181,10 +181,12 @@ it, and **Settings → Updates** now reports the state of the *channel* rather t
 news. That row used to say *"up to date"* when no check had ever run, when the laptop was
 offline, and when the manifest had been 404 since the day Relay was installed. One reassuring
 sentence over four different situations, on the one path by which a fix reaches a church that
-already has Relay. **On 2026-09-05 the channel itself went live**, by pinning the endpoint at the
-tag of a release that already existed rather than by publishing a new one — so an installed copy
-can now receive a fix, and the pin is owned by `version.mjs` so a bump cannot silently leave it
-behind. The blocker that remains in its place is the one underneath it all along: **the builds
+already has Relay. **On 2026-09-05 the channel itself was fixed** — at the second attempt. The first fix pinned the
+endpoint at a release's own tag: it resolved, every instrument went green, and a build could only
+ever have been told about its own version. The endpoint is now one permanent address that every
+build shares, repointed by the act of publishing, and `version.mjs` refuses both drifts on every
+PR. **An installed copy still cannot receive a fix** — the builds already in the world carry the
+old dead address — but the next one can, and that is the last time that sentence has to be true. The blocker that remains in its place is the one underneath it all along: **the builds
 that release would carry are unsigned on both platforms.**
 
 **And the one this pass removed from the informal list**: a church now has a way to **erase a
@@ -1031,9 +1033,11 @@ Stated plainly, because a risk that is not named is a risk that is being hidden.
 4. **Two code-signing certificates.** Neither platform has one. Every release so far is unsigned
    on both. `sign-local.sh` reproduces the *conditions* ad hoc and passes; it cannot reproduce
    Gatekeeper.
-5. **The updater endpoint is live, and no update has ever been watched installing.** The channel
-   resolves (RG-83, closed 2026-09-05) and the manifest is signed, but nobody has taken a machine
-   on an older version and watched Relay fetch, verify and apply an update. That is the row in
+5. **The update channel is built and has never carried an update.** RG-83 is closed and RG-114
+   corrected its first fix, but the address only starts describing anything once a release is
+   published through the promote workflow, and **no update has ever been watched installing** —
+   nobody has taken a machine on an older version and watched Relay fetch, verify and apply one.
+   The builds already in the world carry the old dead address and can never be reached at all. That is the row in
    [qa/LAUNCH_CHECKLIST.md](qa/LAUNCH_CHECKLIST.md) §5 that still reads ⬜, and it needs two
    versions and a laptop, not a commit.
 6. **Windows.** Not built or run in this session. CI covers compile, format, lint and tests;

@@ -11,19 +11,20 @@
 // total in the field — exactly the class of failure that needs an instrument
 // rather than a reader.
 //
-// **CLOSED 2026-09-05 by pinning the endpoint at a TAG** —
-// `…/releases/download/v<version>/latest.json` — which is the other half of what
-// RG-83 always proposed. The alternative, publishing a full release, is refused by
-// `release.yml` while either platform is unsigned (RG-73), and it should be: a full
-// release of an unsigned build is a build a church cannot open, presented as the
-// stable one.
+// **The first repair was wrong in a way that looked right.** The endpoint was
+// pinned at each release's own tag — `…/releases/download/v0.2.0-1/latest.json` —
+// which resolves, so this script went green. It does not work: a build asks its
+// OWN release's manifest, is told its own version, and concludes it is up to date
+// for ever. The next release lives at a URL it has never heard of. The symptom was
+// printed by this very script, as `note: same version as this checkout — nothing
+// would update`, and read as benign.
 //
-// The pin has its own failure mode and its own guard: a version bump that leaves
-// the pin behind ships an updater looking at the PREVIOUS release for ever, and
-// silently, because the manifest still resolves. `scripts/version.mjs` therefore
-// owns the pin — `--set` moves it, and `--check` (a CI gate on every PR) refuses
-// to pass while it disagrees with the three version files, or while an endpoint has
-// drifted back to the `/latest/` shape that caused this in the first place.
+// The endpoint is now a CONSTANT: a permanent release tagged `updates` whose only
+// asset is `latest.json`, re-uploaded by `update-channel-promote.yml` whenever a
+// release is published. Every build ever shipped asks the same address, and that
+// address always describes the newest release. `scripts/version.mjs --check` — a
+// CI gate on every PR — refuses both drifts: back to `/latest/`, and forward to a
+// version tag.
 //
 // This is that instrument. It reads the endpoint OUT OF THE CONFIG rather than
 // restating it (a second copy of a URL is the next thing to drift), fetches it, and
@@ -32,13 +33,13 @@
 //   node scripts/check-updater.mjs          # report, exit 0 unless the channel is dead
 //   node scripts/check-updater.mjs --strict # exit 1 on anything but a live manifest
 //
-// It is NOT in CI on every push, deliberately, and the reason has changed shape:
-// between bumping the version and publishing that release, the pin points at a tag
-// that does not exist yet and this check is legitimately red. A red build on every
-// unrelated PR is a red build people learn to ignore. It belongs to the release
-// ceremony — see docs/RELEASING.md — and to anyone asking "can a church actually
-// receive a fix?". The **Update channel** workflow runs it on demand from the
-// Actions tab, which is when the answer matters.
+// It is NOT in CI on every push, deliberately: the channel describes the newest
+// PUBLISHED release, so on a branch that has bumped the version it legitimately
+// reports an older one, and until the first release is published after this change
+// it reports nothing at all. A red build on every unrelated PR is a red build
+// people learn to ignore. It belongs to the release ceremony — see
+// docs/RELEASING.md — and to anyone asking "can a church actually receive a fix?".
+// The **Update channel** workflow runs it on demand from the Actions tab.
 import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -123,7 +124,7 @@ for (const [file, url] of rows) {
     dead += 1;
     console.error(`  ✗ ${url}\n      (${file}) HTTP ${res.status}${
       res.status === 404 && url.includes('/releases/latest/')
-        ? " — GitHub's /releases/latest/ excludes PRE-RELEASES. Pin the endpoint at a tag instead: npm run version:set -- <version> rewrites it."
+        ? " — GitHub's /releases/latest/ excludes PRE-RELEASES. The endpoint should be the `updates` channel release; see update-channel-promote.yml."
         : ''
     }`);
     continue;

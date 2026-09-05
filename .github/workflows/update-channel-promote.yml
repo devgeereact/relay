@@ -1,0 +1,131 @@
+name: Promote to the update channel
+
+# THE UPDATE CHANNEL IS ONE FIXED ADDRESS, AND THIS IS WHAT MOVES IT.
+#
+# ── Why the endpoint is not a version tag ────────────────────────────────────
+#
+# `…/releases/latest/download/latest.json` returns 404 for this project, because
+# GitHub's `/latest/` excludes pre-releases and the signing gate refuses a real
+# release tag while either platform is unsigned (RG-73). So the endpoint was
+# pinned at the release's own tag instead — and that resolves, which is what made
+# it look right, and **the chain does not advance**: a 0.2.0-1 build asks
+# `…/download/v0.2.0-1/latest.json`, is told "version 0.2.0-1", and concludes it
+# is up to date. For ever. The next release lives at a URL it has never heard of.
+#
+# So the endpoint is now a CONSTANT — a permanent release tagged `updates` whose
+# only asset is `latest.json` — and this workflow re-uploads that asset every time
+# a release is published. Every build ever shipped looks at the same address, and
+# that address always describes the newest release.
+#
+# ── Why it runs on `published`, not on the tag ───────────────────────────────
+#
+# `release.yml` opens a **draft**, on purpose: a person looks at it before a
+# church does. A draft's assets are not publicly downloadable, so promoting the
+# manifest at build time would advertise a version whose installers 404 — an
+# update that fails halfway is worse than one that never appears. `published` is
+# the exact moment the artefacts become real.
+#
+# It is deliberately not a `workflow_dispatch` button: a manual step in the middle
+# of a release ceremony is a step that gets skipped, and the failure is silent
+# until the release after next.
+
+on:
+  release:
+    types: [published]
+  # Kept for repair: if a promotion ever fails, run it by hand against a tag.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag whose latest.json should become the channel'
+        required: true
+
+permissions:
+  contents: write # upload the manifest onto the `updates` release
+
+# One at a time. Two releases published a minute apart must not race to be the
+# channel — the loser would silently win, because the last upload is what stands.
+concurrency:
+  group: update-channel
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    name: Point the channel at the newest release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Promote
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          # Read through the ENVIRONMENT, never as an expression inside `run:` —
+          # a tag name is attacker-influenceable in principle, and an expression is
+          # substituted before bash sees it (release.yml has the same note, and
+          # CLAUDE.md rule 22 is about the comment version of this trap).
+          EVENT_TAG: ${{ github.event.release.tag_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+          CHANNEL_TAG: updates
+        run: |
+          set -euo pipefail
+          TAG="${EVENT_TAG:-$INPUT_TAG}"
+          if [ -z "$TAG" ]; then
+            echo "::error::no tag to promote"
+            exit 1
+          fi
+
+          # The channel release publishing itself must not promote itself.
+          if [ "$TAG" = "$CHANNEL_TAG" ]; then
+            echo "That is the channel release itself. Nothing to do."
+            exit 0
+          fi
+
+          # A DRAFT HAS NO PUBLIC ASSETS, so promoting one would advertise a
+          # version whose installers 404. `published` should mean this is false;
+          # assert it rather than assume it.
+          if [ "$(gh release view "$TAG" --repo "$REPO" --json isDraft -q .isDraft)" = "true" ]; then
+            echo "::error::$TAG is still a draft — its assets are not downloadable."
+            exit 1
+          fi
+
+          mkdir -p _channel
+          gh release download "$TAG" --repo "$REPO" --pattern latest.json --dir _channel
+          VERSION=$(node -p "require('./_channel/latest.json').version")
+          echo "Promoting $TAG → the channel advertises $VERSION"
+
+          # The channel release is created once and then only ever re-uploaded to.
+          # It is marked as a pre-release so it never becomes what `/releases/latest/`
+          # resolves to — this is a manifest, not something to install.
+          if ! gh release view "$CHANNEL_TAG" --repo "$REPO" >/dev/null 2>&1; then
+            cat > _channel/notes.md <<'NOTES'
+          This release exists so that every installed copy of Relay has ONE address to ask
+          for updates.
+
+          Its only asset is `latest.json` — the manifest describing the newest published
+          release — re-uploaded automatically whenever a release is published.
+
+          **There is nothing to install here.** The installers are on the release this
+          manifest points at.
+
+          Pinning the endpoint at a version tag instead *resolves*, and does not work: a
+          build would only ever be told about its own version, for ever. See
+          `.github/workflows/update-channel-promote.yml`.
+          NOTES
+            gh release create "$CHANNEL_TAG" --repo "$REPO" \
+              --title 'Update channel (not a download)' \
+              --prerelease \
+              --notes-file _channel/notes.md
+          fi
+
+          gh release upload "$CHANNEL_TAG" --repo "$REPO" _channel/latest.json --clobber
+
+          # Prove it from the outside, the way Relay will ask.
+          URL="https://github.com/$REPO/releases/download/$CHANNEL_TAG/latest.json"
+          SERVED=$(curl -sSL --retry 5 --retry-delay 3 --retry-all-errors "$URL" | node -p "JSON.parse(require('fs').readFileSync(0,'utf8')).version")
+          echo "$URL now serves version $SERVED"
+          if [ "$SERVED" != "$VERSION" ]; then
+            echo "::error::the channel serves $SERVED, expected $VERSION"
+            exit 1
+          fi

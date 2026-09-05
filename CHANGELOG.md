@@ -14,7 +14,7 @@ _Nothing yet._
 
 ---
 
-## [0.2.0-1] — 2026-09-05 · pre-release
+## [0.2.0-2] — 2026-09-05 · pre-release
 
 **A pre-release, not a release**, and the reason has not changed: neither the macOS
 nor the Windows build carries a code-signing certificate, so macOS will say *"Relay
@@ -29,9 +29,13 @@ was built, wired and signed — and the address it looked at returned "not found
 every time, since the day it was written. Nothing said so: the screen simply never
 offered an update, which looks exactly like being up to date.
 
-The address is fixed. Nothing about your copy changes today, but the next version
-can actually reach you, and **Settings → Updates** will tell you the truth about the
-channel either way — including when it cannot reach it at all.
+There is now one permanent address that always describes the newest version, and
+every future build asks it. **This is the first build that can be told about a
+newer one** — a copy you already have cannot, because the address it was built with
+does not exist. Updating to this version by hand is the last time you will have to.
+
+**Settings → Updates** tells you the truth about the channel either way, including
+when it cannot reach it at all.
 
 ### A list that fails to load no longer tells you it is empty
 
@@ -86,6 +90,10 @@ have — the version that shipped it could not, on any machine, which was found 
 fixed before this build. It also keeps the verse references in your service history
 intact while it repairs itself; the first attempt would have blanked every one of
 them.
+
+**0.2.0-1 was built and never published.** Its updater pointed at its own release,
+which answers with its own version — so it would have reported itself up to date for
+ever, and this entry would have been wrong. Caught before anyone could install it.
 
 ### Six verses were missing from the bundled Bible, and it shifted the ones after them
 
