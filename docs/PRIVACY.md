@@ -18,15 +18,17 @@ Short version:
 | **Which verses were detected** | Your computer | **No.** |
 | **Songs, media, announcements, service plans** | Your computer | **No.** |
 | **Service history** | Your computer | **No.** |
-| **The audio itself** | **Nowhere. It is never saved.** Audio is transcribed in memory and discarded. | **No.** |
+| **The audio itself** | **Nowhere, unless you turn on debug recording.** Audio is transcribed in memory and discarded — **except** while `RELAY_RECORD_WAV` is set, which writes the service to a file you name (see [Debug audio recording](#debug-audio-recording-off-by-default) below). Off unless you set it, no button turns it on. | **No.** |
 
 Everything is in one folder:
 
 - **macOS** — `~/Library/Application Support/com.relay.app/`
 - **Windows** — `%APPDATA%\com.relay.app\`
 
-Delete that folder and every trace of every service is gone. There is no copy
-anywhere else, because there is nowhere else.
+Delete that folder and every trace of every service is gone — with one exception,
+and it is one you have to have created deliberately: a WAV written by
+`RELAY_RECORD_WAV` lands wherever you named it, which is normally not that folder.
+Nothing else Relay writes lives outside it.
 
 ### Erasing one service, from inside Relay
 

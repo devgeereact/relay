@@ -21,11 +21,12 @@
   // looks armed and errors on click is worse than one that is plainly not.
   import { onMount } from 'svelte';
   import EmptyState from '../../ui/EmptyState.svelte';
+  import ErrorState from '../../ui/ErrorState.svelte';
   import Loading from '../../ui/Loading.svelte';
   import { humanError } from '../../errors.js';
   import { safeMode } from '../../boot/boot.js';
   import { live, screenBlack, rehearsing } from '../../stores/capture.js';
-  import { listMedia, deleteMedia, fireMedia, localIp } from '../../stores/capture.js';
+  import { listMedia, deleteMedia, fireMedia, localIp, readErrors } from '../../stores/capture.js';
   import VerseDeck from './VerseDeck.svelte';
 
   export let query = '';
@@ -224,6 +225,12 @@
       <div class="ml-body r-scroll">
         {#if loading}
           <Loading what="the media library" />
+        {:else if $readErrors.listMedia}
+          <!-- RG-95. `listMedia` swallows to `[]`, so an empty deck cannot tell a
+               library with nothing in it from a database that did not answer. The
+               operator was told "No media yet — add some with the Import button",
+               and would have imported the file again. -->
+          <ErrorState error={$readErrors.listMedia} onRetry={refresh} />
         {:else if !deck.length}
           <EmptyState
             message={query?.trim()

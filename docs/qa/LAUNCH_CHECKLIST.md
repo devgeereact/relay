@@ -10,7 +10,7 @@ checklist claiming a macOS signing certificate that has never existed. Do not ti
 `✅` verified by a command that was run · `⚠️` partially verified, with the limit stated ·
 `⬜` **never checked** · `❌` checked and failing.
 
-Last run: **2026-09-02**, against `0.1.0-4`. Findings live in
+Last run: **2026-09-05**, against `0.1.0-4`. Findings live in
 [RELAY_GAP.md](RELAY_GAP.md) §23; the reasoning is [RELAY_V1_AUDIT.md](../RELAY_V1_AUDIT.md).
 
 ---
@@ -19,8 +19,8 @@ Last run: **2026-09-02**, against `0.1.0-4`. Findings live in
 
 | | Gate | How |
 |---|---|---|
-| ✅ | Frontend suite passes | `npx vitest run` → 942 passing, 70 files |
-| ✅ | Rust suite passes | `cd src-tauri && cargo test` → 644 passing, 17 ignored |
+| ✅ | Frontend suite passes | `npx vitest run` — the counts live in [QA_HARNESS.md](QA_HARNESS.md) §0, which is the register; this row is about the gate, not the number |
+| ✅ | Rust suite passes | `cd src-tauri && cargo test` — same: §0 owns the count. This row said *942 / 70* and *644* for three days after both moved |
 | ✅ | Formatting | `cargo fmt --all -- --check` |
 | ✅ | Lints, warnings denied | `cargo clippy --all-targets -- -D warnings` — **this failed on 2026-09-02 and was fixed (RG-82). Run it; do not assume it** |
 | ✅ | Frontend builds | `npm run build` |
@@ -29,7 +29,7 @@ Last run: **2026-09-02**, against `0.1.0-4`. Findings live in
 | ✅ | Every citation resolves | `npx vitest run src/lib/crossrefs.test.js` |
 | ✅ | The packaged binary builds and launches | `npm run tauri build` → `.app` + `.dmg`, 0 warnings; launched 2026-09-03 with an isolated `RELAY_DB_PATH` and printed **exactly one** boot heartbeat. **CI's macOS job is still compile-only and says so** — this box is ticked by a human running the command |
 | ✅ | The hardened runtime does not kill the microphone | `./scripts/sign-local.sh` → `flags=0x10002(adhoc,runtime)`, mic entitlement present, usage string present. **Rule 17's trap reproduced without a certificate** |
-| ✅ | The LAN surface behaves in production, not just in tests | `curl` against the running bundle: `output.html` 200 + kiosk CSP + `nosniff`; `GET /api/black` → **405, `Allow: POST`, no CORS wildcard**; traversal → 404 |
+| ✅ | The LAN surface behaves in production, not just in tests | `curl` against the running bundle, re-run 2026-09-05 on a build carrying the ranged-media change: `output.html` 200 + kiosk CSP + `nosniff`; `GET /api/black` → **405, `Allow: POST`, no CORS wildcard**; traversal → 404; `/media/<id>` 200 + `Accept-Ranges`, `Range: bytes=500-599` → **206 + `Content-Range: bytes 500-599/1024`, byte-exact**, and a range past the end → **416** |
 | ⬜ | The update channel resolves | `npm run updater:check` — **currently HTTP 404 on both configured endpoints (RG-83). Publish a full, non-prerelease release and re-run** |
 | ⬜ | A clean machine installs it | never done |
 
@@ -48,6 +48,7 @@ Last run: **2026-09-02**, against `0.1.0-4`. Findings live in
 | ✅ | No `unwrap`/`expect` on the live path | grep, test-boundary aware, across the seven service modules |
 | ⚠️ | The whole path, driven end to end | `cargo test e2e::` → 38 tests — real commands, real DB, **mock window** |
 | ⬜ | The whole path, on a projector, in a room | one service on 2026-08-30; no second |
+| ⬜ | **A database from a released build survives the corpus repair** | RG-102 … RG-105. `sqlite3 "$HOME/Library/Application Support/com.relay.app/relay.db" "PRAGMA user_version; SELECT COUNT(*) FROM verses;"` before an upgrade and after. Held by tests; never run on a machine that has recorded real services |
 
 ## 3. Speech
 
@@ -90,7 +91,7 @@ Last run: **2026-09-02**, against `0.1.0-4`. Findings live in
 | ✅ | No secrets in the tree | `git grep`; `.env` untracked, `.env.example` tracked |
 | ✅ | No production dependency advisories | `npm audit --omit=dev` → 0 |
 | ⚠️ | Dev-toolchain advisories | 10, all `vite`/`vitest`/`svelte-hmr`/`esbuild` — none shipped |
-| ⬜ | Rust dependency advisories | `cargo audit` — not installed |
+| ⚠️ | Rust dependency advisories | `cargo audit` — **run for the first time 2026-09-05**. `h2` fixed by a lockfile update; **two 7.5-HIGH `quick-xml`** advisories remain, reaching Relay through `plist` through Tauri, and need an upstream bump (RG-101). The 18 warnings are unmaintained GTK3 Linux bindings, which neither shipped platform builds. **No CI job runs it** |
 | ✅ | Mutating LAN routes require POST and are denied CORS even on success | `main::remote_mutates` |
 | ⚠️ | The CSP | tight where it counts; grants `http:`/`ws:` to any host (RG-85). **`tauri dev` does not exercise it — verify against a packaged build** |
 | ✅ | Nothing a preacher said reaches the timeline | `timeline_tests`, and `timeline.test.js` from the other side |

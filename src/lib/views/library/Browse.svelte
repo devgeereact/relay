@@ -27,6 +27,7 @@
   // editable; the corpus is not ours to touch.
   import { onMount } from 'svelte';
   import EmptyState from '../../ui/EmptyState.svelte';
+  import ErrorState from '../../ui/ErrorState.svelte';
   import Loading from '../../ui/Loading.svelte';
   import VerseDeck from './VerseDeck.svelte';
   import { humanError } from '../../errors.js';
@@ -44,6 +45,7 @@
     live,
     screenBlack,
     rehearsing,
+    readErrors,
   } from '../../stores/capture.js';
 
   /** Canonical book list + chapter counts, loaded by the Library shell. */
@@ -310,7 +312,13 @@
 </script>
 
 <div class="br">
-  {#if !books.length}
+  {#if !books.length && $readErrors.listBooks}
+    <!-- RG-95. An empty book list is either a corpus that is not installed or a
+         database that did not answer, and only one of those is fixed in Settings →
+         data health. Sending an operator to the wrong screen costs the minutes
+         before a service. -->
+    <ErrorState error={$readErrors.listBooks} />
+  {:else if !books.length}
     <EmptyState message="No scripture is loaded. Check Settings → data health." />
   {:else}
     <div class="br-grid">
@@ -383,6 +391,11 @@
             <Loading what="the chapter" />
           {:else if searching}
             <Loading what="matching verses" />
+          {:else if searchMode && $readErrors.searchScripture}
+            <ErrorState error={$readErrors.searchScripture} onRetry={() => runSearch(query)} />
+          {:else if !searchMode && $readErrors.chapterVerses}
+            <!-- Not "that chapter is empty": no chapter of any Bible is. -->
+            <ErrorState error={$readErrors.chapterVerses} onRetry={() => open(book, chapter)} />
           {:else if !sorted.length}
             <EmptyState
               message={favouritesOnly

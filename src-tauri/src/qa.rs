@@ -1340,18 +1340,42 @@ mod cold_start {
         // The second half of the original finding, unchanged and still true: the
         // server OBS and the native window both hit does not read the DB at all, so
         // a repair that only fixed the column would have fixed nothing.
+        //
+        // The body lives in `serve_media_from_dir` since ranged replies were added
+        // (RG-96) — `serve_media_file` is now the two-line wrapper that supplies
+        // the real media directory. This reads BOTH, because a scanner pointed at
+        // the wrapper alone finds no `404`, no SQL and nothing else either: it
+        // passes by seeing nothing, which is the failure mode this repository has
+        // already had twice in its own instruments.
         let ch = std::fs::read_to_string("src/channels.rs").unwrap();
         let serve = ch
-            .split("async fn serve_media_file")
+            .split("async fn serve_media_from_dir")
             .nth(1)
             .and_then(|s| s.split("\n}\n").next())
-            .expect("serve_media_file");
+            .expect("serve_media_from_dir");
+        assert!(
+            serve.len() > 500,
+            "the media-serving body is not where this test is looking — it read {} \
+             characters, which is a scanner that has stopped scanning",
+            serve.len()
+        );
         assert!(
             !serve.contains("media_assets") && !serve.contains("path FROM"),
             "the media server now reads the DB — re-check what it does with an \
              empty path"
         );
         assert!(serve.contains("404"), "the miss answers 404");
+        // And the wrapper still routes to it, so the scan above is about the code
+        // that actually runs.
+        let wrapper = ch
+            .split("async fn serve_media_file")
+            .nth(1)
+            .and_then(|s| s.split("\n}\n").next())
+            .expect("serve_media_file");
+        assert!(
+            wrapper.contains("serve_media_from_dir"),
+            "serve_media_file no longer delegates to the body this test reads"
+        );
     }
 
     // ── 6. Migration retryability (CLAUDE.md §25) ────────────────────────────

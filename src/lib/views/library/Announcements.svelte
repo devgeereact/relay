@@ -16,7 +16,8 @@
   import { safeMode } from '../../boot/boot.js';
   import VerseDeck from './VerseDeck.svelte';
   import EmptyState from '../../ui/EmptyState.svelte';
-  import { listActiveTemplates, getContentTemplates, loadTemplates, templates } from '../../stores/capture.js';
+  import ErrorState from '../../ui/ErrorState.svelte';
+  import { listActiveTemplates, getContentTemplates, loadTemplates, templates, readErrors } from '../../stores/capture.js';
 
   export let startDraft = false; // New → "Draft announcement" opens the editor
   /** The Library's one search box. */
@@ -229,6 +230,11 @@
           onEdit={(d) => open(items.find((x) => x.id === d.id))}
           onDuplicate={duplicate}
           onDelete={(d) => remove(items.find((x) => x.id === d.id), new Event('x'))} />
+      {:else if !edit && $readErrors.listAnnouncements}
+        <!-- RG-95. `listAnnouncements` swallows to `[]`, so a database that did not
+             answer used to read as "no announcements yet" — and the operator's
+             answer to that sentence is to type the notices again. -->
+        <ErrorState error={$readErrors.listAnnouncements} onRetry={refresh} />
       {:else if !edit}
         <EmptyState
           message={query?.trim()

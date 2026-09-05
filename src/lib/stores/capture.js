@@ -1672,14 +1672,18 @@ return guardedRead('listBooks', async (call) => {
 }, []);
 }
 
-/** One chapter's verses, in order. */
+/**
+ * One chapter's verses, in order.
+ *
+ * GUARDED (RG-95). It used to swallow into a bare `catch {}`, so a chapter that
+ * failed to load was indistinguishable from a chapter with no verses in it — and
+ * the Bible pane's sentence for that is *"That chapter is empty"*, which is a
+ * claim about scripture rather than about the database.
+ */
 export async function chapterVerses(book, chapter) {
-try {
-  const call = await invoke();
-  return await call('chapter_verses', { book, chapter });
-} catch {
-  return [];
-}
+return guardedRead('chapterVerses', async (call) => {
+    return await call('chapter_verses', { book, chapter });
+}, []);
 }
 
 /** This machine's LAN IP so output URLs work on other devices. Null if offline. */

@@ -66,8 +66,8 @@ decision), [§6](#6-the-fix-process-start-to-finish) (what was actually changed)
 
 | | Command | Result |
 |---|---|---|
-| Frontend suite | `npx vitest run` | **952 passed**, 0 skipped, 71 files |
-| Rust suite | `cd src-tauri && cargo test` | **649 passed**, 0 failed, 17 ignored |
+| Frontend suite | `npx vitest run` | **959 passed**, 0 skipped, 71 files |
+| Rust suite | `cd src-tauri && cargo test` | **659 passed**, 0 failed, 17 ignored |
 | End-to-end fire path | `cargo test e2e::` | **38 passed, 0 ignored** |
 | Format gate | `cargo fmt --all -- --check` | clean |
 | Lint gate (a CI gate on both platforms) | `cargo clippy --all-targets -- -D warnings` | clean |
@@ -81,6 +81,7 @@ decision), [§6](#6-the-fix-process-start-to-finish) (what was actually changed)
 | Surface inventory | `node scripts/qa-inventory.mjs` | 48 components (47 reachable), 463 controls, 133 commands, **0 dead controls, 0 unreachable commands, 0 controls without an accessible name** |
 | Production dependencies | `npm audit --omit=dev` | **0 vulnerabilities** |
 | All dependencies | `npm audit` | 10, **every one in dev tooling** — see RG-98 |
+| **Rust dependencies** | `cargo audit` (installed 2026-09-04 — it had **never been run**) | 3 advisories: `h2` fixed by a lockfile update; **two 7.5-HIGH `quick-xml`** advisories reach Relay through `plist` through Tauri and need an upstream bump — RG-101 |
 | Update channel | `npm run updater:check` (written by this pass) | **HTTP 404 — the endpoint resolves to nothing** |
 
 **What did not run, and why.** There is no church, no projector, no congregation, no second
@@ -611,8 +612,21 @@ corpus and was pinned to it by a test. Two green checks, both agreeing with the 
 verses carry explicit NUMBERS rather than positions: the six missing verses inserted, the four
 splits merged, Revelation 12 back to 17 verses and Revelation 13:1 whole. `detection::VERSES_PER_CHAPTER`
 regenerated from the repaired file. `db::migrate` gained a forward-fill rung — any database whose
-verse count is not exactly 31,102 is re-imported once, so an install made before today is repaired
-on next launch rather than staying wrong until somebody reinstalls.
+verse count is not exactly 31,102 is re-imported once.
+
+> **CORRECTION, 2026-09-05.** The sentence that stood here — *"an install made before today is
+> repaired on next launch"* — **was false when it was written**, and the audit that wrote it did
+> not check it. The rung was placed in `baseline_forward_fill`, the `user_version == 0` branch,
+> and every shipped build stamps `user_version = 2` on a fresh install: no copy of Relay in
+> anyone's hands would ever have run it (RG-102). On the one branch it could run down, it opened
+> a transaction inside `import_full_kjv`'s and returned
+> `cannot start a transaction within a transaction`, which `db::open` propagates — so it had
+> never worked anywhere (RG-103). Both are fixed: `SCHEMA_VERSION` is 3, the repair is a rung in
+> `run_migrations` that probes the count **and** the gloss defect the count cannot see, and the
+> insert no longer owns its own transaction. Two further defects fell out of making it run at
+> all — it erased the verse reference from every past detection (RG-104), and it deletes 31,102
+> parent rows against an unindexed child column, costing **8.3 s at boot** (RG-105). The claim is
+> now held by tests that drive the real `migrate` on a v2 database and assert the DATA.
 
 **Files.** `src-tauri/data/kjv.json`, `src-tauri/src/db/verses.rs`, `src-tauri/src/db/mod.rs`,
 `src-tauri/src/detection.rs`, `src-tauri/src/qa.rs`.
@@ -946,6 +960,13 @@ Stated plainly, because a risk that is not named is a risk that is being hidden.
    test that serves a large file to three clients.
 10. **RG-85's CSP narrowing** cannot be verified without a kiosk screen, and an unverified CSP
     change is a blank screen in a church.
+11a. **The corpus repair now runs on real installs, and no real install has run it.** RG-102 …
+    RG-105 were found and fixed by reading and by tests on 2026-09-05; what none of that reaches
+    is a church laptop with a v2 database, a year of detections in it, and the boot that repairs
+    the Bible underneath them. The check that settles it takes one line per machine:
+    `sqlite3 "$HOME/Library/Application Support/com.relay.app/relay.db" "PRAGMA user_version; SELECT COUNT(*) FROM verses;"`
+    before the upgrade, and the same again after.
+
 11. **The bounded capture queue (F-06) has not been exercised by a real microphone.** The change
     is two lines inside cpal's real-time callback, and cpal's callback only runs with a real
     device open. The existing audio harness (`audio::gate`, `chunks_as_captured`) deliberately
@@ -1072,10 +1093,13 @@ Relay and a church is evidence, a certificate and a published release — not co
    project, and it costs nothing.
 6. **Have a native speaker review `book_aliases.json`** and translate the `live.*` keys in one
    locale. A partial translation is a working translation and ships the day it lands.
-7. Then the open register rows, in this order: **RG-95** (the error state on twelve more list
-   surfaces), **RG-96** (HTTP `Range` on the media server), **RG-98** (decide the dev-server
-   default), **RG-97** (rate limiting), **RG-85** (the CSP narrowing — but only with a kiosk
-   screen to verify it against).
+7. Then the open register rows. **RG-95, RG-96 and RG-97 were closed on 2026-09-04**, and
+   RG-102 … RG-107 and RG-109 on 2026-09-05. What is left, in this order: **RG-101** (the two
+   `quick-xml` advisories, which need a Tauri bump — and a CI job that runs `cargo audit`, so the
+   next one is not found eleven months late), **RG-108** (the kiosk hub's missing `Origin` check)
+   and **RG-85** (the CSP narrowing) — the last two both need a real kiosk screen to verify
+   against, and neither should be taken on without one — then **RG-98** (decide the dev-server
+   default).
 
 ---
 

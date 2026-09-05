@@ -18,6 +18,7 @@
   // order with this week's is one click rather than three.
   import { onMount } from 'svelte';
   import EmptyState from '../ui/EmptyState.svelte';
+  import ErrorState from '../ui/ErrorState.svelte';
   import Loading from '../ui/Loading.svelte';
   import TemplateRender from '../TemplateRender.svelte';
   import { humanError } from '../errors.js';
@@ -58,6 +59,7 @@
     listMedia,
     listAnnouncements,
     loadTemplates,
+    readErrors,
   } from '../stores/capture.js';
 
   // ── plans list ──
@@ -468,6 +470,11 @@
         {/each}
       {:else if plans.length}
         <div class="sp-hint r-mono">No plan matches “{planQ}”.</div>
+      {:else if $readErrors.listPlans}
+        <!-- RG-95. `listPlans` swallows to `[]`, so a database that did not answer
+             read as "No plans yet" — and the answer to that sentence, on a Tuesday
+             evening, is to build Sunday's service again from nothing. -->
+        <ErrorState compact error={$readErrors.listPlans} onRetry={refresh} />
       {:else}
         <div class="sp-hint r-mono">No plans yet.</div>
       {/if}
@@ -499,6 +506,8 @@
 
     {#if loading}
       <Loading what="plans" />
+    {:else if !openPlan && !plans.length && $readErrors.listPlans}
+      <ErrorState error={$readErrors.listPlans} onRetry={refresh} />
     {:else if !openPlan}
       <EmptyState message={plans.length ? 'Pick a plan on the left to open it.' : 'No plans yet — create one to start building a service.'} />
     {:else}

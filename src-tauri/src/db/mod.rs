@@ -50,7 +50,14 @@ const SCHEMA: &str = include_str!("../../../docs/data/schema.sql");
 
 /// The schema version this build expects. Bump it and add a rung to
 /// `run_migrations` when you change the schema.
-pub const SCHEMA_VERSION: i64 = 2;
+///
+/// **v3 is not a schema change. It is a DATA change**, and it is here for the
+/// same reason a column would be: the corpus repair of 2026-09-04 was written
+/// into `baseline_forward_fill`, which runs for a `user_version == 0` database
+/// and for nothing else — so every install made by v0.1.0-2, -3 or -4 (which
+/// stamp `user_version = 2` on creation) would have kept the six-verse-short,
+/// mis-numbered Bible for ever. A rung is what reaches an operator's file.
+pub const SCHEMA_VERSION: i64 = 3;
 
 fn user_version(conn: &Connection) -> rusqlite::Result<i64> {
     conn.query_row("PRAGMA user_version", [], |r| r.get(0))
@@ -77,6 +84,62 @@ fn run_migrations(conn: &Connection, from: i64) -> rusqlite::Result<()> {
     // real file, which no unit test was doing.
     if from < 2 {
         ensure_detection_evidence(conn)?;
+    }
+    // v3: the bundled KJV was wrong, and an already-installed copy has to be told.
+    //
+    // This is the same trap as the v2 rung above, walked into a second time and
+    // caught by an audit rather than by a church: the repair was placed in
+    // `baseline_forward_fill`, so it ran on brand-new databases and on nothing
+    // else. A fresh install seeds the corrected corpus and never needs this; an
+    // install from August needs exactly this and nothing above would give it.
+    if from < 3 {
+        ensure_corpus_repair(conn)?;
+    }
+    Ok(())
+}
+
+/// Repair a corpus imported before 2026-09-04, in place, once.
+///
+/// Two defects, one file, and **neither is visible from the schema**: the bundled
+/// KJV was six verses short and carried four split ones (31,100 against 31,102),
+/// and a verse number in that file is a POSITION — so every verse after a gap was
+/// renumbered and "Matthew 22:37" returned the words of 22:38. The second defect
+/// decided by WORDING which brace groups were marginal notes, so Luke 17:36
+/// rendered a note as scripture and Genesis 30:27 lost the supplied words
+/// "tarry: for".
+///
+/// ## Why two probes and not one
+///
+/// The count alone cannot see the gloss defect: the four split verses were merged
+/// and the six missing ones inserted in the same pass that fixed the glosses, so a
+/// database can hold 31,102 rows and still carry the wrong text. Genesis 30:27 is
+/// the cheapest witness to the second defect — it is one row, it is deterministic,
+/// and the word it lost is a word the KJV has.
+///
+/// Runs once per database (the version is stamped afterwards) and is a no-op on a
+/// corpus that is already right, so an operator who never had the broken build
+/// pays a single `COUNT(*)` and one indexed lookup at startup.
+fn ensure_corpus_repair(conn: &Connection) -> rusqlite::Result<()> {
+    // An install that has not imported a Bible at all is not a broken corpus —
+    // it is a database `baseline_forward_fill` or `seed` will fill. Repairing
+    // here would be a 31,102-row import on a machine that asked for none.
+    let have: i64 = conn.query_row("SELECT COUNT(*) FROM verses", [], |r| r.get(0))?;
+    if have == 0 {
+        return Ok(());
+    }
+    let count_wrong = have != 31_102;
+    let supplied_words_lost: bool = conn
+        .query_row(
+            "SELECT COUNT(*) FROM verses
+              WHERE book = 'Genesis' AND chapter = 30 AND verse = 27
+                AND text NOT LIKE '%tarry%'",
+            [],
+            |r| r.get::<_, i64>(0),
+        )
+        .unwrap_or(0)
+        > 0;
+    if count_wrong || supplied_words_lost {
+        reimport_full_kjv(conn)?;
     }
     Ok(())
 }
@@ -2207,6 +2270,141 @@ mod tests {
                 "{label}: {object} missing after migrating an existing install"
             );
         }
+    }
+
+    /// THE REPAIR HAS TO REACH THE DATABASE AN OPERATOR ALREADY HAS.
+    ///
+    /// The corpus repair of 2026-09-04 fixed a P0 — a correct reference, heard
+    /// correctly, gated correctly, showing the wrong verse's words — and put the
+    /// fix on the `user_version == 0` branch, which is the one branch no shipped
+    /// install is on: v0.1.0-2, -3 and -4 all stamp `user_version = 2` when they
+    /// create the file. So the defect was fixed for people who did not have it and
+    /// left in place for everybody who did.
+    ///
+    /// This drives the real `migrate` on a v2 database whose corpus is short, and
+    /// asserts the DATA, not the schema. Every other migration test in this file
+    /// checks that an object exists, and a rung on the dead branch passes all of
+    /// them.
+    #[test]
+    fn a_versioned_database_with_a_short_corpus_is_repaired_on_boot() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+        init_fresh(&conn).unwrap();
+
+        // The state a church's laptop is actually in: the August build's stamp,
+        // and a corpus with a hole in it.
+        conn.execute(
+            "DELETE FROM verses WHERE book = 'Matthew' AND chapter = 22 AND verse = 1",
+            [],
+        )
+        .unwrap();
+        set_user_version(&conn, 2).unwrap();
+        assert_ne!(verses::verse_count(&conn).unwrap(), 31_102);
+
+        migrate(&conn, false).unwrap();
+
+        assert_eq!(
+            verses::verse_count(&conn).unwrap(),
+            31_102,
+            "an install from August kept the mis-numbered Bible"
+        );
+        assert_eq!(user_version(&conn).unwrap(), SCHEMA_VERSION);
+        // And the second boot does no work: the version is stamped, and the probe
+        // is a count and one indexed lookup.
+        migrate(&conn, false).unwrap();
+        assert_eq!(verses::verse_count(&conn).unwrap(), 31_102);
+    }
+
+    /// The count cannot see the other half of the defect.
+    ///
+    /// The gloss rule decided by WORDING which brace groups were marginal notes,
+    /// so Genesis 30:27 lost the supplied words "tarry: for" while the row count
+    /// stayed exactly right. A database repaired by count alone would keep it.
+    #[test]
+    fn a_corpus_with_the_right_count_and_the_wrong_words_is_still_repaired() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+        init_fresh(&conn).unwrap();
+
+        let broken = "I pray thee, if I have found favour in thine eyes, \
+                      for I have learned by experience that the LORD hath blessed me for thy sake.";
+        conn.execute(
+            "UPDATE verses SET text = ?1
+              WHERE book = 'Genesis' AND chapter = 30 AND verse = 27",
+            [broken],
+        )
+        .unwrap();
+        set_user_version(&conn, 2).unwrap();
+        assert_eq!(
+            verses::verse_count(&conn).unwrap(),
+            31_102,
+            "count is right"
+        );
+
+        migrate(&conn, false).unwrap();
+
+        let text: String = conn
+            .query_row(
+                "SELECT text FROM verses WHERE book = 'Genesis' AND chapter = 30 AND verse = 27",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(
+            text.contains("tarry"),
+            "the supplied words are still missing after a migration: {text}"
+        );
+    }
+
+    /// A REPAIR MUST NOT ERASE THE RECORD OF WHAT WENT ON A WALL.
+    ///
+    /// `reimport_full_kjv` nulls `verse_id` on every detection to get past the
+    /// foreign key, and `service_detections` builds its reference by joining that
+    /// column — so before this, repairing a database silently stripped the
+    /// reference from every detection of every service ever recorded, leaving rows
+    /// with a time, a confidence and the heard text and no verse.
+    #[test]
+    fn repairing_the_corpus_keeps_the_reference_of_every_past_detection() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+        init_fresh(&conn).unwrap();
+
+        let vid: i64 = conn
+            .query_row(
+                "SELECT id FROM verses WHERE book = 'John' AND chapter = 3 AND verse = 16",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let s = create_service(&conn, "2026-08-30", "Sunday Service").unwrap();
+        let t = insert_transcript(&conn, s, 0.0, "for God so loved the world", "en", None).unwrap();
+        insert_detection(
+            &conn,
+            t,
+            Some(vid),
+            "direct",
+            0.9,
+            "auto",
+            Some(1.0),
+            Some("john three sixteen"),
+        )
+        .unwrap();
+
+        conn.execute(
+            "DELETE FROM verses WHERE book = 'Matthew' AND chapter = 22 AND verse = 1",
+            [],
+        )
+        .unwrap();
+        set_user_version(&conn, 2).unwrap();
+        migrate(&conn, false).unwrap();
+
+        let after = service_detections(&conn, s).unwrap();
+        assert_eq!(after.len(), 1);
+        assert_eq!(
+            after[0].reference.as_deref(),
+            Some("John 3:16"),
+            "the service record lost the verse it fired"
+        );
     }
 
     /// A detection must be able to say WHAT IT HEARD.

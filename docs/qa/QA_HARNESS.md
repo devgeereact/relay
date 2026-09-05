@@ -20,7 +20,7 @@ every edit: `.claude/hooks/relay-fast-gate.mjs`, path-filtered and report-only (
 
 ## 0. Current inventory
 
-Re-measured **2026-09-04** against the working tree. Every number here is produced by a command,
+Re-measured **2026-09-05** against the working tree. Every number here is produced by a command,
 and the command is named — a count you cannot reproduce is a rumour.
 
 > **Expect these to be wrong, and reach for the command rather than the value.** Every count in
@@ -31,8 +31,8 @@ and the command is named — a count you cannot reproduce is a rumour.
 
 | | Count | How to reproduce |
 |---|---|---|
-| Rust tests | **649 passing**, 17 ignored (666 declared) | `cd src-tauri && cargo test`. It read **644 / 661** before the 2026-09-04 corpus pass, which added 5 (4 in `db::verses::corpus_tests` pinning the bundled KJV to the KJV's own versification and the gloss rule to the fifteen verses it got wrong, 1 asserting no bundled verse is empty). It read **629 / 646** before the 2026-09-03 fix pass, which added 15 (5 import guard, 4 service erase, 3 history indexes, 3 LAN server). It read **630 / 647** until 2026-09-02, and that extra one was not a test: a duplicated `#[test]` attribute in `db/services.rs` registered one function twice. The same duplicate made `cargo clippy --all-targets -- -D warnings` fail, which is a CI gate — so the count register and the build gate were wrong in the same place, for the same reason |
-| Frontend tests | **952 passing**, 0 skipped, 71 files | `npx vitest run` — read the runner's own summary line. **Not** `vitest list \| wc -l`: that stream carries Svelte compiler warnings too and over-counted by 7. It read **927 / 68** before the 2026-09-03 fix pass (+5 `mediaimport`, +7 `updatechannel`, +3 `crossrefs`, +1 `hardrules`, +9 `v1audit` — the last of which holds the audit document to its own arithmetic, because two of its three scorecard totals were wrong in the first draft) |
+| Rust tests | **659 passing**, 17 ignored (676 declared) | `cd src-tauri && cargo test`. It read **654 / 671** before the 2026-09-05 migration pass, which added 5 (3 in `db` proving the corpus repair reaches a v2 database and keeps every past detection's reference — RG-102 … RG-104 — and 2 in `channels` for the kiosk deadline and the SVG policy). It read **649 / 666** before the 2026-09-04 LAN pass, which added 5 in `channels` (ranged media, RG-96; the connection cap and the whole-head deadline, RG-97). It read **644 / 661** before the 2026-09-04 corpus pass, which added 5 (4 in `db::verses::corpus_tests` pinning the bundled KJV to the KJV's own versification and the gloss rule to the fifteen verses it got wrong, 1 asserting no bundled verse is empty). It read **629 / 646** before the 2026-09-03 fix pass, which added 15 (5 import guard, 4 service erase, 3 history indexes, 3 LAN server). It read **630 / 647** until 2026-09-02, and that extra one was not a test: a duplicated `#[test]` attribute in `db/services.rs` registered one function twice. The same duplicate made `cargo clippy --all-targets -- -D warnings` fail, which is a CI gate — so the count register and the build gate were wrong in the same place, for the same reason |
+| Frontend tests | **959 passing**, 0 skipped, 71 files | `npx vitest run` — read the runner's own summary line. It read **952 / 71** before the 2026-09-04 pass, which added 7 `surface.test.js` cases (RG-95: one per list surface that used to show its empty sentence over a failed read). **Not** `vitest list \| wc -l`: that stream carries Svelte compiler warnings too and over-counted by 7. It read **927 / 68** before the 2026-09-03 fix pass (+5 `mediaimport`, +7 `updatechannel`, +3 `crossrefs`, +1 `hardrules`, +9 `v1audit` — the last of which holds the audit document to its own arithmetic, because two of its three scorecard totals were wrong in the first draft) |
 | `e2e.rs` tests | **38** (38 run, **0 ignored** — the file has carried no ignored test since R2-C and R2-D closed, DECISIONS §54) | `cd src-tauri && cargo test e2e::` |
 | Registered `#[tauri::command]` | **133** (five dead ones deleted 2026-08-30; `delete_service` added 2026-09-03, RG-89) | `grep -c '#\[tauri::command\]' src-tauri/src/main.rs` |
 | `.svelte` files | **48**, 22 of them views | `find src -name '*.svelte' | wc -l` |
@@ -176,11 +176,18 @@ Suggestion ≠ Auto-fire · Clear ≠ Blackout · Rehearsal ≠ Live
 Five of the six were already pinned by tests. Preview ≠ Programme was not, and closing it
 produced the two most interesting results of this whole build.
 
-**First: the component that reads like the safety model is not in the product.**
-`src/lib/views/library/PreviewProgram.svelte` is 312 lines of two-pane switcher whose header
+> **Read this section as history, and check the date.** It records what was found in
+> August 2026 and what was done about it *then*. Both of its subjects have since been
+> **deleted from the tree**: `PreviewProgram.svelte` on 2026-08-15, and with it the staging half
+> of the run rail and every test about a TAKE button. The paragraphs below are left because the
+> reasoning is worth keeping; the present tense in them is not. **§4.2 is the current state.**
+
+**First: the component that read like the safety model was not in the product.**
+`src/lib/views/library/PreviewProgram.svelte` **was** 312 lines of two-pane switcher whose header
 comment states the danger exactly — *"Relay used to fire on a single click. One slip of a
 trackpad put the wrong scripture on a wall in front of a congregation, instantly, with no
-undo"* — and **nothing imports it**. Fourteen tests were written against it and passed before
+undo"* — and **nothing imported it**. It was deleted on 2026-08-15; the file is not in the
+repository. Fourteen tests were written against it and passed before
 `scripts/qa-inventory.mjs` reported it unreachable on its first run. Fourteen green tests
 about a screen no operator can open is the audit's own failure mode, caught by the audit's own
 tool, which is the best argument for the tool I can offer.
@@ -200,10 +207,12 @@ The header does say "· Preview", in small grey label text, beside a pulsing amb
 indicators disagree and the louder one is wrong. Same class as the media bug already closed
 once ("the wall showed a photo, the topbar said ON AIR, and the monitor showed black").
 
-**FIXED — option (b).** The badge now describes the **pane**: staged → grey "Preview", and
-amber is reachable only when the pane is showing content a congregation can actually see. The
-fact the badge can no longer carry rides in a second, deliberately smaller chip (`.lo-behind`):
-**"Wall live"** in amber, or **"Wall: rehearsal"** in amethyst.
+**FIXED at the time — option (b), and then SUPERSEDED.** The badge was made to describe the
+**pane**: staged → grey "Preview", with the wall's own state in a second, smaller chip
+(`.lo-behind`). **Neither survives**: the staging half was removed a fortnight later (audit
+P1-2) because nothing could reach it, so there is no staged state for a badge to describe and
+`grep -rn 'lo-behind' src/` finds nothing. The rail's amber rule is the one that remained, and
+it is the one `liveoutputrail.test.js` pins today.
 
 Option (a) — badge-only — was rejected. It trades a wrong signal for a **missing** one on the
 single question this panel exists to answer, and staging is precisely the moment an operator
@@ -211,9 +220,11 @@ forgets what is still up. A panel titled LIVE OUTPUT that goes quiet about the w
 you touch the library is not more honest than one that shouts the wrong thing; it is quieter
 about the same failure.
 
-The chip is a warning, not decoration, so it stays absent when the wall is genuinely clear and
-when the screens are blacked out. `src/lib/liveoutputrail.test.js` is now **17 passing tests,
-none skipped**, five of them on this state alone.
+The chip was a warning, not decoration, so it stayed absent when the wall was genuinely clear
+and when the screens were blacked out. `src/lib/liveoutputrail.test.js` read **17 passing
+tests** at that point; it holds **11** today, and none of them is about staging — the five that
+were about this state went with the feature. Reproduce with
+`grep -cE '^\s*(it|test)\(' src/lib/liveoutputrail.test.js`.
 
 Full state of all six, with the file and test names, is in **§4.2**.
 
@@ -535,7 +546,7 @@ is not covered, however green its tests** — fourteen passing tests were writte
 | **Paraphrase ≠ Direct** | **Yes** | `detect.test.js`: a spoken reference is HEARD, a paraphrase is not "however high its score", the three methods get three distinguishable keys, and *"a paraphrase NEVER shows a percentage — at any score"* |
 | **Clear ≠ Blackout** | **Yes, as separate contracts** | `panic.test.js`: `clearScreens` returns FALSE on backend failure and the caller must not flash success; a failed clear raises the panic banner; *"blackout has the identical contract — it is a panic control too"*; a success clears a stale warning; no crying wolf with no backend at all |
 | **Cued ≠ On Air** | **Yes** | `transport.test.js`: Esc/clear takes the plan off air but REMEMBERS the position; blackout the same; a FAILED hand-fire leaves the plan exactly as it was; clearing twice is idempotent and does not lose the position |
-| **Preview ≠ Programme** | **Yes, now** | `src/lib/liveoutputrail.test.js` — 17 tests, none skipped: staging reaches nobody, TAKE hands the slide to the parent and fires nothing itself, TAKE is dead with nothing staged / in safe mode / mid-take, the monitor is honest in every state, amber never sits beside a staged slide, and the operator is still told when the wall is hot behind one |
+| **Preview ≠ Programme** | **Yes — on the surface that has one** | **Corrected 2026-09-05.** This row used to cite *"`liveoutputrail.test.js` — 17 tests"* about staging and a TAKE button, and **both the component and those tests were deleted on 2026-08-15** (audit P1-2): `PreviewProgram.svelte` had no importer and `Library.svelte::stage()` had no caller, so the preview half could not render. Scoring a safety distinction against deleted evidence is the failure this table exists to prevent. What holds it today: **`Live.svelte` owns the distinction for the plan path**, where it is implemented and reachable (`previewNext` / `previewCue` / `previewSlide` beside the program pane, both rendered through the one `TemplateRender`), and `r2livepath.test.js` §R2-E pins the Library's side as an ABSENCE — *"the Library run column has no preview half at all"*, *"the rail declares no preview prop and offers no Take button"*, and Go Live fires the queue, which is reachable. `liveoutputrail.test.js`'s 11 tests are about the monitor and the panic tiles: amber only when a congregation is genuinely looking, amethyst in rehearsal, no amber under a blackout, and a panic control that never reports a success it did not achieve |
 
 **Preview ≠ Programme was the gap you flagged, and closing it found two things.**
 

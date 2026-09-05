@@ -181,11 +181,33 @@ fn kjv_translation_id(conn: &Connection) -> rusqlite::Result<i64> {
 /// rows). Strips the `{…}` italic markers KJV uses for supplied words. Returns
 /// the verse count inserted.
 fn import_full_kjv(conn: &Connection, translation_id: i64) -> rusqlite::Result<usize> {
+    let tx = conn.unchecked_transaction()?;
+    let count = insert_full_kjv(&tx, translation_id)?;
+    tx.commit()?;
+    Ok(count)
+}
+
+/// The insert itself, with NO transaction of its own.
+///
+/// ## Why this is split out
+///
+/// `import_full_kjv` opened a transaction, and `reimport_full_kjv` called it from
+/// **inside** one — so every corpus repair returned
+/// `cannot start a transaction within a transaction`, which `db::open` propagates
+/// as a failure to open the database at all. That is the whole of the RG-99
+/// forward-fill: it could never once have run on an operator's machine, on any
+/// branch of `migrate`, and no test called it because both existing corpus tests
+/// build a fresh database (where `seed` calls the outer function, with no
+/// transaction open, and it works).
+///
+/// Transaction ownership belongs to the caller now: `import_full_kjv` for a fresh
+/// seed, `reimport_full_kjv` for a repair that must also take the old rows out
+/// atomically. A half-imported Bible is not a state a church may boot into.
+fn insert_full_kjv(tx: &Connection, translation_id: i64) -> rusqlite::Result<usize> {
     let raw = KJV_JSON.trim_start_matches('\u{feff}'); // strip UTF-8 BOM
     let books: Vec<KjvBook> = serde_json::from_str(raw)
         .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
 
-    let tx = conn.unchecked_transaction()?;
     let mut count = 0usize;
     {
         let mut stmt = tx.prepare(
@@ -211,8 +233,7 @@ fn import_full_kjv(conn: &Connection, translation_id: i64) -> rusqlite::Result<u
             }
         }
     }
-    tx.commit()?;
-    rebuild_verses_fts(conn)?;
+    rebuild_verses_fts(tx)?;
     Ok(count)
 }
 
@@ -585,10 +606,46 @@ pub(super) fn reimport_full_kjv(conn: &Connection) -> rusqlite::Result<()> {
     // A transaction makes the whole thing all-or-nothing: either the new corpus
     // lands, or the old one is still there. There is no state in between.
     let tx = conn.unchecked_transaction()?;
+    // WHICH VERSE EACH PAST DETECTION FIRED IS PART OF THE SERVICE RECORD.
+    //
+    // Nulling `verse_id` is what lets the delete past the foreign key, and on its
+    // own it is silent data loss: `service_detections` builds every reference by
+    // `LEFT JOIN verses`, so a history screen, a Sunday report and a replay of a
+    // repaired database would show rows with a time, a confidence and the heard
+    // text — and no reference at all, for every service ever recorded. So the
+    // link is taken down and put back, keyed by the reference rather than the id.
+    //
+    // The reference is the right key even though the old corpus numbered its
+    // verses wrongly: "Matthew 22:37" is what the wall said that morning, and it
+    // is what the record should keep saying. What changes after the repair is
+    // that the reference now resolves to the words the KJV actually has there.
+    let links: Vec<(i64, String, i64, i64)> = {
+        let mut q = tx.prepare(
+            "SELECT d.id, v.book, v.chapter, v.verse
+               FROM detections d JOIN verses v ON v.id = d.verse_id",
+        )?;
+        let rows = q.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()?
+    };
     tx.execute("UPDATE detections SET verse_id = NULL", [])?;
     tx.execute("DELETE FROM verses", [])?;
     let tid = kjv_translation_id(&tx)?;
-    import_full_kjv(&tx, tid)?;
+    insert_full_kjv(&tx, tid)?;
+    {
+        let mut put = tx.prepare(
+            "UPDATE detections SET verse_id = (
+                 SELECT id FROM verses
+                  WHERE translation_id = ?1 AND book = ?2 AND chapter = ?3 AND verse = ?4
+             ) WHERE id = ?5",
+        )?;
+        for (id, book, chapter, verse) in &links {
+            // A reference that no longer exists (it never did — it was a position
+            // in a chapter that was short a verse) leaves the link null, which is
+            // the honest answer and the state this function used to leave for
+            // EVERY row.
+            put.execute(rusqlite::params![tid, book, chapter, verse, id])?;
+        }
+    }
     tx.commit()?;
     Ok(())
 }

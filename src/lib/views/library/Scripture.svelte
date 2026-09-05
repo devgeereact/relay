@@ -6,6 +6,7 @@
   // search box in the Library — this pane used to carry a second one of its own.
   import { onMount } from 'svelte';
   import EmptyState from '../../ui/EmptyState.svelte';
+  import ErrorState from '../../ui/ErrorState.svelte';
   import Loading from '../../ui/Loading.svelte';
   import VerseDeck from './VerseDeck.svelte';
   import { humanError } from '../../errors.js';
@@ -20,6 +21,7 @@
     live,
     screenBlack,
     rehearsing,
+    readErrors,
   } from '../../stores/capture.js';
 
   export let query = '';
@@ -38,11 +40,17 @@
   let layout = 'grid';
   let page = 0;
   let perPage = 12;
-  onMount(async () => {
+  onMount(load);
+
+  // Named so the error state has something to retry with (RG-95). A read that
+  // failed is not an empty library, and the operator cannot tell the difference
+  // from a sentence that says "no saved verses yet".
+  async function load() {
+    loading = true;
     saved = (await listSavedScripture()) ?? [];
     template = (await listActiveTemplates().catch(() => []))[0] ?? null;
     loading = false;
-  });
+  }
 
   let lastQuery = null;
   $: if (query !== lastQuery) {
@@ -185,6 +193,13 @@
         <Loading what="saved scripture" />
       {:else if searching}
         <Loading what="matching verses" />
+      {:else if searchMode && $readErrors.searchScripture}
+        <!-- RG-95. A failed search returned `[]`, which read as "no such verse" —
+             so an operator hunting a reference mid-service retypes it instead of
+             being told the search itself did not run. -->
+        <ErrorState error={$readErrors.searchScripture} onRetry={() => doSearch(query)} />
+      {:else if !searchMode && $readErrors.listSavedScripture}
+        <ErrorState error={$readErrors.listSavedScripture} onRetry={load} />
       {:else if !numbered.length}
         <EmptyState
           message={searchMode

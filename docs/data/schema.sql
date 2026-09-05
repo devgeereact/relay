@@ -208,6 +208,9 @@ CREATE TABLE detections (
 
 CREATE INDEX idx_transcripts_service ON transcripts(service_id);
 CREATE INDEX idx_detections_transcript ON detections(transcript_id);
+-- Not for a query: the corpus repair deletes every verse, and without this
+-- SQLite scans `detections` once per deleted parent to enforce the reference.
+CREATE INDEX idx_detections_verse ON detections(verse_id);
 
 -- Operator-action log for a running service (distinct from a plan_items cue).
 CREATE TABLE cues (

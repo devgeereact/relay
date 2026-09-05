@@ -492,6 +492,107 @@ describe('R3-04 · CLOSED — a list does not say Empty before it knows', () => 
   });
 });
 
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RG-95 · THE SAME LIE, ON THE FIVE LIBRARY SURFACES THAT STILL TOLD IT
+//
+// RG-93 fixed History and left the pattern half-applied: `Channels`,
+// `TemplateGallery` and `History` read `readErrors`, and every other list showed
+// its empty sentence over a failed read. The sentences are the problem, not the
+// styling — "No songs yet — import or paste one", "No media yet — add some",
+// "No announcements yet — draft one" and "That chapter is empty" all tell an
+// operator to REDO WORK THEY HAVE ALREADY DONE, minutes before a service, on the
+// evidence of a read that never returned.
+//
+// One case per surface, each rejecting exactly the read that surface makes.
+describe('RG-95 · a list that failed to load never says the library is empty', () => {
+  /** Reject one command, answer everything else with an empty list. */
+  const onlyFails = (bad, why) =>
+    invoke.mockImplementation((cmd) =>
+      cmd === bad ? Promise.reject(why) : Promise.resolve([]),
+    );
+
+  itMounted('MediaLibrary says the reason, not "No media yet"', async () => {
+    onlyFails('list_media', 'database is locked');
+    const MediaLibrary = (await import('./views/library/MediaLibrary.svelte')).default;
+    const el = mountInto(MediaLibrary);
+    await until(() => !/Loading/.test(el.textContent), 'MediaLibrary to finish loading');
+
+    expect(el.textContent).not.toMatch(/No media yet/);
+    expect(el.querySelector('[role="alert"]')).toBeTruthy();
+  });
+
+  itMounted('Announcements says the reason, not "No announcements yet"', async () => {
+    onlyFails('list_announcements', 'disk I/O error');
+    const Announcements = (await import('./views/library/Announcements.svelte')).default;
+    const el = mountInto(Announcements);
+    await until(
+      () => el.querySelector('[role="alert"]'),
+      'Announcements to report the failed read',
+    );
+
+    expect(el.textContent).not.toMatch(/No announcements yet/);
+  });
+
+  itMounted('Scripture says the reason, not "No saved verses yet"', async () => {
+    onlyFails('list_saved_scripture', 'database is locked');
+    const Scripture = (await import('./views/library/Scripture.svelte')).default;
+    const el = mountInto(Scripture);
+    await until(() => el.querySelector('[role="alert"]'), 'Scripture to report the failed read');
+
+    expect(el.textContent).not.toMatch(/No saved verses yet/);
+  });
+
+  itMounted('LyricsPane says the reason, not "No songs yet"', async () => {
+    onlyFails('list_songs', 'database is locked');
+    const LyricsPane = (await import('./views/library/LyricsPane.svelte')).default;
+    const el = mountInto(LyricsPane);
+    await until(() => el.querySelector('[role="alert"]'), 'LyricsPane to report the failed read');
+
+    expect(el.textContent).not.toMatch(/No songs yet/);
+  });
+
+  itMounted('ServicePlanner says the reason, not "No plans yet"', async () => {
+    // The most expensive of the five sentences: an operator who believes it on a
+    // Tuesday evening rebuilds Sunday's service from nothing.
+    onlyFails('list_plans', 'database is locked');
+    const ServicePlanner = (await import('./views/ServicePlanner.svelte')).default;
+    const el = mountInto(ServicePlanner);
+    await until(
+      () => el.querySelector('[role="alert"]'),
+      'ServicePlanner to report the failed read',
+    );
+
+    expect(el.textContent).not.toMatch(/No plans yet/);
+  });
+
+  itMounted('ModelSetup shows the reason rather than an empty panel', async () => {
+    // Not a wrong sentence — NO sentence. The model list renders an `{#each}`, so a
+    // failed read drew a blank card on the one screen whose job is getting speech
+    // recognition working before a service.
+    onlyFails('list_models', 'network is unreachable');
+    const ModelSetup = (await import('./ModelSetup.svelte')).default;
+    const el = mountInto(ModelSetup);
+    await until(() => el.querySelector('[role="alert"]'), 'ModelSetup to report the failed read');
+  });
+
+  itMounted('Browse says the reason, not "That chapter is empty"', async () => {
+    // No chapter of any Bible is empty, so that sentence can only ever be
+    // describing a read that failed — which is why `chapterVerses` stopped
+    // swallowing into a bare `catch {}` and became a guarded read.
+    onlyFails('chapter_verses', 'database is locked');
+    const Browse = (await import('./views/library/Browse.svelte')).default;
+    const el = mountInto(Browse, {
+      books: [{ book: 'Genesis', chapters: 50 }],
+      book: 'Genesis',
+      chapter: 1,
+    });
+    await until(() => el.querySelector('[role="alert"]'), 'Browse to report the failed read');
+
+    expect(el.textContent).not.toMatch(/That chapter is empty/);
+  });
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // R3-05 · THE EMPTY STATE THAT MATTERS MOST NOW OFFERS THE ACTION
 //
