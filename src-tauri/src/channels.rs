@@ -1164,14 +1164,14 @@ pub async fn run_kiosk_server(
             };
             let ws = match tokio::time::timeout(
                 REQUEST_READ_TIMEOUT,
-                tokio_tungstenite::accept_async_with_config(stream, Some(cfg)),
+                tokio_tungstenite::accept_hdr_async_with_config(stream, origin_gate, Some(cfg)),
             )
             .await
             {
                 Ok(Ok(w)) => w,
-                // A handshake that never arrives and one that fails are the same
-                // outcome here: nothing to serve, so let the task end and give the
-                // slot back.
+                // A handshake that never arrives, one that fails and one that is
+                // refused are the same outcome here: nothing to serve, so let the
+                // task end and give the slot back.
                 Ok(Err(_)) | Err(_) => return,
             };
             let (mut write, mut read) = ws.split();
@@ -1707,6 +1707,118 @@ pub(crate) const MAX_HEAD_BYTES: usize = 8 * 1024;
 
 /// How many requests may be served at once. See the comment at the accept loop.
 pub(crate) const MAX_CONCURRENT_REQUESTS: usize = 64;
+
+/// The handshake callback: refuse a client whose `Origin` is not one of Relay's.
+///
+/// WHO IS ALLOWED TO LISTEN (RG-108). The hub subscribes a client to the content
+/// feed at ACCEPT — before and without a `hello` — and WebSockets are exempt from
+/// CORS, so any plain-`http:` page a congregant opened on the church wifi could
+/// `new WebSocket('ws://<relay>:8031')` and receive the service. What travels is
+/// not only the verse on the projector: `kiosk_content_json` carries `stage_note`,
+/// `next_reference` and `next_text` — the preacher's own monitor. DECISIONS §35
+/// accepts that somebody in the room can SEE the wall; this is content leaving the
+/// building, which SECURITY.md ranks above everything else.
+///
+/// The check has to be here rather than after `hello`, because a check after the
+/// subscription is a check after the leak.
+#[allow(
+    clippy::result_large_err,
+    reason = "the handshake callback's signature takes and returns http::Response by value"
+)]
+fn origin_gate(
+    req: &tokio_tungstenite::tungstenite::handshake::server::Request,
+    resp: tokio_tungstenite::tungstenite::handshake::server::Response,
+) -> Result<
+    tokio_tungstenite::tungstenite::handshake::server::Response,
+    tokio_tungstenite::tungstenite::handshake::server::ErrorResponse,
+> {
+    let origin = req
+        .headers()
+        .get("origin")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+    if kiosk_origin_allowed(origin.as_deref()) {
+        return Ok(resp);
+    }
+    // Printed, because the failure mode this creates is a screen that stays blank
+    // with no explanation, on a Sunday. The refusal names the origin and the way out.
+    println!(
+        "kiosk: refused a connection from origin {:?} — Relay serves its pages on \
+         :{}, so that is the origin it trusts. A kiosk page hosted elsewhere needs \
+         RELAY_KIOSK_ANY_ORIGIN=1.",
+        origin.unwrap_or_default(),
+        crate::sysprobe::HTTP_PORT
+    );
+    // 403, not the default. `ErrorResponse::new` builds a 200, and tungstenite
+    // refuses to write a SUCCESSFUL refusal — so the client got a bare close with
+    // no status at all, which is indistinguishable from Relay being down. A page
+    // that is refused should be able to say why in its own console.
+    let mut refusal = tokio_tungstenite::tungstenite::handshake::server::ErrorResponse::new(Some(
+        "origin not allowed".into(),
+    ));
+    *refusal.status_mut() = tokio_tungstenite::tungstenite::http::StatusCode::FORBIDDEN;
+    Err(refusal)
+}
+
+/// May a browser at this `Origin` join the kiosk feed? (RG-108)
+///
+/// ## The rule, and why each half of it
+///
+/// **No `Origin` at all → allowed.** A browser always sends one on a WebSocket
+/// handshake; a native client, a diagnostic tool and this repository's own tests
+/// do not. Refusing them would break the things that are not the threat.
+///
+/// **An origin on Relay's own ports → allowed.** The pages that legitimately open
+/// this socket are `output.html` and `stage.html`, and Relay serves them itself:
+/// on `:8032` in a packaged build, on the Vite dev port in development. The HOST
+/// cannot be checked, because it is whatever LAN address the church laptop has
+/// that morning — but the PORT is Relay's own, and a page on it came from Relay.
+/// An OBS browser source pointed at `http://<ip>:8032/output.html` sends exactly
+/// that origin, which is the client this must not break.
+///
+/// **Anything else → refused**, including `null` (a page opened from a file, and
+/// also what a sandboxed frame sends).
+///
+/// ## The escape hatch, and why it exists
+///
+/// A church that hosts its own kiosk page somewhere else — a Raspberry Pi, an
+/// existing signage box — is a real setup, and discovering on a Sunday that the
+/// screen no longer connects is the worst possible time. `RELAY_KIOSK_ANY_ORIGIN=1`
+/// restores the previous behaviour, and the refusal message above names it. It is
+/// an env var rather than a setting on purpose: it is a decision about the church's
+/// network, not about the service.
+pub(crate) fn kiosk_origin_allowed(origin: Option<&str>) -> bool {
+    let Some(origin) = origin else {
+        return true;
+    };
+    if std::env::var("RELAY_KIOSK_ANY_ORIGIN").is_ok_and(|v| v == "1") {
+        return true;
+    }
+    // Relay's OWN webview. A bundled page has no LAN port in its origin — Tauri
+    // serves it from `tauri://localhost` (macOS) or `http://tauri.localhost`
+    // (Windows). `Output.svelte` only reaches for the socket when the Tauri event
+    // bridge is missing, which should not happen in a packaged build — but a
+    // fallback that is refused is a blank wall, and this is Relay talking to
+    // itself.
+    if origin == "tauri://localhost" || origin == "http://tauri.localhost" {
+        return true;
+    }
+    let Some(rest) = origin.strip_prefix("http://") else {
+        // `https://` cannot be Relay (the LAN server is plain HTTP), and `null`
+        // is not a host.
+        return false;
+    };
+    let Some((_host, port)) = rest.rsplit_once(':') else {
+        // No port means :80, which Relay never serves on.
+        return false;
+    };
+    port.parse::<u16>()
+        .is_ok_and(|p| p == crate::sysprobe::HTTP_PORT || p == DEV_CONSOLE_PORT)
+}
+
+/// The Vite dev server's port. `output.html` is served from it under
+/// `npm run tauri dev`, and from nowhere in a packaged build.
+pub(crate) const DEV_CONSOLE_PORT: u16 = 5032;
 
 /// How many kiosk WebSocket clients may be connected at once.
 ///
@@ -2356,6 +2468,93 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// RG-108 · WHO MAY LISTEN TO THE SERVICE.
+    ///
+    /// The rule in one table, because each row is a real client: no origin is a
+    /// native tool, Relay's own ports are the pages Relay serves, and everything
+    /// else is a page somebody opened on the church wifi.
+    #[test]
+    fn only_a_page_relay_served_may_join_the_kiosk_feed() {
+        // A native client, a diagnostic tool, this file's other tests.
+        assert!(kiosk_origin_allowed(None));
+        // What an OBS browser source and a kiosk screen actually send — any LAN
+        // host, because the address is whatever the laptop has that morning.
+        assert!(kiosk_origin_allowed(Some("http://192.168.1.9:8032")));
+        assert!(kiosk_origin_allowed(Some("http://relay-laptop.local:8032")));
+        assert!(kiosk_origin_allowed(Some("http://localhost:8032")));
+        // Development: the same page, served by Vite.
+        assert!(kiosk_origin_allowed(Some("http://localhost:5032")));
+        // Relay's own webview, which has no LAN port in its origin at all.
+        assert!(kiosk_origin_allowed(Some("tauri://localhost")));
+        assert!(kiosk_origin_allowed(Some("http://tauri.localhost")));
+
+        // The finding itself: a page a congregant opened on the church wifi.
+        assert!(!kiosk_origin_allowed(Some("http://evil.example.com")));
+        assert!(!kiosk_origin_allowed(Some("http://192.168.1.55:3000")));
+        // A file opened from disk, and a sandboxed frame, both say this.
+        assert!(!kiosk_origin_allowed(Some("null")));
+        // Relay's LAN server is plain HTTP, so an https origin is not Relay.
+        assert!(!kiosk_origin_allowed(Some("https://192.168.1.9:8032")));
+        // No port is :80, which Relay never serves on.
+        assert!(!kiosk_origin_allowed(Some("http://192.168.1.9")));
+    }
+
+    /// And the refusal happens at the HANDSHAKE, before a single broadcast is
+    /// forwarded — the hub subscribes at accept, so a check after `hello` would be
+    /// a check after the leak.
+    #[tokio::test]
+    async fn a_page_from_another_origin_is_refused_the_socket() {
+        use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+        let port = free_port();
+        let hub = KioskHub::default();
+        tokio::spawn(run_kiosk_server(
+            log_only(),
+            hub.sender(),
+            hub.templates_handle(),
+            hub.clients_handle(),
+            hub.themes_handle(),
+            OutputHealth::default(),
+            port,
+        ));
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+
+        let mut req = format!("ws://127.0.0.1:{port}")
+            .into_client_request()
+            .unwrap();
+        req.headers_mut()
+            .insert("origin", "http://evil.example.com".parse().unwrap());
+        let refused = tokio_tungstenite::connect_async(req).await;
+        let err = refused.expect_err("a page on another origin was handed the service feed");
+        // A REAL 403, not a bare close. `ErrorResponse::new` builds a 200 and
+        // tungstenite will not write a successful refusal, so the first version of
+        // this dropped the connection with no status — indistinguishable, from the
+        // kiosk's side, from Relay being switched off.
+        match err {
+            tokio_tungstenite::tungstenite::Error::Http(r) => assert_eq!(
+                r.status(),
+                tokio_tungstenite::tungstenite::http::StatusCode::FORBIDDEN,
+                "the refusal has to say what it is"
+            ),
+            other => panic!("expected an HTTP refusal, got {other:?}"),
+        }
+
+        // …and a page Relay served is still let in, which is the half that breaks a
+        // church if it is got wrong.
+        let mut ok = format!("ws://127.0.0.1:{port}")
+            .into_client_request()
+            .unwrap();
+        ok.headers_mut().insert(
+            "origin",
+            format!("http://127.0.0.1:{}", crate::sysprobe::HTTP_PORT)
+                .parse()
+                .unwrap(),
+        );
+        assert!(
+            tokio_tungstenite::connect_async(ok).await.is_ok(),
+            "a page served by Relay was refused its own hub"
+        );
     }
 
     /// The kiosk port gets the same deadline the HTTP port has.

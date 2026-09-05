@@ -67,7 +67,7 @@ decision), [§6](#6-the-fix-process-start-to-finish) (what was actually changed)
 | | Command | Result |
 |---|---|---|
 | Frontend suite | `npx vitest run` | **964 passed**, 0 skipped, 71 files |
-| Rust suite | `cd src-tauri && cargo test` | **660 passed**, 0 failed, 17 ignored |
+| Rust suite | `cd src-tauri && cargo test` | **663 passed**, 0 failed, 17 ignored |
 | End-to-end fire path | `cargo test e2e::` | **38 passed, 0 ignored** |
 | Format gate | `cargo fmt --all -- --check` | clean |
 | Lint gate (a CI gate on both platforms) | `cargo clippy --all-targets -- -D warnings` | clean |
@@ -960,6 +960,17 @@ Stated plainly, because a risk that is not named is a risk that is being hidden.
    test that serves a large file to three clients.
 10. **RG-85's CSP narrowing** cannot be verified without a kiosk screen, and an unverified CSP
     change is a blank screen in a church.
+11b. **Two things about the 2026-09-05 LAN narrowing that only a room can answer.** *(a)* The
+    console's CSP no longer grants `http:` to every host, and `tauri dev` does not exercise the
+    CSP at all — so nobody has yet watched a **background video paint on a projector** under the
+    narrowed policy. The packaged build boots and prints its one heartbeat, which proves the
+    bundle loads; it does not prove a media layer renders. If it does not, the output page's own
+    console names the directive that blocked it. *(b)* The kiosk hub now refuses a handshake whose
+    `Origin` is not one Relay served. **No OBS install here could confirm what `Origin` a real
+    browser source sends** — the reasoning is that it is the page's own `:8032` origin, and
+    `RELAY_KIOSK_ANY_ORIGIN=1` exists precisely because that reasoning could be wrong on somebody's
+    setup.
+
 11a. **The corpus repair now runs on real installs, and no real install has run it.** RG-102 …
     RG-105 were found and fixed by reading and by tests on 2026-09-05; what none of that reaches
     is a church laptop with a v2 database, a year of detections in it, and the boot that repairs
@@ -1094,12 +1105,13 @@ Relay and a church is evidence, a certificate and a published release — not co
 6. **Have a native speaker review `book_aliases.json`** and translate the `live.*` keys in one
    locale. A partial translation is a working translation and ships the day it lands.
 7. Then the open register rows. **RG-95, RG-96 and RG-97 were closed on 2026-09-04**, and
-   RG-102 … RG-107 and RG-109 on 2026-09-05. What is left, in this order: **RG-101** (the two
-   `quick-xml` advisories, which need a Tauri bump — and a CI job that runs `cargo audit`, so the
-   next one is not found eleven months late), **RG-108** (the kiosk hub's missing `Origin` check)
-   and **RG-85** (the CSP narrowing) — the last two both need a real kiosk screen to verify
-   against, and neither should be taken on without one — then **RG-98** (decide the dev-server
-   default).
+   RG-85, RG-102 … RG-112 on 2026-09-05 — including the two this audit had declined: the kiosk
+   hub now refuses a handshake from a page Relay did not serve (RG-108), and the console's policy
+   names Relay's own ports instead of the whole internet (RG-85). Both were probed against the
+   packaged binary; what neither can prove without a room is in [§16](#16-remaining-risks--what-could-not-be-verified).
+   What is left: **RG-101** (the two `quick-xml` advisories, which need a Tauri bump — and a CI job
+   that runs `cargo audit`, so the next one is not found eleven months late) and **RG-98** (decide
+   the dev-server default).
 
 ---
 

@@ -93,7 +93,8 @@ Last run: **2026-09-05**, against `0.1.0-4`. Findings live in
 | ⚠️ | Dev-toolchain advisories | 10, all `vite`/`vitest`/`svelte-hmr`/`esbuild` — none shipped |
 | ⚠️ | Rust dependency advisories | `cargo audit` — **run for the first time 2026-09-05**. `h2` fixed by a lockfile update; **two 7.5-HIGH `quick-xml`** advisories remain, reaching Relay through `plist` through Tauri, and need an upstream bump (RG-101). The 18 warnings are unmaintained GTK3 Linux bindings, which neither shipped platform builds. **No CI job runs it** |
 | ✅ | Mutating LAN routes require POST and are denied CORS even on success | `main::remote_mutates` |
-| ⚠️ | The CSP | tight where it counts; grants `http:`/`ws:` to any host (RG-85). **`tauri dev` does not exercise it — verify against a packaged build** |
+| ⚠️ | The CSP | **Narrowed 2026-09-05 (RG-85)**: `img-src`/`media-src` are `http://*:8032` and `connect-src` is `ws://*:8031` — Relay's own ports, any host, because a LAN address cannot be named in a static policy. Held by `qa::kiosk_headers::the_console_policy_allows_relays_own_media_url_and_no_other_host`, and the packaged build boots and prints its one heartbeat. **Still ⚠️ because `tauri dev` does not exercise the CSP and nobody has watched a background video paint on a projector under it** |
+| ✅ | Only a page Relay served may join the kiosk feed | **RG-108, DECISIONS §64.** Probed against the packaged binary: `101` for no origin, `:8032` on two hosts, `:5032` and `tauri://localhost`; **`403`** for `evil.example.com`, `null`, a LAN host on `:3000` and an `https://` origin. `RELAY_KIOSK_ANY_ORIGIN=1` is the escape hatch and the refusal names it. **What no instrument here could check: the `Origin` a real OBS browser source sends** |
 | ✅ | Nothing a preacher said reaches the timeline | `timeline_tests`, and `timeline.test.js` from the other side |
 | ✅ | Crash reports drop free text wholesale rather than filtering it | `telemetry::scrub` |
 

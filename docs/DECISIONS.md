@@ -2820,3 +2820,82 @@ reintroduced, and both fail), plus `report.test.js` — including a test that fe
 the report the old impossible `'suggested'`/`'dismissed'` detection rows and
 requires them to come back **null**, so the previous shape cannot be restored by
 accident.
+
+---
+
+## 64. The LAN is trusted to WATCH the wall, and no longer to eavesdrop on the preacher (2026-09-05)
+
+**§35 accepted an unauthenticated LAN control plane, deliberately and with the
+reasoning written out: anybody already on the church wifi can see the wall, so a
+password on the phone remote would be theatre. That decision was about
+`:8032` — the HTTP control plane — and it was quietly doing a second job it was
+never asked to do.**
+
+The kiosk hub on `:8031` subscribes a client to the content feed **at accept**,
+before and without a `hello`. WebSockets are exempt from CORS, so a plain-`http:`
+page a congregant opened on their phone, on the church wifi, could
+`new WebSocket('ws://<relay>:8031')` and receive the service. And what travels is
+not only what is on the projector: `kiosk_content_json` carries `stage_note`,
+`next_reference` and `next_text` — **the preacher's own monitor**, which is the
+one surface in Relay that exists precisely because the congregation cannot see it.
+
+### Why this is not a re-litigation of §35
+
+§35 accepts that **a person in the room can see the wall.** That is unavoidable and
+it costs nothing: they are in the room. What the hub was additionally granting is
+**content leaving the building** — a page on a phone can relay the feed anywhere,
+and `docs/SECURITY.md` §1 ranks exfiltration above every other harm in this product.
+Those are different claims and only the first one was ever decided.
+
+### The check, and why it is by PORT
+
+`channels::kiosk_origin_allowed` refuses a handshake whose `Origin` is not one of
+Relay's own. It cannot check the HOST, because the host is whatever LAN address the
+church laptop was given that morning — but it can check the **port**, and the pages
+that legitimately open this socket are ones Relay served itself: `:8032` in a
+packaged build, `:5032` under `npm run tauri dev`, plus Relay's own webview origin
+(`tauri://localhost`). An OBS browser source pointed at
+`http://<ip>:8032/output.html` sends exactly that origin, which is the client this
+must not break.
+
+**No `Origin` header at all is allowed.** A browser always sends one on a WebSocket
+handshake; a native client, a diagnostic tool and this repository's own tests do
+not. Refusing them would break the things that are not the threat, and would not
+stop the thing that is.
+
+### The escape hatch is deliberate, and it is an environment variable
+
+A church that hosts its own kiosk page somewhere else — a Raspberry Pi, an existing
+signage box — is a real setup, and finding out on a Sunday morning that the screen
+no longer connects is the worst possible time to discover a security improvement.
+`RELAY_KIOSK_ANY_ORIGIN=1` restores the old behaviour, and **the refusal is printed
+with that variable named in it**, so the way out is in the same place as the
+problem. It is an environment variable rather than a Settings toggle because it is
+a decision about the church's network, taken once, not a decision about a service.
+
+The refusal is a real **403**, not a dropped connection. The first version returned
+`ErrorResponse::new(…)`, which builds a 200 — and tungstenite will not write a
+successful refusal, so the socket simply closed with no status: from the kiosk's
+side, indistinguishable from Relay being switched off.
+
+### What was narrowed at the same time, and what was not
+
+`tauri.conf.json`'s policy granted `http:` and `ws:` — every host, every port — to
+`img-src`, `media-src` and `connect-src`. The reason was real (the media server and
+the kiosk hub cannot be TLS on a LAN appliance) and the grant was far wider than the
+need. It was also **reachable**: `TemplateRender`'s `bgPaint` emits
+`url("${L.image}")` straight from template JSON, so a template that arrived by email
+beaconed an attacker's URL the moment an operator previewed it — the church's IP and
+the time it was opened, out of an app whose first promise is that nothing leaves the
+device. The grants are now `http://*:8032` and `ws://*:8031`: Relay's own ports, any
+host, because the host cannot be named in a static policy.
+
+**What is still not verified, and it is the same sentence RG-85 always carried:**
+`tauri dev` does not exercise the CSP at all. The narrowing is held by a test that
+reads the policy out of `tauri.conf.json` and asserts it still permits the media URL
+`main::fire_media` actually builds while refusing an arbitrary host, and by a
+packaged build that boots and prints its one heartbeat — which proves the bundle
+still loads. It does **not** prove that a background video renders on a projector.
+The first person to put a media background on a wall with this build should check
+that it paints, and if it does not, the browser console on the output page names the
+directive that blocked it.

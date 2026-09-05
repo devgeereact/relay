@@ -1718,4 +1718,111 @@ mod kiosk_headers {
         assert!(policy.contains("object-src 'none'"));
         assert!(policy.contains("script-src 'self'"));
     }
+
+    /// RG-85 · THE OPERATOR CONSOLE'S POLICY NAMES THE LAN, NOT THE INTERNET.
+    ///
+    /// `tauri.conf.json` granted `http:` — every host, every port — to `img-src`,
+    /// `media-src` and `connect-src`, and the reason was real: the media server and
+    /// the kiosk hub cannot be TLS on a LAN appliance. The grant was written far
+    /// wider than the need, and it was **reachable**: `TemplateRender`'s `bgPaint`
+    /// emits `url("${L.image}")` straight from template JSON, so a template that
+    /// arrived by email beaconed an attacker's `http://` URL the moment an operator
+    /// previewed it — the church's IP and the time it was opened, out of an app
+    /// whose first promise is that nothing leaves the device.
+    ///
+    /// The narrowing is by PORT, because a LAN address cannot be named in a static
+    /// policy: `http://*:8032` is Relay's own media server on any host, and
+    /// `ws://*:8031` its kiosk hub. Both are the ports this binary opens.
+    ///
+    /// **This test cannot prove a kiosk screen still renders** — `tauri dev` does
+    /// not exercise the CSP at all, and only a packaged build driven through real
+    /// media playback can answer that. What it proves is that the policy still
+    /// permits the URL shape Relay itself generates, and no longer permits an
+    /// arbitrary host, which is the half that a change could silently get wrong.
+    #[test]
+    fn the_console_policy_allows_relays_own_media_url_and_no_other_host() {
+        let conf = include_str!("../tauri.conf.json");
+        let csp = conf
+            .split("\"csp\"")
+            .nth(1)
+            .and_then(|s| s.split('"').nth(1))
+            .expect("no csp in tauri.conf.json");
+        assert!(
+            csp.len() > 100,
+            "the policy read back as {csp:?} — this test is not reading a policy"
+        );
+
+        let directive = |name: &str| -> String {
+            csp.split(';')
+                .map(str::trim)
+                .find(|d| d.starts_with(name))
+                .unwrap_or_else(|| panic!("{name} is missing"))
+                .to_string()
+        };
+
+        for name in ["img-src", "media-src", "connect-src"] {
+            let d = directive(name);
+            // A bare `http:` is the whole internet. It is the thing that was there.
+            assert!(
+                !d.split_whitespace().any(|t| t == "http:" || t == "ws:"),
+                "{name} still grants every host: {d:?}"
+            );
+        }
+
+        // The URL `main::fire_media` actually builds, on a real LAN address.
+        let media = "http://192.168.1.9:8032/media/12";
+        for name in ["img-src", "media-src"] {
+            assert!(
+                csp_allows(&directive(name), media),
+                "{name} would block Relay's own media URL — a background video on the \
+                 wall goes black and nothing says why"
+            );
+        }
+        assert!(
+            csp_allows(&directive("connect-src"), "ws://192.168.1.9:8031"),
+            "connect-src would block the kiosk hub"
+        );
+        // And the beacon RG-85 was actually about.
+        assert!(
+            !csp_allows(&directive("img-src"), "http://evil.example.com/beacon.png"),
+            "an emailed template can still call home"
+        );
+        assert!(
+            !csp_allows(&directive("img-src"), "http://192.168.1.9:9999/beacon.png"),
+            "any port on the LAN is still the network"
+        );
+    }
+
+    /// Does one CSP directive permit one URL? Enough of the host-source grammar for
+    /// the sources this policy uses: `scheme:`, `scheme://host[:port]`, and `*` as a
+    /// whole host. Deliberately small — a full CSP parser here would be a second
+    /// implementation to be wrong in.
+    fn csp_allows(directive: &str, url: &str) -> bool {
+        let (scheme, rest) = url.split_once("://").expect("url with a scheme");
+        let (host, port) = match rest.split('/').next().unwrap_or("").split_once(':') {
+            Some((h, p)) => (h.to_string(), p.to_string()),
+            None => (
+                rest.split('/').next().unwrap_or("").to_string(),
+                String::new(),
+            ),
+        };
+        directive.split_whitespace().skip(1).any(|src| {
+            if let Some(s) = src.strip_suffix(':') {
+                return s == scheme; // `http:` — the whole scheme
+            }
+            let Some((s, hostpart)) = src.split_once("://") else {
+                return false; // 'self', 'none', data:, blob: — handled above or not a host
+            };
+            if s != scheme {
+                return false;
+            }
+            let (shost, sport) = match hostpart.split_once(':') {
+                Some((h, p)) => (h, p),
+                None => (hostpart, ""),
+            };
+            let host_ok = shost == "*" || shost == host;
+            let port_ok = sport.is_empty() || sport == "*" || sport == port;
+            host_ok && port_ok
+        })
+    }
 }
