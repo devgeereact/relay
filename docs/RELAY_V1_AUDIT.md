@@ -66,7 +66,7 @@ decision), [§6](#6-the-fix-process-start-to-finish) (what was actually changed)
 
 | | Command | Result |
 |---|---|---|
-| Frontend suite | `npx vitest run` | **962 passed**, 0 skipped, 71 files |
+| Frontend suite | `npx vitest run` | **964 passed**, 0 skipped, 71 files |
 | Rust suite | `cd src-tauri && cargo test` | **660 passed**, 0 failed, 17 ignored |
 | End-to-end fire path | `cargo test e2e::` | **38 passed, 0 ignored** |
 | Format gate | `cargo fmt --all -- --check` | clean |

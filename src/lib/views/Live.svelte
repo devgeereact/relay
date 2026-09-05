@@ -34,6 +34,7 @@
   import { registerContext } from '../shortcuts.js';
   import { t } from '../i18n.js';
   import EmptyState from '../ui/EmptyState.svelte';
+  import ErrorState from '../ui/ErrorState.svelte';
   import Loading from '../ui/Loading.svelte';
   import { heard, methodKey, inLibrary } from '../detect.js';
   import DetectionInspector from '../DetectionInspector.svelte';
@@ -90,6 +91,7 @@
     setSensitivity,
     pushAnnouncement,
     verseRepeatCount,
+    readErrors,
   } from '../stores/capture.js';
 
   // ── the plan being RUN (not edited) ──────────────────────────────────────
@@ -140,6 +142,12 @@
   // Now it matches the sentence above it: verse mode means something that did not
   // come from the plan is genuinely IN FRONT OF PEOPLE.
   $: mode = openPlan && items.length && !($live && !$screenBlack && !planOnAir) ? 'slide' : 'verse';
+
+  // Named so the plan picker's error state has something to retry with (RG-95).
+  async function loadPlans() {
+    plans = await listPlans().catch(() => []);
+    plansLoaded = true;
+  }
 
   async function loadPlan(p) {
     openPlan = p;
@@ -295,8 +303,7 @@
     await loadTemplates().catch(() => {});
     await loadDefaultTemplate().catch(() => {});
     channels = await listOutputChannels().catch(() => []);
-    plans = await listPlans().catch(() => []);
-    plansLoaded = true;
+    await loadPlans();
 
     // Resume where the operator actually was. The output windows are separate
     // webviews and survive a console crash, so the verse is still on the wall —
@@ -1137,7 +1144,11 @@
             {/if}
           </div>
         {:else}
-          <EmptyState message="No screens yet — add one in the Outputs tab." />
+          {#if $readErrors.listOutputChannels}
+            <ErrorState compact error={$readErrors.listOutputChannels} />
+          {:else}
+            <EmptyState message="No screens yet — add one in the Outputs tab." />
+          {/if}
         {/each}
       </div>
       {#if nowhereToShow}
@@ -1456,6 +1467,11 @@
           {/each}
           {#if !itemsLoaded}
             <Loading what="cues" compact />
+          {:else if !items.length && $readErrors.planItems}
+            <!-- RG-95, last two surfaces. `planItems` swallowed to `[]`, so a read
+                 that failed rendered "this plan has no cues yet" — on the RUN
+                 surface, mid-service, about a plan the operator built. -->
+            <ErrorState compact error={$readErrors.planItems} onRetry={() => loadPlan(openPlan)} />
           {:else if !items.length}
             <EmptyState message={$t('live.plan_no_cues')} />
           {/if}
@@ -1482,6 +1498,8 @@
                a full library that they had lost their work. -->
           {#if !plansLoaded}
             <Loading what="plans" compact />
+          {:else if !plans.length && $readErrors.listPlans}
+            <ErrorState compact error={$readErrors.listPlans} onRetry={loadPlans} />
           {:else if !plans.length}
             <EmptyState message={$t('live.no_plans')} />
           {/if}

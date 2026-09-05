@@ -629,6 +629,11 @@
                 </div>
               {/each}
             {/each}
+          {:else if $readErrors.planItems}
+            <!-- RG-95, last two surfaces. `planItems` swallowed to `[]`, so a read
+                 that failed said "Empty plan" about a plan the operator spent an
+                 evening building. -->
+            <ErrorState error={$readErrors.planItems} onRetry={loadItems} />
           {:else}
             <div class="sp-drop r-mono">Empty plan — use ＋ Add Cue.</div>
           {/if}

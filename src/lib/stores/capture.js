@@ -952,14 +952,24 @@ return await call('duplicate_plan', {
 });
 }
 
-/** Ordered cues of a plan. */
+/**
+ * Ordered cues of a plan.
+ *
+ * GUARDED (RG-95). It swallowed into a bare `catch {}`, so the run surface and the
+ * Planner both rendered "This plan has no cues yet" over a read that failed — a
+ * sentence that, ten minutes before a service, tells an operator their plan is
+ * empty and their Tuesday evening is gone.
+ *
+ * **It stays a GROUP 2 read and must not be promoted to one that throws.**
+ * `Live.svelte::loadPlan` sets `itemsLoaded = false`, awaits this, and sets it
+ * true afterwards with no `finally` — a throw there leaves the run surface saying
+ * *Loading cues…* for the rest of the service. The fallback is what keeps that
+ * flag moving; `readErrors` is what makes the failure visible.
+ */
 export async function planItems(planId) {
-try {
-  const call = await invoke();
-  return await call('plan_items', { planId });
-} catch {
-  return [];
-}
+return guardedRead('planItems', async (call) => {
+    return await call('plan_items', { planId });
+}, []);
 }
 
 /** Append a cue of any type. `payload` is serialized to JSON here. */

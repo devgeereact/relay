@@ -566,6 +566,52 @@ describe('RG-95 · a list that failed to load never says the library is empty', 
     expect(el.textContent).not.toMatch(/No plans yet/);
   });
 
+  itMounted('the Planner cue table says the reason, not "Empty plan"', async () => {
+    // The last two surfaces RG-95 could not reach, because `planItems` swallowed
+    // into a bare `catch {}` and there was no key to read. "Empty plan — use ＋ Add
+    // Cue." over a failed read tells an operator the evening they spent building
+    // Sunday is gone.
+    invoke.mockImplementation((cmd) => {
+      if (cmd === 'list_plans') {
+        return Promise.resolve([{ id: 1, title: 'Sunday', plan_date: '2026-09-06', cue_count: 3 }]);
+      }
+      if (cmd === 'plan_items') return Promise.reject('database is locked');
+      return Promise.resolve([]);
+    });
+    const ServicePlanner = (await import('./views/ServicePlanner.svelte')).default;
+    const el = mountInto(ServicePlanner);
+    await until(() => el.querySelector('.sp-railcard'), 'the plan rail to list a plan');
+    el.querySelector('.sp-railcard').click();
+    await until(() => el.querySelector('[role="alert"]'), 'the cue table to report the failed read');
+
+    expect(el.textContent).not.toMatch(/Empty plan/);
+  });
+
+  it('the RUN surface does the same, on all three of its lists', () => {
+    // Live is not mounted anywhere in this suite — it needs the whole store — so
+    // this reads the source, the way `safescreen.test.js` and `r2livepath.test.js`
+    // already do for it. What matters is that each empty sentence is now behind an
+    // error branch keyed to the read that produces it.
+    const f = src('src/lib/views/Live.svelte');
+    for (const [key, sentence] of [
+      ['planItems', "live.plan_no_cues"],
+      ['listPlans', 'live.no_plans'],
+      ['listOutputChannels', 'No screens yet'],
+    ]) {
+      expect(f, `the ${key} list has no error branch`).toMatch(
+        new RegExp(`readErrors\\.${key}`),
+      );
+      const at = f.indexOf(sentence);
+      expect(at, `${sentence} is gone — update this test with it`).toBeGreaterThan(-1);
+      // The error branch has to come BEFORE the empty sentence, or the sentence
+      // wins and the branch is decoration.
+      expect(
+        f.lastIndexOf(`readErrors.${key}`, at),
+        `${key}'s error branch sits after its empty sentence`,
+      ).toBeGreaterThan(-1);
+    }
+  });
+
   itMounted('ModelSetup shows the reason rather than an empty panel', async () => {
     // Not a wrong sentence — NO sentence. The model list renders an `{#each}`, so a
     // failed read drew a blank card on the one screen whose job is getting speech
