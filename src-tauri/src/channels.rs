@@ -2415,19 +2415,34 @@ mod tests {
             .expect("the writer never finished")
             .unwrap();
         let mut buf = [0u8; 64];
-        // Either shape counts as dropped: a clean EOF, or the RST the OS returns
-        // because we kept writing to a socket the server had already closed. What
-        // must NOT happen is the read hanging, which is what it did before the
-        // deadline covered the whole head.
+        // Either shape counts as dropped — see `assert_dropped`. What must NOT
+        // happen is the read hanging, which is what it did before the deadline
+        // covered the whole head.
         let outcome = tokio::time::timeout(std::time::Duration::from_secs(5), s.read(&mut buf))
             .await
             .expect("the server never dropped a dribbling client");
+        assert_dropped(outcome);
+    }
+
+    /// A DROPPED CONNECTION HAS TWO NAMES, AND THEY ARE PLATFORM-SPECIFIC.
+    ///
+    /// A read on a socket the peer has closed comes back as a clean EOF, or — if
+    /// we kept writing to it first — as an error. macOS calls that error
+    /// `ConnectionReset` (ECONNRESET) and **Windows calls it `ConnectionAborted`**
+    /// (WSAECONNABORTED, 10053). Asserting only the first passed on this machine
+    /// and failed on the Windows runner, on code that was behaving correctly —
+    /// which is the shape of every Windows bug in this repository's history, for
+    /// once caught by CI rather than by a church.
+    fn assert_dropped(outcome: std::io::Result<usize>) {
         match outcome {
             Ok(n) => assert_eq!(n, 0, "the server should have closed the connection"),
-            Err(e) => assert_eq!(
-                e.kind(),
-                std::io::ErrorKind::ConnectionReset,
-                "unexpected error from a dropped connection: {e}"
+            Err(e) => assert!(
+                matches!(
+                    e.kind(),
+                    std::io::ErrorKind::ConnectionReset | std::io::ErrorKind::ConnectionAborted
+                ),
+                "unexpected error from a dropped connection: {e} ({:?})",
+                e.kind()
             ),
         }
     }
@@ -2590,10 +2605,7 @@ mod tests {
         )
         .await
         .expect("the kiosk server never dropped an idle connection");
-        match outcome {
-            Ok(n) => assert_eq!(n, 0, "the server should have closed the connection"),
-            Err(e) => assert_eq!(e.kind(), std::io::ErrorKind::ConnectionReset, "{e}"),
-        }
+        assert_dropped(outcome);
     }
 
     /// THE CONNECTION CAP (RG-97). Over the ceiling a client is told `503` at once
