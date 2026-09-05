@@ -40,7 +40,9 @@ function endpoints() {
     } catch {
       continue;
     }
-    for (const url of conf?.plugins?.updater?.endpoints ?? []) found.push([rel, url]);
+    for (const url of conf?.plugins?.updater?.endpoints ?? []) {
+      found.push([rel, url]);
+    }
   }
   return found;
 }
@@ -52,8 +54,44 @@ if (!rows.length) {
   process.exit(1);
 }
 
+/**
+ * Is this an endpoint we are willing to FETCH?
+ *
+ * The URL comes out of a config file, and this script then makes a network
+ * request to it — which CodeQL flags as `js/file-access-to-http`, correctly as a
+ * shape even though the file is one of ours and is tracked. The right answer is
+ * not to silence it: **an updater endpoint that is not an HTTPS GitHub release
+ * URL is itself a finding**, and a checker that would happily fetch whatever the
+ * config named would be the wrong instrument for noticing it.
+ *
+ * So the shape is asserted before anything is fetched, and a URL that fails it is
+ * reported as a failure rather than followed.
+ */
+function permitted(url) {
+  let u;
+  try {
+    u = new URL(url);
+  } catch {
+    return 'not a URL at all';
+  }
+  if (u.protocol !== 'https:') return `not HTTPS (${u.protocol})`;
+  if (u.hostname !== 'github.com' && u.hostname !== 'api.github.com') {
+    return `not a GitHub host (${u.hostname})`;
+  }
+  return null;
+}
+
 let dead = 0;
 for (const [file, url] of rows) {
+  const refused = permitted(url);
+  if (refused) {
+    dead += 1;
+    console.error(
+      `  ✗ ${url}\n      (${file}) ${refused} — this is where a shipped copy of Relay ` +
+        `would look for its updates. Not fetched.`,
+    );
+    continue;
+  }
   // The updater substitutes these per platform. For a reachability check the
   // literal path is what matters, so they are only reported, never resolved.
   const templated = /\{\{/.test(url);

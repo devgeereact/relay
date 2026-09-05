@@ -39,6 +39,30 @@ const SVELTE = tree('src', '.svelte');
 const RUST = tree('src-tauri/src', '.rs');
 const mainRs = read('src-tauri/src/main.rs');
 
+/**
+ * Blank out `/* … *\/` and `<!-- … -->` regions, keeping every other character.
+ *
+ * Walks the text once and replaces the inside of each comment with spaces, so
+ * offsets and line numbers are unchanged and an unterminated comment runs to the
+ * end rather than being silently dropped.
+ */
+function stripComments(src) {
+  const out = src.split('');
+  let i = 0;
+  while (i < src.length) {
+    const block = src.startsWith('/*', i) ? '*/' : src.startsWith('<!--', i) ? '-->' : null;
+    if (!block) {
+      i += 1;
+      continue;
+    }
+    const end = src.indexOf(block, i + 2);
+    const stop = end === -1 ? src.length : end + block.length;
+    for (let j = i; j < stop; j += 1) if (out[j] !== '\n') out[j] = ' ';
+    i = stop;
+  }
+  return out.join('');
+}
+
 describe('RG-76 · the mechanically checkable hard-way rules', () => {
   it('reads a real tree (the guard on every assertion below)', () => {
     // All five would also pass over an empty file list.
@@ -114,9 +138,17 @@ describe('RG-76 · the mechanically checkable hard-way rules', () => {
     for (const [file, src] of SVELTE) {
       // Strip comments first — every current mention is a comment explaining why
       // these are not used, and flagging those would make the test cry wolf.
-      const code = src
-        .replace(/\/\*[\s\S]*?\*\//g, '')
-        .replace(/<!--[\s\S]*?-->/g, '')
+      //
+      // Blanked by a WALK rather than by `.replace(/<!--[\s\S]*?-->/g, '')`.
+      // That regex is the shape CodeQL calls an incomplete multi-character
+      // sanitizer (`js/incomplete-multi-character-sanitization`), and although
+      // nothing here sanitizes anything — the input is this repository's own
+      // source and the output is never rendered — the alert is right that the
+      // pattern mishandles overlapping delimiters. A scanner that has to be told
+      // to ignore a pattern stops being read at all, so it is removed rather than
+      // dismissed. The walk is also simply more correct: it cannot leave a
+      // trailing `<!--` behind, and it never rewrites the file's length.
+      const code = stripComments(src)
         .split('\n')
         .filter((l) => !/^\s*(\/\/|\*)/.test(l))
         .join('\n');
