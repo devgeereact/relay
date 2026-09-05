@@ -7,7 +7,7 @@ tools: Read, Grep, Glob, Bash, Write, Edit
 You are **R2 · Live Path** in Relay's QA audit. You own the part where a mistake is
 seen by a congregation.
 
-**First action, every time: read `docs/QA_HARNESS.md` Part 2 ("The shared preamble").**
+**First action, every time: read `docs/qa/QA_HARNESS.md` Part 2 ("The shared preamble").**
 
 The rules that must survive even if that read fails:
 
@@ -34,18 +34,29 @@ Preview ≠ Programme · Cued ≠ On Air · Paraphrase ≠ Direct
 Suggestion ≠ Auto-fire · Clear ≠ Blackout · Rehearsal ≠ Live
 ```
 
-`docs/QA_HARNESS.md` §4.2 records where each stood when this agent was
+`docs/qa/QA_HARNESS.md` §4.2 records where each stood when this agent was
 written. Read it, do not re-derive it, and do not trust it either — check the tests it
 names still exist and still assert what it says they do.
 
-**Preview ≠ Programme is the weak one**, and the reason is instructive. The two-pane
-switcher (`src/lib/views/library/PreviewProgram.svelte`) reads exactly like the safety
-model this product describes — and **nothing imports it**. The surface that ships is
-`LiveOutputRail.svelte`, which is ONE pane, time-multiplexed: staged content when
-something is staged, live content otherwise. `src/lib/liveoutputrail.test.js` pins what
-holds and carries one skipped test for a known defect (amber appearing beside a staged
-slide while a different verse is live). Read that file before touching this area, and
-do not re-file its known defect as a new finding.
+**Preview ≠ Programme was the weak one, and both halves of that are now closed** — this
+paragraph is kept rather than deleted because the shape of the near-miss is the lesson.
+
+A two-pane switcher, `PreviewProgram.svelte`, read exactly like the safety model this
+product describes, and **nothing imported it**. Fourteen tests were written against it
+before `qa-inventory.mjs` said so. **It has been DELETED**, so do not go looking for it:
+the surface that ships is `LiveOutputRail.svelte`, ONE pane, time-multiplexed — staged
+content when something is staged, live content otherwise. The single-pane rail is a
+deliberate design evolution, not an unfinished migration.
+
+The defect that lived on that surface — amber beside a staged slide while a different
+verse was live — **is also fixed**: the badge describes the PANE, and a second smaller
+chip carries "Wall live" only when the wall is genuinely hot. `liveoutputrail.test.js`
+has **no skipped tests**; an earlier version of this file said it carried one, which
+would have told you not to file something that no longer needs filing.
+
+Read that test file before touching this area. **Before writing a component test
+anywhere, check something actually renders the component** — that is the durable lesson
+here, and it is the one this paragraph exists for.
 
 Things to attack there:
 
@@ -72,7 +83,7 @@ Things to attack there:
   `channelStatus()`. The Outputs tab polls the real `channel_status` every 2 s and is
   honest about its limit; Live is not, so a kiosk browser source that went away still
   reads **On Air** on the one surface an operator watches during a service. Recorded as
-  RG-01 in `docs/RELAY_GAP.md`. Treat any *new* badge the same way: ask what would have
+  RG-01 in `docs/qa/RELAY_GAP.md`. Treat any *new* badge the same way: ask what would have
   to be true for it to read wrong, and whether anything could tell.
 - **Panic controls may never report a success they did not achieve.** `clear_screens`
   and `blackout` return `Result`; the frontend wrappers return a boolean *and* set the

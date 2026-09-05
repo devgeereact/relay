@@ -16,6 +16,11 @@ tauri-build = { version = "2", features = [] }
 # It is a dev-dependency: nothing here ships.
 [dev-dependencies]
 tauri = { version = "2", features = ["test"] }
+# `test-util` is NOT part of tokio's `full`. It gives tests a controllable clock, so
+# a five-second server timeout can be asserted without a test that takes five
+# seconds — a test slow enough to be skipped is a test that stops being run.
+# Dev-only: nothing in the shipped binary changes.
+tokio = { version = "1", features = ["full", "test-util"] }
 
 # GPU acceleration for whisper is a BUILD-TIME fact, not a runtime one: whisper.cpp
 # is compiled with a backend or it is not. These forward to whisper-rs so

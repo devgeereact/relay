@@ -417,6 +417,7 @@ fn main() {
             start_service,
             end_service,
             list_services,
+            delete_service,
             service_detail,
             export_service,
             list_templates,
@@ -2291,6 +2292,86 @@ fn list_media(db: tauri::State<'_, Db>) -> error::Result<Vec<db::MediaAsset>> {
     db::list_media(&conn).map_err(Into::into)
 }
 
+/// The largest file the Library will accept across the import bridge.
+///
+/// An imported file does not arrive as a path. The webview's `<input type=file>`
+/// yields bytes, so `capture.js::fileToBase64` builds the whole file as a base64
+/// string, Tauri serialises that string across the IPC bridge, and this side
+/// decodes it into another complete copy before writing it to disk. Several
+/// simultaneous copies of a 1.5 GB service video on a church laptop is not a slow
+/// import — it is the operating system killing Relay with no error, no message and
+/// nothing in any log, on a Saturday, while somebody sets up for Sunday.
+///
+/// 256 MiB sits comfortably above every background loop, still and lyric file a
+/// church actually imports. Above it the answer is a sentence, not a crash.
+///
+/// The webview holds the SAME limit (`capture.js::MAX_IMPORT_BYTES`) and that copy
+/// is the one that actually prevents the allocation — by the time bytes reach here
+/// the large string already exists. This one is the door that cannot be walked
+/// past: a command is invokable from the webview whatever the UI does.
+const MAX_IMPORT_BYTES: usize = 256 * 1024 * 1024;
+
+/// Decode an import payload, refusing an oversized one BEFORE allocating the
+/// decoded copy.
+///
+/// The length check is on the base64 text, which is 4 bytes per 3 decoded, so the
+/// estimate is exact enough to be a guard and never rejects a file that would have
+/// fit. Shared by both import commands so the limit cannot come to mean two things.
+fn decode_import(filename: &str, data: &str) -> error::Result<Vec<u8>> {
+    use base64::Engine as _;
+    let approx = data.len() / 4 * 3;
+    if approx > MAX_IMPORT_BYTES {
+        return Err(error::Error::refused(format!(
+            "{filename} is about {} MB, and Relay imports files up to {} MB. \
+             Shorten or compress it and try again.",
+            approx / (1024 * 1024),
+            MAX_IMPORT_BYTES / (1024 * 1024)
+        )));
+    }
+    base64::engine::general_purpose::STANDARD
+        .decode(data.as_bytes())
+        .map_err(|e| error::Error::refused(format!("could not read {filename}: {e}")))
+}
+
+/// Write an imported file to disk, and UNDO the row if it cannot be written.
+///
+/// The row has to be inserted first, because its id is half the on-disk name. That
+/// ordering is what made an orphan possible: when the write failed the row stayed,
+/// and its `path` stayed at the schema's empty-string default — a Library entry
+/// that exists, lists, and plays nothing. The realistic way to fail here is a full
+/// disk, which is also exactly when a church is importing the last thing before a
+/// service.
+///
+/// Split out from `import_media` so the failure branch can actually be executed by
+/// a test: pass a directory that is not there and the write fails the same way a
+/// full disk does. A cleanup path that has never run is a cleanup path that does
+/// not work.
+fn write_media_file(
+    conn: &rusqlite::Connection,
+    dir: &std::path::Path,
+    id: i64,
+    filename: &str,
+    bytes: &[u8],
+) -> error::Result<String> {
+    // Prefix with the row id to guarantee a unique on-disk name.
+    let safe: String = filename
+        .chars()
+        .map(|c| {
+            if c.is_alphanumeric() || matches!(c, '.' | '-' | '_') {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let path = dir.join(format!("{id}_{safe}"));
+    if let Err(e) = std::fs::write(&path, bytes) {
+        let _ = db::delete_media(conn, id);
+        return Err(e.into());
+    }
+    Ok(path.to_string_lossy().to_string())
+}
+
 /// Media (Library): import a file (image / video / document). The webview hands
 /// us the picked file's bytes (base64); we write it beside the DB and store a
 /// pointer — offline-first, nothing uploads.
@@ -2304,29 +2385,13 @@ fn import_media(
     date: String,
 ) -> error::Result<db::MediaAsset> {
     lock.guard("import_media")?;
-    use base64::Engine as _;
-    let bytes = base64::engine::general_purpose::STANDARD
-        .decode(data.as_bytes())
-        .map_err(|e| format!("could not read file data: {e}"))?;
+    let bytes = decode_import(&filename, &data)?;
     let dir = db::media_dir();
     std::fs::create_dir_all(&dir)?;
 
     let conn = db.0.lock()?;
     let id = db::insert_media(&conn, &kind, &filename, &date)?;
-    // Prefix with the row id to guarantee a unique on-disk name.
-    let safe: String = filename
-        .chars()
-        .map(|c| {
-            if c.is_alphanumeric() || matches!(c, '.' | '-' | '_') {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect();
-    let path = dir.join(format!("{id}_{safe}"));
-    std::fs::write(&path, &bytes)?;
-    let path_str = path.to_string_lossy().to_string();
+    let path_str = write_media_file(&conn, &dir, id, &filename, &bytes)?;
     db::set_media_path(&conn, id, &path_str)?;
     Ok(db::MediaAsset {
         id,
@@ -2379,10 +2444,7 @@ struct ReviewSong {
 /// import-then-fix-then-replace cycle). Offline.
 #[tauri::command]
 fn parse_import(filename: String, data: String) -> error::Result<Vec<ReviewSong>> {
-    use base64::Engine as _;
-    let bytes = base64::engine::general_purpose::STANDARD
-        .decode(data.as_bytes())
-        .map_err(|e| format!("could not read file data: {e}"))?;
+    let bytes = decode_import(&filename, &data)?;
     let ext = filename.rsplit('.').next().unwrap_or("").to_lowercase();
     let mut out = Vec::new();
     if ["txt", "text", "md", "lyric", "lyrics"].contains(&ext.as_str()) {
@@ -3417,7 +3479,16 @@ async fn start_capture(
                 );
             }
             if let Some(tx) = &stt_tx {
-                let _ = tx.send(chunk.clone());
+                // Bounded since RG-84. FULL means the whisper worker has stopped
+                // consuming — stuck in a decode, or on a model this machine cannot
+                // run — and the queue would otherwise grow for as long as the
+                // preacher kept talking. Shed, and count it: audio Relay never
+                // heard is a worse thing than a shed partial, and both have to be
+                // visible. DISCONNECTED is an engine that has been unloaded and is
+                // not a gap in anything.
+                if let Err(std::sync::mpsc::TrySendError::Full(_)) = tx.try_send(chunk.clone()) {
+                    latency::note_dropped_audio();
+                }
             }
         },
         move |quality| {
@@ -3665,6 +3736,25 @@ fn confirm_detection<R: tauri::Runtime>(
                 "{key} isn't in the Bible text — check the reference"
             )));
         }
+        // ── THE OPERATOR'S DECISION, RECORDED ───────────────────────────────
+        //
+        // Accepting a suggestion fires through `fire_manual`, which records the
+        // detection as `'manual'` — correct, and indistinguishable from a verse
+        // typed into the box by hand. So the service record could say how many
+        // verses a human put up and could NOT say how many of them were Relay's
+        // idea, which is the one number that says whether the AI is earning its
+        // place.
+        //
+        // A cue, not a `service_event`: `service_events` explicitly does not
+        // duplicate what `cues` already holds, and `cues` is what the operator
+        // pressed.
+        //
+        // Not during a rehearsal, for the same reason `record_feedback` is not —
+        // a rehearsal is not evidence, and an acceptance rate inflated by
+        // practice is worse than none.
+        if !rehearsal.on() {
+            persist_cue(&app, "suggestion_accepted", Some(&key));
+        }
     }
     let t = {
         let mut router = routing.0.lock()?;
@@ -3687,14 +3777,62 @@ fn confirm_detection<R: tauri::Runtime>(
     Ok(t)
 }
 
-/// Operator rejected an auto-fired detection (undo). Tightens the gate and
-/// persists the nudge onto the active profile.
+/// Operator rejected an auto-fired detection (undo). Tightens the gate,
+/// persists the nudge onto the active profile, and — since the rejection is the
+/// half of the acceptance rate that was invisible — records that it happened.
+///
+/// ## Why a rejection had no record at all
+///
+/// `detections.status` permits `'suggested'` and `'dismissed'`, `db/services.rs`
+/// documents all four, and `service_timeline` reads them — but **the only
+/// production insert runs inside `persist_fire`, which is called only for a fire
+/// that reaches a screen.** So in a real service the column can only ever hold
+/// `'auto'` or `'manual'`, and two of its four documented values were structurally
+/// unreachable. The Sunday report counted them anyway and reported **0**, which
+/// reads as *"Relay never offered you anything"* rather than *"nothing records
+/// that"* — the exact inversion DECISIONS §44 exists to forbid.
+///
+/// **Persisting every suggestion is not the fix.** Suggestions are deliberately
+/// not debounced (CLAUDE.md rule 28), so one spoken paraphrase yields a suggestion
+/// on every decode pass — hundreds of rows a minute, none of which a person saw as
+/// separate. What is bounded, meaningful and exactly what the metric needs is what
+/// the OPERATOR did, so that is what is recorded, here and in `confirm_detection`.
+///
+/// `reference` is optional so the LAN remote and any older caller keep working —
+/// the same precedent as `confidence`/`method` above. Absent, the rejection is
+/// still counted; only the *which verse* is lost.
+///
+/// ## The reference is CANONICALISED, never stored as given
+///
+/// It arrives as a string across the bridge, and `cues.payload_json` is read back
+/// by `service_timeline` — the part of the history most likely to be sent to
+/// somebody for support. `db/services.rs` is explicit that what goes in there is
+/// *"a short phrase Relay composes … never verse text, never a transcript"*, and
+/// every other writer satisfies that by construction: `manual_fire` builds its key
+/// from an already-parsed `VerseRef`, so it cannot be a sentence.
+///
+/// A raw string from the webview would be the first cue payload whose shape was
+/// *trusted* rather than *guaranteed* — and "a future column could quietly widen
+/// this" is the exact risk the two-sided privacy tests exist for. So the reference
+/// is parsed and the canonical `Book C:V` is stored; anything that does not parse
+/// stores nothing at all, and the rejection is still counted.
 #[tauri::command]
-fn dismiss_detection(
+fn dismiss_detection<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     routing: tauri::State<'_, Routing>,
     db: tauri::State<'_, Db>,
     rehearsal: tauri::State<'_, channels::Rehearsal>,
+    reference: Option<String>,
 ) -> error::Result<Thresholds> {
+    if !rehearsal.on() {
+        let canonical = reference.as_deref().and_then(|r| {
+            detection::detect_direct(r)
+                .into_iter()
+                .next()
+                .map(|m| pipeline::Fire::key_for(&m.reference))
+        });
+        persist_cue(&app, "suggestion_dismissed", canonical.as_deref());
+    }
     let t = {
         let mut router = routing.0.lock()?;
         // No argument: the router remembers what it last auto-fired, so the
@@ -5316,6 +5454,29 @@ fn list_services(db: tauri::State<'_, Db>) -> error::Result<Vec<db::ServiceSumma
     db::list_services(&conn).map_err(Into::into)
 }
 
+/// Erase one recorded service — its transcript, its detections, its operator
+/// actions, its timeline and its latency samples.
+///
+/// THE ONE THING RELAY COULD NOT DO WITH THE MOST SENSITIVE DATA IT HOLDS.
+/// `transcripts.text` is verbatim text of what a preacher said to a congregation.
+/// Every document here promises it never leaves the device, and none of them could
+/// say how to remove it: `PRIVACY.md` answered with *"delete that folder"*, which
+/// means quitting Relay and deleting every service ever recorded, from the Finder,
+/// or keeping all of them. A church that wanted one sermon gone had no path.
+///
+/// Held back while a service is recording, like every other `delete_*` — including,
+/// necessarily, the service being recorded right now (`servicelock::PROTECTED`).
+#[tauri::command]
+fn delete_service(
+    db: tauri::State<'_, Db>,
+    lock: tauri::State<'_, servicelock::ServiceLock>,
+    id: i64,
+) -> error::Result<i64> {
+    lock.guard("delete_service")?;
+    let conn = db.0.lock()?;
+    db::delete_service(&conn, id).map_err(Into::into)
+}
+
 /// Everything that happened in one service, in order — the replay's spine.
 ///
 /// Merged from three tables rather than kept in a fourth: `detections` is what the
@@ -5569,5 +5730,103 @@ mod display_target_tests {
         // "Display 0" is not a form anything writes, but saturating_sub must not
         // turn it into usize::MAX and index past the monitor list.
         assert_eq!(parse_display("Display 0"), Some(0));
+    }
+}
+
+#[cfg(test)]
+mod import_guard_tests {
+    use super::*;
+    use base64::Engine as _;
+
+    fn b64(bytes: &[u8]) -> String {
+        base64::engine::general_purpose::STANDARD.encode(bytes)
+    }
+
+    /// An ordinary file still imports. The guard must not be a limit nobody can
+    /// reach *downwards* either — a cap that rejects a 40 KB logo is a cap that
+    /// gets deleted by the next person.
+    #[test]
+    fn a_normal_file_decodes_unchanged() {
+        let payload = vec![7u8; 64 * 1024];
+        let got = decode_import("logo.png", &b64(&payload)).expect("normal import");
+        assert_eq!(got, payload);
+    }
+
+    /// THE BUG. There was no limit at all: the webview built the whole file as a
+    /// base64 string, Tauri serialised it across the bridge, and this side decoded
+    /// a second complete copy — so a service video killed the process rather than
+    /// producing an error. Refusing has to happen BEFORE the decode allocation,
+    /// which is why the check reads the base64 length.
+    #[test]
+    fn an_oversized_file_is_refused_and_never_decoded() {
+        // One base64 character per byte is a 25% under-estimate of the decoded
+        // size, so this is comfortably over the cap without allocating 256 MiB of
+        // real payload in the test.
+        let huge = "A".repeat(MAX_IMPORT_BYTES + (MAX_IMPORT_BYTES / 2));
+        let err = decode_import("service.mp4", &huge).expect_err("must refuse");
+        assert!(
+            matches!(err, error::Error::Refused { .. }),
+            "an oversized import is a refusal, not a fault: {err:?}"
+        );
+        let msg = err.message();
+        assert!(msg.contains("service.mp4"), "names the file: {msg}");
+        assert!(msg.contains("256"), "names the limit: {msg}");
+    }
+
+    /// Both import commands share one limit. Two copies of this number is how it
+    /// comes to mean two different things.
+    #[test]
+    fn the_lyric_importer_is_behind_the_same_guard() {
+        let huge = "A".repeat(MAX_IMPORT_BYTES * 2);
+        assert!(decode_import("set.pro", &huge).is_err());
+    }
+
+    /// THE ORPHAN. The row is inserted before the file is written, because its id
+    /// is half the on-disk name. When the write failed the row survived with an
+    /// empty `path` — an asset that lists in the Library and plays nothing.
+    ///
+    /// The write is made to fail the way a full disk fails, by naming a directory
+    /// that is not there.
+    #[test]
+    fn a_failed_write_leaves_no_media_row_behind() {
+        let conn = rusqlite::Connection::open_in_memory().expect("db");
+        conn.execute_batch(include_str!("../../docs/data/schema.sql"))
+            .expect("schema");
+        let id = db::insert_media(&conn, "video", "loop.mp4", "2026-09-02").expect("insert");
+        assert_eq!(
+            db::list_media(&conn).expect("list").len(),
+            1,
+            "the row exists before the write is attempted"
+        );
+
+        let nowhere = std::path::Path::new("/relay-no-such-directory-9f3a/media");
+        let err = write_media_file(&conn, nowhere, id, "loop.mp4", b"x").expect_err("must fail");
+        assert!(
+            matches!(err, error::Error::Io { .. } | error::Error::Internal { .. }),
+            "a write failure is a fault, not a refusal: {err:?}"
+        );
+        assert!(
+            db::list_media(&conn).expect("list").is_empty(),
+            "a file that never landed must not leave a Library entry"
+        );
+    }
+
+    /// The happy path still writes, and still returns the path the row records.
+    #[test]
+    fn a_successful_write_returns_the_path_and_keeps_the_row() {
+        let conn = rusqlite::Connection::open_in_memory().expect("db");
+        conn.execute_batch(include_str!("../../docs/data/schema.sql"))
+            .expect("schema");
+        let id = db::insert_media(&conn, "image", "a b/c.png", "2026-09-02").expect("insert");
+        let dir = std::env::temp_dir().join("relay-import-guard-test");
+        std::fs::create_dir_all(&dir).expect("tmp dir");
+        let path = write_media_file(&conn, &dir, id, "a b/c.png", b"hello").expect("write");
+        assert!(
+            path.ends_with(&format!("{id}_a_b_c.png")),
+            "id-prefixed, sanitised name: {path}"
+        );
+        assert_eq!(std::fs::read(&path).expect("read back"), b"hello");
+        assert_eq!(db::list_media(&conn).expect("list").len(), 1);
+        let _ = std::fs::remove_file(&path);
     }
 }

@@ -7,7 +7,7 @@ tools: Read, Grep, Glob, Bash, Write, Edit
 You are **R4 · Detection & Language** in Relay's QA audit. You audit what the AI claims
 and whether the claim is honest.
 
-**First action, every time: read `docs/QA_HARNESS.md` Part 2 ("The shared preamble").**
+**First action, every time: read `docs/qa/QA_HARNESS.md` Part 2 ("The shared preamble").**
 
 The rules that must survive even if that read fails:
 

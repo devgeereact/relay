@@ -14,7 +14,7 @@ That is not because the measurement is hard. **The ruler is built, unit-tested, 
 
 `bench/.gitignore` refuses `*.wav`, `*.f32`, `*.mp3`, `*.m4a` and `*.txt`. **Do not override it.**
 
-`PRIVACY.md` promises a church that sermon audio never leaves their device. That promise is not conditional on the device being a church's — it is the promise. A recording of a real congregation, in a public repository, would break it in the most literal way possible, and no amount of "it was only for testing" repairs that.
+`../docs/PRIVACY.md` promises a church that sermon audio never leaves their device. That promise is not conditional on the device being a church's — it is the promise. A recording of a real congregation, in a public repository, would break it in the most literal way possible, and no amount of "it was only for testing" repairs that.
 
 Keep the file locally. Point the bench at it. Commit **the number**, never the recording.
 
@@ -147,3 +147,22 @@ Every one of those is currently an assertion in a document. Thirty minutes of ta
 ## Also useful, and also missing
 
 ~~Real transcripts from a service — even without the audio — would let `eval.rs`'s corpus grow from hand-written examples into **things a preacher actually said**.~~ **Done, 2026-08-30:** six verbatim lines from a live service are in the corpus (`source: FIELD-2026-08-30`), taken from `detections.heard_text`. **The audio is still missing, and that is the gap that matters** — transcripts measure detection over TEXT; word error rate needs the WAV. Set `RELAY_RECORD_WAV` for one service and that changes.
+
+---
+
+## The two variables nothing documented
+
+Every other `RELAY_*` knob is named above; these two were in no document in the
+repository until 2026-09-05, and they belong to the cheapest experiment here.
+`router::tests` replays a transcript through the REAL router and prints which
+verse would have reached a wall at each sensitivity, so you can see what a
+threshold change would have done to a service that already happened:
+
+```bash
+RELAY_SWEEP_TRANSCRIPT=/path/lines.txt RELAY_SWEEP_TRUTH="Romans 10:17" \
+  cargo test sweep -- --ignored --nocapture
+```
+
+`RELAY_SWEEP_TRANSCRIPT` is one utterance per line — `detections.heard_text` from
+a real service is exactly the right input. `RELAY_SWEEP_TRUTH` is the reference a
+human says was correct.

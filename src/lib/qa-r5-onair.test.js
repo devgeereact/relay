@@ -87,7 +87,8 @@ describe('a restart may not put a cue back on air', () => {
   // advances and the Recover gate never appears). `svelte:window on:keydown` DOES
   // fire, which is why the Esc case below is a real, driven reproduction and this
   // one is a source-level contract. Saying which is which is the point — see
-  // Working-Agent-PROMPT.md, "every claim must name the instrument that saw it".
+  // "Every claim must name the instrument that saw it" — from the three
+  // Working-Agent documents, which `docs/qa/QA_HARNESS.md` superseded and replaced.
   it('has exactly three exits, and only two of them clear liveOnAir', async () => {
     const src = await readFile(resolve(process.cwd(), 'src/lib/boot/BootSequence.svelte'), 'utf8');
 

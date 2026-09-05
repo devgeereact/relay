@@ -25,6 +25,8 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { writable } from 'svelte/store';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 const stopCapture = vi.fn();
 const startCapture = vi.fn(async () => {});
@@ -126,5 +128,53 @@ describe("the first-run wizard's microphone", () => {
     btn('Continue').click();
     await settle();
     expect(startCapture).toHaveBeenCalledTimes(2);
+  });
+});
+
+// ── RG-61 · the wizard has to hand off to the three things it does not do ────
+//
+// The onboarding gap (brief §59/60) was never a missing feature: the drills, the
+// six-stage path check and rehearsal all shipped. It was that a volunteer who has
+// just finished the wizard has no way to learn any of them exist, and the wizard
+// is the last moment anybody is guaranteed to be looking.
+//
+// It is deliberately a HAND-OFF and not three more steps. This wizard's own rule
+// is that it asks as little as it can — Welcome and Finish ask nothing — and each
+// of these is a thing to do on another day, not an answer to give now.
+//
+// Asserted on the source rather than by mounting, because the block lives on the
+// last step and reaching it means driving five steps of device and model state
+// this suite deliberately does not fake.
+describe('RG-61 · the last step names what to do before the first Sunday', () => {
+  const SRC = readFileSync(resolve(process.cwd(), 'src/lib/FirstRun.svelte'), 'utf8').replace(
+    /\s+/g,
+    ' ',
+  );
+
+  it('names all three, and where each one lives', () => {
+    // The where is the whole point: naming the instrument without naming the tab
+    // is the same as not naming it.
+    expect(SRC).toMatch(/Practise/);
+    expect(SRC).toMatch(/drills on the <b>Help<\/b> tab/);
+    expect(SRC).toMatch(/Settings → Dashboard/);
+    expect(SRC).toMatch(/Rehearse<\/b> on the Live tab/);
+  });
+
+  it('says the path check is about the whole chain, not the parts the wizard just set up', () => {
+    // Without this sentence the step reads as a duplicate of the wizard, and an
+    // operator who has just seen a verse hit the screen will skip it.
+    expect(SRC).toMatch(/six stages between the microphone and the screen/);
+    expect(SRC).toMatch(/can pass while the chain still does not work end to end/);
+  });
+
+  it('tells the operator this is not their last chance to find them', () => {
+    // An operator who dismisses a wizard and then cannot find the setting again
+    // has been actively harmed by it — the wizard's own header says so.
+    expect(SRC).toMatch(/not your last chance to find them/);
+  });
+
+  it('adds no step — the hand-off is on the finish step, not a sixth question', () => {
+    const steps = SRC.match(/const STEPS = \[(.*?)\];/)?.[1] ?? '';
+    expect((steps.match(/key: '/g) ?? []).length).toBe(6);
   });
 });

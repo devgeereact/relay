@@ -72,6 +72,26 @@ If the bar does not move, Relay cannot hear, and nothing else on this page will 
 
 > Leaving rehearsal **clears the screens**. That is on purpose: they have been showing whatever was on them before you started, and handing you back a live wall you have not looked at in twenty minutes is how the wrong thing ends up in front of a congregation.
 
+**Two things worth doing once, before your first Sunday:**
+
+- **Practise the drills.** The **Help** tab has six of them, and they use the real controls on the
+  real surface, in rehearsal. The panic controls come first — before anything about firing
+  verses — because the key you need under pressure is the one you should not be reading about at
+  the time. It is not a simulated service: Relay cannot produce a sermon, and practising against
+  a fake would teach you the shape of the fake.
+- **Run the path check.** **Settings → Dashboard → say one verse.** Relay watches the six stages
+  between the microphone and the screen and tells you which of them were reached. The twenty-one
+  launch checks can all pass on a machine where nothing works end to end — a microphone the
+  operating system has muted, an output window on a display that is asleep. This is the thing
+  that finds that at 10:05 instead of 10:31. It only runs in rehearsal.
+
+**Save your room.** **Settings → Audio → Rooms → Save this room** remembers the microphone,
+the language, the service length, the voice profile and which display each screen is on. Applying
+it back reports **which pieces did not take** — a projector that moved to another port comes back
+as four of six restored, named, rather than as a green tick over a dark wall. It deliberately does
+**not** store the audio levels: Relay learns those live, every service, because a level that was
+right in an empty hall is wrong once it fills with people.
+
 ### During the service — you live on one tab
 
 **Live** is the only tab you need. Everything is on it.
@@ -110,6 +130,7 @@ Live software fails live. These are the things that actually happen.
 | **The bar doesn't move when someone speaks** | Relay cannot hear. Nothing else will work. | Settings → Audio. Try a different input. Check the cable and that the desk is sending. |
 | **The transcript is nonsense** | Usually the mic is too quiet, not the AI being bad. | Get a stronger feed. Relay adapts to a quiet room, but it cannot invent a signal that is not there. |
 | **"Relay keeps changing its mind about the language"** | On a strong accent, leaving the language on **Auto** makes Relay re-guess every few seconds — and a wrong guess garbles the transcript, which is where most wrong verses come from. | **Settings → Scripture & Bible → Recognition Language.** Pick the language instead of Auto. This is the single biggest accuracy win for an accented preacher. |
+| **A suggestion says "Not in your Bible"** | Relay parsed a real-looking reference out of garbled speech — "Psalms 23:99" — and that verse does not exist. It is telling you it misheard a **number**. | Nothing to do about that one; its Approve button is deliberately dead. If it keeps happening, the microphone is the cause, not the AI — see the two rows above. |
 | **Wrong verses keep appearing on the wall** | Relay heard a book name and a number in ordinary speech — *"Matthew, one of the twelve"*, *"number one… number two…"*. | Turn the **sensitivity dial down** on Live. If it is still noisy, press the **Armed** chip to disarm auto-fire — everything else keeps working and you fire by hand. And fix the language above first, because that is usually the real cause. |
 | **"No speech model loaded"** | Step 2 above never happened. | Settings → Speech → Download. Manual override still works meanwhile. |
 | **Nothing appears on the projector** | The output window is not open, or it is on the wrong display. | Outputs → Screens → pick the display → **Open**. |
@@ -135,8 +156,56 @@ You will not need these during a service.
 - **Outputs** — three panes: **Screens** (one row per output screen — the projector, a stage monitor, OBS, the preacher's phone), **Content looks** (which template scripture, lyrics, media and announcements wear by default), and **Sharing** (the LAN address and the preacher's stage remote). Set up once.
 - **Templates** — what scripture *looks like* on the wall. What you see in the editor is exactly what the projector shows. **Import** a design someone shared, or **Export** one of yours to a file (⋮ menu / the preview panel) to hand to another church.
 - **Themes** — the *look beneath* your templates: fonts, colours, spacing, motion. Pick a theme (eight are built in), tweak a copy in the theme editor, then apply it to a template — the template inherits the theme and you override only what you want. Themes export and import as files too. A theme never reaches a screen on its own; it dresses a template, and the template is what fires.
-- **Settings** — audio, speech model, sensitivity, console language, privacy.
-- **Help** — the same guide, inside the app, where you can read it without the internet.
+- **Settings** — audio, speech model, sensitivity, console language, and eight more sections. The
+  four worth knowing about: **Dashboard** (is this machine ready, and the path check above),
+  **Languages** (how much of Yorùbá, Kiswahili and Hausa Relay actually knows — including the
+  columns that are honestly empty), **Privacy** (what is on this machine and what can leave it),
+  and **Diagnostics** (the live numbers, and a **one-file export** you can attach to an email
+  when something goes wrong — it contains nothing about your church, by construction).
+- **Help** — the same guide, inside the app, where you can read it without the internet, plus the
+  six practice drills and an honest account of **what the AI is bad at**.
+
+### Two things you will notice mid-service and should not worry about
+
+**Some buttons stop working while a service is recording.** Every **Delete**, and anything that
+would take the speech engine away — changing or downloading a speech model, switching the Bible
+translation, importing media — is held back until the service ends. It tells you why, and you can
+lift it in one action. **Nothing you use to run a service is affected**: firing, the arrow keys,
+clear, blackout, rehearsal, the sensitivity dial, opening and closing screens, and changing a
+screen's template all work exactly as normal — including editing a template, because an
+unreadable verse on the wall is fixed by changing its look, during the service, which is when you
+find out.
+
+**A verse can be reported as "shrunk".** Relay fits text by shrinking it until it stops
+overflowing, and it will always still show the verse rather than blanking a screen. But if it has
+had to shrink below **45% of the size your template asked for**, it says so and tells you how
+small it went — because a template that had quietly stopped working used to look exactly like one
+that was working. If you see it, that passage is longer than the template was designed for.
+
+---
+
+## Afterwards
+
+**Library → History** holds every service. Open one and you get:
+
+- **The Sunday report** — how long, how many verses, how many Relay put up by itself versus how
+  many you fired, **how many of its suggestions you took and how many you turned down**, and how
+  fast the transcript was keeping up. **Only what was actually measured appears.** A blank is
+  shown as "—" and never as 0, because a report that shows zero for something nobody measured is
+  a report that gets better as the system gets worse — and until recently the suggestion figures
+  did exactly that, showing 0 for something nothing was recording.
+
+  The percentage is **of the suggestions you answered**, not of every suggestion Relay made. One
+  that scrolled past while you were busy is not counted anywhere, and the report says so rather
+  than folding it in.
+- **Replay** — click any line in the timeline to see what was being said around it, what Relay
+  decided, and how fast it was going. It replays the *record*, not the audio: Relay never stores
+  what was said aloud.
+- **Week on week** — whether the transcript is keeping up better or worse than last Sunday.
+
+**If something went wrong, send the diagnostic file** (Settings → Diagnostics → export) rather
+than a photograph of the screen. It is built by naming every field that may be in it, so it
+cannot leak a transcript, a verse, a lyric, an announcement or your service titles.
 
 ---
 
@@ -164,6 +233,6 @@ key is deliberately total, so it clears *everything*, monitor timers included.
 ## Things Relay promises you
 
 - **It works with the internet unplugged.** All of it. The listening, the detecting, the screens.
-- **Your sermon audio never leaves the computer.** It is transcribed on the machine and thrown away. See [PRIVACY.md](../PRIVACY.md), which says exactly what is and is not sent, and means it.
+- **Your sermon audio never leaves the computer.** It is transcribed on the machine and thrown away. See [PRIVACY.md](PRIVACY.md), which says exactly what is and is not sent, and means it.
 - **It will not put a verse on the wall because it *guessed*.** Only because it *heard*, or because you told it to.
 - **It tells you when something failed.** A control that lies is worse than one that breaks, and this is software that fails in front of five hundred people.

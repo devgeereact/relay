@@ -23,6 +23,7 @@
   import VerseDeck from './VerseDeck.svelte';
   import Arrangements from './Arrangements.svelte';
   import EmptyState from '../../ui/EmptyState.svelte';
+  import ErrorState from '../../ui/ErrorState.svelte';
   import Loading from '../../ui/Loading.svelte';
   import { humanError } from '../../errors.js';
   import { safeMode } from '../../boot/boot.js';
@@ -42,6 +43,7 @@
     live,
     screenBlack,
     rehearsing,
+    readErrors,
   } from '../../stores/capture.js';
 
   /** Search text from the Library's one search box. */
@@ -399,6 +401,14 @@
         <div class="ly-deck r-scroll">
           {#if loading || loadingSong}
             <Loading what={loading ? 'songs' : 'the song'} />
+          {:else if $readErrors.listSongs || $readErrors.searchSongs}
+            <!-- RG-95. Both reads swallow to `[]`, so a library that failed to open
+                 said "No songs yet — import or paste one with the Import button."
+                 An operator who believes that re-imports a songbook they already
+                 have, minutes before a service. -->
+            <ErrorState
+              error={$readErrors.searchSongs ?? $readErrors.listSongs}
+              onRetry={() => runSearch(query)} />
           {:else if !songs.length}
             <EmptyState
               message={query?.trim()
@@ -431,7 +441,10 @@
     </section>
   </div>
 
-  {#if msg}<p class="ly-msg">{msg}</p>{/if}
+  <!-- Announced. "John 3:16 is on the screens" is the confirmation that content
+         reached a congregation, and it was silent to a screen reader — the error
+         half of these panes carries `role="alert"` and this half carried nothing. -->
+  {#if msg}<p class="ly-msg" role="status" aria-live="polite">{msg}</p>{/if}
   {#if error}<p class="ly-err" role="alert">{error}</p>{/if}
 </div>
 

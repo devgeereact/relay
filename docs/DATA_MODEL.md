@@ -1,4 +1,4 @@
-# Relay — Domain Model & Event Architecture
+# Relay — Data Model & Event Architecture
 
 *What Relay **is**, as opposed to what it does.* This document centralizes the entities, their
 lifecycle, the invariants that govern them, and the events that connect the Rust core to the
@@ -34,14 +34,26 @@ Verse ────────┘           OutputChannel             ├─ Tra
 Content Library           Service Plan              Calibration
 ───────────────           ────────────              ───────────
 SavedScripture            ServicePlan               VoiceProfile
-Song ─ Section            └─ PlanItem  ── the unified cue
-     └ Arrangement           (scripture│song│media│announcement│countdown)
+Song ─ Section            └─ PlanItem  ── the unified cue    EnvironmentProfile
+     └ Arrangement           (scripture│song│media│announcement│countdown)   (a room)
 Announcement
 MediaAsset
 
+The service record                       Safety state (runtime)
+──────────────────                       ──────────────────────
+ServiceEvent  (an ordered timeline       ServiceLock   (what may not happen now)
+               that survives the app)    OutputHealth  (is each screen still painting?)
+PerfSample    (percentiles, not traces)  Degradation   (which capability is reduced)
+
 Runtime-only (never persisted): VerseRef · RefMatch · Cand · Fire · DetectionEvent ·
-ContextMemory · PassageNav · SemanticIndex · Thresholds · OutputContent · SessionState
+ContextMemory · PassageNav · SemanticIndex · Thresholds · OutputContent · SessionState ·
+ServiceLock · OutputHealth
 ```
+
+**Three of these carry a rule the schema alone does not state.** `ServiceEvent.detail` is a
+phrase Relay composes and never a phrase a preacher said; `PerfSample` stores percentiles and
+never traces; and `EnvironmentProfile` deliberately omits the audio levels, because nothing in
+Relay may compare a signal to a stored level ([DECISIONS.md](DECISIONS.md) §19, §44, §46).
 
 ---
 
@@ -49,14 +61,14 @@ ContextMemory · PassageNav · SemanticIndex · Thresholds · OutputContent · S
 
 ### Translation — `db/verses.rs` `Translation`
 The Bible translation a verse belongs to. Bundled corpus today is **KJV only** (66 books,
-31,100 verses, committed at `src-tauri/data/kjv.json`, glosses stripped at import). Fields:
+31,102 verses, committed at `src-tauri/data/kjv.json`, glosses stripped at import). Fields:
 `id, name, abbreviation, language` (ISO code), `license_type`. There is deliberately no import
 path for a second translation — which is also why there is no licensing exposure.
 
 ### Verse — `db/verses.rs` `VerseRow`
 A single verse: `translation_id, book` (canonical name), `chapter, verse, text`, and
 `embedding BLOB`. **The `embedding` column exists and has never been written to** — it is the
-waiting seam for a future neural paraphrase model (see [ROADMAP.md](ROADMAP.md)). Lookup is
+waiting seam for a future neural paraphrase model (see [KNOWN_ISSUES.md](KNOWN_ISSUES.md)). Lookup is
 indexed by `(translation_id, book, chapter, verse)`; full-text recall rides an FTS5 virtual
 table `verses_fts` *behind* the reference/phrase/semantic ranker (DECISIONS: "FTS5 added behind
 the existing ranker").
@@ -83,7 +95,7 @@ network_client}`, an assigned `template_id`, a `display_target` (display index /
 kiosk id), and `status ∈ {online, offline}`. **Any channel can carry any template**; the render
 target and template are *configuration*, never per-type code (a core non-negotiable). `ndi_encode`
 is a valid target in the schema but returns a clear "not built" error at runtime — an honest
-seam, not a lie (see [ROADMAP.md](ROADMAP.md)).
+seam, not a lie (see [KNOWN_ISSUES.md](KNOWN_ISSUES.md)).
 
 **`OutputContent`** (`channels.rs` `OutputContent`) is the runtime payload actually broadcast to
 a channel; **`MonitorInfo`** (`channels.rs` `MonitorInfo`) is the stage-monitor view.
@@ -235,7 +247,8 @@ Panic keys clear only `onAir`; wiping the position would restart the plan at cue
 
 Consolidated here as *domain facts*; the code-level statements and their war stories live in
 [../CLAUDE.md](../CLAUDE.md) "Architecture rules learned the HARD WAY" and
-[DECISIONS.md](DECISIONS.md) §18–§25. This list references them — it does not fork them.
+[DECISIONS.md](DECISIONS.md) — the numbered log now runs §18–§62. This list references
+those decisions; it does not fork them.
 
 1. **Only `Direct` auto-fires.** A cosine is not a probability. `Semantic`/`Ambiguous` are
    capped at `Suggest` structurally, not numerically.
@@ -258,9 +271,11 @@ Consolidated here as *domain facts*; the code-level statements and their war sto
 ## 8. Event & command architecture
 
 The Rust core and the Svelte webview talk over two channels: **commands** (request/response,
-`#[tauri::command]`, 101 of them, all in `main.rs`) and **events** (push, `handle.emit`). The
-full command reference lives in [ARCHITECTURE.md](ARCHITECTURE.md) §6 — it is not duplicated
-here. What follows is the **event catalog**: the push side, which is where the live pipeline
+`#[tauri::command]`, all in `main.rs`) and **events** (push, `handle.emit`). **The count is
+deliberately not written here** — restated counts in this repository have drifted every time
+(`grep -c '#\[tauri::command\]' src-tauri/src/main.rs`). The command reference lives in
+[ARCHITECTURE.md](ARCHITECTURE.md) §6, which no longer restates the list either, for the same
+reason. What follows is the **event catalog**: the push side, which is where the live pipeline
 actually surfaces.
 
 | Event | Producer → Consumer | Carries / means |
@@ -281,6 +296,16 @@ actually surfaces.
 | `model://done` | models → Settings/first-run | download complete and checksum-verified |
 | `model://error` | models → Settings/first-run | download failed (dismissable) |
 | `model://cancelled` | models → Settings/first-run | operator cancelled — **not** an error; keeps the `.part` |
+| `stt://language_unstable` | stt worker → console | auto language detection is flapping — the operator should know before blaming the AI |
+| `channel://retemplate` | main → native output window | this screen's template changed; the page filters by its own `channel` id so a swap is live with no new URL (DECISIONS §29) |
+| `rehearsal://changed` | main → every console surface | rehearsal on/off, pushed so no surface can be a poll interval behind the others |
+
+**`model://done` is emitted and deliberately has no listener.** `download_model`
+resolves only once the file is installed and checksum-verified, so the command's own
+return is the completion signal; adding a listener would handle the same fact twice.
+It stays because the trio `done`/`cancelled`/`error` is the protocol `models.rs`
+documents, and an outbound event with no consumer costs nothing — unlike a *command*
+nothing calls, which is attack surface (RG-51).
 
 Two events encode safety, not just plumbing: `output://panic_failed` exists because the panic
 controls fire from a global keydown handler and a shell button that **cannot `catch`** — a
@@ -303,5 +328,9 @@ reaching the end of a passage is a correct boundary and the operator is entitled
 | SavedScripture / Announcement / MediaAsset | `library.rs` | — | Library content |
 | Service / Transcript / Detection | `services.rs` | `Cand`, `DetectionEvent` (`pipeline.rs`) | `status='manual'` is training data |
 | VoiceProfile | `profiles.rs` | `Thresholds` (`router.rs`) | one baseline by construction |
+| ServiceEvent / PerfSample | `services.rs` | — | the ordered record and its percentiles; **neither may carry what a preacher said**, pinned from both sides |
+| EnvironmentProfile | `environments.rs` | — | a room, applied back one piece at a time so a partial apply reports *which* piece did not take |
 | Session | — (`main.rs` `SessionState`) | `SessionState` | ephemeral; never persisted verbatim |
+| ServiceLock | — | `servicelock.rs` | 16 named actions held back while recording; **nothing on the fire path** |
+| OutputHealth | — | `channels.rs` | per-channel liveness from an anonymous beat; a lost beat degrades to "silent", the safe direction |
 | ContextMemory / PassageNav / SemanticIndex | — | `detection.rs` | pure, DB-free detection state |

@@ -10,7 +10,7 @@
 // Rust's `invoke_handler!`, and (the other direction) every event the backend
 // emits must be listened for somewhere.
 
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, it, expect } from 'vitest';
 
@@ -37,20 +37,53 @@ const outputHealthJs = read('src/lib/outputHealth.js');
 const updaterJs = read('src/lib/updater.js');
 const mainRs = read('src-tauri/src/main.rs');
 
-/** Every `call('name', …)` in the store, and every `invoke('name', …)` in the probes. */
+/**
+ * Every frontend source file, discovered rather than listed.
+ *
+ * The list used to be written out by hand — `capture.js`, `probes.js`,
+ * `outputHealth.js`, `updater.js` — and grew by one entry each time somebody
+ * noticed another file calling Tauri directly. This file's own comments record
+ * three of those discoveries, each phrased as *"added the moment it existed"*, and
+ * the last one says it plainly: **a command called from a file this test does not
+ * read is precisely the door nobody checks.**
+ *
+ * There were **nine** such files by the time that was written and the list had
+ * four. Nothing was broken — all six commands outside the contract do exist — but
+ * "nothing was broken" is what an unchecked door looks like right up until it is
+ * not, and this is the same failure as the event scanner reading only `main.rs`.
+ *
+ * So the inputs are now derived from the tree. A tenth file joins the contract by
+ * existing.
+ */
+function frontendSources() {
+  const out = [];
+  const walk = (dir) => {
+    for (const e of readdirSync(resolve(root, dir), { withFileTypes: true })) {
+      const rel = `${dir}/${e.name}`;
+      if (e.isDirectory()) walk(rel);
+      else if (/\.(js|svelte)$/.test(e.name) && !e.name.includes('.test.')) {
+        out.push([rel, read(rel)]);
+      }
+    }
+  };
+  walk('src');
+  return out;
+}
+
+/**
+ * Every Tauri command name the frontend calls, from every file that can call one.
+ *
+ * Scoped to files that import `@tauri-apps/api/core`, because `call(` and `inv(`
+ * are ordinary names — matching them everywhere would sweep up unrelated helpers
+ * and turn this contract into noise.
+ */
 function commandsCalledByFrontend() {
   const names = new Set();
-  for (const m of captureJs.matchAll(/\bcall\(\s*['"]([a-z0-9_]+)['"]/g)) {
-    names.add(m[1]);
-  }
-  for (const m of probesJs.matchAll(/\binvoke\(\s*['"]([a-z0-9_]+)['"]/g)) {
-    names.add(m[1]);
-  }
-  for (const m of outputHealthJs.matchAll(/\binv\(\s*['"]([a-z0-9_]+)['"]/g)) {
-    names.add(m[1]);
-  }
-  for (const m of updaterJs.matchAll(/\binvoke\(\s*['"]([a-z0-9_]+)['"]/g)) {
-    names.add(m[1]);
+  for (const [, text] of frontendSources()) {
+    if (!text.includes('@tauri-apps/api/core')) continue;
+    for (const m of text.matchAll(/\b(?:call|invoke|inv)\(\s*['"]([a-z0-9_]+)['"]/g)) {
+      names.add(m[1]);
+    }
   }
   return [...names].sort();
 }
@@ -85,6 +118,18 @@ describe('Tauri IPC contract', () => {
     expect(commandsCalledByFrontend()).toContain('update_verify');
   });
 
+  it('the contract reads every file that can call Tauri, not a hand-written list', () => {
+    // Guards the discovery, which is now the load-bearing part. These four commands
+    // are each called from a file the old hand-written list did not include —
+    // `App.svelte`, `FirstRun.svelte`, `latency.js`, `Settings.svelte`, `Output.svelte`.
+    // If the inputs are ever narrowed again, they vanish and every other assertion
+    // in this block still passes.
+    const called = commandsCalledByFrontend();
+    for (const c of ['system_hardware', 'latency_mark', 'update_preflight', 'get_template']) {
+      expect(called, `${c} is called from a file outside the old list`).toContain(c);
+    }
+  });
+
   it('every command the frontend calls is registered in Rust', () => {
     const registered = new Set(commandsRegisteredInRust());
     const missing = commandsCalledByFrontend().filter((c) => !registered.has(c));
@@ -105,14 +150,12 @@ describe('Tauri IPC contract', () => {
   //
   // Liveness probes call `ping` (silent). This keeps it that way.
   it('the boot heartbeat (greet) is called from exactly one place', () => {
-    const sources = [
-      ['src/App.svelte', read('src/App.svelte')],
-      ['src/lib/boot/probes.js', probesJs],
-      ['src/lib/stores/capture.js', captureJs],
-      ['src/lib/boot/BootSequence.svelte', read('src/lib/boot/BootSequence.svelte')],
-      ['src/lib/views/Dashboard.svelte', read('src/lib/views/Dashboard.svelte')],
-    ];
-    const callers = sources.filter(([, text]) => /['"]greet['"]/.test(text)).map(([f]) => f);
+    // Every source file, not a list of five. The count IS the instrument here, so
+    // a `greet` added to a sixth file is exactly what this must catch — and a
+    // hand-written list cannot, by construction.
+    const callers = frontendSources()
+      .filter(([, text]) => /['"]greet['"]/.test(text))
+      .map(([f]) => f);
     expect(
       callers,
       `greet is the boot heartbeat and must have ONE caller (App.svelte). ` +
@@ -134,9 +177,37 @@ describe('Tauri event contract', () => {
   // and `output://panic_failed` — the second being a PANIC path, the one place a
   // dropped event is least affordable. They matched nothing, so they were never
   // checked, and the test still passed and still looked exhaustive.
+  //
+  // ── AND IT SCANNED ONE FILE ────────────────────────────────────────────────
+  //
+  // The second version of that same mistake: `emitted` was built from `main.rs`
+  // alone, so anything emitted from another module was outside a contract whose
+  // whole claim is exhaustiveness. `models.rs` emits four events and `channels.rs`
+  // is the output hub; none of them were ever checked. **A scanner that reads one
+  // file cannot report on a repository**, and eleven of thirteen findings in the
+  // last accessibility pass were the instrument's own bugs (RG-13) — the pattern is
+  // that the tool is wrong more often than the code it audits.
+  const rustFiles = readdirSync(resolve(root, 'src-tauri/src'))
+    .filter((f) => f.endsWith('.rs'))
+    .map((f) => read(`src-tauri/src/${f}`));
   const emitted = new Set(
-    [...mainRs.matchAll(/emit\(\s*"([a-z_]+:\/\/[a-z_]+)"/g)].map((m) => m[1]),
+    rustFiles.flatMap((src) =>
+      [...src.matchAll(/emit\(\s*"([a-z_]+:\/\/[a-z_]+)"/g)].map((m) => m[1]),
+    ),
   );
+
+  // Emitted on purpose with nobody listening. Each entry needs a REASON here, not
+  // just a name — an allow-list without one becomes the place failures go to be
+  // forgotten, which is how the "no dead commands" claim stayed true-sounding while
+  // five commands were unreachable.
+  const DELIBERATELY_UNHEARD = {
+    // `download_model` only resolves once the file is installed and its checksum
+    // verified, so the command's own return already carries completion. A listener
+    // as well would handle the same fact twice, and the two could disagree about
+    // ordering. `cancelled` and `error` DO have listeners, because they arrive
+    // while the caller is still awaiting. See `models.rs::download`.
+    'model://done': 'the download command resolves on success; a listener would double-handle it',
+  };
 
   it('finds the emitted events', () => {
     expect(emitted.size).toBeGreaterThan(3);
@@ -150,9 +221,32 @@ describe('Tauri event contract', () => {
     );
   });
 
+  // Guards the WIDENING, for the same reason. If this ever reads only main.rs
+  // again, these two vanish and every other assertion here still passes.
+  it('the scanner reads every Rust module, not just main.rs', () => {
+    expect([...emitted]).toEqual(
+      expect.arrayContaining(['model://progress', 'model://done']),
+    );
+  });
+
   it('every event the backend emits is listened for on the frontend', () => {
-    const unheard = [...emitted].filter((e) => !listeners.includes(e));
+    const unheard = [...emitted].filter(
+      (e) => !listeners.includes(e) && !(e in DELIBERATELY_UNHEARD),
+    );
     expect(unheard, `backend emits events nobody listens to: ${unheard.join(', ')}`).toEqual([]);
+  });
+
+  it('every allowed exception is still actually emitted, and still actually unheard', () => {
+    // An allow-list that outlives its entry is a lie in the other direction: it
+    // would silently permit a future event that happens to reuse the name, and it
+    // would hide the day somebody DOES wire a listener up.
+    for (const [name, why] of Object.entries(DELIBERATELY_UNHEARD)) {
+      expect(emitted.has(name), `${name} is allow-listed but nothing emits it`).toBe(true);
+      expect(
+        listeners.includes(name),
+        `${name} now HAS a listener — remove it from the allow-list (${why})`,
+      ).toBe(false);
+    }
   });
 });
 

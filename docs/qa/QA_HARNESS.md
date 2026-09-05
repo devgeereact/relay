@@ -1,8 +1,8 @@
 # Relay — the QA harness
 
 How Relay is audited, by whom, with which instrument, and what the repository can already
-prove. This is not part of the specification hierarchy — [SPEC.md](SPEC.md),
-[DECISIONS.md](DECISIONS.md) and [PRODUCT_AUDIT.md](PRODUCT_AUDIT.md) own the product; this
+prove. This is not part of the specification hierarchy — [SPEC.md](../SPEC.md),
+[DECISIONS.md](../DECISIONS.md) and [PRODUCT_AUDIT.md](audits/PRODUCT-2026-07-13.md) own the product; this
 document owns how it gets checked.
 
 It supersedes `Working-Agent.md`, `Working-Agent-PROMPT.md` and `Working-Agent-COVERAGE.md`,
@@ -20,18 +20,33 @@ every edit: `.claude/hooks/relay-fast-gate.mjs`, path-filtered and report-only (
 
 ## 0. Current inventory
 
-Re-measured **2026-08-29** against `0338244`. Every number here is produced by a command, and
-the command is named — a count you cannot reproduce is a rumour.
+Re-measured **2026-09-05** against the working tree. Every number here is produced by a command,
+and the command is named — a count you cannot reproduce is a rumour.
+
+> **Expect these to be wrong, and reach for the command rather than the value.** Every count in
+> this repository has been corrected three times in a week and been wrong again each time; two of
+> those corrections were wrong because a plausible one-liner was believed over the tool that
+> actually knows. `RELAY_GAP.md` §18 keeps the evidence. **This table is the register of counts
+> for the whole repository** — other documents cite it rather than restating it.
 
 | | Count | How to reproduce |
 |---|---|---|
-| Rust tests | **624 passing**, 17 ignored | `cd src-tauri && cargo test` |
-| Frontend tests | **874 passing**, 0 skipped, 63 files | `npx vitest run` — read the runner's own summary line. **Not** `vitest list \| wc -l`: that stream carries Svelte compiler warnings too and over-counted by 7 |
-| `e2e.rs` tests | **35** (35 run, 0 ignored — R2-C and R2-D closed, DECISIONS §54; three added for the calibrator and the service record) | `cd src-tauri && cargo test e2e::` |
-| Registered `#[tauri::command]` | **137** | `grep -c '#\[tauri::command\]' src-tauri/src/main.rs` |
-| `.svelte` files | **47**, 22 of them views | `find src -name '*.svelte' | wc -l` |
-| `<button>` occurrences | **338** | `grep -ro '<button' --include='*.svelte' src | wc -l` |
+| Rust tests | **663 passing**, 17 ignored (680 declared) | `cd src-tauri && cargo test`. It read **654 / 671** before the 2026-09-05 pass, which added 9 (3 in `db` proving the corpus repair reaches a v2 database and keeps every past detection's reference — RG-102 … RG-104 — 2 in `channels` for the kiosk deadline and the SVG policy, 1 in `proimport` for the zip bomb (RG-111), and 3 for the two the audit had declined: the kiosk hub's origin gate (RG-108, two tests) and the narrowed console policy (RG-85)). It read **649 / 666** before the 2026-09-04 LAN pass, which added 5 in `channels` (ranged media, RG-96; the connection cap and the whole-head deadline, RG-97). It read **644 / 661** before the 2026-09-04 corpus pass, which added 5 (4 in `db::verses::corpus_tests` pinning the bundled KJV to the KJV's own versification and the gloss rule to the fifteen verses it got wrong, 1 asserting no bundled verse is empty). It read **629 / 646** before the 2026-09-03 fix pass, which added 15 (5 import guard, 4 service erase, 3 history indexes, 3 LAN server). It read **630 / 647** until 2026-09-02, and that extra one was not a test: a duplicated `#[test]` attribute in `db/services.rs` registered one function twice. The same duplicate made `cargo clippy --all-targets -- -D warnings` fail, which is a CI gate — so the count register and the build gate were wrong in the same place, for the same reason |
+| Frontend tests | **965 passing**, 0 skipped, 71 files | `npx vitest run` — read the runner's own summary line. It read **952 / 71** before the 2026-09-04 pass, which added 7 `surface.test.js` cases (RG-95: one per list surface that used to show its empty sentence over a failed read) and 6 more on 2026-09-05 (RG-110: Channels' unreachable error state, a failed save shown in success green, and the six success lines a screen reader never heard; RG-95's last two surfaces: the Planner's cue table and the run surface's three lists; RG-98: the dev server's default host). **Not** `vitest list \| wc -l`: that stream carries Svelte compiler warnings too and over-counted by 7. It read **927 / 68** before the 2026-09-03 fix pass (+5 `mediaimport`, +7 `updatechannel`, +3 `crossrefs`, +1 `hardrules`, +9 `v1audit` — the last of which holds the audit document to its own arithmetic, because two of its three scorecard totals were wrong in the first draft) |
+| `e2e.rs` tests | **38** (38 run, **0 ignored** — the file has carried no ignored test since R2-C and R2-D closed, DECISIONS §54) | `cd src-tauri && cargo test e2e::` |
+| Registered `#[tauri::command]` | **133** (five dead ones deleted 2026-08-30; `delete_service` added 2026-09-03, RG-89) | `grep -c '#\[tauri::command\]' src-tauri/src/main.rs` |
+| `.svelte` files | **48**, **23** of them views | `find src -name '*.svelte' \| wc -l`, and `find src/lib/views -name '*.svelte' \| wc -l` for the second — it read 22 with no reproducer beside it, and the views live in three directories |
+| `<button>` occurrences | **353** | `grep -ro '<button' --include='*.svelte' src | wc -l` |
 | Tables in the schema | **21** | `grep -c 'CREATE TABLE' docs/data/schema.sql` |
+| Cases in the detection gate | **74** | `python3 -c "import json;print(len(json.load(open('src-tauri/data/eval_corpus.json'))['cases']))"` — it was 50, then 57, then 63; three documents still quoted an older one |
+| Modal surfaces that trap focus | **10** | `grep -rl trapFocus src \| grep -c svelte` — **not** a `role="dialog"` grep, which counts a comment and misses an `alertdialog` |
+
+> **`node scripts/qa-inventory.mjs` reports `perf_samples` as BACKEND ONLY — no command reaches
+> the insert. That is correct and it is not a defect.** The table is written by the
+> `relay-history` thread every 60 seconds and once more at `end_service` (`main::snapshot_latency`
+> → `db::log_perf_sample`); there is deliberately no command, because latency history is not
+> something an operator authors. It is listed here so the red flag reads as understood rather
+> than as unnoticed.
 
 **Status: BUILT.** What shipped:
 
@@ -41,7 +56,7 @@ the command is named — a count you cannot reproduce is a rumour.
 | Surface inventory | `node scripts/qa-inventory.mjs` — controls, orphans, command map, create-path chain |
 | Six agents | `.claude/agents/relay-qa-{cold-start,live-path,surface,detection,failure,auditor}.md` |
 | The command | `/qa-audit` — changed-surface by default, `--full`, `--live` |
-| The hook | `.claude/hooks/relay-fast-gate.mjs` — path-filtered, report-only (§1.6) |
+| The hook | `.claude/hooks/relay-fast-gate.mjs` — path-filtered, report-only (§1.6). **Off until installed**: it lives in `.claude/settings.json`, which is gitignored because it is per machine, so a fresh clone does not have it — `npm run hooks:install` (idempotent), `npm run hooks:check` to see. **Its watch list is itself pinned** (`fastgate.test.js`, RG-69): a rule whose path stops matching does not error, it goes quiet, and four safety files had already gained tests without gaining a rule |
 
 ---
 
@@ -61,7 +76,7 @@ Relay is neither.
 - **There is no browser driver, no Playwright, no `@testing-library/svelte`** in
   `package.json`, and adding one does not help: a driver needs a page, and the page needs the
   Tauri bridge, which only exists inside the packaged webview.
-- **The surface is 319 `<button>` occurrences across 47 `.svelte` files.** No agent in this
+- **The surface is hundreds of `<button>` occurrences across dozens of `.svelte` files** — §0 carries the two numbers and the commands that produce them; this sentence carried a stale copy of both. No agent in this
   environment can press one of them.
 
 So a literal execution of your prompt produces exactly the failure your prompt was written to
@@ -109,7 +124,7 @@ You are right that a system which only looks alive because someone pre-filled it
 defect, and right that it is the single most under-tested thing in most apps. But Relay's
 fresh install is not a demo fixture. `db::init_fresh` seeds:
 
-- 31,100 KJV verses and their translation row (bundled, `include_str!`, required to build)
+- 31,102 KJV verses and their translation row (bundled, `include_str!`, required to build)
 - 5 built-in templates plus the presets
 - the default output channels
 - one active voice profile
@@ -120,8 +135,11 @@ requirement that does not exist.
 
 The version of your question that *does* apply, and applies hard:
 
-> **Which of the 18 tables in `docs/data/schema.sql` can only be filled by the seeder or by an
+> **Which of the tables in `docs/data/schema.sql` can only be filled by the seeder or by an
 > importer — with no path a new user can reach from a rendered control?**
+
+(`grep -c 'CREATE TABLE' docs/data/schema.sql`, and `node scripts/qa-inventory.mjs` prints the
+verdict per table. The count is not written here for the reason §0 gives.)
 
 That is mechanically answerable, and it is the first job of agent R1. The chain, per table:
 
@@ -158,11 +176,18 @@ Suggestion ≠ Auto-fire · Clear ≠ Blackout · Rehearsal ≠ Live
 Five of the six were already pinned by tests. Preview ≠ Programme was not, and closing it
 produced the two most interesting results of this whole build.
 
-**First: the component that reads like the safety model is not in the product.**
-`src/lib/views/library/PreviewProgram.svelte` is 312 lines of two-pane switcher whose header
+> **Read this section as history, and check the date.** It records what was found in
+> August 2026 and what was done about it *then*. Both of its subjects have since been
+> **deleted from the tree**: `PreviewProgram.svelte` on 2026-08-15, and with it the staging half
+> of the run rail and every test about a TAKE button. The paragraphs below are left because the
+> reasoning is worth keeping; the present tense in them is not. **§4.2 is the current state.**
+
+**First: the component that read like the safety model was not in the product.**
+`src/lib/views/library/PreviewProgram.svelte` **was** 312 lines of two-pane switcher whose header
 comment states the danger exactly — *"Relay used to fire on a single click. One slip of a
 trackpad put the wrong scripture on a wall in front of a congregation, instantly, with no
-undo"* — and **nothing imports it**. Fourteen tests were written against it and passed before
+undo"* — and **nothing imported it**. It was deleted on 2026-08-15; the file is not in the
+repository. Fourteen tests were written against it and passed before
 `scripts/qa-inventory.mjs` reported it unreachable on its first run. Fourteen green tests
 about a screen no operator can open is the audit's own failure mode, caught by the audit's own
 tool, which is the best argument for the tool I can offer.
@@ -182,10 +207,12 @@ The header does say "· Preview", in small grey label text, beside a pulsing amb
 indicators disagree and the louder one is wrong. Same class as the media bug already closed
 once ("the wall showed a photo, the topbar said ON AIR, and the monitor showed black").
 
-**FIXED — option (b).** The badge now describes the **pane**: staged → grey "Preview", and
-amber is reachable only when the pane is showing content a congregation can actually see. The
-fact the badge can no longer carry rides in a second, deliberately smaller chip (`.lo-behind`):
-**"Wall live"** in amber, or **"Wall: rehearsal"** in amethyst.
+**FIXED at the time — option (b), and then SUPERSEDED.** The badge was made to describe the
+**pane**: staged → grey "Preview", with the wall's own state in a second, smaller chip
+(`.lo-behind`). **Neither survives**: the staging half was removed a fortnight later (audit
+P1-2) because nothing could reach it, so there is no staged state for a badge to describe and
+`grep -rn 'lo-behind' src/` finds nothing. The rail's amber rule is the one that remained, and
+it is the one `liveoutputrail.test.js` pins today.
 
 Option (a) — badge-only — was rejected. It trades a wrong signal for a **missing** one on the
 single question this panel exists to answer, and staging is precisely the moment an operator
@@ -193,9 +220,11 @@ forgets what is still up. A panel titled LIVE OUTPUT that goes quiet about the w
 you touch the library is not more honest than one that shouts the wrong thing; it is quieter
 about the same failure.
 
-The chip is a warning, not decoration, so it stays absent when the wall is genuinely clear and
-when the screens are blacked out. `src/lib/liveoutputrail.test.js` is now **17 passing tests,
-none skipped**, five of them on this state alone.
+The chip was a warning, not decoration, so it stayed absent when the wall was genuinely clear
+and when the screens were blacked out. `src/lib/liveoutputrail.test.js` read **17 passing
+tests** at that point; it holds **11** today, and none of them is about staging — the five that
+were about this state went with the feature. Reproduce with
+`grep -cE '^\s*(it|test)\(' src/lib/liveoutputrail.test.js`.
 
 Full state of all six, with the file and test names, is in **§4.2**.
 
@@ -269,7 +298,7 @@ Your report structure survives, with two changes:
    ordered, specific, "plug in the ATEM, do this, expect that". That list is the actual output
    of an honest audit of a desktop app on a machine with no screen.
 
-Written to `docs/audits/QA-<ISO date>.md`. It never touches `PRODUCT_AUDIT.md` — that document
+Written to `docs/qa/audits/QA-<ISO date>.md`. It never touches `PRODUCT_AUDIT.md` — that document
 is a human's, written at a different altitude, and an agent overwriting it would be the worst
 kind of quiet damage.
 
@@ -297,7 +326,7 @@ kind of quiet damage.
 | **8.1** | Where the agents live | **Committed.** `.gitignore` un-ignores exactly the eight QA files and nothing else; the claude-flow scratch stays out |
 | **8.2** | Default scope | **Changed-surface**, computed from `git diff --name-only main...HEAD`; `--full` for a release |
 | **8.3** | May it drive the running app? | **Yes, behind `--live`.** R2 and R5 get layer D only when the flag is passed, and are told when it is off |
-| **8.4** | Report location | **Committed**, `docs/audits/QA-<ISO date>.md` |
+| **8.4** | Report location | **Committed**, `docs/qa/audits/QA-<ISO date>.md` |
 | **8.5** | Does the hook block? | **Report only.** It never exits 2 |
 
 ---
@@ -443,9 +472,9 @@ and a question nobody else can answer.
 
 | | Agent | Layers | Owns | Forbidden to claim |
 |---|---|---|---|---|
-| **R1** | Cold Start | A, C | The empty-system build: create-path matrix for all 18 tables, seed audit, persistence across a real reopen, first-run order, migration retryability | That a screen "works". It never sees one |
+| **R1** | Cold Start | A, C | The empty-system build: a create-path matrix for **every** table in the schema, seed audit, persistence across a real reopen, first-run order, migration retryability | That a screen "works". It never sees one |
 | **R2** | Live Path | A, D | The six distinctions, the transport, panic, rehearsal containment, recovery after a kill, `NavResult` on every surface that exposes nav | That an operator *understood* anything. Legibility is R3's |
-| **R3** | Surface Inventory | B, C | Every control in 47 files: enumerated, classified, mounted where mountable. Dead controls, missing empty/loading/error states, focus order, colour semantics, the humaniser on every error path | That any backend call succeeded. Its backend is a mock |
+| **R3** | Surface Inventory | B, C | Every control in every `.svelte` file: enumerated, classified, mounted where mountable. Dead controls, missing empty/loading/error states, focus order, colour semantics, the humaniser on every error path | That any backend call succeeded. Its backend is a mock |
 | **R4** | Detection & Language | A | Scoring **through the router**, never by reading the transcript. False positives, ambiguity, code-switching, the paraphrase-shows-no-percentage rule, honesty about Yorùbá numerals and unmeasured WER | Any claim about audio or accents. WER over speech is layer E |
 | **R5** | Failure & Boundaries | A, D | Offline, process kill mid-service, poisoned locks, migration retry, concurrent writes, injection through text fields, unicode round-trips, and whether the LAN remote's *decided* threat model still holds | That an integration passes. OBS/ATEM/ProPresenter hardware is BLOCKED, always |
 | **R6** | Independent Auditor | all | Runs last, reads none of R1–R5 until it has produced its own list, then reconciles and writes the report and the GO / NO-GO | Nothing. It is the one allowed to contradict the others |
@@ -481,8 +510,8 @@ count. This is the audit's starting line.
 
 | Layer | Present today | Where |
 |---|---|---|
-| **A — Command E2E** | Yes. 32 tests (32 run, 0 ignored) driving the real commands against a real in-memory DB through the real router and pipeline | `src-tauri/src/e2e.rs` |
-| **B — Component mount** | Yes, and used — but only twice | `src/lib/inspector.test.js` mounts `DetectionInspector`; `src/lib/layers.test.js` mounts `TemplateRender` |
+| **A — Command E2E** | Yes. **38 tests, 0 ignored** (`cargo test e2e::`) driving the real commands against a real in-memory DB through the real router and pipeline | `src-tauri/src/e2e.rs` |
+| **B — Component mount** | Yes, and **no longer under-used: 14 files mount a real component** (`grep -rln 'new [A-Z][A-Za-z]*({' src/lib/*.test.js`) | `inspector`, `layers`, `liveoutputrail`, `arrangements`, `firstrunmic`, `lowerthird`, `qa-r5-onair`, `qa-r5-template-injection`, `r2livepath`, `r6-lifecycle-probe`, `rendercontent`, `templatestyle`, `themerender`, `surface` |
 | **C — Static contract** | Yes, one exemplar | `src/lib/ipc.test.js` — command names both directions, event listeners, and a `greet`-has-one-caller assertion |
 | **D — Live app** | Exists as a surface, is not exercised by any test | `channels.rs` serves `:8032`; `main.rs::remote_api` handles `search / fire / next / prev / clear / black / live`. Kiosk hub on `:8031` |
 | **E — Human** | The bench harness is built and pointed at nothing | `bench/README.md` says what to record; `bench/.gitignore` refuses to let sermon audio into the repo |
@@ -498,8 +527,13 @@ and Stage F of the human test script for the part that needs a room.
 
 Totals are in §0 and are re-measured, not inherited.
 
-Layer B is the biggest under-used asset in the repo. The pattern works, it is proven twice, and
-it is the only instrument that can see a control at all.
+**Layer B was the biggest under-used asset in the repo and is not any more** — it went from two
+files to fourteen, and it is still the only instrument that can see a control at all. Two rules
+came out of using it, and both are load-bearing: **`vitest.config.js` must set
+`resolve: { conditions: ['browser'] }`**, or Svelte hands the test the SSR stubs and every
+load-on-mount path silently does nothing while the test passes; and **a component nothing renders
+is not covered, however green its tests** — fourteen passing tests were written against
+`PreviewProgram.svelte` before `qa-inventory.mjs` reported that nothing imported it.
 
 ---
 
@@ -512,7 +546,7 @@ it is the only instrument that can see a control at all.
 | **Paraphrase ≠ Direct** | **Yes** | `detect.test.js`: a spoken reference is HEARD, a paraphrase is not "however high its score", the three methods get three distinguishable keys, and *"a paraphrase NEVER shows a percentage — at any score"* |
 | **Clear ≠ Blackout** | **Yes, as separate contracts** | `panic.test.js`: `clearScreens` returns FALSE on backend failure and the caller must not flash success; a failed clear raises the panic banner; *"blackout has the identical contract — it is a panic control too"*; a success clears a stale warning; no crying wolf with no backend at all |
 | **Cued ≠ On Air** | **Yes** | `transport.test.js`: Esc/clear takes the plan off air but REMEMBERS the position; blackout the same; a FAILED hand-fire leaves the plan exactly as it was; clearing twice is idempotent and does not lose the position |
-| **Preview ≠ Programme** | **Yes, now** | `src/lib/liveoutputrail.test.js` — 17 tests, none skipped: staging reaches nobody, TAKE hands the slide to the parent and fires nothing itself, TAKE is dead with nothing staged / in safe mode / mid-take, the monitor is honest in every state, amber never sits beside a staged slide, and the operator is still told when the wall is hot behind one |
+| **Preview ≠ Programme** | **Yes — on the surface that has one** | **Corrected 2026-09-05.** This row used to cite *"`liveoutputrail.test.js` — 17 tests"* about staging and a TAKE button, and **both the component and those tests were deleted on 2026-08-15** (audit P1-2): `PreviewProgram.svelte` had no importer and `Library.svelte::stage()` had no caller, so the preview half could not render. Scoring a safety distinction against deleted evidence is the failure this table exists to prevent. What holds it today: **`Live.svelte` owns the distinction for the plan path**, where it is implemented and reachable (`previewNext` / `previewCue` / `previewSlide` beside the program pane, both rendered through the one `TemplateRender`), and `r2livepath.test.js` §R2-E pins the Library's side as an ABSENCE — *"the Library run column has no preview half at all"*, *"the rail declares no preview prop and offers no Take button"*, and Go Live fires the queue, which is reachable. `liveoutputrail.test.js`'s 11 tests are about the monitor and the panic tiles: amber only when a congregation is genuinely looking, amethyst in rehearsal, no amber under a blackout, and a panic control that never reports a success it did not achieve |
 
 **Preview ≠ Programme was the gap you flagged, and closing it found two things.**
 
@@ -614,7 +648,7 @@ From `db::init_fresh` — schema, then `seed`, then `ensure_tables`, then a stam
 
 | Seeded | Why it is content, not demo data |
 |---|---|
-| 31,100 KJV verses + the translation row | Bundled at `src-tauri/data/kjv.json` via `include_str!`, required to build. A church with an empty verse table has a broken install |
+| 31,102 KJV verses + the translation row | Bundled at `src-tauri/data/kjv.json` via `include_str!`, required to build. A church with an empty verse table has a broken install |
 | 5 built-in templates + presets | `templates.rs::seed_templates`. Includes "Worship Lyrics", added because every earlier built-in was scripture-shaped and put the song title where the words should be |
 | Default output channels | `channels.rs::seed_channels` |
 | One active voice profile | `ensure_tables` guarantees it even on a bare in-memory DB |
@@ -683,6 +717,14 @@ the rehearsal-containment tests built on `qa::Kiosk` cannot start passing by see
 This list is the audit's most valuable output, not its excuse. Each item is BLOCKED and needs a
 person.
 
+> **Two rows left this list on 2026-08-30 and are recorded rather than deleted.** *Audio in* —
+> a real preacher was transcribed for 49.5 minutes in a real room, and the packaged, ad-hoc-signed
+> build ran the whole service ([`audits/FIELD-2026-08-30.md`](audits/FIELD-2026-08-30.md)). **That
+> morning produced seven findings that months of reading source had not**, one of them a wrong
+> verse on a congregation's wall — which is the argument for taking the rest of this table
+> seriously, not for trusting it less. *Word error rate is still on the list*: being transcribed
+> is not the same as being measured.
+
 | Area | Why it is blocked | What a human must do |
 |---|---|---|
 | Anything visual | This machine cannot screenshot the app | Open the app; check layout, contrast, spacing, the dark palette, and that amber only ever appears when something is genuinely live |
@@ -694,6 +736,8 @@ person.
 | NDI | Parked by decision — needs a proprietary SDK; `open_ndi_output` returns a clear error on purpose | Nothing. Confirm the error is still clear and still honest |
 | The macOS microphone under a signed build | The mic dies on the **first correctly-signed build**: notarization forces the hardened runtime, under which opening an input device without `com.apple.security.device.audio-input` is TCC-killed, and without `NSMicrophoneUsageDescription` the app is terminated the instant it asks. `tauri dev` and unsigned pre-releases both work fine | `npm run tauri build && ./scripts/sign-local.sh`, then actually speak into it |
 | CSP | `tauri dev` does not exercise it — Tauri loads the Vite `devUrl`, and `app.security.csp` only applies to bundled assets | `npm run tauri build`, then run the packaged binary |
+| Pixels out | Nothing here has ever measured what a projector actually showed | A projector, and RG-18's contrast and distance thresholds checked against a real wall — they are WCAG (a spec for screens at arm's length) and broadcast safe-title practice, neither verified in a hall |
+| An operator who did not write Relay | — | **The largest unknown in the project.** One person, one service |
 | An actual congregation | — | A Sunday |
 
 ---

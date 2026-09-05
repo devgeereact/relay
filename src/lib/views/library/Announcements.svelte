@@ -16,7 +16,8 @@
   import { safeMode } from '../../boot/boot.js';
   import VerseDeck from './VerseDeck.svelte';
   import EmptyState from '../../ui/EmptyState.svelte';
-  import { listActiveTemplates, getContentTemplates, loadTemplates, templates } from '../../stores/capture.js';
+  import ErrorState from '../../ui/ErrorState.svelte';
+  import { listActiveTemplates, getContentTemplates, loadTemplates, templates, readErrors } from '../../stores/capture.js';
 
   export let startDraft = false; // New → "Draft announcement" opens the editor
   /** The Library's one search box. */
@@ -27,6 +28,13 @@
   let items = [];
   let msg = '';
   let msgT;
+  // A FAILURE IS NOT A SUCCESS IN A DIFFERENT COLOUR.
+  //
+  // Both used to go through `flash()` into one emerald line with no role, so a
+  // save that failed was announced to nobody and looked, at a glance, exactly
+  // like a save that worked. `err` renders assertively and in the failure colour;
+  // `msg` stays the quiet confirmation it always was.
+  let err = '';
   // Editor state: null = list view; else { id, title, body } being edited.
   let edit = null;
 
@@ -76,6 +84,7 @@
     items = await listAnnouncements();
   }
   function flash(t) {
+    err = '';
     msg = t;
     clearTimeout(msgT);
     msgT = setTimeout(() => (msg = ''), 2600);
@@ -100,7 +109,7 @@
       await refresh();
       flash('Saved.');
     } catch (e) {
-      flash(String(e));
+      err = humanError(e);
     }
   }
   // Two-step delete (no native confirm — Tauri's webview doesn't implement it).
@@ -116,7 +125,16 @@
     }
     clearTimeout(delArmT);
     delArm = null;
-    await deleteAnnouncement(a.id);
+    // `deleteAnnouncement` THROWS (GROUP 1). Unguarded, a refusal — the service
+    // lock, most likely, mid-service — became an unhandled rejection: the refresh
+    // below never ran, the row stayed on screen, and nothing was said. An operator
+    // reads that as a delete that did not take and presses it again.
+    try {
+      await deleteAnnouncement(a.id);
+    } catch (e) {
+      err = humanError(e);
+      return;
+    }
     if (edit && edit.id === a.id) edit = null;
     await refresh();
   }
@@ -229,6 +247,11 @@
           onEdit={(d) => open(items.find((x) => x.id === d.id))}
           onDuplicate={duplicate}
           onDelete={(d) => remove(items.find((x) => x.id === d.id), new Event('x'))} />
+      {:else if !edit && $readErrors.listAnnouncements}
+        <!-- RG-95. `listAnnouncements` swallows to `[]`, so a database that did not
+             answer used to read as "no announcements yet" — and the operator's
+             answer to that sentence is to type the notices again. -->
+        <ErrorState error={$readErrors.listAnnouncements} onRetry={refresh} />
       {:else if !edit}
         <EmptyState
           message={query?.trim()
@@ -238,7 +261,10 @@
     </div>
   </section>
 
-  {#if msg}<p class="an-msg">{msg}</p>{/if}
+  <!-- Announced, both of them: an operator watching the wall is not watching this
+       corner, and a screen-reader user was told neither. -->
+  {#if err}<p class="an-err" role="alert">{err}</p>{/if}
+  {#if msg}<p class="an-msg" role="status" aria-live="polite">{msg}</p>{/if}
 </div>
 
 <style>
@@ -260,4 +286,6 @@
   .an-text { min-height: 110px; padding: 10px 13px; line-height: 1.5; resize: vertical;
     font-family: var(--f-body); }
   .an-msg { margin: 0; font-size: var(--v-fs-b2); color: var(--v-emerald); }
+  /* Rose, never amber: amber is the tally light and means ON AIR. */
+  .an-err { margin: 0; font-size: var(--v-fs-b2); color: var(--v-red); }
 </style>

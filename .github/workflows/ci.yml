@@ -29,7 +29,7 @@ jobs:
       matrix:
         os: [macos-latest, windows-latest]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # Don't leave GITHUB_TOKEN on disk for the rest of the job.
           persist-credentials: false
@@ -46,7 +46,7 @@ jobs:
       # Tauri's Linux deps aren't needed (we build macOS + Windows only), but the
       # frontend must exist: channels.rs `include_dir!`s ../dist at compile time,
       # so the Rust build FAILS without a built frontend. Not optional.
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 20
           cache: npm
@@ -130,23 +130,95 @@ jobs:
 
       - name: Upload the Windows installer
         if: matrix.os == 'windows-latest'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: relay-windows-msi
           path: src-tauri/target/release/bundle/msi/*.msi
           if-no-files-found: error
 
-  frontend:
-    name: Frontend
+  # NOTHING EVER CHECKED THE HALF OF THE DEPENDENCY TREE THAT SHIPS.
+  #
+  # `npm audit` was run by hand from time to time; `cargo audit` had **never been
+  # run at all** until 2026-09-04, and it found three advisories on the first go —
+  # one of them reachable through `reqwest` on the model-download and update paths.
+  # A packaged Relay contains no Node at all, so the Rust half is the half that
+  # actually ships, and it was the unaudited half.
+  #
+  # Two gates, and they are deliberately different:
+  #
+  #   * `cargo audit` fails on a VULNERABILITY. Its 18 warnings are unmaintained
+  #     GTK3 Linux bindings that neither shipped platform builds, so `--deny
+  #     warnings` here would fail the build over code that is never compiled.
+  #   * `npm audit --omit=dev` must stay at ZERO. The full `npm audit` is ten
+  #     advisories, every one in dev tooling, and every fix a semver major — that
+  #     is recorded at the line it affects (`vite.config.js`, RG-98) rather than
+  #     fought here on every push.
+  #
+  # This job needs no build: both tools read a lockfile.
+  audit:
+    name: Dependency advisories
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-audit
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+
+      - name: Rust advisories (fails on a vulnerability, not on a warning)
+        working-directory: src-tauri
+        run: cargo audit
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+
+      # Production dependencies only. The dev-tooling advisories are a recorded
+      # decision, not a gate — see vite.config.js.
+      - name: Production npm advisories must stay at zero
+        run: npm audit --omit=dev
+
+  # THE NODE MATRIX IS NOT DECORATION — DO NOT TRIM IT TO ONE.
+  #
+  # `npm test` passed on Node 20, which is all CI ran, and failed on Node 22 and
+  # newer with 60 red tests on a clean checkout: `TypeError: Cannot read properties
+  # of undefined (reading 'clear')` on the first `localStorage.clear()`.
+  #
+  # Node >= 22 defines `localStorage`/`sessionStorage` on the global as OWN accessor
+  # properties which return `undefined` without `--localstorage-file`, and vitest's
+  # jsdom environment leaves keys the global already owns — so Node's dead stub won
+  # over jsdom's real Storage. The 60 tests are exactly the ones covering what an
+  # operator sees when the app relaunches: the session, the crash record, the
+  # first-run flag.
+  #
+  # `src/test-setup.js` fixes it, and CLAUDE.md says in as many words: "Don't delete
+  # it because 'jsdom provides that'." **Nothing in CI exercised that fix.** Deleting
+  # the shim would have left this workflow green while every contributor on a current
+  # Node saw a broken checkout — the shape of a guard that guards nothing.
+  #
+  # 20 is the floor the Rust job also uses; 22 is where the break was; 24 is a
+  # current runtime, so the fix is proved forward and not only backward.
+  frontend:
+    name: Frontend (Node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [20, 22, 24]
+    steps:
+      - uses: actions/checkout@v7
         with:
           # Don't leave GITHUB_TOKEN on disk for the rest of the job.
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
-          node-version: 20
+          node-version: ${{ matrix.node }}
           cache: npm
       - run: npm ci
       # Relay's version lives in three files (tauri.conf.json, package.json,

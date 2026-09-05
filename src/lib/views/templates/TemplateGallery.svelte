@@ -184,7 +184,7 @@
       const id = await saveTemplate({ name: starter.label, layout: t.layout, style: t.style });
       selId = id;
       dispatch('edit', { id });
-    } catch (e) { err = String(e); }
+    } catch (e) { err = humanError(e); }
   }
   async function duplicate(t) {
     menuFor = null;
@@ -197,7 +197,7 @@
         style: structuredClone(t.style ?? {}),
       });
       selId = id;
-    } catch (e) { err = String(e); }
+    } catch (e) { err = humanError(e); }
   }
   // Make this template THE default (or clear it if it already is). One default,
   // not a set of four — any template can be it, and any template can still be a
@@ -205,7 +205,7 @@
   async function makeDefault(t) {
     err = '';
     try { await setDefaultTemplate($defaultTemplateId === t.id ? null : t.id); }
-    catch (e) { err = String(e).replace('Error: ', ''); }
+    catch (e) { err = humanError(e); }
   }
 
   // Two-step delete (Tauri's webview has no reliable confirm()).
@@ -225,7 +225,7 @@
     try {
       await deleteTemplate(t.id);
       if (selId === t.id) selId = $templates[0]?.id ?? null;
-    } catch (e) { err = String(e); }
+    } catch (e) { err = humanError(e); }
   }
 
   // Preview the selected template fullscreen, in-console (Decision §26). The overlay
@@ -251,7 +251,7 @@
     renaming = false;
     if (!sel || !renameDraft.trim() || renameDraft === sel.name) return;
     try { await saveTemplate({ ...sel, name: renameDraft.trim() }); }
-    catch (e) { err = String(e); }
+    catch (e) { err = humanError(e); }
   }
 </script>
 

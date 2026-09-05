@@ -1285,86 +1285,97 @@ mod cold_start {
         }
     }
 
-    /// A media import that fails half-way leaves a row with no file behind it,
-    /// and nothing in the app can tell it apart from a good one.
+    /// A media import that fails half-way leaves NOTHING behind.
     ///
-    /// `import_media` (main.rs) does, in this order and with no transaction:
+    /// ── What this test used to assert, and why it was right to ─────────────
+    ///
+    /// It was named `a_half_finished_media_import_leaves_a_row_that_serves_a_404`
+    /// and it pinned the defect rather than the fix. `import_media` did, in this
+    /// order and with no transaction:
     ///
     /// ```text
     ///   db::insert_media(...)          ← committed immediately
-    ///   std::fs::write(path, bytes)?   ← disk full / permissions / long name → returns Err
+    ///   std::fs::write(path, bytes)?   ← disk full / permissions → returns Err
     ///   db::set_media_path(...)        ← never reached
     /// ```
     ///
-    /// The `?` propagates and the operator sees an error — but the row is already
-    /// there, with `path = ''`. `list_media` shows it in the Media library like any
-    /// other asset, and `serve_media_file` does not consult `path` at all: it scans
-    /// `media_dir()` for a `{id}_` prefix, finds nothing, and answers **404**.
+    /// The `?` propagated and the operator saw an error — but the row was already
+    /// there with `path = ''`. `list_media` showed it in the Media library like any
+    /// healthy asset, and `serve_media_file` does not consult `path` at all: it
+    /// scans `media_dir()` for a `{id}_` prefix, finds nothing, and answers **404**.
+    /// So the failure surfaced on Sunday, as a blank output, with no message.
     ///
-    /// So the failure surfaces on Sunday, as a blank output, with no message —
-    /// which is the failure mode this codebase has fixed several times elsewhere.
+    /// ── What closed it ─────────────────────────────────────────────────────
     ///
-    /// Tested at the db layer plus a static read of the command, deliberately:
-    /// forcing the real `fs::write` to fail means pointing `RELAY_DB_PATH` at a
-    /// scratch dir, and `db::mod`'s `open_creates_and_seeds_a_real_file_db`
-    /// already sets that variable with no lock — two tests racing on one process
-    /// env is a flake, not evidence.
+    /// The row still has to be inserted first — its id is half the on-disk name —
+    /// so the ordering could not be reversed. `write_media_file` instead UNDOES the
+    /// row when the write fails, and is a separate function precisely so that
+    /// branch can be executed by a test (`import_guard_tests`) rather than reasoned
+    /// about. Inverted, not deleted: the shape of the defect is the reason the
+    /// guarantee exists.
     #[test]
-    fn a_half_finished_media_import_leaves_a_row_that_serves_a_404() {
+    fn a_half_finished_media_import_leaves_no_row_behind() {
         let app = bare_app();
         let h = app.handle().clone();
         let db = h.state::<Db>();
         let conn = db.0.lock().unwrap();
 
-        // Exactly the state `import_media` leaves when `fs::write` fails.
+        // The state the old code left: a row whose file never landed.
         let id = db::insert_media(&conn, "image", "backdrop.png", "2026-08-16").unwrap();
+        assert_eq!(db::list_media(&conn).unwrap().len(), 1);
 
-        let listed = db::list_media(&conn).unwrap();
-        let row = listed.iter().find(|m| m.id == id).unwrap();
-        assert_eq!(
-            row.path, "",
-            "if this is no longer empty, insert_media learned to write the path \
-             and the window between the two statements has closed"
-        );
-        assert_eq!(
-            listed.len(),
-            1,
-            "the Media library lists it exactly like a healthy asset — there is no \
-             `path == \"\"` filter anywhere"
-        );
-
-        // The command still inserts before it writes, and still is not a transaction.
-        let cmd = std::fs::read_to_string("src/main.rs").unwrap();
-        let body = cmd
-            .split("fn import_media(")
-            .nth(1)
-            .and_then(|s| s.split("\n}\n").next())
-            .expect("import_media");
-        let insert_at = body.find("db::insert_media").expect("insert");
-        let write_at = body.find("std::fs::write").expect("write");
+        // The write fails the way a full disk fails. The row must not survive it.
+        let nowhere = std::path::Path::new("/relay-no-such-directory-7c1b/media");
+        let err = crate::write_media_file(&conn, nowhere, id, "backdrop.png", b"x")
+            .expect_err("the write must fail");
         assert!(
-            insert_at < write_at,
-            "the row is now written after the file — the gap is closed, delete this test"
+            !matches!(err, crate::error::Error::Refused { .. }),
+            "a disk that said no is a fault, not a refusal the operator can fix"
         );
         assert!(
-            !body.contains("unchecked_transaction"),
-            "import_media is now transactional — good; delete this test"
+            db::list_media(&conn).unwrap().is_empty(),
+            "the Media library must not list an asset whose file never landed —              there is still no `path == \"\"` filter anywhere, and the media server              still ignores `path` entirely, so a row that survives here is a blank              output on Sunday with no message"
         );
 
-        // And the server that OBS and the native window both hit ignores `path`,
-        // so a repair that only fixed the column would fix nothing.
+        // The second half of the original finding, unchanged and still true: the
+        // server OBS and the native window both hit does not read the DB at all, so
+        // a repair that only fixed the column would have fixed nothing.
+        //
+        // The body lives in `serve_media_from_dir` since ranged replies were added
+        // (RG-96) — `serve_media_file` is now the two-line wrapper that supplies
+        // the real media directory. This reads BOTH, because a scanner pointed at
+        // the wrapper alone finds no `404`, no SQL and nothing else either: it
+        // passes by seeing nothing, which is the failure mode this repository has
+        // already had twice in its own instruments.
         let ch = std::fs::read_to_string("src/channels.rs").unwrap();
         let serve = ch
-            .split("async fn serve_media_file")
+            .split("async fn serve_media_from_dir")
             .nth(1)
             .and_then(|s| s.split("\n}\n").next())
-            .expect("serve_media_file");
+            .expect("serve_media_from_dir");
+        assert!(
+            serve.len() > 500,
+            "the media-serving body is not where this test is looking — it read {} \
+             characters, which is a scanner that has stopped scanning",
+            serve.len()
+        );
         assert!(
             !serve.contains("media_assets") && !serve.contains("path FROM"),
             "the media server now reads the DB — re-check what it does with an \
              empty path"
         );
         assert!(serve.contains("404"), "the miss answers 404");
+        // And the wrapper still routes to it, so the scan above is about the code
+        // that actually runs.
+        let wrapper = ch
+            .split("async fn serve_media_file")
+            .nth(1)
+            .and_then(|s| s.split("\n}\n").next())
+            .expect("serve_media_file");
+        assert!(
+            wrapper.contains("serve_media_from_dir"),
+            "serve_media_file no longer delegates to the body this test reads"
+        );
     }
 
     // ── 6. Migration retryability (CLAUDE.md §25) ────────────────────────────
@@ -1572,7 +1583,8 @@ mod cold_start {
     /// What a church actually receives, item by item, so a change to the seed is
     /// a decision and not an accident.
     ///
-    /// The counts are the claim in `docs/Working-Agent-PROMPT.md` §R1. If one
+    /// The counts are the R1 claim, now in `docs/qa/QA_HARNESS.md` Part 3 — it
+    /// superseded the three Working-Agent documents, which are gone. If one
     /// moves, the audit's seed section is out of date.
     #[test]
     fn the_seed_is_exactly_what_the_audit_says_it_is() {
@@ -1581,11 +1593,11 @@ mod cold_start {
         let db = h.state::<Db>();
         let conn = db.0.lock().unwrap();
 
-        assert_eq!(db::verse_count(&conn).unwrap(), 31_100, "the bundled KJV");
+        assert_eq!(db::verse_count(&conn).unwrap(), 31_102, "the bundled KJV");
         assert_eq!(count(&conn, "translations"), 1);
         assert_eq!(
             count(&conn, "verses_fts"),
-            31_100,
+            31_102,
             "the FTS mirror is built"
         );
         // Five built-ins + the ready-to-use presets. The exact total is asserted
@@ -1705,5 +1717,112 @@ mod kiosk_headers {
         }
         assert!(policy.contains("object-src 'none'"));
         assert!(policy.contains("script-src 'self'"));
+    }
+
+    /// RG-85 · THE OPERATOR CONSOLE'S POLICY NAMES THE LAN, NOT THE INTERNET.
+    ///
+    /// `tauri.conf.json` granted `http:` — every host, every port — to `img-src`,
+    /// `media-src` and `connect-src`, and the reason was real: the media server and
+    /// the kiosk hub cannot be TLS on a LAN appliance. The grant was written far
+    /// wider than the need, and it was **reachable**: `TemplateRender`'s `bgPaint`
+    /// emits `url("${L.image}")` straight from template JSON, so a template that
+    /// arrived by email beaconed an attacker's `http://` URL the moment an operator
+    /// previewed it — the church's IP and the time it was opened, out of an app
+    /// whose first promise is that nothing leaves the device.
+    ///
+    /// The narrowing is by PORT, because a LAN address cannot be named in a static
+    /// policy: `http://*:8032` is Relay's own media server on any host, and
+    /// `ws://*:8031` its kiosk hub. Both are the ports this binary opens.
+    ///
+    /// **This test cannot prove a kiosk screen still renders** — `tauri dev` does
+    /// not exercise the CSP at all, and only a packaged build driven through real
+    /// media playback can answer that. What it proves is that the policy still
+    /// permits the URL shape Relay itself generates, and no longer permits an
+    /// arbitrary host, which is the half that a change could silently get wrong.
+    #[test]
+    fn the_console_policy_allows_relays_own_media_url_and_no_other_host() {
+        let conf = include_str!("../tauri.conf.json");
+        let csp = conf
+            .split("\"csp\"")
+            .nth(1)
+            .and_then(|s| s.split('"').nth(1))
+            .expect("no csp in tauri.conf.json");
+        assert!(
+            csp.len() > 100,
+            "the policy read back as {csp:?} — this test is not reading a policy"
+        );
+
+        let directive = |name: &str| -> String {
+            csp.split(';')
+                .map(str::trim)
+                .find(|d| d.starts_with(name))
+                .unwrap_or_else(|| panic!("{name} is missing"))
+                .to_string()
+        };
+
+        for name in ["img-src", "media-src", "connect-src"] {
+            let d = directive(name);
+            // A bare `http:` is the whole internet. It is the thing that was there.
+            assert!(
+                !d.split_whitespace().any(|t| t == "http:" || t == "ws:"),
+                "{name} still grants every host: {d:?}"
+            );
+        }
+
+        // The URL `main::fire_media` actually builds, on a real LAN address.
+        let media = "http://192.168.1.9:8032/media/12";
+        for name in ["img-src", "media-src"] {
+            assert!(
+                csp_allows(&directive(name), media),
+                "{name} would block Relay's own media URL — a background video on the \
+                 wall goes black and nothing says why"
+            );
+        }
+        assert!(
+            csp_allows(&directive("connect-src"), "ws://192.168.1.9:8031"),
+            "connect-src would block the kiosk hub"
+        );
+        // And the beacon RG-85 was actually about.
+        assert!(
+            !csp_allows(&directive("img-src"), "http://evil.example.com/beacon.png"),
+            "an emailed template can still call home"
+        );
+        assert!(
+            !csp_allows(&directive("img-src"), "http://192.168.1.9:9999/beacon.png"),
+            "any port on the LAN is still the network"
+        );
+    }
+
+    /// Does one CSP directive permit one URL? Enough of the host-source grammar for
+    /// the sources this policy uses: `scheme:`, `scheme://host[:port]`, and `*` as a
+    /// whole host. Deliberately small — a full CSP parser here would be a second
+    /// implementation to be wrong in.
+    fn csp_allows(directive: &str, url: &str) -> bool {
+        let (scheme, rest) = url.split_once("://").expect("url with a scheme");
+        let (host, port) = match rest.split('/').next().unwrap_or("").split_once(':') {
+            Some((h, p)) => (h.to_string(), p.to_string()),
+            None => (
+                rest.split('/').next().unwrap_or("").to_string(),
+                String::new(),
+            ),
+        };
+        directive.split_whitespace().skip(1).any(|src| {
+            if let Some(s) = src.strip_suffix(':') {
+                return s == scheme; // `http:` — the whole scheme
+            }
+            let Some((s, hostpart)) = src.split_once("://") else {
+                return false; // 'self', 'none', data:, blob: — handled above or not a host
+            };
+            if s != scheme {
+                return false;
+            }
+            let (shost, sport) = match hostpart.split_once(':') {
+                Some((h, p)) => (h, p),
+                None => (hostpart, ""),
+            };
+            let host_ok = shost == "*" || shost == host;
+            let port_ok = sport.is_empty() || sport == "*" || sport == port;
+            host_ok && port_ok
+        })
     }
 }

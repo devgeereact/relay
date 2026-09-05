@@ -7,9 +7,17 @@
 //
 // ── The constraint that shapes everything here is LATENCY ────────────────────
 //
-// `.claude/settings.json` already wires twelve hook points. A hook that adds more
-// than a few seconds to every edit gets disabled within a week, and a disabled
-// safety net is worse than none, because you still believe it is there. So:
+// This is wired on `PostToolUse` for `Write|Edit|MultiEdit` — so it runs on EVERY
+// edit to any file, and the path filter below is the only thing keeping that cheap.
+// A hook that adds more than a few seconds to every edit gets disabled within a
+// week, and a disabled safety net is worse than none, because you still believe it
+// is there. So:
+//
+// (An earlier version of this comment said `.claude/settings.json` "already wires
+// twelve hook points". It wires ONE — this one. The latency argument never depended
+// on the number, but the number was the premise it was written as, and a false fact
+// at the top of a file is exactly what this repository keeps finding inside its own
+// instruments. Corrected rather than deleted, per RG-46.)
 //
 //   1. Path filter FIRST. Almost every edit exits in under a millisecond.
 //   2. Only vitest. `cargo test` takes ~50s in this repo — for a Rust fire-path
@@ -37,6 +45,22 @@ const WATCHED = [
   { match: /src\/lib\/(cues|plan|queue|passage)\.js$/, tests: ['transport', 'plan', 'queue', 'passage'] },
   { match: /src\/lib\/detect\.js$/, tests: ['detect', 'suggestions'] },
   { match: /src\/lib\/errors\.js$/, tests: ['errors'] },
+  // Added 2026-08-31. These four shipped with RG-01 … RG-09 and were never added
+  // here, so four service-critical files gained tests and no gate. That is the
+  // failure this whole file exists to prevent, one level up: a watch list drifts
+  // behind the code it watches and goes quiet rather than red.
+  //
+  // The bar for being on this list is unchanged — **a silent break is measured in
+  // Sundays** — and these four clear it:
+  //   · outputHealth  the ONE rule for what Live and the Outputs tab may say about
+  //                   a screen. Break it and a dead projector reads On Air (RG-01).
+  //   · degraded      the shell line on every tab. Break it and a lost model, a
+  //                   disarmed detector or a CPU-only build goes silent again.
+  //   · updater       refuses to install while capturing OR while a service is
+  //                   locked. Break it and Relay restarts mid-sermon.
+  { match: /src\/lib\/outputHealth\.js$/, tests: ['outputhealth', 'liveoutputrail'] },
+  { match: /src\/lib\/degraded\.js$/, tests: ['degraded'] },
+  { match: /src\/lib\/updater\.js$/, tests: ['updatesafety'] },
   { match: /src\/lib\/views\/library\/LiveOutputRail\.svelte$/, tests: ['liveoutputrail'] },
   { match: /src\/lib\/TemplateRender\.svelte$/, tests: ['layers', 'templatestyle', 'themerender', 'rendercontent'] },
   // Renaming a #[tauri::command] does not break the build, does not fail a test and
@@ -46,6 +70,10 @@ const WATCHED = [
   { match: /src-tauri\/src\/(pipeline|router|channels)\.rs$/, tests: [], rust: 'cargo test e2e' },
   { match: /src-tauri\/src\/detection\.rs$/, tests: [], rust: 'cargo test detection:: eval' },
   { match: /src-tauri\/src\/db\//, tests: [], rust: 'cargo test db::' },
+  //   · servicelock   what may NOT happen while a service records. Break it and a
+  //                   mis-click deletes the template that is on the projector.
+  { match: /src-tauri\/src\/servicelock\.rs$/, tests: ['servicelock'], rust: 'cargo test servicelock' },
+  { match: /src-tauri\/src\/updates\.rs$/, tests: ['updatesafety'], rust: 'cargo test updates' },
 ];
 
 function emit(context) {

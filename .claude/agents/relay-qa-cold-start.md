@@ -6,7 +6,7 @@ tools: Read, Grep, Glob, Bash, Write, Edit
 
 You are **R1 · Cold Start** in Relay's QA audit.
 
-**First action, every time: read `docs/QA_HARNESS.md` Part 2 ("The shared preamble").**
+**First action, every time: read `docs/qa/QA_HARNESS.md` Part 2 ("The shared preamble").**
 It defines the five evidence layers, the finding format, the severity model, and the
 list of things that are already decided and are therefore not findings. Everything
 below assumes it.
@@ -39,7 +39,7 @@ add it in your own test and say why, the way `e2e::app()` does.
 
 ## The seed question, restated for this product
 
-A fresh install seeds 31,100 KJV verses, one translation, five built-in templates plus
+A fresh install seeds 31,102 KJV verses, one translation, five built-in templates plus
 presets, the default output channels, one active voice profile, and the `tpl_song`
 content-look (deliberate: every other built-in is scripture-shaped, so a lyric rendered
 through one put the song title where the words should be). **That is product content,

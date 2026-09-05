@@ -10,6 +10,194 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 
 ## [Unreleased]
 
+### Six verses were missing from the bundled Bible, and it shifted the ones after them
+
+**This is the important one.** Relay's copy of the King James Version was short six
+verses — Matthew 2:16, Matthew 22:1, Matthew 26:38, Mark 4:40, Mark 7:11 and Mark
+8:8 — and four other verses had been split in two. Because Relay numbers a verse by
+where it sits in the file, a missing verse does not just go missing: **everything
+after it in that chapter moves up by one.**
+
+What that meant in a service: asking for **Matthew 22:37** ("Thou shalt love the
+Lord thy God…") put the words of 22:38 on the screen. **Matthew 2:23** could not be
+found at all. The same shift ran through the rest of Matthew 2, Matthew 22, the
+Gethsemane passage in Matthew 26, and three chapters of Mark. Everything else in
+the Bible was correct, and no other book was affected.
+
+It is fixed. Every one of the 1,189 chapters now matches the King James Version's
+own verse numbering, checked verse by verse against an independent copy. **You do
+not need to do anything**: the next time you open Relay it repairs its own copy of
+the Bible, once, and then never again. Your services, plans, templates and settings
+are untouched.
+
+**Also fixed, in the same sweep.** A handful of verses carried the translators'
+margin notes into the verse itself — Luke 17:36 ended with "this verse is not found
+in most of the Greek copies" as though that were scripture — and seven other verses
+had real words dropped, so Genesis 30:27 read "if I have found favour in thine eyes,
+I have learned by experience" with "tarry: for" missing. Fifteen verses in total
+now read as they should.
+
+
+### You can now delete a service — and a big file no longer takes Relay down with it
+
+**Erasing a sermon.** Until now, the only way to remove a recorded service was to
+quit Relay and delete the folder holding *every* service you had ever recorded.
+There was no middle setting. If a pastoral conversation was read into the room, or
+a visiting speaker asked, the answer was all of it or none of it.
+
+Open a service in **Library → History** and there is now an **Erase service**
+button. It removes that service's transcript, the verses that were detected in it,
+what you pressed during it, its timeline and its timing samples — and it tells you
+how many transcript lines went. Click once to arm it, once more to confirm. It
+cannot be undone and there is no hidden copy, which is the point; export the
+service to Markdown first if you want to keep a record. Like every other delete, it
+is refused while a service is being recorded.
+
+**Importing a large file.** Dragging a big video into the Library used to make
+Relay disappear — no error, no message, nothing in any log, usually while somebody
+was setting up on a Saturday. Relay now says how big the file is and what its limit
+is (256 MB), and carries on. And if a file cannot be written — a full disk is the
+usual reason — the Library no longer keeps an entry pointing at a file that is not
+there, which used to show up on Sunday as a screen that stayed blank.
+
+**"Up to date" now means somebody actually asked.** The Updates screen said *up to
+date* whether there was genuinely no new version, or you were offline, or nothing
+had checked yet, or the update server had never once answered. It now says which,
+and says so in plain words. Nothing about this interrupts you during a service — it
+never did and it still does not.
+
+**History no longer says you have no services while it is still looking.** If the
+list is loading it says so, and if it could not be read it says why, instead of
+telling you that you have never recorded a service.
+
+Under the hood, and only worth knowing if something goes wrong: Relay now counts
+audio it had to drop because a queue filled up, and shows it in
+**Settings → Diagnostics** as *audio dropped (never heard)*. It should always be
+zero. If it is not, part of the sermon did not reach the transcript, and now you
+can see that instead of guessing.
+
+### Relay may now be used in a church — with someone watching
+
+The decision on whether Relay is fit to run a service used to be an open-ended
+"not yet". It is now specific: **not for general release, yes for a supervised
+pilot** — two churches, a named operator at each, and every service watched by
+somebody who can clear the wall by hand.
+
+What that means if you are the operator: Relay is good enough to help you, and it
+is not good enough to leave alone. It put a wrong verse on a screen during its
+first real service. That particular fault is fixed and cannot come back without a
+test failing, but nobody has yet measured how well it hears in any language, and
+you would be the first person outside its author to run a service on it.
+
+Before your first live use: run a rehearsal, use the path check, and read
+Settings → Diagnostics afterwards. If a wrong verse does reach the screen, the
+"heard" text beside it in the service history is exactly what is needed to stop
+it happening again — that is how the one from the first service became a
+permanent test.
+
+Windows is not signed yet, so this applies to macOS only.
+
+### Service history now shows what Relay actually heard
+
+When a wrong verse goes up, the useful question is *what words made it think that*
+— and Relay has been recording exactly that on every fire since the first real
+service. It just had no way to show you: the answer was in the database and nowhere
+on screen.
+
+Now it sits under the reference in **Library → History**, in quotation marks. It is
+not the transcript. Relay decides on what it has heard *so far*, so the transcript
+line nearest a detection is often a completely different moment — this is the
+sentence the detector was actually looking at.
+
+If a verse you did not want appears during a service, this is the line to copy into
+a bug report. It is what turned the one wrong verse from the first real service into
+a permanent test.
+
+**It stays on your machine.** It is not in the service timeline, not in the
+diagnostic file you can send for support, and not in a crash report.
+
+### Small text is a little lighter
+
+Captions and labels on raised panels were very slightly below the accessibility
+contrast standard. They are two shades lighter now — you are unlikely to see the
+difference, and a screen reader user or anyone in a bright room will.
+
+### A suggestion for a verse that does not exist now says so
+
+When speech is garbled Relay sometimes parses a reference that is real-looking and
+does not exist — "Psalms 23:99". It deliberately still shows you that suggestion,
+because it is the clearest possible sign that it misheard a number, and hiding it
+would leave you guessing.
+
+What it should not have done is offer an **Approve** button that looked exactly
+like a working one. Pressing it failed a moment later with an error, and pressing
+<kbd>A</kbd> did the same.
+
+Now the suggestion is marked before you touch it — "Not in your Bible — Relay
+misheard a number" — the Approve button is disabled and says *why* rather than just
+going grey, and the keyboard shortcut will not fire it either. The suggestion stays
+on screen, because it is still telling you something worth knowing.
+
+### Your service report can finally say whether Relay was any use
+
+The report after a service used to say **0 suggested · 0 dismissed** — for every
+service, always. Not because Relay never suggested anything, but because nothing
+was writing it down. A zero there does not read as "we didn't record that". It
+reads as "Relay never offered you anything", which is close to the opposite of
+what happened.
+
+Now Relay records what **you** did: when you took a suggestion, and when you turned
+one down. Rejecting one used to leave no trace anywhere at all.
+
+Two numbers come out of that, and they are the ones that say whether the AI is
+earning its place:
+
+- **Suggestions taken** — separated from verses you typed in yourself. Before this,
+  the history could tell you how many verses a person put up and could not tell you
+  how many of them were Relay's idea.
+- **Suggestions rejected**, and what share of the ones you answered you took.
+
+Two things it deliberately does not do. It does not count suggestions that scrolled
+past while you were busy — those are genuinely not recorded, and the report says so
+rather than folding them into the percentage. And **nothing is counted during a
+rehearsal**: practising means accepting verses you chose yourself, and a score
+inflated by practice is worse than no score.
+
+### The setup walk-through now tells you what to do before your first Sunday
+
+Relay has practice drills, a check that says whether the whole chain from the
+microphone to the screen actually works, and a rehearsal mode that runs a full
+service without touching the projector. All three have been there for a while, and
+nothing told a new operator any of them existed.
+
+The last step of the setup walk-through — the one where a verse goes up on your
+real screen — now names all three and says which tab each one is on. It does not
+add any more questions to the walk-through: they are things to do on another day,
+not answers to give now, and everything in there is still in Settings afterwards.
+
+The one worth doing first is the chain check (**Settings → Dashboard**): say one
+verse out loud, and Relay tells you which of the six stages between your
+microphone and your screen were reached. Everything the walk-through sets up can
+pass on a machine where the chain still does not work end to end — a microphone
+the operating system has muted, an output window on a display that is asleep. That
+is the difference between finding out at 10:05 and finding out at 10:31.
+
+### Relay now tells you, in the app, what it is bad at
+
+- **Help has a new topic: "What the AI is bad at."** It says four things plainly, and they
+  are the four a church should hear before it trusts this: Relay **never writes scripture**
+  (the words are read verbatim from the bundled King James Version, so a wrong verse means
+  a wrong *reference*, never invented text); **African-language listening is the weakest
+  part of the product**, and it is also the headline claim; **nobody has measured how often
+  it mishears**, in any language, English included; and therefore keep `Esc` under your
+  hand and watch the wall rather than the app.
+- **Why this is a change worth reading.** All of that was already written down — honestly,
+  at length — in a file on the internet that no operator was ever going to open. What the
+  app itself carried was the reassuring half: the rule that a guess never reaches a screen
+  on its own. Publishing only the reassuring half is worse than publishing neither, and it
+  is the same failure as a status light that cannot detect its own fault. Both halves are
+  now in the app, offline, in the search box on the Help tab.
+
 ### The first real service, and the eight things it changed
 
 Relay listened to a live sermon for the first time — fifty minutes, a real preacher, a
@@ -183,7 +371,7 @@ first time you can see the delay for yourself.**
 **Read before you change models.** Diagnostics will now tell you plainly that on a
 bigger model the wait is the model itself and not something Relay can fix — a trade
 you were always making and could not previously see. Evidence, and everything these
-numbers do *not* prove: `docs/audits/PERF-2026-08-24.md`.
+numbers do *not* prove: `docs/qa/audits/PERF-2026-08-24.md`.
 
 ---
 
@@ -270,7 +458,7 @@ The first thing a church could actually use.
 
 ### Your privacy
 
-- **Sermon audio never leaves the device.** It is transcribed on your computer and thrown away. See [PRIVACY.md](PRIVACY.md).
+- **Sermon audio never leaves the device.** It is transcribed on your computer and thrown away. See [PRIVACY.md](docs/PRIVACY.md).
 - **Crash reporting is off by default**, has no destination in the open-source build, and *drops* free text rather than trying to filter it — so a transcript, a verse or a lyric cannot leak through it even by accident.
 
 ### Fixed before anyone was hurt by them

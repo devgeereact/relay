@@ -18,14 +18,14 @@ Gemini, Aider, Claude Code, or whatever comes next. It is tool-agnostic on purpo
 2. **`docs/README.md`** — the documentation index; it says which document owns which question.
 3. **`docs/DECISIONS.md`** — *why*. **If a decision is not in there, it has not been made.
    Ask; do not assume.**
-4. The volume you actually need: `ARCHITECTURE.md`, `DOMAIN_MODEL.md`, `DESIGN_SYSTEM.md`,
+4. The volume you actually need: `ARCHITECTURE.md`, `DATA_MODEL.md`, `DESIGN_SYSTEM.md`,
    `LANGUAGES.md`, `RELEASING.md`, `QA_HARNESS.md`.
 
-Auditing rather than building? **`docs/QA_HARNESS.md` Part 4 first** — it is what the tests
+Auditing rather than building? **`docs/qa/QA_HARNESS.md` Part 4 first** — it is what the tests
 already pin. An agent that skips it burns its run "finding" a bug that was fixed in July.
 
-Wondering whether a feature is missing or refused? **`docs/RELAY_GAP.md`** §2 and §17, and
-**`docs/ROADMAP.md`** §3. A great many obvious-looking gaps are recorded refusals.
+Wondering whether a feature is missing or refused? **`docs/qa/RELAY_GAP.md`** §2 and §17, and
+**`docs/KNOWN_ISSUES.md`** §3. A great many obvious-looking gaps are recorded refusals.
 
 ---
 
@@ -123,7 +123,7 @@ You may. Some of them should be reopened eventually. But do it in the open:
 
 Write that, put it in front of a human, and stop. **Do not silently reverse a decision, and do
 not implement one "to show what it would look like".** Two worked examples of the format live in
-`docs/RELAY_GAP.md` §20.
+`docs/qa/RELAY_GAP.md` §20.
 
 ---
 
@@ -135,9 +135,34 @@ load-bearing, not modesty. Preserve it.
 - **"Not measured" is a valid answer and the correct one when nothing measured it.** Word error
   rate has never been measured in any language. No native speaker has reviewed the book aliases.
   Do not soften either sentence.
-- **BLOCKED is a real outcome**, and it is a deliverable, not an excuse. Half of this product —
-  audio in, pixels out, hardware, a packaged build, a congregation — has never been reached by
-  any instrument in this repository. You cannot claim it from source.
+- **BLOCKED is a real outcome**, and it is a deliverable, not an excuse. Much of this product —
+  **pixels out, hardware, a congregation** — has never been reached by any instrument in this
+  repository. You cannot claim it from source.
+  **Two of those blockers fell on 2026-08-30** and it is worth knowing how: the packaged build
+  and audio-in were reached by *running a real service*, not by writing more tests. It produced
+  seven findings in fifty minutes that months of source-reading had not.
+- **"Blocked" is a claim, and it gets the same scrutiny as any other.** Three "blocked" entries
+  in `RELAY_GAP.md` did not survive it: an old schema the repo supposedly did not keep (git had
+  it), five commands documented as acceptably dead (they were deletable), and a licensing
+  reason that was simply wrong (DECISIONS §32.4 says the opposite). **A wrong reason in a
+  register parks the work forever**, because nobody re-examines something already explained.
+- **A STATUS goes stale exactly like a count, and it is more dangerous when it does.** On
+  2026-08-31 `RELAY_GAP.md` §2 still said **MISSING** about thirty-one requirements that had
+  shipped that same week — directly underneath a fix log saying they had shipped. A wrong number
+  reads as a number; a wrong status reads as a *decision*. If you are editing a document that
+  scores the product, re-derive the rows you touch from the code, and cite a **file and a
+  symbol** rather than a line number, because line numbers rot faster and rot invisibly.
+- **Resolving something by deciding not to build it is a result, and it gets written down like a
+  build** — the verdict, the reason, and the condition that would reverse it. "Not now" is how a
+  decision decays back into a gap nobody re-argues and everybody re-files. See DECISIONS §62.
+- **Audit the instruments, not only the code — it is the most productive seam in this
+  repository and it is not close.** In one pass: a contract test that scanned one Rust file
+  while claiming to cover the repository, its other half reading four frontend files out of
+  nine, a CI job on a single Node version so the fix protecting every other one was never
+  exercised, an agent brief describing a deleted component and a closed defect, and four
+  citations pointing at a section that does not exist. Eleven of thirteen findings in the
+  accessibility pass were the scanner's own bugs. **When a check says everything is fine, ask
+  what it actually reads.** A scanner that quietly narrows passes everything.
 - **Never imply you ran, clicked, saw or heard something you did not.**
 - A count you cannot reproduce is a rumour.
 

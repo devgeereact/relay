@@ -34,8 +34,9 @@
   import { registerContext } from '../shortcuts.js';
   import { t } from '../i18n.js';
   import EmptyState from '../ui/EmptyState.svelte';
+  import ErrorState from '../ui/ErrorState.svelte';
   import Loading from '../ui/Loading.svelte';
-  import { heard, methodKey } from '../detect.js';
+  import { heard, methodKey, inLibrary } from '../detect.js';
   import DetectionInspector from '../DetectionInspector.svelte';
   import { humanError as humanErrorBase } from '../errors.js';
   import { TYPE, payloadOf, slidesOf, slideAccent, cueSub, nextOf, stepFrom } from '../plan.js';
@@ -90,6 +91,7 @@
     setSensitivity,
     pushAnnouncement,
     verseRepeatCount,
+    readErrors,
   } from '../stores/capture.js';
 
   // ── the plan being RUN (not edited) ──────────────────────────────────────
@@ -140,6 +142,12 @@
   // Now it matches the sentence above it: verse mode means something that did not
   // come from the plan is genuinely IN FRONT OF PEOPLE.
   $: mode = openPlan && items.length && !($live && !$screenBlack && !planOnAir) ? 'slide' : 'verse';
+
+  // Named so the plan picker's error state has something to retry with (RG-95).
+  async function loadPlans() {
+    plans = await listPlans().catch(() => []);
+    plansLoaded = true;
+  }
 
   async function loadPlan(p) {
     openPlan = p;
@@ -295,8 +303,7 @@
     await loadTemplates().catch(() => {});
     await loadDefaultTemplate().catch(() => {});
     channels = await listOutputChannels().catch(() => []);
-    plans = await listPlans().catch(() => []);
-    plansLoaded = true;
+    await loadPlans();
 
     // Resume where the operator actually was. The output windows are separate
     // webviews and survive a console crash, so the verse is still on the wall —
@@ -513,6 +520,14 @@
   async function acceptTop() {
     const d = dets[0];
     if (!d) return;
+    // A reference that parsed but resolves to no verse cannot be fired, and the
+    // backend already knows — it marks the suggestion `in_library: false`. Without
+    // this the `A` key still reached `confirm_detection` and failed after the
+    // press, so the keyboard bypassed the very warning the card renders.
+    if (!inLibrary(d)) {
+      flash($t('live.not_in_bible', { reference: d.reference }));
+      return;
+    }
     try {
       await confirmDetection(d.reference);
       flash($t('live.now_live', { reference: d.reference }));
@@ -942,7 +957,7 @@
 </script>
 
 
-<!-- LIVE — laid out to docs/relaydesign/relay-console-screen.png.
+<!-- LIVE — laid out to docs/design/relay-console-screen.png.
      Row A: PREVIEW · take rack · PROGRAM · OUTPUT STATUS
      Row B: 1 Live Transcript · 2 AI Detection · 3 Service Plan · 4 Quick Controls
      Everything below is a re-dressing of the controls that were already here — no
@@ -1129,7 +1144,11 @@
             {/if}
           </div>
         {:else}
-          <EmptyState message="No screens yet — add one in the Outputs tab." />
+          {#if $readErrors.listOutputChannels}
+            <ErrorState compact error={$readErrors.listOutputChannels} />
+          {:else}
+            <EmptyState message="No screens yet — add one in the Outputs tab." />
+          {/if}
         {/each}
       </div>
       {#if nowhereToShow}
@@ -1279,9 +1298,24 @@
               <div><span class="klbl">Reference</span><b>{d.reference}</b></div>
             </div>
 
+            <!-- PARSED, BUT THERE IS NO SUCH VERSE. Relay keeps showing it — the
+                 suggestion is the operator's evidence that a number was misheard,
+                 and dropping it would be silence. What it must not do is offer an
+                 amber Accept that looks exactly like a working one and fails after
+                 the click. The disabled control says WHY, because a disabled
+                 control that does not is its own finding. -->
+            {#if !inLibrary(d)}
+              <p class="claim-absent">
+                {$t('live.not_in_bible', { reference: d.reference })}
+              </p>
+            {/if}
             <div class="acts">
-              <button class="act go" on:click={acceptTop}>
-                <b>Accept &amp; fire</b><span>Send to outputs</span>
+              <button class="act go" on:click={acceptTop} disabled={!inLibrary(d)}>
+                {#if inLibrary(d)}
+                  <b>Accept &amp; fire</b><span>Send to outputs</span>
+                {:else}
+                  <b>Nothing to send</b><span>That verse does not exist</span>
+                {/if}
               </button>
               <button class="act no" on:click={dismissTop}>
                 <b>Dismiss</b><span>Not this verse</span>
@@ -1315,8 +1349,13 @@
               <span class="mchip sm" class:guess={!heard(x)}>
                 {$t(methodKey(x))}{#if heard(x)} {Math.round(x.confidence * 100)}%{/if}
               </span>
+              {#if !inLibrary(x)}
+                <span class="rc-absent">not in your Bible</span>
+              {/if}
               <span class="spring"></span>
-              <button class="mini" on:click={() => pushRef(x.reference)}>Fire</button>
+              <button class="mini" on:click={() => pushRef(x.reference)} disabled={!inLibrary(x)}>
+                Fire
+              </button>
               <button class="mini ghost" on:click={() => dismissDetection(x.reference)}>Dismiss</button>
             </div>
           {/each}
@@ -1428,6 +1467,11 @@
           {/each}
           {#if !itemsLoaded}
             <Loading what="cues" compact />
+          {:else if !items.length && $readErrors.planItems}
+            <!-- RG-95, last two surfaces. `planItems` swallowed to `[]`, so a read
+                 that failed rendered "this plan has no cues yet" — on the RUN
+                 surface, mid-service, about a plan the operator built. -->
+            <ErrorState compact error={$readErrors.planItems} onRetry={() => loadPlan(openPlan)} />
           {:else if !items.length}
             <EmptyState message={$t('live.plan_no_cues')} />
           {/if}
@@ -1454,6 +1498,8 @@
                a full library that they had lost their work. -->
           {#if !plansLoaded}
             <Loading what="plans" compact />
+          {:else if !plans.length && $readErrors.listPlans}
+            <ErrorState compact error={$readErrors.listPlans} onRetry={loadPlans} />
           {:else if !plans.length}
             <EmptyState message={$t('live.no_plans')} />
           {/if}
@@ -1591,7 +1637,7 @@
 </div>
 
 <style>
-  /* LIVE — laid out to docs/relaydesign/relay-console-screen.png, styled entirely
+  /* LIVE — laid out to docs/design/relay-console-screen.png, styled entirely
      from the --v-* design tokens in app.css. No raw hex, no arbitrary px: every
      colour is a token and every gap comes off the 8pt scale. */
   .inspect-link{ align-self:flex-start; margin-top:9px; background:none; border:0; padding:0;
@@ -1861,6 +1907,11 @@
   .mt-q{margin:5px 0 0; font-size:var(--v-fs-b1); line-height:1.55; color:var(--v-txt)}
   .claim-verse{margin:10px 0 0; font-family:var(--f-serif); font-style:italic;
     font-size:var(--v-fs-b2); line-height:1.55; color:var(--v-dim)}
+  /* No verse behind the reference. Rose is the failure colour on this screen;
+     amber is never spent here, because nothing about this is on air. */
+  .claim-absent{margin:10px 0 0; font-size:var(--v-fs-cap); line-height:1.5;
+    color:var(--v-rose)}
+  .rc-absent{font-size:var(--v-fs-cap); color:var(--v-rose)}
   .meta2{display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:14px;
     padding-top:12px; border-top:1px solid var(--v-line)}
   .meta2 b{display:block; margin-top:3px; font-size:var(--v-fs-b2); font-weight:500; color:var(--v-txt)}

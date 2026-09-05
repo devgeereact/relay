@@ -1078,11 +1078,13 @@ impl NavResult {
 // worse than no test: it protects nothing while reading, in its own reason string,
 // as an open bug.
 //
-// R2-C and R2-D remain open, remain RED, and remain ignored. Run them with:
+// **R2-C and R2-D were closed too** (DECISIONS §54, CLAUDE.md rule 38), so this
+// file now carries NO ignored test — `cargo test e2e::` runs all of them. The
+// sentence here used to say the two "remain open, remain RED, and remain ignored"
+// and stayed that way after they were fixed; `grep -c '#\[ignore\]'` on this file
+// answers the question the sentence was answering badly.
 //
-//   cargo test r2_ -- --ignored --nocapture
-//
-// All three are the SAME class of bug this repo has now had four times: a rule
+// All four are the SAME class of bug this repo has now had four times: a rule
 // enforced on one surface and skipped on its twin.
 // ════════════════════════════════════════════════════════════════════════════
 
@@ -1740,5 +1742,214 @@ fn the_fire_half_of_the_chain_is_measured_on_its_own() {
     assert!(
         span("reference_detection_to_fire") >= 1,
         "the router and the broadcast are not being measured"
+    );
+}
+
+/// Rejecting a suggestion has to leave a mark, and accepting one has to say whose
+/// idea it was.
+///
+/// ## The defect this closes
+///
+/// `detections.status` permits four values and `docs/data/schema.sql`'s `CHECK`
+/// enforces them, `db/services.rs` documents all four, `service_timeline` reads
+/// them and the Sunday report counted them. **Two of the four were structurally
+/// unreachable in production**: the only insert is inside `persist_fire`, which is
+/// called for a fire that reaches a screen, so a real service can only ever write
+/// `'auto'` or `'manual'`.
+///
+/// So the report printed `0 suggested` and `0 dismissed` for every service ever
+/// run — which does not read as "nothing recorded that", it reads as *"Relay never
+/// offered you anything"*. That is the inversion DECISIONS §44 exists to forbid,
+/// and it was invisible because the report's own tests fed it synthetic rows the
+/// product could not produce.
+///
+/// The fix is not to persist every suggestion: suggestions are deliberately not
+/// debounced (CLAUDE.md rule 28), so one spoken paraphrase yields one per decode
+/// pass. What is bounded and meaningful is what the OPERATOR did.
+#[test]
+fn what_the_operator_did_with_a_suggestion_reaches_the_record() {
+    let app = app();
+    let h = app.handle().clone();
+
+    let svc = start_service(
+        h.clone(),
+        h.state::<Session>(),
+        h.state::<Db>(),
+        h.state::<channels::Rehearsal>(),
+        h.state::<servicelock::ServiceLock>(),
+        "Sunday Service".into(),
+        "2026-08-29".into(),
+    )
+    .expect("start");
+
+    // Accept one, reject another — the two halves of an acceptance rate.
+    confirm_detection(
+        h.clone(),
+        h.state::<Db>(),
+        h.state::<Routing>(),
+        h.state::<channels::Rehearsal>(),
+        "John 3:16".into(),
+        Some(0.91),
+        Some("direct".into()),
+    )
+    .expect("confirm");
+    settle();
+    dismiss_detection(
+        h.clone(),
+        h.state::<Routing>(),
+        h.state::<Db>(),
+        h.state::<channels::Rehearsal>(),
+        Some("Psalms 23:1".into()),
+    )
+    .expect("dismiss");
+
+    let rows = service_timeline(h.state::<Db>(), svc).expect("timeline");
+    let kinds: Vec<&str> = rows.iter().map(|r| r.kind.as_str()).collect();
+
+    assert!(
+        kinds.contains(&"suggestion_accepted"),
+        "taking Relay's suggestion is not the same act as typing a verse by hand, \
+         and the record has to be able to tell them apart: {kinds:?}"
+    );
+    assert!(
+        kinds.contains(&"suggestion_dismissed"),
+        "a rejection used to leave no trace anywhere — not in `detections`, not in \
+         `cues`, not in `service_events`: {kinds:?}"
+    );
+
+    // Both arrive as CUES. `service_events` deliberately does not duplicate what
+    // `cues` already holds, and these are things the operator pressed.
+    for kind in ["suggestion_accepted", "suggestion_dismissed"] {
+        assert!(
+            rows.iter().any(|r| r.kind == kind && r.source == "cue"),
+            "{kind} belongs in cues, not in service_events"
+        );
+    }
+
+    // The accepted one still fires, and still fires AS a human decision — the cue
+    // records whose idea it was; it does not change who decided.
+    assert!(
+        rows.iter()
+            .any(|r| r.source == "detection" && r.kind == "manual"),
+        "confirming a suggestion is a human decision: {rows:?}"
+    );
+
+    // Still nothing a preacher said.
+    let dump = format!("{rows:?}");
+    assert!(
+        !dump.contains("For God so loved"),
+        "no verse text in the timeline"
+    );
+}
+
+/// A rejection carries a canonical reference or nothing — never a sentence.
+///
+/// `cues.payload_json` is read back by `service_timeline`, which is the part of the
+/// history most likely to be emailed to somebody. Every other cue writer satisfies
+/// `db/services.rs`'s "a short phrase Relay composes" by construction — `manual_fire`
+/// builds its key from an already-parsed `VerseRef`. `dismiss_detection` takes a
+/// string across the bridge, so it would have been the first cue payload whose shape
+/// was trusted rather than guaranteed.
+#[test]
+fn a_rejection_records_a_reference_and_never_a_sentence() {
+    let app = app();
+    let h = app.handle().clone();
+
+    let svc = start_service(
+        h.clone(),
+        h.state::<Session>(),
+        h.state::<Db>(),
+        h.state::<channels::Rehearsal>(),
+        h.state::<servicelock::ServiceLock>(),
+        "Sunday Service".into(),
+        "2026-08-29".into(),
+    )
+    .expect("start");
+
+    // A whole sentence with a reference buried in it: the reference survives,
+    // canonicalised. The sentence does not.
+    dismiss_detection(
+        h.clone(),
+        h.state::<Routing>(),
+        h.state::<Db>(),
+        h.state::<channels::Rehearsal>(),
+        Some("and beloved if you turn with me to psalm twenty three verse one".into()),
+    )
+    .expect("dismiss");
+    // And something with no reference in it at all stores no payload — the
+    // rejection is still counted; only the "which verse" is lost.
+    dismiss_detection(
+        h.clone(),
+        h.state::<Routing>(),
+        h.state::<Db>(),
+        h.state::<channels::Rehearsal>(),
+        Some("the sermon text nobody may export".into()),
+    )
+    .expect("dismiss");
+
+    let rows = service_timeline(h.state::<Db>(), svc).expect("timeline");
+    let dump = format!("{rows:?}");
+    assert!(
+        !dump.contains("beloved") && !dump.contains("turn with me"),
+        "a sentence reached the service record: {dump}"
+    );
+    assert!(
+        !dump.contains("sermon text nobody may export"),
+        "free text reached the service record: {dump}"
+    );
+    assert!(
+        dump.contains("Psalms 23:1"),
+        "the reference itself should survive, canonicalised: {dump}"
+    );
+    assert_eq!(
+        rows.iter()
+            .filter(|r| r.kind == "suggestion_dismissed")
+            .count(),
+        2,
+        "both rejections are counted, even the one that named no verse"
+    );
+}
+
+/// A rehearsal is not evidence, and that has to hold for the acceptance rate too.
+///
+/// `record_feedback` already refuses to learn from a rehearsal. The same reasoning
+/// applies exactly to the record: a volunteer practising accepts verses they chose
+/// themselves, so an acceptance rate inflated by practice would make the AI look
+/// like it was earning its place when nobody had tested it.
+#[test]
+fn a_rehearsed_decision_is_not_counted_as_one() {
+    let app = app();
+    let h = app.handle().clone();
+
+    let svc = start_service(
+        h.clone(),
+        h.state::<Session>(),
+        h.state::<Db>(),
+        h.state::<channels::Rehearsal>(),
+        h.state::<servicelock::ServiceLock>(),
+        "Sunday Service".into(),
+        "2026-08-29".into(),
+    )
+    .expect("start");
+
+    h.state::<channels::Rehearsal>().set(true);
+    dismiss_detection(
+        h.clone(),
+        h.state::<Routing>(),
+        h.state::<Db>(),
+        h.state::<channels::Rehearsal>(),
+        Some("Psalms 23:1".into()),
+    )
+    .expect("dismiss");
+    settle();
+
+    let kinds: Vec<String> = service_timeline(h.state::<Db>(), svc)
+        .expect("timeline")
+        .into_iter()
+        .map(|r| r.kind)
+        .collect();
+    assert!(
+        !kinds.iter().any(|k| k == "suggestion_dismissed"),
+        "a rehearsal is not evidence: {kinds:?}"
     );
 }

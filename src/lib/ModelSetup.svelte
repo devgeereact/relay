@@ -17,7 +17,9 @@
     capture,
     findModelFiles,
     installModelFile,
+    readErrors,
   } from './stores/capture.js';
+  import ErrorState from './ui/ErrorState.svelte';
 
   export let compact = false; // banner form (Console) vs full card (Settings)
 
@@ -140,6 +142,14 @@
         you can put any verse on screen by typing its reference.
       {/if}
     </p>
+
+    {#if !models.length && $readErrors.listModels}
+      <!-- RG-95. The model list swallows to `[]`, and this screen renders a list —
+           so a failed read showed an operator a BLANK panel with no models, no
+           message and no action, on the screen whose whole job is getting speech
+           recognition working before a service. -->
+      <ErrorState error={$readErrors.listModels} onRetry={refresh} />
+    {/if}
 
     {#each models as m}
       {@const active = m.installed && m.filename === activeFile}

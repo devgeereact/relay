@@ -4,9 +4,9 @@
 
 **Status:** builds and runs, full pipeline end to end. Operator console, SQLite data layer, audio capture + VAD, local STT (multilingual + code-switching), direct + semantic + context-memory detection, confidence-gating router with first-class manual override, and output channels (native fullscreen + kiosk/OBS WebSocket + preacher stage remote; NDI parked on the external SDK).
 
-Built out into a lightweight presentation suite: a **Content Library** (saved scripture, songs with a slide-flow editor + named arrangements, media, announcements, service history), a **Service Planner** (Mission-Control run editor over a unified cue model — scripture, song, media, announcement, countdown — with drag-reorder, per-cue stage notes, and plan duplication), **FTS5 + semantic scripture search**, **per-content-type templates** with a WYSIWYG editor, verse **auto-fit**, crossfade transitions, blackout, a **pre-service countdown timer**, and the full KJV corpus (66 books, 31,100 verses, bundled offline, translator glosses stripped). Next: African-language STT fine-tunes, neural paraphrase embedder, NDI, document (PDF/PPTX) presentation, real-service hardening.
+Built out into a lightweight presentation suite: a **Content Library** (saved scripture, songs with a slide-flow editor + named arrangements, media, announcements, service history), a **Service Planner** (Mission-Control run editor over a unified cue model — scripture, song, media, announcement, countdown — with drag-reorder, per-cue stage notes, and plan duplication), **FTS5 + semantic scripture search**, **per-content-type templates** with a WYSIWYG editor, verse **auto-fit**, crossfade transitions, blackout, a **pre-service countdown timer**, and the full KJV corpus (66 books, 31,102 verses, bundled offline, translator glosses stripped). Next: African-language STT fine-tunes, neural paraphrase embedder, NDI, document (PDF/PPTX) presentation, real-service hardening.
 
-**Relay has never shipped. As of 2026-08-31 the decision is NO-GO for general release and GO for a supervised pilot** — two churches, named operators, every service watched by somebody who can take the wall back by hand. Not because of a known defect (every P0 and P1 from the last full audit is closed) but because on 2026-08-30 Relay put a verse nobody said in front of a real congregation, **word error rate has never been measured in any language**, Windows cannot be signed for, and nobody but the author has ever run a service on it. The full decision and the five conditions that convert it into a general release are [docs/RELAY_GAP.md](docs/RELAY_GAP.md) §24.
+**Relay has never shipped. As of 2026-08-31 the decision is NO-GO for general release and GO for a supervised pilot** — two churches, named operators, every service watched by somebody who can take the wall back by hand. Not because of a known defect (every P0 and P1 from the last full audit is closed) but because on 2026-08-30 Relay put a verse nobody said in front of a real congregation, **word error rate has never been measured in any language**, **neither platform has a code-signing certificate** (every release so far is unsigned), and nobody but the author has ever run a service on it. The full decision and the five conditions that convert it into a general release are [docs/qa/RELAY_GAP.md](docs/qa/RELAY_GAP.md) §24.
 
 ## Start here
 
@@ -14,7 +14,7 @@ Built out into a lightweight presentation suite: a **Content Library** (saved sc
 1. **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — how the app works, in detail (process model, pipeline, cue model, rendering, data layer, command/event reference, invariants).
 2. **[docs/USER_GUIDE.md](docs/USER_GUIDE.md)** — how to operate it: every screen and the typical Sunday flow.
 3. `CLAUDE.md` — working conventions and non-negotiable constraints; read first if you're using an AI coding agent in this repo.
-4. `PROMPT.md` — the build-phase reference (the module docs cite its phase numbers); the full brief now lives in `docs/SPEC.md`.
+4. `docs/PROMPT.md` — the build-phase reference (the module docs cite its phase numbers); the full brief now lives in `docs/SPEC.md`.
 5. `docs/SPEC.md` — canonical technical spec (original brief). `docs/DECISIONS.md` — every major decision, with reasoning.
 6. **[docs/DESIGN_SYSTEM.md](docs/DESIGN_SYSTEM.md)** — tokens, type, and the four colours that carry a promise (amber = on air, amethyst = rehearsal, cyan = a guess, grey = cued). Read before touching any UI. `docs/design/` holds the rendered screen references.
 
@@ -32,8 +32,8 @@ Rust core · Tauri v2 shell · Svelte + Vite frontend · SQLite (`rusqlite`) · 
 
 ## Privacy, security, and what the AI does
 
-- **[PRIVACY.md](PRIVACY.md)** — *nothing you say, sing or show leaves your computer.* No accounts, no cloud, no server. The audio is never even saved.
-- **[SECURITY.md](SECURITY.md)** — how to report a vulnerability, and what we consider most serious (anything that leaks sermon content, or puts content on a screen the operator didn't choose).
+- **[PRIVACY.md](docs/PRIVACY.md)** — *nothing you say, sing or show leaves your computer.* No accounts, no cloud, no server. The audio is not saved either, unless you deliberately turn on debug recording (`RELAY_RECORD_WAV`), which nothing in the app can do for you.
+- **[SECURITY.md](docs/SECURITY.md)** — how to report a vulnerability, and what we consider most serious (anything that leaks sermon content, or puts content on a screen the operator didn't choose).
 - **[docs/AI_DISCLOSURE.md](docs/AI_DISCLOSURE.md)** — what the AI decides by itself, what it will **never** do (a paraphrase never reaches a congregation without a human agreeing), and where it is honestly weak.
 - **[docs/LANGUAGES.md](docs/LANGUAGES.md)** — Yorùbá / Kiswahili / Hausa. Fix a book name in a one-line PR, no Rust required.
 

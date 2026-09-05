@@ -18,15 +18,33 @@ Short version:
 | **Which verses were detected** | Your computer | **No.** |
 | **Songs, media, announcements, service plans** | Your computer | **No.** |
 | **Service history** | Your computer | **No.** |
-| **The audio itself** | **Nowhere. It is never saved.** Audio is transcribed in memory and discarded. | **No.** |
+| **The audio itself** | **Nowhere, unless you turn on debug recording.** Audio is transcribed in memory and discarded — **except** while `RELAY_RECORD_WAV` is set, which writes the service to a file you name (see [Debug audio recording](#debug-audio-recording-off-by-default) below). Off unless you set it, no button turns it on. | **No.** |
 
 Everything is in one folder:
 
 - **macOS** — `~/Library/Application Support/com.relay.app/`
 - **Windows** — `%APPDATA%\com.relay.app\`
 
-Delete that folder and every trace of every service is gone. There is no copy
-anywhere else, because there is nowhere else.
+Delete that folder and every trace of every service is gone — with one exception,
+and it is one you have to have created deliberately: a WAV written by
+`RELAY_RECORD_WAV` lands wherever you named it, which is normally not that folder.
+Nothing else Relay writes lives outside it.
+
+### Erasing one service, from inside Relay
+
+Deleting the folder was, until 2026-09-03, the **only** answer this page had — and
+it is a bad one. It means every service Relay has ever recorded, or none. A church
+that wants one sermon gone, because a pastoral conversation was read into the room
+or a visiting speaker asked, could not have it.
+
+**Library → History → open the service → Erase service.** Two clicks, the second
+one confirming, and it removes that service's transcript, the detections under it,
+the operator's actions, the timeline and the latency samples — in one transaction,
+so there is no half-erased state. Relay tells you how many transcript lines went.
+
+It is **not** reversible and there is no undo, which is the point: the words are
+gone from the database, not hidden in it. Export first (**Export .md**) if you want
+a copy. Like every other delete, it is refused while a service is being recorded.
 
 ---
 
@@ -68,7 +86,7 @@ clear.
 
 There is no safe way to sift content out of a field that is *allowed* to contain
 content. So it isn't sifted — **it is dropped.** The error type and the stack trace
-are enough to fix a crash. (`src-tauri/src/telemetry.rs`, and the tests beneath it.)
+are enough to fix a crash. (`../src-tauri/src/telemetry.rs`, and the tests beneath it.)
 
 ---
 
@@ -91,7 +109,7 @@ means, because it is more than reading:
   Nothing leaves your computer either way.
 
 That second point is a deliberate tradeoff for a device on a church's own network,
-and it is recorded as one — see **[DECISIONS §35](docs/DECISIONS.md)**, which also
+and it is recorded as one — see **[DECISIONS §35](DECISIONS.md)**, which also
 lists what would make us change it. It is written here in plain words because a
 privacy document that undersells the exposure is worse than one that says nothing.
 

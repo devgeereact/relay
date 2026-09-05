@@ -534,7 +534,7 @@ struct Beat {
 ///   Not a history, not a log, never written to the database, gone on quit.
 ///
 /// So this is anonymous liveness, and it stays that way. If a future change wants
-/// to know *which* device, that is the pairing proposal in `docs/RELAY_GAP.md` §20,
+/// to know *which* device, that is the pairing proposal in `docs/qa/RELAY_GAP.md` §20,
 /// and it needs a human first.
 #[derive(Clone, Default)]
 pub struct OutputHealth {
@@ -1055,6 +1055,28 @@ pub fn report_to(handle: &tauri::AppHandle) -> ErrorSink {
     })
 }
 
+/// A port nothing else on this machine is using.
+///
+/// These tests used to bind FIXED ports (8199–8205). On 2026-09-03 the whole Rust
+/// suite failed on `kiosk_ws_forwards_published_content` with a response carrying
+/// `x-powered-by: PHP/8.5.9` — an unrelated PHP dev server for a different project
+/// already held `127.0.0.1:8199`. Relay's server bound `0.0.0.0:8199` and
+/// *succeeded* (tokio sets `SO_REUSEADDR`), the more specific loopback binding won
+/// the connection, and the test spent its life talking to somebody else's web
+/// server.
+///
+/// That is worse than a port clash: nothing errored, the server printed that it was
+/// listening, and the failure read as a regression in code that had not changed.
+/// Asking the OS for a port removes the whole class, and the port it returns is
+/// loopback-specific, so a foreign wildcard listener cannot shadow it either.
+#[cfg(test)]
+fn free_port() -> u16 {
+    let l = std::net::TcpListener::bind("127.0.0.1:0").expect("a free port");
+    let port = l.local_addr().expect("addr").port();
+    drop(l);
+    port
+}
+
 /// A sink that only logs — for tests, where there is no UI to tell.
 #[cfg(test)]
 fn log_only() -> ErrorSink {
@@ -1105,8 +1127,22 @@ pub async fn run_kiosk_server(
         }
     };
     println!("kiosk: WebSocket server listening on :{port}");
+    // THE SAME TWO BOUNDS THE HTTP SERVER HAS, ON THE PORT THAT DID NOT GET THEM.
+    //
+    // RG-90 gave `:8032` a read deadline and RG-97 gave it a connection cap; this
+    // port had neither, and it is on the same church LAN. A socket that completed
+    // the TCP handshake and then never sent a WebSocket upgrade held a task and a
+    // descriptor for the life of the process — the RG-90 finding verbatim, on the
+    // door RG-90 did not check. Nothing hostile is needed: a port scanner sweeping
+    // the network produces them, silently, across a service.
+    let in_flight = std::sync::Arc::new(tokio::sync::Semaphore::new(MAX_KIOSK_CLIENTS));
     loop {
         let Ok((stream, _addr)) = listener.accept().await else {
+            continue;
+        };
+        // Over the cap the socket is dropped rather than queued. A screen retries;
+        // a queued socket is the resource this cap exists to bound.
+        let Ok(permit) = in_flight.clone().try_acquire_owned() else {
             continue;
         };
         let mut rx = tx.subscribe();
@@ -1115,9 +1151,28 @@ pub async fn run_kiosk_server(
         let themes = themes.clone();
         let health = health.clone();
         tokio::spawn(async move {
-            let ws = match tokio_tungstenite::accept_async(stream).await {
-                Ok(w) => w,
-                Err(_) => return,
+            let _permit = permit;
+            // A kiosk `hello`, a `beat` and a `rendered` are a few hundred bytes
+            // each. tungstenite's defaults are 64 MiB per message and 16 MiB per
+            // frame, and every frame is buffered whole before `serde_json` sees
+            // it — on an unauthenticated port, that is a memory bound set by
+            // whoever is on the wifi rather than by Relay.
+            let cfg = tokio_tungstenite::tungstenite::protocol::WebSocketConfig {
+                max_message_size: Some(64 * 1024),
+                max_frame_size: Some(64 * 1024),
+                ..Default::default()
+            };
+            let ws = match tokio::time::timeout(
+                REQUEST_READ_TIMEOUT,
+                tokio_tungstenite::accept_hdr_async_with_config(stream, origin_gate, Some(cfg)),
+            )
+            .await
+            {
+                Ok(Ok(w)) => w,
+                // A handshake that never arrives, one that fails and one that is
+                // refused are the same outcome here: nothing to serve, so let the
+                // task end and give the slot back.
+                Ok(Err(_)) | Err(_) => return,
             };
             let (mut write, mut read) = ws.split();
             // Dropped when this task ends by ANY route — break, error, or panic —
@@ -1286,7 +1341,7 @@ fn mime_for(path: &str) -> &'static str {
     }
 }
 
-async fn serve_embedded<S>(request_path: &str, stream: &mut S)
+async fn serve_embedded<S>(request_path: &str, range: Option<&str>, stream: &mut S)
 where
     S: tokio::io::AsyncWrite + Unpin,
 {
@@ -1304,7 +1359,7 @@ where
     };
     // Media assets live on disk (imported files), not in the embedded bundle.
     if let Some(rest) = clean.strip_prefix("media/") {
-        serve_media_file(rest, stream).await;
+        serve_media_file(rest, range, stream).await;
         return;
     }
     // DEV ONLY: serve the LIVE on-disk `dist/` first. `DIST` is embedded at Rust
@@ -1361,23 +1416,149 @@ where
     }
 }
 
+/// What a `Range:` header asks for, once it has been read against a known length.
+///
+/// A player asks for a range for two reasons and both matter on a church LAN: to
+/// SEEK (jump to 40 s of a five-minute clip) and to RESUME a connection that
+/// dropped. Without an answer it can do neither — it starts the clip again from
+/// zero, which is what an operator sees as "the video restarted itself".
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum RangeAsk {
+    /// No `Range:` header, or one this server does not implement (multiple
+    /// ranges, a unit other than bytes). Answer 200 with the whole file — a
+    /// client that asked for a range and got the whole thing still works.
+    Whole,
+    /// `start..=end`, inclusive, both already clamped inside the file.
+    Slice { start: u64, end: u64 },
+    /// A syntactically valid byte range that starts past the end of the file.
+    /// RFC 9110 says 416, and says the reply must carry `Content-Range: bytes */len`
+    /// so the client can correct itself.
+    Unsatisfiable,
+}
+
+/// Parse one `Range:` header value against a known content length.
+///
+/// Deliberately narrow: a single byte range, which is what every browser
+/// `<video>` sends. `bytes=0-`, `bytes=500-999` and `bytes=-500` (the last 500
+/// bytes) are the three forms in practice; anything else falls back to `Whole`
+/// rather than guessing, because serving the WRONG bytes with a 206 hands a
+/// player a corrupt file, and serving the whole file merely costs bandwidth.
+pub(crate) fn parse_range(value: &str, len: u64) -> RangeAsk {
+    let spec = match value.trim().strip_prefix("bytes=") {
+        Some(s) => s.trim(),
+        None => return RangeAsk::Whole,
+    };
+    // One range only. `a-b,c-d` needs a multipart/byteranges body; we do not
+    // build one, and a 200 is a correct answer to a range request.
+    if spec.contains(',') {
+        return RangeAsk::Whole;
+    }
+    let (first, last) = match spec.split_once('-') {
+        Some(p) => p,
+        None => return RangeAsk::Whole,
+    };
+    let (first, last) = (first.trim(), last.trim());
+    if len == 0 {
+        return RangeAsk::Unsatisfiable;
+    }
+    if first.is_empty() {
+        // `bytes=-N` — the final N bytes.
+        let n: u64 = match last.parse() {
+            Ok(n) => n,
+            Err(_) => return RangeAsk::Whole,
+        };
+        if n == 0 {
+            return RangeAsk::Unsatisfiable;
+        }
+        let start = len.saturating_sub(n);
+        return RangeAsk::Slice {
+            start,
+            end: len - 1,
+        };
+    }
+    let start: u64 = match first.parse() {
+        Ok(n) => n,
+        Err(_) => return RangeAsk::Whole,
+    };
+    if start >= len {
+        return RangeAsk::Unsatisfiable;
+    }
+    let end = if last.is_empty() {
+        len - 1
+    } else {
+        match last.parse::<u64>() {
+            // A player may ask for more than there is; the answer is what exists,
+            // not an error.
+            Ok(n) => n.min(len - 1),
+            Err(_) => return RangeAsk::Whole,
+        }
+    };
+    if end < start {
+        return RangeAsk::Unsatisfiable;
+    }
+    RangeAsk::Slice { start, end }
+}
+
+/// The policy every imported file is served under.
+///
+/// **An SVG is a document, not a picture.** The Library imports one as an image
+/// and `mime_for` answers `image/svg+xml`, which is correct — and a browser that
+/// opens `http://<relay>:8032/media/7` TOP-LEVEL runs any script inside it, on
+/// the same origin as `output.html` and the kiosk socket. `nosniff` does not help:
+/// the type is right, it is the type that is executable. The file arrives by
+/// import, so it is the operator's own file — but the operator's own file is
+/// exactly how a graphic pack from the internet gets onto a church laptop.
+///
+/// `default-src 'none'` with inline styles allowed keeps a designed SVG looking
+/// the way its author drew it while giving it nothing to run and nowhere to send.
+/// **Applied to SVG replies only, deliberately.** A CSP on an image or a video
+/// response is ignored by a browser rendering it as a subresource, and `sandbox`
+/// on a subresource has a history of being honoured inconsistently — so putting
+/// this header on a background video would risk a blank wall on a Sunday to
+/// protect a case that does not exist. SVG is the one imported type a browser
+/// will execute.
+pub(crate) const MEDIA_CSP: &str = "default-src 'none'; img-src data:; style-src 'unsafe-inline'";
+
+/// The header line for a media reply: present for SVG, absent for everything else.
+fn media_csp_header(mime: &str) -> String {
+    if mime.starts_with("image/svg") {
+        format!("Content-Security-Policy: {MEDIA_CSP}\r\n")
+    } else {
+        String::new()
+    }
+}
+
 /// Serve an imported media/document file by its DB id from `media_dir()`. Files
 /// are stored as `{id}_{name}`; we take the leading digits of the request as the
 /// id (so `../` and other traversal can't escape the media dir) and stream the
-/// first matching file. Whole-file read — fine for images/short clips; large
-/// videos would want ranged streaming later.
-async fn serve_media_file<S>(id_part: &str, stream: &mut S)
+/// file, honouring a single-byte-range request.
+async fn serve_media_file<S>(id_part: &str, range: Option<&str>, stream: &mut S)
 where
     S: tokio::io::AsyncWrite + Unpin,
 {
+    serve_media_from_dir(&crate::db::media_dir(), id_part, range, stream).await
+}
+
+/// The same, with the directory as a parameter so a test can serve a real file
+/// from a temporary directory without touching the machine's app-data path or
+/// mutating `RELAY_DB_PATH` under every other test running in the same process.
+pub(crate) async fn serve_media_from_dir<S>(
+    dir: &std::path::Path,
+    id_part: &str,
+    range: Option<&str>,
+    stream: &mut S,
+) where
+    S: tokio::io::AsyncWrite + Unpin,
+{
+    use tokio::io::AsyncReadExt;
+    use tokio::io::AsyncSeekExt;
     use tokio::io::AsyncWriteExt;
     let id: String = id_part.chars().take_while(|c| c.is_ascii_digit()).collect();
     let found = if id.is_empty() {
         None
     } else {
-        let dir = crate::db::media_dir();
         let prefix = format!("{id}_");
-        std::fs::read_dir(&dir).ok().and_then(|rd| {
+        std::fs::read_dir(dir).ok().and_then(|rd| {
             rd.filter_map(|e| e.ok()).map(|e| e.path()).find(|p| {
                 p.file_name()
                     .and_then(|n| n.to_str())
@@ -1386,16 +1567,85 @@ where
             })
         })
     };
-    match found.and_then(|p| std::fs::read(&p).ok().map(|b| (p, b))) {
-        Some((path, body)) => {
+    // Open and measure; do NOT read. This used to be `std::fs::read` — the whole
+    // file into a `Vec<u8>` before a single byte went out — so a 400 MB background
+    // loop cost 400 MB of resident memory PER REQUEST, and a wall, a stage screen
+    // and an OBS machine asking for the same clip during a service cost three
+    // copies of it on the laptop running the sermon. The bytes are the same; where
+    // they live while they travel is not.
+    let opened = match found {
+        Some(p) => match tokio::fs::File::open(&p).await {
+            Ok(f) => match f.metadata().await {
+                Ok(m) => Some((p, f, m.len())),
+                Err(_) => None,
+            },
+            Err(_) => None,
+        },
+        None => None,
+    };
+    match opened {
+        Some((path, mut file, len)) => {
             let mime = mime_for(&path.to_string_lossy());
-            let header = format!(
-                "HTTP/1.1 200 OK\r\nContent-Type: {}\r\nContent-Length: {}\r\nAccess-Control-Allow-Origin: *\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n",
-                mime,
-                body.len()
-            );
-            let _ = stream.write_all(header.as_bytes()).await;
-            let _ = stream.write_all(&body).await;
+            let csp = media_csp_header(mime);
+            let ask = match range {
+                Some(v) => parse_range(v, len),
+                None => RangeAsk::Whole,
+            };
+            // `Accept-Ranges` rides on EVERY reply, including the 200 and the 416.
+            // It is the only way a player learns it may seek at all; without it a
+            // browser disables the scrub bar however well the 206 works.
+            let (start, end) = match ask {
+                RangeAsk::Unsatisfiable => {
+                    let msg = b"Range not satisfiable";
+                    let header = format!(
+                        "HTTP/1.1 416 Range Not Satisfiable\r\nContent-Range: bytes */{}\r\nAccept-Ranges: bytes\r\nContent-Length: {}\r\nAccess-Control-Allow-Origin: *\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n\r\n",
+                        len,
+                        msg.len()
+                    );
+                    let _ = stream.write_all(header.as_bytes()).await;
+                    let _ = stream.write_all(msg).await;
+                    return;
+                }
+                RangeAsk::Whole => (0, len.saturating_sub(1)),
+                RangeAsk::Slice { start, end } => (start, end),
+            };
+            let partial = !matches!(ask, RangeAsk::Whole);
+            let count = if len == 0 { 0 } else { end - start + 1 };
+            if partial && file.seek(std::io::SeekFrom::Start(start)).await.is_err() {
+                return;
+            }
+            let header = if partial {
+                format!(
+                    "HTTP/1.1 206 Partial Content\r\nContent-Type: {mime}\r\nContent-Length: {count}\r\nContent-Range: bytes {start}-{end}/{len}\r\nAccept-Ranges: bytes\r\nAccess-Control-Allow-Origin: *\r\nX-Content-Type-Options: nosniff\r\n{csp}Cache-Control: no-cache\r\nConnection: close\r\n\r\n"
+                )
+            } else {
+                format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: {mime}\r\nContent-Length: {len}\r\nAccept-Ranges: bytes\r\nAccess-Control-Allow-Origin: *\r\nX-Content-Type-Options: nosniff\r\n{csp}Cache-Control: no-cache\r\nConnection: close\r\n\r\n"
+                )
+            };
+            if stream.write_all(header.as_bytes()).await.is_err() {
+                return;
+            }
+            let mut remaining = count;
+            let mut buf = vec![0u8; 64 * 1024];
+            while remaining > 0 {
+                let want = remaining.min(buf.len() as u64) as usize;
+                match file.read(&mut buf[..want]).await {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        // A screen that closed its tab mid-clip is an ordinary end,
+                        // not an error to report anywhere.
+                        if stream.write_all(&buf[..n]).await.is_err() {
+                            return;
+                        }
+                        remaining -= n as u64;
+                    }
+                    // Truncated rather than wrong: the header already promised a
+                    // length, so the client sees a short read and retries. Inventing
+                    // padding would hand a player a corrupt file.
+                    Err(_) => break,
+                }
+            }
         }
         None => {
             let msg = b"Media not found";
@@ -1444,7 +1694,215 @@ pub struct ApiReply {
 
 pub type ApiSink = std::sync::Arc<dyn Fn(&str, &str) -> Option<ApiReply> + Send + Sync>;
 
+/// How long a connection has to send its request line before Relay drops it.
+///
+/// Far longer than a LAN request takes, far shorter than a service lasts.
+pub(crate) const REQUEST_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// The largest request head this server will read before giving up on a client.
+///
+/// A LAN request from a browser, a phone or OBS is a few hundred bytes. Anything
+/// approaching this is either broken or trying to make the server hold memory.
+pub(crate) const MAX_HEAD_BYTES: usize = 8 * 1024;
+
+/// How many requests may be served at once. See the comment at the accept loop.
+pub(crate) const MAX_CONCURRENT_REQUESTS: usize = 64;
+
+/// The handshake callback: refuse a client whose `Origin` is not one of Relay's.
+///
+/// WHO IS ALLOWED TO LISTEN (RG-108). The hub subscribes a client to the content
+/// feed at ACCEPT — before and without a `hello` — and WebSockets are exempt from
+/// CORS, so any plain-`http:` page a congregant opened on the church wifi could
+/// `new WebSocket('ws://<relay>:8031')` and receive the service. What travels is
+/// not only the verse on the projector: `kiosk_content_json` carries `stage_note`,
+/// `next_reference` and `next_text` — the preacher's own monitor. DECISIONS §35
+/// accepts that somebody in the room can SEE the wall; this is content leaving the
+/// building, which SECURITY.md ranks above everything else.
+///
+/// The check has to be here rather than after `hello`, because a check after the
+/// subscription is a check after the leak.
+#[allow(
+    clippy::result_large_err,
+    reason = "the handshake callback's signature takes and returns http::Response by value"
+)]
+fn origin_gate(
+    req: &tokio_tungstenite::tungstenite::handshake::server::Request,
+    resp: tokio_tungstenite::tungstenite::handshake::server::Response,
+) -> Result<
+    tokio_tungstenite::tungstenite::handshake::server::Response,
+    tokio_tungstenite::tungstenite::handshake::server::ErrorResponse,
+> {
+    let origin = req
+        .headers()
+        .get("origin")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+    if kiosk_origin_allowed(origin.as_deref()) {
+        return Ok(resp);
+    }
+    // Printed, because the failure mode this creates is a screen that stays blank
+    // with no explanation, on a Sunday. The refusal names the origin and the way out.
+    println!(
+        "kiosk: refused a connection from origin {:?} — Relay serves its pages on \
+         :{}, so that is the origin it trusts. A kiosk page hosted elsewhere needs \
+         RELAY_KIOSK_ANY_ORIGIN=1.",
+        origin.unwrap_or_default(),
+        crate::sysprobe::HTTP_PORT
+    );
+    // 403, not the default. `ErrorResponse::new` builds a 200, and tungstenite
+    // refuses to write a SUCCESSFUL refusal — so the client got a bare close with
+    // no status at all, which is indistinguishable from Relay being down. A page
+    // that is refused should be able to say why in its own console.
+    let mut refusal = tokio_tungstenite::tungstenite::handshake::server::ErrorResponse::new(Some(
+        "origin not allowed".into(),
+    ));
+    *refusal.status_mut() = tokio_tungstenite::tungstenite::http::StatusCode::FORBIDDEN;
+    Err(refusal)
+}
+
+/// May a browser at this `Origin` join the kiosk feed? (RG-108)
+///
+/// ## The rule, and why each half of it
+///
+/// **No `Origin` at all → allowed.** A browser always sends one on a WebSocket
+/// handshake; a native client, a diagnostic tool and this repository's own tests
+/// do not. Refusing them would break the things that are not the threat.
+///
+/// **An origin on Relay's own ports → allowed.** The pages that legitimately open
+/// this socket are `output.html` and `stage.html`, and Relay serves them itself:
+/// on `:8032` in a packaged build, on the Vite dev port in development. The HOST
+/// cannot be checked, because it is whatever LAN address the church laptop has
+/// that morning — but the PORT is Relay's own, and a page on it came from Relay.
+/// An OBS browser source pointed at `http://<ip>:8032/output.html` sends exactly
+/// that origin, which is the client this must not break.
+///
+/// **Anything else → refused**, including `null` (a page opened from a file, and
+/// also what a sandboxed frame sends).
+///
+/// ## The escape hatch, and why it exists
+///
+/// A church that hosts its own kiosk page somewhere else — a Raspberry Pi, an
+/// existing signage box — is a real setup, and discovering on a Sunday that the
+/// screen no longer connects is the worst possible time. `RELAY_KIOSK_ANY_ORIGIN=1`
+/// restores the previous behaviour, and the refusal message above names it. It is
+/// an env var rather than a setting on purpose: it is a decision about the church's
+/// network, not about the service.
+pub(crate) fn kiosk_origin_allowed(origin: Option<&str>) -> bool {
+    let Some(origin) = origin else {
+        return true;
+    };
+    if std::env::var("RELAY_KIOSK_ANY_ORIGIN").is_ok_and(|v| v == "1") {
+        return true;
+    }
+    // Relay's OWN webview. A bundled page has no LAN port in its origin — Tauri
+    // serves it from `tauri://localhost` (macOS) or `http://tauri.localhost`
+    // (Windows). `Output.svelte` only reaches for the socket when the Tauri event
+    // bridge is missing, which should not happen in a packaged build — but a
+    // fallback that is refused is a blank wall, and this is Relay talking to
+    // itself.
+    if origin == "tauri://localhost" || origin == "http://tauri.localhost" {
+        return true;
+    }
+    let Some(rest) = origin.strip_prefix("http://") else {
+        // `https://` cannot be Relay (the LAN server is plain HTTP), and `null`
+        // is not a host.
+        return false;
+    };
+    let Some((_host, port)) = rest.rsplit_once(':') else {
+        // No port means :80, which Relay never serves on.
+        return false;
+    };
+    port.parse::<u16>()
+        .is_ok_and(|p| p == crate::sysprobe::HTTP_PORT || p == DEV_CONSOLE_PORT)
+}
+
+/// The Vite dev server's port. `output.html` is served from it under
+/// `npm run tauri dev`, and from nowhere in a packaged build.
+pub(crate) const DEV_CONSOLE_PORT: u16 = 5032;
+
+/// How many kiosk WebSocket clients may be connected at once.
+///
+/// A church runs a wall, a stage screen, an OBS machine and perhaps a phone. This
+/// is an order of magnitude above that and far below the point where the laptop
+/// running the sermon notices.
+pub(crate) const MAX_KIOSK_CLIENTS: usize = 32;
+
+/// Read the request head — everything up to the blank line — under ONE deadline.
+///
+/// `None` means the client said nothing, said too much, or ran out of time; the
+/// caller drops the connection. Reading to the terminator rather than taking the
+/// first packet is what makes a header AFTER the request line (`Range:`) reliable:
+/// TCP may deliver a request in any number of segments, and a browser seeking in a
+/// video is exactly the client most likely to be on a slow wifi link.
+async fn read_request_head<S>(stream: &mut S, deadline: std::time::Duration) -> Option<String>
+where
+    S: tokio::io::AsyncRead + Unpin,
+{
+    use tokio::io::AsyncReadExt;
+    let mut head: Vec<u8> = Vec::with_capacity(1024);
+    let mut buf = [0u8; 2048];
+    let read_all = async {
+        loop {
+            let n = stream.read(&mut buf).await.ok()?;
+            if n == 0 {
+                // A client that closed before finishing its head has no request.
+                return None;
+            }
+            head.extend_from_slice(&buf[..n]);
+            if head.windows(4).any(|w| w == b"\r\n\r\n") || head.windows(2).any(|w| w == b"\n\n") {
+                return Some(String::from_utf8_lossy(&head).into_owned());
+            }
+            if head.len() >= MAX_HEAD_BYTES {
+                return None;
+            }
+        }
+    };
+    tokio::time::timeout(deadline, read_all)
+        .await
+        .unwrap_or_default()
+}
+
+/// One header's value out of a request head, matched case-insensitively.
+///
+/// HTTP field names are case-insensitive and clients differ: Safari sends
+/// `Range`, some players send `range`. Matching one spelling is a seek that works
+/// on one browser and not another.
+fn header_value(head: &str, name: &str) -> Option<String> {
+    head.lines()
+        .skip(1)
+        .take_while(|l| !l.trim().is_empty())
+        .find_map(|l| {
+            let (k, v) = l.split_once(':')?;
+            if k.trim().eq_ignore_ascii_case(name) {
+                Some(v.trim().to_string())
+            } else {
+                None
+            }
+        })
+}
+
 pub async fn run_output_http_server(on_error: ErrorSink, api: ApiSink, port: u16) {
+    run_output_http_server_with_timeout(on_error, api, port, REQUEST_READ_TIMEOUT).await
+}
+
+/// The same server, with the idle-connection deadline as a parameter.
+///
+/// The parameter exists so a test can assert the BEHAVIOUR in milliseconds instead
+/// of seconds. The first attempt used tokio's paused clock, and it was flaky: with
+/// two tasks holding timers, auto-advance can reach the client's deadline before
+/// the server task has registered its own, so the test failed about one run in ten
+/// on code that was correct. A flaky test on a timeout is worse than no test — it
+/// teaches whoever sees it red to run it again.
+///
+/// `run_output_http_server` above is the only production caller and it passes
+/// `REQUEST_READ_TIMEOUT`, so the constant is still the shipped value and this
+/// indirection cannot drift away from it.
+pub async fn run_output_http_server_with_timeout(
+    on_error: ErrorSink,
+    api: ApiSink,
+    port: u16,
+    read_timeout: std::time::Duration,
+) {
     let listener = match tokio::net::TcpListener::bind(("0.0.0.0", port)).await {
         Ok(l) => l,
         Err(e) => {
@@ -1453,26 +1911,65 @@ pub async fn run_output_http_server(on_error: ErrorSink, api: ApiSink, port: u16
         }
     };
     println!("output http: serving output/stage pages on :{port}");
+    // HOW MANY REQUESTS MAY BE IN FLIGHT AT ONCE.
+    //
+    // Every accepted socket used to spawn a task with no ceiling, and `/api/search`
+    // runs a semantic scan and an FTS query per request. Nothing hostile is needed
+    // to hurt: a kiosk page with a reload loop, or an OBS source retrying a clip,
+    // can put the laptop running the sermon under load with nothing on any screen
+    // to say why. The cap is far above what a church uses — a wall, a stage screen,
+    // an OBS machine and a phone are four clients, and a browser opens at most a
+    // handful of connections per page — and far below the point where the console
+    // stops answering. Over the cap a connection is answered `503` and closed at
+    // once rather than queued: a client that is told no retries, a client left
+    // waiting holds a socket.
+    let in_flight = std::sync::Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_REQUESTS));
     loop {
         let Ok((mut stream, _addr)) = listener.accept().await else {
             continue;
         };
         let api = api.clone();
+        let Ok(permit) = in_flight.clone().try_acquire_owned() else {
+            tokio::spawn(async move {
+                use tokio::io::AsyncWriteExt;
+                let msg = b"Too many requests in flight";
+                let header = format!(
+                    "HTTP/1.1 503 Service Unavailable\r\nRetry-After: 1\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    msg.len()
+                );
+                let _ = stream.write_all(header.as_bytes()).await;
+                let _ = stream.write_all(msg).await;
+            });
+            continue;
+        };
         tokio::spawn(async move {
-            use tokio::io::AsyncReadExt;
-            let mut buf = [0u8; 8192];
-            let Ok(n) = stream.read(&mut buf).await else {
+            // Held for the life of the reply, dropped with the task — so a client
+            // that hangs up mid-stream returns its slot like any other.
+            let _permit = permit;
+            // A CONNECTION THAT NEVER SPEAKS MUST NOT BE HELD FOREVER.
+            //
+            // This awaited the first read with no deadline, so a socket that
+            // connected and then said nothing kept a task, an 8 KiB buffer and a
+            // file descriptor for the length of the process. Nothing malicious is
+            // required to produce one: a browser that opens a speculative
+            // connection, a kiosk that sleeps between the TCP handshake and the
+            // request, a port scanner sweeping the church LAN. They accumulate
+            // silently across a service and are freed only by quitting Relay.
+            //
+            // Five seconds is far longer than a LAN request line takes and far
+            // shorter than a service — and it now bounds the WHOLE header block,
+            // not the first packet of it. A client that sends its request line and
+            // then dribbles headers one byte at a time is the same idle connection
+            // wearing a hat.
+            let Some(head) = read_request_head(&mut stream, read_timeout).await else {
                 return;
             };
-            if n == 0 {
-                return;
-            }
             // Parse "GET /path HTTP/1.1". The VERB is read, not discarded: it is
             // half of what stops a drive-by from driving the wall (DECISIONS §35).
-            let head = String::from_utf8_lossy(&buf[..n]);
             let mut first = head.lines().next().unwrap_or("").split_whitespace();
             let method = first.next().unwrap_or("GET");
             let path = first.next().unwrap_or("/");
+            let range = header_value(&head, "range");
             if let Some(rest) = path.strip_prefix("/api/") {
                 let reply = api(method, rest).unwrap_or_else(|| ApiReply {
                     status: 500,
@@ -1481,7 +1978,7 @@ pub async fn run_output_http_server(on_error: ErrorSink, api: ApiSink, port: u16
                 });
                 serve_json(&reply, &mut stream).await;
             } else {
-                serve_embedded(path, &mut stream).await;
+                serve_embedded(path, range.as_deref(), &mut stream).await;
             }
         });
     }
@@ -1532,7 +2029,7 @@ where
         ""
     };
     let resp = format!(
-        "HTTP/1.1 {} {}\r\nContent-Type: application/json\r\n{}{}Cache-Control: no-store\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        "HTTP/1.1 {} {}\r\nContent-Type: application/json\r\nX-Content-Type-Options: nosniff\r\n{}{}Cache-Control: no-store\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
         reply.status,
         phrase,
         cors,
@@ -1610,10 +2107,11 @@ mod tests {
     async fn output_http_serves_embedded_pages() {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         let no_api: ApiSink = std::sync::Arc::new(|_: &str, _: &str| None);
-        tokio::spawn(run_output_http_server(log_only(), no_api, 8201));
+        let port = free_port();
+        tokio::spawn(run_output_http_server(log_only(), no_api, port));
         tokio::time::sleep(std::time::Duration::from_millis(150)).await;
 
-        let mut s = tokio::net::TcpStream::connect("127.0.0.1:8201")
+        let mut s = tokio::net::TcpStream::connect(("127.0.0.1", port))
             .await
             .expect("connect");
         s.write_all(b"GET /stage.html HTTP/1.1\r\nHost: x\r\n\r\n")
@@ -1629,7 +2127,7 @@ mod tests {
         );
         assert!(resp.contains("text/html"));
 
-        let mut s2 = tokio::net::TcpStream::connect("127.0.0.1:8201")
+        let mut s2 = tokio::net::TcpStream::connect(("127.0.0.1", port))
             .await
             .expect("connect");
         s2.write_all(b"GET /nope.xyz HTTP/1.1\r\n\r\n")
@@ -1639,10 +2137,527 @@ mod tests {
         assert!(String::from_utf8_lossy(&buf[..n2]).starts_with("HTTP/1.1 404"));
     }
 
+    /// A CONNECTION THAT NEVER SPEAKS MUST NOT BE HELD FOREVER.
+    ///
+    /// The first read had no deadline, so a socket that connected and then said
+    /// nothing kept a task, an 8 KiB buffer and a file descriptor for the whole
+    /// life of the process. Nothing hostile is needed to make one — a browser
+    /// opening a speculative connection, a kiosk sleeping between the handshake
+    /// and the request, a port scanner on the church LAN — and they accumulate
+    /// silently across a service, freed only by quitting Relay.
+    ///
+    /// Driven with a 200 ms deadline instead of the shipped five seconds, so the
+    /// assertion costs no wall time and — unlike the first attempt, which used
+    /// tokio's paused clock — cannot race. With two tasks holding timers,
+    /// auto-advance can reach the CLIENT's deadline before the server has
+    /// registered its own, and that version failed about one run in ten on correct
+    /// code. A flaky test about a timeout is worse than no test: it teaches whoever
+    /// sees it red to run it again rather than read it.
+    #[tokio::test]
+    async fn a_connection_that_never_speaks_is_dropped() {
+        use tokio::io::AsyncReadExt;
+        let no_api: ApiSink = std::sync::Arc::new(|_: &str, _: &str| None);
+        let port = free_port();
+        tokio::spawn(run_output_http_server_with_timeout(
+            log_only(),
+            no_api,
+            port,
+            std::time::Duration::from_millis(200),
+        ));
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+
+        let mut s = tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .expect("connect");
+        // Say nothing at all, then wait for the server to give up on us.
+        //
+        // The client's own deadline exists so that a REGRESSION is a failing test
+        // rather than a hung one: without the server-side timeout this read never
+        // returns, and a test that hangs forever in CI is worse than no test.
+        let mut buf = [0u8; 64];
+        let n = tokio::time::timeout(std::time::Duration::from_secs(10), s.read(&mut buf))
+            .await
+            .expect("the server never dropped an idle connection")
+            .expect("read");
+        assert_eq!(n, 0, "the server should have closed the connection");
+
+        // And the SHIPPED deadline is the constant, not this test's 200 ms. The
+        // production entry point takes no timeout argument precisely so there is
+        // one value; this asserts it is still a real one.
+        assert_eq!(REQUEST_READ_TIMEOUT, std::time::Duration::from_secs(5));
+    }
+
+    /// A JSON reply must carry `nosniff` like every other reply this server sends.
+    ///
+    /// The static path set it and the control plane did not, so the one surface
+    /// that answers with attacker-influenceable strings (a search query echoes
+    /// through `json_str`) was the one a browser was still free to sniff a content
+    /// type for. The header costs nothing and closes the asymmetry.
+    #[tokio::test]
+    async fn a_json_reply_is_never_content_sniffed() {
+        let mut sink: Vec<u8> = Vec::new();
+        serve_json(
+            &ApiReply {
+                status: 200,
+                body: "{\"ok\":true}".into(),
+                cors: true,
+            },
+            &mut sink,
+        )
+        .await;
+        let resp = String::from_utf8_lossy(&sink);
+        assert!(resp.contains("X-Content-Type-Options: nosniff"), "{resp}");
+        assert!(resp.contains("Access-Control-Allow-Origin: *"), "{resp}");
+        assert!(resp.contains("Cache-Control: no-store"), "{resp}");
+    }
+
+    /// A mutating route still withholds the wildcard, nosniff or not. Guards the
+    /// header addition against having widened what a cross-origin caller can read.
+    #[tokio::test]
+    async fn a_mutating_reply_still_withholds_the_cors_wildcard() {
+        let mut sink: Vec<u8> = Vec::new();
+        serve_json(
+            &ApiReply {
+                status: 405,
+                body: "{\"ok\":false}".into(),
+                cors: false,
+            },
+            &mut sink,
+        )
+        .await;
+        let resp = String::from_utf8_lossy(&sink);
+        assert!(
+            resp.starts_with("HTTP/1.1 405 Method Not Allowed"),
+            "{resp}"
+        );
+        assert!(resp.contains("Allow: POST"), "{resp}");
+        assert!(!resp.contains("Access-Control-Allow-Origin"), "{resp}");
+        assert!(resp.contains("X-Content-Type-Options: nosniff"), "{resp}");
+    }
+
+    // ── Ranged media (RG-96) ───────────────────────────────────────────────
+    //
+    // A `<video>` on a kiosk screen or an OBS source cannot SEEK and cannot
+    // RESUME a dropped connection without a ranged reply; it starts the clip
+    // again from zero, which an operator reads as "the video restarted itself".
+
+    /// The three forms a browser actually sends, plus the two ways a range can be
+    /// wrong. `Whole` is the deliberate answer to anything unsupported: a 200 with
+    /// the whole file is always CORRECT, where a 206 carrying the wrong bytes
+    /// hands a player a corrupt file.
+    #[test]
+    fn a_range_header_is_read_against_the_real_length() {
+        assert_eq!(
+            parse_range("bytes=0-", 1000),
+            RangeAsk::Slice { start: 0, end: 999 }
+        );
+        assert_eq!(
+            parse_range("bytes=500-999", 1000),
+            RangeAsk::Slice {
+                start: 500,
+                end: 999
+            }
+        );
+        // The final 100 bytes — how a player reads an MP4's moov atom when it is
+        // at the end of the file.
+        assert_eq!(
+            parse_range("bytes=-100", 1000),
+            RangeAsk::Slice {
+                start: 900,
+                end: 999
+            }
+        );
+        // Asking for more than exists is answered with what exists.
+        assert_eq!(
+            parse_range("bytes=900-5000", 1000),
+            RangeAsk::Slice {
+                start: 900,
+                end: 999
+            }
+        );
+        // Case and whitespace are the client's business, not ours.
+        assert_eq!(
+            parse_range("  bytes=0-9  ", 1000),
+            RangeAsk::Slice { start: 0, end: 9 }
+        );
+        // Past the end, backwards, and an empty file: 416, never a wrong slice.
+        assert_eq!(parse_range("bytes=1000-", 1000), RangeAsk::Unsatisfiable);
+        assert_eq!(parse_range("bytes=800-700", 1000), RangeAsk::Unsatisfiable);
+        assert_eq!(parse_range("bytes=0-", 0), RangeAsk::Unsatisfiable);
+        // Unsupported forms fall back to the whole file rather than guessing.
+        assert_eq!(parse_range("bytes=0-9,20-29", 1000), RangeAsk::Whole);
+        assert_eq!(parse_range("items=0-9", 1000), RangeAsk::Whole);
+        assert_eq!(parse_range("bytes=abc-def", 1000), RangeAsk::Whole);
+    }
+
+    /// End to end over the real serving path: the slice is the right BYTES, the
+    /// headers say so, and a whole-file GET still answers 200 while advertising
+    /// that it could have done better.
+    #[tokio::test]
+    async fn a_ranged_media_request_is_answered_with_the_bytes_it_asked_for() {
+        let dir = std::env::temp_dir().join(format!("relay-media-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let body: Vec<u8> = (0u8..=255).cycle().take(1000).collect();
+        std::fs::write(dir.join("12_clip.mp4"), &body).unwrap();
+
+        // Whole file: 200, and `Accept-Ranges` so a player enables its scrub bar.
+        let mut sink: Vec<u8> = Vec::new();
+        serve_media_from_dir(&dir, "12", None, &mut sink).await;
+        let split = find_body(&sink);
+        let head = String::from_utf8_lossy(&sink[..split]).to_string();
+        assert!(head.starts_with("HTTP/1.1 200 OK"), "{head}");
+        assert!(head.contains("Accept-Ranges: bytes"), "{head}");
+        assert!(head.contains("Content-Length: 1000"), "{head}");
+        assert_eq!(&sink[split..], &body[..]);
+
+        // A seek: 206, the exact slice, and a Content-Range naming the whole.
+        let mut sink: Vec<u8> = Vec::new();
+        serve_media_from_dir(&dir, "12", Some("bytes=500-599"), &mut sink).await;
+        let split = find_body(&sink);
+        let head = String::from_utf8_lossy(&sink[..split]).to_string();
+        assert!(head.starts_with("HTTP/1.1 206 Partial Content"), "{head}");
+        assert!(head.contains("Content-Range: bytes 500-599/1000"), "{head}");
+        assert!(head.contains("Content-Length: 100"), "{head}");
+        assert_eq!(&sink[split..], &body[500..600], "the wrong bytes were sent");
+
+        // Past the end: 416 with the length, so the client can correct itself —
+        // never a 200 pretending the request made sense.
+        let mut sink: Vec<u8> = Vec::new();
+        serve_media_from_dir(&dir, "12", Some("bytes=4000-"), &mut sink).await;
+        let head = String::from_utf8_lossy(&sink).to_string();
+        assert!(head.starts_with("HTTP/1.1 416"), "{head}");
+        assert!(head.contains("Content-Range: bytes */1000"), "{head}");
+
+        // The id is still the leading digits and nothing else: traversal cannot
+        // reach outside the media directory (this is why the id is parsed, not
+        // joined).
+        let mut sink: Vec<u8> = Vec::new();
+        serve_media_from_dir(&dir, "../../etc/passwd", None, &mut sink).await;
+        assert!(
+            String::from_utf8_lossy(&sink).starts_with("HTTP/1.1 404"),
+            "traversal must not resolve"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn find_body(resp: &[u8]) -> usize {
+        resp.windows(4)
+            .position(|w| w == b"\r\n\r\n")
+            .map(|i| i + 4)
+            .expect("no header terminator")
+    }
+
+    /// The head is read to its terminator, so a header sent in a SECOND packet is
+    /// still seen. TCP may split a request anywhere, and the client most likely to
+    /// be on a slow link is exactly the one seeking in a video.
+    #[tokio::test]
+    async fn a_header_that_arrives_in_a_second_packet_is_still_read() {
+        let no_api: ApiSink = std::sync::Arc::new(|_: &str, _: &str| None);
+        let port = free_port();
+        tokio::spawn(run_output_http_server(log_only(), no_api, port));
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let mut s = tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .expect("connect");
+        s.write_all(b"GET /stage.html HTTP/1.1\r\n").await.unwrap();
+        s.flush().await.unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(60)).await;
+        s.write_all(b"Range: bytes=0-9\r\nHost: x\r\n\r\n")
+            .await
+            .unwrap();
+        let mut buf = vec![0u8; 4096];
+        let n = tokio::time::timeout(std::time::Duration::from_secs(5), s.read(&mut buf))
+            .await
+            .expect("the server never answered a split request")
+            .unwrap();
+        assert!(
+            String::from_utf8_lossy(&buf[..n]).starts_with("HTTP/1.1 200"),
+            "a request split across packets must still be served"
+        );
+    }
+
+    /// A HEAD BLOCK THAT NEVER ENDS IS AN IDLE CONNECTION WEARING A HAT.
+    ///
+    /// Dribbling headers forever used to be outside the deadline, because only the
+    /// FIRST read was timed. The deadline now covers the whole head.
+    #[tokio::test]
+    async fn a_client_that_dribbles_headers_forever_is_still_dropped() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let no_api: ApiSink = std::sync::Arc::new(|_: &str, _: &str| None);
+        let port = free_port();
+        tokio::spawn(run_output_http_server_with_timeout(
+            log_only(),
+            no_api,
+            port,
+            std::time::Duration::from_millis(300),
+        ));
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+
+        let mut s = tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .expect("connect");
+        s.write_all(b"GET / HTTP/1.1\r\n").await.unwrap();
+        let writer = tokio::spawn(async move {
+            // Never send the blank line.
+            for _ in 0..50 {
+                if s.write_all(b"X-Pad: x\r\n").await.is_err() {
+                    return s;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+            s
+        });
+        let mut s = tokio::time::timeout(std::time::Duration::from_secs(10), writer)
+            .await
+            .expect("the writer never finished")
+            .unwrap();
+        let mut buf = [0u8; 64];
+        // Either shape counts as dropped — see `assert_dropped`. What must NOT
+        // happen is the read hanging, which is what it did before the deadline
+        // covered the whole head.
+        let outcome = tokio::time::timeout(std::time::Duration::from_secs(5), s.read(&mut buf))
+            .await
+            .expect("the server never dropped a dribbling client");
+        assert_dropped(outcome);
+    }
+
+    /// A DROPPED CONNECTION HAS TWO NAMES, AND THEY ARE PLATFORM-SPECIFIC.
+    ///
+    /// A read on a socket the peer has closed comes back as a clean EOF, or — if
+    /// we kept writing to it first — as an error. macOS calls that error
+    /// `ConnectionReset` (ECONNRESET) and **Windows calls it `ConnectionAborted`**
+    /// (WSAECONNABORTED, 10053). Asserting only the first passed on this machine
+    /// and failed on the Windows runner, on code that was behaving correctly —
+    /// which is the shape of every Windows bug in this repository's history, for
+    /// once caught by CI rather than by a church.
+    fn assert_dropped(outcome: std::io::Result<usize>) {
+        match outcome {
+            Ok(n) => assert_eq!(n, 0, "the server should have closed the connection"),
+            Err(e) => assert!(
+                matches!(
+                    e.kind(),
+                    std::io::ErrorKind::ConnectionReset | std::io::ErrorKind::ConnectionAborted
+                ),
+                "unexpected error from a dropped connection: {e} ({:?})",
+                e.kind()
+            ),
+        }
+    }
+
+    /// AN IMPORTED SVG IS A DOCUMENT, AND THIS PORT SERVES IT ON THE SAME ORIGIN
+    /// AS THE OUTPUT PAGE.
+    ///
+    /// A video gets no policy: a CSP on a subresource is ignored by the browser
+    /// painting it, and one that WAS honoured would risk a blank wall to protect a
+    /// case that does not exist.
+    #[tokio::test]
+    async fn only_an_svg_is_served_under_a_content_policy() {
+        let dir = std::env::temp_dir().join(format!("relay-media-csp-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        std::fs::write(
+            dir.join("1_logo.svg"),
+            b"<svg xmlns='http://www.w3.org/2000/svg'/>",
+        )
+        .unwrap();
+        std::fs::write(dir.join("2_loop.mp4"), b"not really an mp4").unwrap();
+
+        let mut svg: Vec<u8> = Vec::new();
+        serve_media_from_dir(&dir, "1", None, &mut svg).await;
+        let svg = String::from_utf8_lossy(&svg).to_string();
+        assert!(svg.contains("image/svg+xml"), "{svg}");
+        assert!(
+            svg.contains("Content-Security-Policy: default-src 'none'"),
+            "an SVG must be served with nothing it can run: {svg}"
+        );
+
+        let mut mp4: Vec<u8> = Vec::new();
+        serve_media_from_dir(&dir, "2", None, &mut mp4).await;
+        let mp4 = String::from_utf8_lossy(&mp4).to_string();
+        assert!(mp4.contains("video/mp4"), "{mp4}");
+        assert!(
+            !mp4.contains("Content-Security-Policy"),
+            "a video must not carry a policy that could stop it painting: {mp4}"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// RG-108 · WHO MAY LISTEN TO THE SERVICE.
+    ///
+    /// The rule in one table, because each row is a real client: no origin is a
+    /// native tool, Relay's own ports are the pages Relay serves, and everything
+    /// else is a page somebody opened on the church wifi.
+    #[test]
+    fn only_a_page_relay_served_may_join_the_kiosk_feed() {
+        // A native client, a diagnostic tool, this file's other tests.
+        assert!(kiosk_origin_allowed(None));
+        // What an OBS browser source and a kiosk screen actually send — any LAN
+        // host, because the address is whatever the laptop has that morning.
+        assert!(kiosk_origin_allowed(Some("http://192.168.1.9:8032")));
+        assert!(kiosk_origin_allowed(Some("http://relay-laptop.local:8032")));
+        assert!(kiosk_origin_allowed(Some("http://localhost:8032")));
+        // Development: the same page, served by Vite.
+        assert!(kiosk_origin_allowed(Some("http://localhost:5032")));
+        // Relay's own webview, which has no LAN port in its origin at all.
+        assert!(kiosk_origin_allowed(Some("tauri://localhost")));
+        assert!(kiosk_origin_allowed(Some("http://tauri.localhost")));
+
+        // The finding itself: a page a congregant opened on the church wifi.
+        assert!(!kiosk_origin_allowed(Some("http://evil.example.com")));
+        assert!(!kiosk_origin_allowed(Some("http://192.168.1.55:3000")));
+        // A file opened from disk, and a sandboxed frame, both say this.
+        assert!(!kiosk_origin_allowed(Some("null")));
+        // Relay's LAN server is plain HTTP, so an https origin is not Relay.
+        assert!(!kiosk_origin_allowed(Some("https://192.168.1.9:8032")));
+        // No port is :80, which Relay never serves on.
+        assert!(!kiosk_origin_allowed(Some("http://192.168.1.9")));
+    }
+
+    /// And the refusal happens at the HANDSHAKE, before a single broadcast is
+    /// forwarded — the hub subscribes at accept, so a check after `hello` would be
+    /// a check after the leak.
+    #[tokio::test]
+    async fn a_page_from_another_origin_is_refused_the_socket() {
+        use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+        let port = free_port();
+        let hub = KioskHub::default();
+        tokio::spawn(run_kiosk_server(
+            log_only(),
+            hub.sender(),
+            hub.templates_handle(),
+            hub.clients_handle(),
+            hub.themes_handle(),
+            OutputHealth::default(),
+            port,
+        ));
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+
+        let mut req = format!("ws://127.0.0.1:{port}")
+            .into_client_request()
+            .unwrap();
+        req.headers_mut()
+            .insert("origin", "http://evil.example.com".parse().unwrap());
+        let refused = tokio_tungstenite::connect_async(req).await;
+        let err = refused.expect_err("a page on another origin was handed the service feed");
+        // A REAL 403, not a bare close. `ErrorResponse::new` builds a 200 and
+        // tungstenite will not write a successful refusal, so the first version of
+        // this dropped the connection with no status — indistinguishable, from the
+        // kiosk's side, from Relay being switched off.
+        match err {
+            tokio_tungstenite::tungstenite::Error::Http(r) => assert_eq!(
+                r.status(),
+                tokio_tungstenite::tungstenite::http::StatusCode::FORBIDDEN,
+                "the refusal has to say what it is"
+            ),
+            other => panic!("expected an HTTP refusal, got {other:?}"),
+        }
+
+        // …and a page Relay served is still let in, which is the half that breaks a
+        // church if it is got wrong.
+        let mut ok = format!("ws://127.0.0.1:{port}")
+            .into_client_request()
+            .unwrap();
+        ok.headers_mut().insert(
+            "origin",
+            format!("http://127.0.0.1:{}", crate::sysprobe::HTTP_PORT)
+                .parse()
+                .unwrap(),
+        );
+        assert!(
+            tokio_tungstenite::connect_async(ok).await.is_ok(),
+            "a page served by Relay was refused its own hub"
+        );
+    }
+
+    /// The kiosk port gets the same deadline the HTTP port has.
+    ///
+    /// A socket that connects to `:8031` and never sends a WebSocket upgrade used
+    /// to hold a task and a descriptor for the life of the process — RG-90's
+    /// finding on the door RG-90 did not check.
+    #[tokio::test]
+    async fn a_kiosk_socket_that_never_upgrades_is_dropped() {
+        use tokio::io::AsyncReadExt;
+        let port = free_port();
+        let hub = KioskHub::default();
+        tokio::spawn(run_kiosk_server(
+            log_only(),
+            hub.sender(),
+            hub.templates_handle(),
+            hub.clients_handle(),
+            hub.themes_handle(),
+            OutputHealth::default(),
+            port,
+        ));
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+
+        let mut s = tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .expect("connect");
+        // Say nothing. The server has REQUEST_READ_TIMEOUT to give up; the client
+        // deadline is longer, so a regression is a failing test rather than a hang.
+        let mut buf = [0u8; 64];
+        let outcome = tokio::time::timeout(
+            REQUEST_READ_TIMEOUT + std::time::Duration::from_secs(4),
+            s.read(&mut buf),
+        )
+        .await
+        .expect("the kiosk server never dropped an idle connection");
+        assert_dropped(outcome);
+    }
+
+    /// THE CONNECTION CAP (RG-97). Over the ceiling a client is told `503` at once
+    /// rather than queued — a client that is told no retries; a client left waiting
+    /// holds a socket on the laptop running the sermon.
+    #[tokio::test]
+    async fn a_flood_of_connections_is_refused_rather_than_queued() {
+        use tokio::io::AsyncReadExt;
+        let no_api: ApiSink = std::sync::Arc::new(|_: &str, _: &str| None);
+        let port = free_port();
+        tokio::spawn(run_output_http_server_with_timeout(
+            log_only(),
+            no_api,
+            port,
+            std::time::Duration::from_secs(3),
+        ));
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+
+        // Fill every slot with sockets that connect and say nothing: each holds a
+        // permit until its read deadline.
+        let mut held = Vec::new();
+        for _ in 0..MAX_CONCURRENT_REQUESTS {
+            held.push(
+                tokio::net::TcpStream::connect(("127.0.0.1", port))
+                    .await
+                    .expect("connect"),
+            );
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+        let mut s = tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .expect("connect");
+        let mut buf = vec![0u8; 256];
+        let n = tokio::time::timeout(std::time::Duration::from_secs(2), s.read(&mut buf))
+            .await
+            .expect("the server neither refused nor answered over the cap")
+            .unwrap();
+        let resp = String::from_utf8_lossy(&buf[..n]).to_string();
+        assert!(
+            resp.starts_with("HTTP/1.1 503"),
+            "over the cap the answer must be an immediate 503, got: {resp}"
+        );
+        assert!(resp.contains("Retry-After"), "{resp}");
+        drop(held);
+    }
+
     /// The #1 fix: a browser client (OBS/kiosk) says hello and gets back the REAL
     /// cached template, so it renders exactly what the editor shows.
     #[tokio::test]
     async fn kiosk_hello_returns_cached_template() {
+        let port = free_port();
         let hub = KioskHub::default();
         hub.cache_template(
             7,
@@ -1655,11 +2670,11 @@ mod tests {
             hub.clients_handle(),
             hub.themes_handle(),
             OutputHealth::default(),
-            8200,
+            port,
         ));
         tokio::time::sleep(std::time::Duration::from_millis(150)).await;
 
-        let (ws, _) = tokio_tungstenite::connect_async("ws://127.0.0.1:8200")
+        let (ws, _) = tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{port}"))
             .await
             .expect("connect");
         let (mut write, mut read) = ws.split();
@@ -1687,6 +2702,7 @@ mod tests {
     /// can resolve a template that pins a custom theme (builtins it bundles).
     #[tokio::test]
     async fn a_kiosk_client_receives_the_custom_themes_on_hello() {
+        let port = free_port();
         let hub = KioskHub::default();
         hub.cache_themes(r##"[{"id":3,"name":"Sanctuary","style":{"accent":"#abc"}}]"##);
         tokio::spawn(run_kiosk_server(
@@ -1696,11 +2712,11 @@ mod tests {
             hub.clients_handle(),
             hub.themes_handle(),
             OutputHealth::default(),
-            8203,
+            port,
         ));
         tokio::time::sleep(std::time::Duration::from_millis(150)).await;
 
-        let (ws, _) = tokio_tungstenite::connect_async("ws://127.0.0.1:8203")
+        let (ws, _) = tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{port}"))
             .await
             .expect("connect");
         let (mut write, mut read) = ws.split();
@@ -1734,6 +2750,7 @@ mod tests {
     /// is published, and the client receives it.
     #[tokio::test]
     async fn kiosk_ws_forwards_published_content() {
+        let port = free_port();
         let hub = KioskHub::default();
         let tx = hub.sender();
         tokio::spawn(run_kiosk_server(
@@ -1743,12 +2760,12 @@ mod tests {
             hub.clients_handle(),
             hub.themes_handle(),
             OutputHealth::default(),
-            8199,
+            port,
         ));
         // Give the listener a moment to bind.
         tokio::time::sleep(std::time::Duration::from_millis(150)).await;
 
-        let (ws, _) = tokio_tungstenite::connect_async("ws://127.0.0.1:8199")
+        let (ws, _) = tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{port}"))
             .await
             .expect("connect");
         let (_write, mut read) = ws.split();
@@ -1928,6 +2945,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_kiosk_client_is_counted_while_connected_and_not_after() {
+        let port = free_port();
         // The leak this guards: without the drop-guard, a kiosk screen that
         // reconnects across a service leaves a phantom client counted on every
         // previous connection, and the channel reads ONLINE with a dead screen.
@@ -1940,13 +2958,13 @@ mod tests {
             hub.clients_handle(),
             hub.themes_handle(),
             OutputHealth::default(),
-            8202,
+            port,
         ));
         tokio::time::sleep(std::time::Duration::from_millis(150)).await;
 
         assert_eq!(clients.count(4), 0, "nothing connected yet");
 
-        let (ws, _) = tokio_tungstenite::connect_async("ws://127.0.0.1:8202")
+        let (ws, _) = tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{port}"))
             .await
             .expect("connect");
         let (mut write, _read) = ws.split();
@@ -1982,6 +3000,7 @@ mod tests {
     /// screen's light green for a whole service.
     #[tokio::test]
     async fn a_kiosk_screen_reports_that_it_is_painting_and_junk_is_ignored() {
+        let port = free_port();
         let hub = KioskHub::default();
         let health = OutputHealth::default();
         tokio::spawn(run_kiosk_server(
@@ -1991,11 +3010,11 @@ mod tests {
             hub.clients_handle(),
             hub.themes_handle(),
             health.clone(),
-            8204,
+            port,
         ));
         tokio::time::sleep(std::time::Duration::from_millis(150)).await;
 
-        let (ws, _) = tokio_tungstenite::connect_async("ws://127.0.0.1:8204")
+        let (ws, _) = tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{port}"))
             .await
             .expect("connect");
         let (mut write, _read) = ws.split();

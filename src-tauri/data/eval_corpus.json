@@ -28,7 +28,7 @@
     "REAL SERMON LINES — `source: FIELD-2026-08-30`.",
     "",
     "Six cases are not written by anyone. They are verbatim ASR output from a live",
-    "service (docs/audits/FIELD-2026-08-30.md), taken from `detections.heard_text` —",
+    "service (docs/qa/audits/FIELD-2026-08-30.md), taken from `detections.heard_text` —",
     "the column that exists because a service once put wrong verses on a wall and the",
     "log could not say what it had heard.",
     "",

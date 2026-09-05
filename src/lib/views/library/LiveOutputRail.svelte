@@ -43,6 +43,7 @@
     stopCapture,
     listOutputChannels,
   } from '../../stores/capture.js';
+  import { inLibrary } from '../../detect.js';
 
   export let template = null;
   export let allTemplates = [];
@@ -107,6 +108,14 @@
   }
 
   async function accept(d) {
+    // Parsed cleanly, resolves to no verse — the backend says so with
+    // `in_library: false`. The button below is disabled for it; this is the second
+    // door, because a guard rendered only in markup is a guard the next caller
+    // walks past.
+    if (!inLibrary(d)) {
+      error = `${d.reference} is not in your Bible — Relay misheard a number. Nothing was sent.`;
+      return;
+    }
     busyRef = d.reference;
     error = '';
     try {
@@ -240,12 +249,15 @@
               </span>
             </div>
             {#if d.matched_text}<p class="lo-heard">“{d.matched_text}”</p>{/if}
+            {#if !inLibrary(d)}
+              <p class="lo-absent">Not in your Bible — Relay misheard a number.</p>
+            {/if}
             <div class="lo-sugacts">
               <button
                 class="r-btn amber sm"
-                disabled={busyRef === d.reference || $safeMode}
+                disabled={busyRef === d.reference || $safeMode || !inLibrary(d)}
                 on:click={() => accept(d)}>
-                {busyRef === d.reference ? 'Sending…' : 'Approve'}
+                {#if !inLibrary(d)}Nothing to send{:else if busyRef === d.reference}Sending…{:else}Approve{/if}
               </button>
               <button class="r-btn ghost sm" on:click={() => dismissDetection(d.reference)}>
                 Dismiss
@@ -367,7 +379,10 @@
       {$rehearsing ? 'End rehearsal' : 'Rehearsal mode'}
     </button>
 
-    {#if msg}<p class="lo-msg">{msg}</p>{/if}
+    <!-- Announced. "John 3:16 is on the screens" is the confirmation that content
+           reached a congregation, and it was silent to a screen reader — the error
+           half of these panes carries `role="alert"` and this half carried nothing. -->
+    {#if msg}<p class="lo-msg" role="status" aria-live="polite">{msg}</p>{/if}
     {#if error}<p class="lo-err" role="alert">{error}</p>{/if}
   </section>
 </aside>
@@ -428,11 +443,6 @@
   /* The "wall live" chip sits BESIDE the pane's own badge, and is deliberately the
      smaller of the two: it is a second fact, not a competing headline. It must not
      wrap the header onto a second line on a narrow rail. */
-  .lo-behind {
-    flex: 0 0 auto;
-    padding: 4px 9px;
-    font-size: 9px;
-  }
   .lo-pad .r-lbl {
     margin: 0;
   }
@@ -502,27 +512,6 @@
     color: var(--v-dim);
     text-align: center;
   }
-  .lo-take {
-    display: block;
-    width: calc(100% - 20px);
-    margin: 10px;
-    height: 36px;
-    border-radius: var(--v-r-md);
-    background: var(--v-surf2);
-    border: 1px solid var(--v-line2);
-    color: var(--v-accent2);
-    font-family: var(--f-body);
-    font-size: 13px;
-    font-weight: 600;
-    cursor: pointer;
-  }
-  .lo-take:hover:not(:disabled) {
-    background: var(--v-surf3);
-  }
-  .lo-take:disabled {
-    color: var(--v-faint);
-    cursor: not-allowed;
-  }
 
   .lo-none {
     margin: 0;
@@ -562,6 +551,13 @@
     line-height: 1.5;
     color: var(--v-faint);
     font-style: italic;
+  }
+  /* Rose, never amber: nothing about a reference with no verse behind it is live. */
+  .lo-absent {
+    margin: 6px 0 0;
+    font-size: var(--v-fs-cap);
+    line-height: 1.5;
+    color: var(--v-rose);
   }
   .lo-sugacts {
     display: grid;

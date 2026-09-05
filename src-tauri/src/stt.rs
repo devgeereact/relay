@@ -15,7 +15,7 @@
 use crate::audio::AudioChunk;
 use serde::Serialize;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::mpsc::{self, Receiver, SyncSender};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
@@ -253,9 +253,29 @@ impl Deoverlap {
     }
 }
 
+/// How many audio chunks may wait for the whisper worker.
+///
+/// RG-84. This was an UNBOUNDED `mpsc::channel`, and CLAUDE.md rule 33 described
+/// the path into the decoder as bounded with a shed counter — true of the queue
+/// AFTER the decoder, not of this one.
+///
+/// The worker drains a whole batch before decoding it once, so a decoder slower
+/// than real time normally holds only a few chunks here. The queue grows without
+/// limit only when the worker stops consuming altogether — stuck inside
+/// `whisper_full`, or wedged on a model that will not run on this machine — and
+/// then it grows for as long as the preacher keeps talking.
+///
+/// Chunks arrive one per `HOP_MS` (200 ms), so 256 is about fifty seconds of
+/// grace: far beyond any decode, and a hard ceiling of roughly 13 MB rather than a
+/// figure that depends on how long the sermon is. Past it Relay sheds, and COUNTS
+/// what it sheds (`latency::note_dropped_audio`) — a gap in the transcript is a bad
+/// outcome, and a gap nobody is told about is the one this repository keeps
+/// finding.
+pub const STT_QUEUE: usize = 256;
+
 /// Owns the whisper worker thread and the channel feeding it audio.
 pub struct SttEngine {
-    tx: Sender<AudioChunk>,
+    tx: SyncSender<AudioChunk>,
     handle: Option<JoinHandle<()>>,
     model_path: PathBuf,
     lang: LangSetting,
@@ -289,7 +309,7 @@ impl SttEngine {
 
         let lang: LangSetting = Arc::new(Mutex::new(None));
         let prompt: PromptSetting = Arc::new(Mutex::new(None));
-        let (tx, rx) = mpsc::channel::<AudioChunk>();
+        let (tx, rx) = mpsc::sync_channel::<AudioChunk>(STT_QUEUE);
         let lang_worker = lang.clone();
         let prompt_worker = prompt.clone();
         // whisper_full() is stack-hungry; running it and then serializing a
@@ -311,7 +331,7 @@ impl SttEngine {
     }
 
     /// A sender clone to feed this engine audio chunks from the capture path.
-    pub fn sender(&self) -> Sender<AudioChunk> {
+    pub fn sender(&self) -> SyncSender<AudioChunk> {
         self.tx.clone()
     }
 

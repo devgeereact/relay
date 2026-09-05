@@ -8,14 +8,15 @@
   //
   // Everything else in the app is optional refinement. THIS is the path.
   //
-  // ── Shape: docs/relaydesign/relay-production-interface.png, panel 2 ─────────
+  // ── Shape: docs/design/relay-production-interface.png, panel 2 ─────────
   //
   // A vertical step rail on the left, one content pane on the right, Back and
   // Continue at the bottom. The reference's rail is Welcome · Audio Input ·
   // Model Download · Language · Finish.
   //
-  // Two deliberate deviations from it, both logged in
-  // docs/relaydesign/.loop/firstrun-log.md:
+  // Two deliberate deviations from it. (They were logged in a working design log
+  // that is not in this repository, so they are written out here instead — a
+  // citation to a file nobody can open is worse than no citation.)
   //
   //   1. A SCREEN step is added. The reference has none, and without it the
   //      wizard never does the one thing it exists for — put a verse on the
@@ -453,6 +454,41 @@
             <li><kbd>Space</kbd><span>Advance</span></li>
             <li><kbd>?</kbd><span>Every other shortcut</span></li>
           </ul>
+
+          <!-- The three instruments a first-time operator has no way to find.
+               They are NOT extra wizard steps: this wizard's rule is that it asks
+               as little as it can, and each of these is a thing to DO on another
+               day rather than an answer to give now. What was missing was never
+               the feature — all three shipped — it was that nothing told a new
+               volunteer they exist, which is the whole of the onboarding gap
+               (RELAY_GAP §2, brief §59/60). Naming where each one lives is the
+               fix; moving them in here would be the wrong one. -->
+          <div class="fr-next">
+            <b>Before your first Sunday</b>
+            <ul>
+              <li>
+                <span class="w">Practise</span>
+                <span>Six drills on the <b>Help</b> tab, with the real controls, in
+                rehearsal. The panic keys come first — the one you need under pressure
+                is the one you should not be reading about at the time.</span>
+              </li>
+              <li>
+                <span class="w">Check the whole chain</span>
+                <span><b>Settings → Dashboard</b>: say one verse out loud and Relay
+                shows which of the six stages between the microphone and the screen were
+                reached. Everything you just set up can pass while the chain still does
+                not work end to end.</span>
+              </li>
+              <li>
+                <span class="w">Rehearse</span>
+                <span><b>Rehearse</b> on the Live tab runs a whole service with nothing
+                reaching the projector, the stage monitor or OBS. You can do it in the
+                middle of a real service.</span>
+              </li>
+            </ul>
+            <span class="fr-nextnote">All three are in Settings and on the tabs — this
+            is not your last chance to find them.</span>
+          </div>
         {/if}
 
         {#if error}<div class="fr-err">{error}</div>{/if}
@@ -633,6 +669,20 @@
     flex-direction: column;
     gap: 10px;
   }
+  /* The hand-off block. Quiet by construction — it must not compete with the
+     verse that just went on the screen, which is the step's actual proof. */
+  .fr-next{ margin-top:18px; padding:14px 16px; border:1px solid var(--v-line);
+    border-radius:var(--v-r-md); background:var(--v-surf2); }
+  .fr-next > b{ display:block; font-size:var(--v-fs-cap); letter-spacing:.06em;
+    text-transform:uppercase; color:var(--v-faint); margin-bottom:10px; }
+  .fr-next ul{ margin:0; padding:0; list-style:none; display:flex;
+    flex-direction:column; gap:10px; }
+  .fr-next li{ display:grid; grid-template-columns:132px 1fr; gap:12px;
+    align-items:start; font-size:var(--v-fs-cap); line-height:1.55; }
+  .fr-next .w{ color:var(--v-txt); font-weight:600; }
+  .fr-next li > span:last-child{ color:var(--v-dim); }
+  .fr-nextnote{ display:block; margin-top:12px; font-size:var(--v-fs-cap);
+    color:var(--v-faint); }
   .fr-facts li {
     display: flex;
     align-items: baseline;

@@ -38,7 +38,7 @@ const invoke = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...a) => invoke(...a) }));
 
 const LiveOutputRail = (await import('./views/library/LiveOutputRail.svelte')).default;
-const { live, screenBlack, rehearsing, panicError, capture } = await import('./stores/capture.js');
+const { live, screenBlack, rehearsing, panicError, capture, detections } = await import('./stores/capture.js');
 const { setSafeMode } = await import('./boot/boot.js');
 
 const ON_WALL = { reference: 'John 3:16', text: 'For God so loved the world' };
@@ -182,3 +182,71 @@ describe('the panic tiles tell the truth', () => {
   });
 });
 
+
+// ── RG-63 · a suggestion with no verse behind it must not offer an Approve ────
+//
+// `emit_detections` deliberately keeps a reference that parsed cleanly but resolves
+// to nothing — "Psalms 23:99" out of garbled speech — and marks it
+// `in_library: false`. Keeping it is right: it is the operator's evidence that
+// Relay is mishearing numbers, and dropping it would be silence.
+//
+// What was wrong is that NO frontend file read the flag. The card rendered with the
+// same amber Approve beside it, and the click failed afterwards with a backend
+// error. `main.rs` carried a comment saying exactly this, unfixed.
+//
+// Mounted rather than asserted on source, because the claim is about what an
+// operator SEES — and this is the component that ships (the one this file exists to
+// prove, after fourteen tests were written against a component nothing rendered).
+describe('RG-63 · a reference whose verse does not exist', () => {
+  const absent = { reference: 'Psalms 23:99', method: 'direct', confidence: 0.94, in_library: false };
+  const real = { reference: 'John 3:16', method: 'direct', confidence: 0.94, in_library: true };
+
+  const approve = () =>
+    [...host.querySelectorAll('.lo-sugacts .r-btn')].find((b) => /Approve|Nothing to send/.test(b.textContent));
+
+  it('says so, in the failure colour, before anything is clicked', async () => {
+    mount();
+    detections.set([absent]);
+    await tick();
+    const note = host.querySelector('.lo-absent');
+    expect(note, 'nothing told the operator the verse does not exist').toBeTruthy();
+    expect(note.textContent).toMatch(/misheard a number/i);
+  });
+
+  it('disables Approve, and the button itself says why', async () => {
+    // A disabled control that does not say why is its own finding in this repo.
+    mount();
+    detections.set([absent]);
+    await tick();
+    const b = approve();
+    expect(b.disabled).toBe(true);
+    expect(b.textContent.trim()).toBe('Nothing to send');
+  });
+
+  it('does not reach the backend even if the handler is called anyway', async () => {
+    // The markup guard is one door. `accept()` is the other, because a guard that
+    // exists only in markup is a guard the next caller walks past.
+    mount();
+    detections.set([absent]);
+    await tick();
+    invoke.mockClear();
+    approve().click();
+    await settle();
+    expect(
+      invoke.mock.calls.some((c) => c[0] === 'confirm_detection'),
+      'a verse that does not exist must never be sent for confirmation',
+    ).toBe(false);
+  });
+
+  it('leaves a real suggestion completely alone', async () => {
+    // The warning may only ever be ADDED on evidence. A regression that greyed out
+    // working suggestions would be far worse than the defect it replaced.
+    mount();
+    detections.set([real]);
+    await tick();
+    expect(host.querySelector('.lo-absent')).toBeNull();
+    const b = approve();
+    expect(b.disabled).toBe(false);
+    expect(b.textContent.trim()).toBe('Approve');
+  });
+});

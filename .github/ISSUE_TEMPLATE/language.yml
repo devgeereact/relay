@@ -11,7 +11,7 @@ body:
 
         And the book names it listens for — 66 books × 3 languages — **have never been checked by anyone who actually speaks those languages.** They were assembled from public sources. Some of them are probably wrong, and a wrong one fails *silently*: the preacher says the name, Relay hears it perfectly, matches nothing, and no verse ever reaches the screen. Nobody ever finds out why.
 
-        If you can tell us one word is wrong, that is a real contribution. If you would rather open a pull request directly, [CONTRIBUTING.md](https://github.com/devgeereact/relay/blob/main/CONTRIBUTING.md) shows you exactly which file — they are all plain JSON, editable in your browser.
+        If you can tell us one word is wrong, that is a real contribution. If you would rather open a pull request directly, [CONTRIBUTING.md](https://github.com/devgeereact/relay/blob/main/docs/CONTRIBUTING.md) shows you exactly which file — they are all plain JSON, editable in your browser.
 
   - type: input
     id: language

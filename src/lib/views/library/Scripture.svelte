@@ -6,6 +6,7 @@
   // search box in the Library — this pane used to carry a second one of its own.
   import { onMount } from 'svelte';
   import EmptyState from '../../ui/EmptyState.svelte';
+  import ErrorState from '../../ui/ErrorState.svelte';
   import Loading from '../../ui/Loading.svelte';
   import VerseDeck from './VerseDeck.svelte';
   import { humanError } from '../../errors.js';
@@ -20,6 +21,7 @@
     live,
     screenBlack,
     rehearsing,
+    readErrors,
   } from '../../stores/capture.js';
 
   export let query = '';
@@ -38,11 +40,17 @@
   let layout = 'grid';
   let page = 0;
   let perPage = 12;
-  onMount(async () => {
+  onMount(load);
+
+  // Named so the error state has something to retry with (RG-95). A read that
+  // failed is not an empty library, and the operator cannot tell the difference
+  // from a sentence that says "no saved verses yet".
+  async function load() {
+    loading = true;
     saved = (await listSavedScripture()) ?? [];
     template = (await listActiveTemplates().catch(() => []))[0] ?? null;
     loading = false;
-  });
+  }
 
   let lastQuery = null;
   $: if (query !== lastQuery) {
@@ -185,6 +193,13 @@
         <Loading what="saved scripture" />
       {:else if searching}
         <Loading what="matching verses" />
+      {:else if searchMode && $readErrors.searchScripture}
+        <!-- RG-95. A failed search returned `[]`, which read as "no such verse" —
+             so an operator hunting a reference mid-service retypes it instead of
+             being told the search itself did not run. -->
+        <ErrorState error={$readErrors.searchScripture} onRetry={() => doSearch(query)} />
+      {:else if !searchMode && $readErrors.listSavedScripture}
+        <ErrorState error={$readErrors.listSavedScripture} onRetry={load} />
       {:else if !numbered.length}
         <EmptyState
           message={searchMode
@@ -227,7 +242,10 @@
     </footer>
   </section>
 
-  {#if msg}<p class="sv-msg">{msg}</p>{/if}
+  <!-- Announced. "John 3:16 is on the screens" is the confirmation that content
+         reached a congregation, and it was silent to a screen reader — the error
+         half of these panes carries `role="alert"` and this half carried nothing. -->
+  {#if msg}<p class="sv-msg" role="status" aria-live="polite">{msg}</p>{/if}
   {#if error}<p class="sv-err" role="alert">{error}</p>{/if}
 </div>
 
@@ -257,20 +275,6 @@
   .sv-ctl .r-lbl { margin: 0; }
   .sv-ctl .r-select { width: auto; height: 30px; padding: 0 30px 0 10px; font-size: 12px;
     background-position: calc(100% - 14px) 13px, calc(100% - 9px) 13px; }
-
-  .sv-modal { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center;
-    background: rgba(0, 0, 0, 0.6); padding: 24px; }
-  .sv-sheet { width: min(560px, 100%); display: flex; flex-direction: column; gap: 12px;
-    padding: 18px; background: var(--v-surf); border: 1px solid var(--v-line2);
-    border-radius: var(--v-r-xl); box-shadow: var(--v-shadow-lg); }
-  .sv-sheet header { display: flex; align-items: center; gap: 8px; }
-  .sv-sheet header .r-lbl { margin: 0; }
-  .sv-spring { flex: 1; }
-  .sv-field { display: flex; flex-direction: column; gap: 5px; }
-  .sv-text { height: auto; padding: 11px 13px; line-height: 1.6; resize: vertical;
-    font-family: var(--f-body); font-size: 13.5px; }
-  .sv-fine { margin: 0; font-size: var(--v-fs-cap); line-height: 1.6; color: var(--v-faint); }
-  .sv-fine b { color: var(--v-dim); }
 
   .sv-msg, .sv-err { margin: 0; font-size: var(--v-fs-b2); }
   .sv-msg { color: var(--v-emerald); }

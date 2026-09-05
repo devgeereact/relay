@@ -17,7 +17,8 @@
 //
 //   probe: 'live'  — a real Tauri command ran and this is its answer.
 //   probe: 'stub'  — NO backend exists for this yet. Rendered as UNKNOWN, never
-//                    as a pass. See docs/relaydesign/.loop/launch-log.md.
+//                    as a pass. (The working design log this once cited is not in
+//                    this repository; the rule stands on its own.)
 //
 // The UI paints a stub check grey with the word "not probed", at any state. It
 // is not possible to make a stub check look green from here, and that is the

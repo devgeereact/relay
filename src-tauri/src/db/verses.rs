@@ -181,11 +181,33 @@ fn kjv_translation_id(conn: &Connection) -> rusqlite::Result<i64> {
 /// rows). Strips the `{…}` italic markers KJV uses for supplied words. Returns
 /// the verse count inserted.
 fn import_full_kjv(conn: &Connection, translation_id: i64) -> rusqlite::Result<usize> {
+    let tx = conn.unchecked_transaction()?;
+    let count = insert_full_kjv(&tx, translation_id)?;
+    tx.commit()?;
+    Ok(count)
+}
+
+/// The insert itself, with NO transaction of its own.
+///
+/// ## Why this is split out
+///
+/// `import_full_kjv` opened a transaction, and `reimport_full_kjv` called it from
+/// **inside** one — so every corpus repair returned
+/// `cannot start a transaction within a transaction`, which `db::open` propagates
+/// as a failure to open the database at all. That is the whole of the RG-99
+/// forward-fill: it could never once have run on an operator's machine, on any
+/// branch of `migrate`, and no test called it because both existing corpus tests
+/// build a fresh database (where `seed` calls the outer function, with no
+/// transaction open, and it works).
+///
+/// Transaction ownership belongs to the caller now: `import_full_kjv` for a fresh
+/// seed, `reimport_full_kjv` for a repair that must also take the old rows out
+/// atomically. A half-imported Bible is not a state a church may boot into.
+fn insert_full_kjv(tx: &Connection, translation_id: i64) -> rusqlite::Result<usize> {
     let raw = KJV_JSON.trim_start_matches('\u{feff}'); // strip UTF-8 BOM
     let books: Vec<KjvBook> = serde_json::from_str(raw)
         .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
 
-    let tx = conn.unchecked_transaction()?;
     let mut count = 0usize;
     {
         let mut stmt = tx.prepare(
@@ -211,8 +233,7 @@ fn import_full_kjv(conn: &Connection, translation_id: i64) -> rusqlite::Result<u
             }
         }
     }
-    tx.commit()?;
-    rebuild_verses_fts(conn)?;
+    rebuild_verses_fts(tx)?;
     Ok(count)
 }
 
@@ -416,10 +437,11 @@ pub(super) fn clean_verse(text: &str) -> String {
         match after.find('}') {
             Some(close) => {
                 let inner = &after[..close];
-                if !is_gloss(inner) {
+                let tail = &after[close + 1..];
+                if !is_gloss(inner, is_trailing_run(tail)) {
                     out.push_str(inner); // supplied word — keep, minus braces
                 }
-                rest = &after[close + 1..];
+                rest = tail;
             }
             None => {
                 // Unbalanced brace — keep the remainder verbatim, sans '{'.
@@ -434,23 +456,149 @@ pub(super) fn clean_verse(text: &str) -> String {
     out.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// A brace group is a marginal gloss (not verse text) if it carries a
-/// translator note. Supplied-word italics are short and never contain a colon
-/// or a language marker — verified against the full corpus.
-fn is_gloss(inner: &str) -> bool {
-    inner.contains(": ")
+/// Is this brace group part of the run of marginal notes at the END of a verse?
+/// True when nothing but whitespace and further brace groups follow it.
+///
+/// **Position is the primary signal, and it has to be**, because neither half of
+/// the corpus is marked: `{feed or, rule}` (Micah 5:4) is a note and `{it was}`
+/// is verse text, and no wording rule separates them. Every marginal note in
+/// `kjv.json` sits in that trailing run — checked group by group over all 31,102
+/// verses — so the run is what identifies them.
+fn is_trailing_run(tail: &str) -> bool {
+    let mut tail = tail;
+    loop {
+        tail = tail.trim_start();
+        if tail.is_empty() {
+            return true;
+        }
+        if !tail.starts_with('{') {
+            return false;
+        }
+        match tail.find('}') {
+            Some(close) => tail = &tail[close + 1..],
+            None => return false,
+        }
+    }
+}
+
+/// A brace group is a marginal gloss (not verse text) rather than an italicised
+/// supplied word.
+///
+/// **`inner.contains(": ")` used to be the whole rule, and it deleted real
+/// scripture.** Seven verses carry a colon inside their supplied words — Genesis
+/// 30:27 `{tarry: for}`, Genesis 42:34 `{men: so}`, Leviticus 23:21, Job 36:5,
+/// Psalms 18:41, Isaiah 6:13, Jeremiah 22:16 — and each of them reached the wall
+/// with words missing ("if I have found favour in thine eyes, I have learned by
+/// experience"). The rule also worked the other way: eight notes with no colon
+/// were kept AS scripture, so Luke 17:36 ended "the other left. this verse is not
+/// found in most of the Greek copies" on a congregation's screen.
+///
+/// Both classes are closed by asking WHERE the group sits (see `is_trailing_run`)
+/// and keeping the wording markers only for the one note that appears mid-verse
+/// (Hebrews 10:34, caught by its `...` lead-in ellipsis). Verified verse by verse
+/// against an independent copy of the KJV: 15 verses changed, and no other.
+fn is_gloss(inner: &str, trailing: bool) -> bool {
+    trailing
+        || inner.contains("...")
         || inner.starts_with("Or,")
+        || inner.starts_with("or,")
         || inner.contains("Heb.")
         || inner.contains("Gr.")
         || inner.contains("Chaldee")
         || inner.contains("Syriac")
 }
 
+/// The KJV's own versification: how many verses each of the 1,189 chapters has,
+/// one line per book in canonical order.
+///
+/// **This exists because a verse number in `kjv.json` is a POSITION, not a
+/// label.** `import_full_kjv` numbers verses `vi + 1`, so a chapter that is one
+/// verse short does not lose its last verse — it renumbers every verse after the
+/// gap, silently, and Relay then answers a correct reference with the next verse
+/// along. The bundled file was short six verses (Matthew 2:16, 22:1, 26:38, Mark
+/// 4:40, 7:11, 8:8) and carried four split ones, so "Matthew 22:37" put the words
+/// of 22:38 on a wall and "Matthew 2:23" did not exist at all. Nothing detected
+/// it: the seed test asserted `> 31_000`, which 31,100 satisfies.
+///
+/// The numbers below were taken from an independent public-domain KJV whose
+/// verses carry EXPLICIT numbers rather than positions, and they total 31,102 —
+/// the KJV's own count. Do not regenerate this table from `kjv.json`; that is the
+/// artefact it exists to check.
+#[cfg(test)]
+const KJV_VERSES_PER_CHAPTER: &[&str] = &[
+    "Genesis:31,25,24,26,32,22,24,22,29,32,32,20,18,24,21,16,27,33,38,18,34,24,20,67,34,35,46,22,35,43,55,32,20,31,29,43,36,30,23,23,57,38,34,34,28,34,31,22,33,26",
+    "Exodus:22,25,22,31,23,30,25,32,35,29,10,51,22,31,27,36,16,27,25,26,36,31,33,18,40,37,21,43,46,38,18,35,23,35,35,38,29,31,43,38",
+    "Leviticus:17,16,17,35,19,30,38,36,24,20,47,8,59,57,33,34,16,30,37,27,24,33,44,23,55,46,34",
+    "Numbers:54,34,51,49,31,27,89,26,23,36,35,16,33,45,41,50,13,32,22,29,35,41,30,25,18,65,23,31,40,16,54,42,56,29,34,13",
+    "Deuteronomy:46,37,29,49,33,25,26,20,29,22,32,32,18,29,23,22,20,22,21,20,23,30,25,22,19,19,26,68,29,20,30,52,29,12",
+    "Joshua:18,24,17,24,15,27,26,35,27,43,23,24,33,15,63,10,18,28,51,9,45,34,16,33",
+    "Judges:36,23,31,24,31,40,25,35,57,18,40,15,25,20,20,31,13,31,30,48,25",
+    "Ruth:22,23,18,22",
+    "1 Samuel:28,36,21,22,12,21,17,22,27,27,15,25,23,52,35,23,58,30,24,42,15,23,29,22,44,25,12,25,11,31,13",
+    "2 Samuel:27,32,39,12,25,23,29,18,13,19,27,31,39,33,37,23,29,33,43,26,22,51,39,25",
+    "1 Kings:53,46,28,34,18,38,51,66,28,29,43,33,34,31,34,34,24,46,21,43,29,53",
+    "2 Kings:18,25,27,44,27,33,20,29,37,36,21,21,25,29,38,20,41,37,37,21,26,20,37,20,30",
+    "1 Chronicles:54,55,24,43,26,81,40,40,44,14,47,40,14,17,29,43,27,17,19,8,30,19,32,31,31,32,34,21,30",
+    "2 Chronicles:17,18,17,22,14,42,22,18,31,19,23,16,22,15,19,14,19,34,11,37,20,12,21,27,28,23,9,27,36,27,21,33,25,33,27,23",
+    "Ezra:11,70,13,24,17,22,28,36,15,44",
+    "Nehemiah:11,20,32,23,19,19,73,18,38,39,36,47,31",
+    "Esther:22,23,15,17,14,14,10,17,32,3",
+    "Job:22,13,26,21,27,30,21,22,35,22,20,25,28,22,35,22,16,21,29,29,34,30,17,25,6,14,23,28,25,31,40,22,33,37,16,33,24,41,30,24,34,17",
+    "Psalms:6,12,8,8,12,10,17,9,20,18,7,8,6,7,5,11,15,50,14,9,13,31,6,10,22,12,14,9,11,12,24,11,22,22,28,12,40,22,13,17,13,11,5,26,17,11,9,14,20,23,19,9,6,7,23,13,11,11,17,12,8,12,11,10,13,20,7,35,36,5,24,20,28,23,10,12,20,72,13,19,16,8,18,12,13,17,7,18,52,17,16,15,5,23,11,13,12,9,9,5,8,28,22,35,45,48,43,13,31,7,10,10,9,8,18,19,2,29,176,7,8,9,4,8,5,6,5,6,8,8,3,18,3,3,21,26,9,8,24,13,10,7,12,15,21,10,20,14,9,6",
+    "Proverbs:33,22,35,27,23,35,27,36,18,32,31,28,25,35,33,33,28,24,29,30,31,29,35,34,28,28,27,28,27,33,31",
+    "Ecclesiastes:18,26,22,16,20,12,29,17,18,20,10,14",
+    "Song of Solomon:17,17,11,16,16,13,13,14",
+    "Isaiah:31,22,26,6,30,13,25,22,21,34,16,6,22,32,9,14,14,7,25,6,17,25,18,23,12,21,13,29,24,33,9,20,24,17,10,22,38,22,8,31,29,25,28,28,25,13,15,22,26,11,23,15,12,17,13,12,21,14,21,22,11,12,19,12,25,24",
+    "Jeremiah:19,37,25,31,31,30,34,22,26,25,23,17,27,22,21,21,27,23,15,18,14,30,40,10,38,24,22,17,32,24,40,44,26,22,19,32,21,28,18,16,18,22,13,30,5,28,7,47,39,46,64,34",
+    "Lamentations:22,22,66,22,22",
+    "Ezekiel:28,10,27,17,17,14,27,18,11,22,25,28,23,23,8,63,24,32,14,49,32,31,49,27,17,21,36,26,21,26,18,32,33,31,15,38,28,23,29,49,26,20,27,31,25,24,23,35",
+    "Daniel:21,49,30,37,31,28,28,27,27,21,45,13",
+    "Hosea:11,23,5,19,15,11,16,14,17,15,12,14,16,9",
+    "Joel:20,32,21",
+    "Amos:15,16,15,13,27,14,17,14,15",
+    "Obadiah:21",
+    "Jonah:17,10,10,11",
+    "Micah:16,13,12,13,15,16,20",
+    "Nahum:15,13,19",
+    "Habakkuk:17,20,19",
+    "Zephaniah:18,15,20",
+    "Haggai:15,23",
+    "Zechariah:21,13,10,14,11,15,14,23,17,12,17,14,9,21",
+    "Malachi:14,17,18,6",
+    "Matthew:25,23,17,25,48,34,29,34,38,42,30,50,58,36,39,28,27,35,30,34,46,46,39,51,46,75,66,20",
+    "Mark:45,28,35,41,43,56,37,38,50,52,33,44,37,72,47,20",
+    "Luke:80,52,38,44,39,49,50,56,62,42,54,59,35,35,32,31,37,43,48,47,38,71,56,53",
+    "John:51,25,36,54,47,71,53,59,41,42,57,50,38,31,27,33,26,40,42,31,25",
+    "Acts:26,47,26,37,42,15,60,40,43,48,30,25,52,28,41,40,34,28,41,38,40,30,35,27,27,32,44,31",
+    "Romans:32,29,31,25,21,23,25,39,33,21,36,21,14,23,33,27",
+    "1 Corinthians:31,16,23,21,13,20,40,13,27,33,34,31,13,40,58,24",
+    "2 Corinthians:24,17,18,18,21,18,16,24,15,18,33,21,14",
+    "Galatians:24,21,29,31,26,18",
+    "Ephesians:23,22,21,32,33,24",
+    "Philippians:30,30,21,23",
+    "Colossians:29,23,25,18",
+    "1 Thessalonians:10,20,13,18,28",
+    "2 Thessalonians:12,17,18",
+    "1 Timothy:20,15,16,16,25,21",
+    "2 Timothy:18,26,17,22",
+    "Titus:16,15,15",
+    "Philemon:25",
+    "Hebrews:14,18,19,16,14,20,28,13,28,39,40,29,25",
+    "James:27,26,18,17,20",
+    "1 Peter:25,25,22,19,14",
+    "2 Peter:21,22,18",
+    "1 John:10,29,24,21,21",
+    "2 John:13",
+    "3 John:14",
+    "Jude:25",
+    "Revelation:20,29,22,11,14,17,17,13,21,11,19,17,18,20,8,21,18,24,21,15,27,21",
+];
+
 /// Forward-fill the full corpus for DBs created before the full-Bible import
 /// (they hold only the old 15-verse dev seed). FK-safe: nulls any detection
 /// verse links first, then replaces the verses.
 pub(super) fn reimport_full_kjv(conn: &Connection) -> rusqlite::Result<()> {
-    // ATOMIC. This DELETES EVERY VERSE and then re-imports 31,100 of them, and it
+    // ATOMIC. This DELETES EVERY VERSE and then re-imports 31,102 of them, and it
     // runs during a migration on app start. Without a transaction, a crash — or a
     // power cut, in a market where power cuts are ordinary — leaves the church with
     // an EMPTY BIBLE and an app that can no longer show a single verse.
@@ -458,10 +606,46 @@ pub(super) fn reimport_full_kjv(conn: &Connection) -> rusqlite::Result<()> {
     // A transaction makes the whole thing all-or-nothing: either the new corpus
     // lands, or the old one is still there. There is no state in between.
     let tx = conn.unchecked_transaction()?;
+    // WHICH VERSE EACH PAST DETECTION FIRED IS PART OF THE SERVICE RECORD.
+    //
+    // Nulling `verse_id` is what lets the delete past the foreign key, and on its
+    // own it is silent data loss: `service_detections` builds every reference by
+    // `LEFT JOIN verses`, so a history screen, a Sunday report and a replay of a
+    // repaired database would show rows with a time, a confidence and the heard
+    // text — and no reference at all, for every service ever recorded. So the
+    // link is taken down and put back, keyed by the reference rather than the id.
+    //
+    // The reference is the right key even though the old corpus numbered its
+    // verses wrongly: "Matthew 22:37" is what the wall said that morning, and it
+    // is what the record should keep saying. What changes after the repair is
+    // that the reference now resolves to the words the KJV actually has there.
+    let links: Vec<(i64, String, i64, i64)> = {
+        let mut q = tx.prepare(
+            "SELECT d.id, v.book, v.chapter, v.verse
+               FROM detections d JOIN verses v ON v.id = d.verse_id",
+        )?;
+        let rows = q.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()?
+    };
     tx.execute("UPDATE detections SET verse_id = NULL", [])?;
     tx.execute("DELETE FROM verses", [])?;
     let tid = kjv_translation_id(&tx)?;
-    import_full_kjv(&tx, tid)?;
+    insert_full_kjv(&tx, tid)?;
+    {
+        let mut put = tx.prepare(
+            "UPDATE detections SET verse_id = (
+                 SELECT id FROM verses
+                  WHERE translation_id = ?1 AND book = ?2 AND chapter = ?3 AND verse = ?4
+             ) WHERE id = ?5",
+        )?;
+        for (id, book, chapter, verse) in &links {
+            // A reference that no longer exists (it never did — it was a position
+            // in a chapter that was short a verse) leaves the link null, which is
+            // the honest answer and the state this function used to leave for
+            // EVERY row.
+            put.execute(rusqlite::params![tid, book, chapter, verse, id])?;
+        }
+    }
     tx.commit()?;
     Ok(())
 }
@@ -477,7 +661,7 @@ mod fts_ladder_tests {
     // OR problem is a problem of SCALE, and a fixture cannot show it.
     //
     // They are kept as regression guards on the ladder's SHAPE. The actual
-    // measurement lives in `fts_real_corpus` below, against all 31,100 verses.
+    // measurement lives in `fts_real_corpus` below, against all 31,102 verses.
     //
     // THE REQUEST THIS EXISTS FOR:
     //
@@ -934,5 +1118,147 @@ mod browse_tests {
                 .unwrap()
                 .is_empty()
         );
+    }
+}
+
+#[cfg(test)]
+mod corpus_tests {
+    use super::*;
+
+    /// Every chapter of the bundled corpus has the number of verses the KJV
+    /// itself has — the pin under [`KJV_VERSES_PER_CHAPTER`].
+    ///
+    /// **Test the bug, not the fix**: delete any verse from `kjv.json` and this
+    /// names the chapter. A count check over the whole Bible would not — six
+    /// missing verses and four split ones very nearly cancelled out (31,100
+    /// against 31,102), which is how they survived a total-count assertion.
+    #[test]
+    fn the_bundled_kjv_matches_the_kjvs_own_versification() {
+        let raw = KJV_JSON.trim_start_matches('\u{feff}');
+        let books: Vec<KjvBook> = serde_json::from_str(raw).expect("kjv.json parses");
+        assert_eq!(books.len(), 66, "the canon is 66 books");
+        assert_eq!(
+            books.len(),
+            KJV_VERSES_PER_CHAPTER.len(),
+            "the pin covers every book"
+        );
+
+        let mut total = 0usize;
+        for (bi, book) in books.iter().enumerate() {
+            let (name, counts) = KJV_VERSES_PER_CHAPTER[bi]
+                .split_once(':')
+                .expect("each pin line is 'Book:n,n,…'");
+            let want: Vec<usize> = counts.split(',').map(|n| n.parse().unwrap()).collect();
+            assert_eq!(
+                book.chapters.len(),
+                want.len(),
+                "{name} has the wrong number of chapters"
+            );
+            for (ci, chapter) in book.chapters.iter().enumerate() {
+                assert_eq!(
+                    chapter.len(),
+                    want[ci],
+                    "{name} {} has {} verses, the KJV has {}",
+                    ci + 1,
+                    chapter.len(),
+                    want[ci]
+                );
+                total += chapter.len();
+            }
+        }
+        assert_eq!(total, 31_102, "the KJV has 31,102 verses");
+    }
+
+    /// No verse may be empty. An empty string renders as a blank wall under a
+    /// correct reference, which is the one failure `pipeline::preflight` refuses
+    /// and the one an operator cannot diagnose from the room.
+    #[test]
+    fn no_bundled_verse_is_empty() {
+        let raw = KJV_JSON.trim_start_matches('\u{feff}');
+        let books: Vec<KjvBook> = serde_json::from_str(raw).expect("kjv.json parses");
+        for (bi, book) in books.iter().enumerate() {
+            for (ci, chapter) in book.chapters.iter().enumerate() {
+                for (vi, text) in chapter.iter().enumerate() {
+                    assert!(
+                        !clean_verse(text).is_empty(),
+                        "book {} chapter {} verse {} is empty after cleaning",
+                        bi + 1,
+                        ci + 1,
+                        vi + 1
+                    );
+                }
+            }
+        }
+    }
+
+    /// The seven verses whose supplied words carry a colon, and which the old
+    /// `contains(": ")` rule deleted outright.
+    #[test]
+    fn supplied_words_containing_a_colon_survive() {
+        assert_eq!(
+            clean_verse(
+                "And Laban said unto him, I pray thee, if I have found favour in thine eyes, {tarry: for} I have learned by experience that the LORD hath blessed me for thy sake."
+            ),
+            "And Laban said unto him, I pray thee, if I have found favour in thine eyes, tarry: for I have learned by experience that the LORD hath blessed me for thy sake."
+        );
+        assert!(clean_verse(
+            "Behold, God is mighty, and despiseth not {any: he is} mighty in strength and wisdom."
+        )
+        .contains("any: he is mighty"));
+    }
+
+    /// The eight marginal notes with no wording marker at all, which the old rule
+    /// kept AS scripture. Luke 17:36 is the one that reached a wall.
+    #[test]
+    fn a_trailing_note_is_never_scripture_however_it_is_worded() {
+        assert_eq!(
+            clean_verse(
+                "Two men shall be in the field; the one shall be taken, and the other left. {this verse is not found in most of the Greek copies}"
+            ),
+            "Two men shall be in the field; the one shall be taken, and the other left."
+        );
+        assert_eq!(
+            clean_verse("and now shall he be great unto the ends of the earth. {feed or, rule}"),
+            "and now shall he be great unto the ends of the earth."
+        );
+        // …and a note that sits mid-verse is still caught by its lead-in ellipsis.
+        assert_eq!(
+            clean_verse("ye had {in yourselves...: or, that ye have in} heaven a better substance"),
+            "ye had heaven a better substance"
+        );
+    }
+
+    /// The four verses our copy had split, and the six it had dropped — the
+    /// references an operator would have got wrong, asserted by their words.
+    #[test]
+    fn the_repaired_references_hold_their_own_words() {
+        let raw = KJV_JSON.trim_start_matches('\u{feff}');
+        let books: Vec<KjvBook> = serde_json::from_str(raw).expect("kjv.json parses");
+        let at = |b: usize, c: usize, v: usize| clean_verse(&books[b - 1].chapters[c - 1][v - 1]);
+
+        // Matthew is book 40. 2:16 was missing, so 2:16–22 each showed the next
+        // verse along and 2:23 did not exist.
+        assert!(at(40, 2, 16).starts_with("Then Herod, when he saw that he was mocked"));
+        assert!(at(40, 2, 23).contains("He shall be called a Nazarene"));
+        // 22:1 was missing, so the great commandment fired one verse late.
+        assert!(at(40, 22, 1).starts_with("And Jesus answered and spake unto them again"));
+        assert!(at(40, 22, 37).contains("Thou shalt love the Lord thy God"));
+        // 26:38 was missing, so Gethsemane was off by one from there on.
+        assert!(at(40, 26, 38).contains("My soul is exceeding sorrowful"));
+        assert!(at(40, 26, 39).contains("let this cup pass from me"));
+        // Mark is book 41.
+        assert!(at(41, 4, 40).contains("Why are ye so fearful"));
+        assert!(at(41, 7, 11).contains("It is Corban"));
+        assert!(at(41, 8, 8).contains("seven baskets"));
+        // The four our copy had split: each is now one verse, whole.
+        assert!(
+            at(9, 20, 42).contains("for ever.")
+                && at(9, 20, 42).contains("Jonathan went into the city")
+        );
+        assert!(at(11, 22, 43).contains("the high places were not taken away"));
+        assert!(at(64, 1, 14).contains("Greet the friends by name"));
+        // Revelation 12:18 was the first clause of 13:1, standing alone.
+        assert_eq!(books[65].chapters[11].len(), 17);
+        assert!(at(66, 13, 1).starts_with("And I stood upon the sand of the sea, and saw a beast"));
     }
 }

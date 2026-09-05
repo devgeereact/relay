@@ -963,6 +963,12 @@ carefully as the changes, because the refusals are the harder half.
 naming book, chapter and verse. It scores the parser. It says nothing about the
 other half of the product: recognising a verse the preacher never named.
 
+> **That 50 is the number on the day this decision was made, and it is left there.**
+> The corpus is 74 cases now, and the live figure lives beside the command that
+> produces it — `QA_HARNESS.md` §0. A decision log records what was true when the
+> decision was taken; re-pointing its numbers at today would make the reasoning
+> unreadable and would drift again by Sunday.
+
 That half was entirely unmeasured, and it showed. The operator's words:
 
 > *"I don't want the AI to just detect a word and match the word to the whole
@@ -1035,7 +1041,7 @@ TF-IDF is lexical overlap. Its ceiling is visible in the benchmark it just got:
 
 **No amount of tuning fixes a vocabulary mismatch.** Only a semantic embedder
 does, and CLAUDE.md has listed it as parked since the beginning — the seam is
-`SemanticIndex::top_k`, and `verses.embedding` exists with 0 of 31,100 rows
+`SemanticIndex::top_k`, and `verses.embedding` exists with 0 of 31,102 rows
 written.
 
 It was not built here, and the reason is sequencing, not appetite. An embedder
@@ -1590,7 +1596,7 @@ Everything above is a development machine, a release binary run from `cargo`, an
 text-to-speech audio in no room at all. Word error rate is still unmeasured in every
 language. Nobody has run a service. The `end_to_end_speech_to_scripture` and
 `audio_to_visible_transcript` spans need a webview and an output page and therefore a
-real app, and no number for them appears here. See `docs/audits/PERF-2026-08-24.md`
+real app, and no number for them appears here. See `docs/qa/audits/PERF-2026-08-24.md`
 for exactly what was and was not measured, and Stage F of the human test script for
 what has to happen in a room.
 
@@ -1650,7 +1656,7 @@ exactly one word of it:
   written to the database, gone on quit. Not a history, not a log.
 
 Anything that wants to know *which device* is the pairing proposal in
-`docs/RELAY_GAP.md` §20, and it needs a human first. **Anonymous heartbeats do not
+`docs/qa/RELAY_GAP.md` §20, and it needs a human first. **Anonymous heartbeats do not
 require that reversal**, which is why they were built and pairing was not.
 
 The wire carries a closed enum (`content` / `clear` / `black`), never a caption. A beat
@@ -2368,7 +2374,7 @@ be seen as leftover at all.
 
 ### A bare verse belongs to the book this sentence names
 
-**Found in a live service, not in this repository** — `docs/audits/FIELD-2026-08-30.md`.
+**Found in a live service, not in this repository** — `docs/qa/audits/FIELD-2026-08-30.md`.
 
 The operator fired **Proverbs 3:6** by hand. Five minutes later the preacher said
 *"…what was going through in **Luke 10**. If you read from **verse 32**, 37."*
@@ -2420,7 +2426,7 @@ twice**.
 
 ## 57. The record and the instruments, corrected by a real service (2026-08-30)
 
-Three defects found by pointing `docs/audits/FIELD-2026-08-30.md`'s own numbers at the
+Three defects found by pointing `docs/qa/audits/FIELD-2026-08-30.md`'s own numbers at the
 code that produced them. None of them could have been found from source, and none of
 them is in the pipeline — **all three are in what Relay writes down about itself.**
 
@@ -2592,3 +2598,354 @@ never a rounding gap; it was 0.30 wide.
 its anchor. "Relay stopped firing this morning" reads completely differently depending on
 whether the operator moved the dial or the calibration walked the bar up from a run of
 dismissals, and a church's report could not previously distinguish them.
+
+---
+
+## 60. Not general release, and not an indefinite no either (2026-08-31)
+
+**The release decision, made.** It belongs here and not only in `RELAY_GAP.md` §24, because
+it is a decision with reasoning and an explicit non-goal, which is what this file is for.
+
+> **⛔ NO-GO for general release · ✅ GO for a supervised pilot.**
+> Two churches. Named operators. Every service watched by somebody who can take the wall back
+> by hand. For the length of one season.
+
+### What it replaces
+
+An open-ended **NO-GO**, correct when it was written — nothing had ever run in a room — and
+wrong to leave standing afterwards. **An indefinite NO-GO is not caution; it is a way of never
+being wrong.** A product that is never let out never gets the only evidence that would let it
+out, and the register proves the shape of that trap: twenty-one merged pull requests in one
+week moved field validation and the language moat by **zero points**, and they never could
+have. One live service moved field validation off zero and produced seven findings.
+
+### Why not general release
+
+One line decides it: **on 2026-08-30 Relay put a verse nobody said in front of a
+congregation.** A preacher cited Luke 10:32–37; the wall showed Proverbs 3:32. The cause is
+fixed, pinned by a test and now a CI corpus case — but the *class* is not closed, and closing
+it needs services rather than commits.
+
+Three more, each sufficient alone: **word error rate has never been measured in any
+language**, so the product's entire premise is an assertion; there is **no Windows
+certificate**, and Windows is where most churches are; and **nobody but the author has ever
+run a service**, so every claim about whether a volunteer can work this under pressure is a
+claim about the person who wrote it.
+
+### Why a pilot is the right call rather than the brave one
+
+The evidence the blockers need cannot be manufactured here. Word error rate needs real
+preaching on tape. Whether a volunteer can run it needs a volunteer. The second and third
+services RG-32 waits on need second and third services.
+
+And the risk is **bounded in a way general release is not.** With an operator watching and one
+key that clears the wall, the worst outcome is a wrong verse for a few seconds and an entry in
+the register. Without a pilot the worst outcome is the same wrong verse, in a church nobody is
+watching, discovered by nobody, fixed never.
+
+### The conditions are the deliverable
+
+An operator at the desk every service; **`RELAY_RECORD_WAV` set for at least one full
+service** — one environment variable, and the highest-value item in the project, because it is
+what turns the moat's 3/10 from an assertion into a number; a rehearsal before first live use;
+Diagnostics read afterwards; every wrong verse written into the register verbatim from
+`heard_text`; macOS only, because Windows is unsigned.
+
+**Any one missing and it is NO-GO again.** `RELAY_GAP.md` §24 holds the five conditions that
+convert a pilot into a general release, and **anyone quoting "GO" from this without the word
+"pilot" is quoting it wrong.**
+
+---
+
+## 61. Readiness is a surface fact, not an engine fact (2026-08-31)
+
+**The brief's §4 asked for "one unified READY / DEGRADED / ACTION REQUIRED state", and the gap
+report carried that row as PARTIAL for the stated reason that "Rust has no health state at all".
+That reason was a description, not an argument, and the row is now closed the other way: an
+engine-side health state is deliberately not built.**
+
+Relay does answer the question, in three layers that agree with each other: twenty-one launch
+probes on a four-level severity ladder (`boot/probes.js`), a rolled-up verdict on the readiness
+screen (`views/Dashboard.svelte`), and a live one-line degraded state in the shell on every tab
+(`degraded.js`, §45). All three run in the webview.
+
+### Why moving it into Rust is not an improvement
+
+Ask what the engine would *do* with the state. There is exactly one candidate action — refuse to
+put content on a screen when the machine is unhealthy — and it is forbidden twice over:
+
+* **§20.** A panic control may never report a success it did not achieve, and a control that can
+  be *refused* by a health gate is worse than one that lies: `Esc` has to clear the wall in every
+  state, including the broken ones. A gate that could hold back a blackout is a blackout that can
+  fail.
+* **§42.** The pre-air validator refuses only what is unambiguously broken **and silently so** — a
+  payload that would paint an empty screen, a template the output page cannot parse. It
+  deliberately does not check that a screen is attached, because a service runs on the console
+  preview all the time. "The machine is degraded" is precisely the class of judgement §42 refuses
+  to make on the operator's behalf.
+
+Everything else the state could drive is a *sentence shown to a person*, and a person is on the
+other side of the bridge already.
+
+### What the cost would have been
+
+A second implementation of the same judgement, in a language that cannot see two thirds of its
+inputs. Nine of the twenty-one probes are browser facts — a window, a display, a kiosk client, a
+paint. Rust would either re-derive them badly or be told them by the webview, at which point the
+webview is still the source of truth and the engine copy is a cache that can be stale during
+exactly the incident it exists for.
+
+This repository has four separate bugs with the shape *a rule enforced on one surface and skipped
+on its twin*. A second readiness verdict is that bug pre-built.
+
+### What this does not say
+
+It does not say the engine should be silent. The engine already *reports* — `audio://error`,
+`model://error`, `stt://language_unstable`, `OutputHealth`, `channel_status`, the shed-partial
+counter — and every one of those is an input to the one verdict. **Reporting a fact and holding a
+verdict are different jobs, and only the second one is duplicated by moving it.**
+
+**So `readiness://changed` has no producer, on purpose** (RELAY_GAP §14), and §4 is EXISTS rather
+than PARTIAL.
+
+---
+
+## 62. A gap can be closed by deciding not to build it, and that has to be written like a build (2026-08-31)
+
+**Four rows of the brief's requirement matrix are now answered `DECLINED` rather than `MISSING`.
+The distinction is the whole point of the verdict: MISSING says nobody has got to it, DECLINED
+says somebody did, and here is what they concluded.**
+
+A register in which nothing is ever declined has one of two problems — either it is a wish list
+being copied forward untouched, or the declines are happening in someone's head and being
+rendered as neglect. Both make the document less true than the code.
+
+The four, each with the reason recorded in its own row:
+
+| Brief | Declined because |
+|---|---|
+| **§7 · a STABLE transcript state** | It describes the *text*; the harm is a wrong *verse*. `Router::decide_live` already holds a reference from a partial window at `Suggest` until a second pass agrees (rule 28, §38). A text-level state would be a third vocabulary for the same fact and could gate nothing the corroboration rule does not |
+| **§12 · scripture candidate prefetch** | It optimises a 2.6 ms stage inside a 144 ms budget, on a thread that is already not the decoder's. Rule 31 exists because this project has twice answered "STT is slow" and twice been more than half wrong |
+| **§19–§22 · device identity and a security event log** | Both require reversing §35, which is written up as a proposal (RELAY_GAP §20 a) and not adopted. §39 narrowed §35 by exactly one word — *when*, anonymously — and that was the whole budget. A security log whose every entry is attributed to nobody is not a security log |
+| **§24 · a tamper-evident service record** | Its prerequisite (§23) now exists, so it became cheap — and cheap is not the test. A hash chain defends against somebody holding the machine, and `SECURITY.md` T10 already says plainly that Relay is not hardened against a malicious operator. Building it would claim a guarantee against the single actor the product has declared out of scope |
+
+### The rule this sets
+
+**A decline is recorded with the same weight as a build: the verdict, the reason, and the
+condition that would reverse it.** Two of the four name a document that would have to change
+first (§35, T10); the other two name a mechanism that already covers the harm. None of them says
+"not now", because "not now" is how a decline decays back into a gap that nobody re-argues and
+everybody re-files.
+
+---
+
+## 63. What gets recorded about a suggestion is what the operator did with it (2026-08-31)
+
+**`detections.status` permits four values. Two of them have never been written by
+the running application, and the Sunday report counted them anyway and printed 0.**
+
+`docs/data/schema.sql` enforces `CHECK (status IN ('auto','suggested','dismissed','manual'))`,
+`db/services.rs` documents all four, `service_timeline` reads them, and
+`report.js` reported `suggested` and `dismissed` as service statistics. But the only
+production insert into `detections` is inside `persist_fire`, and `persist_fire` is
+called from exactly two places: `fire_manual`, and the AI path **inside
+`if fire.may_broadcast()`**. A `Suggested` fire does not broadcast, by construction
+(`Fire::may_broadcast`). So a real service can only ever write `'auto'` or
+`'manual'`, and the other two were structurally unreachable.
+
+### Why that is worse than a missing feature
+
+The report showed **`0 suggested · 0 dismissed`** for every service ever recorded.
+Zero is a claim. It reads as *"Relay never offered you anything and you never
+turned anything down"* — which about an AI-assistance product is close to the
+opposite of the truth, and it is exactly the inversion §44 exists to forbid: *only
+metrics that were actually measured appear, and a blank renders as "—", never as
+0.* The rule was written for latency and was being broken two fields away.
+
+It also hid: the report's own tests fed it synthetic timeline rows carrying
+`status: 'suggested'`, so they passed against data the product cannot produce. That
+is the same failure as the fourteen tests written against a component nothing
+rendered, and the `#[ignore]`d test that passed with its own fix reverted. **A test
+whose fixture is impossible is not a test.**
+
+### Why the fix is not "persist the suggestions"
+
+That is the obvious repair and it is wrong. **Suggestions are deliberately not
+debounced** — CLAUDE.md rule 28: the debounce and the corroboration rule apply to
+what may reach a wall, and *"suggestions are never gated"*, because an operator
+should see a candidate the instant Relay has one. Detection runs on every decode
+pass, so one spoken paraphrase produces a suggestion every cadence step — hundreds
+of rows a minute, none of which a person experienced as separate events. The table
+would fill with an artefact of the decoder's cadence, and the "suggestions offered"
+figure would measure how fast the machine is rather than how often it interrupted
+anybody.
+
+### What is recorded instead
+
+**What the operator did**, which is bounded, deliberate, and exactly what the
+metric is about: `confirm_detection` writes a `suggestion_accepted` cue and
+`dismiss_detection` writes a `suggestion_dismissed` cue.
+
+Three things follow from that choice, and each is load-bearing:
+
+1. **They are `cues`, not `service_events`.** `service_events` is documented as the
+   home for *"facts that had no home anywhere else"* and explicitly must not
+   duplicate `detections` or `cues`. These are things the operator pressed; `cues`
+   is what the operator pressed.
+2. **Accepting still records the fire as `'manual'`.** The cue says *whose idea it
+   was*; it does not change *who decided*. A human accepting a suggestion is a human
+   decision (rule 14), and the self-calibrating router learns from that column.
+   Before this, an accepted suggestion and a verse typed into the box by hand were
+   indistinguishable in the record — so the service history could say how many
+   verses a human put up and could not say how many of them Relay had proposed,
+   which is the one number that says whether the AI is earning its place.
+3. **Neither is written during a rehearsal**, for the same reason `record_feedback`
+   is not: a volunteer practising accepts verses they picked themselves, and an
+   acceptance rate inflated by practice would make the AI look validated by a
+   morning where nobody tested it.
+
+### And the denominator is named rather than assumed
+
+Uptake is now **accepted ÷ (accepted + rejected)** — *of the suggestions the
+operator answered*, not of everything Relay offered. A suggestion that scrolls away
+unanswered is recorded nowhere, so the honest figure is the one over answers, and
+`report.js`'s `notMeasured` list says so in the report itself. Reporting it as a
+share of all suggestions would need the suggestion count this decision has just
+refused to collect, and quietly using the smaller denominator while implying the
+larger one is the same class of lie as the 0 it replaced.
+
+**Pinned by** `e2e::what_the_operator_did_with_a_suggestion_reaches_the_record` and
+`e2e::a_rehearsed_decision_is_not_counted_as_one` (both re-run with the defect
+reintroduced, and both fail), plus `report.test.js` — including a test that feeds
+the report the old impossible `'suggested'`/`'dismissed'` detection rows and
+requires them to come back **null**, so the previous shape cannot be restored by
+accident.
+
+---
+
+## 64. The LAN is trusted to WATCH the wall, and no longer to eavesdrop on the preacher (2026-09-05)
+
+**§35 accepted an unauthenticated LAN control plane, deliberately and with the
+reasoning written out: anybody already on the church wifi can see the wall, so a
+password on the phone remote would be theatre. That decision was about
+`:8032` — the HTTP control plane — and it was quietly doing a second job it was
+never asked to do.**
+
+The kiosk hub on `:8031` subscribes a client to the content feed **at accept**,
+before and without a `hello`. WebSockets are exempt from CORS, so a plain-`http:`
+page a congregant opened on their phone, on the church wifi, could
+`new WebSocket('ws://<relay>:8031')` and receive the service. And what travels is
+not only what is on the projector: `kiosk_content_json` carries `stage_note`,
+`next_reference` and `next_text` — **the preacher's own monitor**, which is the
+one surface in Relay that exists precisely because the congregation cannot see it.
+
+### Why this is not a re-litigation of §35
+
+§35 accepts that **a person in the room can see the wall.** That is unavoidable and
+it costs nothing: they are in the room. What the hub was additionally granting is
+**content leaving the building** — a page on a phone can relay the feed anywhere,
+and `docs/SECURITY.md` §1 ranks exfiltration above every other harm in this product.
+Those are different claims and only the first one was ever decided.
+
+### The check, and why it is by PORT
+
+`channels::kiosk_origin_allowed` refuses a handshake whose `Origin` is not one of
+Relay's own. It cannot check the HOST, because the host is whatever LAN address the
+church laptop was given that morning — but it can check the **port**, and the pages
+that legitimately open this socket are ones Relay served itself: `:8032` in a
+packaged build, `:5032` under `npm run tauri dev`, plus Relay's own webview origin
+(`tauri://localhost`). An OBS browser source pointed at
+`http://<ip>:8032/output.html` sends exactly that origin, which is the client this
+must not break.
+
+**No `Origin` header at all is allowed.** A browser always sends one on a WebSocket
+handshake; a native client, a diagnostic tool and this repository's own tests do
+not. Refusing them would break the things that are not the threat, and would not
+stop the thing that is.
+
+### The escape hatch is deliberate, and it is an environment variable
+
+A church that hosts its own kiosk page somewhere else — a Raspberry Pi, an existing
+signage box — is a real setup, and finding out on a Sunday morning that the screen
+no longer connects is the worst possible time to discover a security improvement.
+`RELAY_KIOSK_ANY_ORIGIN=1` restores the old behaviour, and **the refusal is printed
+with that variable named in it**, so the way out is in the same place as the
+problem. It is an environment variable rather than a Settings toggle because it is
+a decision about the church's network, taken once, not a decision about a service.
+
+The refusal is a real **403**, not a dropped connection. The first version returned
+`ErrorResponse::new(…)`, which builds a 200 — and tungstenite will not write a
+successful refusal, so the socket simply closed with no status: from the kiosk's
+side, indistinguishable from Relay being switched off.
+
+### What was narrowed at the same time, and what was not
+
+`tauri.conf.json`'s policy granted `http:` and `ws:` — every host, every port — to
+`img-src`, `media-src` and `connect-src`. The reason was real (the media server and
+the kiosk hub cannot be TLS on a LAN appliance) and the grant was far wider than the
+need. It was also **reachable**: `TemplateRender`'s `bgPaint` emits
+`url("${L.image}")` straight from template JSON, so a template that arrived by email
+beaconed an attacker's URL the moment an operator previewed it — the church's IP and
+the time it was opened, out of an app whose first promise is that nothing leaves the
+device. The grants are now `http://*:8032` and `ws://*:8031`: Relay's own ports, any
+host, because the host cannot be named in a static policy.
+
+**What is still not verified, and it is the same sentence RG-85 always carried:**
+`tauri dev` does not exercise the CSP at all. The narrowing is held by a test that
+reads the policy out of `tauri.conf.json` and asserts it still permits the media URL
+`main::fire_media` actually builds while refusing an arbitrary host, and by a
+packaged build that boots and prints its one heartbeat — which proves the bundle
+still loads. It does **not** prove that a background video renders on a projector.
+The first person to put a media background on a wall with this build should check
+that it paints, and if it does not, the browser console on the output page names the
+directive that blocked it.
+
+---
+
+## 65. A development convenience is not a default (2026-09-05)
+
+**The Vite dev server bound every interface, and the reason was good: a kiosk
+screen or an OBS machine on another box can load
+`http://<this-machine-ip>:5032/output.html` while you are working on the output
+page. The cost is that `npm run tauri dev` at a church puts a Vite dev server on
+that church's network, and two of the ten `npm audit` advisories are reachable
+precisely and only through that.**
+
+Vite's path traversal in optimized-deps `.map` handling (HIGH) and esbuild's
+*"any website can send any request to the dev server and read the response"*
+(MODERATE) are dev-server bugs. Every fix is a semver **major** — vite 5 → 8,
+vitest 2 → 4, svelte 4 → 5 — and Svelte 4 is a recorded stack choice whose
+migration would touch every component, so the version numbers were never the
+lever available here. **Who can connect is.**
+
+### The decision
+
+`server.host` and `preview.host` are loopback unless `RELAY_DEV_LAN=1` is set.
+
+```bash
+RELAY_DEV_LAN=1 npm run tauri dev      # the OBS-on-another-machine session
+```
+
+A packaged Relay has **no server on 5032 at all** — the LAN output page is the
+Rust one on `:8032`, which is a different program with a different threat model
+(DECISIONS §35, §64). So the LAN dev server is a *development convenience*, and a
+convenience should not be the thing that is switched on by default on somebody
+else's network.
+
+### Why an environment variable rather than a config edit
+
+The old advice, written in the file itself, was *"set `host: 'localhost'` here for
+a session on a network you do not control"*. That asks a person to edit a tracked
+file, in the moment, and then remember to put it back — and the version of that
+mistake which lands on `main` is the one where somebody commits the safe value and
+somebody else reverts it as noise. An env var cannot be committed by accident, and
+it makes the LAN case an explicit act each time.
+
+### What this costs, said plainly
+
+Anyone who genuinely needs a second machine to see the dev output page now has to
+know the variable exists. It is named in `vite.config.js` at the line it affects,
+in `CLAUDE.md`, and in the register row. **`npm audit --omit=dev` is now a CI
+gate**, so the production tree cannot drift from zero without the build saying so,
+and `cargo audit` runs beside it — the half of the dependency tree that actually
+ships had never been checked at all until 2026-09-04.

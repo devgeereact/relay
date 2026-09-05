@@ -4,9 +4,49 @@
   import { showsConfidence } from '../../detect.js';
   import { sundayReport, replayAt, weekOnWeek, describeTrend } from '../../report.js';
   import Loading from '../../ui/Loading.svelte';
-  import { capture, listServices, serviceDetail, serviceTimeline, servicePerf, perfHistory, endService, exportService } from '../../stores/capture.js';
+  import ErrorState from '../../ui/ErrorState.svelte';
+  import { capture, listServices, serviceDetail, serviceTimeline, servicePerf, perfHistory, endService, exportService, deleteService, readErrors } from '../../stores/capture.js';
 
   let exportMsg = '';
+
+  // ── ERASING A SERVICE ──────────────────────────────────────────────────────
+  //
+  // The most sensitive thing Relay holds is `transcripts.text` — verbatim text of
+  // what a preacher said to a congregation. Until this button existed, PRIVACY.md's
+  // only answer to "remove that" was *delete the folder*: quit Relay and destroy
+  // every service ever recorded, from the Finder, or keep all of them.
+  //
+  // Two-step arm/confirm, never a native `confirm()` — Tauri's webview returns
+  // `false` without ever showing a dialog, so a delete guarded by one deletes
+  // nothing and reports success (CLAUDE.md rule 41). The arm disarms itself after
+  // three seconds, so a stray click cannot leave a live Delete button sitting under
+  // a volunteer's cursor.
+  let delArm = false;
+  let delArmT;
+  let delMsg = '';
+  async function doDelete() {
+    if (!delArm) {
+      delArm = true;
+      clearTimeout(delArmT);
+      delArmT = setTimeout(() => (delArm = false), 3000);
+      return;
+    }
+    clearTimeout(delArmT);
+    delArm = false;
+    delMsg = '';
+    exportMsg = '';
+    try {
+      const gone = await deleteService(selected.id);
+      // Say what was actually removed. "Deleted" alone is the sentence that lets an
+      // operator believe a transcript is gone when a refusal was swallowed.
+      delMsg = `Erased "${selected.title}" — ${gone} transcript line${gone === 1 ? '' : 's'} removed.`;
+      back();
+      await refresh();
+    } catch (e) {
+      delMsg = humanError(e);
+    }
+  }
+
   async function doExport() {
     if (!selected) return;
     try {
@@ -57,7 +97,11 @@
     clear_screens: 'Screens cleared',
     blackout: 'Blackout',
     manual_override: 'Manual override',
-    // From `detections` — status is the useful word.
+    suggestion_accepted: 'Took Relay\u2019s suggestion',
+    suggestion_dismissed: 'Rejected Relay\u2019s suggestion',
+    // From `detections` — status is the useful word. `suggested` and `dismissed`
+    // are kept because the column permits them and an old database may hold them;
+    // nothing has written either since `persist_fire` became the only insert.
     auto: 'Fired by Relay',
     manual: 'Fired by the operator',
     suggested: 'Suggested',
@@ -95,8 +139,25 @@
   $: if (page > pageCount - 1) page = pageCount - 1;
   $: pageServices = services.slice(page * PER, page * PER + PER);
 
+  // ── EMPTY, LOADING AND ERROR ARE THREE DIFFERENT FACTS ────────────────────
+  //
+  // This screen said **"No services yet — press Start listening on the Live tab to
+  // record one."** in all three situations: before `list_services` had answered,
+  // when it had answered with nothing, and when it had FAILED. `listServices` is a
+  // GROUP 2 read and returns `[]` on failure, so an empty array carried no
+  // information at all about which of the three had happened.
+  //
+  // It is the same defect `Loading.svelte` was built for, still standing on the one
+  // screen where the stakes are highest: a church whose database did not open is
+  // told, in a confident sentence, that they have never recorded a service. Some of
+  // them would believe it.
+  //
+  // `asked` is the third fact the array cannot carry. `readErrors.listServices` is
+  // the reason, kept by `guardedRead` instead of discarded.
+  let asked = false;
   async function refresh() {
     services = await listServices();
+    asked = true;
     page = 0;
   }
   onMount(refresh);
@@ -205,10 +266,19 @@
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
           Export .md
         </button>
+        <button class="r-btn ghost sm lib-del" class:arm={delArm} on:click={doDelete}
+          disabled={!$capture.available}
+          title="Erase this service's transcript, detections and timeline. This cannot be undone.">
+          {delArm ? 'Click again to erase' : 'Erase service'}
+        </button>
       </div>
     </div>
 
     {#if exportMsg}<div class="lib-exportmsg" role="status">{exportMsg}</div>{/if}
+    <!-- A FAILED erase leaves the detail open, so its message belongs here too.
+         The success message is shown on the list, which is where the operator ends
+         up (see the note beside it). -->
+    {#if delMsg}<div class="lib-delmsg" role="status">{delMsg}</div>{/if}
 
     {#if loading}
       <Loading what="services" />
@@ -296,6 +366,15 @@
                     {/if}
                     <span class="lib-detect-fired">fired {fmtTs(d.fired_at)}</span>
                   </div>
+                  <!-- THE EVIDENCE. The exact words the detector was looking at when it
+                       decided — not the transcript, which in a real service is routinely
+                       a different moment entirely (nine auto-fires were once logged
+                       against a final from three minutes earlier). This is what §24's
+                       pilot condition means by "verbatim from `heard_text`", and until
+                       now it could only be read by opening the database by hand. -->
+                  {#if d.heard_text}
+                    <p class="lib-detect-heard">“{d.heard_text}”</p>
+                  {/if}
                 </div>
               {/each}
             </div>
@@ -319,9 +398,9 @@
             <div class="lib-rep-cell"><b>{report.durationMs === null ? '—' : fmtMs(report.durationMs)}</b><span>length</span></div>
             <div class="lib-rep-cell"><b>{num(report.autoFired)}</b><span>fired by Relay</span></div>
             <div class="lib-rep-cell"><b>{num(report.manualFired)}</b><span>fired by you</span></div>
-            <div class="lib-rep-cell"><b>{num(report.suggested)}</b><span>suggested</span></div>
-            <div class="lib-rep-cell"><b>{num(report.dismissed)}</b><span>dismissed</span></div>
-            <div class="lib-rep-cell"><b>{pct(report.suggestionUptake)}</b><span>suggestions taken</span></div>
+            <div class="lib-rep-cell"><b>{num(report.suggestionsAccepted)}</b><span>suggestions taken</span></div>
+            <div class="lib-rep-cell"><b>{num(report.suggestionsRejected)}</b><span>suggestions rejected</span></div>
+            <div class="lib-rep-cell"><b>{pct(report.suggestionUptake)}</b><span>of the ones you answered</span></div>
             <div class="lib-rep-cell" class:bad={report.panicFailures > 0}>
               <b>{num(report.panicFailures)}</b><span>panic controls that failed</span>
             </div>
@@ -525,6 +604,13 @@
       </div>
     </div>
 
+    <!-- The confirmation of an erase, shown HERE and not on the detail screen.
+         `doDelete` closes the detail and returns to the list, so a message rendered
+         inside the detail branch would be unmounted in the same tick it was set —
+         an operator would erase a sermon and be told nothing at all, which is the
+         exact failure mode `panicRun` exists to prevent one screen along. -->
+    {#if delMsg}<div class="lib-delmsg" role="status">{delMsg}</div>{/if}
+
     <!-- Column labels -->
     <div class="lib-head r-lbl">
       <span class="c-date">Date</span>
@@ -537,7 +623,13 @@
 
     <!-- Service rows (10 per page) -->
     <div class="lib-list">
-      {#if services.length}
+      {#if !asked && !$readErrors.listServices}
+        <Loading what="services" />
+      {:else if $readErrors.listServices}
+        <!-- The reason, and a way to try again. Never the empty sentence: a read
+             that failed is not a church that has never held a service. -->
+        <ErrorState error={$readErrors.listServices} onRetry={refresh} />
+      {:else if services.length}
         {#each pageServices as s, i}
           {@const gi = page * PER + i}
           <div class="r-row lib-row">
@@ -679,6 +771,11 @@
   .lib-detail-count{ font-size:11px; color:var(--v-dim); }
 
   .lib-exportmsg{ font-size:11px; color:var(--v-emerald); word-break:break-word; margin-top:-8px; }
+  /* Rose, not amber: nothing on this screen is on air, and amber is never spent
+     on anything that is not. Armed reads as a warning, not as a live state. */
+  .lib-delmsg{ font-size:11px; color:var(--v-rose); word-break:break-word; margin-top:-8px; }
+  .lib-del{ color:var(--v-rose); }
+  .lib-del.arm{ background:var(--v-rose); color:var(--v-ink); }
   /* `r-mono` is gone: it now carries a humanised sentence, and monospace is what
      made the old raw-error dumps read like a crash to a volunteer. */
   .lib-detailerr{ font-size:12px; color:var(--v-rose); }
@@ -708,6 +805,10 @@
   .lib-detect-method{ text-transform:uppercase; }
   .lib-detect-bottom{ display:flex; align-items:center; justify-content:space-between; font-size:10px; color:var(--v-faint); }
   .lib-detect-conf{ color:var(--v-accent); }
+  /* The evidence, quoted. Serif and italic like every other quotation of speech in
+     this app, and quiet: it is context for the reference above it, not a headline. */
+  .lib-detect-heard{ margin:6px 0 0; font-family:var(--f-serif); font-style:italic;
+    font-size:var(--v-fs-cap); line-height:1.5; color:var(--v-dim); }
 
   .lib-emptytile{ padding:18px 16px; }
 

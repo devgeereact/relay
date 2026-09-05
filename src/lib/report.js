@@ -51,8 +51,30 @@ export function sundayReport(timeline = [], perf = [], detail = null) {
   // column here (the router learns from it), so the two are never added together.
   const autoFired = count('auto');
   const manualFired = count('manual');
-  const suggested = count('suggested');
-  const dismissed = count('dismissed');
+
+  // ── WHAT THE OPERATOR DID WITH RELAY'S SUGGESTIONS ──────────────────────────
+  //
+  // These used to be `count('suggested')` and `count('dismissed')`, and they were
+  // **always 0** — not because no suggestion was ever offered or rejected, but
+  // because nothing wrote either row. `detections` is only ever inserted from
+  // `persist_fire`, which runs for a fire that reaches a screen, so the column can
+  // hold `'auto'` or `'manual'` and nothing else in a real service. Two of its
+  // four documented values were structurally unreachable.
+  //
+  // A count of 0 for something nothing measures is precisely the failure this file
+  // exists to prevent: it reads as *"Relay never offered you anything"*, which is a
+  // claim, and a false one. `null` reads as "—".
+  //
+  // They now come from `cues` — what the operator actually pressed — written by
+  // `confirm_detection` and `dismiss_detection`. Suggestions themselves are still
+  // not persisted, deliberately: they are not debounced (CLAUDE.md rule 28), so one
+  // spoken paraphrase produces a suggestion per decode pass and hundreds of rows a
+  // minute that no person experienced as separate.
+  const cues = rows.filter((r) => r.source === 'cue');
+  const cueCount = (kind) => cues.filter((r) => r.kind === kind).length;
+  const accepted = cueCount('suggestion_accepted');
+  const rejected = cueCount('suggestion_dismissed');
+  const actedOn = accepted + rejected;
 
   // What went wrong. These have no other home — before `service_events` existed, a
   // panic control that did not reach the screens left no trace once the operator
@@ -67,12 +89,16 @@ export function sundayReport(timeline = [], perf = [], detail = null) {
     transcriptLines: detail?.transcripts?.length ?? null,
     autoFired,
     manualFired,
-    suggested,
-    dismissed,
-    // Of the suggestions Relay offered, how many did the operator take? `null` when
-    // it offered none — 0% would read as "the operator rejected everything", which
-    // is a different and much worse claim.
-    suggestionUptake: suggested + dismissed > 0 ? manualFired / (suggested + dismissed) : null,
+    // Named for what they are. `suggested`/`dismissed` implied a count of what
+    // Relay OFFERED; these are counts of what the operator DECIDED, and the two are
+    // different questions. `null` when the operator acted on none, because 0
+    // accepted out of 0 offered is not the same statement as 0 accepted out of 40.
+    suggestionsAccepted: actedOn ? accepted : null,
+    suggestionsRejected: actedOn ? rejected : null,
+    // Of the suggestions the operator ACTED on, how many did they take? `null` when
+    // they acted on none — 0% would read as "the operator rejected everything",
+    // which is a different and much worse claim.
+    suggestionUptake: actedOn ? accepted / actedOn : null,
     panicFailures,
     outputsLost,
     outputsRecovered,
@@ -81,6 +107,7 @@ export function sundayReport(timeline = [], perf = [], detail = null) {
     // Said out loud in the report itself rather than left for a reader to notice.
     notMeasured: [
       'Whether any verse shown was the RIGHT one — nothing here checks that, and only a person in the room can',
+      'How many suggestions you never acted on — a suggestion that scrolls away unanswered is recorded nowhere, so the acceptance figure is out of the ones you DID answer, not out of everything Relay offered',
       'Word error rate, in any language',
       'Whether the app crashed — crashes are recorded per launch, not per service, and guessing which service one belonged to would be a fabrication',
     ],

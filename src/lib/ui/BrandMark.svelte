@@ -1,7 +1,7 @@
 <script>
   // The Relay waveform mark — the ONE copy.
   //
-  // Traced from the BRAND block of docs/relaydesign/relay-designsystem.png, and
+  // Traced from the BRAND block of docs/design/relay-designsystem.png, and
   // geometrically identical to the app icon (src-tauri/icons/relay-mark.svg):
   // SEVEN bars, centre tallest, rounded caps, the outer pair set back.
   //

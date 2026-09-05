@@ -29,7 +29,7 @@
 //! learner from them is a real idea and might well be right; it is not being done on
 //! a hunch, because the instrument that could show it was safe
 //! (`cargo test audio::gate -- --ignored`, against real room audio) has never been
-//! run against a real room. See `docs/RELAY_GAP.md` §23, RG-10.
+//! run against a real room. See `docs/qa/RELAY_GAP.md` §23, RG-10.
 
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};

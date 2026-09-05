@@ -84,6 +84,28 @@ async function settle() {
   await tick();
 }
 
+/**
+ * Wait until the DOM says what the test is waiting for, or give up.
+ *
+ * A single `await tick()` flushes one Svelte scheduler pass, which is enough on an
+ * idle machine and not always enough when vitest is running seventy files in
+ * parallel: `onMount` runs, its first `await` yields, and the assertion reads the
+ * DOM one microtask before the component had set `loading`. That produced a real
+ * intermittent failure in this file — roughly one full-suite run in five — on an
+ * assertion whose subject had not changed.
+ *
+ * A flaky test is worse than a missing one. It is the same defect this whole file
+ * is about, turned on the instrument: a check that sometimes does not check, and
+ * that trains whoever sees it red to run it again rather than read it.
+ */
+async function until(predicate, what, tries = 50) {
+  for (let i = 0; i < tries; i += 1) {
+    if (predicate()) return;
+    await settle();
+  }
+  throw new Error(`timed out waiting for: ${what}`);
+}
+
 /** A keydown that behaves like a real one: dispatched at the focused element. */
 function press(key, target = document.body) {
   const e = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true });
@@ -404,7 +426,10 @@ describe('R3-04 · CLOSED — a list does not say Empty before it knows', () => 
 
     const TemplateGallery = (await import('./views/templates/TemplateGallery.svelte')).default;
     const el = mountInto(TemplateGallery);
-    await tick();
+    // The read never resolves until `release()`, so this can only ever settle on
+    // the loading state — waiting for it cannot mask a regression, and asserting
+    // one scheduler pass after mount could and occasionally did.
+    await until(() => /Loading/.test(el.textContent), 'TemplateGallery to show Loading');
 
     // A fresh install ships five built-in templates, so "No templates yet" was
     // never something this screen could truthfully say before the read returned —
@@ -434,25 +459,183 @@ describe('R3-04 · CLOSED — a list does not say Empty before it knows', () => 
     expect(el.textContent).toMatch(/database is locked|didn't work|try/i);
   });
 
-  itMounted('History claims "No services yet" before list_services answers', async () => {
+  itMounted('History says Loading, not "No services yet", before list_services answers', async () => {
+    // INVERTED 2026-09-03. This test used to assert the defect, and the defect was
+    // the last screen still conflating all three facts: it said **"No services yet
+    // — press Start listening on the Live tab to record one."** before the read had
+    // answered, when the read had answered with nothing, and when the read had
+    // FAILED. `listServices` is a GROUP 2 read returning `[]` on failure, so the
+    // array itself carried no information about which had happened.
+    //
+    // It mattered more here than on the two screens fixed in August: the sentence
+    // is a confident claim that a church has never recorded a service, shown to a
+    // church whose database did not open.
     invoke.mockImplementation(() => new Promise(() => {})); // never resolves
     const History = (await import('./views/library/History.svelte')).default;
     const el = mountInto(History);
-    await tick();
+    await until(() => /Loading/.test(el.textContent), 'History to show Loading');
 
-    expect(el.textContent).toMatch(/No services yet/);
-    expect(el.textContent).not.toMatch(/Loading/);
+    expect(el.textContent).not.toMatch(/No services yet/);
   });
 
-  itMounted('…and the identical sentence when list_services FAILS', async () => {
+  itMounted('…and says the REASON, not that sentence, when list_services FAILS', async () => {
     invoke.mockRejectedValue('disk I/O error');
     const History = (await import('./views/library/History.svelte')).default;
     const el = mountInto(History);
     await settle();
     await settle();
 
-    expect(el.textContent).toMatch(/No services yet/);
-    expect(el.querySelector('[role="alert"]')).toBe(null);
+    expect(el.textContent).not.toMatch(/No services yet/);
+    // Assertive, so a screen reader hears it too — same as TemplateGallery above.
+    expect(el.querySelector('[role="alert"]')).toBeTruthy();
+    expect(el.textContent).toMatch(/disk I\/O error|didn't work|try/i);
+  });
+});
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RG-95 · THE SAME LIE, ON THE FIVE LIBRARY SURFACES THAT STILL TOLD IT
+//
+// RG-93 fixed History and left the pattern half-applied: `Channels`,
+// `TemplateGallery` and `History` read `readErrors`, and every other list showed
+// its empty sentence over a failed read. The sentences are the problem, not the
+// styling — "No songs yet — import or paste one", "No media yet — add some",
+// "No announcements yet — draft one" and "That chapter is empty" all tell an
+// operator to REDO WORK THEY HAVE ALREADY DONE, minutes before a service, on the
+// evidence of a read that never returned.
+//
+// One case per surface, each rejecting exactly the read that surface makes.
+describe('RG-95 · a list that failed to load never says the library is empty', () => {
+  /** Reject one command, answer everything else with an empty list. */
+  const onlyFails = (bad, why) =>
+    invoke.mockImplementation((cmd) =>
+      cmd === bad ? Promise.reject(why) : Promise.resolve([]),
+    );
+
+  itMounted('MediaLibrary says the reason, not "No media yet"', async () => {
+    onlyFails('list_media', 'database is locked');
+    const MediaLibrary = (await import('./views/library/MediaLibrary.svelte')).default;
+    const el = mountInto(MediaLibrary);
+    await until(() => !/Loading/.test(el.textContent), 'MediaLibrary to finish loading');
+
+    expect(el.textContent).not.toMatch(/No media yet/);
+    expect(el.querySelector('[role="alert"]')).toBeTruthy();
+  });
+
+  itMounted('Announcements says the reason, not "No announcements yet"', async () => {
+    onlyFails('list_announcements', 'disk I/O error');
+    const Announcements = (await import('./views/library/Announcements.svelte')).default;
+    const el = mountInto(Announcements);
+    await until(
+      () => el.querySelector('[role="alert"]'),
+      'Announcements to report the failed read',
+    );
+
+    expect(el.textContent).not.toMatch(/No announcements yet/);
+  });
+
+  itMounted('Scripture says the reason, not "No saved verses yet"', async () => {
+    onlyFails('list_saved_scripture', 'database is locked');
+    const Scripture = (await import('./views/library/Scripture.svelte')).default;
+    const el = mountInto(Scripture);
+    await until(() => el.querySelector('[role="alert"]'), 'Scripture to report the failed read');
+
+    expect(el.textContent).not.toMatch(/No saved verses yet/);
+  });
+
+  itMounted('LyricsPane says the reason, not "No songs yet"', async () => {
+    onlyFails('list_songs', 'database is locked');
+    const LyricsPane = (await import('./views/library/LyricsPane.svelte')).default;
+    const el = mountInto(LyricsPane);
+    await until(() => el.querySelector('[role="alert"]'), 'LyricsPane to report the failed read');
+
+    expect(el.textContent).not.toMatch(/No songs yet/);
+  });
+
+  itMounted('ServicePlanner says the reason, not "No plans yet"', async () => {
+    // The most expensive of the five sentences: an operator who believes it on a
+    // Tuesday evening rebuilds Sunday's service from nothing.
+    onlyFails('list_plans', 'database is locked');
+    const ServicePlanner = (await import('./views/ServicePlanner.svelte')).default;
+    const el = mountInto(ServicePlanner);
+    await until(
+      () => el.querySelector('[role="alert"]'),
+      'ServicePlanner to report the failed read',
+    );
+
+    expect(el.textContent).not.toMatch(/No plans yet/);
+  });
+
+  itMounted('the Planner cue table says the reason, not "Empty plan"', async () => {
+    // The last two surfaces RG-95 could not reach, because `planItems` swallowed
+    // into a bare `catch {}` and there was no key to read. "Empty plan — use ＋ Add
+    // Cue." over a failed read tells an operator the evening they spent building
+    // Sunday is gone.
+    invoke.mockImplementation((cmd) => {
+      if (cmd === 'list_plans') {
+        return Promise.resolve([{ id: 1, title: 'Sunday', plan_date: '2026-09-06', cue_count: 3 }]);
+      }
+      if (cmd === 'plan_items') return Promise.reject('database is locked');
+      return Promise.resolve([]);
+    });
+    const ServicePlanner = (await import('./views/ServicePlanner.svelte')).default;
+    const el = mountInto(ServicePlanner);
+    await until(() => el.querySelector('.sp-railcard'), 'the plan rail to list a plan');
+    el.querySelector('.sp-railcard').click();
+    await until(() => el.querySelector('[role="alert"]'), 'the cue table to report the failed read');
+
+    expect(el.textContent).not.toMatch(/Empty plan/);
+  });
+
+  it('the RUN surface does the same, on all three of its lists', () => {
+    // Live is not mounted anywhere in this suite — it needs the whole store — so
+    // this reads the source, the way `safescreen.test.js` and `r2livepath.test.js`
+    // already do for it. What matters is that each empty sentence is now behind an
+    // error branch keyed to the read that produces it.
+    const f = src('src/lib/views/Live.svelte');
+    for (const [key, sentence] of [
+      ['planItems', "live.plan_no_cues"],
+      ['listPlans', 'live.no_plans'],
+      ['listOutputChannels', 'No screens yet'],
+    ]) {
+      expect(f, `the ${key} list has no error branch`).toMatch(
+        new RegExp(`readErrors\\.${key}`),
+      );
+      const at = f.indexOf(sentence);
+      expect(at, `${sentence} is gone — update this test with it`).toBeGreaterThan(-1);
+      // The error branch has to come BEFORE the empty sentence, or the sentence
+      // wins and the branch is decoration.
+      expect(
+        f.lastIndexOf(`readErrors.${key}`, at),
+        `${key}'s error branch sits after its empty sentence`,
+      ).toBeGreaterThan(-1);
+    }
+  });
+
+  itMounted('ModelSetup shows the reason rather than an empty panel', async () => {
+    // Not a wrong sentence — NO sentence. The model list renders an `{#each}`, so a
+    // failed read drew a blank card on the one screen whose job is getting speech
+    // recognition working before a service.
+    onlyFails('list_models', 'network is unreachable');
+    const ModelSetup = (await import('./ModelSetup.svelte')).default;
+    const el = mountInto(ModelSetup);
+    await until(() => el.querySelector('[role="alert"]'), 'ModelSetup to report the failed read');
+  });
+
+  itMounted('Browse says the reason, not "That chapter is empty"', async () => {
+    // No chapter of any Bible is empty, so that sentence can only ever be
+    // describing a read that failed — which is why `chapterVerses` stopped
+    // swallowing into a bare `catch {}` and became a guarded read.
+    onlyFails('chapter_verses', 'database is locked');
+    const Browse = (await import('./views/library/Browse.svelte')).default;
+    const el = mountInto(Browse, {
+      books: [{ book: 'Genesis', chapters: 50 }],
+      book: 'Genesis',
+      chapter: 1,
+    });
+    await until(() => el.querySelector('[role="alert"]'), 'Browse to report the failed read');
+
+    expect(el.textContent).not.toMatch(/That chapter is empty/);
   });
 });
 
@@ -778,18 +961,24 @@ describe('R3-11 · every disabled fire control says why', () => {
 //
 // No mounting, no lifecycle, so these run identically under either config.
 // ─────────────────────────────────────────────────────────────────────────────
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { resolve as rpath } from 'node:path';
 const src = (p) => readFileSync(rpath(process.cwd(), p), 'utf8');
 
 /** Every non-test frontend file, as [path, text]. Read once. */
 const FRONTEND = (() => {
   const out = [];
+  // `withFileTypes` asks the directory read itself what each entry is, so there is
+  // no second `statSync` on a path that could have changed between the two calls.
+  // CodeQL flags the check-then-use shape (`js/file-system-race`) and it is right
+  // to: nothing here is hostile, but a scanner that has to be told to ignore a
+  // pattern stops being read at all.
   const walk = (d) => {
-    for (const n of readdirSync(d)) {
+    for (const e of readdirSync(d, { withFileTypes: true })) {
+      const n = e.name;
       if (n.startsWith('.') || n === 'node_modules') continue;
       const f = `${d}/${n}`;
-      if (statSync(f).isDirectory()) walk(f);
+      if (e.isDirectory()) walk(f);
       else if (/\.(js|svelte)$/.test(n) && !n.endsWith('.test.js'))
         out.push([f, readFileSync(f, 'utf8')]);
     }
@@ -894,6 +1083,50 @@ describe('R3-12 · CLOSED — every major view says when the engine is missing',
   });
 });
 
+describe('RG-95 second pass · the two surfaces whose error state could not fire', () => {
+  itMounted('Channels reports a failed read instead of "No screens yet"', async () => {
+    // It HAD an `<ErrorState>`. Every read in its `onMount` is a GROUP 2 wrapper
+    // that swallows to a default, so `error` was only ever set by a MUTATION —
+    // the one path that is not how an operator arrives at this screen.
+    invoke.mockImplementation((cmd) =>
+      cmd === 'list_output_channels' ? Promise.reject('database is locked') : Promise.resolve([]),
+    );
+    const Channels = (await import('./views/Channels.svelte')).default;
+    const el = mountInto(Channels);
+    await until(() => el.querySelector('[role="alert"]'), 'Channels to report the failed read');
+
+    expect(el.textContent).not.toMatch(/No screens yet/);
+  });
+
+  it('a failed save on Announcements is not shown in success green', () => {
+    const f = src('src/lib/views/library/Announcements.svelte');
+    // One `flash()` carried both outcomes into one emerald line with no role.
+    expect(f).not.toMatch(/flash\(String\(e\)\)/);
+    expect(f).toMatch(/class="an-err" role="alert"/);
+    // And the delete — a GROUP 1 wrapper that THROWS — is guarded, so a refusal is
+    // no longer an unhandled rejection that leaves the row on screen in silence.
+    expect(f).toMatch(/await deleteAnnouncement\(a\.id\);\n    \} catch \(e\) \{/);
+  });
+
+  it('every "it is on the screens" line is announced, not only the error half', () => {
+    // The error twins were swept in August; the success twins were not, so the
+    // confirmation that content reached a congregation was silent to a screen
+    // reader on six surfaces.
+    for (const [f, cls] of [
+      ['src/lib/views/library/Browse.svelte', 'br-msg'],
+      ['src/lib/views/library/Scripture.svelte', 'sv-msg'],
+      ['src/lib/views/library/MediaLibrary.svelte', 'ml-msg'],
+      ['src/lib/views/library/LyricsPane.svelte', 'ly-msg'],
+      ['src/lib/views/library/LiveOutputRail.svelte', 'lo-msg'],
+      ['src/lib/views/library/Announcements.svelte', 'an-msg'],
+    ]) {
+      expect(src(f), `${f}'s success line is silent`).toMatch(
+        new RegExp(`class="${cls}"[^>]*role="status"[^>]*aria-live="polite"`),
+      );
+    }
+  });
+});
+
 describe('R3-12 · errors.js is the one humaniser, on every surface', () => {
   it('History humanises its export error and announces it', () => {
     const f = src('src/lib/views/library/History.svelte');
@@ -916,11 +1149,20 @@ describe('R3-12 · errors.js is the one humaniser, on every surface', () => {
     expect(f).toMatch(/role="alert"/);
   });
 
-  it('ImportReview and ThemeEditor route through the humaniser, not String(e)', () => {
+  it('ImportReview, ThemeEditor and the TEMPLATE pair route through the humaniser, not String(e)', () => {
+    // The template pair was added 2026-09-05. `String(e)` on a typed error from
+    // `error.rs` — which serialises as `{ kind, message }` — renders literally
+    // **"[object Object]"**, and six controls did it: every delete, duplicate and
+    // rename in the gallery, and the editor's save. The most likely one to be seen
+    // is the Service Lock refusing a delete mid-service, which is the one message
+    // in the set that is already written for a volunteer.
     for (const f of [
       'src/lib/views/library/ImportReview.svelte',
       'src/lib/views/themes/ThemeEditor.svelte',
       'src/lib/views/themes/ThemeGallery.svelte',
+      'src/lib/views/templates/TemplateGallery.svelte',
+      'src/lib/views/templates/TemplateEditor.svelte',
+      'src/lib/views/library/Announcements.svelte',
     ]) {
       const t = src(f);
       expect(t, `${f} still stringifies a typed error`).not.toMatch(/=\s*String\(e\)/);

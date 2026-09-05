@@ -9,7 +9,7 @@
 // whole time; Live.svelte rendered both kinds as "AI suggestion — 92% match". The
 // human in the loop was shown nothing to be a human in the loop WITH.
 import { describe, it, expect } from 'vitest';
-import { heard, methodKey, showsConfidence } from './detect.js';
+import { heard, methodKey, showsConfidence, inLibrary } from './detect.js';
 
 const direct = { method: 'direct', confidence: 0.92 };
 const semantic = { method: 'semantic', confidence: 0.61 };
@@ -105,5 +105,29 @@ describe('nothing crashes on a malformed payload', () => {
   it('survives undefined', () => {
     expect(() => methodKey(undefined)).not.toThrow();
     expect(heard(undefined)).toBe(false);
+  });
+});
+
+describe('a suggestion whose verse does not exist', () => {
+  it('is recognised from the flag the backend already sends', () => {
+    expect(inLibrary({ reference: 'Psalms 23:99', in_library: false })).toBe(false);
+    expect(inLibrary({ reference: 'Psalms 23:1', in_library: true })).toBe(true);
+  });
+
+  it('treats an ABSENT flag as present — the warning may only ever be added on evidence', () => {
+    // The LAN remote and any older payload do not set it. Greying out a real
+    // suggestion because a field was missing would be a fault invented from an
+    // absence, which is the same mistake in the other direction.
+    expect(inLibrary({ reference: 'John 3:16' })).toBe(true);
+    expect(inLibrary(undefined)).toBe(true);
+    expect(inLibrary(null)).toBe(true);
+  });
+
+  it('is independent of HOW it was found — a guess can resolve, a heard one can fail', () => {
+    // "Psalms 23:99" is heard, confidently, and does not exist. The two questions
+    // are orthogonal and the operator needs both answered.
+    const heardButAbsent = { method: 'direct', confidence: 0.94, in_library: false };
+    expect(heard(heardButAbsent)).toBe(true);
+    expect(inLibrary(heardButAbsent)).toBe(false);
   });
 });

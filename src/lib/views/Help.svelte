@@ -96,6 +96,17 @@
       ],
     },
     {
+      id: 'weakness',
+      icon: '⚖️',
+      title: 'What the AI is bad at',
+      body: [
+        ['It never writes scripture.', 'The words on the wall are read verbatim from the bundled King James Version. Relay only ever chooses <i>which</i> verse — it cannot invent, paraphrase or reword one. If the text is wrong, the reference was wrong, not the words.'],
+        ['African-language listening is the weakest part.', 'The speech model was trained on far less Yorùbá and Hausa than English, so it mishears more often in those languages. This is the headline claim of the product and it is also its weakest link — you should hear that from us rather than discover it on a Sunday.'],
+        ['Nobody has measured how often it mishears.', 'Relay measures how well it finds a reference in <i>text</i>, and that is good. How well it hears <i>speech</i> — in any language, English included — has never been measured against real sermon audio. Until it has, treat every auto-fire as something to watch, not something to trust.'],
+        ['So watch the wall, not the app.', 'Keep <kbd>Esc</kbd> under your hand. One wrong verse has already reached a congregation during testing, and the operator noticing is what fixed it.'],
+      ],
+    },
+    {
       id: 'privacy',
       icon: '🔒',
       title: 'Does anything leave this computer?',
@@ -115,7 +126,7 @@
 
   // ── THE SHORTCUT BOARD ────────────────────────────────────────────────────
   //
-  // Laid out to docs/relaydesign/relay-helpandshortcut-screen.png. The LAYOUT is
+  // Laid out to docs/design/relay-helpandshortcut-screen.png. The LAYOUT is
   // the reference's. The KEYS are not, and must never be: every row below is
   // generated from `SHORTCUTS` in lib/shortcuts.js — the same table the keydown
   // handler reads — so this screen cannot drift from the real bindings.
@@ -164,7 +175,7 @@
   $: other = SHORTCUTS.filter((s) => s.always && !s.keys.some((k) => PANIC_KEYS[k]));
 </script>
 
-<!-- HELP / SHORTCUTS — laid out to docs/relaydesign/relay-helpandshortcut-screen.png.
+<!-- HELP / SHORTCUTS — laid out to docs/design/relay-helpandshortcut-screen.png.
      Board first (Panic · Transport · Other), then the troubleshooting topics, which
      the reference does not show but which are this tab's other half. -->
 <div class="help">

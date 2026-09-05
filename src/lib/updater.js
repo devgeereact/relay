@@ -100,26 +100,88 @@ function idle() {
 }
 
 /**
+ * WHAT THE LAST UPDATE CHECK ACTUALLY FOUND.
+ *
+ * `{ state, at, detail }` where `state` is one of:
+ *
+ *   `unchecked`   — no check has completed this session (or a service was running).
+ *   `ok`          — the update server answered. `detail` is the version, or ''.
+ *   `unavailable` — there is no updater here at all: a browser, a dev build, an
+ *                   unsigned build. NOT a fault, and not worth a word to anyone.
+ *   `failed`      — a check ran and could not get an answer. Offline is the common
+ *                   and harmless reason; a manifest that does not exist is not.
+ *
+ * ── Why this store had to exist ──────────────────────────────────────────────
+ *
+ * `checkForUpdate` swallowed every outcome into `null`, and Settings printed
+ * **"Update status · up to date"** whenever nothing was waiting. So "there is no
+ * newer version", "you are offline", "you have never checked" and "the update
+ * server has been returning 404 since the day this was installed" were one
+ * sentence, and it was the reassuring one.
+ *
+ * That is precisely the defect CLAUDE.md rule 35 names: a status badge that cannot
+ * detect its own failure. It matters more here than almost anywhere, because the
+ * update channel is how a fix reaches a church that has already installed Relay —
+ * and if it is broken, nothing else in the product will ever say so.
+ *
+ * It does NOT change the rule above it: a failed check still never interrupts an
+ * operator, still never becomes a toast, and is still invisible during a service.
+ * It is written down, for the one screen where somebody goes to look.
+ */
+export const updateChannel = writable({ state: 'unchecked', at: null, detail: '' });
+
+const noteChannel = (state, detail = '') =>
+  updateChannel.set({ state, at: Date.now(), detail });
+
+/**
  * Check for an update. Safe to call on launch.
  *
- * Silently does nothing when: there's no Tauri backend (browser/dev), the app
- * isn't signed with an updater key yet, or a service is running. A failed update
- * check must never surface as an error to an operator — it is not their problem
- * and there is nothing they can do about it.
+ * Returns the available version, or `null`. Does nothing while a service is
+ * running. A failed check must never surface as an error to an operator — it is
+ * not their problem and there is nothing they can do about it mid-sermon — so the
+ * outcome is RECORDED (`updateChannel`) rather than raised.
  */
 export async function checkForUpdate() {
   if (!idle()) return null;
+  let check;
   try {
-    const { check } = await import('@tauri-apps/plugin-updater');
+    ({ check } = await import('@tauri-apps/plugin-updater'));
+  } catch {
+    // No backend and no plugin: a browser, or a build with no updater wired. There
+    // is nothing here to be broken, so this is not a failure.
+    noteChannel('unavailable');
+    return null;
+  }
+  try {
     const update = await check();
-    if (!update) return null;
+    if (!update) {
+      noteChannel('ok');
+      return null;
+    }
     pending = update;
     updateAvailable.set({ version: update.version, notes: update.body ?? '' });
+    noteChannel('ok', update.version);
     return update.version;
-  } catch {
-    // No backend, no updater config, or offline. All fine — Relay's whole
-    // premise is that it works with the network unplugged.
+  } catch (e) {
+    // Offline is the ordinary reason and Relay's whole premise is that it works
+    // with the network unplugged. A manifest that does not exist looks identical
+    // from here — which is exactly why the reason is kept rather than discarded.
+    noteChannel('failed', String(e?.message ?? e ?? '').slice(0, 200));
     return null;
+  }
+}
+
+/** The sentence for a channel state. One place, so no surface invents a second. */
+export function describeChannel(ch) {
+  switch (ch?.state) {
+    case 'ok':
+      return ch.detail ? `${ch.detail} available` : 'up to date';
+    case 'failed':
+      return 'could not reach the update server';
+    case 'unavailable':
+      return 'no update channel in this build';
+    default:
+      return 'not checked yet';
   }
 }
 
