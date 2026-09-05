@@ -961,18 +961,24 @@ describe('R3-11 · every disabled fire control says why', () => {
 //
 // No mounting, no lifecycle, so these run identically under either config.
 // ─────────────────────────────────────────────────────────────────────────────
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { resolve as rpath } from 'node:path';
 const src = (p) => readFileSync(rpath(process.cwd(), p), 'utf8');
 
 /** Every non-test frontend file, as [path, text]. Read once. */
 const FRONTEND = (() => {
   const out = [];
+  // `withFileTypes` asks the directory read itself what each entry is, so there is
+  // no second `statSync` on a path that could have changed between the two calls.
+  // CodeQL flags the check-then-use shape (`js/file-system-race`) and it is right
+  // to: nothing here is hostile, but a scanner that has to be told to ignore a
+  // pattern stops being read at all.
   const walk = (d) => {
-    for (const n of readdirSync(d)) {
+    for (const e of readdirSync(d, { withFileTypes: true })) {
+      const n = e.name;
       if (n.startsWith('.') || n === 'node_modules') continue;
       const f = `${d}/${n}`;
-      if (statSync(f).isDirectory()) walk(f);
+      if (e.isDirectory()) walk(f);
       else if (/\.(js|svelte)$/.test(n) && !n.endsWith('.test.js'))
         out.push([f, readFileSync(f, 'utf8')]);
     }

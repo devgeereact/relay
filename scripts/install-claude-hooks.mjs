@@ -84,10 +84,21 @@ if (group) {
   settings.hooks.PostToolUse.push({ matcher: MATCHER, hooks: [ENTRY] });
 }
 
-if (existsSync(SETTINGS)) {
+// Back it up if it is there, and create the directory if it is not — decided by
+// ATTEMPTING each one rather than by asking first. `existsSync` followed by
+// `copyFileSync` is a check-then-use race (CodeQL `js/file-system-race`): nothing
+// hostile is plausible on a developer's own `.claude/`, but a scanner that has to
+// be told to ignore a pattern stops being read at all, and this one is two lines
+// to remove rather than to dismiss.
+try {
   copyFileSync(SETTINGS, `${SETTINGS}.bak`);
   say(`  backed up → ${SETTINGS}.bak`);
-} else {
+} catch (e) {
+  if (e.code !== 'ENOENT') {
+    say(`✗ could not back up ${SETTINGS} (${e.message}). Nothing was written.`);
+    process.exit(1);
+  }
+  // No settings file yet: make sure its directory exists before the write below.
   mkdirSync(dirname(SETTINGS), { recursive: true });
 }
 
