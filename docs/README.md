@@ -67,6 +67,7 @@ both expect it.
 | **7 · Operations manual** | *How is it released, signed, updated, and operated on a Sunday?* | [RELEASING.md](RELEASING.md) · [USER_GUIDE.md](USER_GUIDE.md) | Complete |
 | **Decisions (ADR log)** | *Why is anything the way it is?* | [DECISIONS.md](DECISIONS.md) | Complete |
 | **Known issues & tech debt** | *What is deferred, parked, or owed — and on whose authority?* | [KNOWN_ISSUES.md](KNOWN_ISSUES.md) | **NEW** |
+| **Agent routing** | *How an agent working in this repository is meant to operate* | [GEE-OS.md](GEE-OS.md) | Not part of the product hierarchy |
 | **Data schema** | *The canonical on-device SQLite shape* | [data/schema.sql](data/schema.sql) | Refreshed |
 | **Schema baseline** | *The oldest schema Relay can upgrade from — checked in so a test can prove every column added since has a migration. **Never edit it***| [data/schema-baseline.sql](data/schema-baseline.sql) | **NEW** |
 | **Gap register** | *What an outside product brief asked for vs what exists — and the two proposals that would reverse a recorded decision* | [RELAY_GAP.md](qa/RELAY_GAP.md) | **NEW** |
@@ -182,15 +183,18 @@ Three documents, at three altitudes, and they are meant to disagree on scope rat
 - **[qa/LAUNCH_CHECKLIST.md](qa/LAUNCH_CHECKLIST.md)** — the gate list. Every box names the
   command that ticks it or says it has never been checked.
 
-**Relay has never shipped. As of 2026-09-02: NOT READY for general release · READY WITH
+**Relay has never shipped. As of 2026-09-05: NOT READY for general release · READY WITH
 CONDITIONS for a supervised pilot** — two churches, named operators, every service watched by
-somebody who can take the wall back by hand. The register is **87 entries, 78 closed**
-([qa/RELAY_GAP.md](qa/RELAY_GAP.md) §0 owns that count and `relaygap.test.js` asserts it against
-the table). **Five things block a general release and only one is a commit:** a wrong verse
+somebody who can take the wall back by hand. The register's size is a number with one home:
+[qa/RELAY_GAP.md](qa/RELAY_GAP.md), where `relaygap.test.js` asserts it against the table. This
+sentence used to carry its own copy, and the copy was stale by fourteen entries. **Five things
+block a general release, and by the count in [RELAY_V1_AUDIT.md](RELAY_V1_AUDIT.md) §1 none of
+the five is closed by a commit alone — two are not commits at all** (a certificate is a
+purchase, a published release is an action):** a wrong verse
 reached a real congregation on 2026-08-30; word error rate has never been measured in any
 language; neither platform has a code-signing certificate (RG-73); nobody but the author has
 ever run a service; and **the auto-updater points at a URL that returns 404** (RG-83, found
-2026-09-02). The conditions are [qa/RELAY_GAP.md](qa/RELAY_GAP.md) §24 and the reasoning is
+2026-09-02, still true on 2026-09-05). The conditions are [qa/RELAY_GAP.md](qa/RELAY_GAP.md) §24 and the reasoning is
 [RELAY_V1_AUDIT.md](RELAY_V1_AUDIT.md) §1.
 
 The packaged build **has** been reached by an instrument — one live sermon

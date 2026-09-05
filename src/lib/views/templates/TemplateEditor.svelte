@@ -419,7 +419,7 @@
       edit = { ...edit, layout: v.layout, style: v.style };
       lastSig = sigOf(edit); // this IS the committed state now — don't re-autosave it
       histOpen = false;
-    } catch (e) { err = String(e); }
+    } catch (e) { err = humanError(e); }
   }
   // A short relative-time label for a version's timestamp.
   function agoLabel(ts) {

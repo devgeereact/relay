@@ -61,6 +61,7 @@
     localIp,
     defaultTemplateId,
     loadDefaultTemplate,
+    readErrors,
   } from '../stores/capture.js';
 
   // Which pane. 'screens' is where an operator lives; the inspector aside only
@@ -430,6 +431,14 @@
               </div>
             {/if}
           {/each}
+        {:else if !channels.length && $readErrors.listOutputChannels}
+          <!-- RG-95, second pass. This view HAD an `<ErrorState>` and it could not
+               fire: every read in `onMount` is a GROUP 2 wrapper that swallows to a
+               safe default, so `error` was only ever set by `act()` — a mutation.
+               A database that would not open therefore read "No screens yet — add
+               one below.", and the operator's answer to that sentence is to add a
+               screen they already have. -->
+          <ErrorState error={$readErrors.listOutputChannels} onRetry={refresh} />
         {:else}
           <EmptyState message={channels.length ? 'No screen matches this filter.' : 'No screens yet — add one below.'} />
         {/if}

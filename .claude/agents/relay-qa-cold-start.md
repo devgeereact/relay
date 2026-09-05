@@ -39,7 +39,7 @@ add it in your own test and say why, the way `e2e::app()` does.
 
 ## The seed question, restated for this product
 
-A fresh install seeds 31,100 KJV verses, one translation, five built-in templates plus
+A fresh install seeds 31,102 KJV verses, one translation, five built-in templates plus
 presets, the default output channels, one active voice profile, and the `tpl_song`
 content-look (deliberate: every other built-in is scripture-shaped, so a lyric rendered
 through one put the song title where the words should be). **That is product content,

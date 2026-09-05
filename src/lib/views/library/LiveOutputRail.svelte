@@ -379,7 +379,10 @@
       {$rehearsing ? 'End rehearsal' : 'Rehearsal mode'}
     </button>
 
-    {#if msg}<p class="lo-msg">{msg}</p>{/if}
+    <!-- Announced. "John 3:16 is on the screens" is the confirmation that content
+           reached a congregation, and it was silent to a screen reader — the error
+           half of these panes carries `role="alert"` and this half carried nothing. -->
+    {#if msg}<p class="lo-msg" role="status" aria-live="polite">{msg}</p>{/if}
     {#if error}<p class="lo-err" role="alert">{error}</p>{/if}
   </section>
 </aside>

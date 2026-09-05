@@ -1031,6 +1031,50 @@ describe('R3-12 · CLOSED — every major view says when the engine is missing',
   });
 });
 
+describe('RG-95 second pass · the two surfaces whose error state could not fire', () => {
+  itMounted('Channels reports a failed read instead of "No screens yet"', async () => {
+    // It HAD an `<ErrorState>`. Every read in its `onMount` is a GROUP 2 wrapper
+    // that swallows to a default, so `error` was only ever set by a MUTATION —
+    // the one path that is not how an operator arrives at this screen.
+    invoke.mockImplementation((cmd) =>
+      cmd === 'list_output_channels' ? Promise.reject('database is locked') : Promise.resolve([]),
+    );
+    const Channels = (await import('./views/Channels.svelte')).default;
+    const el = mountInto(Channels);
+    await until(() => el.querySelector('[role="alert"]'), 'Channels to report the failed read');
+
+    expect(el.textContent).not.toMatch(/No screens yet/);
+  });
+
+  it('a failed save on Announcements is not shown in success green', () => {
+    const f = src('src/lib/views/library/Announcements.svelte');
+    // One `flash()` carried both outcomes into one emerald line with no role.
+    expect(f).not.toMatch(/flash\(String\(e\)\)/);
+    expect(f).toMatch(/class="an-err" role="alert"/);
+    // And the delete — a GROUP 1 wrapper that THROWS — is guarded, so a refusal is
+    // no longer an unhandled rejection that leaves the row on screen in silence.
+    expect(f).toMatch(/await deleteAnnouncement\(a\.id\);\n    \} catch \(e\) \{/);
+  });
+
+  it('every "it is on the screens" line is announced, not only the error half', () => {
+    // The error twins were swept in August; the success twins were not, so the
+    // confirmation that content reached a congregation was silent to a screen
+    // reader on six surfaces.
+    for (const [f, cls] of [
+      ['src/lib/views/library/Browse.svelte', 'br-msg'],
+      ['src/lib/views/library/Scripture.svelte', 'sv-msg'],
+      ['src/lib/views/library/MediaLibrary.svelte', 'ml-msg'],
+      ['src/lib/views/library/LyricsPane.svelte', 'ly-msg'],
+      ['src/lib/views/library/LiveOutputRail.svelte', 'lo-msg'],
+      ['src/lib/views/library/Announcements.svelte', 'an-msg'],
+    ]) {
+      expect(src(f), `${f}'s success line is silent`).toMatch(
+        new RegExp(`class="${cls}"[^>]*role="status"[^>]*aria-live="polite"`),
+      );
+    }
+  });
+});
+
 describe('R3-12 · errors.js is the one humaniser, on every surface', () => {
   it('History humanises its export error and announces it', () => {
     const f = src('src/lib/views/library/History.svelte');
@@ -1053,11 +1097,20 @@ describe('R3-12 · errors.js is the one humaniser, on every surface', () => {
     expect(f).toMatch(/role="alert"/);
   });
 
-  it('ImportReview and ThemeEditor route through the humaniser, not String(e)', () => {
+  it('ImportReview, ThemeEditor and the TEMPLATE pair route through the humaniser, not String(e)', () => {
+    // The template pair was added 2026-09-05. `String(e)` on a typed error from
+    // `error.rs` — which serialises as `{ kind, message }` — renders literally
+    // **"[object Object]"**, and six controls did it: every delete, duplicate and
+    // rename in the gallery, and the editor's save. The most likely one to be seen
+    // is the Service Lock refusing a delete mid-service, which is the one message
+    // in the set that is already written for a volunteer.
     for (const f of [
       'src/lib/views/library/ImportReview.svelte',
       'src/lib/views/themes/ThemeEditor.svelte',
       'src/lib/views/themes/ThemeGallery.svelte',
+      'src/lib/views/templates/TemplateGallery.svelte',
+      'src/lib/views/templates/TemplateEditor.svelte',
+      'src/lib/views/library/Announcements.svelte',
     ]) {
       const t = src(f);
       expect(t, `${f} still stringifies a typed error`).not.toMatch(/=\s*String\(e\)/);

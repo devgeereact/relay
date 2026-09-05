@@ -238,20 +238,48 @@ pub fn extract_pro_slides(bytes: &[u8]) -> Vec<String> {
     slides
 }
 
+/// The most a playlist may expand to, across every entry it holds.
+///
+/// A `.pro` file is XML with a song's words in it — a large one is a few hundred
+/// kilobytes. Sixty-four megabytes is far more than any real playlist and far less
+/// than a laptop's memory, which is the only thing standing between an emailed
+/// file and the operating system killing Relay mid-setup.
+pub const MAX_UNPACKED_BYTES: usize = 64 * 1024 * 1024;
+
 /// Parse a `.proplaylist` (a ZIP of `.pro` files) into songs. Each `.pro` entry
 /// becomes a song titled by its file stem, with its slides as sections.
 pub fn parse_proplaylist(zip_bytes: &[u8]) -> Result<Vec<ImportedSong>, String> {
     let cursor = std::io::Cursor::new(zip_bytes);
     let mut zip = zip::ZipArchive::new(cursor).map_err(|e| format!("not a valid playlist: {e}"))?;
     let mut songs = Vec::new();
+    let mut budget = MAX_UNPACKED_BYTES;
     for i in 0..zip.len() {
         let mut f = zip.by_index(i).map_err(|e| e.to_string())?;
         let name = f.name().to_string();
         if !name.to_lowercase().ends_with(".pro") {
             continue;
         }
+        // THE 256 MB IMPORT CAP BOUNDS THE COMPRESSED SIDE ONLY.
+        //
+        // `read_to_end` on a zip entry allocates whatever the entry expands to, and
+        // a playlist is a file somebody emails to a church. A megabyte of zeros is
+        // a gigabyte unpacked; nothing in the cap upstream sees that, because the
+        // file on disk was a megabyte. `take` makes the budget the real one — and
+        // it is a SHARED budget across entries, so a hundred entries just under an
+        // individual limit cannot add up past it either.
         let mut buf = Vec::new();
-        f.read_to_end(&mut buf).map_err(|e| e.to_string())?;
+        std::io::Read::by_ref(&mut f)
+            .take(budget as u64 + 1)
+            .read_to_end(&mut buf)
+            .map_err(|e| e.to_string())?;
+        if buf.len() > budget {
+            return Err(format!(
+                "This playlist unpacks to more than {} MB. \
+                 Import the songs you need as separate files.",
+                MAX_UNPACKED_BYTES / (1024 * 1024)
+            ));
+        }
+        budget -= buf.len();
         let slides = extract_pro_slides(&buf);
         if !slides.is_empty() {
             songs.push(ImportedSong {
@@ -293,6 +321,36 @@ fn stem(name: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    /// A PLAYLIST IS A FILE SOMEBODY EMAILS TO A CHURCH.
+    ///
+    /// The 256 MB import cap upstream measures the file on disk. A zip entry of
+    /// zeros costs almost nothing there and expands to whatever it likes on the
+    /// way in, so the cap that mattered was the one that did not exist.
+    #[test]
+    fn a_playlist_that_unpacks_to_gigabytes_is_refused_not_allocated() {
+        use std::io::Write;
+        let mut out = Vec::new();
+        {
+            let mut zip = zip::ZipWriter::new(std::io::Cursor::new(&mut out));
+            let opts: zip::write::FileOptions<()> = zip::write::FileOptions::default()
+                .compression_method(zip::CompressionMethod::Deflated);
+            zip.start_file("bomb.pro", opts).unwrap();
+            // 96 MB of zeros: past the 64 MB budget, and a few hundred KB on disk.
+            let chunk = vec![0u8; 1024 * 1024];
+            for _ in 0..96 {
+                zip.write_all(&chunk).unwrap();
+            }
+            zip.finish().unwrap();
+        }
+        assert!(
+            out.len() < 2 * 1024 * 1024,
+            "the compressed side must be small, or this test is not testing the bomb"
+        );
+        let err = parse_proplaylist(&out).expect_err("a 96 MB entry must be refused");
+        assert!(err.contains("unpacks to more than"), "{err}");
+    }
+
     use super::*;
 
     #[test]

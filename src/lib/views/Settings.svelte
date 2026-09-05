@@ -38,7 +38,9 @@
       (Object.keys(CATALOGUES[code] ?? {}).filter((k) => !k.startsWith('_')).length / TOTAL) * 100,
     );
   import { capture, meter, templates, initAudio, startCapture, stopCapture, setThresholds, setSttLanguage, setInputDevice, listTranslations, getActiveTranslation, setActiveTranslation, localIp, loadTemplates, getContentTemplates, setContentTemplate, getCrashReporting, setCrashReporting, serviceTargetMinutes, loadServiceTarget, setServiceTarget, latencyReport, latencyReset, latencySetEnabled, serviceLock, loadServiceLock, setServiceLock, rooms, loadRooms, saveRoom, useRoom, deleteRoom,
-    listOutputChannels, setChannelDisplay, activeVoiceProfile, languageReport, exportDiagnostics } from '../stores/capture.js';
+    listOutputChannels, setChannelDisplay, activeVoiceProfile, languageReport, exportDiagnostics, readErrors } from '../stores/capture.js';
+  import Loading from '../ui/Loading.svelte';
+  import ErrorState from '../ui/ErrorState.svelte';
   import { captureRoom, observedNote, applyRoom, describeApply } from '../rooms.js';
   import { snapshotPath, KEEP_SNAPSHOTS } from '../updater.js';
   import { diagnose, drift } from '../latency.js';
@@ -274,8 +276,14 @@
   // tables. They render as "not measured" and "not reviewed", never as a score. A
   // number in either would be the single most misleading thing in this product.
   let langs = [];
+  // The third fact the array cannot carry (RG-95): asked-and-empty, still-asking,
+  // and asked-and-failed all render `[]`. Without this, the pane claimed "the
+  // language tables could not be read" in the frames before the read returned —
+  // an error message for a state that is not an error.
+  let langsAsked = false;
   onMount(async () => {
     langs = await languageReport();
+    langsAsked = true;
   });
 
   async function doSaveRoom() {
@@ -1118,6 +1126,10 @@
             scripture on a wall. Fixing one is a one-line change to
             <span class="r-mono">data/book_aliases.json</span>, no code required.
           </p>
+        {:else if !langsAsked}
+          <Loading what="the language tables" />
+        {:else if $readErrors.languageReport}
+          <ErrorState error={$readErrors.languageReport} />
         {:else}
           <p class="s-note">The language tables could not be read.</p>
         {/if}

@@ -1078,11 +1078,13 @@ impl NavResult {
 // worse than no test: it protects nothing while reading, in its own reason string,
 // as an open bug.
 //
-// R2-C and R2-D remain open, remain RED, and remain ignored. Run them with:
+// **R2-C and R2-D were closed too** (DECISIONS §54, CLAUDE.md rule 38), so this
+// file now carries NO ignored test — `cargo test e2e::` runs all of them. The
+// sentence here used to say the two "remain open, remain RED, and remain ignored"
+// and stayed that way after they were fixed; `grep -c '#\[ignore\]'` on this file
+// answers the question the sentence was answering badly.
 //
-//   cargo test r2_ -- --ignored --nocapture
-//
-// All three are the SAME class of bug this repo has now had four times: a rule
+// All four are the SAME class of bug this repo has now had four times: a rule
 // enforced on one surface and skipped on its twin.
 // ════════════════════════════════════════════════════════════════════════════
 
