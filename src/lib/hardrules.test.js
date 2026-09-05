@@ -132,6 +132,23 @@ describe('RG-76 · the mechanically checkable hard-way rules', () => {
   });
 
   // ── Not a numbered rule: a constant four documents hard-code ─────────────
+  it('RG-98 · the dev server does not put itself on the LAN unless asked', () => {
+    // It bound every interface by default, and `npm audit`'s two reachable
+    // advisories — Vite's optimized-deps path traversal and esbuild's "any website
+    // can send any request to the dev server and read the response" — are reachable
+    // exactly through that. The fixes are all semver majors, so the version numbers
+    // are not the lever; who can connect is.
+    const cfg = read('vite.config.js');
+    expect(cfg, 'the LAN opt-in is gone').toMatch(/RELAY_DEV_LAN/);
+    for (const block of ['server', 'preview']) {
+      const at = cfg.indexOf(`  ${block}: {`);
+      expect(at, `${block} block is gone — update this test with it`).toBeGreaterThan(-1);
+      const body = cfg.slice(at, cfg.indexOf('},', at));
+      expect(body, `${block} binds every interface by default`).not.toMatch(/host:\s*true/);
+      expect(body, `${block} does not read the opt-in`).toMatch(/host:\s*DEV_LAN/);
+    }
+  });
+
   it('the docs cite the same default sensitivity the router actually uses', () => {
     // `Thresholds::default()` calls `from_sensitivity(DEFAULT_SENSITIVITY)`, so the
     // "exactly ONE baseline" invariant is unrepresentable otherwise — good. But four

@@ -2899,3 +2899,53 @@ still loads. It does **not** prove that a background video renders on a projecto
 The first person to put a media background on a wall with this build should check
 that it paints, and if it does not, the browser console on the output page names the
 directive that blocked it.
+
+---
+
+## 65. A development convenience is not a default (2026-09-05)
+
+**The Vite dev server bound every interface, and the reason was good: a kiosk
+screen or an OBS machine on another box can load
+`http://<this-machine-ip>:5032/output.html` while you are working on the output
+page. The cost is that `npm run tauri dev` at a church puts a Vite dev server on
+that church's network, and two of the ten `npm audit` advisories are reachable
+precisely and only through that.**
+
+Vite's path traversal in optimized-deps `.map` handling (HIGH) and esbuild's
+*"any website can send any request to the dev server and read the response"*
+(MODERATE) are dev-server bugs. Every fix is a semver **major** — vite 5 → 8,
+vitest 2 → 4, svelte 4 → 5 — and Svelte 4 is a recorded stack choice whose
+migration would touch every component, so the version numbers were never the
+lever available here. **Who can connect is.**
+
+### The decision
+
+`server.host` and `preview.host` are loopback unless `RELAY_DEV_LAN=1` is set.
+
+```bash
+RELAY_DEV_LAN=1 npm run tauri dev      # the OBS-on-another-machine session
+```
+
+A packaged Relay has **no server on 5032 at all** — the LAN output page is the
+Rust one on `:8032`, which is a different program with a different threat model
+(DECISIONS §35, §64). So the LAN dev server is a *development convenience*, and a
+convenience should not be the thing that is switched on by default on somebody
+else's network.
+
+### Why an environment variable rather than a config edit
+
+The old advice, written in the file itself, was *"set `host: 'localhost'` here for
+a session on a network you do not control"*. That asks a person to edit a tracked
+file, in the moment, and then remember to put it back — and the version of that
+mistake which lands on `main` is the one where somebody commits the safe value and
+somebody else reverts it as noise. An env var cannot be committed by accident, and
+it makes the LAN case an explicit act each time.
+
+### What this costs, said plainly
+
+Anyone who genuinely needs a second machine to see the dev output page now has to
+know the variable exists. It is named in `vite.config.js` at the line it affects,
+in `CLAUDE.md`, and in the register row. **`npm audit --omit=dev` is now a CI
+gate**, so the production tree cannot drift from zero without the build saying so,
+and `cargo audit` runs beside it — the half of the dependency tree that actually
+ships had never been checked at all until 2026-09-04.

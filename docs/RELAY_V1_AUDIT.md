@@ -66,7 +66,7 @@ decision), [§6](#6-the-fix-process-start-to-finish) (what was actually changed)
 
 | | Command | Result |
 |---|---|---|
-| Frontend suite | `npx vitest run` | **964 passed**, 0 skipped, 71 files |
+| Frontend suite | `npx vitest run` | **965 passed**, 0 skipped, 71 files |
 | Rust suite | `cd src-tauri && cargo test` | **663 passed**, 0 failed, 17 ignored |
 | End-to-end fire path | `cargo test e2e::` | **38 passed, 0 ignored** |
 | Format gate | `cargo fmt --all -- --check` | clean |
@@ -79,9 +79,9 @@ decision), [§6](#6-the-fix-process-start-to-finish) (what was actually changed)
 | Detection gate | `cargo test eval::tests::print_scorecard -- --nocapture` | 74 cases · **100 % recall · 0 wrong verses · 0 paraphrases auto-fired** |
 | Version agreement | `npm run version:check` | `0.1.0-4` consistent across all three files |
 | Surface inventory | `node scripts/qa-inventory.mjs` | 48 components (47 reachable), 463 controls, 133 commands, **0 dead controls, 0 unreachable commands, 0 controls without an accessible name** |
-| Production dependencies | `npm audit --omit=dev` | **0 vulnerabilities** |
+| Production dependencies | `npm audit --omit=dev` | **0 vulnerabilities** — now a CI gate |
 | All dependencies | `npm audit` | 10, **every one in dev tooling** — see RG-98 |
-| **Rust dependencies** | `cargo audit` (installed 2026-09-04 — it had **never been run**) | 3 advisories: `h2` fixed by a lockfile update; **two 7.5-HIGH `quick-xml`** advisories reach Relay through `plist` through Tauri and need an upstream bump — RG-101 |
+| **Rust dependencies** | `cargo audit` (installed 2026-09-04 — it had **never been run**) | 3 advisories on the first run; **0 vulnerabilities after 2026-09-05**, all three cleared by lockfile updates. Now a CI gate — RG-101 |
 | Update channel | `npm run updater:check` (written by this pass) | **HTTP 404 — the endpoint resolves to nothing** |
 
 **What did not run, and why.** There is no church, no projector, no congregation, no second
@@ -1109,9 +1109,13 @@ Relay and a church is evidence, a certificate and a published release — not co
    hub now refuses a handshake from a page Relay did not serve (RG-108), and the console's policy
    names Relay's own ports instead of the whole internet (RG-85). Both were probed against the
    packaged binary; what neither can prove without a room is in [§16](#16-remaining-risks--what-could-not-be-verified).
-   What is left: **RG-101** (the two `quick-xml` advisories, which need a Tauri bump — and a CI job
-   that runs `cargo audit`, so the next one is not found eleven months late) and **RG-98** (decide
-   the dev-server default).
+   **RG-98 and RG-101 closed the same day**: `cargo audit` reports zero vulnerabilities (the two
+   `quick-xml` advisories this audit recorded as needing a Tauri bump did not — `plist` 1.10.0
+   already depends on the fixed version, and a dependency arriving *through* Tauri is not
+   necessarily pinned *by* it), and the dev server is loopback unless `RELAY_DEV_LAN=1`. Both
+   audits now run in CI. **What is left in the register is four rows and not one of them is a
+   commit**: RG-32 and RG-50 want a second Sunday and a native speaker, RG-41 is a correction kept
+   on the record, and RG-83 is the publishing action below.
 
 ---
 

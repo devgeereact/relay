@@ -20,6 +20,14 @@ const FATAL_SVELTE_WARNINGS = new Set([
   'missing-declaration', // an undefined variable/store used in a component
 ]);
 
+/**
+ * Does the dev server listen on the LAN? Off unless asked (RG-98, DECISIONS §65).
+ *
+ * `true` binds every interface, `false` binds loopback. See the comment at
+ * `server.host` for why the default moved and what it costs.
+ */
+const DEV_LAN = process.env.RELAY_DEV_LAN === '1';
+
 export default defineConfig({
   plugins: [
     svelte({
@@ -40,36 +48,41 @@ export default defineConfig({
   // committed in a branch lands on main at merge. To run two copies at once,
   // override at the CLI for the one you care less about, and never in this file:
   // npm run dev -- --port 5033
+  // WHO CAN REACH THE DEV SERVER (RG-98, DECISIONS §65).
+  //
+  // This bound every interface. The reason was real — a kiosk screen or an OBS
+  // machine loading `http://<this-machine-ip>:5032/output.html` during development
+  // — and it put a Vite dev server on a church LAN, which is where the cost is.
+  // `npm audit` reports ten advisories and **every one is in dev tooling**
+  // (production is clean: `npm audit --omit=dev` → 0). Two of them are reachable
+  // exactly because of this: Vite's path traversal in optimized-deps `.map`
+  // handling (HIGH) and esbuild's *"any website can send any request to the dev
+  // server and read the response"* (MODERATE). Every fix is a semver major (vite
+  // 5 → 8, vitest 2 → 4, svelte 4 → 5) — Svelte 4 is a recorded stack choice and a
+  // runes migration would touch every component — so the version numbers are not
+  // the lever. The lever is who can connect.
+  //
+  // **The default is now loopback.** A packaged Relay has no server on 5032 at all
+  // (that is `:8032`, the Rust one), so the LAN case is a DEVELOPMENT convenience,
+  // and a convenience should not be the thing that is on by default on somebody
+  // else's network. Set `RELAY_DEV_LAN=1` for the session where you actually need
+  // an OBS machine to reach the dev output page:
+  //
+  //   RELAY_DEV_LAN=1 npm run tauri dev
+  //
+  // It is an env var and not a config edit so that turning it on cannot be
+  // committed by accident, which is the shape this whole finding has.
   server: {
     port: 5032,
     strictPort: true,
-    // Bind all interfaces so LAN devices (kiosk screens, OBS on another machine)
-    // can load the output page over http://<this-machine-ip>:5032 during dev.
-    //
-    // ⚠️ WEIGH THIS BEFORE RUNNING `tauri dev` ON A CHURCH NETWORK (RG-98).
-    // `npm audit` reports ten vulnerabilities and **every one of them is in a dev
-    // tool** — production dependencies are clean (`npm audit --omit=dev` → 0). Two
-    // of them are reachable precisely because of this line: Vite's path traversal
-    // in optimized-deps `.map` handling (HIGH), and esbuild's "any website can send
-    // any request to the dev server and read the response" (MODERATE). Both are
-    // dev-server bugs, and this dev server is deliberately on the LAN.
-    //
-    // Every fix is a semver MAJOR (vite 5 → 8, vitest 2 → 4, svelte 4 → 5), so none
-    // of them is an audit-pass edit — svelte 4 is a recorded stack choice and a
-    // runes migration would touch every component. **The exposure only exists while
-    // `npm run tauri dev` is running**, and a packaged Relay has no server on 5032
-    // at all. Leaving the default LAN-bound is a deliberate choice, not an
-    // oversight: set `host: 'localhost'` here for a session on a network you do not
-    // control, and accept that an OBS machine can no longer reach the dev output
-    // page while you do.
-    host: true,
+    host: DEV_LAN,
   },
   // Same port as dev: `vite preview` otherwise drifts to the shared 4173,
-  // which no project owns and which collides across checkouts.
+  // which no project owns and which collides across checkouts. Same LAN rule.
   preview: {
     port: 5032,
     strictPort: true,
-    host: true,
+    host: DEV_LAN,
   },
   build: {
     // Two entries: the operator console (index.html) and the native output

@@ -136,6 +136,54 @@ jobs:
           path: src-tauri/target/release/bundle/msi/*.msi
           if-no-files-found: error
 
+  # NOTHING EVER CHECKED THE HALF OF THE DEPENDENCY TREE THAT SHIPS.
+  #
+  # `npm audit` was run by hand from time to time; `cargo audit` had **never been
+  # run at all** until 2026-09-04, and it found three advisories on the first go —
+  # one of them reachable through `reqwest` on the model-download and update paths.
+  # A packaged Relay contains no Node at all, so the Rust half is the half that
+  # actually ships, and it was the unaudited half.
+  #
+  # Two gates, and they are deliberately different:
+  #
+  #   * `cargo audit` fails on a VULNERABILITY. Its 18 warnings are unmaintained
+  #     GTK3 Linux bindings that neither shipped platform builds, so `--deny
+  #     warnings` here would fail the build over code that is never compiled.
+  #   * `npm audit --omit=dev` must stay at ZERO. The full `npm audit` is ten
+  #     advisories, every one in dev tooling, and every fix a semver major — that
+  #     is recorded at the line it affects (`vite.config.js`, RG-98) rather than
+  #     fought here on every push.
+  #
+  # This job needs no build: both tools read a lockfile.
+  audit:
+    name: Dependency advisories
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-audit
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+
+      - name: Rust advisories (fails on a vulnerability, not on a warning)
+        working-directory: src-tauri
+        run: cargo audit
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+
+      # Production dependencies only. The dev-tooling advisories are a recorded
+      # decision, not a gate — see vite.config.js.
+      - name: Production npm advisories must stay at zero
+        run: npm audit --omit=dev
+
   # THE NODE MATRIX IS NOT DECORATION — DO NOT TRIM IT TO ONE.
   #
   # `npm test` passed on Node 20, which is all CI ran, and failed on Node 22 and

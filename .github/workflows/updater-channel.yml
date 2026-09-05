@@ -1,0 +1,46 @@
+name: Update channel
+
+# DOES A SHIPPED COPY OF RELAY HAVE ANY WAY TO RECEIVE A FIX?
+#
+# `npm run updater:check` reads the endpoint out of BOTH Tauri configs — it does
+# not restate a URL — fetches it, and reports what an installed Relay would find
+# there. Today it finds a 404 (RG-83): every release so far is a DRAFT and a
+# PRE-RELEASE, and GitHub's `/releases/latest/` excludes both, so
+# `…/releases/latest/download/latest.json` resolves to nothing and no installed
+# copy can ever update itself.
+#
+# ── Why this is a button and not a gate ──────────────────────────────────────
+#
+# Adding it to `release.yml` would fail on every tag, because the release it is
+# checking is still a draft at that moment — the whole point of `releaseDraft:
+# true` is that a person approves it before any church sees it. A step that is
+# red every single time teaches everyone to ignore it, which is worse than not
+# having it: the register already carries this defect, and what is needed is a
+# way to watch it GO GREEN, once, deliberately.
+#
+# So: run it by hand, from the Actions tab, straight after approving a release.
+# `--strict` exits 1 on a dead channel, so the answer is the job's colour.
+#
+# A weekly `schedule:` here would also catch a channel that dies later — worth
+# adding the day RG-83 closes, and pointless while it is open.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  channel:
+    name: Would an installed copy find an update?
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+
+      # No `npm ci`: the script uses nothing but Node's own fetch, deliberately,
+      # so this can run on a clean checkout in seconds.
+      - name: Fetch the endpoint both configs point at
+        run: node scripts/check-updater.mjs --strict
