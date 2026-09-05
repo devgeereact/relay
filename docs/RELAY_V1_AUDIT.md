@@ -1,6 +1,11 @@
 # Relay — V1 Production Audit
 
-**2026-09-03 · branch `audit/v1-production-sweep` · version `0.1.0-4`.**
+**2026-09-03, revised 2026-09-05 · branch `audit/v1-production-sweep` · version `0.1.0-4`.**
+
+> **The 2026-09-05 revision** re-ran every gate in §0, closed twenty more register rows — among
+> them **two P0s in the corpus repair this document had described as done** — and re-scored §15.
+> The verdict is unchanged, [§15.3](#153-live-service-reliability--6380) did not move by a point,
+> and one score went **down**. What changed is written at each row rather than summarised here.
 
 Two production-readiness briefs, answered against the code that exists rather than the code
 described — a 42-phase **PWA master audit** and a **Relay live-service audit** numbered §00–§105 —
@@ -44,8 +49,8 @@ decision), [§6](#6-the-fix-process-start-to-finish) (what was actually changed)
 | [12](#12-performance-and-long-service-behaviour) | Performance | Measured latency, and the two hours nobody has run |
 | [13](#13-accessibility-responsiveness-and-ux) | Accessibility & UX | |
 | [14](#14-privacy-retention-and-observability) | Privacy | What leaves the device, and what can now be erased |
-| [15](#15-the-scorecards) | **The scorecards** | Three, because one average hides what matters |
-| [16](#16-remaining-risks--what-could-not-be-verified) | **Remaining risks** | Eleven, named plainly |
+| [15](#15-the-scorecards) | **The scorecards** | Three, because one average hides what matters — and on 2026-09-05 one of them did not move at all |
+| [16](#16-remaining-risks--what-could-not-be-verified) | **Remaining risks** | Fourteen, named plainly |
 | [17](#17-brief-disposition--every-phase-both-briefs) | Brief disposition | Every PWA phase 01–42 and every Relay section 00–105 |
 | [18](#18-recommended-next-steps-in-order) | Next steps | In order, and none of them is a large piece of engineering |
 | [19](#19-the-launch-decision) | The launch decision | |
@@ -84,6 +89,23 @@ decision), [§6](#6-the-fix-process-start-to-finish) (what was actually changed)
 | **Rust dependencies** | `cargo audit` (installed 2026-09-04 — it had **never been run**) | 3 advisories on the first run; **0 vulnerabilities after 2026-09-05**, all three cleared by lockfile updates. Now a CI gate — RG-101 |
 | Update channel | `npm run updater:check` (written by this pass) | **HTTP 404 — the endpoint resolves to nothing** |
 
+**Re-run and added on 2026-09-05.** Every row above was re-run; these are the ones that are new
+or that changed their answer:
+
+| | Command | Result |
+|---|---|---|
+| Rust suite | `cd src-tauri && cargo test` | **663 passed**, 0 failed, 17 ignored |
+| Frontend suite | `npx vitest run` | **965 passed**, 71 files |
+| **Rust dependencies** | `cargo audit` | **0 vulnerabilities** (3 on the first run, 2026-09-04); 18 warnings, all unmaintained GTK3 **Linux** bindings |
+| **The kiosk hub's origin gate, on the packaged binary** | raw WebSocket handshakes with nine `Origin` values | `101` for none, `:8032` on two hosts, `:5032`, `tauri://localhost`; **`403`** for `evil.example.com`, `null`, a LAN host on `:3000`, an `https://` origin |
+| **Ranged media, on the packaged binary** | `curl -H 'Range: bytes=500-599' …/media/12` | `206` + `Content-Range: bytes 500-599/1024`, and the 100 bytes match the file exactly; a range past the end → `416` |
+| **The console under the narrowed CSP** | packaged binary, isolated `RELAY_DB_PATH` | booted clean; **exactly one** `console: webview up (operator)` — the bundle still loads |
+| The migration, on a v2 database | `cargo test corpus` and the three new `db::tests` | the corpus repair reaches an existing install, keeps every past detection's reference, and is a no-op the second time |
+
+**What the 2026-09-05 pass still could not reach**, beyond the standing list: a projector under
+the narrowed CSP, and a real OBS browser source's `Origin` header. Both are named at the rows
+they affect rather than here.
+
 **What did not run, and why.** There is no church, no projector, no congregation, no second
 operator, and no code-signing certificate on this machine. There is no recording of a real
 sermon — so **word error rate remains unmeasured in every language**, which is the sentence
@@ -105,8 +127,23 @@ a guard that fails when the scanner itself stops seeing anything.
 
 > ## NOT READY for general release · READY WITH CONDITIONS for a supervised pilot
 
-Unchanged in verdict from [qa/RELAY_GAP.md](qa/RELAY_GAP.md) §24 (2026-08-31), re-verified, and
-now with **one blocker removed and one added**.
+Unchanged in verdict from [qa/RELAY_GAP.md](qa/RELAY_GAP.md) §24 (2026-08-31), re-verified on
+2026-09-03, and **re-verified again on 2026-09-05 after a pass that closed twenty register rows
+and found two P0s.** The verdict did not move, and the reason it did not is the whole argument
+of this document: **everything closed since was closed by reading and by tests, and the five
+things below all want a room, a purchase or a publishing action.**
+
+> **What the 2026-09-05 pass changed, in one paragraph.** The Bible-corpus repair committed the
+> day before **could never have run** — it sat on the `user_version == 0` branch that no shipped
+> install is on, and on that branch it opened a transaction inside one and errored out of
+> `migrate` altogether. Both are fixed and both are now held by tests that assert the DATA on a
+> v2 database. Alongside that: eleven list surfaces stopped telling operators to redo work they
+> had already done, five controls stopped rendering `[object Object]`, the kiosk hub stopped
+> handing the preacher's stage monitor to anything on the church wifi, the console's policy
+> stopped granting `http:` to the whole internet, a playlist stopped being able to unpack without
+> bound, and `cargo audit` — never run before in this project's life — went from three advisories
+> to **zero**, with both dependency audits now running in CI. **None of that is field evidence**,
+> which is why [§15.3](#153-live-service-reliability--6380) did not move by a single point.
 
 **What holds up, and it is most of the product.** The live path is genuinely well built and the
 safety architecture is not decorative. Content reaches a wall through exactly one function
@@ -128,7 +165,15 @@ against a test double.
 | 2 | **Word error rate has never been measured, in any language** | Needs 30 minutes of real sermon audio. The ruler is built and runs in CI |
 | 3 | **Neither platform has a code-signing certificate** | `gh secret list` holds zero of the fourteen. Every release so far went out unsigned, on both platforms |
 | 4 | **Nobody but the author has ever run a service** | Needs a Sunday |
-| 5 | **The auto-updater points at a URL that returns 404** | Verified again this session. Still true — it is a *publishing* action, not a commit |
+| 5 | **The auto-updater points at a URL that returns 404** | Verified again on 2026-09-05. Still true — it is a *publishing* action, not a commit. Every release so far is both a draft and a pre-release, and GitHub's `/releases/latest/` excludes both |
+
+**No sixth blocker was added, and one nearly was.** The corpus defect (RG-99 … RG-105) is the
+only thing found since that could have put a wrong verse on a wall — a correct reference, heard
+correctly, gated correctly, rendering the words of the next verse — and it is fixed in the data,
+in the migration and in the tests. It is not a blocker because no evidence is outstanding for it;
+it is a **condition**, and it is condition 8 in [§19](#19-the-launch-decision): the repair has
+never run on a real church database, and one `sqlite3` line before and after an upgrade settles
+that in a minute.
 
 **What changed about #5, and why it is no longer invisible.** It is the same 404, but it can no
 longer hide. `npm run updater:check` reads the endpoint out of both Tauri configs and fetches
@@ -670,6 +715,8 @@ independent KJV: **15 verses changed and no others** — 7 restored, 8 cleaned.
 
 ## 7. Regression results
 
+### 7.1 The 2026-09-03 pass
+
 Run after the last change, in this order, from a clean tree:
 
 | Gate | Before the pass | After |
@@ -687,6 +734,29 @@ Run after the last change, in this order, from a clean tree:
 
 The full frontend suite was run **four times** end to end after the last change; all four were
 clean, including the assertion that had been intermittently failing.
+
+### 7.2 The 2026-09-05 pass
+
+| Gate | Before | After |
+|---|---|---|
+| `cargo fmt --all -- --check` | clean | **clean** |
+| `cargo clippy --all-targets -- -D warnings` | clean | **clean** (it failed twice during the pass — a large `Err` returned from a handshake closure, and an `.err().expect()`; both fixed rather than allowed) |
+| `cargo test` | 649 / 17 ignored | **663 passed / 0 failed / 17 ignored** |
+| `cargo test e2e::` | 38 / 0 ignored | **38 / 0 ignored** |
+| `npx vitest run` | 952 in 71 files | **965 in 71 files, 0 failed** |
+| `cargo audit` | **never run** | **0 vulnerabilities**, 18 warnings (GTK3 Linux bindings) |
+| `npm audit --omit=dev` | 0, checked by hand | **0, and now a CI gate** |
+| `npm run build` | clean | **clean** |
+| `npm run tauri build -- --no-bundle --features metal` | clean | **clean**, run four times across the pass |
+| `npm run version:check` | consistent | **consistent** |
+| `node scripts/qa-inventory.mjs` | 0 dead controls | **0 dead controls, 0 unreachable commands, 0 unnamed controls** |
+| `npm run updater:check` | HTTP 404 | **HTTP 404** — unchanged, and now also runnable from the Actions tab |
+
+**Every new test in this pass was verified by reintroducing its defect and watching it fail** —
+fourteen of them, including the two that matter most: setting `SCHEMA_VERSION` back to 2 turns
+the corpus-migration tests red, and stripping the re-link turns the detection-reference test red.
+Two source-scanning tests also gained a guard that fails when the scanner stops seeing anything,
+because this repository has twice shipped an instrument that passed by matching nothing.
 
 **Adjacent functionality specifically re-tested**, because none of these fixes is as local as it
 looks: the fire path (`e2e.rs`, 38), rehearsal containment, the panic controls, the service lock
@@ -867,7 +937,7 @@ evidence that exists.
 Three, because the briefs ask for three and because a single average hides exactly the thing
 that matters.
 
-### 15.1 PWA master audit — 81/100
+### 15.1 PWA master audit — 84/100
 
 Scored on the brief's own ten axes. **Where a phase is structurally N/A for a desktop
 application, the axis is scored on the equivalent Relay actually has**, and the row says which.
@@ -875,21 +945,21 @@ application, the axis is scored on the equivalent Relay actually has**, and the 
 | Axis | Score | Why |
 |---|---|---|
 | Functionality | **9**/10 | Every rendered control reaches a real command; 0 dead controls; the fire path is covered end to end. −1 for the import path that could kill the process until this pass |
-| Security | **8**/10 | Clean production dependencies, a written threat model, the drive-by closed and verified in production. −2 for an unauthenticated control plane (a recorded decision, but still an exposure) and RG-85/RG-97 open |
+| Security | **9**/10 | ▲ +1, 2026-09-05. RG-85 and RG-97 are closed, and three more with them: the kiosk hub refuses a page Relay did not serve (RG-108), an imported SVG is no longer an active document (RG-107), and `cargo audit` — which had never been run — reports **0 vulnerabilities** with both audits now in CI. −1 for the unauthenticated control plane, which is a recorded decision and still an exposure, and because an `Origin` is a claim a browser makes honestly and other software can forge |
 | PWA | **6**/10 | Scored as *distribution and installability*: a signed installer, an updater, an offline bundle on a USB stick. −4 because the updater endpoint 404s and neither platform is code-signed |
 | Offline | **10**/10 | Not approximated — it is the resting state. Nothing on the live path touches a network |
 | Performance | **8**/10 | 139 ms median first partial, 0 dropped partials, bounded memory. −2 because mic→screen p95 has never been measured in a room |
-| Accessibility | **8**/10 | 0 unnamed controls, focus traps, assertive errors, no native dialogs. −2 for no screen-reader run and no keyboard-only pass by a person |
+| Accessibility | **9**/10 | ▲ +1, 2026-09-05. Six *"it is on the screens"* lines were silent to a screen reader and are now announced; five controls rendered `[object Object]`; a failed save was shown in success green with no role. −1, and it does not move until somebody does it: **no screen-reader run and no keyboard-only pass by a person** |
 | Responsiveness | **8**/10 | Scored as *output scaling*: `cqw` templates render identically at any output size, with a measured fit floor. Console breakpoints are N/A |
 | SEO | **N/A** | There is no public surface, no crawler, and nothing indexable. Scored out of the total rather than as a zero — see the note below |
-| UX | **8**/10 | Mode-aware transport, panic controls that cannot lie, honest degradation. −2 for RG-95 |
+| UX | **9**/10 | ▲ +1, 2026-09-05. RG-95 is closed across eleven surfaces: a list that failed to load no longer tells an operator to redo work they have already done. −1 because nobody but the author has operated any of it |
 | Reliability | **8**/10 | Service lock, heartbeats, pre-air validation, crash recovery that refuses to restore on-air-ness. −2 because one wrong verse reached a real congregation and one service is one sample |
 
-**73 of a possible 90 → 81/100 normalised.** SEO is excluded from the denominator rather than
+**76 of a possible 90 → 84/100 normalised.** SEO is excluded from the denominator rather than
 scored 0/10: a private local application has no indexable surface, and awarding it zero would
 report a failure where there is no requirement. That is stated rather than buried.
 
-### 15.2 Relay production score — 80/100
+### 15.2 Relay production score — 81/100
 
 | Area | Score | Note |
 |---|---|---|
@@ -905,20 +975,28 @@ report a failure where there is no requirement. That is stated rather than burie
 | ATEM | **5**/10 | Probed and reported, never driven. Bridging hardware is the recorded strategy |
 | ProPresenter | **6**/10 | Import works. There is no live interop and none is claimed |
 | Recovery | **9**/10 | Position restored, on-air-ness deliberately not |
-| Live-service UX | **8**/10 | |
+| Live-service UX | **9**/10 | ▲ +1 — see the UX row in 15.1 |
 | PWA / distribution | **6**/10 | The 404 endpoint and the absent certificates |
 | Performance | **8**/10 | |
-| Accessibility | **8**/10 | |
-| Security | **8**/10 | |
-| Data integrity | **9**/10 | Orphans and missing indexes both closed this pass |
+| Accessibility | **9**/10 | ▲ +1 — see 15.1 |
+| Security | **9**/10 | ▲ +1 — see 15.1 |
+| Data integrity | **8**/10 | ▼ **−1, and it is the only score that went DOWN.** The previous 9 was awarded without knowing that the corpus repair it was scoring **had never run on any path**: it was placed on the `user_version == 0` branch that no shipped install is on, and on that branch it opened a transaction inside one and errored out of `migrate` altogether (RG-102, RG-103). Both are fixed, with tests that drive the real `migrate` on a v2 database and assert the DATA rather than the schema — but a 9 for a repair nobody had run was a number about a hope. Seven smaller findings are filed and deliberately unfixed (RG-113), including no `busy_timeout` on a file two Relay windows can open |
 | Observability | **9**/10 | Two new instruments; the report names what it cannot see |
 | Long-service stability | **6**/10 | 49.5 minutes of real evidence. Two hours is untested |
 
-**Total: 159/200 → 80/100.**
+**Total: 161/200 → 81/100.**
 
 ### 15.3 Live-service reliability — 63/80
 
 The score the brief insists must not be hidden by strong scores in cosmetic areas.
+
+> **Not one row moved on 2026-09-05, and that is the finding.** Two P0s were closed that day,
+> five surfaces stopped lying about failed reads, the kiosk hub stopped handing the preacher's
+> monitor to the wifi and the dependency tree went to zero vulnerabilities — and **none of it is
+> field evidence.** This scorecard only moves for a room: a measured word error rate, a second
+> service, an operator who did not write Relay, a projector, two hours. Every one of the eight
+> rows below is capped by something that costs a Sunday morning rather than a commit, which is
+> exactly why the brief asks for it separately.
 
 | | Score |
 |---|---|
@@ -949,8 +1027,9 @@ Stated plainly, because a risk that is not named is a risk that is being hidden.
 4. **Two code-signing certificates.** Neither platform has one. Every release so far is unsigned
    on both. `sign-local.sh` reproduces the *conditions* ad hoc and passes; it cannot reproduce
    Gatekeeper.
-5. **The updater endpoint.** Still 404. Now instrumented from two directions, but instrumenting
-   a dead channel does not make it live.
+5. **The updater endpoint.** Still 404. Now instrumented from three directions — the script, the
+   Settings row, and a workflow you can run from the Actions tab — but instrumenting a dead
+   channel does not make it live.
 6. **Windows.** Not built or run in this session. CI covers compile, format, lint and tests;
    nothing here covers behaviour.
 7. **A second and third service, and one run by somebody who did not write Relay.** The largest
@@ -958,26 +1037,12 @@ Stated plainly, because a risk that is not named is a risk that is being hidden.
 8. **A two-hour run.** 49.5 minutes is the longest evidence that exists.
 9. **The media streaming path (F-05)** is verified by a 404 and by reading the code, not by a
    test that serves a large file to three clients.
-10. **RG-85's CSP narrowing** cannot be verified without a kiosk screen, and an unverified CSP
-    change is a blank screen in a church.
-11b. **Two things about the 2026-09-05 LAN narrowing that only a room can answer.** *(a)* The
-    console's CSP no longer grants `http:` to every host, and `tauri dev` does not exercise the
-    CSP at all — so nobody has yet watched a **background video paint on a projector** under the
-    narrowed policy. The packaged build boots and prints its one heartbeat, which proves the
-    bundle loads; it does not prove a media layer renders. If it does not, the output page's own
-    console names the directive that blocked it. *(b)* The kiosk hub now refuses a handshake whose
-    `Origin` is not one Relay served. **No OBS install here could confirm what `Origin` a real
-    browser source sends** — the reasoning is that it is the page's own `:8032` origin, and
-    `RELAY_KIOSK_ANY_ORIGIN=1` exists precisely because that reasoning could be wrong on somebody's
-    setup.
-
-11a. **The corpus repair now runs on real installs, and no real install has run it.** RG-102 …
-    RG-105 were found and fixed by reading and by tests on 2026-09-05; what none of that reaches
-    is a church laptop with a v2 database, a year of detections in it, and the boot that repairs
-    the Bible underneath them. The check that settles it takes one line per machine:
-    `sqlite3 "$HOME/Library/Application Support/com.relay.app/relay.db" "PRAGMA user_version; SELECT COUNT(*) FROM verses;"`
-    before the upgrade, and the same again after.
-
+10. **The CSP narrowing was taken on 2026-09-05, and half of it is still unverified.** The policy
+    is held by a test that reads it out of `tauri.conf.json` and asserts it still permits the
+    media URL `main::fire_media` builds while refusing an arbitrary host, and the packaged binary
+    boots and prints its one heartbeat — so the bundle loads. **Nobody has watched a background
+    video paint on a projector under it.** `tauri dev` does not exercise the CSP at all. If it
+    fails, the output page's own console names the directive that blocked it.
 11. **The bounded capture queue (F-06) has not been exercised by a real microphone.** The change
     is two lines inside cpal's real-time callback, and cpal's callback only runs with a real
     device open. The existing audio harness (`audio::gate`, `chunks_as_captured`) deliberately
@@ -991,8 +1056,26 @@ Stated plainly, because a risk that is not named is a risk that is being hidden.
     Listening on this branch should check Settings → Diagnostics afterwards and confirm *audio
     dropped (never heard)* reads 0.**
 
----
+12. **The corpus repair now runs on real installs, and no real install has run it.** RG-102 …
+    RG-105 were found and fixed by reading and by tests on 2026-09-05; what none of that reaches
+    is a church laptop with a v2 database, a year of detections in it, and the boot that repairs
+    the Bible underneath them. The check that settles it takes one line per machine, before the
+    upgrade and again after:
+    `sqlite3 "$HOME/Library/Application Support/com.relay.app/relay.db" "PRAGMA user_version; SELECT COUNT(*) FROM verses;"`.
 
+13. **What `Origin` a real OBS browser source sends.** The kiosk hub now refuses a handshake from
+    an origin Relay did not serve (RG-108). The reasoning is that a browser source pointed at
+    `http://<ip>:8032/output.html` sends exactly that origin, and nine origins were probed against
+    the packaged binary — but **no OBS install here could confirm the real one**.
+    `RELAY_KIOSK_ANY_ORIGIN=1` exists precisely because that reasoning could be wrong on somebody's
+    setup, and the refusal names it in the line it prints.
+
+14. **Seven smaller database findings are filed and unfixed** (RG-113) — among them no
+    `busy_timeout` on a file two Relay windows can open, and an environment swap that can leave a
+    church with no active room after a crash. None was observed at runtime; none is a wrong verse
+    on a wall; all seven are read-and-reason findings that nothing here has exercised.
+
+---
 ## 17. Brief disposition — every phase, both briefs
 
 ### 17.1 The PWA master audit, phases 01–42
@@ -1125,21 +1208,43 @@ Relay and a church is evidence, a certificate and a published release — not co
 > ### READY WITH CONDITIONS (supervised pilot — two churches, named operators, every service watched by somebody who can take the wall back by hand)
 
 The conditions are [qa/RELAY_GAP.md](qa/RELAY_GAP.md) §24's five, unchanged, plus the two this
-audit adds:
+audit added on 2026-09-03 and two more on 2026-09-05:
 
 6. **Publish a full release before handing any build to a church**, so that installation is not
-   also a commitment to never receiving a fix.
+   also a commitment to never receiving a fix. When you do, run the **Update channel** workflow
+   from the Actions tab and watch it go green — that is the whole of blocker 5.
 7. **Tell the pilot churches, in writing, that Settings → Updates now reports the update channel
    honestly** — and ask them to look at it, because that row is the only thing in the product
    that can tell them their copy has gone stale.
+8. **Before upgrading any machine that has already recorded a service, check the corpus repair
+   actually lands.** One line, before the upgrade and again after:
+   `sqlite3 "$HOME/Library/Application Support/com.relay.app/relay.db" "PRAGMA user_version; SELECT COUNT(*) FROM verses;"`.
+   A machine carrying the old corpus reads `user_version = 2` and a verse count that is **not**
+   31,102; after the upgrade both should read `3` and `31,102`. The repair is held by tests that
+   drive the real `migrate`; it has never run on a database with a year of a church's services in
+   it, and that is a different thing.
+9. **If a pilot church runs its own kiosk page from anything other than Relay, they will need
+   `RELAY_KIOSK_ANY_ORIGIN=1`** — the hub now refuses a WebSocket handshake from an origin Relay
+   did not serve (DECISIONS §64). An OBS browser source pointed at `http://<ip>:8032/output.html`
+   is fine by construction; **nothing here could confirm what `Origin` a real OBS install sends**,
+   so find out on the Saturday, not on the Sunday.
 
 **The reasoning has not changed and is worth restating.** An indefinite NO-GO is not caution; it
 is a way of never being wrong. Relay ran a live sermon on 2026-08-30 for 49.5 minutes with no
 drift and five of six auto-fires correct, and one wrong verse reached a congregation. The way to
 learn whether that was typical is not another audit. It is a second service, watched.
 
-What this pass changed is that the audit itself is now a smaller part of the answer. Ten real
-defects were found and closed — one of which would have killed the process on a volunteer's
-Saturday, one of which meant a church could never erase a sermon, and one of which meant the
-only surface that could report a dead update channel was reporting *"up to date"*. The
-instruments that found them are in the tree, and each one fails if its defect comes back.
+**And the 2026-09-05 pass is the sharpest version of that argument this document has.** Twenty
+more register rows closed, two of them P0s — and [§15.3](#153-live-service-reliability--6380),
+the live-service reliability score, **did not move by a single point**. Every row in it is capped
+by something no amount of reading can supply. Two P0s were found in a repair committed the day
+before, by an audit track re-reading work an audit had just called done; the same day, two 7.5-HIGH
+advisories this register had written off as *"needs an upstream Tauri bump"* turned out to need
+one `cargo update`. **The instrument is still wrong more often than the code it audits**, and the
+useful conclusion is not to audit harder. It is that the next real finding costs a Sunday morning,
+and the one after that costs a second church.
+
+What the audits have changed is what they can still change: every defect closed since 2026-09-02
+has an instrument in the tree that fails if it comes back, and the four register rows still open
+are a second service, a native speaker, a correction kept on the record, and a release somebody
+has to publish. **None of the four is a commit.**
