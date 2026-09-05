@@ -30,6 +30,8 @@ import { readFileSync, writeFileSync } from 'node:fs';
 const TAURI = 'src-tauri/tauri.conf.json';
 const NPM = 'package.json';
 const CARGO = 'src-tauri/Cargo.toml';
+/** Both configs carry the updater endpoint, and both are PINNED AT A TAG. */
+const UPDATER_CONFS = [TAURI, 'src-tauri/tauri.updater.conf.json'];
 
 // Cargo's [package] version — the FIRST `version = "…"` at the start of a line.
 // Dependency versions are indented or inline, so they can't match.
@@ -99,6 +101,35 @@ function validate(v, where) {
   }
 }
 
+/**
+ * THE ENDPOINT IS PINNED AT A TAG, SO THE VERSION OWNS IT TOO.
+ *
+ * `…/releases/latest/download/latest.json` returns 404 while every release is a
+ * pre-release — GitHub's `/latest/` excludes them — so both configs point at
+ * `…/releases/download/v<version>/latest.json` instead (RG-83). That is correct
+ * and it has one failure mode: **a version bump that leaves the pin behind ships
+ * a build whose updater looks at the PREVIOUS release for ever.** Silently: the
+ * manifest resolves, it just never advertises anything newer.
+ *
+ * So the pin is part of the version, not a thing to remember. `--set` moves it and
+ * `--check` refuses to pass while it disagrees.
+ */
+const PIN = /releases\/download\/v([^/]+)\/latest\.json/;
+
+function pinnedTags() {
+  const found = {};
+  for (const f of UPDATER_CONFS) {
+    const eps = JSON.parse(read(f))?.plugins?.updater?.endpoints ?? [];
+    for (const url of eps) {
+      const m = PIN.exec(url);
+      // An endpoint that is not pinned at all is reported as such rather than
+      // skipped — `/latest/` is exactly the shape that was 404 for months.
+      found[f] = m ? m[1] : url;
+    }
+  }
+  return found;
+}
+
 function check(expected) {
   const found = current();
   const values = Object.values(found);
@@ -131,7 +162,20 @@ function check(expected) {
     );
   }
 
+  const pins = Object.entries(pinnedTags());
+  const wrong = pins.filter(([, tag]) => tag !== values[0]);
+  if (wrong.length) {
+    const list = wrong.map(([f, tag]) => `      ${String(tag).padEnd(12)} ${f}`).join('\n');
+    fail(
+      `The updater endpoint is pinned at a different version than the repo (${values[0]}):\n\n` +
+        list,
+      `Fix with:  npm run version:set -- ${values[0]}\n  ` +
+        '           …which rewrites the pin as well as the three version files.',
+    );
+  }
+
   console.log(`  ✓ version ${values[0]} — consistent across all three files`);
+  console.log(`  ✓ updater endpoint pinned at v${values[0]} in ${pins.length} config(s)`);
 }
 
 function set(v) {
@@ -149,8 +193,25 @@ function set(v) {
   if (!CARGO_VERSION.test(cargo)) fail(`Could not find a [package] version in ${CARGO}.`);
   writeFileSync(CARGO, cargo.replace(CARGO_VERSION, `version = "${v}"`));
 
+  // …and the endpoint pinned at the tag, because a version that moves without it
+  // ships an updater pointed at the previous release.
+  let pinned = 0;
+  for (const f of UPDATER_CONFS) {
+    const before = read(f);
+    const after = before.replace(
+      /releases\/download\/v[^/]+\/latest\.json/g,
+      `releases/download/v${v}/latest.json`,
+    );
+    if (after !== before) {
+      writeFileSync(f, after);
+      pinned += 1;
+    }
+  }
+
   console.log(`  ✓ set version ${v} in all three files`);
+  console.log(`  ✓ repointed the updater endpoint at v${v} in ${pinned} config(s)`);
   console.log('    Commit this before you tag — the release gate compares the tag to the repo.');
+  console.log(`    The endpoint 404s until the v${v} release is published; that is expected.`);
 }
 
 const [mode, arg] = process.argv.slice(2);

@@ -181,7 +181,7 @@ base64 -i certificate.pfx | pbcopy
 ## 4. Cut a release
 
 ```bash
-npm run version:set -- 0.2.0          # writes all THREE version files
+npm run version:set -- 0.2.0          # three version files AND the updater pin
 git commit -am "chore(release): 0.2.0"
 git push
 git tag v0.2.0
@@ -190,7 +190,15 @@ git push origin v0.2.0
 
 > **Bump the version with the script, and commit it before you tag.** The version lives
 > in three files — `src-tauri/tauri.conf.json`, `package.json`, `src-tauri/Cargo.toml` —
-> and the one in `tauri.conf.json` is what the update manifest advertises. Tauri decides
+> and the one in `tauri.conf.json` is what the update manifest advertises.
+>
+> **`--set` also moves the updater endpoint**, which is pinned at a tag
+> (`…/releases/download/v0.2.0/latest.json`) rather than at `/releases/latest/`. GitHub's
+> `/latest/` excludes pre-releases, and every Relay release is one, so that URL was a 404
+> for months and no installed copy could ever have received a fix (RG-83). **Between the
+> bump and the publish the pinned URL 404s, and that is expected** — the tag does not
+> exist yet. `npm run version:check` fails if the pin is ever left behind, or if it drifts
+> back to the `/latest/` shape. Tauri decides
 > "is there an update?" by comparing that number, as semver, against what the church is
 > running.
 >
@@ -207,6 +215,12 @@ The workflow builds macOS (universal — one download for both Apple Silicon and
 Intel) and Windows, signs each with that platform's certificate — and notarizes the
 macOS build with Apple — then opens a **draft** release with `latest.json` attached.
 **Draft, on purpose:** you look at it before a church does.
+
+**Then publish the draft, and check the channel.** The endpoint is pinned at this tag, so
+until the draft is published the manifest is not there — an installed copy sees a 404 and
+stays where it is, which is the safe direction but not the intended one. Run the **Update
+channel** workflow from the Actions tab (or `npm run updater:check`) and watch it report
+the endpoint live before you tell anybody the release exists.
 
 Publish the draft, and every existing install will offer the update on next launch.
 
@@ -403,27 +417,35 @@ This page used to claim the auto-updater "can be tested end to end today". **It 
 not from a pre-release**, and believing otherwise is how you find out the updater is
 broken on the day you need it.
 
-Relay's endpoint is:
+Relay's endpoint **used to be** `…/releases/latest/download/latest.json`, and that URL
+returned 404 for months:
 
-```
-https://github.com/devgeereact/relay/releases/latest/download/latest.json
-```
-
-GitHub's `/releases/latest/` resolves **only to a published, non-draft, non-prerelease
-release**. So:
-
-| Release | Served to installed apps? |
+| Release | Served by `/releases/latest/`? |
 |---|---|
 | draft (what the workflow opens) | **No** — assets aren't public until you publish |
 | pre-release (`v0.2.0-1`) | **No** — `/latest/` skips prereleases, by design |
 | published, plain tag (`v0.2.0`) | **Yes** |
 
-That behaviour is *correct* — a church must never be auto-updated onto an unsigned
-release candidate. But it means the endpoint stays dark until you publish a real
-release, so the happy path is:
+Every Relay release is a pre-release, because the signing gate refuses a plain tag while
+either platform is unsigned (RG-73) — so `/latest/` never resolved to anything, and no
+installed copy could ever receive a fix (RG-83).
 
-**tag `v0.2.0` → workflow opens a draft → you check it → you publish it → every install
-offers the update on next launch.**
+**Since 2026-09-05 the endpoint is pinned at a TAG instead**, in both configs:
+
+```
+https://github.com/devgeereact/relay/releases/download/v<version>/latest.json
+```
+
+which is served for a **published** release whether or not it is a pre-release. The pin is
+written by `npm run version:set`, and `npm run version:check` — a CI gate on every PR —
+fails if a bump leaves it behind or if it drifts back to the `/latest/` shape. So the happy
+path is:
+
+**bump (pin moves with it) → tag → workflow opens a draft → you check it → you publish it
+→ every install offers the update on next launch.**
+
+Between the bump and the publish, the pinned URL 404s: the tag does not exist yet. That is
+expected, and it is the safe direction — an install sees no update rather than the wrong one.
 
 #### Prove it, don't assume it
 
@@ -435,9 +457,19 @@ Reads the endpoint **out of both Tauri configs** — never a second copy of the 
 fetches it, and reports what a shipped copy of Relay would actually find:
 
 ```
+  ✓ https://github.com/devgeereact/relay/releases/download/v0.1.0-4/latest.json
+      version 0.1.0-4 · platforms: windows-x86_64, darwin-aarch64, darwin-x86_64, …
+
+  2 update endpoints live.
+```
+
+and, when the tag has not been published yet — or when somebody restores the old shape:
+
+```
   ✗ https://github.com/devgeereact/relay/releases/latest/download/latest.json
       (src-tauri/tauri.conf.json) HTTP 404 — GitHub's /releases/latest/ excludes
-      PRE-RELEASES. Publish a full release, or point at a tag.
+      PRE-RELEASES. Pin the endpoint at a tag instead: npm run version:set -- <version>
+      rewrites it.
 ```
 
 That is the state as this is written (RG-83), and it is the reason the check exists.
