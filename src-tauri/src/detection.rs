@@ -2142,6 +2142,65 @@ pub fn anchor_for_bare_verses(text: &str) -> Option<VerseRef> {
         .map(|m| m.reference)
 }
 
+/// True if this window says the word "chapter" (in any priority language) with a
+/// number after it — the speaker stated which chapter they are in.
+///
+/// `is_chapter_word` and `skip_linkers`, not an English literal, for the same
+/// reason as `detect_bare_verses`: "sura ya tano" states a chapter as plainly as
+/// "chapter five", and a check that only speaks English would silently apply to
+/// half the priority languages.
+pub fn chapter_named(text: &str) -> bool {
+    let norm = normalize(text);
+    let tokens: Vec<&str> = norm.split_whitespace().collect();
+    (0..tokens.len()).any(|i| {
+        is_chapter_word(tokens[i]) && parse_number(&tokens, skip_linkers(&tokens, i + 1)).is_some()
+    })
+}
+
+/// Where a bare verse number ("verse ten") actually points — the ONE place that
+/// decision is made.
+///
+/// Three sources, in strict order of authority:
+///
+///  1. **A reference parsed from this same window** (`anchor`). The words said it
+///     in this breath. FIELD F-1.
+///  2. **Nothing at all**, when the window states a CHAPTER that no parsed
+///     reference accounts for. FIELD F-8 (2026-09-06): the preacher said *"is
+///     taken from 4th Peter chapter 5 verse 10"*. There is no 4th Peter, so
+///     `detect_direct` returned nothing and `anchor` was `None` — and the bare
+///     `10` was then resolved against `Psalms 92`, the passage from ten minutes
+///     earlier, putting **Psalms 92:10** up unattended at 0.88. The sentence
+///     named chapter 5. Memory named chapter 92. Relay believed memory.
+///
+///     The phrasing is out of `detect_passage_nav`'s reach (it caps at 8 tokens,
+///     deliberately, so sermon prose full of numbers cannot trigger a jump), so
+///     nothing else was going to catch it. Declining is the only honest answer
+///     available: the spoken chapter is known but the BOOK is not, and pairing a
+///     heard chapter with a remembered book is the same lie in a smaller coat.
+///  3. **Memory** (`memory`), only when the words do not say — "and verse
+///     eighteen", mid-passage, which is the case the whole mechanism exists for.
+///
+/// Pure, so the rule can be tested without an app: the defect above lived in the
+/// candidate assembly inside `emit_detections`, where no test could reach it.
+pub fn resolve_bare_verse_for_window(
+    text: &str,
+    n: i64,
+    anchor: Option<&VerseRef>,
+    memory: Option<&VerseRef>,
+) -> Option<VerseRef> {
+    if let Some(a) = anchor {
+        return Some(VerseRef {
+            book: a.book.clone(),
+            chapter: a.chapter,
+            verse: n,
+        });
+    }
+    if chapter_named(text) {
+        return None;
+    }
+    memory.cloned()
+}
+
 pub fn detect_bare_verses(text: &str) -> Vec<i64> {
     let norm = normalize(text);
     let tokens: Vec<&str> = norm.split_whitespace().collect();
@@ -5017,6 +5076,111 @@ mod r4_audit {
             !got.iter().any(|k| k == "Proverbs 3:32"),
             "FIELD F-1 reproduced: Proverbs 3:32 auto-fired from a sentence citing \
              Luke 10:32-37 — fired {got:?}"
+        );
+    }
+
+    /// FIELD F-8 · 2026-09-06 · the second wrong verse on a real wall, and it is
+    /// F-1's own repair discovering the case it did not cover.
+    ///
+    /// The preacher said *"is taken from **4th Peter chapter 5 verse 10**"* — 1
+    /// Peter 5:10, misheard as a book that does not exist. So `detect_direct`
+    /// found nothing, `anchor_for_bare_verses` was `None`, and the bare `10` fell
+    /// through to `ContextMemory`, which held **Psalms 92** from ten minutes
+    /// earlier. **Psalms 92:10 auto-fired at 0.88.**
+    ///
+    /// F-1 taught that a book named in this breath beats memory. F-8 is the same
+    /// sentence with the book name BROKEN: the window still states a chapter, and
+    /// memory still stated a different one, and memory still won. "The words do
+    /// not say" is not the same as "the words did not parse".
+    ///
+    /// Asserting `None` and not a corrected reference is the point. The spoken
+    /// chapter is known (5); the BOOK is not. Pairing a heard chapter with a
+    /// remembered book would put Psalms 5:10 up instead — a different wrong verse,
+    /// and rule 10's lesson exactly: a real confidence about a word nobody said.
+    #[test]
+    fn field_f8_a_chapter_this_window_states_is_not_one_memory_may_answer_for() {
+        let heard = "God that I read by the way of declaration, joining my faith with \
+                     the faith of our Father and the Lord, is taken from 4th Peter \
+                     chapter 5 verse 10.";
+        assert!(
+            anchor_for_bare_verses(heard).is_none(),
+            "precondition: '4th Peter' is not a book, so nothing parses out of this"
+        );
+        assert!(
+            detect_bare_verses(heard).contains(&10),
+            "precondition: 10 is seen as a bare verse"
+        );
+        assert!(
+            chapter_named(heard),
+            "precondition: this window states a chapter out loud"
+        );
+        let memory = VerseRef {
+            book: "Psalms".into(),
+            chapter: 92,
+            verse: 10,
+        };
+        assert_eq!(
+            resolve_bare_verse_for_window(heard, 10, None, Some(&memory)),
+            None,
+            "FIELD F-8 reproduced: a verse was resolved against a chapter the \
+             preacher did not say, while naming a different one out loud"
+        );
+    }
+
+    /// …and the case the bare-verse path exists for is untouched.
+    ///
+    /// "and verse eighteen" states no chapter, so memory is all Relay has and is
+    /// exactly right. If the F-8 repair took this away it would have broken the
+    /// only phrasing the mechanism was written for.
+    #[test]
+    fn field_f8_memory_still_answers_when_the_window_states_no_chapter() {
+        let heard = "and if you look at verse eighteen";
+        assert!(!chapter_named(heard), "no chapter is stated here");
+        let memory = VerseRef {
+            book: "Romans".into(),
+            chapter: 8,
+            verse: 18,
+        };
+        assert_eq!(
+            resolve_bare_verse_for_window(heard, 18, None, Some(&memory)).as_ref(),
+            Some(&memory),
+            "mid-passage 'verse eighteen' must still resolve against the passage on screen"
+        );
+    }
+
+    /// …and a window that DOES name a book still beats memory, chapter word or
+    /// not. This is F-1's guarantee, re-asserted through the one function that now
+    /// owns the decision, so a future edit cannot keep F-8 and lose F-1.
+    #[test]
+    fn field_f8_a_book_named_in_this_breath_still_outranks_memory() {
+        let heard = "is taken from 1 Peter chapter 5 verse 10";
+        let anchor = anchor_for_bare_verses(heard).expect("1 Peter 5 parses");
+        let memory = VerseRef {
+            book: "Psalms".into(),
+            chapter: 92,
+            verse: 10,
+        };
+        let got = resolve_bare_verse_for_window(heard, 10, Some(&anchor), Some(&memory))
+            .expect("the window names a book, so it resolves");
+        assert_eq!(got.reference_book_chapter_verse(), "1 Peter 5:10");
+    }
+
+    /// `chapter_named` speaks the priority languages, like every other detection
+    /// helper. An English-only check would have applied the F-8 repair to English
+    /// preaching and silently skipped Swahili and Hausa — the exact asymmetry
+    /// `detect_bare_verses` and `detect_passage_nav` were both fixed for.
+    #[test]
+    fn field_f8_chapter_named_is_not_english_only() {
+        assert!(chapter_named("chapter 5 verse 10"));
+        assert!(chapter_named("chap 5 verse 10"));
+        assert!(chapter_named("sura ya tano mstari wa kumi"), "Swahili");
+        assert!(
+            !chapter_named("verse ten"),
+            "a verse word alone is not a stated chapter"
+        );
+        assert!(
+            !chapter_named("the fifth chapter of what he read"),
+            "'chapter' with no number after it states nothing"
         );
     }
 
