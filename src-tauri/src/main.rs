@@ -951,14 +951,22 @@ fn emit_detections<R: tauri::Runtime>(
         //
         // Memory is what Relay has when the words do not say. When the words do
         // say, the words win.
+        //
+        // FIELD F-7 added the second half of that rule: a window can STATE a
+        // chapter without any reference parsing out of it ("4th Peter chapter 5
+        // verse 10" — there is no 4th Peter), and memory used to win there too.
+        // `resolve_bare_verse_for_window` owns the whole decision so it is one
+        // pure function with a test, rather than an `or_else` chain here that no
+        // test could reach.
         let anchor = detection::anchor_for_bare_verses(text);
         for n in detection::detect_bare_verses(text) {
-            let from_window = anchor.as_ref().map(|a| detection::VerseRef {
-                book: a.book.clone(),
-                chapter: a.chapter,
-                verse: n,
-            });
-            let resolved = from_window.or_else(|| context.resolve_bare_verse(n));
+            let from_memory = context.resolve_bare_verse(n);
+            let resolved = detection::resolve_bare_verse_for_window(
+                text,
+                n,
+                anchor.as_ref(),
+                from_memory.as_ref(),
+            );
             if let Some(r) = resolved {
                 // "…and verse eighteen", resolved against the passage already on
                 // screen. The operator needs to see that this came from CONTEXT, not
