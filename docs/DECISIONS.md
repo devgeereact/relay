@@ -2949,3 +2949,77 @@ in `CLAUDE.md`, and in the register row. **`npm audit --omit=dev` is now a CI
 gate**, so the production tree cannot drift from zero without the build saying so,
 and `cargo audit` runs beside it — the half of the dependency tree that actually
 ships had never been checked at all until 2026-09-04.
+
+---
+
+## 66. A chapter this window states is not one memory may answer for (2026-09-06)
+
+**Found in a live service, not in this repository** — `docs/qa/audits/FIELD-2026-09-06.md`,
+finding F-8.
+
+§56 established the first half of this rule and the wording it turned on: *memory is what
+Relay has when the words do not say, and when the words DO say the words win.* That fixed
+the case where a sentence names a book Relay can parse. Four weeks later the same mechanism
+put a second wrong verse on a real output, because **"the words do not say" is not the same
+thing as "the words did not parse".**
+
+The preacher said *"…joining my faith with the faith of our Father and the Lord, is taken
+from **4th Peter chapter 5 verse 10**."* That is 1 Peter 5:10, misheard into a book that does
+not exist. So:
+
+1. `detect_direct` found nothing — there is no 4th Peter, and bare "peter" is not an alias
+   in its own right (only `1 peter`, `first peter`, `i peter`, `1peter`).
+2. `anchor_for_bare_verses` was therefore `None`.
+3. `detect_bare_verses` saw `10`.
+4. That `10` was resolved against `ContextMemory`, holding **Psalms 92** from ten minutes
+   earlier.
+5. **Psalms 92:10 auto-fired at 0.88, unattended.**
+
+**The window stated a chapter out loud. Memory stated a different one. Memory won.**
+
+`detect_passage_nav` was never going to catch it. It handles "chapter 5 verse 10" with no
+book named, and correctly, but it caps at eight tokens deliberately so that ordinary sermon
+prose full of numbers cannot trigger a jump — and that sentence is nine after normalisation.
+Widening the cap is not the fix; the cap is what stops a jump firing on prose.
+
+### The decision: decline, rather than correct
+
+`detection::resolve_bare_verse_for_window` is now the one place a bare verse is resolved, and
+it is a pure function so the rule is testable at all. Three sources, in strict order:
+
+1. **A reference parsed from this window.** The words said it in this breath. §56.
+2. **Nothing**, when the window states a chapter that no parsed reference accounts for.
+3. **Memory**, only when the words do not say.
+
+The tempting alternative was to pair the heard chapter with the remembered book, which would
+have shown **Psalms 5:10**. That is a different wrong verse and the same mistake: the chapter
+was heard, the book was not, and combining them produces a real confidence about a word
+nobody said. §21's rule about what kind of claim Relay is making applies to a reference as
+much as to a percentage. **Declining is the only honest answer available here**, and it costs
+nothing an operator cannot do in one action.
+
+**What this does NOT change.** A preacher walking a passage who says *"and verse eighteen"*
+resolves against memory exactly as before — that phrasing states no chapter, and it is the
+case the whole mechanism exists for. `chapter_named` asks `is_chapter_word` and
+`skip_linkers` rather than matching an English literal, so "sura ya tano mstari wa kumi"
+states a chapter as plainly as "chapter five" and gets the same treatment; an English-only
+check here would have applied the repair to English preaching and silently skipped two of the
+three Tier-1 languages.
+
+**What is still wrong and is left alone deliberately.** The bare-verse path still stamps a
+hardcoded `0.88` and a hardcoded `DetectionMethod::Direct`, and that label is still a lie:
+Relay inferred the book, it did not hear it. §56 recorded that and left it, on the grounds
+that one service is not enough evidence to make every in-passage "verse eighteen" ask for a
+click. Two services is still not enough, and this decision narrows *when* the label is
+applied rather than fixing the label. Recorded here so the next person to meet it knows it
+was seen twice and left twice.
+
+### How it is held
+
+`detection::r4_audit::field_f8_a_chapter_this_window_states_is_not_one_memory_may_answer_for`,
+**verified by removing the check and watching it reproduce
+`Some(VerseRef { book: "Psalms", chapter: 92, verse: 10 })`** — the exact verse that reached
+the output. §56's own record notes that the first F-1 diagnosis was wrong and its regression
+test passed with the supposed fix reverted; that is why this one was reverted on purpose
+before being believed. Three further tests hold the mid-passage case, §56's guarantee through
+the new function, and `chapter_named` in Swahili.
