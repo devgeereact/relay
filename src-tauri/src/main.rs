@@ -952,7 +952,7 @@ fn emit_detections<R: tauri::Runtime>(
         // Memory is what Relay has when the words do not say. When the words do
         // say, the words win.
         //
-        // FIELD F-7 added the second half of that rule: a window can STATE a
+        // FIELD F-8 added the second half of that rule: a window can STATE a
         // chapter without any reference parsing out of it ("4th Peter chapter 5
         // verse 10" — there is no 4th Peter), and memory used to win there too.
         // `resolve_bare_verse_for_window` owns the whole decision so it is one

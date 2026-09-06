@@ -84,7 +84,7 @@ both expect it.
 | [qa/RELAY_GAP.md](qa/RELAY_GAP.md) | The `RG-` gap register. Meant to be updated, unlike the audits |
 | [qa/LAUNCH_CHECKLIST.md](qa/LAUNCH_CHECKLIST.md) | One release gate list. Every box names its command or says it has never been checked |
 | [RELAY_V1_AUDIT.md](RELAY_V1_AUDIT.md) | The V1 production audit: the decision, three scorecards, the fix process, and every phase of both briefs dispositioned |
-| [qa/audits/](qa/audits/) | **Frozen.** Five dated audits, including the retired product audit. Closures go in a fix log at the top, never into the findings |
+| [qa/audits/](qa/audits/) | **Frozen.** Six dated audits, including the retired product audit. Closures go in a fix log at the top, never into the findings |
 
 **On ADRs:** [DECISIONS.md](DECISIONS.md) *is* the architecture-decision record — a single
 narrative log with reasoning and explicit non-goals, 46 numbered decisions (§18–§63) deep,
@@ -176,7 +176,10 @@ Three documents, at three altitudes, and they are meant to disagree on scope rat
   its numbers do **not** establish),
   **[FIELD-2026-08-30.md](qa/audits/FIELD-2026-08-30.md)** — *the first real service*: 49.5
   minutes on a packaged build, no drift, five of six auto-fires correct, **one wrong verse on a
-  real wall** — [PERF-MODELS-2026-08-30.md](qa/audits/PERF-MODELS-2026-08-30.md), what each
+  real wall** — **[FIELD-2026-09-06.md](qa/audits/FIELD-2026-09-06.md)** — *two services, two
+  models, four wrong verses*: the day the model choice turned out to be an accuracy decision
+  (**3 of 3 on `turbo`, 5 of 9 on `ggml-base`**), and the day the sensitivity dial was shown by
+  measurement not to be the lever — [PERF-MODELS-2026-08-30.md](qa/audits/PERF-MODELS-2026-08-30.md), what each
   speech model costs in transcript updates per second, and
   [PRODUCT-2026-07-13.md](qa/audits/PRODUCT-2026-07-13.md), the product audit retired into
   evidence on 2026-09-02 with a header recording where each of its parts went.

@@ -2165,7 +2165,7 @@ pub fn chapter_named(text: &str) -> bool {
 ///  1. **A reference parsed from this same window** (`anchor`). The words said it
 ///     in this breath. FIELD F-1.
 ///  2. **Nothing at all**, when the window states a CHAPTER that no parsed
-///     reference accounts for. FIELD F-7 (2026-09-06): the preacher said *"is
+///     reference accounts for. FIELD F-8 (2026-09-06): the preacher said *"is
 ///     taken from 4th Peter chapter 5 verse 10"*. There is no 4th Peter, so
 ///     `detect_direct` returned nothing and `anchor` was `None` — and the bare
 ///     `10` was then resolved against `Psalms 92`, the passage from ten minutes
@@ -5079,7 +5079,7 @@ mod r4_audit {
         );
     }
 
-    /// FIELD F-7 · 2026-09-06 · the second wrong verse on a real wall, and it is
+    /// FIELD F-8 · 2026-09-06 · the second wrong verse on a real wall, and it is
     /// F-1's own repair discovering the case it did not cover.
     ///
     /// The preacher said *"is taken from **4th Peter chapter 5 verse 10**"* — 1
@@ -5088,7 +5088,7 @@ mod r4_audit {
     /// through to `ContextMemory`, which held **Psalms 92** from ten minutes
     /// earlier. **Psalms 92:10 auto-fired at 0.88.**
     ///
-    /// F-1 taught that a book named in this breath beats memory. F-7 is the same
+    /// F-1 taught that a book named in this breath beats memory. F-8 is the same
     /// sentence with the book name BROKEN: the window still states a chapter, and
     /// memory still stated a different one, and memory still won. "The words do
     /// not say" is not the same as "the words did not parse".
@@ -5098,7 +5098,7 @@ mod r4_audit {
     /// remembered book would put Psalms 5:10 up instead — a different wrong verse,
     /// and rule 10's lesson exactly: a real confidence about a word nobody said.
     #[test]
-    fn field_f7_a_chapter_this_window_states_is_not_one_memory_may_answer_for() {
+    fn field_f8_a_chapter_this_window_states_is_not_one_memory_may_answer_for() {
         let heard = "God that I read by the way of declaration, joining my faith with \
                      the faith of our Father and the Lord, is taken from 4th Peter \
                      chapter 5 verse 10.";
@@ -5122,7 +5122,7 @@ mod r4_audit {
         assert_eq!(
             resolve_bare_verse_for_window(heard, 10, None, Some(&memory)),
             None,
-            "FIELD F-7 reproduced: a verse was resolved against a chapter the \
+            "FIELD F-8 reproduced: a verse was resolved against a chapter the \
              preacher did not say, while naming a different one out loud"
         );
     }
@@ -5130,10 +5130,10 @@ mod r4_audit {
     /// …and the case the bare-verse path exists for is untouched.
     ///
     /// "and verse eighteen" states no chapter, so memory is all Relay has and is
-    /// exactly right. If the F-7 repair took this away it would have broken the
+    /// exactly right. If the F-8 repair took this away it would have broken the
     /// only phrasing the mechanism was written for.
     #[test]
-    fn field_f7_memory_still_answers_when_the_window_states_no_chapter() {
+    fn field_f8_memory_still_answers_when_the_window_states_no_chapter() {
         let heard = "and if you look at verse eighteen";
         assert!(!chapter_named(heard), "no chapter is stated here");
         let memory = VerseRef {
@@ -5150,9 +5150,9 @@ mod r4_audit {
 
     /// …and a window that DOES name a book still beats memory, chapter word or
     /// not. This is F-1's guarantee, re-asserted through the one function that now
-    /// owns the decision, so a future edit cannot keep F-7 and lose F-1.
+    /// owns the decision, so a future edit cannot keep F-8 and lose F-1.
     #[test]
-    fn field_f7_a_book_named_in_this_breath_still_outranks_memory() {
+    fn field_f8_a_book_named_in_this_breath_still_outranks_memory() {
         let heard = "is taken from 1 Peter chapter 5 verse 10";
         let anchor = anchor_for_bare_verses(heard).expect("1 Peter 5 parses");
         let memory = VerseRef {
@@ -5166,11 +5166,11 @@ mod r4_audit {
     }
 
     /// `chapter_named` speaks the priority languages, like every other detection
-    /// helper. An English-only check would have applied the F-7 repair to English
+    /// helper. An English-only check would have applied the F-8 repair to English
     /// preaching and silently skipped Swahili and Hausa — the exact asymmetry
     /// `detect_bare_verses` and `detect_passage_nav` were both fixed for.
     #[test]
-    fn field_f7_chapter_named_is_not_english_only() {
+    fn field_f8_chapter_named_is_not_english_only() {
         assert!(chapter_named("chapter 5 verse 10"));
         assert!(chapter_named("chap 5 verse 10"));
         assert!(chapter_named("sura ya tano mstari wa kumi"), "Swahili");
