@@ -2273,9 +2273,22 @@ mod bench {
                 .collect::<Vec<_>>()
         );
         if let Some(w) = pick("RELAY_BENCH_MODELS") {
+            // An entry that names an installed model EXACTLY selects that one model;
+            // anything else is a substring, so `turbo` still works. Substring alone was
+            // the first version and it surprised on the first real run: `base` also
+            // selected `ggml-base.en`, which is a different model answering a different
+            // question, and at one real-time replay per condition that is an extra 85
+            // minutes nobody asked for.
+            let exact: Vec<String> = engines.iter().map(|(l, _)| l.to_lowercase()).collect();
             engines.retain(|(label, _)| {
                 let l = label.to_lowercase();
-                w.iter().any(|x| l.contains(x.as_str()))
+                w.iter().any(|x| {
+                    if exact.iter().any(|e| e == x) {
+                        &l == x
+                    } else {
+                        l.contains(x.as_str())
+                    }
+                })
             });
             assert!(
                 !engines.is_empty(),
