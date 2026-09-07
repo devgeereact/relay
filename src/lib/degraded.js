@@ -72,6 +72,7 @@ export const LEVELS = ['blocked', 'reduced'];
  * @param s.macos          is this macOS? (where a CPU-only build is a known trap)
  * @param s.droppedPartials how many decode passes have been shed
  * @param s.screensDown    names of screens that are attached but not answering
+ * @param s.micMissing     the remembered input device that is not attached today
  */
 export function degradations(s = {}) {
   const out = [];
@@ -144,6 +145,20 @@ export function degradations(s = {}) {
       title: `${s.droppedPartials} transcript ${s.droppedPartials === 1 ? 'update' : 'updates'} skipped`,
       what: 'Relay fell behind and dropped some in-progress updates to catch up. Nothing final was lost, and no verse was missed because of it.',
       fix: 'If it keeps climbing, a smaller speech model will keep up better — Settings → Diagnostics shows the speed.',
+    });
+  }
+
+  // RG-121. The remembered microphone is not attached, so Relay is capturing from
+  // whatever the system calls default. It still works, which is precisely the
+  // problem: a desk feed and a laptop microphone at the back of a booth sound
+  // nothing alike and neither of them errors.
+  if (s.micMissing) {
+    out.push({
+      id: 'mic',
+      level: 'reduced',
+      title: `${s.micMissing} is not plugged in`,
+      what: 'That is the microphone this machine used last time. Relay is listening on the computer\u2019s default input instead, which in a hall is usually much further from the preacher.',
+      fix: 'Plug it back in, or pick the right input in Settings \u2192 Audio.',
     });
   }
 

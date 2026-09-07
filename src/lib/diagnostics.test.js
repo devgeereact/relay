@@ -22,6 +22,23 @@ const rs = read('src-tauri/src/main.rs');
 const mod = read('src-tauri/src/diagnostics.rs');
 const settings = read('src/lib/views/Settings.svelte');
 
+/**
+ * The body of `export_diagnostics`, from its signature to its closing brace.
+ *
+ * Every assertion about what the bundle may contain has to be scoped to the
+ * command itself, and it has to be scoped by the code's own shape rather than by
+ * a character count: a fixed window silently stops covering the end of the
+ * function as soon as anything is added near the top, and it is the end that a
+ * new field gets appended to.
+ */
+function exportDiagnostics() {
+  const start = rs.indexOf('fn export_diagnostics(');
+  expect(start).toBeGreaterThan(-1);
+  const end = rs.indexOf('\n}\n', start);
+  expect(end).toBeGreaterThan(start);
+  return rs.slice(start, end);
+}
+
 beforeEach(() => {
   invoke.mockReset();
   store.capture.update((s) => ({ ...s, available: true }));
@@ -56,7 +73,7 @@ describe('it is composed as an ALLOW-LIST', () => {
   });
 
   it('the command reads no table that holds the church’s material', () => {
-    const fn = rs.slice(rs.indexOf('fn export_diagnostics('), rs.indexOf('#[cfg(test)]\nmod diagnostic_bundle_tests'));
+    const fn = exportDiagnostics();
     for (const forbidden of [
       'service_transcripts',
       'service_detections',
@@ -73,12 +90,19 @@ describe('it is composed as an ALLOW-LIST', () => {
 
   it('sends the model’s FILENAME, never its path', () => {
     // The path is inside a home folder and names a person.
-    const fn = rs.slice(rs.indexOf('fn export_diagnostics('));
-    expect(fn.slice(0, 6000)).toMatch(/\.file_name\(\)/);
+    //
+    // Scoped to the FUNCTION, not to its first 6000 characters. The window was a
+    // magic number and it expired the first time a fact was added above this one
+    // (RG-122's microphone line): the guarantee still held, and the test failed
+    // anyway. A scanner with an arbitrary edge reports on where code sits rather
+    // than on what it does — the same defect `ipc.test.js` has had twice, in the
+    // safer direction.
+    const fn = exportDiagnostics();
+    expect(fn).toMatch(/\.file_name\(\)/);
   });
 
   it('does not include the update snapshot path, only the version', () => {
-    const fn = rs.slice(rs.indexOf('fn export_diagnostics('));
+    const fn = exportDiagnostics();
     const pending = fn.slice(fn.indexOf('Pending update'), fn.indexOf('Pending update') + 400);
     expect(pending).toMatch(/from_version/);
     expect(pending).not.toMatch(/\.snapshot/);

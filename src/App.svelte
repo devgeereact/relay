@@ -63,6 +63,9 @@
     macos: typeof navigator !== 'undefined' && /Mac/i.test(navigator.platform || ''),
     droppedPartials,
     screensDown,
+    // RG-121: the microphone this machine used last time is not here today, and
+    // Relay has quietly fallen back to the system default.
+    micMissing: $capture.inputDeviceMissing,
   });
   $: degLevel = worstLevel(degraded);
 
