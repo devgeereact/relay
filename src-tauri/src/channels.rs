@@ -502,6 +502,85 @@ struct Beat {
     at: std::time::Instant,
     state: PaintState,
     transport: &'static str,
+    /// What the SCREEN'S OWN CLOCK said about the gap before this beat.
+    gap: BeatGap,
+}
+
+/// The screen's account of its own silence, carried on the beat that ends it.
+///
+/// **This exists to answer RG-119, and it is the only thing that can.** A service
+/// on 2026-09-06 recorded the main output lost and recovered three times, 19.3
+/// minutes of an 85.5 minute service, and the record could not say which of two
+/// opposite failures it was: the screen really stopped painting, or `OutputHealth`
+/// lost a heartbeat it should have kept. Relay's side of the beat cannot tell them
+/// apart, because both look identical from here — no beat arrived.
+///
+/// The page knows, and only the page knows:
+///
+/// * `since_ms` — its own `Date.now()` gap since its previous tick. Roughly one
+///   interval means the page kept ticking and the beats were lost in transport
+///   (Relay's fault). A gap the size of the whole outage means the page was not
+///   running at all: the OS suspended or throttled it, which is a screen that
+///   genuinely was not painting.
+/// * `hidden_ms` — how much of that gap the page spent `document.hidden`. On macOS
+///   an occluded window is hidden, so this separates "covered by another window"
+///   from "alive but silent", and those want opposite fixes.
+///
+/// **Both are ABSENT rather than zero when the page did not say** (`latency.rs`
+/// learned that distinction the hard way), and both arrive over an unauthenticated
+/// LAN socket, so they are clamped at the door and dropped if they are not
+/// non-negative integers. A number here can only ever be evidence in a timeline
+/// entry; nothing routes, gates or fires on it.
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
+pub struct BeatGap {
+    pub since_ms: Option<u64>,
+    pub hidden_ms: Option<u64>,
+}
+
+/// A day. Anything longer is a broken clock or a hostile client, and either way it
+/// is not evidence about a service.
+const GAP_CLAMP_MS: u64 = 24 * 60 * 60 * 1000;
+
+impl BeatGap {
+    /// Read the two numbers off a JSON beat. Anything that is not a non-negative
+    /// integer within `GAP_CLAMP_MS` is dropped to `None` — an absent number reads
+    /// as "the screen did not say", which is true, where a defaulted zero would
+    /// read as "the screen said it never went quiet", which is a lie in the one
+    /// record this field exists to make trustworthy.
+    fn from_json(v: &serde_json::Value) -> Self {
+        let field = |k: &str| {
+            v.get(k)
+                .and_then(|n| n.as_u64())
+                .filter(|ms| *ms <= GAP_CLAMP_MS)
+        };
+        BeatGap {
+            since_ms: field("since_ms"),
+            hidden_ms: field("hidden_ms"),
+        }
+    }
+
+    /// Same rule for the Tauri bridge, where the value arrives already typed.
+    pub fn clamped(since_ms: Option<u64>, hidden_ms: Option<u64>) -> Self {
+        BeatGap {
+            since_ms: since_ms.filter(|ms| *ms <= GAP_CLAMP_MS),
+            hidden_ms: hidden_ms.filter(|ms| *ms <= GAP_CLAMP_MS),
+        }
+    }
+
+    /// One phrase for a timeline entry, or `None` when the screen said nothing.
+    /// Content-free by construction: two durations and no text from anywhere.
+    pub fn describe(&self) -> Option<String> {
+        let since = self.since_ms?;
+        let secs = |ms: u64| (ms as f64 / 1000.0).round() as u64;
+        Some(match self.hidden_ms {
+            Some(h) if h > 0 => format!(
+                "screen's own clock: silent {}s, hidden {}s",
+                secs(since),
+                secs(h)
+            ),
+            _ => format!("screen's own clock: silent {}s, never hidden", secs(since)),
+        })
+    }
 }
 
 /// Liveness of every output, reported BY the output.
@@ -548,13 +627,18 @@ pub struct OutputHealth {
     /// every poll for as long as it stayed lost, which is how a timeline becomes
     /// something nobody reads.
     reported: Arc<Mutex<HashMap<i64, bool>>>,
+    /// When each channel was first seen ATTACHED but not yet answering, so a page
+    /// that is still loading is not written into the service record as a fault.
+    /// Cleared the moment the channel detaches, so a window reopened later starts
+    /// its grace again rather than inheriting one from an hour ago.
+    first_seen: Arc<Mutex<HashMap<i64, std::time::Instant>>>,
 }
 
 impl OutputHealth {
     /// Record that the screen for `channel_id` is alive and painting `state`.
     /// A lock poisoned by a panicking reader must not take the wall's status with
     /// it: a lost beat degrades to "silent", which is the safe direction.
-    pub fn beat(&self, channel_id: i64, state: PaintState, transport: &'static str) {
+    pub fn beat(&self, channel_id: i64, state: PaintState, transport: &'static str, gap: BeatGap) {
         if channel_id <= 0 {
             return;
         }
@@ -565,9 +649,18 @@ impl OutputHealth {
                     at: std::time::Instant::now(),
                     state,
                     transport,
+                    gap,
                 },
             );
         }
+    }
+
+    /// What the screen's own clock said about the silence before its last beat.
+    /// `None` for a channel that has never beaten, which is an absence and not a
+    /// zero gap. See `BeatGap`, and RG-119 for why it is recorded at all.
+    pub fn last_gap(&self, channel_id: i64) -> Option<BeatGap> {
+        let m = self.beats.lock().ok()?;
+        Some(m.get(&channel_id)?.gap)
     }
 
     /// Age of the last beat in milliseconds, plus what it said. `None` means this
@@ -594,6 +687,14 @@ impl OutputHealth {
         self.forget_transition(channel_id);
     }
 
+    /// True once this channel has answered at least once in this run.
+    fn ever_beaten(&self, channel_id: i64) -> bool {
+        self.beats
+            .lock()
+            .map(|m| m.contains_key(&channel_id))
+            .unwrap_or(false)
+    }
+
     /// Has this channel's answering state CHANGED since the last time anyone
     /// looked? Returns the new value on an edge, `None` otherwise.
     ///
@@ -602,7 +703,40 @@ impl OutputHealth {
     /// twice a second would be a second answer to one question. That means this
     /// mutates from inside what reads like a query, which is worth stating plainly
     /// rather than discovering: `channel_status` is the edge detector.
-    pub fn transition(&self, channel_id: i64, painting: bool) -> Option<bool> {
+    pub fn transition(&self, channel_id: i64) -> Option<bool> {
+        // Read the beat side first and finish with it. Nothing in this type holds
+        // two of these locks at once, and this is the one place that would be
+        // tempted to.
+        let painting = self.painting(channel_id);
+        let ever = self.ever_beaten(channel_id);
+
+        // ── A SCREEN THAT HAS NEVER ANSWERED YET IS NOT A FAULT YET ──
+        //
+        // A window is attached the instant it is created, and its page has to load
+        // before it can beat. Without this, every service opened with
+        // `output_lost` followed by `output_recovered` a fraction of a second
+        // later: 2026-09-06 recorded that pair at 4.9 s and 5.0 s, and the service
+        // before it at 1457.7 s and 1459.7 s. Both are in the permanent record,
+        // both render in History as "Screen stopped responding", and the Sunday
+        // report counts them. A fault that appears every single time is one an
+        // operator learns to scroll past, which costs exactly the real one.
+        //
+        // The grace is bounded and it does NOT swallow the failure it looks like:
+        // a page that never loads at all still reports lost, once
+        // `BEAT_STALE_MS` has passed since it was first seen attached. The
+        // difference is between "has not answered yet" and "is not answering".
+        if !ever && !painting {
+            let first = {
+                let mut seen = self.first_seen.lock().ok()?;
+                *seen
+                    .entry(channel_id)
+                    .or_insert_with(std::time::Instant::now)
+            };
+            if first.elapsed().as_millis() as u64 <= BEAT_STALE_MS {
+                return None;
+            }
+        }
+
         let mut m = self.reported.lock().ok()?;
         match m.insert(channel_id, painting) {
             Some(prev) if prev == painting => None,
@@ -618,6 +752,9 @@ impl OutputHealth {
     /// "lost" nor "recovered" would mean anything about it.
     pub fn forget_transition(&self, channel_id: i64) {
         if let Ok(mut m) = self.reported.lock() {
+            m.remove(&channel_id);
+        }
+        if let Ok(mut m) = self.first_seen.lock() {
             m.remove(&channel_id);
         }
     }
@@ -1255,7 +1392,7 @@ pub async fn run_kiosk_server(
                                             .and_then(|s| s.as_str())
                                             .and_then(PaintState::parse),
                                     ) {
-                                        health.beat(ch, st, "kiosk");
+                                        health.beat(ch, st, "kiosk", BeatGap::from_json(&v));
                                     }
                                 }
                                 if v.get("kind").and_then(|k| k.as_str()) == Some("hello") {
@@ -3165,7 +3302,7 @@ mod rehearsal_tests {
     #[test]
     fn a_beat_makes_a_screen_painting_and_carries_what_it_said() {
         let h = OutputHealth::default();
-        h.beat(7, PaintState::Content, "window");
+        h.beat(7, PaintState::Content, "window", BeatGap::default());
         assert!(h.painting(7));
         let (age, state, transport) = h.read(7).expect("just beat");
         assert!(age < 1_000);
@@ -3181,10 +3318,141 @@ mod rehearsal_tests {
     #[test]
     fn a_preview_with_no_channel_reports_nothing() {
         let h = OutputHealth::default();
-        h.beat(0, PaintState::Content, "window");
-        h.beat(-1, PaintState::Content, "window");
+        h.beat(0, PaintState::Content, "window", BeatGap::default());
+        h.beat(-1, PaintState::Content, "window", BeatGap::default());
         assert!(h.read(0).is_none());
         assert!(h.read(-1).is_none());
+    }
+
+    /// A WINDOW STILL LOADING IS NOT A FAULT, AND ONE THAT NEVER LOADS STILL IS.
+    ///
+    /// RG-119. A window is attached the instant it is created and its page has to
+    /// load before it can beat, so the first status poll used to write
+    /// `output_lost` into the permanent service record, followed by
+    /// `output_recovered` a fraction of a second later. Both real services on
+    /// 2026-09-06 opened with that pair (4.9 s to 5.0 s, and 1457.7 s to 1459.7 s
+    /// the service before), History renders it as "Screen stopped responding", and
+    /// the Sunday report counts it. A fault that appears every single time is one
+    /// an operator learns to scroll past.
+    ///
+    /// The grace may not swallow the failure it resembles, so this asserts both
+    /// halves: silent inside the window, and reported once the window has passed.
+    #[test]
+    fn a_screen_that_has_not_answered_yet_is_not_a_fault_until_it_has_had_time() {
+        let h = OutputHealth::default();
+        assert_eq!(h.transition(9), None, "still loading is not a fault");
+        assert_eq!(
+            h.transition(9),
+            None,
+            "and it does not become one by polling"
+        );
+
+        // Backdate the moment it was first seen, which is the only thing that
+        // separates "has not answered yet" from "is not answering". Reaching in
+        // rather than sleeping through `BEAT_STALE_MS` keeps this a unit test.
+        {
+            let mut seen = h.first_seen.lock().expect("lock");
+            let old =
+                std::time::Instant::now() - std::time::Duration::from_millis(BEAT_STALE_MS * 2);
+            seen.insert(9, old);
+        }
+        assert_eq!(
+            h.transition(9),
+            Some(false),
+            "a page that never loads at all must still be reported"
+        );
+        assert_eq!(h.transition(9), None, "and reported exactly once");
+    }
+
+    /// A SCREEN THAT ANSWERED AND THEN STOPPED IS THE CASE THIS WAS BUILT FOR,
+    /// and the grace above must not have bought it any silence.
+    #[test]
+    fn a_screen_that_answered_and_then_went_quiet_is_reported_at_once() {
+        let h = OutputHealth::default();
+        h.beat(9, PaintState::Content, "window", BeatGap::default());
+        assert_eq!(
+            h.transition(9),
+            None,
+            "a healthy first sighting is not news"
+        );
+
+        // Age the beat past the staleness window without waiting for it.
+        {
+            let mut m = h.beats.lock().expect("lock");
+            let b = m.get_mut(&9).expect("beat");
+            b.at = std::time::Instant::now() - std::time::Duration::from_millis(BEAT_STALE_MS * 2);
+        }
+        assert_eq!(h.transition(9), Some(false));
+        h.beat(9, PaintState::Content, "window", BeatGap::default());
+        assert_eq!(h.transition(9), Some(true));
+    }
+
+    /// THE SCREEN'S OWN ACCOUNT OF ITS SILENCE SURVIVES BOTH DOORS (RG-119).
+    ///
+    /// The distinction this carries is the whole point: about one interval means
+    /// the page kept ticking and the beats were lost on the way, which is Relay's
+    /// fault; minutes mean the page was not running at all, which is a screen that
+    /// genuinely was not painting. A defaulted zero would erase exactly that.
+    #[test]
+    fn a_beat_carries_what_the_screen_said_about_its_own_silence() {
+        let h = OutputHealth::default();
+        h.beat(9, PaintState::Content, "window", BeatGap::default());
+        assert_eq!(h.last_gap(9), Some(BeatGap::default()));
+        assert_eq!(
+            h.last_gap(9).and_then(|g| g.describe()),
+            None,
+            "a screen that said nothing must not be quoted as saying zero"
+        );
+
+        h.beat(
+            9,
+            PaintState::Content,
+            "window",
+            BeatGap::clamped(Some(641_000), Some(641_000)),
+        );
+        assert_eq!(
+            h.last_gap(9).and_then(|g| g.describe()).as_deref(),
+            Some("screen's own clock: silent 641s, hidden 641s")
+        );
+
+        h.beat(
+            9,
+            PaintState::Content,
+            "window",
+            BeatGap::clamped(Some(2_000), Some(0)),
+        );
+        assert_eq!(
+            h.last_gap(9).and_then(|g| g.describe()).as_deref(),
+            Some("screen's own clock: silent 2s, never hidden")
+        );
+    }
+
+    /// A NUMBER OFF THE LAN IS STILL UNTRUSTED INPUT.
+    ///
+    /// It only ever becomes a phrase in a timeline entry, but a client can send
+    /// anything, and a year of milliseconds in a service record is not evidence.
+    #[test]
+    fn a_nonsense_gap_is_dropped_rather_than_believed() {
+        for bad in [
+            serde_json::json!({"since_ms": -1}),
+            serde_json::json!({"since_ms": "641000"}),
+            serde_json::json!({"since_ms": GAP_CLAMP_MS + 1}),
+            serde_json::json!({"since_ms": 1.5}),
+            serde_json::json!({}),
+        ] {
+            assert_eq!(
+                BeatGap::from_json(&bad),
+                BeatGap::default(),
+                "not evidence: {bad}"
+            );
+        }
+        assert_eq!(
+            BeatGap::from_json(&serde_json::json!({"since_ms": 4000, "hidden_ms": 4000})),
+            BeatGap {
+                since_ms: Some(4_000),
+                hidden_ms: Some(4_000)
+            }
+        );
     }
 
     /// CLOSING A SCREEN ON PURPOSE MUST NOT LOOK LIKE ONE FAILING.
@@ -3196,7 +3464,7 @@ mod rehearsal_tests {
     #[test]
     fn forgetting_a_channel_resets_it_to_no_answer_yet() {
         let h = OutputHealth::default();
-        h.beat(3, PaintState::Black, "kiosk");
+        h.beat(3, PaintState::Black, "kiosk", BeatGap::default());
         assert!(h.painting(3));
         h.forget(3);
         assert!(h.read(3).is_none());
@@ -3233,8 +3501,8 @@ mod rehearsal_tests {
     #[test]
     fn the_latest_beat_wins() {
         let h = OutputHealth::default();
-        h.beat(2, PaintState::Content, "window");
-        h.beat(2, PaintState::Black, "kiosk");
+        h.beat(2, PaintState::Content, "window", BeatGap::default());
+        h.beat(2, PaintState::Black, "kiosk", BeatGap::default());
         let (_, state, transport) = h.read(2).expect("beat");
         assert_eq!(state, PaintState::Black);
         assert_eq!(transport, "kiosk");
