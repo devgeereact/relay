@@ -661,8 +661,23 @@ fn worker<F>(
                 "This build has no GPU backend. Rebuild with Metal — measured 2.8x on an \
                  M4 Pro (~1710ms -> ~602ms for large-v3-turbo)."
             } else {
-                "Switch to a smaller model in Settings -> Speech (measured on an M4 Pro with \
-                 Metal: large-v3-turbo ~602ms, small ~153ms, base ~59ms per window)."
+                // The accuracy half of this sentence is the whole reason it exists in
+                // this form. It used to name three millisecond figures and nothing
+                // else, so an operator who followed it landed on `ggml-base`, which is
+                // the configuration that produced four wrong verses in 85.5 minutes on
+                // 2026-09-06 (`docs/qa/audits/FIELD-2026-09-06.md` §3, RG-116). A
+                // speed setting that is really an accuracy setting must say so at the
+                // point where it is offered. `small` is named because rule 32 makes it
+                // free: 153ms rounds to the same single 200ms chunker hop that base's
+                // 59ms does, so it costs no cadence at all.
+                "Switch to a smaller model in Settings -> Speech, and prefer `small`: at \
+                 ~153ms it rounds to the same 200ms cadence step as `base` at ~59ms, so \
+                 it is the larger model for the same speed (`large-v3-turbo` ~602ms per \
+                 window; measured on an M4 Pro with Metal). A SMALLER MODEL CAN COST \
+                 ACCURACY, and Relay has never measured how much: in one field service \
+                 `large-v3-turbo` auto-fired 3 of 3 references correctly and `ggml-base` \
+                 5 of 9, putting four wrong verses on the output. That is one sample per \
+                 model and not a ranking, and it is the only accuracy evidence there is."
             };
             eprintln!(
                 "stt: decode {decode_ms}ms for a {window_ms}ms window on {threads} threads — \
@@ -1894,12 +1909,72 @@ mod bench {
         assert_eq!(a, 0.0);
     }
 
-    fn load_f32(path: &str) -> Vec<f32> {
+    /// Mono little-endian f32 samples, from a raw `.f32` dump or from a WAV.
+    ///
+    /// **The header is walked, not assumed to be 44 bytes, and the format is checked.**
+    /// Both were assumptions, and both fail silently, which is the worst possible shape
+    /// for a bench that asserts nothing: a wrong read yields a confident-looking table
+    /// of zeroes rather than an error.
+    ///
+    /// The 44-byte assumption broke on the first real recording this project ever had.
+    /// macOS `afconvert` is the tool nearest to hand for the 48 kHz to 16 kHz
+    /// conversion a service recording needs, and it writes a 4044-byte `FLLR` padding
+    /// chunk between `fmt ` and `data`, so the payload starts at 4096. Read from 44,
+    /// every sample is misaligned and 85 minutes of a church's audio decodes as noise.
+    ///
+    /// The format check is the same failure one level up: a 16-bit PCM WAV read as f32
+    /// is also noise, and `RELAY_BENCH_WAV` had nothing stopping one.
+    ///
+    /// It lives here once for all three benches in this file. It was copied into each
+    /// of them, so a file this one read as noise was read as noise three times, and a
+    /// repair to any single copy would have left the other two wrong.
+    pub(super) fn load_f32(path: &str) -> Vec<f32> {
         let bytes = std::fs::read(path).expect("read wav");
-        // Skip a 44-byte RIFF header if present; the payload is little-endian f32.
-        let start = if bytes.starts_with(b"RIFF") { 44 } else { 0 };
+        let start = if bytes.starts_with(b"RIFF") {
+            check_wav_format(&bytes, path);
+            chunk_offset(&bytes, b"data").unwrap_or_else(|| panic!("{path}: no `data` chunk"))
+        } else {
+            // A raw dump carries no format to check. Producing 16 kHz mono f32 is the
+            // caller's job; `bench/README.md` gives the command.
+            0
+        };
         let (frames, _tail) = bytes[start..].as_chunks::<4>();
         frames.iter().map(|c| f32::from_le_bytes(*c)).collect()
+    }
+
+    /// Byte offset of a RIFF chunk's PAYLOAD, by walking the chunk list.
+    fn chunk_offset(b: &[u8], want: &[u8; 4]) -> Option<usize> {
+        let mut p = 12; // "RIFF" + size + "WAVE"
+        while p + 8 <= b.len() {
+            let sz = u32::from_le_bytes([b[p + 4], b[p + 5], b[p + 6], b[p + 7]]) as usize;
+            let body = p + 8;
+            if &b[p..p + 4] == want {
+                return Some(body);
+            }
+            // Chunks are word-aligned: an odd size carries a pad byte.
+            p = body + sz + (sz & 1);
+        }
+        None
+    }
+
+    /// What the live worker is fed, and therefore the only thing that may be measured:
+    /// 16 kHz mono IEEE float. Anything else is a different measurement wearing this
+    /// one's numbers.
+    fn check_wav_format(b: &[u8], path: &str) {
+        let Some(f) = chunk_offset(b, b"fmt ") else {
+            panic!("{path}: no `fmt ` chunk");
+        };
+        let u16at = |i: usize| u16::from_le_bytes([b[f + i], b[f + i + 1]]);
+        let tag = u16at(0);
+        let channels = u16at(2);
+        let rate = u32::from_le_bytes([b[f + 4], b[f + 5], b[f + 6], b[f + 7]]);
+        let bits = u16at(14);
+        assert!(
+            tag == 3 && bits == 32 && channels == 1 && rate == TARGET_RATE,
+            "{path}: needs 16 kHz mono 32-bit float, got tag {tag} / {bits}-bit / \
+             {channels} ch / {rate} Hz. Convert it first:\n    \
+             afconvert -f WAVE -d LEF32@16000 -c 1 --src-quality 127 in.wav out.wav"
+        );
     }
 
     /// Does the decoder get the NUMBERS right, and what does it cost?
@@ -2148,7 +2223,7 @@ mod bench {
 
         // The same degradation grid the other benches use. A decoder that only wins on
         // studio audio wins nothing: clean audio is the one case Relay already handles.
-        let conds = [
+        let all_conds = [
             ("clean       ", 1.0f32, 0.0f32),
             ("quiet       ", 0.08, 0.0),
             ("noisy       ", 1.0, 0.02),
@@ -2156,11 +2231,71 @@ mod bench {
             ("very quiet  ", 0.03, 0.002),
         ];
 
+        // ── SELECTING A SUBSET, AND WHY THE FULL GRID IS NOT ALWAYS RUNNABLE ──
+        //
+        // Every condition is one REAL-TIME replay of the whole recording, by design
+        // (see the feed loop below). On an eleven-second clip the grid is free. On the
+        // 85.5 minutes of real service audio RG-116 exists to score, one model over
+        // five conditions is seven hours and three models is twenty-one, which is a
+        // measurement nobody runs and therefore a number nobody has.
+        //
+        // `RELAY_BENCH_CONDS=clean` and `RELAY_BENCH_MODELS=base,small` cut it to what
+        // a question actually needs. They select, they never invent: a name matching
+        // nothing is a hard failure rather than a silently smaller grid, because this
+        // bench asserts nothing and a quietly empty run would print a confident-looking
+        // table of zeroes.
+        //
+        // Both subsets are printed on every run. The headline is `right/total` and
+        // `total` is derived from the conditions actually run, so two runs with
+        // different filters produce numbers that look comparable and are not.
+        let pick = |var: &str| -> Option<Vec<String>> {
+            std::env::var(var).ok().map(|v| {
+                v.split(',')
+                    .map(|s| s.trim().to_lowercase())
+                    .filter(|s| !s.is_empty())
+                    .collect()
+            })
+        };
+        let want_conds = pick("RELAY_BENCH_CONDS");
+        let conds: Vec<(&str, f32, f32)> = all_conds
+            .into_iter()
+            .filter(|(l, _, _)| match &want_conds {
+                None => true,
+                Some(w) => w.iter().any(|x| l.trim() == x),
+            })
+            .collect();
+        assert!(
+            !conds.is_empty(),
+            "RELAY_BENCH_CONDS matched no condition. Available: {:?}",
+            all_conds
+                .iter()
+                .map(|(l, _, _)| l.trim())
+                .collect::<Vec<_>>()
+        );
+        if let Some(w) = pick("RELAY_BENCH_MODELS") {
+            engines.retain(|(label, _)| {
+                let l = label.to_lowercase();
+                w.iter().any(|x| l.contains(x.as_str()))
+            });
+            assert!(
+                !engines.is_empty(),
+                "RELAY_BENCH_MODELS matched no installed model"
+            );
+        }
+        println!(
+            "  conditions:        {:?}",
+            conds.iter().map(|(l, _, _)| l.trim()).collect::<Vec<_>>()
+        );
+        println!(
+            "  engines scored:    {:?}",
+            engines.iter().map(|(l, _)| l.as_str()).collect::<Vec<_>>()
+        );
+
         for (label, model) in &engines {
             println!("\n  ── engine: whisper · {label} ──");
             let (mut right, mut wrong, mut audio_s, mut wall_s) = (0usize, 0usize, 0f64, 0f64);
 
-            for (clabel, scale, noise) in conds {
+            for &(clabel, scale, noise) in &conds {
                 let mut cleaned = church_signal(&wav, scale, noise, 0x1234_5678);
                 // Trailing silence, so the worker's silence run fires a FINAL rather
                 // than leaving the last utterance stranded as a partial. This is what
@@ -2815,14 +2950,10 @@ mod adaptive_cadence {
 #[cfg(test)]
 mod e2e_latency {
     use super::*;
+    // ONE loader for all three benches in this file. It was copied into each of
+    // them, 44-byte header assumption and all. See `bench::load_f32`.
+    use super::bench::load_f32;
     use std::time::Instant;
-
-    fn load_f32(path: &str) -> Vec<f32> {
-        let bytes = std::fs::read(path).expect("read audio");
-        let start = if bytes.starts_with(b"RIFF") { 44 } else { 0 };
-        let (frames, _) = bytes[start..].as_chunks::<4>();
-        frames.iter().map(|c| f32::from_le_bytes(*c)).collect()
-    }
 
     /// One pass over the audio at a given cadence. Returns, per reference, the audio
     /// position (seconds) at which the detector first named it, plus wall cost.
@@ -2967,15 +3098,11 @@ mod e2e_latency {
 #[cfg(test)]
 mod realtime {
     use super::*;
+    // ONE loader for all three benches in this file. It was copied into each of
+    // them, 44-byte header assumption and all. See `bench::load_f32`.
+    use super::bench::load_f32;
     use std::sync::{Arc, Mutex};
     use std::time::{Duration, Instant};
-
-    fn load_f32(path: &str) -> Vec<f32> {
-        let bytes = std::fs::read(path).expect("read audio");
-        let start = if bytes.starts_with(b"RIFF") { 44 } else { 0 };
-        let (frames, _) = bytes[start..].as_chunks::<4>();
-        frames.iter().map(|c| f32::from_le_bytes(*c)).collect()
-    }
 
     #[test]
     #[ignore = "needs RELAY_BENCH_WAV and an installed model"]

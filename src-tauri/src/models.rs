@@ -114,7 +114,15 @@ const CATALOG: &[ModelInfo] = &[
         id: "base",
         filename: "ggml-base.bin",
         label: "Multilingual (recommended)",
-        detail: "Understands English plus Yoruba, Swahili and Hausa, including switching between them mid-sentence. Runs on any laptop.",
+        // `recommended` deliberately stays TRUE. RG-116's honest change is to the
+        // advice and not to the default: one field service is one sample per model,
+        // and moving every church onto a 488 MB download on that evidence would be
+        // choosing the number we would like over the number that is measured. What
+        // is not honest is a row that lists only what this model costs to run. The
+        // 2026-09-06 figures are in the detail because this is the screen where the
+        // choice is actually made, and the operator was previously told the trade in
+        // milliseconds only (`stt.rs`, the lag warning).
+        detail: "Understands English plus Yoruba, Swahili and Hausa, including switching between them mid-sentence. Runs on any laptop, and it is the least accurate model offered here: in one real service it heard 5 of 9 spoken references correctly, where the largest model heard 3 of 3 the same morning.",
         url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin",
         sha256: "60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe",
         bytes: 147_951_465,
