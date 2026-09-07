@@ -2,7 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { trapFocus } from './lib/focus.js';
   import { t } from './lib/i18n.js';
-  import { capture, capturing, detectionOn, live, screenBlack, rehearsing, initAudio, autoOpenOutputs, setDetection, clearScreens, blackScreen, panicError, dismissPanicError, serviceLock, loadServiceLock, channelHealth, startChannelHealth, latencyReport, onOperatorAction, noteOperatorAction } from './lib/stores/capture.js';
+  import { capture, capturing, detectionOn, live, screenBlack, rehearsing, initAudio, autoOpenOutputs, setDetection, clearScreens, blackScreen, panicError, dismissPanicError, dismissAudioError, serviceLock, loadServiceLock, channelHealth, startChannelHealth, latencyReport, onOperatorAction, noteOperatorAction } from './lib/stores/capture.js';
   import * as training from './lib/training.js';
   import { practice, stopPractice } from './lib/practice.js';
   import { degradations, worstLevel, summarise } from './lib/degraded.js';
@@ -572,6 +572,26 @@
         <span>{$panicError}</span>
       </div>
       <button class="r-btn ghost sm" on:click={dismissPanicError}>Dismiss</button>
+    </div>
+  {/if}
+
+  <!-- THE MICROPHONE DIED (RG-117). A device unplugged mid-service used to be one
+       line on stderr: capture spun on a dead stream, the transcript stopped, and
+       the only thing an operator could see was Relay apparently hearing nothing.
+
+       It belongs in the shell rather than on Live, for the same reason the panic
+       bar does — a volunteer may well be in Settings or Templates when the desk
+       feed is knocked out, and a message on a tab they are not looking at is not
+       a message. `role="alert"`, because it interrupts the service; it does not
+       auto-dismiss, because "the microphone stopped" stays true until somebody
+       does something about it. -->
+  {#if $capture.audioError}
+    <div class="audiobar" role="alert" aria-live="assertive">
+      <div class="panic-t">
+        <b>Relay has stopped hearing the microphone.</b>
+        <span>{$capture.audioError}</span>
+      </div>
+      <button class="r-btn ghost sm" on:click={dismissAudioError}>Dismiss</button>
     </div>
   {/if}
 

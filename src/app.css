@@ -575,6 +575,24 @@ body{ overflow:hidden; text-rendering:optimizeLegibility; -moz-osx-font-smoothin
 .panicbar span{ color:var(--v-txt); font-size:12.5px; line-height:1.55; }
 .panicbar .panic-t{ display:flex; flex-direction:column; gap:2px; flex:1; min-width:0; }
 
+/* THE MICROPHONE DIED (RG-117). Rose, because it is a fault and not a reduced
+   capability — never amber, which means ON AIR, and never amethyst, which means
+   rehearsal.
+
+   In flow rather than fixed, so it stacks UNDER the panic bar: a panic control
+   that failed outranks a dead microphone, because one of them means the
+   congregation is looking at something nobody chose. Quieter than `.panicbar` for
+   the same reason — same colour, no shadow, no full-bleed fixed position.
+
+   The bug this exists for: a device unplugged mid-service reached the operator as
+   one line on stderr, and the only visible symptom was Relay appearing to hear
+   nothing. */
+.audiobar{ display:flex; align-items:center; gap:14px; padding:10px 18px;
+  background:#2d0f16; border-bottom:1px solid var(--v-rose); }
+.audiobar b{ color:var(--v-rose); font-size:13px; letter-spacing:.02em; }
+.audiobar span{ color:var(--v-txt); font-size:12.5px; line-height:1.55; }
+.audiobar .panic-t{ display:flex; flex-direction:column; gap:2px; flex:1; min-width:0; }
+
 /* What is ACTUALLY on the congregation's screen — the reference, named, next to
    the On Air badge. The operator should never have to hunt a 10px monospace
    footer inside a monitor tile to answer "what are they looking at?". */

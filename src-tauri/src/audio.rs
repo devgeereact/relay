@@ -20,7 +20,7 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use serde::Serialize;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
 /// A voiced, time-stamped chunk of mono audio handed upstream to STT.
@@ -380,6 +380,78 @@ impl Drop for AudioEngine {
     }
 }
 
+/// WHAT A RUNTIME STREAM ERROR IS ALLOWED TO DO (RG-117).
+///
+/// cpal reports a device that has died after capture started through the stream's
+/// error callback, and that callback was the single line
+/// `eprintln!("audio stream error: {e}")`. It set no flag, emitted no event and
+/// reached no operator, so three things happened at once and none of them were
+/// visible:
+///
+/// 1. The capture loop is `while !stop` around a 100 ms `recv_timeout`, and the
+///    stream object stays alive, so the channel never disconnects. It spun on
+///    `Timeout => continue` for ever. The transcript simply stopped mid-sermon,
+///    indistinguishable from a preacher who had gone quiet.
+/// 2. `RELAY_RECORD_WAV` writes AFTER the loop exits, so a loop that never exits
+///    never writes. The instrument for the one measurement this project most needs
+///    is destroyed by the failure it would most want to have captured. On
+///    2026-09-06 the desk feed was unplugged and 26 minutes of a service sat
+///    buffered in RAM while the app looked alive.
+/// 3. CLAUDE.md rule 5 says device errors come back via `audio://error`. That was
+///    true of START errors and false of runtime ones, so the handbook overstated
+///    the coverage.
+///
+/// The message is stored BEFORE the flag is set, so the loop cannot exit and look
+/// for a reason that has not been written yet. The FIRST error wins: cpal can fire
+/// this repeatedly while a device tears down, and the first one is the cause while
+/// the rest are consequences.
+///
+/// **It never blocks.** This can be called on the device's own real-time thread,
+/// where blocking is what kills a capture stream outright, so a contended lock
+/// loses the message rather than waiting for it — and the stop flag is still set,
+/// because stopping is the half that saves the recording.
+fn note_stream_error(stop: &AtomicBool, sink: &Mutex<Option<String>>, message: String) {
+    eprintln!("audio stream error: {message}");
+    if let Ok(mut slot) = sink.try_lock() {
+        slot.get_or_insert(message);
+    }
+    stop.store(true, Ordering::Relaxed);
+}
+
+/// Where a debug recording may actually be written.
+///
+/// **Never over an existing file.** `RELAY_RECORD_WAV` names one path and the
+/// capture thread used to truncate it on every Stop, so a second Start/Stop cycle
+/// silently destroyed the first: on 2026-09-06 that turned 1837.8 s of a real
+/// service into a valid-looking 170.0 s file, and the audio was gone. It is worse
+/// than losing the recording outright, because it looks exactly like it worked.
+///
+/// So an existing name is never reused; the next free `-2`, `-3` … is taken and
+/// the write line prints where the audio actually went.
+fn free_recording_path(requested: &std::path::Path) -> std::path::PathBuf {
+    if !requested.exists() {
+        return requested.to_path_buf();
+    }
+    let stem = requested
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| "recording".into());
+    let ext = requested
+        .extension()
+        .map(|e| format!(".{}", e.to_string_lossy()))
+        .unwrap_or_default();
+    let dir = requested.parent().unwrap_or(std::path::Path::new("."));
+    // Bounded: a loop that cannot fail is a loop that hangs on a full disk or a
+    // read-only directory. After this many the answer is not a better filename.
+    for n in 2..1000 {
+        let candidate = dir.join(format!("{stem}-{n}{ext}"));
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+    requested.to_path_buf()
+}
+
 /// Resolve the device, build the cpal stream, then run the chunk/VAD loop until
 /// stopped. Everything touching the non-Send `Device`/`Stream` stays on this
 /// one thread.
@@ -412,12 +484,15 @@ where
     // aggregate/virtual devices, or unusual channel layouts — fall back to the
     // device's own default config so audio STILL flows (denoise self-disables).
     // Without this, selecting a non-default device silently produced no audio.
-    let (stream, used) = match build_stream(&device, &preferred, &tx) {
+    // Where a runtime stream failure leaves its reason. Set by the stream's error
+    // callback, read once the loop has exited and the recording is safely written.
+    let runtime_err: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+    let (stream, used) = match build_stream(&device, &preferred, &tx, &stop, &runtime_err) {
         Ok(s) => (s, preferred),
         Err(e1) => {
             eprintln!("audio: preferred 48 kHz config failed ({e1}); using device default");
             let def = device.default_input_config().map_err(|e| e.to_string())?;
-            let s = build_stream(&device, &def, &tx)?;
+            let s = build_stream(&device, &def, &tx, &stop, &runtime_err)?;
             (s, def)
         }
     };
@@ -439,7 +514,13 @@ where
     // the operator names explicitly, is never uploaded, and is never enabled by any UI —
     // it exists for someone diagnosing their own installation. See PRIVACY.md.
     let mut rec = std::env::var_os("RELAY_RECORD_WAV").map(|p| {
-        println!("audio: RECORDING cleaned input to {}", p.to_string_lossy());
+        // The name is where it will TRY to write. An existing file is never
+        // overwritten (`free_recording_path`), and the write line at the end of
+        // capture prints where the audio actually went.
+        println!(
+            "audio: RECORDING cleaned input to {} (existing files are never overwritten)",
+            p.to_string_lossy()
+        );
         (std::path::PathBuf::from(p), Vec::<f32>::new())
     });
 
@@ -523,6 +604,9 @@ where
     }
     drop(stream);
     if let Some((path, buf)) = rec {
+        // Resolved HERE and not at Start: the previous segment's file exists by
+        // now, and this is what stops a second Stop from writing over it.
+        let path = free_recording_path(&path);
         match write_wav_f32(&path, &buf, sample_rate) {
             Ok(()) => println!(
                 "audio: wrote {:.1}s to {}",
@@ -531,6 +615,13 @@ where
             ),
             Err(e) => eprintln!("audio: could not write recording: {e}"),
         }
+    }
+    // The recording is on disk before the error is reported, deliberately. This
+    // returns through `AudioEngine::start`'s `on_error`, which emits
+    // `audio://error` — so by the time an operator is told the microphone died,
+    // the audio that proves what happened has already been saved.
+    if let Some(msg) = runtime_err.lock().ok().and_then(|mut m| m.take()) {
+        return Err(msg);
     }
     Ok(())
 }
@@ -585,11 +676,19 @@ fn build_stream(
     device: &cpal::Device,
     supported: &cpal::SupportedStreamConfig,
     tx: &mpsc::SyncSender<Vec<f32>>,
+    stop: &Arc<AtomicBool>,
+    runtime_err: &Arc<Mutex<Option<String>>>,
 ) -> Result<cpal::Stream, String> {
     let sample_format = supported.sample_format();
     let config: cpal::StreamConfig = supported.clone().into();
     let channels = config.channels as usize;
-    let err_fn = |e| eprintln!("audio stream error: {e}");
+    // A DEAD DEVICE MUST STOP THE LOOP (RG-117). See `note_stream_error`: this
+    // used to be an `eprintln!` and nothing else, so capture spun for ever on a
+    // device that had been unplugged, the operator was told nothing, and the debug
+    // recording — which is written after the loop exits — was never written at all.
+    let (stop_on_err, err_sink) = (stop.clone(), runtime_err.clone());
+    let err_fn =
+        move |e: cpal::StreamError| note_stream_error(&stop_on_err, &err_sink, e.to_string());
     let stream = match sample_format {
         cpal::SampleFormat::F32 => {
             let tx = tx.clone();
@@ -714,6 +813,79 @@ fn downmix_u16(data: &[u16], channels: usize) -> Vec<f32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A DEAD DEVICE MUST STOP THE LOOP, AND SAY WHY (RG-117).
+    ///
+    /// The old error callback was `|e| eprintln!("audio stream error: {e}")` and
+    /// nothing else. The loop is `while !stop` around a 100 ms `recv_timeout` and
+    /// the stream stays alive, so the channel never disconnects and capture spun
+    /// on a device that had been unplugged: no banner, no event, and — because
+    /// the debug recorder writes after the loop exits — no recording either.
+    #[test]
+    fn a_stream_error_stops_capture_and_keeps_its_reason() {
+        let stop = AtomicBool::new(false);
+        let sink = Mutex::new(None);
+        note_stream_error(
+            &stop,
+            &sink,
+            "The requested device is no longer available.".into(),
+        );
+        assert!(
+            stop.load(Ordering::Relaxed),
+            "the loop must be able to exit"
+        );
+        assert_eq!(
+            sink.lock().unwrap().as_deref(),
+            Some("The requested device is no longer available."),
+            "and the operator must be able to be told what happened"
+        );
+    }
+
+    /// THE FIRST ERROR IS THE CAUSE; THE REST ARE CONSEQUENCES.
+    ///
+    /// cpal can fire the error callback repeatedly while a device tears down, and
+    /// the last message in that burst is usually the least informative. Reporting
+    /// it would replace "the device was unplugged" with something generic.
+    #[test]
+    fn the_first_reason_is_the_one_kept() {
+        let stop = AtomicBool::new(false);
+        let sink = Mutex::new(None);
+        note_stream_error(&stop, &sink, "device unplugged".into());
+        note_stream_error(&stop, &sink, "backend error".into());
+        assert_eq!(sink.lock().unwrap().as_deref(), Some("device unplugged"));
+    }
+
+    /// A SECOND RECORDING MAY NEVER OVERWRITE THE FIRST.
+    ///
+    /// `RELAY_RECORD_WAV` names one path and the capture thread truncated it on
+    /// every Stop, so a second Start/Stop cycle destroyed the first segment. On
+    /// 2026-09-06 that turned 1837.8 s of a real service into a valid-looking
+    /// 170.0 s file — worse than losing it outright, because it looks like it
+    /// worked.
+    #[test]
+    fn a_recording_never_lands_on_a_file_that_already_exists() {
+        let dir = std::env::temp_dir().join(format!("relay-rec-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let asked = dir.join("service.wav");
+
+        // Nothing there yet: the operator gets the name they asked for.
+        assert_eq!(free_recording_path(&asked), asked);
+
+        std::fs::write(&asked, b"first segment").expect("write");
+        let second = free_recording_path(&asked);
+        assert_ne!(second, asked, "the first segment must survive");
+        assert_eq!(second.file_name().unwrap(), "service-2.wav");
+
+        std::fs::write(&second, b"second segment").expect("write");
+        assert_eq!(
+            free_recording_path(&asked).file_name().unwrap(),
+            "service-3.wav"
+        );
+
+        // The first segment is still exactly what it was.
+        assert_eq!(std::fs::read(&asked).expect("read"), b"first segment");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn rms_of_silence_is_zero() {
