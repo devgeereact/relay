@@ -608,6 +608,12 @@ fn worker<F>(
                     window_ms,
                     drained,
                     is_final,
+                    // RG-118. The worker's own voiced count decides whether the gap
+                    // this pass closes was speech or a pause: silent chunks are
+                    // appended to a window that has not closed (see the comment
+                    // above on why whisper needs them), so a step can fire having
+                    // heard nobody, and the cadence metric used to time it.
+                    voiced,
                 );
                 emitted = true;
                 on_update(TranscriptUpdate {
