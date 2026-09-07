@@ -3114,6 +3114,18 @@ fn export_diagnostics(app: tauri::AppHandle) -> error::Result<String> {
             "Transcript updates skipped",
             report.dropped_partials.to_string(),
         ),
+        // RG-120. Without these two, an end-to-end stage with no samples is
+        // unreadable in a bundle: nothing distinguishes "the AI never fired" from
+        // "nothing was attached to paint what it fired". A real service reported
+        // zero samples against three auto-fires for the second reason.
+        Fact::new(
+            "Verses no screen reported painting",
+            report.fires_never_painted.to_string(),
+        ),
+        Fact::new(
+            "Render reports that arrived too late",
+            report.marks_after_close.to_string(),
+        ),
     ];
     for m in &report.metrics {
         if m.samples == 0 {

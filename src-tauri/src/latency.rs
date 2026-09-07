@@ -496,6 +496,29 @@ pub fn note_dropped_audio() {
 
 static DROPPED_AUDIO: AtomicU64 = AtomicU64::new(0);
 
+/// Verses that left the machine and that no screen ever reported painting.
+///
+/// RG-120. `end_to_end_speech_to_scripture` stamped **0 samples against three
+/// auto-fires** in one service and **7 against nine** in another, and the report
+/// could not say why — an absence there is honest (rule 31: a stage never reached
+/// is an absence, not a zero) but it is unattributable, and "the AI never fired"
+/// and "nothing was attached to paint it" look identical.
+///
+/// They are completely different situations. The first service ran its three fires
+/// before any output window existed, so nothing could have painted them and zero is
+/// the correct answer. Counting the gap is what makes that readable instead of
+/// silent.
+static FIRES_NEVER_PAINTED: AtomicU64 = AtomicU64::new(0);
+
+/// Render marks that arrived for a trace that was already gone — closed by an
+/// earlier screen, expired at `STALE_US`, or evicted from `open`.
+///
+/// The other half of the same question. A missing sample caused by nothing being
+/// attached is a fact about the church's setup; one caused by the recorder having
+/// dropped the trace first is a fact about this instrument, and only a count can
+/// tell them apart. Both were silent.
+static MARKS_AFTER_CLOSE: AtomicU64 = AtomicU64::new(0);
+
 pub fn set_enabled(on: bool) {
     recorder().enabled.store(on, Ordering::Relaxed);
 }
@@ -561,6 +584,13 @@ fn push_open(g: &mut Inner, t: Trace) {
 
 /// Fold a finished trace's spans into the histograms and park it in the ring.
 fn retire(g: &mut Inner, t: Trace) {
+    // RG-120. This trace put a verse on the way to a screen and no screen ever
+    // said it painted it. Counted here because `retire` is the one place a trace
+    // stops being able to receive anything — every path to the ring goes through
+    // it, so this cannot be missed on one of them.
+    if t.at(Stage::FireSent).is_some() && t.at(Stage::OutputRendered).is_none() {
+        FIRES_NEVER_PAINTED.fetch_add(1, Ordering::Relaxed);
+    }
     for (i, m) in Metric::ALL.iter().enumerate() {
         let sample = match m {
             Metric::Decode => (t.decode_us > 0).then_some(t.decode_us),
@@ -580,16 +610,20 @@ fn retire(g: &mut Inner, t: Trace) {
 }
 
 /// Apply `f` to the open trace with this id.
-fn with_open<F: FnOnce(&mut Trace)>(id: u64, f: F) {
+/// Returns whether the trace was still open. Callers that care about a mark
+/// arriving too late use it; the rest ignore it.
+fn with_open<F: FnOnce(&mut Trace)>(id: u64, f: F) -> bool {
     let r = recorder();
     if !r.enabled.load(Ordering::Relaxed) {
-        return;
+        return false;
     }
     if let Ok(mut g) = r.inner.lock() {
         if let Some(t) = g.open.iter_mut().find(|t| t.id == id) {
             f(t);
+            return true;
         }
     }
+    false
 }
 
 /// Stamp a stage on an open trace, now.
@@ -645,12 +679,20 @@ pub fn frontend_mark(id: u64, stage: Stage, at_epoch_ms: u64) {
     } else {
         converted
     };
-    with_open(id, |t| {
+    let landed = with_open(id, |t| {
         t.stamp(stage, at);
         if t.ipc_return_us.is_none() {
             t.ipc_return_us = Some(arrived.saturating_sub(at));
         }
     });
+    // A mark for a trace that is no longer open is not a no-op worth ignoring: it
+    // is the difference between "no screen answered" and "a screen answered and we
+    // had already thrown the trace away" (RG-120). A second screen painting the
+    // same verse lands here too, by design — see
+    // `e2e::a_second_screen_painting_the_same_verse_does_not_double_count`.
+    if !landed {
+        MARKS_AFTER_CLOSE.fetch_add(1, Ordering::Relaxed);
+    }
     // An output render is the last stage there is: nothing else will arrive for
     // this trace, so close it now rather than waiting for the ring to evict it.
     if stage == Stage::OutputRendered {
@@ -735,6 +777,18 @@ pub struct Report {
     /// means marks are not coming back — a console or output page that stopped
     /// reporting, not a pipeline that got slow.
     pub open_traces: usize,
+    /// Verses that left the machine and that no screen reported painting (RG-120).
+    /// This is what makes `end_to_end_speech_to_scripture` readable when it has few
+    /// samples or none: three fires and three never painted is a church with
+    /// nothing attached to paint them, which is a completely different report from
+    /// three fires and no measurement.
+    pub fires_never_painted: u64,
+    /// Render marks that arrived after their trace had gone. A second screen
+    /// painting the same verse is the ordinary case and lands here by design; a
+    /// number far larger than the screens in the room means marks are arriving
+    /// later than the recorder keeps traces, which is an instrument fault and not
+    /// a slow projector.
+    pub marks_after_close: u64,
 }
 
 fn us_to_ms(us: u64) -> f64 {
@@ -754,6 +808,8 @@ pub fn report(recent_n: usize) -> Report {
             dropped_partials: DROPPED_PARTIALS.load(Ordering::Relaxed),
             dropped_audio: DROPPED_AUDIO.load(Ordering::Relaxed),
             open_traces: 0,
+            fires_never_painted: FIRES_NEVER_PAINTED.load(Ordering::Relaxed),
+            marks_after_close: MARKS_AFTER_CLOSE.load(Ordering::Relaxed),
         };
     };
     expire_stale(&mut g, now_us());
@@ -805,6 +861,8 @@ pub fn report(recent_n: usize) -> Report {
         dropped_partials: DROPPED_PARTIALS.load(Ordering::Relaxed),
         dropped_audio: DROPPED_AUDIO.load(Ordering::Relaxed),
         open_traces: g.open.len(),
+        fires_never_painted: FIRES_NEVER_PAINTED.load(Ordering::Relaxed),
+        marks_after_close: MARKS_AFTER_CLOSE.load(Ordering::Relaxed),
     }
 }
 
@@ -822,6 +880,8 @@ pub fn reset() {
     }
     DROPPED_PARTIALS.store(0, Ordering::Relaxed);
     DROPPED_AUDIO.store(0, Ordering::Relaxed);
+    FIRES_NEVER_PAINTED.store(0, Ordering::Relaxed);
+    MARKS_AFTER_CLOSE.store(0, Ordering::Relaxed);
 }
 
 /// The recorder is a PROCESS-WIDE singleton, and `cargo test` runs tests in

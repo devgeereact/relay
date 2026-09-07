@@ -1360,6 +1360,15 @@
                  minutes behind, rather than a number. Non-zero here is worse news
                  than the row above it, so it is coloured and the row above is not. -->
             <div class="s-netrow"><span class="s-netk">audio dropped (never heard)</span><span class="s-netv r-mono" class:s-netbad={(lat?.dropped_audio ?? 0) > 0}>{lat?.dropped_audio ?? 0}</span></div>
+            <!-- RG-120. The end-to-end row above is an absence when no screen ever
+                 answered, and an absence with no cause is unreadable: "the AI never
+                 fired" and "nothing was attached to paint it" look identical at
+                 0 samples. A real service showed 0 samples against three auto-fires
+                 for exactly the second reason. NOT coloured as a fault — a console
+                 preview with no projector attached is a supported setup, and it is
+                 what a church rehearsing on a Tuesday looks like. -->
+            <div class="s-netrow"><span class="s-netk">verses no screen reported painting</span><span class="s-netv r-mono">{lat?.fires_never_painted ?? 0}</span></div>
+            <div class="s-netrow"><span class="s-netk">render reports that arrived too late</span><span class="s-netv r-mono">{lat?.marks_after_close ?? 0}</span></div>
           </div>
         {:else}
           <p class="s-note">Nothing measured yet. Start listening and speak for a few seconds.</p>

@@ -1745,6 +1745,168 @@ fn the_fire_half_of_the_chain_is_measured_on_its_own() {
     );
 }
 
+/// ONE AUTO-FIRE THAT REACHED A SCREEN IS ONE END-TO-END SAMPLE.
+///
+/// RG-120. `end_to_end_speech_to_scripture` is the stage that answers the only
+/// question a church actually asks — *how long after the preacher says it does it
+/// appear* — and in a real service it stamped **0 samples against three auto-fires**
+/// (service 14) and **7 against nine** (service 15). Nothing asserted this, which
+/// is why 0 of 3 shipped unnoticed: every other metric was populated, so the report
+/// looked healthy and the one number a church would quote was missing.
+///
+/// The whole span in one test, in order, exactly as the live path runs it: a decode
+/// pass begins, its transcript is emitted, a reference is detected and fired, and
+/// the screen reports it painted through the same command `latency.js` calls.
+#[test]
+fn one_auto_fire_that_reached_a_screen_is_one_end_to_end_sample() {
+    let _recorder = crate::latency::test_lock();
+    crate::latency::reset();
+    let app = app();
+    let h = app.handle().clone();
+    let _wall = Wall::watch(&h);
+
+    let trace = crate::latency::begin_pass(crate::latency::now_us(), None);
+    crate::latency::transcript_emitted(trace, 1_000, 8_000, 1, true);
+    super::emit_detections(
+        &h,
+        "turn with me to John chapter three verse sixteen",
+        0,
+        true,
+        Some(trace),
+    );
+    settle();
+
+    // The screen answers, the way `latency.js::markOutput` does over the bridge.
+    crate::latency::frontend_mark(
+        trace,
+        crate::latency::Stage::OutputRendered,
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0),
+    );
+
+    let report = crate::latency::report(4);
+    let e2e = report
+        .metrics
+        .iter()
+        .find(|m| m.metric == "end_to_end_speech_to_scripture")
+        .expect("metric");
+    assert_eq!(
+        e2e.samples, 1,
+        "a verse that was heard, fired and painted produced no end-to-end sample"
+    );
+}
+
+/// A SECOND SCREEN PAINTING THE SAME VERSE IS NOT A SECOND SAMPLE.
+///
+/// The mark closes the trace, deliberately, and that is what makes a church with a
+/// projector AND a stage monitor AND an OBS source report one measurement per verse
+/// rather than three. Worth pinning: the obvious "fix" for RG-120 is to stop
+/// closing on the first mark, and it would silently triple every count in the
+/// report while looking like more data.
+#[test]
+fn a_second_screen_painting_the_same_verse_does_not_double_count() {
+    let _recorder = crate::latency::test_lock();
+    crate::latency::reset();
+    let app = app();
+    let h = app.handle().clone();
+    let _wall = Wall::watch(&h);
+
+    let trace = crate::latency::begin_pass(crate::latency::now_us(), None);
+    crate::latency::transcript_emitted(trace, 1_000, 8_000, 1, true);
+    super::emit_detections(
+        &h,
+        "turn with me to John chapter three verse sixteen",
+        0,
+        true,
+        Some(trace),
+    );
+    settle();
+    for _ in 0..3 {
+        crate::latency::frontend_mark(
+            trace,
+            crate::latency::Stage::OutputRendered,
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0),
+        );
+    }
+
+    let report = crate::latency::report(4);
+    let e2e = report
+        .metrics
+        .iter()
+        .find(|m| m.metric == "end_to_end_speech_to_scripture")
+        .expect("metric");
+    assert_eq!(e2e.samples, 1, "three screens, one verse, one measurement");
+}
+
+/// A VERSE NOTHING PAINTED IS COUNTED, SO A MISSING SAMPLE HAS A CAUSE.
+///
+/// The rest of RG-120, and the part a commit can actually settle. Service 14 ran
+/// its three auto-fires before any output window existed — `service_events` records
+/// no attachment until 1457.7 s, and all three fires were at 181.9 s, 212.0 s and
+/// 460.4 s — so nothing could have painted them and zero end-to-end samples is the
+/// CORRECT answer, not a broken stage.
+///
+/// But zero with no cause is unreadable. "The AI never fired" and "nothing was
+/// attached to paint it" are the same number today, and they are completely
+/// different reports about a church. So a fire that leaves the machine and is never
+/// reported painted is counted, and the count is in Diagnostics and in the
+/// diagnostic bundle beside the metric it explains.
+#[test]
+fn a_verse_that_no_screen_painted_is_counted_rather_than_silently_absent() {
+    let _recorder = crate::latency::test_lock();
+    crate::latency::reset();
+    let app = app();
+    let h = app.handle().clone();
+    let _wall = Wall::watch(&h);
+
+    let trace = crate::latency::begin_pass(crate::latency::now_us(), None);
+    crate::latency::transcript_emitted(trace, 1_000, 8_000, 1, true);
+    super::emit_detections(
+        &h,
+        "turn with me to John chapter three verse sixteen",
+        0,
+        true,
+        Some(trace),
+    );
+    settle();
+    // No screen answers — the console-only setup of a real service. The trace is
+    // retired the way `expire_stale` and `push_open` retire one.
+    crate::latency::close(trace);
+
+    let report = crate::latency::report(4);
+    let e2e = report
+        .metrics
+        .iter()
+        .find(|m| m.metric == "end_to_end_speech_to_scripture")
+        .expect("metric");
+    assert_eq!(
+        e2e.samples, 0,
+        "nothing painted it, so there is nothing to time"
+    );
+    assert_eq!(
+        report.fires_never_painted, 1,
+        "the absence has no cause, which is what made 0 of 3 unreadable in the field"
+    );
+
+    // And a render that arrives after its trace has gone is the OTHER cause, kept
+    // apart from the first: one is a fact about the room, the other about this
+    // recorder.
+    crate::latency::frontend_mark(
+        trace,
+        crate::latency::Stage::OutputRendered,
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0),
+    );
+    assert_eq!(crate::latency::report(4).marks_after_close, 1);
+}
+
 /// Rejecting a suggestion has to leave a mark, and accepting one has to say whose
 /// idea it was.
 ///
