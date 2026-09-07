@@ -2303,6 +2303,13 @@ mod bench {
             "  engines scored:    {:?}",
             engines.iter().map(|(l, _)| l.as_str()).collect::<Vec<_>>()
         );
+        println!(
+            "  language:          {}",
+            match std::env::var("RELAY_BENCH_LANG") {
+                Ok(l) => format!("pinned to {l}"),
+                Err(_) => "auto (whisper re-elects one per window)".into(),
+            }
+        );
 
         for (label, model) in &engines {
             println!("\n  ── engine: whisper · {label} ──");
@@ -2338,6 +2345,23 @@ mod bench {
                         continue;
                     }
                 };
+                // ── PIN THE LANGUAGE, OR MEASURE THE LANGUAGE DETECTOR ──
+                //
+                // Unset means auto, which is what a church gets by default and is
+                // worth measuring — but it is a DIFFERENT measurement, and one model
+                // can lose to another purely by electing a different language.
+                // `ggml-small` did exactly that on this church's audio: over the same
+                // 70 s that `ggml-base` transcribed as English and scored a verse on,
+                // it produced 17 fragments of multilingual noise ("sous interpersonal
+                // work", "pee Samus putzein thrilled") and found nothing. That is the
+                // wander this file's own header records, not an accuracy gap, and
+                // reading it as one would retire the model the cadence arithmetic in
+                // DECISIONS §38 says is free.
+                //
+                // `RELAY_BENCH_LANG=en` is the control. The header says which was
+                // used, every run: the two numbers are not comparable and nothing
+                // else in the output distinguishes them.
+                engine.set_language(std::env::var("RELAY_BENCH_LANG").ok());
 
                 // Count what the GATE saw before the decoder ever runs. Without this
                 // number, "found nothing" is unattributable: a silent voice gate and a

@@ -128,6 +128,22 @@ RELAY_BENCH_CONDS=clean RELAY_BENCH_MODELS=base,small,turbo ...   # 3 x 85.5 min
 `ggml-base.en` if it is installed. Read the `engines scored:` line the run prints rather than
 assuming what the filter caught.
 
+> ### Pin the language, or you are measuring the language detector
+>
+> Unset means auto, which is what a church gets by default and is worth measuring — but it
+> is a **different measurement**, and one model can lose to another purely by electing a
+> different language. `ggml-small` did exactly that on 85.5 minutes of real service audio:
+> it scored 1 of 8 where `base` scored 4 and `turbo` 6. On a 70 second slice of the same
+> recording it produced **17** distinct transcripts of multilingual noise ("sous
+> interpersonal work", "pee Samus putzein thrilled") against `base`'s **231** of coherent
+> English, at 3.4 s lag against 0.3 s, and found nothing.
+>
+> With `RELAY_BENCH_LANG=en` on the identical slice: **161** transcripts, coherent English,
+> the verse found, lag 0.4 s. Same model, same audio, same rig.
+>
+> The header prints `language: pinned to en` or `language: auto (whisper re-elects one per
+> window)` on every run. Quote it with the number, because the two are not comparable.
+
 `clean` is the right first cut on field audio: the recording already contains the room, the
 microphone and the preacher, so degrading it further asks a different question. Both subsets
 are printed on every run, and `total` is derived from the conditions actually run, so numbers
