@@ -43,6 +43,15 @@ RELAY_BENCH_MODEL="$HOME/Library/Application Support/com.relay.app/models/ggml-b
 > **44% of the auto-fires on `ggml-base` were wrong against SPEC's 5% bar**, and it is the
 > model this project ships as recommended.
 >
+> **That replay is running as of 2026-09-07, and two of the three models are in.** On the
+> same audio, scored through the real router: `ggml-base` 4 of 8 correct with 3 wrong
+> verses that could have reached a wall; `ggml-large-v3-turbo` 6 of 8 correct with 2.
+> `ggml-small` is still decoding, and it is the model that decides the advice, because §2's
+> own arithmetic makes it free. The bench's raw counts are higher (5 and 3) because it
+> stops at `router::decide` and the live path then demotes a reference that is not in the
+> corpus — `Psalms 721:27` and `Psalms 71:27` are both absent from the bundled KJV and
+> could never have reached a congregation. RG-116 carries the detail.
+>
 > Word error rate is still unmeasured in every language. This does not change that.
 
 ---
