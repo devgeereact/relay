@@ -548,6 +548,14 @@
     <span class="te-histwrap">
       <button class="r-btn ghost sm" class:on={histOpen} on:click|stopPropagation={toggleHistory} disabled={!edit?.id} title="Restore an earlier saved version of this template">History</button>
       {#if histOpen}
+        <!-- The click handler is not an interaction: it stops the document-level
+             outside-click closer from seeing a click on the menu itself. Every real
+             control inside is a <button>, so the keyboard already reaches all of them,
+             and Escape is handled globally — `shortcuts.js` gives Escape to any mounted
+             [role="menu"] rather than clearing the screens. A keydown handler here would
+             have to stopPropagation too, which would swallow Space (rule 11: Space means
+             advance, app-wide) for as long as a menu is open. -->
+        <!-- svelte-ignore a11y-click-events-have-key-events -->
         <div class="te-histmenu" on:click|stopPropagation role="menu" tabindex="-1">
           <div class="te-histhead r-lbl">Saved versions</div>
           {#if versions.length}
@@ -589,6 +597,14 @@
           <div class="te-addwrap">
             <button class="te-addbtn" on:click|stopPropagation={() => (addOpen = !addOpen)} aria-label="Add layer">＋</button>
             {#if addOpen}
+              <!-- The click handler is not an interaction: it stops the document-level
+                   outside-click closer from seeing a click on the menu itself. Every real
+                   control inside is a <button>, so the keyboard already reaches all of them,
+                   and Escape is handled globally — `shortcuts.js` gives Escape to any mounted
+                   [role="menu"] rather than clearing the screens. A keydown handler here would
+                   have to stopPropagation too, which would swallow Space (rule 11: Space means
+                   advance, app-wide) for as long as a menu is open. -->
+              <!-- svelte-ignore a11y-click-events-have-key-events -->
               <div class="te-addmenu" on:click|stopPropagation role="menu" tabindex="-1">
                 <div class="te-addsec r-lbl">Add layer</div>
                 {#each LAYER_TYPES as t}

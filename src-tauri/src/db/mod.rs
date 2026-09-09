@@ -57,7 +57,7 @@ const SCHEMA: &str = include_str!("../../../docs/data/schema.sql");
 /// and for nothing else — so every install made by v0.1.0-2, -3 or -4 (which
 /// stamp `user_version = 2` on creation) would have kept the six-verse-short,
 /// mis-numbered Bible for ever. A rung is what reaches an operator's file.
-pub const SCHEMA_VERSION: i64 = 4;
+pub const SCHEMA_VERSION: i64 = 5;
 
 fn user_version(conn: &Connection) -> rusqlite::Result<i64> {
     conn.query_row("PRAGMA user_version", [], |r| r.get(0))
@@ -102,36 +102,75 @@ fn run_migrations(conn: &Connection, from: i64) -> rusqlite::Result<()> {
     // group's close, and the source has nested and misplaced braces, so Micah
     // 7:12 kept its whole marginal note as scripture and Hebrews 10:34, Romans
     // 16:27 and 1 Corinthians 16:24 kept a fragment of one. A database repaired
-    // by v3 is therefore still wrong, and its count and its Genesis 30:27 are
-    // both right, so neither of v3's probes can see it.
+    // by v3 is still wrong, and its count and its Genesis 30:27 are both right,
+    // so neither of v3's probes can see it.
     if from < 4 {
-        ensure_no_note_text_in_verses(conn)?;
+        ensure_no_note_text_in_verses(conn, NoteDelimiters::Braces)?;
+    }
+    // v5: and fourteen more carried a subscription — `«Written to the Hebrews
+    // from Italy, by Timothy.»`, under the benediction, on the wall — which no
+    // version of `clean_verse` before this one had ever looked at.
+    //
+    // **This is a SEPARATE rung and not a wider v4, because v4 is already
+    // stamped.** It was found by booting the packaged build against a real
+    // database that had taken v4 an hour earlier: widening v4's probe in place
+    // left `from < 4` false for ever and the fourteen verses sitting there. That
+    // is RG-102 exactly — a repair placed where the install that needs it has
+    // already gone past — and it is the third time this ladder has been walked
+    // into. A rung that has run cannot be edited; it can only be followed.
+    if from < 5 {
+        ensure_no_note_text_in_verses(conn, NoteDelimiters::Guillemets)?;
     }
     Ok(())
 }
 
-/// Re-import a corpus that carries marginal-note text, once.
+/// Which delimiter a rung looks for. Each rung owns its own, because a rung that
+/// has already run on somebody's database can never be widened — see the v5
+/// comment in `run_migrations`.
+#[derive(Clone, Copy)]
+enum NoteDelimiters {
+    /// Marginal glosses: `{green...: Heb. pastures of tender grass}`.
+    Braces,
+    /// Subscriptions: `«Written to the Hebrews from Italy, by Timothy.»`.
+    Guillemets,
+}
+
+impl NoteDelimiters {
+    fn probe(self) -> &'static str {
+        match self {
+            NoteDelimiters::Braces => {
+                "SELECT COUNT(*) FROM verses WHERE text LIKE '%{%' OR text LIKE '%}%'"
+            }
+            NoteDelimiters::Guillemets => {
+                "SELECT COUNT(*) FROM verses WHERE text LIKE '%«%' OR text LIKE '%»%'"
+            }
+        }
+    }
+}
+
+/// Re-import a corpus that carries a translator's note, once.
 ///
-/// **The probe is a brace, and it is the right probe because a brace is never
-/// scripture.** Every note in `kjv.json` is delimited by `{}`, `clean_verse`
-/// removes every one it recognises, and nothing in the KJV has a brace of its
-/// own — so a brace surviving into `verses.text` is note text on a wall,
-/// whichever parsing error put it there. Naming the four verses instead would
-/// have to be rewritten for the fifth; this rung will not.
+/// **The probe is the delimiter, and it is the right probe because neither
+/// delimiter is ever scripture.** Every note in `kjv.json` is bracketed by `{}`
+/// and every subscription by `«»`; `clean_verse` removes both; and no verse of
+/// the KJV contains either character of its own — the guillemets are the only
+/// non-ASCII characters in the whole file. So one surviving into `verses.text`
+/// is note text on a wall, whichever parsing error put it there. Naming the
+/// eighteen verses instead would have to be rewritten for the nineteenth; this
+/// rung will not.
 ///
 /// A database with no verses is left alone, for the same reason as
 /// `ensure_corpus_repair`: that is an install waiting for a seed, not a broken
 /// corpus.
-fn ensure_no_note_text_in_verses(conn: &Connection) -> rusqlite::Result<()> {
+fn ensure_no_note_text_in_verses(
+    conn: &Connection,
+    look_for: NoteDelimiters,
+) -> rusqlite::Result<()> {
     let have: i64 = conn.query_row("SELECT COUNT(*) FROM verses", [], |r| r.get(0))?;
     if have == 0 {
         return Ok(());
     }
-    let note_text: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM verses WHERE text LIKE '%{%' OR text LIKE '%}%'",
-        [],
-        |r| r.get(0),
-    )?;
+    let note_text: i64 = conn.query_row(look_for.probe(), [], |r| r.get(0))?;
     if note_text > 0 {
         reimport_full_kjv(conn)?;
     }
@@ -2435,6 +2474,73 @@ mod tests {
             "a marginal note survived the migration: {text}"
         );
         assert!(text.contains("from sea to sea"), "and the verse is whole");
+    }
+
+    /// AND THE SAME FOR THE OTHER DELIMITER, which no version of `clean_verse`
+    /// before v4 had ever looked at — so a database repaired by v3 carries all
+    /// fourteen subscriptions, with the count and Genesis 30:27 both right.
+    #[test]
+    fn a_v3_database_still_carrying_a_subscription_is_repaired_on_boot() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+        init_fresh(&conn).unwrap();
+
+        conn.execute(
+            "UPDATE verses SET text = ?1 WHERE book = 'Hebrews' AND chapter = 13 AND verse = 25",
+            ["Grace be with you all. Amen. «Written to the Hebrews from Italy, by Timothy.»"],
+        )
+        .unwrap();
+        set_user_version(&conn, 3).unwrap();
+        assert_eq!(verses::verse_count(&conn).unwrap(), 31_102);
+
+        migrate(&conn, false).unwrap();
+
+        let text: String = conn
+            .query_row(
+                "SELECT text FROM verses WHERE book = 'Hebrews' AND chapter = 13 AND verse = 25",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(text, "Grace be with you all. Amen.");
+    }
+
+    /// AND FROM v4, WHICH IS THE ONE THAT WAS ACTUALLY BROKEN.
+    ///
+    /// The subscription repair was first written as a WIDER v4 probe, and this
+    /// machine's database had taken v4 an hour earlier — so `from < 4` was false
+    /// for ever and all fourteen verses stayed. Found by booting the packaged
+    /// build against a real file, not by a test, which is the same way RG-102 was
+    /// found and the same mistake: **a rung that has already run cannot be
+    /// edited, only followed.**
+    ///
+    /// The v3 test above passes either way, because a v3 database runs every rung
+    /// below it. Only a v4 one can tell the difference, which is exactly why the
+    /// version a test starts from is part of its claim.
+    #[test]
+    fn a_v4_database_still_carrying_a_subscription_is_repaired_on_boot() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+        init_fresh(&conn).unwrap();
+
+        conn.execute(
+            "UPDATE verses SET text = ?1 WHERE book = 'Hebrews' AND chapter = 13 AND verse = 25",
+            ["Grace be with you all. Amen. «Written to the Hebrews from Italy, by Timothy.»"],
+        )
+        .unwrap();
+        set_user_version(&conn, 4).unwrap();
+
+        migrate(&conn, false).unwrap();
+
+        let text: String = conn
+            .query_row(
+                "SELECT text FROM verses WHERE book = 'Hebrews' AND chapter = 13 AND verse = 25",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(text, "Grace be with you all. Amen.");
+        assert_eq!(user_version(&conn).unwrap(), SCHEMA_VERSION);
     }
 
     /// A REPAIR MUST NOT ERASE THE RECORD OF WHAT WENT ON A WALL.

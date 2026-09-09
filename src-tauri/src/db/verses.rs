@@ -429,6 +429,8 @@ fn fts_match(conn: &Connection, match_q: &str, limit: i64) -> rusqlite::Result<V
 /// Keep the supplied words (drop only the braces); drop the glosses entirely;
 /// then collapse the whitespace the removed glosses leave behind.
 pub(super) fn clean_verse(text: &str) -> String {
+    let without_subscription = strip_subscriptions(text);
+    let text = without_subscription.as_str();
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
     // Where `out` ended when the last brace group was DROPPED as a gloss, and
@@ -471,6 +473,47 @@ pub(super) fn clean_verse(text: &str) -> String {
     out.push_str(rest);
     // Collapse the double spaces a dropped gloss leaves and trim the ends.
     out.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Remove the translators' subscriptions, which the source marks with `«…»`.
+///
+/// **These are not verse text and they reached a congregation's wall as though
+/// they were.** Hebrews 13:25 rendered *"Grace be with you all. Amen. «Written
+/// to the Hebrews from Italy, by Timothy.»"* — a note about where a letter was
+/// posted, on the screen, under the last words of the epistle. Fourteen verses
+/// carry one, all at the end of a book: Romans, both Corinthians, Galatians,
+/// Ephesians, Philippians, Colossians, both Thessalonians, both Timothys, Titus,
+/// Philemon and Hebrews.
+///
+/// This is RG-100's rule applied to the other delimiter. The guillemets are the
+/// only non-ASCII characters in the whole corpus and they mark nothing else, so
+/// the group is the note — no wording rule is needed and none is used. The
+/// braces INSIDE a subscription (`«{To the} Galatians written from Rome.»`) go
+/// with it, which is why this runs before the brace pass rather than after.
+///
+/// Checked group by group over all 31,102 verses: every one is balanced, every
+/// one is terminal, and the only verse with anything after its closing `»` is
+/// Ephesians 6:24, where that anything is itself a marginal note the brace pass
+/// then drops. Removing them changes fourteen verses and no others, and leaves
+/// no verse empty.
+fn strip_subscriptions(text: &str) -> String {
+    if !text.contains('«') {
+        return text.to_string();
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(open) = rest.find('«') {
+        out.push_str(&rest[..open]);
+        rest = match rest[open..].find('»') {
+            // An unclosed subscription runs to the end of the verse — which is
+            // where every one of them sits anyway. The corpus has none, and
+            // keeping the remainder would put the note back on the wall.
+            None => "",
+            Some(close) => &rest[open + close + '»'.len_utf8()..],
+        };
+    }
+    out.push_str(rest);
+    out
 }
 
 /// Byte index of the `}` that MATCHES the `{` at `open`, counting depth.
@@ -1390,11 +1433,60 @@ mod corpus_tests {
             ),
             "an enduring substance."
         );
-        // Romans 16:27. Nothing was dropped before this brace, so only the brace
-        // goes — deleting the clause would delete the verse's own words.
+        // Romans 16:27's stray brace, with the subscription markers taken off so
+        // this asserts the brace rule alone. Nothing was dropped before this
+        // brace, so only the brace goes — truncating here would delete the
+        // verse's own words.
         assert_eq!(
-            clean_verse("Amen. «{Written to the Romans} by Phebe of Cenchrea.}»"),
-            "Amen. «Written to the Romans by Phebe of Cenchrea.»"
+            clean_verse("Amen. {Written to the Romans} by Phebe of Cenchrea.}"),
+            "Amen. Written to the Romans by Phebe of Cenchrea."
         );
+    }
+
+    /// A TRANSLATOR'S SUBSCRIPTION IS NOT THE LAST WORDS OF THE EPISTLE.
+    ///
+    /// Fourteen verses ended with one, on a congregation's wall, under the
+    /// benediction: Hebrews 13:25 read *"Grace be with you all. Amen. «Written
+    /// to the Hebrews from Italy, by Timothy.»"*. Same rule as the braces, other
+    /// delimiter — and the braces inside a subscription go with it, which is the
+    /// case that decides the ORDER of the two passes.
+    #[test]
+    fn a_subscription_is_never_the_verse() {
+        assert_eq!(
+            clean_verse(
+                "Grace {be} with you all. Amen. «{Written to the Hebrews from Italy, by Timothy.}»"
+            ),
+            "Grace be with you all. Amen."
+        );
+        // Ephesians 6:24 — the only verse with anything after its closing `»`,
+        // and that anything is a marginal note the brace pass then drops.
+        assert_eq!(
+            clean_verse(
+                "Grace {be} with all them that love our Lord Jesus Christ in sincerity. Amen. \
+                 «{To the} Ephesians written from Rome, by Tychicus.» {in sincerity: or, with incorruption}"
+            ),
+            "Grace be with all them that love our Lord Jesus Christ in sincerity. Amen."
+        );
+    }
+
+    /// No cleaned verse anywhere carries EITHER delimiter, and none is emptied
+    /// by the removal. The second half matters: a rule that strips a whole verse
+    /// is worse than the note it removes.
+    #[test]
+    fn no_cleaned_verse_anywhere_carries_a_subscription() {
+        let raw = KJV_JSON.trim_start_matches('\u{feff}');
+        let books: Vec<KjvBook> = serde_json::from_str(raw).expect("kjv.json parses");
+        let mut bad = Vec::new();
+        for (bi, book) in books.iter().enumerate() {
+            for (ci, ch) in book.chapters.iter().enumerate() {
+                for (vi, v) in ch.iter().enumerate() {
+                    let cleaned = clean_verse(v);
+                    if cleaned.contains(['«', '»']) || cleaned.trim().is_empty() {
+                        bad.push(format!("book {} {}:{} — {cleaned}", bi + 1, ci + 1, vi + 1));
+                    }
+                }
+            }
+        }
+        assert!(bad.is_empty(), "not the verse:\n{}", bad.join("\n"));
     }
 }

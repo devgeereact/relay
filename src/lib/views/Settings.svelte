@@ -1100,9 +1100,19 @@
                   <td><b>{l.name}</b> <span class="r-mono s-langcode">{l.code}</span></td>
                   <td class="r-mono">{l.books} / {l.books_total}</td>
                   <td class="r-mono">{l.aliases}</td>
-                  <!-- Yorùbá numerals are subtractive (16 = ẹrìndínlógún) and are
-                       not parsed. Saying "no" is the point of this column. -->
-                  <td class="r-mono" class:s-langgap={!l.numerals}>{l.numerals ? 'yes' : 'no'}</td>
+                  <!-- Three states, not two, and the middle one is the point of
+                       this column. Yorùbá numerals PARSE (they are vigesimal and
+                       subtractive — 16 is ẹrìndínlógún) but no native speaker has
+                       checked the table, so they are capped at suggest and can
+                       never reach a wall unattended. Printing a bare "yes" beside
+                       Kiswahili would claim the two behave the same. -->
+                  <td
+                    class="r-mono"
+                    class:s-langgap={!l.numerals || !l.numerals_auto_fire}
+                    title={l.numerals && !l.numerals_auto_fire
+                      ? 'Parsed, but no native speaker has reviewed these numbers — a reference resolved through them is offered to you and never fired on its own.'
+                      : null}
+                  >{!l.numerals ? 'no' : l.numerals_auto_fire ? 'yes' : 'suggest only'}</td>
                   <td class="r-mono" class:s-langgap={coverage(l.code) === 0}>{coverage(l.code)}%</td>
                   <!-- ABSENCES, not scores. Nothing observes a native speaker's
                        judgement, and none has looked at these tables. -->
