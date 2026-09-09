@@ -57,7 +57,7 @@ const SCHEMA: &str = include_str!("../../../docs/data/schema.sql");
 /// and for nothing else — so every install made by v0.1.0-2, -3 or -4 (which
 /// stamp `user_version = 2` on creation) would have kept the six-verse-short,
 /// mis-numbered Bible for ever. A rung is what reaches an operator's file.
-pub const SCHEMA_VERSION: i64 = 3;
+pub const SCHEMA_VERSION: i64 = 4;
 
 fn user_version(conn: &Connection) -> rusqlite::Result<i64> {
     conn.query_row("PRAGMA user_version", [], |r| r.get(0))
@@ -94,6 +94,46 @@ fn run_migrations(conn: &Connection, from: i64) -> rusqlite::Result<()> {
     // install from August needs exactly this and nothing above would give it.
     if from < 3 {
         ensure_corpus_repair(conn)?;
+    }
+    // v4: four verses still carried marginal-note text after the v3 repair.
+    //
+    // Not a new defect in the data — the same one, surviving its own fix. v3
+    // repaired the corpus with a `clean_verse` that took the FIRST `}` as a
+    // group's close, and the source has nested and misplaced braces, so Micah
+    // 7:12 kept its whole marginal note as scripture and Hebrews 10:34, Romans
+    // 16:27 and 1 Corinthians 16:24 kept a fragment of one. A database repaired
+    // by v3 is therefore still wrong, and its count and its Genesis 30:27 are
+    // both right, so neither of v3's probes can see it.
+    if from < 4 {
+        ensure_no_note_text_in_verses(conn)?;
+    }
+    Ok(())
+}
+
+/// Re-import a corpus that carries marginal-note text, once.
+///
+/// **The probe is a brace, and it is the right probe because a brace is never
+/// scripture.** Every note in `kjv.json` is delimited by `{}`, `clean_verse`
+/// removes every one it recognises, and nothing in the KJV has a brace of its
+/// own — so a brace surviving into `verses.text` is note text on a wall,
+/// whichever parsing error put it there. Naming the four verses instead would
+/// have to be rewritten for the fifth; this rung will not.
+///
+/// A database with no verses is left alone, for the same reason as
+/// `ensure_corpus_repair`: that is an install waiting for a seed, not a broken
+/// corpus.
+fn ensure_no_note_text_in_verses(conn: &Connection) -> rusqlite::Result<()> {
+    let have: i64 = conn.query_row("SELECT COUNT(*) FROM verses", [], |r| r.get(0))?;
+    if have == 0 {
+        return Ok(());
+    }
+    let note_text: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM verses WHERE text LIKE '%{%' OR text LIKE '%}%'",
+        [],
+        |r| r.get(0),
+    )?;
+    if note_text > 0 {
+        reimport_full_kjv(conn)?;
     }
     Ok(())
 }
@@ -2354,6 +2394,47 @@ mod tests {
             text.contains("tarry"),
             "the supplied words are still missing after a migration: {text}"
         );
+    }
+
+    /// A DATABASE ALREADY REPAIRED BY v3 IS STILL CARRYING NOTE TEXT.
+    ///
+    /// The v3 repair ran `clean_verse` as it was then, and it took the first `}`
+    /// as a group's close — so Micah 7:12 came out of the repair with its whole
+    /// marginal note attached, and a database at `user_version = 3` has the right
+    /// verse count and the right Genesis 30:27. Both of v3's probes are green on
+    /// it. Only a v4 rung reaches that install, and it must assert the DATA
+    /// rather than the version, because the version is what was wrong before.
+    #[test]
+    fn a_v3_database_still_carrying_note_text_is_repaired_on_boot() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+        init_fresh(&conn).unwrap();
+
+        let broken = "In that day also he shall come even to thee from Assyria. \
+                      {and from the fortified cities: or, even to the fortified cities}";
+        conn.execute(
+            "UPDATE verses SET text = ?1 WHERE book = 'Micah' AND chapter = 7 AND verse = 12",
+            [broken],
+        )
+        .unwrap();
+        set_user_version(&conn, 3).unwrap();
+        // Everything v3 knows how to look at is right, which is the point.
+        assert_eq!(verses::verse_count(&conn).unwrap(), 31_102);
+
+        migrate(&conn, false).unwrap();
+
+        let text: String = conn
+            .query_row(
+                "SELECT text FROM verses WHERE book = 'Micah' AND chapter = 7 AND verse = 12",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(
+            !text.contains(['{', '}']),
+            "a marginal note survived the migration: {text}"
+        );
+        assert!(text.contains("from sea to sea"), "and the verse is whole");
     }
 
     /// A REPAIR MUST NOT ERASE THE RECORD OF WHAT WENT ON A WALL.
