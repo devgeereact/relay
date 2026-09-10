@@ -10,7 +10,41 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 
 ## [Unreleased]
 
-_Nothing yet._
+### Eighteen verses were showing a translator's note as though it were scripture
+
+Some verses in the bundled KJV ended with a note the translators wrote, rendered on
+the screen in the same type as the verse — so a congregation read it as part of what
+was being preached.
+
+Fourteen were the notes at the end of a letter. Hebrews 13:25 read *"Grace be with you
+all. Amen. **«Written to the Hebrews from Italy, by Timothy.»**"*, and Romans, both
+Corinthians, Galatians, Ephesians, Philippians, Colossians, both Thessalonians, both
+Timothys, Titus and Philemon each did the same.
+
+Four were marginal notes. **Micah 7:12** ended with a whole one — *"…from mountain to
+mountain. **{and from the fortified cities: or, even to the fortified cities}**"* — and
+Hebrews 10:34, Romans 16:27 and 1 Corinthians 16:24 each ended with a fragment of one.
+
+**All eighteen are fixed, and an existing install repairs itself on the next launch.**
+Nothing else about your service history, your plans or your templates is touched; the
+repair replaces only the verse text. If you have already recorded services, their
+detections keep pointing at the same references they always did.
+
+### Yorùbá chapter and verse numbers are now understood — as suggestions
+
+Relay already recognised Yorùbá **book** names. It now recognises Yorùbá **numbers**
+too, so *"Jòhánù orí kẹta ẹsẹ̀ kẹrìndínlógún"* finds John 3:16 without anyone switching
+to English mid-sentence.
+
+**It will offer the verse; it will not put it on the screen by itself.** No Yorùbá
+speaker has checked those number words yet, and a wrong number does not fail safely —
+it shows a different verse. So Relay asks rather than acts, and you accept it with one
+press, exactly like a paraphrase. **Settings → Languages** says *"suggest only"* in the
+numerals column so this is visible rather than a surprise.
+
+Swahili and Hausa are unchanged and still fire on their own.
+
+_Nothing else that changes what you see in the booth._
 
 ---
 

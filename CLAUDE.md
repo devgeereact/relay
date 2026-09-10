@@ -35,7 +35,7 @@ Full context: `docs/SPEC.md` (canonical spec), `docs/DECISIONS.md` (why, not jus
 
 Tier 1: **Yoruba, Swahili, Hausa**, plus English. Code-switching (English mixed mid-sentence with a local language) is the normal case, not an edge case — never write detection logic that assumes single-language input.
 
-**Be honest about the moat**: today it is a hand-curated multilingual *reference-parsing* table (66 books × 3 languages, in `src-tauri/data/book_aliases.json`) on top of stock Whisper base. No fine-tuned acoustic model ships, Yoruba numerals are not parsed, no native speaker has reviewed the aliases, and word error rate has never been measured in any language. `docs/LANGUAGES.md` says all of this plainly — **do not soften it.**
+**Be honest about the moat**: today it is a hand-curated multilingual *reference-parsing* table (66 books × 3 languages, in `src-tauri/data/book_aliases.json`) on top of stock Whisper base. No fine-tuned acoustic model ships, no native speaker has reviewed the aliases, and word error rate has never been measured in any language. Yoruba numerals now parse (RG-126) and **that is not a claim about accuracy**: nobody has reviewed those words either, so the `yo` block is marked `unreviewed` and everything resolved through it is capped at `Suggest` and can never reach a wall unattended. `docs/LANGUAGES.md` says all of this plainly — **do not soften it.**
 
 ## Commands
 

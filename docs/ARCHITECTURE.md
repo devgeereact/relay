@@ -167,7 +167,7 @@ Type a word, a phrase, or a paraphrase → the verse plus ranked suggestions. Ca
 4. **FTS5 full-text** (`search_verses_fts`) — bm25-ranked, terms quoted then OR'd — catches loose, non-contiguous word queries a substring `LIKE` misses. 0.33–0.45 band.
 5. Substring `LIKE` as a last-ditch fallback.
 
-The KJV importer strips translator **marginal glosses** (`{green…: Heb. pastures of tender grass}` — not verse text) while keeping supplied-word italics (`{it was}` → `it was`).
+The KJV importer strips translator **marginal glosses** (`{green…: Heb. pastures of tender grass}` — not verse text) and **subscriptions** (`«Written to the Hebrews from Italy, by Timothy.»` — a note about where a letter was posted, not the last words of the epistle), while keeping supplied-word italics (`{it was}` → `it was`). Brace groups are matched by DEPTH, because the source contains nested and misplaced braces and taking the first `}` left note text on the wall in four verses (RG-123 … RG-125).
 
 ---
 
