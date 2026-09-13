@@ -288,3 +288,11 @@ describe('a template that asks for a transition', () => {
     expect(el.querySelector('.verse')).toBeTruthy();
   });
 });
+
+// PROBE — what a fired song slide puts in the reference region today.
+describe('PROBE song label', () => {
+  it('shows what reaches the glass', () => {
+    const el = mount(scripture(), { reference: 'Amazing Grace · Chorus 2', text: 'Amazing grace, how sweet the sound', kind: 'song' });
+    console.log('PROBE ref region:', JSON.stringify(el.querySelector('.reference')?.textContent));
+  });
+});

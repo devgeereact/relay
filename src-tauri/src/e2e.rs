@@ -688,6 +688,49 @@ fn a_lyric_slide_projects_the_lyric_and_not_the_song_title() {
 }
 
 #[test]
+fn r10_a_suppressed_label_is_still_in_the_service_record() {
+    // The other half of the sentence above — "the label still names the cue" —
+    // which was never asserted, and was not true from the run surface: Live
+    // passed an empty string for a song cue, suppressing the label a second time
+    // in the wrong place. The record then said "Manual override" about nothing,
+    // and a Sunday report could not name what had been on the screens.
+    let app = app();
+    let h = app.handle().clone();
+
+    let svc = start_service(
+        h.clone(),
+        h.state::<Session>(),
+        h.state::<Db>(),
+        h.state::<channels::Rehearsal>(),
+        h.state::<servicelock::ServiceLock>(),
+        "Sunday".into(),
+        "2026-09-13".into(),
+    )
+    .expect("start");
+
+    fire_content(
+        h.clone(),
+        h.state::<Db>(),
+        "Blessed Assurance · Verse 1".into(),
+        "Blessed assurance, Jesus is mine".into(),
+        "song".into(),
+        None,
+        None,
+    )
+    .expect("fire the lyric");
+    settle();
+
+    let named = service_timeline(h.state::<Db>(), svc)
+        .expect("timeline")
+        .into_iter()
+        .any(|r| r.detail.as_deref() == Some("Blessed Assurance · Verse 1"));
+    assert!(
+        named,
+        "the cue that was fired is not named anywhere in the service record"
+    );
+}
+
+#[test]
 fn an_announcement_still_shows_its_title() {
     // The lyric rule is for lyrics only. A notice without its heading is a
     // sentence floating on a wall with nothing to say what it is.

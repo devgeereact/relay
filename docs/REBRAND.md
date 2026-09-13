@@ -241,7 +241,7 @@ gates in the phases section are green on it — `cargo test`, `npx vitest run`, 
 | 7 | Countdown | **partly done** | one formatter (`formatCountdown`), one warning rule, read by the wall and the stage. `layers.test.js` +8, `templatestyle.test.js` +2, suite 1053. **Pause / ±1 / Reset not built** |
 | 8 | Transitions | **done** | seven in one register (`transitions.js`), played by the renderer, migrated from the three old names, reduced motion is a cut. DECISIONS §71. `transitions.test.js` 15 + 6 elsewhere, suite 1072 |
 | 9 | Search | **partly done** | glued digits parse, a literal hit must cover 55% of the query, and nothing a search does reaches a screen. DECISIONS §72. `e2e::r9_*` ×4, cargo 673. **"Why it matched" not built** |
-| 10 | Library | not started | |
+| 10 | Library | **partly done** | the operator label reaches the record again and still not the glass (DECISIONS §73); announcements say which fields the room sees. `e2e::r10_*`, `r2livepath` R2-H, cargo 674 / suite 1074. **Collections rail, reflow editing, section keys and media upload not built** |
 | 11 | Settings | not started | |
 | 12 | SuperSource | not started | |
 
@@ -356,6 +356,18 @@ version of the defect this product exists to prevent.
 **"Each hit says why it matched" is not built.** It changes the shape of what `search_scripture`
 returns, and three surfaces plus the preacher's remote read it. It belongs with the Library pass
 (phase 10), which reworks that UI anyway.
+
+**Phase 10 took the half of the Library that was a defect, not a redesign.** The rule that a
+song's section label must not reach the glass was held at the backend and implemented AGAIN in
+Live, which passed an empty label — so the wall was right and the service record could not name
+what had been on it. One rule, one home; both halves are now tested.
+
+**The rest of §10 is a redesign, and it is not started.** The collections rail, reflow lyric
+editing, section keys (`v c b t i o`) and media upload are new surfaces rather than repairs.
+Section keys in particular add a global keystroke path that can put content on a wall, next to
+the panic keys — that is `shortcuts.js` territory, where this repository has already had one
+bug of exactly that shape (Escape wiping the wall from behind a menu), and it deserves its own
+pass rather than the tail of another.
 
 **Carried forward, deliberately.** Phase 1 owns `src/app.css`, and the shared layer is now
 token-only: every literal radius there reads `--v-r-*`. Components still hold about sixty

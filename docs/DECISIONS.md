@@ -3176,3 +3176,46 @@ verse actually contains — a word counts when it appears, when a verse word sta
 *Each hit says why it matched* (the brief's §9) would change the shape of what `search_scripture`
 returns, and three surfaces plus the preacher's remote read it. It belongs with the Library pass
 that reworks the search UI, and is recorded in `docs/REBRAND.md` rather than half-built here.
+
+## 73. What a cue is CALLED and what a cue SHOWS are different facts (2026-09-13)
+
+### The rule, which already existed
+
+`fire_content` decides what reaches the glass. A song's label does not: *"Blessed Assurance ·
+Verse 1"* across the top of a wall is the operator's bookkeeping in front of a congregation, so
+for `kind == "song"` the projected reference is empty. Scripture is the opposite — a reference is
+part of what is being shown — and an announcement's heading is content too.
+
+`e2e::a_lyric_slide_projects_the_lyric_and_not_the_song_title` has held the first half of that
+sentence for months.
+
+### What was wrong
+
+The second half — *"the label still names the cue"* — was neither asserted nor true from the run
+surface. `Live.svelte` passed an EMPTY STRING as the label when firing a song cue from a plan,
+implementing the suppression a second time, one layer too early.
+
+Two costs, and the second is the one that matters:
+
+- the service record had nothing to say about which song had been on the screens, so a Sunday
+  report showed *"Manual override"* about nothing;
+- two surfaces disagreed about a rule only one of them should own. The Library's own fire passed
+  the label all along.
+
+This is CLAUDE.md rule 36 in miniature: the check belongs at the choke point, and a caller that
+re-implements it is a caller that will drift from it.
+
+### The decision
+
+**The caller says what it fired; `fire_content` decides what is shown.** Live passes the real
+label, the backend still suppresses it for songs, and both halves are now held:
+
+- `e2e::r10_a_suppressed_label_is_still_in_the_service_record` — fired, suppressed, and still
+  named in the timeline;
+- `r2livepath.test.js` R2-H — no view may blank a label at the call site. A source assertion on
+  purpose: what it guards is a boundary, and the way a boundary breaks is a caller being helpful.
+
+**Announcements say where each field goes.** The heading and the notice both reach the room, and
+nothing on the form used to say so — an operator typing a heading had no way to know whether it
+was a name for their own list (as a song's section label is) or something a congregation would
+read. Two content kinds with opposite rules, one form, no signposts.

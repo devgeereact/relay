@@ -421,9 +421,13 @@
           true, // keepPlan — this IS the plan's slide
         );
       } else if (item.cue_type === 'song') {
-        // Lyrics carry NO title/section on the live screen — that stays in the
-        // operator UI. Only the lyric lines go out.
-        await fireContent('', s.text, 'song', stageNote, tpl, true); // keepPlan
+        // Lyrics carry NO title/section on the live screen — and `fire_content`
+        // is the ONE place that decides that (CLAUDE.md rule 36). Passing an
+        // empty label here suppressed it a second time, in the wrong place: the
+        // service record then had nothing to say about which song was on screen,
+        // and the Library's own fire (which passes the label) disagreed with this
+        // one about the same rule.
+        await fireContent(item.label, s.text, 'song', stageNote, tpl, true); // keepPlan
       } else {
         await fireContent(item.label, s.text, 'announce', stageNote, tpl, true); // keepPlan
       }

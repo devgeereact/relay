@@ -218,14 +218,20 @@
             <button class="r-btn ghost sm" on:click={() => (edit = null)}>Cancel</button>
             <button class="r-btn primary sm" on:click={save}>Save</button>
           </div>
+          <!-- BOTH OF THESE REACH THE ROOM, and the fields now say so. A song's
+               section label is suppressed on the way to the glass and an
+               announcement's heading is not — two content kinds with opposite
+               rules, and nothing here told an operator which one they were
+               typing into. -->
           <label class="an-field">
-            <span class="r-lbl">Title</span>
+            <span class="r-lbl">Heading <em class="an-where">on screen</em></span>
             <input class="r-input" bind:value={edit.title} placeholder="e.g. Midweek service — Wednesday 7pm" />
           </label>
           <label class="an-field">
-            <span class="r-lbl">Body</span>
-            <textarea class="r-input an-text" bind:value={edit.body} placeholder="The notice text shown on screen…"></textarea>
+            <span class="r-lbl">Notice <em class="an-where">on screen</em></span>
+            <textarea class="r-input an-text" bind:value={edit.body} placeholder="The words the congregation reads…"></textarea>
           </label>
+          <p class="an-note">Both lines go to the screens — the heading sits above the notice.</p>
         </div>
       {/if}
 
@@ -283,6 +289,8 @@
   .an-ehead { display: flex; align-items: center; gap: 8px; }
   .an-spring { flex: 1; }
   .an-field { display: flex; flex-direction: column; gap: 5px; }
+  .an-where { font-style: normal; color: var(--v-faint); letter-spacing: 0; text-transform: none; }
+  .an-note { margin: 0; font-size: var(--v-fs-cap); color: var(--v-faint); }
   .an-text { min-height: 110px; padding: 10px 13px; line-height: 1.5; resize: vertical;
     font-family: var(--f-body); }
   .an-msg { margin: 0; font-size: var(--v-fs-b2); color: var(--v-emerald); }
