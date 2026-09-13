@@ -40,30 +40,63 @@
   import MediaLibrary from './library/MediaLibrary.svelte';
   import Announcements from './library/Announcements.svelte';
   import ImportReview from './library/ImportReview.svelte';
+  import Collections from './library/Collections.svelte';
+  import { COLLECTIONS, collectionOf } from './library/collections.js';
   import {
     capture,
     parseImport,
     importMedia,
     fileToBase64,
+    listSavedScripture,
+    listSongs,
+    listAnnouncements,
+    listMedia,
   } from '../stores/capture.js';
 
-  const tabs = [
-    // BROWSE is first: the Library could search, and could list what had been
-    // saved, but could not open a Bible and read it — which is the thing the
-    // word "library" promises.
-    { key: 'browse', label: 'Bible' },
-    { key: 'scripture', label: 'Saved' },
-    { key: 'lyrics', label: 'Lyrics' },
-    { key: 'media', label: 'Media' },
-    { key: 'announcements', label: 'Announcements' },
-    // GRAPHICS is the reference's sixth pill. It is not a new store: it is the
-    // image half of Media. ProPresenter draws the same line — a still you put
-    // BEHIND words is a different job from a video you play, and mixing them
-    // means hunting past twenty MP4s for a logo. Both read the same table, so
-    // nothing is duplicated and nothing is invented.
-    { key: 'graphics', label: 'Graphics' },
-  ];
+  // ── THE COLLECTION RAIL (REBRAND §10) ─────────────────────────────────────
+  //
+  // The six pills became four collections, because four is what the content
+  // actually is: two of the pills were halves of one kind (a Bible you read and
+  // the verses you saved; the moving half of media and the still half). The
+  // register lives in `library/collections.js` so the bar and this shell cannot
+  // disagree about what a collection contains.
+  //
+  // `active` is still the VIEW key, and it is still the single source of truth
+  // for which pane renders — every existing prop, binding and test on the panes
+  // is untouched by the row above them.
   let active = 'browse';
+  $: openCollection = collectionOf(active) ?? COLLECTIONS[0];
+  // Which view each collection was last left on, so coming back to Scripture
+  // returns you to the Bible or to Saved — whichever you were reading.
+  const lastView = {};
+  $: lastView[openCollection.key] = active;
+
+  function goCollection(key) {
+    const c = COLLECTIONS.find((x) => x.key === key);
+    if (!c) return;
+    active = lastView[key] ?? c.views[0].key;
+  }
+
+  // Counts on the rail. `null` is NOT zero and `-1` is NOT zero: a count that
+  // has not loaded, and a count whose query failed, must not read the same as an
+  // empty collection (rule 35). `countWords`/`countMark` keep those three apart.
+  let counts = { scripture: null, songs: null, notices: null, media: null };
+  async function loadCounts() {
+    const one = async (fn) => {
+      try {
+        return (await fn()).length;
+      } catch {
+        return -1; // said out loud as "count unavailable", never drawn as 0
+      }
+    };
+    const [s, g, n, m] = await Promise.all([
+      one(listSavedScripture),
+      one(listSongs),
+      one(listAnnouncements),
+      one(listMedia),
+    ]);
+    counts = { scripture: s, songs: g, notices: n, media: m };
+  }
   // The template the OUTPUT actually uses, so the live strip is the real thing.
   let liveTemplate = null;
   // ── THE LIVE COLUMN ───────────────────────────────────────────────────────
@@ -182,6 +215,7 @@
   }
 
   onMount(async () => {
+    loadCounts();
     liveTemplate = (await listActiveTemplates().catch(() => []))[0] ?? null;
     await loadTemplates().catch(() => {});
     // Guarded: an unguarded reject here aborts the rest of mount, leaving the
@@ -219,6 +253,8 @@
   function goTab(t) {
     active = t;
     reload += 1;
+    // An import that added songs or media just changed a number on the rail.
+    loadCounts();
   }
 
   // File-type routing — the heart of "import anything, sorted automatically".
@@ -421,19 +457,15 @@
 {#if reviewing}
   <ImportReview songs={reviewSongs} on:done={onReviewDone} on:cancel={() => (reviewing = false)} />
 {:else}
-  <!-- ROW 1 — the content type, and the two things you can do to the library
-       as a whole. Constant across every pane. -->
+  <!-- ROW 1 — the collections, and the two things you can do to the library as
+       a whole. Constant across every pane. -->
   <div class="lib-topline">
-    <div class="subtabs" role="tablist" aria-label="Content type">
-      {#each tabs as t}
-        <button
-          class="r-pill r-focus"
-          role="tab"
-          aria-selected={active === t.key}
-          class:on={active === t.key}
-          on:click={() => (active = t.key)}>{t.label}</button>
-      {/each}
-    </div>
+    <Collections
+      collection={openCollection.key}
+      view={active}
+      {counts}
+      onCollection={goCollection}
+      onView={(v) => (active = v)} />
 
     <span class="lib-spring"></span>
 
@@ -491,10 +523,9 @@
       </select>
     {/if}
 
-    <select class="r-select lib-f" aria-label="Content type" bind:value={active}>
-      {#each tabs as t}<option value={t.key}>{t.label}</option>{/each}
-    </select>
-
+    <!-- The "Content type" select that used to sit here is gone: it was a second
+         copy of the row above it, and the collection rail now says which kind of
+         content you are in AND how much of it there is. -->
     <div class="lib-search">
       <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"
         stroke-width="2" stroke-linecap="round" aria-hidden="true">
@@ -569,8 +600,17 @@
             only={active === 'graphics' ? 'image' : 'moving'}
             {queue}
             onQueueChange={(q) => (queue = q)} />
-        {:else}
+        {:else if active === 'announcements'}
           <Announcements query={debounced} startDraft={announceAction} {queue} onQueueChange={(q) => (queue = q)} />
+        {:else}
+          <!-- Announcements used to be the `{:else}`, which meant an unknown view
+               key rendered the announcement pane and looked entirely normal. Every
+               key comes from the collection register, so this branch is reachable
+               only by a register and a shell that have drifted apart — and it says
+               so rather than showing the wrong content under the right heading. -->
+          <p class="lib-nopane" role="alert">
+            The Library has no pane for “{active}”. Pick a collection above.
+          </p>
         {/if}
       {/key}
     </div>
@@ -619,13 +659,17 @@
     .lib-body{ grid-template-columns:1fr; height:auto; }
     .lib-pane{ min-height:60vh; }
   }
-  .lib-topline{ display:flex; align-items:center; gap:16px; flex-wrap:wrap; }
+  /* The collection rail can be one row or two (a collection with more than one
+     view carries them beneath it), so the actions align to the TOP and hold the
+     collection chips' own height — otherwise they jump half a row the moment an
+     operator opens Scripture. */
+  .lib-topline{ display:flex; align-items:flex-start; gap:16px; flex-wrap:wrap; }
   .lib-spring{ flex:1; }
-  .subtabs{ display:flex; gap:8px; flex-wrap:wrap; }
-  .lib-topactions{ display:flex; gap:8px; flex-shrink:0; align-items:center; }
+  .lib-topactions{ display:flex; gap:8px; flex-shrink:0; align-items:center; height:34px; }
   .lib-importmsg{ font-size:11.5px; color:var(--v-emerald); margin-top:-4px; }
   /* Failures are rose — never the emerald success line above them. */
   .lib-importerr{ font-size:11.5px; color:var(--v-red); margin-top:-4px; }
+  .lib-nopane{ margin:0; padding:18px 4px; font-size:var(--v-fs-b2); color:var(--v-red); }
 
   /* The filter bar. Every control is 40px so the row has one baseline. */
   .lib-filters{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
