@@ -5,7 +5,7 @@
   // template scales identically whether the container is a full screen or a
   // small preview box.
   import { afterUpdate, onMount, onDestroy } from 'svelte';
-  import { isLayered, boundValue, templateShows, formatElapsed, formatRemaining } from './layers.js';
+  import { isLayered, boundValue, templateShows, formatElapsed, formatRemaining, formatCountdown, countdownWarning } from './layers.js';
   import { applySink, getAudioOutput, onAudioOutputChange } from './audioOutput.js';
 
   export let template = {};
@@ -591,11 +591,21 @@
   onDestroy(stopClock);
   $: remainingMs = countdownTo ? Math.max(0, countdownTo - now) : null;
   $: countdownDone = remainingMs === 0;
-  $: countdownText = (() => {
-    if (remainingMs == null) return '';
-    const s = Math.round(remainingMs / 1000);
-    return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
-  })();
+  // ONE FORMATTER (docs/REBRAND.md §7). This used to be its own copy of the
+  // arithmetic, as did the stage page — and both stopped at minutes, so a
+  // 90-minute pre-service countdown read `90:00`.
+  $: countdownText = remainingMs == null ? '' : formatCountdown(remainingMs);
+  // The last minute, or the last tenth of a short countdown. `countdown_from`
+  // rides with the content when the fire path knows it; without it the rule falls
+  // back to the last minute, which is the honest answer for a countdown whose
+  // length nobody told us.
+  // The warning colour is applied INLINE as well as by class: the countdown's own
+  // colour is an inline style, and an inline style beats a stylesheet rule, so a
+  // `.warn` class alone would have changed nothing on the wall.
+  const CD_WARN = '#f4515b';
+  $: countdownWarn =
+    remainingMs != null &&
+    countdownWarning(remainingMs, content?.countdown_from ? countdownTo - content.countdown_from : null);
 
   // Re-key on the actual content so a new slide crossfades but identical content
   // (a re-broadcast of the same verse) does not re-animate. Countdown ticks are
@@ -779,7 +789,7 @@
         {#if content.reference && !countdownDone}
           <div class="reference" style="font-size:{refSize}cqw; {refStyle}">{content.reference}</div>
         {/if}
-        <div class="verse countdown" style="font-size:{verseSize * 2}cqw; margin-top:{refGap}cqw; color:{verseColor}; text-align:center; text-shadow:{verseShadowCss};">
+        <div class="verse countdown" class:warn={countdownWarn} style="font-size:{verseSize * 2}cqw; margin-top:{refGap}cqw; color:{countdownWarn ? CD_WARN : verseColor}; text-align:center; text-shadow:{verseShadowCss};">
           {countdownDone ? (content.countdown_done || '0:00') : countdownText}
         </div>
       </div>
@@ -842,7 +852,7 @@
               {#if content.reference && !countdownDone}
                 <div class="reference" style="font-size:{refSize}cqw; {refStyle}">{content.reference}</div>
               {/if}
-              <div class="verse countdown" style="font-size:{verseSize * 2}cqw; color:{verseColor}; text-align:{verseAlign}; text-shadow:{verseShadowCss};">
+              <div class="verse countdown" class:warn={countdownWarn} style="font-size:{verseSize * 2}cqw; color:{countdownWarn ? CD_WARN : verseColor}; text-align:{verseAlign}; text-shadow:{verseShadowCss};">
                 {countdownDone ? (content.countdown_done || '0:00') : countdownText}
               </div>
             {:else if refFirst}
@@ -976,6 +986,22 @@
     padding: 0 0 6% 0;
   }
   /* Full-bleed media layer behind the text (image/video background). */
+  /* THE LAST MINUTE (docs/REBRAND.md §7). Red, and moving — a still colour
+     change on a screen somebody glances at is easy to miss. Reduced motion gets
+     the glow without the pulse: the information is the colour, the pulse only
+     makes it findable. */
+  .countdown.warn { color: #f4515b; }
+  @media (prefers-reduced-motion: no-preference) {
+    .countdown.warn { animation: cdwarn 2s ease-in-out infinite; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .countdown.warn { text-shadow: 0 0 0.25em rgba(244, 81, 91, 0.85); }
+  }
+  @keyframes cdwarn {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.55; }
+  }
+
   .media {
     position: absolute;
     inset: 0;

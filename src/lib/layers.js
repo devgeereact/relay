@@ -262,6 +262,48 @@ export function slideRevealCss(mode, t) {
 /** Format a remaining duration (ms). Positive shows time left (`M:SS`); once the
  *  service runs OVER the planned length it goes negative and shows `-M:SS`, so a
  *  preacher can see they are past time. Reuses formatElapsed for the magnitude. */
+/**
+ * THE ONE COUNTDOWN FORMATTER. Read by the wall, the stage monitor and anything
+ * else that shows the same number, so they cannot drift apart.
+ *
+ * `auto` shows `m:ss` and grows to `h:mm:ss` once there is an hour to show —
+ * both previous copies stopped at minutes, so a 90-minute pre-service countdown
+ * read `90:00`. `ms` and `hms` pin the shape for a template that wants one.
+ */
+export function formatCountdown(ms, mode = 'auto') {
+  const total = Math.max(0, Math.round((Number(ms) || 0) / 1000));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const sec = total % 60;
+  const pad = (n) => String(n).padStart(2, '0');
+  if (mode === 'hms') return `${h}:${pad(m)}:${pad(sec)}`;
+  if (mode === 'ms') return `${Math.floor(total / 60)}:${pad(sec)}`;
+  return h > 0 ? `${h}:${pad(m)}:${pad(sec)}` : `${m}:${pad(sec)}`;
+}
+
+/** How long is left is a countdown's business; WHEN TO WORRY is this. */
+export const COUNTDOWN_WARN_MS = 60_000;
+
+/**
+ * Is this countdown inside its warning window?
+ *
+ * The last minute — or the last tenth of a countdown shorter than ten minutes,
+ * because a minute's warning on a two-minute countdown is a colour that is on for
+ * half its life and therefore says nothing.
+ *
+ * A rule rather than a setting, deliberately: the control belongs in the Settings
+ * pass, and a setting with nowhere to set it is worse than a sensible default.
+ */
+export function countdownWarning(remainingMs, totalMs = null) {
+  const left = Number(remainingMs);
+  if (!Number.isFinite(left) || left <= 0) return false;
+  const span = Number(totalMs);
+  const window = Number.isFinite(span) && span > 0
+    ? Math.min(COUNTDOWN_WARN_MS, span / 10)
+    : COUNTDOWN_WARN_MS;
+  return left <= window;
+}
+
 export function formatRemaining(ms) {
   const n = Number(ms) || 0;
   return n < 0 ? `-${formatElapsed(-n)}` : formatElapsed(n);

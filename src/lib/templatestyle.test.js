@@ -218,3 +218,34 @@ describe("a shape layer's fill and opacity", () => {
     expect(getComputedStyle(box).opacity).toBe('0.4');
   });
 });
+
+// ── THE COUNTDOWN WARNS, AND THE WARNING HAS TO WIN ────────────────────────
+//
+// The countdown's colour is written as an INLINE style, and an inline style beats
+// a stylesheet rule — so a `.warn` class in the CSS alone changed nothing at all
+// on the wall. It looked right in the markup and was invisible on the screen,
+// which is the failure worth a test.
+describe('the countdown warning', () => {
+  const timer = () => ({
+    id: 5,
+    name: 'Timer',
+    layout: { regions: ['verse_text'], align: 'center' },
+    style: { verseColor: '#ffffff', background: '#101010' },
+  });
+  const fire = (msFromNow) => ({ reference: '', text: '', countdown_to: Date.now() + msFromNow });
+
+  it('is the template colour with time still to go', () => {
+    const el = mount(timer(), fire(10 * 60_000));
+    const cd = el.querySelector('.countdown');
+    expect(cd).toBeTruthy();
+    expect(cd.className).not.toMatch(/warn/);
+    expect(cd.style.color).toBe('rgb(255, 255, 255)');
+  });
+
+  it('turns red in the last minute, inline, so nothing can override it back', () => {
+    const el = mount(timer(), fire(30_000));
+    const cd = el.querySelector('.countdown');
+    expect(cd.className).toMatch(/warn/);
+    expect(cd.style.color).toBe('rgb(244, 81, 91)');
+  });
+});

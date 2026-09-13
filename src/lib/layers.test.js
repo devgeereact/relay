@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import TemplateRender from './TemplateRender.svelte';
-import { makeLayer, isLayered, isKeyedTemplate, boundValue, regionsToLayers, STARTERS, formatElapsed, formatRemaining, slideRevealCss } from './layers.js';
+import { formatCountdown, countdownWarning, makeLayer, isLayered, isKeyedTemplate, boundValue, regionsToLayers, STARTERS, formatElapsed, formatRemaining, slideRevealCss } from './layers.js';
 
 describe('layer model', () => {
   it('makes typed layers with sane defaults and unique ids', () => {
@@ -290,5 +290,58 @@ describe('the lower-third starters', () => {
     const b = starter('lower.bible');
     a.layout.layers[0].fill = '#ff0000';
     expect(b.layout.layers[0].fill).not.toBe('#ff0000');
+  });
+});
+
+// ── ONE COUNTDOWN FORMATTER (docs/REBRAND.md §7) ───────────────────────────
+//
+// The arithmetic lived twice — the wall and the preacher's phone each had their
+// own copy. Two timers that agree are indistinguishable from one timer, right up
+// until somebody fixes a rounding edge in one of them.
+describe('formatCountdown', () => {
+  it('shows m:ss under an hour', () => {
+    expect(formatCountdown(5 * 60_000 + 7_000)).toBe('5:07');
+    expect(formatCountdown(0)).toBe('0:00');
+  });
+
+  it('grows to h:mm:ss once there is an hour to show', () => {
+    // Both previous copies stopped at minutes, so a 90-minute pre-service
+    // countdown read "90:00".
+    expect(formatCountdown(90 * 60_000)).toBe('1:30:00');
+  });
+
+  it('can be pinned to a shape a template asked for', () => {
+    expect(formatCountdown(90 * 60_000, 'ms')).toBe('90:00');
+    expect(formatCountdown(65_000, 'hms')).toBe('0:01:05');
+  });
+
+  it('never shows a negative time', () => {
+    expect(formatCountdown(-5000)).toBe('0:00');
+    expect(formatCountdown(null)).toBe('0:00');
+  });
+});
+
+describe('countdownWarning', () => {
+  it('warns in the last minute of an ordinary countdown', () => {
+    expect(countdownWarning(61_000, 15 * 60_000)).toBe(false);
+    expect(countdownWarning(59_000, 15 * 60_000)).toBe(true);
+  });
+
+  it('scales down for a short countdown rather than warning for half its life', () => {
+    // A minute's warning on a two-minute countdown is a colour that is on half
+    // the time, which is a colour that says nothing.
+    // A two-minute countdown warns for its last twelve seconds, not its last minute.
+    expect(countdownWarning(59_000, 2 * 60_000)).toBe(false);
+    expect(countdownWarning(13_000, 2 * 60_000)).toBe(false);
+    expect(countdownWarning(11_000, 2 * 60_000)).toBe(true);
+  });
+
+  it('is not warning once it has finished', () => {
+    expect(countdownWarning(0, 60_000)).toBe(false);
+  });
+
+  it('falls back to the last minute when the total is unknown', () => {
+    expect(countdownWarning(30_000)).toBe(true);
+    expect(countdownWarning(120_000)).toBe(false);
   });
 });

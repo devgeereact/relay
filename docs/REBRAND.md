@@ -238,7 +238,7 @@ gates in the phases section are green on it — `cargo test`, `npx vitest run`, 
 | 4 | Roles and the look register | **done** | a screen may follow the content look (DECISIONS §70), "Used for" on the template, a tag on each gallery card. `e2e::r4_a_screen_may_follow_the_content_look`, suite 1034 / cargo 668 |
 | 5 | Lower thirds | **partly done** | three starters (Name · Lyric · Scripture), each keyed, each its own template. A non-hex shape fill no longer paints black. `layers.test.js` +6, `templatestyle.test.js` +3, suite 1043. **Band-gives-ground not built** |
 | 6 | Stage monitor | **partly done** | a word to the preacher (new `stage_alert` hub message, stage-only by contract), the reading can no longer push the clock off the top. `e2e::r5_a_word_to_the_preacher_reaches_the_stage_and_not_a_rehearsal`, cargo 669, suite 1043. **Switchable zones and the stacked rail clock not built** |
-| 7 | Countdown | not started | |
+| 7 | Countdown | **partly done** | one formatter (`formatCountdown`), one warning rule, read by the wall and the stage. `layers.test.js` +8, `templatestyle.test.js` +2, suite 1053. **Pause / ±1 / Reset not built** |
 | 8 | Transitions | not started | |
 | 9 | Search | not started | |
 | 10 | Library | not started | |
@@ -321,6 +321,24 @@ the header cannot be pushed off the top, and that is what changed.
 with nowhere yet to persist them, and the three-pair rail needs the same container-inside-a-
 container concept phases 5 and 12 are waiting on. Offering a switch that saves nothing is the
 defect phase 4 just closed.
+
+**Phase 7 removed a second clock.** The m:ss arithmetic lived twice — the wall and the
+preacher's phone each had their own copy. They agreed, which is exactly what made it worth
+deleting: two clocks that agree are indistinguishable from one clock right up until somebody
+fixes a rounding edge in one of them. Both also stopped at minutes, so a 90-minute pre-service
+countdown read `90:00`.
+
+**The warning is a rule, not a setting, and that is on purpose for now.** The spec asks for a
+configurable threshold. The place that control belongs is the Settings pass (phase 11), and a
+setting with no screen to set it on is precisely the defect phase 4 closed. The rule is the last
+minute, or the last tenth of a countdown shorter than ten minutes — a minute's warning on a
+two-minute countdown is a colour that is lit for half its life, and a colour that is always on
+says nothing. Reduced motion gets the glow without the pulse: the information is the colour.
+
+**Start/Pause, Reset and ±1 are not built.** `countdown_to` is an absolute instant that rides
+with the content; pausing and nudging need a countdown the engine OWNS rather than a timestamp it
+broadcast once, which is a backend model rather than a transport row. Clear already exists (the
+screen clears).
 
 **Carried forward, deliberately.** Phase 1 owns `src/app.css`, and the shared layer is now
 token-only: every literal radius there reads `--v-r-*`. Components still hold about sixty

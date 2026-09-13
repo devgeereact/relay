@@ -1,4 +1,5 @@
 <script>
+  import { formatCountdown, countdownWarning } from './lib/layers.js';
   // Mobile stage-display remote — the preacher opens this on a phone/iPad (via
   // QR or the LAN URL) to see the live verse + reference in real time. No Tauri
   // runtime: it connects to the kiosk WebSocket hub (:8031) for content, exactly
@@ -109,11 +110,10 @@
   let nowMs = 0;
   $: cdRemain = cdTo ? Math.max(0, cdTo - nowMs) : null;
   $: cdFinished = cdRemain === 0;
-  $: cdText = (() => {
-    if (cdRemain == null) return '';
-    const s = Math.round(cdRemain / 1000);
-    return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
-  })();
+  // ONE FORMATTER, shared with the wall (docs/REBRAND.md §7) — this page used to
+  // carry its own copy of the same arithmetic.
+  $: cdText = cdRemain == null ? '' : formatCountdown(cdRemain);
+  $: cdWarn = cdRemain != null && countdownWarning(cdRemain);
 
   function apply(m) {
     if (m.kind === 'content') {
@@ -207,7 +207,7 @@
       <div class="alert" role="status" aria-live="assertive">{alert}</div>
     {:else if visible && cdTo}
       {#if content.reference && !cdFinished}<div class="ref">{content.reference}</div>{/if}
-      <div class="verse countdown">{cdFinished ? (cdDone || '0:00') : cdText}</div>
+      <div class="verse countdown" class:warn={cdWarn}>{cdFinished ? (cdDone || '0:00') : cdText}</div>
       {#if note}<div class="note"><span class="note-lbl">Note</span>{note}</div>{/if}
     {:else if visible && content}
       {#if content.reference}<div class="ref">{content.reference}{content.translation ? ' · ' + content.translation : ''}</div>{/if}
@@ -305,6 +305,15 @@
      anything is fired, and therefore the text most likely to be looked at. It was
      2.25:1: the worst contrast in the product, in its least forgiving location. */
   .idle { font-family: var(--f-mono); color: var(--v-faint); font-size: 14px; letter-spacing: .1em; }
+  /* The last minute — the same rule and the same red as the wall. */
+  .countdown.warn { color: var(--v-red); }
+  @media (prefers-reduced-motion: no-preference) {
+    .countdown.warn { animation: cdwarn 2s ease-in-out infinite; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .countdown.warn { text-shadow: 0 0 .25em rgba(244, 81, 91, .85); }
+  }
+  @keyframes cdwarn { 0%, 100% { opacity: 1; } 50% { opacity: .55; } }
   .countdown { font-family: var(--f-mono); font-variant-numeric: tabular-nums; font-weight: 700;
     font-size: clamp(56px, 20vw, 160px); color: var(--v-amber); line-height: 1; letter-spacing: .02em; max-width: none; }
   /* Operator's cue note — confidence-monitor only, never on the main output. */
