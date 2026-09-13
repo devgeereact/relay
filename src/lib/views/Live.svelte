@@ -41,6 +41,8 @@
   import DetectionInspector from '../DetectionInspector.svelte';
   import { humanError as humanErrorBase } from '../errors.js';
   import { TYPE, payloadOf, slidesOf, slideAccent, cueSub, nextOf, stepFrom } from '../plan.js';
+  import { gridSource, pressArbiter } from '../slidegrid.js';
+  import { parsePassage } from '../passage.js';
   import { session, setSession } from '../session.js';
   import { get } from 'svelte/store';
   import {
@@ -93,6 +95,7 @@
     pushAnnouncement,
     sendStageAlert,
     verseRepeatCount,
+    chapterVerses,
     readErrors,
   } from '../stores/capture.js';
 
@@ -364,6 +367,8 @@
     clearTimeout(annArmT);
     clearTimeout(liveMsgT);
     clearTimeout(relatedT); // a pending poll must not fire into a destroyed view
+    // A view that has gone away must not put scripture on a wall a beat later.
+    gridPress.cancel();
   });
 
   // ── the transport ────────────────────────────────────────────────────────
@@ -450,6 +455,8 @@
   }
 
   async function clearAll() {
+    // A press armed a beat ago must not paint a verse over a cleared wall.
+    gridPress.cancel();
     // clearScreens() resets the transport cursor at the store, so the plan does
     // not fire straight back in on the next →.
     //
@@ -472,6 +479,7 @@
   }
 
   async function blackAll() {
+    gridPress.cancel(); // same reason as clearAll — see there
     const ok = await blackScreen();
     if (ok) flash('Blackout');
   }
@@ -870,21 +878,121 @@
   $: previewNext = openPlan ? stepFrom(items, liveCueId, liveSlide, 1) : null;
   $: previewCue = previewNext ?? (selCue ? { item: selCue, slide: 0 } : null);
   $: previewSlide = previewCue ? slidesOf(previewCue.item)[previewCue.slide] : null;
-  $: previewContent = dets[0]
-    ? { reference: dets[0].reference, text: dets[0].text ?? '', translation: null }
-    : previewSlide
-      ? { reference: previewCue.item.label, text: previewSlide.text || previewSlide.label, translation: null }
-      : null;
-  $: previewLabel = dets[0]
-    ? dets[0].reference
-    : previewCue
-      ? `${previewCue.item.label} · ${previewSlide?.label ?? ''}`.trim()
-      : '';
+  // A cell the operator DOUBLE-clicked in the grid outranks both, and is the one
+  // case where an unaccepted AI claim loses the preview pane. That is deliberate:
+  // the operator asked for this slide by hand, and a preview that swapped under
+  // them would make TAKE fire something they never chose. The claim is not lost —
+  // it is still in the detection panel, where accepting it is one press. The
+  // override is transient: taking it clears it, and the preview goes back to the
+  // ordinary order.
+  $: previewContent = gridPreview
+    ? { reference: gridPreview.label, text: gridPreview.text || gridPreview.label, translation: null }
+    : dets[0]
+      ? { reference: dets[0].reference, text: dets[0].text ?? '', translation: null }
+      : previewSlide
+        ? { reference: previewCue.item.label, text: previewSlide.text || previewSlide.label, translation: null }
+        : null;
+  $: previewLabel = gridPreview
+    ? gridPreview.label
+    : dets[0]
+      ? dets[0].reference
+      : previewCue
+        ? `${previewCue.item.label} · ${previewSlide?.label ?? ''}`.trim()
+        : '';
   /** The take. Never a new code path — the same accept/fire the keys already run. */
   async function take() {
+    if (gridPreview) return fireCell(gridPreview);
     if (dets[0]) return acceptTop();
     if (previewCue) return fireSlide(previewCue.item, previewCue.slide);
   }
+
+  // ── THE SLIDE GRID ───────────────────────────────────────────────────
+  //
+  // What is staged, as pickable cells (docs/REBRAND.md §2). The arbitration and
+  // the cell-building are in `slidegrid.js`, tested there; this half is the
+  // wiring — which fire path a cell takes, and what is loaded behind it.
+  let gridVerses = [];
+  let gridChapter = null; // the chapter `gridVerses` holds, e.g. "Psalms 23"
+  let gridPreview = null; // the cell a double click staged, or null
+
+  // The chapter around the live verse — ONLY when no plan is open. A plan is what
+  // the operator deliberately staged, and must not be pushed out of the grid by
+  // whatever the preacher happened to say next.
+  $: stagedRef = openPlan ? null : ($liveContent?.reference ?? null);
+  $: loadChapterFor(stagedRef);
+
+  async function loadChapterFor(ref) {
+    const p = ref ? parsePassage(ref) : null;
+    if (!p) {
+      gridChapter = null;
+      gridVerses = [];
+      return;
+    }
+    const title = `${p.book} ${p.chapter}`;
+    // Every fire re-emits the same chapter. Refetching it each time would put a
+    // DB read on the fire path for no new information.
+    if (title === gridChapter) return;
+    gridChapter = title;
+    const asked = title;
+    // `chapterVerses` is a GUARDED read — it reports through `$readErrors` rather
+    // than throwing, and answers [] when it could not load. An empty grid that
+    // says nothing is staged is the honest reading of that.
+    const rows = await chapterVerses(p.book, p.chapter);
+    // A slow load must not stage the previous chapter's verses under this title.
+    if (gridChapter === asked) gridVerses = rows ?? [];
+  }
+
+  $: grid = gridSource({
+    planOpen: !!openPlan,
+    planTitle: openPlan?.title ?? '',
+    items,
+    slidesOf,
+    verses: gridVerses,
+    passageTitle: gridChapter ?? '',
+  });
+
+  /**
+   * Fire one grid cell.
+   *
+   * NEVER a new fire path: a plan cell is `fireSlide` (which marks the cue amber
+   * only after the fire resolves), and a verse cell is the same `manualFire` the
+   * search box uses. Both report their own failure.
+   */
+  async function fireCell(cell) {
+    gridPreview = null;
+    if (cell.kind === 'plan') {
+      const item = items.find((i) => i.id === cell.cueId);
+      // The plan was reloaded under the grid. Say so rather than firing a guess.
+      if (!item) {
+        flash('That cue is no longer in the plan.');
+        return;
+      }
+      return fireSlide(item, cell.slideIdx);
+    }
+    if (!cell.reference) return;
+    try {
+      await manualFire(cell.reference);
+      flash($t('live.now_live', { reference: cell.reference }));
+    } catch (e) {
+      flash(humanError(e));
+    }
+  }
+
+  // Single click sends to programme, double click previews. The 190ms beat and
+  // the guarantee that a double never fires both live in `slidegrid.js`.
+  const gridPress = pressArbiter({
+    send: fireCell,
+    preview: (cell) => {
+      gridPreview = cell;
+    },
+    onError: (e) => flash(humanError(e)),
+  });
+
+  /** Is this cell what is on the congregation's screen right now? */
+  $: cellLive = (c) =>
+    c.kind === 'plan'
+      ? planOnAir && c.cueId === liveCueId && c.slideIdx === liveSlide
+      : !!c.reference && !$screenBlack && $liveContent?.reference === c.reference;
 
   // How many times the previewed verse has ALREADY gone out this service.
   //
@@ -1260,10 +1368,65 @@
       </footer>
     </section>
 
-    <!-- ── 2 · AI DETECTION — CURRENT CLAIM ── -->
+    <!-- ── 2 · SLIDES ── -->
+    <!-- Single click sends to programme, double click previews (docs/REBRAND.md §2).
+         BOTH handlers go through ONE arbiter, so a double can never do both — the
+         alternative is that every preview puts the slide on the wall on its way
+         past. The 190ms beat and that guarantee are tested in `slidegrid.test.js`.
+         Nothing here claims a screen: `fireCell` reuses the existing fire paths,
+         which mark amber only after the fire resolves (rules 15 and 18). -->
     <section class="pane">
       <header class="pane-head">
         <span class="pn">2</span>
+        <h2>Slides</h2>
+        <span class="spring"></span>
+        <span class="r-mono cnt">{grid.cells.length}</span>
+      </header>
+
+      <div class="pane-body sg-body">
+        {#if grid.cells.length}
+          <div class="sgrid">
+            {#each grid.cells as c (c.key)}
+              <button
+                class="sg-cell"
+                class:islive={cellLive(c)}
+                class:cued={gridPreview?.key === c.key}
+                on:click={() => gridPress.press(c)}
+                on:dblclick={() => gridPress.double(c)}
+                disabled={!$capture.available}
+                title="Click to send {c.label} to the programme · double click to preview it">
+                <span class="sg-thumb">
+                  <span class="sg-text">{c.text || c.label}</span>
+                  {#if c.tag}<span class="sg-tag r-mono">{c.tag}</span>{/if}
+                  <!-- The word, not only the colour — amber alone is not a label. -->
+                  {#if cellLive(c)}<span class="sg-air">On Air</span>
+                  {:else if gridPreview?.key === c.key}<span class="sg-prev">Preview</span>{/if}
+                </span>
+                <span class="sg-meta">
+                  <span class="r-mono sg-n">{String(c.n).padStart(2, '0')}</span>
+                  <span class="sg-ttl">{c.label}</span>
+                </span>
+              </button>
+            {/each}
+          </div>
+        {:else if grid.source === 'plan'}
+          <EmptyState message="This plan has no slides yet — add cues to it in the Planner." />
+        {:else}
+          <EmptyState message="Nothing staged. Load a plan, or put a verse on screen and its chapter appears here." />
+        {/if}
+      </div>
+
+      <footer class="pane-foot sg-foot">
+        <span class="sg-cap">{grid.title || '—'}</span>
+        <span class="spring"></span>
+        <span class="sg-cap">single click → programme · double click → preview</span>
+      </footer>
+    </section>
+
+    <!-- ── 3 · AI DETECTION — CURRENT CLAIM ── -->
+    <section class="pane">
+      <header class="pane-head">
+        <span class="pn">3</span>
         <h2>AI Detection — Current Claim</h2>
         <span class="spring"></span>
         <label class="sens" title="How readily the AI fires. Lower = fewer, surer catches; higher = more, noisier. Same dial as Settings.">
@@ -1433,10 +1596,10 @@
       {#if errMsg}<div class="err" role="alert">{errMsg}</div>{/if}
     </section>
 
-    <!-- ── 3 · SERVICE PLAN — RUNNING ── -->
+    <!-- ── 4 · SERVICE PLAN — RUNNING ── -->
     <section class="pane">
       <header class="pane-head">
-        <span class="pn">3</span>
+        <span class="pn">4</span>
         <h2>{openPlan ? 'Service Plan — Running' : 'Service Plan'}</h2>
         <span class="spring"></span>
         {#if openPlan}
@@ -1553,10 +1716,10 @@
       </footer>
     </section>
 
-    <!-- ── 4 · QUICK CONTROLS ── -->
+    <!-- ── 5 · QUICK CONTROLS ── -->
     <section class="pane">
       <header class="pane-head">
-        <span class="pn">4</span>
+        <span class="pn">5</span>
         <h2>Quick Controls</h2>
       </header>
 
@@ -1766,8 +1929,11 @@
      hierarchy the room does not have. */
   .con-top{flex:0 0 auto; height:clamp(268px,33vh,364px);
     display:grid; grid-template-columns:1fr 118px 1fr 300px; gap:var(--v-sp-sm); min-height:0}
+  /* Five panels: transcript · slides · detection · plan · controls. The grid
+     takes the widest share of the flexible columns — a cell the operator cannot
+     read is a cell they have to click twice to identify. */
   .con-bot{flex:1; min-height:0;
-    display:grid; grid-template-columns:1fr 1.21fr 1fr 300px; gap:var(--v-sp-sm)}
+    display:grid; grid-template-columns:1fr 1.35fr 1.1fr 1fr 300px; gap:var(--v-sp-sm)}
 
   .pane{display:flex; flex-direction:column; min-height:0; overflow:hidden;
     background:var(--v-surf); border:1px solid var(--v-line); border-radius:var(--v-r-lg);
@@ -1913,7 +2079,47 @@
   .ibtn:hover:not(:disabled){color:var(--v-amber)}
   .ibtn:disabled{opacity:.4; cursor:not-allowed}
 
-  /* ── 2 · detection ─────────────────────────────────────────────────────── */
+  /* ── 2 · slides ───────────────────────────────────────────────── */
+  .sg-body{padding:var(--v-sp-sm)}
+  .sgrid{display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr));
+    gap:var(--v-sp-sm)}
+  .sg-cell{display:flex; flex-direction:column; gap:5px; padding:0; text-align:left;
+    background:none; border:0; cursor:pointer; min-width:0; font-family:var(--f-body)}
+  .sg-cell:disabled{opacity:.45; cursor:not-allowed}
+  .sg-thumb{position:relative; display:block; aspect-ratio:16/9; overflow:hidden;
+    padding:9px 10px; border-radius:var(--v-r-md);
+    background:var(--v-surf2); border:1px solid var(--v-line2);
+    transition:border-color var(--v-dur) var(--v-ease), background var(--v-dur) var(--v-ease)}
+  .sg-cell:hover .sg-thumb{border-color:var(--v-sel-line)}
+  /* Steel blue is SELECTION — the thing you are working on. It is what a preview
+     is, and it is deliberately not grey: grey means CUED, a plan position. */
+  .sg-cell.cued .sg-thumb{border-color:var(--v-sel); background:var(--v-sel-soft)}
+  /* Amber is ON AIR and nothing else. `cellLive` derives it from what the store
+     says is on the screen, never from "we pressed the button". */
+  .sg-cell.islive .sg-thumb{border-color:var(--v-amber); background:var(--v-amber-soft)}
+  .sg-cell:focus-visible .sg-thumb{outline:2px solid var(--v-sel); outline-offset:2px}
+  .sg-text{display:-webkit-box; -webkit-line-clamp:4; -webkit-box-orient:vertical;
+    overflow:hidden; font-size:11px; line-height:1.45; color:var(--v-dim)}
+  .sg-cell.islive .sg-text,
+  .sg-cell.cued .sg-text{color:var(--v-txt)}
+  .sg-tag{position:absolute; left:6px; bottom:6px; padding:1px 5px;
+    border-radius:var(--v-r-sm); background:var(--v-surf3); color:var(--v-dim);
+    font-size:9px; letter-spacing:.06em; text-transform:uppercase}
+  .sg-air,.sg-prev{position:absolute; right:6px; top:6px; padding:1px 6px;
+    border-radius:var(--v-r-sm); font-size:9px; font-weight:700; letter-spacing:.07em;
+    text-transform:uppercase}
+  .sg-air{background:var(--v-amber); color:var(--v-amber-ink)}
+  .sg-prev{background:var(--v-sel); color:var(--v-sel-ink)}
+  .sg-meta{display:flex; align-items:baseline; gap:6px; min-width:0; padding:0 2px}
+  .sg-n{flex:0 0 auto; font-size:10px; color:var(--v-dim)}
+  .sg-ttl{min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+    font-size:var(--v-fs-cap); color:var(--v-txt)}
+  .sg-cell.islive .sg-ttl{color:var(--v-amber)}
+  .sg-foot{display:flex; align-items:center; gap:var(--v-sp-sm)}
+  .sg-cap{min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+    font-size:10px; color:var(--v-dim)}
+
+  /* ── 3 · detection ─────────────────────────────────────────────────────── */
   .chip{display:inline-flex; align-items:center; gap:6px; flex:0 0 auto; padding:4px 9px;
     border-radius:99px; background:var(--v-surf2); border:1px solid var(--v-line2);
     font-size:var(--v-fs-cap); color:var(--v-faint)}
@@ -2018,7 +2224,7 @@
   .wide.amber{flex:0 0 auto; width:auto; padding:0 18px; background:var(--v-amber);
     border-color:transparent; color:var(--v-amber-ink)}
 
-  /* ── 3 · plan ──────────────────────────────────────────────────────────── */
+  /* ── 4 · plan ──────────────────────────────────────────────────────────── */
   .plan{gap:6px}
   .rail{display:flex; align-items:stretch; gap:10px}
   .rail-dot{flex:0 0 auto; align-self:center; width:9px; height:9px; border-radius:50%;
@@ -2072,7 +2278,7 @@
   .fd{width:6px; height:6px; border-radius:50%; background:var(--v-emerald);
     box-shadow:0 0 8px var(--v-emerald); flex:0 0 auto}
 
-  /* ── 4 · quick controls ────────────────────────────────────────────────── */
+  /* ── 5 · quick controls ────────────────────────────────────────────────── */
   .quick{gap:5px}
   .q4{display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:var(--v-sp-sm)}
   .q4.tight{gap:6px}
@@ -2159,7 +2365,7 @@
   /* ── responsive ────────────────────────────────────────────────────────── */
   @media (max-width:1400px){
     .con-top{grid-template-columns:1fr 104px 1fr 250px}
-    .con-bot{grid-template-columns:1fr 1.2fr 1fr 250px}
+    .con-bot{grid-template-columns:1fr 1.25fr 1fr 1fr 250px}
   }
   @media (max-width:1180px){
     .con{height:auto}
