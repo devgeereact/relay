@@ -232,6 +232,7 @@ gates in the phases section are green on it — `cargo test`, `npx vitest run`, 
 
 | # | Phase | State | Evidence |
 |---|---|---|---|
+| 2* | Workspace grammar (§2 — **no phase number in the brief**) | **partly done** | the sidebar became a 34px chrome bar with the workspaces in it, the footer became a 26px status bar, a dock row (audio · transcript · quick tools · controls) lives in the SHELL, and the studio split is two equal monitors either side of a 118px take column. **Slide grid and single-click-to-air not built** |
 | 1 | Tokens and chrome | **done** | palette, radius, type scale, one slider / switch / colour well, the four control colours. `tokencontrast.test.js` 7 green, `rangefill.test.js` 9 new, suite 974 |
 | 2 | Template model | **done** | `templatemodel.js` (migrate · resolve · slideBG · fit estimate), migration on three doors, the renderer reads the model. 34 + 6 new tests, suite 1014 |
 | 3 | The object inspector | **done** | object tab strip (wrapping), Position group with real numbers, Duplicate (deep copy), Reset this object, two-step Delete. `layerops.test.js` 14, `templateinspector.test.js` 3, suite 1032 |
@@ -391,6 +392,13 @@ the output page read a missing `template_id` as 1 — so a follower's OBS source
 while the operator's own window followed correctly. The URL was also built twice in the same
 component, four lines apart, with only one copy corrected. One builder now (`lib/outputurl.js`),
 tested, and `ipc.test.js` fails if a view starts building its own again.
+
+**§2 had no phase number, and that is why twelve finished phases did not look like the prototype.**
+The brief's implementation list covers the subsystems; the LOOK of Relay Studio is mostly §2's
+workspace grammar, which the list never mentions. It is now partly built — chrome bar, workspaces,
+dock row, status bar, equal monitors — and what remains is the slide grid and single-click-to-air.
+That last one changes what a click does on the surface that puts scripture in front of people, so
+it is a pass of its own rather than the tail of a layout commit.
 
 **Carried forward, deliberately.** Phase 1 owns `src/app.css`, and the shared layer is now
 token-only: every literal radius there reads `--v-r-*`. Components still hold about sixty

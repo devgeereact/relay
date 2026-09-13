@@ -1759,8 +1759,13 @@
   @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
 
   /* ── the two rows ──────────────────────────────────────────────────────── */
+  /* THE STUDIO SPLIT (docs/REBRAND.md §2). Two EQUAL monitors with the take
+     column between them, at the prototype's measured 118px: Preview and Program
+     are the same size because they are the same question asked twice — what is
+     about to go out, and what is out. The 1.19fr that made Preview wider was a
+     hierarchy the room does not have. */
   .con-top{flex:0 0 auto; height:clamp(268px,33vh,364px);
-    display:grid; grid-template-columns:1.19fr 92px 1fr 300px; gap:var(--v-sp-sm); min-height:0}
+    display:grid; grid-template-columns:1fr 118px 1fr 300px; gap:var(--v-sp-sm); min-height:0}
   .con-bot{flex:1; min-height:0;
     display:grid; grid-template-columns:1fr 1.21fr 1fr 300px; gap:var(--v-sp-sm)}
 
@@ -2153,12 +2158,12 @@
 
   /* ── responsive ────────────────────────────────────────────────────────── */
   @media (max-width:1400px){
-    .con-top{grid-template-columns:1.1fr 84px 1fr 250px}
+    .con-top{grid-template-columns:1fr 104px 1fr 250px}
     .con-bot{grid-template-columns:1fr 1.2fr 1fr 250px}
   }
   @media (max-width:1180px){
     .con{height:auto}
-    .con-top{height:auto; grid-template-columns:1fr 84px 1fr; grid-auto-rows:minmax(230px,auto)}
+    .con-top{height:auto; grid-template-columns:1fr 104px 1fr; grid-auto-rows:minmax(230px,auto)}
     .con-bot{grid-template-columns:1fr 1fr; grid-auto-rows:minmax(320px,auto)}
   }
   @media (max-width:760px){
