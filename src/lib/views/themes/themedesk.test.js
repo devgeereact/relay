@@ -33,7 +33,7 @@ function mount() {
 }
 
 const railRows = () =>
-  [...host.querySelectorAll('.te-pjump')].map((b) => b.querySelector('.te-pn').textContent.trim());
+  [...host.querySelectorAll('.te-pjump')].map((b) => b.querySelector('.rw-itemname').textContent.trim());
 
 describe('the theme editor rail says what this theme has actually set', () => {
   beforeEach(() => {

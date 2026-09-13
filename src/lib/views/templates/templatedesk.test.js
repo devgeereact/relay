@@ -38,8 +38,8 @@ function mount() {
 /** The look-register rows, as [kind, what it says]. */
 const lookRows = () =>
   [...host.querySelectorAll('.tg-look')].map((r) => [
-    r.querySelector('.tg-pn').textContent.trim(),
-    r.querySelector('.tg-pv').textContent.trim(),
+    r.querySelector('.rw-itemname').textContent.trim(),
+    r.querySelector('.tg-lookv').textContent.trim(),
   ]);
 
 describe('the Templates rail states the look register', () => {

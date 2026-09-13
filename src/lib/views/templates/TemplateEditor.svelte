@@ -1144,7 +1144,18 @@
   .te-canvas{ display:flex; flex-direction:column; min-height:0; overflow:hidden; background:var(--v-surf); border:1px solid var(--v-line); border-radius:var(--v-r-lg); }
   /* ProPresenter-clean canvas: a flat, calm dark stage with a soft vignette for
      depth — no busy grid competing with the artboard. */
-  .te-stage{ flex:1; min-height:0; display:flex; align-items:center; justify-content:center; padding:var(--v-sp-lg); overflow:auto; position:relative; background:#141417; }
+  /* `--v-void`, not a hand-picked hex. This was `#141417` — one step off the
+     token, imperceptibly — and the theme editor's stage copied it verbatim to
+     keep the two matching. When `workspacegrammar.test.js` forbade raw hexes on
+     the desks, the themes side moved to the token and this one became the odd
+     one out, matching nothing. `--v-void` is already documented as "shell +
+     main + the output-window canvas", which is exactly what a stage is: the
+     dark a slide is judged against. Both stages are on the token now, so they
+     move together. NOTE: this file is an editor, not a desk, so it is not in
+     that test's DESKS array and nothing catches a literal here — the array
+     means "is in the workspace grammar", and stretching it to cover one hex
+     would weaken what it says. */
+  .te-stage{ flex:1; min-height:0; display:flex; align-items:center; justify-content:center; padding:var(--v-sp-lg); overflow:auto; position:relative; background:var(--v-void); }
   .te-stage::before{ content:""; position:absolute; inset:0; pointer-events:none; background:radial-gradient(130% 110% at 50% 32%, transparent 45%, rgba(0,0,0,.45) 100%); }
   /* board wrapper carries the rulers; the artboard sits inside, offset for them. */
   .te-board-wrap{ position:relative; max-width:100%; padding:18px 0 0 26px; flex:0 0 auto; z-index:1; }
