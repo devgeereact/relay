@@ -273,6 +273,14 @@ read *"the screens may still be live"* is motion for its own sake.
   total silence.
 - **Heading structure is real**, starting at a single `<h1>`. Do not use a heading level for its
   size; use the type scale.
+- **A list row is a name and a VALUE — never an em dash standing in for one.**
+  [`settingValue`](../src/lib/settingvalue.js) turns an absent value into words, and the wording
+  belongs to the call site, because only it knows what absence means there: "not on a network" is
+  a different fact from "could not be read", and both are different from "checking…". An em dash
+  was the same glyph for all three — rule 35's defect (a status that reads the same when broken as
+  when fine is not a status), and the same shape as RG-83. Pinned by `surface.test.js` R3-13.
+  The one place a dash survives is the latency percentile row, where it means *this stage was never
+  reached* and a word in a five-value numeric row would read worse (CLAUDE.md rule 31).
 
 ---
 

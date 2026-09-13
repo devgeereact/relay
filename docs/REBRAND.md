@@ -242,7 +242,7 @@ gates in the phases section are green on it — `cargo test`, `npx vitest run`, 
 | 8 | Transitions | **done** | seven in one register (`transitions.js`), played by the renderer, migrated from the three old names, reduced motion is a cut. DECISIONS §71. `transitions.test.js` 15 + 6 elsewhere, suite 1072 |
 | 9 | Search | **partly done** | glued digits parse, a literal hit must cover 55% of the query, and nothing a search does reaches a screen. DECISIONS §72. `e2e::r9_*` ×4, cargo 673. **"Why it matched" not built** |
 | 10 | Library | **partly done** | the operator label reaches the record again and still not the glass (DECISIONS §73); announcements say which fields the room sees. `e2e::r10_*`, `r2livepath` R2-H, cargo 674 / suite 1074. **Collections rail, reflow editing, section keys and media upload not built** |
-| 11 | Settings | not started | |
+| 11 | Settings | **partly done** | rows say which kind of nothing they have (`settingValue`, pinned by `surface.test.js` R3-13). `settingvalue.test.js` 7, suite 1083. **The eleven-section merge and the type-role pass not built** |
 | 12 | SuperSource | not started | |
 
 **Where phase 1 departed from the prototype, and why.** Both are cases of the rule in Context —
@@ -368,6 +368,16 @@ Section keys in particular add a global keystroke path that can put content on a
 the panic keys — that is `shortcuts.js` territory, where this repository has already had one
 bug of exactly that shape (Escape wiping the wall from behind a menu), and it deserves its own
 pass rather than the tail of another.
+
+**Phase 11 took the row-level defect and left the reorganisation.** Settings printed `—` for the
+LAN address, the installed version and the recognition language, and an empty value there has
+three different causes an operator needs to tell apart: not fetched yet, the fetch failed, and
+genuinely nothing there. One glyph over three situations is rule 35 — and the same shape as RG-83,
+where "up to date" was printed over a channel that had been 404ing for months.
+
+**Merging sixteen sections into eleven is a reorganisation, not a repair**, and it moves every
+control an operator has learned where to find. It is worth doing with somebody watching the
+screens rather than at the end of a long pass.
 
 **Carried forward, deliberately.** Phase 1 owns `src/app.css`, and the shared layer is now
 token-only: every literal radius there reads `--v-r-*`. Components still hold about sixty

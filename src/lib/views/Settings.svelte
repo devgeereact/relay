@@ -8,6 +8,7 @@
   import { locale, setLocale, LOCALES, t } from '../i18n.js';
   import { restartSetup, setSession } from '../session.js';
   import { humanError } from '../errors.js';
+  import { settingValue, CHECKING } from '../settingvalue.js';
   import { safeMode, setSafeMode } from '../boot/boot.js';
   import { checkForUpdate, updateAvailable, updateChannel, describeChannel } from '../updater.js';
   import {
@@ -477,6 +478,11 @@
   let activeTranslation = null;
   let dataLoaded = false; // async settings data has resolved at least once
   let lanIp = '';
+  // WHICH KIND OF NOTHING. An empty `lanIp` used to render as an em dash, and an
+  // em dash is the same glyph for "not fetched yet", "the fetch failed" and "this
+  // machine is not on a network" — three things an operator needs to tell apart
+  // (rule 35, and RG-83 in another costume).
+  let lanState = 'loading';
 
   // ── LIVE LATENCY ────────────────────────────────────────────────────────────
   //
@@ -518,9 +524,12 @@
 
   // ─── System overview (right rail) ───────────────────────────────────────
   let appVersion = '';
+  let versionState = 'loading';
   const environment = import.meta.env?.DEV ? 'Development' : 'Production';
   let bootAt = 0;
-  let uptime = '—';
+  // Never a dash, not even for the instant before the first tick: a row that
+  // says nothing is a row an operator has to guess about.
+  let uptime = CHECKING;
   let uptimeTimer = null;
   function fmtUptime(ms) {
     const s = Math.floor(ms / 1000);
@@ -588,8 +597,10 @@
     try {
       const { getVersion } = await import('@tauri-apps/api/app');
       appVersion = await getVersion();
+      versionState = 'ok';
     } catch {
       appVersion = '';
+      versionState = 'failed';
     }
     // Guarded as a block: an unguarded reject on any one of these aborts the rest
     // of mount, so crash state, content-type templates and the LAN IP would all
@@ -607,8 +618,10 @@
     }
     try {
       lanIp = await localIp();
+      lanState = 'ok';
     } catch {
       lanIp = '';
+      lanState = 'failed';
     }
   });
   onDestroy(() => {
@@ -1173,7 +1186,10 @@
 
       {:else if section === 'network'}
         <div class="s-cardbox">
-          <div class="s-netrow"><span class="s-netk">This machine</span><span class="s-netv r-mono">{lanIp || '—'}</span></div>
+          <div class="s-netrow"><span class="s-netk">This machine</span><span class="s-netv r-mono">{settingValue(lanIp, {
+              loading: lanState === 'loading',
+              missing: lanState === 'failed' ? 'could not be read' : 'not on a network',
+            })}</span></div>
           <div class="s-netrow"><span class="s-netk">Output / stage pages</span><span class="s-netv r-mono">:8032 · http</span></div>
           <div class="s-netrow"><span class="s-netk">Live update channel</span><span class="s-netv r-mono">:8031 · websocket</span></div>
         </div>
@@ -1257,7 +1273,10 @@
 
       {:else if section === 'updates'}
         <div class="s-cardbox">
-          <div class="s-netrow"><span class="s-netk">Installed version</span><span class="s-netv r-mono">{appVersion || '—'}</span></div>
+          <div class="s-netrow"><span class="s-netk">Installed version</span><span class="s-netv r-mono">{settingValue(appVersion, {
+              loading: versionState === 'loading',
+              missing: 'could not be read',
+            })}</span></div>
           <div class="s-netrow"><span class="s-netk">Environment</span><span class="s-netv r-mono">{environment}</span></div>
           <!-- The status of the CHANNEL, not the absence of news. This row used to
                read "up to date" whenever nothing was waiting — which was also what
@@ -1321,12 +1340,18 @@
         <div class="s-cardbox">
           <div class="s-netrow"><span class="s-netk">Backend</span><span class="s-netv r-mono">{$capture.available ? 'connected' : 'not connected'}</span></div>
           <div class="s-netrow"><span class="s-netk">Speech model</span><span class="s-netv r-mono">{$capture.stt.loaded ? ($capture.stt.model || 'loaded') : 'not loaded'}</span></div>
-          <div class="s-netrow"><span class="s-netk">Recognition language</span><span class="s-netv r-mono">{$capture.stt.language || '—'}</span></div>
+          <div class="s-netrow"><span class="s-netk">Recognition language</span><span class="s-netv r-mono">{settingValue($capture.stt.language, { missing: 'not set yet' })}</span></div>
           <div class="s-netrow"><span class="s-netk">Microphone</span><span class="s-netv r-mono">{$capture.inputDevice || 'system default'}</span></div>
           <div class="s-netrow"><span class="s-netk">Detection</span><span class="s-netv r-mono">{$capture.detectionOn ? 'armed' : 'off'}</span></div>
-          <div class="s-netrow"><span class="s-netk">This machine (LAN)</span><span class="s-netv r-mono">{lanIp || '—'}</span></div>
+          <div class="s-netrow"><span class="s-netk">This machine (LAN)</span><span class="s-netv r-mono">{settingValue(lanIp, {
+              loading: lanState === 'loading',
+              missing: lanState === 'failed' ? 'could not be read' : 'not on a network',
+            })}</span></div>
           <div class="s-netrow"><span class="s-netk">Ports</span><span class="s-netv r-mono">5032 console · 8031 ws · 8032 http</span></div>
-          <div class="s-netrow"><span class="s-netk">Version</span><span class="s-netv r-mono">{appVersion || '—'} · {environment}</span></div>
+          <div class="s-netrow"><span class="s-netk">Version</span><span class="s-netv r-mono">{settingValue(appVersion, {
+              loading: versionState === 'loading',
+              missing: 'could not be read',
+            })} · {environment}</span></div>
           <div class="s-netrow"><span class="s-netk">Uptime (this run)</span><span class="s-netv r-mono">{uptime}</span></div>
         </div>
 
@@ -1465,7 +1490,10 @@
         <div class="s-cardbox">
           <div class="s-netrow"><span class="s-netk">Licence</span><span class="s-netv r-mono">MIT · open source</span></div>
           <div class="s-netrow"><span class="s-netk">Environment</span><span class="s-netv r-mono">{environment}</span></div>
-          <div class="s-netrow"><span class="s-netk">Version</span><span class="s-netv r-mono">{appVersion || '—'}</span></div>
+          <div class="s-netrow"><span class="s-netk">Version</span><span class="s-netv r-mono">{settingValue(appVersion, {
+              loading: versionState === 'loading',
+              missing: 'could not be read',
+            })}</span></div>
         </div>
         <p class="s-note">Relay is free and open source. There is no account to sign in to and nothing to pay — every feature works offline, on this machine.</p>
         <div class="s-grouphead">Operators</div>
@@ -1477,7 +1505,10 @@
     <aside class="s-over">
       <div class="s-ocard">
         <div class="s-ohead">System Overview</div>
-        <div class="s-orow"><span class="s-ok">Version</span><span class="s-ov r-mono">{appVersion || '—'}</span></div>
+        <div class="s-orow"><span class="s-ok">Version</span><span class="s-ov r-mono">{settingValue(appVersion, {
+              loading: versionState === 'loading',
+              missing: 'could not be read',
+            })}</span></div>
         <div class="s-orow"><span class="s-ok">Environment</span><span class="r-badge" class:emerald={environment === 'Production'} class:grey={environment !== 'Production'}>{environment}</span></div>
         <div class="s-orow"><span class="s-ok">Licence</span><span class="r-badge emerald">MIT</span></div>
         <div class="s-orow"><span class="s-ok">Uptime</span><span class="s-ov r-mono">{uptime}</span></div>
