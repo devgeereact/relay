@@ -293,50 +293,52 @@ body{ overflow:hidden; text-rendering:optimizeLegibility; -moz-osx-font-smoothin
    motion for its own sake. It appears, and the app is already out of its way. */
 .shell.has-panic{ padding-top:var(--panic-h,0px); }
 
-.side{ width:238px; flex:0 0 238px; background:var(--v-bg); border-right:1px solid var(--v-line);
-  display:flex; flex-direction:column; padding:18px 14px; gap:4px; }
-/* The BRAND lockup from the design sheet: mark + wordmark, wide tracking. */
-.side-brand{ display:flex; align-items:center; gap:10px; padding:0 8px 14px; }
-.side-brand span{ font-family:var(--f-head); font-size:19px; font-weight:700;
-  letter-spacing:.18em; color:var(--v-txt); }
-.side-profile{ display:flex; align-items:center; gap:11px; padding:11px; margin-bottom:12px;
-  background:var(--v-surf); border:1px solid var(--v-line); border-radius:var(--v-r-lg); }
-.side-avatar{ width:38px; height:38px; border-radius:var(--v-r-sm); flex:0 0 auto; display:grid; place-items:center;
-  background:linear-gradient(150deg,var(--v-accent),var(--v-accent-fill)); color:var(--v-accent-ink); }
-.side-profile .who{ min-width:0; }
-.side-profile .who b{ display:block; font-size:13.5px; font-weight:600; color:var(--v-txt);
-  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.side-profile .who span{ font-family:var(--f-mono); font-size:9px; letter-spacing:.14em; text-transform:uppercase; color:var(--v-faint); }
-
-.nav{ display:flex; flex-direction:column; gap:3px; }
-.nav-item{ display:flex; align-items:center; gap:12px; padding:11px 12px; border-radius:var(--v-r-sm);
-  color:var(--v-dim); cursor:pointer; font-size:14px; font-weight:500; background:transparent;
-  border:1px solid transparent; text-align:left; transition:background .15s, color .15s, transform .15s; }
-.nav-item:hover{ background:var(--v-surf); color:var(--v-txt); }
-.nav-item.active{ background:var(--v-accent-soft); color:var(--v-accent2); border-color:var(--v-accent-line); transform:translateX(2px); }
-.nav-item .ic{ flex:0 0 auto; }
-.side-foot{ margin-top:auto; padding:12px; background:var(--v-surf); border:1px solid var(--v-line);
-  border-radius:var(--v-r-lg); }
-.side-foot .row{ display:flex; align-items:center; justify-content:space-between; margin-bottom:7px; }
-.side-foot .row .k{ font-family:var(--f-mono); font-size:9px; font-weight:700; letter-spacing:.12em;
-  text-transform:uppercase; color:var(--v-faint); }
-.side-foot .dot{ width:7px; height:7px; border-radius:50%; }
-.side-foot .m{ font-family:var(--f-mono); font-size:10px; color:var(--v-dim); opacity:.85; line-height:1.6; }
-
+/* The sidebar is gone (docs/REBRAND.md §2) — its workspaces are the chrome bar's
+   menu and its foot is the status bar. Its rules went with its markup: a rule
+   whose class nothing renders is the dead CSS §6 warns about, and leaving these
+   would have left 238px of layout waiting for a class name to come back. */
 .main-v{ flex:1; min-width:0; display:flex; flex-direction:column; overflow:hidden; background:var(--v-void); }
-.topbar-v{ height:62px; flex:0 0 auto; display:flex; align-items:center; gap:16px;
-  padding:0 22px; border-bottom:1px solid var(--v-line); }
-.topbar-title{ margin:0; font-family:var(--f-head); font-size:25px; font-weight:700; letter-spacing:-.005em; color:var(--v-txt); }
+/* THE CHROME BAR (docs/REBRAND.md §2). 34px: a control room's title bar, not a
+   web page's masthead. The 62px header and the 42px footer it replaces took 66
+   pixels of desk between them — on a 1366x768 booth laptop that is a row of the
+   slide grid, and the grid is the job. */
+.topbar-v{ height:34px; flex:0 0 auto; display:flex; align-items:center; gap:10px;
+  padding:0 10px; background:var(--v-bg); border-bottom:1px solid var(--v-rule); }
+.chrome-brand{ display:flex; align-items:center; gap:7px; flex:0 0 auto; }
+.chrome-brand b{ font-family:var(--f-head); font-size:12.5px; font-weight:700;
+  letter-spacing:.13em; color:var(--v-txt); }
+.chrome-sep{ width:1px; height:16px; background:var(--v-rule); flex:0 0 auto; }
+/* THE WORKSPACES. Across the top, where a desk puts them. They WRAP rather than
+   scroll: a workspace hidden behind a scrollbar is a workspace nobody knows is
+   there — the same rule as the object tabs in the template inspector. */
+.ws-menu{ display:flex; align-items:center; gap:2px; flex-wrap:wrap; min-width:0; }
+.ws-tab{ padding:4px 10px; border:0; border-radius:var(--v-r-sm); background:transparent;
+  color:var(--v-dim); font-family:var(--f-body); font-size:var(--v-fs-b2); font-weight:600;
+  cursor:pointer; white-space:nowrap;
+  transition:background var(--v-dur) var(--v-ease), color var(--v-dur) var(--v-ease); }
+.ws-tab:hover:not(.on){ background:var(--v-surf3); color:var(--v-txt); }
+/* The selected workspace is marked by an underline in the SELECTION colour, not
+   by a filled chip: a permanently filled control in the chrome reads as a state,
+   and the only states that belong in this bar are the ones about the screens. */
+.ws-tab.on{ background:var(--v-surf3); color:var(--v-txt); box-shadow:inset 0 -2px 0 var(--v-sel); }
 .topbar-spring{ flex:1; }
 .topbar-icons{ display:flex; align-items:center; gap:16px; color:var(--v-dim); }
 .topbar-icons .ib{ cursor:pointer; transition:color .15s; }
 .topbar-icons .ib:hover{ color:var(--v-accent2); }
-.mainscroll{ flex:1; overflow-y:auto; padding:22px; }
-.footer-v{ height:42px; flex:0 0 auto; display:flex; align-items:center; justify-content:space-between;
-  padding:0 22px; border-top:1px solid var(--v-line);
-  font-family:var(--f-mono); font-size:10px; letter-spacing:.05em; color:var(--v-faint); }
-.footer-v .fl{ display:flex; align-items:center; gap:18px; }
-.footer-v b{ color:var(--v-dim); font-weight:600; }
+.mainscroll{ flex:1; min-height:0; overflow-y:auto; padding:14px; }
+/* THE STATUS BAR. 26px of facts, each a key and a VALUE — never a dash standing
+   in for one (§11, and `settingValue` for the rows that can be absent). */
+.footer-v{ height:26px; flex:0 0 auto; display:flex; align-items:center; gap:0;
+  padding:0 4px; background:var(--v-bg); border-top:1px solid var(--v-rule);
+  overflow-x:auto; }
+.footer-v .st{ display:flex; align-items:center; gap:6px; height:100%; padding:0 10px;
+  border-right:1px solid var(--v-rule); white-space:nowrap; flex:0 0 auto; }
+.footer-v .st:last-child{ border-right:0; }
+.footer-v .k{ font-family:var(--f-mono); font-size:9px; letter-spacing:var(--v-tr-caps);
+  text-transform:uppercase; color:var(--v-faint); }
+.footer-v .v{ font-family:var(--f-mono); font-size:11px; color:var(--v-dim);
+  max-width:38ch; overflow:hidden; text-overflow:ellipsis; }
+.footer-v .push{ flex:1; }
 
 /* Bottom nav (mobile only) */
 .botnav{ display:none; }
@@ -541,26 +543,14 @@ input[type=color]::-moz-color-swatch{ border:0; border-radius:2px; }
 .r-chip.amber{ background:var(--v-amber-soft); border-color:var(--v-amber-line); color:var(--v-amber); }
 
 .r-empty{ color:var(--v-faint); font-size:var(--v-fs-b2); }
-.r-focus:focus-visible, .r-btn:focus-visible, .r-iconbtn:focus-visible, .nav-item:focus-visible,
+.r-focus:focus-visible, .r-btn:focus-visible, .r-iconbtn:focus-visible, .ws-tab:focus-visible,
 .r-input:focus-visible, .r-select:focus-visible, .r-switch:focus-visible,
 .r-cbtn:focus-visible, .r-pill:focus-visible, .r-well:focus-within{
   outline:2px solid var(--v-sel); outline-offset:2px; }
 
-/* ── Responsive: sidebar → icon rail → bottom nav ──────────────────────── */
-@media (max-width:1024px){
-  .side{ width:70px; flex-basis:70px; padding:16px 8px; align-items:center; }
-  .side-brand{ justify-content:center; padding:0 0 12px; }
-  .side-brand span{ display:none; }
-  .nav-item{ justify-content:center; padding:12px 0; }
-  .nav-item.active{ transform:none; }
-  .nav-label, .side-profile .who, .side-foot .m, .side-foot .row .k{ display:none; }
-  .side-profile{ padding:8px; justify-content:center; }
-  .side-foot{ padding:10px; display:flex; justify-content:center; }
-}
+/* ── Responsive ─────────────────────────────────────────────────────────── */
 @media (max-width:640px){
-  .side{ display:none; }
-  .topbar-v{ height:54px; padding:0 16px; }
-  .topbar-title{ font-size:20px; }
+  .topbar-v{ height:auto; min-height:34px; padding:2px 8px; flex-wrap:wrap; }
   .topbar-icons{ gap:12px; }
   .mainscroll{ padding:16px 14px 84px; }
   .r-title{ font-size:26px; }

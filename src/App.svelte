@@ -11,6 +11,7 @@
   import { installLeaveGuard } from './lib/crash.js';
   import { session, setSession, resolveActiveTab } from './lib/session.js';
   import FirstRun from './lib/FirstRun.svelte';
+  import Dock from './lib/Dock.svelte';
   import Splash from './lib/Splash.svelte';
   import BootSequence from './lib/boot/BootSequence.svelte';
   import BrandMark from './lib/ui/BrandMark.svelte';
@@ -424,49 +425,25 @@
      the operator most needs to see what is on the wall is the moment this bar is
      up, and it was sitting on top of that exact readout. -->
 <div class="shell" class:has-panic={$panicError} class:chromeless={liveFullscreen} style="--panic-h:{panicH}px">
-  <!-- Sidebar -->
-  <aside class="side">
-    <!-- The lockup from the design sheet's BRAND block: the waveform mark, then
-         the wordmark. The sidebar carried the word alone — the app's own logo
-         appeared nowhere in the app. -->
-    <div class="side-brand">
-      <BrandMark size="22px" />
-      <span>RELAY</span>
-    </div>
-    <div class="side-profile">
-      <div class="side-avatar">
-        <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M12 2 4 7v13h16V7l-8-5Z"/><path d="M12 6v5M9.5 8.5h5M9 20v-4a3 3 0 0 1 6 0v4"/></svg>
-      </div>
-      <div class="who"><b>Relay Console</b><span>Live Service</span></div>
-    </div>
-
-    <nav class="nav">
-      {#each tabs as tab}
-        <button class="nav-item r-focus" class:active={tab.key === active} on:click={() => go(tab.key)}>
-          <span class="ic">{@html icons[tab.key]}</span>
-          <span class="nav-label">{$t(tab.label)}</span>
-        </button>
-      {/each}
-    </nav>
-
-    <div class="side-foot">
-      <div class="row">
-        <span class="k">AI Signal</span>
-        <!-- Emerald, not amber. `engineOnline` is true whenever the backend is
-             attached (essentially always), so amber here would burn permanently —
-             and amber is the tally light: it may only ever mean the congregation
-             is looking at something on air (CLAUDE.md rule 18). -->
-        <span class="dot" style="background:{engineOnline ? 'var(--v-emerald)' : 'var(--v-faint)'};"></span>
-      </div>
-      <div class="m">Engine {engineOnline ? 'online' : 'offline'}</div>
-      <div class="m">Detection {$detectionOn ? 'active' : 'off'}</div>
-    </div>
-  </aside>
 
   <!-- Main -->
   <div class="main-v">
     <header class="topbar-v">
-      <h1 class="topbar-title">{currentTab.title}</h1>
+      <!-- THE LOCKUP, then the workspaces. A control room puts them across the
+           top: the desk is wide, not tall, and a column of nav is height the
+           slide grid does not get (docs/REBRAND.md §2). -->
+      <span class="chrome-brand"><BrandMark size="17px" /><b>RELAY</b></span>
+      <nav class="ws-menu" aria-label="Workspaces">
+        {#each tabs as tab}
+          <button
+            class="ws-tab r-focus"
+            class:on={tab.key === active}
+            aria-current={tab.key === active}
+            on:click={() => go(tab.key)}
+          >{$t(tab.label)}</button>
+        {/each}
+      </nav>
+      <span class="chrome-sep" aria-hidden="true"></span>
       <!-- ON AIR must mean "the congregation is looking at something" — NOT "the
            microphone is on". It used to key off $capturing, so Relay would sit
            there pulsing ON AIR at an operator whose screens were completely blank.
@@ -547,15 +524,30 @@
       {/if}
     </div>
 
-    <footer class="footer-v">
-      <div class="fl">
-        <b>Relay AI</b>
-        <span>Detection {$detectionOn ? 'ACTIVE' : 'OFF'}</span>
-      </div>
-      <div style="display:flex;align-items:center;gap:8px;">
-        <span class="dot" style="width:6px;height:6px;border-radius:50%;background:{$safeMode || $rehearsing ? 'var(--v-amethyst)' : $live && !$screenBlack ? 'var(--v-amber)' : 'var(--v-faint)'};"></span>
-        {$safeMode ? 'SAFE MODE' : $rehearsing ? 'REHEARSAL' : $screenBlack ? 'BLACKOUT' : $live ? 'ON AIR' : 'SCREENS CLEAR'}
-      </div>
+    <!-- THE DOCK ROW (docs/REBRAND.md §2). Under the desk, the same on every
+         workspace: the level, the transcript, the three tools that change during
+         a service, and the four controls that change what a congregation sees.
+         In the SHELL, not inside Live — an operator editing a template still
+         needs Clear screens within one reach. -->
+    {#if !liveFullscreen}<Dock />{/if}
+
+    <!-- THE STATUS BAR. Facts, in one strip, in the order an operator asks for
+         them: what the room is doing, then what the machine is doing. It replaces
+         a two-line footer and the sidebar's foot, which said some of this twice
+         and neither of them said the screens. -->
+    <footer class="footer-v" aria-label="Status">
+      <span class="st">
+        <span class="k">State</span>
+        <span class="v" style="color:{$safeMode || $rehearsing ? 'var(--v-amethyst)' : $live && !$screenBlack ? 'var(--v-amber)' : 'var(--v-dim)'};">
+          {$safeMode ? 'SAFE MODE' : $rehearsing ? 'REHEARSAL' : $screenBlack ? 'BLACKOUT' : $live ? 'ON AIR' : 'SCREENS CLEAR'}
+        </span>
+      </span>
+      <span class="st"><span class="k">Screens</span><span class="v">{$live ? liveLabel($live) : 'clear'}</span></span>
+      <span class="st"><span class="k">Detection</span><span class="v">{$detectionOn ? 'active' : 'off'}</span></span>
+      <span class="st"><span class="k">Mic</span><span class="v">{$capturing ? 'listening' : 'idle'}</span></span>
+      <span class="st"><span class="k">Engine</span><span class="v">{engineOnline ? 'online' : 'offline'}</span></span>
+      <span class="push"></span>
+      <span class="st"><span class="k">Clock</span><span class="v">{clock}</span></span>
     </footer>
   </div>
 
