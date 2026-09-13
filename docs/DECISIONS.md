@@ -3134,3 +3134,45 @@ Transitions come back as an explicit choice, and the default is a **cut**.
   upgrade worked.
 
 `slideRevealCss` is deleted along with its test, superseded rather than weakened.
+
+## 72. A search result is an offer, and an empty list is an answer (2026-09-13)
+
+### What the tests found
+
+`search_verses` had no tests at all — the one function the Planner's box, the Library's search and
+the preacher's remote all go through, reading what a person typed and deciding which verse that
+is. It is the same class of code as `detection.rs`, and it was the only one of the two nobody had
+measured.
+
+Two defects, both found the moment a probe was pointed at it:
+
+- **`ps23:1` returned nothing.** Not a wrong verse — an empty list. The reference parser reads
+  tokens, and `ps23:1` is one token, so the fastest way to type a reference was the single way
+  that silently failed. `split_digit_runs` puts a space wherever letters meet digits, for the
+  reference pass only: a phrase search must keep the query a person actually typed.
+- **`quantum shepherd tractor engine banana` returned nineteen verses**, Ezekiel 26:9 first. The
+  full-text index returns anything matching any term, so one real word in five was enough to look
+  like an answer. This is the search-shaped version of the defect the whole product is built
+  around: a confident wrong answer is worse than no answer, because the operator acts on it.
+
+### The decision
+
+A literal hit has to cover the query. `phrase_coverage` counts how much of what was typed the
+verse actually contains — a word counts when it appears, when a verse word starts with it (`shep`
+→ `shepherd`), or when it is one edit away — and weights the words that carry no signal (`the`,
+`is`, `my`) at 0.3 of a real one. Below **55%**, the hit is dropped rather than ranked.
+
+- It applies to the **literal** branches (FTS and the substring fallback), not to the semantic
+  one. A paraphrase match is supposed to find a verse whose words are different — that is what it
+  is for — so a word-coverage floor there would break the feature it was meant to protect.
+- `one_edit_apart` is now shared with `detection.rs` rather than reimplemented, so "nearly the
+  same word" has one definition in the product.
+- **Nothing a search does may reach a screen**, and that is asserted on both doors (the Tauri
+  events and the kiosk hub) rather than inferred from the absence of a call. The absence of a
+  call is exactly what four separate bugs in this repository looked like.
+
+### Not done
+
+*Each hit says why it matched* (the brief's §9) would change the shape of what `search_scripture`
+returns, and three surfaces plus the preacher's remote read it. It belongs with the Library pass
+that reworks the search UI, and is recorded in `docs/REBRAND.md` rather than half-built here.

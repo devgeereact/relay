@@ -2084,3 +2084,111 @@ fn r5_a_word_to_the_preacher_reaches_the_stage_and_not_a_rehearsal() {
         "a rehearsal's word to the preacher escaped to a live stage monitor"
     );
 }
+
+/// THE SCRIPTURE SEARCH — the same parser as the live pipeline, and never a fire.
+///
+/// `search_verses` is the one search: the Planner's box, the preacher's remote
+/// and the run surface all go through it. It reads what a person typed and
+/// decides which verse that is, which makes it the same class of code as
+/// `detection.rs` — so it gets the same kind of test.
+#[test]
+fn r9_the_search_finds_a_reference_however_it_is_typed() {
+    let app = app();
+    let h = app.handle().clone();
+    let db = h.state::<Db>();
+    let conn = db.0.lock().expect("db");
+    let sem = h.state::<Semantic>();
+    let top = |q: &str| {
+        search_verses(&conn, &sem.0, q)
+            .first()
+            .map(|v| format!("{} {}:{}", v.book, v.chapter, v.verse))
+    };
+
+    // Full name, fast abbreviation, non-prefix alias, and the spoken words a
+    // person types without thinking.
+    assert_eq!(top("john 3:16").as_deref(), Some("John 3:16"));
+    assert_eq!(top("psa 23 1").as_deref(), Some("Psalms 23:1"));
+    assert_eq!(top("jn 3:16").as_deref(), Some("John 3:16"));
+    assert_eq!(top("rom 8 verse 1").as_deref(), Some("Romans 8:1"));
+
+    // GLUED DIGITS. `ps23:1` is one token to the parser, so the quickest way to
+    // type a reference used to return nothing at all — an empty list, with
+    // nothing to say it had not understood.
+    assert_eq!(top("ps23:1").as_deref(), Some("Psalms 23:1"));
+    assert_eq!(top("jn3:16").as_deref(), Some("John 3:16"));
+}
+
+#[test]
+fn r9_a_reference_outranks_a_phrase() {
+    let app = app();
+    let h = app.handle().clone();
+    let db = h.state::<Db>();
+    let conn = db.0.lock().expect("db");
+    let sem = h.state::<Semantic>();
+
+    // "John 3:16" is also a phrase that appears in no verse; the reference must
+    // win, and win FIRST, because that is what the person typing it meant.
+    let hits = search_verses(&conn, &sem.0, "john 3:16");
+    let first = hits.first().expect("a reference always finds its verse");
+    assert_eq!(
+        (first.book.as_str(), first.chapter, first.verse),
+        ("John", 3, 16)
+    );
+}
+
+#[test]
+fn r9_a_query_that_is_mostly_not_scripture_returns_nothing_rather_than_guessing() {
+    let app = app();
+    let h = app.handle().clone();
+    let db = h.state::<Db>();
+    let conn = db.0.lock().expect("db");
+    let sem = h.state::<Semantic>();
+
+    // This used to come back with NINETEEN verses, Ezekiel 26:9 at the top,
+    // because the full-text index returns anything that matched any term. A
+    // confident wrong answer is worse than an empty list: the operator acts on it.
+    let junk = search_verses(&conn, &sem.0, "quantum shepherd tractor engine banana");
+    assert!(
+        junk.len() <= 8,
+        "a query with one real word in five came back with {} verses",
+        junk.len()
+    );
+
+    // A word that is in no verse at all finds nothing, and says so by being empty.
+    assert!(search_verses(&conn, &sem.0, "flibbertigibbet").is_empty());
+
+    // And the thing the floor must NOT break: a real phrase still lands.
+    let psalm = search_verses(&conn, &sem.0, "the lord is my shepherd");
+    let first = psalm
+        .first()
+        .expect("a real phrase must still find its verse");
+    assert_eq!(
+        (first.book.as_str(), first.chapter, first.verse),
+        ("Psalms", 23, 1)
+    );
+}
+
+#[test]
+fn r9_searching_never_puts_anything_on_a_screen() {
+    // A search is an OFFER. Nothing it does may reach an output — not the wall,
+    // not the stage monitor — until an operator chooses a result. Asserted on
+    // both doors rather than inferred from the absence of a call, because the
+    // absence of a call is exactly what four separate bugs in this repository
+    // looked like.
+    let app = app();
+    let h = app.handle().clone();
+    let wall = qa::Wall::watch(&h);
+    let mut kiosk = qa::Kiosk::attach(&h);
+
+    for q in ["john 3:16", "the lord is my shepherd", "ps23:1"] {
+        let db = h.state::<Db>();
+        let conn = db.0.lock().expect("db");
+        let sem = h.state::<Semantic>();
+        let hits = search_verses(&conn, &sem.0, q);
+        assert!(!hits.is_empty(), "{q} found nothing");
+    }
+    settle();
+
+    assert_eq!(wall.count(), 0, "a search reached a congregation screen");
+    assert!(kiosk.silent(), "a search reached the kiosk hub");
+}

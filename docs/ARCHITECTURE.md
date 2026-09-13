@@ -167,6 +167,18 @@ Type a word, a phrase, or a paraphrase → the verse plus ranked suggestions. Ca
 4. **FTS5 full-text** (`search_verses_fts`) — bm25-ranked, terms quoted then OR'd — catches loose, non-contiguous word queries a substring `LIKE` misses. 0.33–0.45 band.
 5. Substring `LIKE` as a last-ditch fallback.
 
+**A reference is read by the same parser the live pipeline uses** (`detection::detect_direct`),
+and the query is retried with letters split from digits so `ps23:1` parses like `ps 23 1` — it is
+one token otherwise, and returned nothing at all.
+
+**The literal branches (4 and 5) must COVER the query.** `phrase_coverage` weighs the words that
+carry no signal at 0.3 and drops a hit below 55%; `quantum shepherd tractor engine banana` used to
+return nineteen verses on the strength of one word. The semantic branch is deliberately exempt —
+a paraphrase match is supposed to find a verse whose words are different (DECISIONS §72).
+
+**A search never puts anything on a screen.** It returns candidates; an operator chooses. Held by
+`e2e::r9_searching_never_puts_anything_on_a_screen`, which watches both doors.
+
 The KJV importer strips translator **marginal glosses** (`{green…: Heb. pastures of tender grass}` — not verse text) while keeping supplied-word italics (`{it was}` → `it was`).
 
 ---

@@ -240,7 +240,7 @@ gates in the phases section are green on it — `cargo test`, `npx vitest run`, 
 | 6 | Stage monitor | **partly done** | a word to the preacher (new `stage_alert` hub message, stage-only by contract), the reading can no longer push the clock off the top. `e2e::r5_a_word_to_the_preacher_reaches_the_stage_and_not_a_rehearsal`, cargo 669, suite 1043. **Switchable zones and the stacked rail clock not built** |
 | 7 | Countdown | **partly done** | one formatter (`formatCountdown`), one warning rule, read by the wall and the stage. `layers.test.js` +8, `templatestyle.test.js` +2, suite 1053. **Pause / ±1 / Reset not built** |
 | 8 | Transitions | **done** | seven in one register (`transitions.js`), played by the renderer, migrated from the three old names, reduced motion is a cut. DECISIONS §71. `transitions.test.js` 15 + 6 elsewhere, suite 1072 |
-| 9 | Search | not started | |
+| 9 | Search | **partly done** | glued digits parse, a literal hit must cover 55% of the query, and nothing a search does reaches a screen. DECISIONS §72. `e2e::r9_*` ×4, cargo 673. **"Why it matched" not built** |
 | 10 | Library | not started | |
 | 11 | Settings | not started | |
 | 12 | SuperSource | not started | |
@@ -346,6 +346,16 @@ control that changes nothing, documented instead of fixed. And `layers.js` carri
 `slideRevealCss`: three modes, its own test, no caller. A helper with tests and nothing rendering
 it reads exactly like working code. Transitions now play, the default is a cut (which is what an
 operator asked for), and the old helper is deleted rather than left beside the new one.
+
+**Phase 9 measured the one function nobody had measured.** `search_verses` — the Planner's box,
+the Library's search and the preacher's remote all go through it — had no tests, and a probe found
+two defects immediately: `ps23:1` returned an empty list, and a query with one real word in five
+returned nineteen confident verses. Both are fixed and pinned; the second one is the search-shaped
+version of the defect this product exists to prevent.
+
+**"Each hit says why it matched" is not built.** It changes the shape of what `search_scripture`
+returns, and three surfaces plus the preacher's remote read it. It belongs with the Library pass
+(phase 10), which reworks that UI anyway.
 
 **Carried forward, deliberately.** Phase 1 owns `src/app.css`, and the shared layer is now
 token-only: every literal radius there reads `--v-r-*`. Components still hold about sixty

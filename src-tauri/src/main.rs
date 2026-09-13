@@ -1658,6 +1658,81 @@ fn search_scripture(
     Ok(search_verses(&conn, &sem.0, query.trim()))
 }
 
+/// `ps23:1` → `ps 23 1`: a space wherever letters meet digits.
+///
+/// The reference parser reads tokens, and `ps23:1` is one token, so the fastest
+/// way to type a reference was the one way that returned nothing at all. Applied
+/// ONLY to the reference pass — a phrase search must keep the query a person
+/// actually typed.
+fn split_digit_runs(q: &str) -> String {
+    let mut out = String::with_capacity(q.len() + 4);
+    let mut prev: Option<char> = None;
+    for c in q.chars() {
+        if let Some(p) = prev {
+            if p.is_ascii_alphabetic() && c.is_ascii_digit()
+                || p.is_ascii_digit() && c.is_ascii_alphabetic()
+            {
+                out.push(' ');
+            }
+        }
+        out.push(c);
+        prev = Some(c);
+    }
+    out
+}
+
+/// Words that carry almost no search signal on their own. A verse matching only
+/// these has not matched the query.
+const WEAK_WORDS: &[&str] = &[
+    "the", "and", "of", "a", "an", "to", "in", "is", "that", "for", "it", "with", "as", "was",
+    "be", "not", "but", "they", "he", "him", "his", "her", "she", "i", "you", "me", "my", "we",
+    "us", "them", "their", "our", "this", "these", "those", "there", "then", "shall", "will",
+    "unto", "upon", "o", "on", "at", "by", "from", "all", "are", "were", "have", "has", "had",
+];
+
+/// How much of the query this verse actually contains, 0.0–1.0.
+///
+/// A weak word is worth 0.3 of a real one, so "the lord is my shepherd" is not
+/// counted as five-fifths matched because a verse happens to contain "the", "is"
+/// and "my". A query word counts when it appears, when a verse word starts with
+/// it (so `shep` finds `shepherd`), or when it is one edit away — which is what
+/// makes a typed query survive a typo without inventing a match.
+fn phrase_coverage(query: &str, text: &str) -> f32 {
+    let words: Vec<String> = text
+        .to_lowercase()
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .map(str::to_string)
+        .collect();
+    let mut total = 0.0f32;
+    let mut hit = 0.0f32;
+    for q in query
+        .to_lowercase()
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+    {
+        let weight = if WEAK_WORDS.contains(&q) { 0.3 } else { 1.0 };
+        total += weight;
+        let found = words.iter().any(|w| {
+            w == q
+                || (q.len() >= 4 && w.starts_with(q))
+                || (q.len() >= 5 && detection::one_edit_apart(w, q))
+        });
+        if found {
+            hit += weight;
+        }
+    }
+    if total <= 0.0 {
+        0.0
+    } else {
+        hit / total
+    }
+}
+
+/// Below this share of the query, a loose text hit is a guess, and the search
+/// says nothing instead. Four words out of five missing is not a near miss.
+const MIN_COVERAGE: f32 = 0.55;
+
 /// The scripture search itself, over a connection + semantic index — shared by
 /// the `search_scripture` command and the preacher-remote HTTP endpoint.
 fn search_verses(
@@ -1677,8 +1752,14 @@ fn search_verses(
     let mut scored: Vec<(f32, db::VerseRow)> = Vec::new();
     let mut seen: std::collections::HashSet<i64> = std::collections::HashSet::new();
 
-    // 1) Explicit references ("john 3:16", "ps 23").
-    for m in detection::detect_direct(q) {
+    // 1) Explicit references ("john 3:16", "ps 23", "ps23:1").
+    let mut refs = detection::detect_direct(q);
+    if refs.is_empty() {
+        // `ps23:1` is ONE token to the parser. Splitting letters from digits is
+        // what makes the quickest way to type a reference work at all.
+        refs = detection::detect_direct(&split_digit_runs(q));
+    }
+    for m in refs {
         let r = &m.reference;
         if let Ok(Some(v)) = db::lookup_verse(conn, &r.book, r.chapter, r.verse) {
             if seen.insert(v.id) {
@@ -1715,6 +1796,13 @@ fn search_verses(
         .into_iter()
         .enumerate()
     {
+        // COVERAGE, not just a hit. FTS returns a verse that matched ANY term, so
+        // "quantum shepherd tractor engine banana" came back with nineteen verses
+        // and Ezekiel 26:9 at the top. A confident wrong answer is worse than an
+        // empty list: the operator acts on it.
+        if phrase_coverage(q, &v.text) < MIN_COVERAGE {
+            continue;
+        }
         if seen.insert(v.id) {
             scored.push((0.45 - (i as f32) * 0.008, v)); // 0.45..~0.33 band
         }
@@ -1723,6 +1811,9 @@ fn search_verses(
     if scored.is_empty() {
         if let Ok(hits) = db::search_verses_text(conn, q, 15) {
             for v in hits {
+                if phrase_coverage(q, &v.text) < MIN_COVERAGE {
+                    continue;
+                }
                 if seen.insert(v.id) {
                     scored.push((0.3, v));
                 }

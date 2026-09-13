@@ -1007,6 +1007,15 @@ fn fuzzy_book(tokens: &[&str], start: usize) -> Option<&'static str> {
     Some(canonical)
 }
 
+/// Is `a` reachable from `b` in a single edit?
+///
+/// Exposed for the scripture search, which uses it to let a typed word land on a
+/// near word without inventing a match. Same arithmetic the alias repair uses, so
+/// there is one definition of "nearly the same word" in the product.
+pub fn one_edit_apart(a: &str, b: &str) -> bool {
+    matches!(edit_distance_within(a, b, 1), Some(d) if d <= 1)
+}
+
 /// Levenshtein distance, abandoning early once it exceeds `budget`.
 ///
 /// Returns `Some(distance)` when within budget, `None` when it cannot be — the
