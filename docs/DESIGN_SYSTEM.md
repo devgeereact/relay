@@ -364,7 +364,11 @@ that no congregation template renders.
 
 ### Rules for anyone touching output rendering
 
-1. **Sizes are `cqw`.** A template must look identical at 1280×720 and at 3840×2160.
+1. **Sizes are `cqw`.** A template must look identical at 1280×720 and at 3840×2160. A **slide
+   region** (a composite's word half) is its own container, so `cqw` inside it is a share of the
+   REGION's width — which is what lets one template render correctly at screen size and at region
+   size with no second rule. A region renders only at depth 0: a composite may not be another
+   composite's fill (DECISIONS §74).
 2. **The output page background is transparent** so a Transparent-background template keys out
    for OBS/ATEM. Do not paint a fallback colour on it.
 3. **No `if channel_type == …` in rendering logic.** A per-channel difference is a template

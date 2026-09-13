@@ -243,7 +243,7 @@ gates in the phases section are green on it — `cargo test`, `npx vitest run`, 
 | 9 | Search | **partly done** | glued digits parse, a literal hit must cover 55% of the query, and nothing a search does reaches a screen. DECISIONS §72. `e2e::r9_*` ×4, cargo 673. **"Why it matched" not built** |
 | 10 | Library | **partly done** | the operator label reaches the record again and still not the glass (DECISIONS §73); announcements say which fields the room sees. `e2e::r10_*`, `r2livepath` R2-H, cargo 674 / suite 1074. **Collections rail, reflow editing, section keys and media upload not built** |
 | 11 | Settings | **partly done** | rows say which kind of nothing they have (`settingValue`, pinned by `surface.test.js` R3-13). `settingvalue.test.js` 7, suite 1083. **The eleven-section merge and the type-role pass not built** |
-| 12 | SuperSource | not started | |
+| 12 | SuperSource | **done** | a `region` layer that is its own container, a depth cap, a built-ins-only inner template, the SuperSource starter and its inspector block. DECISIONS §74. `composite.test.js` 9, suite 1092 |
 
 **Where phase 1 departed from the prototype, and why.** Both are cases of the rule in Context —
 the repository wins where the two disagree:
@@ -378,6 +378,12 @@ where "up to date" was printed over a channel that had been 404ing for months.
 **Merging sixteen sections into eleven is a reorganisation, not a repair**, and it moves every
 control an operator has learned where to find. It is worth doing with somebody watching the
 screens rather than at the end of a long pass.
+
+**Phase 12 is the container-inside-a-container concept phases 5 and 6 were waiting for.** A
+`region` layer renders a real template inside its own `container-type: inline-size` box, so `cqw`
+inside it is a share of the region rather than of the frame. That is the primitive band-gives-
+ground and the stage's stacked rail clock both need; neither is built on it yet, and building them
+on it is now a smaller job than it was.
 
 **Carried forward, deliberately.** Phase 1 owns `src/app.css`, and the shared layer is now
 token-only: every literal radius there reads `--v-r-*`. Components still hold about sixty

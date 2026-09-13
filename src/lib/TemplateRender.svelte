@@ -20,10 +20,19 @@
   import { applyTheme, themeById, templateThemeRef, BUILTIN_THEMES } from './themes.js';
   import { resolveStyle, slideBG, faceOf, fitScale } from './templatemodel.js';
   import { transitionCss, transitionDuration, DEFAULT_TRANSITION } from './transitions.js';
+  import { builtinById } from './templates.js';
   // Sound is OPT-IN per surface. This same renderer draws the Templates editor
   // preview, and editing a template must not blast video audio across the room —
   // so only a real output surface passes audio={true}.
   export let audio = false;
+  /**
+   * How deep this render is inside a composite. 0 is the screen itself.
+   *
+   * A REGION LAYER ONLY RENDERS AT DEPTH 0 — "a composite may not be another
+   * composite's fill" (docs/REBRAND.md §6). Without it a template that names
+   * itself would recurse until the webview died, on a wall, mid-service.
+   */
+  export let depth = 0;
 
   // The theme to apply. An EXPLICIT `theme` prop always wins (the Themes editor
   // previewing an unsaved draft, or an output page that resolved a CUSTOM theme
@@ -761,6 +770,25 @@
           {/if}
         {:else if L.type === 'shape'}
           <div class="lshape" style="{boxStyle(L)} {shapePaint(L)} border-radius:{L.radius || 0}cqw;"></div>
+        {:else if L.type === 'region'}
+          <!-- A REAL RENDERED SLIDE, inside its own container (docs/REBRAND.md §6).
+               `container-type: inline-size` is the feature: cqw inside this box is
+               a share of the BOX's width, so the template scales to the region
+               exactly as it would to a screen of that width.
+
+               Only at depth 0 — a composite may not be another composite's fill. -->
+          {#if depth === 0}
+            <div
+              class="lregion"
+              style="{boxStyle(L)} border-radius:{L.radius || 0}cqw; opacity:{L.opacity == null ? 1 : L.opacity}; {L.outline ? `outline:${L.outline}cqw solid ${L.outlineColor || 'var(--accent)'}; outline-offset:-${L.outline}cqw;` : ''} {L.plate ? `background:${L.plate};` : ''}">
+              <svelte:self
+                template={builtinById(L.templateRef)}
+                {content}
+                {theme}
+                depth={depth + 1}
+              />
+            </div>
+          {/if}
         {:else if !(showDefaultCountdown && (L.bind === 'verse' || L.bind === 'reference' || L.bind === 'translation'))}
           <!-- Verse/reference/translation layers are hidden during a default
                countdown (they carry no content then); a static or clock layer
@@ -925,9 +953,17 @@
   .lbg,
   .lshape,
   .ltext,
+  .lregion,
   .lmediabox {
     position: absolute;
     box-sizing: border-box;
+  }
+  /* THE REGION IS ITS OWN CONTAINER — the whole point of a composite. `cqw`
+     inside this box is a share of the BOX's width, so the template rendered in
+     it scales to the region exactly as it would to a screen of that width. */
+  .lregion {
+    overflow: hidden;
+    container-type: inline-size;
   }
   /* A media layer: the picture/video fills the layer's box (cover/contain set
      inline per layer), clipped to its rounded corners. */

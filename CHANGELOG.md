@@ -36,6 +36,9 @@ What you may notice most, in the order you would meet it:
   a scripture band.
 - **Settings rows say which kind of nothing they have.** "—" beside *This machine* could mean
   "no network", "could not be read" or "still checking"; now it says which.
+- **A composite screen.** A camera on one side and a real rendered slide on the other, keyed —
+  your switcher supplies the camera. The slide half scales to its own box, so the same look works
+  at full screen and in half of one.
 - **A song cue is named in the service record again.** Firing a song from a plan recorded a blank,
   so a Sunday report said "Manual override" about nothing. The words on the screen are unchanged —
   a song's section label still never reaches the glass.

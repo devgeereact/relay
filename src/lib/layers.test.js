@@ -37,7 +37,9 @@ describe('layer model', () => {
       expect(t.layout.layers.length).toBeGreaterThan(0);
       // Every layer has geometry and a type.
       for (const L of t.layout.layers) {
-        expect(['text', 'media', 'shape', 'background']).toContain(L.type);
+        // `region` is the composite's slide region (§6) — a layer like any
+        // other, with geometry, that happens to render a template inside itself.
+        expect(['text', 'media', 'shape', 'background', 'region']).toContain(L.type);
         expect(typeof L.x).toBe('number');
       }
     }

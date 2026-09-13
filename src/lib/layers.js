@@ -45,6 +45,7 @@ export const BINDINGS = [
 
 export const LAYER_TYPES = [
   { type: 'text', label: 'Text', icon: 'T' },
+  { type: 'region', label: 'Slide region (composite)', icon: '▣' },
   { type: 'media', label: 'Media (image / video)', icon: '▷' },
   { type: 'shape', label: 'Shape', icon: '▢' },
   { type: 'background', label: 'Background', icon: '▦' },
@@ -73,6 +74,22 @@ export function makeLayer(type, over = {}) {
         image: null,
         opacity: 1,
         dim: 0,
+      };
+      break;
+    case 'region':
+      // A REAL RENDERED SLIDE inside its own container (docs/REBRAND.md §6).
+      // `templateRef` names a BUILT-IN: a kiosk or OBS page has no database and
+      // resolves ids against the bundled list, so a custom template here would
+      // render one thing on the operator's wall and another in the stream.
+      spec = {
+        name: 'Slide region',
+        x: 50, y: 8, w: 46, h: 84,
+        templateRef: 1,
+        radius: 1,
+        outline: 0,
+        outlineColor: 'theme:accent',
+        plate: null,
+        opacity: 1,
       };
       break;
     case 'media':
@@ -420,6 +437,27 @@ function lowerBible() {
   };
 }
 
+/** SuperSource: a camera half and a rendered slide half, composited (§6).
+ *
+ *  The camera half is what is NOT painted. Relay does not take a camera feed —
+ *  NDI is parked, and a camera reaches the building through OBS or an ATEM — so
+ *  a composite here is a KEYED layout and the switcher puts the picture behind
+ *  the transparent half. A grey rectangle captioned "camera" would be a picture
+ *  of a feature rather than the feature. */
+function superSource() {
+  return {
+    layout: {
+      layers: [
+        makeLayer('shape', { name: 'Top bar', x: 0, y: 0, w: 100, h: 7, fill: '#0b0d12', opacity: 0.92, radius: 0 }),
+        makeLayer('shape', { name: 'Bottom bar', x: 0, y: 93, w: 100, h: 7, fill: '#0b0d12', opacity: 0.92, radius: 0 }),
+        makeLayer('region', { name: 'Word region', x: 52, y: 9, w: 44, h: 82, templateRef: 1 }),
+      ],
+      align: 'center',
+    },
+    style: {},
+  };
+}
+
 /** Announcement ticker: a bottom bar + a scrolling body line. */
 function announcement() {
   return {
@@ -551,6 +589,7 @@ export const STARTERS = [
   { key: 'confidence', label: 'Confidence Monitor', make: confidenceMonitor, hint: 'Booth-facing "what\'s on screen now" view with clock. Theme-aware.' },
   { key: 'preacher', label: 'Preacher View', make: preacherView, hint: 'Big centred verse, the next verse, service timer and your note.' },
   { key: 'timer', label: 'Countdown Timer', make: timerScreen, hint: 'Huge MM:SS for a pre-service countdown, with a label and clock.' },
+  { key: 'supersource', label: 'SuperSource', make: superSource, hint: 'Camera on one side, a rendered slide on the other. Keyed — the switcher supplies the camera.' },
   { key: 'freestyle', label: 'Freestyle', make: freestyle, hint: 'A blank canvas — add layers yourself.' },
 ];
 

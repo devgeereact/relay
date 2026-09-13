@@ -3219,3 +3219,46 @@ label, the backend still suppresses it for songs, and both halves are now held:
 nothing on the form used to say so — an operator typing a heading had no way to know whether it
 was a name for their own list (as a song's section label is) or something a congregation would
 read. Two content kinds with opposite rules, one form, no signposts.
+
+## 74. A composite is a region that is its own container (2026-09-13)
+
+### What a composite is here
+
+A camera region and a real rendered slide, side by side — the brief's SuperSource (§6). The word
+region is **its own container** (`container-type: inline-size`), and that is the entire feature:
+`cqw` means *a share of the container's width*, so a template rendered inside a region sizes
+itself to the region exactly as it would to a screen of that width. No second scaling rule, no
+per-composite arithmetic, and the same renderer doing the drawing.
+
+Without it, `cqw` inside the region resolves against the whole frame and every word in the
+composite is about twice the size it should be — in a stream, where nobody at the desk is
+watching.
+
+### The camera half is transparency, and that is honest
+
+Relay does not take a camera feed. NDI is parked, and a camera reaches the building through OBS or
+an ATEM. So a composite here is a **keyed layout**: the half that is not painted is where the
+switcher puts the picture. A grey rectangle captioned "camera" would be a picture of a feature
+rather than the feature.
+
+### Two rules, held by construction rather than by care
+
+- **A composite may not be another composite's fill.** `depth` is passed down and a region at
+  depth > 0 renders nothing. It is a depth cap rather than a cycle check, because the failure is
+  the same whether a template names itself or names a different composite: a webview recursing
+  until it dies, mid-service, on a wall. Pinned by `composite.test.js`, watched to fail with the
+  guard removed.
+- **The inner template must resolve on EVERY client.** A kiosk or OBS page has no database and
+  resolves ids against the bundled built-ins, so a region names a built-in and the inspector
+  offers nothing else. A region pointing at a custom template would render one thing on the
+  operator's wall and another in the stream — the one failure a composite must not have.
+  `builtinById` also answers with the default rather than an empty box, so an id from a newer
+  version still shows the verse.
+
+### What was NOT added
+
+Arrangement, camera share and gap are not controls. A region is a layer, and a layer already has
+x / y / width / height as real numbers in the inspector (phase 3's Position group):
+camera-left and camera-right are the same template with the region's `x` moved, and the gap is the
+space between two boxes. Three more controls writing the same four numbers would be three more
+ways for a template to disagree with itself.
