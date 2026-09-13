@@ -400,6 +400,34 @@ dock row, status bar, equal monitors — and what remains is the slide grid and 
 That last one changes what a click does on the surface that puts scripture in front of people, so
 it is a pass of its own rather than the tail of a layout commit.
 
+**A visual audit compared the running console against the prototype on 2026-09-13, and the palette
+and type scale MATCH — byte-identical ground, panel and take-amber, 12px Inter throughout. What
+differs is structure, and this is the list, so the next pass starts from it rather than
+rediscovering it:**
+
+- **No screen ladder and no transition control in the chrome bar.** The prototype's right-hand
+  chrome carries five screen lamps (Main · Streaming · Lobby · Stage · Overflow), a transition
+  picker and its duration. The app has a clock and an emergency stop.
+- **The dock's rhythm is wrong.** The prototype's four cards are equal (377px) and 178px tall on a
+  darker trough; the app's are unequal and 151px, flush to the ground.
+- **The Library item area is a text list**, where the prototype renders a grid of slide
+  thumbnails with reference-plus-first-line captions.
+- **Library reaches an item through four rows of chrome** (collections, Bible/Saved, filters,
+  panel header) against the prototype's two.
+- **AI detection is a card in the middle row**, not the 286px right-hand inspector the prototype
+  gives it.
+- **`Go Live` is amber, deliberately.** §1 of this brief puts green on Go Live and saves amber for
+  End service. This repository's own rule is different and older: `.r-btn.amber` is reserved for
+  "a control that puts something in front of a congregation, or takes it away", which is exactly
+  what that button does. It is a divergence from the prototype, NOT a colour-law violation, and it
+  was left alone rather than changed by somebody who could not see the screens.
+
+**A limit of the new instrument, recorded rather than closed by force.** `workspacegrammar.test.js`
+asserts no raw hex and no px font sizes — over its `DESKS` array only. Editors, Live and Library
+sit outside it. Widening the array to swallow a stray literal would either force an unrelated
+conversion or dilute what the array asserts, so the array stays honest and the gap is written
+down. A literal `#141417` survived in the template editor exactly this way, and was found by eye.
+
 **Carried forward, deliberately.** Phase 1 owns `src/app.css`, and the shared layer is now
 token-only: every literal radius there reads `--v-r-*`. Components still hold about sixty
 radius literals of their own, twenty of them `99px` — so a few pills survive on surfaces phases
