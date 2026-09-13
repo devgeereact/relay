@@ -236,7 +236,7 @@ gates in the phases section are green on it — `cargo test`, `npx vitest run`, 
 | 2 | Template model | **done** | `templatemodel.js` (migrate · resolve · slideBG · fit estimate), migration on three doors, the renderer reads the model. 34 + 6 new tests, suite 1014 |
 | 3 | The object inspector | **done** | object tab strip (wrapping), Position group with real numbers, Duplicate (deep copy), Reset this object, two-step Delete. `layerops.test.js` 14, `templateinspector.test.js` 3, suite 1032 |
 | 4 | Roles and the look register | **done** | a screen may follow the content look (DECISIONS §70), "Used for" on the template, a tag on each gallery card. `e2e::r4_a_screen_may_follow_the_content_look`, suite 1034 / cargo 668 |
-| 5 | Lower thirds | not started | |
+| 5 | Lower thirds | **partly done** | three starters (Name · Lyric · Scripture), each keyed, each its own template. A non-hex shape fill no longer paints black. `layers.test.js` +6, `templatestyle.test.js` +3, suite 1043. **Band-gives-ground not built** |
 | 6 | Stage monitor | not started | |
 | 7 | Countdown | not started | |
 | 8 | Transitions | not started | |
@@ -283,6 +283,24 @@ The spec's remaining five (`preservice`, `stage`, `lower.name`, `lower.lyric`, `
 `supersource`) name kinds nothing renders yet; they arrive with phases 5, 6 and 12. A role
 offered before its renderer exists is a control that saves a setting nothing reads, which is the
 defect this phase just closed.
+
+**Phase 5 is the first phase left deliberately incomplete, and the reason is the model.**
+"The band gives ground before the words do" means a shape grows when a text layer beside it needs
+room. In this repository a template is a flat list of independently placed objects: there is no
+parent, no child and no "these two belong together". The only way to build it now would be a rule
+that fires when a shape happens to be named `Band` — a hidden coupling that applies to some
+templates and not others, which is the shape of every bug CLAUDE.md's non-negotiables warn about.
+Phases 6 and 12 (zones, and a composite's regions) want the same missing concept, so it is worth
+designing once, for all three, rather than bolting onto one starter. The three bands ship without
+it: type shrinks, as it does everywhere else, and rule 37's floor still reports when it goes too
+far.
+
+**The opacity defect the spec names is not this repository's.** The prototype capped a band's
+alpha at 0.9×; nothing here does — `hexA` applies the alpha exactly. What IS here is worse and
+was found while checking: a shape fill that is not a hex (a gradient, a CSS var, a theme token
+that resolves to one) was parsed two characters at a time with a fallback of 0 per component, so
+it rendered as **black** at the requested alpha. Silently, and looking deliberate. The layer most
+likely to carry a gradient is a lower-third band, and that is the layer keyed over a live camera.
 
 **Carried forward, deliberately.** Phase 1 owns `src/app.css`, and the shared layer is now
 token-only: every literal radius there reads `--v-r-*`. Components still hold about sixty

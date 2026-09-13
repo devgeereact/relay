@@ -328,15 +328,60 @@ function fullScreen() {
   };
 }
 
-/** Lower third: a band at the bottom + verse + reference IN the band. No full
- *  background layer, so the rest of the frame stays transparent (keyed). */
-function lowerThird() {
+// ── THE THREE LOWER THIRDS ─────────────────────────────────────────────────
+//
+// A band is keyed over a live camera, so NONE of these carries a background
+// layer: the rest of the frame stays transparent (see `isKeyedTemplate`, and the
+// transparency law in TemplateRender).
+//
+// They are three separate templates rather than one with options, which is what
+// makes "editing one touches no other" a property of the model instead of a
+// thing to remember.
+
+/** The band itself, at the one geometry all three share. */
+const band = () =>
+  makeLayer('shape', { name: 'Band', x: 6, y: 74, w: 88, h: 18, fill: '#101319', opacity: 0.9, radius: 1 });
+
+/** NAME: who is speaking, and what they are. The name is the large line. */
+function lowerName() {
   return {
     layout: {
       layers: [
-        makeLayer('shape', { name: 'Band', x: 6, y: 74, w: 88, h: 18, fill: '#101319', opacity: 0.9, radius: 1 }),
+        band(),
+        makeLayer('text', { name: 'Name', bind: 'verse', x: 9, y: 76, w: 82, h: 10, size: 3.2, color: '#f2f4f8', align: 'left', valign: 'middle', shadow: 0 }),
+        makeLayer('text', { name: 'Role', bind: 'reference', x: 9, y: 86, w: 82, h: 5, size: 1.4, color: '#9db4ff', align: 'left', transform: 'uppercase', letterSpacing: 0.1 }),
+      ],
+      align: 'left',
+    },
+    style: {},
+  };
+}
+
+/** LYRIC: the words, and NOTHING else — no reference layer at all.
+ *  A song's "reference" is its title, and a title under every line reads like a
+ *  slide rather than a caption. The line is given the whole band. */
+function lowerLyric() {
+  return {
+    layout: {
+      layers: [
+        band(),
+        makeLayer('text', { name: 'Words', bind: 'verse', x: 9, y: 75, w: 82, h: 16, size: 3, color: '#f2f4f8', align: 'left', valign: 'middle', shadow: 0 }),
+      ],
+      align: 'left',
+    },
+    style: {},
+  };
+}
+
+/** SCRIPTURE: the verse, with its reference beneath — right-aligned, tracked and
+ *  small, so it reads as a citation rather than as a second sentence. */
+function lowerBible() {
+  return {
+    layout: {
+      layers: [
+        band(),
         makeLayer('text', { name: 'Verse', bind: 'verse', x: 9, y: 76, w: 82, h: 10, size: 2.6, color: '#f2f4f8', align: 'left', valign: 'middle', shadow: 0 }),
-        makeLayer('text', { name: 'Reference', bind: 'reference', x: 9, y: 86, w: 82, h: 5, size: 1.5, color: '#9db4ff', align: 'left', transform: 'uppercase', letterSpacing: 0.08 }),
+        makeLayer('text', { name: 'Reference', bind: 'reference', x: 9, y: 86, w: 82, h: 5, size: 1.5, color: '#9db4ff', align: 'right', transform: 'uppercase', letterSpacing: 0.08 }),
       ],
       align: 'left',
     },
@@ -466,7 +511,9 @@ function timerScreen() {
 
 export const STARTERS = [
   { key: 'fullscreen', label: 'Full-Screen Scripture', make: fullScreen, hint: 'Verse centred with its reference beneath.' },
-  { key: 'lowerthird', label: 'Lower Third', make: lowerThird, hint: 'A band at the bottom, keyed over camera in OBS/ATEM.' },
+  { key: 'lower.name', label: 'Lower Third — Name', make: lowerName, hint: 'Who is speaking, and what they are. Keyed over camera.' },
+  { key: 'lower.lyric', label: 'Lower Third — Lyric', make: lowerLyric, hint: 'The words alone — no reference. Keyed over camera.' },
+  { key: 'lower.bible', label: 'Lower Third — Scripture', make: lowerBible, hint: 'Verse with its reference beneath. Keyed over camera.' },
   { key: 'media', label: 'Full-Screen Media', make: mediaFull, hint: 'A picture or video fills the wall — add text over it if you like.' },
   { key: 'announcement', label: 'Announcement Ticker', make: announcement, hint: 'A scrolling crawl along the bottom.' },
   { key: 'stage', label: 'Stage Display', make: stageDisplay, hint: 'Platform monitor: current verse, reference and clock. Theme-aware.' },

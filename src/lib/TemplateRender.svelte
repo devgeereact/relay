@@ -85,6 +85,26 @@
     const n = h.length === 3 ? h.split('').map((c) => c + c).join('') : h;
     return `rgba(${parseInt(n.slice(0, 2), 16) || 0}, ${parseInt(n.slice(2, 4), 16) || 0}, ${parseInt(n.slice(4, 6), 16) || 0}, ${Math.max(0, Math.min(1, Number(a) ?? 1))})`;
   };
+  /**
+   * A SHAPE'S PAINT, WHICH IS NOT ALWAYS A HEX.
+   *
+   * `hexA` parses two characters at a time and falls back to 0 per component, so
+   * a gradient, a CSS var or a theme token that resolves to one came out BLACK at
+   * the requested alpha — silently, and rendering perfectly. The layer most likely
+   * to carry a gradient is a lower-third band, and that is the layer keyed over a
+   * live camera.
+   *
+   * A hex still gets its alpha folded into the colour (so the shape can be
+   * translucent without making its own children translucent). Anything else is
+   * painted as written, with the alpha on the element instead.
+   */
+  const isHex = (v) => /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(String(v || '').trim());
+  const shapePaint = (L) => {
+    const a = L.opacity == null ? 1 : L.opacity;
+    return isHex(L.fill)
+      ? `background:${hexA(L.fill, a)};`
+      : `background:${L.fill || 'transparent'}; opacity:${Math.max(0, Math.min(1, Number(a) ?? 1))};`;
+  };
   // The box style for a positioned layer (percent geometry of the 16:9 stage).
   const boxStyle = (L) =>
     `left:${L.x}%; top:${L.y}%; width:${L.w}%; height:${L.h}%;`;
@@ -713,7 +733,7 @@
             </div>
           {/if}
         {:else if L.type === 'shape'}
-          <div class="lshape" style="{boxStyle(L)} background:{hexA(L.fill, L.opacity == null ? 1 : L.opacity)}; border-radius:{L.radius || 0}cqw;"></div>
+          <div class="lshape" style="{boxStyle(L)} {shapePaint(L)} border-radius:{L.radius || 0}cqw;"></div>
         {:else if !(showDefaultCountdown && (L.bind === 'verse' || L.bind === 'reference' || L.bind === 'translation'))}
           <!-- Verse/reference/translation layers are hidden during a default
                countdown (they carry no content then); a static or clock layer

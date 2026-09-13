@@ -173,3 +173,48 @@ describe('font fallback', () => {
     expect(ff).toMatch(/--f-serif/);
   });
 });
+
+// ── A SHAPE'S FILL IS NOT ALWAYS A HEX ─────────────────────────────────────
+//
+// `hexA` parses the fill two characters at a time and falls back to 0 for each
+// component, so ANY fill that is not a hex — a gradient an operator pasted, a
+// CSS var, a theme token that resolves to one — silently became BLACK at the
+// requested alpha. A lower-third band is the layer most likely to carry a
+// gradient, and it is the layer keyed over a live camera: a black bar where a
+// translucent one was designed is a congregation-facing failure that renders
+// perfectly and reports nothing.
+import { makeLayer } from './layers.js';
+
+const shaped = (fill, opacity) => ({
+  id: 3,
+  name: 'Band',
+  layout: {
+    layers: [
+      makeLayer('shape', { name: 'Band', x: 0, y: 70, w: 100, h: 20, fill, opacity }),
+      makeLayer('text', { name: 'Verse', bind: 'verse', x: 4, y: 72, w: 92, h: 16 }),
+    ],
+  },
+  style: {},
+});
+
+describe("a shape layer's fill and opacity", () => {
+  it('applies alpha to a hex fill', () => {
+    const el = mount(shaped('#101319', 0.5), CONTENT);
+    expect(getComputedStyle(el.querySelector('.lshape')).background).toContain('rgba(16, 19, 25, 0.5)');
+  });
+
+  it('keeps a gradient fill instead of painting it black', () => {
+    const el = mount(shaped('linear-gradient(90deg,#123456,#654321)', 1), CONTENT);
+    const bg = getComputedStyle(el.querySelector('.lshape')).background;
+    expect(bg).toContain('gradient');
+    // The colours the designer chose, not the black `hexA` used to fall back to.
+    expect(bg).toContain('rgb(18, 52, 86)');
+  });
+
+  it('still honours opacity on a fill it cannot parse', () => {
+    const el = mount(shaped('linear-gradient(90deg,#123456,#654321)', 0.4), CONTENT);
+    const box = el.querySelector('.lshape');
+    expect(getComputedStyle(box).background).toContain('gradient');
+    expect(getComputedStyle(box).opacity).toBe('0.4');
+  });
+});

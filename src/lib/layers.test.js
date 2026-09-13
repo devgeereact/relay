@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import TemplateRender from './TemplateRender.svelte';
-import { makeLayer, isLayered, boundValue, regionsToLayers, STARTERS, formatElapsed, formatRemaining, slideRevealCss } from './layers.js';
+import { makeLayer, isLayered, isKeyedTemplate, boundValue, regionsToLayers, STARTERS, formatElapsed, formatRemaining, slideRevealCss } from './layers.js';
 
 describe('layer model', () => {
   it('makes typed layers with sane defaults and unique ids', () => {
@@ -239,5 +239,56 @@ describe('per-screen content visibility (templateShows)', () => {
     const t = { layout: { noMedia: true } };
     expect(templateShows(t, 'media')).toBe(false);
     expect(templateShows(t, 'scripture')).toBe(true);
+  });
+});
+
+// ── THE THREE LOWER THIRDS (docs/REBRAND.md §4) ────────────────────────────
+//
+// One starter made every band the same shape: a verse line and a reference
+// line. That is right for scripture and wrong for the other two things a band
+// is for. What each one CARRIES is the whole point of there being three, so it
+// is the thing worth holding.
+describe('the lower-third starters', () => {
+  const starter = (key) => STARTERS.find((s) => s.key === key).make();
+  const names = (t) => t.layout.layers.map((l) => l.name);
+  const binds = (t) => t.layout.layers.filter((l) => l.type === 'text').map((l) => l.bind);
+
+  it('there are three of them', () => {
+    const keys = STARTERS.map((s) => s.key).filter((k) => k.startsWith('lower.'));
+    expect(keys).toEqual(['lower.name', 'lower.lyric', 'lower.bible']);
+  });
+
+  it('every one is KEYED — a band is composited over a live camera', () => {
+    // A band that paints a background covers the preacher it exists to caption.
+    for (const key of ['lower.name', 'lower.lyric', 'lower.bible']) {
+      expect(isKeyedTemplate(starter(key)), key).toBe(true);
+    }
+  });
+
+  it('the lyric band carries NO reference at all', () => {
+    // A song's "reference" is its title, and a title under every line reads as a
+    // slide rather than a caption.
+    const t = starter('lower.lyric');
+    expect(binds(t)).toEqual(['verse']);
+    expect(names(t)).not.toContain('Reference');
+  });
+
+  it('the name band carries a name and a role', () => {
+    expect(binds(starter('lower.name'))).toEqual(['verse', 'reference']);
+  });
+
+  it('the scripture band sets its reference apart rather than repeating the verse', () => {
+    const ref = starter('lower.bible').layout.layers.find((l) => l.bind === 'reference');
+    const verse = starter('lower.bible').layout.layers.find((l) => l.bind === 'verse');
+    expect(ref.align).toBe('right');
+    expect(ref.size).toBeLessThan(verse.size);
+    expect(ref.transform).toBe('uppercase');
+  });
+
+  it('each is its own template, so editing one cannot touch another', () => {
+    const a = starter('lower.bible');
+    const b = starter('lower.bible');
+    a.layout.layers[0].fill = '#ff0000';
+    expect(b.layout.layers[0].fill).not.toBe('#ff0000');
   });
 });
