@@ -234,7 +234,7 @@ gates in the phases section are green on it — `cargo test`, `npx vitest run`, 
 |---|---|---|---|
 | 1 | Tokens and chrome | **done** | palette, radius, type scale, one slider / switch / colour well, the four control colours. `tokencontrast.test.js` 7 green, `rangefill.test.js` 9 new, suite 974 |
 | 2 | Template model | **done** | `templatemodel.js` (migrate · resolve · slideBG · fit estimate), migration on three doors, the renderer reads the model. 34 + 6 new tests, suite 1014 |
-| 3 | The object inspector | not started | |
+| 3 | The object inspector | **done** | object tab strip (wrapping), Position group with real numbers, Duplicate (deep copy), Reset this object, two-step Delete. `layerops.test.js` 14, `templateinspector.test.js` 3, suite 1032 |
 | 4 | Roles and the look register | not started | |
 | 5 | Lower thirds | not started | |
 | 6 | Stage monitor | not started | |
@@ -263,6 +263,12 @@ fewer forced reflows, and the first real use of the aspect argument. And `bgStyl
 been a property no control could set, so the theme editor gained a Background style row (and
 `THEME_STYLE_KEYS` gained the key, without which the control would have saved into a draft the
 wall never receives).
+
+**Phase 3's object sets by kind are not all here yet.** The tab strip lists the objects a
+template actually has, which is the whole set for a full-screen look. The kind-specific starters
+the spec names — a lower third's **Band**, a stage monitor's **Zones**, a composite's **Camera /
+Word bg / Word / Ref** — arrive with the phases that build those kinds (5, 6 and 12). Listing
+them now would be a tab strip offering objects no renderer draws.
 
 **Carried forward, deliberately.** Phase 1 owns `src/app.css`, and the shared layer is now
 token-only: every literal radius there reads `--v-r-*`. Components still hold about sixty

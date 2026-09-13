@@ -14,6 +14,7 @@
   // The preview is the SAME TemplateRender as the wall — WYSIWYG by construction.
   import { createEventDispatcher, onMount, onDestroy } from 'svelte';
   import { rangeFill } from '../../rangefill.js';
+  import { duplicateLayer, resetLayer } from '../../layerops.js';
   import TemplateRender from '../../TemplateRender.svelte';
   import { review, PREVIEW_DISTANCES_M, previewScale } from '../../legibility.js';
   import TemplatePreviewOverlay from '../../TemplatePreviewOverlay.svelte';
@@ -150,9 +151,46 @@
     selId = L.id;
     edit = edit;
   }
+  // DELETE IS TWO STEPS, and the first one lapses.
+  //
+  // It used to remove the object on a single click of a 20px button sitting
+  // between Lock and Visibility in a row of five. Undo exists, and "your work is
+  // one keystroke away" is not the same as "you did not lose it" when the panel
+  // is being used against the clock. Never a native confirm(): Tauri's webview
+  // returns false without showing a dialog, so a delete guarded by one deletes
+  // nothing and reports success (CLAUDE.md rule 41).
+  let armedDelete = null;
+  let armedTimer = 0;
+  function disarmDelete() {
+    clearTimeout(armedTimer);
+    armedTimer = 0;
+    armedDelete = null;
+  }
   function removeLayer(id) {
+    if (armedDelete !== id) {
+      clearTimeout(armedTimer);
+      armedDelete = id;
+      // Long enough to read the word "Delete?" and decide; short enough that an
+      // armed button never sits waiting through the next thing you do.
+      armedTimer = setTimeout(() => { armedDelete = null; }, 4000);
+      return;
+    }
+    disarmDelete();
     edit.layout.layers = edit.layout.layers.filter((l) => l.id !== id);
     if (selId === id) selId = edit.layout.layers[edit.layout.layers.length - 1]?.id ?? null;
+    edit = edit;
+  }
+  function duplicate(id) {
+    const before = edit.layout.layers || [];
+    const after = duplicateLayer(before, id);
+    if (after === before) return;
+    edit.layout.layers = after;
+    selId = after[after.findIndex((l) => l.id === id) + 1].id;
+    edit = edit;
+  }
+  function resetObject(id) {
+    const after = resetLayer(edit.layout.layers || [], id);
+    edit.layout.layers = after;
     edit = edit;
   }
   function moveLayer(id, dir) {
@@ -193,6 +231,12 @@
     edit = edit;
   }
   function set(k, v) { if (sel) { sel[k] = v; edit = edit; } }
+  /** A geometry number, clamped to the canvas so an object cannot be typed off it. */
+  function geom(k, v) {
+    const n = Number(v);
+    if (!Number.isFinite(n)) return;
+    set(k, Math.max(0, Math.min(100, n)));
+  }
   function num(k, v) { set(k, +v); }
   // Layer colour/fill/font can bind to a THEME TOKEN (`theme:accent`) that follows
   // the applied theme, or be a literal. Colours offer every token except the
@@ -615,7 +659,14 @@
                 <button class="te-lmini" title="Back" on:click|stopPropagation={() => moveLayer(L.id, -1)}>↓</button>
                 <button class="te-lmini" title={L.locked ? 'Unlock' : 'Lock'} class:on={L.locked} on:click|stopPropagation={() => toggleLock(L.id)}>{L.locked ? '🔒' : '🔓'}</button>
                 <button class="te-lmini" title="Visibility" on:click|stopPropagation={() => toggleVisible(L.id)}>{L.visible === false ? '◌' : '●'}</button>
-                <button class="te-lmini danger" title="Delete" on:click|stopPropagation={() => removeLayer(L.id)}>✕</button>
+                <button
+                  class="te-lmini danger"
+                  class:armed={armedDelete === L.id}
+                  title={armedDelete === L.id ? 'Click again to delete' : 'Delete'}
+                  aria-label={armedDelete === L.id ? `Delete ${layerLabel(L)} — click again to confirm` : `Delete ${layerLabel(L)}`}
+                  on:click|stopPropagation={() => removeLayer(L.id)}
+                  on:blur={() => armedDelete === L.id && disarmDelete()}
+                >{armedDelete === L.id ? 'Sure?' : '✕'}</button>
               </span>
             </div>
           {/each}
@@ -719,6 +770,35 @@
       <!-- ══ PROPERTIES ══ -->
       <aside class="te-pane te-design">
         <div class="te-panehead"><span class="r-lbl">Design</span><span class="te-designfor r-mono">{sel ? layerLabel(sel) : ''}</span></div>
+        <!-- THE OBJECTS ON THIS SLIDE. A wrapping strip, never a scrolling one:
+             a tab that has scrolled behind a hidden scrollbar is a tab nobody
+             knows is there. -->
+        {#if layers.length}
+          <div class="te-objtabs" role="tablist" aria-label="Objects on this slide">
+            {#each layers as L (L.id)}
+              <button
+                class="te-objtab"
+                class:on={selId === L.id}
+                class:off={L.visible === false}
+                role="tab"
+                aria-selected={selId === L.id}
+                on:click={() => (selId = L.id)}
+              >{layerLabel(L)}</button>
+            {/each}
+          </div>
+          {#if sel}
+            <div class="te-objacts">
+              <button class="r-btn sm ghost" on:click={() => duplicate(sel.id)}>Duplicate</button>
+              <button class="r-btn sm ghost" on:click={() => resetObject(sel.id)}>Reset this object</button>
+              <button
+                class="r-btn sm danger"
+                class:armed={armedDelete === sel.id}
+                on:click={() => removeLayer(sel.id)}
+                on:blur={() => armedDelete === sel.id && disarmDelete()}
+              >{armedDelete === sel.id ? 'Delete — sure?' : 'Delete'}</button>
+            </div>
+          {/if}
+        {/if}
         <div class="te-designbody r-scroll">
           <h3 class="te-sec">Template</h3>
           <div class="te-frow"><label class="te-fk" for="te-name">Name</label><input id="te-name" class="r-input te-fv" bind:value={edit.name} /></div>
@@ -734,6 +814,32 @@
               </button>
             {/each}
           </div>
+
+          {#if sel}
+            <!-- POSITION. These were reachable only by dragging on the canvas, so
+                 a keyboard-only operator could not place an object at all and
+                 nobody could place one exactly. Percentages of the frame, like
+                 everything else in a template. -->
+            <h3 class="te-sec">Position</h3>
+            <div class="te-geom">
+              {#each [['x', 'X'], ['y', 'Y'], ['w', 'W'], ['h', 'H']] as [k, label]}
+                <label class="te-geomcell">
+                  <span class="r-lbl">{label}</span>
+                  <input
+                    class="te-num r-mono"
+                    type="number"
+                    min="0"
+                    max="100"
+                    step="0.5"
+                    value={Math.round((sel[k] ?? 0) * 10) / 10}
+                    disabled={sel.locked}
+                    on:input={(e) => geom(k, e.target.value)}
+                  />
+                </label>
+              {/each}
+            </div>
+            {#if sel.locked}<p class="te-fnote">This object is locked. Unlock it in the layer list to move it.</p>{/if}
+          {/if}
 
           {#if !sel}
             <p class="te-guide">Select a layer to edit it, or add one with ＋.</p>
@@ -833,6 +939,7 @@
             </div>
             <div class="te-frow"><label class="te-fk" for="te-lh">Line height</label><span class="te-fv te-rangerow"><input id="te-lh" class="r-range" type="range" min="0.9" max="2" step="0.05" value={sel.lineHeight || 1.32} on:input={(e) => num('lineHeight', e.target.value)} use:rangeFill={sel.lineHeight || 1.32} /><span class="te-rnum r-mono">{(sel.lineHeight || 1.32).toFixed(2)}</span></span></div>
             <div class="te-frow"><label class="te-fk" for="te-ls">Spacing</label><span class="te-fv te-rangerow"><input id="te-ls" class="r-range" type="range" min="-0.05" max="0.4" step="0.01" value={sel.letterSpacing || 0} on:input={(e) => num('letterSpacing', e.target.value)} use:rangeFill={sel.letterSpacing || 0} /><span class="te-rnum r-mono">{(sel.letterSpacing || 0).toFixed(2)}em</span></span></div>
+            <h3 class="te-sec">Effects</h3>
             <div class="te-frow"><label class="te-fk" for="te-sh">Shadow</label><span class="te-fv te-rangerow"><input id="te-sh" class="r-range" type="range" min="0" max="1" step="0.05" value={sel.shadow || 0} on:input={(e) => num('shadow', e.target.value)} use:rangeFill={sel.shadow || 0} /><span class="te-rnum r-mono">{Math.round((sel.shadow || 0) * 100)}%</span></span></div>
             <div class="te-frow">
               <label class="te-fk" for="te-fit">Scale</label>
@@ -936,6 +1043,21 @@
 
   .te-pane{ display:flex; flex-direction:column; min-height:0; overflow:hidden; background:var(--v-surf); border:1px solid var(--v-line); border-radius:var(--v-r-lg); }
   .te-panehead{ display:flex; align-items:center; justify-content:space-between; gap:8px; padding:11px 13px; border-bottom:1px solid var(--v-line); flex:0 0 auto; }
+  /* The object strip WRAPS. A tab that has scrolled out of sight behind a
+     hidden scrollbar is a tab nobody knows is there. */
+  .te-objtabs{ display:flex; flex-wrap:wrap; gap:3px; padding:7px 9px 0; }
+  .te-objtab{ padding:3px 8px; border-radius:var(--v-r-sm); border:1px solid var(--v-line2);
+    background:var(--v-surf2); color:var(--v-dim); font-size:var(--v-fs-lbl); font-weight:600;
+    cursor:pointer; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+    transition:background var(--v-dur) var(--v-ease), color var(--v-dur) var(--v-ease); }
+  .te-objtab:hover:not(.on){ color:var(--v-txt); background:var(--v-surf3); }
+  .te-objtab.on{ background:var(--v-sel-fill); border-color:transparent; color:var(--v-sel-ink); }
+  .te-objtab.off{ text-decoration:line-through; opacity:.6; }
+  .te-objacts{ display:flex; flex-wrap:wrap; gap:5px; padding:7px 9px 0; }
+  .te-objacts .armed{ background:var(--v-red); border-color:transparent; color:#fff; }
+  .te-geom{ display:grid; grid-template-columns:repeat(4, 1fr); gap:5px; padding:0 0 4px; }
+  .te-geomcell{ display:flex; flex-direction:column; gap:2px; min-width:0; }
+  .te-geomcell input{ width:100%; }
   .te-designfor{ font-size:var(--v-fs-cap); color:var(--v-accent2); }
 
   /* layers panel */
