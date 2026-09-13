@@ -196,9 +196,15 @@
           <span class="vd-go">Go live →</span>
         </button>
 
+        <!-- The label wrapping this box is EMPTY (it only carries the drawn tick),
+             so the input had no accessible name at all: a screen reader announced
+             "checkbox, unchecked" against every row in the deck, with nothing to say
+             which row. The `title` on the label is not an accessible name for the
+             input inside it. -->
         <label class="vd-check" title="Select for a bulk action">
           <input
             type="checkbox"
+            aria-label={`Select ${v.label ?? v.reference} for a bulk action`}
             checked={checked.has(v.reference)}
             on:change={() => onCheck(v)} />
           <span></span>

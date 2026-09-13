@@ -27,7 +27,27 @@
 //    crosses an unauthenticated LAN (DECISIONS §35) and lands in the operator's
 //    status pane; a free-text field there would be an injection surface into the
 //    one UI that must never lie. Rust parses it against a closed enum and drops
-//    anything else.
+//    anything else. The two numbers below obey the same rule: integers, clamped
+//    at the door, never text.
+//
+// ── What the beat says about its own silence (RG-119) ─────────────────────────
+//
+// A beat that never arrives tells Relay nothing about WHY, and the two reasons
+// want opposite fixes: the screen stopped painting, or Relay lost a heartbeat the
+// screen did send. A service on 2026-09-06 lost the main output three times for
+// 19.3 minutes in total and the record could not say which. Only the page knows,
+// so it says, on the beat that ends its silence:
+//
+// * `since_ms` — its own clock since the previous tick. About one interval means
+//   the page kept ticking and the beats were lost on the way. Minutes mean the
+//   page was not running: the OS suspended or throttled it.
+// * `hidden_ms` — how much of that was spent `document.hidden`. On macOS a window
+//   covered by another window is hidden, which is the leading suspicion for that
+//   service and is not the same fault as a frozen renderer.
+//
+// Both are omitted rather than sent as 0 when the page cannot know (the first beat
+// of its life has no previous tick). Absent means "did not say"; zero would mean
+// "said it never went quiet", and only one of those is true.
 //
 // The interval is Rust's `channels::BEAT_INTERVAL_MS`, and the staleness window it
 // has to stay under is `channels::BEAT_STALE_MS`. They are coupled — three beats
@@ -35,6 +55,17 @@
 
 /** How often a screen reports in. Must match `channels::BEAT_INTERVAL_MS`. */
 export const BEAT_INTERVAL_MS = 2000;
+
+/**
+ * A clock for measuring a gap. `performance.now()` where it exists, because it is
+ * monotonic and a wall clock that steps (a laptop waking, an NTP correction) would
+ * report a silence that never happened into the one record RG-119 is trying to
+ * make trustworthy.
+ */
+const now = () =>
+  typeof performance !== 'undefined' && typeof performance.now === 'function'
+    ? performance.now()
+    : Date.now();
 
 /** The three things a screen can be showing. Must match `channels::PaintState`. */
 export const PAINT_STATES = ['content', 'clear', 'black'];
@@ -66,23 +97,75 @@ export function startBeat({ channelId, getState, getWs = () => null, invoke = nu
 
   let stopped = false;
 
-  const sendOverSocket = (ws, state) => {
+  // ── The page's account of its own silence. See the header note (RG-119) ──
+  //
+  // `lastTickAt` moves on every tick that RUNS, whether or not the send lands, so
+  // a page that keeps ticking into a broken socket still reports a one-interval
+  // gap and is not confused with a page the OS stopped running.
+  let lastTickAt = null;
+  let hiddenSince = null;
+  let hiddenMs = 0;
+  const doc = typeof document === 'undefined' ? null : document;
+
+  const onVisibility = () => {
+    try {
+      if (doc.hidden) hiddenSince ??= now();
+      else if (hiddenSince !== null) {
+        hiddenMs += now() - hiddenSince;
+        hiddenSince = null;
+      }
+    } catch {
+      // Rule 1. A visibility listener may never take a live output page down.
+    }
+  };
+  if (doc?.addEventListener) {
+    doc.addEventListener('visibilitychange', onVisibility);
+    if (doc.hidden) hiddenSince = now();
+  }
+
+  /** The two numbers for this tick, omitting what the page cannot know. */
+  const gap = () => {
+    const at = now();
+    // A page suspended while hidden never runs this listener, so the time it
+    // spent hidden has to be closed off here as well.
+    if (hiddenSince !== null) {
+      hiddenMs += at - hiddenSince;
+      hiddenSince = doc?.hidden ? at : null;
+    }
+    const out = {};
+    if (lastTickAt !== null) {
+      out.since_ms = Math.max(0, Math.round(at - lastTickAt));
+      out.hidden_ms = Math.max(0, Math.round(hiddenMs));
+    }
+    lastTickAt = at;
+    hiddenMs = 0;
+    return out;
+  };
+
+  const sendOverSocket = (ws, state, g) => {
     // OPEN only (readyState 1). A queued send on a reconnecting socket arrives
     // seconds later and would report a screen as healthy at a moment it demonstrably
     // was not — the beat would paper over the very gap it exists to expose.
     if (!ws || ws.readyState !== 1) return false;
     try {
-      ws.send(JSON.stringify({ kind: 'beat', channel: channelId, state }));
+      ws.send(JSON.stringify({ kind: 'beat', channel: channelId, state, ...g }));
       return true;
     } catch {
       return false;
     }
   };
 
-  const sendOverBridge = async (state) => {
+  const sendOverBridge = async (state, g) => {
     try {
       const inv = invoke ?? (await import('@tauri-apps/api/core')).invoke;
-      await inv('output_beat', { channelId, state });
+      // camelCase across the bridge, snake_case on the wire: Tauri maps the
+      // argument names and the WebSocket protocol does not.
+      await inv('output_beat', {
+        channelId,
+        state,
+        sinceMs: g.since_ms ?? null,
+        hiddenMs: g.hidden_ms ?? null,
+      });
     } catch {
       /* no backend, or the command is gone. Stay silent and go stale. */
     }
@@ -105,10 +188,11 @@ export function startBeat({ channelId, getState, getWs = () => null, invoke = nu
     } catch {
       ws = null;
     }
-    if (sendOverSocket(ws, state)) return;
+    const g = gap();
+    if (sendOverSocket(ws, state, g)) return;
     // A kiosk page has no bridge, so this is a no-op there and the beat correctly
     // goes stale while its socket is down.
-    void sendOverBridge(state);
+    void sendOverBridge(state, g);
   };
 
   // Report at once, so a screen that has just opened is not shown as silent for
@@ -120,6 +204,7 @@ export function startBeat({ channelId, getState, getWs = () => null, invoke = nu
   return () => {
     stopped = true;
     clearInterval(id);
+    if (doc?.removeEventListener) doc.removeEventListener('visibilitychange', onVisibility);
   };
 }
 
@@ -273,3 +358,24 @@ export const FAULT_WORD = {
   silent: 'NOT RESPONDING',
   ok: 'LIVE',
 };
+
+/**
+ * The plain-language word for a screen's render target.
+ *
+ * ONE definition, because two surfaces name the same thing: the Outputs table's
+ * TYPE column and Live's Output Status pane. Live had no word at all — its status
+ * line fell back to printing the raw column value (`native_window`) at a volunteer
+ * mid-service, which is the same defect as rendering a raw `Err` string.
+ */
+export function screenKind(renderTarget) {
+  if (renderTarget === 'native_window') return 'Native window';
+  if (renderTarget === 'ndi_encode') return 'NDI';
+  return 'Network client';
+}
+
+/** How the pixels leave the machine. Pairs with `screenKind`. */
+export function screenTransport(renderTarget) {
+  if (renderTarget === 'native_window') return 'HDMI / display';
+  if (renderTarget === 'ndi_encode') return 'unavailable';
+  return 'WebSocket';
+}

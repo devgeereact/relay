@@ -735,14 +735,18 @@
   .lib-stats{ display:grid; grid-template-columns:repeat(3, 1fr); gap:14px; }
 
   /* ── Table-like list ── */
+  /* THE TITLE IS THE COLUMN A PERSON READS. Five fixed columns plus 16px gaps
+     took 530px of a 626px row, so the `1fr` title resolved to 58px and every
+     service in the list read "Sunda…" — the one field that tells them apart. The
+     fixed columns are sized to their content now and the title keeps a floor. */
   .lib-head{
-    display:grid; grid-template-columns:130px 1fr 100px 84px 90px 46px;
-    align-items:center; gap:16px; padding:0 18px;
+    display:grid; grid-template-columns:110px minmax(140px, 1.6fr) 92px 72px 82px 40px;
+    align-items:center; gap:12px; padding:0 18px;
   }
   .lib-list{ display:flex; flex-direction:column; gap:8px; }
   .lib-row{
-    display:grid; grid-template-columns:130px 1fr 100px 84px 90px 46px;
-    gap:16px; cursor:default;
+    display:grid; grid-template-columns:110px minmax(140px, 1.6fr) 92px 72px 82px 40px;
+    gap:12px; cursor:default;
   }
   .c-verses, .c-over{ text-align:center; }
   .lib-head .c-verses, .lib-head .c-over{ text-align:center; }

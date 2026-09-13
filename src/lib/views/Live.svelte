@@ -28,7 +28,7 @@
   // task, done on a Tuesday, not with a congregation waiting.
   import { onMount, onDestroy } from 'svelte';
   import { rangeFill } from '../rangefill.js';
-  import { describeScreen, SCREEN_BADGE, screenSwitch } from '../outputHealth.js';
+  import { describeScreen, SCREEN_BADGE, screenSwitch, screenKind } from '../outputHealth.js';
   import TemplateRender from '../TemplateRender.svelte';
   import { resolveOutputTemplate } from '../layers.js';
   import ModelSetup from '../ModelSetup.svelte';
@@ -1093,7 +1093,10 @@
             shown {previewRepeats > 1 ? `${previewRepeats}×` : 'earlier'}
           </span>
         {/if}
-        <span class="mon-name">{previewLabel || 'Nothing cued'}</span>
+        <!-- Only when there IS something. The pane below already says "Nothing
+             cued" in the middle of the empty screen, and the same three words in
+             two places at once reads as two facts. -->
+        {#if previewLabel}<span class="mon-name">{previewLabel}</span>{/if}
       </header>
       <div class="screen">
         {#if previewTpl && previewContent}
@@ -1187,13 +1190,18 @@
             <span class="out-ic" aria-hidden="true">
               <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
             </span>
-            <span class="out-t">
-              <b>{o.c.name}</b>
-              <!-- The screen's OWN last word, not ours. When it disagrees with the
-                   badge, that disagreement is the finding. -->
-              <span class="r-mono">{o.s.note || o.c.render_target}</span>
-            </span>
+            <b class="out-nm" title={o.c.name}>{o.c.name}</b>
             <span class="r-badge {SCREEN_BADGE[o.s.kind]} sm-badge"><span class="bd"></span>{o.s.label}</span>
+            <!-- The screen's OWN last word, not ours. When it disagrees with the
+                 badge, that disagreement is the finding. With nothing to report
+                 yet it names the KIND of screen in words — it used to print the
+                 raw database value (`native_window`) at a volunteer mid-service. -->
+            <span class="out-note r-mono">{o.s.note || screenKind(o.c.render_target)}</span>
+            <!-- ONLY WHEN THERE IS SOMETHING TO PRESS. The inert half of this pair
+                 ("Browser source", "No window") was a label that never did anything,
+                 sitting where the eye looks for a control and taking ~85px from the
+                 screen's name and the badge on a ~230px rail. The Outputs tab states
+                 the type in full, in a column made for it. -->
             {#if o.w.action}
               <button
                 class="out-sw"
@@ -1202,8 +1210,6 @@
                 on:click={() => toggleScreen(o.c, o.w.action)}>
                 {switching === o.c.id ? '…' : o.w.label}
               </button>
-            {:else}
-              <span class="out-sw-off" title={o.w.why}>{o.w.label}</span>
             {/if}
           </div>
         {:else}
@@ -1394,10 +1400,10 @@
 
             {#if d.text}<p class="claim-verse">“{d.text}”</p>{/if}
 
-            <div class="meta2">
-              <div><span class="klbl">Method</span><b>{$t(methodKey(d))}</b></div>
-              <div><span class="klbl">Reference</span><b>{d.reference}</b></div>
-            </div>
+            <!-- A "Method / Reference" grid used to sit here, repeating the two
+                 facts already at the top of this card: the reference IS the
+                 headline and the method IS the chip beside it. It cost about 40px
+                 of a 281px panel and helped push Accept and Dismiss out of sight. -->
 
             <!-- PARSED, BUT THERE IS NO SUCH VERSE. Relay keeps showing it — the
                  suggestion is the operator's evidence that a number was misheard,
@@ -1515,7 +1521,7 @@
       <div class="pane-body plan">
         {#if openPlan}
           {#each items as c, i (c.id)}
-            {@const ty = TYPE[c.cue_type] || TYPE.scripture}
+            {@const ty = TYPE[c.cue_type] || TYPE.unknown}
             <div class="rail">
               <span class="rail-dot" class:on={planOnAir && c.id === liveCueId} class:cued={!planOnAir && c.id === liveCueId}></span>
               <button
@@ -1527,7 +1533,7 @@
                 <span class="cue-stripe" style="background:{ty.color}"></span>
                 <span class="cue-num r-mono">{String(i + 1).padStart(2, '0')}</span>
                 <span class="cue-body">
-                  <span class="cue-title">{c.label}</span>
+                  <span class="cue-title" title={c.label}>{c.label}</span>
                   <span class="cue-meta r-mono">{cueSub(c)}</span>
                 </span>
                 {#if c.id === liveCueId}
@@ -1587,7 +1593,7 @@
                 <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2v4M16 2v4"/></svg>
               </span>
               <span class="cue-body">
-                <span class="cue-title">{p.title}</span>
+                <span class="cue-title" title={p.title}>{p.title}</span>
                 <span class="cue-meta r-mono">{p.plan_date} · {p.cue_count} {p.cue_count === 1 ? 'cue' : 'cues'}</span>
               </span>
               <span class="pick-run"><svg viewBox="0 0 24 24" width="10" height="10" fill="currentColor" aria-hidden="true"><path d="M5 3v18l15-9L5 3Z"/></svg>Run</span>
@@ -1763,7 +1769,14 @@
     background:var(--v-surf); border:1px solid var(--v-line); border-radius:var(--v-r-lg);
     box-shadow:var(--v-shadow-sm)}
 
+  /* WRAPS. A panel header is a heading plus its controls, and on one unwrapped
+     line the controls always won: at 1366×768 — the commonest church laptop —
+     "AI Detection — Current Claim" was rendered 5px wide and "Live Transcript"
+     74px, because the sensitivity dial and the Armed chip are sized to content and
+     the heading was the only thing allowed to shrink. Now the controls drop to a
+     second line instead of crushing the name of the panel they belong to. */
   .pane-head{flex:0 0 auto; display:flex; align-items:center; gap:var(--v-sp-sm);
+    flex-wrap:wrap; row-gap:6px;
     padding:10px 12px; border-bottom:1px solid var(--v-line)}
   /* The reference console has no sidebar, so its panels are ~25% wider than they can
      be here. The heading is therefore set a touch tighter than the design sheet's
@@ -1843,22 +1856,56 @@
   .rack-mode.slide{color:var(--v-amber)}
 
   /* ── output status ─────────────────────────────────────────────────────── */
-  .out{display:flex; align-items:center; gap:10px; padding:9px 10px; border-radius:var(--v-r-md);
+  /* TWO ROWS, not one. On a single flex line the name, the note, the badge and
+     the switch competed for a ~275px rail, and the name lost: "Streaming" was
+     rendered 7px wide and "Lobby screen" 37px, while the note wrapped one word
+     per line and pushed the row to 122px. The screen with the WORST news was the
+     least readable of all, because "Not responding" is the longest badge — on the
+     one pane whose whole job is telling an operator which screen has died.
+     Name + badge on top, the screen's own word + the switch underneath. */
+  /* A SCROLLER THAT SAYS SO. Three of five screens fit at 900px, and the pane
+     scrolls — but macOS overlay scrollbars are invisible at rest, so the pane
+     looked like the whole list. Two `background-attachment: local` gradients: the
+     shadow at an edge appears only while there is more content past it, and goes
+     when you reach the end. No script, no state, nothing to keep in step. */
+  .outs{
+    background:
+      linear-gradient(var(--v-surf) 30%, transparent) top / 100% 14px no-repeat local,
+      linear-gradient(transparent, var(--v-surf) 70%) bottom / 100% 14px no-repeat local,
+      radial-gradient(farthest-side at 50% 0, rgba(0,0,0,.4), transparent) top / 100% 7px no-repeat scroll,
+      radial-gradient(farthest-side at 50% 100%, rgba(0,0,0,.4), transparent) bottom / 100% 7px no-repeat scroll;
+  }
+  .out{display:grid; grid-template-columns:28px minmax(0,1fr) auto;
+    grid-template-areas:"ic nm badge" "ic note act";
+    column-gap:10px; row-gap:2px; align-items:center; padding:9px 10px;
+    border-radius:var(--v-r-md);
     background:var(--v-surf2); border:1px solid var(--v-line)}
-  .out-ic{flex:0 0 auto; width:28px; height:28px; border-radius:var(--v-r-sm); display:grid;
+  .out-ic{grid-area:ic; width:28px; height:28px; border-radius:var(--v-r-sm); display:grid;
     place-items:center; background:var(--v-surf3); color:var(--v-dim)}
-  .out-t{flex:1; min-width:0; display:flex; flex-direction:column; gap:2px}
+  .out-nm{grid-area:nm; min-width:0}
+  .out-note{grid-area:note; min-width:0}
+  .out .sm-badge{grid-area:badge; justify-self:end}
+  .out-sw{grid-area:act; justify-self:end}
   /* Deliberately quiet. This is a repair for one screen, not a panic control —
      Clear and Blackout are the loud pair and nothing else may look like them. */
-  .out-sw{flex:0 0 auto; font:inherit; font-size:10px; letter-spacing:.04em;
+  .out-sw{font:inherit; font-size:10px; letter-spacing:.04em;
     padding:3px 8px; border-radius:var(--v-r-sm); cursor:pointer;
     background:transparent; color:var(--v-faint); border:1px solid var(--v-line)}
   .out-sw:hover:not(:disabled){color:var(--v-txt); border-color:var(--v-txt-dim)}
   .out-sw:disabled{opacity:.45; cursor:not-allowed}
-  .out-sw-off{flex:0 0 auto; font-size:9px; letter-spacing:.05em; color:var(--v-faint)}
-  .out-t b{font-size:var(--v-fs-b2); font-weight:600; color:var(--v-txt);
-    overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
-  .out-t span{font-size:9px; letter-spacing:.05em; color:var(--v-faint)}
+
+  /* WRAPS RATHER THAN TRUNCATES. On a ~230px rail (1366-wide laptop) the status
+     badge is 60–115px wide and "Lobby screen" does not fit beside "NO WINDOW".
+     A second line costs 12px; an ellipsis costs the operator the identity of the
+     screen that has just failed, which is the one thing this pane is for. */
+  .out-nm{font-size:var(--v-fs-b2); font-weight:600; color:var(--v-txt);
+    display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2;
+    overflow:hidden; overflow-wrap:anywhere}
+  /* Wraps, but never past two lines: the note is the screen's own word and it is
+     worth reading, and it is not worth 120px of a pane an operator scans. */
+  .out-note{font-size:9px; letter-spacing:.05em; color:var(--v-faint);
+    display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2;
+    overflow:hidden}
   /* A screen that is not answering is a FAILURE, and the row says so without
      spending amber (which means on air, DECISIONS §22) or reading as decoration.
      The border is the signal; the badge carries the word. */
@@ -1870,7 +1917,7 @@
   .out.down{border-color:color-mix(in srgb, var(--v-rose) 45%, transparent);
     background:color-mix(in srgb, var(--v-rose) 7%, var(--v-surf2))}
   .out.down .out-ic{color:var(--v-rose)}
-  .out.down .out-t span{color:var(--v-rose)}
+  .out.down .out-note{color:var(--v-rose)}
   .sm-badge{padding:3px 8px; font-size:9px; letter-spacing:.07em; flex:0 0 auto}
   .sm-badge .bd{width:5px; height:5px}
 
@@ -1961,6 +2008,12 @@
   .sens{display:inline-flex; align-items:center; gap:7px; flex:0 0 auto;}
   .sens-lbl{font-size:var(--v-fs-cap); letter-spacing:var(--v-tr-caps); color:var(--v-faint);}
   .sens-val{font-size:var(--v-fs-cap); color:var(--v-dim); min-width:20px; text-align:right;}
+  /* Width ONLY. THE BAR IS 3px AND THE CONTROL IS NOT — an input styled as the
+     track is a 4px pointer target, and a near-miss on a live console lands on
+     whatever is underneath. That box (18px) and the track that draws the bar
+     inside it are app.css's `input[type=range]` block, which this dial shares
+     with every other slider in the app; overriding them here is what made the
+     dial a different instrument from the one in Settings. */
   .sens input[type="range"]{width:88px;}
 
   .claim{background:var(--v-surf2); border:1px solid var(--v-amber-line);
@@ -1989,17 +2042,25 @@
   .klbl.sec{margin-top:var(--v-sp-sm)}
   .mt{margin-top:12px}
   .mt-q{margin:5px 0 0; font-size:var(--v-fs-b1); line-height:1.55; color:var(--v-txt)}
+  /* Clamped: the whole verse is already rendered in its real template in the
+     Preview pane directly above, so a second full copy here buys nothing and can
+     run to ten lines on a psalm. Three lines is enough to recognise it by. */
   .claim-verse{margin:10px 0 0; font-family:var(--f-serif); font-style:italic;
-    font-size:var(--v-fs-b2); line-height:1.55; color:var(--v-dim)}
+    font-size:var(--v-fs-b2); line-height:1.55; color:var(--v-dim);
+    display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:3; overflow:hidden}
   /* No verse behind the reference. Rose is the failure colour on this screen;
      amber is never spent here, because nothing about this is on air. */
   .claim-absent{margin:10px 0 0; font-size:var(--v-fs-cap); line-height:1.5;
     color:var(--v-rose)}
   .rc-absent{font-size:var(--v-fs-cap); color:var(--v-rose)}
-  .meta2{display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:14px;
-    padding-top:12px; border-top:1px solid var(--v-line)}
-  .meta2 b{display:block; margin-top:3px; font-size:var(--v-fs-b2); font-weight:500; color:var(--v-txt)}
-  .acts{display:grid; grid-template-columns:1fr 1fr; gap:var(--v-sp-sm); margin-top:14px}
+  /* THE DECISION NEVER SCROLLS AWAY. Measured at 1440x900 with one ordinary
+     suggestion: this card needed 436px in a 281px panel, so "Accept & fire" and
+     "Dismiss" sat 35px below the bottom edge with no scrollbar visible — the two
+     controls the whole product exists to offer, on the panel an operator watches
+     during a sermon. Sticky, with the panel's own surface behind it. */
+  .acts{display:grid; grid-template-columns:1fr 1fr; gap:var(--v-sp-sm); margin-top:14px;
+    position:sticky; bottom:0; z-index:1; padding:8px 0 2px; background:var(--v-surf);
+    box-shadow:0 -8px 10px -8px var(--v-surf)}
   .act{display:flex; flex-direction:column; gap:2px; align-items:center; padding:9px 10px;
     border-radius:var(--v-r-md); cursor:pointer; border:1px solid transparent;
     font-family:var(--f-body); transition:filter .14s}
@@ -2068,7 +2129,11 @@
   .slide-stripe{background:var(--acc)}
   .cue-num{flex:0 0 auto; font-size:10px; color:var(--v-faint)}
   .cue-body{flex:1; min-width:0; display:flex; flex-direction:column; gap:2px}
-  .cue-title{font-size:var(--v-fs-b2); overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  /* Two lines, not an ellipsis. Three plans truncated to 57px on a 1366 laptop
+     ("Sunday M…", "Evening P…", "Harvest T…") are three plans an operator cannot
+     tell apart, on the control that RUNS one of them. */
+  .cue-title{font-size:var(--v-fs-b2); display:-webkit-box; -webkit-box-orient:vertical;
+    -webkit-line-clamp:2; overflow:hidden; overflow-wrap:anywhere}
   .cue-meta{font-size:9px; letter-spacing:.05em; color:var(--v-faint)}
   /* Plan picker (no plan loaded) — a plan reads as a real, inviting card. */
   .pick-intro{ padding:2px 2px 4px; flex:0 0 auto; }
@@ -2111,10 +2176,12 @@
     background:var(--v-surf2); border:1px solid var(--v-line2); color:var(--v-txt);
     font-family:var(--f-body); transition:.14s}
   .qb{min-width:0; padding:8px 10px}
-  .qb b{font-size:var(--v-fs-b2); font-weight:600; max-width:100%;
-    overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
-  .qb span{font-size:10px; color:var(--v-faint); max-width:100%;
-    overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  /* THE NAME OF A PANIC CONTROL IS NEVER TRUNCATED. At 1366px — the commonest
+     church laptop — this read "Clear scree…" over "Stop all outputs …". A key an
+     operator reaches for once a year, in front of people, must not need guessing;
+     two lines cost 12px and the column already scrolls. */
+  .qb b{font-size:var(--v-fs-b2); font-weight:600; max-width:100%; overflow-wrap:anywhere}
+  .qb span{font-size:10px; color:var(--v-faint); max-width:100%; overflow-wrap:anywhere}
   .qb:disabled{opacity:.45; cursor:not-allowed}
   .qb.red{background:var(--v-red-soft); border-color:var(--v-red-line); color:var(--v-red)}
   /* BLACKOUT IS BLACK, not grey. Grey means CUED — where the transport resumes,
@@ -2146,7 +2213,10 @@
   .sb:disabled{opacity:.45; cursor:not-allowed}
   .sb i{font-style:normal; color:var(--v-faint)}
   .sb.cd{cursor:default; gap:6px; justify-content:flex-start}
-  .sb.cd>span:first-child{flex:1}
+  /* The row LABEL never shrinks. "Announce" was ellipsised to "An…" beside a text
+     field that had all the room it wanted — and this is the control that writes
+     over live scripture on every screen at once. */
+  .sb.cd>span:first-child{flex:0 0 auto; overflow:visible}
   .cd-unit{flex:0 0 auto; font-size:9px; color:var(--v-faint)}
   .cd-min{width:40px; padding:3px 5px; border-radius:var(--v-r-sm); border:1px solid var(--v-line2);
     background:var(--v-bg); color:var(--v-txt); font-size:var(--v-fs-cap); text-align:center}
@@ -2203,7 +2273,13 @@
     .con-bot{grid-template-columns:1fr 1fr; grid-auto-rows:minmax(320px,auto)}
   }
   @media (max-width:760px){
-    .con-top{grid-template-columns:1fr}
+    /* AUTO rows. In one column the 230px floor inherited from the rule above was
+       being applied to the TAKE rack too — a short strip of buttons padded out to
+       230px, leaving a dead gap between Preview and Program. The two screens keep
+       their own height; the rack takes what it needs. */
+    .con-top{grid-template-columns:1fr; grid-auto-rows:auto}
+    .con-top>.pane{min-height:230px}
+    .rack{min-height:0}
     .con-bot{grid-template-columns:1fr}
     .rail-col{flex-direction:column; height:auto}
     .rack{flex-direction:row; align-items:center; flex-wrap:wrap}

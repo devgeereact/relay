@@ -451,3 +451,150 @@ position marker, so it is now black with a hairline, per the four-control rule i
 - Repo gates: `cargo fmt`, `clippy -D warnings`, both suites, `npm run version:check`, and the doc
   consistency tests (`crossrefs.test.js`, `relaygap.test.js`).
 - Work lands as a PR, never a direct commit to `main`.
+
+---
+
+# Dispatch — the agent briefs
+
+Nine agents. **Two foundations run first and alone** (everything else compiles against them), then six
+workspaces in parallel, then one integrator. Each returns a branch and a review note; nobody merges.
+
+## A · The preamble every agent inherits verbatim
+
+> You are building one part of Relay's rebrand. The design is settled and proven — it was operated and
+> measured as a working prototype. Your job is to bring it into the real app without inventing,
+> widening or softening it.
+>
+> **Read first, in this order:** `docs/REBRAND.md` (the specification — your section is named in your
+> brief), `CLAUDE.md` (the forty-three rules; they win over anything in the spec), `docs/DECISIONS.md`
+> for any §  your brief cites, and the file list in your brief. Do not read the whole repo.
+>
+> **Sources of truth.** `docs/REBRAND.md` describes WHAT. `CLAUDE.md` describes what may not change.
+> Where they disagree, `CLAUDE.md` wins and you say so in your review note. The prototype is a
+> reference for behaviour and proportion, not for code — it shares no code with Relay.
+>
+> **Hard rules, all of them from real failures:**
+> - `src/lib/TemplateRender.svelte` is the ONE renderer. Do not fork it, do not add a second.
+> - Sizes are **cqw**. Never px, never vw.
+> - No native `confirm()` / `alert()` / `prompt()` — the webview does not implement them, so a guard
+>   built on one guards nothing and reports success (rule 41).
+> - Panic controls (`Esc` clear, `B` blackout, Clear screens, Blackout) may never sit behind a
+>   validator, may never be scrolled out of reach, and may never report a success they did not achieve
+>   (rule 15, DECISIONS §20).
+> - The colour law is fixed: amber = ON AIR, amethyst = rehearsal, cyan = a guess, grey = CUED. Eight
+>   test files pin those token and class names as literal strings. Do not rename them.
+> - `--v-txt` / `--v-dim` / `--v-faint` stay hex literals in `src/app.css` at ≥ 4.5:1 on
+>   `--v-void/--v-bg/--v-surf/--v-surf2` (`tokencontrast.test.js`).
+> - Nothing an operator types for themselves — a section label, a stage note, a stage alert — may reach
+>   a congregation channel.
+> - Loading, switching workspace or editing a template may never change what is on the programme.
+>
+> **Definition of done.** All four green, run by you, output quoted in your note:
+> `cd src-tauri && cargo test` · `npx vitest run` · `npm run build` · `cargo fmt --all && cargo clippy
+> --all-targets -- -D warnings`. Plus: every new behaviour has a test, and **each test was watched to
+> fail** with the change reverted. A test you did not watch fail is a theory you did not test.
+>
+> **Deliverable.** One branch, `rebrand/<your-area>`, off `main`. Open a PR; do not merge, do not
+> commit to `main`. End with a review note in this shape:
+> `SCOPE` what you built · `EVIDENCE` the four command outputs and the tests you watched fail ·
+> `DECISIONS` anything you resolved that the spec left open · `NOT DONE` what you deliberately left,
+> and why · `RISK` what a reviewer should look at hardest · `BLOCKED` anything you could not verify.
+> Report honestly. "NOT TESTED" is an acceptable answer; a claim without evidence is not.
+>
+> **Scope discipline.** Touch only the files your brief names, plus tests. If you need a change in
+> someone else's area, write it in `DECISIONS` and leave it alone. Do not reformat files you are not
+> changing. Do not bump versions.
+
+## B · Wave 1 — foundations (sequential, in this order)
+
+**A1 · Tokens and chrome** — `docs/REBRAND.md` §1, §12.
+Files: `src/app.css`, `docs/DESIGN_SYSTEM.md`, plus the token tests.
+Build: the palette and 2px radius, the type scale, the custom range slider (3px track filled to value
+via `--rp`, 13px thumb, hover/active/focus), 38×21 colour wells, switches sized to match, and the four
+control colours (Go Live green · End service amber · Clear screens red · Blackout black). Update
+`DESIGN_SYSTEM.md` in the same PR — it is the document those choices are cited from.
+Acceptance: contrast test green; no control in the app still renders a platform-default slider; a
+column of mixed controls lines up on one right edge at 1280 and at 900px wide.
+
+**A2 · The template model** — §3, §3.4.
+Files: `src/lib/TemplateRender.svelte`, `src/lib/themes.js`, `src/lib/layers.js`, new
+`src/lib/template.js` if a pure module helps, and tests beside `templatefit.test.js`.
+Build: per-element properties, the one-time migration that deletes the legacy whole-template keys, the
+background-style builder, and the measured auto-fit with per-face advance, taking a real aspect for
+nested contexts. Keep `needsRefit()` and rule 42's two-pass refit exactly as they are.
+Acceptance: an old template renders identically after migration; no template overflows its box at any
+setting; the fit's aspect argument is exercised by a test with a non-16:9 box.
+
+## C · Wave 2 — the workspaces (parallel, each off A2)
+
+Every brief below inherits §A, cites its spec section, and owns its view file.
+
+**W1 · Live** — §2, §7, §8.
+`src/lib/views/Live.svelte`, `src/lib/shortcuts.js`, `src/lib/stores/capture.js`.
+The run surface: search rail, Preview/TAKE/Program with the programme mirroring the main screen,
+the slide grid, single-click-to-air with the 190 ms double-click guard, Quick tools (countdown · name
+band · word to the preacher), the seven transitions, the four-colour control dock.
+Acceptance: the programme survives every workspace switch and every plan load; `Space`, `Esc`, `B`,
+`R`, `←`/`→` behave exactly as `shortcuts.test.js` requires; a transition set to Cut animates nothing.
+
+**W2 · Library** — §10.
+`src/lib/views/Library.svelte` (or the current file), `src/lib/songs`-adjacent helpers, `songs.rs` if
+parsing moves.
+Collections across the top colour-coded and square, items down the rail, slides in the grid, the reflow
+editor, section keys (`v c b t i o`, numbered on repeat, per song), media upload read locally into the
+item, announcements with the operator title separated from the words.
+Acceptance: a section key fires that section on Live and nothing while a field has focus; a two-line
+slide round-trips through reflow; **the section label never renders to an output**; no "add all to
+Live" path exists.
+
+**W3 · Planner** — §2, §10.
+`src/lib/views/ServicePlanner.svelte`, `src/lib/plan.js`, `src/lib/cues.js`.
+The running order in the new chrome; nothing here may reach an output (that is the whole point of the
+tab). Arrangement staleness (rule 39) is untouched.
+Acceptance: a plan built here runs unchanged in Live; `cargo test` plan/arrangement tests green.
+
+**W4 · Templates** — §3.2, §3.3, §4, §6.
+`src/lib/views/TemplateGallery.svelte` + the inspector components.
+The object tab strip, grouped properties, reset-per-object, new/duplicate (deep copy)/delete (two-step,
+in-app), the roles register and "Used for", the three lower thirds with the band element and
+band-gives-ground, and SuperSource as a template kind.
+Acceptance: editing one band changes no other; a duplicate is independent; a screen set to *follow the
+content look* renders scripture, lyrics and announcements through three different templates without
+anyone touching it.
+
+**W5 · Outputs and the stage monitor** — §5, §3.3.
+`src/lib/views/Channels.svelte`, `src/Output.svelte`, `src/Stage.svelte`, `src-tauri/src/channels.rs`.
+Screen cards previewing what that screen really shows, *Follow the content look* in the picker, the
+stage zones, geometry that cannot overflow, the stacked rail clock, and the stage alert as its own
+frame kind.
+Acceptance: the alert reaches the stage page and **no congregation channel** — prove it with a hub-level
+test in the shape of `nothing_reaches_the_stage_monitor_during_a_rehearsal`; rule 43's retained frame
+still replays to a client that joins mid-service.
+
+**W6 · Settings** — §11.
+`src/lib/views/Settings.svelte`, `src/lib/views/Dashboard.svelte`.
+Eleven sections, the three type roles, values in the value column, no duplicated control, no section
+that is three rows on a full-height page. Every control must move something real or not exist
+(DECISIONS §69).
+Acceptance: no setting writes a preference nothing reads; the update line still cannot say "up to date"
+when no check has run (`updatechannel.test.js`).
+
+**W7 · Search** — §9.
+`src-tauri/src/detection.rs` adjacent, or a new pure module; `src/lib/views/Live.svelte` for the rail.
+Reference parsing and fuzzy phrase matching, scored so a reference always outranks a phrase, one click
+loading the chapter and putting the verse on the programme.
+Acceptance: Rust tests for `ps 23 1`, `ps23:1`, `psalm 23`, `rom 8 28`, `mt 6 33`, `1 cor 13 4`,
+`see ye first the kingdom` → Matthew 6:33, `lamp unto my feet` → Psalms 119:105. **Nothing here may
+auto-fire** — search is an operator action; rule 10 is untouched.
+
+## D · Wave 3 — the integrator
+
+**I1 · Assemble and review.** Takes the seven branches, resolves collisions in `app.css` and the store,
+runs the full gate on the combined branch, drives the packaged app through the browser harness
+(`relay-browser-audit-harness`), and files one report: what matches the spec, what drifted, what is
+still owed. It opens the final PR. It does not merge.
+
+## E · Launch order
+
+Run A1 → A2 alone. Then W1–W7 together. Then I1. Do not start wave 2 before A2's PR exists, or seven
+agents will each invent their own template model.

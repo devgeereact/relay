@@ -14,6 +14,7 @@
     BUILTIN_THEMES,
     THEME_PREVIEW_TEMPLATE,
     THEME_SAMPLE_CONTENT,
+    fontLabel,
   } from '../../themes.js';
   import { customThemes, loadThemes, saveTheme, deleteTheme, exportTheme, importThemeFromFile } from '../../stores/capture.js';
   import { humanError } from '../../errors.js';
@@ -223,11 +224,18 @@
         <!-- A row is a NAME and a VALUE (§11), full-bleed against the pane's own
              12px gutter so the seams reach both edges. A key the theme does not
              pin says "Renderer default" — never a dash, which cannot tell that
-             apart from a read that never happened (R3-13). -->
+             apart from a read that never happened (R3-13).
+
+             Typeface goes through `fontLabel`, NOT through the raw value. The
+             stored value is a CSS custom property, so this row printed
+             `var(--f-display)` at a volunteer who had opened it to find out what
+             the theme looks like. `fontLabel` answers with the same word the
+             editor's dropdown uses; the "not pinned" case is answered here,
+             because `fontLabel` returns a dash and this row may not. -->
         <div class="th-rows">
           <div class="rw-nv"><span class="rw-nvk">Name</span><span class="rw-nvv">{sel.name}</span></div>
           <div class="rw-nv"><span class="rw-nvk">Kind</span><span class="rw-nvv">{sel.builtin ? 'Built-in (read-only)' : 'Custom'}</span></div>
-          <div class="rw-nv"><span class="rw-nvk">Typeface</span><span class="rw-nvv">{sel.style?.font || 'Renderer default'}</span></div>
+          <div class="rw-nv"><span class="rw-nvk">Typeface</span><span class="rw-nvv">{sel.style?.font ? fontLabel(sel.style.font) : 'Renderer default'}</span></div>
           <div class="rw-nv"><span class="rw-nvk">Background</span><span class="rw-nvv">{bgLabel(sel)}</span></div>
           <div class="rw-nv">
             <span class="rw-nvk">Accent</span>

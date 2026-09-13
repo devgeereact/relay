@@ -41,7 +41,7 @@ code that would consume each already exists.
 |---|---|---|
 | **TWO code-signing certificates — Windows AND Apple** | Either platform can ship at all. The gate is per-platform and *refuses* a real tag not covered on both (CLAUDE.md rule 23; **not** DECISIONS §23, which is the voice gate). **Neither exists**: `gh secret list` holds only the two `TAURI_SIGNING_PRIVATE_KEY*` **updater** keys, so all four releases went out unsigned on the pre-release path (RG-73). Windows is the target market's dominant platform on cost grounds; macOS is what has actually been run in a room. **And rule 17's trap — the microphone dies on the first correctly-signed build — is still ahead, not behind.** | ~$10/month (Azure Trusted Signing) + $99/year (Apple Developer Program) |
 | **30 minutes of real sermon audio on tape** | Word error rate (never measured, any language), the dormant STT bench (`stt::bench`, already scores through the real detector), the fine-tune evaluation, and the decoder-bias-prompt question. **Every claim about the moat is currently an assertion.** | Time + a recorder; audio never enters the repo (`bench/.gitignore` refuses it) |
-| **Native-speaker review** | The 66×3 book aliases (unreviewed), Yorùbá numerals (unparsed, subtractive), and the three locale files (ship empty *on purpose*). This is the actual moat and no native speaker has read it. | Free — a language contribution, no code (see [CONTRIBUTING.md](CONTRIBUTING.md), [LANGUAGES.md](LANGUAGES.md)) |
+| **Native-speaker review** | The 66×3 book aliases (unreviewed), the Yorùbá numerals (they parse as of RG-126, and are capped at *suggest* precisely because nobody has read them), and the three locale files (ship empty *on purpose*). This is the actual moat and no native speaker has read any of it. | Free — a language contribution, no code (see [CONTRIBUTING.md](CONTRIBUTING.md), [LANGUAGES.md](LANGUAGES.md)) |
 | **One observed end-to-end update install** | Confidence that the updater mechanism — capable but never watched — actually delivers a fix to a church. | 30 minutes on a real machine ([RELEASING.md](RELEASING.md)) |
 | ~~**One full service on tape, watching Diagnostics — Stage F11**~~ — **RUN 2026-08-30** | **The answer is no drift.** `stt_decode` p50 held at **686–697 ms across ~40 minutes and 1,900+ samples** — that is the drift window the audit tabulates from minute 4.3 on, and over the **whole** 49.5-minute service it reads **627–699 ms across 2,423 decodes**, which is the audit's own summary row and the figure to quote. p95 flat, `worst` unmoved since minute four, **0 dropped partials**, on the packaged build in a real service with `ggml-large-v3-turbo`. The thermal-throttling line this stage was written to look for is not there. Three documents called it the highest-value unrun item; it has been run — see [FIELD-2026-08-30.md](qa/audits/FIELD-2026-08-30.md). **It also produced four defects nothing in this repository could have found from source**, RG-24 … RG-27, one of them a wrong verse on a real wall. | *Done — one machine, one model, one service* |
 | **Watch one full service run by a non-author operator** | The one thing no amount of engineering substitutes for. | A real Sunday |
@@ -68,9 +68,14 @@ not missing. Do not fake them; do not delete the seam.
   cannot evaluate a fine-tune without the sermon-audio corpus (§1). Today's differentiator is a
   hand-curated multilingual **reference-parsing** table on stock Whisper base — real, tested,
   and honestly described in [LANGUAGES.md](LANGUAGES.md). Do not soften that.
-- **Yorùbá numerals.** Swahili and Hausa parse in-language; Yorùbá is subtractive
-  (16 = *ẹrìndínlógún*) and not yet parsed. Yorùbá is the largest addressable church market in
-  the tier-1 list.
+- **Yorùbá numerals are parsed but unreviewed.** They landed in RG-126 — Yorùbá is vigesimal
+  and subtractive (16 = *ẹrìndínlógún*, one word), so the `yo` block carries `standalone` rather
+  than the ones/tens the Swahili and Hausa state machine walks. **What is still owed is a
+  speaker, not a parser.** Until one signs the table off, the block stays marked `unreviewed`
+  and every reference resolved through it is demoted to `UncertainNumber`, which the router
+  refuses at any score and any dial. Deleting that flag is the whole of the remaining work, and
+  it is a signature rather than a commit. Yorùbá is the largest addressable church market in the
+  tier-1 list.
 - **`related_scripture`** — built, registered, and now *surfaced* in the Intelligence Feed
   (previously zero callers). Keep it earning its place or delete it; dead built code rots.
 

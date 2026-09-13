@@ -2,7 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { trapFocus } from './lib/focus.js';
   import { t } from './lib/i18n.js';
-  import { capture, capturing, detectionOn, live, screenBlack, rehearsing, initAudio, autoOpenOutputs, setDetection, clearScreens, blackScreen, panicError, dismissPanicError, serviceLock, loadServiceLock, channelHealth, startChannelHealth, latencyReport, onOperatorAction, noteOperatorAction } from './lib/stores/capture.js';
+  import { capture, capturing, detectionOn, live, screenBlack, rehearsing, initAudio, autoOpenOutputs, setDetection, clearScreens, blackScreen, panicError, dismissPanicError, serviceLock, loadServiceLock, channelHealth, startChannelHealth, latencyReport, ping, onOperatorAction, noteOperatorAction } from './lib/stores/capture.js';
   import * as training from './lib/training.js';
   import { practice, stopPractice } from './lib/practice.js';
   import { degradations, worstLevel, summarise } from './lib/degraded.js';
@@ -49,9 +49,13 @@
   let droppedPartials = 0;
   let degOpen = false;
 
+  // The NAME, not the id. This line used to map `st.id`, so the banner an
+  // operator reads mid-service said "3 is not responding" — a number nothing on
+  // any screen relates back to "Streaming". `degraded.js` has documented these as
+  // names since it was written; only the producer disagreed.
   $: screensDown = Object.values($channelHealth)
     .filter((st) => describeScreen(st, {}, Number.MAX_SAFE_INTEGER).kind === 'down')
-    .map((st) => st.id);
+    .map((st) => st.name || `Screen ${st.id}`);
 
   $: degraded = degradations({
     sttLoaded: $capture.stt?.loaded,
@@ -314,6 +318,14 @@
     // enough that it costs nothing over a service.
     shedTimer = setInterval(async () => {
       droppedPartials = (await latencyReport(0))?.dropped_partials ?? droppedPartials;
+      // AND ASK AGAIN WHETHER THE ENGINE IS THERE. `engineOnline` was set ONCE, at
+      // mount, so a `greet` that failed on a slow or locked start left the sidebar
+      // reading "Engine offline" for the rest of the session while everything
+      // worked — a status line that cannot detect its own recovery (rule 35, the
+      // mirror image). `ping`, never `greet`: `greet` is a COUNTER whose whole
+      // value is one line per console mount (rule 26), and a poller calling it
+      // would print the heartbeat every fifteen seconds forever.
+      engineOnline = await ping();
     }, 15000);
     // Did the LAST update work? Asked once, here, because the answer is only
     // knowable on the launch after one — and the person who pressed the button may
@@ -326,6 +338,7 @@
     } catch {
       engineOnline = false;
     }
+    // …and it is re-asked on the shed timer above, with `ping`.
     // The version the splash shows is the one the UPDATER compares against, so
     // read it from Tauri rather than a second copy in the frontend bundle
     // (CLAUDE.md §19 — the version lives in three files and no more).

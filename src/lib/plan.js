@@ -17,6 +17,14 @@ export const TYPE = {
   media: { label: 'MEDIA', color: 'var(--v-amethyst)', trig: 'MANUAL/LOOP' },
   announce: { label: 'NOTICE', color: 'var(--v-rose)', trig: 'MANUAL/TIMER' },
   countdown: { label: 'COUNTDOWN', color: 'var(--v-cyan)', trig: 'TIMER' },
+  /* A cue_type this build does not know. The three surfaces that read this map
+     used to fall back to `scripture`, which is the ONE type that says AUTO-DETECT
+     — so an unrecognised row was presented as the only kind of cue the AI is
+     allowed to fire by itself. `cue_type` is plain TEXT with no CHECK constraint,
+     and `docs/data/schema.sql` still documented the notice type under a spelling
+     the frontend has never used ('announcement' vs 'announce'), which is exactly
+     how a row like that arrives. Say "unknown" and claim nothing. */
+  unknown: { label: 'UNKNOWN', color: 'var(--v-faint)', trig: 'MANUAL' },
 };
 
 /** A cue's payload. Never throws — a corrupt row must not take down the console. */

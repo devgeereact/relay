@@ -144,15 +144,43 @@ preacher said Psalm 200.** There is a test that asserts exactly this, by name.
 A connector disambiguates: `mia moja` (no connector) is 1×100, while `mia na tatu`
 (connector) is 100+3. Both are handled.
 
-### Yorùbá numerals are still to do
+### Yorùbá numerals parse, and they may never fire by themselves
 
-**Yorùbá is subtractive**, and genuinely hard: 16 is *ẹrìndínlógún* — literally
-*"four less than twenty"*. It is a real parsing problem, not a lookup table, and it
-is a great first contribution for a Yorùbá speaker.
+**Yorùbá is subtractive and vigesimal**: 16 is *ẹrìndínlógún*, literally *"four
+less than twenty"*. There is no tens-plus-ones for a state machine to walk, so the
+`yo` block carries `standalone` instead of `ones`/`tens` — **each word is the whole
+number and joins to nothing on either side**, which means a wrong entry can only
+ever be wrong where it stands and can never alter a neighbouring number.
 
-Until then Yorùbá relies on code-switching, which is **the normal case rather than
-an edge case** (`CLAUDE.md`) — a Yorùbá sermon routinely names the book in Yorùbá
-and the numbers in English, and that already works:
+> ✅ "**Jòhánù orí kẹta ẹsẹ̀ kẹrìndínlógún**" → John 3:16 — **as a suggestion**
+> ✅ "**Sáàmù orí ogún**" → Psalms 20 — **as a suggestion**
+
+**Never as an auto-fire, at any setting of the sensitivity dial.** Nobody has
+reviewed those words. The words were *heard*; what they are *worth* is Relay's
+guess, and this file's own warning is that a wrong numeral does not fail safely —
+it shows a different verse. So the block is marked `unreviewed` and everything
+resolved through it is demoted to `UncertainNumber`, the same cap a guessed book
+name gets (`CLAUDE.md` rule 10). It reaches the operator, who accepts it in one
+press. **A demotion expressed as a score is one the dial erases; expressed as a
+method, the router refuses it at every setting** — asserted across the whole dial
+by `r4_05b_an_unreviewed_yoruba_numeral_is_offered_never_fired`.
+
+**Deleting `"unreviewed": true` from the `yo` block lifts the cap.** That is a
+native speaker's signature, not a code change, and it is the single most valuable
+Yorùbá contribution anyone can make to this repository.
+
+**What is deliberately absent.** The bare units 1–9, because `normalize()` folds
+tone marks and dots-below and several of them then collide with ordinary sermon
+words — *èje* (7) and *ẹ̀jẹ̀* (blood) both become `eje`, *àrún* (5) and *àrùn*
+(disease) both become `arun`. The ordinal *k-* forms cover how a preacher actually
+says a chapter and a verse. Composite numbers above twenty (*ọ̀kànlélógún* = 21)
+are absent too: they parse to nothing, exactly as they did before this block
+existed. One collision is accepted and named — *ogún* (20) folds together with
+*ògùn* (medicine) — and it costs at most a suggestion the operator ignores.
+
+Code-switching remains **the normal case rather than an edge case** (`CLAUDE.md`),
+and it still works, at full confidence, because those numbers really were heard in
+English:
 
 > ✅ "Ẹ ṣí **Jòhánù** chapter **three** verse **sixteen**" → John 3:16
 
@@ -189,8 +217,10 @@ In order of value:
    Relay's African-language accuracy is currently **unmeasured**, and you cannot
    improve what you have never baselined. This is the single most useful thing
    anyone can contribute.
-3. **Yorùbá numerals** — subtractive, and the last piece of in-language parsing.
-   (Swahili and Hausa are done.)
+3. **Review the Yorùbá numerals.** They now parse, and they are capped at
+   *suggest* until a speaker checks them — so this is not new parsing work, it is
+   one signature that turns a suggestion into a fire. Delete `"unreviewed": true`
+   from the `yo` block when the numbers are right.
 4. **A verified fine-tune**, once (2) exists to measure it against.
 
 ---

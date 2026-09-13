@@ -490,7 +490,7 @@
       {:else if railPlans.length}
         {#each railPlans as p (p.id)}
           <button class="sp-railcard r-focus" class:sel={openPlan?.id === p.id} on:click={() => open(p)}>
-            <span class="sp-railtitle">{p.title}</span>
+            <span class="sp-railtitle" title={p.title}>{p.title}</span>
             <span class="sp-railfootline">
               <span class="sp-railmeta r-mono">{p.plan_date || 'No date'}</span>
               <span class="sp-railcues r-mono">{p.cue_count} cue{p.cue_count === 1 ? '' : 's'}</span>
@@ -551,6 +551,12 @@
         </div>
         <button class="r-btn ghost sm" disabled={!items.length} on:click={addSection}>＋ Add Section</button>
       {/if}
+      <!-- OUTSIDE the `{#if}`: this is a standing safety caveat about the whole
+           workspace, not about the open plan, and it must be readable when no
+           plan is open at all. Shortened so it FITS — it was being ellipsised to
+           "Build only — never reaches …" at 1440px, which is half a caveat:
+           "never reaches" what? The full sentence is on the title. -->
+      <span class="r-lbl sp-toolnote" title="Building a plan here never reaches an output. Run it in Live.">Build only — never goes live</span>
     </div>
 
     {#if loading}
@@ -588,7 +594,7 @@
               {/if}
 
               {#each sec.items as c (c.id)}
-                {@const ty = TYPE[c.cue_type] || TYPE.scripture}
+                {@const ty = TYPE[c.cue_type] || TYPE.unknown}
                 {@const n = items.findIndex((i) => i.id === c.id)}
                 <div class="sp-row" class:sel={c.id === selId} class:dragover={dragOverId === c.id}
                   draggable={true}
@@ -717,7 +723,11 @@
       <div class="rw-panehead"><h2 class="rw-panettl">Cue details</h2></div>
       <div class="sp-empty r-empty">Pick a cue to edit it.</div>
     {:else}
-      {@const ty = TYPE[selCue.cue_type] || TYPE.scripture}
+      <!-- `TYPE.unknown`, NEVER `TYPE.scripture`. A cue of a kind this build does
+           not recognise was drawn as Scripture — amber dot, "SCRIPTURE", the
+           scripture trigger — which is a claim about what will reach a screen,
+           made from an absence. `unknown` says nothing and claims nothing. -->
+      {@const ty = TYPE[selCue.cue_type] || TYPE.unknown}
       <div class="rw-panehead">
         <h2 class="rw-panettl">Cue details</h2>
         <span class="rw-spring"></span>
@@ -922,6 +932,19 @@
     font-size:var(--v-fs-h3); line-height:var(--v-lh-h3); max-width:46ch; }
   .sp-hm{ display:inline-flex; align-items:center; gap:5px; flex:0 0 auto;
     font-size:var(--v-fs-cap); color:var(--v-dim); }
+  /* The standing caveat sits at the far end of the head. It may WRAP to a second
+     line (`.sp-panehead` wraps) rather than be ellipsised — half a safety
+     sentence is worse than a second row of chrome. */
+  .sp-toolnote{ margin-left:auto; flex:0 0 auto; color:var(--v-faint); }
+  /* Nothing open yet: the sentence sits in the middle of the space it is talking
+     about, the way the Outputs inspector and the Cue Details panel already do.
+     Top-left in a 600×750 void read as a stray line of text rather than an
+     invitation. The three `.rw-panebody.pad` bodies under this pane are exactly
+     the empty, loading and error voids — the running order and the add panel
+     carry their own class — so centring them is centring that one sentence. */
+  .sp-main > :global(.rw-panebody.pad){ display:flex; }
+  .sp-main > :global(.rw-panebody.pad) > :global(.r-empty),
+  .sp-main > :global(.rw-panebody.pad) > :global(.es){ margin:auto; text-align:center; max-width:44ch; }
   .sp-hm svg{ color:var(--v-faint); flex:0 0 auto; }
   .sp-toolseg{ flex:0 0 auto; }
   .sp-msg{ font-size:var(--v-fs-lbl); color:var(--v-emerald); max-width:220px;

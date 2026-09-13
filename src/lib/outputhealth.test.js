@@ -11,7 +11,7 @@
 // a report about what happened. Every one of these tests fails if that line comes
 // back, because every one of them describes a screen that is NOT answering while
 // content is live.
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
@@ -169,7 +169,57 @@ describe('startBeat', () => {
     });
     await flush();
     stop();
-    expect(sent).toEqual([['output_beat', { channelId: 3, state: 'content' }]]);
+    // The first beat of a page's life has no previous tick, so it says nothing
+    // about a gap rather than claiming a zero one (RG-119).
+    expect(sent).toEqual([
+      ['output_beat', { channelId: 3, state: 'content', sinceMs: null, hiddenMs: null }],
+    ]);
+  });
+
+  it('the first beat omits the gap entirely on the socket, and later ones carry it', async () => {
+    vi.useFakeTimers();
+    const frames = [];
+    const ws = { readyState: 1, send: (f) => frames.push(JSON.parse(f)) };
+    const stop = startBeat({ channelId: 4, getState: () => 'content', getWs: () => ws });
+
+    // An absent number reads as "the screen did not say", which is true of a
+    // first beat. A zero would read as "it said it never went quiet".
+    expect(frames).toEqual([{ kind: 'beat', channel: 4, state: 'content' }]);
+
+    vi.advanceTimersByTime(BEAT_INTERVAL_MS);
+    stop();
+    expect(frames).toHaveLength(2);
+    expect(frames[1].kind).toBe('beat');
+    expect(Number.isInteger(frames[1].since_ms)).toBe(true);
+    expect(frames[1].since_ms).toBeGreaterThanOrEqual(0);
+    // Nothing hid this page, and saying so is the point: it is what separates a
+    // window the OS covered from one whose beats were lost on the way.
+    expect(frames[1].hidden_ms).toBe(0);
+    vi.useRealTimers();
+  });
+
+  it('a page that keeps ticking into a dead socket still reports a ONE-INTERVAL gap', async () => {
+    // The distinction RG-119 exists to make. `lastTickAt` advances on every tick
+    // that runs, not on every send that lands, so a transport failure cannot be
+    // mistaken for the OS having stopped the page.
+    vi.useFakeTimers();
+    const frames = [];
+    const ws = { readyState: 1, send: () => { throw new Error('socket gone'); } };
+    const sent = [];
+    const stop = startBeat({
+      channelId: 5,
+      getState: () => 'content',
+      getWs: () => ws,
+      invoke: async (cmd, args) => sent.push(args),
+    });
+    vi.advanceTimersByTime(BEAT_INTERVAL_MS * 3);
+    stop();
+    vi.useRealTimers();
+    await new Promise((r) => setTimeout(r, 0));
+    frames.length = 0;
+    const gaps = sent.slice(1).map((a) => a.sinceMs);
+    expect(gaps.length).toBeGreaterThan(0);
+    for (const g of gaps) expect(g).toBeLessThan(BEAT_INTERVAL_MS * 2);
   });
 
   it('prefers the socket a kiosk page already has', async () => {
@@ -352,5 +402,34 @@ describe('RG-29 · turning a screen on and off', () => {
     const st = { supported: true, online: false };
     expect(describeScreen(st, {}, 0).label).toBe('No window');
     expect(screenSwitch(st, NATIVE).action).toBe('on');
+  });
+});
+
+// ── THE BANNER HAS TO SAY WHICH SCREEN ───────────────────────────────────────
+//
+// The shell's degraded line read **"3 is not responding"**. `degraded.js` has
+// documented its `screensDown` argument as *"names of screens"* since it was
+// written; the producer (`App.svelte`) mapped `st.id`, because the backend row
+// carried no name to map. A number is not something a volunteer can act on with a
+// congregation waiting, and nothing else on any screen relates "3" back to
+// "Streaming".
+//
+// Both halves are pinned, because the fix needed both: the field has to exist in
+// Rust and the shell has to use it. Either one alone puts the number back.
+describe('a screen that stops answering is named, not numbered', () => {
+  it('the backend row carries the screen name', async () => {
+    const { readFileSync } = await import('node:fs');
+    const rust = readFileSync('src-tauri/src/main.rs', 'utf8');
+    const struct = rust.slice(rust.indexOf('struct ChannelLiveness'));
+    expect(struct.slice(0, struct.indexOf('}'))).toMatch(/\bname: String,/);
+  });
+
+  it('the shell maps health rows to that name', async () => {
+    const { readFileSync } = await import('node:fs');
+    const shell = readFileSync('src/App.svelte', 'utf8');
+    const line = shell.slice(shell.indexOf('$: screensDown'));
+    const decl = line.slice(0, line.indexOf(';'));
+    expect(decl).toMatch(/st\.name/);
+    expect(decl).not.toMatch(/=>\s*st\.id\b/);
   });
 });

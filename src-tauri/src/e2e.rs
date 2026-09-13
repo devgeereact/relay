@@ -2235,3 +2235,101 @@ fn r9_searching_never_puts_anything_on_a_screen() {
     assert_eq!(wall.count(), 0, "a search reached a congregation screen");
     assert!(kiosk.silent(), "a search reached the kiosk hub");
 }
+
+/// RG-136 — A RECOVERY IN THE SERVICE RECORD MUST HAVE A LOSS TO RECOVER FROM.
+///
+/// Field service 2026-09-13 (`audits/FIELD-2026-09-13.md` §3) recorded three
+/// events for a 110.5 minute service: `service_started`, then `output_recovered`
+/// for the Streaming screen, then `output_lost`. **A screen came back from an
+/// outage the timeline never recorded**, so the report and the replay — which are
+/// both built on this table — understate the outage count by at least one.
+///
+/// The two halves of the mechanism are individually reasonable and wrong together:
+///
+/// - `OutputHealth::transition` CONSUMES the edge it reports. `reported` advances
+///   whether or not anything writes the event down.
+/// - `log_event` is a **silent no-op when no service is recording** — the whole
+///   body sits inside `if let Some(st) = sess.as_ref()`.
+///
+/// So a screen that was already dead before the operator pressed record had its
+/// `output_lost` computed, thrown away, and its edge marked as reported. The
+/// matching recovery then landed inside the service with no partner.
+///
+/// This drives `record_output_edges`, the real body of the status poll, rather
+/// than `channel_status` itself: the command additionally needs a `KioskHub` and a
+/// webview to answer at all, and neither has anything to do with what this decides.
+#[test]
+fn r136_a_recovery_in_the_record_always_has_a_loss_to_recover_from() {
+    let app = app();
+    let h = app.handle().clone();
+    let health = h.state::<channels::OutputHealth>();
+
+    let list = {
+        let db = h.state::<Db>();
+        let conn = db.0.lock().expect("db");
+        db::list_output_channels(&conn).expect("channels")
+    };
+    // A `network_client` screen is treated as attached at all times, so it is the
+    // one whose edges are polled from launch — before any service exists. This is
+    // the Streaming channel of the field service.
+    let screen = list
+        .iter()
+        .find(|c| c.render_target == "network_client")
+        .expect("a fresh install seeds a network_client channel")
+        .id;
+
+    // ── 1. Before the service. The screen is attached and not answering. ──
+    record_output_edges(&h, &health, &list, &[], false);
+    health.expire_grace(screen);
+    record_output_edges(&h, &health, &list, &[], false);
+
+    // ── 2. The operator starts recording. ──
+    let svc = start_service(
+        h.clone(),
+        h.state::<Session>(),
+        h.state::<Db>(),
+        h.state::<channels::Rehearsal>(),
+        h.state::<servicelock::ServiceLock>(),
+        "Sunday Service".into(),
+        "2026-09-13".into(),
+    )
+    .expect("start_service");
+
+    // Still dead, and now inside a service that can record it.
+    health.expire_grace(screen);
+    record_output_edges(&h, &health, &list, &[], true);
+
+    // ── 3. The screen starts answering. ──
+    health.beat(
+        screen,
+        channels::PaintState::Content,
+        "kiosk",
+        channels::BeatGap::default(),
+    );
+    record_output_edges(&h, &health, &list, &[], true);
+
+    let kinds: Vec<String> = service_timeline(h.state::<Db>(), svc)
+        .expect("timeline")
+        .into_iter()
+        .map(|r| r.kind)
+        .collect();
+
+    // The invariant, stated as the audit found it violated: walking the timeline,
+    // a screen may never be recovered before it has been lost.
+    let mut lost = false;
+    for k in &kinds {
+        match k.as_str() {
+            "output_lost" => lost = true,
+            "output_recovered" => assert!(
+                lost,
+                "a recovery with no loss before it — the timeline understates the \
+                 outage count, which is RG-136: {kinds:?}"
+            ),
+            _ => {}
+        }
+    }
+    assert!(
+        kinds.iter().any(|k| k == "output_recovered"),
+        "the screen came back and the record must say so: {kinds:?}"
+    );
+}

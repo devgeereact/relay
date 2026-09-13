@@ -502,6 +502,85 @@ struct Beat {
     at: std::time::Instant,
     state: PaintState,
     transport: &'static str,
+    /// What the SCREEN'S OWN CLOCK said about the gap before this beat.
+    gap: BeatGap,
+}
+
+/// The screen's account of its own silence, carried on the beat that ends it.
+///
+/// **This exists to answer RG-119, and it is the only thing that can.** A service
+/// on 2026-09-06 recorded the main output lost and recovered three times, 19.3
+/// minutes of an 85.5 minute service, and the record could not say which of two
+/// opposite failures it was: the screen really stopped painting, or `OutputHealth`
+/// lost a heartbeat it should have kept. Relay's side of the beat cannot tell them
+/// apart, because both look identical from here — no beat arrived.
+///
+/// The page knows, and only the page knows:
+///
+/// * `since_ms` — its own `Date.now()` gap since its previous tick. Roughly one
+///   interval means the page kept ticking and the beats were lost in transport
+///   (Relay's fault). A gap the size of the whole outage means the page was not
+///   running at all: the OS suspended or throttled it, which is a screen that
+///   genuinely was not painting.
+/// * `hidden_ms` — how much of that gap the page spent `document.hidden`. On macOS
+///   an occluded window is hidden, so this separates "covered by another window"
+///   from "alive but silent", and those want opposite fixes.
+///
+/// **Both are ABSENT rather than zero when the page did not say** (`latency.rs`
+/// learned that distinction the hard way), and both arrive over an unauthenticated
+/// LAN socket, so they are clamped at the door and dropped if they are not
+/// non-negative integers. A number here can only ever be evidence in a timeline
+/// entry; nothing routes, gates or fires on it.
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
+pub struct BeatGap {
+    pub since_ms: Option<u64>,
+    pub hidden_ms: Option<u64>,
+}
+
+/// A day. Anything longer is a broken clock or a hostile client, and either way it
+/// is not evidence about a service.
+const GAP_CLAMP_MS: u64 = 24 * 60 * 60 * 1000;
+
+impl BeatGap {
+    /// Read the two numbers off a JSON beat. Anything that is not a non-negative
+    /// integer within `GAP_CLAMP_MS` is dropped to `None` — an absent number reads
+    /// as "the screen did not say", which is true, where a defaulted zero would
+    /// read as "the screen said it never went quiet", which is a lie in the one
+    /// record this field exists to make trustworthy.
+    fn from_json(v: &serde_json::Value) -> Self {
+        let field = |k: &str| {
+            v.get(k)
+                .and_then(|n| n.as_u64())
+                .filter(|ms| *ms <= GAP_CLAMP_MS)
+        };
+        BeatGap {
+            since_ms: field("since_ms"),
+            hidden_ms: field("hidden_ms"),
+        }
+    }
+
+    /// Same rule for the Tauri bridge, where the value arrives already typed.
+    pub fn clamped(since_ms: Option<u64>, hidden_ms: Option<u64>) -> Self {
+        BeatGap {
+            since_ms: since_ms.filter(|ms| *ms <= GAP_CLAMP_MS),
+            hidden_ms: hidden_ms.filter(|ms| *ms <= GAP_CLAMP_MS),
+        }
+    }
+
+    /// One phrase for a timeline entry, or `None` when the screen said nothing.
+    /// Content-free by construction: two durations and no text from anywhere.
+    pub fn describe(&self) -> Option<String> {
+        let since = self.since_ms?;
+        let secs = |ms: u64| (ms as f64 / 1000.0).round() as u64;
+        Some(match self.hidden_ms {
+            Some(h) if h > 0 => format!(
+                "screen's own clock: silent {}s, hidden {}s",
+                secs(since),
+                secs(h)
+            ),
+            _ => format!("screen's own clock: silent {}s, never hidden", secs(since)),
+        })
+    }
 }
 
 /// Liveness of every output, reported BY the output.
@@ -548,13 +627,18 @@ pub struct OutputHealth {
     /// every poll for as long as it stayed lost, which is how a timeline becomes
     /// something nobody reads.
     reported: Arc<Mutex<HashMap<i64, bool>>>,
+    /// When each channel was first seen ATTACHED but not yet answering, so a page
+    /// that is still loading is not written into the service record as a fault.
+    /// Cleared the moment the channel detaches, so a window reopened later starts
+    /// its grace again rather than inheriting one from an hour ago.
+    first_seen: Arc<Mutex<HashMap<i64, std::time::Instant>>>,
 }
 
 impl OutputHealth {
     /// Record that the screen for `channel_id` is alive and painting `state`.
     /// A lock poisoned by a panicking reader must not take the wall's status with
     /// it: a lost beat degrades to "silent", which is the safe direction.
-    pub fn beat(&self, channel_id: i64, state: PaintState, transport: &'static str) {
+    pub fn beat(&self, channel_id: i64, state: PaintState, transport: &'static str, gap: BeatGap) {
         if channel_id <= 0 {
             return;
         }
@@ -565,9 +649,18 @@ impl OutputHealth {
                     at: std::time::Instant::now(),
                     state,
                     transport,
+                    gap,
                 },
             );
         }
+    }
+
+    /// What the screen's own clock said about the silence before its last beat.
+    /// `None` for a channel that has never beaten, which is an absence and not a
+    /// zero gap. See `BeatGap`, and RG-119 for why it is recorded at all.
+    pub fn last_gap(&self, channel_id: i64) -> Option<BeatGap> {
+        let m = self.beats.lock().ok()?;
+        Some(m.get(&channel_id)?.gap)
     }
 
     /// Age of the last beat in milliseconds, plus what it said. `None` means this
@@ -594,6 +687,14 @@ impl OutputHealth {
         self.forget_transition(channel_id);
     }
 
+    /// True once this channel has answered at least once in this run.
+    fn ever_beaten(&self, channel_id: i64) -> bool {
+        self.beats
+            .lock()
+            .map(|m| m.contains_key(&channel_id))
+            .unwrap_or(false)
+    }
+
     /// Has this channel's answering state CHANGED since the last time anyone
     /// looked? Returns the new value on an edge, `None` otherwise.
     ///
@@ -602,7 +703,40 @@ impl OutputHealth {
     /// twice a second would be a second answer to one question. That means this
     /// mutates from inside what reads like a query, which is worth stating plainly
     /// rather than discovering: `channel_status` is the edge detector.
-    pub fn transition(&self, channel_id: i64, painting: bool) -> Option<bool> {
+    pub fn transition(&self, channel_id: i64) -> Option<bool> {
+        // Read the beat side first and finish with it. Nothing in this type holds
+        // two of these locks at once, and this is the one place that would be
+        // tempted to.
+        let painting = self.painting(channel_id);
+        let ever = self.ever_beaten(channel_id);
+
+        // ── A SCREEN THAT HAS NEVER ANSWERED YET IS NOT A FAULT YET ──
+        //
+        // A window is attached the instant it is created, and its page has to load
+        // before it can beat. Without this, every service opened with
+        // `output_lost` followed by `output_recovered` a fraction of a second
+        // later: 2026-09-06 recorded that pair at 4.9 s and 5.0 s, and the service
+        // before it at 1457.7 s and 1459.7 s. Both are in the permanent record,
+        // both render in History as "Screen stopped responding", and the Sunday
+        // report counts them. A fault that appears every single time is one an
+        // operator learns to scroll past, which costs exactly the real one.
+        //
+        // The grace is bounded and it does NOT swallow the failure it looks like:
+        // a page that never loads at all still reports lost, once
+        // `BEAT_STALE_MS` has passed since it was first seen attached. The
+        // difference is between "has not answered yet" and "is not answering".
+        if !ever && !painting {
+            let first = {
+                let mut seen = self.first_seen.lock().ok()?;
+                *seen
+                    .entry(channel_id)
+                    .or_insert_with(std::time::Instant::now)
+            };
+            if first.elapsed().as_millis() as u64 <= BEAT_STALE_MS {
+                return None;
+            }
+        }
+
         let mut m = self.reported.lock().ok()?;
         match m.insert(channel_id, painting) {
             Some(prev) if prev == painting => None,
@@ -614,10 +748,27 @@ impl OutputHealth {
         }
     }
 
+    /// Test-only: backdate the moment this channel was first seen attached, so the
+    /// grace window inside `transition` has expired without a test sleeping through
+    /// `BEAT_STALE_MS`. The unit tests in this file reach into `first_seen`
+    /// directly; tests in other modules cannot, and needed the same thing.
+    #[cfg(test)]
+    pub(crate) fn expire_grace(&self, channel_id: i64) {
+        if let Ok(mut seen) = self.first_seen.lock() {
+            seen.insert(
+                channel_id,
+                std::time::Instant::now() - std::time::Duration::from_millis(BEAT_STALE_MS * 2),
+            );
+        }
+    }
+
     /// Stop tracking a channel's edges — it is no longer attached, so neither
     /// "lost" nor "recovered" would mean anything about it.
     pub fn forget_transition(&self, channel_id: i64) {
         if let Ok(mut m) = self.reported.lock() {
+            m.remove(&channel_id);
+        }
+        if let Ok(mut m) = self.first_seen.lock() {
             m.remove(&channel_id);
         }
     }
@@ -725,6 +876,25 @@ fn kiosk_content_json(content: &OutputContent) -> String {
         "trace_id": content.trace_id,
     })
     .to_string()
+}
+
+/// Is this frame one of the three that decide what a screen is SHOWING?
+///
+/// Deliberately a prefix match on frames this module builds itself, not a JSON
+/// parse: it runs inside `publish`, which is on the path between a fire and the
+/// projector. `template`, `themes` and `stage_next` are excluded — the first two
+/// are already sent on hello and the third is a monitor-only extra that must not
+/// stand in for the content it accompanies.
+fn is_screen_frame(msg: &str) -> bool {
+    // CONTAINS, not `starts_with`. `serde_json`'s default map is a BTreeMap, so
+    // `kiosk_content_json` emits its keys in ALPHABETICAL order and a content frame
+    // begins `{"content_kind":…` — a prefix check silently matched nothing and the
+    // retained frame stayed empty, which looks exactly like the bug it fixes.
+    // `"kind":"content"` cannot occur inside a JSON string value (the quotes would
+    // be escaped), so this cannot be triggered by a verse.
+    msg.contains(r#""kind":"content""#)
+        || msg.contains(r#""kind":"clear""#)
+        || msg.contains(r#""kind":"black""#)
 }
 
 /// Push content to every output channel. One broadcast, N independently-styled
@@ -924,6 +1094,24 @@ pub struct KioskHub {
     /// validated JSON array is ever stored (see `set_themes`), so embedding it raw
     /// into a WS message can never corrupt the frame.
     themes: Arc<Mutex<String>>,
+    /// THE LAST FRAME THAT DECIDED WHAT IS ON THE SCREENS — content, clear or
+    /// black — kept so a client that joins LATE is shown it.
+    ///
+    /// Without this a browser source that reconnects mid-service comes back
+    /// BLANK and stays blank until the operator happens to fire the next thing.
+    /// That is not a rare event: an OBS source restarting, a kiosk page
+    /// reloading, a Wi-Fi blip on the lobby TV, or this hub's own 1.5 s reconnect
+    /// loop all produce it, and RG-119 records the main output going away three
+    /// times in one 85.5 minute service. Reproduced by opening `output.html`
+    /// while a verse was live: the page connected, was sent its template and its
+    /// themes, and painted nothing.
+    ///
+    /// It retains the last frame of those three kinds and NOTHING else, so it can
+    /// never resurrect a screen the operator cleared: `clear` and `black` are
+    /// themselves published here and become the retained frame in their turn. A
+    /// rehearsal publishes nothing to this hub at all (the gate is at the
+    /// publishers), so nothing a rehearsal did can be replayed either.
+    last_screen: Arc<Mutex<Option<String>>>,
 }
 
 impl Default for KioskHub {
@@ -934,6 +1122,7 @@ impl Default for KioskHub {
             templates: Arc::new(Mutex::new(HashMap::new())),
             clients: Arc::new(Mutex::new(HashMap::new())),
             themes: Arc::new(Mutex::new("[]".to_string())),
+            last_screen: Arc::new(Mutex::new(None)),
         }
     }
 }
@@ -994,7 +1183,16 @@ impl Drop for ClientGuard {
 
 impl KioskHub {
     pub fn publish(&self, msg: String) {
+        if is_screen_frame(&msg) {
+            if let Ok(mut last) = self.last_screen.lock() {
+                *last = Some(msg.clone());
+            }
+        }
         let _ = self.tx.send(msg); // Err only means no subscribers — fine.
+    }
+    /// Shared handle to the retained screen frame, for the WS task to send on hello.
+    pub fn last_screen_handle(&self) -> Arc<Mutex<Option<String>>> {
+        self.last_screen.clone()
     }
     pub fn sender(&self) -> broadcast::Sender<String> {
         self.tx.clone()
@@ -1135,6 +1333,7 @@ pub async fn run_kiosk_server(
     templates: Arc<Mutex<HashMap<i64, String>>>,
     clients: ClientRegistry,
     themes: Arc<Mutex<String>>,
+    last_screen: Arc<Mutex<Option<String>>>,
     health: OutputHealth,
     port: u16,
 ) {
@@ -1168,6 +1367,7 @@ pub async fn run_kiosk_server(
         let templates = templates.clone();
         let clients = clients.clone();
         let themes = themes.clone();
+        let last_screen = last_screen.clone();
         let health = health.clone();
         tokio::spawn(async move {
             let _permit = permit;
@@ -1274,7 +1474,7 @@ pub async fn run_kiosk_server(
                                             .and_then(|s| s.as_str())
                                             .and_then(PaintState::parse),
                                     ) {
-                                        health.beat(ch, st, "kiosk");
+                                        health.beat(ch, st, "kiosk", BeatGap::from_json(&v));
                                     }
                                 }
                                 if v.get("kind").and_then(|k| k.as_str()) == Some("hello") {
@@ -1304,6 +1504,24 @@ pub async fn run_kiosk_server(
                                                 format!(r#"{{"kind":"themes","themes":{blob}}}"#),
                                             ))
                                             .await;
+                                        // AND WHAT IS ON THE SCREENS RIGHT NOW.
+                                        // A client that joins mid-service used to
+                                        // be told its template and its themes and
+                                        // then left blank until the next fire — so
+                                        // an OBS source restarting, or this page
+                                        // reloading, put a black rectangle in front
+                                        // of a congregation for as long as the
+                                        // reading lasted. Sent LAST so the template
+                                        // it needs to render with has already
+                                        // arrived. `clear` and `black` are retained
+                                        // the same way, so this can never undo a
+                                        // panic control.
+                                        let retained = last_screen.lock().ok().and_then(|l| l.clone());
+                                        if let Some(frame) = retained {
+                                            let _ = write
+                                                .send(tokio_tungstenite::tungstenite::Message::Text(frame))
+                                                .await;
+                                        }
                                     }
                                 }
                             }
@@ -2549,6 +2767,7 @@ mod tests {
             hub.templates_handle(),
             hub.clients_handle(),
             hub.themes_handle(),
+            hub.last_screen_handle(),
             OutputHealth::default(),
             port,
         ));
@@ -2607,6 +2826,7 @@ mod tests {
             hub.templates_handle(),
             hub.clients_handle(),
             hub.themes_handle(),
+            hub.last_screen_handle(),
             OutputHealth::default(),
             port,
         ));
@@ -2688,6 +2908,7 @@ mod tests {
             hub.templates_handle(),
             hub.clients_handle(),
             hub.themes_handle(),
+            hub.last_screen_handle(),
             OutputHealth::default(),
             port,
         ));
@@ -2730,6 +2951,7 @@ mod tests {
             hub.templates_handle(),
             hub.clients_handle(),
             hub.themes_handle(),
+            hub.last_screen_handle(),
             OutputHealth::default(),
             port,
         ));
@@ -2765,6 +2987,241 @@ mod tests {
         assert!(got, "the client never received the custom themes");
     }
 
+    /// The retained-frame test above can only be trusted if the matcher agrees
+    /// with what this module actually SERIALISES. It did not: `serde_json`'s map is
+    /// a BTreeMap, so a content frame starts `{"content_kind":…` and the first
+    /// version of `is_screen_frame` (a `starts_with`) matched none of them — the
+    /// retained frame stayed `None` and a joining screen was still blank.
+    #[test]
+    fn the_screen_frame_matcher_agrees_with_what_is_published() {
+        let content = kiosk_content_json(&OutputContent {
+            kind: Some("scripture".into()),
+            reference: "Romans 8:28".into(),
+            text: Some("And we know that all things".into()),
+            ..Default::default()
+        });
+        assert!(
+            is_screen_frame(&content),
+            "a real content frame is not recognised: {content}"
+        );
+        assert!(is_screen_frame(r#"{"kind":"clear"}"#));
+        assert!(is_screen_frame(r#"{"kind":"black"}"#));
+        // Not a frame that decides what is on the screen.
+        assert!(!is_screen_frame(
+            r#"{"kind":"stage_next","label":"John 3:17"}"#
+        ));
+        // An instruction to a person, about a moment. A tablet that rejoins ten
+        // minutes later must not be handed it — and it must not stand in for the
+        // content the screen is actually showing either.
+        assert!(!is_screen_frame(
+            r#"{"kind":"stage_alert","text":"two minutes"}"#
+        ));
+        assert!(!is_screen_frame(r#"{"kind":"themes","themes":[]}"#));
+        assert!(!is_screen_frame(
+            r#"{"kind":"template","id":1,"template":{}}"#
+        ));
+    }
+
+    /// Every `kind` this module publishes, and whether it decides what a screen
+    /// is SHOWING. `true` here means the hub retains it and replays it to a
+    /// client that joins late (rule 43).
+    const FRAME_VERDICTS: &[(&str, bool)] = &[
+        ("content", true),
+        ("clear", true),
+        ("black", true),
+        ("stage_next", false),
+        ("stage_alert", false),
+        ("themes", false),
+        ("template", false),
+    ];
+
+    /// THE ENUMERATION MUST GROW WITH THE MODULE, OR IT IS NOT AN ENUMERATION.
+    ///
+    /// The test above lists the kinds it knows about, and a list of examples
+    /// cannot notice a kind nobody added to it. This one reads the module's own
+    /// source and fails on any published `kind` with no verdict — which is the
+    /// case that actually arose: `stage_alert` was added on `new_look_refresh`
+    /// while `is_screen_frame` was being written on `audit/field-2026-09-13`, and
+    /// the two met for the first time in a merge. The matcher happened to be
+    /// right about it; nothing was checking.
+    ///
+    /// Same shape as `r6-contracts.test.js` on the client side: a new hub message
+    /// that nobody has answered for is the finding.
+    #[test]
+    fn every_kind_this_module_publishes_has_an_explicit_verdict() {
+        let src = include_str!("channels.rs");
+        let body = src.split("mod tests").next().unwrap_or(src);
+
+        let mut found: Vec<&str> = Vec::new();
+        for line in body.lines() {
+            // Comments talk ABOUT frames without publishing any.
+            if line.trim_start().starts_with("//") {
+                continue;
+            }
+            let mut rest = line;
+            while let Some(i) = rest.find("\"kind\"") {
+                rest = &rest[i + "\"kind\"".len()..];
+                let Some(after) = rest.trim_start().strip_prefix(':') else {
+                    continue;
+                };
+                let Some(after) = after.trim_start().strip_prefix('"') else {
+                    continue;
+                };
+                let Some(end) = after.find('"') else { continue };
+                let kind = &after[..end];
+                if !found.contains(&kind) {
+                    found.push(kind);
+                }
+            }
+        }
+
+        assert!(
+            !found.is_empty(),
+            "the scanner found no published kind at all — it has stopped reading \
+             this module, and a scanner that quietly narrows passes everything"
+        );
+        for kind in &found {
+            assert!(
+                FRAME_VERDICTS.iter().any(|(k, _)| k == kind),
+                "`{kind}` is published to the kiosk hub and no one has said whether \
+                 a screen that joins late should be shown it. Add it to \
+                 FRAME_VERDICTS with a reason, and assert it in the matcher test."
+            );
+        }
+        for (kind, retained) in FRAME_VERDICTS {
+            assert!(
+                found.contains(kind),
+                "FRAME_VERDICTS names `{kind}`, which this module no longer \
+                 publishes — a verdict about nothing"
+            );
+            let frame = format!(r#"{{"kind":"{kind}","x":1}}"#);
+            assert_eq!(
+                is_screen_frame(&frame),
+                *retained,
+                "the matcher disagrees with the verdict for `{kind}`"
+            );
+        }
+    }
+
+    /// A SCREEN THAT JOINS LATE IS SHOWN WHAT IS ON THE SCREENS.
+    ///
+    /// Reproduced against the real backend: with a verse live, opening
+    /// `output.html` connected, was sent its template and its themes, and painted
+    /// NOTHING — a black rectangle in front of a congregation until the operator
+    /// happened to fire the next thing. An OBS source restarting, a kiosk page
+    /// reloading, a Wi-Fi blip on the lobby TV and this hub's own reconnect loop
+    /// all produce exactly that, and RG-119 records the main output going away
+    /// three times in one 85.5 minute service.
+    #[tokio::test]
+    async fn a_client_that_connects_mid_service_is_sent_what_is_on_the_screens() {
+        let port = free_port();
+        let hub = KioskHub::default();
+        tokio::spawn(run_kiosk_server(
+            log_only(),
+            hub.sender(),
+            hub.templates_handle(),
+            hub.clients_handle(),
+            hub.themes_handle(),
+            hub.last_screen_handle(),
+            OutputHealth::default(),
+            port,
+        ));
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+
+        // The verse went up BEFORE this client existed.
+        hub.publish(
+            r#"{"kind":"content","reference":"Romans 8:28","text":"And we know"}"#.to_string(),
+        );
+
+        let (ws, _) = tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{port}"))
+            .await
+            .expect("connect");
+        let (mut write, mut read) = ws.split();
+        write
+            .send(tokio_tungstenite::tungstenite::Message::Text(
+                r#"{"kind":"hello","template_id":7}"#.to_string(),
+            ))
+            .await
+            .expect("send hello");
+
+        let mut got = None;
+        for _ in 0..4 {
+            let Ok(Some(Ok(msg))) =
+                tokio::time::timeout(std::time::Duration::from_secs(2), read.next()).await
+            else {
+                break;
+            };
+            let text = msg.into_text().unwrap();
+            if text.contains(r#""kind":"content""#) {
+                got = Some(text);
+                break;
+            }
+        }
+        assert!(
+            got.as_deref().unwrap_or("").contains("Romans 8:28"),
+            "a screen that reconnected mid-reading was left blank: {got:?}"
+        );
+    }
+
+    /// …AND IT CAN NEVER UNDO A PANIC CONTROL.
+    ///
+    /// The retained frame is whatever was published LAST, and `clear` and `black`
+    /// are published through the same door. A screen that joins after the operator
+    /// cleared the wall must join a cleared wall — a retained verse that outlived
+    /// the control that removed it would be strictly worse than the blank screen
+    /// this whole mechanism exists to fix (CLAUDE.md rule 15).
+    #[tokio::test]
+    async fn a_cleared_wall_stays_cleared_for_a_screen_that_joins_after_it() {
+        let port = free_port();
+        let hub = KioskHub::default();
+        tokio::spawn(run_kiosk_server(
+            log_only(),
+            hub.sender(),
+            hub.templates_handle(),
+            hub.clients_handle(),
+            hub.themes_handle(),
+            hub.last_screen_handle(),
+            OutputHealth::default(),
+            port,
+        ));
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+
+        hub.publish(r#"{"kind":"content","reference":"Romans 8:28","text":"x"}"#.to_string());
+        hub.publish(r#"{"kind":"clear"}"#.to_string());
+        // A monitor-only extra must not stand in for the frame that decides the
+        // screen, or the clear would be forgotten by the next "up next" push.
+        hub.publish(r#"{"kind":"stage_next","label":"John 3:17"}"#.to_string());
+
+        let (ws, _) = tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{port}"))
+            .await
+            .expect("connect");
+        let (mut write, mut read) = ws.split();
+        write
+            .send(tokio_tungstenite::tungstenite::Message::Text(
+                r#"{"kind":"hello","template_id":7}"#.to_string(),
+            ))
+            .await
+            .expect("send hello");
+
+        let mut frames = Vec::new();
+        for _ in 0..4 {
+            let Ok(Some(Ok(msg))) =
+                tokio::time::timeout(std::time::Duration::from_millis(900), read.next()).await
+            else {
+                break;
+            };
+            frames.push(msg.into_text().unwrap());
+        }
+        assert!(
+            frames.iter().any(|f| f.contains(r#""kind":"clear""#)),
+            "the wall was cleared and the joining screen was not told: {frames:?}"
+        );
+        assert!(
+            !frames.iter().any(|f| f.contains("Romans 8:28")),
+            "a verse outlived the control that removed it: {frames:?}"
+        );
+    }
+
     /// End-to-end kiosk path (what OBS/vMix uses): a WS client connects, a fire
     /// is published, and the client receives it.
     #[tokio::test]
@@ -2778,6 +3235,7 @@ mod tests {
             hub.templates_handle(),
             hub.clients_handle(),
             hub.themes_handle(),
+            hub.last_screen_handle(),
             OutputHealth::default(),
             port,
         ));
@@ -2976,6 +3434,7 @@ mod tests {
             hub.templates_handle(),
             hub.clients_handle(),
             hub.themes_handle(),
+            hub.last_screen_handle(),
             OutputHealth::default(),
             port,
         ));
@@ -3028,6 +3487,7 @@ mod tests {
             hub.templates_handle(),
             hub.clients_handle(),
             hub.themes_handle(),
+            hub.last_screen_handle(),
             health.clone(),
             port,
         ));
@@ -3184,7 +3644,7 @@ mod rehearsal_tests {
     #[test]
     fn a_beat_makes_a_screen_painting_and_carries_what_it_said() {
         let h = OutputHealth::default();
-        h.beat(7, PaintState::Content, "window");
+        h.beat(7, PaintState::Content, "window", BeatGap::default());
         assert!(h.painting(7));
         let (age, state, transport) = h.read(7).expect("just beat");
         assert!(age < 1_000);
@@ -3200,10 +3660,141 @@ mod rehearsal_tests {
     #[test]
     fn a_preview_with_no_channel_reports_nothing() {
         let h = OutputHealth::default();
-        h.beat(0, PaintState::Content, "window");
-        h.beat(-1, PaintState::Content, "window");
+        h.beat(0, PaintState::Content, "window", BeatGap::default());
+        h.beat(-1, PaintState::Content, "window", BeatGap::default());
         assert!(h.read(0).is_none());
         assert!(h.read(-1).is_none());
+    }
+
+    /// A WINDOW STILL LOADING IS NOT A FAULT, AND ONE THAT NEVER LOADS STILL IS.
+    ///
+    /// RG-119. A window is attached the instant it is created and its page has to
+    /// load before it can beat, so the first status poll used to write
+    /// `output_lost` into the permanent service record, followed by
+    /// `output_recovered` a fraction of a second later. Both real services on
+    /// 2026-09-06 opened with that pair (4.9 s to 5.0 s, and 1457.7 s to 1459.7 s
+    /// the service before), History renders it as "Screen stopped responding", and
+    /// the Sunday report counts it. A fault that appears every single time is one
+    /// an operator learns to scroll past.
+    ///
+    /// The grace may not swallow the failure it resembles, so this asserts both
+    /// halves: silent inside the window, and reported once the window has passed.
+    #[test]
+    fn a_screen_that_has_not_answered_yet_is_not_a_fault_until_it_has_had_time() {
+        let h = OutputHealth::default();
+        assert_eq!(h.transition(9), None, "still loading is not a fault");
+        assert_eq!(
+            h.transition(9),
+            None,
+            "and it does not become one by polling"
+        );
+
+        // Backdate the moment it was first seen, which is the only thing that
+        // separates "has not answered yet" from "is not answering". Reaching in
+        // rather than sleeping through `BEAT_STALE_MS` keeps this a unit test.
+        {
+            let mut seen = h.first_seen.lock().expect("lock");
+            let old =
+                std::time::Instant::now() - std::time::Duration::from_millis(BEAT_STALE_MS * 2);
+            seen.insert(9, old);
+        }
+        assert_eq!(
+            h.transition(9),
+            Some(false),
+            "a page that never loads at all must still be reported"
+        );
+        assert_eq!(h.transition(9), None, "and reported exactly once");
+    }
+
+    /// A SCREEN THAT ANSWERED AND THEN STOPPED IS THE CASE THIS WAS BUILT FOR,
+    /// and the grace above must not have bought it any silence.
+    #[test]
+    fn a_screen_that_answered_and_then_went_quiet_is_reported_at_once() {
+        let h = OutputHealth::default();
+        h.beat(9, PaintState::Content, "window", BeatGap::default());
+        assert_eq!(
+            h.transition(9),
+            None,
+            "a healthy first sighting is not news"
+        );
+
+        // Age the beat past the staleness window without waiting for it.
+        {
+            let mut m = h.beats.lock().expect("lock");
+            let b = m.get_mut(&9).expect("beat");
+            b.at = std::time::Instant::now() - std::time::Duration::from_millis(BEAT_STALE_MS * 2);
+        }
+        assert_eq!(h.transition(9), Some(false));
+        h.beat(9, PaintState::Content, "window", BeatGap::default());
+        assert_eq!(h.transition(9), Some(true));
+    }
+
+    /// THE SCREEN'S OWN ACCOUNT OF ITS SILENCE SURVIVES BOTH DOORS (RG-119).
+    ///
+    /// The distinction this carries is the whole point: about one interval means
+    /// the page kept ticking and the beats were lost on the way, which is Relay's
+    /// fault; minutes mean the page was not running at all, which is a screen that
+    /// genuinely was not painting. A defaulted zero would erase exactly that.
+    #[test]
+    fn a_beat_carries_what_the_screen_said_about_its_own_silence() {
+        let h = OutputHealth::default();
+        h.beat(9, PaintState::Content, "window", BeatGap::default());
+        assert_eq!(h.last_gap(9), Some(BeatGap::default()));
+        assert_eq!(
+            h.last_gap(9).and_then(|g| g.describe()),
+            None,
+            "a screen that said nothing must not be quoted as saying zero"
+        );
+
+        h.beat(
+            9,
+            PaintState::Content,
+            "window",
+            BeatGap::clamped(Some(641_000), Some(641_000)),
+        );
+        assert_eq!(
+            h.last_gap(9).and_then(|g| g.describe()).as_deref(),
+            Some("screen's own clock: silent 641s, hidden 641s")
+        );
+
+        h.beat(
+            9,
+            PaintState::Content,
+            "window",
+            BeatGap::clamped(Some(2_000), Some(0)),
+        );
+        assert_eq!(
+            h.last_gap(9).and_then(|g| g.describe()).as_deref(),
+            Some("screen's own clock: silent 2s, never hidden")
+        );
+    }
+
+    /// A NUMBER OFF THE LAN IS STILL UNTRUSTED INPUT.
+    ///
+    /// It only ever becomes a phrase in a timeline entry, but a client can send
+    /// anything, and a year of milliseconds in a service record is not evidence.
+    #[test]
+    fn a_nonsense_gap_is_dropped_rather_than_believed() {
+        for bad in [
+            serde_json::json!({"since_ms": -1}),
+            serde_json::json!({"since_ms": "641000"}),
+            serde_json::json!({"since_ms": GAP_CLAMP_MS + 1}),
+            serde_json::json!({"since_ms": 1.5}),
+            serde_json::json!({}),
+        ] {
+            assert_eq!(
+                BeatGap::from_json(&bad),
+                BeatGap::default(),
+                "not evidence: {bad}"
+            );
+        }
+        assert_eq!(
+            BeatGap::from_json(&serde_json::json!({"since_ms": 4000, "hidden_ms": 4000})),
+            BeatGap {
+                since_ms: Some(4_000),
+                hidden_ms: Some(4_000)
+            }
+        );
     }
 
     /// CLOSING A SCREEN ON PURPOSE MUST NOT LOOK LIKE ONE FAILING.
@@ -3215,7 +3806,7 @@ mod rehearsal_tests {
     #[test]
     fn forgetting_a_channel_resets_it_to_no_answer_yet() {
         let h = OutputHealth::default();
-        h.beat(3, PaintState::Black, "kiosk");
+        h.beat(3, PaintState::Black, "kiosk", BeatGap::default());
         assert!(h.painting(3));
         h.forget(3);
         assert!(h.read(3).is_none());
@@ -3252,8 +3843,8 @@ mod rehearsal_tests {
     #[test]
     fn the_latest_beat_wins() {
         let h = OutputHealth::default();
-        h.beat(2, PaintState::Content, "window");
-        h.beat(2, PaintState::Black, "kiosk");
+        h.beat(2, PaintState::Content, "window", BeatGap::default());
+        h.beat(2, PaintState::Black, "kiosk", BeatGap::default());
         let (_, state, transport) = h.read(2).expect("beat");
         assert_eq!(state, PaintState::Black);
         assert_eq!(transport, "kiosk");

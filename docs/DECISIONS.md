@@ -27,7 +27,7 @@ Made while building the Library + Planner + output layer. Same rule: if the code
 | **Countdown ticks locally** in each output from a broadcast target epoch | Broadcasting every second would spam the WS hub and drift; broadcasting the target once and ticking client-side is offline-clean, sync-correct, and updates digits in place (no crossfade per tick, no reactive-loop freeze). |
 | **Verse auto-fit** (measure + shrink) instead of fixed/length-bucketed sizing | Real live verses vary wildly; a heuristic clips or overflows. Measuring the box and shrinking guarantees scripture always fits at any output size. Font-size is set imperatively so it can't re-enter Svelte's scheduler and loop. |
 | **FTS5** added *behind* the existing reference/phrase/semantic ranker, not replacing it | bm25 full-text catches loose, non-contiguous word queries a substring `LIKE` misses, but precise reference/phrase/semantic matches must still rank first. FTS is the recall tail, self-healing via an idempotent index-rebuild migration. |
-| **Strip KJV translator glosses** at import, keep supplied-word italics | The bundled corpus brackets both marginal notes (`{…: Heb. …}`, not verse text) and supplied words (`{it was}`, real text). Drop the former, unbracket the latter — in code (versioned, re-runnable via migration), source data untouched. |
+| **Strip KJV translator glosses and subscriptions** at import, keep supplied-word italics | The bundled corpus brackets both marginal notes (`{…: Heb. …}`, not verse text) and supplied words (`{it was}`, real text), and marks the epistle subscriptions with `«…»`. Drop the notes and the subscriptions, unbracket the supplied words — in code (versioned, re-runnable via migration), source data untouched. Groups are matched by DEPTH: the source nests and misplaces braces, and the first-`}` reading left note text on a wall in four verses (RG-123 … RG-125). |
 | **No native `confirm()`/`alert()`** anywhere | Tauri's webview doesn't implement JS dialogs (returns false) — they silently break actions. All confirmations are in-app two-step ("arm → confirm"). |
 | **Per-content-type templates** carried as a `template_json` override on the cue | Lyrics should look like lyrics and scripture like scripture without a per-channel branch. The override is just data on the broadcast; the one renderer honors it, else the channel template. |
 | Console migrated to the global `--v-*` design tokens | The console had a private palette; unifying to the shared tokens keeps one design system across every surface. |
@@ -3024,11 +3024,138 @@ test passed with the supposed fix reverted; that is why this one was reverted on
 before being believed. Three further tests hold the mid-passage case, §56's guarantee through
 the new function, and `chapter_named` in Swahili.
 
+---
+
+## 67. An unreviewed numeral table may parse, and may not fire (2026-09-09)
+
+**Yorùbá numerals now parse.** Until RG-126 `data/numerals.json` carried `sw` and `ha` and no
+`yo` key, so a reference spoken entirely in Yorùbá resolved to nothing: the book alias matched,
+and then the chapter number was not a number the FSM knew. `r4_05` recorded that as an
+`#[ignore]`d red test for the life of the project.
+
+### Why the shape is different from Swahili and Hausa
+
+Those two happen to share a grammar — tens, connector, ones — which is why one state machine
+walks both. **Yorùbá is vigesimal and subtractive**: 16 is *ẹrìndínlógún*, "four taken from
+twenty", and it is **one word**. There is nothing for a state machine to walk.
+
+So the `yo` block carries `standalone` rather than `ones`/`tens`, and a `standalone` word is the
+whole number and joins to nothing on either side. That is a safety property and not only a
+grammatical one: **a wrong entry can be wrong only where it stands, and can never alter a
+neighbouring number.**
+
+### The decision: it parses, and it is capped at Suggest
+
+`data/numerals.json` has warned from its first line that *a wrong numeral does not fail safely —
+it silently shows a different verse.* Nobody has reviewed the Yorùbá. Two honest options existed
+and one was chosen:
+
+* **Ship it like Swahili and Hausa.** A Yorùbá-speaking church gets full behaviour immediately,
+  and unverified words sit directly on the auto-fire path. This is the option that warning is
+  about.
+* **Ship it capped.** The block is marked `unreviewed`; `parsed_an_unreviewed_numeral` demotes
+  any reference resolved through it to `UncertainNumber`. The router refuses that method at any
+  score and any dial setting, so it reaches the operator and is accepted in one press.
+
+**The cap was chosen, and the reasoning is §21's, not a new one.** The words really were *heard*;
+what they are *worth* is Relay's guess. That is the same doubt `UncertainBook` was created for
+(CLAUDE.md rule 10) and the same one `UncertainNumber` already covers — the book was heard, the
+numbers were inferred. This is one more route into an existing variant, not a new mechanism.
+
+Two consequences worth stating:
+
+* **A demotion expressed as a score is one the operator's dial erases** — `from_sensitivity(100)`
+  returns the confidence floor. Expressed as a method, it holds everywhere.
+  `r4_05b_an_unreviewed_yoruba_numeral_is_offered_never_fired` asserts that across the whole dial,
+  and setting `unreviewed` to false makes the same line auto-fire John 3:16 at **0.95** — which is
+  what proves the cap is structural rather than a number that happens to be low.
+* **Lifting it is a signature, not a commit.** Deleting `"unreviewed": true` from the `yo` block
+  is the entire remaining change, and it belongs to a Yorùbá speaker.
+
+### What is deliberately absent, and why that is also rule 10
+
+The bare cardinals 1–9 are not in the table. `normalize()` folds tone marks and dots-below, and
+several of them then collide with ordinary sermon words: *èje* (7) and *ẹ̀jẹ̀* (blood) both become
+`eje`; *àrún* (5) and *àrùn* (disease) both become `arun`. Listing them would manufacture rule
+10's failure in a third language. The ordinal *k-* forms — *orí kẹta*, *ẹsẹ̀ kẹrìndínlógún* — are
+the register a chapter and a verse are actually spoken in, and they carry no such collisions.
+
+One collision is accepted and named rather than hidden: *ogún* (20) folds together with *ògùn*
+(medicine) and *Ògún*. A chapter of twenty or more is said *"orí ogún"*, with no *k-* form, so
+leaving it out would cost every such chapter. Under the cap it costs at most a suggestion the
+operator ignores — which is precisely the trade the cap was chosen to make available.
+
+Composite numbers above twenty (*ọ̀kànlélógún* = 21) are absent too. They resolve to nothing,
+exactly as they did before this block existed: no regression, and no invented number.
+
+### How the report stays honest about it
+
+**Settings → Languages gained a third state.** The numerals column had two, and a bare *yes*
+beside Kiswahili would claim an unreviewed table behaves like a reviewed one. It now reads
+**"suggest only"**, and `language_report` derives `numerals` from `ones` **or** `standalone` —
+without that it reported *no* while the detector was parsing them, which is the one disagreement
+between that screen and the running app the whole function exists to prevent (§47).
+
+## 68. A screen that joins late is shown what is on the screens (2026-09-10)
+
+**Decision:** the kiosk hub retains the last frame that decided **what a screen is
+showing** — `content`, `clear` or `black` — and sends it to every client on `hello`,
+after the template and the themes it needs to render with.
+
+Until this, `hello` was answered with the cached template and the custom themes and
+nothing else. A client that connected mid-service received the NEXT fire and nothing
+before it, so an output that went away and came back showed **black** for as long as
+the reading lasted. That is not an exotic event: OBS restarting a browser source, a
+kiosk page reloading, a lobby television dropping off the wifi for a moment and this
+hub's own 1.5-second reconnect loop all produce it, and RG-119 records the main output
+going away three times in one 85.5-minute service.
+
+**Why it cannot undo a panic control.** The retained frame is whatever was published
+last, and `clear` and `black` go through the same door as `content` — so a screen that
+joins after the operator cleared the wall joins a cleared wall. A retained verse that
+outlived the control that removed it would be strictly worse than the blank screen this
+mechanism exists to fix (rule 15). Nothing that is not one of those three kinds is ever
+retained: `stage_next` is a monitor-only extra and must not stand in for the content it
+accompanies, and `template` and `themes` are already sent.
+
+**Rehearsal is unaffected, by construction rather than by a second check.** Rehearsal is
+gated at the publishers, so a rehearsal publishes nothing to this hub at all — there is
+nothing for it to retain and nothing for it to replay. That is the same reasoning as
+§18: the guarantee lives at the choke point, not at the door.
+
+**What it does not do.** It does not make a screen's history available, it does not
+replay a sequence, and it does not tell the console anything new. One frame, the current
+one, to a client that asked.
+
+## 69. A control that saves an intent nobody honours is removed, not labelled (2026-09-10)
+
+**Decision:** Settings' seven unwired preference controls are **deleted**. They wrote a
+key to `localStorage` that nothing in the application ever read: `Confirm Before Going
+Live`, `Auto Save`, `Default Content Type`, `Time Format`, `Date Format`, `Restore
+Previous Session` and `Default Startup Screen`.
+
+The first is why this is a decision and not a tidy-up. It was **on by default** and it
+said *"Show a confirmation dialog before sending content live."* There has never been
+one. An operator who reads that switch believes there is a step between them and the
+congregation's screen, and the product spends its whole design budget elsewhere making
+sure no control lies about what it did (§20, §21, rule 15, rule 35). This one lied in
+the most expensive place available to it.
+
+**Why removed rather than marked "Soon".** Two rows in the same list already carry that
+treatment honestly — `Auto Start on Login` and `Minimize to System Tray` are disabled,
+tagged, and say what is missing — and they stay. "Soon" is a promise, though, and none
+of these seven is on a roadmap; four of them (time format, date format, startup screen,
+restore session) describe behaviour Relay has deliberately not made configurable. Same
+precedent as the `StageDisplays` subtree in §25: a dead surface comes out.
+
+**Wiring any of them is a product decision, not a repair**, and this section is where it
+would be recorded if one is ever taken.
+
 ## 70. A screen may have no look of its own (2026-09-13)
 
-**Numbered 70 deliberately.** §67–69 are taken on `audit/field-2026-09-13` (PR #60), which is
-not merged yet; picking the next free number on `main` would have produced two §67s the day
-those branches meet.
+**Numbered 70 deliberately.** §67–69 were taken on `audit/field-2026-09-13` (PR #60) while it
+was still unmerged; picking the next free number on `main` would have produced two §67s the day
+those branches met. They met on `rebrand/base`, and each section still owns one number.
 
 ### What was wrong
 

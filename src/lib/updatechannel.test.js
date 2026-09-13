@@ -110,3 +110,43 @@ describe('the update channel reports on itself', () => {
     expect(get(updateChannel).state).toBe('ok');
   });
 });
+
+// ── THE SECOND DOOR ──────────────────────────────────────────────────────────
+//
+// The fix above landed on Settings → Updates and stopped there. The Settings
+// OVERVIEW page carries a second copy of the same claim, in a Quick Links card,
+// and it was still hard-coded: `$updateAvailable ? … : "You're on the latest
+// version"`. Same lie, same screen, one scroll apart — and it is the copy an
+// operator sees FIRST, because Overview is where Settings opens.
+//
+// This repository has had four separate bugs with exactly this shape (CLAUDE.md,
+// "A guarantee is only kept on the doors you checked"), so the guard is a scan
+// rather than a component test: any future third surface fails it too.
+describe('every surface that talks about the update channel goes through one describer', () => {
+  it('no view hard-codes "the latest version"', async () => {
+    const { readFileSync, readdirSync } = await import('node:fs');
+    const { join } = await import('node:path');
+
+    const files = [];
+    const walk = (dir) => {
+      for (const e of readdirSync(dir, { withFileTypes: true })) {
+        const p = join(dir, e.name);
+        if (e.isDirectory()) walk(p);
+        else if (e.name.endsWith('.svelte')) files.push(p);
+      }
+    };
+    walk('src');
+
+    // MARKUP ONLY. `doCheckUpdates` legitimately ends a guarded ternary with that
+    // sentence — it has already ruled out 'failed' and 'unavailable' by then. What
+    // must never come back is the phrase rendered straight into a template, where
+    // nothing has asked the channel anything.
+    const markupOf = (src) =>
+      src
+        .replace(/<script[\s\S]*?<\/script>/g, '')
+        .replace(/<!--[\s\S]*?-->/g, '');
+
+    const offenders = files.filter((f) => /latest version/i.test(markupOf(readFileSync(f, 'utf8'))));
+    expect(offenders).toEqual([]);
+  });
+});

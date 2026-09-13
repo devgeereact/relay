@@ -1047,7 +1047,49 @@ fn edit_distance_within(a: &str, b: &str, budget: usize) -> Option<usize> {
 
 /// Parse a chapter:verse reference beginning at `idx` (just past the book).
 /// `book_start` is the book's first token index, used for the matched span.
+/// Parse a reference, and demote it if any of its numbers came from a numeral
+/// table nobody has reviewed.
+///
+/// **This is a wrapper and not a line inside the parser, on purpose (rule 36).**
+/// `parse_reference_inner` has six exits that already demote by other rules; a
+/// seventh added next year would be the one that forgot this. Putting the check
+/// on the door means it cannot be.
+///
+/// `matched_text` is the exact span the reference was parsed from — the field the
+/// operator is shown — so it is the right thing to test, and it needs no new
+/// argument threaded through the FSM.
 fn parse_reference(
+    tokens: &[&str],
+    idx: usize,
+    canonical: &str,
+    book_start: usize,
+    book_ev: BookEvidence,
+) -> Option<(RefMatch, usize)> {
+    let (mut m, end) = parse_reference_inner(tokens, idx, canonical, book_start, book_ev)?;
+    if parsed_an_unreviewed_numeral(&m.matched_text) {
+        DetectionMethod::uncertain_number(&mut m);
+    }
+    Some((m, end))
+}
+
+/// Did this span use a numeral word from an `unreviewed` language block?
+///
+/// The words were HEARD; what they are worth is Relay's guess, and an unchecked
+/// guess about a number is the failure `data/numerals.json`'s own header warns
+/// about — it does not fail safely, it shows a different verse. So the same cap
+/// `UncertainNumber` applies everywhere else applies here: offered to the
+/// operator, never fired unattended, at any score and any dial setting.
+fn parsed_an_unreviewed_numeral(matched_text: &str) -> bool {
+    let n = numerals();
+    if n.unreviewed.is_empty() {
+        return false;
+    }
+    normalize(matched_text)
+        .split_whitespace()
+        .any(|t| n.unreviewed.contains(t))
+}
+
+fn parse_reference_inner(
     tokens: &[&str],
     idx: usize,
     canonical: &str,
@@ -1527,6 +1569,10 @@ enum NumWord {
     /// Swahili "mia", Hausa "ɗari" — the multiplier comes AFTER ("mia mbili" =
     /// 200, not 102). See parse_number.
     HundredPost,
+    /// A word that is the WHOLE number and joins to nothing either side — Yorùbá
+    /// `kẹrìndínlógún` is 16 outright. It completes the FSM where it stands, so
+    /// it can neither absorb a following word nor be absorbed by a preceding one.
+    Standalone(i64),
 }
 
 /// Spoken numbers in the tier-1 languages, from `data/numerals.json`.
@@ -1540,6 +1586,21 @@ enum NumWord {
 pub struct Numerals {
     pub ones: HashMap<String, i64>,
     pub tens: HashMap<String, i64>,
+    /// A word that IS a whole number and combines with nothing — Yorùbá, whose
+    /// numerals are vigesimal and subtractive (16 is `ẹrìndínlógún`, "four taken
+    /// from twenty", one word). There is no tens-plus-ones for a state machine to
+    /// walk, so a `standalone` word completes the number where it stands and a
+    /// wrong entry can never alter a neighbouring one.
+    pub standalone: HashMap<String, i64>,
+    /// Every numeral word that came from a language block marked `unreviewed`.
+    ///
+    /// **A reference parsed with one of these is capped at `Suggest`.** The file's
+    /// own warning is that a wrong numeral does not fail safely — it silently
+    /// shows a different verse — and nobody has checked the Yorùbá. That is the
+    /// same doubt `UncertainNumber` already exists for (rule 10): the words were
+    /// heard, what they MEAN is Relay's guess. Emptying this set lifts the cap,
+    /// which is what a native-speaker review is for.
+    pub unreviewed: HashSet<String>,
     pub hundred_post: HashSet<String>,
     pub connectors: HashSet<String>,
     pub chapter_words: HashSet<String>,
@@ -1555,6 +1616,8 @@ fn numerals() -> &'static Numerals {
         let mut n = Numerals {
             ones: HashMap::new(),
             tens: HashMap::new(),
+            standalone: HashMap::new(),
+            unreviewed: HashSet::new(),
             hundred_post: HashSet::new(),
             connectors: HashSet::new(),
             chapter_words: HashSet::new(),
@@ -1588,6 +1651,19 @@ fn numerals() -> &'static Numerals {
             };
             nums("ones", &mut n.ones);
             nums("tens", &mut n.tens);
+            nums("standalone", &mut n.standalone);
+            // Record the words, not the language: by the time a reference has been
+            // parsed the language is gone and only the tokens are left, and the
+            // token is what the demotion has to key on.
+            if spec.get("unreviewed").and_then(|v| v.as_bool()) == Some(true) {
+                for key in ["ones", "tens", "standalone"] {
+                    if let Some(m) = spec.get(key).and_then(|v| v.as_object()) {
+                        for w in m.keys() {
+                            n.unreviewed.insert(normalize(w));
+                        }
+                    }
+                }
+            }
             let words = |key: &str, into: &mut HashSet<String>| {
                 for w in spec
                     .get(key)
@@ -1760,6 +1836,13 @@ fn parse_number(tokens: &[&str], start: usize) -> Option<(i64, usize, bool)> {
                 value = v;
                 St::AfterTen
             }
+            // The whole number, in one word. Straight to Complete: it may not
+            // combine, in either direction. Anywhere but Start it ends the run,
+            // which the catch-all below already does.
+            (St::Start, NumWord::Standalone(v)) => {
+                value = v;
+                St::Complete
+            }
             (St::Start, NumWord::Hundred) => {
                 value = 100;
                 St::AfterHundred
@@ -1879,7 +1962,9 @@ fn classify_num_word(w: &str) -> Option<NumWord> {
         // does not fail safely, it silently shows a different verse.
         w => {
             let n = numerals();
-            if let Some(&v) = n.ones.get(w) {
+            if let Some(&v) = n.standalone.get(w) {
+                NumWord::Standalone(v)
+            } else if let Some(&v) = n.ones.get(w) {
                 NumWord::Ones(v)
             } else if let Some(&v) = n.tens.get(w) {
                 NumWord::Ten(v)
@@ -5355,20 +5440,21 @@ mod r4_audit {
         }
     }
 
-    // ── R4-05 · Yorùbá is book names only ───────────────────────────────────
+    // ── R4-05 · Yorùbá numerals ─────────────────────────────────────────────
     //
-    // `data/numerals.json` carries `sw` and `ha`. There is no `yo` key — no Yorùbá
-    // numerals, no `orí`, no `ẹsẹ̀`. So a reference spoken ENTIRELY in Yorùbá
-    // parses to nothing: the book alias matches and then the chapter number is not
-    // a number the FSM knows, so `parse_reference` returns None.
+    // **This test was `#[ignore]`d and RED for the life of the project**, recording
+    // that `data/numerals.json` carried `sw` and `ha` and no `yo` key: a reference
+    // spoken entirely in Yorùbá parsed to nothing, because the book alias matched
+    // and then the chapter number was not a number the FSM knew. It was filed here
+    // because `eval_corpus.json`'s twelve `yo` cases all use digits or English
+    // number words, so the scorecard printed a 100% Yorùbá row beside Swahili and
+    // Hausa rows that really had parsed their own numerals.
     //
-    // docs/LANGUAGES.md says this plainly and it is not a discovery. It is here
-    // because `eval_corpus.json` contains twelve `yo` cases, every one of which
-    // uses digits or English number words, and the scorecard therefore prints a
-    // 100% Yorùbá row beside Swahili and Hausa rows that really did parse their
-    // own numerals.
+    // The `yo` block now exists and this runs in CI. What has NOT changed is that
+    // nobody has reviewed those words — so the block is marked `unreviewed` and
+    // everything resolved through it is capped at `Suggest`
+    // (`parsed_an_unreviewed_numeral`). `r4_05b` is the half that matters more.
     #[test]
-    #[ignore]
     fn r4_05_a_reference_spoken_entirely_in_yoruba_is_detected() {
         for line in [
             "Jòhánù orí kẹta ẹsẹ̀ kẹrìndínlógún", // John 3:16
@@ -5379,10 +5465,49 @@ mod r4_audit {
             assert!(
                 !f.is_empty() || !s.is_empty(),
                 "{line:?} produced nothing at all — the Yorùbá book name matched \
-                 and the Yorùbá numeral did not, because data/numerals.json has \
-                 no \"yo\" key"
+                 and the Yorùbá numeral did not"
             );
         }
+    }
+
+    /// R4-05b · AN UNREVIEWED NUMERAL MAY NEVER REACH A WALL BY ITSELF.
+    ///
+    /// `data/numerals.json`'s own header states the risk this closes: a wrong
+    /// numeral does not fail safely, it silently shows a DIFFERENT VERSE. Nobody
+    /// has checked the Yorùbá in that file, so the words were heard and what they
+    /// are worth is Relay's guess — which is the doubt `UncertainNumber` already
+    /// exists for (rule 10).
+    ///
+    /// Asserted **across the whole dial**, because a demotion expressed as a score
+    /// is one the operator's sensitivity slider erases: `from_sensitivity(100)`
+    /// returns the confidence floor. Expressed as a method, the router refuses it
+    /// at every setting. Deleting `unreviewed` from the `yo` block is what lifts
+    /// this, and that is a native speaker's signature, not a code change.
+    #[test]
+    fn r4_05b_an_unreviewed_yoruba_numeral_is_offered_never_fired() {
+        for dial in [0u8, 25, 50, 63, 75, 100] {
+            for line in [
+                "Jòhánù orí kẹta ẹsẹ̀ kẹrìndínlógún",
+                "Johanu ori keta ese kerindinlogun",
+                "Sáàmù orí ogún",
+            ] {
+                let (fired, suggested) = wall(line, dial);
+                assert!(
+                    fired.is_empty(),
+                    "dial {dial}: {line:?} auto-fired {fired:?} — an unreviewed \
+                     numeral table put a verse on a wall unattended"
+                );
+                assert!(
+                    !suggested.is_empty(),
+                    "dial {dial}: {line:?} was capped into silence rather than \
+                     into a suggestion — the operator gets nothing at all"
+                );
+            }
+        }
+        // The control: English through the same parser still fires, so the cap is
+        // the Yorùbá table's and not a change to the gate.
+        let (fired, _) = wall("John chapter three verse sixteen", 50);
+        assert!(!fired.is_empty(), "the cap leaked onto English");
     }
 
     // ── R4-06 · three sibling entry points are hardcoded to English ─────────
@@ -5806,6 +5931,13 @@ pub struct LanguageReport {
     /// false, a reference in this language only resolves when the numbers are said
     /// in English, which is common but not universal.
     pub numerals: bool,
+    /// May a reference resolved through those numerals reach a wall UNATTENDED?
+    ///
+    /// **False for a numeral table no native speaker has signed off.** Yorùbá
+    /// parses today and is capped at `Suggest` (`parsed_an_unreviewed_numeral`),
+    /// and a screen that printed a bare "yes" beside Swahili would be claiming the
+    /// two are the same thing. They are not: one fires, one asks.
+    pub numerals_auto_fire: bool,
     /// **Always false, and reported as an absence rather than a score.** No record
     /// exists of a native speaker checking these, because none has. The day one
     /// does, this becomes a real field and not before.
@@ -5869,11 +6001,28 @@ pub fn language_report() -> Vec<LanguageReport> {
             books: with_alias,
             books_total: BOOKS_IN_THE_BIBLE,
             aliases,
-            numerals: numerals
+            // `ones` OR `standalone`: Yorùbá is vigesimal and carries the second,
+            // so a check for `ones` alone reported "no" while the detector was
+            // parsing them — the one disagreement between this screen and the app
+            // that this whole function exists to prevent.
+            numerals: ["ones", "standalone"].iter().any(|k| {
+                numerals
+                    .get(lang)
+                    .and_then(|v| v.get(*k))
+                    .and_then(|v| v.as_object())
+                    .is_some_and(|o| !o.is_empty())
+            }),
+            numerals_auto_fire: ["ones", "standalone"].iter().any(|k| {
+                numerals
+                    .get(lang)
+                    .and_then(|v| v.get(*k))
+                    .and_then(|v| v.as_object())
+                    .is_some_and(|o| !o.is_empty())
+            }) && numerals
                 .get(lang)
-                .and_then(|v| v.get("ones"))
-                .and_then(|v| v.as_object())
-                .is_some_and(|o| !o.is_empty()),
+                .and_then(|v| v.get("unreviewed"))
+                .and_then(|v| v.as_bool())
+                != Some(true),
             native_reviewed: false,
             wer: None,
         });
@@ -5922,17 +6071,30 @@ mod language_report_tests {
     ///
     /// This is the single largest known gap in the tier-1 list — Yorùbá is
     /// subtractive (16 = ẹrìndínlógún) and the largest addressable market of the
-    /// three. If somebody adds them, this test fails and the claim gets updated,
-    /// which is the correct direction for a test like this to break.
+    /// three. **It fired, and this is the updated claim**: Yorùbá numerals now
+    /// parse, and they are capped at `Suggest` until a native speaker signs the
+    /// table off, so the report has to say BOTH — a bare "yes" beside Swahili
+    /// would claim the two behave the same, and they do not.
     #[test]
     fn the_report_names_the_numerals_gap_rather_than_hiding_it() {
         let r = language_report();
-        let by = |c: &str| r.iter().find(|l| l.code == c).unwrap().numerals;
-        assert!(by("sw"), "Kiswahili numerals are parsed");
-        assert!(by("ha"), "Hausa numerals are parsed");
+        let l = |c: &str| r.iter().find(|x| x.code == c).unwrap();
+        for c in ["sw", "ha"] {
+            assert!(l(c).numerals, "{c} numerals are parsed");
+            assert!(
+                l(c).numerals_auto_fire,
+                "{c} numerals are reviewed and fire"
+            );
+        }
         assert!(
-            !by("yo"),
-            "Yorùbá numerals are still unparsed — if this fails, update LANGUAGES.md and this test"
+            l("yo").numerals,
+            "Yorùbá numerals are parsed as of the yo block"
+        );
+        assert!(
+            !l("yo").numerals_auto_fire,
+            "Yorùbá numerals are UNREVIEWED and must report as suggest-only — if \
+             this fails, a native speaker has signed the table off, so update \
+             LANGUAGES.md and this test"
         );
     }
 

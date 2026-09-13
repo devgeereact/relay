@@ -98,6 +98,57 @@ or that changed their answer:
 | Frontend suite | `npx vitest run` | **1099 passed**, 80 files |
 | **Rust dependencies** | `cargo audit` | **0 vulnerabilities** (3 on the first run, 2026-09-04); 18 warnings, all unmaintained GTK3 **Linux** bindings |
 | **The kiosk hub's origin gate, on the packaged binary** | raw WebSocket handshakes with nine `Origin` values | `101` for none, `:8032` on two hosts, `:5032`, `tauri://localhost`; **`403`** for `evil.example.com`, `null`, a LAN host on `:3000`, an `https://` origin |
+
+**Re-run on 2026-09-09.** A fourth pass, against `0.2.0-2`. It found four more note-on-the-wall
+defects in the corpus (RG-123 … RG-125) and closed the Yorùbá numeral gap under a cap (RG-126).
+**The verdict did not move**, and §15.3 did not move by a point, for the reason this document has
+given three times: everything closed was closed by reading and by tests, and the four blockers
+still want a room, a purchase and a Sunday.
+
+| | Command | Result |
+|---|---|---|
+| Rust suite | `cd src-tauri && cargo test` | **683 passed**, 0 failed, 16 ignored — +3 on 2026-09-10 for the frame a screen that joins mid-service is sent (RG-129) |
+| Frontend suite | `npx vitest run` | **975 passed**, 0 skipped, 72 files — +7 on 2026-09-10 (RG-128, RG-130, RG-133) |
+| End-to-end fire path | `cargo test e2e::` | **38 passed, 0 ignored** |
+| Format and lint gates | `cargo fmt --all -- --check`, `cargo clippy --all-targets -- -D warnings` | clean |
+| Frontend build | `npm run build` | clean — and **0 a11y warnings**, down from 4 |
+| Detection gate | `cargo test eval::tests::print_scorecard -- --nocapture` | 74 cases · **100 % recall · 0 wrong verses · 0 paraphrases auto-fired**, unchanged |
+| **Production bundle** | `npm run tauri build` | **`Relay.app` + `Relay_0.2.0-2_aarch64.dmg`** |
+| **Hardened-runtime signing** | `./scripts/sign-local.sh` | hardened runtime **ON**, mic entitlement **present**, usage string **present** |
+| **The packaged binary, launched** | isolated `RELAY_DB_PATH` on a copy of a real 15-service database | booted clean; **exactly one** `console: webview up (operator)`; `user_version` **4 → 5**, 14 note-delimiter rows **→ 0**, 31,102 verses preserved, **all 161 detections kept their `verse_id`** |
+| **The output page, in a real browser** | headless Chromium against the running `:8032` | 11 assets, all `200`, **zero console errors**; RG-119's heartbeat captured live — beats **2000 ms** apart, `since_ms` one interval, `hidden_ms` `0`, and hiding the page produced `1243` → `2000` → `1793` → `0`, so partial and fully-hidden intervals both track |
+| **The kiosk hub, against hostile beats** | raw RFC 6455 client: negative, string, `1e308`, overflowing and XSS-shaped payloads | connection held, **no panic**, app still serving |
+| Update channel | `npm run updater:check` | **2 endpoints live**, serving `0.2.0-2` |
+| Surface inventory | `node scripts/qa-inventory.mjs` | **0 dead controls, 0 unreachable commands, 0 controls without an accessible name** |
+| Version agreement | `npm run version:check` | `0.2.0-2` consistent across all three files |
+
+**What this pass could not reach is unchanged**: a microphone, a projector, a certificate, and a
+congregation. One new instrument defect was filed rather than fixed — **RG-127**: two `channels`
+tests serve the real `dist/`, which is gitignored, so a fresh clone fails `cargo test` twice with
+a bare `404`. CI is green only because it runs `npm run build` first, at an ordering nothing
+states.
+
+**Re-run on 2026-09-14, on `rebrand/base`.** Not a pass of its own: the rebrand branch and the
+2026-09-13 field-audit branch were merged onto one base, so every count in this section had two
+values and neither was the tree's. These are the merged tree's, measured, and they are what
+[`qa/QA_HARNESS.md`](qa/QA_HARNESS.md) §0 now carries. **The verdict does not move, and nothing
+here is evidence about a service** — no code changed meaning in the merge.
+
+| | Command | Result |
+|---|---|---|
+| Rust suite | `cd src-tauri && cargo test` | **692 passed**, 0 failed, 16 ignored |
+| Frontend suite | `npx vitest run` | **1165 passed**, 0 skipped, 87 files |
+| End-to-end fire path | `cargo test e2e::` | **46 passed, 0 ignored** |
+| Format and lint gates | `cargo fmt --all`, `cargo clippy --all-targets -- -D warnings` | clean |
+| Frontend build | `npm run build` | clean, no warnings |
+| Version agreement | `npm run version:check` | `0.2.0-2` consistent across all three files; 2 update endpoints |
+| Surface inventory | `node scripts/qa-inventory.mjs` | 52 components (51 reachable), 479 controls, 134 commands, **0 dead controls, 0 unreachable commands, 0 controls without an accessible name** |
+
+**What this run could not reach**: the standing list, unchanged — a microphone, a projector, a
+certificate and a congregation. It also could not reach the packaged bundle: `npm run tauri build`
+and `./scripts/sign-local.sh` were **not** re-run on the merged tree, so rule 17's entitlement
+check and the CSP, both of which only exist in a packaged binary, are inherited claims here rather
+than measured ones.
 | **Ranged media, on the packaged binary** | `curl -H 'Range: bytes=500-599' …/media/12` | `206` + `Content-Range: bytes 500-599/1024`, and the 100 bytes match the file exactly; a range past the end → `416` |
 | **The console under the narrowed CSP** | packaged binary, isolated `RELAY_DB_PATH` | booted clean; **exactly one** `console: webview up (operator)` — the bundle still loads |
 | The migration, on a v2 database | `cargo test corpus` and the three new `db::tests` | the corpus repair reaches an existing install, keeps every past detection's reference, and is a no-op the second time |
@@ -1027,9 +1078,11 @@ Stated plainly, because a risk that is not named is a risk that is being hidden.
    an assertion. `LANGUAGES.md` says so and this audit does not soften it.
 2. **A projector.** RG-18's contrast and distance thresholds have never been checked against a
    wall.
-3. **A Yorùbá, Swahili or Hausa speaker.** The alias table is unreviewed, the numerals are
-   unparsed, and three of the four operator locales are deliberately empty stubs that say so in
-   their own `_readme`. A wrong numeral does not fail safely; it shows a different verse.
+3. **A Yorùbá, Swahili or Hausa speaker.** The alias table is unreviewed; the Yorùbá numerals
+   now parse (RG-126) and are **capped at *suggest* because they are unreviewed too**; and three
+   of the four operator locales are deliberately empty stubs that say so in their own `_readme`.
+   A wrong numeral does not fail safely; it shows a different verse — which is exactly why the
+   cap is there, and why lifting it needs a person rather than a commit.
 4. **Two code-signing certificates.** Neither platform has one. Every release so far is unsigned
    on both. `sign-local.sh` reproduces the *conditions* ad hoc and passes; it cannot reproduce
    Gatekeeper.

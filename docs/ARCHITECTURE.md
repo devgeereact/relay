@@ -179,7 +179,7 @@ a paraphrase match is supposed to find a verse whose words are different (DECISI
 **A search never puts anything on a screen.** It returns candidates; an operator chooses. Held by
 `e2e::r9_searching_never_puts_anything_on_a_screen`, which watches both doors.
 
-The KJV importer strips translator **marginal glosses** (`{green…: Heb. pastures of tender grass}` — not verse text) while keeping supplied-word italics (`{it was}` → `it was`).
+The KJV importer strips translator **marginal glosses** (`{green…: Heb. pastures of tender grass}` — not verse text) and **subscriptions** (`«Written to the Hebrews from Italy, by Timothy.»` — a note about where a letter was posted, not the last words of the epistle), while keeping supplied-word italics (`{it was}` → `it was`). Brace groups are matched by DEPTH, because the source contains nested and misplaced braces and taking the first `}` left note text on the wall in four verses (RG-123 … RG-125).
 
 ---
 
@@ -229,6 +229,17 @@ Networked clients get the content events as JSON frames over the WS hub
 (`{kind:"content"|"clear"|"black"|"stage_next"|"stage_alert"|"channel_template", …}`), and send
 exactly three kinds back — `hello`, `beat`, `rendered` — none of which can carry content
 ([SECURITY.md](SECURITY.md) T4).
+
+**A client that says `hello` is answered with three things: its template, the custom
+themes, and WHAT IS ON THE SCREENS RIGHT NOW.** The last of those is the retained
+frame — the most recent `content`, `clear` or `black` — kept by `KioskHub` so a
+screen that joins in the middle of a service is not blank until the next fire
+(DECISIONS §68, CLAUDE.md rule 43). `stage_next` is deliberately not retained: it is
+a monitor-only extra and must not stand in for the content it accompanies. Neither is
+`stage_alert`, for the same reason and one more: an instruction to a person is about a
+moment, and a tablet rejoining ten minutes later must not be handed it. Because
+`clear` and `black` are published through the same door, joining late can never undo
+a panic control.
 
 **Every kind needs a verdict per client, and two of them are `false` on purpose.** `stage_next`
 and `stage_alert` are for the platform, not the room: the first is the verse coming up, the

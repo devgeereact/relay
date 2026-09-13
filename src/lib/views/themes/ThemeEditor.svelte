@@ -21,6 +21,7 @@
     BUILTIN_THEMES,
     THEME_PREVIEW_TEMPLATE,
     THEME_SAMPLE_CONTENT,
+    THEME_FONTS,
   } from '../../themes.js';
   import { customThemes, loadThemes, saveTheme } from '../../stores/capture.js';
 
@@ -35,12 +36,7 @@
   let dirty = false;
   let tab = 'type'; // type | colour | motion
 
-  const FONTS = [
-    { value: 'var(--f-serif)', label: 'Serif' },
-    { value: 'var(--f-body)', label: 'Body (sans)' },
-    { value: 'var(--f-display)', label: 'Display' },
-    { value: 'var(--f-head)', label: 'Heading (Inter)' },
-  ];
+  const FONTS = THEME_FONTS; // one list, shared with the gallery's inspector
 
   // ONE register of the keys a theme may pin, each with the words the rail uses
   // and the tab that owns it. The rail, the tab strip and the "clear" control all

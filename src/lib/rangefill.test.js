@@ -15,6 +15,8 @@
 // `input` alone is a painter that is correct until the moment the operator
 // changes what they are looking at.
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { rangeFill, fillPercent } from './rangefill.js';
 
 /** A real `<input type=range>`, because the action reads min/max/value off it. */
@@ -94,5 +96,51 @@ describe('rangeFill — the action', () => {
     el.value = '70';
     el.dispatchEvent(new Event('input'));
     expect(rp(el)).toBe('10%');
+  });
+});
+
+// `--rp` being right is only half the control. The other half is the STYLESHEET
+// reading it — and that half has no component to test, so it is tested as text.
+//
+// This is the merge that made it necessary. `new_look_refresh` styled every
+// slider once, by element as well as by class, with the filled share drawn from
+// `--rp`. `audit/field-2026-09-13` had independently fixed the same white-track
+// defect with its own `input[type="range"]` block. Both survived the merge, the
+// audit's block sat LATER in the file at equal specificity, and it won: every
+// bare range input in Settings, Templates and Themes went back to a flat track
+// that paints the same at every value. Nothing above this line would have
+// noticed — `--rp` was still correct, and it was still being ignored.
+describe('app.css — one slider block, and it stays the only one', () => {
+  const css = readFileSync(resolve(__dirname, '../app.css'), 'utf8');
+
+  /**
+   * Every rule whose selector list names the bare `input[type=range]` ELEMENT —
+   * the ones that set the control's own box. Pseudo-element rules
+   * (`::-webkit-slider-thumb` and friends) are a different surface and there are
+   * properly several of those.
+   */
+  const boxRules = () =>
+    // A selector can hold no brace, so `[^{}]*` before the `{` IS the selector —
+    // no need to anchor on the previous rule's `}`, and anchoring on it was
+    // wrong: consuming that `}` made the scanner skip every other rule, and it
+    // reported one block while two were present.
+    [...css.matchAll(/([^{}]*)\{([^{}]*)\}/g)]
+      .map((m) => ({ sel: m[1].trim(), body: m[2] }))
+      .filter(({ sel }) =>
+        sel.split(',').some((s) => /^input\[type=["']?range["']?\]$/.test(s.trim())),
+      );
+
+  it('sets the slider box exactly once', () => {
+    expect(boxRules().map((r) => r.sel)).toHaveLength(1);
+  });
+
+  it('paints the filled share from --rp, so the track follows the value', () => {
+    expect(css).toMatch(/slider-runnable-track[\s\S]{0,200}var\(--rp/);
+  });
+
+  it('gives the input a real box, not a bar-sized one', () => {
+    // A 4px-tall input is a 4px pointer target, and a near-miss on a live
+    // console lands on whatever is underneath it.
+    expect(boxRules()[0].body).toMatch(/height:\s*18px/);
   });
 });
