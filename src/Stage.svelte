@@ -8,6 +8,12 @@
   let content = null;
   let visible = false;
   let note = ''; // operator's confidence-monitor note for the live cue
+  // A WORD TO THE PREACHER. Takes the whole screen until the operator clears it.
+  // It lives here, in the stage renderer, which is what makes "no congregation
+  // screen can show it" a property of the system rather than a promise: the
+  // output page has an explicit `false` verdict for this message kind
+  // (r6-contracts.test.js).
+  let alert = '';
   let next = null; // { label, text } — the "up next" preview
   let connected = false;
   let ws = null;
@@ -142,6 +148,10 @@
       note = '';
       cdTo = null;
       next = null;
+    } else if (m.kind === 'stage_alert') {
+      // `text: null` (or empty) clears it. An alert is an instruction, not a
+      // state of the wall, so nothing here is retained or restored on reconnect.
+      alert = (m.text || '').trim();
     } else if (m.kind === 'stage_next') {
       next = m.label || m.text ? { label: m.label || '', text: m.text || '' } : null;
     }
@@ -191,7 +201,11 @@
     </button>
   </header>
   <main>
-    {#if visible && cdTo}
+    {#if alert}
+      <!-- THE WHOLE SCREEN. A preacher reads this from a platform, mid-sentence,
+           without looking for it. -->
+      <div class="alert" role="status" aria-live="assertive">{alert}</div>
+    {:else if visible && cdTo}
       {#if content.reference && !cdFinished}<div class="ref">{content.reference}</div>{/if}
       <div class="verse countdown">{cdFinished ? (cdDone || '0:00') : cdText}</div>
       {#if note}<div class="note"><span class="note-lbl">Note</span>{note}</div>{/if}
@@ -275,7 +289,16 @@
   .status.on i { box-shadow: 0 0 8px currentColor; animation: p 1.7s ease-in-out infinite; }
   @keyframes p { 0%, 100% { opacity: 1; } 50% { opacity: .4; } }
   .clock { font-family: var(--f-mono); font-size: 13px; color: var(--v-dim); }
-  main { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 24px; gap: 18px; min-height: 0; }
+  /* NOTHING LEAVES THE SCREEN (docs/REBRAND.md §5). The reading takes what is
+     left and scrolls INSIDE itself, so the header — the clock, the connection
+     state — cannot be pushed off the top by a long passage.
+
+     The spec says clip. This scrolls instead, deliberately: on a platform monitor
+     the two are the same because the reading is sized to fit, and on the
+     preacher's phone, which is the other thing this page is, clipping would take
+     the end of a passage away from the person reading it aloud. */
+  main { flex: 1 1 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    text-align: center; padding: 24px; gap: 18px; min-height: 0; overflow: auto; overscroll-behavior: contain; }
   .ref { font-family: var(--f-mono); font-size: clamp(13px, 3.5vw, 20px); letter-spacing: .18em; text-transform: uppercase; color: var(--v-amber); }
   .verse { font-family: var(--f-serif); font-size: clamp(26px, 7vw, 64px); line-height: 1.28; color: var(--v-txt); max-width: 16ch; }
   /* The DEFAULT resting state of the preacher's phone — the thing on screen before
@@ -285,6 +308,34 @@
   .countdown { font-family: var(--f-mono); font-variant-numeric: tabular-nums; font-weight: 700;
     font-size: clamp(56px, 20vw, 160px); color: var(--v-amber); line-height: 1; letter-spacing: .02em; max-width: none; }
   /* Operator's cue note — confidence-monitor only, never on the main output. */
+  /* A WORD TO THE PREACHER — docs/REBRAND.md §5. The pulse is the point: a
+     platform is a bright place and a flat red panel reads as part of the set. */
+  .alert {
+    /* FIXED, and above everything. This is read by somebody mid-sentence in front
+       of a congregation; it does not share the screen with a clock. */
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+    display: grid;
+    place-items: center;
+    padding: 4cqw;
+    text-align: center;
+    font-family: var(--f-body);
+    font-weight: 700;
+    font-size: 8.5cqw;
+    line-height: 1.15;
+    color: #fff;
+    text-shadow: 0 0.02em 0.06em rgba(0, 0, 0, 0.75);
+    background: #c8121c;
+    overflow: hidden;
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .alert { animation: stagealert 1.4s ease-in-out infinite; }
+  }
+  @keyframes stagealert {
+    0%, 100% { background: #c8121c; }
+    50% { background: #7a0a11; }
+  }
   .note { display: inline-flex; align-items: center; gap: 10px; max-width: 30ch; margin-top: 4px;
     padding: 10px 16px; border-radius: 12px; background: rgba(255,176,0,.1);
     border: 1px solid rgba(255,176,0,.32); color: var(--v-amber2);

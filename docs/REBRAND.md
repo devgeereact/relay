@@ -237,7 +237,7 @@ gates in the phases section are green on it — `cargo test`, `npx vitest run`, 
 | 3 | The object inspector | **done** | object tab strip (wrapping), Position group with real numbers, Duplicate (deep copy), Reset this object, two-step Delete. `layerops.test.js` 14, `templateinspector.test.js` 3, suite 1032 |
 | 4 | Roles and the look register | **done** | a screen may follow the content look (DECISIONS §70), "Used for" on the template, a tag on each gallery card. `e2e::r4_a_screen_may_follow_the_content_look`, suite 1034 / cargo 668 |
 | 5 | Lower thirds | **partly done** | three starters (Name · Lyric · Scripture), each keyed, each its own template. A non-hex shape fill no longer paints black. `layers.test.js` +6, `templatestyle.test.js` +3, suite 1043. **Band-gives-ground not built** |
-| 6 | Stage monitor | not started | |
+| 6 | Stage monitor | **partly done** | a word to the preacher (new `stage_alert` hub message, stage-only by contract), the reading can no longer push the clock off the top. `e2e::r5_a_word_to_the_preacher_reaches_the_stage_and_not_a_rehearsal`, cargo 669, suite 1043. **Switchable zones and the stacked rail clock not built** |
 | 7 | Countdown | not started | |
 | 8 | Transitions | not started | |
 | 9 | Search | not started | |
@@ -301,6 +301,26 @@ was found while checking: a shape fill that is not a hex (a gradient, a CSS var,
 that resolves to one) was parsed two characters at a time with a fallback of 0 per component, so
 it rendered as **black** at the requested alpha. Silently, and looking deliberate. The layer most
 likely to carry a gradient is a lower-third band, and that is the layer keyed over a live camera.
+
+**Phase 6 built the half that carries a guarantee.** "A word to the preacher" is a new hub
+message rather than content, which is what makes *no congregation screen can show it* a property
+of the system: `r6-contracts.test.js` requires every hub message to have an explicit verdict per
+client, and the output page's verdict is `false`. It is suppressed in a rehearsal like every
+other publisher here — the defect `stage_next` had once, where the wall does not move so the
+sandbox looks intact while the preacher's own tablet is handed a practice message. It is
+deliberately **not retained** (rule 43 retains what decides what a screen is SHOWING): a tablet
+reconnecting ten minutes later must not be handed an instruction meant for a moment that passed.
+
+**One deviation, on purpose.** The spec says the stage clips; this scrolls the reading inside
+itself instead. On a platform monitor the two are identical because the reading is sized to fit,
+and on the preacher's PHONE — which is the other thing this page is — clipping would take the end
+of a passage away from the person reading it aloud. What the spec is really asking for is that
+the header cannot be pushed off the top, and that is what changed.
+
+**Switchable zones and the stacked rail clock are not built.** Zones are a per-screen setting
+with nowhere yet to persist them, and the three-pair rail needs the same container-inside-a-
+container concept phases 5 and 12 are waiting on. Offering a switch that saves nothing is the
+defect phase 4 just closed.
 
 **Carried forward, deliberately.** Phase 1 owns `src/app.css`, and the shared layer is now
 token-only: every literal radius there reads `--v-r-*`. Components still hold about sixty

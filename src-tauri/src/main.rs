@@ -401,6 +401,7 @@ fn main() {
             service_lock,
             set_service_lock,
             set_channel_template,
+            send_stage_alert,
             list_monitors,
             open_channel_output,
             auto_open_outputs,
@@ -5233,6 +5234,32 @@ fn set_channel_template<R: tauri::Runtime>(
         // is told to paint something that could not be read.
         (Some(_), None) => {}
     }
+    Ok(())
+}
+
+/// A WORD TO THE PREACHER: take over the stage monitor with one line of text.
+///
+/// Whitespace is not a message — a blank send CLEARS, which is also what the
+/// Clear button does, so an operator who empties the box and presses Send gets
+/// the obvious result rather than a red screen with nothing on it.
+///
+/// The line is capped. A stage monitor renders this at 8.5cqw across the whole
+/// screen; a pasted paragraph is not a word to the preacher, it is a wall of type
+/// nobody can read from a platform.
+#[tauri::command]
+fn send_stage_alert<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    text: Option<String>,
+) -> error::Result<()> {
+    const MAX: usize = 140;
+    let line = text.unwrap_or_default();
+    let line = line.trim();
+    let msg = if line.is_empty() {
+        None
+    } else {
+        Some(line.chars().take(MAX).collect::<String>())
+    };
+    channels::stage_alert(&app, msg);
     Ok(())
 }
 

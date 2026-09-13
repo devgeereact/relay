@@ -862,6 +862,25 @@ pub fn stage_next<R: tauri::Runtime>(
     publish_kiosk(app, json);
 }
 
+/// A WORD TO THE PREACHER — the whole stage screen, and no other screen at all.
+///
+/// `text: None` clears it. Deliberately NOT retained by the hub: rule 43 retains
+/// the frames that decide what a screen is SHOWING (`content`, `clear`, `black`),
+/// and an alert is an instruction to a person rather than a state of the wall. A
+/// tablet reconnecting ten minutes later must not be handed a message meant for a
+/// moment that has passed.
+///
+/// Suppressed in a rehearsal, like every other publisher here — see `stage_next`
+/// for what that cost the one time it was missed.
+pub fn stage_alert<R: tauri::Runtime>(app: &tauri::AppHandle<R>, text: Option<String>) {
+    if rehearsing(app) {
+        println!("rehearsal: stage_alert SUPPRESSED — nothing left the machine");
+        return;
+    }
+    let json = serde_json::json!({ "kind": "stage_alert", "text": text }).to_string();
+    publish_kiosk(app, json);
+}
+
 fn publish_kiosk<R: tauri::Runtime>(app: &tauri::AppHandle<R>, msg: String) {
     if let Some(hub) = app.try_state::<KioskHub>() {
         hub.publish(msg);

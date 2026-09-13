@@ -91,6 +91,7 @@
     getSensitivity,
     setSensitivity,
     pushAnnouncement,
+    sendStageAlert,
     verseRepeatCount,
     readErrors,
   } from '../stores/capture.js';
@@ -489,6 +490,35 @@
   let annMsg = '';
   let annArmed = false;
   let annArmT;
+  // A WORD TO THE PREACHER — the stage monitor, and nothing else. `stageShowing`
+  // is what this console SENT, not what the tablet is displaying: the stage page
+  // reports nothing back, and a Clear button that claimed to know would be a
+  // status line that reads the same when it is wrong (rule 35).
+  let stageMsg = '';
+  let stageErr = '';
+  let stageShowing = false;
+  async function sendToPreacher() {
+    const line = stageMsg.trim();
+    if (!line) return;
+    stageErr = '';
+    try {
+      await sendStageAlert(line);
+      stageShowing = true;
+    } catch (e) {
+      stageErr = humanError(e);
+    }
+  }
+  async function clearToPreacher() {
+    stageErr = '';
+    try {
+      await sendStageAlert(null);
+      stageShowing = false;
+      stageMsg = '';
+    } catch (e) {
+      stageErr = humanError(e);
+    }
+  }
+
   async function sendAnnouncement() {
     const text = annMsg.trim();
     if (!text) return;
@@ -1587,6 +1617,25 @@
             {annArmed ? 'Confirm?' : 'Send'}
           </button>
         </div>
+
+        <!-- A WORD TO THE PREACHER. The stage monitor only — no congregation
+             screen can render it (docs/REBRAND.md §5). -->
+        <div class="sb cd">
+          <span>To preacher</span>
+          <input
+            class="cd-msg"
+            type="text"
+            placeholder="One line, stage monitor only"
+            bind:value={stageMsg}
+            aria-label="Word to the preacher — stage monitor only"
+            on:keydown={(e) => e.key === 'Enter' && sendToPreacher()}
+            disabled={!$capture.available} />
+          <button class="cd-go" on:click={sendToPreacher}
+            disabled={!$capture.available || !stageMsg.trim()}>Send</button>
+          <button class="cd-go" on:click={clearToPreacher}
+            disabled={!$capture.available || !stageShowing}>Clear</button>
+        </div>
+        {#if stageErr}<p class="cd-err" role="alert">{stageErr}</p>{/if}
 
         <span class="klbl sec">Audio monitor</span>
         <div class="amon">

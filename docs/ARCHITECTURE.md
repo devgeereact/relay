@@ -214,9 +214,15 @@ service lock · update safety · diagnostics · models.
 | `rehearsal://changed` | Rehearsal was turned on or off. Pushed rather than polled, because every surface must agree about it at the same instant |
 
 Networked clients get the content events as JSON frames over the WS hub
-(`{kind:"content"|"clear"|"black"|"stage_next"|"channel_template", …}`), and send exactly three
-kinds back — `hello`, `beat`, `rendered` — none of which can carry content
+(`{kind:"content"|"clear"|"black"|"stage_next"|"stage_alert"|"channel_template", …}`), and send
+exactly three kinds back — `hello`, `beat`, `rendered` — none of which can carry content
 ([SECURITY.md](SECURITY.md) T4).
+
+**Every kind needs a verdict per client, and two of them are `false` on purpose.** `stage_next`
+and `stage_alert` are for the platform, not the room: the first is the verse coming up, the
+second is a word an operator sends the preacher mid-sermon. Neither may render on a congregation
+screen, and that is held by `r6-contracts.test.js` rather than by where the code happens to
+live — it fails on any new hub message that no client has an explicit answer for.
 
 ---
 

@@ -2025,3 +2025,62 @@ fn r4_a_screen_may_follow_the_content_look() {
         "assigning must carry the template, not a null: {msg}"
     );
 }
+
+/// A WORD TO THE PREACHER reaches the stage monitor, and a rehearsal holds it.
+///
+/// Two separate guarantees, and they fail in opposite directions:
+///
+///   - it must ARRIVE, or the operator types a message to somebody standing in
+///     front of a congregation and nothing happens;
+///   - it must not arrive during a REHEARSAL. The same defect `stage_next` had:
+///     the congregation wall does not move, so the sandbox looks intact, while
+///     the preacher's own tablet is handed a message from a practice run.
+///
+/// "No congregation screen can show it" is held on the other side, by
+/// `r6-contracts.test.js`, which requires every hub message to have an explicit
+/// per-client verdict — the output page's verdict for this one is `false`.
+#[test]
+fn r5_a_word_to_the_preacher_reaches_the_stage_and_not_a_rehearsal() {
+    let app = app();
+    let h = app.handle().clone();
+    let mut kiosk = qa::Kiosk::attach(&h);
+
+    // Assert arrival FIRST, so this cannot pass by the publish path being broken.
+    super::send_stage_alert(h.clone(), Some("  Wrap up — 5 minutes  ".into())).expect("send");
+    settle();
+    let sent = kiosk
+        .next()
+        .expect("the stage monitor must get the message");
+    assert!(
+        sent.contains("\"kind\":\"stage_alert\"") && sent.contains("Wrap up — 5 minutes"),
+        "the stage monitor got something else: {sent}"
+    );
+    assert!(
+        !sent.contains("  Wrap up"),
+        "a line is trimmed before it is 8.5cqw across somebody's monitor: {sent}"
+    );
+
+    // Blank clears rather than painting a red screen with nothing on it.
+    super::send_stage_alert(h.clone(), Some("   ".into())).expect("clear");
+    settle();
+    let cleared = kiosk.next().expect("clearing is also a message");
+    assert!(
+        cleared.contains("\"kind\":\"stage_alert\"") && cleared.contains("\"text\":null"),
+        "whitespace must clear the alert, not send it: {cleared}"
+    );
+
+    set_rehearsal(
+        h.clone(),
+        h.state::<Session>(),
+        h.state::<channels::Rehearsal>(),
+        true,
+    )
+    .expect("enter rehearsal");
+
+    super::send_stage_alert(h.clone(), Some("Rehearsing".into())).expect("send in rehearsal");
+    settle();
+    assert!(
+        kiosk.silent(),
+        "a rehearsal's word to the preacher escaped to a live stage monitor"
+    );
+}

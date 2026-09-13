@@ -1675,6 +1675,19 @@ return guardedRead('listOutputChannels', async (call) => {
  * GROUP 1 (throws). It is an operator action with a visible result; a failure
  * that is swallowed leaves the picker showing a look the screen is not wearing.
  */
+/**
+ * A WORD TO THE PREACHER — one line, the whole stage monitor, and no other
+ * screen (docs/REBRAND.md §5). Empty or whitespace clears it.
+ *
+ * GROUP 1 (throws). The operator is sending a message to a person and is looking
+ * at the result; a failure that is swallowed leaves them believing the preacher
+ * has been told something they have not.
+ */
+export async function sendStageAlert(text) {
+const call = await invoke();
+await call('send_stage_alert', { text: text ?? null });
+}
+
 export async function setChannelTemplate(id, templateId) {
 const call = await invoke();
 await call('set_channel_template', { id, templateId: templateId ?? null });
