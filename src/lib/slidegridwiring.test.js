@@ -51,7 +51,18 @@ describe('the grid is rendered, and its presses go through the arbiter', () => {
     const body = src.slice(src.indexOf('async function fireCell('), src.indexOf('const gridPress'));
     expect(body).toMatch(/return fireSlide\(item, cell\.slideIdx\);/);
     expect(body).toMatch(/await manualFire\(cell\.reference\);/);
-    expect(body).not.toMatch(/fireContent\(/);
+    // A SONG cell — staged by hand from the Live rail — has no reference to
+    // resolve, so it takes `fireContent`, which is the SAME wrapper the plan's
+    // song cues take (Live::fireSlide). That is still not a new path; what would
+    // be is a payload built here. The list is closed on purpose: every branch of
+    // `fireCell` must name one of these three wrappers and nothing else.
+    const wrappers = [...body.matchAll(/\b(fireSlide|manualFire|fireContent|fireMedia)\(/g)].map((m) => m[1]);
+    expect(new Set(wrappers)).toEqual(new Set(['fireSlide', 'manualFire', 'fireContent']));
+    // …and the verse branch is NOT allowed to become one of them: a reference
+    // must be resolved by the backend from the active translation, never fired
+    // as whatever text this pane happened to load.
+    const verse = body.slice(body.indexOf("if (!cell.reference) return;"));
+    expect(verse).not.toMatch(/fireContent\(/);
   });
 
   it('a fire that fails is reported — the arbiter is given somewhere to put it', () => {
@@ -61,10 +72,20 @@ describe('the grid is rendered, and its presses go through the arbiter', () => {
   // A press armed a beat ago, landing after a blackout, is a verse appearing on a
   // wall the operator just took down. Rule 15's family: a panic control that can
   // be undone 190ms later is not a panic control.
-  it('the panic controls and the teardown both disarm a pending press', () => {
-    const after = (fn) => src.slice(src.indexOf(fn), src.indexOf(fn) + 400);
-    expect(after('async function clearAll() {')).toMatch(/gridPress\.cancel\(\);/);
-    expect(after('async function blackAll() {')).toMatch(/gridPress\.cancel\(\);/);
+  //
+  // Live no longer owns a Clear screens button — the dock does, one row below, on
+  // every workspace. So the disarm cannot hang off a handler in this file: it
+  // watches the STORE, which is where Esc, the dock button and a spoken clear all
+  // land. Watching the button would have left three of the four ways a wall gets
+  // cleared able to be undone 190ms later.
+  it('a wall going clear disarms a pending press, however it was cleared', () => {
+    const watch = src.slice(src.indexOf('unsubLive = live.subscribe('), src.indexOf('unsubLive = live.subscribe(') + 500);
+    expect(watch).toMatch(/if \(wasLive && !now\) \{/);
+    expect(watch).toMatch(/gridPress\.cancel\(\);/);
+    // The preacher's "up next" must not outlive the content it was about, and
+    // that one reports its own failure rather than going quiet.
+    expect(watch).toMatch(/setStageNext\(null, null\)/);
+    expect(watch).toMatch(/\.catch\(/);
     expect(src.slice(src.indexOf('onDestroy(('), src.indexOf('onDestroy((') + 700))
       .toMatch(/gridPress\.cancel\(\);/);
   });

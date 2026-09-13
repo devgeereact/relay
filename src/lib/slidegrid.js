@@ -94,6 +94,30 @@ export function passageCells(verses) {
 }
 
 /**
+ * A song, as cells — one section each.
+ *
+ * Staged by hand from the Live rail, which is the case this exists for: the
+ * congregation is singing something nobody planned for. The words travel with
+ * the cell because a song has no canonical reference to resolve from — unlike a
+ * verse, there is no second copy in the database to fire by name.
+ *
+ * @param {{title?:string, sections?:Array<{tag?:string,label?:string,text?:string}>}} song
+ */
+export function songCells(song) {
+  return (song?.sections ?? []).map((s, i) => ({
+    key: `s:${song?.id ?? song?.title ?? ''}:${i}`,
+    n: i + 1,
+    label: s.label || s.tag || song?.title || '',
+    text: s.text || '',
+    tag: s.tag || '',
+    kind: 'song',
+    cueId: null,
+    slideIdx: i,
+    reference: null,
+  }));
+}
+
+/**
  * What is staged right now.
  *
  * A plan wins when one is open — it is the thing the operator deliberately
@@ -104,14 +128,36 @@ export function passageCells(verses) {
  * empty it is: no plan and no verse is "nothing staged", a plan whose cues are
  * all empty is a different problem.
  *
- * @returns {{ title: string, cells: Cell[], source: 'plan'|'passage'|'none' }}
+ * A HAND PICK OUTRANKS THE PLAN, and only a hand pick. `handPicked` is set when
+ * the operator chose this chapter in the Live rail, and a song can only get here
+ * that way — both are the most recent deliberate act, so the grid shows them.
+ * What must never displace a plan is a DETECTION: the preacher quoting something
+ * is not the operator asking for it, and `handPicked` stays false on that path.
+ *
+ * @returns {{ title: string, cells: Cell[], source: 'plan'|'passage'|'song'|'none' }}
  */
-export function gridSource({ planOpen, planTitle, items, slidesOf, verses, passageTitle }) {
-  if (planOpen) {
+export function gridSource({
+  planOpen,
+  planTitle,
+  items,
+  slidesOf,
+  verses,
+  passageTitle,
+  song = null,
+  handPicked = false,
+}) {
+  if (song) {
+    return { title: song.title || 'Song', cells: songCells(song), source: 'song' };
+  }
+  if (planOpen && !handPicked) {
     return { title: planTitle || 'Plan', cells: planCells(items, slidesOf), source: 'plan' };
   }
   const cells = passageCells(verses);
   if (cells.length) return { title: passageTitle || '', cells, source: 'passage' };
+  // A hand-picked chapter that has not arrived (or would not load) must not blank
+  // an open plan and tell the operator nothing is staged. The plan is still the
+  // truthful answer until the verses are actually here.
+  if (planOpen) return { title: planTitle || 'Plan', cells: planCells(items, slidesOf), source: 'plan' };
   return { title: '', cells: [], source: 'none' };
 }
 
