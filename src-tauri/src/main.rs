@@ -5179,33 +5179,59 @@ fn list_output_channels(db: tauri::State<'_, Db>) -> error::Result<Vec<db::Outpu
 /// reload and no URL change. Native windows get a `channel://retemplate` event; kiosk
 /// / OBS clients get a `channel_template` WS message they filter by their own channel.
 #[tauri::command]
-fn set_channel_template(
-    app: tauri::AppHandle,
+fn set_channel_template<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     db: tauri::State<'_, Db>,
     kiosk: tauri::State<'_, channels::KioskHub>,
     id: i64,
-    template_id: i64,
+    template_id: Option<i64>,
 ) -> error::Result<()> {
+    // `None` means THIS SCREEN HAS NO LOOK OF ITS OWN and follows the content look
+    // (DECISIONS §70). Until this was possible every screen always had a template,
+    // and since a screen's own template wins over a content-type default (§29), the
+    // content-look map could be filled in, saved, and do nothing on every screen in
+    // the building.
+    //
     // DB write + resolve the new template JSON under one lock, then release before
     // emitting (never hold a lock across emit — CLAUDE.md rule #2).
     let tjson = {
         let conn = db.0.lock()?;
         db::set_channel_template(&conn, id, template_id)?;
-        db::get_template(&conn, template_id)?.and_then(|t| serde_json::to_string(&t).ok())
+        match template_id {
+            Some(tid) => db::get_template(&conn, tid)?.and_then(|t| serde_json::to_string(&t).ok()),
+            None => None,
+        }
     };
-    if let Some(j) = tjson {
-        if let Ok(tpl) = serde_json::from_str::<serde_json::Value>(&j) {
+    match (template_id, tjson) {
+        (Some(tid), Some(j)) => {
+            if let Ok(tpl) = serde_json::from_str::<serde_json::Value>(&j) {
+                let _ = app.emit(
+                    "channel://retemplate",
+                    serde_json::json!({ "channel": id, "template": tpl }),
+                );
+            }
+            kiosk.publish(format!(
+                r#"{{"kind":"channel_template","channel":{id},"template":{j}}}"#
+            ));
+            // Keep the hub's per-template cache current so a fresh kiosk connect on
+            // this template id renders the up-to-date template too.
+            kiosk.cache_template(tid, &j);
+        }
+        // CLEARING IS ALSO NEWS. A screen that is already open has to be told it is
+        // now following the content look; staying silent leaves it wearing the look
+        // it was given until something happens to reload it.
+        (None, _) => {
             let _ = app.emit(
                 "channel://retemplate",
-                serde_json::json!({ "channel": id, "template": tpl }),
+                serde_json::json!({ "channel": id, "template": serde_json::Value::Null }),
             );
+            kiosk.publish(format!(
+                r#"{{"kind":"channel_template","channel":{id},"template":null}}"#
+            ));
         }
-        kiosk.publish(format!(
-            r#"{{"kind":"channel_template","channel":{id},"template":{j}}}"#
-        ));
-        // Keep the hub's per-template cache current so a fresh kiosk connect on this
-        // template id renders the up-to-date template too.
-        kiosk.cache_template(template_id, &j);
+        // A template id that resolves to nothing: the row is written, and no screen
+        // is told to paint something that could not be read.
+        (Some(_), None) => {}
     }
     Ok(())
 }

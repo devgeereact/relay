@@ -126,6 +126,9 @@
   const obsUrl = (c) =>
     `http://${lanIp}:8032/output.html?channel=${c.id}&template_id=${c.template_id ?? 1}&name=${encodeURIComponent(c.name)}`;
   const templateOf = (c) => $templates.find((t) => t.id === c.template_id) || null;
+  /** What a content look currently resolves to, by name — for a following screen. */
+  const lookName = (kind) =>
+    $templates.find((t) => t.id === $contentTemplates[kind])?.name ?? 'the default look';
   const monitorOf = (c) => {
     const i = parseInt(c.display_target ?? '', 10);
     return Number.isFinite(i) ? monitors.find((m) => m.index === i) || null : null;
@@ -210,7 +213,10 @@
     }
   }
 
-  const assignTemplate = (c, e) => act(() => setChannelTemplate(c.id, parseInt(e.target.value, 10)));
+  // '' is the operator choosing FOLLOW THE CONTENT LOOK — a screen with no look
+  // of its own (DECISIONS §70). It is a value, not an empty field.
+  const assignTemplate = (c, e) =>
+    act(() => setChannelTemplate(c.id, e.target.value === '' ? null : parseInt(e.target.value, 10)));
   const assignDisplay = (c, e) => act(() => setChannelDisplay(c.id, e.target.value === '' ? null : e.target.value));
   const openNative = (c) => act(() => openChannelOutput(c.id));
   const closeNative = (c) => act(() => closeChannelOutput(c.id));
@@ -377,7 +383,7 @@
 
               <span class="ch-ty r-mono">{kindOf(c)}<i>{transportOf(c)}</i></span>
 
-              <span class="ch-tpl r-mono">{templateOf(c)?.name ?? 'None'}</span>
+              <span class="ch-tpl r-mono">{c.template_id == null ? 'Content look' : (templateOf(c)?.name ?? 'None')}</span>
 
               <!-- Resolution is shown ONLY for a native screen with a display
                    assigned, because that is the only case where Relay knows one:
@@ -491,7 +497,7 @@
           <dl class="ch-info">
             <dt>Type</dt><dd>{kindOf(sel)}</dd>
             <dt>Transport</dt><dd>{transportOf(sel)}</dd>
-            <dt>Template</dt><dd>{templateOf(sel)?.name ?? 'None'}</dd>
+            <dt>Template</dt><dd>{sel.template_id == null ? 'Follows the content look' : (templateOf(sel)?.name ?? 'None')}</dd>
             {#if isNative(sel)}
               <dt>Display</dt><dd>{monitorOf(sel) ? `${monitorOf(sel).name} · ${monitorOf(sel).width}×${monitorOf(sel).height}` : 'Primary'}</dd>
             {:else if !isNdi(sel)}
@@ -512,12 +518,25 @@
           </dl>
 
           <div class="r-lbl ch-flbl">Template</div>
-          <select class="r-select ch-fin" value={sel.template_id} on:change={(e) => assignTemplate(sel, e)} disabled={!$capture.available}>
+          <select class="r-select ch-fin" value={sel.template_id ?? ''} on:change={(e) => assignTemplate(sel, e)} disabled={!$capture.available}>
+            <option value="">Follow the content look</option>
             {#each $templates as t (t.id)}
               <option value={t.id}>{t.name}</option>
             {/each}
           </select>
-          <p class="ch-finhint">This screen's own look. A content look (Scripture, Lyrics…) overrides it for that content type.</p>
+          {#if sel.template_id == null}
+            <p class="ch-finhint">
+              This screen has no look of its own: each kind of content wears whatever the
+              content look says. Right now —
+              {#each CONTENT_KINDS as k, i}{i ? ' · ' : ' '}{k.label}: {lookName(k.key)}{/each}
+            </p>
+          {:else}
+            <p class="ch-finhint">
+              This screen's own look. It wins over a content look — only a cue that pins its
+              own template overrides it (DECISIONS §29). To let the content looks decide here,
+              choose <b>Follow the content look</b>.
+            </p>
+          {/if}
 
           {#if isNative(sel)}
             <div class="r-lbl ch-flbl">Display</div>

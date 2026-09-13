@@ -15,6 +15,7 @@
   import { createEventDispatcher, onMount, onDestroy } from 'svelte';
   import { rangeFill } from '../../rangefill.js';
   import { duplicateLayer, resetLayer } from '../../layerops.js';
+  import { contentTemplates, setContentTemplate, loadContentTemplates } from '../../stores/capture.js';
   import TemplateRender from '../../TemplateRender.svelte';
   import { review, PREVIEW_DISTANCES_M, previewScale } from '../../legibility.js';
   import TemplatePreviewOverlay from '../../TemplatePreviewOverlay.svelte';
@@ -43,6 +44,7 @@
   let addOpen = false;
 
   onMount(async () => {
+    loadContentTemplates();
     if (!$templates.length) await loadTemplates();
     loadThemes();
     load(templateId);
@@ -229,6 +231,20 @@
     edit.layout.shows = shows;
     delete edit.layout.noMedia; // superseded by the explicit list
     edit = edit;
+  }
+  // USED FOR. Which kinds of content wear this template on any screen set to
+  // follow the content look (DECISIONS §70). Toggling writes through
+  // `setContentTemplate`, which is the ONE writer of that map — three surfaces
+  // used to each hold their own copy and overwrite one another.
+  let lookErr = '';
+  async function toggleUsedFor(kind) {
+    const mine = $contentTemplates[kind] === edit?.id;
+    lookErr = '';
+    try {
+      await setContentTemplate(kind, mine ? null : edit.id);
+    } catch (e) {
+      lookErr = humanError(e);
+    }
   }
   function set(k, v) { if (sel) { sel[k] = v; edit = edit; } }
   /** A geometry number, clamped to the canvas so an object cannot be typed off it. */
@@ -806,6 +822,21 @@
                online wall shows everything; a stage / confidence monitor might show
                only scripture, songs and the timer — when a picture or announcement
                fires, this screen ignores it and holds what it had. -->
+          <span class="r-lbl te-showlbl">Used for</span>
+          <div class="te-showgrid">
+            {#each CONTENT_KINDS as k}
+              <button
+                class="te-showchip"
+                class:on={$contentTemplates[k.key] === edit.id}
+                on:click={() => toggleUsedFor(k.key)}
+              >
+                <span class="te-showtick" aria-hidden="true">{$contentTemplates[k.key] === edit.id ? '✓' : ''}</span>{k.label}
+              </button>
+            {/each}
+          </div>
+          <p class="te-fnote">A kind ticked here wears this template on every screen set to <b>Follow the content look</b>. A screen with a look of its own keeps it.</p>
+          {#if lookErr}<p class="te-fwarn" role="alert">{lookErr}</p>{/if}
+
           <span class="r-lbl te-showlbl">Shows on this screen</span>
           <div class="te-showgrid">
             {#each CONTENT_KINDS as k}

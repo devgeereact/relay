@@ -1668,10 +1668,16 @@ return guardedRead('listOutputChannels', async (call) => {
 }, []);
 }
 
-/** Assign a template to a channel. */
+/**
+ * Assign a template to a screen — or `null`, which means THIS SCREEN HAS NO LOOK
+ * OF ITS OWN and follows the content look (DECISIONS §70).
+ *
+ * GROUP 1 (throws). It is an operator action with a visible result; a failure
+ * that is swallowed leaves the picker showing a look the screen is not wearing.
+ */
 export async function setChannelTemplate(id, templateId) {
 const call = await invoke();
-await call('set_channel_template', { id, templateId });
+await call('set_channel_template', { id, templateId: templateId ?? null });
 }
 
 

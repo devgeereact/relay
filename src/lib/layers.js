@@ -216,6 +216,12 @@ export function templateShows(template, kind) {
  * take the override; a keyed override on a keyed channel is fine.
  */
 export function resolveOutputTemplate(channelTpl, override, pinned = false) {
+  // NO TEMPLATE OF ITS OWN = this screen follows the content look (DECISIONS §70).
+  // It has to be answered before the transparency law below, because
+  // `isKeyedTemplate(null)` is true — a template with no background layer is keyed,
+  // and an absent template has no layers at all — so a following screen would have
+  // "kept its keyed template", which is nothing, and painted an empty frame.
+  if (!channelTpl) return override ?? null;
   if (!override) return channelTpl;
   // TRANSPARENCY LAW: a keyed (lower-third) screen never goes opaque for an opaque
   // override — the camera it keys over must not be covered. Wins over everything.

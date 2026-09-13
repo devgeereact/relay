@@ -235,7 +235,7 @@ gates in the phases section are green on it — `cargo test`, `npx vitest run`, 
 | 1 | Tokens and chrome | **done** | palette, radius, type scale, one slider / switch / colour well, the four control colours. `tokencontrast.test.js` 7 green, `rangefill.test.js` 9 new, suite 974 |
 | 2 | Template model | **done** | `templatemodel.js` (migrate · resolve · slideBG · fit estimate), migration on three doors, the renderer reads the model. 34 + 6 new tests, suite 1014 |
 | 3 | The object inspector | **done** | object tab strip (wrapping), Position group with real numbers, Duplicate (deep copy), Reset this object, two-step Delete. `layerops.test.js` 14, `templateinspector.test.js` 3, suite 1032 |
-| 4 | Roles and the look register | not started | |
+| 4 | Roles and the look register | **done** | a screen may follow the content look (DECISIONS §70), "Used for" on the template, a tag on each gallery card. `e2e::r4_a_screen_may_follow_the_content_look`, suite 1034 / cargo 668 |
 | 5 | Lower thirds | not started | |
 | 6 | Stage monitor | not started | |
 | 7 | Countdown | not started | |
@@ -269,6 +269,20 @@ template actually has, which is the whole set for a full-screen look. The kind-s
 the spec names — a lower third's **Band**, a stage monitor's **Zones**, a composite's **Camera /
 Word bg / Word / Ref** — arrive with the phases that build those kinds (5, 6 and 12). Listing
 them now would be a tab strip offering objects no renderer draws.
+
+**Phase 4 found the reason the look register existed and did nothing.** `set_channel_template`
+took a non-null id, so every screen always had a template of its own — and since a screen's own
+template wins over a content-type default (§29), the content-look map could be filled in, saved,
+and change nothing on any screen in the building. The sentence under the picker said the
+opposite of what the code did, which is how it survived. A screen can now be set to **Follow the
+content look**; §29 is unchanged for a screen that has one.
+
+**The ten roles are not all here.** The register is `CONTENT_KINDS` — scripture, songs, media,
+announcements, timer — which is what the fire path, the database and the matrix already speak.
+The spec's remaining five (`preservice`, `stage`, `lower.name`, `lower.lyric`, `lower.bible`,
+`supersource`) name kinds nothing renders yet; they arrive with phases 5, 6 and 12. A role
+offered before its renderer exists is a control that saves a setting nothing reads, which is the
+defect this phase just closed.
 
 **Carried forward, deliberately.** Phase 1 owns `src/app.css`, and the shared layer is now
 token-only: every literal radius there reads `--v-r-*`. Components still hold about sixty

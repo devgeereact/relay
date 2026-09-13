@@ -1953,3 +1953,75 @@ fn a_rehearsed_decision_is_not_counted_as_one() {
         "a rehearsal is not evidence: {kinds:?}"
     );
 }
+
+/// DECISIONS §70 — a screen with no look of its own follows the content look.
+///
+/// The defect this holds closed is not a crash and was invisible to every
+/// existing test: `set_channel_template` took an `i64`, so a screen always had a
+/// template, and since a screen's own template wins over a content-type default
+/// (§29) the whole content-look map could be filled in and do nothing. A test
+/// that only checked "assigning a template works" passed throughout.
+#[test]
+fn r4_a_screen_may_follow_the_content_look() {
+    let app = app();
+    let h = app.handle().clone();
+    let mut kiosk = qa::Kiosk::attach(&h);
+
+    let (chan, tpl) = {
+        let db = h.state::<Db>();
+        let conn = db.0.lock().expect("db");
+        let ch = db::list_output_channels(&conn).expect("channels");
+        let c = ch.first().expect("a fresh install seeds screens");
+        (c.id, c.template_id)
+    };
+    assert!(
+        tpl.is_some(),
+        "a seeded screen starts with a look of its own"
+    );
+
+    // Set it to follow.
+    super::set_channel_template(
+        h.clone(),
+        h.state::<Db>(),
+        h.state::<channels::KioskHub>(),
+        chan,
+        None,
+    )
+    .expect("a screen may be set to follow");
+
+    {
+        let dbs = h.state::<Db>();
+        let conn = dbs.0.lock().expect("db");
+        let ch = db::list_output_channels(&conn).expect("channels");
+        assert_eq!(
+            ch.iter().find(|c| c.id == chan).and_then(|c| c.template_id),
+            None,
+            "the screen now has no look of its own"
+        );
+    }
+
+    // CLEARING IS NEWS. A screen that is already open has to be told, or it keeps
+    // wearing the look it was given until something reloads it.
+    let msg = kiosk
+        .next()
+        .expect("clearing a screen's template is published");
+    assert!(
+        msg.contains("\"kind\":\"channel_template\"") && msg.contains("\"template\":null"),
+        "the screens must be told the template was cleared: {msg}"
+    );
+
+    // And back again: giving it a look of its own publishes the template itself.
+    super::set_channel_template(
+        h.clone(),
+        h.state::<Db>(),
+        h.state::<channels::KioskHub>(),
+        chan,
+        tpl,
+    )
+    .expect("a screen may be given its own look again");
+    let msg = kiosk.next().expect("assigning a template is published");
+    assert!(
+        msg.contains("\"kind\":\"channel_template\"") && !msg.contains("\"template\":null"),
+        "assigning must carry the template, not a null: {msg}"
+    );
+}

@@ -167,9 +167,12 @@
 
   // The outputs a template is assigned to — REAL: a channel stores template_id.
   $: assignedChannels = sel ? channels.filter((c) => c.template_id === sel.id) : [];
-  // READ-ONLY: the content types this template is the default look for. The ONE
-  // writer of the content-type→template map is the Outputs hub matrix (Decision
-  // §25); every other surface, this gallery included, only subscribes.
+  // READ-ONLY HERE: the content types this template is the look for. The one
+  // WRITER is `setContentTemplate` (capture.js) — called by the Outputs hub matrix
+  // and by the template editor's "Used for" (Decision §25, §70). This gallery only
+  // subscribes, which is what keeps every surface showing the same answer.
+  /** The content kinds a given template is the look for. */
+  $: usedFor = (id) => CONTENT_KINDS.filter((k) => $contentTemplates[k.key] === id);
   $: defaultForKinds = sel
     ? CONTENT_KINDS.filter((k) => $contentTemplates[k.key] === sel.id)
     : [];
@@ -331,6 +334,12 @@
                 <div class="tg-metatext">
                   <span class="tg-name">{t.name}</span>
                   <span class="tg-sub r-mono">{kindLabel(t)} · 16:9</span>
+                  <!-- USED FOR. A tag on the card, so "which template does
+                       scripture wear" is answerable by looking rather than by
+                       opening each one. -->
+                  {#if usedFor(t.id).length}
+                    <span class="tg-usedfor">{usedFor(t.id).map((k) => k.label).join(' · ')}</span>
+                  {/if}
                 </div>
                 <div class="tg-cardbtns">
                   <!-- Star = THE default template (the fallback look every slide
@@ -566,6 +575,9 @@
   .tg-check{ position:absolute; top:8px; left:8px; width:20px; height:20px; border-radius:50%;
     background:var(--v-accent-fill); color:#fff; display:grid; place-items:center; }
 
+  .tg-usedfor{ display:block; margin-top:3px; font-size:var(--v-fs-cap); font-weight:600;
+    letter-spacing:var(--v-tr-caps); text-transform:uppercase; color:var(--v-sel);
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .tg-meta{ display:flex; align-items:center; gap:8px; padding:10px 11px; flex:1; min-width:0; }
   .tg-metatext{ flex:1; min-width:0; }
   .tg-name{ display:block; font-size:var(--v-fs-b1); font-weight:500; color:var(--v-txt);

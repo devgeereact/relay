@@ -3023,3 +3023,62 @@ the output. §56's own record notes that the first F-1 diagnosis was wrong and i
 test passed with the supposed fix reverted; that is why this one was reverted on purpose
 before being believed. Three further tests hold the mid-passage case, §56's guarantee through
 the new function, and `chapter_named` in Swahili.
+
+## 70. A screen may have no look of its own (2026-09-13)
+
+**Numbered 70 deliberately.** §67–69 are taken on `audit/field-2026-09-13` (PR #60), which is
+not merged yet; picking the next free number on `main` would have produced two §67s the day
+those branches meet.
+
+### What was wrong
+
+`set_channel_template` took `template_id: i64`. Not an `Option` — an id. So every output screen
+always had a template of its own, from the moment it was created.
+
+§29 says a screen's own template **wins** over a content-type default, and only a cue that pins
+its own template overrides the screen. Both halves are right and neither is changed here. But
+put them together with a column that could never be empty and the consequence is this:
+
+> **The content-look map could not apply to anything.**
+
+An operator could open Outputs, set "Scripture wears Nocturne", save it, and watch every screen
+in the building carry on wearing what it already had. Five settings, a matrix to edit them in, a
+store, a backend command, a `content_template_id` lookup on the fire path — and no screen that
+could ever read the answer. The one visible symptom was a sentence under the template picker
+that said the opposite of what the code did:
+
+> *"This screen's own look. A content look (Scripture, Lyrics…) overrides it for that content
+> type."*
+
+That sentence was true before §29 reversed the order and was never updated, so the feature did
+nothing and the interface explained why it should have worked.
+
+### The decision
+
+A screen may be assigned **no template**, which means: follow the content look. `template_id` is
+now `Option<i64>` across the command, the database helper and the picker, and the column has
+been nullable since the schema was written (`template_id INTEGER REFERENCES templates(id)`), so
+this is not a migration.
+
+- **Clearing is broadcast.** `channel://retemplate` and the kiosk `channel_template` message
+  both carry `template: null`. A screen that is already open has to be told it is now
+  following; staying silent leaves it wearing the look it was given until something reloads it.
+  Both readers used to test the template for truthiness, which drops a null silently.
+- **`resolveOutputTemplate` answers the empty case FIRST**, before the transparency law.
+  `isKeyedTemplate(null)` is true — a template with no background layer is keyed, and an absent
+  template has no layers at all — so a following screen would have "kept its keyed template",
+  which is nothing, and painted an empty frame.
+- **The output page falls back to `DEFAULT_TEMPLATE`** when a following screen has no content
+  look either. A screen painting nothing is worse than a screen painting the default look.
+- **"Used for" moved onto the template.** The map was editable only in the Outputs matrix, which
+  is the right place to see all five at once and the wrong place to answer "is this the one
+  scripture wears?" while designing a look. `setContentTemplate` remains the ONE writer (§25);
+  the editor is a second surface onto the same store, not a second copy of the state, and the
+  gallery tags each card with what it is used for.
+
+### What this does not change
+
+§29 stands: a screen that HAS a template keeps it, and only a pinned cue template overrides it.
+The transparency law stands: a keyed screen never goes opaque for an override. What changed is
+that "no template" is now a state an operator can choose, and therefore a content look is now a
+setting that can do something.

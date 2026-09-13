@@ -154,6 +154,19 @@ describe('resolveOutputTemplate (per-screen template is authoritative; cue choic
     const otherLook = { layout: { layers: [makeLayer('background', { fill: '#0a0a0a' }), makeLayer('text', { bind: 'verse' })] } };
     expect(resolveOutputTemplate(opaque, otherLook, false)).toBe(opaque); // screen wins over the look
   });
+  it('a screen with NO template of its own wears the content look', () => {
+    // DECISIONS §70. Until a screen could be set to follow, `set_channel_template`
+    // took a non-null id, so every screen always had a template — and since the
+    // screen's own template wins (§29), the content-look map could be filled in,
+    // saved, and change nothing on any screen in the building.
+    expect(resolveOutputTemplate(null, opaque, false)).toBe(opaque);
+  });
+  it('a following screen with no content look either falls back, rather than resolving to nothing', () => {
+    // The output page turns this into DEFAULT_TEMPLATE. What matters here is that
+    // the resolver does not invent one — a screen painting nothing is worse than
+    // a screen painting the default look.
+    expect(resolveOutputTemplate(null, null, false)).toBe(null);
+  });
   it('a PINNED cue choice overrides an opaque screen (the operator picked it for that cue)', () => {
     const cueTpl = { layout: { layers: [makeLayer('background', { fill: '#123456' }), makeLayer('text', { bind: 'verse' })] } };
     expect(resolveOutputTemplate(opaque, cueTpl, true)).toBe(cueTpl);
