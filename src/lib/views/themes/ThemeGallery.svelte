@@ -47,6 +47,14 @@
     .filter((t) => !q.trim() || t.name.toLowerCase().includes(q.trim().toLowerCase()));
   $: sel = all.find((t) => t.id === selId) || null;
 
+  // The rail's rows. Derived rather than written out twice, so a count and the
+  // list it filters to can never disagree.
+  $: sets = [
+    { key: 'all', label: 'All themes', count: all.length },
+    { key: 'builtin', label: 'Built-in', count: BUILTIN_THEMES.length },
+    { key: 'custom', label: 'Custom', count: $customThemes.length },
+  ];
+
   // Two-step delete — Tauri's webview has no reliable confirm().
   let delArm = null;
   let delArmT;
@@ -102,29 +110,49 @@
     if (t.builtin) return duplicate(t); // builtins are read-only → edit the copy
     dispatch('edit', { id: t.id });
   }
+
+  // A one-word read of the theme's background, so the inspector states a fact
+  // rather than printing a raw CSS string an operator cannot parse at a glance.
+  function bgLabel(t) {
+    const bg = t?.style?.background;
+    if (!bg) return 'None (transparent)';
+    if (typeof bg === 'string' && bg.includes('gradient')) return 'Gradient';
+    return 'Solid colour';
+  }
 </script>
 
+<!-- THE THEMES WORKSPACE (docs/REBRAND.md §2), in the same three columns as
+     Templates: a rail of what you can narrow by, the themes, an inspector. -->
 <div class="th-shell">
   <!-- A screen-reader operator navigates by heading. This tab had none at all,
        so there was nothing to jump to and no way to tell where you had landed.
        Visually hidden because the tab bar is already the visible title — the
        heading is for the reader that cannot see it. -->
   <h1 class="sr-only">Themes</h1>
-  <section class="th-main">
-    <div class="th-tabs">
-      <button class="th-tab" class:on={filter === 'all'} on:click={() => (filter = 'all')}>
-        All Themes<span class="th-tabn r-mono">{all.length}</span>
-      </button>
-      <button class="th-tab" class:on={filter === 'builtin'} on:click={() => (filter = 'builtin')}>
-        Built-in<span class="th-tabn r-mono">{BUILTIN_THEMES.length}</span>
-      </button>
-      <button class="th-tab" class:on={filter === 'custom'} on:click={() => (filter = 'custom')}>
-        Custom<span class="th-tabn r-mono">{$customThemes.length}</span>
-      </button>
+
+  <aside class="th-pane th-rail">
+    <div class="th-panehead"><span class="r-lbl">Sets</span></div>
+    <div class="th-railscroll r-scroll">
+      {#each sets as s (s.key)}
+        <button class="th-prow" class:on={filter === s.key} on:click={() => (filter = s.key)}>
+          <span class="th-pn">{s.label}</span>
+          <span class="th-pv r-mono">{s.count}</span>
+        </button>
+      {/each}
+    </div>
+    <!-- The one sentence that explains what a theme IS relative to a template.
+         It belongs beside the list, not at the foot of the inspector where it
+         was only read by somebody who had already selected something. -->
+    <p class="th-railnote">A theme is the style layer <b>beneath</b> templates. A template overrides it key by key, so a theme sets the defaults and never the last word.</p>
+  </aside>
+
+  <section class="th-pane th-main">
+    <div class="th-panehead">
+      <span class="r-lbl">Themes</span>
       <span class="th-spring"></span>
       <input type="file" accept=".json,application/json" bind:this={fileInput} on:change={onImportFile} style="display:none" />
       <button class="r-btn ghost sm" on:click={() => fileInput.click()}>Import</button>
-      <button class="r-btn primary sm" on:click={newTheme}>＋ New Theme</button>
+      <button class="r-btn primary sm" on:click={newTheme}>＋ New theme</button>
     </div>
 
     <div class="th-toolbar">
@@ -144,11 +172,14 @@
               on:dblclick={() => edit(t)}>
               <div class="th-thumb">
                 <TemplateRender template={THEME_PREVIEW_TEMPLATE} theme={t} content={THEME_SAMPLE_CONTENT} />
-                {#if t.builtin}<span class="th-badge r-mono">Built-in</span>{/if}
               </div>
               <div class="th-meta">
-                <span class="th-name">{t.name}</span>
                 <div class="th-swatch" style="--sw:{t.style?.accent || '#888'}" title="Accent"></div>
+                <span class="th-name">{t.name}</span>
+                <!-- NOT A STATUS: it says where the theme came from, so it is
+                     the muted step and a hairline, never one of the four
+                     colours that carry a promise. -->
+                {#if t.builtin}<span class="th-badge r-mono">Built-in</span>{/if}
               </div>
             </div>
           {/each}
@@ -161,19 +192,21 @@
     {#if err}<div class="th-err" role="alert">{err}</div>{/if}
   </section>
 
-  <aside class="th-insp">
+  <aside class="th-pane th-insp">
     {#if !sel}
-      <div class="th-insphead"><span class="th-inspttl">Theme Preview</span></div>
+      <div class="th-panehead"><span class="r-lbl">Theme</span></div>
       <div class="th-empty r-empty">Pick a theme to preview it.</div>
     {:else}
-      <div class="th-insphead">
-        <span class="th-inspttl">Theme Preview</span>
-        {#if sel.builtin}<span class="th-badge r-mono static">Built-in</span>{/if}
+      <div class="th-panehead">
+        <span class="r-lbl">Theme</span>
+        <span class="th-spring"></span>
+        {#if sel.builtin}<span class="th-badge r-mono">Built-in</span>{/if}
       </div>
       <div class="th-inspbody r-scroll">
         <div class="th-preview">
           <TemplateRender template={THEME_PREVIEW_TEMPLATE} theme={sel} content={THEME_SAMPLE_CONTENT} />
         </div>
+        <div class="th-selname">{sel.name}</div>
 
         <div class="th-btns">
           {#if sel.builtin}
@@ -182,94 +215,111 @@
             <button class="r-btn primary sm" on:click={() => edit(sel)}>Edit theme</button>
             <button class="r-btn ghost sm" on:click={() => duplicate(sel)}>Duplicate</button>
           {/if}
-        </div>
-        <div class="th-btns">
-          <button class="r-btn ghost sm" on:click={() => exportTheme(sel)} title="Save this theme as a portable .relaytheme.json file">Export theme</button>
+          <button class="r-btn ghost sm" on:click={() => exportTheme(sel)} title="Save this theme as a portable .relaytheme.json file">Export</button>
         </div>
 
         <dl class="th-info">
           <dt>Name</dt><dd>{sel.name}</dd>
           <dt>Kind</dt><dd>{sel.builtin ? 'Built-in (read-only)' : 'Custom'}</dd>
-          <dt>Typeface</dt><dd>{sel.style?.font || '—'}</dd>
-          <dt>Accent</dt><dd><span class="th-inline-sw" style="--sw:{sel.style?.accent || '#888'}"></span>{sel.style?.accent || '—'}</dd>
+          <dt>Typeface</dt><dd>{sel.style?.font || 'Renderer default'}</dd>
+          <dt>Background</dt><dd>{bgLabel(sel)}</dd>
+          <dt>Accent</dt><dd><span class="th-inline-sw" style="--sw:{sel.style?.accent || '#888'}"></span>{sel.style?.accent || 'Renderer default'}</dd>
         </dl>
 
-        {#if !sel.builtin}
+        {#if sel.builtin}
+          <p class="th-hint th-rohint">Built-in themes are read-only. Duplicate this one to get an editable copy.</p>
+        {:else}
           <div class="r-lbl th-flbl">Actions</div>
           <div class="th-actions">
+            <!-- Two-step, because Tauri's webview has no working confirm() and a
+                 delete that reports success without ever showing a dialog is
+                 exactly the defect rule 41 exists for. -->
             <button class="r-btn ghost sm th-del" class:arm={delArm === sel.id} on:click={() => del(sel)}>
-              {delArm === sel.id ? 'Click again to confirm' : 'Delete'}
+              {delArm === sel.id ? 'Delete — sure?' : 'Delete'}
             </button>
           </div>
         {/if}
-
-        <p class="th-hint">A theme is applied to a template in the <b>Templates</b> editor. Templates always override the theme, key by key.</p>
       </div>
     {/if}
   </aside>
 </div>
 
 <style>
-  .th-shell{ display:grid; grid-template-columns:minmax(0,1fr) 330px; gap:var(--v-sp-md); height:100%; min-height:0; }
-  @media (max-width:1180px){ .th-shell{ grid-template-columns:1fr; height:auto; } }
-  .th-main{ display:flex; flex-direction:column; min-height:0; gap:12px; }
+  /* THREE COLUMNS, the same desk as Templates and the template editor. */
+  .th-shell{ display:grid; grid-template-columns:206px minmax(0,1fr) 312px; gap:12px; height:100%; min-height:0; }
+  @media (max-width:1180px){ .th-shell{ grid-template-columns:176px minmax(0,1fr) 276px; } }
+  @media (max-width:980px){ .th-shell{ grid-template-columns:1fr; height:auto; } }
 
-  .th-tabs{ display:flex; align-items:center; gap:6px; flex:0 0 auto; flex-wrap:wrap; }
-  .th-tab{ display:inline-flex; align-items:center; gap:7px; padding:7px 13px; border-radius:var(--v-r-md);
-    background:var(--v-surf); border:1px solid var(--v-line); color:var(--v-dim); cursor:pointer;
-    font-size:var(--v-fs-b2); font-weight:500; transition:.12s; }
-  .th-tab:hover{ border-color:var(--v-line2); color:var(--v-txt); }
-  .th-tab.on{ background:var(--v-accent-fill); border-color:var(--v-accent-fill); color:var(--v-accent-ink); }
-  .th-tabn{ font-size:var(--v-fs-cap); padding:1px 6px; border-radius:99px; background:var(--v-surf3); color:var(--v-dim); }
-  .th-tab.on .th-tabn{ background:rgba(0,0,0,.28); color:var(--v-accent-ink); }
+  .th-pane{ display:flex; flex-direction:column; min-height:0; overflow:hidden;
+    background:var(--v-surf); border:1px solid var(--v-line); border-radius:var(--v-r-lg); }
+  .th-panehead{ display:flex; align-items:center; gap:8px; padding:0 10px; height:34px; flex:0 0 auto;
+    border-bottom:1px solid var(--v-line); }
   .th-spring{ flex:1; }
 
-  .th-toolbar{ display:flex; align-items:center; gap:10px; flex:0 0 auto; }
-  .th-search{ display:flex; align-items:center; gap:8px; background:var(--v-bg); border:1px solid var(--v-line2);
-    border-radius:var(--v-r-md); padding:0 11px; height:32px; flex:1 1 260px; max-width:340px; }
-  .th-search:focus-within{ border-color:var(--v-accent-line); box-shadow:0 0 0 3px var(--v-accent-soft); }
+  /* ── the rail: dense rows, hairline seams ─────────────────────────────── */
+  .th-railscroll{ flex:1; min-height:0; overflow-y:auto; }
+  .th-prow{ display:flex; align-items:center; gap:8px; width:100%; height:26px; padding:0 10px;
+    border:0; border-bottom:1px solid var(--v-line); background:none; color:var(--v-dim);
+    font-family:var(--f-body); font-size:var(--v-fs-b2); text-align:left; cursor:pointer;
+    box-shadow:inset 2px 0 0 transparent;
+    transition:background var(--v-dur) var(--v-ease), color var(--v-dur) var(--v-ease); }
+  .th-prow:hover{ background:var(--v-surf2); color:var(--v-txt); }
+  /* Selection is steel blue and nothing else is (REBRAND §1). */
+  .th-prow.on{ background:var(--v-sel-soft); color:var(--v-txt); box-shadow:inset 2px 0 0 var(--v-sel); }
+  .th-pn{ flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .th-pv{ flex:0 0 auto; font-size:var(--v-fs-cap); color:var(--v-faint); }
+  .th-railnote{ margin:0; padding:10px; border-top:1px solid var(--v-line); flex:0 0 auto;
+    font-size:var(--v-fs-cap); line-height:1.5; color:var(--v-faint); }
+  .th-railnote b{ color:var(--v-dim); }
+
+  /* ── the middle column ────────────────────────────────────────────────── */
+  .th-toolbar{ display:flex; align-items:center; gap:8px; flex:0 0 auto; height:34px; padding:0 10px;
+    border-bottom:1px solid var(--v-line); }
+  .th-search{ display:flex; align-items:center; gap:7px; background:var(--v-bg); border:1px solid var(--v-line2);
+    border-radius:var(--v-r-sm); padding:0 9px; height:24px; flex:1 1 200px; max-width:280px; }
+  .th-search:focus-within{ border-color:var(--v-sel-line); }
   .th-search svg{ color:var(--v-faint); flex:0 0 auto; }
   .th-search input{ flex:1; min-width:0; background:transparent; border:0; outline:none; color:var(--v-txt); font-size:var(--v-fs-b2); }
   .th-search input::placeholder{ color:var(--v-faint); }
 
-  .th-scroll{ flex:1; min-height:0; overflow-y:auto; }
-  .th-grid{ display:grid; grid-template-columns:repeat(auto-fill, minmax(210px, 1fr)); gap:14px; padding-bottom:8px; }
-  .th-card{ display:flex; flex-direction:column; background:var(--v-surf); border:1px solid var(--v-line);
-    border-radius:var(--v-r-lg); overflow:hidden; cursor:pointer; transition:border-color .12s, box-shadow .12s; }
+  .th-scroll{ flex:1; min-height:0; overflow-y:auto; padding:10px; }
+  .th-grid{ display:grid; grid-template-columns:repeat(auto-fill, minmax(196px, 1fr)); gap:10px; }
+  .th-card{ display:flex; flex-direction:column; background:var(--v-surf2); border:1px solid var(--v-line);
+    border-radius:var(--v-r-md); overflow:hidden; cursor:pointer;
+    transition:border-color var(--v-dur) var(--v-ease); }
   .th-card:hover{ border-color:var(--v-line2); }
-  .th-card.sel{ border-color:var(--v-accent); box-shadow:0 0 0 1px var(--v-accent); }
+  .th-card.sel{ border-color:var(--v-sel); box-shadow:0 0 0 1px var(--v-sel); }
+  /* position:relative is load-bearing — TemplateRender's root is
+     position:absolute; inset:0 and supplies its own container-type. */
   .th-thumb{ position:relative; aspect-ratio:16/9; background:var(--v-void); overflow:hidden; flex:0 0 auto; }
-  .th-badge{ position:absolute; top:8px; right:8px; font-size:9px; letter-spacing:.04em; color:var(--v-txt);
-    background:rgba(10,10,10,.62); padding:2px 6px; border-radius:var(--v-r-sm); }
-  .th-badge.static{ position:static; background:var(--v-surf2); color:var(--v-faint); }
-  .th-meta{ display:flex; align-items:center; gap:8px; padding:10px 11px; }
-  .th-name{ flex:1; min-width:0; font-size:var(--v-fs-b1); font-weight:500; color:var(--v-txt);
+  .th-meta{ display:flex; align-items:center; gap:7px; padding:6px 8px; min-width:0; }
+  .th-name{ flex:1; min-width:0; font-size:var(--v-fs-b2); font-weight:600; color:var(--v-txt);
     overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .th-swatch{ width:16px; height:16px; border-radius:5px; background:var(--sw); border:1px solid var(--v-line2); flex:0 0 auto; }
+  .th-badge{ flex:0 0 auto; padding:1px 6px; border:1px solid var(--v-line2); border-radius:var(--v-r-sm);
+    font-size:9px; letter-spacing:var(--v-tr-caps); text-transform:uppercase; color:var(--v-faint); }
+  .th-swatch{ width:13px; height:13px; border-radius:2px; background:var(--sw); border:1px solid var(--v-line2); flex:0 0 auto; }
 
-  .th-err{ flex:0 0 auto; padding:9px 12px; border:1px solid var(--v-rose); border-radius:var(--v-r-md);
+  .th-err{ flex:0 0 auto; margin:8px; padding:8px 10px; border:1px solid var(--v-rose); border-radius:var(--v-r-sm);
     background:var(--v-rose-soft); color:var(--v-rose); font-size:var(--v-fs-cap); }
 
-  .th-insp{ display:flex; flex-direction:column; min-height:0; background:var(--v-surf);
-    border:1px solid var(--v-line); border-radius:var(--v-r-lg); overflow:hidden; }
-  .th-insphead{ display:flex; align-items:center; justify-content:space-between; gap:10px; padding:12px 14px;
-    border-bottom:1px solid var(--v-line); flex:0 0 auto; }
-  .th-inspttl{ font-family:var(--f-head); font-size:var(--v-fs-h3); font-weight:600; color:var(--v-txt); }
-  .th-inspbody{ flex:1; min-height:0; overflow-y:auto; padding:14px; }
+  /* ── inspector ────────────────────────────────────────────────────────── */
+  .th-inspbody{ flex:1; min-height:0; overflow-y:auto; padding:10px; }
   .th-preview{ position:relative; aspect-ratio:16/9; border-radius:var(--v-r-md); border:1px solid var(--v-line2);
     overflow:hidden; background:var(--v-void); }
-  .th-btns{ display:flex; gap:6px; margin-top:10px; }
-  .th-btns .r-btn{ flex:1; justify-content:center; }
-  .th-info{ display:grid; grid-template-columns:auto 1fr; gap:6px 12px; margin:14px 0 0; font-size:var(--v-fs-b2); }
+  .th-selname{ margin:8px 0 0; font-family:var(--f-head); font-size:var(--v-fs-h3); font-weight:600;
+    color:var(--v-txt); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .th-btns{ display:flex; flex-wrap:wrap; gap:5px; margin-top:8px; }
+  .th-btns .r-btn{ flex:1 1 auto; justify-content:center; }
+  .th-info{ display:grid; grid-template-columns:auto 1fr; gap:5px 12px; margin:12px 0 0; font-size:var(--v-fs-b2); }
   .th-info dt{ color:var(--v-faint); }
   .th-info dd{ margin:0; color:var(--v-txt); overflow-wrap:anywhere; display:flex; align-items:center; gap:6px; }
-  .th-inline-sw{ width:13px; height:13px; border-radius:3px; background:var(--sw); border:1px solid var(--v-line2); }
-  .th-flbl{ margin:15px 0 7px; }
-  .th-actions{ display:flex; gap:6px; }
+  .th-inline-sw{ width:12px; height:12px; border-radius:2px; background:var(--sw); border:1px solid var(--v-line2); flex:0 0 auto; }
+  .th-flbl{ margin:14px 0 6px; }
+  .th-actions{ display:flex; gap:5px; }
   .th-actions .r-btn{ flex:1 1 auto; justify-content:center; }
   .th-del{ color:var(--v-rose); }
   .th-del:hover, .th-del.arm{ border-color:var(--v-rose); background:var(--v-rose-soft); }
-  .th-hint{ margin:15px 0 0; font-size:var(--v-fs-cap); line-height:1.5; color:var(--v-faint); }
-  .th-hint b{ color:var(--v-dim); }
+  .th-hint{ margin:14px 0 0; font-size:var(--v-fs-cap); line-height:1.5; color:var(--v-faint); }
+  .th-rohint{ padding:8px 10px; border:1px solid var(--v-line2); border-radius:var(--v-r-sm); background:var(--v-surf2); }
   .th-empty{ margin:auto; padding:24px; text-align:center; }
 </style>
