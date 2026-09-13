@@ -77,6 +77,22 @@ describe('§3.1 · migrateStyle — the legacy keys leave, the facts stay', () =
     for (const k of LEGACY_STYLE_KEYS) expect(out[k]).toBeUndefined();
   });
 
+  it('maps the three old transition names onto the register', () => {
+    // A saved theme holds whichever of `fade` / `slide` / `zoom` its operator
+    // chose in the old picker. Dropping them would turn every one of those
+    // themes into a cut — losing a choice somebody made, silently, while
+    // looking like the upgrade worked.
+    expect(migrateStyle({ transition: 'fade' }).transition).toBe('crossfade');
+    expect(migrateStyle({ transition: 'slide' }).transition).toBe('slideup');
+    expect(migrateStyle({ transition: 'zoom' }).transition).toBe('materialise');
+  });
+
+  it('leaves a transition that is already current alone, and twice is once', () => {
+    expect(migrateStyle({ transition: 'pushleft' }).transition).toBe('pushleft');
+    const once = migrateStyle({ transition: 'fade' });
+    expect(migrateStyle(once)).toEqual(once);
+  });
+
   it('survives a template with no style at all', () => {
     expect(migrateStyle(undefined)).toEqual({});
     expect(migrateStyle(null)).toEqual({});

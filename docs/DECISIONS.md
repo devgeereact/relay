@@ -3082,3 +3082,55 @@ this is not a migration.
 The transparency law stands: a keyed screen never goes opaque for an override. What changed is
 that "no template" is now a state an operator can choose, and therefore a content look is now a
 setting that can do something.
+
+## 71. A transition is a template's choice, and a cut is the default (2026-09-13)
+
+### What was wrong
+
+Two halves of the same feature disagreed, and each looked finished from where it sat.
+
+`THEME_STYLE_KEYS` carried `transition` and `transitionMs`. The theme editor offered a picker
+(fade / slide / zoom) and a duration slider. Both saved. `TemplateRender` ignored them, and said
+so in a comment: *"`style.transition`/`transitionMs` are now ignored; the theme editor's
+transition control is a no-op by design."*
+
+That is a control that changes nothing, documented instead of fixed — the same class as the seven
+Settings controls in §69 and the content-look map in §70. An operator picks "Slide up", saves it,
+watches the wall cut, and has no way to tell a preference that did not take from a feature that
+does not work.
+
+`layers.js` also carried `slideRevealCss` — three modes, its own test, and no caller anywhere. A
+helper with tests and nothing rendering it reads exactly like working code.
+
+### Why transitions were removed in the first place
+
+They were, and for a real reason: a crossfade made the measured auto-fit read `scrollHeight`
+while the incoming slide still carried a transform, so a long verse was sized against a shape it
+was not going to settle at. The operator request that followed — *"quick as light, remove every
+animation"* — is also right about what a wall should do by default.
+
+### The decision
+
+Transitions come back as an explicit choice, and the default is a **cut**.
+
+- **Seven, in one register** (`src/lib/transitions.js`): Cut · Crossfade · Dissolve · Fade
+  through black · Push left · Slide up · Materialise. One pure function turns a mode and a
+  progress into inline CSS, so the renderer and the test share a definition (§27's `in:`-only
+  rule is unchanged — never a bidirectional `transition:`, which is what froze the wall on a
+  rapid re-fire).
+- **Only `opacity`, `transform` and `filter` are animated**, and that is asserted rather than
+  intended. None of the three moves `scrollHeight` or `clientHeight`, so the fitter measures the
+  same box whether or not a transition is running. A mode that animated width, padding or
+  font-size would bring the 2026 fit bug straight back.
+- **Every mode ends settled.** A transition that finishes at opacity 0.98, or with a leftover
+  blur, leaves the verse slightly wrong for as long as it is on the wall and nobody can say why.
+  Held by a test over all seven.
+- **Reduced motion is a cut**, not a shorter animation: the viewer asked for none.
+- **An unknown mode is a cut.** An imported theme from a newer version must not be able to stop a
+  verse rendering.
+- **The three old names are migrated, not dropped.** `fade` → `crossfade`, `slide` → `slideup`,
+  `zoom` → `materialise`, in `migrateStyle` (§3.1's one home). Dropping them would have turned
+  every saved theme into a cut — losing a choice somebody made, silently, while looking like the
+  upgrade worked.
+
+`slideRevealCss` is deleted along with its test, superseded rather than weakened.

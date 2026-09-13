@@ -115,7 +115,7 @@ A **channel** is a configured destination. A **template** is a layout + style + 
   "style": {
     "font_display": "Fraunces",
     "background": "radial-warm-dark",
-    "transition": "fade",
+    "transition": "crossfade",
     "transition_ms": 400
   }
 }

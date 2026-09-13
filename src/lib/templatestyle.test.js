@@ -249,3 +249,42 @@ describe('the countdown warning', () => {
     expect(cd.style.color).toBe('rgb(244, 81, 91)');
   });
 });
+
+// ── THE TRANSITION IS WIRED (docs/REBRAND.md §8) ───────────────────────────
+//
+// `transitions.test.js` holds what each mode looks like. This holds the thing a
+// pure test cannot: that the renderer actually hands Svelte a valid transition.
+// A wrong signature there throws at RENDER TIME — on a wall, on the first fire
+// of the service — and no amount of testing the CSS function would catch it.
+//
+// jsdom runs no animation frames the way a browser does, so this deliberately
+// does not assert on intermediate opacity: what is being checked is that a
+// template asking for a transition still renders its verse.
+describe('a template that asks for a transition', () => {
+  const withTransition = (transition, transitionMs) => ({
+    id: 8,
+    name: 'T',
+    layout: { regions: ['verse_text', 'reference'], align: 'center' },
+    style: { verseColor: '#ffffff', accent: '#ffb000', background: '#101010', transition, transitionMs },
+  });
+
+  it('renders the verse on a cut', () => {
+    const el = mount(withTransition('cut', 0), CONTENT);
+    expect(el.querySelector('.verse').textContent).toContain('For God so loved');
+  });
+
+  it('renders the verse on every animated mode', () => {
+    for (const mode of ['crossfade', 'dissolve', 'fadeblack', 'pushleft', 'slideup', 'materialise']) {
+      const el = mount(withTransition(mode, 250), CONTENT);
+      expect(el.querySelector('.verse'), mode).toBeTruthy();
+      app?.$destroy();
+      host?.remove();
+    }
+  });
+
+  it('renders the verse when a theme asks for a mode nothing knows', () => {
+    // An imported theme, or one from a newer version. It must cut, not crash.
+    const el = mount(withTransition('sparkle', 250), CONTENT);
+    expect(el.querySelector('.verse')).toBeTruthy();
+  });
+});

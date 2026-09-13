@@ -1,5 +1,6 @@
 <script>
   import { BG_STYLES } from '../../templatemodel.js';
+  import { TRANSITIONS, DEFAULT_TRANSITION } from '../../transitions.js';
   import { humanError } from '../../errors.js';
   import { rangeFill } from '../../rangefill.js';
   // Theme editor — edit ONE custom theme's style and see it live on the same
@@ -185,10 +186,10 @@
           </label>
           <label class="te-row">
             <span>Transition</span>
-            <select class="r-select" value={draft.style.transition || 'fade'} on:change={(e) => set('transition', e.target.value)}>
-              <option value="fade">Crossfade</option>
-              <option value="slide">Slide up</option>
-              <option value="zoom">Zoom</option>
+            <select class="r-select" value={draft.style.transition || DEFAULT_TRANSITION} on:change={(e) => set('transition', e.target.value)}>
+              {#each TRANSITIONS as t (t.id)}
+                <option value={t.id} title={t.hint}>{t.label}</option>
+              {/each}
             </select>
           </label>
           <label class="te-row">

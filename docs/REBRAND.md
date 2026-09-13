@@ -239,7 +239,7 @@ gates in the phases section are green on it — `cargo test`, `npx vitest run`, 
 | 5 | Lower thirds | **partly done** | three starters (Name · Lyric · Scripture), each keyed, each its own template. A non-hex shape fill no longer paints black. `layers.test.js` +6, `templatestyle.test.js` +3, suite 1043. **Band-gives-ground not built** |
 | 6 | Stage monitor | **partly done** | a word to the preacher (new `stage_alert` hub message, stage-only by contract), the reading can no longer push the clock off the top. `e2e::r5_a_word_to_the_preacher_reaches_the_stage_and_not_a_rehearsal`, cargo 669, suite 1043. **Switchable zones and the stacked rail clock not built** |
 | 7 | Countdown | **partly done** | one formatter (`formatCountdown`), one warning rule, read by the wall and the stage. `layers.test.js` +8, `templatestyle.test.js` +2, suite 1053. **Pause / ±1 / Reset not built** |
-| 8 | Transitions | not started | |
+| 8 | Transitions | **done** | seven in one register (`transitions.js`), played by the renderer, migrated from the three old names, reduced motion is a cut. DECISIONS §71. `transitions.test.js` 15 + 6 elsewhere, suite 1072 |
 | 9 | Search | not started | |
 | 10 | Library | not started | |
 | 11 | Settings | not started | |
@@ -339,6 +339,13 @@ says nothing. Reduced motion gets the glow without the pulse: the information is
 with the content; pausing and nudging need a countdown the engine OWNS rather than a timestamp it
 broadcast once, which is a backend model rather than a transport row. Clear already exists (the
 screen clears).
+
+**Phase 8 found two halves of a feature that each looked finished.** The theme editor offered a
+transition and a duration, both saved; the renderer ignored them and said so in a comment — a
+control that changes nothing, documented instead of fixed. And `layers.js` carried
+`slideRevealCss`: three modes, its own test, no caller. A helper with tests and nothing rendering
+it reads exactly like working code. Transitions now play, the default is a cut (which is what an
+operator asked for), and the old helper is deleted rather than left beside the new one.
 
 **Carried forward, deliberately.** Phase 1 owns `src/app.css`, and the shared layer is now
 token-only: every literal radius there reads `--v-r-*`. Components still hold about sixty

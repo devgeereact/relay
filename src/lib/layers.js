@@ -248,17 +248,6 @@ export function formatElapsed(ms) {
   return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
 }
 
-/** The inline CSS for the slide-in transition at progress `t` (0→1), for a given
- *  mode: 'slide' (rise) | 'zoom' (scale up) | anything else = 'fade'. Pure, so the
- *  renderer's `in:` transition and its test share one definition. Opacity always
- *  ramps with `t` so every mode also cross-fades. */
-export function slideRevealCss(mode, t) {
-  const o = `opacity:${t};`;
-  if (mode === 'slide') return `${o} transform:translateY(${(1 - t) * 4}cqh);`;
-  if (mode === 'zoom') return `${o} transform:scale(${0.92 + t * 0.08});`;
-  return o;
-}
-
 /** Format a remaining duration (ms). Positive shows time left (`M:SS`); once the
  *  service runs OVER the planned length it goes negative and shows `-M:SS`, so a
  *  preacher can see they are past time. Reuses formatElapsed for the magnitude. */

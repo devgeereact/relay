@@ -39,6 +39,16 @@ const LEGACY_MAP = {
 export const LEGACY_STYLE_KEYS = Object.keys(LEGACY_MAP);
 
 /**
+ * The three transition names the old picker wrote, mapped onto the register in
+ * `transitions.js`.
+ *
+ * A saved theme holds whichever of these its operator chose. Dropping them would
+ * turn every one of those themes into a cut — losing a choice somebody made,
+ * silently, while looking like the upgrade worked.
+ */
+const LEGACY_TRANSITIONS = { fade: 'crossfade', slide: 'slideup', zoom: 'materialise' };
+
+/**
  * Every per-element default the renderer used to inline.
  *
  * These are the values that shipped, not an improvement on them: changing one
@@ -102,6 +112,7 @@ export function migrateStyle(style) {
     }
     delete out[legacy];
   }
+  if (out.transition in LEGACY_TRANSITIONS) out.transition = LEGACY_TRANSITIONS[out.transition];
   return out;
 }
 

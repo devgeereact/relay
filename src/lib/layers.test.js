@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import TemplateRender from './TemplateRender.svelte';
-import { formatCountdown, countdownWarning, makeLayer, isLayered, isKeyedTemplate, boundValue, regionsToLayers, STARTERS, formatElapsed, formatRemaining, slideRevealCss } from './layers.js';
+import { formatCountdown, countdownWarning, makeLayer, isLayered, isKeyedTemplate, boundValue, regionsToLayers, STARTERS, formatElapsed, formatRemaining } from './layers.js';
 
 describe('layer model', () => {
   it('makes typed layers with sane defaults and unique ids', () => {
@@ -99,19 +99,6 @@ describe('layer model', () => {
     expect(formatRemaining(3600_000)).toBe('1:00:00');
   });
 
-  it('slideRevealCss ramps opacity for every mode, adds transform only for slide/zoom', () => {
-    // Fade: opacity only, no transform.
-    expect(slideRevealCss('fade', 0.5)).toBe('opacity:0.5;');
-    expect(slideRevealCss('fade', 1)).not.toContain('transform');
-    // Slide rises: at t=0 it is offset, at t=1 it lands.
-    expect(slideRevealCss('slide', 0)).toContain('translateY(4cqh)');
-    expect(slideRevealCss('slide', 1)).toContain('translateY(0cqh)');
-    // Zoom scales up into place.
-    expect(slideRevealCss('zoom', 0)).toContain('scale(0.92)');
-    expect(slideRevealCss('zoom', 1)).toContain('scale(1)');
-    // Every mode cross-fades (opacity tracks t).
-    for (const m of ['fade', 'slide', 'zoom']) expect(slideRevealCss(m, 0.3)).toContain('opacity:0.3');
-  });
 
   it('the preacher view carries a remaining-time layer', () => {
     const preacher = STARTERS.find((s) => s.key === 'preacher').make().layout.layers;

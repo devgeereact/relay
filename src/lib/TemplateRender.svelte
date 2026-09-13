@@ -19,6 +19,7 @@
   export let theme = null;
   import { applyTheme, themeById, templateThemeRef, BUILTIN_THEMES } from './themes.js';
   import { resolveStyle, slideBG, faceOf, fitScale } from './templatemodel.js';
+  import { transitionCss, transitionDuration, DEFAULT_TRANSITION } from './transitions.js';
   // Sound is OPT-IN per surface. This same renderer draws the Templates editor
   // preview, and editing a template must not blast video audio across the room —
   // so only a real output surface passes audio={true}.
@@ -560,13 +561,29 @@
     return `${f}, system-ui, sans-serif`;
   })();
 
-  // NO SLIDE TRANSITION — the wall CUTS instantly to each verse (operator
-  // request: "quick as light, remove every animation"). A crossfade also made the
-  // auto-fit measure `scrollHeight` while the incoming slide still carried a
-  // transform, so a long verse was sized wrong and overflowed the frame. Cutting
-  // means the fit always measures a settled slide. `{#key slideKey}` still swaps
-  // content — it just does so with no animation. `style.transition`/`transitionMs`
-  // are now ignored; the theme editor's transition control is a no-op by design.
+  // THE SLIDE TRANSITION (docs/REBRAND.md §8). A CUT unless the template or its
+  // theme asks for something else, because that is what an operator asked for
+  // ("quick as light, remove every animation") and what a wall should do when
+  // nobody has said otherwise.
+  //
+  // Transitions were removed from this renderer once, for a real reason: a
+  // crossfade made the auto-fit measure a slide that still carried a transform.
+  // `transitions.js` animates ONLY opacity, transform and filter, and none of the
+  // three moves `scrollHeight` or `clientHeight` — so the fitter measures the same
+  // box whether or not a transition is running. A mode that animated width,
+  // padding or font-size would bring the old bug straight back.
+  //
+  // Reduced motion is a CUT, not a faster animation: the viewer asked for none.
+  $: transitionMode = style.transition || DEFAULT_TRANSITION;
+  $: transitionMs = transitionDuration(transitionMode, style.transitionMs, reduceMotion);
+  const reduceMotion =
+    typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+      ? window.matchMedia('(prefers-reduced-motion: reduce)').matches
+      : false;
+  /** Svelte's transition contract, driven by the one pure function. */
+  function slideIn(node, { mode, duration }) {
+    return { duration, css: (t) => transitionCss(mode, t) };
+  }
 
   // Countdown: tick a local clock only while a target is set. The number updates
   // in place via its own reactive (`now`), which slideKey excludes — so ticks
@@ -820,7 +837,8 @@
       <div
         class="slide"
         class:lower-third={bandMode}
-        class:bandless={bandMode && !bandHasWords}>
+        class:bandless={bandMode && !bandHasWords}
+        in:slideIn={{ mode: transitionMode, duration: transitionMs }}>
         {#if scroll && show('verse_text') && content.text && !countdownTo}
           <!-- FOOTER TICKER (ProPresenter-style). A band pinned to the very
                bottom of the screen: an optional fixed label on the left, then the
