@@ -71,8 +71,8 @@ decision), [§6](#6-the-fix-process-start-to-finish) (what was actually changed)
 
 | | Command | Result |
 |---|---|---|
-| Frontend suite | `npx vitest run` | **965 passed**, 0 skipped, 71 files |
-| Rust suite | `cd src-tauri && cargo test` | **663 passed**, 0 failed, 17 ignored |
+| Frontend suite | `npx vitest run` | **1092 passed**, 0 skipped, 79 files |
+| Rust suite | `cd src-tauri && cargo test` | **674 passed**, 0 failed, 17 ignored |
 | End-to-end fire path | `cargo test e2e::` | **38 passed, 0 ignored** |
 | Format gate | `cargo fmt --all -- --check` | clean |
 | Lint gate (a CI gate on both platforms) | `cargo clippy --all-targets -- -D warnings` | clean |
@@ -94,8 +94,8 @@ or that changed their answer:
 
 | | Command | Result |
 |---|---|---|
-| Rust suite | `cd src-tauri && cargo test` | **663 passed**, 0 failed, 17 ignored |
-| Frontend suite | `npx vitest run` | **965 passed**, 71 files |
+| Rust suite | `cd src-tauri && cargo test` | **674 passed**, 0 failed, 17 ignored |
+| Frontend suite | `npx vitest run` | **1092 passed**, 79 files |
 | **Rust dependencies** | `cargo audit` | **0 vulnerabilities** (3 on the first run, 2026-09-04); 18 warnings, all unmaintained GTK3 **Linux** bindings |
 | **The kiosk hub's origin gate, on the packaged binary** | raw WebSocket handshakes with nine `Origin` values | `101` for none, `:8032` on two hosts, `:5032`, `tauri://localhost`; **`403`** for `evil.example.com`, `null`, a LAN host on `:3000`, an `https://` origin |
 | **Ranged media, on the packaged binary** | `curl -H 'Range: bytes=500-599' …/media/12` | `206` + `Content-Range: bytes 500-599/1024`, and the 100 bytes match the file exactly; a range past the end → `416` |
@@ -232,7 +232,7 @@ A single native binary. No server, no account, no cloud dependency on the live p
 
 | Layer | What is actually there |
 |---|---|
-| Shell | Tauri v2, one webview window; `src-tauri/src/main.rs` (5,832 lines) registers **133** commands |
+| Shell | Tauri v2, one webview window; `src-tauri/src/main.rs` (5,984 lines) registers **134** commands |
 | Engine | Rust — capture, DSP, whisper, detection, routing, rendering, all in-process |
 | UI | Svelte 4 + Vite, **48** components (47 reachable), **463** controls, one store (`capture.js`, 2,215 lines) |
 | Data | SQLite via `rusqlite`, **21** tables, schema version 2, migrations as ordered retryable rungs |
