@@ -233,7 +233,7 @@ gates in the phases section are green on it — `cargo test`, `npx vitest run`, 
 | # | Phase | State | Evidence |
 |---|---|---|---|
 | 1 | Tokens and chrome | **done** | palette, radius, type scale, one slider / switch / colour well, the four control colours. `tokencontrast.test.js` 7 green, `rangefill.test.js` 9 new, suite 974 |
-| 2 | Template model | not started | |
+| 2 | Template model | **done** | `templatemodel.js` (migrate · resolve · slideBG · fit estimate), migration on three doors, the renderer reads the model. 34 + 6 new tests, suite 1014 |
 | 3 | The object inspector | not started | |
 | 4 | Roles and the look register | not started | |
 | 5 | Lower thirds | not started | |
@@ -255,6 +255,14 @@ the repository wins where the two disagree:
 - **Radius.** Section 1 says "2px everywhere" and then "3px corners on cards"; the prototype,
   which was measured rather than sketched, uses 3px with 5px on containers. That is what
   shipped, and `--v-r-round` survives only for a slider thumb, a status dot and a switch.
+
+**Phase 2 departed from the spec once, and added one thing it did not ask for.** The spec's
+auto-fit is an estimate; this repository already MEASURES the box in the DOM, which is strictly
+better, so the estimate became the loop's seed rather than its replacement — same answer, far
+fewer forced reflows, and the first real use of the aspect argument. And `bgStyle` would have
+been a property no control could set, so the theme editor gained a Background style row (and
+`THEME_STYLE_KEYS` gained the key, without which the control would have saved into a draft the
+wall never receives).
 
 **Carried forward, deliberately.** Phase 1 owns `src/app.css`, and the shared layer is now
 token-only: every literal radius there reads `--v-r-*`. Components still hold about sixty

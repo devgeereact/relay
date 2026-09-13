@@ -18,6 +18,7 @@
   // regression on every existing call site.
   export let theme = null;
   import { applyTheme, themeById, templateThemeRef, BUILTIN_THEMES } from './themes.js';
+  import { resolveStyle, slideBG, faceOf, fitScale } from './templatemodel.js';
   // Sound is OPT-IN per surface. This same renderer draws the Templates editor
   // preview, and editing a template must not blast video audio across the room —
   // so only a real output surface passes audio={true}.
@@ -36,7 +37,12 @@
   // fallbacks (a literal template hits applyTheme's fast path and is unchanged).
   $: resolved = applyTheme(template, effectiveTheme);
   $: layout = resolved?.layout ?? {};
-  $: style = resolved?.style ?? {};
+  // THE MODEL, not a bag of keys. `resolveStyle` migrates the legacy
+  // whole-template properties onto their elements and fills every default in one
+  // place, so the editor's preview and the wall cannot disagree about what an
+  // unset property looks like (docs/REBRAND.md §3.1). It deliberately does NOT
+  // answer for `background` or alignment — see the transparency law below.
+  $: style = resolveStyle(resolved?.style ?? {});
 
   // ── LAYER MODE ─────────────────────────────────────────────────────────────
   // When a template carries `layout.layers`, render the free-form layer stack;
@@ -117,8 +123,8 @@
     layout.refFirst || (layout.regions?.[0] === 'reference' && !layout.lowerThird);
 
   // Base type sizes (cqw). Real fit is measured, not guessed — see fitText().
-  $: verseSize = parseFloat(style.verseSize) || 6;
-  $: refSize = parseFloat(style.refSize) || 2.6;
+  $: verseSize = style.verseSize;
+  $: refSize = style.refSize;
 
   // Auto-fit: after every render (and on container resize), shrink the verse +
   // reference until the content box no longer overflows, so scripture is NEVER
@@ -159,10 +165,10 @@
     // The countdown renders at 2× the verse size — fit from THAT base, not the
     // plain verse size, or it would be shrunk to half on every tick.
     const vBase = verse && verse.classList.contains('countdown') ? verseSize * 2 : verseSize;
-    if (verse) verse.style.fontSize = `${vBase}cqw`;
-    if (ref) ref.style.fontSize = `${refSize}cqw`;
-    let scale = 1;
-    let guard = 0;
+    const apply = (k) => {
+      if (verse) verse.style.fontSize = `${vBase * k}cqw`;
+      if (ref) ref.style.fontSize = `${refSize * k}cqw`;
+    };
     // BOTH DIMENSIONS. It only ever checked height, which is fine for a verse —
     // prose wraps, so too much text gets taller. A COUNTDOWN does not wrap: it
     // is one wide line of tabular digits, so `2:00` at 12cqw overflows sideways
@@ -170,10 +176,46 @@
     // loop never noticed. Same for a long unbroken word.
     const overflows = () =>
       box.scrollHeight > box.clientHeight + 1 || box.scrollWidth > box.clientWidth + 1;
+
+    // WHERE THE LOOP IS LIKELY TO LAND. Each measured step forces a synchronous
+    // reflow, so starting at 1 and shrinking costs one layout per 5% for a long
+    // passage — on the page that is on the wall. The estimate uses the same 0.95
+    // curve, the face's own advance and the box's REAL aspect, so it is a seed
+    // rather than an answer: the measurement below still decides.
+    let scale = 1;
+    if (!(verse && verse.classList.contains('countdown'))) {
+      const w = box.clientWidth || 0;
+      const h = box.clientHeight || 0;
+      if (w > 0 && h > 0) {
+        scale = fitScale({
+          text: verse ? verse.textContent || '' : '',
+          size: vBase,
+          face: faceOf(verseFontFamily),
+          aspect: w / h,
+          lineHeight: verseLineHeight,
+        });
+      }
+    }
+    apply(scale);
+
+    let guard = 0;
     while (overflows() && guard < 40) {
       scale *= 0.95;
-      if (verse) verse.style.fontSize = `${vBase * scale}cqw`;
-      if (ref) ref.style.fontSize = `${refSize * scale}cqw`;
+      apply(scale);
+      guard++;
+    }
+    // The estimate can be pessimistic — a verse of short words wraps sooner in
+    // arithmetic than it does in a real line-breaker. Grow back while it still
+    // genuinely fits, so a seeded fit lands exactly where the plain loop would
+    // have. Never above 1: the template's own size is the ceiling.
+    while (scale < 1 && guard < 40) {
+      const bigger = Math.min(1, scale / 0.95);
+      apply(bigger);
+      if (overflows()) {
+        apply(scale);
+        break;
+      }
+      scale = bigger;
       guard++;
     }
     return scale;
@@ -377,10 +419,10 @@
     return v.startsWith('var(') ? v : `${v}, system-ui, sans-serif`;
   };
 
-  $: bgOpacity = style.bgOpacity == null || style.bgOpacity === '' ? 1 : clamp01(style.bgOpacity);
+  $: bgOpacity = clamp01(style.bgOpacity);
   // DIM SCRIM — a black overlay over the background (behind the text) to knock
   // down a bright image/background so text stays readable. 0 = none.
-  $: bgDim = clamp01(style.bgDim || 0);
+  $: bgDim = clamp01(style.bgDim);
 
   // TEXT CONTRAST PANEL (a "shape" behind the words). On a bright background a
   // coloured plate behind the text is what keeps it legible. Colour + opacity +
@@ -398,7 +440,7 @@
   $: panelBg = panelOn
     ? hexToRgba(style.panelColor || '#000000', style.panelOpacity == null ? 0.45 : style.panelOpacity)
     : 'transparent';
-  $: panelRadius = style.panelRadius == null ? 1.4 : Number(style.panelRadius);
+  $: panelRadius = style.panelRadius;
 
   // Heights. `bandHeight` (cqh) sizes the lower-third bar; `bgHeight` (%) lets the
   // background cover less than the full frame (anchored to the bottom, e.g. a
@@ -406,19 +448,22 @@
   $: bandHeight = Number(style.bandHeight) > 0 ? Number(style.bandHeight) : null;
   $: bgHeight = style.bgHeight == null || style.bgHeight === '' ? 100 : Number(style.bgHeight);
 
-  $: verseTransform = style.verseTransform || 'none'; // capitalization
-  $: refTransform = style.refTransform || 'none';
-  $: verseLineHeight = Number(style.verseLineHeight) > 0 ? Number(style.verseLineHeight) : 1.32;
+  $: verseTransform = style.verseTransform; // capitalization; resolved in the model
+  $: refTransform = style.refTransform;
+  $: verseLineHeight = style.verseLineHeight > 0 ? style.verseLineHeight : 1.32;
   $: verseLetter = style.verseLetterSpacing ? `${Number(style.verseLetterSpacing)}em` : 'normal';
   $: refLetter = style.refLetterSpacing ? `${Number(style.refLetterSpacing)}em` : 'normal';
   // Gap between the verse and its reference (cqw, so it scales with the output).
-  $: refGap = style.refGap == null ? 1.4 : Number(style.refGap);
-  // Per-region font. Each layer picks its own; `style.font` is the shared default.
-  $: verseFontFamily = fontFam(style.verseFont || style.font);
-  $: refFontFamily = fontFam(style.refFont || style.font);
-  // Per-region shadow (each falls back to the shared `textShadow`).
-  $: verseShadowCss = shadowCssOf(clamp01(style.verseShadow ?? style.textShadow ?? 0));
-  $: refShadowCss = shadowCssOf(clamp01(style.refShadow ?? style.textShadow ?? 0));
+  $: refGap = style.refGap;
+  // Per-element font and shadow. There is no whole-template fallback any more:
+  // `migrateStyle` writes the old `style.font` / `style.textShadow` onto both
+  // elements and deletes them, so reading them here would be reading a key that
+  // no longer exists — and a fallback chain is a second home wearing a helpful
+  // name (docs/REBRAND.md §3.1).
+  $: verseFontFamily = fontFam(style.verseFont);
+  $: refFontFamily = fontFam(style.refFont);
+  $: verseShadowCss = shadowCssOf(clamp01(style.verseShadow));
+  $: refShadowCss = shadowCssOf(clamp01(style.refShadow));
   // Announcement/ticker scroll: renders as a bottom FOOTER band (a ProPresenter
   // ticker), not centred text. Off unless the template asks for it.
   $: scroll = !!style.scroll;
@@ -477,7 +522,9 @@
     ? 'transparent'
     : style.bgImage
       ? `url("${style.bgImage}") center / cover no-repeat`
-      : style.background || 'transparent';
+      // `slideBG` returns null when the template names no background, which is
+      // what keeps an unset template transparent rather than black.
+      : slideBG(style) || 'transparent';
 
   // Alignment is configured per template (defaults centre). Lyrics inherit it —
   // the default lower-third template is centred, matching ProPresenter.
@@ -488,7 +535,7 @@
   // computer's default rather than something arbitrary. A CSS var already carries
   // its own generic; a bare family name ("Didot") does not, so append one.
   $: fontFamily = (() => {
-    const f = style.font || 'var(--f-serif)';
+    const f = style.verseFont || 'var(--f-serif)';
     if (f.startsWith('var(')) return f; // the var supplies its own fallback
     return `${f}, system-ui, sans-serif`;
   })();

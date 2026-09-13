@@ -40,6 +40,7 @@
 
 import { writable, derived, get } from 'svelte/store';
 import { parseTemplateOverride } from '../templates.js';
+import { migrateTemplate } from '../templatemodel.js';
 import { tNow } from '../i18n.js';
 import { humanError } from '../errors.js';
 import { markTranscript } from '../latency.js';
@@ -1393,8 +1394,14 @@ return btoa(bin);
 export async function loadTemplates() {
 return guardedRead('loadTemplates', async (call) => {
     const list = await call('list_templates');
-    templates.set(list);
-    return list;
+    // THE DATABASE DOOR. Every template is migrated on the way in, so nothing
+    // downstream — the gallery, the editor, a save — ever handles a style with
+    // two homes for one property (docs/REBRAND.md §3.1). Migrating only at the
+    // renderer would keep the WALL correct while the legacy key sat in the
+    // database for ever, waiting for the next reader that does not resolve.
+    const migrated = Array.isArray(list) ? list.map(migrateTemplate) : list;
+    templates.set(migrated);
+    return migrated;
 }, []);
 }
 

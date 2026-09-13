@@ -40,6 +40,10 @@ export const THEME_STYLE_KEYS = [
   'verseColor',
   'refColor',
   'background',
+  // The TREATMENT applied to that background — solid, vertical fade, centre
+  // glow, diagonal, vignette (templatemodel.js: BG_STYLES). Without this key a
+  // theme could offer the choice and the wall would never receive it.
+  'bgStyle',
   // effect + rhythm
   'verseShadow',
   'refShadow',

@@ -1,4 +1,5 @@
 <script>
+  import { BG_STYLES } from '../../templatemodel.js';
   import { humanError } from '../../errors.js';
   import { rangeFill } from '../../rangefill.js';
   // Theme editor — edit ONE custom theme's style and see it live on the same
@@ -71,6 +72,11 @@
   }
 
   // The preview template with the draft theme applied — one live render.
+  // A background that is not a plain hex (a pasted gradient, a var()) is used
+  // exactly as written — see `slideBG`. Offering a treatment for it would be a
+  // control that changes nothing, which is worse than no control.
+  $: rawBackground = !!draft?.style?.background && !/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(String(draft.style.background).trim());
+
   $: previewTheme = draft ? { id: draft.id, name: draft.name, style: draft.style } : null;
 </script>
 
@@ -151,7 +157,20 @@
             <span>Background</span>
             <input class="r-input" value={draft.style.background || ''} placeholder="#000 or a CSS gradient" on:input={(e) => set('background', e.target.value)} />
           </label>
-          <p class="te-hint">Background accepts a hex colour or any CSS gradient, e.g. <code>linear-gradient(160deg,#241419,#120a0e)</code>. Leave empty for transparent.</p>
+          <label class="te-row">
+            <span>Background style</span>
+            <select
+              class="r-select"
+              value={draft.style.bgStyle || 'solid'}
+              disabled={rawBackground}
+              on:change={(e) => set('bgStyle', e.target.value)}
+            >
+              {#each BG_STYLES as b (b.id)}
+                <option value={b.id}>{b.label}</option>
+              {/each}
+            </select>
+          </label>
+          <p class="te-hint">Background accepts a hex colour or any CSS gradient, e.g. <code>linear-gradient(160deg,#241419,#120a0e)</code>. Leave empty for transparent.{#if rawBackground} A background written as CSS is used exactly as typed, so the style above does not apply to it.{/if}</p>
         </fieldset>
 
         <fieldset class="te-group" disabled={readonly}>

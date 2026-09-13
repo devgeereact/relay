@@ -311,6 +311,35 @@ until someone can look at a running app. Tracked in [KNOWN_ISSUES.md](KNOWN_ISSU
   only the DB) so a kiosk or OBS client with no database can still resolve one.
 - Layer colours may bind to a theme token (`theme:accent`) rather than a hex.
 
+**One property, one home** (`src/lib/templatemodel.js`, docs/REBRAND.md §3.1). A template stores
+only what it has changed and the model fills the rest:
+
+- `migrateStyle` writes the legacy WHOLE-TEMPLATE keys (`font`, `textShadow`) onto the elements
+  that use them and then **deletes** them. `style.font` was a second home for `verseFont` and
+  `refFont`, reached through a fallback chain — so the editor could show one and save the other.
+  Nothing crashed; the preview and the wall simply stopped agreeing.
+- `resolveStyle` fills every per-element default in one place, so "unset" looks the same on every
+  surface. It deliberately answers for neither `background` nor alignment: an unset background is
+  **transparent**, which is what keys a lower third over a camera, and alignment falls back to
+  `layout.align` first. An absence that means something cannot be defaulted away.
+- `slideBG` turns a colour and a treatment into CSS — solid, vertical fade, centre glow,
+  diagonal, vignette — and returns **null** when a template names no background. A background
+  written as raw CSS is passed through untouched; wrapping a pasted gradient in another gradient
+  produces an invalid value that paints nothing.
+- The migration runs on the **doors**, not only in the renderer: `loadTemplates` (the database),
+  `parseImportedTemplate` (a file), and `resolveStyle` itself. Migrating at the renderer alone
+  would keep the wall correct while the legacy key sat in the database for the next reader that
+  does not resolve.
+
+**Auto-fit is measured, and now seeded** (§3.4). The DOM loop still decides — it reads
+`scrollHeight` against `clientHeight` and shrinks until the box holds the text — but it starts
+from `fitScale`, which predicts the answer from the text, the face's own advance (mono 0.62,
+serif 0.49, sans 0.52) and the box's **real** aspect. Each measured step forces a synchronous
+reflow on the page that is on the wall, so a long passage used to cost twenty of them. If the
+estimate is pessimistic the loop grows the text back while it genuinely fits, so a seeded fit
+lands where the plain loop would have. **jsdom has no layout**, so the measured half cannot be
+tested; `templatemodel.test.js` holds the arithmetic, and the floor it reports is rule 37's.
+
 **`TemplateRender.svelte` is the ONE renderer** — the fullscreen output *and* the Templates
 editor preview both use it, so the editor is WYSIWYG by construction. Stage displays and
 confidence monitors are **render profiles of that same engine** (starters in `layers.js`), not a
