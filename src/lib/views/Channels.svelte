@@ -38,6 +38,7 @@
   import Loading from '../ui/Loading.svelte';
   import TemplateRender from '../TemplateRender.svelte';
   import { CONTENT_KINDS, resolveOutputTemplate } from '../layers.js';
+  import { outputUrl } from '../outputurl.js';
   import {
     capture,
     templates,
@@ -123,8 +124,11 @@
   // template change reach this output live — the output filters a channel-retemplate
   // broadcast by its own `channel`, so switching a screen's template needs no
   // re-copying of the URL. `template_id` stays for the first render before any push.
-  const obsUrl = (c) =>
-    `http://${lanIp}:8032/output.html?channel=${c.id}&template_id=${c.template_id ?? 1}&name=${encodeURIComponent(c.name)}`;
+  // ONE BUILDER (`lib/outputurl.js`). This was written out twice, four lines
+  // apart, and only one copy was corrected when a screen gained the ability to
+  // have no look of its own — so Copy URL and the inspector's readout said
+  // different things about the same screen.
+  const obsUrl = (c) => outputUrl(lanIp, c.id, c.template_id, c.name);
   const templateOf = (c) => $templates.find((t) => t.id === c.template_id) || null;
   /** What a content look currently resolves to, by name — for a following screen. */
   const lookName = (kind) =>
@@ -153,9 +157,7 @@
   // `{obsUrl(sel)}` it was only ever correct by luck of ordering — the same trap
   // the stage-remote URL fell into, one selection away from showing `localhost`
   // to someone about to type it into a phone.
-  $: selAddr = sel
-    ? `http://${lanIp}:8032/output.html?channel=${sel.id}&template_id=${sel.template_id ?? 1}&name=${encodeURIComponent(sel.name)}`
-    : '';
+  $: selAddr = sel ? outputUrl(lanIp, sel.id, sel.template_id, sel.name) : '';
   $: onlineCount = channels.filter((c) => status[c.id]?.online).length;
 
   async function showQr(c) {

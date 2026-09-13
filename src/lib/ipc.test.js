@@ -264,12 +264,22 @@ describe('Tauri event contract', () => {
 //
 // It was found by launching the actual release binary. This keeps it found.
 describe('the output URL handed to OBS / kiosks', () => {
+  // The URL now has ONE builder (`lib/outputurl.js`); it was written out twice in
+  // Channels, four lines apart, and only one copy was corrected when a screen
+  // gained the ability to have no look of its own. This guard follows it there,
+  // and also checks that no view has started building its own again.
+  const builder = read('src/lib/outputurl.js');
   const channels = read('src/lib/views/Channels.svelte');
   const docs = ['README.md', 'docs/USER_GUIDE.md', 'CLAUDE.md'].map((f) => [f, read(f)]);
 
   it('is served from the embedded HTTP server (8032), not the dev server (5032)', () => {
-    expect(channels).toMatch(/:8032\/output\.html/);
+    expect(builder).toMatch(/8032/);
+    expect(builder).not.toMatch(/5032/);
     expect(channels).not.toMatch(/:5032\/output\.html/);
+  });
+
+  it('is built in one place, so a fix cannot land on one copy of it', () => {
+    expect(channels, 'Channels is building the URL itself again').not.toMatch(/output\.html\?channel=/);
   });
 
   it('is not misdocumented anywhere a human would read it', () => {

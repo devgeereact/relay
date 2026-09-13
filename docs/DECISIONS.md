@@ -3083,6 +3083,23 @@ The transparency law stands: a keyed screen never goes opaque for an override. W
 that "no template" is now a state an operator can choose, and therefore a content look is now a
 setting that can do something.
 
+### Addendum, 2026-09-13 — a follower has to follow in the STREAM too
+
+Found while re-reading this branch's own diff. `Copy URL` wrote
+`template_id=${c.template_id ?? 1}`, so a screen set to follow the content look handed OBS a URL
+naming built-in 1 — and the output page read a missing `template_id` as 1 as well. The operator's
+own window followed the content look correctly while the browser source wore something else, until
+a `channel_template` message happened to arrive. Nobody at the desk is watching the stream, which
+is what makes that divergence the dangerous kind.
+
+**A screen with no look of its own now says so by saying nothing**: no `template_id` in the URL,
+and an absent one means "follow" rather than "built-in 1".
+
+The URL was also being built TWICE in `Channels.svelte`, four lines apart, and only one copy had
+been corrected — so Copy URL and the inspector's readout disagreed about the same screen. There is
+one builder now (`src/lib/outputurl.js`), it is tested, and `ipc.test.js` fails if a view starts
+building its own again.
+
 ## 71. A transition is a template's choice, and a cut is the default (2026-09-13)
 
 ### What was wrong

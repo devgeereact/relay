@@ -385,6 +385,13 @@ inside it is a share of the region rather than of the frame. That is the primiti
 ground and the stage's stacked rail clock both need; neither is built on it yet, and building them
 on it is now a smaller job than it was.
 
+**A review pass over this branch's own diff found one more, and it is the same shape as the defect
+phase 4 fixed.** `Copy URL` wrote `template_id=1` for a screen that follows the content look, and
+the output page read a missing `template_id` as 1 — so a follower's OBS source wore a built-in
+while the operator's own window followed correctly. The URL was also built twice in the same
+component, four lines apart, with only one copy corrected. One builder now (`lib/outputurl.js`),
+tested, and `ipc.test.js` fails if a view starts building its own again.
+
 **Carried forward, deliberately.** Phase 1 owns `src/app.css`, and the shared layer is now
 token-only: every literal radius there reads `--v-r-*`. Components still hold about sixty
 radius literals of their own, twenty of them `99px` — so a few pills survive on surfaces phases

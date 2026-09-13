@@ -14,7 +14,11 @@
   // with a transparent background (e.g. the lower third) lets an OBS/ATEM camera
   // source show through.
   const params = new URLSearchParams(location.search);
-  const templateId = parseInt(params.get('template_id') || '1', 10);
+  // NO `template_id` MEANS THE SCREEN HAS NO LOOK OF ITS OWN and follows the
+  // content look (DECISIONS §70). Defaulting to 1 here made a follower's browser
+  // source wear built-in 1 until a `channel_template` message arrived.
+  const templateIdParam = params.get('template_id');
+  const templateId = templateIdParam == null ? null : parseInt(templateIdParam, 10) || null;
   // The CHANNEL this output belongs to (0 = a raw template preview with no
   // channel). When the operator changes this screen's template, a channel-retemplate
   // broadcast arrives; this output swaps to the new template if the channel matches
@@ -84,9 +88,13 @@
   }
   async function loadTemplate() {
     const call = await invoke();
-    const tpl = await call('get_template', { id: templateId });
     // A screen with NO template of its own follows the content look, so `null`
-     // here is an answer rather than a missing one (DECISIONS §70).
+    // here is an answer rather than a missing one (DECISIONS §70).
+    if (templateId == null) {
+      t = null;
+      return;
+    }
+    const tpl = await call('get_template', { id: templateId });
     t = tpl ?? null;
   }
   // Desktop only — the operator's custom themes, so a template pinning one wears
@@ -200,7 +208,9 @@
     }
   }
   function startKiosk() {
-    t = builtinById(templateId);
+    // A kiosk client has no database, so it resolves its id against the bundled
+    // built-ins — and a follower resolves to nothing, deliberately.
+    t = templateId == null ? null : builtinById(templateId);
     connectKiosk(location.hostname || 'localhost');
   }
 

@@ -71,7 +71,7 @@ decision), [§6](#6-the-fix-process-start-to-finish) (what was actually changed)
 
 | | Command | Result |
 |---|---|---|
-| Frontend suite | `npx vitest run` | **1092 passed**, 0 skipped, 79 files |
+| Frontend suite | `npx vitest run` | **1099 passed**, 0 skipped, 80 files |
 | Rust suite | `cd src-tauri && cargo test` | **674 passed**, 0 failed, 17 ignored |
 | End-to-end fire path | `cargo test e2e::` | **38 passed, 0 ignored** |
 | Format gate | `cargo fmt --all -- --check` | clean |
@@ -95,7 +95,7 @@ or that changed their answer:
 | | Command | Result |
 |---|---|---|
 | Rust suite | `cd src-tauri && cargo test` | **674 passed**, 0 failed, 17 ignored |
-| Frontend suite | `npx vitest run` | **1092 passed**, 79 files |
+| Frontend suite | `npx vitest run` | **1099 passed**, 80 files |
 | **Rust dependencies** | `cargo audit` | **0 vulnerabilities** (3 on the first run, 2026-09-04); 18 warnings, all unmaintained GTK3 **Linux** bindings |
 | **The kiosk hub's origin gate, on the packaged binary** | raw WebSocket handshakes with nine `Origin` values | `101` for none, `:8032` on two hosts, `:5032`, `tauri://localhost`; **`403`** for `evil.example.com`, `null`, a LAN host on `:3000`, an `https://` origin |
 | **Ranged media, on the packaged binary** | `curl -H 'Range: bytes=500-599' …/media/12` | `206` + `Content-Range: bytes 500-599/1024`, and the 100 bytes match the file exactly; a range past the end → `416` |
