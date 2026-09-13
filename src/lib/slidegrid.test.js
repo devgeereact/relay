@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { gridSource, planCells, passageCells, songCells, pressArbiter, PRESS_MS } from './slidegrid.js';
+import { gridSource, planCells, passageCells, pressArbiter, PRESS_MS } from './slidegrid.js';
 
 const slidesOf = (item) => item.slides ?? [];
 
@@ -177,30 +177,6 @@ describe('single click sends to programme, double click previews', () => {
 // operator's own choice silently ignored, or the plan they built pushed off the
 // grid by whatever the preacher happened to quote.
 describe('a hand pick outranks the plan; a detection never does', () => {
-  const SONG = {
-    id: 7,
-    title: 'Great Is Thy Faithfulness',
-    sections: [
-      { tag: 'Verse 1', label: 'Verse 1', text: 'Great is thy faithfulness' },
-      { tag: 'Chorus', label: 'Chorus', text: 'Morning by morning' },
-    ],
-  };
-
-  it('a song staged from the rail wins, even over an open plan', () => {
-    const g = gridSource({
-      planOpen: true, planTitle: 'Sunday Morning', items: PLAN, slidesOf,
-      verses: [], passageTitle: '', song: SONG, handPicked: false,
-    });
-    expect(g.source).toBe('song');
-    expect(g.title).toBe('Great Is Thy Faithfulness');
-    expect(g.cells.map((c) => c.label)).toEqual(['Verse 1', 'Chorus']);
-    // A song cell carries its WORDS: unlike a verse there is no canonical
-    // reference for the backend to resolve it from.
-    expect(g.cells[0].text).toBe('Great is thy faithfulness');
-    expect(g.cells[0].kind).toBe('song');
-    expect(g.cells[0].reference).toBeNull();
-  });
-
   it('a chapter the operator picked wins over an open plan', () => {
     const g = gridSource({
       planOpen: true, planTitle: 'Sunday Morning', items: PLAN, slidesOf,
@@ -230,10 +206,5 @@ describe('a hand pick outranks the plan; a detection never does', () => {
     });
     expect(g.source).toBe('plan');
     expect(g.cells.length).toBe(3);
-  });
-
-  it('songCells is empty for a song with no sections, and says so quietly', () => {
-    expect(songCells({ title: 'Empty', sections: [] })).toEqual([]);
-    expect(songCells(null)).toEqual([]);
   });
 });

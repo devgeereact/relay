@@ -92,7 +92,6 @@
     pushAnnouncement,
     verseRepeatCount,
     chapterVerses,
-    getSong,
     readErrors,
   } from '../stores/capture.js';
 
@@ -156,7 +155,6 @@
     // Loading a plan is the operator asking for the plan. A chapter or a song
     // they staged from the rail earlier must not keep outranking it.
     railChapter = null;
-    railSong = null;
     itemsLoaded = false;
     items = await planItems(p.id);
     itemsLoaded = true;
@@ -170,7 +168,6 @@
     openPlan = null;
     items = [];
     railChapter = null;
-    railSong = null;
     liveCue.set({ cueId: null, slide: 0, onAir: false });
     setSession({ planId: null, liveCueId: null, liveSlide: 0, liveOnAir: false });
   }
@@ -838,33 +835,9 @@
   // `gridSource`) because it is the more recent deliberate act; a DETECTION never
   // does, which is the distinction the flag exists to keep.
   let railChapter = null; // { book, chapter } chosen in the rail, or null
-  let railSong = null; // a full song staged from the rail, or null
-
   /** Stage a chapter from the rail. It does NOT fire — the grid does that. */
   function stageChapter(book, chapter) {
-    railSong = null;
     railChapter = { book, chapter };
-  }
-  /** Stage a song from the rail. Same rule: nothing reaches a screen from here. */
-  async function stageSong(s) {
-    railChapter = null;
-    // `getSong` swallows to null (group 2). A song that will not load must not
-    // leave the previous one staged under the new title.
-    const full = await getSong(s.id);
-    if (!full) {
-      railSong = null;
-      flash(`Could not open “${s.title}”.`);
-      return;
-    }
-    // The database calls a section's words `lyrics`; every grid cell carries
-    // `text`. Mapped HERE, at the one boundary, rather than teaching `slidegrid`
-    // a second field name — the version that did not do this staged a whole song
-    // of blank cells and looked exactly like a song with no words in it.
-    railSong = {
-      id: full.id,
-      title: full.title,
-      sections: (full.sections ?? []).map((x) => ({ tag: x.tag, label: x.label, text: x.lyrics })),
-    };
   }
 
   // The chapter around the live verse — ONLY when no plan is open, and only when
@@ -906,7 +879,6 @@
     slidesOf,
     verses: gridVerses,
     passageTitle: gridChapter ?? '',
-    song: railSong,
     handPicked: !!railChapter,
   });
 
@@ -927,18 +899,6 @@
         return;
       }
       return fireSlide(item, cell.slideIdx);
-    }
-    if (cell.kind === 'song') {
-      // Off-plan lyrics, staged by hand from the rail. Same `fireContent` the
-      // plan's song cues use, and deliberately WITHOUT keepPlan: this did not
-      // come from the plan, so the transport must not pretend it did.
-      try {
-        await fireContent(cell.label, cell.text, 'song');
-        flash(`Live: ${cell.label}`);
-      } catch (e) {
-        flash(humanError(e));
-      }
-      return;
     }
     if (!cell.reference) return;
     try {
@@ -1100,8 +1060,7 @@
     <div class="rail-col">
       <LiveRail
         disabled={!$capture.available}
-        onChapter={stageChapter}
-        onSong={stageSong} />
+        onChapter={stageChapter} />
       <!-- View controls. Deliberately at the TOP-RIGHT and deliberately small: they
            change how the console looks, never what reaches a screen, and must not
            compete with the transport for an operator's attention. -->

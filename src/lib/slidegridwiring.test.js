@@ -51,18 +51,7 @@ describe('the grid is rendered, and its presses go through the arbiter', () => {
     const body = src.slice(src.indexOf('async function fireCell('), src.indexOf('const gridPress'));
     expect(body).toMatch(/return fireSlide\(item, cell\.slideIdx\);/);
     expect(body).toMatch(/await manualFire\(cell\.reference\);/);
-    // A SONG cell — staged by hand from the Live rail — has no reference to
-    // resolve, so it takes `fireContent`, which is the SAME wrapper the plan's
-    // song cues take (Live::fireSlide). That is still not a new path; what would
-    // be is a payload built here. The list is closed on purpose: every branch of
-    // `fireCell` must name one of these three wrappers and nothing else.
-    const wrappers = [...body.matchAll(/\b(fireSlide|manualFire|fireContent|fireMedia)\(/g)].map((m) => m[1]);
-    expect(new Set(wrappers)).toEqual(new Set(['fireSlide', 'manualFire', 'fireContent']));
-    // …and the verse branch is NOT allowed to become one of them: a reference
-    // must be resolved by the backend from the active translation, never fired
-    // as whatever text this pane happened to load.
-    const verse = body.slice(body.indexOf("if (!cell.reference) return;"));
-    expect(verse).not.toMatch(/fireContent\(/);
+    expect(body).not.toMatch(/fireContent\(/);
   });
 
   it('a fire that fails is reported — the arbiter is given somewhere to put it', () => {
