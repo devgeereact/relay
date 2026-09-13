@@ -748,6 +748,20 @@ impl OutputHealth {
         }
     }
 
+    /// Test-only: backdate the moment this channel was first seen attached, so the
+    /// grace window inside `transition` has expired without a test sleeping through
+    /// `BEAT_STALE_MS`. The unit tests in this file reach into `first_seen`
+    /// directly; tests in other modules cannot, and needed the same thing.
+    #[cfg(test)]
+    pub(crate) fn expire_grace(&self, channel_id: i64) {
+        if let Ok(mut seen) = self.first_seen.lock() {
+            seen.insert(
+                channel_id,
+                std::time::Instant::now() - std::time::Duration::from_millis(BEAT_STALE_MS * 2),
+            );
+        }
+    }
+
     /// Stop tracking a channel's edges — it is no longer attached, so neither
     /// "lost" nor "recovered" would mean anything about it.
     pub fn forget_transition(&self, channel_id: i64) {
