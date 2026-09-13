@@ -1,0 +1,237 @@
+# RELAY REBRAND — the build specification
+
+**Trigger word: `REBRAND`.**
+Say `REBRAND` to start or continue this work. `REBRAND <n>` jumps to a phase (e.g. `REBRAND 4`).
+`REBRAND status` reports what is done and what is next.
+
+---
+
+## Context
+
+Across this session we designed the whole of Relay's new look and behaviour as a working prototype,
+not a mock-up: **Relay Studio**, at `https://claude.ai/code/artifact/8abb5121-8411-4b07-9eb9-1c202991ac50`
+(**V23**), source at
+`/private/tmp/claude-501/-Users-mrgee-WebstormProjects-relay/6f9d56af-f7ed-4a8b-8708-045346d2c144/scratchpad/relay-studio.html`.
+
+Every decision below was operated, measured in a browser, and revised — several were reversed after
+measurement proved the first answer wrong. This file is the specification for bringing that into the
+real app. The first act of `REBRAND` is to copy this file to **`docs/REBRAND.md`** so it lives with the
+code rather than in a plan directory.
+
+**The prototype is the reference; the repository's rules win where they disagree.** In particular
+`CLAUDE.md`'s colour law, `TemplateRender.svelte` as the ONE renderer, cqw sizing, the panic-control
+guarantees and every named test stay exactly as they are.
+
+---
+
+## 1 · Brand and visual system
+
+- **Grammar**: OBS Studio's control room (studio split, dock row, status bar) crossed with
+  ProPresenter 7's object inspector. Dark only — the booth is dark and the wall is black.
+- **Type**: Inter (UI), IBM Plex Mono (every figure, so a changing number never reflows the row
+  beside it), Fraunces (the serif templates render in).
+- **Radius is 2px everywhere.** No pills. A pill in a control room reads as a toy.
+- **Density**: 11–12px UI type, 3px corners on cards, hairline seams.
+- **Colour law is unchanged and non-negotiable** (`CLAUDE.md` rule 18, DECISIONS §21):
+  amber = ON AIR, amethyst = rehearsal, cyan = a guess, grey = CUED.
+- **Colour added by this rebrand**, none of it overlapping the law:
+  - steel blue `--sel` = the thing you are working on (selection, tabs, keys);
+  - red = destructive (Clear screens, delete) and the stage alert;
+  - collection colours in the Library: Scripture amber, Songs steel, Announcements red, Media amethyst.
+- **Controls have four distinct colours** because the two most consequential buttons in the room used
+  to look alike: Go Live green → **End service amber** (it owns the on-air session), **Clear screens
+  red**, **Blackout black** with a light hairline, **Rehearse amethyst**.
+
+## 2 · Workspace grammar
+
+Six workspaces on one desk: **Live · Library · Planner · Templates · Outputs · Settings**, a persistent
+dock row beneath (Live audio · Live transcript · **Quick tools** · Controls), and a status bar.
+
+- **Live** is the run surface: search rail, Preview / TAKE / Program, slide grid, AI detection column.
+- **Quick tools** (was "Playlist") holds the three things that change during a service: the
+  **countdown**, the **name band**, and **word to the preacher**. `Load whole plan` stays in its header.
+- **Single click sends to Program, double click previews.** A 190 ms timer on the single press so a
+  double never fires both.
+- **Nothing clears the programme.** Switching workspace, loading a plan, editing a template: the
+  programme is content, not an index into a grid — this was a real bug and must not return.
+
+## 3 · The template engine
+
+### 3.1 One property, one home
+
+A template stores only what it has changed; `resolve()` fills the rest. `migrateTpl()` runs once and
+**deletes** the legacy whole-template keys (`font`, `lh`, `tr`, `uc`, `it`, `sh`) after writing the
+per-element ones. A property with two homes is a property the editor can show while writing elsewhere.
+
+Per element (verse, reference): `font · size · colour · weight · italic · upper case · letter spacing ·
+line spacing · alignment · opacity · drop shadow · height in band`, plus `text width` (verse) and
+`sits above/below` + `show` (reference).
+Per slide: `background colour · background style (solid / vertical fade / centre glow / diagonal /
+vignette) · block position · top-and-bottom safe area · side safe area · gap`.
+
+### 3.2 The inspector is objects, not a ladder
+
+A **tab strip** of the objects on this slide — they wrap, never scroll behind a hidden scrollbar —
+then that object's properties grouped **Text / Position / Effects**, and **Reset this object**.
+Object sets by kind: full-screen looks get Background · Verse · Reference; a lower third adds **Band**;
+a stage monitor is **Zones · Background · Reading · Reference**; a composite is
+**Layout · Camera · Word bg · Word · Ref**.
+
+### 3.3 Roles — what a template is *for*
+
+Ten roles in one register (`LOOKS`): scripture, lyrics, announcement, preservice, media, stage,
+`lower.name`, `lower.lyric`, `lower.bible`, supersource. Assigned from the template's own inspector
+("Used for"), shown as a tag on its card. A screen may be set to **Follow the content look** so
+"Scripture wears Nocturne" is said once rather than on five screens.
+
+Resolution order (matches DECISIONS §29): a screen's own template wins; a screen set to follow uses the
+role register; **a lower third always swaps to the band for the content in hand**.
+
+### 3.4 Auto-fit
+
+Measured, not tabled. cqw is a share of width; a 16:9 frame is 56.25cqw tall. Shrink until the
+estimated block fits, with a per-face advance (mono 0.62, serif 0.49, sans 0.52). Every nested context
+passes its **real** aspect: a SuperSource word region, a stage reading, a band.
+
+## 4 · Lower thirds — three, not one
+
+| Template | Carries | Notes |
+|---|---|---|
+| **Name** (+ Light) | name over role | set once, fired from Quick tools |
+| **Lyric** | words only | **no reference at all** |
+| **Scripture** | verse, reference beneath | reference right-aligned, tracked, small |
+
+- The band is a **real element** (`.lband`) from `top%` to the bottom, inset by the side safe area,
+  baseline lift as bottom padding, **content centred inside it** (measured 7px above, 7px below).
+- **The band gives ground before the words do**: it grows upward by up to 16 points — never past a
+  third of the frame — before type shrinks below 78% of the designer's size. A short name at the same
+  setting does not move.
+- Band opacity means what it says: the body of the band sits at exactly the set alpha (this was capped
+  at 0.9× and read as grey).
+- Each band is a separate template with its own `lt`; editing one touches no other. Proved by
+  measurement.
+
+## 5 · Stage monitor
+
+A stage monitor is not a congregation screen in other colours. Zones: **Reading · Next · Note ·
+Countdown · Clock · Service elapsed**, each switchable, figures **beside the reading** or **across the
+bottom**.
+
+- **Nothing may leave the screen**: the reading takes what is left (`flex: 1 1 0`), the rows below are
+  the only fixed sizes (`flex-basis`, not `height`), everything clipped.
+- Clean by default: reading fills the screen, countdown and clock beneath; the rest is switched on.
+- Beside the reading the countdown is **three stacked pairs** (HH / MM / SS), each filling the rail;
+  the rail is its own container so the figure is a share of the rail, not the frame.
+- **Word to the preacher**: an operator types a line and sends it to the **stage only** — the whole
+  screen, red pulsing `#C8121C` → `#7A0A11`, 8.5cqw white type with a black shadow. It exists inside
+  the stage renderer, so no congregation screen can show it.
+
+## 6 · SuperSource
+
+One composite: a camera region and a **real rendered slide**, side by side — the word region is its own
+container, so the template inside scales to the region exactly as it would to a screen of that width.
+Two arrangements (camera left / word left), camera share, gap, **top-and-bottom bars only** so both
+regions keep full width, a background plate that fills the bars, corner radius, outline and outline
+colour. A composite may not be another composite's fill.
+
+## 7 · The countdown
+
+One timer, one formatter, read by the slide, the stage rail and the transport so they cannot drift.
+Fields are **hh : mm : ss** with a format picker (auto / m:ss / h:mm:ss). A countdown cue **starts** it.
+Transport: Start/Pause · Reset · ±1 · Clear — and **Clear resets it without removing the tool**.
+The warning threshold is a setting; below it the figure turns red and pulses on a 2 s cycle
+(reduced-motion gets a glow instead).
+
+## 8 · Transitions
+
+Seven, and they actually apply: Cut · Crossfade · Dissolve · Fade through black · Push left · Slide up ·
+Materialise, with a duration picker feeding `--xd`. Only transform / opacity / filter are animated.
+Choosing one replays it on the programme at once.
+
+## 9 · Search
+
+Two questions in one box, scored separately, **a reference always outranking a phrase**.
+
+- **References**: full name, any prefix ≥ 2 letters (`psa`, `rom`), or a non-prefix alias (`jn`, `mt`,
+  `php`); digits split from letters so `ps23:1` parses like `ps 23 1`; `chapter`/`verse`/`v`/`ch` dropped.
+- **Phrases**: each word may land on a near word (shared prefix, or one edit), common words weigh 0.3,
+  below 55% coverage it returns nothing rather than guessing.
+- **One click does the whole job**: the verse goes to the programme, its chapter loads into the grid,
+  that verse is the active slide. Each hit says why it matched.
+
+## 10 · Library
+
+Same grammar as Live: **collections across the top** (colour-coded, square, with counts), **items down
+the left rail**, slides in the big grid, inspector on the right. Clicking an item opens its slides.
+
+- **Songs**: sections as slides, each tagged with the key that fires it.
+- **Reflow editing** (double-click, or Edit lyrics): the song is one piece of text, a blank line starts
+  a slide, `[Chorus:c]` names the section and its key. Live read-out of the slides as you type. Two
+  sections cannot share a key.
+- **Section keys**: `v c b t i o`, numbered only when a kind repeats. On Live the key sends that
+  section to the programme. A half-typed key wins the next keystroke so `v2` can be typed; panic keys
+  are never shadowed; typing in a field fires nothing.
+- **The section label is operator-only.** It rides on the slide for the grid, the card and the program
+  label, and is suppressed on the way to the glass. Scripture is the opposite: the reference is content.
+- **Media uploads**: a real file, read locally into the item, previewed before it is added, with a
+  caption; the slide *is* the picture.
+- **Announcements**: title (for the operator) separated from the words that reach the room.
+- **No "add all to Live"** — a song joins a service through the plan.
+
+## 11 · Settings
+
+Eleven sections, merged from sixteen: General · Screens & looks · Audio · AI & Detection ·
+Scripture & Languages · Network & Integrations · History & Backup · Shortcuts · Updates · Diagnostics ·
+Privacy & Advanced. One type scale, three roles: **page title / standfirst / row**, with a footnote
+behind a hairline. A list row is a name and a **value** — never an em dash standing in for one.
+
+## 12 · Controls, sliders, switches
+
+One instrument everywhere: a 3px track filled to the value with a 13px thumb (`--rp`, kept current on
+render, on input and on every panel rebuild), colour wells as 38×21 swatches, switches the same size so
+a mixed column lines up on one right edge. `accent-color` is not enough — it let every platform draw
+its own idea of a slider.
+
+---
+
+## Implementation phases
+
+Each phase ends green: `cd src-tauri && cargo test`, `npx vitest run`, `npm run build`.
+
+1. **Tokens and chrome** — palette, radius, type scale, sliders, switches, colour wells, the four
+   control colours. `src/app.css`, `docs/DESIGN_SYSTEM.md`. *Watch:* `tokencontrast.test.js` requires
+   `--v-txt/--v-dim/--v-faint` as hex literals at ≥ 4.5:1; the colour-law class names are pinned by
+   eight test files.
+2. **Template model** — per-element properties, `migrate`, `resolve`, `slideBG`, measured auto-fit.
+   `src/lib/TemplateRender.svelte` stays the one renderer. New tests beside `templatefit.test.js`.
+3. **The object inspector** — tab strip, grouped properties, reset-per-object, new/duplicate/delete
+   (deep copy; two-step delete, never `confirm()` — rule 41).
+4. **Roles and the look register** — `LOOKS`, "Used for", screens that follow. Extends the existing
+   content-look resolution (DECISIONS §29); `resolveOutputTemplate` is the one resolver.
+5. **Lower thirds** — three templates, the band element, band-gives-ground, opacity fix.
+6. **Stage monitor** — zones, geometry that cannot overflow, the stacked rail clock, the stage alert.
+   New Tauri event + kiosk frame for the alert; it must never reach a congregation channel.
+7. **Countdown** — one timer, one formatter, the transport, the warning threshold.
+8. **Transitions** — seven, driven by the picker, reduced-motion honoured.
+9. **Search** — reference parser + fuzzy phrase over the real corpus, scored through the existing
+   detection helpers rather than a second parser. This one needs Rust tests: it is the same class of
+   code as `detection.rs` and must never auto-fire anything.
+10. **Library** — layout, reflow editor, section keys, media upload, announcements.
+11. **Settings** — eleven sections, the type scale, values in the value column.
+12. **SuperSource** — composite rendering as a template kind.
+
+**Rules that bound every phase**: no native `confirm()`/`alert()`/`prompt()`; panic controls never
+behind a validator and never scrolled out of reach; a status line that reads the same when broken as
+when fine is not a status line; nothing a spoken control does may be invisible; and the section label,
+the stage note and the stage alert must be unable to reach a congregation channel.
+
+## Verification
+
+- Drive the packaged app the way we drove the prototype: the browser harness in
+  `relay-browser-audit-harness` memory (mock Tauri bridge for the console, the real backend for the
+  output and stage pages).
+- Per phase: no overflow on any template at any setting; every control changes what it claims to;
+  every preview matches the wall.
+- Repo gates: `cargo fmt`, `clippy -D warnings`, both suites, `npm run version:check`, and the doc
+  consistency tests (`crossrefs.test.js`, `relaygap.test.js`).
+- Work lands as a PR, never a direct commit to `main`.
