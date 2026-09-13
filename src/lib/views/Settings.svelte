@@ -3,6 +3,9 @@
   import { rangeFill } from '../rangefill.js';
   import { get } from 'svelte/store';
   import ModelSetup from '../ModelSetup.svelte';
+  // The shared workspace grammar (docs/REBRAND.md §2 · §11) — the same columns,
+  // panes, type roles and name/value row the Planner and Outputs desks use.
+  import WorkspaceFrame from './WorkspaceFrame.svelte';
   import History from './library/History.svelte';
   import Dashboard from './Dashboard.svelte';
   import { locale, setLocale, LOCALES, t } from '../i18n.js';
@@ -654,18 +657,30 @@
   ];
 </script>
 
-<div class="s-page">
-  <header class="s-pagehead">
-    <div>
-      <h1 class="s-title">Settings</h1>
-      <p class="s-sub">Configure Relay to match your environment and workflow.</p>
-    </div>
-  </header>
-
-  <div class="s-layout">
+<!-- Settings is laid out in the shared workspace grammar (`WorkspaceFrame.svelte`,
+     docs/REBRAND.md §2 · §11) — the same columns, panes and type roles the
+     Planner and Outputs desks use.
+     §11 asks for ONE type scale with three roles: page title, standfirst, row.
+     The page title is "Settings" and never changes; the STANDFIRST is the
+     section's own sentence, so the two roles say different things instead of the
+     title being repeated a size smaller directly beneath itself, which is what
+     the page head and the panel head were doing to each other.
+     The sixteen sections are deliberately NOT merged into §11's eleven: that
+     reorganisation moves every control an operator has learned where to find, and
+     it is worth doing with somebody watching the screens rather than at the tail
+     of a styling pass. -->
+<WorkspaceFrame
+  title="Settings"
+  standfirst={activeSection.desc}
+  columns="212px minmax(0,1fr) 288px">
     <!-- ════ SECTION RAIL ════ -->
-    <aside class="s-rail">
-      <nav class="s-railnav">
+    <aside class="rw-pane">
+      <div class="rw-panehead">
+        <h2 class="rw-panettl">Sections</h2>
+        <span class="rw-spring"></span>
+        <span class="rw-itemn">{SECTIONS.length}</span>
+      </div>
+      <nav class="rw-panebody s-railnav">
         {#each SECTIONS as s}
           <button
             class="s-railbtn r-focus"
@@ -678,20 +693,18 @@
           </button>
         {/each}
       </nav>
-      <button class="r-btn ghost sm s-reset" class:arm={resetArmed} on:click={resetAllSettings}>
-        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
-        {resetArmed ? 'Click again to reset' : 'Reset to Defaults'}
-      </button>
+      <div class="rw-panefoot">
+        <button class="r-btn ghost sm s-reset" class:arm={resetArmed} on:click={resetAllSettings}>
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+          {resetArmed ? 'Click again to reset' : 'Reset to Defaults'}
+        </button>
+      </div>
     </aside>
 
     <!-- ════ ACTIVE PANEL ════ -->
-    <main class="s-panel">
-      {#if section !== 'dashboard'}
-        <div class="s-panelhead">
-          <h2 class="s-paneltitle">{activeSection.label}</h2>
-          <p class="s-paneldesc">{activeSection.desc}</p>
-        </div>
-      {/if}
+    <main class="rw-pane">
+      <div class="rw-panehead"><h2 class="rw-panettl">{activeSection.label}</h2></div>
+      <div class="rw-panebody s-panel">
 
       {#if section === 'dashboard'}
         <!-- Dashboard moved into Settings — a records/overview surface, not a run
@@ -1089,9 +1102,9 @@
               </button>
             {/each}
           {:else if !dataLoaded}
-            <div class="r-empty" style="font-size:12.5px;">Loading translations…</div>
+            <div class="r-empty" style="font-size:var(--v-fs-b1);">Loading translations…</div>
           {:else}
-            <div class="r-empty" style="font-size:12.5px;">No translations loaded.</div>
+            <div class="r-empty" style="font-size:var(--v-fs-b1);">No translations loaded.</div>
           {/if}
         </div>
         <div class="s-tr-note r-mono">Only public-domain <b>KJV</b> is bundled. Additional versions need their verse data added to the corpus.</div>
@@ -1499,10 +1512,15 @@
         <div class="s-grouphead">Operators</div>
         <p class="s-note" style="margin-top:0">Relay is a <b>single-operator, on-device</b> app — there are no user accounts, roles or logins, by design. The one control that matters mid-service (operator override) is always reachable, and the preacher's stage remote is a separate, LAN-only surface (set up in <b>Outputs → Sharing</b>). Nothing about who is at the desk is recorded.</p>
       {/if}
+      </div>
     </main>
 
-    <!-- ════ OVERVIEW RAIL ════ -->
-    <aside class="s-over">
+    <!-- ════ OVERVIEW RAIL ════ the facts that are true whatever section is open,
+         so they belong in the inspector column rather than being repeated inside
+         each section that happens to care about one of them. -->
+    <aside class="rw-pane rw-insp">
+      <div class="rw-panehead"><h2 class="rw-panettl">Overview</h2></div>
+      <div class="rw-panebody s-overbody">
       <div class="s-ocard">
         <div class="s-ohead">System Overview</div>
         <div class="s-orow"><span class="s-ok">Version</span><span class="s-ov r-mono">{settingValue(appVersion, {
@@ -1547,66 +1565,84 @@
           </button>
         </div>
       </div>
+      </div>
     </aside>
-  </div>
-</div>
+</WorkspaceFrame>
 
 <style>
-  .s-page{ display:flex; flex-direction:column; gap:22px; }
-  .s-pagehead{ display:flex; align-items:flex-start; justify-content:space-between; gap:24px; }
-  .s-title{ margin:0; font-family:var(--f-head); font-size:var(--v-fs-h1); line-height:var(--v-lh-h1);
-    font-weight:700; letter-spacing:var(--v-tr-tight); color:var(--v-txt); }
-  .s-sub{ margin:6px 0 0; font-size:13.5px; color:var(--v-dim); }
+  /* SETTINGS — the workspace grammar (`WorkspaceFrame.svelte`, docs/REBRAND.md
+     §2 · §11): section rail · panel · overview rail, as three panes.
 
-  /* 3-column layout: section rail · panel · overview rail */
-  .s-layout{ display:grid; grid-template-columns:212px minmax(0,1fr) 288px; gap:20px; align-items:start; }
+     ── ONE TYPE SCALE, THREE ROLES ──────────────────────────────────────────
+     §11's three roles are page title / standfirst / row, with a footnote behind
+     a hairline. The first two live in the frame. This file owns the third, and
+     the reason it is worth writing down is that it used to be eleven: 13.5px,
+     14px, 13px, 12.5px, 12px, 11px, 10.5px, 10px, 9px, 18px and 30px, none of
+     them from the token scale, all of them chosen one control at a time. A scale
+     with eleven steps is not a scale. Every size here is now a `--v-fs-*` token.
+
+     ── SEAMS, NOT GUTTERS ───────────────────────────────────────────────────
+     A settings section was a column of bordered cards with 12px trenches between
+     them. On a booth laptop that trench is about a third of the screen spent
+     saying "these two settings are not related", which is false — they are the
+     same section. Rows now bleed to the pane's edges with a hairline between
+     them, which is how the running order and the screens list read, and gives
+     the width back to the words. The bleed is `margin:0 -14px` against the
+     panel's own 14px gutter: prose keeps the gutter, rows reach the seam. */
 
   /* ── SECTION RAIL ── */
-  .s-rail{ position:sticky; top:0; display:flex; flex-direction:column; gap:14px; }
-  .s-railnav{ display:flex; flex-direction:column; gap:3px; }
-  .s-railbtn{ display:flex; align-items:center; gap:11px; width:100%; text-align:left; cursor:pointer;
-    padding:9px 12px; border-radius:var(--v-r-md); border:1px solid transparent; background:transparent;
-    color:var(--v-dim); font-family:var(--f-body); font-size:13.5px; font-weight:500;
-    transition:background .13s, color .13s, border-color .13s; }
-  .s-railbtn:hover{ background:var(--v-surf); color:var(--v-txt); }
-  .s-railbtn.on{ background:var(--v-accent-soft); border-color:var(--v-accent-line); color:var(--v-accent2); font-weight:600; }
+  .s-railnav{ display:flex; flex-direction:column; }
+  .s-railbtn{ display:flex; align-items:center; gap:10px; width:100%; text-align:left; cursor:pointer;
+    min-height:32px; padding:6px 12px; border:0; border-bottom:1px solid var(--v-line); background:transparent;
+    color:var(--v-dim); font-family:var(--f-body); font-size:var(--v-fs-b2); line-height:var(--v-lh-b2);
+    font-weight:500; transition:background var(--v-dur) var(--v-ease), color var(--v-dur) var(--v-ease); }
+  .s-railbtn:last-child{ border-bottom:0; }
+  .s-railbtn:hover:not(.on){ background:var(--v-surf2); color:var(--v-txt); }
+  /* Steel blue = the thing you are working on (docs/REBRAND.md §1). */
+  .s-railbtn.on{ background:var(--v-sel-soft); color:var(--v-txt); font-weight:600;
+    box-shadow:inset 2px 0 0 var(--v-sel); }
   .s-railic{ flex:0 0 auto; }
   .s-raillbl{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .s-reset{ justify-content:center; width:100%; margin-top:2px; }
+  .s-reset{ justify-content:center; width:100%; }
 
-  /* ── ACTIVE PANEL ── the cards float on the page, no outer box (matches ref) */
-  .s-panel{ min-width:0; display:flex; flex-direction:column; gap:12px; }
-  /* Dashboard embed — let it fill and scroll within the settings panel. */
-  .s-dash{ flex:1; min-height:0; overflow:auto; }
-  .s-panelhead{ margin-bottom:6px; }
-  .s-paneltitle{ margin:0; font-family:var(--f-head); font-size:var(--v-fs-h2); line-height:var(--v-lh-h2);
-    font-weight:600; letter-spacing:var(--v-tr-h2); color:var(--v-txt); }
-  .s-paneldesc{ margin:5px 0 0; font-size:13px; color:var(--v-dim); }
+  /* ── ACTIVE PANEL ── */
+  .s-panel{ min-width:0; display:flex; flex-direction:column; gap:0; padding:14px; }
+  /* Dashboard and History bring their own layout; let them fill the pane rather
+     than sitting inside the panel's gutter at a second, smaller width. */
+  .s-dash{ flex:1; min-height:0; overflow:auto; margin:-14px -14px 0; }
+  .s-history{ margin:-14px -14px 0; }
 
-  .s-lead{ margin:0 0 4px; font-size:13px; line-height:1.6; color:var(--v-dim); }
-  .s-inline{ display:flex; justify-content:flex-end; }
+  .s-lead{ margin:0 0 10px; font-size:var(--v-fs-b2); line-height:1.55; color:var(--v-dim);
+    max-width:74ch; }
+  .s-inline{ display:flex; justify-content:flex-end; padding:8px 0; }
 
-  /* Setting rows (General) — each its own bordered card */
+  /* ── ROLE 3 · a setting row is a name and a value ── */
   .s-row{ display:flex; align-items:center; justify-content:space-between; gap:20px;
-    padding:16px 20px; border:1px solid var(--v-line); border-radius:var(--v-r-lg);
-    background:var(--v-surf); }
+    margin:0 -14px; padding:10px 14px; border:0; border-bottom:1px solid var(--v-line);
+    background:transparent; }
+  .s-row:last-child{ border-bottom:0; }
   .s-rowtext{ min-width:0; }
-  .s-rowtitle{ font-size:14px; font-weight:600; color:var(--v-txt); }
-  .s-rownote{ margin-top:3px; font-size:12px; line-height:1.5; color:var(--v-faint); }
+  .s-rowtitle{ font-size:var(--v-fs-b2); line-height:var(--v-lh-b2); font-weight:600; color:var(--v-txt); }
+  .s-rownote{ margin-top:2px; font-size:var(--v-fs-cap); line-height:var(--v-lh-cap); color:var(--v-faint);
+    max-width:74ch; }
   .s-rowctl{ flex:0 0 auto; min-width:170px; max-width:220px; }
   .s-lenctl{ display:flex; align-items:center; gap:8px; justify-content:flex-end; }
   .s-leninput{ width:90px; text-align:right; }
   .s-lenunit{ color:var(--v-faint); font-size:var(--v-fs-cap); }
 
-  .s-grouphead{ margin:14px 0 2px; font-family:var(--f-mono); font-size:11px; font-weight:600;
-    letter-spacing:.14em; text-transform:uppercase; color:var(--v-faint); }
+  /* A group heading inside a section. Furniture, so it sits on the darker ground
+     with a seam under it — the same shape as the frame's `.rw-group`. */
+  .s-grouphead{ margin:0 -14px; padding:8px 14px 6px; background:var(--v-bg);
+    border-bottom:1px solid var(--v-line);
+    font-family:var(--f-mono); font-size:var(--v-fs-cap); line-height:var(--v-lh-cap); font-weight:600;
+    letter-spacing:var(--v-tr-caps); text-transform:uppercase; color:var(--v-faint); }
   .s-grouphead.first{ margin-top:0; }
 
   /* Voice profiles. `s-vpactive` marks the profile the gate is calibrated by —
      EMERALD, never amber: amber is spent only on air (CLAUDE.md / DECISIONS §22),
      and a selected profile is configuration, not something on a screen. */
   .s-vpactive{ margin-left:8px; padding:1px 6px; border-radius:var(--v-r-sm);
-    font-size:10px; letter-spacing:.08em; text-transform:uppercase;
+    font-size:var(--v-fs-cap); letter-spacing:.08em; text-transform:uppercase;
     color:var(--v-emerald); border:1px solid color-mix(in srgb, var(--v-emerald) 40%, transparent); }
   .s-vpbtns{ display:flex; gap:6px; justify-content:flex-end; }
   .s-vpadd{ display:flex; gap:8px; align-items:center; margin-top:8px; }
@@ -1614,157 +1650,177 @@
   .s-err{ color:var(--v-red); }
 
   /* Segmented control (theme, time format) */
-  .s-seg{ display:inline-flex; gap:4px; padding:4px; border-radius:var(--v-r-md);
+  .s-seg{ display:inline-flex; gap:2px; padding:3px; border-radius:var(--v-r-md);
     background:var(--v-void); border:1px solid var(--v-line); flex:0 0 auto; }
-  .s-segbtn{ display:inline-flex; align-items:center; gap:6px; padding:7px 14px; border:0; cursor:pointer;
-    border-radius:6px; background:transparent; color:var(--v-dim); font-family:var(--f-body);
-    font-size:12.5px; font-weight:500; transition:background .13s, color .13s; }
-  .s-segbtn:hover{ color:var(--v-txt); }
-  .s-segbtn.on{ background:var(--v-accent-fill); color:var(--v-accent-ink); box-shadow:var(--v-shadow-sm); }
+  .s-segbtn{ display:inline-flex; align-items:center; gap:6px; height:22px; padding:0 11px; border:0;
+    cursor:pointer; border-radius:2px; background:transparent; color:var(--v-faint);
+    font-family:var(--f-body); font-size:var(--v-fs-lbl); font-weight:600;
+    transition:background var(--v-dur) var(--v-ease), color var(--v-dur) var(--v-ease); }
+  .s-segbtn:hover:not(.on){ color:var(--v-txt); }
+  .s-segbtn.on{ background:var(--v-accent-fill); color:var(--v-accent-ink); }
 
-  /* Toggle switch */
-  .s-toggle{ position:relative; flex:0 0 auto; width:44px; height:24px; border-radius:99px; cursor:pointer;
-    border:1px solid var(--v-line2); background:var(--v-surf3); padding:0; transition:background .16s, border-color .16s; }
-  .s-toggle.on{ background:var(--v-accent-fill); border-color:var(--v-accent-fill); }
-  .s-knob{ position:absolute; top:2px; left:2px; width:18px; height:18px; border-radius:50%;
-    background:#fff; transition:transform .16s; box-shadow:0 1px 2px rgba(0,0,0,.4); }
-  .s-toggle.on .s-knob{ transform:translateX(20px); }
+  /* Toggle switch. `--v-r-round` is one of the two shapes the rebrand allows to
+     stay round (a slider thumb and a switch) — everything else is 3px. */
+  .s-toggle{ position:relative; flex:0 0 auto; width:38px; height:21px; border-radius:var(--v-r-round);
+    cursor:pointer; border:1px solid var(--v-500); background:var(--v-surf3); padding:0;
+    transition:background var(--v-dur) var(--v-ease), border-color var(--v-dur) var(--v-ease); }
+  .s-toggle:hover:not(:disabled){ border-color:var(--v-sel); }
+  .s-toggle.on{ background:var(--v-sel); border-color:transparent; }
+  .s-knob{ position:absolute; top:2px; left:2px; width:15px; height:15px; border-radius:50%;
+    background:var(--v-dim); transition:transform 190ms var(--v-ease), background var(--v-dur) var(--v-ease);
+    box-shadow:0 1px 2px rgba(0,0,0,.5); }
+  .s-toggle.on .s-knob{ transform:translateX(17px); background:var(--v-sel-ink); }
   .s-toggle:disabled{ opacity:.4; cursor:not-allowed; }
 
   /* "Soon" — a control shown for shape but not yet wired, marked so it can't lie.
      Sits on --v-surf2, not --v-surf3: muted text on surf3 is 3.76:1, below WCAG AA,
-     and this was the only rule in the app that did it (RG-74). Surf2 is 4.50:1 and
-     the pill still reads as the lightest chrome on the page. */
-  .s-soon{ display:inline-block; margin-left:8px; padding:1px 7px; border-radius:99px;
+     and this was the only rule in the app that did it (RG-74). Surf2 is 4.50:1.
+     Not a pill any more: §1 is explicit that a pill in a control room reads as a
+     toy, and this one marks something that does not work yet. */
+  .s-soon{ display:inline-block; margin-left:8px; padding:1px 6px; border-radius:var(--v-r-sm);
     background:var(--v-surf2); border:1px solid var(--v-line2); color:var(--v-faint);
     font-family:var(--f-mono); font-size:var(--v-fs-cap); letter-spacing:.04em; vertical-align:middle; }
   .s-dim{ color:var(--v-faint); }
 
-  /* Boxed rows (outputs, network, updates, account, shortcuts) */
-  .s-cardbox{ display:flex; flex-direction:column; gap:8px; }
+  /* Boxed rows (outputs, network, updates, account, shortcuts) — seamed, like
+     every other list on the desk. */
+  .s-cardbox{ display:flex; flex-direction:column; gap:0; margin:0 -14px; }
   .s-netrow{ display:flex; align-items:center; justify-content:space-between; gap:12px;
-    padding:12px 14px; border-radius:var(--v-r-md); background:var(--v-surf2); border:1px solid var(--v-line); }
-  .s-netk{ font-size:13px; color:var(--v-dim); }
-  .s-netv{ font-size:11px; color:var(--v-txt); }
+    padding:8px 14px; background:transparent; border:0; border-bottom:1px solid var(--v-line); }
+  .s-netrow:last-child{ border-bottom:0; }
+  .s-netk{ font-size:var(--v-fs-b2); color:var(--v-dim); min-width:0; }
+  /* The VALUE half of the row: mono so a figure that changes cannot reflow the
+     name beside it, and right-aligned so a column of them reads down one edge. */
+  .s-netv{ font-family:var(--f-mono); font-size:var(--v-fs-mono); line-height:var(--v-lh-mono);
+    font-variant-numeric:tabular-nums; color:var(--v-txt); text-align:right; }
   /* Rose, not amber: amber means ON AIR and is never spent on anything else. */
   .s-netbad{ color:var(--v-rose); }
 
-  .s-note{ margin:14px 0 0; font-size:12px; line-height:1.6; color:var(--v-dim); }
-  .s-note b{ color:var(--v-accent); }
+  /* THE FOOTNOTE, behind a hairline (§11). */
+  .s-note{ margin:14px -14px 0; padding:12px 14px 0; border-top:1px solid var(--v-line);
+    font-size:var(--v-fs-cap); line-height:1.6; color:var(--v-faint); max-width:none; }
+  .s-note b{ color:var(--v-dim); font-weight:600; }
   .s-mt{ margin-top:14px; }
-  .s-rule{ border:0; border-top:1px solid var(--v-line); margin:18px 0 0; }
+  .s-rule{ border:0; border-top:1px solid var(--v-line); margin:14px -14px 0; }
 
   /* Shortcuts */
-  .s-scrow{ display:flex; align-items:center; gap:14px; padding:11px 14px; border-radius:var(--v-r-md);
-    background:var(--v-surf2); border:1px solid var(--v-line); }
+  .s-scrow{ display:flex; align-items:center; gap:14px; padding:8px 14px;
+    background:transparent; border:0; border-bottom:1px solid var(--v-line); }
+  .s-scrow:last-child{ border-bottom:0; }
   .s-sckeys{ flex:0 0 118px; display:flex; gap:5px; }
-  .s-kbd{ font-family:var(--f-mono); font-size:11px; color:var(--v-txt); background:var(--v-void);
-    border:1px solid var(--v-line2); border-bottom-width:2px; border-radius:5px; padding:2px 7px; }
-  .s-scnote{ font-size:12.5px; color:var(--v-dim); }
+  .s-kbd{ font-family:var(--f-mono); font-size:var(--v-fs-mono); color:var(--v-txt); background:var(--v-void);
+    border:1px solid var(--v-line2); border-bottom-width:2px; border-radius:var(--v-r-sm); padding:1px 6px; }
+  .s-scnote{ font-size:var(--v-fs-b2); color:var(--v-dim); }
 
   /* level meter */
   .s-meterwrap{ margin-top:16px; }
-  .s-meter{ height:7px; border-radius:99px; background:var(--v-surf3); overflow:hidden; }
-  .s-meter i{ display:block; height:100%; border-radius:99px;
+  .s-meter{ height:6px; border-radius:var(--v-r-round); background:var(--v-surf3); overflow:hidden; }
+  .s-meter i{ display:block; height:100%; border-radius:var(--v-r-round);
     background:linear-gradient(90deg,var(--v-accent),var(--v-accent2)); }
   .s-meter-scale{ display:flex; justify-content:space-between; margin-top:7px;
-    font-family:var(--f-mono); font-size:9.5px; letter-spacing:.05em; color:var(--v-faint); }
+    font-family:var(--f-mono); font-size:var(--v-fs-cap); letter-spacing:.05em; color:var(--v-faint); }
   .s-listen{ display:flex; align-items:center; gap:14px; margin-top:18px; flex-wrap:wrap; }
-  .s-rms{ font-family:var(--f-mono); font-size:11px; letter-spacing:.03em; color:var(--v-faint);
+  .s-rms{ font-family:var(--f-mono); font-size:var(--v-fs-mono); letter-spacing:.03em; color:var(--v-faint);
     display:inline-flex; align-items:center; gap:7px; }
   .s-rms.voice{ color:var(--v-emerald); }
   .s-dot{ width:7px; height:7px; border-radius:50%; background:var(--v-faint); }
   .s-dot.on{ background:var(--v-emerald); box-shadow:0 0 7px var(--v-emerald); }
-  .s-count{ font-family:var(--f-mono); font-size:10px; letter-spacing:.05em; color:var(--v-faint); }
+  .s-count{ font-family:var(--f-mono); font-size:var(--v-fs-cap); letter-spacing:.05em; color:var(--v-faint); }
 
   /* sliders */
-  .s-slider{ margin-top:22px; }
+  .s-slider{ margin-top:20px; }
   .s-slider:first-of-type{ margin-top:4px; }
-  .s-slider-top{ display:flex; align-items:baseline; justify-content:space-between; margin-bottom:12px; }
-  .s-slider-name{ color:var(--v-dim); }
-  .s-slider-val{ font-family:var(--f-mono); font-size:18px; font-weight:500; color:var(--v-accent);
+  .s-slider-top{ display:flex; align-items:baseline; justify-content:space-between; margin-bottom:10px; }
+  .s-slider-name{ color:var(--v-dim); font-size:var(--v-fs-b2); }
+  .s-slider-val{ font-family:var(--f-mono); font-size:var(--v-fs-h1); font-weight:500; color:var(--v-accent);
     font-variant-numeric:tabular-nums; }
-  .s-slider-ends{ display:flex; justify-content:space-between; margin-top:9px;
-    font-family:var(--f-mono); font-size:9.5px; letter-spacing:.06em; text-transform:uppercase; color:var(--v-faint); }
+  .s-slider-ends{ display:flex; justify-content:space-between; margin-top:8px;
+    font-family:var(--f-mono); font-size:var(--v-fs-cap); letter-spacing:.06em; text-transform:uppercase;
+    color:var(--v-faint); }
 
   /* bible translations */
-  .s-checklist{ display:flex; flex-direction:column; gap:6px; }
-  .s-check-code{ font-family:var(--f-mono); font-size:11px; font-weight:600; letter-spacing:.05em; color:var(--v-txt); }
+  .s-checklist{ display:flex; flex-direction:column; gap:0; margin:0 -14px; }
+  .s-check-code{ font-family:var(--f-mono); font-size:var(--v-fs-mono); font-weight:600; letter-spacing:.05em;
+    color:var(--v-txt); }
   .s-tr{ display:flex; align-items:center; gap:11px; width:100%; text-align:left; cursor:pointer;
-    background:var(--v-surf2); border:1px solid var(--v-line); border-radius:9px; padding:10px 12px;
-    color:var(--v-txt); font-family:var(--f-body); font-size:13px; transition:border-color .14s, background .14s; }
-  .s-tr:hover{ border-color:var(--v-line2); }
-  .s-tr.on{ border-color:var(--v-accent-line); background:var(--v-accent-soft); }
-  .s-tr-dot{ width:14px; height:14px; border-radius:50%; flex:0 0 auto; border:2px solid var(--v-faint); }
+    background:transparent; border:0; border-bottom:1px solid var(--v-line); padding:8px 14px;
+    color:var(--v-txt); font-family:var(--f-body); font-size:var(--v-fs-b2);
+    transition:background var(--v-dur) var(--v-ease); }
+  .s-tr:last-child{ border-bottom:0; }
+  .s-tr:hover:not(.on){ background:var(--v-surf2); }
+  .s-tr.on{ background:var(--v-sel-soft); box-shadow:inset 2px 0 0 var(--v-sel); }
+  .s-tr-dot{ width:13px; height:13px; border-radius:50%; flex:0 0 auto; border:2px solid var(--v-faint); }
   .s-tr-dot.on{ border-color:var(--v-accent); background:radial-gradient(circle,var(--v-accent) 40%,transparent 45%); }
   .s-tr-name{ color:var(--v-dim); flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .s-tr-active{ font-size:9px; letter-spacing:.1em; text-transform:uppercase; color:var(--v-accent); }
-  .s-tr-note{ font-size:10.5px; color:var(--v-faint); margin-top:12px; line-height:1.6; }
+  .s-tr-active{ font-family:var(--f-mono); font-size:var(--v-fs-cap); letter-spacing:.1em;
+    text-transform:uppercase; color:var(--v-accent); }
+  .s-tr-note{ font-size:var(--v-fs-cap); color:var(--v-faint); margin-top:12px; line-height:1.6; }
   .s-tr-note b{ color:var(--v-dim); }
 
   /* network / model */
   .s-status{ display:inline-flex; align-items:center; gap:7px; margin-top:2px;
-    font-family:var(--f-mono); font-size:11px; letter-spacing:.04em; }
+    font-family:var(--f-mono); font-size:var(--v-fs-mono); letter-spacing:.04em; }
   .s-status.ok{ color:var(--v-emerald); }
   .s-sdot{ width:7px; height:7px; border-radius:50%; background:currentColor; }
   .s-status.ok .s-sdot{ box-shadow:0 0 7px var(--v-emerald); }
-  .s-modelpath{ margin-top:6px; font-family:var(--f-mono); font-size:10px; line-height:1.5;
+  .s-modelpath{ margin-top:6px; font-family:var(--f-mono); font-size:var(--v-fs-cap); line-height:1.5;
     color:var(--v-faint); word-break:break-all; }
 
-  /* embedded History */
-  .s-history{ margin:-4px -4px 0; }
-
-  /* ── OVERVIEW RAIL ── */
-  .s-over{ position:sticky; top:0; display:flex; flex-direction:column; gap:16px; }
-  .s-ocard{ background:var(--v-surf); border:1px solid var(--v-line); border-radius:var(--v-r-lg); padding:16px 18px; }
-  .s-ocard.danger{ border-color:var(--v-red-soft); background:linear-gradient(180deg,var(--v-red-soft),var(--v-surf)); }
-  .s-ohead{ font-family:var(--f-head); font-size:14px; font-weight:600; color:var(--v-txt); margin-bottom:14px; }
+  /* ── OVERVIEW RAIL ── three groups in one pane, seamed, rather than three
+     cards floating in a column with gutters between them. */
+  .s-overbody{ display:flex; flex-direction:column; }
+  .s-ocard{ display:flex; flex-direction:column; border-bottom:1px solid var(--v-line); }
+  .s-ocard:last-child{ border-bottom:0; }
+  .s-ohead{ padding:8px 12px 6px; background:var(--v-bg); border-bottom:1px solid var(--v-line);
+    font-family:var(--f-mono); font-size:var(--v-fs-cap); line-height:var(--v-lh-cap); font-weight:600;
+    letter-spacing:var(--v-tr-caps); text-transform:uppercase; color:var(--v-faint); }
   .s-ohead.danger{ color:var(--v-red); }
-  .s-orow{ display:flex; align-items:center; justify-content:space-between; gap:12px; padding:7px 0; }
-  .s-ok{ font-size:12.5px; color:var(--v-dim); }
-  .s-ov{ font-size:12px; color:var(--v-txt); }
+  .s-ocard.danger{ background:linear-gradient(180deg,var(--v-red-soft),transparent); }
+  .s-orow{ display:flex; align-items:center; justify-content:space-between; gap:12px;
+    padding:7px 12px; border-bottom:1px solid var(--v-line); }
+  .s-orow:last-child{ border-bottom:0; }
+  .s-ok{ font-size:var(--v-fs-b2); color:var(--v-dim); }
+  .s-ov{ font-family:var(--f-mono); font-size:var(--v-fs-mono); font-variant-numeric:tabular-nums;
+    color:var(--v-txt); text-align:right; }
 
-  .s-qlink{ display:flex; align-items:center; gap:12px; width:100%; text-align:left; cursor:pointer;
-    padding:11px 4px; border:0; border-top:1px solid var(--v-line); background:transparent; color:var(--v-dim);
-    transition:color .13s; }
-  .s-qlink:first-of-type{ border-top:0; padding-top:2px; }
-  .s-qlink:hover{ color:var(--v-accent2); }
+  .s-qlink{ display:flex; align-items:center; gap:10px; width:100%; text-align:left; cursor:pointer;
+    padding:8px 12px; border:0; border-bottom:1px solid var(--v-line); background:transparent;
+    color:var(--v-dim); transition:background var(--v-dur) var(--v-ease), color var(--v-dur) var(--v-ease); }
+  .s-qlink:last-child{ border-bottom:0; }
+  .s-qlink:hover{ background:var(--v-surf2); color:var(--v-accent2); }
   .s-qtext{ display:flex; flex-direction:column; gap:1px; min-width:0; flex:1; }
-  .s-qtext b{ font-size:13px; font-weight:600; color:var(--v-txt); }
-  .s-qtext em{ font-style:normal; font-size:11px; color:var(--v-faint); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .s-qtext b{ font-size:var(--v-fs-b2); line-height:var(--v-lh-b2); font-weight:600; color:var(--v-txt); }
+  .s-qtext em{ font-style:normal; font-size:var(--v-fs-cap); color:var(--v-faint);
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .s-qarr{ flex:0 0 auto; color:var(--v-faint); }
   .s-qlink:hover .s-qarr{ color:var(--v-accent2); }
 
-  .s-drow{ display:flex; align-items:center; justify-content:space-between; gap:12px; }
-  .s-dbtn{ flex:0 0 auto; width:34px; height:34px; display:grid; place-items:center; cursor:pointer;
-    border-radius:var(--v-r-md); background:var(--v-red-soft); border:1px solid var(--v-red-soft); color:var(--v-red);
-    transition:background .13s; }
+  .s-drow{ display:flex; align-items:center; justify-content:space-between; gap:12px; padding:9px 12px; }
+  .s-dbtn{ flex:0 0 auto; width:30px; height:30px; display:grid; place-items:center; cursor:pointer;
+    border-radius:var(--v-r-sm); background:var(--v-red-soft); border:1px solid var(--v-red-soft); color:var(--v-red);
+    transition:background var(--v-dur) var(--v-ease); }
   .s-dbtn:hover{ background:var(--v-red-soft); }
   /* Armed: the destructive action is one click from happening — make it read red. */
   .s-dbtn.arm{ background:var(--v-red); border-color:var(--v-red); color:#fff; }
   .s-reset.arm{ border-color:var(--v-red); color:var(--v-red); }
 
   /* ── responsive ── */
-  @media (max-width:1180px){
-    .s-layout{ grid-template-columns:200px minmax(0,1fr); }
-    .s-over{ grid-column:1 / -1; flex-direction:row; flex-wrap:wrap; position:static; }
-    .s-over .s-ocard{ flex:1 1 260px; }
-  }
+  /* The frame hides the inspector column below 1240px and stacks below 900px;
+     these are the rules that are this workspace's own. A setting row that cannot
+     hold its control beside its name puts the control underneath rather than
+     crushing the sentence that explains what it does. */
   @media (max-width:820px){
-    .s-layout{ grid-template-columns:1fr; }
-    .s-rail{ position:static; }
-    .s-railnav{ flex-direction:row; flex-wrap:wrap; }
-    .s-railbtn{ width:auto; }
     .s-row{ flex-direction:column; align-items:stretch; gap:10px; }
     .s-rowctl{ max-width:none; }
   }
+
   .s-roomrow{ align-items:flex-start; }
   .s-lang{ width:100%; border-collapse:collapse; font-size:var(--v-fs-b2); margin-top:10px; }
-  .s-lang th{ text-align:left; font-weight:500; font-size:9px; letter-spacing:.06em;
+  .s-lang th{ text-align:left; font-weight:500; font-size:var(--v-fs-cap); letter-spacing:.06em;
     text-transform:uppercase; color:var(--v-faint); padding:6px 8px;
     border-bottom:1px solid var(--v-line); }
   .s-lang td{ padding:7px 8px; border-bottom:1px solid var(--v-line2); color:var(--v-dim); }
-  .s-langcode{ color:var(--v-faint); font-size:10px; }
+  .s-langcode{ color:var(--v-faint); font-size:var(--v-fs-cap); }
   /* An absence is dim, not red: nobody has failed here — the work has not been
      done, and saying so is the whole point of the column. */
   .s-langgap{ color:var(--v-faint); font-style:italic; }
@@ -1774,6 +1830,4 @@
   .s-netv.on{ color:var(--v-emerald); }
   .s-roomname{ flex:1; min-width:0; display:flex; flex-direction:column; gap:2px; }
   .s-roomnote{ font-size:var(--v-fs-cap); color:var(--v-faint); }
-  @media (min-width:1px){
-  }
 </style>

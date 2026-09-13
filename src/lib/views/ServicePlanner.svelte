@@ -17,6 +17,9 @@
   // a separate full-page step; as a rail it stays put, so comparing last week's
   // order with this week's is one click rather than three.
   import { onMount } from 'svelte';
+  // The shared workspace grammar (docs/REBRAND.md §2 · §11) — the same columns,
+  // panes, type roles and name/value row the Outputs and Settings desks use.
+  import WorkspaceFrame from './WorkspaceFrame.svelte';
   import EmptyState from '../ui/EmptyState.svelte';
   import ErrorState from '../ui/ErrorState.svelte';
   import Loading from '../ui/Loading.svelte';
@@ -446,16 +449,42 @@
      [role="dialog"] is mounted, so the two halves cannot disagree.) -->
 <svelte:window on:keydown={(e) => arrPick && e.key === 'Escape' && (arrPick = null)} />
 
-<div class="sp-shell">
+<!-- The standfirst carries the one caveat that matters here, so it is always on
+     screen. It used to be a note in the toolbar that `display:none`d itself below
+     1240px — the sentence explaining that this workspace cannot reach a
+     congregation disappeared first on the smallest screens. -->
+<WorkspaceFrame
+  title="Planner"
+  standfirst="Build the running order for a service. Nothing on this workspace can reach an output screen — running it is Live's job."
+  columns="206px minmax(0,1fr) 330px">
+  <svelte:fragment slot="head">
+    {#if !$capture.available}
+      <span class="r-badge rose"><span class="bd"></span>Backend not attached — plans need the desktop app</span>
+    {/if}
+    {#if err}<span class="sp-err r-mono" role="alert">{err}</span>
+    {:else if msg}<span class="sp-msg r-mono">{msg}</span>{/if}
+    <!-- The ONLY path from build to run. Nothing else on this screen reaches an
+         output — an operator arranging next Sunday's songs on a Tuesday must not
+         be able to put one on the wall by clicking the wrong thing. -->
+    <button class="r-btn primary sm" on:click={runPlan} disabled={!openPlan || !items.length}>
+      Run in Live
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>
+    </button>
+  </svelte:fragment>
+
   <!-- ══ RAIL: every plan, always reachable ══ -->
-  <aside class="sp-rail">
-    <div class="r-lbl sp-raillbl">Service Plans</div>
+  <aside class="rw-pane sp-rail">
+    <div class="rw-panehead">
+      <h2 class="rw-panettl">Service plans</h2>
+      <span class="rw-spring"></span>
+      <span class="rw-itemn">{plans.length}</span>
+    </div>
     <div class="sp-railsearch">
       <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3" stroke-linecap="round"/></svg>
       <input placeholder="Search plans…" bind:value={planQ} aria-label="Search plans" />
     </div>
 
-    <div class="sp-raillist r-scroll">
+    <div class="rw-panebody sp-raillist">
       {#if loading}
         <Loading compact what="plans" />
       {:else if railPlans.length}
@@ -480,7 +509,7 @@
       {/if}
     </div>
 
-    <div class="sp-railfoot">
+    <div class="rw-panefoot">
       {#if showNew}
         <form class="sp-newform" on:submit|preventDefault={addPlan}>
           <!-- svelte-ignore a11y-autofocus -->
@@ -499,59 +528,42 @@
   </aside>
 
   <!-- ══ MAIN: the running order ══ -->
-  <section class="sp-main">
-    {#if !$capture.available}
-      <div class="sp-offline"><span class="r-badge rose"><span class="bd"></span>Backend not attached — plans need the desktop app</span></div>
-    {/if}
-
-    {#if loading}
-      <Loading what="plans" />
-    {:else if !openPlan && !plans.length && $readErrors.listPlans}
-      <ErrorState error={$readErrors.listPlans} onRetry={refresh} />
-    {:else if !openPlan}
-      <EmptyState message={plans.length ? 'Pick a plan on the left to open it.' : 'No plans yet — create one to start building a service.'} />
-    {:else}
-      <header class="sp-head">
-        <div class="sp-headmain">
-          <h2 class="sp-plantitle">{openPlan.title}</h2>
-          <div class="sp-headmeta r-mono">
-            <span class="sp-hm">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 11h18"/></svg>
-              {openPlan.plan_date || 'No date'}
-            </span>
-            <!-- "(est.)" is not decoration. Most plans contain a scripture cue,
-                 which is untimed by nature, so the sum is a floor and never the
-                 service length. Presenting a partial total as a real one is how a
-                 service runs long. -->
-            <span class="sp-hm">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
-              {items.length} cue{items.length === 1 ? '' : 's'} · {fmtDuration(runtime.seconds, true)}{runtime.partial ? ' (est.)' : ''}
-            </span>
-          </div>
-        </div>
-        {#if err}<span class="sp-err r-mono" role="alert">{err}</span>
-        {:else if msg}<span class="sp-msg r-mono">{msg}</span>{/if}
-        <!-- The ONLY path from build to run. Nothing on this screen reaches an
-             output — an operator arranging next Sunday's songs on a Tuesday must
-             not be able to put one on the wall by clicking the wrong thing. -->
-        <button class="r-btn primary sm" on:click={runPlan} disabled={!items.length}>
-          Run in Live
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>
-        </button>
-      </header>
-
-      <div class="sp-toolbar">
+  <section class="rw-pane sp-main">
+    <div class="rw-panehead sp-panehead">
+      <h2 class="rw-panettl sp-plantitle">{openPlan ? openPlan.title : 'Running order'}</h2>
+      {#if openPlan}
+        <span class="sp-hm r-mono">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 11h18"/></svg>
+          {openPlan.plan_date || 'No date'}
+        </span>
+        <!-- "(est.)" is not decoration. Most plans contain a scripture cue,
+             which is untimed by nature, so the sum is a floor and never the
+             service length. Presenting a partial total as a real one is how a
+             service runs long. -->
+        <span class="sp-hm r-mono">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+          {items.length} cue{items.length === 1 ? '' : 's'} · {fmtDuration(runtime.seconds, true)}{runtime.partial ? ' (est.)' : ''}
+        </span>
+        <span class="rw-spring"></span>
         <div class="r-seg sp-toolseg">
           <button class:on={leftMode === 'cues'} on:click={() => (leftMode = 'cues')}>Running Order</button>
           <button class:on={leftMode === 'add'} on:click={() => { leftMode = 'add'; if (!addQ.trim()) { addMedia = allMedia.slice(0, 8); addAnnounce = allAnnounce.slice(0, 8); } }}>＋ Add Cue</button>
         </div>
         <button class="r-btn ghost sm" disabled={!items.length} on:click={addSection}>＋ Add Section</button>
-        <span class="sp-spring"></span>
-        <span class="r-lbl sp-toolnote">Build only — never reaches an output</span>
-      </div>
+      {/if}
+    </div>
 
+    {#if loading}
+      <div class="rw-panebody pad"><Loading what="plans" /></div>
+    {:else if !openPlan && !plans.length && $readErrors.listPlans}
+      <div class="rw-panebody pad"><ErrorState error={$readErrors.listPlans} onRetry={refresh} /></div>
+    {:else if !openPlan}
+      <div class="rw-panebody pad">
+        <EmptyState message={plans.length ? 'Pick a plan on the left to open it.' : 'No plans yet — create one to start building a service.'} />
+      </div>
+    {:else}
       {#if leftMode === 'cues'}
-        <div class="sp-tablewrap r-scroll">
+        <div class="rw-panebody sp-tablewrap">
           {#if items.length}
             <div class="sp-thead r-lbl">
               <span></span>
@@ -639,7 +651,7 @@
           {/if}
         </div>
       {:else}
-        <div class="sp-addpanel r-scroll">
+        <div class="rw-panebody sp-addpanel">
           <div class="sp-addsearch">
             <svg class="sp-searchic" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3" stroke-linecap="round"/></svg>
             <!-- svelte-ignore a11y-autofocus -->
@@ -700,18 +712,19 @@
   </section>
 
   <!-- ══ INSPECTOR: the selected cue ══ -->
-  <aside class="sp-insp">
+  <aside class="rw-pane rw-insp sp-insp">
     {#if !selCue}
-      <div class="sp-insphead"><span class="sp-inspttl">Cue Details</span></div>
+      <div class="rw-panehead"><h2 class="rw-panettl">Cue details</h2></div>
       <div class="sp-empty r-empty">Pick a cue to edit it.</div>
     {:else}
       {@const ty = TYPE[selCue.cue_type] || TYPE.scripture}
-      <div class="sp-insphead">
-        <span class="sp-inspttl">Cue Details</span>
+      <div class="rw-panehead">
+        <h2 class="rw-panettl">Cue details</h2>
+        <span class="rw-spring"></span>
         <span class="sp-inspttrig r-mono">{ty.trig}</span>
       </div>
 
-      <div class="sp-inspbody r-scroll">
+      <div class="rw-panebody pad sp-inspbody">
         <div class="sp-insptype r-mono" style="color:{ty.color};">
           <span class="sp-dot" style="background:{ty.color};"></span>{ty.label}
         </div>
@@ -815,7 +828,7 @@
       </div>
     {/if}
   </aside>
-</div>
+</WorkspaceFrame>
 
 <!-- arrangement picker — shown when a song with saved arrangements is added -->
 {#if arrPick}
@@ -860,39 +873,41 @@
 {/if}
 
 <style>
-  /* Three columns: plans · running order · inspector. Each scrolls internally so
-     the running order never pushes the rail or the inspector off screen. */
-  .sp-shell{ display:grid; grid-template-columns:206px minmax(0,1fr) 340px; gap:var(--v-sp-md);
-    height:100%; min-height:0; }
-  @media (max-width:1280px){ .sp-shell{ grid-template-columns:186px minmax(0,1fr) 300px; gap:12px; } }
-  @media (max-width:1020px){ .sp-shell{ grid-template-columns:1fr; height:auto; } }
+  /* PLANNER — laid out in the shared workspace grammar (`WorkspaceFrame.svelte`,
+     docs/REBRAND.md §2): plans rail · running order · cue inspector, as three
+     panes with hairline seams and 8px gutters rather than three floating cards
+     with 16px trenches between them. The columns, the type roles and the
+     name/value row live in the frame; what is here is what is specific to a plan.
+
+     The plans list used to be a separate full-page step; as a rail it stays put,
+     so comparing last week's order with this week's is one click rather than
+     three. */
 
   /* ── rail ── */
-  .sp-rail{ display:flex; flex-direction:column; min-height:0; gap:10px;
-    background:var(--v-surf); border:1px solid var(--v-line); border-radius:var(--v-r-lg); padding:13px 11px; }
-  .sp-raillbl{ padding:0 2px; }
-  .sp-railsearch{ display:flex; align-items:center; gap:8px; background:var(--v-bg); border:1px solid var(--v-line2);
-    border-radius:var(--v-r-md); padding:0 10px; height:32px; flex:0 0 auto; }
-  .sp-railsearch:focus-within{ border-color:var(--v-accent-line); box-shadow:0 0 0 3px var(--v-accent-soft); }
+  .sp-railsearch{ display:flex; align-items:center; gap:8px; background:var(--v-bg);
+    border-bottom:1px solid var(--v-line); padding:0 12px; height:30px; flex:0 0 auto; }
+  .sp-railsearch:focus-within{ box-shadow:inset 0 0 0 1px var(--v-accent-line); }
   .sp-railsearch svg{ color:var(--v-faint); flex:0 0 auto; }
   .sp-railsearch input{ flex:1; min-width:0; background:transparent; border:0; outline:none; color:var(--v-txt);
     font-size:var(--v-fs-b2); }
   .sp-railsearch input::placeholder{ color:var(--v-faint); }
 
-  .sp-raillist{ flex:1; min-height:0; overflow-y:auto; display:flex; flex-direction:column; gap:6px; }
-  .sp-railcard{ position:relative; display:flex; flex-direction:column; gap:5px; width:100%; text-align:left;
-    padding:10px 11px; border-radius:var(--v-r-md); background:var(--v-surf2); border:1px solid var(--v-line);
-    color:inherit; cursor:pointer; transition:border-color .12s, background .12s; }
-  .sp-railcard:hover{ border-color:var(--v-line2); }
-  .sp-railcard.sel{ border-color:var(--v-accent-line); background:var(--v-accent-soft); }
+  .sp-raillist{ display:flex; flex-direction:column; }
+  /* A dense row with a seam, not a card with a gutter. Selection is steel blue —
+     the thing you are working on — and never amber, which means a congregation is
+     looking at something. */
+  .sp-railcard{ position:relative; display:flex; flex-direction:column; gap:3px; width:100%; text-align:left;
+    padding:7px 12px; background:transparent; border:0; border-bottom:1px solid var(--v-line);
+    color:inherit; cursor:pointer; transition:background var(--v-dur) var(--v-ease); }
+  .sp-railcard:last-child{ border-bottom:0; }
+  .sp-railcard:hover:not(.sel){ background:var(--v-surf2); }
+  .sp-railcard.sel{ background:var(--v-sel-soft); box-shadow:inset 2px 0 0 var(--v-sel); }
   .sp-railtitle{ font-size:var(--v-fs-b2); font-weight:600; color:var(--v-txt); line-height:1.25;
     overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .sp-railfootline{ display:flex; align-items:center; justify-content:space-between; gap:6px; }
-  .sp-railmeta, .sp-railcues{ font-size:var(--v-fs-cap); color:var(--v-faint); letter-spacing:.02em; }
+  .sp-railmeta, .sp-railcues{ font-family:var(--f-mono); font-size:var(--v-fs-cap); color:var(--v-faint);
+    letter-spacing:.02em; }
 
-  .sp-railfoot{ display:flex; flex-direction:column; gap:6px; flex:0 0 auto; padding-top:10px;
-    border-top:1px solid var(--v-line); }
-  .sp-railfoot .r-btn{ width:100%; justify-content:center; }
   .sp-raildel{ color:var(--v-rose); }
   .sp-raildel:hover:not(:disabled){ border-color:var(--v-rose); background:var(--v-rose-soft); }
   .sp-newform{ display:flex; flex-direction:column; gap:6px; }
@@ -900,16 +915,15 @@
   .sp-newbtns .r-btn{ flex:1; }
 
   /* ── main ── */
-  .sp-main{ display:flex; flex-direction:column; min-height:0; gap:12px; }
-  .sp-offline{ flex:0 0 auto; }
-
-  .sp-head{ display:flex; align-items:flex-start; gap:14px; flex:0 0 auto; }
-  .sp-headmain{ flex:1; min-width:0; }
-  .sp-plantitle{ margin:0; font-family:var(--f-head); font-size:var(--v-fs-h1); line-height:var(--v-lh-h1);
-    letter-spacing:var(--v-tr-tight); font-weight:600; color:var(--v-txt); }
-  .sp-headmeta{ display:flex; align-items:center; gap:14px; margin-top:5px; flex-wrap:wrap; }
-  .sp-hm{ display:inline-flex; align-items:center; gap:5px; font-size:var(--v-fs-lbl); color:var(--v-dim); }
+  /* One head, not a header plus a toolbar: the plan's name, what it costs, and
+     the two things you do to it, on the seam that already divides the pane. */
+  .sp-panehead{ min-height:38px; padding:5px 12px; gap:10px; flex-wrap:wrap; }
+  .sp-plantitle{ flex:0 0 auto; text-transform:none; letter-spacing:var(--v-tr-h2);
+    font-size:var(--v-fs-h3); line-height:var(--v-lh-h3); max-width:46ch; }
+  .sp-hm{ display:inline-flex; align-items:center; gap:5px; flex:0 0 auto;
+    font-size:var(--v-fs-cap); color:var(--v-dim); }
   .sp-hm svg{ color:var(--v-faint); flex:0 0 auto; }
+  .sp-toolseg{ flex:0 0 auto; }
   .sp-msg{ font-size:var(--v-fs-lbl); color:var(--v-emerald); max-width:220px;
     overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   /* A FAILURE is rose, never the success-green above — the two must never share
@@ -917,61 +931,60 @@
   .sp-err{ font-size:var(--v-fs-lbl); color:var(--v-red); max-width:280px;
     overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 
-  .sp-toolbar{ display:flex; align-items:center; gap:8px; flex:0 0 auto; }
-  .sp-spring{ flex:1; }
-  /* Never wraps to a second line — it is a standing caveat, not a message, and a
-     two-line caveat pushes the running order down the screen. */
-  .sp-toolnote{ color:var(--v-faint); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  @media (max-width:1240px){ .sp-toolnote{ display:none; } }
-  .sp-toolseg{ flex:0 0 auto; }
-
   /* ── the running order table ── */
-  /* Breakpoints are derived from the TABLE's width, not the viewport's: this
-     column is the viewport minus the nav sidebar (236), the plans rail (206), the
-     inspector (340) and three gaps — about 814px of fixed chrome. Sized off the
-     raw viewport, the table kept all eight columns at 1536px inside a ~690px box
-     and overflowed, clipping the row buttons off the right edge and running the
-     DURATION and TRIGGER headings together.
+  /* Breakpoints are derived from the TABLE's width, not the viewport's. The
+     workspace costs the rail (206), the inspector (330), two gaps and the page
+     gutter — about 580px of chrome, down from 814 when a nav sidebar still ate a
+     column. Sized off the raw viewport the table kept all eight columns inside a
+     box that could not hold them, clipped the row buttons off the right edge and
+     ran DURATION and TRIGGER together.
+     The frame drops the inspector at 1240px, which hands 330px back — so the
+     columns that went at 1330 come back at 1240 and only go again when the table
+     itself is genuinely short of room.
      (`@container` states that intent directly, but esbuild's CSS minifier cannot
      parse it and silently emitted broken rules — dev looked right, the packaged
      build would not have been.) */
-  .sp-tablewrap{ flex:1; min-height:0; overflow-y:auto; background:var(--v-surf);
-    border:1px solid var(--v-line); border-radius:var(--v-r-lg); }
+  .sp-tablewrap{ overflow-y:auto; }
   /* The cue name is what an operator scans; it gets the flexible column and a
      floor, and every other column is sized to its content so the name is never
      the one that collapses. */
   .sp-thead, .sp-row{ display:grid;
     grid-template-columns:18px 22px minmax(160px,1fr) 96px 122px 62px 88px 78px;
     align-items:center; gap:8px; padding:0 10px; }
-  .sp-thead{ height:30px; position:sticky; top:0; z-index:2; background:var(--v-surf);
+  .sp-thead{ height:28px; position:sticky; top:0; z-index:2; background:var(--v-bg);
     border-bottom:1px solid var(--v-line); color:var(--v-faint); }
   .sp-th-n{ text-align:center; }
   .sp-th-r{ text-align:right; }
   /* Trigger goes first, then Template — both are stated in full in the inspector
      for the selected cue, so neither is the last copy of anything. */
-  @media (max-width:1600px){
+  @media (max-width:1330px){
     .sp-thead, .sp-row{ grid-template-columns:18px 22px minmax(150px,1fr) 92px 172px 60px 78px; }
     .sp-tg, .sp-th-tg{ display:none; }
   }
-  @media (max-width:1360px){
+  @media (max-width:1240px){
+    .sp-thead, .sp-row{ grid-template-columns:18px 22px minmax(160px,1fr) 96px 122px 62px 88px 78px; }
+    .sp-tg, .sp-th-tg{ display:block; }
+  }
+  @media (max-width:960px){
     .sp-thead, .sp-row{ grid-template-columns:18px 22px minmax(130px,1fr) 96px 62px 78px; }
-    .sp-tpl, .sp-th-tpl{ display:none; }
+    .sp-tg, .sp-th-tg, .sp-tpl, .sp-th-tpl{ display:none; }
   }
   /* Below the three-column break the table has the whole width back, so both
      columns return. */
-  @media (max-width:1020px){
+  @media (max-width:900px){
     .sp-thead, .sp-row{ grid-template-columns:18px 22px minmax(160px,1fr) 96px 122px 62px 88px 78px; }
     .sp-tg, .sp-th-tg, .sp-tpl, .sp-th-tpl{ display:block; }
   }
 
-  .sp-row{ min-height:36px; border-bottom:1px solid var(--v-line); cursor:pointer;
+  .sp-row{ min-height:34px; border-bottom:1px solid var(--v-line); cursor:pointer;
     transition:background .12s, box-shadow .12s; }
   .sp-row:last-child{ border-bottom:0; }
   .sp-row:hover{ background:var(--v-surf2); }
-  /* Selection is amethyst — the app's accent. It is NOT amber: amber means a cue
-     is live on the wall, and a cue merely being edited on a Tuesday is not. */
-  .sp-row.sel{ background:var(--v-accent-soft); box-shadow:inset 3px 0 0 var(--v-accent); }
-  .sp-row.dragover{ box-shadow:inset 0 2px 0 var(--v-accent); }
+  /* Selection is steel blue — the thing you are working on (docs/REBRAND.md §1).
+     It is NOT amber: amber means a cue is live on the wall, and a cue merely
+     being edited on a Tuesday is not. */
+  .sp-row.sel{ background:var(--v-sel-soft); box-shadow:inset 2px 0 0 var(--v-sel); }
+  .sp-row.dragover{ box-shadow:inset 0 2px 0 var(--v-sel); }
   .sp-grip{ color:var(--v-500); cursor:grab; display:grid; place-items:center; }
   .sp-row:hover .sp-grip{ color:var(--v-faint); }
   .sp-num{ font-size:var(--v-fs-lbl); color:var(--v-faint); text-align:center; }
@@ -990,8 +1003,8 @@
   .sp-tg{ font-size:var(--v-fs-cap); color:var(--v-faint); letter-spacing:.05em; }
   .sp-rowbtns{ display:flex; gap:4px; justify-content:flex-end; opacity:0; transition:opacity .12s; }
   .sp-row:hover .sp-rowbtns, .sp-row.sel .sp-rowbtns, .sp-row:focus-within .sp-rowbtns{ opacity:1; }
-  .sp-mini{ width:22px; height:22px; border-radius:var(--v-r-sm); display:grid; place-items:center; cursor:pointer;
-    font-size:11px; background:var(--v-surf3); border:1px solid var(--v-line); color:var(--v-dim); }
+  .sp-mini{ width:20px; height:20px; border-radius:var(--v-r-sm); display:grid; place-items:center; cursor:pointer;
+    font-size:var(--v-fs-lbl); background:var(--v-surf3); border:1px solid var(--v-line); color:var(--v-dim); }
   .sp-mini:hover:not(:disabled){ color:var(--v-accent); border-color:var(--v-line2); }
   .sp-mini.danger:hover:not(:disabled){ color:var(--v-rose); border-color:var(--v-rose); }
   .sp-mini:disabled{ opacity:.3; cursor:not-allowed; }
@@ -1000,54 +1013,51 @@
   /* Section header row. Amber bar = the reference's own accent for a section, and
      it is safe here: it is a heading in a build tool, not a live-state indicator
      on a cue. */
-  .sp-section{ display:flex; align-items:center; gap:10px; padding:8px 10px 6px;
-    background:var(--v-bg); border-bottom:1px solid var(--v-line); position:sticky; top:30px; z-index:1; }
-  .sp-secbar{ width:3px; height:15px; border-radius:2px; background:var(--v-amber); flex:0 0 auto; }
+  .sp-section{ display:flex; align-items:center; gap:10px; padding:7px 10px 6px;
+    background:var(--v-bg); border-bottom:1px solid var(--v-line); position:sticky; top:28px; z-index:1; }
+  .sp-secbar{ width:3px; height:14px; border-radius:2px; background:var(--v-amber); flex:0 0 auto; }
   .sp-sectitle{ font-size:var(--v-fs-lbl); font-weight:600; letter-spacing:var(--v-tr-wide);
     text-transform:uppercase; color:var(--v-txt); }
   .sp-secmeta{ margin-left:auto; font-size:var(--v-fs-cap); color:var(--v-faint); }
 
   /* ── add panel ── */
-  .sp-addpanel{ flex:1; min-height:0; overflow-y:auto; padding:12px; background:var(--v-surf);
-    border:1px solid var(--v-line); border-radius:var(--v-r-lg); }
-  .sp-addsearch{ display:flex; align-items:center; gap:9px; background:var(--v-bg); border:1px solid var(--v-line2);
-    border-radius:var(--v-r-md); padding:0 11px; height:38px; }
-  .sp-addsearch:focus-within{ border-color:var(--v-accent-line); box-shadow:0 0 0 3px var(--v-accent-soft); }
+  .sp-addpanel{ overflow-y:auto; }
+  .sp-addsearch{ display:flex; align-items:center; gap:9px; background:var(--v-bg);
+    border-bottom:1px solid var(--v-line); padding:0 12px; height:34px; }
+  .sp-addsearch:focus-within{ box-shadow:inset 0 0 0 1px var(--v-accent-line); }
   .sp-searchic{ color:var(--v-faint); flex:0 0 auto; }
   .sp-addsearch input{ flex:1; min-width:0; background:transparent; border:0; outline:none; color:var(--v-txt);
-    font-size:var(--v-fs-b1); }
+    font-size:var(--v-fs-b2); }
   .sp-addsearch input::placeholder{ color:var(--v-faint); }
-  .sp-reslbl{ margin:10px 0 2px; }
-  .sp-hint{ font-size:var(--v-fs-b2); color:var(--v-faint); padding:6px 2px; }
+  .sp-reslbl{ padding:8px 12px 5px; background:var(--v-bg); border-bottom:1px solid var(--v-line); }
+  .sp-hint{ font-size:var(--v-fs-b2); color:var(--v-faint); padding:10px 12px; }
 
-  .sp-cdadd{ display:flex; align-items:center; gap:8px; margin-top:8px; padding:8px 10px;
-    border:1px solid var(--v-line); border-radius:var(--v-r-md); background:var(--v-surf2); }
-  .sp-cdlbl{ font-size:var(--v-fs-b1); color:var(--v-txt); }
-  .sp-cdmin{ width:52px; padding:4px 6px; border-radius:var(--v-r-sm); border:1px solid var(--v-line2);
+  .sp-cdadd{ display:flex; align-items:center; gap:8px; padding:7px 12px;
+    border-bottom:1px solid var(--v-line); background:var(--v-surf2); }
+  .sp-cdlbl{ font-size:var(--v-fs-b2); color:var(--v-txt); }
+  .sp-cdmin{ width:52px; padding:3px 6px; border-radius:var(--v-r-sm); border:1px solid var(--v-line2);
     background:var(--v-surf); color:var(--v-txt); font-family:var(--f-mono); font-size:var(--v-fs-b2); text-align:center; }
   .sp-cdunit{ font-size:var(--v-fs-lbl); color:var(--v-faint); margin-left:-3px; }
   .sp-cdgo{ margin-left:auto; }
 
-  .sp-results{ display:flex; flex-direction:column; gap:6px; margin-top:8px; }
-  .sp-result{ display:flex; align-items:flex-start; gap:9px; width:100%; padding:9px 10px; border-radius:var(--v-r-md);
-    background:var(--v-surf2); border:1px solid var(--v-line); color:var(--v-txt); cursor:pointer; text-align:left; }
-  .sp-result:hover{ border-color:var(--v-line2); }
+  .sp-results{ display:flex; flex-direction:column; }
+  .sp-result{ display:flex; align-items:flex-start; gap:9px; width:100%; padding:8px 12px;
+    background:transparent; border:0; border-bottom:1px solid var(--v-line);
+    color:var(--v-txt); cursor:pointer; text-align:left;
+    transition:background var(--v-dur) var(--v-ease); }
+  .sp-result:hover{ background:var(--v-surf2); }
   .sp-result .sp-dot{ margin-top:5px; }
   .sp-resbody{ flex:1; min-width:0; }
-  .sp-resref{ display:block; font-family:var(--f-head); font-weight:600; font-size:var(--v-fs-b1); color:var(--v-txt); }
-  .sp-restext{ font-size:var(--v-fs-b2); color:var(--v-dim); line-height:1.4; margin-top:2px;
+  .sp-resref{ display:block; font-family:var(--f-head); font-weight:600; font-size:var(--v-fs-b2); color:var(--v-txt); }
+  .sp-restext{ font-size:var(--v-fs-cap); color:var(--v-dim); line-height:1.45; margin-top:2px;
     display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
   .sp-plus{ color:var(--v-accent); font-family:var(--f-mono); font-weight:700; flex:0 0 auto; }
 
   /* ── inspector ── */
-  .sp-insp{ display:flex; flex-direction:column; min-height:0;
-    background:var(--v-surf); border:1px solid var(--v-line); border-radius:var(--v-r-lg); overflow:hidden; }
-  .sp-insphead{ display:flex; align-items:center; justify-content:space-between; gap:10px;
-    padding:12px 14px; border-bottom:1px solid var(--v-line); flex:0 0 auto; }
-  .sp-inspttl{ font-family:var(--f-head); font-size:var(--v-fs-h3); font-weight:600; color:var(--v-txt); }
-  .sp-inspttrig{ font-size:var(--v-fs-cap); letter-spacing:.06em; color:var(--v-faint);
-    padding:3px 8px; border-radius:99px; background:var(--v-surf2); border:1px solid var(--v-line2); }
-  .sp-inspbody{ flex:1; min-height:0; overflow-y:auto; padding:14px; }
+  .sp-inspbody{ padding:12px; }
+  /* Not a pill: §1 is explicit that a pill in a control room reads as a toy. */
+  .sp-inspttrig{ flex:0 0 auto; font-size:var(--v-fs-cap); letter-spacing:.06em; color:var(--v-faint);
+    padding:2px 7px; border-radius:var(--v-r-sm); background:var(--v-surf2); border:1px solid var(--v-line2); }
   .sp-insptype{ display:inline-flex; align-items:center; gap:6px; font-size:var(--v-fs-cap); letter-spacing:.06em; }
   .sp-inspname{ margin:6px 0 2px; font-family:var(--f-head); font-size:var(--v-fs-h2); line-height:var(--v-lh-h2);
     letter-spacing:var(--v-tr-h2); font-weight:600; color:var(--v-txt); }
@@ -1067,7 +1077,7 @@
      escapes this box and lays itself out against the page — which reads as a
      dead black rectangle here and a mystery elsewhere. It also supplies its own
      `container-type:size` for the cqw units, so this element must not. */
-  .sp-preview{ position:relative; aspect-ratio:16/9; border-radius:var(--v-r-md);
+  .sp-preview{ position:relative; aspect-ratio:16/9; border-radius:var(--v-r-sm);
     border:1px solid var(--v-line2); overflow:hidden; background:var(--v-void);
     display:grid; place-items:center; }
   .sp-nopreview{ font-size:var(--v-fs-cap); color:var(--v-500); letter-spacing:.04em; }
@@ -1076,17 +1086,17 @@
   .sp-actions .r-btn{ flex:1 1 auto; justify-content:center; }
 
   .sp-slidemeta{ display:flex; flex-wrap:wrap; gap:6px; margin:12px 0 10px; }
-  .sp-chip{ font-size:var(--v-fs-cap); letter-spacing:.05em; color:var(--v-dim); padding:4px 9px;
+  .sp-chip{ font-size:var(--v-fs-cap); letter-spacing:.05em; color:var(--v-dim); padding:3px 8px;
     border-radius:var(--v-r-sm); background:var(--v-surf2); border:1px solid var(--v-line2); white-space:nowrap; }
-  .sp-slides{ display:flex; flex-direction:column; gap:8px; }
-  .sp-slide{ position:relative; border-radius:var(--v-r-md); border:1px solid var(--v-line);
-    background:var(--v-surf2); padding:10px 12px 10px 44px; min-height:52px;
+  .sp-slides{ display:flex; flex-direction:column; gap:6px; }
+  .sp-slide{ position:relative; border-radius:var(--v-r-sm); border:1px solid var(--v-line);
+    background:var(--v-surf2); padding:9px 12px 9px 42px; min-height:46px;
     display:flex; align-items:center; }
-  .sp-slidetag{ position:absolute; left:10px; top:10px; font-family:var(--f-mono); font-size:9px; font-weight:700;
+  .sp-slidetag{ position:absolute; left:10px; top:9px; font-family:var(--f-mono); font-size:var(--v-fs-cap); font-weight:700;
     letter-spacing:.06em; padding:2px 5px; border-radius:var(--v-r-sm); border:1px solid currentColor; }
   .sp-slidetext{ font-size:var(--v-fs-b2); line-height:1.45; color:var(--v-dim); white-space:pre-line;
     display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; }
-  .sp-slideidx{ position:absolute; right:10px; bottom:8px; font-size:var(--v-fs-cap); color:var(--v-500); }
+  .sp-slideidx{ position:absolute; right:10px; bottom:7px; font-size:var(--v-fs-cap); color:var(--v-500); }
 
   .sp-empty{ margin:auto; padding:24px; text-align:center; }
 
@@ -1099,14 +1109,14 @@
   .sp-arrtitle{ font-family:var(--f-head); font-weight:600; font-size:var(--v-fs-h3); color:var(--v-txt); }
   .sp-arrsub{ margin:2px 0 6px; }
   .sp-arropt{ display:flex; flex-direction:column; gap:3px; width:100%; text-align:left; padding:10px 12px;
-    border-radius:var(--v-r-md); background:var(--v-surf2); border:1px solid var(--v-line); color:var(--v-txt);
+    border-radius:var(--v-r-sm); background:var(--v-surf2); border:1px solid var(--v-line); color:var(--v-txt);
     cursor:pointer; transition:.12s; }
   .sp-arropt:hover{ border-color:var(--v-accent); background:var(--v-accent-soft); }
   /* Rose, never amber: this is a thing that is wrong, not a thing that is live
      (DECISIONS §22). */
   .sp-arropt.stale{ border-color:var(--v-rose,#e0526a); opacity:.75; cursor:not-allowed; }
   .sp-arropt.stale:hover{ border-color:var(--v-rose,#e0526a); background:transparent; }
-  .sp-arrstale{ font-size:11px; color:var(--v-rose,#e0526a); }
+  .sp-arrstale{ font-size:var(--v-fs-lbl); color:var(--v-rose,#e0526a); }
   .sp-chip.stale{ color:var(--v-rose,#e0526a); border-color:currentColor; }
   .sp-arroptname{ font-weight:600; font-size:var(--v-fs-b1); }
   .sp-arroptseq{ font-size:var(--v-fs-cap); letter-spacing:.03em; color:var(--v-faint);
