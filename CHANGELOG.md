@@ -10,7 +10,37 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 
 ## [Unreleased]
 
-_Nothing yet._
+**A new look, and eight things that were quietly not working.** The whole console has been
+retuned for a dark booth — denser type, flatter corners, one slider and one switch everywhere
+instead of whatever each screen drew for itself. None of the four colours that carry a promise
+changed meaning: amber is still ON AIR, amethyst still rehearsal, cyan still a guess, grey still
+CUED. What did change is that the colour for "the thing you are clicking" is now its own steel
+blue, so the rehearsal colour is no longer lit on every hover and Save button.
+
+What you may notice most, in the order you would meet it:
+
+- **A screen can now follow the content look.** Set "Scripture wears Nocturne" once, and every
+  screen set to follow wears it. Until now every screen always had a look of its own, which meant
+  the content-look settings could be filled in and change nothing anywhere.
+- **A word to the preacher.** Type one line in Live and it takes over the stage monitor — and only
+  the stage monitor. No congregation screen can show it.
+- **Blackout is black.** It used to wear the same grey that means CUED.
+- **Deleting an object in the Templates editor now takes two presses.** It was one click on a
+  small button between Lock and Visibility.
+- **Transitions work.** The theme editor has offered a transition and a duration for a long time
+  and the wall ignored both. There are seven now, they apply, and the default is still an instant
+  cut. If you have reduced motion turned on, everything cuts.
+- **Search understands `ps23:1`**, and stops answering when it has not understood: a search whose
+  words are mostly not in any verse now returns nothing rather than a confident list.
+- **Three lower thirds** instead of one — a name band, a lyric band with no reference at all, and
+  a scripture band.
+- **Settings rows say which kind of nothing they have.** "—" beside *This machine* could mean
+  "no network", "could not be read" or "still checking"; now it says which.
+- **A song cue is named in the service record again.** Firing a song from a plan recorded a blank,
+  so a Sunday report said "Manual override" about nothing. The words on the screen are unchanged —
+  a song's section label still never reaches the glass.
+
+Nothing here changes how verses are detected, which model you run, or the release decision.
 
 ---
 
