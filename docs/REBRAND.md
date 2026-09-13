@@ -225,6 +225,50 @@ behind a validator and never scrolled out of reach; a status line that reads the
 when fine is not a status line; nothing a spoken control does may be invisible; and the section label,
 the stage note and the stage alert must be unable to reach a congregation channel.
 
+## Status
+
+`REBRAND status` reads this table. One row per phase; a phase is **done** only when the three
+gates in the phases section are green on it — `cargo test`, `npx vitest run`, `npm run build`.
+
+| # | Phase | State | Evidence |
+|---|---|---|---|
+| 1 | Tokens and chrome | **done** | palette, radius, type scale, one slider / switch / colour well, the four control colours. `tokencontrast.test.js` 7 green, `rangefill.test.js` 9 new, suite 974 |
+| 2 | Template model | not started | |
+| 3 | The object inspector | not started | |
+| 4 | Roles and the look register | not started | |
+| 5 | Lower thirds | not started | |
+| 6 | Stage monitor | not started | |
+| 7 | Countdown | not started | |
+| 8 | Transitions | not started | |
+| 9 | Search | not started | |
+| 10 | Library | not started | |
+| 11 | Settings | not started | |
+| 12 | SuperSource | not started | |
+
+**Where phase 1 departed from the prototype, and why.** Both are cases of the rule in Context —
+the repository wins where the two disagree:
+
+- **The muted text step.** The prototype's `#7e8695` measures 4.25:1 on `--v-surf` and 3.77:1 on
+  `--v-surf2`, below WCAG AA on two of the four surfaces muted text sits on.
+  `tokencontrast.test.js` (RG-74) exists precisely to catch that, so the token ships at
+  `#8c94a1` — same hue, 4.52:1 at worst.
+- **Radius.** Section 1 says "2px everywhere" and then "3px corners on cards"; the prototype,
+  which was measured rather than sketched, uses 3px with 5px on containers. That is what
+  shipped, and `--v-r-round` survives only for a slider thumb, a status dot and a switch.
+
+**Carried forward, deliberately.** Phase 1 owns `src/app.css`, and the shared layer is now
+token-only: every literal radius there reads `--v-r-*`. Components still hold about sixty
+radius literals of their own, twenty of them `99px` — so a few pills survive on surfaces phases
+2, 10 and 11 rewrite anyway. "No pills" is true of the design system as of phase 1; it is not
+yet true of every rendered screen, and saying otherwise would be the kind of claim this
+repository files as a finding.
+
+**One thing phase 1 changed that the spec did not ask for.** Blackout on the run surface wore
+`--v-grey`, and grey means CUED. The control that takes the wall to black shared a colour with a
+position marker, so it is now black with a hairline, per the four-control rule in section 1.
+
+---
+
 ## Verification
 
 - Drive the packaged app the way we drove the prototype: the browser harness in

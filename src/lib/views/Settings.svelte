@@ -1,5 +1,6 @@
 <script>
   import { onMount, onDestroy } from 'svelte';
+  import { rangeFill } from '../rangefill.js';
   import { get } from 'svelte/store';
   import ModelSetup from '../ModelSetup.svelte';
   import History from './library/History.svelte';
@@ -1030,7 +1031,7 @@
               <span class="r-lbl s-slider-name">Sensitivity</span>
               <span class="s-slider-val">{editing.sensitivity}</span>
             </div>
-            <input class="r-range" type="range" min="0" max="100" step="1" bind:value={editing.sensitivity} />
+            <input class="r-range" type="range" min="0" max="100" step="1" bind:value={editing.sensitivity} use:rangeFill={editing.sensitivity} />
             <div class="s-slider-ends"><span>CAUTIOUS</span><span>EAGER</span></div>
           </div>
           <!-- THE ONE THING THIS FORM MUST NOT GET WRONG. The learned pair is shown,
@@ -1143,7 +1144,7 @@
           </div>
           <input class="r-range" type="range" min="0.5" max="0.99" step="0.01"
             value={$capture.thresholds.auto_fire}
-            on:input={(e) => onAuto(+e.target.value)} disabled={!$capture.available} />
+            on:input={(e) => onAuto(+e.target.value)} disabled={!$capture.available} use:rangeFill={$capture.thresholds.auto_fire} />
           <div class="s-slider-ends"><span>LAX (50%)</span><span>STRICT (100%)</span></div>
         </div>
         <div class="s-slider">
@@ -1153,7 +1154,7 @@
           </div>
           <input class="r-range" type="range" min="0.3" max="0.9" step="0.01"
             value={$capture.thresholds.suggest}
-            on:input={(e) => onSuggest(+e.target.value)} disabled={!$capture.available} />
+            on:input={(e) => onSuggest(+e.target.value)} disabled={!$capture.available} use:rangeFill={$capture.thresholds.suggest} />
           <div class="s-slider-ends"><span>PASSIVE</span><span>HYPER-AWARE</span></div>
         </div>
         <p class="s-note">Only a direct, high-confidence quotation can ever auto-fire. A paraphrase is always a suggestion — a cosine is not a probability.</p>
@@ -1685,7 +1686,7 @@
   /* ── OVERVIEW RAIL ── */
   .s-over{ position:sticky; top:0; display:flex; flex-direction:column; gap:16px; }
   .s-ocard{ background:var(--v-surf); border:1px solid var(--v-line); border-radius:var(--v-r-lg); padding:16px 18px; }
-  .s-ocard.danger{ border-color:var(--v-red-soft); background:linear-gradient(180deg,rgba(239,68,68,.05),var(--v-surf)); }
+  .s-ocard.danger{ border-color:var(--v-red-soft); background:linear-gradient(180deg,var(--v-red-soft),var(--v-surf)); }
   .s-ohead{ font-family:var(--f-head); font-size:14px; font-weight:600; color:var(--v-txt); margin-bottom:14px; }
   .s-ohead.danger{ color:var(--v-red); }
   .s-orow{ display:flex; align-items:center; justify-content:space-between; gap:12px; padding:7px 0; }
@@ -1707,7 +1708,7 @@
   .s-dbtn{ flex:0 0 auto; width:34px; height:34px; display:grid; place-items:center; cursor:pointer;
     border-radius:var(--v-r-md); background:var(--v-red-soft); border:1px solid var(--v-red-soft); color:var(--v-red);
     transition:background .13s; }
-  .s-dbtn:hover{ background:rgba(239,68,68,.2); }
+  .s-dbtn:hover{ background:var(--v-red-soft); }
   /* Armed: the destructive action is one click from happening — make it read red. */
   .s-dbtn.arm{ background:var(--v-red); border-color:var(--v-red); color:#fff; }
   .s-reset.arm{ border-color:var(--v-red); color:var(--v-red); }

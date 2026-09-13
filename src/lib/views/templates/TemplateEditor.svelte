@@ -13,6 +13,7 @@
   //
   // The preview is the SAME TemplateRender as the wall — WYSIWYG by construction.
   import { createEventDispatcher, onMount, onDestroy } from 'svelte';
+  import { rangeFill } from '../../rangefill.js';
   import TemplateRender from '../../TemplateRender.svelte';
   import { review, PREVIEW_DISTANCES_M, previewScale } from '../../legibility.js';
   import TemplatePreviewOverlay from '../../TemplatePreviewOverlay.svelte';
@@ -317,19 +318,19 @@
 
   // ── Fonts ──────────────────────────────────────────────────────────────────
   let fonts = [
-    'Fraunces', 'Playfair Display', 'Space Grotesk', 'Inter', 'JetBrains Mono',
+    'Fraunces', 'Playfair Display', 'Space Grotesk', 'Inter', 'IBM Plex Mono', 'JetBrains Mono',
     'Georgia', 'Times New Roman', 'Palatino', 'Baskerville', 'Garamond',
     'Helvetica Neue', 'Arial', 'Futura', 'Gill Sans', 'Optima', 'Didot',
     'Menlo', 'Courier New', 'Verdana', 'Trebuchet MS', 'Cambria',
   ];
   const FONT_LABEL = {
     'var(--f-serif)': 'Fraunces (serif)', 'var(--f-display)': 'Inter (display)',
-    'var(--f-body)': 'Inter (body)', 'var(--f-mono)': 'JetBrains Mono', 'var(--f-head)': 'Inter (heading)',
+    'var(--f-body)': 'Inter (body)', 'var(--f-mono)': 'IBM Plex Mono', 'var(--f-head)': 'Inter (heading)',
   };
   const fontLabel = (f) => FONT_LABEL[f] ?? f;
   const BUNDLED_FONTS = new Set([
     'var(--f-serif)', 'var(--f-display)', 'var(--f-body)', 'var(--f-mono)', 'var(--f-head)',
-    'Fraunces', 'Inter', 'Playfair Display', 'Space Grotesk', 'JetBrains Mono',
+    'Fraunces', 'Inter', 'Playfair Display', 'Space Grotesk', 'IBM Plex Mono', 'JetBrains Mono',
   ]);
   let fontMsg = '';
   let detected = new Set();
@@ -745,11 +746,11 @@
             <div class="te-frow"><label class="te-fk" for="te-bgbind">Theme link</label><select id="te-bgbind" class="r-select te-fv" value={isThemeToken(sel.fill) ? sel.fill : 'custom'} on:change={(e) => { bindToken('fill', e.target.value, '#0b0906'); if (e.target.value !== 'custom') set('image', null); }}><option value="custom">Custom fill</option>{#each COLOUR_TOKENS as t}<option value={t.token}>{t.label}</option>{/each}</select></div>
             <div class="te-frow">
               <label class="te-fk" for="te-op">Opacity</label>
-              <span class="te-fv te-rangerow"><input id="te-op" class="r-range" type="range" min="0" max="1" step="0.05" value={sel.opacity ?? 1} on:input={(e) => num('opacity', e.target.value)} /><span class="te-rnum r-mono">{Math.round((sel.opacity ?? 1) * 100)}%</span></span>
+              <span class="te-fv te-rangerow"><input id="te-op" class="r-range" type="range" min="0" max="1" step="0.05" value={sel.opacity ?? 1} on:input={(e) => num('opacity', e.target.value)} use:rangeFill={sel.opacity ?? 1} /><span class="te-rnum r-mono">{Math.round((sel.opacity ?? 1) * 100)}%</span></span>
             </div>
             <div class="te-frow">
               <label class="te-fk" for="te-dim">Dim</label>
-              <span class="te-fv te-rangerow"><input id="te-dim" class="r-range" type="range" min="0" max="0.9" step="0.05" value={sel.dim || 0} on:input={(e) => num('dim', e.target.value)} /><span class="te-rnum r-mono">{Math.round((sel.dim || 0) * 100)}%</span></span>
+              <span class="te-fv te-rangerow"><input id="te-dim" class="r-range" type="range" min="0" max="0.9" step="0.05" value={sel.dim || 0} on:input={(e) => num('dim', e.target.value)} use:rangeFill={sel.dim || 0} /><span class="te-rnum r-mono">{Math.round((sel.dim || 0) * 100)}%</span></span>
             </div>
             <p class="te-fnote">Dim lays black over the background so text stays readable on bright images.</p>
             <div class="r-lbl te-sublbl">Image library</div>
@@ -772,15 +773,15 @@
                 <button class:on={sel.fit === 'contain'} on:click={() => set('fit', 'contain')}>Contain</button>
               </span>
             </div>
-            <div class="te-frow"><label class="te-fk" for="te-mop">Opacity</label><span class="te-fv te-rangerow"><input id="te-mop" class="r-range" type="range" min="0" max="1" step="0.05" value={sel.opacity ?? 1} on:input={(e) => num('opacity', e.target.value)} /><span class="te-rnum r-mono">{Math.round((sel.opacity ?? 1) * 100)}%</span></span></div>
-            <div class="te-frow"><label class="te-fk" for="te-mrad">Radius</label><span class="te-fv te-rangerow"><input id="te-mrad" class="r-range" type="range" min="0" max="8" step="0.2" value={sel.radius || 0} on:input={(e) => num('radius', e.target.value)} /><span class="te-rnum r-mono">{(sel.radius || 0).toFixed(1)}</span></span></div>
+            <div class="te-frow"><label class="te-fk" for="te-mop">Opacity</label><span class="te-fv te-rangerow"><input id="te-mop" class="r-range" type="range" min="0" max="1" step="0.05" value={sel.opacity ?? 1} on:input={(e) => num('opacity', e.target.value)} use:rangeFill={sel.opacity ?? 1} /><span class="te-rnum r-mono">{Math.round((sel.opacity ?? 1) * 100)}%</span></span></div>
+            <div class="te-frow"><label class="te-fk" for="te-mrad">Radius</label><span class="te-fv te-rangerow"><input id="te-mrad" class="r-range" type="range" min="0" max="8" step="0.2" value={sel.radius || 0} on:input={(e) => num('radius', e.target.value)} use:rangeFill={sel.radius || 0} /><span class="te-rnum r-mono">{(sel.radius || 0).toFixed(1)}</span></span></div>
             <p class="te-fnote">Shows the fired picture or video. Empty until media is on screen — a template without a Media layer never shows media on that screen. Put it high in the layer list to cover everything, or low to sit behind the text.</p>
           {:else if sel.type === 'shape'}
             <h3 class="te-sec">Shape</h3>
             <div class="te-frow"><label class="te-fk" for="te-sfill">Fill</label><span class="te-fv te-swatch"><input id="te-sfill" type="color" value={isColor(sel.fill) ? sel.fill : '#101319'} on:input={(e) => set('fill', e.target.value)} disabled={isThemeToken(sel.fill)} /><span class="te-hex r-mono">{isThemeToken(sel.fill) ? 'theme' : isColor(sel.fill) ? sel.fill.toUpperCase() : '#101319'}</span></span></div>
             <div class="te-frow"><label class="te-fk" for="te-sfillbind">Theme link</label><select id="te-sfillbind" class="r-select te-fv" value={isThemeToken(sel.fill) ? sel.fill : 'custom'} on:change={(e) => bindToken('fill', e.target.value, '#101319')}><option value="custom">Custom fill</option>{#each COLOUR_TOKENS as t}<option value={t.token}>{t.label}</option>{/each}</select></div>
-            <div class="te-frow"><label class="te-fk" for="te-sop">Opacity</label><span class="te-fv te-rangerow"><input id="te-sop" class="r-range" type="range" min="0" max="1" step="0.05" value={sel.opacity ?? 1} on:input={(e) => num('opacity', e.target.value)} /><span class="te-rnum r-mono">{Math.round((sel.opacity ?? 1) * 100)}%</span></span></div>
-            <div class="te-frow"><label class="te-fk" for="te-srad">Radius</label><span class="te-fv te-rangerow"><input id="te-srad" class="r-range" type="range" min="0" max="8" step="0.2" value={sel.radius || 0} on:input={(e) => num('radius', e.target.value)} /><span class="te-rnum r-mono">{(sel.radius || 0).toFixed(1)}</span></span></div>
+            <div class="te-frow"><label class="te-fk" for="te-sop">Opacity</label><span class="te-fv te-rangerow"><input id="te-sop" class="r-range" type="range" min="0" max="1" step="0.05" value={sel.opacity ?? 1} on:input={(e) => num('opacity', e.target.value)} use:rangeFill={sel.opacity ?? 1} /><span class="te-rnum r-mono">{Math.round((sel.opacity ?? 1) * 100)}%</span></span></div>
+            <div class="te-frow"><label class="te-fk" for="te-srad">Radius</label><span class="te-fv te-rangerow"><input id="te-srad" class="r-range" type="range" min="0" max="8" step="0.2" value={sel.radius || 0} on:input={(e) => num('radius', e.target.value)} use:rangeFill={sel.radius || 0} /><span class="te-rnum r-mono">{(sel.radius || 0).toFixed(1)}</span></span></div>
           {:else}
             <!-- text / timer -->
             <h3 class="te-sec">Text</h3>
@@ -830,9 +831,9 @@
                 <option value="none">As typed</option><option value="uppercase">UPPERCASE</option><option value="lowercase">lowercase</option><option value="capitalize">Capitalize</option>
               </select>
             </div>
-            <div class="te-frow"><label class="te-fk" for="te-lh">Line height</label><span class="te-fv te-rangerow"><input id="te-lh" class="r-range" type="range" min="0.9" max="2" step="0.05" value={sel.lineHeight || 1.32} on:input={(e) => num('lineHeight', e.target.value)} /><span class="te-rnum r-mono">{(sel.lineHeight || 1.32).toFixed(2)}</span></span></div>
-            <div class="te-frow"><label class="te-fk" for="te-ls">Spacing</label><span class="te-fv te-rangerow"><input id="te-ls" class="r-range" type="range" min="-0.05" max="0.4" step="0.01" value={sel.letterSpacing || 0} on:input={(e) => num('letterSpacing', e.target.value)} /><span class="te-rnum r-mono">{(sel.letterSpacing || 0).toFixed(2)}em</span></span></div>
-            <div class="te-frow"><label class="te-fk" for="te-sh">Shadow</label><span class="te-fv te-rangerow"><input id="te-sh" class="r-range" type="range" min="0" max="1" step="0.05" value={sel.shadow || 0} on:input={(e) => num('shadow', e.target.value)} /><span class="te-rnum r-mono">{Math.round((sel.shadow || 0) * 100)}%</span></span></div>
+            <div class="te-frow"><label class="te-fk" for="te-lh">Line height</label><span class="te-fv te-rangerow"><input id="te-lh" class="r-range" type="range" min="0.9" max="2" step="0.05" value={sel.lineHeight || 1.32} on:input={(e) => num('lineHeight', e.target.value)} use:rangeFill={sel.lineHeight || 1.32} /><span class="te-rnum r-mono">{(sel.lineHeight || 1.32).toFixed(2)}</span></span></div>
+            <div class="te-frow"><label class="te-fk" for="te-ls">Spacing</label><span class="te-fv te-rangerow"><input id="te-ls" class="r-range" type="range" min="-0.05" max="0.4" step="0.01" value={sel.letterSpacing || 0} on:input={(e) => num('letterSpacing', e.target.value)} use:rangeFill={sel.letterSpacing || 0} /><span class="te-rnum r-mono">{(sel.letterSpacing || 0).toFixed(2)}em</span></span></div>
+            <div class="te-frow"><label class="te-fk" for="te-sh">Shadow</label><span class="te-fv te-rangerow"><input id="te-sh" class="r-range" type="range" min="0" max="1" step="0.05" value={sel.shadow || 0} on:input={(e) => num('shadow', e.target.value)} use:rangeFill={sel.shadow || 0} /><span class="te-rnum r-mono">{Math.round((sel.shadow || 0) * 100)}%</span></span></div>
             <div class="te-frow">
               <label class="te-fk" for="te-fit">Scale</label>
               <select id="te-fit" class="r-select te-fv" value={sel.fit || 'both'} on:change={(e) => set('fit', e.target.value)}>
@@ -1033,7 +1034,6 @@
   .te-rangerow .r-range{ flex:1; min-width:0; }
   .te-rnum{ flex:0 0 auto; min-width:40px; text-align:right; font-size:var(--v-fs-cap); color:var(--v-dim); }
   .te-swatch{ display:flex; align-items:center; gap:9px; }
-  .te-swatch input[type=color]{ width:32px; height:32px; flex:0 0 auto; border:1px solid var(--v-line2); border-radius:var(--v-r-md); background:var(--v-bg); cursor:pointer; padding:3px; }
   .te-hex{ font-size:var(--v-fs-cap); color:var(--v-dim); text-transform:uppercase; }
   .te-seg{ display:flex; gap:2px; background:var(--v-bg); border:1px solid var(--v-line); border-radius:var(--v-r-md); padding:3px; }
   .te-seg button{ flex:1; height:26px; display:grid; place-items:center; border:0; border-radius:var(--v-r-sm); background:none; color:var(--v-dim); cursor:pointer; font-size:var(--v-fs-cap); }

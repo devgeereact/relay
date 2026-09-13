@@ -1,5 +1,6 @@
 <script>
   import { humanError } from '../../errors.js';
+  import { rangeFill } from '../../rangefill.js';
   // Theme editor — edit ONE custom theme's style and see it live on the same
   // TemplateRender the wall uses. A theme owns only the whitelisted style keys
   // (themes.js: THEME_STYLE_KEYS); this form is grouped by concern (type, colour,
@@ -116,15 +117,15 @@
           </label>
           <label class="te-row">
             <span>Verse size <em>{draft.style.verseSize || '6'}</em></span>
-            <input type="range" min="3" max="10" step="0.1" value={draft.style.verseSize || 6} on:input={(e) => set('verseSize', e.target.value)} />
+            <input type="range" min="3" max="10" step="0.1" value={draft.style.verseSize || 6} on:input={(e) => set('verseSize', e.target.value)} use:rangeFill={draft.style.verseSize || 6} />
           </label>
           <label class="te-row">
             <span>Reference size <em>{draft.style.refSize || '2.6'}</em></span>
-            <input type="range" min="1.4" max="4.5" step="0.1" value={draft.style.refSize || 2.6} on:input={(e) => set('refSize', e.target.value)} />
+            <input type="range" min="1.4" max="4.5" step="0.1" value={draft.style.refSize || 2.6} on:input={(e) => set('refSize', e.target.value)} use:rangeFill={draft.style.refSize || 2.6} />
           </label>
           <label class="te-row">
             <span>Line height <em>{draft.style.verseLineHeight || '1.32'}</em></span>
-            <input type="range" min="1" max="1.8" step="0.02" value={draft.style.verseLineHeight || 1.32} on:input={(e) => set('verseLineHeight', e.target.value)} />
+            <input type="range" min="1" max="1.8" step="0.02" value={draft.style.verseLineHeight || 1.32} on:input={(e) => set('verseLineHeight', e.target.value)} use:rangeFill={draft.style.verseLineHeight || 1.32} />
           </label>
           <label class="te-check">
             <input type="checkbox" checked={!!draft.style.italicRef} on:change={(e) => set('italicRef', e.target.checked)} />
@@ -157,11 +158,11 @@
           <legend>Rhythm &amp; motion</legend>
           <label class="te-row">
             <span>Verse shadow <em>{Number(draft.style.verseShadow || 0).toFixed(2)}</em></span>
-            <input type="range" min="0" max="1" step="0.05" value={draft.style.verseShadow || 0} on:input={(e) => set('verseShadow', e.target.value)} />
+            <input type="range" min="0" max="1" step="0.05" value={draft.style.verseShadow || 0} on:input={(e) => set('verseShadow', e.target.value)} use:rangeFill={draft.style.verseShadow || 0} />
           </label>
           <label class="te-row">
             <span>Verse–reference gap <em>{draft.style.refGap || '1.4'}</em></span>
-            <input type="range" min="0" max="4" step="0.1" value={draft.style.refGap || 1.4} on:input={(e) => set('refGap', e.target.value)} />
+            <input type="range" min="0" max="4" step="0.1" value={draft.style.refGap || 1.4} on:input={(e) => set('refGap', e.target.value)} use:rangeFill={draft.style.refGap || 1.4} />
           </label>
           <label class="te-row">
             <span>Transition</span>
@@ -173,7 +174,7 @@
           </label>
           <label class="te-row">
             <span>Duration <em>{draft.style.transitionMs || '250'}ms</em></span>
-            <input type="range" min="0" max="800" step="10" value={draft.style.transitionMs || 250} on:input={(e) => set('transitionMs', e.target.value)} />
+            <input type="range" min="0" max="800" step="10" value={draft.style.transitionMs || 250} on:input={(e) => set('transitionMs', e.target.value)} use:rangeFill={draft.style.transitionMs || 250} />
           </label>
         </fieldset>
 
@@ -211,9 +212,9 @@
   .te-row{ display:flex; align-items:center; justify-content:space-between; gap:12px; font-size:var(--v-fs-b2); color:var(--v-dim); }
   .te-row > span{ flex:0 0 auto; display:flex; gap:6px; align-items:baseline; }
   .te-row em{ font-style:normal; color:var(--v-faint); font-size:var(--v-fs-cap); font-variant-numeric:tabular-nums; }
-  .te-row input[type=range]{ flex:1; max-width:170px; accent-color:var(--v-accent); }
-  .te-row input[type=color]{ width:40px; height:26px; padding:0; border:1px solid var(--v-line2);
-    border-radius:var(--v-r-sm); background:none; cursor:pointer; }
+  /* Width only. The track, the thumb and the filled share come from app.css —
+     accent-color let every platform draw its own idea of a slider. */
+  .te-row input[type=range]{ flex:1; max-width:170px; }
   .te-row .r-select{ height:30px; min-width:150px; }
   .te-bg{ flex-direction:column; align-items:stretch; gap:6px; }
   .te-bg > span{ align-self:flex-start; }

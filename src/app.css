@@ -55,7 +55,11 @@
   --f-serif:'Fraunces',serif; --f-mono:'JetBrains Mono',monospace;
 }
 *{box-sizing:border-box;}
-body{ margin:0; background:var(--bg); color:var(--text); font-family:var(--f-body); font-size:14px; -webkit-font-smoothing:antialiased; }
+/* 12px, not 14px. A control room is read at a glance from a metre away, and
+   the extra two pixels cost a row of the slide grid and, on a 1366x768 booth
+   laptop, the status bar itself. */
+body{ margin:0; background:var(--bg); color:var(--text); font-family:var(--f-body);
+  font-size:var(--v-fs-b1); line-height:1.45; -webkit-font-smoothing:antialiased; }
 .brand{ display:flex; align-items:center; gap:12px; }
 .status-pill.live{ background:var(--green-soft); color:var(--green); border:1px solid rgba(34,197,94,0.3); }
 .status-pill.idle{ background:var(--surface2); color:var(--text-dim); border:1px solid var(--border); }
@@ -92,116 +96,173 @@ body{ margin:0; background:var(--bg); color:var(--text); font-family:var(--f-bod
 
 /* ══════════════════════════════════════════════════════════════════════════
 
-   RELAY — "Spiritual High-Tech" rebrand (Stitch: stitch_relay).
+   RELAY STUDIO — the control-room rebrand (docs/REBRAND.md, phase 1).
    Global shell + shared component system. Fit-to-screen, retina, responsive.
-   New tokens are additive (--v-*, --f-head) so the output window (which shares
-   this file via output.js and relies on --f-serif/--bg) is never disturbed.
+   The token NAMES are stable, so the output window (which shares this file via
+   output.js and relies on --f-serif/--bg) and Stage move with the console
+   rather than being left on an older palette.
    ══════════════════════════════════════════════════════════════════════════ */
 :root{
-  /* ── Design-system palette (docs/design/relay-designsystem.png v1.0) ──
-     The token NAMES are unchanged so every consumer (console, Output window via
-     output.js, Stage via stage.js) moves together; only the hexes were retuned
-     to the published system. Neutrals are the 8-step ramp 950→500. */
-  --v-void:#0a0a0a;   /* 950 — deepest: shell + main + output canvas */
-  --v-bg:#141414;     /* 900 — sidebar, topbar, input fields          */
-  --v-surf:#1b1b1b;   /* 800 — default card                           */
-  --v-surf2:#262626;  /* 700 — raised / selected card                 */
-  --v-surf3:#333333;  /* 600 — hover / lightest chrome                */
-  --v-500:#4d4d4d;    /* 500 — hairline emphasis                      */
+  /* ══ RELAY STUDIO — the rebrand palette (docs/REBRAND.md §1) ══════════════
+     The grammar is a control room: OBS Studio's studio split and dock row
+     crossed with ProPresenter's object inspector. Dark only, because the booth
+     is dark and the wall is black.
+
+     The NAMES are unchanged, so every consumer moves together — the console,
+     the output window (via output.js) and Stage (via stage.js) all read these.
+     What changed is the tuning: the neutral ramp carries a slight blue cast so
+     a grey surface reads as equipment rather than as paper, and the semantic
+     colours were re-measured against it.
+
+     WHAT DID NOT CHANGE IS THE LAW. Amber still means ON AIR and nothing else,
+     amethyst still means rehearsal, cyan is still a guess and grey is still
+     CUED (CLAUDE.md rule 18, DECISIONS §21). A rebrand may retune a hex; it may
+     not move a promise onto a different colour. */
+
+  /* ── Neutrals, deepest to lightest ────────────────────────────────────── */
+  --v-void:#131418;   /* shell + main + the output-window canvas */
+  --v-bg:#1a1c21;     /* sidebar, dock, top bar, input fields    */
+  --v-surf:#212429;   /* default card                            */
+  --v-surf2:#292d34;  /* raised / selected card                  */
+  --v-surf3:#343942;  /* hover, lightest chrome                  */
+  --v-500:#3a404a;    /* edge — a visible hairline on a card     */
+  /* The seam between two regions is DARKER than either of them. A control room
+     divides by shadow, not by a light rule: a pale divider on a dark desk is the
+     first thing the eye goes to, and nothing on this desk deserves that. */
+  --v-rule:#0c0d10;
   --v-line:rgba(255,255,255,.075); --v-line2:rgba(255,255,255,.13);
-  /* Text ramp: Primary / Secondary / Muted.
-     Muted was the design's #8A8A8A and is now #8C8C8C — two steps, invisible to the
-     eye, and the difference between failing and passing WCAG AA on --v-surf2.
 
-     THE COMMENT THIS REPLACES KNEW ABOUT THE WRONG SURFACE. It said muted "passes
-     AA on --v-surf/--v-bg (~5:1)" and warned only about --v-surf3 — where faint text
-     is not in fact placed anywhere. It never checked --v-surf2 (#262626), where the
-     ratio was 4.38:1, and where five real rules put muted text on chips and badges.
-     A hand analysis that names two of four surfaces reads exactly like one that
-     names all four; that is why this is now a test (tokencontrast.test.js, RG-74).
+  /* ── Text ramp: primary / secondary / muted ───────────────────────────────
+     Every one of these is measured against every surface it can sit on by
+     `tokencontrast.test.js` (RG-74), which requires a hex literal here and
+     WCAG AA's 4.5:1 body bar. It has caught two real failures already.
 
-     The measured matrix, at AA's 4.5:1 body bar:
-       --v-faint on --v-void #0a0a0a  · --v-bg #141414 · --v-surf #1b1b1b · --v-surf2 #262626  → all ≥ 4.50
-       --v-faint on --v-surf3 #333333 → 3.79, and NOTHING pairs them; the test asserts
-       that stays true, because fixing surf3 would need #9B9B9B and collapse the ramp
-       into --v-dim. */
-  --v-txt:#f2f2f2; --v-dim:#b3b3b3; --v-faint:#8c8c8c;
-  --v-disabled:#555555; --v-inverse:#141414;
-  /* Semantic — the mode law (CLAUDE.md): amber ON AIR · amethyst rehearsal ·
-     cyan guess · green confirmed · red panic · grey cued. */
-  --v-amber:#ffb000; --v-amber2:#ffc24d; --v-amber-ink:#241a00;
-  --v-amber-soft:rgba(255,176,0,.13); --v-amber-glow:rgba(255,176,0,.42);
-  --v-cyan:#22d3ee; --v-cyan-soft:rgba(34,211,238,.14);
-  /* --v-rose is this app's "something is live / alert" colour (On Air badge +
-     panic bar). Retuned to the design system's Error/Panic red #EF4444. */
-  --v-rose:#ef4444; --v-rose-soft:rgba(239,68,68,.14);
-  --v-red:#ef4444; --v-red-soft:rgba(239,68,68,.14);
-  /* --v-amethyst2 is INFERRED: the design sheet publishes one amethyst, but the
-     splash renders the wordmark gradient and tagline a step lighter than it. */
-  --v-amethyst:#8b5cf6; --v-amethyst2:#a78bfa; --v-amethyst-mute:#4a4658;
-  --v-amethyst-soft:rgba(139,92,246,.13);
-  --v-emerald:#22c55e;   /* Confirmed / success / connected (design green) */
-  --v-grey:#6b7280;      /* Cued / plan position (not live) */
-  /* Radius scale */
-  --v-r-sm:4px; --v-r-md:8px; --v-r-lg:12px; --v-r-xl:16px; --v-r-2xl:24px;
+     THE PROTOTYPE'S MUTED STEP DID NOT SURVIVE THAT TEST. It was #7e8695, which
+     measures 4.25:1 on --v-surf and 3.77:1 on --v-surf2 — below AA on two of the
+     four surfaces muted text is actually placed on. The repository's rule wins
+     over the prototype (REBRAND.md, Context), so it is lifted to #8c94a1: same
+     hue, 4.52:1 at worst, and indistinguishable at a glance.
+
+     The measured matrix, at 4.5:1:
+       --v-txt   on void 15.28 · bg 14.15 · surf 12.92 · surf2 11.48
+       --v-dim   on void  8.43 · bg  7.81 · surf  7.13 · surf2  6.33
+       --v-faint on void  6.02 · bg  5.57 · surf  5.09 · surf2  4.52
+     --v-faint on --v-surf3 is 3.79 and NOTHING pairs them; the test asserts that
+     stays true, because clearing surf3 needs ~#9b9ba6 and collapses muted into
+     --v-dim. */
+  --v-txt:#e8eaee; --v-dim:#a9b0bc; --v-faint:#8c94a1;
+  --v-disabled:#5a6270; --v-inverse:#131418;
+
+  /* ── The four colours that carry a promise ────────────────────────────────
+     Retuned, not reassigned. Each has a soft fill (a chip's background) and a
+     line (its border) so no component has to hand-write an rgba() of it — five
+     rules drifted from the token that way before. */
+  /* ON AIR. The congregation is looking at this right now. */
+  --v-amber:#ffa31a; --v-amber2:#ffc266; --v-amber-ink:#251700;
+  --v-amber-soft:rgba(255,163,26,.15); --v-amber-line:rgba(255,163,26,.45);
+  --v-amber-glow:rgba(255,163,26,.42);
+  /* A GUESS — a paraphrase or semantic match, never a heard reference. */
+  --v-cyan:#4cc9f0; --v-cyan-soft:rgba(76,201,240,.15); --v-cyan-line:rgba(76,201,240,.4);
+  /* REHEARSAL — this cannot reach the congregation. No longer doing double duty
+     as the interactive accent: chrome moved to steel blue below, so amethyst now
+     means one thing again. */
+  --v-amethyst:#a96bf5; --v-amethyst2:#c49bfa; --v-amethyst-mute:#4a4658;
+  --v-amethyst-soft:rgba(169,107,245,.16); --v-amethyst-line:rgba(169,107,245,.45);
+  /* CUED — where the transport resumes, and NOT on screen. */
+  --v-grey:#8a929e; --v-grey-soft:rgba(138,146,158,.16);
+
+  /* ── The rest of the semantic set ─────────────────────────────────────── */
+  --v-emerald:#3fcf6a; --v-emerald-soft:rgba(63,207,106,.14); --v-emerald-line:rgba(63,207,106,.4);
+  /* Destructive, and the stage alert. --v-rose is the same colour under its
+     older name; both are kept because the output window shares this file. */
+  --v-red:#f4515b; --v-red-soft:rgba(244,81,91,.15); --v-red-line:rgba(244,81,91,.5);
+  --v-rose:#f4515b; --v-rose-soft:rgba(244,81,91,.15);
+
+  /* ── SELECTION — the thing you are working on ─────────────────────────────
+     Steel blue. The selected tab, a focus ring, a switch that is on, the filled
+     part of a slider, the transcript line being read right now.
+
+     This is the rebrand's one structural colour change. Interactive chrome used
+     to be amethyst, which was already an improvement on amber — but it meant the
+     rehearsal colour was also lit on every hover, every switch and every primary
+     button, in a product where telling a rehearsal from a live service is a
+     safety distinction. A colour that carries a promise cannot also be the
+     default for "clicked". So selection gets its own colour, and the promise
+     colours are now used ONLY where they mean what they say.
+
+     White on --v-sel-fill (#2e6fd4) is 4.84:1 — above AA for button text. The
+     lighter --v-sel is for borders, dots and text on a dark surface, where it is
+     the thing being read rather than the thing behind it. */
+  --v-sel:#5b9cf8; --v-sel-fill:#2e6fd4; --v-sel-ink:#ffffff;
+  --v-sel-soft:rgba(91,156,248,.16); --v-sel-line:rgba(91,156,248,.45);
+  --v-sel-glow:rgba(91,156,248,.5);
+  /* The --v-accent* family is the SAME colour under the name several hundred
+     rules already use. Kept as aliases rather than renamed, so the whole console
+     moves in one edit and nothing is left behind on a stale hex. */
+  --v-accent:var(--v-sel);
+  --v-accent2:#8bbcff;
+  --v-accent-fill:var(--v-sel-fill);
+  --v-accent-ink:var(--v-sel-ink);
+  --v-accent-soft:var(--v-sel-soft);
+  --v-accent-line:var(--v-sel-line);
+  --v-accent-glow:var(--v-sel-glow);
+
+  /* ── Collection colours (the Library) ─────────────────────────────────────
+     A collection is a KIND of content, so it borrows the colour that kind
+     already wears on the wall. None of these is a status: they tint an icon and
+     a row's left edge, never a badge that could be mistaken for ON AIR. */
+  --v-col-scripture:var(--v-amber);
+  --v-col-song:var(--v-sel);
+  --v-col-notice:var(--v-red);
+  --v-col-media:var(--v-amethyst);
+
+  /* ── Radius. 3px, and 5px for the things that hold other things ───────────
+     No pills on buttons, tabs or cards: a pill in a control room reads as a toy.
+     --v-r-round survives for the two shapes that are genuinely round — a slider
+     thumb and a status dot — and for nothing else. */
+  --v-r-sm:3px; --v-r-md:3px; --v-r-lg:5px; --v-r-xl:5px; --v-r-2xl:6px;
+  --v-r-round:99px;
+
   /* Spacing (8pt grid) */
   --v-sp-xs:4px; --v-sp-sm:8px; --v-sp-md:16px; --v-sp-lg:24px; --v-sp-xl:32px;
   --v-sp-2xl:48px; --v-sp-3xl:64px; --v-sp-4xl:96px; --v-sp-5xl:128px;
-  /* Elevation */
-  --v-shadow-sm:0 1px 2px rgba(0,0,0,.4);
-  --v-shadow-md:0 4px 16px rgba(0,0,0,.45);
-  --v-shadow-lg:0 12px 40px rgba(0,0,0,.6);
-  /* TYPOGRAPHY. The design system publishes ONE family — Inter — for Display,
-     Heading, Body, Label and Caption, with JetBrains Mono for the mono row.
-     `--f-head` was Playfair Display (the pre-rebrand serif); it is now Inter, so
-     every heading in the console moves to the system in one place. `--f-serif`
-     is untouched: that is VERSE body on the wall, which is template content, not
-     app chrome, and the design sheet does not govern it. */
+
+  /* Elevation — a dark room, so shadows are for depth, never for decoration. */
+  --v-shadow-sm:0 1px 2px rgba(0,0,0,.45);
+  --v-shadow-md:0 4px 16px rgba(0,0,0,.5);
+  --v-shadow-lg:0 20px 60px -24px #000;
+
+  /* Motion. One duration and one curve for every piece of chrome, so the desk
+     feels like one instrument. Honoured against prefers-reduced-motion below. */
+  --v-dur:120ms; --v-ease:cubic-bezier(.2,.7,.3,1);
+
+  /* ── TYPOGRAPHY ───────────────────────────────────────────────────────────
+     Inter for the interface, IBM Plex Mono for EVERY figure — a clock, a
+     confidence, a latency, a verse number — because tabular digits mean a
+     changing number never reflows the row beside it. Fraunces is the serif the
+     scripture templates render in; it is template content, not chrome, and the
+     console does not use it.
+
+     --f-display (Space Grotesk) and --f-head (Playfair) are aliases of Inter,
+     kept because templates.js and a few views still name them. */
   --f-head:'Inter',system-ui,-apple-system,sans-serif;
-  /* Type scale, read off the design sheet's TYPOGRAPHY block (size/line-height). */
-  --v-fs-d1:56px;  --v-lh-d1:64px;   /* Display 1 — Bold,      -0.02em */
-  --v-fs-d2:40px;  --v-lh-d2:48px;   /* Display 2 — Bold,      -0.02em */
-  --v-fs-h1:28px;  --v-lh-h1:36px;   /* H1        — Semi Bold, -0.02em */
-  --v-fs-h2:20px;  --v-lh-h2:28px;   /* H2        — Semi Bold, -0.01em */
-  --v-fs-h3:16px;  --v-lh-h3:24px;   /* H3        — Medium,     0      */
-  --v-fs-b1:14px;  --v-lh-b1:20px;   /* Body 1    — Regular,    0      */
-  --v-fs-b2:13px;  --v-lh-b2:18px;   /* Body 2    — Regular,    0      */
-  --v-fs-lbl:12px; --v-lh-lbl:16px;  /* Label     — Medium,     0.02em */
-  --v-fs-cap:11px; --v-lh-cap:14px;  /* Caption   — Regular,    0.02em */
-  --v-fs-mono:12px;--v-lh-mono:16px; /* Mono      — Mono,       0      */
-  --v-tr-tight:-.02em; --v-tr-h2:-.01em; --v-tr-wide:.02em;
-  /* Soft fills for the two semantic colours that had none (chips/badges). */
-  --v-emerald-soft:rgba(34,197,94,.13); --v-grey-soft:rgba(107,114,128,.16);
+  --f-mono:'IBM Plex Mono',ui-monospace,SFMono-Regular,monospace;
 
-  /* ── THE INTERACTIVE ACCENT — and why it is not amber ──────────────────────
-     Every piece of interactive CHROME points at this: the selected nav item, a
-     focus ring, a switch, a hover, a primary button.
-
-     It used to be amber. Amber is the tally light — the design sheet's MODE
-     INDICATORS and CLAUDE.md both say it means ONE thing: the congregation is
-     looking at something. Spending it on "this tab is selected" and on twenty
-     ordinary Save buttons meant the loudest colour in the product was lit
-     permanently, everywhere, whether or not anything was on a wall. A colour
-     that is always on cannot also be a warning.
-
-     The design reference settles it: in relay-production-interface.png the
-     active sidebar item is amethyst-tinted, not amber.
-
-     So: chrome is amethyst. Amber survives ONLY as `.r-badge.amber`,
-     `.r-btn.amber` and `.r-stat.amber` — the on-air cases, named explicitly at
-     the call site so using one is a decision rather than a default. */
-  --v-accent:var(--v-amethyst);
-  --v-accent2:var(--v-amethyst2);
-  /* A DEEPER amethyst, used only as a FILL behind white text.
-     White on --v-amethyst (#8b5cf6) is 4.22:1 — under WCAG AA for 13px semibold
-     button text. #7c3aed is 5.70:1 and reads as the same colour at a glance.
-     The lighter --v-accent stays for borders, dots and text on a dark surface,
-     where it is the thing being read rather than the thing behind it. */
-  --v-accent-fill:#7c3aed;
-  --v-accent-ink:#ffffff;
-  --v-accent-soft:rgba(139,92,246,.13);
-  --v-accent-line:rgba(139,92,246,.42);
-  --v-accent-glow:rgba(139,92,246,.55);
+  /* The scale is DENSER than the one it replaces: 11–12px is the control-room
+     register, and the old 14px body pushed the dock row and the status bar off
+     the bottom of a 1366×768 booth laptop. */
+  --v-fs-d1:30px;  --v-lh-d1:34px;   /* Display — a splash, a gate           */
+  --v-fs-d2:21px;  --v-lh-d2:26px;   /* Page title                           */
+  --v-fs-h1:17px;  --v-lh-h1:22px;   /* Section heading                      */
+  --v-fs-h2:14px;  --v-lh-h2:19px;   /* Card heading                         */
+  --v-fs-h3:12.5px;--v-lh-h3:17px;   /* Row heading                          */
+  --v-fs-b1:12px;  --v-lh-b1:17px;   /* Body — the default                   */
+  --v-fs-b2:11.5px;--v-lh-b2:16px;   /* Body, secondary                      */
+  --v-fs-lbl:11px; --v-lh-lbl:15px;  /* Label                                */
+  --v-fs-cap:9.5px;--v-lh-cap:13px;  /* Caption / the uppercase key line     */
+  --v-fs-mono:11px;--v-lh-mono:15px; /* Mono row                             */
+  --v-tr-tight:-.022em; --v-tr-h2:-.01em; --v-tr-wide:.02em;
+  --v-tr-caps:.09em;   /* the uppercase caption line, and only that */
 }
 
 /* Fit-to-screen base — no body scroll; the shell owns the viewport, panels
@@ -214,7 +275,7 @@ body{ overflow:hidden; text-rendering:optimizeLegibility; -moz-osx-font-smoothin
 .mainscroll, .r-scroll{ scrollbar-width:thin; scrollbar-color:var(--v-surf3) transparent; }
 .mainscroll::-webkit-scrollbar, .r-scroll::-webkit-scrollbar{ width:10px; height:10px; }
 .mainscroll::-webkit-scrollbar-thumb, .r-scroll::-webkit-scrollbar-thumb{
-  background:var(--v-surf3); border-radius:99px; border:3px solid transparent; background-clip:content-box; }
+  background:var(--v-surf3); border-radius:var(--v-r-round); border:3px solid transparent; background-clip:content-box; }
 .mainscroll::-webkit-scrollbar-thumb:hover, .r-scroll::-webkit-scrollbar-thumb:hover{ background:#33333a; background-clip:content-box; }
 
 /* ── Shell ─────────────────────────────────────────────────────────────── */
@@ -239,8 +300,8 @@ body{ overflow:hidden; text-rendering:optimizeLegibility; -moz-osx-font-smoothin
 .side-brand span{ font-family:var(--f-head); font-size:19px; font-weight:700;
   letter-spacing:.18em; color:var(--v-txt); }
 .side-profile{ display:flex; align-items:center; gap:11px; padding:11px; margin-bottom:12px;
-  background:var(--v-surf); border:1px solid var(--v-line); border-radius:12px; }
-.side-avatar{ width:38px; height:38px; border-radius:10px; flex:0 0 auto; display:grid; place-items:center;
+  background:var(--v-surf); border:1px solid var(--v-line); border-radius:var(--v-r-lg); }
+.side-avatar{ width:38px; height:38px; border-radius:var(--v-r-sm); flex:0 0 auto; display:grid; place-items:center;
   background:linear-gradient(150deg,var(--v-accent),var(--v-accent-fill)); color:var(--v-accent-ink); }
 .side-profile .who{ min-width:0; }
 .side-profile .who b{ display:block; font-size:13.5px; font-weight:600; color:var(--v-txt);
@@ -248,14 +309,14 @@ body{ overflow:hidden; text-rendering:optimizeLegibility; -moz-osx-font-smoothin
 .side-profile .who span{ font-family:var(--f-mono); font-size:9px; letter-spacing:.14em; text-transform:uppercase; color:var(--v-faint); }
 
 .nav{ display:flex; flex-direction:column; gap:3px; }
-.nav-item{ display:flex; align-items:center; gap:12px; padding:11px 12px; border-radius:10px;
+.nav-item{ display:flex; align-items:center; gap:12px; padding:11px 12px; border-radius:var(--v-r-sm);
   color:var(--v-dim); cursor:pointer; font-size:14px; font-weight:500; background:transparent;
   border:1px solid transparent; text-align:left; transition:background .15s, color .15s, transform .15s; }
 .nav-item:hover{ background:var(--v-surf); color:var(--v-txt); }
 .nav-item.active{ background:var(--v-accent-soft); color:var(--v-accent2); border-color:var(--v-accent-line); transform:translateX(2px); }
 .nav-item .ic{ flex:0 0 auto; }
 .side-foot{ margin-top:auto; padding:12px; background:var(--v-surf); border:1px solid var(--v-line);
-  border-radius:12px; }
+  border-radius:var(--v-r-lg); }
 .side-foot .row{ display:flex; align-items:center; justify-content:space-between; margin-bottom:7px; }
 .side-foot .row .k{ font-family:var(--f-mono); font-size:9px; font-weight:700; letter-spacing:.12em;
   text-transform:uppercase; color:var(--v-faint); }
@@ -282,23 +343,26 @@ body{ overflow:hidden; text-rendering:optimizeLegibility; -moz-osx-font-smoothin
 
 /* ── Shared components (.r-*) ──────────────────────────────────────────── */
 .r-mono{ font-family:var(--f-mono); font-variant-numeric:tabular-nums; letter-spacing:.04em; }
-.r-lbl{ font-family:var(--f-mono); font-size:10px; font-weight:600; letter-spacing:.16em;
-  text-transform:uppercase; color:var(--v-faint); }
-.r-title{ font-family:var(--f-head); font-size:34px; font-weight:700; letter-spacing:-.01em;
-  color:var(--v-txt); line-height:1.1; }
-.r-lead{ color:var(--v-dim); font-size:14px; line-height:1.6; max-width:62ch; }
-.r-tile{ background:var(--v-surf); border:1px solid var(--v-line); border-radius:14px; }
+.r-lbl{ font-family:var(--f-mono); font-size:var(--v-fs-cap); font-weight:600;
+  letter-spacing:var(--v-tr-caps); text-transform:uppercase; color:var(--v-faint); }
+.r-title{ font-family:var(--f-head); font-size:var(--v-fs-d1); font-weight:700;
+  letter-spacing:var(--v-tr-tight); color:var(--v-txt); line-height:1.1; }
+.r-lead{ color:var(--v-dim); font-size:var(--v-fs-b1); line-height:1.55; max-width:74ch; }
+.r-tile{ background:var(--v-surf); border:1px solid var(--v-line); border-radius:var(--v-r-lg); }
 .r-dim{ color:var(--v-dim); }
 .r-amber{ color:var(--v-amber); }
 
-.r-btn{ display:inline-flex; align-items:center; justify-content:center; gap:8px; height:40px;
-  padding:0 18px; border-radius:9px; border:1px solid transparent; cursor:pointer; white-space:nowrap;
-  font-family:var(--f-body); font-size:13px; font-weight:600; transition:filter .14s, background .14s, border-color .14s, transform .1s; }
+.r-btn{ display:inline-flex; align-items:center; justify-content:center; gap:7px; height:30px;
+  padding:0 13px; border-radius:var(--v-r-sm); border:1px solid transparent; cursor:pointer; white-space:nowrap;
+  font-family:var(--f-body); font-size:var(--v-fs-b2); font-weight:600;
+  transition:filter var(--v-dur) var(--v-ease), background var(--v-dur) var(--v-ease),
+    border-color var(--v-dur) var(--v-ease), transform 90ms var(--v-ease); }
 .r-btn:active{ transform:scale(.98); }
 .r-btn:disabled{ opacity:.45; cursor:not-allowed; }
 /* PRIMARY — the ordinary "do the thing" button: Save, Add, Continue, Import.
-   Amethyst, because it is chrome. This is what the twenty-odd buttons that used
-   to be amber now wear. */
+   Steel blue, because it is chrome and nothing more. It was amber once, then
+   amethyst; both of those carry a promise elsewhere in the product, and a
+   colour that is lit on every Save button cannot also be a warning. */
 .r-btn.primary{ background:var(--v-accent-fill); color:var(--v-accent-ink); box-shadow:0 6px 18px -6px var(--v-accent-glow); }
 .r-btn.primary:hover:not(:disabled){ filter:brightness(1.08); }
 /* ON AIR ACTION — the design sheet's amber primary. RESERVED: use it only for a
@@ -311,50 +375,125 @@ body{ overflow:hidden; text-rendering:optimizeLegibility; -moz-osx-font-smoothin
 .r-btn.ghost:hover:not(:disabled){ background:var(--v-surf3); }
 .r-btn.danger{ background:transparent; border-color:rgba(239,68,68,.5); color:var(--v-rose); }
 .r-btn.danger:hover:not(:disabled){ background:var(--v-rose-soft); }
-.r-btn.sm{ height:32px; padding:0 13px; font-size:12px; }
+.r-btn.sm{ height:24px; padding:0 10px; font-size:var(--v-fs-lbl); }
 
-.r-iconbtn{ width:34px; height:34px; border-radius:8px; display:grid; place-items:center; cursor:pointer;
-  background:var(--v-surf2); border:1px solid var(--v-line); color:var(--v-dim); transition:.14s; }
+.r-iconbtn{ width:26px; height:26px; border-radius:var(--v-r-sm); display:grid; place-items:center; cursor:pointer;
+  background:var(--v-surf2); border:1px solid var(--v-line); color:var(--v-dim);
+  transition:color var(--v-dur) var(--v-ease), border-color var(--v-dur) var(--v-ease); }
 .r-iconbtn:hover{ color:var(--v-accent2); border-color:var(--v-accent-line); }
 
-.r-badge{ display:inline-flex; align-items:center; gap:7px; padding:5px 11px; border-radius:99px;
-  font-family:var(--f-mono); font-size:10px; font-weight:600; letter-spacing:.08em; text-transform:uppercase; }
-.r-badge.amber{ background:var(--v-amber-soft); border:1px solid rgba(255,176,0,.32); color:var(--v-amber); }
-.r-badge.cyan{ background:var(--v-cyan-soft); border:1px solid rgba(34,211,238,.32); color:var(--v-cyan); }
-.r-badge.rose{ background:var(--v-rose-soft); border:1px solid rgba(239,68,68,.32); color:var(--v-rose); }
+.r-badge{ display:inline-flex; align-items:center; gap:6px; padding:3px 8px; border-radius:var(--v-r-sm);
+  font-family:var(--f-mono); font-size:var(--v-fs-cap); font-weight:600;
+  letter-spacing:var(--v-tr-caps); text-transform:uppercase; }
+.r-badge.amber{ background:var(--v-amber-soft); border:1px solid var(--v-amber-line); color:var(--v-amber); }
+.r-badge.cyan{ background:var(--v-cyan-soft); border:1px solid var(--v-cyan-line); color:var(--v-cyan); }
+.r-badge.rose{ background:var(--v-rose-soft); border:1px solid var(--v-red-line); color:var(--v-rose); }
 /* Rehearsal. Deliberately NOT amber and NOT rose: amber means the congregation is
    looking at it, rose means something is wrong. A rehearsal is neither. */
-.r-badge.amethyst{ background:rgba(139,92,246,.12); border:1px solid rgba(139,92,246,.42); color:var(--v-amethyst); }
+.r-badge.amethyst{ background:var(--v-amethyst-soft); border:1px solid var(--v-amethyst-line); color:var(--v-amethyst); }
 /* Cued / plan position / neutral — the design sheet's grey mode chip. Never amber:
    amber means the congregation is looking at it. */
 .r-badge.grey{ background:var(--v-grey-soft); border:1px solid var(--v-line2); color:var(--v-dim); }
-.r-badge.green{ background:var(--v-emerald-soft); border:1px solid rgba(34,197,94,.32); color:var(--v-emerald); }
+.r-badge.green{ background:var(--v-emerald-soft); border:1px solid var(--v-emerald-line); color:var(--v-emerald); }
 .r-badge .bd{ width:6px; height:6px; border-radius:50%; background:currentColor; }
 .r-badge.pulse .bd{ box-shadow:0 0 7px currentColor; animation:vpulse 1.7s ease-in-out infinite; }
 @keyframes vpulse{ 0%,100%{opacity:1} 50%{opacity:.4} }
 
-.r-input, .r-select{ height:40px; width:100%; padding:0 13px; border-radius:9px; background:var(--v-bg);
-  border:1px solid var(--v-line2); color:var(--v-txt); font-family:var(--f-body); font-size:13px; outline:none; transition:.15s; }
+.r-input, .r-select{ height:28px; width:100%; padding:0 9px; border-radius:var(--v-r-sm); background:var(--v-surf3);
+  border:1px solid var(--v-500); color:var(--v-txt); font-family:var(--f-body); font-size:var(--v-fs-b2);
+  outline:none; transition:border-color var(--v-dur) var(--v-ease), box-shadow var(--v-dur) var(--v-ease); }
 .r-input.mono{ font-family:var(--f-mono); }
 .r-input::placeholder{ color:var(--v-faint); }
 .r-input:focus, .r-select:focus{ border-color:var(--v-accent-line); box-shadow:0 0 0 3px var(--v-accent-soft); }
 .r-input:disabled, .r-select:disabled{ opacity:.5; }
 .r-select{ appearance:none; -webkit-appearance:none; cursor:pointer;
   background-image:linear-gradient(45deg,transparent 50%,var(--v-faint) 50%),linear-gradient(135deg,var(--v-faint) 50%,transparent 50%);
-  background-position:calc(100% - 16px) 17px,calc(100% - 11px) 17px; background-size:5px 5px,5px 5px; background-repeat:no-repeat; padding-right:32px; }
+  background-position:calc(100% - 14px) 12px,calc(100% - 10px) 12px; background-size:4px 4px,4px 4px;
+  background-repeat:no-repeat; padding-right:26px; }
 
-.r-range{ width:100%; height:6px; accent-color:var(--v-accent); cursor:pointer; }
+.r-range, input[type=range]{ -webkit-appearance:none; appearance:none; width:100%; height:18px;
+  background:transparent; cursor:pointer; }
+.r-range::-webkit-slider-runnable-track, input[type=range]::-webkit-slider-runnable-track{
+  height:3px; border-radius:var(--v-r-round);
+  background:linear-gradient(90deg,var(--v-sel) 0 var(--rp,50%),var(--v-surf3) var(--rp,50%) 100%); }
+.r-range::-moz-range-track, input[type=range]::-moz-range-track{
+  height:3px; border-radius:var(--v-r-round); background:var(--v-surf3); }
+.r-range::-moz-range-progress, input[type=range]::-moz-range-progress{
+  height:3px; border-radius:var(--v-r-round); background:var(--v-sel); }
+.r-range::-webkit-slider-thumb, input[type=range]::-webkit-slider-thumb{
+  -webkit-appearance:none; appearance:none; width:13px; height:13px; margin-top:-5px;
+  border-radius:50%; background:#fff; box-shadow:0 1px 3px rgba(0,0,0,.6), 0 0 0 1px rgba(0,0,0,.25);
+  transition:transform var(--v-dur) var(--v-ease), box-shadow var(--v-dur) var(--v-ease); }
+.r-range::-moz-range-thumb, input[type=range]::-moz-range-thumb{
+  width:13px; height:13px; border:0; border-radius:50%; background:#fff; box-shadow:0 1px 3px rgba(0,0,0,.6); }
+.r-range:hover::-webkit-slider-thumb, input[type=range]:hover::-webkit-slider-thumb{ transform:scale(1.12); }
+.r-range:active::-webkit-slider-thumb, input[type=range]:active::-webkit-slider-thumb{
+  transform:scale(1.04); box-shadow:0 0 0 5px var(--v-sel-soft), 0 1px 3px rgba(0,0,0,.6); }
+.r-range:focus-visible::-webkit-slider-thumb, input[type=range]:focus-visible::-webkit-slider-thumb{
+  box-shadow:0 0 0 3px var(--v-sel-glow); }
+.r-range:disabled, input[type=range]:disabled{ opacity:.45; cursor:not-allowed; }
+
+/* COLOUR WELL. The native control carries a platform border and its own padding,
+   so every operating system drew a different swatch. This is the swatch alone,
+   at the size of a switch (38x21), so a mixed column of switches, wells and
+   inputs lines up on one right edge instead of stepping in and out by two
+   pixels a row. Styled on the ELEMENT, so every colour input in the product is
+   this control and none can be missed. */
+input[type=color]{ -webkit-appearance:none; appearance:none; width:38px; height:21px; padding:0;
+  flex:0 0 auto; border:1px solid var(--v-500); border-radius:var(--v-r-lg); background:transparent;
+  cursor:pointer; box-shadow:inset 0 0 0 1px rgba(0,0,0,.35);
+  transition:border-color var(--v-dur) var(--v-ease); }
+input[type=color]:hover:not(:disabled){ border-color:var(--v-sel); }
+input[type=color]:disabled{ opacity:.45; cursor:not-allowed; }
+input[type=color]::-webkit-color-swatch-wrapper{ padding:0; }
+input[type=color]::-webkit-color-swatch{ border:0; border-radius:2px; }
+input[type=color]::-moz-color-swatch{ border:0; border-radius:2px; }
+
+/* ── THE FOUR CONTROLS ─────────────────────────────────────────────────────
+   The two most consequential buttons in the room used to look alike. Each of
+   these now owns a colour nothing else in the dock wears:
+
+     End service  amber  — it owns the ON-AIR session, so it carries the tally
+                           colour. Go Live, before a service, is green.
+     Clear screens red   — it takes the wall away.
+     Blackout     black  — it is the black itself, with a light hairline so the
+                           button is still findable on a dark desk.
+     Rehearse     amethyst — the rehearsal colour, and nothing else uses it.
+
+   A panic control is never placed behind a validator and never scrolled out of
+   reach (CLAUDE.md rule 36, DECISIONS section 20), so these are sized to stay
+   legible at the smallest dock height rather than to look neat at the largest. */
+.r-ctl{ display:grid; grid-template-columns:1fr 1fr; gap:6px; }
+.r-cbtn{ min-height:32px; padding:0 10px; border-radius:var(--v-r-sm); background:var(--v-surf3);
+  border:1px solid var(--v-500); color:var(--v-txt); cursor:pointer; white-space:nowrap;
+  font-family:var(--f-body); font-size:var(--v-fs-b2); font-weight:600;
+  transition:transform 90ms var(--v-ease), background var(--v-dur) var(--v-ease); }
+.r-cbtn:hover:not(:disabled){ background:var(--v-surf3); filter:brightness(1.15); }
+.r-cbtn:active:not(:disabled){ transform:scale(.965); }
+.r-cbtn:disabled{ opacity:.45; cursor:not-allowed; }
+.r-cbtn.wide{ grid-column:1 / -1; }
+.r-cbtn.golive{ background:var(--v-emerald); border-color:transparent; color:#04230e; }
+.r-cbtn.golive[data-on="1"]{ background:var(--v-amber-soft); border-color:var(--v-amber-line);
+  color:var(--v-amber); box-shadow:inset 0 0 0 1px rgba(255,163,26,.14); }
+.r-cbtn.danger{ background:var(--v-red-soft); border-color:var(--v-red-line); color:var(--v-red); }
+.r-cbtn.black{ background:linear-gradient(180deg,#0b0d12,#050609); border-color:rgba(210,220,235,.34); color:#d7deea; }
+.r-cbtn.black[data-on="1"]{ background:#000; border-color:#e8edf5; color:#fff; }
+.r-cbtn.rehearse[data-on="1"]{ background:var(--v-amethyst-soft); border-color:var(--v-amethyst-line);
+  color:var(--v-amethyst); }
 
 /* Pill toggle (visual switch) */
-.r-switch{ width:44px; height:24px; border-radius:99px; position:relative; flex:0 0 auto; cursor:pointer;
-  background:var(--v-surf3); border:1px solid var(--v-line2); transition:.18s; }
-.r-switch::after{ content:""; position:absolute; top:2px; left:2px; width:18px; height:18px; border-radius:50%;
-  background:var(--v-dim); transition:.18s; }
-.r-switch.on{ background:var(--v-accent-fill); border-color:transparent; }
-.r-switch.on::after{ left:22px; background:var(--v-accent-ink); }
+.r-switch{ width:38px; height:21px; border-radius:var(--v-r-round); position:relative; flex:0 0 auto;
+  cursor:pointer; background:var(--v-surf3); border:1px solid var(--v-500);
+  transition:background var(--v-dur) var(--v-ease), border-color var(--v-dur) var(--v-ease); }
+.r-switch:hover{ border-color:var(--v-sel); }
+.r-switch::after{ content:""; position:absolute; top:2px; left:2px; width:15px; height:15px; border-radius:50%;
+  background:var(--v-dim); box-shadow:0 1px 2px rgba(0,0,0,.5);
+  transition:transform 190ms var(--v-ease), background var(--v-dur) var(--v-ease); }
+.r-switch.on{ background:var(--v-sel); border-color:transparent; }
+.r-switch.on::after{ transform:translateX(17px); background:var(--v-sel-ink); }
 
 /* Stat card with left accent bar */
-.r-stat{ position:relative; background:var(--v-surf); border:1px solid var(--v-line); border-radius:12px;
+.r-stat{ position:relative; background:var(--v-surf); border:1px solid var(--v-line); border-radius:var(--v-r-lg);
   padding:16px 18px; overflow:hidden; }
 .r-stat::before{ content:""; position:absolute; left:0; top:0; bottom:0; width:3px; background:var(--v-accent); }
 .r-stat.cyan::before{ background:var(--v-cyan); }
@@ -365,44 +504,47 @@ body{ overflow:hidden; text-rendering:optimizeLegibility; -moz-osx-font-smoothin
 
 /* List row with accent bar */
 .r-row{ position:relative; display:flex; align-items:center; gap:16px; padding:16px 18px;
-  background:var(--v-surf); border:1px solid var(--v-line); border-radius:12px; transition:border-color .15s, background .15s; }
+  background:var(--v-surf); border:1px solid var(--v-line); border-radius:var(--v-r-lg); transition:border-color .15s, background .15s; }
 .r-row:hover{ border-color:var(--v-line2); }
-.r-row .bar{ position:absolute; left:0; top:12px; bottom:12px; width:3px; border-radius:0 3px 3px 0; }
+.r-row .bar{ position:absolute; left:0; top:12px; bottom:12px; width:3px; border-radius:0 var(--v-r-sm) var(--v-r-sm) 0; }
 
 /* ── Pills, segments, chips ────────────────────────────────────────────────
    The Library reference (docs/design/relay-main-library-screen.png) introduces
    three small controls that are not one-offs: the content-type PILL row, the
    view SEGMENT control, and the metadata CHIP. They live here so the Library,
    the Planner and anything after them cannot drift apart on radius or height. */
-.r-pill{ display:inline-flex; align-items:center; gap:8px; height:34px; padding:0 16px;
+.r-pill{ display:inline-flex; align-items:center; gap:7px; height:26px; padding:0 11px;
   border-radius:var(--v-r-md); border:1px solid transparent; background:var(--v-surf2);
-  color:var(--v-dim); font-family:var(--f-body); font-size:13px; font-weight:600;
-  cursor:pointer; white-space:nowrap; transition:background .14s, color .14s; }
+  color:var(--v-dim); font-family:var(--f-body); font-size:var(--v-fs-b2); font-weight:600;
+  cursor:pointer; white-space:nowrap;
+  transition:background var(--v-dur) var(--v-ease), color var(--v-dur) var(--v-ease); }
 .r-pill:hover:not(.on){ background:var(--v-surf3); color:var(--v-txt); }
-/* SELECTED is chrome, so it is amethyst. Amber here would mean the congregation
-   is looking at a tab (CLAUDE.md — amber is the tally light, and nothing else). */
+/* SELECTED is chrome, so it is the selection colour. Amber here would mean the
+   congregation is looking at a tab (CLAUDE.md — amber is the tally light). */
 .r-pill.on{ background:var(--v-accent-fill); color:var(--v-accent-ink); }
 
 .r-seg{ display:inline-flex; gap:2px; padding:3px; border-radius:var(--v-r-md);
   background:var(--v-bg); border:1px solid var(--v-line); }
-.r-seg button{ height:28px; padding:0 15px; border:0; border-radius:6px; background:transparent;
-  color:var(--v-dim); font-family:var(--f-body); font-size:12.5px; font-weight:600; cursor:pointer;
-  transition:background .14s, color .14s; }
+.r-seg button{ height:22px; padding:0 10px; border:0; border-radius:2px; background:transparent;
+  color:var(--v-faint); font-family:var(--f-body); font-size:var(--v-fs-lbl); font-weight:600; cursor:pointer;
+  transition:background var(--v-dur) var(--v-ease), color var(--v-dur) var(--v-ease); }
 .r-seg button:hover:not(.on){ color:var(--v-txt); }
 .r-seg button.on{ background:var(--v-accent-fill); color:var(--v-accent-ink); }
 
-.r-chip{ display:inline-flex; align-items:center; gap:5px; height:21px; padding:0 8px;
+.r-chip{ display:inline-flex; align-items:center; gap:5px; height:19px; padding:0 7px;
   border-radius:var(--v-r-sm); border:1px solid var(--v-line2); background:var(--v-surf2);
-  font-family:var(--f-mono); font-size:10.5px; font-variant-numeric:tabular-nums;
+  font-family:var(--f-mono); font-size:var(--v-fs-cap); font-variant-numeric:tabular-nums;
   letter-spacing:.02em; color:var(--v-dim); white-space:nowrap; }
-.r-chip.green{ background:var(--v-emerald-soft); border-color:rgba(34,197,94,.32); color:var(--v-emerald); }
-.r-chip.cyan{ background:var(--v-cyan-soft); border-color:rgba(34,211,238,.32); color:var(--v-cyan); }
-.r-chip.amethyst{ background:var(--v-accent-soft); border-color:var(--v-accent-line); color:var(--v-accent2); }
-.r-chip.amber{ background:var(--v-amber-soft); border-color:rgba(255,176,0,.32); color:var(--v-amber); }
+.r-chip.green{ background:var(--v-emerald-soft); border-color:var(--v-emerald-line); color:var(--v-emerald); }
+.r-chip.cyan{ background:var(--v-cyan-soft); border-color:var(--v-cyan-line); color:var(--v-cyan); }
+.r-chip.amethyst{ background:var(--v-amethyst-soft); border-color:var(--v-amethyst-line); color:var(--v-amethyst2); }
+.r-chip.amber{ background:var(--v-amber-soft); border-color:var(--v-amber-line); color:var(--v-amber); }
 
-.r-empty{ color:var(--v-faint); font-size:13.5px; }
+.r-empty{ color:var(--v-faint); font-size:var(--v-fs-b2); }
 .r-focus:focus-visible, .r-btn:focus-visible, .r-iconbtn:focus-visible, .nav-item:focus-visible,
-.r-input:focus-visible, .r-select:focus-visible, .r-switch:focus-visible{ outline:2px solid var(--v-accent2); outline-offset:2px; }
+.r-input:focus-visible, .r-select:focus-visible, .r-switch:focus-visible,
+.r-cbtn:focus-visible, .r-pill:focus-visible, .r-well:focus-within{
+  outline:2px solid var(--v-sel); outline-offset:2px; }
 
 /* ── Responsive: sidebar → icon rail → bottom nav ──────────────────────── */
 @media (max-width:1024px){
@@ -427,7 +569,7 @@ body{ overflow:hidden; text-rendering:optimizeLegibility; -moz-osx-font-smoothin
     background:var(--v-bg); border-top:1px solid var(--v-line2); padding:6px 6px calc(6px + env(safe-area-inset-bottom));
     justify-content:space-around; align-items:stretch; }
   .botnav .bn{ flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px;
-    background:none; border:0; color:var(--v-faint); font-size:10px; font-weight:600; cursor:pointer; border-radius:10px; }
+    background:none; border:0; color:var(--v-faint); font-size:10px; font-weight:600; cursor:pointer; border-radius:var(--v-r-sm); }
   .botnav .bn.active{ color:var(--v-accent2); background:var(--v-accent-soft); }
 }
 
@@ -440,12 +582,12 @@ body{ overflow:hidden; text-rendering:optimizeLegibility; -moz-osx-font-smoothin
 
 /* Sub-tab strip (Library content types) */
 .subtabs{ display:flex; gap:6px; flex-wrap:wrap; }
-.subtab{ display:flex; align-items:center; gap:8px; padding:9px 14px; border-radius:10px;
+.subtab{ display:flex; align-items:center; gap:8px; padding:9px 14px; border-radius:var(--v-r-sm);
   border:1px solid var(--v-line2); background:var(--v-surf2); color:var(--v-dim);
   font-family:var(--f-body); font-size:13px; font-weight:600; cursor:pointer; transition:.14s; }
 .subtab:hover{ color:var(--v-txt); }
 .subtab.on{ background:var(--v-surf3); color:var(--v-txt); border-color:var(--v-line2); }
-.subtab .c{ width:8px; height:8px; border-radius:3px; flex:0 0 auto; }
+.subtab .c{ width:8px; height:8px; border-radius:var(--v-r-sm); flex:0 0 auto; }
 .subtab .n{ font-family:var(--f-mono); font-size:9.5px; color:var(--v-faint); }
 
 /* Catalog toolbar + grid + card */
@@ -454,20 +596,20 @@ body{ overflow:hidden; text-rendering:optimizeLegibility; -moz-osx-font-smoothin
 .cat-bar .r-input{ max-width:300px; }
 .cat-bar .spring{ flex:1; }
 .cat-grid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(196px,1fr)); gap:14px; }
-.cat-card{ display:flex; flex-direction:column; border:1px solid var(--v-line); border-radius:14px;
+.cat-card{ display:flex; flex-direction:column; border:1px solid var(--v-line); border-radius:var(--v-r-lg);
   background:var(--v-surf); padding:13px; transition:border-color .14s; }
 .cat-card:hover{ border-color:var(--v-line2); }
-.cat-thumb{ aspect-ratio:16/9; border-radius:9px; margin-bottom:11px; position:relative; overflow:hidden;
+.cat-thumb{ aspect-ratio:16/9; border-radius:var(--v-r-sm); margin-bottom:11px; position:relative; overflow:hidden;
   background:repeating-linear-gradient(135deg,var(--v-surf2) 0 8px,var(--v-surf3) 8px 16px); }
 .cat-thumb.scripture{ background:radial-gradient(120% 140% at 50% 25%,#241a10,#0c0905); display:grid; place-items:center; padding:10px; }
 .cat-thumb.scripture .q{ font-family:var(--f-serif); color:#f4e4c8; font-size:12px; text-align:center; line-height:1.35; }
 .cat-kind{ position:absolute; top:8px; left:8px; font-family:var(--f-mono); font-size:8.5px; letter-spacing:.06em;
-  padding:2px 6px; border-radius:5px; background:rgba(0,0,0,.55); border:1px solid var(--v-line2); color:var(--v-dim); }
+  padding:2px 6px; border-radius:var(--v-r-sm); background:rgba(0,0,0,.55); border:1px solid var(--v-line2); color:var(--v-dim); }
 .cat-t{ font-weight:600; font-size:13px; color:var(--v-txt); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .cat-m{ font-family:var(--f-mono); font-size:9px; color:var(--v-faint); margin-top:3px; letter-spacing:.03em;
   overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .cat-card .cat-add{ margin-top:11px; width:100%; }
-.cat-empty{ padding:34px 20px; text-align:center; border:1px dashed var(--v-line2); border-radius:14px; }
+.cat-empty{ padding:34px 20px; text-align:center; border:1px dashed var(--v-line2); border-radius:var(--v-r-lg); }
 .cat-sketch{ font-family:var(--f-mono); font-size:10px; letter-spacing:.1em; text-transform:uppercase;
   color:var(--v-faint); display:inline-flex; align-items:center; gap:7px; }
 .cat-sketch::before{ content:""; width:6px; height:6px; border-radius:50%; background:var(--v-accent); box-shadow:0 0 7px var(--v-accent); }
@@ -478,7 +620,7 @@ body{ overflow:hidden; text-rendering:optimizeLegibility; -moz-osx-font-smoothin
 .cheat-scrim{ position:fixed; inset:0; z-index:900; display:grid; place-items:center;
   background:rgba(0,0,0,.62); padding:24px; cursor:default; }
 .cheat{ width:100%; max-width:520px; background:var(--v-surf); border:1px solid var(--v-line2);
-  border-radius:14px; padding:22px 24px; box-shadow:0 18px 50px rgba(0,0,0,.5); }
+  border-radius:var(--v-r-lg); padding:22px 24px; box-shadow:0 18px 50px rgba(0,0,0,.5); }
 .cheat h2{ margin:0 0 16px; font-family:var(--f-display); font-size:17px; font-weight:600; color:var(--v-txt); }
 .cheat table{ width:100%; border-collapse:collapse; }
 .cheat tr{ border-bottom:1px solid var(--v-line); }
@@ -489,11 +631,11 @@ body{ overflow:hidden; text-rendering:optimizeLegibility; -moz-osx-font-smoothin
 .cheat .scope{ text-align:right; font-family:var(--f-mono); font-size:9.5px; letter-spacing:.05em;
   text-transform:uppercase; color:var(--v-faint); white-space:nowrap; padding-left:12px; }
 .cheat kbd{ display:inline-block; font-family:var(--f-mono); font-size:10.5px; line-height:1;
-  padding:5px 7px; margin-right:4px; border-radius:5px; background:var(--v-surf3);
+  padding:5px 7px; margin-right:4px; border-radius:var(--v-r-sm); background:var(--v-surf3);
   border:1px solid var(--v-line2); color:var(--v-txt); }
 .cheat-foot{ margin:16px 0 0; font-size:12px; color:var(--v-dim); line-height:1.6; }
 .cheat-foot kbd{ display:inline-block; font-family:var(--f-mono); font-size:10px; padding:3px 5px;
-  border-radius:4px; background:var(--v-surf3); border:1px solid var(--v-line2); color:var(--v-txt); }
+  border-radius:var(--v-r-sm); background:var(--v-surf3); border:1px solid var(--v-line2); color:var(--v-txt); }
 
 /* ===== Update banner =================================================
    Sits at rest only. updater.js will not even check while the mic is live —
@@ -545,7 +687,7 @@ body{ overflow:hidden; text-rendering:optimizeLegibility; -moz-osx-font-smoothin
 .upd .upd-msg{ display:block; color:var(--v-dim); margin-top:4px; }
 .upd{ position:fixed; left:50%; transform:translateX(-50%); bottom:18px; z-index:800;
   display:flex; align-items:center; gap:14px; max-width:min(760px,calc(100vw - 32px));
-  background:var(--v-surf); border:1px solid var(--v-accent-line); border-radius:12px;
+  background:var(--v-surf); border:1px solid var(--v-accent-line); border-radius:var(--v-r-lg);
   padding:12px 16px; box-shadow:0 14px 40px rgba(0,0,0,.45); }
 .upd-t{ display:flex; flex-direction:column; gap:2px; }
 .upd-t b{ font-size:13px; color:var(--v-accent2); }
@@ -579,7 +721,7 @@ body{ overflow:hidden; text-rendering:optimizeLegibility; -moz-osx-font-smoothin
    the On Air badge. The operator should never have to hunt a 10px monospace
    footer inside a monitor tile to answer "what are they looking at?". */
 .topbar-live{ font-size:12px; color:var(--v-txt); background:var(--v-surf2);
-  border:1px solid var(--v-line2); border-radius:6px; padding:3px 8px;
+  border:1px solid var(--v-line2); border-radius:var(--v-r-sm); padding:3px 8px;
   max-width:280px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 /* The microphone is a SEPARATE fact from what's on screen, and quieter. */
 .topbar-mic{ display:inline-flex; align-items:center; gap:6px; font-size:11px;
@@ -590,7 +732,7 @@ body{ overflow:hidden; text-rendering:optimizeLegibility; -moz-osx-font-smoothin
    careful, not that anything is wrong, and it must never compete with the amber
    that says a congregation is looking at something. */
 .lockchip{ display:inline-flex; align-items:center; font-size:9px; letter-spacing:.09em;
-  color:var(--v-dim); border:1px solid var(--v-line2); border-radius:5px;
+  color:var(--v-dim); border:1px solid var(--v-line2); border-radius:var(--v-r-sm);
   padding:2px 7px; background:var(--v-surf2); flex:0 0 auto; }
 @media (prefers-reduced-motion: no-preference){
   .mic-dot{ animation:micpulse 1.8s ease-in-out infinite; }
@@ -627,7 +769,7 @@ body{ overflow:hidden; text-rendering:optimizeLegibility; -moz-osx-font-smoothin
 .b-bar .b-ver{ font-size:11px; color:var(--v-faint); }
 .b-bar .b-spring{ flex:1; }
 .b-mark{ display:flex; align-items:flex-end; gap:2px; height:16px; }
-.b-mark i{ width:2.5px; border-radius:99px; background:var(--v-amethyst); }
+.b-mark i{ width:2.5px; border-radius:var(--v-r-round); background:var(--v-amethyst); }
 .b-mark i:nth-child(1),.b-mark i:nth-child(5){ height:6px; opacity:.55; }
 .b-mark i:nth-child(2),.b-mark i:nth-child(4){ height:11px; }
 .b-mark i:nth-child(3){ height:16px; }
@@ -657,10 +799,10 @@ body{ overflow:hidden; text-rendering:optimizeLegibility; -moz-osx-font-smoothin
 
 /* Progress bar — design sheet PROGRESS / INDICATORS. */
 .b-prog{ margin-top:var(--v-sp-lg); display:flex; align-items:center; gap:12px; }
-.b-prog .track{ flex:1; height:6px; border-radius:99px; background:var(--v-surf2); overflow:hidden; }
+.b-prog .track{ flex:1; height:6px; border-radius:var(--v-r-round); background:var(--v-surf2); overflow:hidden; }
 /* Fills by scaleX, not width — a transform is composited on the GPU and never
    triggers layout, so the boot/download bar stays smooth on weak hardware. */
-.b-prog .fill{ height:100%; width:100%; border-radius:99px; transform-origin:left center; transform:scaleX(0);
+.b-prog .fill{ height:100%; width:100%; border-radius:var(--v-r-round); transform-origin:left center; transform:scaleX(0);
   background:linear-gradient(90deg,var(--v-amethyst),var(--v-amethyst2)); transition:transform .35s ease; }
 .b-prog .pct{ font-family:var(--f-mono); font-variant-numeric:tabular-nums; font-size:12px; color:var(--v-dim); min-width:38px; text-align:right; }
 
@@ -784,7 +926,7 @@ body{ overflow:hidden; text-rendering:optimizeLegibility; -moz-osx-font-smoothin
 .shell.chromeless .botnav{ display:none; }
 .shell.chromeless .mainscroll{ padding:14px; }
 .exit-fs{ position:absolute; top:10px; right:14px; z-index:60;
-  height:30px; padding:0 12px; border-radius:8px; cursor:pointer;
+  height:30px; padding:0 12px; border-radius:var(--v-r-sm); cursor:pointer;
   background:var(--v-surf2); border:1px solid var(--v-line2); color:var(--v-dim);
   font-family:var(--f-body); font-size:12px; font-weight:600; }
 .exit-fs:hover{ color:var(--v-txt); border-color:var(--v-accent-line); }

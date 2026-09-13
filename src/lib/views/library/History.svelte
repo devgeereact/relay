@@ -755,7 +755,7 @@
   .c-over{ color:var(--v-dim); font-size:12px; }
   .lib-pill{
     display:inline-block; min-width:30px; text-align:center; padding:3px 9px; border-radius:99px;
-    background:var(--v-cyan-soft); border:1px solid rgba(34,211,238,.32); color:var(--v-cyan); font-size:11px;
+    background:var(--v-cyan-soft); border:1px solid var(--v-cyan-line); color:var(--v-cyan); font-size:11px;
   }
   .lib-openbtn svg{ transition:transform .15s; }
   .lib-row:hover .lib-openbtn{ color:var(--v-accent); border-color:var(--v-line2); }

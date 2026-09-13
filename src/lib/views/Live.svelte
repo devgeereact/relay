@@ -27,6 +27,7 @@
   // BUILDING a plan is not this screen's job. That is the Planner: a different
   // task, done on a Tuesday, not with a congregation waiting.
   import { onMount, onDestroy, afterUpdate } from 'svelte';
+  import { rangeFill } from '../rangefill.js';
   import { describeScreen, SCREEN_BADGE, screenSwitch } from '../outputHealth.js';
   import TemplateRender from '../TemplateRender.svelte';
   import { resolveOutputTemplate } from '../layers.js';
@@ -1235,7 +1236,7 @@
           <span class="sens-lbl r-mono">SENS</span>
           <input type="range" min="0" max="100" step="1" value={sensitivity}
             on:input={(e) => onSensitivity(+e.target.value)} disabled={!$capture.available}
-            aria-label="Detection sensitivity" />
+            aria-label="Detection sensitivity" use:rangeFill={sensitivity} />
           <span class="sens-val r-mono">{sensitivity}</span>
         </label>
         <button class="chip btnchip" class:ok={$capture.detectionOn} on:click={toggleDetection}
@@ -1530,7 +1531,7 @@
           <button class="qb red" on:click={clearAll} disabled={!$capture.available}>
             <b>Clear screens</b><span>Stop all outputs · Esc</span>
           </button>
-          <button class="qb grey" class:on={$screenBlack} on:click={blackAll} disabled={!$capture.available}>
+          <button class="qb black" class:on={$screenBlack} on:click={blackAll} disabled={!$capture.available}>
             <b>Blackout</b><span>Go to black · B</span>
           </button>
           <button class="qb amethyst" class:on={$rehearsing} on:click={toggleRehearsal}
@@ -1686,7 +1687,7 @@
   /* ── rehearsal band ── amethyst, never amber. Amber means ON AIR. */
   .reh{flex:0 0 auto; display:flex; align-items:center; gap:var(--v-sp-sm);
     padding:10px var(--v-sp-md); border-radius:var(--v-r-lg);
-    background:var(--v-amethyst-soft); border:1px solid rgba(139,92,246,.42);
+    background:var(--v-amethyst-soft); border:1px solid var(--v-amethyst-line);
     font-size:var(--v-fs-b2); line-height:var(--v-lh-b2); color:var(--v-dim)}
   .reh b{font-family:var(--f-mono); font-size:var(--v-fs-cap); font-weight:700;
     letter-spacing:.14em; color:var(--v-amethyst); flex:0 0 auto}
@@ -1742,7 +1743,7 @@
   .tag.preview{background:var(--v-amethyst); color:var(--v-void)}
   /* Amber, and only when the congregation is genuinely looking at it. */
   .tag.onair{background:var(--v-amber); color:var(--v-amber-ink)}
-  .tag.reh{background:var(--v-amethyst-soft); border:1px solid rgba(139,92,246,.45); color:var(--v-amethyst)}
+  .tag.reh{background:var(--v-amethyst-soft); border:1px solid var(--v-amethyst-line); color:var(--v-amethyst)}
   .tag.off{background:var(--v-grey-soft); border:1px solid var(--v-line2); color:var(--v-dim)}
   .mon-name{min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
     font-size:var(--v-fs-cap); color:var(--v-faint)}
@@ -1859,27 +1860,22 @@
     border-radius:99px; background:var(--v-surf2); border:1px solid var(--v-line2);
     font-size:var(--v-fs-cap); color:var(--v-faint)}
   .chip .bd{width:6px; height:6px; border-radius:50%; background:var(--v-faint)}
-  .chip.ok{color:var(--v-emerald); border-color:rgba(34,197,94,.32); background:var(--v-emerald-soft)}
+  .chip.ok{color:var(--v-emerald); border-color:var(--v-emerald-line); background:var(--v-emerald-soft)}
   .chip.ok .bd{background:var(--v-emerald); box-shadow:0 0 6px var(--v-emerald)}
   .btnchip{cursor:pointer; font-family:var(--f-body)}
   .btnchip:disabled{opacity:.5; cursor:not-allowed}
 
   /* Sensitivity dial — compact, on the run surface. Reaches the same thresholds
-     as Settings; the value is amethyst (chrome), never amber. */
+     as Settings, and is now the SAME INSTRUMENT: the track, the thumb and the
+     filled share all come from app.css, so the dial an operator learns in
+     Settings is the dial they use during a service. Width is the only thing
+     that is genuinely local — this one lives in a crowded transport bar. */
   .sens{display:inline-flex; align-items:center; gap:7px; flex:0 0 auto;}
-  .sens-lbl{font-size:var(--v-fs-cap); letter-spacing:.08em; color:var(--v-faint);}
+  .sens-lbl{font-size:var(--v-fs-cap); letter-spacing:var(--v-tr-caps); color:var(--v-faint);}
   .sens-val{font-size:var(--v-fs-cap); color:var(--v-dim); min-width:20px; text-align:right;}
-  .sens input[type="range"]{-webkit-appearance:none; appearance:none; width:88px; height:4px;
-    border-radius:99px; background:var(--v-surf3); cursor:pointer; outline:none;}
-  .sens input[type="range"]:focus-visible{box-shadow:0 0 0 3px var(--v-accent-soft);}
-  .sens input[type="range"]:disabled{opacity:.5; cursor:not-allowed;}
-  .sens input[type="range"]::-webkit-slider-thumb{-webkit-appearance:none; appearance:none;
-    width:13px; height:13px; border-radius:50%; background:var(--v-accent);
-    border:2px solid var(--v-surf); box-shadow:var(--v-shadow-sm);}
-  .sens input[type="range"]::-moz-range-thumb{width:13px; height:13px; border-radius:50%;
-    background:var(--v-accent); border:2px solid var(--v-surf);}
+  .sens input[type="range"]{width:88px;}
 
-  .claim{background:var(--v-surf2); border:1px solid rgba(255,176,0,.28);
+  .claim{background:var(--v-surf2); border:1px solid var(--v-amber-line);
     border-radius:var(--v-r-lg); padding:14px; box-shadow:0 0 20px -6px var(--v-amber-glow)}
   /* A GUESS MUST LOOK LIKE A GUESS. Amber reads as "Relay is confident" and a
      paraphrase has not earned it — its score is a cosine, and router.rs will not let
@@ -1892,8 +1888,8 @@
     font-weight:600; letter-spacing:var(--v-tr-tight); color:var(--v-txt)}
   .mchip{flex:0 0 auto; padding:4px 10px; border-radius:99px; font-family:var(--f-mono);
     font-size:var(--v-fs-cap); font-weight:600; background:var(--v-amber-soft);
-    border:1px solid rgba(255,176,0,.32); color:var(--v-amber)}
-  .mchip.guess{background:var(--v-cyan-soft); border-color:rgba(34,211,238,.32); color:var(--v-cyan)}
+    border:1px solid var(--v-amber-line); color:var(--v-amber)}
+  .mchip.guess{background:var(--v-cyan-soft); border-color:var(--v-cyan-line); color:var(--v-cyan)}
   .mchip.sm{padding:3px 8px; font-size:10px}
   /* Confidence as a BAR — "0.92" means nothing to a volunteer. Only ever drawn for a
      heard reference, the only one whose number means what it appears to mean. */
@@ -1953,7 +1949,7 @@
   .search input{flex:1; min-width:0; background:transparent; border:0; outline:none;
     color:var(--v-txt); font-family:var(--f-mono); font-size:var(--v-fs-mono)}
   .search input::placeholder{color:var(--v-faint)}
-  .search:focus-within{border-color:rgba(255,176,0,.45); box-shadow:0 0 0 3px rgba(255,176,0,.1)}
+  .search:focus-within{border-color:var(--v-amber-line); box-shadow:0 0 0 3px var(--v-amber-soft)}
   .err{padding:0 12px 10px; color:var(--v-red); font-size:var(--v-fs-cap)}
 
   .wide{width:100%; height:32px; border-radius:var(--v-r-md); cursor:pointer;
@@ -1975,7 +1971,7 @@
     cursor:pointer; padding:9px 10px; border-radius:var(--v-r-md); background:var(--v-surf2);
     border:1px solid var(--v-line); color:var(--v-txt); font-family:var(--f-body); transition:.14s}
   .cue:hover,.slide:hover{border-color:var(--v-line2); background:var(--v-surf3)}
-  .cue.sel{border-color:rgba(34,211,238,.45)}
+  .cue.sel{border-color:var(--v-cyan-line)}
   /* Amber = it is in front of the congregation. Nothing else may use it. */
   .cue.islive,.slide.islive{border-color:var(--v-amber); background:var(--v-amber-soft)}
   /* CUED = where → will resume from, but NOT on screen. Deliberately not amber. */
@@ -2009,7 +2005,7 @@
   .slide.islive .slide-text{color:var(--v-txt)}
   .note{margin-left:19px; display:flex; align-items:flex-start; gap:7px; padding:8px 10px;
     border-radius:var(--v-r-md); background:var(--v-amethyst-soft);
-    border:1px solid rgba(139,92,246,.3); color:var(--v-amethyst);
+    border:1px solid var(--v-amethyst-line); color:var(--v-amethyst);
     font-size:var(--v-fs-cap); line-height:1.5}
   .note svg{flex:0 0 auto; margin-top:2px}
   .flash{display:flex; align-items:center; gap:8px; min-width:0; overflow:hidden;
@@ -2032,10 +2028,15 @@
   .qb span{font-size:10px; color:var(--v-faint); max-width:100%;
     overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
   .qb:disabled{opacity:.45; cursor:not-allowed}
-  .qb.red{background:var(--v-red-soft); border-color:rgba(239,68,68,.4); color:var(--v-red)}
-  .qb.grey.on{background:var(--v-grey-soft); border-color:var(--v-grey); color:var(--v-txt)}
-  .qb.amethyst.on{background:var(--v-amethyst-soft); border-color:rgba(139,92,246,.45); color:var(--v-amethyst)}
-  .qb.cyan.on{background:var(--v-cyan-soft); border-color:rgba(34,211,238,.4); color:var(--v-cyan)}
+  .qb.red{background:var(--v-red-soft); border-color:var(--v-red-line); color:var(--v-red)}
+  /* BLACKOUT IS BLACK, not grey. Grey means CUED — where the transport resumes,
+     and not on screen (CLAUDE.md, frontend shape). Wearing it here meant the one
+     control that takes the wall to black shared a colour with a position marker.
+     The hairline is what keeps it findable on a dark desk. */
+  .qb.black{background:linear-gradient(180deg,#0b0d12,#050609); border-color:rgba(210,220,235,.34); color:#d7deea}
+  .qb.black.on{background:#000; border-color:#e8edf5; color:#fff}
+  .qb.amethyst.on{background:var(--v-amethyst-soft); border-color:var(--v-amethyst-line); color:var(--v-amethyst)}
+  .qb.cyan.on{background:var(--v-cyan-soft); border-color:var(--v-cyan-line); color:var(--v-cyan)}
   .qb:hover:not(:disabled){filter:brightness(1.12)}
 
   .modes{display:flex; flex-direction:column; gap:5px}
@@ -2045,7 +2046,7 @@
   .md i{width:11px; height:11px; border-radius:50%; flex:0 0 auto;
     border:1px solid var(--v-line2); background:transparent}
   .md em{font-style:normal; font-size:10px; opacity:.8}
-  .md.on{background:var(--v-amethyst-soft); border-color:rgba(139,92,246,.45); color:var(--v-txt)}
+  .md.on{background:var(--v-amethyst-soft); border-color:var(--v-amethyst-line); color:var(--v-txt)}
   .md.on i{background:var(--v-amethyst); border-color:var(--v-amethyst)}
 
   .sb{display:flex; align-items:center; justify-content:space-between; gap:7px; min-width:0;
@@ -2066,12 +2067,12 @@
   .cd-msg{flex:1 1 auto; min-width:0; padding:3px 7px; border-radius:var(--v-r-sm);
     border:1px solid var(--v-line2); background:var(--v-bg); color:var(--v-txt);
     font-size:var(--v-fs-cap)}
-  .cd-go{padding:4px 9px; border-radius:var(--v-r-sm); border:1px solid rgba(34,211,238,.4);
+  .cd-go{padding:4px 9px; border-radius:var(--v-r-sm); border:1px solid var(--v-cyan-line);
     background:var(--v-cyan-soft); color:var(--v-cyan); font-family:var(--f-mono);
     font-size:10px; font-weight:700; cursor:pointer}
   .cd-go:hover:not(:disabled){filter:brightness(1.2)}
   .cd-go:disabled{opacity:.45; cursor:not-allowed}
-  .cd-go.armed{background:var(--v-amber-soft); border-color:rgba(255,176,0,.5); color:var(--v-amber)}
+  .cd-go.armed{background:var(--v-amber-soft); border-color:var(--v-amber-line); color:var(--v-amber)}
 
   .amon{display:flex; align-items:center; gap:var(--v-sp-sm); padding:7px 10px;
     border-radius:var(--v-r-md); background:var(--v-surf2); border:1px solid var(--v-line)}
@@ -2079,12 +2080,12 @@
 
   /* ── banners ───────────────────────────────────────────────────────────── */
   .audioerr{flex:0 0 auto; background:var(--v-red-soft); color:var(--v-red);
-    border:1px solid rgba(239,68,68,.3); border-radius:var(--v-r-md);
+    border:1px solid var(--v-red-line); border-radius:var(--v-r-md);
     padding:9px 12px; font-size:var(--v-fs-lbl)}
   /* Degraded, not broken: amber (a warning), never red (an error) — the app is still
      fully usable by hand, and the banner should read that way. */
   .sttwarn{flex:0 0 auto; background:var(--v-amber-soft); color:var(--v-txt);
-    border:1px solid rgba(255,176,0,.34); border-radius:var(--v-r-md);
+    border:1px solid var(--v-amber-line); border-radius:var(--v-r-md);
     padding:10px 12px; font-size:var(--v-fs-lbl); line-height:1.6}
   .sttwarn b{display:block; margin-bottom:2px; color:var(--v-amber2)}
 

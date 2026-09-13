@@ -1,0 +1,98 @@
+// The filled part of a slider is drawn by CSS from `--rp`, so `--rp` being
+// right IS the control being right. `accent-color` used to do this, badly: it
+// let every platform draw its own idea of a slider, and the sensitivity dial and
+// a template's letter spacing ended up as two different instruments.
+//
+// What makes this worth a test rather than three lines in a component: the
+// failure is silent and it looks like a design decision. A slider whose `--rp`
+// is stale paints a filled track that disagrees with its own value — it says
+// 50% while the number beside it says 80 — and nothing throws, nothing logs, and
+// the operator reads the picture rather than the number.
+//
+// The third case below is the one that actually bit the prototype: a panel that
+// rebuilds (a different template selected, a different screen inspected) sets
+// the input's value from JavaScript, which fires NO `input` event. Listening to
+// `input` alone is a painter that is correct until the moment the operator
+// changes what they are looking at.
+import { describe, it, expect } from 'vitest';
+import { rangeFill, fillPercent } from './rangefill.js';
+
+/** A real `<input type=range>`, because the action reads min/max/value off it. */
+function slider({ min = 0, max = 100, value = 50 } = {}) {
+  const el = document.createElement('input');
+  el.type = 'range';
+  el.min = String(min);
+  el.max = String(max);
+  el.value = String(value);
+  document.body.appendChild(el);
+  return el;
+}
+
+const rp = (el) => el.style.getPropertyValue('--rp');
+
+describe('fillPercent — the arithmetic on its own', () => {
+  it('maps a value onto its share of the track', () => {
+    expect(fillPercent(0, 0, 100)).toBe(0);
+    expect(fillPercent(50, 0, 100)).toBe(50);
+    expect(fillPercent(100, 0, 100)).toBe(100);
+    expect(fillPercent(30, 10, 50)).toBe(50);
+  });
+
+  it('clamps rather than painting past the ends of the track', () => {
+    expect(fillPercent(-20, 0, 100)).toBe(0);
+    expect(fillPercent(999, 0, 100)).toBe(100);
+  });
+
+  it('a zero-width range is 0%, not NaN', () => {
+    // `(v - min) / (max - min)` divides by zero here. NaN reaches CSS as an
+    // invalid value, the declaration is dropped, and the track falls back to the
+    // stylesheet's 50% default — a slider that reads half full at every value.
+    expect(fillPercent(5, 5, 5)).toBe(0);
+    expect(Number.isFinite(fillPercent(5, 5, 5))).toBe(true);
+  });
+
+  it('a non-numeric value is 0%, not NaN', () => {
+    expect(fillPercent('', 0, 100)).toBe(0);
+  });
+});
+
+describe('rangeFill — the action', () => {
+  it('paints on mount, before anyone touches it', () => {
+    const el = slider({ value: 25 });
+    rangeFill(el);
+    expect(rp(el)).toBe('25%');
+  });
+
+  it('repaints on input, which is what a drag is', () => {
+    const el = slider({ value: 25 });
+    rangeFill(el);
+    el.value = '80';
+    el.dispatchEvent(new Event('input'));
+    expect(rp(el)).toBe('80%');
+  });
+
+  it('repaints when the panel rebuilds and sets the value in code', () => {
+    // No `input` event is fired by assigning `.value`. Svelte calls `update()`
+    // when the bound value changes, and that is the only signal there is.
+    const el = slider({ value: 25 });
+    const action = rangeFill(el);
+    el.value = '90';
+    action.update();
+    expect(rp(el)).toBe('90%');
+  });
+
+  it('honours min and max rather than assuming 0-100', () => {
+    const el = slider({ min: 1, max: 9, value: 5 });
+    rangeFill(el);
+    expect(rp(el)).toBe('50%');
+  });
+
+  it('stops listening when the control goes away', () => {
+    const el = slider({ value: 10 });
+    const action = rangeFill(el);
+    action.destroy();
+    el.value = '70';
+    el.dispatchEvent(new Event('input'));
+    expect(rp(el)).toBe('10%');
+  });
+});
