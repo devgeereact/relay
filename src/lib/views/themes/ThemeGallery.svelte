@@ -8,6 +8,7 @@
   // deleted. Editing a builtin means "duplicate, then edit the copy".
   import { createEventDispatcher, onMount } from 'svelte';
   import TemplateRender from '../../TemplateRender.svelte';
+  import WorkspaceFrame from '../WorkspaceFrame.svelte';
   import EmptyState from '../../ui/EmptyState.svelte';
   import {
     BUILTIN_THEMES,
@@ -121,48 +122,49 @@
   }
 </script>
 
-<!-- THE THEMES WORKSPACE (docs/REBRAND.md §2), in the same three columns as
-     Templates: a rail of what you can narrow by, the themes, an inspector. -->
-<div class="th-shell">
-  <!-- A screen-reader operator navigates by heading. This tab had none at all,
-       so there was nothing to jump to and no way to tell where you had landed.
-       Visually hidden because the tab bar is already the visible title — the
-       heading is for the reader that cannot see it. -->
-  <h1 class="sr-only">Themes</h1>
 
-  <aside class="th-pane th-rail">
-    <div class="th-panehead"><span class="r-lbl">Sets</span></div>
-    <div class="th-railscroll r-scroll">
+<!-- THE THEMES WORKSPACE, in the shared workspace grammar
+     (`WorkspaceFrame.svelte`, docs/REBRAND.md §2 and §11) — the same rail ·
+     main · inspector as Templates and Outputs, from the one definition. The
+     frame carries the page's <h1>; each pane head carries an <h2>. -->
+<WorkspaceFrame
+  title="Themes"
+  standfirst="The style layer beneath templates. A template overrides a theme key by key, so a theme sets the defaults and never the last word."
+  columns="206px minmax(0,1fr) 312px">
+  <svelte:fragment slot="head">
+    <input type="file" accept=".json,application/json" bind:this={fileInput} on:change={onImportFile} style="display:none" />
+    <button class="r-btn ghost sm" on:click={() => fileInput.click()}>Import</button>
+    <button class="r-btn primary sm" on:click={newTheme}>＋ New theme</button>
+  </svelte:fragment>
+
+  <aside class="rw-pane th-rail">
+    <div class="rw-panehead"><h2 class="rw-panettl">Sets</h2></div>
+    <nav class="rw-panebody" aria-label="Theme sets">
       {#each sets as s (s.key)}
-        <button class="th-prow" class:on={filter === s.key} on:click={() => (filter = s.key)}>
-          <span class="th-pn">{s.label}</span>
-          <span class="th-pv r-mono">{s.count}</span>
+        <button class="rw-item r-focus" class:on={filter === s.key} on:click={() => (filter = s.key)}>
+          <span class="rw-itemname">{s.label}</span>
+          <span class="rw-itemn">{s.count}</span>
         </button>
       {/each}
+    </nav>
+    <div class="rw-panefoot">
+      <!-- Built-ins are read-only and there is no control that changes that, so
+           the rail says it once rather than every card carrying a lock. -->
+      <p class="th-railnote">Built-in themes cannot be edited or deleted. <b>Duplicate</b> one to get an editable copy — that is what "edit a built-in" means here.</p>
     </div>
-    <!-- The one sentence that explains what a theme IS relative to a template.
-         It belongs beside the list, not at the foot of the inspector where it
-         was only read by somebody who had already selected something. -->
-    <p class="th-railnote">A theme is the style layer <b>beneath</b> templates. A template overrides it key by key, so a theme sets the defaults and never the last word.</p>
   </aside>
 
-  <section class="th-pane th-main">
-    <div class="th-panehead">
-      <span class="r-lbl">Themes</span>
-      <span class="th-spring"></span>
-      <input type="file" accept=".json,application/json" bind:this={fileInput} on:change={onImportFile} style="display:none" />
-      <button class="r-btn ghost sm" on:click={() => fileInput.click()}>Import</button>
-      <button class="r-btn primary sm" on:click={newTheme}>＋ New theme</button>
-    </div>
-
-    <div class="th-toolbar">
+  <section class="rw-pane">
+    <div class="rw-panehead">
+      <h2 class="rw-panettl">Themes</h2>
+      <span class="rw-spring"></span>
       <div class="th-search">
         <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3" stroke-linecap="round"/></svg>
         <input placeholder="Search themes…" bind:value={q} aria-label="Search themes" />
       </div>
     </div>
 
-    <div class="th-scroll r-scroll">
+    <div class="rw-panebody pad">
       {#if shown.length}
         <div class="th-grid">
           {#each shown as t (t.id)}
@@ -189,20 +191,20 @@
       {/if}
     </div>
 
-    {#if err}<div class="th-err" role="alert">{err}</div>{/if}
+    {#if err}<div class="rw-panefoot th-err" role="alert">{err}</div>{/if}
   </section>
 
-  <aside class="th-pane th-insp">
+  <aside class="rw-pane rw-insp">
     {#if !sel}
-      <div class="th-panehead"><span class="r-lbl">Theme</span></div>
+      <div class="rw-panehead"><h2 class="rw-panettl">Theme</h2></div>
       <div class="th-empty r-empty">Pick a theme to preview it.</div>
     {:else}
-      <div class="th-panehead">
-        <span class="r-lbl">Theme</span>
-        <span class="th-spring"></span>
+      <div class="rw-panehead">
+        <h2 class="rw-panettl">Theme</h2>
+        <span class="rw-spring"></span>
         {#if sel.builtin}<span class="th-badge r-mono">Built-in</span>{/if}
       </div>
-      <div class="th-inspbody r-scroll">
+      <div class="rw-panebody pad">
         <div class="th-preview">
           <TemplateRender template={THEME_PREVIEW_TEMPLATE} theme={sel} content={THEME_SAMPLE_CONTENT} />
         </div>
@@ -218,17 +220,22 @@
           <button class="r-btn ghost sm" on:click={() => exportTheme(sel)} title="Save this theme as a portable .relaytheme.json file">Export</button>
         </div>
 
-        <dl class="th-info">
-          <dt>Name</dt><dd>{sel.name}</dd>
-          <dt>Kind</dt><dd>{sel.builtin ? 'Built-in (read-only)' : 'Custom'}</dd>
-          <dt>Typeface</dt><dd>{sel.style?.font || 'Renderer default'}</dd>
-          <dt>Background</dt><dd>{bgLabel(sel)}</dd>
-          <dt>Accent</dt><dd><span class="th-inline-sw" style="--sw:{sel.style?.accent || '#888'}"></span>{sel.style?.accent || 'Renderer default'}</dd>
-        </dl>
+        <!-- A row is a NAME and a VALUE (§11), full-bleed against the pane's own
+             12px gutter so the seams reach both edges. A key the theme does not
+             pin says "Renderer default" — never a dash, which cannot tell that
+             apart from a read that never happened (R3-13). -->
+        <div class="th-rows">
+          <div class="rw-nv"><span class="rw-nvk">Name</span><span class="rw-nvv">{sel.name}</span></div>
+          <div class="rw-nv"><span class="rw-nvk">Kind</span><span class="rw-nvv">{sel.builtin ? 'Built-in (read-only)' : 'Custom'}</span></div>
+          <div class="rw-nv"><span class="rw-nvk">Typeface</span><span class="rw-nvv">{sel.style?.font || 'Renderer default'}</span></div>
+          <div class="rw-nv"><span class="rw-nvk">Background</span><span class="rw-nvv">{bgLabel(sel)}</span></div>
+          <div class="rw-nv">
+            <span class="rw-nvk">Accent</span>
+            <span class="rw-nvv th-accval"><span class="th-inline-sw" style="--sw:{sel.style?.accent || '#888'}"></span>{sel.style?.accent || 'Renderer default'}</span>
+          </div>
+        </div>
 
-        {#if sel.builtin}
-          <p class="th-hint th-rohint">Built-in themes are read-only. Duplicate this one to get an editable copy.</p>
-        {:else}
+        {#if !sel.builtin}
           <div class="r-lbl th-flbl">Actions</div>
           <div class="th-actions">
             <!-- Two-step, because Tauri's webview has no working confirm() and a
@@ -239,50 +246,26 @@
             </button>
           </div>
         {/if}
+        <p class="rw-foot">A theme is applied to a template in the <b>Templates</b> editor. Templates always override it, key by key.</p>
       </div>
     {/if}
   </aside>
-</div>
+</WorkspaceFrame>
 
 <style>
-  /* THREE COLUMNS, the same desk as Templates and the template editor. */
-  .th-shell{ display:grid; grid-template-columns:206px minmax(0,1fr) 312px; gap:12px; height:100%; min-height:0; }
-  @media (max-width:1180px){ .th-shell{ grid-template-columns:176px minmax(0,1fr) 276px; } }
-  @media (max-width:980px){ .th-shell{ grid-template-columns:1fr; height:auto; } }
-
-  .th-pane{ display:flex; flex-direction:column; min-height:0; overflow:hidden;
-    background:var(--v-surf); border:1px solid var(--v-line); border-radius:var(--v-r-lg); }
-  .th-panehead{ display:flex; align-items:center; gap:8px; padding:0 10px; height:34px; flex:0 0 auto;
-    border-bottom:1px solid var(--v-line); }
-  .th-spring{ flex:1; }
-
-  /* ── the rail: dense rows, hairline seams ─────────────────────────────── */
-  .th-railscroll{ flex:1; min-height:0; overflow-y:auto; }
-  .th-prow{ display:flex; align-items:center; gap:8px; width:100%; height:26px; padding:0 10px;
-    border:0; border-bottom:1px solid var(--v-line); background:none; color:var(--v-dim);
-    font-family:var(--f-body); font-size:var(--v-fs-b2); text-align:left; cursor:pointer;
-    box-shadow:inset 2px 0 0 transparent;
-    transition:background var(--v-dur) var(--v-ease), color var(--v-dur) var(--v-ease); }
-  .th-prow:hover{ background:var(--v-surf2); color:var(--v-txt); }
-  /* Selection is steel blue and nothing else is (REBRAND §1). */
-  .th-prow.on{ background:var(--v-sel-soft); color:var(--v-txt); box-shadow:inset 2px 0 0 var(--v-sel); }
-  .th-pn{ flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .th-pv{ flex:0 0 auto; font-size:var(--v-fs-cap); color:var(--v-faint); }
-  .th-railnote{ margin:0; padding:10px; border-top:1px solid var(--v-line); flex:0 0 auto;
-    font-size:var(--v-fs-cap); line-height:1.5; color:var(--v-faint); }
+  /* The pane, the pane head, the rail row and the name/value row all come from
+     `WorkspaceFrame.svelte`. What is left is this workspace's own: a grid of
+     live theme thumbnails, and the controls around it. */
+  .th-railnote{ margin:0; font-size:var(--v-fs-cap); line-height:1.5; color:var(--v-faint); }
   .th-railnote b{ color:var(--v-dim); }
 
-  /* ── the middle column ────────────────────────────────────────────────── */
-  .th-toolbar{ display:flex; align-items:center; gap:8px; flex:0 0 auto; height:34px; padding:0 10px;
-    border-bottom:1px solid var(--v-line); }
   .th-search{ display:flex; align-items:center; gap:7px; background:var(--v-bg); border:1px solid var(--v-line2);
-    border-radius:var(--v-r-sm); padding:0 9px; height:24px; flex:1 1 200px; max-width:280px; }
+    border-radius:var(--v-r-sm); padding:0 9px; height:24px; flex:1 1 160px; max-width:260px; }
   .th-search:focus-within{ border-color:var(--v-sel-line); }
   .th-search svg{ color:var(--v-faint); flex:0 0 auto; }
   .th-search input{ flex:1; min-width:0; background:transparent; border:0; outline:none; color:var(--v-txt); font-size:var(--v-fs-b2); }
   .th-search input::placeholder{ color:var(--v-faint); }
 
-  .th-scroll{ flex:1; min-height:0; overflow-y:auto; padding:10px; }
   .th-grid{ display:grid; grid-template-columns:repeat(auto-fill, minmax(196px, 1fr)); gap:10px; }
   .th-card{ display:flex; flex-direction:column; background:var(--v-surf2); border:1px solid var(--v-line);
     border-radius:var(--v-r-md); overflow:hidden; cursor:pointer;
@@ -296,30 +279,30 @@
   .th-name{ flex:1; min-width:0; font-size:var(--v-fs-b2); font-weight:600; color:var(--v-txt);
     overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .th-badge{ flex:0 0 auto; padding:1px 6px; border:1px solid var(--v-line2); border-radius:var(--v-r-sm);
-    font-size:9px; letter-spacing:var(--v-tr-caps); text-transform:uppercase; color:var(--v-faint); }
+    font-size:var(--v-fs-cap); letter-spacing:var(--v-tr-caps); text-transform:uppercase; color:var(--v-faint); }
   .th-swatch{ width:13px; height:13px; border-radius:2px; background:var(--sw); border:1px solid var(--v-line2); flex:0 0 auto; }
 
-  .th-err{ flex:0 0 auto; margin:8px; padding:8px 10px; border:1px solid var(--v-rose); border-radius:var(--v-r-sm);
-    background:var(--v-rose-soft); color:var(--v-rose); font-size:var(--v-fs-cap); }
+  /* The error sits in the pane's own foot, behind the same hairline every other
+     footnote uses, rather than floating as a bordered card of its own. */
+  .th-err{ color:var(--v-rose); font-size:var(--v-fs-cap); line-height:1.45; }
 
-  /* ── inspector ────────────────────────────────────────────────────────── */
-  .th-inspbody{ flex:1; min-height:0; overflow-y:auto; padding:10px; }
   .th-preview{ position:relative; aspect-ratio:16/9; border-radius:var(--v-r-md); border:1px solid var(--v-line2);
     overflow:hidden; background:var(--v-void); }
   .th-selname{ margin:8px 0 0; font-family:var(--f-head); font-size:var(--v-fs-h3); font-weight:600;
     color:var(--v-txt); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .th-btns{ display:flex; flex-wrap:wrap; gap:5px; margin-top:8px; }
   .th-btns .r-btn{ flex:1 1 auto; justify-content:center; }
-  .th-info{ display:grid; grid-template-columns:auto 1fr; gap:5px 12px; margin:12px 0 0; font-size:var(--v-fs-b2); }
-  .th-info dt{ color:var(--v-faint); }
-  .th-info dd{ margin:0; color:var(--v-txt); overflow-wrap:anywhere; display:flex; align-items:center; gap:6px; }
+
+  /* Full-bleed rows against the pane body's own 12px gutter, so a seam reaches
+     the pane edge while the prose around it keeps the gutter. The border box
+     lands exactly on the padding edge — no horizontal overflow. */
+  .th-rows{ display:flex; flex-direction:column; margin:12px -12px 0; border-top:1px solid var(--v-line); }
+  .th-accval{ display:flex; align-items:center; gap:6px; }
   .th-inline-sw{ width:12px; height:12px; border-radius:2px; background:var(--sw); border:1px solid var(--v-line2); flex:0 0 auto; }
   .th-flbl{ margin:14px 0 6px; }
   .th-actions{ display:flex; gap:5px; }
   .th-actions .r-btn{ flex:1 1 auto; justify-content:center; }
   .th-del{ color:var(--v-rose); }
   .th-del:hover, .th-del.arm{ border-color:var(--v-rose); background:var(--v-rose-soft); }
-  .th-hint{ margin:14px 0 0; font-size:var(--v-fs-cap); line-height:1.5; color:var(--v-faint); }
-  .th-rohint{ padding:8px 10px; border:1px solid var(--v-line2); border-radius:var(--v-r-sm); background:var(--v-surf2); }
   .th-empty{ margin:auto; padding:24px; text-align:center; }
 </style>

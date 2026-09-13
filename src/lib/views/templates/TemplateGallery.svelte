@@ -7,6 +7,7 @@
   // what the wall shows, not a drawing of it.
   import { createEventDispatcher, onMount, onDestroy } from 'svelte';
   import TemplateRender from '../../TemplateRender.svelte';
+  import WorkspaceFrame from '../WorkspaceFrame.svelte';
   import EmptyState from '../../ui/EmptyState.svelte';
   import Loading from '../../ui/Loading.svelte';
   import ErrorState from '../../ui/ErrorState.svelte';
@@ -258,33 +259,56 @@
   }
 </script>
 
-<!-- THE TEMPLATES WORKSPACE (docs/REBRAND.md §2). Three columns on one desk:
-     a rail of what you can narrow by, the templates themselves, and an
-     inspector. Not a page of stacked cards — the rail answers "which of these
-     am I looking at" without spending any of the middle column on it. -->
-<div class="tg-shell">
-  <!-- A screen-reader operator navigates by heading; this view had none.
-       Visually hidden because the tab bar already carries the visible title —
-       the heading exists for the reader that cannot see it. -->
-  <h1 class="sr-only">Templates</h1>
+<!-- THE TEMPLATES WORKSPACE, laid out in the shared workspace grammar
+     (`WorkspaceFrame.svelte`, docs/REBRAND.md §2 and §11): a left RAIL of what
+     there is, the MAIN area holding the thing in hand, an INSPECTOR of what is
+     true of it. Nothing here declares its own three-column body — a fourth copy
+     of that grid is how the desks drifted apart the first time.
+
+     The frame carries the page's <h1>; each pane head carries an <h2>. That is
+     ordinary document structure rather than a workaround, and it is what keeps a
+     screen-reader operator able to jump into a pane rather than only onto the
+     page (surface.test.js R3-12). -->
+<WorkspaceFrame
+  title="Templates"
+  standfirst="How a verse, a song or a notice looks on a screen. Editing one repaints every screen already wearing it."
+  columns="206px minmax(0,1fr) 312px">
+  <svelte:fragment slot="head">
+    <input type="file" accept=".json,application/json" bind:this={fileInput} on:change={onImportFile} style="display:none" />
+    <button class="r-btn ghost sm" on:click|stopPropagation={() => fileInput.click()}>Import</button>
+    <span class="tg-newwrap">
+      <button class="r-btn primary sm" on:click|stopPropagation={() => (newOpen = !newOpen)} disabled={!$capture.available}>＋ New template</button>
+      {#if newOpen}
+        <div class="tg-newmenu" on:click|stopPropagation role="menu" tabindex="-1">
+          <div class="tg-newsec r-lbl">Start from</div>
+          {#each STARTERS as s}
+            <button on:click={() => newFrom(s)}>
+              <span class="tg-newname">{s.label}</span>
+              <span class="tg-newhint">{s.hint}</span>
+            </button>
+          {/each}
+        </div>
+      {/if}
+    </span>
+  </svelte:fragment>
 
   <!-- ══ RAIL ══ Kinds, then the look register read from the other direction.
-       Both are dense rows with a hairline between them, which is the whole
-       grammar: a list you scan, not a stack of cards you read. -->
-  <aside class="tg-pane tg-rail">
-    <div class="tg-panehead"><span class="r-lbl">Kinds</span></div>
-    <div class="tg-railscroll r-scroll">
+       Dense rows with a hairline between them, which is the whole grammar: a
+       list you scan, not a stack of cards you read. -->
+  <aside class="rw-pane tg-rail">
+    <div class="rw-panehead"><h2 class="rw-panettl">Kinds</h2></div>
+    <nav class="rw-panebody" aria-label="Template kinds">
       <!-- Type rows — DERIVED from each template's shape, so a row can never
            claim a template it isn't. Only kinds that actually occur are shown;
            there is no empty "Announcements" row because nothing distinguishes one. -->
-      <button class="tg-prow" class:on={filter === 'all'} on:click={() => (filter = 'all')}>
-        <span class="tg-pn">All templates</span>
-        <span class="tg-pv r-mono">{$templates.length}</span>
+      <button class="rw-item r-focus" class:on={filter === 'all'} on:click={() => (filter = 'all')}>
+        <span class="rw-itemname">All templates</span>
+        <span class="rw-itemn">{$templates.length}</span>
       </button>
       {#each kinds as k (k.key)}
-        <button class="tg-prow" class:on={filter === k.key} on:click={() => (filter = k.key)}>
-          <span class="tg-pn">{k.many}</span>
-          <span class="tg-pv r-mono">{k.count}</span>
+        <button class="rw-item r-focus" class:on={filter === k.key} on:click={() => (filter = k.key)}>
+          <span class="rw-itemname">{k.many}</span>
+          <span class="rw-itemn">{k.count}</span>
         </button>
       {/each}
 
@@ -293,51 +317,35 @@
            wear", which is the question asked in a booth. READ-ONLY: the one
            writer is `setContentTemplate` (Outputs, and the editor's Used for) —
            a row here only selects the template so you can look at it.
-           A kind with nothing bound says so; it never prints a dash, because a
-           dash cannot tell "not set" from "we did not ask" (R3-13). -->
-      <div class="tg-railsec r-lbl">Content looks</div>
+           A kind with nothing bound says so IN WORDS; it never prints a dash,
+           because a dash cannot tell "not set" from "we did not ask" (R3-13). -->
+      <div class="rw-group">Content looks</div>
       {#each CONTENT_KINDS as ck (ck.key)}
         {@const lookTpl = $templates.find((t) => t.id === $contentTemplates[ck.key]) || null}
         {#if lookTpl}
-          <button class="tg-prow tg-look" class:on={lookTpl.id === selId}
+          <button class="rw-item r-focus tg-look" class:on={lookTpl.id === selId}
             on:click={() => { filter = 'all'; selId = lookTpl.id; }}>
-            <span class="tg-pn">{ck.label}</span>
-            <span class="tg-pv">{lookTpl.name}</span>
+            <span class="rw-itemname">{ck.label}</span>
+            <span class="tg-lookv">{lookTpl.name}</span>
           </button>
         {:else}
-          <div class="tg-prow tg-look static">
-            <span class="tg-pn">{ck.label}</span>
-            <span class="tg-pv unset">Not set</span>
+          <!-- Not a disabled button. There is nothing for this row to select, and
+               a control an operator can press and learn nothing from is worse
+               than a line of text that states the fact. -->
+          <div class="rw-item tg-look tg-static">
+            <span class="rw-itemname">{ck.label}</span>
+            <span class="tg-lookv unset">Not set</span>
           </div>
         {/if}
       {/each}
-    </div>
+    </nav>
   </aside>
 
   <!-- ══ THE TEMPLATES ══ -->
-  <section class="tg-pane tg-main">
-    <div class="tg-panehead">
-      <span class="r-lbl">Templates</span>
-      <span class="tg-spring"></span>
-      <input type="file" accept=".json,application/json" bind:this={fileInput} on:change={onImportFile} style="display:none" />
-      <button class="r-btn ghost sm" on:click|stopPropagation={() => fileInput.click()}>Import</button>
-      <span class="tg-newwrap">
-        <button class="r-btn primary sm" on:click|stopPropagation={() => (newOpen = !newOpen)} disabled={!$capture.available}>＋ New template</button>
-        {#if newOpen}
-          <div class="tg-newmenu" on:click|stopPropagation role="menu" tabindex="-1">
-            <div class="tg-newsec r-lbl">Start from</div>
-            {#each STARTERS as s}
-              <button on:click={() => newFrom(s)}>
-                <span class="tg-newname">{s.label}</span>
-                <span class="tg-newhint">{s.hint}</span>
-              </button>
-            {/each}
-          </div>
-        {/if}
-      </span>
-    </div>
-
-    <div class="tg-toolbar">
+  <section class="rw-pane">
+    <div class="rw-panehead">
+      <h2 class="rw-panettl">Templates</h2>
+      <span class="rw-spring"></span>
       <div class="tg-search">
         <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3" stroke-linecap="round"/></svg>
         <input placeholder="Search templates…" bind:value={q} aria-label="Search templates" />
@@ -360,7 +368,7 @@
       </div>
     </div>
 
-    <div class="tg-scroll r-scroll" class:pad={view === 'grid'} on:scroll={closeMenu}>
+    <div class="rw-panebody" class:pad={view === 'grid'} on:scroll={closeMenu}>
       {#if shown.length}
         <div class="tg-grid" class:list={view === 'list'}>
           {#each shown as t (t.id)}
@@ -430,22 +438,22 @@
       {/if}
     </div>
 
-    {#if err}<div class="tg-err" role="alert">{err}</div>{/if}
+    {#if err}<div class="rw-panefoot tg-err" role="alert">{err}</div>{/if}
   </section>
 
   <!-- ══ INSPECTOR ══ -->
-  <aside class="tg-pane tg-insp">
+  <aside class="rw-pane rw-insp">
     {#if !sel}
-      <div class="tg-panehead"><span class="r-lbl">Template</span></div>
+      <div class="rw-panehead"><h2 class="rw-panettl">Template</h2></div>
       <div class="tg-empty r-empty">Pick a template to preview it.</div>
     {:else}
-      <div class="tg-panehead">
-        <span class="r-lbl">Template</span>
-        <span class="tg-spring"></span>
+      <div class="rw-panehead">
+        <h2 class="rw-panettl">Template</h2>
+        <span class="rw-spring"></span>
         <span class="tg-aspect r-mono static">16:9</span>
       </div>
 
-      <div class="tg-inspbody r-scroll">
+      <div class="rw-panebody pad">
         <div class="tg-preview">
           <TemplateRender template={sel} content={SAMPLE} />
         </div>
@@ -474,24 +482,30 @@
         </div>
 
         {#if inspTab === 'details'}
-          <dl class="tg-info">
-            <dt>Name</dt>
-            <dd>
+          <!-- A row is a NAME and a VALUE (§11), full-bleed against the pane's own
+               12px gutter so the seams reach both edges. -->
+          <div class="tg-rows">
+            <div class="rw-nv">
+              <span class="rw-nvk">Name</span>
               {#if renaming}
                 <!-- svelte-ignore a11y-autofocus -->
-                <input class="r-input tg-rename" bind:value={renameDraft} autofocus
+                <input class="r-input tg-rename rw-nvctl" bind:value={renameDraft} autofocus
+                  aria-label="Template name"
                   on:blur={commitRename} on:keydown={(e) => e.key === 'Enter' && e.target.blur()} />
               {:else}
-                {sel.name}
+                <span class="rw-nvv">{sel.name}</span>
               {/if}
-            </dd>
-            <dt>Content type</dt><dd>{kindLabel(sel)}</dd>
+            </div>
+            <div class="rw-nv"><span class="rw-nvk">Content type</span><span class="rw-nvv">{kindLabel(sel)}</span></div>
             <!-- A READOUT, not a picker: every template is 16:9 by construction
                  (TemplateRender sizes in cqw), so there is no orientation to set. -->
-            <dt>Orientation</dt><dd>16:9 · 1920×1080</dd>
-            <dt>Background</dt><dd>{bgLabel(sel)}</dd>
-            <dt>Default</dt><dd>{sel.id === $defaultTemplateId ? 'Yes — the fallback for every slide' : 'No'}</dd>
-          </dl>
+            <div class="rw-nv"><span class="rw-nvk">Orientation</span><span class="rw-nvv">16:9 · 1920×1080</span></div>
+            <div class="rw-nv"><span class="rw-nvk">Background</span><span class="rw-nvv">{bgLabel(sel)}</span></div>
+            <div class="rw-nv">
+              <span class="rw-nvk">Default</span>
+              <span class="rw-nvv">{sel.id === $defaultTemplateId ? 'Yes' : 'No'}</span>
+            </div>
+          </div>
           <!-- Created / Last modified / "used 26 times" are in the reference and
                omitted here on purpose: templates carry no timestamps and Relay
                keeps no per-template usage count, so any figure would be invented. -->
@@ -512,16 +526,13 @@
               {delArm === sel.id ? 'Delete — sure?' : 'Delete'}
             </button>
           </div>
+          <p class="rw-foot">The <b>default template</b> is the fallback look a slide wears when neither the screen nor the content type has one of its own.</p>
         {:else}
           <div class="r-lbl tg-flbl">Assigned to outputs</div>
           {#if assignedChannels.length}
-            <div class="tg-assigned">
+            <div class="tg-rows">
               {#each assignedChannels as c (c.id)}
-                <div class="tg-arow">
-                  <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
-                  <span class="tg-aname">{c.name}</span>
-                  <span class="tg-atype r-mono">{c.render_target === 'native_window' ? 'display' : c.render_target === 'ndi_encode' ? 'NDI' : 'network'}</span>
-                </div>
+                <div class="rw-nv"><span class="rw-nvk">{c.name}</span><span class="rw-nvv">{c.render_target === 'native_window' ? 'display' : c.render_target === 'ndi_encode' ? 'NDI' : 'network'}</span></div>
               {/each}
             </div>
           {:else}
@@ -530,23 +541,20 @@
 
           <div class="r-lbl tg-flbl">Default content look</div>
           {#if defaultForKinds.length}
-            <div class="tg-assigned">
+            <div class="tg-rows">
               {#each defaultForKinds as ck (ck.key)}
-                <div class="tg-arow">
-                  <span class="tg-aname">{ck.label}</span>
-                  <span class="tg-atype r-mono">default</span>
-                </div>
+                <div class="rw-nv"><span class="rw-nvk">{ck.label}</span><span class="rw-nvv">default</span></div>
               {/each}
             </div>
           {:else}
             <p class="tg-fhelp">Not set as a default content look.</p>
           {/if}
-          <p class="tg-fhelp">Content looks are set in <b>Outputs → Content looks</b> — the one place a content type is bound to a template.</p>
+          <p class="rw-foot">Content looks are set in <b>Outputs → Content looks</b> — the one place a content type is bound to a template.</p>
         {/if}
       </div>
     {/if}
   </aside>
-</div>
+</WorkspaceFrame>
 
 <!-- Fixed-position row menu — anchored to the ⋮ button's screen rect so it is
      never clipped by the card or the scroll area. -->
@@ -565,40 +573,21 @@
 {/if}
 
 <style>
-  /* THREE COLUMNS, one desk (docs/REBRAND.md §2) — the same proportions the
-     template editor already uses, so moving between the gallery and the editor
-     does not move the furniture. */
-  .tg-shell{ display:grid; grid-template-columns:206px minmax(0,1fr) 312px; gap:12px;
-    height:100%; min-height:0; }
-  @media (max-width:1180px){ .tg-shell{ grid-template-columns:176px minmax(0,1fr) 276px; } }
-  @media (max-width:980px){ .tg-shell{ grid-template-columns:1fr; height:auto; } }
+  /* The pane, the pane head, the rail row and the name/value row all come from
+     `WorkspaceFrame.svelte`. What is left here is what is genuinely this
+     workspace's own: a grid of live thumbnails, and the controls around it. */
 
-  .tg-pane{ display:flex; flex-direction:column; min-height:0; overflow:hidden;
-    background:var(--v-surf); border:1px solid var(--v-line); border-radius:var(--v-r-lg); }
-  .tg-panehead{ display:flex; align-items:center; gap:8px; padding:0 10px; height:34px; flex:0 0 auto;
-    border-bottom:1px solid var(--v-line); }
-  .tg-spring{ flex:1; }
+  /* ── the rail's second column ─────────────────────────────────────────── */
+  /* A look register row names a TEMPLATE, not a count, so it takes the width it
+     needs rather than `.rw-itemn`'s figure column. */
+  .tg-look .rw-itemname{ flex:0 0 auto; color:var(--v-faint); }
+  .tg-lookv{ flex:1; min-width:0; text-align:right; font-size:var(--v-fs-cap);
+    color:var(--v-faint); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .tg-lookv.unset{ font-style:italic; }
+  .tg-static{ cursor:default; }
+  .tg-static:hover{ background:transparent; color:var(--v-dim); }
 
-  /* ── the rail: dense rows, hairline seams ─────────────────────────────── */
-  .tg-railscroll{ flex:1; min-height:0; overflow-y:auto; }
-  .tg-prow{ display:flex; align-items:center; gap:8px; width:100%; height:26px; padding:0 10px;
-    border:0; border-bottom:1px solid var(--v-line); background:none; color:var(--v-dim);
-    font-family:var(--f-body); font-size:var(--v-fs-b2); text-align:left; cursor:pointer;
-    box-shadow:inset 2px 0 0 transparent;
-    transition:background var(--v-dur) var(--v-ease), color var(--v-dur) var(--v-ease); }
-  .tg-prow:hover:not(.static){ background:var(--v-surf2); color:var(--v-txt); }
-  /* Selection is steel blue and nothing else is (REBRAND §1). */
-  .tg-prow.on{ background:var(--v-sel-soft); color:var(--v-txt); box-shadow:inset 2px 0 0 var(--v-sel); }
-  .tg-prow.static{ cursor:default; }
-  .tg-pn{ flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .tg-pv{ flex:0 0 auto; max-width:52%; font-size:var(--v-fs-cap); color:var(--v-faint);
-    overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .tg-pv.unset{ font-style:italic; }
-  .tg-railsec{ padding:11px 10px 5px; border-bottom:1px solid var(--v-line); }
-  .tg-look .tg-pn{ flex:0 0 auto; color:var(--v-faint); }
-  .tg-look .tg-pv{ flex:1; text-align:right; }
-
-  /* ── the middle column ────────────────────────────────────────────────── */
+  /* ── the head's controls ──────────────────────────────────────────────── */
   .tg-newwrap{ position:relative; }
   .tg-newmenu{ position:absolute; top:30px; right:0; z-index:40; width:250px; background:var(--v-surf2);
     border:1px solid var(--v-line2); border-radius:var(--v-r-md); box-shadow:var(--v-shadow-lg); padding:4px; }
@@ -614,28 +603,26 @@
      a contrast failure that only exists on hover is still a contrast failure. */
   .tg-newmenu button:hover .tg-newhint{ color:var(--v-dim); }
 
-  .tg-toolbar{ display:flex; align-items:center; gap:8px; flex:0 0 auto; height:34px; padding:0 10px;
-    border-bottom:1px solid var(--v-line); }
   .tg-search{ display:flex; align-items:center; gap:7px; background:var(--v-bg); border:1px solid var(--v-line2);
-    border-radius:var(--v-r-sm); padding:0 9px; height:24px; flex:1 1 200px; max-width:280px; }
+    border-radius:var(--v-r-sm); padding:0 9px; height:24px; flex:1 1 160px; max-width:260px; }
   .tg-search:focus-within{ border-color:var(--v-sel-line); }
   .tg-search svg{ color:var(--v-faint); flex:0 0 auto; }
   .tg-search input{ flex:1; min-width:0; background:transparent; border:0; outline:none; color:var(--v-txt); font-size:var(--v-fs-b2); }
   .tg-search input::placeholder{ color:var(--v-faint); }
-  .tg-sort{ display:flex; align-items:center; gap:7px; margin-left:auto; }
-  .tg-sort .r-select{ height:24px; }
+  .tg-sort{ display:flex; align-items:center; gap:7px; flex:0 0 auto; }
+  .tg-sort .r-select{ height:24px; width:auto; }
   .tg-viewtog{ display:flex; gap:2px; background:var(--v-bg); border:1px solid var(--v-line2);
-    border-radius:var(--v-r-sm); padding:2px; }
+    border-radius:var(--v-r-sm); padding:2px; flex:0 0 auto; }
   .tg-viewtog button{ width:26px; height:20px; display:grid; place-items:center; border:0; border-radius:var(--v-r-sm);
     background:none; color:var(--v-faint); cursor:pointer; }
   .tg-viewtog button:hover{ color:var(--v-txt); }
   .tg-viewtog button.on{ background:var(--v-surf3); color:var(--v-txt); }
 
-  .tg-scroll{ flex:1; min-height:0; overflow-y:auto; }
-  .tg-scroll.pad{ padding:10px; }
+  /* ── the grid, and the rows it becomes ────────────────────────────────── */
   .tg-grid{ display:grid; grid-template-columns:repeat(auto-fill, minmax(210px, 1fr)); gap:10px; }
   /* ROWS: no card borders, one hairline between — a list you scan down, which is
-     what a desk does with thirty of anything. */
+     what a desk does with thirty of anything. The pane body drops its padding in
+     this mode (`pad` is opt-in), so the seams reach both edges. */
   .tg-grid.list{ display:block; }
 
   .tg-card{ display:flex; flex-direction:column; background:var(--v-surf2); border:1px solid var(--v-line);
@@ -652,21 +639,21 @@
      position:absolute; inset:0 and supplies its own container-type. */
   .tg-thumb{ position:relative; aspect-ratio:16/9; background:var(--v-void); overflow:hidden; flex:0 0 auto; }
   .tg-card.row .tg-thumb{ width:84px; margin:5px 0 5px 8px; border-radius:2px; }
-  .tg-aspect{ position:absolute; top:6px; right:6px; font-size:9px; letter-spacing:.04em; color:var(--v-txt);
-    background:rgba(10,10,10,.62); padding:1px 5px; border-radius:var(--v-r-sm); }
+  .tg-aspect{ position:absolute; top:6px; right:6px; font-size:var(--v-fs-cap); letter-spacing:.04em;
+    color:var(--v-txt); background:rgba(10,10,10,.62); padding:1px 5px; border-radius:var(--v-r-sm); }
   .tg-aspect.static{ position:static; background:var(--v-surf2); color:var(--v-faint); }
 
   /* NOT A STATUS. A role tag, in mono, in the muted step — every colour that
      carries a promise is spoken for, steel blue (selection) included. */
   .tg-usedfor{ flex:0 0 auto; max-width:40%; padding:1px 6px; border:1px solid var(--v-line2);
-    border-radius:var(--v-r-sm); font-size:9px; letter-spacing:var(--v-tr-caps); text-transform:uppercase;
-    color:var(--v-faint); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    border-radius:var(--v-r-sm); font-size:var(--v-fs-cap); letter-spacing:var(--v-tr-caps);
+    text-transform:uppercase; color:var(--v-faint); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .tg-meta{ display:flex; align-items:center; gap:7px; padding:6px 8px; flex:1; min-width:0; }
-  .tg-card.row .tg-meta{ padding:0 8px; }
+  .tg-card.row .tg-meta{ padding:0 12px 0 8px; }
   .tg-metatext{ flex:1; min-width:0; }
   .tg-name{ display:block; font-size:var(--v-fs-b2); font-weight:600; color:var(--v-txt);
     overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .tg-sub{ display:block; font-size:9px; color:var(--v-faint); margin-top:1px; }
+  .tg-sub{ display:block; font-size:var(--v-fs-cap); color:var(--v-faint); margin-top:1px; }
   .tg-cardbtns{ display:flex; align-items:center; gap:1px; flex:0 0 auto; position:relative; }
   .tg-star, .tg-more{ width:22px; height:22px; display:grid; place-items:center; border:0; background:none;
     color:var(--v-faint); cursor:pointer; border-radius:var(--v-r-sm); }
@@ -683,11 +670,11 @@
   .tg-menu .danger{ color:var(--v-rose); }
   .tg-menu .danger.arm{ background:var(--v-rose-soft); }
 
-  .tg-err{ flex:0 0 auto; margin:8px; padding:8px 10px; border:1px solid var(--v-rose); border-radius:var(--v-r-sm);
-    background:var(--v-rose-soft); color:var(--v-rose); font-size:var(--v-fs-cap); }
+  /* The error sits in the pane's own foot, behind the same hairline every other
+     footnote uses, rather than floating as a bordered card of its own. */
+  .tg-err{ color:var(--v-rose); font-size:var(--v-fs-cap); line-height:1.45; }
 
   /* ── inspector ────────────────────────────────────────────────────────── */
-  .tg-inspbody{ flex:1; min-height:0; overflow-y:auto; padding:10px; }
   .tg-preview{ position:relative; aspect-ratio:16/9; border-radius:var(--v-r-md); border:1px solid var(--v-line2);
     overflow:hidden; background:var(--v-void); }
   .tg-selname{ margin:8px 0 0; font-family:var(--f-head); font-size:var(--v-fs-h3); font-weight:600;
@@ -696,13 +683,15 @@
   .tg-previewbtns .r-btn{ flex:1 1 auto; justify-content:center; }
   .tg-testerr{ margin:8px 0 0; padding:8px 10px; border:1px solid var(--v-rose); border-radius:var(--v-r-sm);
     background:var(--v-rose-soft); color:var(--v-rose); font-size:var(--v-fs-cap); line-height:1.45; }
-  .tg-insptabs{ margin:12px 0 4px; width:100%; }
+  .tg-insptabs{ margin:12px 0 0; width:100%; }
   .tg-insptabs :global(button){ flex:1; }
 
-  .tg-info{ display:grid; grid-template-columns:auto 1fr; gap:5px 12px; margin:10px 0 0; font-size:var(--v-fs-b2); }
-  .tg-info dt{ color:var(--v-faint); }
-  .tg-info dd{ margin:0; color:var(--v-txt); overflow-wrap:anywhere; }
-  .tg-rename{ height:24px; padding:2px 7px; }
+  /* Full-bleed rows against the pane body's own 12px gutter, so a seam reaches
+     the pane edge while the prose around it keeps the gutter. The border box
+     lands exactly on the padding edge — no horizontal overflow. */
+  .tg-rows{ display:flex; flex-direction:column; margin:10px -12px 0;
+    border-top:1px solid var(--v-line); }
+  .tg-rename{ height:24px; padding:2px 7px; max-width:150px; }
 
   .tg-flbl{ margin:14px 0 6px; }
   .tg-fhelp{ margin:0; font-size:var(--v-fs-cap); line-height:1.5; color:var(--v-faint); }
@@ -711,15 +700,6 @@
   .tg-actions .r-btn{ flex:1 1 auto; justify-content:center; }
   .tg-del{ color:var(--v-rose); }
   .tg-del:hover:not(:disabled), .tg-del.arm{ border-color:var(--v-rose); background:var(--v-rose-soft); }
-
-  /* Dense rows again, not cards: the inspector's lists are the same grammar as
-     the rail's. */
-  .tg-assigned{ display:flex; flex-direction:column; border-top:1px solid var(--v-line); }
-  .tg-arow{ display:flex; align-items:center; gap:8px; height:26px; padding:0 2px;
-    border-bottom:1px solid var(--v-line); }
-  .tg-arow svg{ color:var(--v-faint); flex:0 0 auto; }
-  .tg-aname{ flex:1; min-width:0; font-size:var(--v-fs-b2); color:var(--v-txt); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .tg-atype{ font-size:9px; color:var(--v-faint); }
 
   .tg-empty{ margin:auto; padding:24px; text-align:center; }
 </style>

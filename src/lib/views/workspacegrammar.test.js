@@ -26,21 +26,41 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const read = (f) => readFileSync(resolve(__dirname, '../../..', f), 'utf8');
 
 const FRAME = 'src/lib/views/WorkspaceFrame.svelte';
-// The three workspaces this pass covers. Live is deliberately absent: it is the
-// run surface and has its own studio split (§2), which the frame does not own.
-// Library, Templates and Themes are other agents' files and other passes.
+// The workspaces this pass covers. Live is deliberately absent: it is the run
+// surface and has its own studio split (§2), which the frame does not own.
+// Library is another agent's file and another pass.
+//
+// Templates and Themes joined on conversion, which is the point of keeping the
+// list here rather than in three files: a desk is either in the grammar or it is
+// not, and the array is where that is said. All four assertions below fired on
+// the Templates/Themes conversion before it was finished — a raw 9px caption, a
+// hand-rolled `.tg-pane` grid and a literal stage hex — which is what the list
+// is for.
 const DESKS = [
   'src/lib/views/ServicePlanner.svelte',
   'src/lib/views/Channels.svelte',
   'src/lib/views/Settings.svelte',
+  'src/lib/views/templates/TemplateGallery.svelte',
+  'src/lib/views/themes/ThemeGallery.svelte',
+  'src/lib/views/themes/ThemeEditor.svelte',
 ];
 
 describe('§2 · one workspace grammar, not three', () => {
   it('every desk lays itself out in the shared frame', () => {
     for (const f of DESKS) {
       const src = read(f);
+      // `./` for a desk beside the frame, `../` for one in a subdirectory
+      // (Templates and Themes each live in their own folder). The path is
+      // allowed to vary; importing the ONE frame is not.
+      //
+      // `(?:\.\.?\/)+` rather than `\.\.?\/`: the first version of this was
+      // hard-coded to `./` and failed the subdirectory desks for the wrong
+      // reason — a test that reports "does not import the frame" about a file
+      // that does is worse than no test, because the next person fixes the
+      // import. One repeat of that is enough, so any relative depth passes and
+      // only the frame itself is named.
       expect(src, `${f} does not import the frame`).toMatch(
-        /import WorkspaceFrame from '\.\/WorkspaceFrame\.svelte'/,
+        /import WorkspaceFrame from '(?:\.\.?\/)+WorkspaceFrame\.svelte'/,
       );
       expect(src, `${f} imports the frame but does not render it`).toMatch(/<WorkspaceFrame\b/);
     }
