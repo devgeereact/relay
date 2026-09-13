@@ -14,6 +14,58 @@ RELAY_BENCH_MODEL="$HOME/Library/Application Support/com.relay.app/models/ggml-b
 
 ---
 
+> ### Standing, as of 2026-09-06 — read before §1
+>
+> **Nothing below is edited. This document measured speed, and §5 said in its first line
+> that it measured nothing about accuracy. That gap has now been partly filled, from a
+> real service rather than from a bench, and the missing column belongs beside the one
+> that is here because the two were being read as one decision.**
+>
+> `FIELD-2026-09-06.md` ran two services on one machine and switched model mid-morning.
+> Scored **through the router**, which is the only question SPEC sets a bar for:
+>
+> | model | 8 s window (bench, §1) | cadence in a service | auto-fires correct | wrong verses |
+> |---|---|---|---|---|
+> | `ggml-base` | 59 ms | 206 ms p50 | **5 of 9** | **4** |
+> | `ggml-small` | 152 ms | not run in a service | **never measured** | **never measured** |
+> | `ggml-large-v3-turbo` | 597 ms | 968 ms p50 | **3 of 3** | **0** |
+>
+> **Read that as evidence of a cost, not as a ranking.** It is one sample per model, the
+> two samples are of different services as well as different models, and the reference
+> list can only contain what Relay noticed or the operator fired, so it is a ceiling on
+> correctness and says nothing about recall. `ggml-small` has no accuracy figure at all,
+> which matters because §2's arithmetic makes it the cheapest row in the table: 152 ms and
+> 59 ms both round up to the same single 200 ms hop, so `small` costs no cadence over
+> `base`.
+>
+> The number that settles this is a replay of the 85.5 minute recording through all three
+> models with `stt::bench::engine_shootout`, filed as **RG-116**. Until that has run,
+> **44% of the auto-fires on `ggml-base` were wrong against SPEC's 5% bar**, and it is the
+> model this project ships as recommended.
+>
+> **That replay ran on 2026-09-07, and it is 4.3 hours of real-time decoding on this one
+> recording.** On the same audio, scored through the real router: `ggml-base` **4 of 8**
+> correct with **3** wrong verses that could have reached a wall; `ggml-large-v3-turbo`
+> **6 of 8** with **2**. The bench's raw counts are higher (5 and 3) because it stops at
+> `router::decide`, and the live path then demotes a reference that is not in the corpus —
+> `Psalms 721:27` and `Psalms 71:27` are both absent from the bundled KJV and could never
+> have reached a congregation.
+>
+> **`ggml-small` returned 1 of 8 and that number is not usable.** It emitted 2583 distinct
+> transcripts against `base`'s 13029 on identical input while decoding faster than `turbo`,
+> and never once transcribed "Psalm 92", which the other two produced 23 and 13 times. That
+> is a rig or model interaction rather than an accuracy result, so the model §2's
+> arithmetic makes free is still the one nobody has measured. RG-116 carries the detail and
+> stays open for it.
+>
+> **The ceiling is not 8.** Three of the eight references cannot be reached by this bench at
+> all: one was spoken as a bare "verse 22" and resolved live against `ContextMemory`, and
+> two were operator fires rather than parsed references.
+>
+> Word error rate is still unmeasured in every language. This does not change that.
+
+---
+
 ## 1. The table
 
 | model | load | 2 s window | 4 s window | 8 s window |

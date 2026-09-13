@@ -11,7 +11,7 @@
 // a report about what happened. Every one of these tests fails if that line comes
 // back, because every one of them describes a screen that is NOT answering while
 // content is live.
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
@@ -169,7 +169,57 @@ describe('startBeat', () => {
     });
     await flush();
     stop();
-    expect(sent).toEqual([['output_beat', { channelId: 3, state: 'content' }]]);
+    // The first beat of a page's life has no previous tick, so it says nothing
+    // about a gap rather than claiming a zero one (RG-119).
+    expect(sent).toEqual([
+      ['output_beat', { channelId: 3, state: 'content', sinceMs: null, hiddenMs: null }],
+    ]);
+  });
+
+  it('the first beat omits the gap entirely on the socket, and later ones carry it', async () => {
+    vi.useFakeTimers();
+    const frames = [];
+    const ws = { readyState: 1, send: (f) => frames.push(JSON.parse(f)) };
+    const stop = startBeat({ channelId: 4, getState: () => 'content', getWs: () => ws });
+
+    // An absent number reads as "the screen did not say", which is true of a
+    // first beat. A zero would read as "it said it never went quiet".
+    expect(frames).toEqual([{ kind: 'beat', channel: 4, state: 'content' }]);
+
+    vi.advanceTimersByTime(BEAT_INTERVAL_MS);
+    stop();
+    expect(frames).toHaveLength(2);
+    expect(frames[1].kind).toBe('beat');
+    expect(Number.isInteger(frames[1].since_ms)).toBe(true);
+    expect(frames[1].since_ms).toBeGreaterThanOrEqual(0);
+    // Nothing hid this page, and saying so is the point: it is what separates a
+    // window the OS covered from one whose beats were lost on the way.
+    expect(frames[1].hidden_ms).toBe(0);
+    vi.useRealTimers();
+  });
+
+  it('a page that keeps ticking into a dead socket still reports a ONE-INTERVAL gap', async () => {
+    // The distinction RG-119 exists to make. `lastTickAt` advances on every tick
+    // that runs, not on every send that lands, so a transport failure cannot be
+    // mistaken for the OS having stopped the page.
+    vi.useFakeTimers();
+    const frames = [];
+    const ws = { readyState: 1, send: () => { throw new Error('socket gone'); } };
+    const sent = [];
+    const stop = startBeat({
+      channelId: 5,
+      getState: () => 'content',
+      getWs: () => ws,
+      invoke: async (cmd, args) => sent.push(args),
+    });
+    vi.advanceTimersByTime(BEAT_INTERVAL_MS * 3);
+    stop();
+    vi.useRealTimers();
+    await new Promise((r) => setTimeout(r, 0));
+    frames.length = 0;
+    const gaps = sent.slice(1).map((a) => a.sinceMs);
+    expect(gaps.length).toBeGreaterThan(0);
+    for (const g of gaps) expect(g).toBeLessThan(BEAT_INTERVAL_MS * 2);
   });
 
   it('prefers the socket a kiosk page already has', async () => {

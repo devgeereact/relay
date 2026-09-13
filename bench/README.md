@@ -46,6 +46,25 @@ Whisper wants raw **f32 mono @ 16 kHz** — the exact bytes the live worker feed
 ffmpeg -i sermon.m4a -ac 1 -ar 16000 -f f32le bench/sermon.f32
 ```
 
+### If the recording came out of Relay itself
+
+`RELAY_RECORD_WAV` writes the CLEANED capture stream at the device's rate, which on the desk
+feed used in the field is **48 kHz mono f32**. Whisper wants 16 kHz, and nothing in the bench
+resamples, so a 48 kHz file replayed as-is decodes at three times speed and every number it
+prints is nonsense. Convert first. On a Mac with no ffmpeg, `afconvert` ships with the OS:
+
+```bash
+afconvert -f WAVE -d LEF32@16000 -c 1 --src-quality 127 service.wav sermon16k.wav
+```
+
+> **`afconvert` writes a 4044-byte `FLLR` padding chunk, so the audio starts at byte 4096 and
+> not at 44.** `bench::load_f32` walks the chunk list rather than assuming a 44-byte header,
+> and refuses a file that is not 16 kHz mono 32-bit float, because both of those read as
+> *noise* rather than as an error: this bench asserts nothing, so a misread prints a
+> confident-looking table of zeroes. Either feed it the converted WAV directly or strip the
+> header yourself; both work.
+
+
 And a reference transcript — **what was actually said** — in `bench/sermon.txt`.
 
 > ### Write the transcript AS SPOKEN, not as printed.
@@ -95,6 +114,55 @@ RELAY_BENCH_WAV=../bench/sermon.f32 \
 RELAY_BENCH_REFS=../bench/refs.txt \
   cargo test --release --features metal stt::bench::engine_shootout -- --ignored --nocapture
 ```
+
+**On a real service recording, pick a subset or it will not run.** Each condition is one
+real-time replay, so the five-condition grid over 85.5 minutes of sermon is **seven hours per
+model** and twenty-one for three. `RELAY_BENCH_CONDS` and `RELAY_BENCH_MODELS` cut it to the
+question in hand, and both fail loudly on a name that matches nothing:
+
+```bash
+RELAY_BENCH_CONDS=clean RELAY_BENCH_MODELS=base,small,turbo ...   # 3 x 85.5 min
+```
+
+`RELAY_BENCH_MODELS` matches a SUBSTRING of the model filename, so `base` also selects
+`ggml-base.en` if it is installed. Read the `engines scored:` line the run prints rather than
+assuming what the filter caught.
+
+> ### Pin the language, or you are measuring the language detector
+>
+> Unset means auto, which is what a church gets by default and is worth measuring — but it
+> is a **different measurement**, and one model can lose to another purely by electing a
+> different language. `ggml-small` did exactly that on 85.5 minutes of real service audio:
+> it scored 1 of 8 where `base` scored 4 and `turbo` 6. On a 70 second slice of the same
+> recording it produced **17** distinct transcripts of multilingual noise ("sous
+> interpersonal work", "pee Samus putzein thrilled") against `base`'s **231** of coherent
+> English, at 3.4 s lag against 0.3 s, and found nothing.
+>
+> With `RELAY_BENCH_LANG=en` on the identical slice: **161** transcripts, coherent English,
+> the verse found, lag 0.4 s. Same model, same audio, same rig.
+>
+> The header prints `language: pinned to en` or `language: auto (whisper re-elects one per
+> window)` on every run. Quote it with the number, because the two are not comparable.
+
+`clean` is the right first cut on field audio: the recording already contains the room, the
+microphone and the preacher, so degrading it further asks a different question. Both subsets
+are printed on every run, and `total` is derived from the conditions actually run, so numbers
+from two differently-filtered runs are not comparable.
+
+> **The bench scores `detect_direct` only, and the live path does not.** `emit_detections`
+> also runs `detect_bare_verses` against `ContextMemory` and the window anchor, which is the
+> path that produced two of the four wrong verses on 2026-09-06 (RG-115 / F-8). So this bench
+> cannot reproduce that class at all: a reference the preacher gave as a bare "verse 22" reads
+> here as a MISS, and a wrong verse invented from memory cannot appear. Its wrong-verse rate is
+> therefore about the *decoder plus the direct parser*, not about everything that can reach a
+> wall, and it is not the same quantity as a field audit's.
+
+> **The reference list is a CEILING, not a transcript.** It can only hold what Relay noticed
+> or the operator fired. A reference the preacher spoke and nothing caught cannot be in it, so
+> the rate it yields says nothing at all about recall. Where the live run fired the *wrong*
+> verse, the list must carry what was **said**, not what appeared, or the replay scores the
+> original defect as a success.
+
 
 Unlike every other bench here it drives audio in through `SttEngine::sender()`, so the
 measurement contains the whole pipeline — the voice gate, `Deoverlap`, the rolling window,

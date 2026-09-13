@@ -4909,7 +4909,23 @@ fn channel_status(
             health.forget_transition(c.id);
             continue;
         }
-        if let Some(now_painting) = health.transition(c.id, health.painting(c.id)) {
+        if let Some(now_painting) = health.transition(c.id) {
+            // A RECOVERY CARRIES THE SCREEN'S OWN ACCOUNT OF ITS SILENCE (RG-119).
+            //
+            // Relay cannot tell a screen that stopped painting from a heartbeat it
+            // failed to keep: both look like no beat arriving. The page can, and
+            // the beat that ends the outage is the only moment it can say so, so
+            // that phrase is written into the timeline entry where an audit will
+            // find it next to the times. Two durations and a channel name, no text
+            // from the page (`BeatGap::describe`), so this stays inside the rule
+            // that nothing a preacher said reaches the service record.
+            let detail = match (
+                now_painting,
+                health.last_gap(c.id).and_then(|g| g.describe()),
+            ) {
+                (true, Some(said)) => format!("{} · {said}", c.name),
+                _ => c.name.clone(),
+            };
             log_event(
                 &app,
                 if now_painting {
@@ -4917,7 +4933,7 @@ fn channel_status(
                 } else {
                     db::EventKind::OutputLost
                 },
-                Some(&c.name),
+                Some(&detail),
             );
         }
     }
@@ -5041,12 +5057,22 @@ fn output_beat(
     health: tauri::State<'_, channels::OutputHealth>,
     channel_id: i64,
     state: String,
+    // What the page's own clock says about the gap before this beat. Optional on
+    // purpose: a page that does not send them is silent about its silence, and
+    // absent is the honest reading of that. See `channels::BeatGap` and RG-119.
+    since_ms: Option<u64>,
+    hidden_ms: Option<u64>,
 ) -> error::Result<()> {
     // An unparseable state is dropped, not defaulted. Defaulting would let a
     // malformed beat keep a dead screen looking alive, which is the exact failure
     // this whole mechanism exists to end.
     if let Some(st) = channels::PaintState::parse(&state) {
-        health.beat(channel_id, st, "window");
+        health.beat(
+            channel_id,
+            st,
+            "window",
+            channels::BeatGap::clamped(since_ms, hidden_ms),
+        );
     }
     Ok(())
 }
