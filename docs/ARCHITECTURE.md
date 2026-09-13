@@ -218,6 +218,15 @@ Networked clients get the content events as JSON frames over the WS hub
 kinds back — `hello`, `beat`, `rendered` — none of which can carry content
 ([SECURITY.md](SECURITY.md) T4).
 
+**A client that says `hello` is answered with three things: its template, the custom
+themes, and WHAT IS ON THE SCREENS RIGHT NOW.** The last of those is the retained
+frame — the most recent `content`, `clear` or `black` — kept by `KioskHub` so a
+screen that joins in the middle of a service is not blank until the next fire
+(DECISIONS §68, CLAUDE.md rule 43). `stage_next` is deliberately not retained: it is
+a monitor-only extra and must not stand in for the content it accompanies. Because
+`clear` and `black` are published through the same door, joining late can never undo
+a panic control.
+
 ---
 
 ## 7. Frontend shape

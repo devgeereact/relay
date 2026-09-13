@@ -147,20 +147,33 @@
     }
   }
 
+  // How many times the socket has failed since it was last up.
+  //
+  // "connecting…" reads the same at two seconds and at ten minutes, and the
+  // preacher holding the phone cannot tell a page that is about to work from one
+  // that never will. After a few failed attempts it says so plainly instead.
+  let attempts = 0;
+  $: reach = connected ? 'live' : attempts > 3 ? "can't reach Relay — retrying" : 'connecting…';
+
   function connect(host) {
     if (closed) return;
     try {
       ws = new WebSocket(`ws://${host}:8031`);
-      ws.onopen = () => (connected = true);
+      ws.onopen = () => {
+        connected = true;
+        attempts = 0;
+      };
       ws.onmessage = (e) => {
         try { apply(JSON.parse(e.data)); } catch { /* ignore */ }
       };
       ws.onclose = () => {
         connected = false;
+        attempts += 1;
         if (!closed) setTimeout(() => connect(host), 1500);
       };
       ws.onerror = () => { try { ws.close(); } catch { /* onclose retries */ } };
     } catch {
+      attempts += 1;
       if (!closed) setTimeout(() => connect(host), 1500);
     }
   }
@@ -184,7 +197,7 @@
 <div class="sr">
   <header>
     <span class="brand">Relay · Stage</span>
-    <span class="status" class:on={connected}><i></i>{connected ? 'live' : 'connecting…'}</span>
+    <span class="status" class:on={connected}><i></i>{reach}</span>
     <span class="clock">{clock}</span>
     <button class="ctl-toggle" class:active={showCtl} on:click={() => (showCtl = !showCtl)} aria-label="Control panel">
       {showCtl ? 'Done' : 'Control'}
@@ -215,6 +228,7 @@
           inputmode="search"
           enterkeyhint="search"
           placeholder="Search a verse — “John 3:16” or “shepherd”"
+          aria-label="Search for a verse to put on the screens"
           bind:value={q}
           on:input={doSearch}
           autocomplete="off"

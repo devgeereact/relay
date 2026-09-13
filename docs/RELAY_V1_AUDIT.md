@@ -107,8 +107,8 @@ still want a room, a purchase and a Sunday.
 
 | | Command | Result |
 |---|---|---|
-| Rust suite | `cd src-tauri && cargo test` | **680 passed**, 0 failed, 16 ignored — `r4_05` stopped being ignored |
-| Frontend suite | `npx vitest run` | **968 passed**, 0 skipped, 71 files |
+| Rust suite | `cd src-tauri && cargo test` | **683 passed**, 0 failed, 16 ignored — +3 on 2026-09-10 for the frame a screen that joins mid-service is sent (RG-129) |
+| Frontend suite | `npx vitest run` | **975 passed**, 0 skipped, 72 files — +7 on 2026-09-10 (RG-128, RG-130, RG-133) |
 | End-to-end fire path | `cargo test e2e::` | **38 passed, 0 ignored** |
 | Format and lint gates | `cargo fmt --all -- --check`, `cargo clippy --all-targets -- -D warnings` | clean |
 | Frontend build | `npm run build` | clean — and **0 a11y warnings**, down from 4 |

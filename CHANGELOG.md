@@ -10,6 +10,89 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 
 ## [Unreleased]
 
+### The first verse of a service could go up cut in half
+
+On a screen that had just been opened — an OBS browser source, a kiosk page, the
+projector page loaded before the service — the **first** thing put on it was sized
+wrongly and painted with its top and bottom lines sliced through the middle. Nothing
+fixed it afterwards: it stayed like that until something happened to resize the
+window. Measured on the default Classic Serif template at 1920×1080, Romans 8:28
+painted a block half as tall again as the box it was in.
+
+The cause is that a font is only fetched the moment something first uses it, so the
+very first verse was measured in a stand-in typeface, wrapped into fewer lines than
+the real one, and was therefore allowed to be too big. Relay now checks that it
+measured the typeface it is about to paint with, and measures again if it did not.
+
+### A screen that reconnected during a service came back blank
+
+If an output went away and came back — OBS restarting a source, a kiosk page
+reloading, the lobby television dropping off the wifi for a moment — it reconnected
+and then showed **nothing at all** until the operator happened to put the next thing
+up. On the congregation's screen, for as long as the reading lasted.
+
+A screen that joins now receives what is on the screens at that moment. If the
+operator has cleared or blacked out, that is what it receives: coming back late can
+never undo Clear or Blackout.
+
+### The Live screen said which screen had died, in a word you can act on
+
+Four things on the run surface were being cut off mid-word, and all four mattered:
+
+- The **Output Status** panel could not fit a screen's name beside its badge, and the
+  screen with the worst news was the worst affected — "Streaming" was rendered seven
+  pixels wide next to "NOT RESPONDING". Names now read in full, on their own line.
+- The warning strip along the bottom said **"3 is not responding"**. It says
+  "Streaming is not responding".
+- On a 1366-wide laptop the panel headings collapsed ("AI Detection — Current Claim"
+  down to five pixels) and the **Clear screens** button read "Clear scree…". Both fit
+  now, wrapping rather than truncating.
+- A screen whose own report was blank showed `native_window`, a word out of the
+  database. It says "Native window".
+
+### Accept and Dismiss were below the bottom of the panel
+
+With one ordinary suggestion showing, the two buttons the whole product exists to
+offer sat just off the bottom of the AI Detection panel, out of sight unless you
+scrolled. The card repeated the reference and the match type twice over; that
+repetition is gone, and the two buttons are now pinned to the bottom of the panel
+where they cannot scroll away.
+
+### Settings stopped offering seven switches that did nothing
+
+Seven controls saved a preference nothing in Relay ever read. The worst was
+**"Confirm Before Going Live"**, which was on by default and promised a confirmation
+step between the operator and the congregation's screen — there has never been one.
+Also removed: Auto Save, Default Content Type, Time Format, Date Format, Restore
+Previous Session and Default Startup Screen. Nothing you could do with them is lost,
+because nothing they did ever happened.
+
+**Settings → Overview** also said *"You're on the latest version"* whether or not
+anything had been asked — including when Relay could not reach the update server. It
+now reports what the last check actually found, which the Updates page already did.
+
+### Smaller things you may notice
+
+- The Template editor's **Save Template** button was off the right-hand edge of the
+  window at 1440 wide, and the layer list showed one and a half layers out of three.
+- The Template editor's "Select a layer" hint was drawn as grey text on a solid
+  purple bar, sitting on top of the panel heading.
+- **Service History** squeezed the service title to about four characters, so every
+  service in the list read "Sunda…".
+- The **Dashboard's** system-health rows were cut off mid-word on every line.
+- Sliders across Settings, the Template editor and the Theme editor were drawing the
+  browser's own white bar on a dark panel; the detection dial's was four pixels tall,
+  which is hard to hit and easy to miss.
+- The Theme editor listed a typeface as `var(--f-display)`. It says "Display".
+- On a phone-width window the **Emergency Stop** button was off the edge of the
+  screen, and the warning strip covered the tab bar.
+- The preacher's stage page said "connecting…" for ever when it could not reach
+  Relay. After a few attempts it says so.
+- The sidebar's "Engine offline" line could not recover: it was decided once at
+  startup and never asked again.
+- A plan cue of a kind Relay does not recognise was drawn as **Scripture**, which is
+  the one kind that fires by itself. It is drawn as Unknown.
+
 ### Eighteen verses were showing a translator's note as though it were scripture
 
 Some verses in the bundled KJV ended with a note the translators wrote, rendered on

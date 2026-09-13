@@ -30,7 +30,7 @@
   // The SAME rule Live uses. Two surfaces describing one screen must not be able
   // to reach different conclusions about it — that asymmetry is how this
   // repository has produced four separate bugs with one root cause.
-  import { screenFault, FAULT_WORD } from '../outputHealth.js';
+  import { screenFault, FAULT_WORD, screenKind, screenTransport } from '../outputHealth.js';
   // Was: `error = String(err)`, rendered in a MONOSPACE font, five times over — a raw
   // Rust Err string shown to a church volunteer who has never seen one.
   import ErrorState from '../ui/ErrorState.svelte';
@@ -130,11 +130,10 @@
     const i = parseInt(c.display_target ?? '', 10);
     return Number.isFinite(i) ? monitors.find((m) => m.index === i) || null : null;
   };
-  /** The kind label shown in the TYPE column. */
-  const kindOf = (c) =>
-    isNative(c) ? 'Native window' : isNdi(c) ? 'NDI' : 'Network client';
-  const transportOf = (c) =>
-    isNative(c) ? 'HDMI / display' : isNdi(c) ? 'unavailable' : 'WebSocket';
+  /** The kind label shown in the TYPE column. One definition, shared with Live's
+      Output Status pane — see `outputHealth.js::screenKind`. */
+  const kindOf = (c) => screenKind(c.render_target);
+  const transportOf = (c) => screenTransport(c.render_target);
 
   $: counts = {
     all: channels.length,

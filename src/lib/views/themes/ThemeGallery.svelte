@@ -13,6 +13,7 @@
     BUILTIN_THEMES,
     THEME_PREVIEW_TEMPLATE,
     THEME_SAMPLE_CONTENT,
+    fontLabel,
   } from '../../themes.js';
   import { customThemes, loadThemes, saveTheme, deleteTheme, exportTheme, importThemeFromFile } from '../../stores/capture.js';
   import { humanError } from '../../errors.js';
@@ -190,7 +191,7 @@
         <dl class="th-info">
           <dt>Name</dt><dd>{sel.name}</dd>
           <dt>Kind</dt><dd>{sel.builtin ? 'Built-in (read-only)' : 'Custom'}</dd>
-          <dt>Typeface</dt><dd>{sel.style?.font || '—'}</dd>
+          <dt>Typeface</dt><dd>{fontLabel(sel.style?.font)}</dd>
           <dt>Accent</dt><dd><span class="th-inline-sw" style="--sw:{sel.style?.accent || '#888'}"></span>{sel.style?.accent || '—'}</dd>
         </dl>
 

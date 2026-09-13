@@ -100,13 +100,6 @@
     theme: 'dark',
     autoStart: false,
     minimizeTray: true,
-    confirmLive: true,
-    autoSave: true,
-    defaultContent: 'scripture',
-    timeFormat: '24',
-    dateFormat: 'DD/MM/YYYY',
-    restoreSession: true,
-    startupScreen: 'dashboard',
   };
   let prefs = { ...DEFAULT_PREFS };
   function loadPrefs() {
@@ -148,8 +141,13 @@
   const GENERAL_TOGGLES = [
     { key: 'autoStart',    title: 'Auto Start on Login',   note: 'Launch Relay automatically when you log in to your computer.', soon: true },
     { key: 'minimizeTray', title: 'Minimize to System Tray', note: 'Minimize the application to the system tray instead of the taskbar.', soon: true },
-    { key: 'confirmLive',  title: 'Confirm Before Going Live', note: 'Show a confirmation dialog before sending content live.' },
-    { key: 'autoSave',     title: 'Auto Save',             note: 'Automatically save changes in templates, plans and settings.' },
+    // 'Confirm Before Going Live' and 'Auto Save' USED TO BE HERE, both defaulting
+    // to ON, and neither was read by anything. The first was the worse of the two by
+    // a distance: it promised a confirmation step between the operator and the
+    // congregation's screen, and there has never been one. A switch that claims a
+    // safety guard the product does not have is the exact control this app refuses
+    // everywhere else. Removed rather than marked "Soon" — "soon" is a promise too,
+    // and neither is on any roadmap.
   ];
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -742,7 +740,7 @@
           <div class="s-row">
             <div class="s-rowtext">
               <div class="s-rowtitle">{tg.title}{#if tg.soon}<span class="s-soon">Soon</span>{/if}</div>
-              <div class="s-rownote">{tg.note}{#if tg.soon} <span class="s-dim">— not available yet.</span>{/if}</div>
+              <div class="s-rownote">{tg.note} {#if tg.soon}<span class="s-dim">Not available yet.</span>{/if}</div>
             </div>
             <button
               class="s-toggle"
@@ -756,65 +754,15 @@
           </div>
         {/each}
 
-        <!-- Default content type -->
-        <div class="s-row">
-          <div class="s-rowtext">
-            <div class="s-rowtitle">Default Content Type</div>
-            <div class="s-rownote">Set the default content type when creating new items.</div>
-          </div>
-          <select class="r-select s-rowctl" value={prefs.defaultContent} on:change={(e) => setPref('defaultContent', e.target.value)}>
-            <option value="scripture">Scripture</option>
-            <option value="song">Lyrics</option>
-            <option value="media">Media</option>
-            <option value="announce">Announcements</option>
-          </select>
-        </div>
-
-        <!-- Time format -->
-        <div class="s-row">
-          <div class="s-rowtext">
-            <div class="s-rowtitle">Time Format</div>
-            <div class="s-rownote">Choose how time is displayed across the application.</div>
-          </div>
-          <div class="s-seg" role="group" aria-label="Time format">
-            <button class="s-segbtn" class:on={prefs.timeFormat === '12'} aria-pressed={prefs.timeFormat === '12'} on:click={() => setPref('timeFormat', '12')}>12-hour</button>
-            <button class="s-segbtn" class:on={prefs.timeFormat === '24'} aria-pressed={prefs.timeFormat === '24'} on:click={() => setPref('timeFormat', '24')}>24-hour</button>
-          </div>
-        </div>
-
-        <!-- Date format -->
-        <div class="s-row">
-          <div class="s-rowtext">
-            <div class="s-rowtitle">Date Format</div>
-            <div class="s-rownote">Choose how dates are displayed across the application.</div>
-          </div>
-          <select class="r-select s-rowctl" value={prefs.dateFormat} on:change={(e) => setPref('dateFormat', e.target.value)}>
-            <option value="DD/MM/YYYY">DD/MM/YYYY</option>
-            <option value="MM/DD/YYYY">MM/DD/YYYY</option>
-            <option value="YYYY-MM-DD">YYYY-MM-DD</option>
-          </select>
-        </div>
-
-        <div class="s-grouphead">Startup</div>
-        <div class="s-row">
-          <div class="s-rowtext">
-            <div class="s-rowtitle">Restore Previous Session</div>
-            <div class="s-rownote">Automatically restore the last active screen on startup.</div>
-          </div>
-          <button class="s-toggle" class:on={prefs.restoreSession} role="switch" aria-checked={prefs.restoreSession} aria-label="Restore previous session" on:click={() => setPref('restoreSession', !prefs.restoreSession)}><span class="s-knob"></span></button>
-        </div>
-        <div class="s-row">
-          <div class="s-rowtext">
-            <div class="s-rowtitle">Default Startup Screen</div>
-            <div class="s-rownote">Choose which screen to show when Relay starts.</div>
-          </div>
-          <select class="r-select s-rowctl" value={prefs.startupScreen} on:change={(e) => setPref('startupScreen', e.target.value)}>
-            <option value="dashboard">Dashboard</option>
-            <option value="live">Live</option>
-            <option value="planner">Planner</option>
-            <option value="library">Library</option>
-          </select>
-        </div>
+        <!-- REMOVED, not hidden: Default Content Type, Time Format, Date Format,
+             Restore Previous Session and Default Startup Screen. Five controls that
+             wrote a key to localStorage that NOTHING in the application ever read —
+             the clock is not formatted by Time Format, Relay always opens on Live,
+             and no "new item" anywhere consults a default content type. Same
+             precedent as the `StageDisplays` subtree (DECISIONS §25): a control that
+             persists an intent nobody honours is a lie with a saved value, and it
+             cost the most-visited settings page five rows of noise. Wiring them is a
+             product decision, not a repair. -->
 
       {:else if section === 'outputs'}
         <p class="s-lead">Each content type can use its own template automatically — lyrics in a lower-third, scripture full-screen. “Channel default” leaves the look to each output's own template.</p>
@@ -1501,7 +1449,12 @@
         </button>
         <button class="s-qlink" on:click={() => (section = 'updates')}>
           <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
-          <span class="s-qtext"><b>Check for Updates</b><em>{$updateAvailable ? 'An update is waiting' : "You're on the latest version"}</em></span>
+          <!-- THE SAME DOOR, SECOND COPY. The Updates section itself was fixed
+               (RG-92) to report the CHANNEL's state rather than the absence of
+               news; this card kept saying "You're on the latest version" while the
+               update manifest was 404 and while no check had ever run. One
+               describer, both surfaces. -->
+          <span class="s-qtext"><b>Check for Updates</b><em>{$updateAvailable ? 'An update is waiting' : describeChannel($updateChannel)}</em></span>
           <svg class="s-qarr" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18l6-6-6-6"/></svg>
         </button>
         <button class="s-qlink" on:click={() => (section = 'history')}>

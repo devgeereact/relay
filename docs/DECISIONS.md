@@ -3095,3 +3095,58 @@ beside Kiswahili would claim an unreviewed table behaves like a reviewed one. It
 **"suggest only"**, and `language_report` derives `numerals` from `ones` **or** `standalone` —
 without that it reported *no* while the detector was parsing them, which is the one disagreement
 between that screen and the running app the whole function exists to prevent (§47).
+
+## 68. A screen that joins late is shown what is on the screens (2026-09-10)
+
+**Decision:** the kiosk hub retains the last frame that decided **what a screen is
+showing** — `content`, `clear` or `black` — and sends it to every client on `hello`,
+after the template and the themes it needs to render with.
+
+Until this, `hello` was answered with the cached template and the custom themes and
+nothing else. A client that connected mid-service received the NEXT fire and nothing
+before it, so an output that went away and came back showed **black** for as long as
+the reading lasted. That is not an exotic event: OBS restarting a browser source, a
+kiosk page reloading, a lobby television dropping off the wifi for a moment and this
+hub's own 1.5-second reconnect loop all produce it, and RG-119 records the main output
+going away three times in one 85.5-minute service.
+
+**Why it cannot undo a panic control.** The retained frame is whatever was published
+last, and `clear` and `black` go through the same door as `content` — so a screen that
+joins after the operator cleared the wall joins a cleared wall. A retained verse that
+outlived the control that removed it would be strictly worse than the blank screen this
+mechanism exists to fix (rule 15). Nothing that is not one of those three kinds is ever
+retained: `stage_next` is a monitor-only extra and must not stand in for the content it
+accompanies, and `template` and `themes` are already sent.
+
+**Rehearsal is unaffected, by construction rather than by a second check.** Rehearsal is
+gated at the publishers, so a rehearsal publishes nothing to this hub at all — there is
+nothing for it to retain and nothing for it to replay. That is the same reasoning as
+§18: the guarantee lives at the choke point, not at the door.
+
+**What it does not do.** It does not make a screen's history available, it does not
+replay a sequence, and it does not tell the console anything new. One frame, the current
+one, to a client that asked.
+
+## 69. A control that saves an intent nobody honours is removed, not labelled (2026-09-10)
+
+**Decision:** Settings' seven unwired preference controls are **deleted**. They wrote a
+key to `localStorage` that nothing in the application ever read: `Confirm Before Going
+Live`, `Auto Save`, `Default Content Type`, `Time Format`, `Date Format`, `Restore
+Previous Session` and `Default Startup Screen`.
+
+The first is why this is a decision and not a tidy-up. It was **on by default** and it
+said *"Show a confirmation dialog before sending content live."* There has never been
+one. An operator who reads that switch believes there is a step between them and the
+congregation's screen, and the product spends its whole design budget elsewhere making
+sure no control lies about what it did (§20, §21, rule 15, rule 35). This one lied in
+the most expensive place available to it.
+
+**Why removed rather than marked "Soon".** Two rows in the same list already carry that
+treatment honestly — `Auto Start on Login` and `Minimize to System Tray` are disabled,
+tagged, and say what is missing — and they stay. "Soon" is a promise, though, and none
+of these seven is on a roadmap; four of them (time format, date format, startup screen,
+restore session) describe behaviour Relay has deliberately not made configurable. Same
+precedent as the `StageDisplays` subtree in §25: a dead surface comes out.
+
+**Wiring any of them is a product decision, not a repair**, and this section is where it
+would be recorded if one is ever taken.

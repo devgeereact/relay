@@ -864,6 +864,25 @@ fn kiosk_content_json(content: &OutputContent) -> String {
     .to_string()
 }
 
+/// Is this frame one of the three that decide what a screen is SHOWING?
+///
+/// Deliberately a prefix match on frames this module builds itself, not a JSON
+/// parse: it runs inside `publish`, which is on the path between a fire and the
+/// projector. `template`, `themes` and `stage_next` are excluded — the first two
+/// are already sent on hello and the third is a monitor-only extra that must not
+/// stand in for the content it accompanies.
+fn is_screen_frame(msg: &str) -> bool {
+    // CONTAINS, not `starts_with`. `serde_json`'s default map is a BTreeMap, so
+    // `kiosk_content_json` emits its keys in ALPHABETICAL order and a content frame
+    // begins `{"content_kind":…` — a prefix check silently matched nothing and the
+    // retained frame stayed empty, which looks exactly like the bug it fixes.
+    // `"kind":"content"` cannot occur inside a JSON string value (the quotes would
+    // be escaped), so this cannot be triggered by a verse.
+    msg.contains(r#""kind":"content""#)
+        || msg.contains(r#""kind":"clear""#)
+        || msg.contains(r#""kind":"black""#)
+}
+
 /// Push content to every output channel. One broadcast, N independently-styled
 /// renders — native windows (Tauri event) AND networked kiosk clients (WS).
 ///
@@ -1042,6 +1061,24 @@ pub struct KioskHub {
     /// validated JSON array is ever stored (see `set_themes`), so embedding it raw
     /// into a WS message can never corrupt the frame.
     themes: Arc<Mutex<String>>,
+    /// THE LAST FRAME THAT DECIDED WHAT IS ON THE SCREENS — content, clear or
+    /// black — kept so a client that joins LATE is shown it.
+    ///
+    /// Without this a browser source that reconnects mid-service comes back
+    /// BLANK and stays blank until the operator happens to fire the next thing.
+    /// That is not a rare event: an OBS source restarting, a kiosk page
+    /// reloading, a Wi-Fi blip on the lobby TV, or this hub's own 1.5 s reconnect
+    /// loop all produce it, and RG-119 records the main output going away three
+    /// times in one 85.5 minute service. Reproduced by opening `output.html`
+    /// while a verse was live: the page connected, was sent its template and its
+    /// themes, and painted nothing.
+    ///
+    /// It retains the last frame of those three kinds and NOTHING else, so it can
+    /// never resurrect a screen the operator cleared: `clear` and `black` are
+    /// themselves published here and become the retained frame in their turn. A
+    /// rehearsal publishes nothing to this hub at all (the gate is at the
+    /// publishers), so nothing a rehearsal did can be replayed either.
+    last_screen: Arc<Mutex<Option<String>>>,
 }
 
 impl Default for KioskHub {
@@ -1052,6 +1089,7 @@ impl Default for KioskHub {
             templates: Arc::new(Mutex::new(HashMap::new())),
             clients: Arc::new(Mutex::new(HashMap::new())),
             themes: Arc::new(Mutex::new("[]".to_string())),
+            last_screen: Arc::new(Mutex::new(None)),
         }
     }
 }
@@ -1112,7 +1150,16 @@ impl Drop for ClientGuard {
 
 impl KioskHub {
     pub fn publish(&self, msg: String) {
+        if is_screen_frame(&msg) {
+            if let Ok(mut last) = self.last_screen.lock() {
+                *last = Some(msg.clone());
+            }
+        }
         let _ = self.tx.send(msg); // Err only means no subscribers — fine.
+    }
+    /// Shared handle to the retained screen frame, for the WS task to send on hello.
+    pub fn last_screen_handle(&self) -> Arc<Mutex<Option<String>>> {
+        self.last_screen.clone()
     }
     pub fn sender(&self) -> broadcast::Sender<String> {
         self.tx.clone()
@@ -1253,6 +1300,7 @@ pub async fn run_kiosk_server(
     templates: Arc<Mutex<HashMap<i64, String>>>,
     clients: ClientRegistry,
     themes: Arc<Mutex<String>>,
+    last_screen: Arc<Mutex<Option<String>>>,
     health: OutputHealth,
     port: u16,
 ) {
@@ -1286,6 +1334,7 @@ pub async fn run_kiosk_server(
         let templates = templates.clone();
         let clients = clients.clone();
         let themes = themes.clone();
+        let last_screen = last_screen.clone();
         let health = health.clone();
         tokio::spawn(async move {
             let _permit = permit;
@@ -1422,6 +1471,24 @@ pub async fn run_kiosk_server(
                                                 format!(r#"{{"kind":"themes","themes":{blob}}}"#),
                                             ))
                                             .await;
+                                        // AND WHAT IS ON THE SCREENS RIGHT NOW.
+                                        // A client that joins mid-service used to
+                                        // be told its template and its themes and
+                                        // then left blank until the next fire — so
+                                        // an OBS source restarting, or this page
+                                        // reloading, put a black rectangle in front
+                                        // of a congregation for as long as the
+                                        // reading lasted. Sent LAST so the template
+                                        // it needs to render with has already
+                                        // arrived. `clear` and `black` are retained
+                                        // the same way, so this can never undo a
+                                        // panic control.
+                                        let retained = last_screen.lock().ok().and_then(|l| l.clone());
+                                        if let Some(frame) = retained {
+                                            let _ = write
+                                                .send(tokio_tungstenite::tungstenite::Message::Text(frame))
+                                                .await;
+                                        }
                                     }
                                 }
                             }
@@ -2667,6 +2734,7 @@ mod tests {
             hub.templates_handle(),
             hub.clients_handle(),
             hub.themes_handle(),
+            hub.last_screen_handle(),
             OutputHealth::default(),
             port,
         ));
@@ -2725,6 +2793,7 @@ mod tests {
             hub.templates_handle(),
             hub.clients_handle(),
             hub.themes_handle(),
+            hub.last_screen_handle(),
             OutputHealth::default(),
             port,
         ));
@@ -2806,6 +2875,7 @@ mod tests {
             hub.templates_handle(),
             hub.clients_handle(),
             hub.themes_handle(),
+            hub.last_screen_handle(),
             OutputHealth::default(),
             port,
         ));
@@ -2848,6 +2918,7 @@ mod tests {
             hub.templates_handle(),
             hub.clients_handle(),
             hub.themes_handle(),
+            hub.last_screen_handle(),
             OutputHealth::default(),
             port,
         ));
@@ -2883,6 +2954,154 @@ mod tests {
         assert!(got, "the client never received the custom themes");
     }
 
+    /// The retained-frame test above can only be trusted if the matcher agrees
+    /// with what this module actually SERIALISES. It did not: `serde_json`'s map is
+    /// a BTreeMap, so a content frame starts `{"content_kind":…` and the first
+    /// version of `is_screen_frame` (a `starts_with`) matched none of them — the
+    /// retained frame stayed `None` and a joining screen was still blank.
+    #[test]
+    fn the_screen_frame_matcher_agrees_with_what_is_published() {
+        let content = kiosk_content_json(&OutputContent {
+            kind: Some("scripture".into()),
+            reference: "Romans 8:28".into(),
+            text: Some("And we know that all things".into()),
+            ..Default::default()
+        });
+        assert!(
+            is_screen_frame(&content),
+            "a real content frame is not recognised: {content}"
+        );
+        assert!(is_screen_frame(r#"{"kind":"clear"}"#));
+        assert!(is_screen_frame(r#"{"kind":"black"}"#));
+        // Not a frame that decides what is on the screen.
+        assert!(!is_screen_frame(
+            r#"{"kind":"stage_next","label":"John 3:17"}"#
+        ));
+        assert!(!is_screen_frame(r#"{"kind":"themes","themes":[]}"#));
+        assert!(!is_screen_frame(
+            r#"{"kind":"template","id":1,"template":{}}"#
+        ));
+    }
+
+    /// A SCREEN THAT JOINS LATE IS SHOWN WHAT IS ON THE SCREENS.
+    ///
+    /// Reproduced against the real backend: with a verse live, opening
+    /// `output.html` connected, was sent its template and its themes, and painted
+    /// NOTHING — a black rectangle in front of a congregation until the operator
+    /// happened to fire the next thing. An OBS source restarting, a kiosk page
+    /// reloading, a Wi-Fi blip on the lobby TV and this hub's own reconnect loop
+    /// all produce exactly that, and RG-119 records the main output going away
+    /// three times in one 85.5 minute service.
+    #[tokio::test]
+    async fn a_client_that_connects_mid_service_is_sent_what_is_on_the_screens() {
+        let port = free_port();
+        let hub = KioskHub::default();
+        tokio::spawn(run_kiosk_server(
+            log_only(),
+            hub.sender(),
+            hub.templates_handle(),
+            hub.clients_handle(),
+            hub.themes_handle(),
+            hub.last_screen_handle(),
+            OutputHealth::default(),
+            port,
+        ));
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+
+        // The verse went up BEFORE this client existed.
+        hub.publish(
+            r#"{"kind":"content","reference":"Romans 8:28","text":"And we know"}"#.to_string(),
+        );
+
+        let (ws, _) = tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{port}"))
+            .await
+            .expect("connect");
+        let (mut write, mut read) = ws.split();
+        write
+            .send(tokio_tungstenite::tungstenite::Message::Text(
+                r#"{"kind":"hello","template_id":7}"#.to_string(),
+            ))
+            .await
+            .expect("send hello");
+
+        let mut got = None;
+        for _ in 0..4 {
+            let Ok(Some(Ok(msg))) =
+                tokio::time::timeout(std::time::Duration::from_secs(2), read.next()).await
+            else {
+                break;
+            };
+            let text = msg.into_text().unwrap();
+            if text.contains(r#""kind":"content""#) {
+                got = Some(text);
+                break;
+            }
+        }
+        assert!(
+            got.as_deref().unwrap_or("").contains("Romans 8:28"),
+            "a screen that reconnected mid-reading was left blank: {got:?}"
+        );
+    }
+
+    /// …AND IT CAN NEVER UNDO A PANIC CONTROL.
+    ///
+    /// The retained frame is whatever was published LAST, and `clear` and `black`
+    /// are published through the same door. A screen that joins after the operator
+    /// cleared the wall must join a cleared wall — a retained verse that outlived
+    /// the control that removed it would be strictly worse than the blank screen
+    /// this whole mechanism exists to fix (CLAUDE.md rule 15).
+    #[tokio::test]
+    async fn a_cleared_wall_stays_cleared_for_a_screen_that_joins_after_it() {
+        let port = free_port();
+        let hub = KioskHub::default();
+        tokio::spawn(run_kiosk_server(
+            log_only(),
+            hub.sender(),
+            hub.templates_handle(),
+            hub.clients_handle(),
+            hub.themes_handle(),
+            hub.last_screen_handle(),
+            OutputHealth::default(),
+            port,
+        ));
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+
+        hub.publish(r#"{"kind":"content","reference":"Romans 8:28","text":"x"}"#.to_string());
+        hub.publish(r#"{"kind":"clear"}"#.to_string());
+        // A monitor-only extra must not stand in for the frame that decides the
+        // screen, or the clear would be forgotten by the next "up next" push.
+        hub.publish(r#"{"kind":"stage_next","label":"John 3:17"}"#.to_string());
+
+        let (ws, _) = tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{port}"))
+            .await
+            .expect("connect");
+        let (mut write, mut read) = ws.split();
+        write
+            .send(tokio_tungstenite::tungstenite::Message::Text(
+                r#"{"kind":"hello","template_id":7}"#.to_string(),
+            ))
+            .await
+            .expect("send hello");
+
+        let mut frames = Vec::new();
+        for _ in 0..4 {
+            let Ok(Some(Ok(msg))) =
+                tokio::time::timeout(std::time::Duration::from_millis(900), read.next()).await
+            else {
+                break;
+            };
+            frames.push(msg.into_text().unwrap());
+        }
+        assert!(
+            frames.iter().any(|f| f.contains(r#""kind":"clear""#)),
+            "the wall was cleared and the joining screen was not told: {frames:?}"
+        );
+        assert!(
+            !frames.iter().any(|f| f.contains("Romans 8:28")),
+            "a verse outlived the control that removed it: {frames:?}"
+        );
+    }
+
     /// End-to-end kiosk path (what OBS/vMix uses): a WS client connects, a fire
     /// is published, and the client receives it.
     #[tokio::test]
@@ -2896,6 +3115,7 @@ mod tests {
             hub.templates_handle(),
             hub.clients_handle(),
             hub.themes_handle(),
+            hub.last_screen_handle(),
             OutputHealth::default(),
             port,
         ));
@@ -3094,6 +3314,7 @@ mod tests {
             hub.templates_handle(),
             hub.clients_handle(),
             hub.themes_handle(),
+            hub.last_screen_handle(),
             OutputHealth::default(),
             port,
         ));
@@ -3146,6 +3367,7 @@ mod tests {
             hub.templates_handle(),
             hub.clients_handle(),
             hub.themes_handle(),
+            hub.last_screen_handle(),
             health.clone(),
             port,
         ));

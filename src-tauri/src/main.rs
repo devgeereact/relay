@@ -213,6 +213,7 @@ fn main() {
             let kiosk_templates = kiosk.templates_handle();
             let kiosk_clients = kiosk.clients_handle();
             let kiosk_themes = kiosk.themes_handle();
+            let kiosk_last = kiosk.last_screen_handle();
             // Warm the custom-themes blob so a kiosk connecting before any theme is
             // saved this session still gets the operator's themes on `hello`.
             {
@@ -247,6 +248,7 @@ fn main() {
                 kiosk_templates,
                 kiosk_clients,
                 kiosk_themes,
+                kiosk_last,
                 app.state::<channels::OutputHealth>().inner().clone(),
                 8031,
             ));
@@ -4846,6 +4848,13 @@ fn parse_display(s: &str) -> Option<usize> {
 #[derive(serde::Serialize)]
 struct ChannelLiveness {
     id: i64,
+    /// The screen's NAME, as the operator typed it.
+    ///
+    /// It is here because the shell's degraded banner had only the id and said
+    /// "3 is not responding" — a number a volunteer cannot map to a screen while a
+    /// congregation waits. `degraded.js` documented these as names for months; the
+    /// producer sent ids, and no test could see the difference.
+    name: String,
     online: bool,
     clients: usize,
     detail: String,
@@ -4953,6 +4962,7 @@ fn channel_status(
                 let painting = online && health.painting(c.id);
                 ChannelLiveness {
                     id: c.id,
+                    name: c.name.clone(),
                     online,
                     clients: 0,
                     detail: match (online, painting, age) {
@@ -4988,6 +4998,7 @@ fn channel_status(
                 let painting = health.painting(c.id);
                 ChannelLiveness {
                     id: c.id,
+                    name: c.name.clone(),
                     online: true,
                     clients: n,
                     // The viewer count answers "did a browser connect". The beat
@@ -5019,6 +5030,7 @@ fn channel_status(
             // NDI is parked, not broken — `open_ndi_output` says so too.
             "ndi_encode" => ChannelLiveness {
                 id: c.id,
+                name: c.name.clone(),
                 online: false,
                 clients: 0,
                 detail: "NDI output is not available in this build".into(),
@@ -5029,6 +5041,7 @@ fn channel_status(
             },
             other => ChannelLiveness {
                 id: c.id,
+                name: c.name.clone(),
                 online: false,
                 clients: 0,
                 detail: format!("Unknown render target '{other}'"),

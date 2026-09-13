@@ -1,3 +1,31 @@
+<script context="module">
+  /**
+   * Does the fit that just ran need doing again?
+   *
+   * Pure, and exported, because it is the rule that decides whether a
+   * congregation reads a whole verse or one with its first and last lines cut
+   * through the middle — and a rule that important should not only be testable
+   * through a browser.
+   *
+   * @param fontReady    is the face the text will be PAINTED in available yet?
+   *                     A webfont is fetched only when something first uses it,
+   *                     so on an output page (which opens with nothing on it)
+   *                     the very first verse is measured in the fallback, fits
+   *                     in fewer lines, and then grows when the real face lands.
+   * @param overflowing  does the box overflow right now? Catches the non-font
+   *                     causes; it cannot catch the font one, because the reflow
+   *                     the new face causes has not happened yet when we look.
+   * @param tries        re-fits already spent on this content.
+   * @param max          the ceiling. Text that does not fit at ANY size is rule
+   *                     37's case: it is reported through `onFit`, not retried
+   *                     forever.
+   */
+  export function needsRefit({ fontReady, overflowing, tries, max = 2 }) {
+    if (tries >= max) return false;
+    return !fontReady || !!overflowing;
+  }
+</script>
+
 <script>
   // ONE renderer for both the fullscreen output (Output.svelte) and the editor
   // preview (Templates.svelte) — guarantees WYSIWYG: what you save is exactly
@@ -253,6 +281,92 @@
     lastFitSig = sig;
     if (layered) fitLayers();
     else fitText();
+    verifyFit(sig);
+  }
+
+  // ── THE FIT HAS TO CHECK ITSELF ────────────────────────────────────────────
+  //
+  // The mount-time `document.fonts.status !== 'loaded'` guard below is correct
+  // about the case it was written for and blind to the one that matters most: an
+  // OUTPUT PAGE OPENS WITH NO TEXT ON IT. A webfont is only fetched when something
+  // first uses it, so at mount there is nothing pending, `status` is already
+  // `loaded`, and the deferred re-fit is skipped — permanently. Then the first
+  // verse of the service arrives, the binary search measures it in the FALLBACK
+  // face, converges, the real serif lands a moment later and the text grows past
+  // the box it was fitted to. Nothing re-fits, because the signature has not
+  // changed.
+  //
+  // Measured on a fresh `output.html` at 1920x1080 with the default Classic Serif
+  // template: Romans 8:28 settled at 110.9px and painted a 732px block inside a
+  // 583px box with `overflow: hidden`. The congregation reads a verse with its
+  // first and last lines cut through the middle, and it stays that way until
+  // something happens to resize the window.
+  //
+  // So the fit now looks at what it produced. If the box still overflows, the
+  // metrics it measured are not the metrics being painted: wait for the fonts to
+  // settle and fit exactly once more. A verse that genuinely cannot fit — the case
+  // rule 37 is about — retries once, finds the same answer, and is reported
+  // through `onFit` as before, so this cannot loop.
+  let refitSig = '';
+  let refitTries = 0;
+  const MAX_REFIT = 2;
+  function fitBoxes() {
+    if (!stageEl) return [];
+    return [
+      ...(layered
+        ? stageEl.querySelectorAll('.ltext')
+        : stageEl.querySelectorAll('.slide .content')),
+    ];
+  }
+  function overflowing() {
+    return fitBoxes().some(
+      (b) => b.scrollHeight > b.clientHeight + 1 || b.scrollWidth > b.clientWidth + 1
+    );
+  }
+  /**
+   * Did the fit that just ran measure the face that will actually be painted?
+   *
+   * A webfont is only fetched when something first USES it, so on an output page —
+   * which opens with nothing on it — the request starts on the same frame as the
+   * first verse. The binary search then measures the fallback (`serif`), finds a
+   * size that fits in fewer lines, and the real face lands a moment later, taller.
+   * Asking `overflowing()` straight after the fit does not catch it: the reflow the
+   * new face causes has not happened yet. `fonts.check` is a fact available NOW.
+   */
+  function fittedWithTheRealFont() {
+    if (typeof document === 'undefined' || !document.fonts || !document.fonts.check) return true;
+    const box = fitBoxes()[0];
+    if (!box) return true;
+    const el = box.querySelector('.lfit') || box;
+    try {
+      return document.fonts.check(`1em ${getComputedStyle(el).fontFamily}`);
+    } catch {
+      return true; // an unparseable family is not a reason to keep re-fitting
+    }
+  }
+  function verifyFit(sig) {
+    if (sig !== refitSig) {
+      refitSig = sig;
+      refitTries = 0;
+    }
+    const stale = !fittedWithTheRealFont();
+    if (!needsRefit({ fontReady: !stale, overflowing: overflowing(), tries: refitTries, max: MAX_REFIT }))
+      return;
+    refitTries += 1;
+    const again = () => {
+      lastFitSig = '';
+      scheduleFit();
+    };
+    const fonts = typeof document !== 'undefined' ? document.fonts : null;
+    const box = fitBoxes()[0];
+    if (stale && fonts && fonts.load && box) {
+      const family = getComputedStyle(box.querySelector('.lfit') || box).fontFamily;
+      Promise.resolve(fonts.load(`1em ${family}`))
+        .catch(() => {})
+        .then(() => setTimeout(again, 32));
+    } else {
+      setTimeout(again, 60);
+    }
   }
   function scheduleFit() {
     if (fitRaf) return;

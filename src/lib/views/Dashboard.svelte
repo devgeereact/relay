@@ -531,6 +531,23 @@
     background: transparent;
     border-color: var(--v-line);
   }
+  /* STACKED, always. The boot screen shows these rows across a full window; this
+     card is about 325px wide at every viewport, and the value on the right is
+     capped at 46% of it — so the check's own sentence was ellipsised mid-word on
+     every row. This is the same shape the narrow-viewport rule in app.css already
+     switches to, applied by CONTAINER rather than by window. */
+  .d-health :global(.b-check) {
+    flex-wrap: wrap;
+  }
+  /* Its OWN line, always — not merely when it fails to fit. A short value like
+     "31,102 verses" still reserves enough of a 325px row to ellipsise the check's
+     sentence beside it, so the two never share a line in this card. */
+  .d-health :global(.b-check .note) {
+    flex: 1 0 100%;
+    max-width: 100%;
+    text-align: left;
+    padding-left: 34px;
+  }
 
   /* THE PATH CHECK. Emerald for a stage reached (the design system's
      "confirmed"), rose for one that was not — and a stage that has not been

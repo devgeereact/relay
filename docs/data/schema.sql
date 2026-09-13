@@ -86,7 +86,8 @@ CREATE TABLE plan_items (
     id           INTEGER PRIMARY KEY,
     plan_id      INTEGER NOT NULL REFERENCES service_plans(id) ON DELETE CASCADE,
     position     INTEGER NOT NULL,
-    cue_type     TEXT NOT NULL,           -- 'scripture' | 'song' | 'media' | 'announcement' | 'countdown'
+    cue_type     TEXT NOT NULL,           -- 'scripture' | 'song' | 'media' | 'announce' | 'countdown'
+                                          -- (the canonical list is CONTENT_KINDS in src/lib/layers.js)
     label        TEXT NOT NULL,
     payload_json TEXT NOT NULL DEFAULT '{}',
     template_id  INTEGER

@@ -404,3 +404,32 @@ describe('RG-29 · turning a screen on and off', () => {
     expect(screenSwitch(st, NATIVE).action).toBe('on');
   });
 });
+
+// ── THE BANNER HAS TO SAY WHICH SCREEN ───────────────────────────────────────
+//
+// The shell's degraded line read **"3 is not responding"**. `degraded.js` has
+// documented its `screensDown` argument as *"names of screens"* since it was
+// written; the producer (`App.svelte`) mapped `st.id`, because the backend row
+// carried no name to map. A number is not something a volunteer can act on with a
+// congregation waiting, and nothing else on any screen relates "3" back to
+// "Streaming".
+//
+// Both halves are pinned, because the fix needed both: the field has to exist in
+// Rust and the shell has to use it. Either one alone puts the number back.
+describe('a screen that stops answering is named, not numbered', () => {
+  it('the backend row carries the screen name', async () => {
+    const { readFileSync } = await import('node:fs');
+    const rust = readFileSync('src-tauri/src/main.rs', 'utf8');
+    const struct = rust.slice(rust.indexOf('struct ChannelLiveness'));
+    expect(struct.slice(0, struct.indexOf('}'))).toMatch(/\bname: String,/);
+  });
+
+  it('the shell maps health rows to that name', async () => {
+    const { readFileSync } = await import('node:fs');
+    const shell = readFileSync('src/App.svelte', 'utf8');
+    const line = shell.slice(shell.indexOf('$: screensDown'));
+    const decl = line.slice(0, line.indexOf(';'));
+    expect(decl).toMatch(/st\.name/);
+    expect(decl).not.toMatch(/=>\s*st\.id\b/);
+  });
+});
