@@ -183,6 +183,10 @@
       reference: a.title || 'Untitled',
       label: a.title || 'Untitled',
       text: a.body,
+      // A notice is a title and a body, and the title is all the card footer had.
+      // `subLine` takes the first line, so a three-paragraph notice does not become
+      // one run-on sentence.
+      sub: a.body,
       slideNo: i + 1,
     }));
 

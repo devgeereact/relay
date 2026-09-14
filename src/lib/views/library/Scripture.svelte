@@ -211,6 +211,7 @@
     reference: r.reference,
     label: r.reference,
     text: r.text,
+    sub: r.text,
     translation: r.translation ?? r.abbreviation,
     book: r.book,
     chapter: r.chapter,

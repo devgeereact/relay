@@ -315,6 +315,11 @@
     key: refOf(v),
     reference: refOf(v),
     text: v.text,
+    // The card's second line. The thumbnail renders this same verse, but through
+    // the operator's own template and fitted to a 268px box — a long verse shrinks
+    // to a grey smudge there (rule 37's floor is about exactly this). The sub line
+    // is the one legible copy of the words at card size.
+    sub: v.text,
     translation: v.abbreviation,
     book: v.book,
     chapter: v.chapter,

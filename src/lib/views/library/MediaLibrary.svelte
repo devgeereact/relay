@@ -9,6 +9,15 @@
   // file size and no generated thumbnail anywhere in the codebase. So this pane
   // does not print any of them.
   //
+  // AND THERE IS NO CAPTION COLUMN. REBRAND §10 asks for "a caption stored apart
+  // from the item's name"; `filename` is ALREADY the operator's own words — the
+  // add sheet writes what they typed into it and keeps the real file name only as
+  // a hint on screen — so a caption would be a SECOND operator-authored string
+  // beside the one that exists, and §10's own sentence for media is "the slide
+  // *is* the picture", which means none of it reaches a congregation. Not built,
+  // deliberately; the card's second line comes from `collections.js::mediaSub`,
+  // rather than a second name.
+  //
   // The thumbnail is therefore the FILE ITSELF, fetched from the app's own HTTP
   // server on :8032 — an <img> for a picture, a <video preload="metadata"> for a
   // video (the browser paints its first frame). Not a stand-in icon that might
@@ -28,6 +37,10 @@
   import { live, screenBlack, rehearsing } from '../../stores/capture.js';
   import { listMedia, deleteMedia, fireMedia, localIp, readErrors } from '../../stores/capture.js';
   import VerseDeck from './VerseDeck.svelte';
+  // The card's second line, and the reason there is no caption column, both
+  // live in the register beside `countWords` — pure, so they can be asserted
+  // without mounting a pane that needs a backend to list anything.
+  import { mediaSub } from './collections.js';
 
   export let query = '';
   /**
@@ -193,6 +206,7 @@
     media: m.kind !== 'document' && !missing[m.id] ? url(m) : null,
     mediaKind: m.kind,
     icon: missing[m.id] ? 'MISSING' : m.kind === 'document' ? ext(m) : null,
+    sub: mediaSub(m),
   }));
   $: queuedRefs = new Set(queue.map((q) => q.reference));
   $: liveDeckRef = deck.find((d) => isLive({ id: d.id }, liveUrl))?.reference ?? null;

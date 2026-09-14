@@ -246,6 +246,11 @@
     reference: `${song?.title ?? ''} · ${s.label}`,
     label: s.label,
     text: s.lyrics,
+    // The card's second line is the WORDS. The footer already names the song and
+    // the section (the reference above is `Song · Section`), so what a lyric card
+    // could not say was which lines it holds — and the thumbnail says it only at
+    // whatever size the template fitted into a 268px box.
+    sub: s.lyrics,
     translation: null,
     // THE KEY GOES ON THE FIRST PART ONLY. A section that reflowed into three
     // slides has one key, and it sends the section — so printing it on all three

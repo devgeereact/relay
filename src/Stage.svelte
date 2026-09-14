@@ -531,9 +531,22 @@
   .rail { flex: 0 0 26%; max-width: 26%; min-width: 0; min-height: 0; overflow: hidden;
     container-type: size; display: flex; flex-direction: column;
     border-left: 1px solid rgba(255,255,255,.08); background: rgba(255,255,255,.02); }
+  /* A FIGURE ON THIS RAIL WEARS NO PROMISE COLOUR. The clock, the elapsed time
+     and the countdown were all `--v-amber`, and amber on this console means ON
+     AIR and nothing else (rule 18, DECISIONS §21, `colourlaw.test.js`). Driven
+     against the real backend, `stage.html` rendered "— standby —" with an amber
+     clock beside it: the ON AIR colour, at the largest size on the page, over a
+     page with nothing on air. It is not a template's saved default and no
+     operator chose it — this page renders no template at all, so the colour was
+     a stylesheet literal and nothing else.
+     NOT the prototype's `--stg-mc` cyan either: cyan on this console promises A
+     GUESS, and swapping one promise for another is the same defect in a
+     different hue. A clock is a fact about time, so it takes the page's own ink.
+     `--v-txt` is also BRIGHTER than amber on `--v-void`, so the figure a
+     preacher reads from a platform did not get quieter. */
   .railrow { flex: 1 1 0; min-height: 0; overflow: hidden; display: grid; place-items: center;
     font-family: var(--f-mono); font-variant-numeric: tabular-nums; font-weight: 700;
-    color: var(--v-amber); line-height: 1; letter-spacing: .01em;
+    color: var(--v-txt); line-height: 1; letter-spacing: .01em;
     /* A share of the rail in BOTH axes: wide enough to fill it, never taller than
        its own share of the stack. `--rows` counts the rows actually switched on and
        `--ch` how many characters this row holds.
@@ -566,8 +579,9 @@
   .fig + .fig { border-left: 1px solid rgba(255,255,255,.06); }
   .figk { font-family: var(--f-mono); font-size: 9px; font-weight: 700; letter-spacing: .16em;
     text-transform: uppercase; color: var(--v-faint); }
+  /* The bottom row is the same three figures in the other layout. Same rule. */
   .fig .figv { font-family: var(--f-mono); font-variant-numeric: tabular-nums; font-weight: 700;
-    color: var(--v-amber); line-height: 1;
+    color: var(--v-txt); line-height: 1;
     /* Same rule as the rail: the width a figure may take is its share of the row
        divided by the characters it actually has. */
     font-size: min(
