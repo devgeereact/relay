@@ -51,7 +51,7 @@
   export let theme = null;
   import { applyTheme, themeById, templateThemeRef, BUILTIN_THEMES } from './themes.js';
   import { resolveStyle, slideBG, faceOf, fitScale, keepShrinking, FIT_STEP } from './templatemodel.js';
-  import { transitionCss, transitionDuration, DEFAULT_TRANSITION } from './transitions.js';
+  import { transitionCss, transitionDuration, resolveTransition, isOverride, liveTransition } from './transitions.js';
   import { builtinById } from './templates.js';
   // Sound is OPT-IN per surface. This same renderer draws the Templates editor
   // preview, and editing a template must not blast video audio across the room —
@@ -724,8 +724,21 @@
   // padding or font-size would bring the old bug straight back.
   //
   // Reduced motion is a CUT, not a faster animation: the viewer asked for none.
-  $: transitionMode = style.transition || DEFAULT_TRANSITION;
-  $: transitionMs = transitionDuration(transitionMode, style.transitionMs, reduceMotion);
+  //
+  // TWO AUTHORITIES, ONE RANKING (DECISIONS §83). The operator's live override
+  // outranks the template; `resolveTransition` is the only place that is decided,
+  // so the console preview and the wall cannot disagree about it.
+  //
+  // The override is read from the store by DEFAULT, which is what gives every
+  // console surface the picker with no per-surface wiring — the same arrangement
+  // themes use. `Output.svelte` passes the prop explicitly instead, because a
+  // congregation screen must apply an override only when CONTENT arrives: see the
+  // snapshot comment there.
+  export let transitionOverride = undefined;
+  $: activeOverride = transitionOverride === undefined ? $liveTransition : transitionOverride;
+  $: resolvedTransition = resolveTransition(style, activeOverride);
+  $: transitionMode = resolvedTransition.mode;
+  $: transitionMs = transitionDuration(resolvedTransition.mode, resolvedTransition.ms, reduceMotion);
   const reduceMotion =
     typeof window !== 'undefined' && typeof window.matchMedia === 'function'
       ? window.matchMedia('(prefers-reduced-motion: reduce)').matches
@@ -791,7 +804,18 @@
   // Re-key on the actual content so a new slide crossfades but identical content
   // (a re-broadcast of the same verse) does not re-animate. Countdown ticks are
   // deliberately excluded — only a NEW countdown target re-keys.
-  $: slideKey = `${content?.reference ?? ''}|${content?.text ?? ''}|${content?.media_url ?? ''}|${countdownTo ?? ''}`;
+  //
+  // THE OVERRIDE IS PART OF THE KEY, and the template's own transition is NOT.
+  // "Choosing one replays it on the programme at once" (docs/REBRAND.md §8) is the
+  // half of this control that stops it reading as dead — the prototype repaints its
+  // program frame on every pick for exactly that reason. Keying on the override
+  // gives that for free on any surface that follows the store.
+  //
+  // The RESOLVED mode is deliberately not in the key: a live template edit pushes a
+  // new `template` frame to every screen, and keying on it would make every such
+  // edit re-animate a verse that is already up on the wall.
+  $: overrideKey = isOverride(activeOverride) ? `${activeOverride.mode}|${activeOverride.ms ?? ''}` : '';
+  $: slideKey = `${content?.reference ?? ''}|${content?.text ?? ''}|${content?.media_url ?? ''}|${countdownTo ?? ''}|${overrideKey}`;
 
   // A wall clock for clock-bound layers — ticks once a second only when needed.
   let clockNow = 0;

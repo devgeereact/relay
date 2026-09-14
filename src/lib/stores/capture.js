@@ -49,6 +49,9 @@ import { markTranscript } from '../latency.js';
 // (docs/REBRAND.md §7). The console reads it through the same function the wall and
 // the stage page do, so a held countdown cannot go on ticking on one of the three.
 import { countdownRemainingMs, countdownIsPaused } from '../countdown.js';
+// X1 · the transition override's store lives beside its register — see the block
+// further down for why it is not declared in this file.
+import { liveTransition } from '../transitions.js';
 
 /**
  * The audio meter — RMS level + voice-activity, arriving 10–50 times a second.
@@ -1746,6 +1749,45 @@ async function persistThemes(list) {
     /* no hub / no clients — the blob is saved; kiosks get it on next connect */
   }
 }
+
+// ══ X1 · THE TRANSITION CONTROL (docs/REBRAND.md §8 · DECISIONS §83) ═══════════
+// One block, deliberately self-contained: this file is being edited by more than
+// one agent this wave, so an integrator can move these lines whole.
+//
+// GROUP 1 — THROWS. A congregation CAN see the difference: an operator who asked
+// for a cut and got an 800 ms crossfade is watching something they turned off.
+// The caller (the chrome picker in `App.svelte`) catches and puts the control back
+// where it was, so a failed change is visible as the picker refusing to move
+// rather than as a preference that quietly did not take.
+//
+// The STORE is `liveTransition` in `lib/transitions.js`, not here, and that is not
+// a drift from the one-store rule: `TemplateRender` reads it and also renders
+// `output.html`, which is served to a browser source with no backend. Importing
+// this module there would put the whole command surface on a congregation screen.
+// The bridge stays here; the value sits beside the register that defines it.
+export async function setLiveTransition(mode, ms) {
+  const call = await invoke();
+  await call('set_live_transition', { mode: mode ?? null, ms: ms ?? null });
+  liveTransition.set(mode ? { mode, ms } : null);
+}
+
+/**
+ * What override the BACKEND says is in force. The console can reload mid-service;
+ * the screens do not.
+ *
+ * GROUP 2, through `guardedRead` — and the guard is the point, not the swallow.
+ * A bare `catch` here would make "nobody has overridden anything" and "I could not
+ * ask" the same answer, and the second one is the state in which this picker would
+ * read `Follow template` over a building full of crossfading screens (rule 35).
+ * `readErrors.liveTransition` carries the reason, the way every other read does.
+ */
+export async function loadLiveTransition() {
+  const cur = await guardedRead('liveTransition', (call) => call('live_transition'), null);
+  liveTransition.set(
+    Array.isArray(cur) && cur[0] ? { mode: cur[0], ms: cur[1] ?? undefined } : null,
+  );
+}
+// ══ end X1 block ══════════════════════════════════════════════════════════════
 
 /**
  * Insert or update a custom theme; returns its id. A theme with no id (or a
