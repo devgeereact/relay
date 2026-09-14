@@ -235,9 +235,9 @@ gates in the phases section are green on it — `cargo test`, `npx vitest run`, 
 | 2* | Workspace grammar (§2 — **no phase number in the brief**) | **partly done** | the sidebar became a 34px chrome bar with the workspaces in it, the footer became a 26px status bar, a dock row (audio · transcript · quick tools · controls) lives in the SHELL, and the studio split is two equal monitors either side of a 118px take column. **Slide grid and single-click-to-air not built** |
 | 1 | Tokens and chrome | **done** | palette, radius, type scale, one slider / switch / colour well, the four control colours. `tokencontrast.test.js` 7 green, `rangefill.test.js` 9 new, suite 974 |
 | 2 | Template model | **done** | `templatemodel.js` (migrate · resolve · slideBG · fit estimate), migration on three doors, the renderer reads the model. 34 + 6 new tests, suite 1014 |
-| 3 | The object inspector | **done** | object tab strip (wrapping), Position group with real numbers, Duplicate (deep copy), Reset this object, two-step Delete. `layerops.test.js` 14, `templateinspector.test.js` 3, suite 1032 |
+| 3 | The object inspector | **done** | object tab strip (measured: 17 objects wrap onto 8 rows, none past the edge, nothing behind a scrollbar), ONE Position group with real numbers, Duplicate (a deep copy that is now load-bearing), Reset this object, two-step Delete. `layerops.test.js` 14, `templateinspector.test.js` 3, `band.test.js` 24 |
 | 4 | Roles and the look register | **done** | a screen may follow the content look (DECISIONS §70), "Used for" on the template, a tag on each gallery card. `e2e::r4_a_screen_may_follow_the_content_look`, suite 1034 / cargo 668 |
-| 5 | Lower thirds | **partly done** | three starters (Name · Lyric · Scripture), each keyed, each its own template. A non-hex shape fill no longer paints black. `layers.test.js` +6, `templatestyle.test.js` +3, suite 1043. **Band-gives-ground not built** |
+| 5 | Lower thirds | **done** | three starters (Name · Lyric · Scripture), each keyed, each its own template. A non-hex shape fill no longer paints black. The band is now a real `band` layer running to the bottom edge, naming the words inside it (`members`), and **giving ground** before they shrink. `band.test.js` 24, measured in the browser. DECISIONS §75 |
 | 6 | Stage monitor | **partly done** | a word to the preacher (new `stage_alert` hub message, stage-only by contract), the reading can no longer push the clock off the top. `e2e::r5_a_word_to_the_preacher_reaches_the_stage_and_not_a_rehearsal`, cargo 669, suite 1043. **Switchable zones and the stacked rail clock not built** |
 | 7 | Countdown | **partly done** | one formatter (`formatCountdown`), one warning rule, read by the wall and the stage. `layers.test.js` +8, `templatestyle.test.js` +2, suite 1053. **Pause / ±1 / Reset not built** |
 | 8 | Transitions | **done** | seven in one register (`transitions.js`), played by the renderer, migrated from the three old names, reduced motion is a cut. DECISIONS §71. `transitions.test.js` 15 + 6 elsewhere, suite 1072 |
@@ -285,16 +285,36 @@ The spec's remaining five (`preservice`, `stage`, `lower.name`, `lower.lyric`, `
 offered before its renderer exists is a control that saves a setting nothing reads, which is the
 defect this phase just closed.
 
-**Phase 5 is the first phase left deliberately incomplete, and the reason is the model.**
-"The band gives ground before the words do" means a shape grows when a text layer beside it needs
-room. In this repository a template is a flat list of independently placed objects: there is no
-parent, no child and no "these two belong together". The only way to build it now would be a rule
-that fires when a shape happens to be named `Band` — a hidden coupling that applies to some
-templates and not others, which is the shape of every bug CLAUDE.md's non-negotiables warn about.
-Phases 6 and 12 (zones, and a composite's regions) want the same missing concept, so it is worth
-designing once, for all three, rather than bolting onto one starter. The three bands ship without
-it: type shrinks, as it does everywhere else, and rule 37's floor still reports when it goes too
-far.
+**Phase 5 was left deliberately incomplete, and W4 built the concept it was waiting for.**
+The reason it was deferred stands as written: "the band gives ground before the words do" means a
+shape grows when a text layer beside it needs room, and in this repository a template is a flat
+list of independently placed objects with no parent, no child and no "these two belong together".
+The shortcut it refused — a rule that fires when a shape happens to be *named* `Band` — was the
+right thing to refuse.
+
+What W4 added is the missing relationship, declared rather than inferred: a `band` layer type
+whose `members` array names the ids of the objects inside it. It is in the saved file, it survives
+a rename, an object in no band is in no band, and every template that never opted in is untouched
+by the whole mechanism. The band is then a real element (§4): it runs from `top` to the BOTTOM
+edge, inset by the side safe area, with the baseline lift as bottom padding and its words centred
+in what is left — measured in a browser as equal gaps above and below, not asserted. It climbs by
+at most 16 points, never past a third of the frame, and only while the type would otherwise fall
+below 78% of its designed size; a short name at the same setting does not move it.
+
+A member is **not** drawn inside the band element. The band computes the boxes and the words are
+drawn by the one text path every other layer uses, because two text paths is how a shadow, a
+transform or a fit fix lands on one kind of layer and not the other. The editor's canvas reads the
+same derived geometry through `drawBoxes`, so a selection handle cannot sit where the words are
+not. Zones (phase 6) and a composite's regions (phase 12) can use the same shape; nothing here
+assumes a lower third.
+
+**One thing the new list broke and the tests caught**: `duplicateLayer`'s deep copy had never
+actually mattered — no layer property was an object or an array, so a shallow spread would have
+behaved identically. `members` is the first one that is, and `structuredClone` alone is exactly
+wrong for it: it copies the ids faithfully, so the duplicate points at the ORIGINAL's words. Both
+bands would lay the same two objects out and editing either would move the other's type. Deleting
+a word now tells its band, too, or the band keeps a dead id in its saved JSON for ever while
+rendering perfectly.
 
 **The opacity defect the spec names is not this repository's.** The prototype capped a band's
 alpha at 0.9×; nothing here does — `hexA` applies the alpha exactly. What IS here is worse and

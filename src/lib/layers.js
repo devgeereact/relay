@@ -16,7 +16,7 @@
 // operator types. Binding is what makes a layer template render live scripture
 // rather than lorem ipsum.
 
-import { migrateStyle, STYLE_DEFAULTS } from './templatemodel.js';
+import { migrateStyle, STYLE_DEFAULTS, bandLayout, faceOf } from './templatemodel.js';
 
 let _seq = 0;
 /** A stable-ish unique id. Not crypto — just needs to be unique within a template. */
@@ -47,6 +47,7 @@ export const BINDINGS = [
 
 export const LAYER_TYPES = [
   { type: 'text', label: 'Text', icon: 'T' },
+  { type: 'band', label: 'Band (lower third)', icon: '▬' },
   { type: 'region', label: 'Slide region (composite)', icon: '▣' },
   { type: 'media', label: 'Media (image / video)', icon: '▷' },
   { type: 'shape', label: 'Shape', icon: '▢' },
@@ -115,6 +116,30 @@ export function makeLayer(type, over = {}) {
         fill: '#101319',
         opacity: 0.82,
         radius: 1.2,
+      };
+      break;
+    case 'band':
+      // A LOWER-THIRD BAND (docs/REBRAND.md §4). Not a shape with a helpful name:
+      // it runs from `top` to the BOTTOM edge, is inset by the side safe area,
+      // lifts its words off the baseline, and — the part no shape can do — it
+      // NAMES the objects that live inside it, so it can give them ground before
+      // they have to shrink. See `bandFit` in templatemodel.js for why that list
+      // is declared rather than guessed at.
+      spec = {
+        name: 'Band',
+        // x/y/w/h are derived from top/side (see `bandBox`) and kept in step so
+        // anything that still reads a plain box — a thumbnail, an exporter — gets
+        // the truth rather than the default 10/10/80/30.
+        x: 6, y: 74, w: 88, h: 26,
+        top: 74,
+        side: 6,
+        pad: 3,
+        lift: 3,
+        grow: 16,
+        members: [],
+        fill: '#101319',
+        opacity: 0.9,
+        radius: 1,
       };
       break;
     case 'timer':
@@ -354,7 +379,80 @@ export function layerLabel(layer) {
   }
   if (layer.type === 'background') return 'Background';
   if (layer.type === 'media') return 'Media';
+  if (layer.type === 'band') return 'Band';
+  if (layer.type === 'region') return 'Slide region';
   return 'Shape';
+}
+
+/**
+ * ══ WHAT A BAND CONTAINS ══
+ *
+ * One reader for `members`, so nothing anywhere has to know that it is an array
+ * of ids that might hold a stale one. A band whose member was deleted names a
+ * layer that is not there; every one of these skips it rather than rendering a
+ * hole or throwing.
+ */
+
+/** The band (if any) that owns this layer. */
+export function bandOf(layers, id) {
+  if (!id) return null;
+  return (Array.isArray(layers) ? layers : []).find(
+    (L) => L && L.type === 'band' && Array.isArray(L.members) && L.members.includes(id),
+  ) || null;
+}
+
+/** Is this layer inside some band? Members are drawn by their band, not by the stack. */
+export function isBandMember(layers, id) {
+  return !!bandOf(layers, id);
+}
+
+/** A band's members, in the order the band names them, skipping any that are gone. */
+export function bandMembers(layers, band) {
+  const list = Array.isArray(layers) ? layers : [];
+  const ids = Array.isArray(band?.members) ? band.members : [];
+  return ids.map((id) => list.find((L) => L && L.id === id)).filter(Boolean);
+}
+
+/**
+ * Every layer that is not somebody's member — what the renderer and the canvas
+ * draw at the top level. A member is drawn by its band, so drawing it here too
+ * would paint it twice, once in the wrong place.
+ */
+export function topLevelLayers(layers) {
+  const list = Array.isArray(layers) ? layers : [];
+  return list.filter((L) => L && !isBandMember(list, L.id));
+}
+
+/**
+ * WHERE EACH OBJECT IS ACTUALLY DRAWN, for every object whose drawn box is not
+ * the box it stores — today that is a band and its words.
+ *
+ * ONE HOME, because there are two surfaces that must agree about this and they
+ * are not the same code: `TemplateRender` paints the wall, and the editor's
+ * canvas draws a selection handle over it. When those two disagree the handle
+ * sits somewhere the words are not, which reads as a broken editor and is the
+ * WYSIWYG guarantee (`TemplateRender` is THE one renderer) failing one layer
+ * above the renderer.
+ *
+ * @param textOf  what each member currently says — a band's growth depends on
+ *                the words in it, so the boxes depend on the content on screen.
+ * @returns a Map of layer id → `{ x, y, w, h }`. A layer that is not in it draws
+ *          at its own stored box.
+ */
+export function drawBoxes(layers, textOf = () => '') {
+  const list = Array.isArray(layers) ? layers : [];
+  const out = new Map();
+  for (const L of list) {
+    if (!L || L.type !== 'band') continue;
+    const mem = bandMembers(list, L);
+    const lay = bandLayout({
+      band: L,
+      members: mem.map((m) => ({ text: textOf(m), size: m.size, face: faceOf(m.font), h: m.h })),
+    });
+    out.set(L.id, lay.box);
+    mem.forEach((m, i) => out.set(m.id, lay.members[i]));
+  }
+  return out;
 }
 
 // ── Starting-point templates (the "new template" chooser) ──────────────────
@@ -388,19 +486,28 @@ function fullScreen() {
 // makes "editing one touches no other" a property of the model instead of a
 // thing to remember.
 
-/** The band itself, at the one geometry all three share. */
-const band = () =>
-  makeLayer('shape', { name: 'Band', x: 6, y: 74, w: 88, h: 18, fill: '#101319', opacity: 0.9, radius: 1 });
+/** The band itself, at the one geometry all three share, holding the words that
+ *  were built for it.
+ *
+ *  MEMBERSHIP IS SET HERE, ONCE, AT BUILD TIME. A starter is the only place that
+ *  knows which words belong to which band, so it says so — and every later
+ *  reader (the renderer, the fit, duplicate, delete) works off that list rather
+ *  than off a name, a z-order or a bounding box. `bandWith` keeps the two halves
+ *  from drifting: it cannot return a band whose members are not the layers
+ *  beside it. */
+const bandWith = (...members) => {
+  const b = makeLayer('band');
+  return [{ ...b, members: members.map((m) => m.id) }, ...members];
+};
 
 /** NAME: who is speaking, and what they are. The name is the large line. */
 function lowerName() {
   return {
     layout: {
-      layers: [
-        band(),
+      layers: bandWith(
         makeLayer('text', { name: 'Name', bind: 'verse', x: 9, y: 76, w: 82, h: 10, size: 3.2, color: '#f2f4f8', align: 'left', valign: 'middle', shadow: 0 }),
         makeLayer('text', { name: 'Role', bind: 'reference', x: 9, y: 86, w: 82, h: 5, size: 1.4, color: '#9db4ff', align: 'left', transform: 'uppercase', letterSpacing: 0.1 }),
-      ],
+      ),
       align: 'left',
     },
     style: {},
@@ -413,10 +520,9 @@ function lowerName() {
 function lowerLyric() {
   return {
     layout: {
-      layers: [
-        band(),
+      layers: bandWith(
         makeLayer('text', { name: 'Words', bind: 'verse', x: 9, y: 75, w: 82, h: 16, size: 3, color: '#f2f4f8', align: 'left', valign: 'middle', shadow: 0 }),
-      ],
+      ),
       align: 'left',
     },
     style: {},
@@ -428,11 +534,10 @@ function lowerLyric() {
 function lowerBible() {
   return {
     layout: {
-      layers: [
-        band(),
+      layers: bandWith(
         makeLayer('text', { name: 'Verse', bind: 'verse', x: 9, y: 76, w: 82, h: 10, size: 2.6, color: '#f2f4f8', align: 'left', valign: 'middle', shadow: 0 }),
         makeLayer('text', { name: 'Reference', bind: 'reference', x: 9, y: 86, w: 82, h: 5, size: 1.5, color: '#9db4ff', align: 'right', transform: 'uppercase', letterSpacing: 0.08 }),
-      ],
+      ),
       align: 'left',
     },
     style: {},

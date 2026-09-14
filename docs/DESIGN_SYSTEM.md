@@ -272,9 +272,14 @@ read *"the screens may still be live"* is motion for its own sake.
     inputs and selects on ONE edge at both 1280 and 900. The Template inspector's rows are flush
     with each other but their controls are not, because `.te-rangerow` and `.te-swatch` place a
     value readout after the control — deliberate, per §11's "a name and a value". The one that
-    drifts is `.te-swatch`: the 38px well is pinned to the LEFT of that pair, so it ends 158px
-    short of the column at 1280 and 730px short at 900. That is a row-layout decision in
-    `TemplateEditor.svelte`, not a token, and it is recorded here rather than fixed here.
+    drifted was `.te-swatch`: the 38px well is pinned to the LEFT of that pair, so with nothing
+    flexible between them the pair packed left and the row's CONTENT ended 158px short of the
+    column at 1280 and 730px short at 900. (The box always spanned the column — what was short
+    was everything in it, which is why it read as a ragged column rather than as a broken
+    control.) **Fixed in `TemplateEditor.svelte` by W4**: `justify-content: space-between` puts
+    the hex readout on the row's right edge, the same shape `.te-rangerow` and `.te-swrow`
+    already keep. Re-measured in the browser at 1280: the swatch row's content reaches 1251,
+    level with the range rows — 0px short, against 158px before.
 - **Every modal surface traps focus and restores it on close** (`src/lib/focus.js`,
   `use:trapFocus`). This line used to say *five*; it is ten now and will be wrong again, so
   count rather than trust it: `grep -rl trapFocus src | grep -c svelte`. Note that grepping for

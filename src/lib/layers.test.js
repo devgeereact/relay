@@ -39,7 +39,9 @@ describe('layer model', () => {
       for (const L of t.layout.layers) {
         // `region` is the composite's slide region (§6) — a layer like any
         // other, with geometry, that happens to render a template inside itself.
-        expect(['text', 'media', 'shape', 'background', 'region']).toContain(L.type);
+        // `band` is the lower third's own element (§4): it too has geometry, and
+        // it additionally NAMES the words that sit inside it.
+        expect(['text', 'media', 'shape', 'background', 'region', 'band']).toContain(L.type);
         expect(typeof L.x).toBe('number');
       }
     }

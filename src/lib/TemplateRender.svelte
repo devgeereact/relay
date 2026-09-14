@@ -33,7 +33,7 @@
   // template scales identically whether the container is a full screen or a
   // small preview box.
   import { afterUpdate, onMount, onDestroy } from 'svelte';
-  import { isLayered, boundValue, templateShows, formatElapsed, formatRemaining, formatCountdown, countdownWarning } from './layers.js';
+  import { isLayered, boundValue, templateShows, formatElapsed, formatRemaining, formatCountdown, countdownWarning, topLevelLayers, drawBoxes } from './layers.js';
   import { applySink, getAudioOutput, onAudioOutputChange } from './audioOutput.js';
 
   export let template = {};
@@ -829,7 +829,26 @@
     void clockText;
     void elapsedText;
     void remainingText;
-    return layers.map((L) => ({ L, text: layerText(L) }));
+    // A BAND DECIDES WHERE ITS WORDS GO; it does not draw them (docs/REBRAND.md
+    // §4, `bandLayout`). Members are emitted into this same list with a derived
+    // box, so every text layer on a wall — inside a band or not — goes through
+    // ONE path below: one fit, one shadow rule, one transform, one `{#key}`.
+    // They are skipped where they sit in the stack, because their band draws
+    // them in the order it names them.
+    const boxes = drawBoxes(layers, layerText);
+    const out = [];
+    for (const L of topLevelLayers(layers)) {
+      out.push({ L, text: layerText(L), box: boxes.get(L.id) });
+      if (L.type !== 'band') continue;
+      // The band's words, in the order the band names them, each at the box the
+      // band just computed for it — and then through the SAME text branch below
+      // as every other text layer.
+      for (const id of Array.isArray(L.members) ? L.members : []) {
+        const m = layers.find((x) => x && x.id === id);
+        if (m) out.push({ L: m, text: layerText(m), box: boxes.get(m.id) });
+      }
+    }
+    return out;
   })();
 
   // Per-text-layer auto-fit. Each layer's text is sized to BEST FIT its own box —
@@ -886,7 +905,7 @@
          so each screen opts into (or out of) media and controls what sits over or
          under it. A lower third with no media layer never shows the picture; a
          full-screen template with a media layer on top lets the picture fill it. -->
-    {#each layerViews as { L, text } (L.id)}
+    {#each layerViews as { L, text, box } (L.id)}
       {#if L.visible !== false}
         {#if L.type === 'background'}
           <div class="lbg" style="{boxStyle(L)} background:{bgPaint(L)}; opacity:{L.opacity == null ? 1 : L.opacity};"></div>
@@ -907,6 +926,13 @@
           {/if}
         {:else if L.type === 'shape'}
           <div class="lshape" style="{boxStyle(L)} {shapePaint(L)} border-radius:{L.radius || 0}cqw;"></div>
+        {:else if L.type === 'band'}
+          <!-- THE BAND (docs/REBRAND.md §4): a real element running from its own
+               `top` to the bottom edge, inset by the side safe area. Its words are
+               NOT its children — they are emitted beside it with boxes this band
+               computed, so they take the one text path below. Its alpha is applied
+               exactly (`shapePaint`); it has never been scaled by 0.9 here. -->
+          <div class="lband" style="{boxStyle(box || L)} {shapePaint(L)} border-radius:{L.radius || 0}cqw;"></div>
         {:else if L.type === 'region'}
           <!-- A REAL RENDERED SLIDE, inside its own container (docs/REBRAND.md §6).
                `container-type: inline-size` is the feature: cqw inside this box is
@@ -930,7 +956,7 @@
           <!-- Verse/reference/translation layers are hidden during a default
                countdown (they carry no content then); a static or clock layer
                still shows. -->
-          <div class="ltext" style="{boxStyle(L)} align-items:{vAlign(L.valign)};">
+          <div class="ltext" style="{boxStyle(box || L)} align-items:{vAlign(L.valign)};">
             {#key text}
               <div
                 class="lfit"
@@ -1089,6 +1115,7 @@
      geometry), drawn in DOM order (back-to-front). */
   .lbg,
   .lshape,
+  .lband,
   .ltext,
   .lregion,
   .lmediabox {

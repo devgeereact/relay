@@ -321,3 +321,161 @@ export function fitScale({ text, size, face = 'serif', aspect = 16 / 9, widthPct
   while (keepShrinking({ overflowing: overflowsAt(scale), scale })) scale *= FIT_STEP;
   return scale;
 }
+
+/**
+ * ══ THE BAND, AND THE GROUND IT GIVES ══ (docs/REBRAND.md §4)
+ *
+ * A lower-third band is a real element that runs from `top%` to the BOTTOM of
+ * the frame, inset by the side safe area, with the baseline lift as its bottom
+ * padding and its content centred in what is left. Its children are named by
+ * the band itself (`members`), which is the part that matters:
+ *
+ * WHY MEMBERSHIP IS DECLARED AND NOT INFERRED. "The band gives ground before
+ * the words do" needs a band to know which words are its own. The cheap way to
+ * get that is to look at the objects near it, or to fire the rule when a shape
+ * is called `Band` — a coupling that is invisible in the data, applies to some
+ * templates and not others, and breaks the moment somebody renames an object.
+ * `members` is an explicit list of ids on the band: it is in the file, it
+ * survives a rename, an object that is in no band is in no band, and the rule
+ * is off for every template that never opted in. That is the concept phase 5
+ * was waiting for, and it costs one array.
+ *
+ * THE RULE, exactly as §4 states it: the band grows UPWARD by at most
+ * `BAND_GROW_MAX` points, never past `BAND_MAX_SHARE` of the frame, and only
+ * for as long as the type would otherwise be smaller than `BAND_TYPE_FLOOR` of
+ * the size its designer asked for. A short name needs no shrinking at all, so
+ * the loop never runs and the band does not move — which is the half of the
+ * rule that is easy to lose, because a band that grows for everything is a band
+ * that has simply been redesigned taller.
+ */
+export const BAND_GROW_MAX = 16;
+export const BAND_MAX_SHARE = 1 / 3;
+export const BAND_TYPE_FLOOR = 0.78;
+
+/**
+ * A band's geometry, in percent of the frame. `top` runs to the bottom edge, so
+ * the height follows from it; `side` is taken off BOTH edges and `pad` is the
+ * inner gutter between the band and its words.
+ *
+ * Exported because the renderer draws from it and the estimator measures from
+ * it, and a band whose drawn width and measured width disagree is rule 42 in a
+ * different costume — a fit against a box that is not the box.
+ */
+export function bandBox(band) {
+  const b = band || {};
+  const top = Math.max(0, Math.min(100, num(b.top, 74)));
+  const side = Math.max(0, Math.min(49, num(b.side, 6)));
+  const pad = Math.max(0, num(b.pad, 3));
+  const lift = Math.max(0, num(b.lift, 3));
+  return { top, side, pad, lift, height: 100 - top, textWidth: 100 - 2 * side - 2 * pad };
+}
+
+/**
+ * How far up this band has to climb for its words, and what that does to the
+ * room each of them gets.
+ *
+ * `members` are `{ text, size, face, h }` — `h` being the share of the FRAME's
+ * height that member's box was designed to take, which is how the three
+ * starters are written and what keeps a band that does not grow pixel-identical
+ * to the one that shipped.
+ *
+ * Returns `{ top, scale }`: where the band now starts, and the factor its
+ * members' boxes grew by. `scale` is 1 whenever the band did not move, so the
+ * no-growth path is arithmetically a no-op rather than a rounded-off
+ * approximation of one.
+ *
+ * The estimate seeds the DOM, it does not replace it: `TemplateRender` still
+ * MEASURES the type inside whatever box this produces (CLAUDE.md rule 37 and
+ * rule 42 are both untouched). What this decides is the size of the box.
+ */
+export function bandFit({ band, members = [], aspect = 16 / 9, grow } = {}) {
+  const box = bandBox(band);
+  // HOW FAR IT MAY CLIMB IS THE BAND'S OWN PROPERTY, read here and nowhere else.
+  // It was a parameter with a constant default, which meant a caller that did not
+  // pass it silently overrode the band — a second home for `grow`, and the shape
+  // of the defect this whole model exists to prevent (one property, one home).
+  const climb = Math.max(0, num(grow, num(band?.grow, BAND_GROW_MAX)));
+  const designed = box.height - box.lift;
+  const list = (Array.isArray(members) ? members : []).filter(Boolean);
+  if (designed <= 0 || !list.length) return { top: box.top, scale: 1 };
+
+  // The worst member decides, because the band is one box: giving ground for the
+  // line that fits and not for the one that does not would shrink exactly the
+  // words the rule exists to protect.
+  const worstAt = (scale) =>
+    list.reduce((worst, m) => {
+      const s = fitScale({
+        text: m.text,
+        size: m.size,
+        face: m.face,
+        aspect,
+        widthPct: box.textWidth,
+        heightPct: Math.max(0.01, num(m.h, 0) * scale),
+      });
+      return Math.min(worst, s);
+    }, 1);
+
+  // A band may not climb past a third of the frame, and may not climb past the
+  // points it was allowed. Both are floors on `top`, so the tighter one wins.
+  const byGrow = box.top - climb;
+  const byShare = 100 - 100 * BAND_MAX_SHARE;
+  const limit = Math.max(byGrow, byShare, 0);
+
+  let top = box.top;
+  // A short name fits at full size, so this is already true and the band stays
+  // exactly where its designer put it.
+  while (worstAt((100 - top - box.lift) / designed) < BAND_TYPE_FLOOR && top - 1 >= limit) top -= 1;
+  return { top, scale: (100 - top - box.lift) / designed };
+}
+
+/**
+ * THE BAND AND ITS WORDS, AS BOXES.
+ *
+ * Everything the renderer needs to draw a lower third: the rectangle the band
+ * paints, and one box per member, all in percent of the frame, all derived — so
+ * there is no second copy of the band's geometry to disagree with the first.
+ *
+ * WHY THE MEMBERS ARE DERIVED AND NOT NESTED. Drawing a member inside the band
+ * element would mean a second text path in `TemplateRender.svelte`: one for a
+ * layer that is positioned and one for a layer that flows. Two text paths is how
+ * a shadow, a transform or a fit fix lands on one kind of layer and not the
+ * other, which is the shape of four bugs in this repository. A member is drawn by
+ * exactly the same code as every other text layer; the band decides WHERE.
+ *
+ * CENTRED MEANS EQUAL. The stack of members is placed so the gap above it equals
+ * the gap below it, inside the band's content box (the band, less its baseline
+ * lift). That is the property §4 measured as 7px and 7px — the pixels depend on
+ * the output's size, the equality does not.
+ *
+ * @param band    the band layer.
+ * @param members `{ text, size, face, h }` in the order the band names them; `h`
+ *                is the share of the FRAME's height that member was designed to
+ *                take.
+ * @returns `{ box, top, scale, members: [{ x, y, w, h }] }`.
+ */
+export function bandLayout({ band, members = [], aspect = 16 / 9 } = {}) {
+  const box = bandBox(band);
+  const list = (Array.isArray(members) ? members : []).filter(Boolean);
+  const { top, scale } = bandFit({ band, members: list, aspect });
+
+  const contentTop = top;
+  const contentHeight = Math.max(0, 100 - top - box.lift);
+  const heights = list.map((m) => Math.max(0, num(m.h, 0)) * scale);
+  const stack = heights.reduce((a, b) => a + b, 0);
+  // Equal above, equal below. A stack taller than the box (which the fit tries
+  // hard to prevent, and rule 37 reports when it cannot) starts at the top rather
+  // than hanging off both ends.
+  let y = contentTop + Math.max(0, contentHeight - stack) / 2;
+
+  const boxes = heights.map((h) => {
+    const b = { x: box.side + box.pad, y, w: box.textWidth, h };
+    y += h;
+    return b;
+  });
+  return {
+    box: { x: box.side, y: top, w: 100 - 2 * box.side, h: 100 - top },
+    top,
+    scale,
+    members: boxes,
+  };
+}
