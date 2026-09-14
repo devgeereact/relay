@@ -249,9 +249,15 @@
              the theme looks like. `fontLabel` answers with the same word the
              editor's dropdown uses; the "not pinned" case is answered here,
              because `fontLabel` returns a dash and this row may not. -->
+        <!-- TWO ROWS LEFT THIS TABLE, on DECISIONS §69's precedent. **Name**
+             printed the heading one element above it, and **Kind** printed the
+             `Built-in` badge in this pane's own head — three lines apart, on a
+             panel 312px wide, neither of them answerable from anywhere else and
+             both of them already answered. What is left is what an operator
+             cannot see by looking at the card: the typeface (through
+             `fontLabel`, never the raw `var(--f-display)`), what the ground is,
+             and the accent as a value rather than as a swatch. -->
         <div class="th-rows">
-          <div class="rw-nv"><span class="rw-nvk">Name</span><span class="rw-nvv">{sel.name}</span></div>
-          <div class="rw-nv"><span class="rw-nvk">Kind</span><span class="rw-nvv">{sel.builtin ? 'Built-in (read-only)' : 'Custom'}</span></div>
           <div class="rw-nv"><span class="rw-nvk">Typeface</span><span class="rw-nvv">{sel.style?.font ? fontLabel(sel.style.font) : 'Renderer default'}</span></div>
           <div class="rw-nv"><span class="rw-nvk">Background</span><span class="rw-nvv">{bgLabel(sel)}</span></div>
           <div class="rw-nv">

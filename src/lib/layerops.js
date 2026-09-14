@@ -141,3 +141,75 @@ export function resetLayer(layers, id) {
   }
   return [...list.slice(0, i), out, ...list.slice(i + 1)];
 }
+
+/**
+ * Move one object one step through the order that DECIDES WHAT IS DRAWN ON TOP.
+ *
+ * `dir` is +1 toward the front and -1 toward the back, which is the direction
+ * the layer list's two arrows mean.
+ *
+ * ── WHY THIS IS NOT A SWAP OF TWO ADJACENT ARRAY ENTRIES ──────────────────
+ *
+ * It was, in the editor, and a band made that a control that changes nothing.
+ * A band's words live in the same flat array as everything else and are NOT
+ * drawn from it: `topLevelLayers` skips them and the band draws them itself, in
+ * the order it names them (`members`). So swapping a shape with a word moved a
+ * word that nothing reads past, and the wall was identical. On a `lowerBible`
+ * template — a band and its two words, which is the whole template — the arrows
+ * did nothing at all, in either direction, for ever. Add a shape to it and one
+ * step back took three presses, two of which looked broken.
+ *
+ * Two orders, so two moves, decided here rather than at the button:
+ *   · a TOP-LEVEL object steps past the next top-level object, skipping any
+ *     words parked between them in the array;
+ *   · a WORD steps within its own band, which is the order the band draws it
+ *     in — and it may not step OUT of the band, because leaving a band is what
+ *     the "In band" control is for and it is not something an arrow may do by
+ *     accident.
+ *
+ * Returns the SAME list (by reference) when nothing can move, so a caller can
+ * tell "already at the end" from "moved" without comparing contents.
+ */
+export function moveLayer(layers, id, dir) {
+  const list = Array.isArray(layers) ? layers : [];
+  const step = Number(dir) > 0 ? 1 : -1;
+  if (!list.some((l) => l && l.id === id)) return list;
+
+  const band = bandOf(list, id);
+  if (band) {
+    const members = Array.isArray(band.members) ? band.members : [];
+    const at = members.indexOf(id);
+    const to = at + step;
+    if (at < 0 || to < 0 || to >= members.length) return list;
+    const next = [...members];
+    [next[at], next[to]] = [next[to], next[at]];
+    return list.map((l) => (l && l.id === band.id ? { ...l, members: next } : l));
+  }
+
+  // THE STACK, which is the list with every band's words taken out of it.
+  const stack = list.filter((l) => l && !bandOf(list, l.id));
+  const p = stack.findIndex((l) => l.id === id);
+  const q = p + step;
+  if (p < 0 || q < 0 || q >= stack.length) return list;
+  const moved = [...stack];
+  [moved[p], moved[q]] = [moved[q], moved[p]];
+
+  // Rebuilt as BLOCKS — each object, then (for a band) the words it names, in
+  // the order it names them. A band that moved would otherwise leave its words
+  // behind at the index they happened to hold: nothing would render wrongly,
+  // because a band draws its words wherever they sit, but the saved JSON would
+  // stop being readable by the next person who opens it. `seen` is belt and
+  // braces against a stale id in `members` — the one thing that list is allowed
+  // to hold (`bandMembers`).
+  const seen = new Set();
+  const out = [];
+  const push = (l) => { if (l && !seen.has(l.id)) { seen.add(l.id); out.push(l); } };
+  for (const L of moved) {
+    push(L);
+    if (L.type !== 'band') continue;
+    for (const mid of Array.isArray(L.members) ? L.members : []) {
+      push(list.find((x) => x && x.id === mid));
+    }
+  }
+  return out;
+}
