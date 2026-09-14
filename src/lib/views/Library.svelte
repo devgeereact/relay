@@ -180,10 +180,6 @@
   let activeTranslation = null;
   let book = null;
   let chapter = 1;
-  // The verse PICKER — where to look, not what to fire. Bound to the Bible pane
-  // in both directions: it offers the verses the open chapter actually has.
-  let verse = null;
-  let verseCount = 0;
   /** Favourites is the one real filter the Bible pane has. The control moved
       into that pane's own head; the state stays here so it survives a look at
       another collection and back. */
@@ -206,13 +202,6 @@
   // sub-tab change — an operator queueing verses does not expect them dropped
   // because they looked at the songs.
   let queue = [];
-
-  // A verse number means nothing once the chapter under it changed.
-  let lastPlace = '';
-  $: if (`${book}|${chapter}` !== lastPlace) {
-    lastPlace = `${book}|${chapter}`;
-    verse = null;
-  }
 
   async function pickTranslation(id) {
     const prev = activeTranslation;
@@ -692,8 +681,6 @@
             onTranslation={pickTranslation}
             bind:book
             bind:chapter
-            bind:verse
-            bind:verseCount
             bind:favouritesOnly
             {queue}
             onSelect={pick}
