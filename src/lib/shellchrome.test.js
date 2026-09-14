@@ -449,3 +449,175 @@ describe('the live-audio card shows the signal and the two decisions about it', 
     expect(meta).toContain('no model');
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// S1 · WAVE 3 — the chrome's lockup, the fourth control, and the strip's cells.
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ── §1 · THE LOCKUP IS TWO WORDS ────────────────────────────────────────────
+describe('§1 · the wordmark carries the product AND the room', () => {
+  const brand = () => APP.slice(APP.indexOf('<span class="chrome-brand">'), APP.indexOf('<nav class="ws-menu"'));
+
+  it('renders RELAY and the mono tag beside it', () => {
+    // The prototype's `.wordmark` is `<b>RELAY</b><span>studio</span>`; the app
+    // carried only the first half.
+    const b = brand();
+    expect(b).toContain('<b>RELAY</b>');
+    expect(b).toMatch(/class="chrome-tag"[^>]*>studio</);
+  });
+
+  it('the tag is decoration, not a second name', () => {
+    // Every other surface — the bundle id, the window title, every document —
+    // says Relay. A screen reader announcing "relay studio" here would be the
+    // only place in the product that disagreed.
+    expect(brand()).toMatch(/class="chrome-tag" aria-hidden="true"/);
+  });
+
+  it('and it is the first thing to give way when the bar is tight', () => {
+    // The bar's fixed inhabitants are the panic control and the screen lamps. A
+    // brand tag may never be the reason either of them moves, so it goes before
+    // the row is under pressure rather than after.
+    const css = read('src/app.css');
+    expect(css).toMatch(/@media \(max-width:1180px\)\{ \.chrome-brand \.chrome-tag\{ display:none; \} \}/);
+  });
+});
+
+// ── §1 · THE FOURTH CONTROL ─────────────────────────────────────────────────
+//
+// The card declined this for a whole wave, with a correct reason: there was no
+// honest backend fact to drive it, and a button off a frontend flag would offer
+// to end a service that had already ended (rule 35). The fact now exists.
+describe('§1 · End service is the fourth control, and it reads the service', () => {
+  const card = () =>
+    DOCK.slice(DOCK.indexOf('<div class="dbody ctlbody">'), DOCK.indexOf('</section>', DOCK.indexOf('<div class="dbody ctlbody">')));
+
+  it("four buttons, in the repository's order rather than the prototype's", () => {
+    // Clear screens FIRST and full width: the control an operator reaches for
+    // without reading belongs under the thumb (rule 15's neighbourhood). End
+    // service last — it is the only one here that is not about the next thirty
+    // seconds.
+    const order = ['Clear screens', 'Blackout', 'Rehearse', 'End service'];
+    let at = -1;
+    for (const label of order) {
+      const i = card().indexOf(label);
+      expect(i, `${label} must be in the controls card`).toBeGreaterThan(at);
+      at = i;
+    }
+  });
+
+  it('it is driven by `recording`, never by the LOCK', () => {
+    // `engaged` is armed by start_service and released by end_service, so the
+    // two agree almost always — and come apart the moment an operator lifts the
+    // lock, which is a thing the product invites them to do. A button off
+    // `engaged` would then say there is nothing to end over an open record.
+    expect(DOCK).toMatch(/\$: recording = !!\$serviceLock\.recording;/);
+    expect(card()).not.toMatch(/serviceLock\.engaged/);
+    // And Rust reads it from the session itself — the same state `end_service`
+    // clears — rather than from the lock.
+    expect(read('src-tauri/src/main.rs')).toMatch(/recording: session\.0\.lock\(\)\.is_ok_and\(\|s\| s\.is_some\(\)\)/);
+  });
+
+  it('the shell re-asks, so a service ended elsewhere reaches this button', () => {
+    // `loadServiceLock` used to run once at mount and after the two commands
+    // that change it. Library → History ends services too.
+    const poll = APP.slice(APP.indexOf('shedTimer = setInterval'), APP.indexOf('}, 5000);'));
+    expect(poll).toContain('loadServiceLock()');
+  });
+
+  it('amber is the STATE, not the button', () => {
+    // docs/REBRAND.md §1 calls it amber; CLAUDE.md rule 18 says amber IS on air
+    // and nothing else. Both hold because the only time it burns amber is the
+    // time a service really is recording.
+    const css = read('src/app.css');
+    expect(css).toMatch(/\.r-cbtn\.endsvc\[data-on="1"\]\{[^}]*--v-amber-soft/);
+    // No unconditional amber on the class itself.
+    expect(css).not.toMatch(/\.r-cbtn\.endsvc\{[^}]*amber/);
+    // And green never appears: Relay has no Go Live, and green is not in the law.
+    expect(card()).not.toContain('golive');
+  });
+});
+
+describe('the End service button says which of its two states it is in', () => {
+  let host;
+  const settle = () => new Promise((r) => setTimeout(r, 0));
+  beforeEach(() => {
+    invoke.mockReset();
+    invoke.mockImplementation(async () => null);
+  });
+  afterEach(() => {
+    host?.remove();
+    host = null;
+  });
+  async function mount() {
+    const { default: Dock } = await import('./Dock.svelte');
+    host = document.createElement('div');
+    document.body.appendChild(host);
+    new Dock({ target: host });
+    for (let i = 0; i < 4; i++) await settle();
+  }
+  const btn = () => [...host.querySelectorAll('.r-cbtn')].find((b) => /End service|No service/.test(b.textContent));
+
+  it('with nothing recording it says so and refuses to be pressed', async () => {
+    const cap = await import('./stores/capture.js');
+    cap.capture.update((s) => ({ ...s, available: true }));
+    cap.serviceLock.set({ engaged: false, held_back: [], recording: false });
+    await mount();
+    expect(btn().textContent.trim()).toBe('No service');
+    expect(btn().disabled).toBe(true);
+    expect(btn().dataset.on).toBe('0');
+    cap.capture.update((s) => ({ ...s, available: false }));
+  });
+
+  it('with a service open it offers to end it, and pressing it reaches end_service', async () => {
+    const cap = await import('./stores/capture.js');
+    cap.capture.update((s) => ({ ...s, available: true }));
+    cap.serviceLock.set({ engaged: true, held_back: [], recording: true });
+    await mount();
+    expect(btn().textContent.trim()).toBe('End service');
+    expect(btn().disabled).toBe(false);
+    expect(btn().dataset.on).toBe('1');
+    btn().click();
+    for (let i = 0; i < 4; i++) await settle();
+    expect(invoke.mock.calls.map((c) => c[0])).toContain('end_service');
+    cap.serviceLock.set({ engaged: false, held_back: [], recording: false });
+    cap.capture.update((s) => ({ ...s, available: false }));
+  });
+
+  it('a lock the operator lifted does not take the button with it', async () => {
+    // The whole reason `recording` is not `engaged`.
+    const cap = await import('./stores/capture.js');
+    cap.capture.update((s) => ({ ...s, available: true }));
+    cap.serviceLock.set({ engaged: false, held_back: [], recording: true });
+    await mount();
+    expect(btn().textContent.trim()).toBe('End service');
+    expect(btn().disabled).toBe(false);
+    cap.serviceLock.set({ engaged: false, held_back: [], recording: false });
+    cap.capture.update((s) => ({ ...s, available: false }));
+  });
+});
+
+// ── §2 · THE STATUS BAR'S CELLS, AGAINST THE PROTOTYPE'S ROW ────────────────
+describe("§2 · the strip carries the prototype's row, and says where it differs", () => {
+  const bar = () => APP.slice(APP.indexOf('<footer class="footer-v"'), APP.indexOf('</footer>'));
+
+  it("every cell the prototype has, in the prototype's order", () => {
+    // The prototype: state · On air · Latency p50 · Dropped · Model · Cadence ·
+    // push · Screens · Local offline.
+    const keys = [...bar().matchAll(/<span class="k">([^<]+)<\/span>/g)].map((m) => m[1]);
+    expect(keys.slice(0, 5)).toEqual(['On air', 'Latency p50', 'Dropped', 'Model', 'Cadence']);
+    expect(keys).toContain('Screens');
+    // …and the state sentence leads, with no key of its own, as it does there.
+    expect(bar().indexOf('{wall.words}')).toBeLessThan(bar().indexOf('On air'));
+  });
+
+  it('`LOCAL offline` is replaced by a fact, not copied as a constant', () => {
+    // The prototype's last cell is a literal. Relay has no honest equivalent —
+    // it is offline-first by design, so "offline" is not news — and the slot is
+    // worth the one thing an operator cannot otherwise see: whether the console
+    // can still reach the engine. It is re-asked on the same poll, so it detects
+    // its own recovery as well as its own failure (rule 35, both directions).
+    expect(bar()).toContain('Engine');
+    expect(bar()).not.toContain('>Local<');
+    expect(APP).toMatch(/engineOnline = await ping\(\)/);
+  });
+});

@@ -33,6 +33,8 @@
     clearScreens,
     blackScreen,
     setRehearsal,
+    serviceLock,
+    endService,
     setDetection,
     getSensitivity,
     setSensitivity,
@@ -66,6 +68,37 @@
   $: trMeta = $capture.stt?.loaded
     ? `local · ${$capture.detectedLang || $capture.stt?.language || 'auto'}`
     : 'no model';
+
+  // ── THE FOURTH CONTROL · END SERVICE (docs/REBRAND.md §1) ──────────────────
+  //
+  // "Go Live green → End service amber (it owns the on-air session)". Relay has
+  // no Go Live: a service row is opened by `startCapture`, so the pair is one
+  // button, and the half that exists is the half that closes the record.
+  //
+  // This card declined it for a whole wave, and the reason it gave was right at
+  // the time: "Relay has no honest state to drive that pair … a Go Live / End
+  // service button driven by a frontend flag would read Go Live after a console
+  // crash while the service was still open in the database". That is rule 35.
+  //
+  // It now has one. `service_lock` carries `recording`, read from the session
+  // Rust itself clears in `end_service` — not from `engaged`, which the operator
+  // can lift mid-service and which would then say there is nothing to end while
+  // the record is open (`e2e::r3_the_service_is_still_recording_after_the_operator_lifts_the_lock`).
+  // The shell re-polls it every five seconds, so a service started or ended
+  // anywhere else in the app reaches this button on its own.
+  //
+  // AMBER ONLY WHILE IT IS TRUE. §1 calls the button amber; CLAUDE.md rule 18
+  // says amber IS on air and is never allowed to mean anything else. Both are
+  // satisfied by making the colour the STATE rather than the button: amber while
+  // a service is recording, an ordinary dock button when there is nothing to
+  // end. Green — the prototype's Go Live — is not in Relay's colour law and does
+  // not appear.
+  //
+  // It reports its own outcome by not changing: `endService` swallows a backend
+  // failure (it is a history control, not a panic control, and it must never take
+  // the console down), so the proof is the next poll. If the service did not end,
+  // the button still says End service and still burns amber.
+  $: recording = !!$serviceLock.recording;
 
   let busy = false;
   let err = '';
@@ -487,28 +520,24 @@
       <span class="grip" aria-hidden="true"><i></i><i></i><i></i></span>
       <span class="dk">Controls</span>
     </div>
-    <!-- THREE CONTROLS, THREE COLOURS, NONE SHARED — because the two most
-         consequential buttons in the room used to look alike. Clear screens red
-         and full width, Blackout black with a hairline, Rehearse amethyst.
-         Detection moved one card left, to sit with the signal it is about; it was
-         never a control over what a congregation sees, which is what this card
-         is for.
+    <!-- FOUR CONTROLS, FOUR COLOURS, NONE SHARED (docs/REBRAND.md §1) — because
+         the two most consequential buttons in the room used to look alike. Clear
+         screens red and full width, Blackout black with a hairline, Rehearse
+         amethyst, End service amber while a service is recording. Detection moved
+         one card left, to sit with the signal it is about; it was never a control
+         over what a congregation sees, which is what this card is for.
 
-         NOT the same set as docs/REBRAND.md §1 and the prototype, and the
-         difference is deliberate rather than an oversight. Both have a fourth:
-         "Go Live green → End service amber (it owns the on-air session)". Relay
-         has no honest state to drive that pair. `start_service` is called from
-         `startCapture`, `end_service` only from the service history, and the
-         frontend has no way to ASK whether a service is recording —
-         `current_service` was deliberately deleted (CLAUDE.md, "No dead-but-built
-         commands"). A Go Live / End service button driven by a frontend flag
-         would read "Go Live" after a console crash while the service was still
-         open in the database: a status control that cannot detect its own
-         failure, which is rule 35 and beats the spec.
+         THE ORDER IS NOT THE PROTOTYPE'S, deliberately. It puts Go Live at the
+         top and Clear screens at the bottom; here Clear screens stays first and
+         full width. The card never scrolls either way, so nothing is out of
+         reach — but the control an operator reaches for without reading is the
+         one that belongs under the thumb, and that is the red one (rule 15's
+         neighbourhood, DECISIONS §20). End service is the only button here that
+         is not about the next thirty seconds, so it goes last.
 
          This card NEVER scrolls. The buttons stretch to fill whatever height the
-         card has, so an operator can never have to scroll to reach Clear screens
-         (rule 15's neighbourhood). -->
+         card has, so an operator can never have to scroll to reach Clear
+         screens. -->
     <div class="dbody ctlbody">
       <div class="r-ctl">
         <button class="r-cbtn danger wide" on:click={doClear} disabled={!$capture.available}>Clear screens</button>
@@ -521,6 +550,19 @@
           on:click={() => run(() => setRehearsal(!$rehearsing))}
           disabled={busy || !$capture.available}
         >{$rehearsing ? 'Rehearsing' : 'Rehearse'}</button>
+        <!-- The label is the STATE, like Blackout and Rehearse beside it. With no
+             service open it says so and is inert: "End service" over nothing to
+             end reads exactly like "End service" over a recording church, which
+             is the one thing this button may not do. -->
+        <button
+          class="r-cbtn endsvc wide"
+          data-on={recording ? '1' : '0'}
+          on:click={() => run(endService)}
+          disabled={busy || !recording || !$capture.available}
+          title={recording
+            ? 'Stop recording this service. The transcript, the fires and the timeline are kept — Library → History reads them back.'
+            : 'No service is being recorded. One starts when you start listening.'}
+        >{recording ? 'End service' : 'No service'}</button>
       </div>
     </div>
   </div>

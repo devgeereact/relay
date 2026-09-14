@@ -273,6 +273,71 @@ fn a_service_records_what_happened_and_it_survives_the_service() {
     );
 }
 
+/// S1 · THE DOCK'S "End service" BUTTON MUST READ THE SERVICE, NOT THE LOCK.
+///
+/// `docs/REBRAND.md` §1 asks the Controls card for a fourth button that "owns the
+/// on-air session". The obvious fact to drive it off was `service_lock.engaged` —
+/// it is armed by `start_service` and released by `end_service`, so the two agree
+/// almost all of the time.
+///
+/// Almost. The operator can lift the lock in one action and often will: it holds
+/// back deletions and model changes, and somebody who needs one mid-service turns
+/// it off. From that moment `engaged` is false over a service that is still
+/// recording, and a button driven by it would say there is nothing to end while
+/// the church's history is still open — CLAUDE.md rule 35, on the one control
+/// that closes the record.
+///
+/// So `service_lock` carries `recording`, read from the session itself. Watched to
+/// fail by driving it off `engaged`: the third assertion below is the one that
+/// catches it.
+#[test]
+fn r3_the_service_is_still_recording_after_the_operator_lifts_the_lock() {
+    let app = app();
+    let h = app.handle().clone();
+
+    // A fresh install: no service, and nothing for the button to end.
+    let before = service_lock(h.state::<Session>(), h.state::<servicelock::ServiceLock>());
+    assert!(!before.recording, "a fresh install is not recording");
+    assert!(!before.engaged);
+
+    start_service(
+        h.clone(),
+        h.state::<Session>(),
+        h.state::<Db>(),
+        h.state::<channels::Rehearsal>(),
+        h.state::<servicelock::ServiceLock>(),
+        "Sunday Service".into(),
+        "2026-09-14".into(),
+    )
+    .expect("start");
+    let running = service_lock(h.state::<Session>(), h.state::<servicelock::ServiceLock>());
+    assert!(running.recording, "a started service is recording");
+    assert!(running.engaged, "and starting one arms the lock");
+
+    // THE OVERRIDE. The two facts come apart here, and only one of them is the
+    // one `end_service` acts on.
+    set_service_lock(h.clone(), h.state::<servicelock::ServiceLock>(), false);
+    let lifted = service_lock(h.state::<Session>(), h.state::<servicelock::ServiceLock>());
+    assert!(!lifted.engaged, "the operator lifted the lock");
+    assert!(
+        lifted.recording,
+        "and the service is STILL recording — a button off `engaged` would now \
+         offer nothing to end while the record is open"
+    );
+
+    end_service(
+        h.clone(),
+        h.state::<Session>(),
+        h.state::<servicelock::ServiceLock>(),
+    )
+    .expect("end");
+    let after = service_lock(h.state::<Session>(), h.state::<servicelock::ServiceLock>());
+    assert!(
+        !after.recording,
+        "ending it is what makes the button go quiet"
+    );
+}
+
 /// R4-09 · the self-calibrating gate must learn from what was ACCEPTED.
 ///
 /// `confirm_detection` used to receive only the reference string, re-parse it, and

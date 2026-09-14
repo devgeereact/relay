@@ -424,6 +424,14 @@
       // value is one line per console mount (rule 26), and a poller calling it
       // would print the heartbeat every five seconds forever.
       engineOnline = await ping();
+      // …AND WHETHER A SERVICE IS STILL RECORDING. The Controls dock's End
+      // service button reads `$serviceLock.recording`, and until this line that
+      // store was only refreshed on mount and by the two commands that change it
+      // — so a service started from Settings, or ended in Library → History,
+      // left the dock offering to end a service that was already closed. A
+      // control that cannot see the state it acts on is rule 35 with a button on
+      // it. It is the same poll, and `service_lock` is two atomics and a lock.
+      loadServiceLock();
     }, 5000);
     // Did the LAST update work? Asked once, here, because the answer is only
     // knowable on the launch after one — and the person who pressed the button may
@@ -543,7 +551,17 @@
       <!-- THE LOCKUP, then the workspaces. A control room puts them across the
            top: the desk is wide, not tall, and a column of nav is height the
            slide grid does not get (docs/REBRAND.md §2). -->
-      <span class="chrome-brand"><BrandMark size="17px" /><b>RELAY</b></span>
+      <!-- THE LOCKUP IS TWO WORDS (docs/REBRAND.md §1). `RELAY` is the product and
+           `studio` is the room it is: a mono tag, a third the weight, on the
+           baseline of the wordmark rather than beside it as a second name. The
+           prototype's `.wordmark` is exactly this and the app carried only the
+           first half.
+
+           It is NOT a rename — the product, the bundle id, the window title and
+           every document still say Relay. `aria-hidden` on the tag for the same
+           reason: a screen reader announcing "relay studio" for the thing every
+           other surface calls Relay is a second name where there is one. -->
+      <span class="chrome-brand"><BrandMark size="17px" /><b>RELAY</b><span class="chrome-tag" aria-hidden="true">studio</span></span>
       <nav class="ws-menu" aria-label="Workspaces">
         {#each tabs as tab}
           <button
@@ -633,9 +651,23 @@
            the prototype puts its transition picker. A panic control lives at a
            fixed screen corner an operator can hit without reading (rule 15,
            DECISIONS §20) — that corner is the one thing in this bar that may never
-           move, so the negotiable control is the one that gives way. Nothing was
-           displaced in the end: §8\'s transition is a TEMPLATE\'s choice
-           (DECISIONS §71) and no chrome picker ships — see the review note. -->
+           move, so the negotiable control is the one that gives way.
+
+           Nothing was displaced in the end, and the reason is not that the bar
+           is full — it is that a chrome picker CANNOT REACH THE WALL from here.
+           §8\'s transition is a TEMPLATE\'s choice (DECISIONS §71) and the one
+           place it is applied is `TemplateRender.svelte`, from `style.transition`
+           on the resolved template. A congregation screen is a separate document
+           (`output.html`), and on a kiosk/OBS browser source it has no backend at
+           all — `Output.svelte` says so: "kiosk/OBS has no backend — it gets the
+           template over WS". So an operator-level override needs a frame on the
+           kiosk hub (`channels.rs`) before a picker here means anything, and a
+           picker that changed the console preview and not the wall would be a
+           control that reads the same when it is working and when it is not
+           (rule 35) — on the one surface a congregation is looking at.
+
+           The wiring is specified in the S1 review note. Until it exists, this
+           corner carries the panic control and nothing else. -->
       <button class="r-btn danger sm" on:click={clearScreens} title="Blank every output screen">Emergency Stop</button>
     </header>
 
