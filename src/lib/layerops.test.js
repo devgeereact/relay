@@ -278,8 +278,18 @@ describe('spaceEvenly', () => {
     expect(spaceEvenly(list, 'x')).toBe(list);
   });
 
-  it('never pushes an object off the frame', () => {
-    const out = spaceEvenly([at('a', 0, 4), text({ id: 'b', x: 50, w: 80, y: 0, h: 10 }), at('c', 96, 4)], 'x');
+  it('brings an object that was ALREADY off the frame back onto it', () => {
+    // AN INVARIANT, NOT A REGRESSION, and the difference is stated because the
+    // rest of this file is the other kind. Removing the clamp inside
+    // `spaceEvenly` was watched and every assertion here still passed: every
+    // target centre lies between the outermost two centres, and both of those
+    // belong to objects that are on the canvas, so an interior object can never
+    // be pushed off by the spacing itself. What the clamp is actually for is an
+    // object that arrived off the canvas — a hand-edited or imported template —
+    // and that case IS reachable, so it is the case asserted.
+    const overflowing = text({ id: 'b', x: 30, w: 80, y: 0, h: 10 });
+    expect(overflowing.x + overflowing.w).toBeGreaterThan(100);
+    const out = spaceEvenly([at('a', 0, 10), overflowing, at('c', 90, 10)], 'x');
     const moved = out.find((l) => l.id === 'b');
     expect(moved.x).toBeGreaterThanOrEqual(0);
     expect(moved.x + moved.w).toBeLessThanOrEqual(100);

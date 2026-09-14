@@ -369,14 +369,27 @@ describe('S1 · drag to reorder, driven through the arrows that already work', (
     expect(names()).toEqual(['Plate', 'Band', 'Reference', 'Verse']);
 
     // A word and a shape are in two different orders. Dropping one on the other
-    // is not a move that exists — and half-doing it (shuffling the word inside
-    // its band and stopping) is worse than refusing, because it looks like the
-    // drop worked.
-    drag('Reference', 'Plate');
+    // is not a move that exists — and HALF-doing it is worse than refusing,
+    // because it looks like the drop worked.
+    //
+    // `Verse`, not `Reference`, and the choice is the whole test. Without the
+    // context guard the loop asks `moveLayer` to walk the word toward the top of
+    // the list; a word already first in its band cannot move, so dropping
+    // `Reference` on `Plate` comes back unchanged for the wrong reason and the
+    // assertion passes over a missing guard. `Verse` is second in the band, so
+    // an unguarded drop DOES shuffle it one place — which is the half-move this
+    // is about. Watched: with the guard removed, this line reports
+    // `['Plate','Band','Verse','Reference']`.
+    drag('Verse', 'Plate');
     await settle();
     expect(names()).toEqual(['Plate', 'Band', 'Reference', 'Verse']);
   });
 
+  // AN INVARIANT, not a regression. Two separate guards hold it — `dropTarget`
+  // refuses a drop on the carried row, and `reorderTo` returns early when the
+  // start and the target index are the same — so removing either one alone was
+  // watched and this still passed. It is kept because it is the cheapest thing
+  // in the file and it fails if both ever go.
   it('a drop onto the row being dragged changes nothing', async () => {
     mount();
     await settle();
