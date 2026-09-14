@@ -26,17 +26,39 @@
   // it. Nothing here can reach an output, so a desk change costs a service
   // nothing (the rebrand's own rule: loading, switching workspace or editing a
   // template may never change what is on the programme).
+  // ── WHICH DESK, AND WHERE THAT IS REMEMBERED ──────────────────────────────
+  // The shell mounts a workspace with NO props (`<svelte:component this={…} />`),
+  // so a desk held only in a local `let` is a desk forgotten on every reload —
+  // and the `themes → templates` tab redirect would have nowhere to land an
+  // operator whose saved session still names the old tab. Landing them on the
+  // Templates desk reads exactly like the surface having been deleted, which is
+  // the failure that redirect exists to prevent, one level deeper.
+  //
+  // So the choice lives in the session, beside `activeTab` and `liveDensity`,
+  // for the same reason those do: a booth's habits do not change between
+  // Sundays. `initialDesk` stays as an OVERRIDE for a caller that passes one.
   import TemplateGallery from './templates/TemplateGallery.svelte';
   import TemplateEditor from './templates/TemplateEditor.svelte';
   import ThemeGallery from './themes/ThemeGallery.svelte';
   import ThemeEditor from './themes/ThemeEditor.svelte';
+  import { DESKS } from './templates/DeskStrip.svelte';
+  import { session, setSession } from '../session.js';
 
-  /** Which desk to open on. The workspace opens on Templates; `Themes.svelte`
-   *  passes 'themes' so the old tab keeps landing where it always did while the
-   *  shell's strip is being reshaped. */
-  export let initialDesk = 'templates';
+  /** Open on this desk regardless of what the session remembers. Optional: the
+   *  shell passes nothing, so the session answers. */
+  export let initialDesk = null;
 
-  let desk = initialDesk; // templates | themes
+  /** Is this a desk this workspace actually has? A saved value outlives the
+   *  layout it was written under — the same reason `resolveActiveTab` exists —
+   *  so an unknown one falls through to Templates rather than rendering nothing. */
+  const known = (d) => DESKS.some((x) => x.key === d);
+
+  $: desk = known(initialDesk)
+    ? initialDesk
+    : known($session.templatesDesk)
+      ? $session.templatesDesk
+      : 'templates';
+
   let mode = 'gallery'; // gallery | editor
   let editingId = null;
   // Which object the gallery's inspector was pointing at, if it was pointing at
@@ -55,7 +77,13 @@
     editingLayerId = null;
   }
   function changeDesk(e) {
-    desk = e.detail.desk;
+    const next = e.detail.desk;
+    if (!known(next) || next === desk) return;
+    // THE SESSION IS THE ONE HOME. `desk` is derived from it above, so writing
+    // the store is what moves the desk — assigning `desk` here as well would
+    // give the choice two homes, and the local copy would win until the next
+    // reload told the operator otherwise.
+    setSession({ templatesDesk: next });
     backToGallery();
   }
 </script>

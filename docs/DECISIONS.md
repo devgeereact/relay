@@ -3680,6 +3680,18 @@ shell drops the `themes` entry**, and it says so in its own first paragraph: lef
 component nothing renders, and an orphan is how a surface stops being covered while its tests stay
 green.
 
+**Which desk you were on lives in the SESSION, not in a local `let`.** The shell mounts a workspace
+with no props, so a desk held in the component is a desk forgotten on every reload — and the
+`themes → templates` tab redirect would then have nowhere to land an operator whose saved
+`activeTab` still names the old tab. Landing them on the Templates desk reads exactly like the
+Themes surface having been deleted, which is the failure the redirect exists to prevent, one level
+deeper. `session.templatesDesk` sits beside `activeTab` and `liveDensity` for the reason those do:
+a booth's habits do not change between Sundays. The desk is DERIVED from the store and a press
+writes the store — assigning a local copy as well would give the choice two homes, and the local one
+would win until the next reload told the operator otherwise, which is §3.1's defect in a different
+room. An unknown saved value falls through to Templates rather than rendering nothing, for the same
+reason `resolveActiveTab` exists: a persisted key outlives the layout it was written under.
+
 ---
 
 ## 80. The inspector names the objects; the property groups stayed in the editor (2026-09-14)
