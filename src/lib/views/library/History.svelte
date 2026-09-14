@@ -759,7 +759,7 @@
   .c-over{ color:var(--v-dim); font-size:12px; }
   .lib-pill{
     display:inline-block; min-width:30px; text-align:center; padding:3px 9px; border-radius:99px;
-    background:var(--v-cyan-soft); border:1px solid rgba(34,211,238,.32); color:var(--v-cyan); font-size:11px;
+    background:var(--v-cyan-soft); border:1px solid var(--v-cyan-line); color:var(--v-cyan); font-size:11px;
   }
   .lib-openbtn svg{ transition:transform .15s; }
   .lib-row:hover .lib-openbtn{ color:var(--v-accent); border-color:var(--v-line2); }
@@ -779,7 +779,11 @@
      on anything that is not. Armed reads as a warning, not as a live state. */
   .lib-delmsg{ font-size:11px; color:var(--v-rose); word-break:break-word; margin-top:-8px; }
   .lib-del{ color:var(--v-rose); }
-  .lib-del.arm{ background:var(--v-rose); color:var(--v-ink); }
+  /* `--v-ink` was never defined, so this resolved to `unset` — and `color` is
+     inherited, so the ARMED half of a two-step delete drew --v-txt (#e8eaee) on
+     the red fill: 2.82:1, a WCAG AA failure on the one word an operator has to
+     read before a record goes. --v-inverse is the palette's ink and is 5.41:1. */
+  .lib-del.arm{ background:var(--v-rose); color:var(--v-inverse); }
   /* `r-mono` is gone: it now carries a humanised sentence, and monospace is what
      made the old raw-error dumps read like a crash to a volunteer. */
   .lib-detailerr{ font-size:12px; color:var(--v-rose); }

@@ -21,6 +21,15 @@
 
 /** Section headers an operator actually types. `[Chorus]`, `Chorus:`, `V1`. */
 const BRACKET = /^\[([^\]]{1,40})\]\s*$/;
+/**
+ * `[Chorus:c]` — the label AND the key that fires it (REBRAND §10).
+ *
+ * Bracketed only, and ONE letter only: numbering is derived per song by
+ * `sectionkeys.js`, so `[Verse:v1]` would be asking for a fact this file is not
+ * allowed to decide. `[Bridge x2]` still parses as a label, because the marker
+ * is a colon and a single trailing letter, not a space.
+ */
+const KEYED = /^(.*[^\s:])\s*:\s*([A-Za-z])$/;
 const NAMED =
   /^((?:pre-?)?chorus|verse|bridge|tag|intro|outro|refrain|ending|interlude|vamp|instrumental|coda)\s*(\d+)?\s*:?\s*$/i;
 const SHORT = /^([vcbpt])\s*(\d{1,2})\s*:?\s*$/i;
@@ -54,12 +63,22 @@ export function parseLyrics(text) {
     const lines = block.split('\n');
     const head = lines[0].trim();
     let label = '';
+    /** The key the operator asked for, if the header named one. */
+    let key = '';
 
     const bracket = BRACKET.exec(head);
     const named = NAMED.exec(head);
     const short = SHORT.exec(head);
-    if (bracket) label = bracket[1].trim();
-    else if (named) label = title(named[1]) + (named[2] ? ` ${named[2]}` : '');
+    if (bracket) {
+      const inner = bracket[1].trim();
+      const keyed = KEYED.exec(inner);
+      if (keyed) {
+        label = keyed[1].trim();
+        key = keyed[2].toLowerCase();
+      } else {
+        label = inner;
+      }
+    } else if (named) label = title(named[1]) + (named[2] ? ` ${named[2]}` : '');
     else if (short) label = `${SHORT_TAGS[short[1].toLowerCase()]} ${short[2]}`;
 
     const body = label ? lines.slice(1).join('\n').replace(/^\s+/, '') : block;
@@ -67,17 +86,34 @@ export function parseLyrics(text) {
     // A header with nothing under it is a label the operator has not filled in
     // yet, not an empty slide. Keep it — deleting what someone just typed is
     // the one thing an editor may never do.
-    return { tag: tagFor(label), label, lyrics: body };
+    //
+    // THE KEY RIDES IN `tag`. `song_sections` is id · position · tag · label ·
+    // lyrics and nothing else, so `tag` is the only field an asked-for key can
+    // survive a save in. `sectionkeys.js::explicitKey` reads it back, and treats
+    // a tag that is merely what the label derives as no request at all.
+    return { tag: key ? key.toUpperCase() : tagFor(label), label, lyrics: body };
   });
 }
 
-/** Sections back to editable text. `parseLyrics(toText(s))` is stable. */
+/**
+ * Sections back to editable text. `parseLyrics(toText(s))` is stable.
+ *
+ * A key is written back as `[Bridge:r]` ONLY when the tag is a single letter
+ * that the label does not already derive — i.e. only when it is a request
+ * somebody made. Writing `[Chorus:c]` back when `c` is what a chorus gets anyway
+ * would put clutter in the editor for no fact; and a tag that is not a key shape
+ * at all (`PC2`, from a ProPresenter import) is left alone rather than emitted
+ * as a key the parser could not read back.
+ */
 export function toText(sections) {
   return (sections ?? [])
     .map((s) => {
       const label = (s.label || s.tag || '').trim();
       const body = (s.lyrics ?? '').replace(/\s+$/, '');
-      return label ? `[${label}]\n${body}` : body;
+      const tag = String(s.tag ?? '').trim().toLowerCase();
+      const keyed =
+        /^[a-z]$/.test(tag) && tag !== tagFor(label).toLowerCase() ? `:${tag}` : '';
+      return label ? `[${label}${keyed}]\n${body}` : body;
     })
     .join('\n\n')
     .trim();

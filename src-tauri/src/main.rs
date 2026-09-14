@@ -39,6 +39,7 @@ mod qa_r5;
 #[cfg(test)]
 mod r6;
 mod router;
+mod search;
 mod servicelock;
 mod songs;
 mod stt;
@@ -403,6 +404,7 @@ fn main() {
             service_lock,
             set_service_lock,
             set_channel_template,
+            send_stage_alert,
             list_monitors,
             open_channel_output,
             auto_open_outputs,
@@ -1645,70 +1647,173 @@ fn latency_set_enabled(on: bool) -> bool {
     latency::is_enabled()
 }
 
-/// Scripture search for the Planner — resolve a query to verses to add as cues.
-/// First tries to parse explicit references ("john 3:16", "ps 23", "rom 8 1")
-/// via the same detector the live pipeline uses; if none parse, falls back to a
-/// full-text corpus search ("shepherd"). Offline, corpus-only.
+/// One search result: the verse, and WHY it is here.
+///
+/// The verse is `#[serde(flatten)]`ed, so every surface that already reads a
+/// `VerseRow` off this command — the Library, the Planner, the Live rail, the
+/// preacher's remote — keeps reading exactly the fields it read before, and the
+/// explanation is additive. That mattered: DECISIONS §72 deferred "why it
+/// matched" precisely because it changes the shape three surfaces read.
+///
+/// `method` and `why` are the same pairing as `DetectionEvent`'s `method` +
+/// `matched_text` (CLAUDE.md rule 18): the machine fact the surface colours by,
+/// and the human evidence it renders. There is **no percentage** on a
+/// paraphrase, here as there.
+#[derive(Debug, Clone, Serialize)]
+struct SearchHit {
+    #[serde(flatten)]
+    verse: db::VerseRow,
+    /// `reference` · `prefix` · `phrase` · `words` · `paraphrase`.
+    method: &'static str,
+    /// True when Relay guessed rather than read. Cyan on the rail, never amber.
+    guess: bool,
+    /// One line saying why this verse is in the list.
+    why: String,
+    /// The query words that landed. Empty for a reference.
+    matched: Vec<String>,
+}
+
+impl SearchHit {
+    fn new(verse: db::VerseRow, why: search::Why) -> Self {
+        SearchHit {
+            verse,
+            method: why.kind.wire(),
+            guess: why.kind.is_guess(),
+            why: why.sentence,
+            matched: why.matched,
+        }
+    }
+}
+
+/// Scripture search — the Planner's box, the Library, the Live rail and the
+/// preacher's remote all come here, so there is one answer to "what did they
+/// mean". Two questions in one box (`docs/REBRAND.md` §9): which verse is this
+/// REFERENCE, and which verse says these WORDS. Offline, corpus-only.
+///
+/// **Never a fire.** Every row this returns is an offer; only an operator
+/// choosing one reaches a screen (DECISIONS §72, and rule 10 — nothing on this
+/// path can reach `AutoFire` because nothing on it touches the router at all).
 #[tauri::command]
 fn search_scripture(
     db: tauri::State<'_, Db>,
     sem: tauri::State<'_, Semantic>,
     query: String,
-) -> error::Result<Vec<db::VerseRow>> {
+) -> error::Result<Vec<SearchHit>> {
     let conn = db.0.lock()?;
     Ok(search_verses(&conn, &sem.0, query.trim()))
 }
 
 /// The scripture search itself, over a connection + semantic index — shared by
 /// the `search_scripture` command and the preacher-remote HTTP endpoint.
-fn search_verses(
-    conn: &rusqlite::Connection,
-    sem: &SemanticIndex,
-    query: &str,
-) -> Vec<db::VerseRow> {
+///
+/// Five passes, in band order (`search::MatchKind::band`), first-wins per verse:
+///
+///   1. **Reference** — the query parsed, through the SAME parser the live
+///      pipeline uses. A second parser would be a second thing that could
+///      disagree with the router about what a reference is.
+///   2. **Book prefix** — the query parsed only after a ≥2-letter book prefix was
+///      expanded ("philipp 4 13"). Search-only, and deliberately absent from
+///      `detection.rs`; see the boundary note at the top of `search.rs`.
+///   3. **Phrase** — the whole query, verbatim.
+///   4. **Paraphrase** — the semantic index. Marked a guess, with no percentage.
+///   5. **Words** — FTS5, floored at `search::MIN_COVERAGE`.
+///
+/// Every hit carries its `Why`. Nothing here decides, routes or fires: the
+/// scores order a LIST and never cross the router (CLAUDE.md rule 10).
+fn search_verses(conn: &rusqlite::Connection, sem: &SemanticIndex, query: &str) -> Vec<SearchHit> {
+    use search::{MatchKind, Why};
+
     let q = query.trim();
     if q.is_empty() {
         return vec![];
     }
 
-    // Score candidates and rank: exact reference > exact phrase > semantic
-    // paraphrase > loose text. Semantic is what turns a paraphrase ("there is
-    // therefore no condemnation in christ") into the real verse (Romans 8:1)
-    // plus suggestions — the same engine that drives live detection.
-    let mut scored: Vec<(f32, db::VerseRow)> = Vec::new();
+    let mut scored: Vec<(f32, SearchHit)> = Vec::new();
     let mut seen: std::collections::HashSet<i64> = std::collections::HashSet::new();
-
-    // 1) Explicit references ("john 3:16", "ps 23").
-    for m in detection::detect_direct(q) {
-        let r = &m.reference;
-        if let Ok(Some(v)) = db::lookup_verse(conn, &r.book, r.chapter, r.verse) {
-            if seen.insert(v.id) {
-                scored.push((1.0, v));
-            }
+    fn take(
+        score: f32,
+        v: db::VerseRow,
+        why: search::Why,
+        seen: &mut std::collections::HashSet<i64>,
+        scored: &mut Vec<(f32, SearchHit)>,
+    ) {
+        if seen.insert(v.id) {
+            scored.push((score, SearchHit::new(v, why)));
         }
     }
-    // 2) Exact phrase (the whole query appears verbatim).
-    if q.split_whitespace().count() >= 2 {
-        if let Ok(hits) = db::search_verses_text(conn, q, 12) {
-            for v in hits {
-                if seen.insert(v.id) {
-                    scored.push((0.95, v));
+
+    // 1) Explicit references ("john 3:16", "ps 23", "ps23:1").
+    let refs = search::references_in(q);
+    let parsed_a_reference = !refs.is_empty();
+    for m in refs {
+        let r = &m.reference;
+        if let Ok(Some(v)) = db::lookup_verse(conn, &r.book, r.chapter, r.verse) {
+            take(
+                MatchKind::Reference.band(),
+                v,
+                Why::reference(q),
+                &mut seen,
+                &mut scored,
+            );
+        }
+    }
+
+    // 2) A book PREFIX, expanded and handed back to the same parser. Only when
+    //    nothing parsed as typed — an exact alias (`ps`, `mt`, `jn`, `php`)
+    //    already won above, and must never be second-guessed by a prefix.
+    if !parsed_a_reference {
+        for (prefix, book, rewritten) in search::prefix_expansions(q) {
+            for m in search::references_in(&rewritten) {
+                let r = &m.reference;
+                if let Ok(Some(v)) = db::lookup_verse(conn, &r.book, r.chapter, r.verse) {
+                    take(
+                        MatchKind::BookPrefix.band(),
+                        v,
+                        Why::book_prefix(&prefix, book),
+                        &mut seen,
+                        &mut scored,
+                    );
                 }
             }
         }
     }
-    // 3) Semantic paraphrase — top matches by meaning, highest first.
+
+    // 3) Exact phrase (the whole query appears verbatim).
+    if q.split_whitespace().count() >= 2 {
+        if let Ok(hits) = db::search_verses_text(conn, q, 12) {
+            for v in hits {
+                take(
+                    MatchKind::Phrase.band(),
+                    v,
+                    Why::phrase(),
+                    &mut seen,
+                    &mut scored,
+                );
+            }
+        }
+    }
+
+    // 4) Semantic paraphrase — top matches by meaning, highest first. NO
+    //    coverage floor here: a paraphrase is supposed to find a verse whose
+    //    words are different, so a word floor would break the feature it was
+    //    meant to protect (DECISIONS §72).
     for (r, score) in sem.top_k(q, 12) {
         if score < 0.08 {
             continue;
         }
         if let Ok(Some(v)) = db::lookup_verse(conn, &r.book, r.chapter, r.verse) {
-            if seen.insert(v.id) {
-                scored.push((0.5 + score * 0.4, v)); // 0.5..0.9 band
-            }
+            // 0.5..0.9, inside the Paraphrase band's own room.
+            take(
+                MatchKind::Paraphrase.band() + score * 0.4,
+                v,
+                Why::paraphrase(),
+                &mut seen,
+                &mut scored,
+            );
         }
     }
-    // 4) Full-text word/phrase recall (FTS5, bm25-ranked). Catches loose,
+
+    // 5) Full-text word/phrase recall (FTS5, bm25-ranked). Catches loose,
     //    non-contiguous word queries ("lord shepherd") a substring LIKE misses,
     //    and ranks the best-matching verse first.
     for (i, v) in db::search_verses_fts(conn, q, 15)
@@ -1716,17 +1821,38 @@ fn search_verses(
         .into_iter()
         .enumerate()
     {
-        if seen.insert(v.id) {
-            scored.push((0.45 - (i as f32) * 0.008, v)); // 0.45..~0.33 band
+        // COVERAGE, not just a hit. FTS returns a verse that matched ANY term, so
+        // "quantum shepherd tractor engine banana" came back with nineteen verses
+        // and Ezekiel 26:9 at the top. A confident wrong answer is worse than an
+        // empty list: the operator acts on it.
+        let (share, matched) = search::coverage(q, &v.text);
+        if share < search::MIN_COVERAGE {
+            continue;
         }
+        take(
+            MatchKind::Words.band() - (i as f32) * 0.008,
+            v,
+            Why::words(matched),
+            &mut seen,
+            &mut scored,
+        );
     }
-    // 4b) Last-ditch substring scan if FTS returned nothing (index still building).
+
+    // 5b) Last-ditch substring scan if FTS returned nothing (index still building).
     if scored.is_empty() {
         if let Ok(hits) = db::search_verses_text(conn, q, 15) {
             for v in hits {
-                if seen.insert(v.id) {
-                    scored.push((0.3, v));
+                let (share, matched) = search::coverage(q, &v.text);
+                if share < search::MIN_COVERAGE {
+                    continue;
                 }
+                take(
+                    MatchKind::Words.band() - 0.15,
+                    v,
+                    Why::words(matched),
+                    &mut seen,
+                    &mut scored,
+                );
             }
         }
     }
@@ -1826,14 +1952,24 @@ fn remote_api<R: tauri::Runtime>(
                     Err(_) => vec![],
                 }
             };
+            // `why` and `method` ride to the preacher's phone too. The rule they
+            // serve — the operator must see WHICH KIND of claim this is
+            // (CLAUDE.md rule 18) — does not stop at the console, and a surface
+            // that had to compose its own sentence would compose a different one.
             let items: Vec<String> = rows
                 .into_iter()
                 .take(20)
-                .map(|v| {
+                .map(|h| {
                     format!(
-                        "{{\"reference\":{},\"text\":{}}}",
-                        json_str(&format!("{} {}:{}", v.book, v.chapter, v.verse)),
-                        json_str(&v.text)
+                        "{{\"reference\":{},\"text\":{},\"method\":{},\"why\":{},\"guess\":{}}}",
+                        json_str(&format!(
+                            "{} {}:{}",
+                            h.verse.book, h.verse.chapter, h.verse.verse
+                        )),
+                        json_str(&h.verse.text),
+                        json_str(h.method),
+                        json_str(&h.why),
+                        h.guess
                     )
                 })
                 .collect();
@@ -5269,34 +5405,86 @@ fn list_output_channels(db: tauri::State<'_, Db>) -> error::Result<Vec<db::Outpu
 /// reload and no URL change. Native windows get a `channel://retemplate` event; kiosk
 /// / OBS clients get a `channel_template` WS message they filter by their own channel.
 #[tauri::command]
-fn set_channel_template(
-    app: tauri::AppHandle,
+fn set_channel_template<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     db: tauri::State<'_, Db>,
     kiosk: tauri::State<'_, channels::KioskHub>,
     id: i64,
-    template_id: i64,
+    template_id: Option<i64>,
 ) -> error::Result<()> {
+    // `None` means THIS SCREEN HAS NO LOOK OF ITS OWN and follows the content look
+    // (DECISIONS §70). Until this was possible every screen always had a template,
+    // and since a screen's own template wins over a content-type default (§29), the
+    // content-look map could be filled in, saved, and do nothing on every screen in
+    // the building.
+    //
     // DB write + resolve the new template JSON under one lock, then release before
     // emitting (never hold a lock across emit — CLAUDE.md rule #2).
     let tjson = {
         let conn = db.0.lock()?;
         db::set_channel_template(&conn, id, template_id)?;
-        db::get_template(&conn, template_id)?.and_then(|t| serde_json::to_string(&t).ok())
+        match template_id {
+            Some(tid) => db::get_template(&conn, tid)?.and_then(|t| serde_json::to_string(&t).ok()),
+            None => None,
+        }
     };
-    if let Some(j) = tjson {
-        if let Ok(tpl) = serde_json::from_str::<serde_json::Value>(&j) {
+    match (template_id, tjson) {
+        (Some(tid), Some(j)) => {
+            if let Ok(tpl) = serde_json::from_str::<serde_json::Value>(&j) {
+                let _ = app.emit(
+                    "channel://retemplate",
+                    serde_json::json!({ "channel": id, "template": tpl }),
+                );
+            }
+            kiosk.publish(format!(
+                r#"{{"kind":"channel_template","channel":{id},"template":{j}}}"#
+            ));
+            // Keep the hub's per-template cache current so a fresh kiosk connect on
+            // this template id renders the up-to-date template too.
+            kiosk.cache_template(tid, &j);
+        }
+        // CLEARING IS ALSO NEWS. A screen that is already open has to be told it is
+        // now following the content look; staying silent leaves it wearing the look
+        // it was given until something happens to reload it.
+        (None, _) => {
             let _ = app.emit(
                 "channel://retemplate",
-                serde_json::json!({ "channel": id, "template": tpl }),
+                serde_json::json!({ "channel": id, "template": serde_json::Value::Null }),
             );
+            kiosk.publish(format!(
+                r#"{{"kind":"channel_template","channel":{id},"template":null}}"#
+            ));
         }
-        kiosk.publish(format!(
-            r#"{{"kind":"channel_template","channel":{id},"template":{j}}}"#
-        ));
-        // Keep the hub's per-template cache current so a fresh kiosk connect on this
-        // template id renders the up-to-date template too.
-        kiosk.cache_template(template_id, &j);
+        // A template id that resolves to nothing: the row is written, and no screen
+        // is told to paint something that could not be read.
+        (Some(_), None) => {}
     }
+    Ok(())
+}
+
+/// A WORD TO THE PREACHER: take over the stage monitor with one line of text.
+///
+/// Whitespace is not a message — a blank send CLEARS, which is also what the
+/// Clear button does, so an operator who empties the box and presses Send gets
+/// the obvious result rather than a red screen with nothing on it.
+///
+/// The line is capped. A stage monitor renders this at 8.5cqw across the whole
+/// screen; a pasted paragraph is not a word to the preacher, it is a wall of type
+/// nobody can read from a platform.
+#[tauri::command]
+fn send_stage_alert<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    text: Option<String>,
+) -> error::Result<()> {
+    const MAX: usize = 140;
+    let line = text.unwrap_or_default();
+    let line = line.trim();
+    let msg = if line.is_empty() {
+        None
+    } else {
+        Some(line.chars().take(MAX).collect::<String>())
+    };
+    channels::stage_alert(&app, msg);
     Ok(())
 }
 

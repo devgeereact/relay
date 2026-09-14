@@ -474,7 +474,7 @@
               </li>
               <li>
                 <span class="w">Check the whole chain</span>
-                <span><b>Settings → Dashboard</b>: say one verse out loud and Relay
+                <span><b>Settings → Diagnostics</b>: say one verse out loud and Relay
                 shows which of the six stages between the microphone and the screen were
                 reached. Everything you just set up can pass while the chain still does
                 not work end to end.</span>

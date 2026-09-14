@@ -98,7 +98,7 @@ impl ServiceLock {
         };
         Err(error::Error::refused(format!(
             "A service is being recorded, so Relay is holding this back: {what}. \
-             It can wait until the service ends — or unlock in Settings → Backup & Recovery \
+             It can wait until the service ends — or unlock in Settings → History & Backup \
              if you need to do it now."
         )))
     }

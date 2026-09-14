@@ -153,8 +153,8 @@
   .ir-slidecount{ font-size:10px; color:var(--v-faint); flex:0 0 auto; }
   .ir-skip{ flex:0 0 auto; font-family:var(--f-mono); font-size:9px; font-weight:700; letter-spacing:.08em; text-transform:uppercase;
     padding:5px 10px; border-radius:7px; border:1px solid var(--v-line2); background:var(--v-surf2); color:var(--v-dim); cursor:pointer; }
-  .ir-skip:hover{ color:var(--v-rose); border-color:rgba(239,68,68,.4); }
-  .ir-skip.on{ color:var(--v-rose); border-color:rgba(239,68,68,.4); background:var(--v-rose-soft); }
+  .ir-skip:hover{ color:var(--v-rose); border-color:var(--v-red-line); }
+  .ir-skip.on{ color:var(--v-rose); border-color:var(--v-red-line); background:var(--v-rose-soft); }
 
   .ir-slides{ display:grid; grid-template-columns:repeat(auto-fill, minmax(240px, 1fr)); gap:10px; padding:0 14px 14px; }
   .ir-slide{ border:1px solid var(--v-line); border-radius:10px; background:var(--v-surf2); padding:9px; }
@@ -165,7 +165,7 @@
   .ir-mini{ width:24px; height:24px; border-radius:6px; display:grid; place-items:center; cursor:pointer; font-size:11px;
     background:var(--v-surf3); border:1px solid var(--v-line); color:var(--v-dim); }
   .ir-mini:hover:not(:disabled){ color:var(--v-accent); border-color:var(--v-line2); }
-  .ir-mini.danger:hover:not(:disabled){ color:var(--v-rose); border-color:rgba(239,68,68,.4); }
+  .ir-mini.danger:hover:not(:disabled){ color:var(--v-rose); border-color:var(--v-red-line); }
   .ir-mini:disabled{ opacity:.3; cursor:not-allowed; }
   .ir-lyrics{ width:100%; padding:9px 11px; border-radius:8px; background:var(--v-bg); border:1px solid var(--v-line2);
     color:var(--v-txt); font-family:var(--f-serif); font-size:13px; line-height:1.4; resize:vertical; outline:none; }

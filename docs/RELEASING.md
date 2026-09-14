@@ -269,9 +269,10 @@ handed to a church is the worst possible place to discover that, because nobody 
 suspect the file. A bad checksum stops the build.
 
 On the church's machine, the operator copies the model into Downloads and Relay offers
-it under **Settings → Network → "Found on this computer"**. It re-verifies before
-accepting: the checksum is not relaxed because the file came from a USB stick — *"somebody
-handed me this file"* is weaker provenance than an HTTPS download, not stronger.
+it under **Settings → Network & Integrations → "Found on this computer"**. It
+re-verifies before accepting: the checksum is not relaxed because the file came from
+a USB stick — *"somebody handed me this file"* is weaker provenance than an HTTPS
+download, not stronger.
 
 > **Ship the same installers you released.** The bundle is a convenience wrapper around
 > artefacts that have already been through the signing gate; building a special
