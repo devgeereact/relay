@@ -97,6 +97,53 @@ describe('the grid is rendered, and its presses go through the arbiter', () => {
     expect(src).toMatch(/class="sg-prev">Preview</);
   });
 
+  // A CELL IS THE WALL IN MINIATURE (docs/REBRAND.md §2). The grid drew a grey
+  // box with the label in it, so a cell said "Romans 8:28-31" and nothing about
+  // what a congregation would actually see. These four are the whole claim: it
+  // renders, it renders through the ONE renderer, the box is a container query
+  // so cqw resolves against the thumbnail, and the fit report stays the wall's.
+  it('a cell RENDERS the slide, through the one renderer', () => {
+    const cell = src.slice(src.indexOf('<span class="sg-thumb">'), src.indexOf('</span>\n                <span class="sg-meta">'));
+    expect(cell).toMatch(/<TemplateRender template=\{cellTemplate\(c\) \?\? \{\}\} content=\{cellContent\(c\)\} \/>/);
+    // No second renderer, and no second fit path.
+    expect(src).not.toMatch(/SlideThumb|MiniRender|fitCell/);
+  });
+
+  it('the thumb is a CONTAINER, or every cell renders at the page width', () => {
+    const thumb = src.slice(src.indexOf('.sg-thumb{'), src.indexOf('.sg-thumb{') + 400);
+    expect(thumb).toMatch(/position:relative/);
+    expect(thumb).toMatch(/aspect-ratio:16\/9/);
+    expect(thumb).toMatch(/container-type:inline-size/);
+  });
+
+  // Rule 37's "this is rendering at 38% of its designed size" is the WALL's
+  // measurement, and there must be exactly one of it. Twenty thumbnails
+  // reporting their own fit would bury the one that matters.
+  it('a thumbnail never reports a fit — `noteFit` has one caller, the Program pane', () => {
+    expect([...src.matchAll(/onFit=\{noteFit\}/g)]).toHaveLength(1);
+    const cell = src.slice(src.indexOf('<span class="sg-thumb">'), src.indexOf('</span>\n                <span class="sg-meta">'));
+    expect(cell).not.toMatch(/onFit/);
+  });
+
+  // A lyric slide projects the lyric. `fire_content` suppresses a song's title
+  // (rule 36 — one place decides), so a thumbnail that printed it would be
+  // showing the operator something no congregation will ever see.
+  it('a song thumbnail carries NO title — it shows what the wall shows', () => {
+    const body = src.slice(src.indexOf('$: cellContent = '), src.indexOf('$: cellContent = ') + 300);
+    expect(body).toMatch(/reference: c\.ctype === 'song' \? null : c\.label/);
+  });
+
+  // `planCells` draws a cue it could not expand rather than dropping it — a real
+  // eight-cue plan rendered six cells and nothing said which two were missing.
+  // Drawn, named, counted, and refused: there is genuinely nothing to send.
+  it('a cue with nothing to show is drawn and DISABLED, not silently dropped', () => {
+    expect(src).toMatch(/class:isempty=\{c\.empty\}/);
+    expect(src).toMatch(/disabled=\{!\$capture\.available \|\| c\.empty\}/);
+    expect(src).toMatch(/class="sg-void">Nothing to show</);
+    // And it says why, rather than being a dead cell an operator keeps pressing.
+    expect(src).toMatch(/has nothing to show — open it in the Planner/);
+  });
+
   it('muted text never sits on --v-surf3 (tokencontrast.test.js fails the build for it)', () => {
     const sg = src.slice(src.indexOf('.sg-body{'), src.indexOf('.sg-cap{') + 200);
     const onSurf3 = [...sg.matchAll(/background:var\(--v-surf3\);\s*color:var\(--v-([a-z0-9-]+)\)/g)];
