@@ -1344,3 +1344,34 @@ describe('R3-04 · a failed read is distinguishable from an empty one', () => {
     expect(t).toMatch(/No template matches this filter/);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// R3-13 · A LIST ROW IS A NAME AND A VALUE, NEVER A DASH STANDING IN FOR ONE
+//
+// Settings printed `—` for the LAN address, the installed version and the
+// recognition language whenever the value was empty — and an empty value has
+// three different causes an operator needs to tell apart: not fetched yet, the
+// fetch failed, and genuinely nothing there (no network, nothing configured).
+//
+// One glyph over three situations is rule 35's defect: a status that reads the
+// same when broken as when fine is not a status. It is the same shape as RG-83,
+// where "up to date" was printed over an update channel that had been returning
+// 404 since the day Relay was installed.
+//
+// `settingValue` makes the call site say which one it is. This stops the dash
+// coming back, in the one file where it kept appearing.
+describe('R3-13 · settings rows say which kind of nothing', () => {
+  it('no row falls back to an em dash', () => {
+    const text = src('src/lib/views/Settings.svelte');
+    const offenders = [...text.matchAll(/\|\|\s*'—'/g)].map((m) => m[0]);
+    expect(
+      offenders,
+      "use settingValue(value, { loading, missing }) — the call site knows what an empty " +
+        'answer MEANS there, and an em dash does not say it',
+    ).toEqual([]);
+  });
+
+  it('and the helper it uses is the shared one', () => {
+    expect(src('src/lib/views/Settings.svelte')).toMatch(/from '\.\.\/settingvalue\.js'/);
+  });
+});

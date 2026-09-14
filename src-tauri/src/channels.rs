@@ -1032,6 +1032,25 @@ pub fn stage_next<R: tauri::Runtime>(
     publish_kiosk(app, json);
 }
 
+/// A WORD TO THE PREACHER — the whole stage screen, and no other screen at all.
+///
+/// `text: None` clears it. Deliberately NOT retained by the hub: rule 43 retains
+/// the frames that decide what a screen is SHOWING (`content`, `clear`, `black`),
+/// and an alert is an instruction to a person rather than a state of the wall. A
+/// tablet reconnecting ten minutes later must not be handed a message meant for a
+/// moment that has passed.
+///
+/// Suppressed in a rehearsal, like every other publisher here — see `stage_next`
+/// for what that cost the one time it was missed.
+pub fn stage_alert<R: tauri::Runtime>(app: &tauri::AppHandle<R>, text: Option<String>) {
+    if rehearsing(app) {
+        println!("rehearsal: stage_alert SUPPRESSED — nothing left the machine");
+        return;
+    }
+    let json = serde_json::json!({ "kind": "stage_alert", "text": text }).to_string();
+    publish_kiosk(app, json);
+}
+
 fn publish_kiosk<R: tauri::Runtime>(app: &tauri::AppHandle<R>, msg: String) {
     if let Some(hub) = app.try_state::<KioskHub>() {
         hub.publish(msg);
@@ -2318,6 +2337,16 @@ mod tests {
         assert!(u.contains("name=Stage%2F2"), "got {u}");
     }
 
+    /// RG-127. These two tests serve the real `dist/`, which is gitignored, so on a
+    /// fresh clone they fail with `got HTTP/1.1 404 Not Found` — a message that says
+    /// nothing about the frontend never having been built, and costs whoever reads
+    /// it an hour in the HTTP server. The fix is the sentence, not the test: the
+    /// pages genuinely are the built frontend and mocking that away would delete the
+    /// thing being asserted.
+    const NO_DIST: &str = "the page was not served. If this is a fresh clone or a \
+        new worktree, `dist/` is gitignored and these two tests serve the REAL \
+        built frontend: run `npm install && npm run build` first (RG-127).";
+
     /// The embedded LAN server serves the output/stage pages (200 + html) and
     /// 404s the unknown — this is what makes a packaged app reachable by OBS/
     /// kiosk/phone with no dev server.
@@ -2340,7 +2369,7 @@ mod tests {
         let resp = String::from_utf8_lossy(&buf[..n]);
         assert!(
             resp.starts_with("HTTP/1.1 200"),
-            "got {}",
+            "{NO_DIST} — got {}",
             &resp[..resp.len().min(60)]
         );
         assert!(resp.contains("text/html"));
@@ -2593,7 +2622,7 @@ mod tests {
             .unwrap();
         assert!(
             String::from_utf8_lossy(&buf[..n]).starts_with("HTTP/1.1 200"),
-            "a request split across packets must still be served"
+            "a request split across packets must still be served — {NO_DIST}"
         );
     }
 
@@ -2991,10 +3020,97 @@ mod tests {
         assert!(!is_screen_frame(
             r#"{"kind":"stage_next","label":"John 3:17"}"#
         ));
+        // An instruction to a person, about a moment. A tablet that rejoins ten
+        // minutes later must not be handed it — and it must not stand in for the
+        // content the screen is actually showing either.
+        assert!(!is_screen_frame(
+            r#"{"kind":"stage_alert","text":"two minutes"}"#
+        ));
         assert!(!is_screen_frame(r#"{"kind":"themes","themes":[]}"#));
         assert!(!is_screen_frame(
             r#"{"kind":"template","id":1,"template":{}}"#
         ));
+    }
+
+    /// Every `kind` this module publishes, and whether it decides what a screen
+    /// is SHOWING. `true` here means the hub retains it and replays it to a
+    /// client that joins late (rule 43).
+    const FRAME_VERDICTS: &[(&str, bool)] = &[
+        ("content", true),
+        ("clear", true),
+        ("black", true),
+        ("stage_next", false),
+        ("stage_alert", false),
+        ("themes", false),
+        ("template", false),
+    ];
+
+    /// THE ENUMERATION MUST GROW WITH THE MODULE, OR IT IS NOT AN ENUMERATION.
+    ///
+    /// The test above lists the kinds it knows about, and a list of examples
+    /// cannot notice a kind nobody added to it. This one reads the module's own
+    /// source and fails on any published `kind` with no verdict — which is the
+    /// case that actually arose: `stage_alert` was added on `new_look_refresh`
+    /// while `is_screen_frame` was being written on `audit/field-2026-09-13`, and
+    /// the two met for the first time in a merge. The matcher happened to be
+    /// right about it; nothing was checking.
+    ///
+    /// Same shape as `r6-contracts.test.js` on the client side: a new hub message
+    /// that nobody has answered for is the finding.
+    #[test]
+    fn every_kind_this_module_publishes_has_an_explicit_verdict() {
+        let src = include_str!("channels.rs");
+        let body = src.split("mod tests").next().unwrap_or(src);
+
+        let mut found: Vec<&str> = Vec::new();
+        for line in body.lines() {
+            // Comments talk ABOUT frames without publishing any.
+            if line.trim_start().starts_with("//") {
+                continue;
+            }
+            let mut rest = line;
+            while let Some(i) = rest.find("\"kind\"") {
+                rest = &rest[i + "\"kind\"".len()..];
+                let Some(after) = rest.trim_start().strip_prefix(':') else {
+                    continue;
+                };
+                let Some(after) = after.trim_start().strip_prefix('"') else {
+                    continue;
+                };
+                let Some(end) = after.find('"') else { continue };
+                let kind = &after[..end];
+                if !found.contains(&kind) {
+                    found.push(kind);
+                }
+            }
+        }
+
+        assert!(
+            !found.is_empty(),
+            "the scanner found no published kind at all — it has stopped reading \
+             this module, and a scanner that quietly narrows passes everything"
+        );
+        for kind in &found {
+            assert!(
+                FRAME_VERDICTS.iter().any(|(k, _)| k == kind),
+                "`{kind}` is published to the kiosk hub and no one has said whether \
+                 a screen that joins late should be shown it. Add it to \
+                 FRAME_VERDICTS with a reason, and assert it in the matcher test."
+            );
+        }
+        for (kind, retained) in FRAME_VERDICTS {
+            assert!(
+                found.contains(kind),
+                "FRAME_VERDICTS names `{kind}`, which this module no longer \
+                 publishes — a verdict about nothing"
+            );
+            let frame = format!(r#"{{"kind":"{kind}","x":1}}"#);
+            assert_eq!(
+                is_screen_frame(&frame),
+                *retained,
+                "the matcher disagrees with the verdict for `{kind}`"
+            );
+        }
     }
 
     /// A SCREEN THAT JOINS LATE IS SHOWN WHAT IS ON THE SCREENS.
@@ -3113,6 +3229,77 @@ mod tests {
         assert!(
             !frames.iter().any(|f| f.contains("Romans 8:28")),
             "a verse outlived the control that removed it: {frames:?}"
+        );
+    }
+
+    /// A WORD TO THE PREACHER MUST NOT STAND IN FOR THE READING — at the SERVER.
+    ///
+    /// `is_screen_frame` says an alert is not retained and `FRAME_VERDICTS` agrees,
+    /// but both are statements about a matcher. This drives the real hello path:
+    /// verse, then alert, then a client connects. Two ways it could go wrong and
+    /// only one of them is a matcher bug —
+    ///
+    ///   - the alert becomes the retained frame, and the screen that rejoined
+    ///     mid-reading is handed a message meant for a moment that has passed
+    ///     instead of the verse it should be painting (rule 43's own failure, with
+    ///     the alert in the role of `stage_next`);
+    ///   - the alert is retained ALONGSIDE the verse and replayed on hello, which
+    ///     would put a red full-screen instruction on a congregation output ten
+    ///     minutes after the operator sent it, on a page whose only defence is that
+    ///     the message never arrives.
+    ///
+    /// The second is the congregation-facing one and no matcher test can see it:
+    /// it is a property of what `hello` sends.
+    #[tokio::test]
+    async fn a_word_to_the_preacher_is_not_replayed_to_a_screen_that_joins_after_it() {
+        let port = free_port();
+        let hub = KioskHub::default();
+        tokio::spawn(run_kiosk_server(
+            log_only(),
+            hub.sender(),
+            hub.templates_handle(),
+            hub.clients_handle(),
+            hub.themes_handle(),
+            hub.last_screen_handle(),
+            OutputHealth::default(),
+            port,
+        ));
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+
+        hub.publish(
+            r#"{"kind":"content","reference":"Romans 8:28","text":"And we know"}"#.to_string(),
+        );
+        hub.publish(r#"{"kind":"stage_alert","text":"Wrap up — 5 minutes"}"#.to_string());
+
+        let (ws, _) = tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{port}"))
+            .await
+            .expect("connect");
+        let (mut write, mut read) = ws.split();
+        write
+            .send(tokio_tungstenite::tungstenite::Message::Text(
+                r#"{"kind":"hello","template_id":7}"#.to_string(),
+            ))
+            .await
+            .expect("send hello");
+
+        let mut frames = Vec::new();
+        for _ in 0..4 {
+            let Ok(Some(Ok(msg))) =
+                tokio::time::timeout(std::time::Duration::from_millis(900), read.next()).await
+            else {
+                break;
+            };
+            frames.push(msg.into_text().unwrap());
+        }
+        assert!(
+            frames.iter().any(|f| f.contains("Romans 8:28")),
+            "the alert stood in for the reading and the joining screen was left \
+             without it: {frames:?}"
+        );
+        assert!(
+            !frames.iter().any(|f| f.contains("stage_alert")),
+            "a word to the preacher was replayed to a screen that joined later — on \
+             a congregation output that is a red screen nobody sent: {frames:?}"
         );
     }
 

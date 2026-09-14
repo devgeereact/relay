@@ -167,6 +167,18 @@ Type a word, a phrase, or a paraphrase → the verse plus ranked suggestions. Ca
 4. **FTS5 full-text** (`search_verses_fts`) — bm25-ranked, terms quoted then OR'd — catches loose, non-contiguous word queries a substring `LIKE` misses. 0.33–0.45 band.
 5. Substring `LIKE` as a last-ditch fallback.
 
+**A reference is read by the same parser the live pipeline uses** (`detection::detect_direct`),
+and the query is retried with letters split from digits so `ps23:1` parses like `ps 23 1` — it is
+one token otherwise, and returned nothing at all.
+
+**The literal branches (4 and 5) must COVER the query.** `phrase_coverage` weighs the words that
+carry no signal at 0.3 and drops a hit below 55%; `quantum shepherd tractor engine banana` used to
+return nineteen verses on the strength of one word. The semantic branch is deliberately exempt —
+a paraphrase match is supposed to find a verse whose words are different (DECISIONS §72).
+
+**A search never puts anything on a screen.** It returns candidates; an operator chooses. Held by
+`e2e::r9_searching_never_puts_anything_on_a_screen`, which watches both doors.
+
 The KJV importer strips translator **marginal glosses** (`{green…: Heb. pastures of tender grass}` — not verse text) and **subscriptions** (`«Written to the Hebrews from Italy, by Timothy.»` — a note about where a letter was posted, not the last words of the epistle), while keeping supplied-word italics (`{it was}` → `it was`). Brace groups are matched by DEPTH, because the source contains nested and misplaced braces and taking the first `}` left note text on the wall in four verses (RG-123 … RG-125).
 
 ---
@@ -214,8 +226,8 @@ service lock · update safety · diagnostics · models.
 | `rehearsal://changed` | Rehearsal was turned on or off. Pushed rather than polled, because every surface must agree about it at the same instant |
 
 Networked clients get the content events as JSON frames over the WS hub
-(`{kind:"content"|"clear"|"black"|"stage_next"|"channel_template", …}`), and send exactly three
-kinds back — `hello`, `beat`, `rendered` — none of which can carry content
+(`{kind:"content"|"clear"|"black"|"stage_next"|"stage_alert"|"channel_template", …}`), and send
+exactly three kinds back — `hello`, `beat`, `rendered` — none of which can carry content
 ([SECURITY.md](SECURITY.md) T4).
 
 **A client that says `hello` is answered with three things: its template, the custom
@@ -223,9 +235,17 @@ themes, and WHAT IS ON THE SCREENS RIGHT NOW.** The last of those is the retaine
 frame — the most recent `content`, `clear` or `black` — kept by `KioskHub` so a
 screen that joins in the middle of a service is not blank until the next fire
 (DECISIONS §68, CLAUDE.md rule 43). `stage_next` is deliberately not retained: it is
-a monitor-only extra and must not stand in for the content it accompanies. Because
+a monitor-only extra and must not stand in for the content it accompanies. Neither is
+`stage_alert`, for the same reason and one more: an instruction to a person is about a
+moment, and a tablet rejoining ten minutes later must not be handed it. Because
 `clear` and `black` are published through the same door, joining late can never undo
 a panic control.
+
+**Every kind needs a verdict per client, and two of them are `false` on purpose.** `stage_next`
+and `stage_alert` are for the platform, not the room: the first is the verse coming up, the
+second is a word an operator sends the preacher mid-sermon. Neither may render on a congregation
+screen, and that is held by `r6-contracts.test.js` rather than by where the code happens to
+live — it fails on any new hub message that no client has an explicit answer for.
 
 ---
 
@@ -234,7 +254,7 @@ a panic control.
 - **One store** — `src/lib/stores/capture.js` — holds all writable stores (`capture`, `transcript`, `detections` = pending suggestions, `live` = what's on screen, `templates`, `screenBlack`, `panicError`, `serviceLock`) plus every command wrapper and event listener. The file's header states which wrappers **throw** and which **swallow**, and a test holds each one in its group — a contract stated only in a comment was false for `stopCapture` for as long as the comment existed.
 - **`TemplateRender.svelte`** is the single renderer (see §4).
 - **Tabs** — **Live · Outputs · Templates · Themes · Library · Planner · Settings · Help.** There is **no Console tab**: `Live` *is* the console, and the plan runs there, because an operator running a plan on a separate tab could not see the AI's suggestions — and the preacher going off-script is the entire product. (The Outputs tab's internal key is still `channels` and its file is `Channels.svelte`; the label is what an operator reads.)
-- **Sub-surfaces** — `Library` (Scripture / Lyrics / Media / Announcements / History, plus `SongEditor`, `ImportReview`, the arrangement editor and the Sunday report), `Settings` (18 sections, including **Dashboard** — the readiness screen, which is inside Settings and not on the tab bar — **Languages**, **Privacy** and **Diagnostics**); plus standalone `Output` and `Stage` pages.
+- **Sub-surfaces** — `Library` (Scripture / Lyrics / Media / Announcements / History, plus `SongEditor`, `ImportReview`, the arrangement editor and the Sunday report), `Settings` (11 sections, including **Diagnostics** — which holds the readiness screen, inside Settings and not on the tab bar — **Scripture & Languages** and **Privacy & Advanced**); plus standalone `Output` and `Stage` pages.
 - **Cross-cutting shell state** — the panic bar, the rehearsal band, the update banner, and the one-line **degraded** state are mounted once in `App.svelte`, on every tab, never per view. So is `shortcuts.js`, the single global keydown listener.
 - **Design system** — global `--v-*` tokens in `src/app.css`; every view shares them, and the four promise-carrying colours are defined once (amber = on air, amethyst = rehearsal, cyan = a guess, grey = cued).
 

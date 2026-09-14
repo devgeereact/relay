@@ -69,7 +69,7 @@
         ['It can put a spoken reference straight up.', 'If the preacher clearly says “Romans 8:28”, Relay is confident and shows it.'],
         ['It will NEVER put a guess up.', 'If it only <i>thinks</i> a sentence sounds like a verse, it offers it to you as a suggestion. Press <kbd>A</kbd> to accept, <kbd>D</kbd> to dismiss. Nothing reaches the congregation without you.'],
         ['You always win.', 'Type any reference in the box and press Enter, and it goes up immediately — regardless of what the AI thinks.'],
-        ['It is too eager / too cautious', 'Settings → <b>AI Detection Thresholds</b>. Relay also learns from every suggestion you accept or reject.'],
+        ['It is too eager / too cautious', 'Settings → <b>AI &amp; Detection</b>. Relay also learns from every suggestion you accept or reject.'],
       ],
     },
     {
@@ -406,7 +406,7 @@
   .chip{display:inline-flex;align-items:center;gap:7px;flex:0 0 auto;padding:4px 10px;
     border-radius:99px;font-size:var(--v-fs-cap);background:var(--v-surf2);
     border:1px solid var(--v-line2);color:var(--v-faint)}
-  .chip.ok{color:var(--v-emerald);border-color:rgba(34,197,94,.32);background:var(--v-emerald-soft)}
+  .chip.ok{color:var(--v-emerald);border-color:var(--v-emerald-line);background:var(--v-emerald-soft)}
   .chip .bd{width:6px;height:6px;border-radius:50%;background:currentColor;
     box-shadow:0 0 6px currentColor}
 
@@ -423,9 +423,9 @@
 
   .callout{display:flex;align-items:flex-start;gap:12px;margin-top:4px;padding:13px 14px;
     border-radius:var(--v-r-lg);background:var(--v-amethyst-soft);
-    border:1px solid rgba(139,92,246,.32)}
+    border:1px solid var(--v-amethyst-line)}
   .callout-ic{flex:0 0 auto;width:32px;height:32px;display:grid;place-items:center;
-    border-radius:50%;background:rgba(139,92,246,.18);color:var(--v-amethyst)}
+    border-radius:50%;background:var(--v-amethyst-soft);color:var(--v-amethyst)}
   .callout p{margin:0;font-size:var(--v-fs-b2);line-height:1.55;color:var(--v-dim)}
   .panic-fine{margin:0;font-size:var(--v-fs-cap);line-height:1.7;color:var(--v-faint)}
   .panic-fine b{color:var(--v-dim)}
@@ -456,7 +456,7 @@
   kbd{display:inline-block;font-family:var(--f-mono);font-size:var(--v-fs-cap);line-height:1;
     padding:6px 9px;border-radius:var(--v-r-sm);background:var(--v-surf3);
     border:1px solid var(--v-line2);color:var(--v-txt)}
-  kbd.ok{background:var(--v-emerald-soft);border-color:rgba(34,197,94,.32);color:var(--v-emerald)}
+  kbd.ok{background:var(--v-emerald-soft);border-color:var(--v-emerald-line);color:var(--v-emerald)}
 
   /* ── troubleshooting (unchanged behaviour, tokenised) ── */
   .h-search{max-width:340px}

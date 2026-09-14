@@ -39,7 +39,21 @@
   export let onDelete = null;
   export let onMove = null;
   /** Which kebab actions this content type can honestly offer. */
-  export let can = { queue: true, favourite: true, edit: true, duplicate: true, add: true, move: false };
+  /**
+   * `select` — does this pane have a BULK ACTION to select for?
+   *
+   * The tick box says "Select for a bulk action", and in three of the six panes
+   * that render this deck there was no bulk action: ticking a song's chorus tinted
+   * the card and led nowhere. A control that does nothing teaches an operator that
+   * the desk is unreliable, and this one taught it on the surface where they are
+   * choosing what a congregation reads next.
+   *
+   * Scripture and Browse DO have one — "Queue N selected", which stages verses on
+   * the rail and fires none of them — so it defaults to `true` and the panes with
+   * nothing behind it turn it off. Songs deliberately gain no such action:
+   * REBRAND §10, "no add all to Live — a song joins a service through the plan".
+   */
+  export let can = { queue: true, favourite: true, edit: true, duplicate: true, add: true, move: false, select: true };
   /** Favourite stars only make sense where something can be favourited. */
   export let showStar = true;
 
@@ -201,14 +215,16 @@
              "checkbox, unchecked" against every row in the deck, with nothing to say
              which row. The `title` on the label is not an accessible name for the
              input inside it. -->
-        <label class="vd-check" title="Select for a bulk action">
-          <input
-            type="checkbox"
-            aria-label={`Select ${v.label ?? v.reference} for a bulk action`}
-            checked={checked.has(v.reference)}
-            on:change={() => onCheck(v)} />
-          <span></span>
-        </label>
+        {#if can.select !== false}
+          <label class="vd-check" title="Select for a bulk action">
+            <input
+              type="checkbox"
+              aria-label={`Select ${v.label ?? v.reference} for a bulk action`}
+              checked={checked.has(v.reference)}
+              on:change={() => onCheck(v)} />
+            <span></span>
+          </label>
+        {/if}
 
         {#if showStar}
         <button
@@ -242,6 +258,15 @@
 
         <footer class="vd-foot">
           <span class="vd-n r-mono">{v.slideNo}</span>
+          <!-- THE SECTION KEY (REBRAND §10). Printed on the slide it fires, and
+               only on the slide it fires: a section that reflowed into three
+               slides shows the key once, on the first, because that is what the
+               key actually does. Grey — it is a fact about the keyboard, not a
+               claim about the wall, and every other colour on this desk already
+               means something (DECISIONS §22). -->
+          {#if v.hotkey}
+            <kbd class="vd-key r-mono" title="Press {v.hotkey} to put this section on the screens">{v.hotkey}</kbd>
+          {/if}
           <span class="vd-ref">{v.reference}</span>
           <div class="vd-menuwrap">
             <button
@@ -525,6 +550,22 @@
   .vd-n {
     font-size: 11px;
     color: var(--v-faint);
+  }
+  /* The key cap. Grey on --v-surf2, so --v-dim rather than --v-faint —
+     `tokencontrast.test.js` fails the build for the fainter one. */
+  .vd-key {
+    min-width: 17px;
+    height: 17px;
+    padding: 0 4px;
+    display: inline-grid;
+    place-items: center;
+    border: 1px solid var(--v-line2);
+    border-radius: var(--v-r-sm);
+    background: var(--v-surf2);
+    color: var(--v-dim);
+    font-size: 10px;
+    text-transform: uppercase;
+    flex: 0 0 auto;
   }
   .vd-ref {
     flex: 1;

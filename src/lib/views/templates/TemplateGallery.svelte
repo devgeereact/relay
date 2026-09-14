@@ -7,6 +7,7 @@
   // what the wall shows, not a drawing of it.
   import { createEventDispatcher, onMount, onDestroy } from 'svelte';
   import TemplateRender from '../../TemplateRender.svelte';
+  import WorkspaceFrame from '../WorkspaceFrame.svelte';
   import EmptyState from '../../ui/EmptyState.svelte';
   import Loading from '../../ui/Loading.svelte';
   import ErrorState from '../../ui/ErrorState.svelte';
@@ -167,9 +168,12 @@
 
   // The outputs a template is assigned to — REAL: a channel stores template_id.
   $: assignedChannels = sel ? channels.filter((c) => c.template_id === sel.id) : [];
-  // READ-ONLY: the content types this template is the default look for. The ONE
-  // writer of the content-type→template map is the Outputs hub matrix (Decision
-  // §25); every other surface, this gallery included, only subscribes.
+  // READ-ONLY HERE: the content types this template is the look for. The one
+  // WRITER is `setContentTemplate` (capture.js) — called by the Outputs hub matrix
+  // and by the template editor's "Used for" (Decision §25, §70). This gallery only
+  // subscribes, which is what keeps every surface showing the same answer.
+  /** The content kinds a given template is the look for. */
+  $: usedFor = (id) => CONTENT_KINDS.filter((k) => $contentTemplates[k.key] === id);
   $: defaultForKinds = sel
     ? CONTENT_KINDS.filter((k) => $contentTemplates[k.key] === sel.id)
     : [];
@@ -255,52 +259,101 @@
   }
 </script>
 
-<div class="tg-shell">
-  <!-- A screen-reader operator navigates by heading; this view had none.
-       Visually hidden because the tab bar already carries the visible title —
-       the heading exists for the reader that cannot see it. -->
-  <h1 class="sr-only">Templates</h1>
-  <section class="tg-main">
-    <!-- Type tabs — DERIVED from each template's shape, so a tab can never claim a
-         template it isn't. Only kinds that actually occur are shown; there is no
-         empty "Announcements" tab because nothing distinguishes one. -->
-    <div class="tg-tabs">
-      <button class="tg-tab" class:on={filter === 'all'} on:click={() => (filter = 'all')}>
-        All Templates<span class="tg-tabn r-mono">{$templates.length}</span>
+<!-- THE TEMPLATES WORKSPACE, laid out in the shared workspace grammar
+     (`WorkspaceFrame.svelte`, docs/REBRAND.md §2 and §11): a left RAIL of what
+     there is, the MAIN area holding the thing in hand, an INSPECTOR of what is
+     true of it. Nothing here declares its own three-column body — a fourth copy
+     of that grid is how the desks drifted apart the first time.
+
+     The frame carries the page's <h1>; each pane head carries an <h2>. That is
+     ordinary document structure rather than a workaround, and it is what keeps a
+     screen-reader operator able to jump into a pane rather than only onto the
+     page (surface.test.js R3-12). -->
+<WorkspaceFrame
+  title="Templates"
+  standfirst="How a verse, a song or a notice looks on a screen. Editing one repaints every screen already wearing it."
+  columns="206px minmax(0,1fr) 312px">
+  <svelte:fragment slot="head">
+    <input type="file" accept=".json,application/json" bind:this={fileInput} on:change={onImportFile} style="display:none" />
+    <button class="r-btn ghost sm" on:click|stopPropagation={() => fileInput.click()}>Import</button>
+    <span class="tg-newwrap">
+      <button class="r-btn primary sm" on:click|stopPropagation={() => (newOpen = !newOpen)} disabled={!$capture.available}>＋ New template</button>
+      {#if newOpen}
+        <!-- The click handler is not an interaction: it stops the document-level
+             outside-click closer from seeing a click on the menu itself. Every real
+             control inside is a <button>, so the keyboard already reaches all of them,
+             and Escape is handled globally — `shortcuts.js` gives Escape to any mounted
+             [role="menu"] rather than clearing the screens. A keydown handler here would
+             have to stopPropagation too, which would swallow Space (rule 11: Space means
+             advance, app-wide) for as long as a menu is open. -->
+        <!-- svelte-ignore a11y-click-events-have-key-events -->
+        <div class="tg-newmenu" on:click|stopPropagation role="menu" tabindex="-1">
+          <div class="tg-newsec r-lbl">Start from</div>
+          {#each STARTERS as s}
+            <button on:click={() => newFrom(s)}>
+              <span class="tg-newname">{s.label}</span>
+              <span class="tg-newhint">{s.hint}</span>
+            </button>
+          {/each}
+        </div>
+      {/if}
+    </span>
+  </svelte:fragment>
+
+  <!-- ══ RAIL ══ Kinds, then the look register read from the other direction.
+       Dense rows with a hairline between them, which is the whole grammar: a
+       list you scan, not a stack of cards you read. -->
+  <aside class="rw-pane tg-rail">
+    <div class="rw-panehead"><h2 class="rw-panettl">Kinds</h2></div>
+    <nav class="rw-panebody" aria-label="Template kinds">
+      <!-- Type rows — DERIVED from each template's shape, so a row can never
+           claim a template it isn't. Only kinds that actually occur are shown;
+           there is no empty "Announcements" row because nothing distinguishes one. -->
+      <button class="rw-item r-focus" class:on={filter === 'all'} on:click={() => (filter = 'all')}>
+        <span class="rw-itemname">All templates</span>
+        <span class="rw-itemn">{$templates.length}</span>
       </button>
       {#each kinds as k (k.key)}
-        <button class="tg-tab" class:on={filter === k.key} on:click={() => (filter = k.key)}>
-          {k.many}<span class="tg-tabn r-mono">{k.count}</span>
+        <button class="rw-item r-focus" class:on={filter === k.key} on:click={() => (filter = k.key)}>
+          <span class="rw-itemname">{k.many}</span>
+          <span class="rw-itemn">{k.count}</span>
         </button>
       {/each}
-      <span class="tg-spring"></span>
-      <input type="file" accept=".json,application/json" bind:this={fileInput} on:change={onImportFile} style="display:none" />
-      <button class="r-btn ghost sm" on:click|stopPropagation={() => fileInput.click()}>Import</button>
-      <span class="tg-newwrap">
-        <button class="r-btn primary sm" on:click|stopPropagation={() => (newOpen = !newOpen)} disabled={!$capture.available}>＋ New Template</button>
-        {#if newOpen}
-          <!-- The click handler is not an interaction: it stops the document-level
-               outside-click closer from seeing a click on the menu itself. Every real
-               control inside is a <button>, so the keyboard already reaches all of them,
-               and Escape is handled globally — `shortcuts.js` gives Escape to any mounted
-               [role="menu"] rather than clearing the screens. A keydown handler here would
-               have to stopPropagation too, which would swallow Space (rule 11: Space means
-               advance, app-wide) for as long as a menu is open. -->
-          <!-- svelte-ignore a11y-click-events-have-key-events -->
-          <div class="tg-newmenu" on:click|stopPropagation role="menu" tabindex="-1">
-            <div class="tg-newsec r-lbl">Start from</div>
-            {#each STARTERS as s}
-              <button on:click={() => newFrom(s)}>
-                <span class="tg-newname">{s.label}</span>
-                <span class="tg-newhint">{s.hint}</span>
-              </button>
-            {/each}
+
+      <!-- THE LOOK REGISTER, read the other way round. A card's tag answers
+           "what is this template used for"; this answers "what does scripture
+           wear", which is the question asked in a booth. READ-ONLY: the one
+           writer is `setContentTemplate` (Outputs, and the editor's Used for) —
+           a row here only selects the template so you can look at it.
+           A kind with nothing bound says so IN WORDS; it never prints a dash,
+           because a dash cannot tell "not set" from "we did not ask" (R3-13). -->
+      <div class="rw-group">Content looks</div>
+      {#each CONTENT_KINDS as ck (ck.key)}
+        {@const lookTpl = $templates.find((t) => t.id === $contentTemplates[ck.key]) || null}
+        {#if lookTpl}
+          <button class="rw-item r-focus tg-look" class:on={lookTpl.id === selId}
+            on:click={() => { filter = 'all'; selId = lookTpl.id; }}>
+            <span class="rw-itemname">{ck.label}</span>
+            <span class="tg-lookv">{lookTpl.name}</span>
+          </button>
+        {:else}
+          <!-- Not a disabled button. There is nothing for this row to select, and
+               a control an operator can press and learn nothing from is worse
+               than a line of text that states the fact. -->
+          <div class="rw-item tg-look tg-static">
+            <span class="rw-itemname">{ck.label}</span>
+            <span class="tg-lookv unset">Not set</span>
           </div>
         {/if}
-      </span>
-    </div>
+      {/each}
+    </nav>
+  </aside>
 
-    <div class="tg-toolbar">
+  <!-- ══ THE TEMPLATES ══ -->
+  <section class="rw-pane">
+    <div class="rw-panehead">
+      <h2 class="rw-panettl">Templates</h2>
+      <span class="rw-spring"></span>
       <div class="tg-search">
         <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.9" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3" stroke-linecap="round"/></svg>
         <input placeholder="Search templates…" bind:value={q} aria-label="Search templates" />
@@ -315,15 +368,15 @@
       </label>
       <div class="tg-viewtog">
         <button class:on={view === 'grid'} on:click={() => (view = 'grid')} aria-label="Grid view" title="Grid">
-          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
         </button>
-        <button class:on={view === 'list'} on:click={() => (view = 'list')} aria-label="List view" title="List">
-          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>
+        <button class:on={view === 'list'} on:click={() => (view = 'list')} aria-label="Row view" title="Rows">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>
         </button>
       </div>
     </div>
 
-    <div class="tg-scroll r-scroll" on:scroll={closeMenu}>
+    <div class="rw-panebody" class:pad={view === 'grid'} on:scroll={closeMenu}>
       {#if shown.length}
         <div class="tg-grid" class:list={view === 'list'}>
           {#each shown as t (t.id)}
@@ -332,26 +385,35 @@
               on:keydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selId = t.id; } }}>
               <div class="tg-thumb">
                 <TemplateRender template={t} content={SAMPLE} />
-                <span class="tg-aspect r-mono">16:9</span>
-                {#if t.id === selId}<span class="tg-check" aria-hidden="true"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>{/if}
+                {#if view === 'grid'}<span class="tg-aspect r-mono">16:9</span>{/if}
               </div>
               <div class="tg-meta">
                 <div class="tg-metatext">
                   <span class="tg-name">{t.name}</span>
                   <span class="tg-sub r-mono">{kindLabel(t)} · 16:9</span>
                 </div>
+                <!-- USED FOR. A tag on the card, so "which template does
+                     scripture wear" is answerable by looking rather than by
+                     opening each one. Deliberately NEUTRAL: it says what this
+                     template is FOR, not what any screen is doing right now,
+                     and every colour that carries a promise is spoken for
+                     (CLAUDE.md rule 18) — steel blue included, which means
+                     "the thing you are working on". -->
+                {#if usedFor(t.id).length}
+                  <span class="tg-usedfor r-mono" title="Used for {usedFor(t.id).map((k) => k.label).join(', ')}">{usedFor(t.id).map((k) => k.label).join(' · ')}</span>
+                {/if}
                 <div class="tg-cardbtns">
                   <!-- Star = THE default template (the fallback look every slide
-                       wears). One default, not a set of four; accent when set. Not
-                       amber — amber means live on the wall, this only marks a fallback. -->
+                       wears). One default, not a set of four; steel blue when set.
+                       Not amber — amber means live on the wall, this only marks a fallback. -->
                   <button class="tg-star" class:on={t.id === $defaultTemplateId}
                     title={t.id === $defaultTemplateId ? 'Default template — click to clear' : 'Make this the default template'}
                     aria-label="Toggle default template" on:click|stopPropagation={() => makeDefault(t)}
                     disabled={!$capture.available}>
-                    <svg viewBox="0 0 24 24" width="14" height="14" fill={t.id === $defaultTemplateId ? 'currentColor' : 'none'} stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="m12 3 2.6 5.3 5.9.9-4.3 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8-4.3-4.1 5.9-.9L12 3Z"/></svg>
+                    <svg viewBox="0 0 24 24" width="13" height="13" fill={t.id === $defaultTemplateId ? 'currentColor' : 'none'} stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="m12 3 2.6 5.3 5.9.9-4.3 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8-4.3-4.1 5.9-.9L12 3Z"/></svg>
                   </button>
                   <button class="tg-more" aria-label="More actions" on:click|stopPropagation={(e) => openMenu(e, t)}>
-                    <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="12" cy="19" r="1.6"/></svg>
+                    <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="12" cy="19" r="1.6"/></svg>
                   </button>
                 </div>
               </div>
@@ -384,36 +446,36 @@
       {/if}
     </div>
 
-    {#if err}<div class="tg-err" role="alert">{err}</div>{/if}
+    {#if err}<div class="rw-panefoot tg-err" role="alert">{err}</div>{/if}
   </section>
 
-  <!-- ══ PREVIEW / INSPECTOR ══ -->
-  <aside class="tg-insp">
+  <!-- ══ INSPECTOR ══ -->
+  <aside class="rw-pane rw-insp">
     {#if !sel}
-      <div class="tg-insphead"><span class="tg-inspttl">Template Preview</span></div>
+      <div class="rw-panehead"><h2 class="rw-panettl">Template</h2></div>
       <div class="tg-empty r-empty">Pick a template to preview it.</div>
     {:else}
-      <div class="tg-insphead">
-        <span class="tg-inspttl">Template Preview</span>
+      <div class="rw-panehead">
+        <h2 class="rw-panettl">Template</h2>
+        <span class="rw-spring"></span>
         <span class="tg-aspect r-mono static">16:9</span>
       </div>
 
-      <div class="tg-inspbody r-scroll">
+      <div class="rw-panebody pad">
         <div class="tg-preview">
           <TemplateRender template={sel} content={SAMPLE} />
         </div>
+        <div class="tg-selname">{sel.name}</div>
 
         <div class="tg-previewbtns">
-          <button class="r-btn primary sm" on:click={() => (previewing = sel)}>
-            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
-            Preview fullscreen
-          </button>
-          <button class="r-btn ghost sm" on:click={() => dispatch('edit', { id: sel.id })}>
+          <button class="r-btn primary sm" on:click={() => dispatch('edit', { id: sel.id })}>
             <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
-            Edit template
+            Edit
           </button>
-        </div>
-        <div class="tg-previewbtns">
+          <button class="r-btn ghost sm" on:click={() => (previewing = sel)}>
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+            Full screen
+          </button>
           <button class="r-btn ghost sm" on:click={testOnScreens} disabled={!$capture.available}
             title="Fires sample scripture to the live screens using this template — clear it with Esc.">
             <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3v18l15-9L5 3Z"/></svg>
@@ -428,24 +490,30 @@
         </div>
 
         {#if inspTab === 'details'}
-          <dl class="tg-info">
-            <dt>Name</dt>
-            <dd>
+          <!-- A row is a NAME and a VALUE (§11), full-bleed against the pane's own
+               12px gutter so the seams reach both edges. -->
+          <div class="tg-rows">
+            <div class="rw-nv">
+              <span class="rw-nvk">Name</span>
               {#if renaming}
                 <!-- svelte-ignore a11y-autofocus -->
-                <input class="r-input tg-rename" bind:value={renameDraft} autofocus
+                <input class="r-input tg-rename rw-nvctl" bind:value={renameDraft} autofocus
+                  aria-label="Template name"
                   on:blur={commitRename} on:keydown={(e) => e.key === 'Enter' && e.target.blur()} />
               {:else}
-                {sel.name}
+                <span class="rw-nvv">{sel.name}</span>
               {/if}
-            </dd>
-            <dt>Content type</dt><dd>{kindLabel(sel)}</dd>
+            </div>
+            <div class="rw-nv"><span class="rw-nvk">Content type</span><span class="rw-nvv">{kindLabel(sel)}</span></div>
             <!-- A READOUT, not a picker: every template is 16:9 by construction
                  (TemplateRender sizes in cqw), so there is no orientation to set. -->
-            <dt>Orientation</dt><dd>16:9 · 1920×1080</dd>
-            <dt>Background</dt><dd>{bgLabel(sel)}</dd>
-            <dt>Default</dt><dd>{sel.id === $defaultTemplateId ? 'Yes — the fallback for every slide' : 'No'}</dd>
-          </dl>
+            <div class="rw-nv"><span class="rw-nvk">Orientation</span><span class="rw-nvv">16:9 · 1920×1080</span></div>
+            <div class="rw-nv"><span class="rw-nvk">Background</span><span class="rw-nvv">{bgLabel(sel)}</span></div>
+            <div class="rw-nv">
+              <span class="rw-nvk">Default</span>
+              <span class="rw-nvv">{sel.id === $defaultTemplateId ? 'Yes' : 'No'}</span>
+            </div>
+          </div>
           <!-- Created / Last modified / "used 26 times" are in the reference and
                omitted here on purpose: templates carry no timestamps and Relay
                keeps no per-template usage count, so any figure would be invented. -->
@@ -459,20 +527,20 @@
             <button class="r-btn ghost sm" on:click={() => duplicate(sel)}>Duplicate</button>
             <button class="r-btn ghost sm" on:click={() => exportTemplate(sel)}>Export</button>
             <button class="r-btn ghost sm" on:click={startRename}>Rename</button>
+            <!-- Two-step, because Tauri's webview has no working confirm() and a
+                 delete that reports success without ever showing a dialog is
+                 exactly the defect rule 41 exists for. -->
             <button class="r-btn ghost sm tg-del" class:arm={delArm === sel.id} on:click={() => del(sel)} disabled={!$capture.available}>
-              {delArm === sel.id ? 'Click again to confirm' : 'Delete'}
+              {delArm === sel.id ? 'Delete — sure?' : 'Delete'}
             </button>
           </div>
+          <p class="rw-foot">The <b>default template</b> is the fallback look a slide wears when neither the screen nor the content type has one of its own.</p>
         {:else}
           <div class="r-lbl tg-flbl">Assigned to outputs</div>
           {#if assignedChannels.length}
-            <div class="tg-assigned">
+            <div class="tg-rows">
               {#each assignedChannels as c (c.id)}
-                <div class="tg-arow">
-                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
-                  <span class="tg-aname">{c.name}</span>
-                  <span class="tg-atype r-mono">{c.render_target === 'native_window' ? 'display' : c.render_target === 'ndi_encode' ? 'NDI' : 'network'}</span>
-                </div>
+                <div class="rw-nv"><span class="rw-nvk">{c.name}</span><span class="rw-nvv">{c.render_target === 'native_window' ? 'display' : c.render_target === 'ndi_encode' ? 'NDI' : 'network'}</span></div>
               {/each}
             </div>
           {:else}
@@ -481,20 +549,20 @@
 
           <div class="r-lbl tg-flbl">Default content look</div>
           {#if defaultForKinds.length}
-            <div class="tg-chips">
+            <div class="tg-rows">
               {#each defaultForKinds as ck (ck.key)}
-                <span class="tg-defchip">Default for: {ck.label}</span>
+                <div class="rw-nv"><span class="rw-nvk">{ck.label}</span><span class="rw-nvv">default</span></div>
               {/each}
             </div>
           {:else}
             <p class="tg-fhelp">Not set as a default content look.</p>
           {/if}
-          <p class="tg-fhelp">Content looks are set in <b>Outputs → Content looks</b> — the one place a content type is bound to a template.</p>
+          <p class="rw-foot">Content looks are set in <b>Outputs → Content looks</b> — the one place a content type is bound to a template.</p>
         {/if}
       </div>
     {/if}
   </aside>
-</div>
+</WorkspaceFrame>
 
 <!-- Fixed-position row menu — anchored to the ⋮ button's screen rect so it is
      never clipped by the card or the scroll area. -->
@@ -511,7 +579,7 @@
     <button on:click={() => { menuFor = null; dispatch('edit', { id: menuTpl.id }); }}>Edit</button>
     <button on:click={() => duplicate(menuTpl)}>Duplicate</button>
     <button on:click={() => { const t = menuTpl; menuFor = null; exportTemplate(t); }}>Export</button>
-    <button class="danger" class:arm={delArm === menuTpl.id} on:click={() => del(menuTpl)}>{delArm === menuTpl.id ? 'Click again' : 'Delete'}</button>
+    <button class="danger" class:arm={delArm === menuTpl.id} on:click={() => del(menuTpl)}>{delArm === menuTpl.id ? 'Sure?' : 'Delete'}</button>
   </div>
 {/if}
 
@@ -521,131 +589,133 @@
 {/if}
 
 <style>
-  .tg-shell{ display:grid; grid-template-columns:minmax(0,1fr) 330px; gap:var(--v-sp-md);
-    height:100%; min-height:0; }
-  @media (max-width:1180px){ .tg-shell{ grid-template-columns:1fr; height:auto; } }
+  /* The pane, the pane head, the rail row and the name/value row all come from
+     `WorkspaceFrame.svelte`. What is left here is what is genuinely this
+     workspace's own: a grid of live thumbnails, and the controls around it. */
 
-  .tg-main{ display:flex; flex-direction:column; min-height:0; gap:12px; }
+  /* ── the rail's second column ─────────────────────────────────────────── */
+  /* A look register row names a TEMPLATE, not a count, so it takes the width it
+     needs rather than `.rw-itemn`'s figure column. */
+  .tg-look .rw-itemname{ flex:0 0 auto; color:var(--v-faint); }
+  .tg-lookv{ flex:1; min-width:0; text-align:right; font-size:var(--v-fs-cap);
+    color:var(--v-faint); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .tg-lookv.unset{ font-style:italic; }
+  .tg-static{ cursor:default; }
+  .tg-static:hover{ background:transparent; color:var(--v-dim); }
 
-  /* tabs */
-  .tg-tabs{ display:flex; align-items:center; gap:6px; flex:0 0 auto; flex-wrap:wrap; }
-  .tg-tab{ display:inline-flex; align-items:center; gap:7px; padding:7px 13px; border-radius:var(--v-r-md);
-    background:var(--v-surf); border:1px solid var(--v-line); color:var(--v-dim); cursor:pointer;
-    font-size:var(--v-fs-b2); font-weight:500; transition:.12s; }
-  .tg-tab:hover{ border-color:var(--v-line2); color:var(--v-txt); }
-  .tg-tab.on{ background:var(--v-accent-fill); border-color:var(--v-accent-fill); color:var(--v-accent-ink); }
-  .tg-tabn{ font-size:var(--v-fs-cap); padding:1px 6px; border-radius:99px; background:var(--v-surf3); color:var(--v-dim); }
-  .tg-tab.on .tg-tabn{ background:rgba(0,0,0,.28); color:var(--v-accent-ink); }
-  .tg-spring{ flex:1; }
+  /* ── the head's controls ──────────────────────────────────────────────── */
   .tg-newwrap{ position:relative; }
-  .tg-newmenu{ position:absolute; top:34px; right:0; z-index:40; width:250px; background:var(--v-surf2);
-    border:1px solid var(--v-line2); border-radius:var(--v-r-md); box-shadow:var(--v-shadow-lg); padding:5px; }
+  .tg-newmenu{ position:absolute; top:30px; right:0; z-index:40; width:250px; background:var(--v-surf2);
+    border:1px solid var(--v-line2); border-radius:var(--v-r-md); box-shadow:var(--v-shadow-lg); padding:4px; }
   .tg-newsec{ padding:6px 8px 4px; }
-  .tg-newmenu button{ display:flex; flex-direction:column; gap:2px; width:100%; text-align:left; padding:9px 10px;
+  .tg-newmenu button{ display:flex; flex-direction:column; gap:2px; width:100%; text-align:left; padding:8px 9px;
     border:0; background:none; color:var(--v-txt); border-radius:var(--v-r-sm); cursor:pointer; }
   .tg-newmenu button:hover{ background:var(--v-surf3); }
   .tg-newname{ font-size:var(--v-fs-b2); font-weight:600; }
   .tg-newhint{ font-size:var(--v-fs-cap); color:var(--v-faint); line-height:1.35; }
+  /* --v-faint is 3.79:1 on --v-surf3 and nothing is allowed to pair them
+     (app.css, RG-74). The hover background IS surf3, so the hint lifts a step
+     with it rather than dropping below AA for as long as the pointer is there —
+     a contrast failure that only exists on hover is still a contrast failure. */
+  .tg-newmenu button:hover .tg-newhint{ color:var(--v-dim); }
 
-  .tg-toolbar{ display:flex; align-items:center; gap:10px; flex:0 0 auto; }
-  .tg-search{ display:flex; align-items:center; gap:8px; background:var(--v-bg); border:1px solid var(--v-line2);
-    border-radius:var(--v-r-md); padding:0 11px; height:32px; flex:1 1 260px; max-width:340px; }
-  .tg-search:focus-within{ border-color:var(--v-accent-line); box-shadow:0 0 0 3px var(--v-accent-soft); }
+  .tg-search{ display:flex; align-items:center; gap:7px; background:var(--v-bg); border:1px solid var(--v-line2);
+    border-radius:var(--v-r-sm); padding:0 9px; height:24px; flex:1 1 160px; max-width:260px; }
+  .tg-search:focus-within{ border-color:var(--v-sel-line); }
   .tg-search svg{ color:var(--v-faint); flex:0 0 auto; }
   .tg-search input{ flex:1; min-width:0; background:transparent; border:0; outline:none; color:var(--v-txt); font-size:var(--v-fs-b2); }
   .tg-search input::placeholder{ color:var(--v-faint); }
-  .tg-sort{ display:flex; align-items:center; gap:7px; margin-left:auto; }
-  .tg-sort .r-select{ height:32px; }
-  .tg-viewtog{ display:flex; gap:2px; background:var(--v-bg); border:1px solid var(--v-line2); border-radius:var(--v-r-md); padding:3px; }
-  .tg-viewtog button{ width:30px; height:26px; display:grid; place-items:center; border:0; border-radius:var(--v-r-sm);
+  .tg-sort{ display:flex; align-items:center; gap:7px; flex:0 0 auto; }
+  .tg-sort .r-select{ height:24px; width:auto; }
+  .tg-viewtog{ display:flex; gap:2px; background:var(--v-bg); border:1px solid var(--v-line2);
+    border-radius:var(--v-r-sm); padding:2px; flex:0 0 auto; }
+  .tg-viewtog button{ width:26px; height:20px; display:grid; place-items:center; border:0; border-radius:var(--v-r-sm);
     background:none; color:var(--v-faint); cursor:pointer; }
   .tg-viewtog button:hover{ color:var(--v-txt); }
-  .tg-viewtog button.on{ background:var(--v-surf3); color:var(--v-accent); }
+  .tg-viewtog button.on{ background:var(--v-surf3); color:var(--v-txt); }
 
-  .tg-scroll{ flex:1; min-height:0; overflow-y:auto; }
-  .tg-grid{ display:grid; grid-template-columns:repeat(auto-fill, minmax(232px, 1fr)); gap:14px; padding-bottom:8px; }
-  .tg-grid.list{ grid-template-columns:1fr; gap:8px; }
+  /* ── the grid, and the rows it becomes ────────────────────────────────── */
+  .tg-grid{ display:grid; grid-template-columns:repeat(auto-fill, minmax(210px, 1fr)); gap:10px; }
+  /* ROWS: no card borders, one hairline between — a list you scan down, which is
+     what a desk does with thirty of anything. The pane body drops its padding in
+     this mode (`pad` is opt-in), so the seams reach both edges. */
+  .tg-grid.list{ display:block; }
 
-  .tg-card{ display:flex; flex-direction:column; background:var(--v-surf); border:1px solid var(--v-line);
-    border-radius:var(--v-r-lg); overflow:hidden; cursor:pointer; transition:border-color .12s, box-shadow .12s; }
+  .tg-card{ display:flex; flex-direction:column; background:var(--v-surf2); border:1px solid var(--v-line);
+    border-radius:var(--v-r-md); overflow:hidden; cursor:pointer;
+    transition:border-color var(--v-dur) var(--v-ease); }
   .tg-card:hover{ border-color:var(--v-line2); }
-  .tg-card.sel{ border-color:var(--v-accent); box-shadow:0 0 0 1px var(--v-accent); }
-  .tg-card.row{ flex-direction:row; align-items:stretch; }
+  .tg-card.sel{ border-color:var(--v-sel); box-shadow:0 0 0 1px var(--v-sel); }
+  .tg-card.row{ flex-direction:row; align-items:stretch; background:none; border:0; border-radius:0;
+    border-bottom:1px solid var(--v-line); box-shadow:none; }
+  .tg-card.row:hover{ background:var(--v-surf2); }
+  .tg-card.row.sel{ background:var(--v-sel-soft); box-shadow:inset 2px 0 0 var(--v-sel); }
 
   /* position:relative is load-bearing — TemplateRender's root is
      position:absolute; inset:0 and supplies its own container-type. */
   .tg-thumb{ position:relative; aspect-ratio:16/9; background:var(--v-void); overflow:hidden; flex:0 0 auto; }
-  .tg-card.row .tg-thumb{ width:200px; aspect-ratio:16/9; }
-  .tg-aspect{ position:absolute; top:8px; right:8px; font-size:9px; letter-spacing:.04em; color:var(--v-txt);
-    background:rgba(10,10,10,.62); padding:2px 6px; border-radius:var(--v-r-sm); }
+  .tg-card.row .tg-thumb{ width:84px; margin:5px 0 5px 8px; border-radius:2px; }
+  .tg-aspect{ position:absolute; top:6px; right:6px; font-size:var(--v-fs-cap); letter-spacing:.04em;
+    color:var(--v-txt); background:rgba(10,10,10,.62); padding:1px 5px; border-radius:var(--v-r-sm); }
   .tg-aspect.static{ position:static; background:var(--v-surf2); color:var(--v-faint); }
-  .tg-check{ position:absolute; top:8px; left:8px; width:20px; height:20px; border-radius:50%;
-    background:var(--v-accent-fill); color:#fff; display:grid; place-items:center; }
 
-  .tg-meta{ display:flex; align-items:center; gap:8px; padding:10px 11px; flex:1; min-width:0; }
+  /* NOT A STATUS. A role tag, in mono, in the muted step — every colour that
+     carries a promise is spoken for, steel blue (selection) included. */
+  .tg-usedfor{ flex:0 0 auto; max-width:40%; padding:1px 6px; border:1px solid var(--v-line2);
+    border-radius:var(--v-r-sm); font-size:var(--v-fs-cap); letter-spacing:var(--v-tr-caps);
+    text-transform:uppercase; color:var(--v-faint); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .tg-meta{ display:flex; align-items:center; gap:7px; padding:6px 8px; flex:1; min-width:0; }
+  .tg-card.row .tg-meta{ padding:0 12px 0 8px; }
   .tg-metatext{ flex:1; min-width:0; }
-  .tg-name{ display:block; font-size:var(--v-fs-b1); font-weight:500; color:var(--v-txt);
+  .tg-name{ display:block; font-size:var(--v-fs-b2); font-weight:600; color:var(--v-txt);
     overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .tg-sub{ display:block; font-size:var(--v-fs-cap); color:var(--v-faint); margin-top:1px; }
-  .tg-cardbtns{ display:flex; align-items:center; gap:2px; flex:0 0 auto; position:relative; }
-  .tg-star{ width:28px; height:28px; display:grid; place-items:center; border:0; background:none;
+  .tg-cardbtns{ display:flex; align-items:center; gap:1px; flex:0 0 auto; position:relative; }
+  .tg-star, .tg-more{ width:22px; height:22px; display:grid; place-items:center; border:0; background:none;
     color:var(--v-faint); cursor:pointer; border-radius:var(--v-r-sm); }
-  .tg-star.on{ color:var(--v-accent); }
+  .tg-star.on{ color:var(--v-sel); }
   .tg-star:disabled{ opacity:.3; cursor:not-allowed; }
-  .tg-more{ width:28px; height:28px; display:grid; place-items:center; border:0; background:none;
-    color:var(--v-faint); cursor:pointer; border-radius:var(--v-r-sm); }
   .tg-more:hover{ color:var(--v-txt); background:var(--v-surf3); }
+
   .tg-menu{ position:fixed; z-index:200; width:150px; display:flex; flex-direction:column;
     background:var(--v-surf2); border:1px solid var(--v-line2); border-radius:var(--v-r-md);
     box-shadow:var(--v-shadow-lg); padding:4px; }
-  .tg-menu button{ text-align:left; padding:7px 10px; border:0; background:none; color:var(--v-txt);
+  .tg-menu button{ text-align:left; padding:6px 9px; border:0; background:none; color:var(--v-txt);
     font-size:var(--v-fs-b2); border-radius:var(--v-r-sm); cursor:pointer; }
   .tg-menu button:hover{ background:var(--v-surf3); }
   .tg-menu .danger{ color:var(--v-rose); }
   .tg-menu .danger.arm{ background:var(--v-rose-soft); }
 
-  .tg-err{ flex:0 0 auto; padding:9px 12px; border:1px solid var(--v-rose); border-radius:var(--v-r-md);
-    background:var(--v-rose-soft); color:var(--v-rose); font-size:var(--v-fs-cap); }
+  /* The error sits in the pane's own foot, behind the same hairline every other
+     footnote uses, rather than floating as a bordered card of its own. */
+  .tg-err{ color:var(--v-rose); font-size:var(--v-fs-cap); line-height:1.45; }
 
-  /* inspector */
-  .tg-insp{ display:flex; flex-direction:column; min-height:0; background:var(--v-surf);
-    border:1px solid var(--v-line); border-radius:var(--v-r-lg); overflow:hidden; }
-  .tg-insphead{ display:flex; align-items:center; justify-content:space-between; gap:10px; padding:12px 14px;
-    border-bottom:1px solid var(--v-line); flex:0 0 auto; }
-  .tg-inspttl{ font-family:var(--f-head); font-size:var(--v-fs-h3); font-weight:600; color:var(--v-txt); }
-  .tg-inspbody{ flex:1; min-height:0; overflow-y:auto; padding:14px; }
+  /* ── inspector ────────────────────────────────────────────────────────── */
   .tg-preview{ position:relative; aspect-ratio:16/9; border-radius:var(--v-r-md); border:1px solid var(--v-line2);
     overflow:hidden; background:var(--v-void); }
-  .tg-previewbtns{ display:flex; gap:6px; margin-top:10px; }
-  .tg-previewbtns .r-btn{ flex:1; justify-content:center; }
-  .tg-testerr{ margin:8px 0 0; padding:8px 10px; border:1px solid var(--v-rose); border-radius:var(--v-r-md);
+  .tg-selname{ margin:8px 0 0; font-family:var(--f-head); font-size:var(--v-fs-h3); font-weight:600;
+    color:var(--v-txt); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .tg-previewbtns{ display:flex; flex-wrap:wrap; gap:5px; margin-top:8px; }
+  .tg-previewbtns .r-btn{ flex:1 1 auto; justify-content:center; }
+  .tg-testerr{ margin:8px 0 0; padding:8px 10px; border:1px solid var(--v-rose); border-radius:var(--v-r-sm);
     background:var(--v-rose-soft); color:var(--v-rose); font-size:var(--v-fs-cap); line-height:1.45; }
-  .tg-insptabs{ margin:14px 0 4px; width:100%; }
+  .tg-insptabs{ margin:12px 0 0; width:100%; }
   .tg-insptabs :global(button){ flex:1; }
 
-  .tg-info{ display:grid; grid-template-columns:auto 1fr; gap:6px 12px; margin:12px 0 0; font-size:var(--v-fs-b2); }
-  .tg-info dt{ color:var(--v-faint); }
-  .tg-info dd{ margin:0; color:var(--v-txt); overflow-wrap:anywhere; }
-  .tg-rename{ height:28px; padding:2px 8px; }
+  /* Full-bleed rows against the pane body's own 12px gutter, so a seam reaches
+     the pane edge while the prose around it keeps the gutter. The border box
+     lands exactly on the padding edge — no horizontal overflow. */
+  .tg-rows{ display:flex; flex-direction:column; margin:10px -12px 0;
+    border-top:1px solid var(--v-line); }
+  .tg-rename{ height:24px; padding:2px 7px; max-width:150px; }
 
-  .tg-flbl{ margin:15px 0 7px; }
+  .tg-flbl{ margin:14px 0 6px; }
   .tg-fhelp{ margin:0; font-size:var(--v-fs-cap); line-height:1.5; color:var(--v-faint); }
   .tg-fhelp b{ color:var(--v-dim); }
-  .tg-actions{ display:flex; flex-wrap:wrap; gap:6px; }
+  .tg-actions{ display:flex; flex-wrap:wrap; gap:5px; }
   .tg-actions .r-btn{ flex:1 1 auto; justify-content:center; }
   .tg-del{ color:var(--v-rose); }
   .tg-del:hover:not(:disabled), .tg-del.arm{ border-color:var(--v-rose); background:var(--v-rose-soft); }
-
-  .tg-assigned{ display:flex; flex-direction:column; gap:6px; }
-  .tg-arow{ display:flex; align-items:center; gap:9px; padding:8px 10px; border-radius:var(--v-r-md);
-    background:var(--v-surf2); border:1px solid var(--v-line); }
-  .tg-arow svg{ color:var(--v-faint); flex:0 0 auto; }
-  .tg-aname{ flex:1; min-width:0; font-size:var(--v-fs-b2); color:var(--v-txt); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .tg-atype{ font-size:var(--v-fs-cap); color:var(--v-faint); }
-  .tg-chips{ display:flex; flex-wrap:wrap; gap:6px; }
-  .tg-defchip{ display:inline-flex; align-items:center; padding:4px 10px; border-radius:99px;
-    background:var(--v-accent-soft); border:1px solid var(--v-accent-line); color:var(--v-txt);
-    font-size:var(--v-fs-cap); font-weight:500; }
 
   .tg-empty{ margin:auto; padding:24px; text-align:center; }
 </style>

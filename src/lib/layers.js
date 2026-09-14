@@ -16,6 +16,8 @@
 // operator types. Binding is what makes a layer template render live scripture
 // rather than lorem ipsum.
 
+import { migrateStyle, STYLE_DEFAULTS, bandLayout, faceOf } from './templatemodel.js';
+
 let _seq = 0;
 /** A stable-ish unique id. Not crypto — just needs to be unique within a template. */
 function newId(prefix = 'l') {
@@ -45,6 +47,8 @@ export const BINDINGS = [
 
 export const LAYER_TYPES = [
   { type: 'text', label: 'Text', icon: 'T' },
+  { type: 'band', label: 'Band (lower third)', icon: '▬' },
+  { type: 'region', label: 'Slide region (composite)', icon: '▣' },
   { type: 'media', label: 'Media (image / video)', icon: '▷' },
   { type: 'shape', label: 'Shape', icon: '▢' },
   { type: 'background', label: 'Background', icon: '▦' },
@@ -75,6 +79,22 @@ export function makeLayer(type, over = {}) {
         dim: 0,
       };
       break;
+    case 'region':
+      // A REAL RENDERED SLIDE inside its own container (docs/REBRAND.md §6).
+      // `templateRef` names a BUILT-IN: a kiosk or OBS page has no database and
+      // resolves ids against the bundled list, so a custom template here would
+      // render one thing on the operator's wall and another in the stream.
+      spec = {
+        name: 'Slide region',
+        x: 50, y: 8, w: 46, h: 84,
+        templateRef: 1,
+        radius: 1,
+        outline: 0,
+        outlineColor: 'theme:accent',
+        plate: null,
+        opacity: 1,
+      };
+      break;
     case 'media':
       // A MEDIA layer binds to the fired picture/video. It paints ONLY when media
       // is on screen, so a template that includes it shows media (at THIS layer's
@@ -96,6 +116,30 @@ export function makeLayer(type, over = {}) {
         fill: '#101319',
         opacity: 0.82,
         radius: 1.2,
+      };
+      break;
+    case 'band':
+      // A LOWER-THIRD BAND (docs/REBRAND.md §4). Not a shape with a helpful name:
+      // it runs from `top` to the BOTTOM edge, is inset by the side safe area,
+      // lifts its words off the baseline, and — the part no shape can do — it
+      // NAMES the objects that live inside it, so it can give them ground before
+      // they have to shrink. See `bandFit` in templatemodel.js for why that list
+      // is declared rather than guessed at.
+      spec = {
+        name: 'Band',
+        // x/y/w/h are derived from top/side (see `bandBox`) and kept in step so
+        // anything that still reads a plain box — a thumbnail, an exporter — gets
+        // the truth rather than the default 10/10/80/30.
+        x: 6, y: 74, w: 88, h: 26,
+        top: 74,
+        side: 6,
+        pad: 3,
+        lift: 3,
+        grow: 16,
+        members: [],
+        fill: '#101319',
+        opacity: 0.9,
+        radius: 1,
       };
       break;
     case 'timer':
@@ -216,6 +260,12 @@ export function templateShows(template, kind) {
  * take the override; a keyed override on a keyed channel is fine.
  */
 export function resolveOutputTemplate(channelTpl, override, pinned = false) {
+  // NO TEMPLATE OF ITS OWN = this screen follows the content look (DECISIONS §70).
+  // It has to be answered before the transparency law below, because
+  // `isKeyedTemplate(null)` is true — a template with no background layer is keyed,
+  // and an absent template has no layers at all — so a following screen would have
+  // "kept its keyed template", which is nothing, and painted an empty frame.
+  if (!channelTpl) return override ?? null;
   if (!override) return channelTpl;
   // TRANSPARENCY LAW: a keyed (lower-third) screen never goes opaque for an opaque
   // override — the camera it keys over must not be covered. Wins over everything.
@@ -242,20 +292,51 @@ export function formatElapsed(ms) {
   return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
 }
 
-/** The inline CSS for the slide-in transition at progress `t` (0→1), for a given
- *  mode: 'slide' (rise) | 'zoom' (scale up) | anything else = 'fade'. Pure, so the
- *  renderer's `in:` transition and its test share one definition. Opacity always
- *  ramps with `t` so every mode also cross-fades. */
-export function slideRevealCss(mode, t) {
-  const o = `opacity:${t};`;
-  if (mode === 'slide') return `${o} transform:translateY(${(1 - t) * 4}cqh);`;
-  if (mode === 'zoom') return `${o} transform:scale(${0.92 + t * 0.08});`;
-  return o;
-}
-
 /** Format a remaining duration (ms). Positive shows time left (`M:SS`); once the
  *  service runs OVER the planned length it goes negative and shows `-M:SS`, so a
  *  preacher can see they are past time. Reuses formatElapsed for the magnitude. */
+/**
+ * THE ONE COUNTDOWN FORMATTER. Read by the wall, the stage monitor and anything
+ * else that shows the same number, so they cannot drift apart.
+ *
+ * `auto` shows `m:ss` and grows to `h:mm:ss` once there is an hour to show —
+ * both previous copies stopped at minutes, so a 90-minute pre-service countdown
+ * read `90:00`. `ms` and `hms` pin the shape for a template that wants one.
+ */
+export function formatCountdown(ms, mode = 'auto') {
+  const total = Math.max(0, Math.round((Number(ms) || 0) / 1000));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const sec = total % 60;
+  const pad = (n) => String(n).padStart(2, '0');
+  if (mode === 'hms') return `${h}:${pad(m)}:${pad(sec)}`;
+  if (mode === 'ms') return `${Math.floor(total / 60)}:${pad(sec)}`;
+  return h > 0 ? `${h}:${pad(m)}:${pad(sec)}` : `${m}:${pad(sec)}`;
+}
+
+/** How long is left is a countdown's business; WHEN TO WORRY is this. */
+export const COUNTDOWN_WARN_MS = 60_000;
+
+/**
+ * Is this countdown inside its warning window?
+ *
+ * The last minute — or the last tenth of a countdown shorter than ten minutes,
+ * because a minute's warning on a two-minute countdown is a colour that is on for
+ * half its life and therefore says nothing.
+ *
+ * A rule rather than a setting, deliberately: the control belongs in the Settings
+ * pass, and a setting with nowhere to set it is worse than a sensible default.
+ */
+export function countdownWarning(remainingMs, totalMs = null) {
+  const left = Number(remainingMs);
+  if (!Number.isFinite(left) || left <= 0) return false;
+  const span = Number(totalMs);
+  const window = Number.isFinite(span) && span > 0
+    ? Math.min(COUNTDOWN_WARN_MS, span / 10)
+    : COUNTDOWN_WARN_MS;
+  return left <= window;
+}
+
 export function formatRemaining(ms) {
   const n = Number(ms) || 0;
   return n < 0 ? `-${formatElapsed(-n)}` : formatElapsed(n);
@@ -298,7 +379,80 @@ export function layerLabel(layer) {
   }
   if (layer.type === 'background') return 'Background';
   if (layer.type === 'media') return 'Media';
+  if (layer.type === 'band') return 'Band';
+  if (layer.type === 'region') return 'Slide region';
   return 'Shape';
+}
+
+/**
+ * ══ WHAT A BAND CONTAINS ══
+ *
+ * One reader for `members`, so nothing anywhere has to know that it is an array
+ * of ids that might hold a stale one. A band whose member was deleted names a
+ * layer that is not there; every one of these skips it rather than rendering a
+ * hole or throwing.
+ */
+
+/** The band (if any) that owns this layer. */
+export function bandOf(layers, id) {
+  if (!id) return null;
+  return (Array.isArray(layers) ? layers : []).find(
+    (L) => L && L.type === 'band' && Array.isArray(L.members) && L.members.includes(id),
+  ) || null;
+}
+
+/** Is this layer inside some band? Members are drawn by their band, not by the stack. */
+export function isBandMember(layers, id) {
+  return !!bandOf(layers, id);
+}
+
+/** A band's members, in the order the band names them, skipping any that are gone. */
+export function bandMembers(layers, band) {
+  const list = Array.isArray(layers) ? layers : [];
+  const ids = Array.isArray(band?.members) ? band.members : [];
+  return ids.map((id) => list.find((L) => L && L.id === id)).filter(Boolean);
+}
+
+/**
+ * Every layer that is not somebody's member — what the renderer and the canvas
+ * draw at the top level. A member is drawn by its band, so drawing it here too
+ * would paint it twice, once in the wrong place.
+ */
+export function topLevelLayers(layers) {
+  const list = Array.isArray(layers) ? layers : [];
+  return list.filter((L) => L && !isBandMember(list, L.id));
+}
+
+/**
+ * WHERE EACH OBJECT IS ACTUALLY DRAWN, for every object whose drawn box is not
+ * the box it stores — today that is a band and its words.
+ *
+ * ONE HOME, because there are two surfaces that must agree about this and they
+ * are not the same code: `TemplateRender` paints the wall, and the editor's
+ * canvas draws a selection handle over it. When those two disagree the handle
+ * sits somewhere the words are not, which reads as a broken editor and is the
+ * WYSIWYG guarantee (`TemplateRender` is THE one renderer) failing one layer
+ * above the renderer.
+ *
+ * @param textOf  what each member currently says — a band's growth depends on
+ *                the words in it, so the boxes depend on the content on screen.
+ * @returns a Map of layer id → `{ x, y, w, h }`. A layer that is not in it draws
+ *          at its own stored box.
+ */
+export function drawBoxes(layers, textOf = () => '') {
+  const list = Array.isArray(layers) ? layers : [];
+  const out = new Map();
+  for (const L of list) {
+    if (!L || L.type !== 'band') continue;
+    const mem = bandMembers(list, L);
+    const lay = bandLayout({
+      band: L,
+      members: mem.map((m) => ({ text: textOf(m), size: m.size, face: faceOf(m.font), h: m.h })),
+    });
+    out.set(L.id, lay.box);
+    mem.forEach((m, i) => out.set(m.id, lay.members[i]));
+  }
+  return out;
 }
 
 // ── Starting-point templates (the "new template" chooser) ──────────────────
@@ -322,17 +476,90 @@ function fullScreen() {
   };
 }
 
-/** Lower third: a band at the bottom + verse + reference IN the band. No full
- *  background layer, so the rest of the frame stays transparent (keyed). */
-function lowerThird() {
+// ── THE THREE LOWER THIRDS ─────────────────────────────────────────────────
+//
+// A band is keyed over a live camera, so NONE of these carries a background
+// layer: the rest of the frame stays transparent (see `isKeyedTemplate`, and the
+// transparency law in TemplateRender).
+//
+// They are three separate templates rather than one with options, which is what
+// makes "editing one touches no other" a property of the model instead of a
+// thing to remember.
+
+/** The band itself, at the one geometry all three share, holding the words that
+ *  were built for it.
+ *
+ *  MEMBERSHIP IS SET HERE, ONCE, AT BUILD TIME. A starter is the only place that
+ *  knows which words belong to which band, so it says so — and every later
+ *  reader (the renderer, the fit, duplicate, delete) works off that list rather
+ *  than off a name, a z-order or a bounding box. `bandWith` keeps the two halves
+ *  from drifting: it cannot return a band whose members are not the layers
+ *  beside it. */
+const bandWith = (...members) => {
+  const b = makeLayer('band');
+  return [{ ...b, members: members.map((m) => m.id) }, ...members];
+};
+
+/** NAME: who is speaking, and what they are. The name is the large line. */
+function lowerName() {
+  return {
+    layout: {
+      layers: bandWith(
+        makeLayer('text', { name: 'Name', bind: 'verse', x: 9, y: 76, w: 82, h: 10, size: 3.2, color: '#f2f4f8', align: 'left', valign: 'middle', shadow: 0 }),
+        makeLayer('text', { name: 'Role', bind: 'reference', x: 9, y: 86, w: 82, h: 5, size: 1.4, color: '#9db4ff', align: 'left', transform: 'uppercase', letterSpacing: 0.1 }),
+      ),
+      align: 'left',
+    },
+    style: {},
+  };
+}
+
+/** LYRIC: the words, and NOTHING else — no reference layer at all.
+ *  A song's "reference" is its title, and a title under every line reads like a
+ *  slide rather than a caption. The line is given the whole band. */
+function lowerLyric() {
+  return {
+    layout: {
+      layers: bandWith(
+        makeLayer('text', { name: 'Words', bind: 'verse', x: 9, y: 75, w: 82, h: 16, size: 3, color: '#f2f4f8', align: 'left', valign: 'middle', shadow: 0 }),
+      ),
+      align: 'left',
+    },
+    style: {},
+  };
+}
+
+/** SCRIPTURE: the verse, with its reference beneath — right-aligned, tracked and
+ *  small, so it reads as a citation rather than as a second sentence. */
+function lowerBible() {
+  return {
+    layout: {
+      layers: bandWith(
+        makeLayer('text', { name: 'Verse', bind: 'verse', x: 9, y: 76, w: 82, h: 10, size: 2.6, color: '#f2f4f8', align: 'left', valign: 'middle', shadow: 0 }),
+        makeLayer('text', { name: 'Reference', bind: 'reference', x: 9, y: 86, w: 82, h: 5, size: 1.5, color: '#9db4ff', align: 'right', transform: 'uppercase', letterSpacing: 0.08 }),
+      ),
+      align: 'left',
+    },
+    style: {},
+  };
+}
+
+/** SuperSource: a camera half and a rendered slide half, composited (§6).
+ *
+ *  The camera half is what is NOT painted. Relay does not take a camera feed —
+ *  NDI is parked, and a camera reaches the building through OBS or an ATEM — so
+ *  a composite here is a KEYED layout and the switcher puts the picture behind
+ *  the transparent half. A grey rectangle captioned "camera" would be a picture
+ *  of a feature rather than the feature. */
+function superSource() {
   return {
     layout: {
       layers: [
-        makeLayer('shape', { name: 'Band', x: 6, y: 74, w: 88, h: 18, fill: '#101319', opacity: 0.9, radius: 1 }),
-        makeLayer('text', { name: 'Verse', bind: 'verse', x: 9, y: 76, w: 82, h: 10, size: 2.6, color: '#f2f4f8', align: 'left', valign: 'middle', shadow: 0 }),
-        makeLayer('text', { name: 'Reference', bind: 'reference', x: 9, y: 86, w: 82, h: 5, size: 1.5, color: '#9db4ff', align: 'left', transform: 'uppercase', letterSpacing: 0.08 }),
+        makeLayer('shape', { name: 'Top bar', x: 0, y: 0, w: 100, h: 7, fill: '#0b0d12', opacity: 0.92, radius: 0 }),
+        makeLayer('shape', { name: 'Bottom bar', x: 0, y: 93, w: 100, h: 7, fill: '#0b0d12', opacity: 0.92, radius: 0 }),
+        makeLayer('region', { name: 'Word region', x: 52, y: 9, w: 44, h: 82, templateRef: 1 }),
       ],
-      align: 'left',
+      align: 'center',
     },
     style: {},
   };
@@ -460,13 +687,16 @@ function timerScreen() {
 
 export const STARTERS = [
   { key: 'fullscreen', label: 'Full-Screen Scripture', make: fullScreen, hint: 'Verse centred with its reference beneath.' },
-  { key: 'lowerthird', label: 'Lower Third', make: lowerThird, hint: 'A band at the bottom, keyed over camera in OBS/ATEM.' },
+  { key: 'lower.name', label: 'Lower Third — Name', make: lowerName, hint: 'Who is speaking, and what they are. Keyed over camera.' },
+  { key: 'lower.lyric', label: 'Lower Third — Lyric', make: lowerLyric, hint: 'The words alone — no reference. Keyed over camera.' },
+  { key: 'lower.bible', label: 'Lower Third — Scripture', make: lowerBible, hint: 'Verse with its reference beneath. Keyed over camera.' },
   { key: 'media', label: 'Full-Screen Media', make: mediaFull, hint: 'A picture or video fills the wall — add text over it if you like.' },
   { key: 'announcement', label: 'Announcement Ticker', make: announcement, hint: 'A scrolling crawl along the bottom.' },
   { key: 'stage', label: 'Stage Display', make: stageDisplay, hint: 'Platform monitor: current verse, reference and clock. Theme-aware.' },
   { key: 'confidence', label: 'Confidence Monitor', make: confidenceMonitor, hint: 'Booth-facing "what\'s on screen now" view with clock. Theme-aware.' },
   { key: 'preacher', label: 'Preacher View', make: preacherView, hint: 'Big centred verse, the next verse, service timer and your note.' },
   { key: 'timer', label: 'Countdown Timer', make: timerScreen, hint: 'Huge MM:SS for a pre-service countdown, with a label and clock.' },
+  { key: 'supersource', label: 'SuperSource', make: superSource, hint: 'Camera on one side, a rendered slide on the other. Keyed — the switcher supplies the camera.' },
   { key: 'freestyle', label: 'Freestyle', make: freestyle, hint: 'A blank canvas — add layers yourself.' },
 ];
 
@@ -476,7 +706,19 @@ export const STARTERS = [
 // its region path for un-converted templates, so this is only run on demand.
 export function regionsToLayers(template) {
   const layout = template?.layout ?? {};
-  const style = template?.style ?? {};
+  // THROUGH THE MODEL, NOT AROUND IT. This read `style.font` and
+  // `style.textShadow` — the whole-template keys `migrateStyle` writes onto the
+  // elements and then DELETES (docs/REBRAND.md §3.1). Every template Relay seeds
+  // carries a `font`, so once migration ran on the way out of the database this
+  // conversion found nothing there and silently substituted the serif default:
+  // `var(--f-display)` and `var(--f-body)` templates came back in the wrong
+  // typeface. Not a preview, either — `TemplateGallery.upgradeLegacyToLayers`
+  // runs on mount and SAVES the result, so the first visit to the Templates tab
+  // after an upgrade would have re-typefaced a church's shelf, once, for good.
+  //
+  // `migrateStyle` is idempotent and pure, so calling it here is correct whether
+  // the caller hands over a migrated template or a raw one off a disk.
+  const style = migrateStyle(template?.style ?? {});
   const regions = Array.isArray(layout.regions) ? layout.regions : [];
   const band = !!layout.lowerThird;
   const refFirst = layout.refFirst || regions[0] === 'reference';
@@ -509,11 +751,11 @@ export function regionsToLayers(template) {
   const mkVerse = (y, h) =>
     makeLayer('text', {
       name: 'Verse', bind: 'verse', x: band ? 8 : 8, y, w: band ? 84 : 84, h,
-      font: style.font || 'var(--f-serif)', color: verseColor,
+      font: style.verseFont || STYLE_DEFAULTS.verseFont, color: verseColor,
       size: Number(style.verseSize) || (band ? 2.6 : 5.2),
       align: style.verseAlign || layout.align || (band ? 'left' : 'center'), valign: 'middle',
       transform: style.verseTransform || 'none', lineHeight: Number(style.verseLineHeight) || 1.32,
-      letterSpacing: Number(style.verseLetterSpacing) || 0, shadow: Number(style.verseShadow ?? style.textShadow) || 0,
+      letterSpacing: Number(style.verseLetterSpacing) || 0, shadow: Number(style.verseShadow) || 0,
       italic: false, scroll: !!style.scroll,
       // The region renderer wraps a verse in “curly quotes” when a reference is
       // also shown; carry that so a converted preset reads identically.
@@ -522,11 +764,11 @@ export function regionsToLayers(template) {
   const mkRef = (y, h) =>
     makeLayer('text', {
       name: 'Reference', bind: 'reference', x: band ? 8 : 8, y, w: band ? 84 : 84, h,
-      font: style.font || 'var(--f-serif)', color: refColor,
+      font: style.refFont || STYLE_DEFAULTS.refFont, color: refColor,
       size: Number(style.refSize) || (band ? 1.6 : 2.5),
       align: style.refAlign || layout.align || (band ? 'left' : 'center'), valign: 'middle',
       transform: style.refTransform || 'none', lineHeight: 1.2,
-      letterSpacing: Number(style.refLetterSpacing) || 0, shadow: Number(style.refShadow ?? style.textShadow) || 0,
+      letterSpacing: Number(style.refLetterSpacing) || 0, shadow: Number(style.refShadow) || 0,
       italic: !!style.italicRef, scroll: false,
     });
 
