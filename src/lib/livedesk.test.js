@@ -222,6 +222,29 @@ describe('the AI detection column', () => {
     expect(host.querySelector('.clm .clm-ref').textContent.trim()).toBe('Pending 9:9');
   });
 
+  // And the cap falls on the RECEIPTS. The store bounds suggestions at six and
+  // prunes them at 45 seconds — the two limits that belong to a suggestion — so
+  // a column cap that hid one of those would be hiding a decision the operator
+  // still owes in order to keep showing a record of one already made.
+  it('every pending claim is drawn; the receipts are what get trimmed', async () => {
+    const now = Date.now();
+    cap.resolvedDetections.set(
+      ['R1 1:1', 'R2 2:2', 'R3 3:3', 'R4 4:4'].map((r) => ({
+        ...claim({ reference: r }),
+        outcome: 'auto',
+        resolvedAt: now,
+      })),
+    );
+    cap.detections.set(
+      ['P1 1:1', 'P2 2:2', 'P3 3:3', 'P4 4:4', 'P5 5:5'].map((r) => claim({ reference: r })),
+    );
+    new Live({ target: host, props: {} });
+    await settle();
+    const refs = [...host.querySelectorAll('.clm .clm-ref')].map((e) => e.textContent.trim());
+    expect(refs).toEqual(['P1 1:1', 'P2 2:2', 'P3 3:3', 'P4 4:4', 'P5 5:5']);
+    expect(host.querySelectorAll('.clm.done')).toHaveLength(0);
+  });
+
   // A reference that parsed against no verse keeps its card — it is the
   // operator's evidence that a number was misheard — and the control that cannot
   // take it says so instead of failing after the press.

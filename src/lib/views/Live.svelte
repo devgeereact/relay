@@ -591,16 +591,23 @@
    * Pending first, deliberately, where the prototype is strictly newest-first: a
    * receipt records something that already happened and a pending claim is a
    * decision the operator still owes, and a record must never push a decision
-   * out of a bounded column.
+   * out of the column.
+   *
+   * AND THE CAP FALLS ON THE RECEIPTS, NOT ON THE CLAIMS. Every pending claim is
+   * drawn — the store already bounds them at six and prunes them at 45 seconds,
+   * which are the two limits that belong to a suggestion — and the receipts then
+   * top the column up to `MAX_RESOLVED`. A cap applied to the whole list would
+   * hide a decision the operator still owes in order to keep showing a record of
+   * one already made, which is the wrong way round at the one moment it matters.
    */
   $: claimCards = [
     ...dets.map((d) => ({ d, outcome: null, key: `p:${d.reference}` })),
-    ...$resolvedDetections.map((d) => ({
+    ...$resolvedDetections.slice(0, Math.max(0, MAX_RESOLVED - dets.length)).map((d) => ({
       d,
       outcome: outcomeLabel(d),
       key: `r:${d.reference}:${d.resolvedAt}`,
     })),
-  ].slice(0, MAX_RESOLVED);
+  ];
 
   // heard() / methodLabel() live in lib/detect.js — pure, and unit-tested there,
   // because they are the frontend half of the auto-fire safety rule (see that file).
@@ -2537,12 +2544,21 @@
 
   /* ── responsive ────────────────────────────────────────────────────────── */
   @media (max-width:1400px){
-    .con-top{grid-template-columns:1fr 104px 1fr 250px}
-    .desk{grid-template-columns:180px minmax(0,1fr)}
+    .con-top{grid-template-columns:1fr 104px 1fr}
+    .desk{grid-template-columns:180px minmax(0,1fr) 250px}
   }
+  /* THE INSPECTOR GOES UNDER, NEVER AWAY. The prototype hides its right column
+     below 1240px; Relay may not, because the column holds the AI's claims and
+     their Accept / Dismiss — the two controls the product exists to offer — and
+     the screens pane. A booth laptop is where an operator is most cramped and
+     least able to go hunting, so the column becomes a row beneath the stage
+     instead: nothing is removed, and nothing needs a scroll to reach. */
   @media (max-width:1180px){
     .con{height:auto}
     .desk{grid-template-columns:1fr}
+    .insp-col{flex-direction:row; align-items:stretch}
+    .insp-col > .pane:first-child{flex:1 1 60%; min-height:340px}
+    .insp-col > .pane:last-child{flex:1 1 40%; max-height:none}
     /* The rail becomes a strip above the stage rather than a column beside it —
        nothing is removed, because a booth laptop is where an operator is most
        cramped and least able to go hunting. */
@@ -2561,7 +2577,10 @@
     .rack{min-height:0}
     .con-bot{grid-template-columns:1fr}
     .rail-col{flex-direction:column; height:auto}
+    .insp-col{flex-direction:column}
+    .insp-col > .pane:first-child,
+    .insp-col > .pane:last-child{flex:0 0 auto; min-height:0}
     .rack{flex-direction:row; align-items:center; flex-wrap:wrap}
-    .rack-mode{margin-top:0; flex:1}
+    .rack-cap{flex:1 0 100%; margin-top:0}
   }
 </style>
