@@ -387,16 +387,52 @@ describe('the sensitivity dial', () => {
     expect(host.querySelector('[aria-label="Detection sensitivity"]')).toBeNull();
   });
 
-  // Arm/disarm is a different question from HOW READILY, and it belongs on the
-  // panel it is about. Only the dial moved.
-  it('but the gate can still be armed and disarmed from the claim panel', async () => {
+  // L4 · AND NEITHER IS THE ARM SWITCH, NOW. This used to assert the opposite:
+  // the dial moved to the dock and an `Armed` chip stayed on the claim panel. The
+  // dock then grew the ARMED switch beside the dial (`shellchrome.test.js`:
+  // "detection is ONE switch, in the card about the signal"), which left two
+  // controls for one gate, one row apart. Two controls for one setting is two
+  // places for them to disagree, which is rule 35's family; the chip is gone and
+  // the dock's switch is the control.
+  //
+  // WHAT THIS PANEL KEEPS IS THE STATE, not a quieter copy of the control. The
+  // head's `.det-meta` distinguishes four situations the chip could not, and it
+  // is what the run surface reads to know whether the AI is armed at all.
+  it('carries NO second arm control — the dock owns the switch', async () => {
     cap.capture.update((s) => ({ ...s, detectionOn: true }));
     new Live({ target: host, props: {} });
     await settle();
-    const chip = host.querySelector('.det-ctl .btnchip');
-    expect(chip).not.toBeNull();
-    expect(chip.textContent).toContain('Armed');
+    expect(host.querySelector('.det-ctl')).toBeNull();
+    expect(host.querySelector('.btnchip')).toBeNull();
+    // Nothing on this surface may reach the command the dock's switch owns.
+    const src = readFileSync(resolve(__dirname, 'views/Live.svelte'), 'utf8');
+    expect(src).not.toMatch(/setDetection\(/);
     cap.capture.update((s) => ({ ...s, detectionOn: false }));
+  });
+
+  it('but the ARM STATE is still on the run surface, and says which failure it is', async () => {
+    // A state line that reads the same when the thing behind it is broken as when
+    // it is fine is not a status line (rule 35). Armed-and-listening is the only
+    // state that says `auto-fire on`; a disarmed detector says so in its own words
+    // and never wears the armed colour.
+    cap.capture.update((s) => ({
+      ...s,
+      detectionOn: true,
+      capturing: true,
+      stt: { ...s.stt, loaded: true },
+    }));
+    new Live({ target: host, props: {} });
+    await settle();
+    const meta = host.querySelector('.det-meta');
+    expect(meta).not.toBeNull();
+    expect(meta.textContent.trim()).toBe('auto-fire on');
+    expect(meta.classList.contains('on')).toBe(true);
+
+    cap.capture.update((s) => ({ ...s, detectionOn: false }));
+    await settle();
+    expect(host.querySelector('.det-meta').textContent.trim()).toBe('detection off');
+    expect(host.querySelector('.det-meta').classList.contains('on')).toBe(false);
+    cap.capture.update((s) => ({ ...s, capturing: false }));
   });
 });
 

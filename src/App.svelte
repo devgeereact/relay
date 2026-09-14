@@ -3,9 +3,7 @@
   import { get } from 'svelte/store';
   import { trapFocus } from './lib/focus.js';
   import { t } from './lib/i18n.js';
-  import { capture, capturing, live, screenBlack, rehearsing, initAudio, autoOpenOutputs, setDetection, clearScreens, blackScreen, panicError, dismissPanicError, serviceLock, loadServiceLock, channelHealth, channelWaiting, startChannelHealth, latencyReport, ping, onOperatorAction, noteOperatorAction, setLiveTransition, loadLiveTransition } from './lib/stores/capture.js';
-  // X1 · the transition register and the override's store (docs/REBRAND.md §8).
-  import { TRANSITIONS, TRANSITION_MS, DEFAULT_TRANSITION_MS, liveTransition } from './lib/transitions.js';
+  import { capture, capturing, live, screenBlack, rehearsing, initAudio, autoOpenOutputs, setDetection, clearScreens, blackScreen, panicError, dismissPanicError, serviceLock, loadServiceLock, channelHealth, channelWaiting, startChannelHealth, latencyReport, ping, onOperatorAction, noteOperatorAction, loadLiveTransition } from './lib/stores/capture.js';
   import * as training from './lib/training.js';
   import { practice, stopPractice } from './lib/practice.js';
   import { degradations, worstLevel, summarise } from './lib/degraded.js';
@@ -296,44 +294,20 @@
   $: if (!$live) onAirFrom = null;
   $: onAirFor = onAirFrom === null ? null : elapsed(nowMs - onAirFrom);
 
-  // ── THE TRANSITION CONTROL (docs/REBRAND.md §8 · DECISIONS §84) ────────────
+  // ── THE TRANSITION CONTROL MOVED TO THE RUN SURFACE (L4) ───────────────────
   //
-  // The one operator-level control over how a slide replaces the last, on every
-  // screen at once. `FOLLOW` is a sentinel for "no override", not a transition —
-  // an eighth entry in `TRANSITIONS` would have been a second register, and one of
-  // the two would eventually have been the one somebody read.
-  const FOLLOW = '';
-
-  // A CHANGE THAT DID NOT REACH THE SCREENS PUTS THE CONTROL BACK.
+  // The picker and its duration used to sit at the right of this 34px bar. They
+  // are now in Live's take rack, beside the transport they are about to change
+  // the look of (`views/Live.svelte`, and `transitionoverride.test.js` follows
+  // them there). Nothing about how a transition reaches a wall moved with them:
+  // `resolveTransition` is still the one ranking, `TemplateRender` still keys the
+  // replay on the override, and both panic controls are still outside it.
   //
-  // `setLiveTransition` throws (group 1 in capture.js): a congregation can see the
-  // difference between a cut and an 800 ms crossfade. There is no room in a 34px
-  // bar for an error chip and no need for one — the honest report is the picker
-  // refusing to move, because the store is only written after the backend has
-  // taken the change, and the `value=` binding then redraws the select from the
-  // store. A picker that stayed on "Crossfade" over screens that were cutting
-  // would be rule 35 with a dropdown.
-  let xError = '';
-  async function applyTransition(mode, ms) {
-    try {
-      xError = '';
-      await setLiveTransition(mode, ms);
-    } catch (e) {
-      xError = humanError(e);
-      // Force the selects to redraw from the store, which did NOT move.
-      liveTransition.set(get(liveTransition));
-    }
-  }
-  function pickTransition(e) {
-    const mode = e.currentTarget.value;
-    if (mode === FOLLOW) return applyTransition(null, null);
-    return applyTransition(mode, get(liveTransition)?.ms ?? DEFAULT_TRANSITION_MS);
-  }
-  function pickDuration(e) {
-    const cur = get(liveTransition);
-    if (!cur) return; // disabled; nothing to be the duration of
-    return applyTransition(cur.mode, Number(e.currentTarget.value));
-  }
+  // `loadLiveTransition()` stays HERE, in the shell's mount, and deliberately:
+  // the override is a BACKEND fact that every surface reads through the store,
+  // and a console reopened mid-service must not draw a picker that disagrees with
+  // screens that are already crossfading (rule 35) — including on a workspace
+  // that draws no picker at all.
 
   // ── THE SCREEN LAMPS (docs/REBRAND.md §2) ──────────────────────────────────
   //
@@ -693,54 +667,39 @@
           {/each}
         </span>
       {/if}
-      <!-- THE TRANSITION CONTROL (docs/REBRAND.md §8 · DECISIONS §84).
+      <!-- THE KEYS LEGEND (L4). The short form of the cheatsheet, always on the
+           screen, in the slot the transition picker used to occupy — an operator
+           mid-service is not going to stop and press `?`.
 
-           TWO AUTHORITIES OVER ONE PROPERTY, AND THE PICKER IS WHAT MAKES THAT
-           HONEST. §71 says a transition is a template's choice; this says an
-           operator may overrule every template at once, which is a second home for
-           one property unless somebody can see which home is answering. Hence the
-           first option: **Follow template**. It is the default, it is what a fresh
-           Relay does, and choosing anything else is a visible act with a visible
-           state — not a preference silently sitting on top of a saved one.
+           IT IS NOT A SECOND SOURCE OF TRUTH, and that is the whole design. It is
+           rendered from `liveShortcuts`, the same derived store the cheatsheet
+           reads, which is `SHORTCUTS` filtered by what the mounted view has
+           actually registered. So a key that is not bound cannot appear here, and
+           a key that stops being bound disappears from both surfaces at once. The
+           gloss is the entry's own `short` field, beside the binding, for the same
+           reason.
 
-           The duration is disabled while the template is being followed, because
-           there is nothing for it to be the duration OF: a number an operator can
-           set that changes nothing is the §69 defect, and it is what the old theme
-           editor's transition control was for the whole of its life.
+           WHICH IS WHY IT SAYS `Space step on` AND NOT `Space take`. Space means
+           ADVANCE app-wide and nothing else (rule 11); TAKE is a button on the run
+           surface. And `R` rehearse and `1–6` workspace are not drawn at all,
+           because nothing binds them — a legend that advertised a dead key would
+           teach an operator something false under pressure, which is the defect
+           `activeActions` in `shortcuts.js` exists to prevent.
 
-           IT GIVES WAY, ALWAYS. It sits before Emergency Stop and after the screen
-           lamps, and below 1180px it is not rendered at all — the panic control
-           lives at a fixed screen corner an operator hits without reading (rule 15,
-           DECISIONS §20) and a picker may never be the reason that corner moved. -->
-      <span class="xfade" class:on={$liveTransition}>
-        <span class="xcap">Transition</span>
-        <select
-          class="r-select xpick r-focus"
-          aria-label="Slide transition"
-          title="How one slide replaces the last, on every screen. Follow template leaves each template's own choice alone."
-          value={$liveTransition?.mode ?? FOLLOW}
-          on:change={pickTransition}>
-          <option value={FOLLOW}>Follow template</option>
-          {#each TRANSITIONS as x}<option value={x.id}>{x.label}</option>{/each}
-        </select>
-        <select
-          class="r-select xpick xdur r-focus"
-          aria-label="Transition duration"
-          title="How long it runs. Only meaningful while an override is in force."
-          disabled={!$liveTransition}
-          value={String($liveTransition?.ms ?? DEFAULT_TRANSITION_MS)}
-          on:change={pickDuration}>
-          {#each TRANSITION_MS as ms}<option value={String(ms)}>{ms} ms</option>{/each}
-        </select>
-        <!-- A CHANGE THAT DID NOT REACH THE SCREENS SAYS SO. The selects have
-             already snapped back to what the screens are actually doing; this says
-             why, so the operator is not left wondering whether they mis-clicked.
-             It reads differently when it is broken from when it is fine, which is
-             the whole of rule 35. -->
-        {#if xError}
-          <span class="xerr" role="status" title={xError}>not applied</span>
-        {/if}
-      </span>
+           IT GIVES WAY, ALWAYS, and in two rungs: the context keys go first and
+           then the whole strip, at the same widths the picker used. Emergency Stop
+           is at a fixed corner an operator hits without reading (rule 15,
+           DECISIONS §20) and a reference strip may never be the reason that corner
+           moved. Nothing is lost that `?` cannot recover. -->
+      {#if $liveShortcuts.length}
+        <span class="keyleg" aria-label="Keyboard shortcuts">
+          {#each $liveShortcuts as s (s.keys[0])}
+            <span class="kl" class:ctx={!s.always} title={s.label}>
+              {#each s.keys as k}<kbd>{k}</kbd>{/each}<span class="klw">{s.short}</span>
+            </span>
+          {/each}
+        </span>
+      {/if}
       <!-- EMERGENCY STOP stays at the far right of the chrome, and this is where
            the prototype puts its transition picker. A panic control lives at a
            fixed screen corner an operator can hit without reading (rule 15,
