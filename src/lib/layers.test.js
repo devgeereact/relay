@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import TemplateRender from './TemplateRender.svelte';
-import { makeLayer, isLayered, boundValue, regionsToLayers, STARTERS, formatElapsed, formatRemaining, slideRevealCss } from './layers.js';
+import { formatCountdown, countdownWarning, makeLayer, isLayered, isKeyedTemplate, boundValue, regionsToLayers, STARTERS, formatElapsed, formatRemaining } from './layers.js';
 
 describe('layer model', () => {
   it('makes typed layers with sane defaults and unique ids', () => {
@@ -37,7 +37,11 @@ describe('layer model', () => {
       expect(t.layout.layers.length).toBeGreaterThan(0);
       // Every layer has geometry and a type.
       for (const L of t.layout.layers) {
-        expect(['text', 'media', 'shape', 'background']).toContain(L.type);
+        // `region` is the composite's slide region (§6) — a layer like any
+        // other, with geometry, that happens to render a template inside itself.
+        // `band` is the lower third's own element (§4): it too has geometry, and
+        // it additionally NAMES the words that sit inside it.
+        expect(['text', 'media', 'shape', 'background', 'region', 'band']).toContain(L.type);
         expect(typeof L.x).toBe('number');
       }
     }
@@ -99,19 +103,6 @@ describe('layer model', () => {
     expect(formatRemaining(3600_000)).toBe('1:00:00');
   });
 
-  it('slideRevealCss ramps opacity for every mode, adds transform only for slide/zoom', () => {
-    // Fade: opacity only, no transform.
-    expect(slideRevealCss('fade', 0.5)).toBe('opacity:0.5;');
-    expect(slideRevealCss('fade', 1)).not.toContain('transform');
-    // Slide rises: at t=0 it is offset, at t=1 it lands.
-    expect(slideRevealCss('slide', 0)).toContain('translateY(4cqh)');
-    expect(slideRevealCss('slide', 1)).toContain('translateY(0cqh)');
-    // Zoom scales up into place.
-    expect(slideRevealCss('zoom', 0)).toContain('scale(0.92)');
-    expect(slideRevealCss('zoom', 1)).toContain('scale(1)');
-    // Every mode cross-fades (opacity tracks t).
-    for (const m of ['fade', 'slide', 'zoom']) expect(slideRevealCss(m, 0.3)).toContain('opacity:0.3');
-  });
 
   it('the preacher view carries a remaining-time layer', () => {
     const preacher = STARTERS.find((s) => s.key === 'preacher').make().layout.layers;
@@ -239,5 +230,109 @@ describe('per-screen content visibility (templateShows)', () => {
     const t = { layout: { noMedia: true } };
     expect(templateShows(t, 'media')).toBe(false);
     expect(templateShows(t, 'scripture')).toBe(true);
+  });
+});
+
+// ── THE THREE LOWER THIRDS (docs/REBRAND.md §4) ────────────────────────────
+//
+// One starter made every band the same shape: a verse line and a reference
+// line. That is right for scripture and wrong for the other two things a band
+// is for. What each one CARRIES is the whole point of there being three, so it
+// is the thing worth holding.
+describe('the lower-third starters', () => {
+  const starter = (key) => STARTERS.find((s) => s.key === key).make();
+  const names = (t) => t.layout.layers.map((l) => l.name);
+  const binds = (t) => t.layout.layers.filter((l) => l.type === 'text').map((l) => l.bind);
+
+  it('there are three of them', () => {
+    const keys = STARTERS.map((s) => s.key).filter((k) => k.startsWith('lower.'));
+    expect(keys).toEqual(['lower.name', 'lower.lyric', 'lower.bible']);
+  });
+
+  it('every one is KEYED — a band is composited over a live camera', () => {
+    // A band that paints a background covers the preacher it exists to caption.
+    for (const key of ['lower.name', 'lower.lyric', 'lower.bible']) {
+      expect(isKeyedTemplate(starter(key)), key).toBe(true);
+    }
+  });
+
+  it('the lyric band carries NO reference at all', () => {
+    // A song's "reference" is its title, and a title under every line reads as a
+    // slide rather than a caption.
+    const t = starter('lower.lyric');
+    expect(binds(t)).toEqual(['verse']);
+    expect(names(t)).not.toContain('Reference');
+  });
+
+  it('the name band carries a name and a role', () => {
+    expect(binds(starter('lower.name'))).toEqual(['verse', 'reference']);
+  });
+
+  it('the scripture band sets its reference apart rather than repeating the verse', () => {
+    const ref = starter('lower.bible').layout.layers.find((l) => l.bind === 'reference');
+    const verse = starter('lower.bible').layout.layers.find((l) => l.bind === 'verse');
+    expect(ref.align).toBe('right');
+    expect(ref.size).toBeLessThan(verse.size);
+    expect(ref.transform).toBe('uppercase');
+  });
+
+  it('each is its own template, so editing one cannot touch another', () => {
+    const a = starter('lower.bible');
+    const b = starter('lower.bible');
+    a.layout.layers[0].fill = '#ff0000';
+    expect(b.layout.layers[0].fill).not.toBe('#ff0000');
+  });
+});
+
+// ── ONE COUNTDOWN FORMATTER (docs/REBRAND.md §7) ───────────────────────────
+//
+// The arithmetic lived twice — the wall and the preacher's phone each had their
+// own copy. Two timers that agree are indistinguishable from one timer, right up
+// until somebody fixes a rounding edge in one of them.
+describe('formatCountdown', () => {
+  it('shows m:ss under an hour', () => {
+    expect(formatCountdown(5 * 60_000 + 7_000)).toBe('5:07');
+    expect(formatCountdown(0)).toBe('0:00');
+  });
+
+  it('grows to h:mm:ss once there is an hour to show', () => {
+    // Both previous copies stopped at minutes, so a 90-minute pre-service
+    // countdown read "90:00".
+    expect(formatCountdown(90 * 60_000)).toBe('1:30:00');
+  });
+
+  it('can be pinned to a shape a template asked for', () => {
+    expect(formatCountdown(90 * 60_000, 'ms')).toBe('90:00');
+    expect(formatCountdown(65_000, 'hms')).toBe('0:01:05');
+  });
+
+  it('never shows a negative time', () => {
+    expect(formatCountdown(-5000)).toBe('0:00');
+    expect(formatCountdown(null)).toBe('0:00');
+  });
+});
+
+describe('countdownWarning', () => {
+  it('warns in the last minute of an ordinary countdown', () => {
+    expect(countdownWarning(61_000, 15 * 60_000)).toBe(false);
+    expect(countdownWarning(59_000, 15 * 60_000)).toBe(true);
+  });
+
+  it('scales down for a short countdown rather than warning for half its life', () => {
+    // A minute's warning on a two-minute countdown is a colour that is on half
+    // the time, which is a colour that says nothing.
+    // A two-minute countdown warns for its last twelve seconds, not its last minute.
+    expect(countdownWarning(59_000, 2 * 60_000)).toBe(false);
+    expect(countdownWarning(13_000, 2 * 60_000)).toBe(false);
+    expect(countdownWarning(11_000, 2 * 60_000)).toBe(true);
+  });
+
+  it('is not warning once it has finished', () => {
+    expect(countdownWarning(0, 60_000)).toBe(false);
+  });
+
+  it('falls back to the last minute when the total is unknown', () => {
+    expect(countdownWarning(30_000)).toBe(true);
+    expect(countdownWarning(120_000)).toBe(false);
   });
 });

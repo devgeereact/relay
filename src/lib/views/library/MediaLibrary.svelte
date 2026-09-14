@@ -59,7 +59,6 @@
    * instead, and firing it is refused: a missing file cannot reach a screen.
    */
   let missing = {};
-  let checked = new Set();
   let layout = 'grid';
   const lost = (m) => (missing = { ...missing, [m.id]: true });
 
@@ -173,11 +172,6 @@
       onQueueChange([...queue, { reference: item.reference, text: '', mediaId: item.id }]);
     }
   }
-  function toggleCheck(item) {
-    const next = new Set(checked);
-    next.has(item.reference) ? next.delete(item.reference) : next.add(item.reference);
-    checked = next;
-  }
   const fireCard = (d) => fire(rows.find((r) => r.id === d.id) ?? {});
   const removeCard = (d) => remove(rows.find((r) => r.id === d.id) ?? {});
 </script>
@@ -209,9 +203,6 @@
           <b>{counts.find((k) => k.key === filter)?.label ?? 'All'}</b>
           <span>{shown.length} file{shown.length === 1 ? '' : 's'}</span>
         </div>
-        {#if checked.size}
-          <span class="r-chip amethyst">{checked.size} selected</span>
-        {/if}
         <div class="r-seg" role="group" aria-label="Layout">
           <button class:on={layout === 'grid'} aria-label="Grid" on:click={() => (layout = 'grid')}>
             <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><rect x="3" y="3" width="7" height="7" rx="1.4" /><rect x="14" y="3" width="7" height="7" rx="1.4" /><rect x="3" y="14" width="7" height="7" rx="1.4" /><rect x="14" y="14" width="7" height="7" rx="1.4" /></svg>
@@ -243,13 +234,11 @@
             items={deck}
             liveRef={liveDeckRef}
             rehearsing={$rehearsing}
-            {checked}
             {queuedRefs}
             busyRef={firing ? deck.find((d) => d.id === firing)?.reference ?? '' : ''}
             {layout}
             showStar={false}
-            can={{ queue: true, favourite: false, edit: false, duplicate: false, add: false }}
-            onCheck={toggleCheck}
+            can={{ queue: true, favourite: false, edit: false, duplicate: false, add: false, select: false }}
             onFire={fireCard}
             onQueue={toggleQueue}
             onDelete={removeCard} />

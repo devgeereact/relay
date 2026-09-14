@@ -14,5 +14,12 @@ import '@fontsource/fraunces/400-italic.css';
 import '@fontsource/playfair-display/600.css';
 import '@fontsource/playfair-display/700.css';
 import '@fontsource/playfair-display/400-italic.css';
+// IBM Plex Mono is the console's figure face: every clock, confidence, latency
+// and verse number renders in it, so a changing number never reflows the row
+// beside it (docs/REBRAND.md §1). JetBrains Mono stays because TEMPLATES still
+// offer it by name — that is a choice an operator saved, not chrome.
+import '@fontsource/ibm-plex-mono/400.css';
+import '@fontsource/ibm-plex-mono/500.css';
+import '@fontsource/ibm-plex-mono/600.css';
 import '@fontsource/jetbrains-mono/400.css';
 import '@fontsource/jetbrains-mono/500.css';

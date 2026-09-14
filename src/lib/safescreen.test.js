@@ -40,15 +40,26 @@ describe('the fit loop has a floor', () => {
     // congregation, and refusing to render is not this component's call: Rust owns
     // refusals. The shrink loop must still run to completion.
     const fit = render.slice(render.indexOf('function fitOne'), render.indexOf('function fitText'));
-    expect(fit).toMatch(/while \(overflows\(\) && guard < 40\)/);
+    expect(fit).toMatch(/while \(keepShrinking\(\{ overflowing: overflows\(\), scale \}\)\)/);
     expect(fit).not.toMatch(/return;/);
     expect(fit).toMatch(/return scale;/);
+  });
+
+  it('is bounded by a SIZE, not by a round count', () => {
+    // `guard < 40` bounded the loop at 0.95^40 = 0.1285, and a box needing less
+    // than that got the last guess and kept it — still overflowing, inside an
+    // `overflow: hidden` box. That is rule 42's sliced verse by a different road,
+    // and it takes only one short line at a large designed size in a shallow box.
+    // A count cannot express "small enough"; a scale can.
+    const fit = render.slice(render.indexOf('function fitOne'), render.indexOf('function fitText'));
+    expect(fit).not.toMatch(/while \(overflows\(\) && guard < 40\)/);
+    expect(render).toMatch(/import \{[^}]*keepShrinking[^}]*\} from '\.\/templatemodel\.js'/);
   });
 
   it('reports the WORST slide on screen, not the last one fitted', () => {
     // During a crossfade two slides coexist. Reporting whichever happened to be
     // fitted last would call a shrunken verse legible half the time.
-    expect(render).toMatch(/Math\.min\(worst, fitOne\(box\)\)/);
+    expect(render).toMatch(/Math\.min\(worst, fitOne\(box, stageEl\)\)/);
   });
 
   it('a reporter that throws may not take the render down', () => {
