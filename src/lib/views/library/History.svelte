@@ -676,7 +676,7 @@
   .lib-tl-row{ display:flex; align-items:baseline; gap:10px; padding:5px 8px;
     border-radius:var(--v-r-sm); background:var(--v-surf2); font-size:var(--v-fs-b2); }
   .lib-tl-at{ flex:0 0 52px; color:var(--v-faint); font-size:10px; }
-  .lib-tl-src{ flex:0 0 68px; color:var(--v-faint); font-size:9px; letter-spacing:.06em;
+  .lib-tl-src{ flex:0 0 68px; color:var(--v-faint); font-size:var(--v-fs-fig); letter-spacing:.06em;
     text-transform:uppercase; }
   .lib-tl-what{ flex:1; min-width:0; color:var(--v-txt); }
   .lib-tl-detail{ color:var(--v-dim); font-size:10px; overflow:hidden;
@@ -693,7 +693,7 @@
   .lib-rep-cell{ background:var(--v-surf2); border:1px solid var(--v-line);
     border-radius:var(--v-r-sm); padding:9px 10px; display:flex; flex-direction:column; gap:2px; }
   .lib-rep-cell b{ font-size:var(--v-fs-h3); font-weight:600; color:var(--v-txt); }
-  .lib-rep-cell span{ font-size:9px; letter-spacing:.05em; color:var(--v-faint);
+  .lib-rep-cell span{ font-size:var(--v-fs-fig); letter-spacing:.05em; color:var(--v-faint);
     text-transform:uppercase; }
   .lib-rep-cell.bad{ border-color:color-mix(in srgb, var(--v-rose) 45%, transparent); }
   .lib-rep-cell.bad b{ color:var(--v-rose); }
@@ -792,7 +792,7 @@
   .lib-collabel{ margin-bottom:10px; }
   .lib-collabel-n{ color:var(--v-faint); letter-spacing:0; }
 
-  .lib-transcript{ padding:14px 16px; max-height:420px; overflow:auto; font-size:13px; line-height:1.6; }
+  .lib-transcript{ padding:14px 16px; max-height:420px; overflow:auto; font-size:var(--v-fs-pr); line-height:1.6; }
   .lib-collabel-row{ display:flex; align-items:baseline; gap:8px; }
   .lib-collabel-row .spring{ flex:1; }
   .lib-hits{ font-size:10px; color:var(--v-faint); }
@@ -809,7 +809,7 @@
   .lib-detect-list{ display:flex; flex-direction:column; gap:9px; }
   .lib-detect{ padding:12px 14px; }
   .lib-detect-top{ display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:8px; }
-  .lib-detect-ref{ font-family:var(--f-head); font-weight:700; font-size:15px; color:var(--v-txt); }
+  .lib-detect-ref{ font-family:var(--f-head); font-weight:700; font-size:var(--v-fs-ttl); color:var(--v-txt); }
   .lib-detect-method{ text-transform:uppercase; }
   .lib-detect-bottom{ display:flex; align-items:center; justify-content:space-between; font-size:10px; color:var(--v-faint); }
   .lib-detect-conf{ color:var(--v-accent); }

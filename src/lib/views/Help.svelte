@@ -466,7 +466,7 @@
     background:none;border:0;color:var(--v-txt);font:inherit;text-align:left;cursor:pointer}
   .h-head b{flex:1;font-size:var(--v-fs-b2)}
   .h-ic{font-size:16px;flex:none}
-  .h-chev{color:var(--v-dim);font-size:15px}
+  .h-chev{color:var(--v-dim);font-size:var(--v-fs-ttl)}
   .h-body{margin:0;padding:12px 16px 14px;border-top:1px solid var(--v-line)}
   .h-body dt{font-size:var(--v-fs-b2);font-weight:600;color:var(--v-txt);margin-top:11px}
   .h-body dt:first-child{margin-top:0}

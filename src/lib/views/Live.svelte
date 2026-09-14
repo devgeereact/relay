@@ -1907,7 +1907,7 @@
   /* Amber ONLY when a congregation is genuinely looking at it. */
   .mon-name.live{color:var(--v-amber)}
   .mon-as{flex:0 0 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
-    font-size:9px; letter-spacing:.05em; color:var(--v-faint)}
+    font-size:var(--v-fs-fig); letter-spacing:.05em; color:var(--v-faint)}
   /* THE FRAME CARRIES THE STATE. The prototype frames preview in steel blue and
      programme in amber (amethyst in rehearsal), and it is the right instrument:
      an operator glancing up is looking at the picture, not at a chip beside it.
@@ -1934,7 +1934,7 @@
      empty box. A transport rack is compact by nature; keep it that way. */
   .rack{display:flex; flex-direction:column; gap:6px; min-height:0; align-self:start; padding:10px 8px;
     background:var(--v-surf); border:1px solid var(--v-line); border-radius:var(--v-r-lg)}
-  .rack-lbl{font-family:var(--f-mono); font-size:9px; font-weight:700; letter-spacing:.14em;
+  .rack-lbl{font-family:var(--f-mono); font-size:var(--v-fs-fig); font-weight:700; letter-spacing:.14em;
     text-transform:uppercase; color:var(--v-faint); text-align:center}
   /* 64px, as measured in the prototype. The one control on this surface that is
      always the same press, in the same place, however tired the operator is. */
@@ -1955,7 +1955,7 @@
      do; the mode answers WHICH walk — and they are one sentence, so an operator
      cannot read the first and miss the second. */
   .rack-cap{display:block; margin-top:2px; text-align:center;
-    font-size:9px; line-height:1.35; letter-spacing:.04em; color:var(--v-faint)}
+    font-size:var(--v-fs-fig); line-height:1.35; letter-spacing:.04em; color:var(--v-faint)}
   .rack-mode{display:block; margin-top:3px;
     font-size:var(--v-fs-cap); font-weight:700; letter-spacing:.1em; color:var(--v-cyan)}
   /* Amber here is NOT "on air": it is the plan's own colour on the plan rail
@@ -2042,7 +2042,7 @@
      until Relay is genuinely armed and listening; emerald when it is, which is
      the same green the Armed chip beside it already uses. Never amber: nothing
      about a gate's readiness is on air. */
-  .det-meta{flex:0 0 auto; font-size:9px; letter-spacing:.08em; text-transform:uppercase;
+  .det-meta{flex:0 0 auto; font-size:var(--v-fs-fig); letter-spacing:.08em; text-transform:uppercase;
     color:var(--v-faint)}
   .det-meta.on{color:var(--v-emerald)}
 
@@ -2071,7 +2071,7 @@
     font-family:var(--f-head); font-size:var(--v-fs-h2); line-height:1.2;
     font-weight:700; letter-spacing:var(--v-tr-tight); color:var(--v-txt)}
   .cbadge{flex:0 0 auto; padding:2px 6px; border-radius:2px; font-family:var(--f-mono);
-    font-size:8.5px; font-weight:600; letter-spacing:.08em; text-transform:uppercase;
+    font-size:var(--v-fs-kind); font-weight:600; letter-spacing:.08em; text-transform:uppercase;
     background:var(--v-amber-soft); color:var(--v-amber)}
   .cbadge.p{background:var(--v-cyan-soft); color:var(--v-cyan)}
   /* Confidence as a BAR — "0.92" means nothing to a volunteer. Only ever drawn
@@ -2090,7 +2090,7 @@
     display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:4; overflow:hidden}
   .clm.guess .clm-verse{color:var(--v-dim)}
   /* WHO ACTED. Quiet, because a receipt is not an offer. */
-  .clm-done{margin:0; font-family:var(--f-mono); font-size:9px; letter-spacing:.08em;
+  .clm-done{margin:0; font-family:var(--f-mono); font-size:var(--v-fs-fig); letter-spacing:.08em;
     text-transform:uppercase; color:var(--v-faint)}
   /* No verse behind the reference. Rose is the failure colour on this screen;
      amber is never spent here, because nothing about this is on air. */
@@ -2101,7 +2101,7 @@
     border-radius:var(--v-r-sm); cursor:pointer; border:1px solid transparent;
     font-family:var(--f-body); transition:filter .14s; min-width:0}
   .act b{font-size:var(--v-fs-cap); font-weight:700}
-  .act span{font-size:9px; opacity:.85; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:100%}
+  .act span{font-size:var(--v-fs-fig); opacity:.85; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:100%}
   .act:hover:not(:disabled){filter:brightness(1.08)}
   /* DISABLED, NOT HIDDEN. A reference that parsed against no verse still has to
      be shown — it is the operator's evidence that a number was misheard — and
@@ -2110,10 +2110,10 @@
   .act.go{background:var(--v-emerald); color:var(--v-void)}
   .act.no{background:var(--v-red); color:#fff}
   .khint{margin:0; text-align:center; font-size:10px; color:var(--v-faint)}
-  .khint kbd{font-family:var(--f-mono); font-size:9px; color:var(--v-dim);
+  .khint kbd{font-family:var(--f-mono); font-size:var(--v-fs-fig); color:var(--v-dim);
     background:var(--v-surf3); border:1px solid var(--v-line2); border-radius:var(--v-r-sm); padding:2px 5px}
 
-  .klbl{font-family:var(--f-mono); font-size:9px; font-weight:700; letter-spacing:.14em;
+  .klbl{font-family:var(--f-mono); font-size:var(--v-fs-fig); font-weight:700; letter-spacing:.14em;
     text-transform:uppercase; color:var(--v-faint)}
   .sub{display:flex; align-items:center; gap:var(--v-sp-sm); margin-top:var(--v-sp-sm);
     padding-top:var(--v-sp-sm); border-top:1px solid var(--v-line)}

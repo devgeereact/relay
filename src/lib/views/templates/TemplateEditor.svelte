@@ -1213,7 +1213,7 @@
   .te-sub{ font-size:var(--v-fs-cap); color:var(--v-faint); }
   .te-undo{ display:inline-flex; align-items:center; gap:2px; margin-left:10px; }
   .te-zoom{ display:flex; align-items:center; gap:4px; }
-  .te-zbtn{ width:26px; height:26px; border-radius:var(--v-r-sm); background:var(--v-surf2); border:1px solid var(--v-line2); color:var(--v-dim); cursor:pointer; font-size:15px; line-height:1; }
+  .te-zbtn{ width:26px; height:26px; border-radius:var(--v-r-sm); background:var(--v-surf2); border:1px solid var(--v-line2); color:var(--v-dim); cursor:pointer; font-size:var(--v-fs-ttl); line-height:1; }
   .te-zbtn:disabled{ opacity:.4; cursor:not-allowed; }
   .te-pct{ min-width:42px; text-align:center; font-size:var(--v-fs-cap); color:var(--v-dim); }
   .r-btn.confirm{ background:var(--v-emerald); color:var(--v-void); border-color:transparent; }
@@ -1245,7 +1245,7 @@
 
   /* layers panel */
   .te-addwrap{ position:relative; }
-  .te-addbtn{ width:24px; height:24px; border-radius:var(--v-r-sm); background:var(--v-accent-fill); color:#fff; border:0; cursor:pointer; font-size:15px; line-height:1; }
+  .te-addbtn{ width:24px; height:24px; border-radius:var(--v-r-sm); background:var(--v-accent-fill); color:#fff; border:0; cursor:pointer; font-size:var(--v-fs-ttl); line-height:1; }
   .te-addmenu{ position:absolute; top:28px; right:0; z-index:30; width:186px; background:var(--v-surf2); border:1px solid var(--v-line2); border-radius:var(--v-r-md); box-shadow:var(--v-shadow-lg); padding:5px; display:flex; flex-direction:column; }
   .te-addmenu button{ display:flex; align-items:center; gap:9px; text-align:left; padding:7px 9px; border:0; background:none; color:var(--v-txt); font-size:var(--v-fs-b2); border-radius:var(--v-r-sm); cursor:pointer; }
   .te-addmenu button:hover{ background:var(--v-surf3); }
@@ -1344,13 +1344,13 @@
   .te-fv{ min-width:0; }
   .te-fnote{ font-size:var(--v-fs-cap); color:var(--v-faint); margin:0; line-height:1.5; }
   .te-emptyhint{ color:var(--v-dim); }
-  .te-minilink{ background:none; border:0; padding:0; text-align:left; color:var(--v-dim); font-family:var(--f-mono); font-size:9px; cursor:pointer; letter-spacing:.04em; }
+  .te-minilink{ background:none; border:0; padding:0; text-align:left; color:var(--v-dim); font-family:var(--f-mono); font-size:var(--v-fs-fig); cursor:pointer; letter-spacing:.04em; }
   .te-fwarn{ margin:0; padding:8px 10px; border:1px solid var(--v-amber-soft); border-radius:var(--v-r-sm); background:var(--v-amber-soft); color:var(--v-amber2); font-size:var(--v-fs-cap); line-height:1.45; }
   .te-stepper{ display:flex; align-items:center; }
   .te-num{ height:32px; padding:0 8px; border-radius:var(--v-r-md); background:var(--v-bg); border:1px solid var(--v-line2); color:var(--v-txt); font-size:var(--v-fs-b2); outline:none; width:100%; box-sizing:border-box; }
   .te-num:focus{ border-color:var(--v-accent-line); }
   .te-stepper .te-num{ border-radius:var(--v-r-md) 0 0 var(--v-r-md); border-right:0; }
-  .te-unit{ flex:0 0 auto; height:32px; display:grid; place-items:center; padding:0 9px; border-radius:0 var(--v-r-md) var(--v-r-md) 0; background:var(--v-surf2); border:1px solid var(--v-line2); font-size:9px; color:var(--v-faint); }
+  .te-unit{ flex:0 0 auto; height:32px; display:grid; place-items:center; padding:0 9px; border-radius:0 var(--v-r-md) var(--v-r-md) 0; background:var(--v-surf2); border:1px solid var(--v-line2); font-size:var(--v-fs-fig); color:var(--v-faint); }
   .te-rangerow{ display:flex; align-items:center; gap:9px; }
   .te-rangerow .r-range{ flex:1; min-width:0; }
   .te-rnum{ flex:0 0 auto; min-width:40px; text-align:right; font-size:var(--v-fs-cap); color:var(--v-dim); }
@@ -1373,7 +1373,7 @@
   .te-bglib{ display:grid; grid-template-columns:repeat(3, 1fr); gap:6px; max-height:196px; overflow-y:auto; padding-right:4px; scrollbar-width:thin; scrollbar-color:var(--v-surf3) transparent; }
   .te-bgtile{ aspect-ratio:16/9; border-radius:var(--v-r-sm); border:1px solid var(--v-line2); background-size:cover; background-position:center; cursor:pointer; padding:0; }
   .te-bgtile.on{ border-color:var(--v-accent); box-shadow:0 0 0 1px var(--v-accent); }
-  .te-bgnone{ display:grid; place-items:center; background:var(--v-surf2); color:var(--v-faint); font-size:13px; }
+  .te-bgnone{ display:grid; place-items:center; background:var(--v-surf2); color:var(--v-faint); font-size:var(--v-fs-pr); }
   .te-bgnone:hover{ color:var(--v-rose); }
   /* Per-screen content visibility chips */
   .te-showlbl{ margin-top:4px; }

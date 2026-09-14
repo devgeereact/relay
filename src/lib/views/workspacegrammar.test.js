@@ -223,9 +223,15 @@ describe('§1 · the decisions that kept being re-litigated per file', () => {
 //      quietly dropping a file out of it to make a build green is not.
 //
 // WHAT THIS STILL DOES NOT COVER, stated so nobody reads it as more than it is:
-//   · off-scale font sizes (8, 8.5, 9, 10, 10.5, 13, 13.5, 15, 16, 18, 22, 26px)
-//     are NOT rejected. They are not in --v-fs-*, so converting one is a
-//     restyle decision, not a sweep. ~101 remain and are listed in REBRAND.
+//   · off-scale font sizes are still NOT rejected, but the list is SHORTER than
+//     it was, because wave 5 (M1) gave four of them a token: 15, 13, 9 and 8.5
+//     are now --v-fs-{ttl,pr,fig,kind} and 53 literals converted, so tier 2
+//     catches them from here on. What is left off-scale is 7, 8, 10, 10.5,
+//     13.5, 16, 18, 22, 24 and 26px — about forty-eight in components and
+//     thirteen in app.css. They are not in the reference type scale EITHER, so
+//     converting one is still a restyle decision about that control rather
+//     than a sweep, and rounding one into a neighbouring step to quieten a
+//     scanner would be the worst of the three options.
 //   · off-scale radii (2, 4, 7, 8, 9, 10, 11, 12, 13px) likewise. §1 asks for
 //     2px and --v-r-sm is 3px; that contradiction is REBRAND's to settle.
 //   · `rgba()` is not scanned at all. Seven Splash glows were the RETIRED
@@ -344,15 +350,31 @@ describe('§1 · the token sweep — wave 4', () => {
     // until the day the scale moves, and then one heading is 1.5px out of step
     // with its twin and nobody can see why. Ninety-five of these were
     // converted; the wave-3 Settings pass had already found six.
+    //
+    // WAVE 5 (M1) WIDENED THIS TWICE OVER. The ladder grew four steps — 15, 13,
+    // 9 and 8.5 had no token at all, which is the whole reason a hundred and
+    // one literals survived wave 4's sweep: there was nothing to convert them
+    // TO, and 53 of those converted the moment the tokens existed. And the scan
+    // now includes `src/app.css` itself, which was the larger hole: the
+    // stylesheet all 53 components share was the one file typing scale steps by
+    // hand that no tier here could see, and it was doing it 43 times — a
+    // scanner that holds every component to a rule the shared sheet is exempt
+    // from is a scanner reporting on the smaller half of the problem.
     const css = read('src/app.css');
     const steps = new Map();
     for (const m of css.matchAll(/--v-fs-([a-z0-9]+)\s*:\s*([0-9.]+)px/g)) {
       if (!steps.has(m[2])) steps.set(m[2], m[1]);
     }
     expect(steps.size, 'no --v-fs-* scale found in app.css').toBeGreaterThan(5);
+    // The four the reference names and Relay had no token for. Spelled out
+    // rather than counted, so deleting one to make a build green has to be done
+    // in the open.
+    for (const [v, t] of [['15', 'ttl'], ['13', 'pr'], ['9', 'fig'], ['8.5', 'kind']]) {
+      expect(steps.get(v), `the reference's ${v}px step has no token`).toBe(t);
+    }
 
     const offenders = [];
-    for (const f of COMPONENTS) {
+    for (const f of [...COMPONENTS, 'src/app.css']) {
       // The WHOLE file: four of these were inline `style="font-size:12px"` on
       // a boot gate, which is exactly where a hand-typed size hides from a
       // stylesheet-only scan.
@@ -404,5 +426,115 @@ describe('§1 · the token sweep — wave 4', () => {
     // NAME, and that is a choice an operator saved into a slide.
     expect(read('src/lib/fonts.js')).toMatch(/jetbrains-mono/);
     expect(read('src/lib/views/templates/TemplateEditor.svelte')).toMatch(/'JetBrains Mono'/);
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// THE CONTROL METRICS — wave 5, agent M1. docs/REBRAND.md §1.
+//
+// The reference names one height per control, and the reason is a COLUMN
+// rather than a control: a settings rail stacks a select, an input, a switch
+// and a button in one list, and four heights picked one control at a time make
+// that column step in and out by two pixels a row. It is the same class of
+// defect as the range input's 2px UA margin — invisible to anyone reading the
+// stylesheet, plainly wrong the moment somebody renders it.
+//
+// Two assertions, because there are two ways to lose it:
+//   1. the shared rule drifts — checked against the reference table;
+//   2. a component overrides the shared rule in its own file, which is how
+//      `.r-select` came to render at 24px, 26px, 28px and 30px in four places
+//      at once. Four of those were removed to write this.
+//
+// WHAT THIS DOES NOT COVER, and the limit is real: it reads the STYLESHEET, not
+// a rendered box. A height declared at 26px and then collapsed by a flex parent,
+// a padding that pushes past it, a font that does not load — none of those are
+// visible here. Only a browser can answer what a control ACTUALLY measures, and
+// the lead owns the headless one. A green run here means the numbers agree, not
+// that the column lines up.
+//
+// Nor does it reject a literal height in general. A panel, a thumbnail, a bar
+// and a waveform all have heights that belong to nothing but themselves, and a
+// scanner that guessed would fail on legitimate code, get weakened, and take
+// the real assertions with it — CLAUDE.md's own reason for leaving twenty-five
+// of its forty-three rules untested.
+describe('§1 · the control metrics', () => {
+  const css = read('src/app.css');
+  // The rule's body, by selector, with comments stripped so a retired value
+  // documented in prose cannot satisfy or break an assertion.
+  const ruleFor = (sel) => {
+    const bare = css.replace(/\/\*[\s\S]*?\*\//g, '');
+    const i = bare.indexOf(sel + '{');
+    expect(i, `no rule for ${sel}`).toBeGreaterThan(-1);
+    return bare.slice(i, bare.indexOf('}', i));
+  };
+
+  it('the scanner can still find a rule and still ignore a comment', () => {
+    // Same guard as the token sweep above, for the same reason: both scanners
+    // in this file have a twin in this repository that quietly narrowed and
+    // passed everything.
+    expect(ruleFor('.r-btn')).toMatch(/height:26px/);
+    expect(ruleFor('.r-btn')).not.toMatch(/WHAT MOVED/);
+  });
+
+  it('every shared control is the height the reference gives it', () => {
+    const TABLE = [
+      ['.topbar-v', 34], // chrome bar
+      ['.footer-v', 26], // status bar
+      ['.r-btn', 26], // button
+      ['.r-btn.sm', 22], // small button — the plan rail's foot is three of these
+      ['.r-input, .r-select', 26],
+      ['.ws-tab', 26], // workspace tab
+      ['.r-pill', 26],
+      ['.r-cbtn', 34], // control button
+    ];
+    for (const [sel, h] of TABLE) {
+      expect(ruleFor(sel), `${sel} is not ${h}px`).toMatch(new RegExp(`height:${h}px`));
+    }
+    // The control button keeps a FLOOR as well as a height: the Controls dock
+    // card is 178px and a panic control may never be scrolled out of reach
+    // (CLAUDE.md rule 36), so `Dock.svelte` relaxes it to `height:auto` and the
+    // floor is what survives. That is the reference's "min 32px when stretched",
+    // and it is the one override the next assertion allows.
+    expect(ruleFor('.r-cbtn')).toMatch(/min-height:32px/);
+
+    // A switch and a colour well are one box, 38x21, so a mixed column lines up
+    // on ONE right edge rather than stepping in and out by two pixels a row.
+    for (const sel of ['.r-switch', 'input[type=color]']) {
+      const r = ruleFor(sel);
+      expect(r, `${sel} is not 38px wide`).toMatch(/width:38px/);
+      expect(r, `${sel} is not 21px tall`).toMatch(/height:21px/);
+    }
+
+    // The slider is three numbers and they are coupled: an 18px BOX so the
+    // pointer target is real, a 3px BAR so it reads as a track, and a 13px
+    // thumb. Styling the input itself as the track left a 4px target, and a
+    // near-miss on a live console lands on whatever is underneath.
+    expect(ruleFor('.r-range, input[type=range]')).toMatch(/height:18px/);
+    expect(css).toMatch(/slider-runnable-track[\s\S]{0,140}height:3px/);
+    expect(css).toMatch(/slider-thumb\{[\s\S]{0,200}width:13px; height:13px/);
+  });
+
+  it('and no component overrides a shared control height in its own file', () => {
+    // `.r-select` rendered at four heights in four files while app.css declared
+    // a fifth. Nobody could see it, because each file was internally consistent
+    // and the drift only exists in the column where two of them meet.
+    const SHARED = ['r-btn', 'r-input', 'r-select', 'r-cbtn', 'r-switch', 'r-range', 'r-pill', 'ws-tab'];
+    // Dock.svelte, named with its reason — see the floor above. An exemption
+    // that has to be spelled out here is one somebody has to argue for.
+    const ALLOWED = new Map([
+      ['src/lib/Dock.svelte', /:global\(\.r-cbtn\) \{ height: auto; min-height: 32px; \}/],
+    ]);
+    const offenders = [];
+    for (const f of COMPONENTS) {
+      for (const m of styleOf(read(f)).matchAll(/[^{}]*\{[^}]*\}/g)) {
+        if (!SHARED.some((c) => m[0].includes('.' + c))) continue;
+        const body = m[0].slice(m[0].indexOf('{'));
+        if (!/(^|[^-\w])height:\s*[0-9]/.test(body)) continue;
+        const ok = ALLOWED.get(f);
+        if (ok && ok.test(m[0].replace(/\s+/g, ' '))) continue;
+        offenders.push(`${f}: ${m[0].replace(/\s+/g, ' ').trim()}`);
+      }
+    }
+    expect(offenders, 'the shared control owns its height — override width and padding only').toEqual([]);
   });
 });

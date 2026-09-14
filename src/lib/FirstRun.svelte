@@ -549,7 +549,7 @@
     padding: 0 6px;
   }
   .fr-brand span {
-    font-size: 13px;
+    font-size: var(--v-fs-pr);
     font-weight: 700;
     letter-spacing: 0.16em;
     color: var(--v-txt);
@@ -568,7 +568,7 @@
     gap: 11px;
     padding: 10px 10px;
     border-radius: 9px;
-    font-size: 13px;
+    font-size: var(--v-fs-pr);
     color: var(--v-dim);
   }
   .fr-rail li .n {
@@ -740,7 +740,7 @@
   }
   .fr-mon b {
     display: block;
-    font-size: 13px;
+    font-size: var(--v-fs-pr);
   }
   .fr-mon-d {
     font-size: 10px;

@@ -849,7 +849,7 @@
     background: repeating-linear-gradient(90deg, rgba(190,205,235,.035) 0 1px, transparent 1px 46px);
   }
   .wavelbl {
-    position: absolute; left: 8px; top: 5px; font-size: 8.5px;
+    position: absolute; left: 8px; top: 5px; font-size: var(--v-fs-kind);
     letter-spacing: .09em; color: var(--v-faint); pointer-events: none;
   }
   .audrow { display: flex; align-items: center; gap: 7px; flex: 0 0 auto; }
@@ -863,7 +863,7 @@
   .db { flex: 0 0 auto; font-size: var(--v-fs-cap); color: var(--v-dim); }
   .vad {
     flex: 0 0 auto;
-    font-size: 8.5px; font-weight: 600; letter-spacing: var(--v-tr-caps);
+    font-size: var(--v-fs-kind); font-weight: 600; letter-spacing: var(--v-tr-caps);
     text-transform: uppercase; padding: 2px 6px; border-radius: var(--v-r-sm);
     /* --v-dim, not --v-faint: muted text on --v-surf3 is 3.79:1, below AA, and
        `tokencontrast.test.js` fails the build for exactly this pairing. */

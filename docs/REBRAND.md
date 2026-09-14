@@ -32,6 +32,41 @@ guarantees and every named test stay exactly as they are.
   beside it), Fraunces (the serif templates render in).
 - **Radius is 2px everywhere.** No pills. A pill in a control room reads as a toy.
 - **Density**: 11–12px UI type, 3px corners on cards, hairline seams.
+- **The type scale is nine steps and the console proper uses six of them.** Added in full at wave 5;
+  the first four are `--v-fs-*` tokens in `src/app.css` and nothing may type one as a number
+  (`workspacegrammar.test.js`).
+
+  | Step | Token | Face | Role |
+  |---|---|---|---|
+  | 15px / 600 / −.012em | `--v-fs-ttl` | Inter | settings page title, a claim's reference |
+  | 13px / 1.55 | `--v-fs-pr` | Inter | prose, standfirst |
+  | 12.5px / 600 | `--v-fs-h3` | Inter | row title, template name |
+  | 12px | `--v-fs-b1` | Inter | body default |
+  | 11.5px | `--v-fs-b2` | Inter | control text, list rows, tabs |
+  | 11px | `--v-fs-lbl` | Inter | card titles, descriptions |
+  | 9.5px / 600 / .09em / upper | `--v-fs-cap` | Plex Mono | the `.cap` eyebrow |
+  | 9px | `--v-fs-fig` | Plex Mono | counts, units, key caps |
+  | 8.5px / .09em / upper | `--v-fs-kind` | Plex Mono | kind chips |
+
+  Four larger steps sit beside it and are NOT part of the reference — `--v-fs-d1` 30, `d2` 21,
+  `h1` 17, `h2` 14. Each is rendered by something and each is listed under "Still owed" below.
+- **Control metrics — one height per control, because the thing being protected is a COLUMN.** A
+  rail stacks a select, an input, a switch and a button in one list, and four heights picked one
+  control at a time make that column step in and out by two pixels a row.
+
+  | Control | Height | Control | Height |
+  |---|---|---|---|
+  | chrome bar | 34 | status bar | 26 |
+  | dock head | 26 min | dock body padding | 8 / 9 |
+  | button | 26 | small button | 22 |
+  | input · select | 26 | workspace tab | 26 |
+  | pill | 26 | segment button | 22 |
+  | switch | 38×21 | colour well | 38×21 |
+  | slider | 18 box · 3 track · 13 thumb | control button | 34, floor 32 when stretched |
+
+  A component may override a shared control's **width and padding**, never its height. The one
+  named exception is `Dock.svelte` relaxing `.r-cbtn` to `height:auto`, so a panic control can
+  never be scrolled out of a 178px dock card (CLAUDE.md rule 36).
 - **Colour law is unchanged and non-negotiable** (`CLAUDE.md` rule 18, DECISIONS §21):
   amber = ON AIR, amethyst = rehearsal, cyan = a guess, grey = CUED.
 - **Colour added by this rebrand**, none of it overlapping the law:
@@ -627,6 +662,24 @@ sizes and off-scale radii (neither is a conversion — see below), `rgba()` (not
 seven retired-amethyst glows in `Splash.svelte` were found by eye, not by it), and template
 content, which is deliberately out of scope.
 
+**Wave 5 (M1) moved that edge twice, and added a third tier.** The scale-step scan now reads
+`src/app.css` as well as the 53 components — the shared stylesheet was the larger hole, and it was
+hand-typing scale steps 43 times while every component it styles was held to the rule. And the
+file now carries **the control metrics**: eight shared controls checked against the reference
+height table, the switch and the colour well checked to be one 38×21 box, the slider's three
+coupled numbers (18 box · 3 track · 13 thumb), and an assertion that **no component overrides a
+shared control's height in its own file** — which is how `.r-select` came to render at 24px, 26px,
+28px and 30px in four places at once, each file internally consistent and the drift existing only
+in the column where two of them meet. `Dock.svelte`'s `height:auto` on `.r-cbtn` is the single
+named exemption, because a panic control may never be scrolled out of a 178px dock card
+(CLAUDE.md rule 36).
+**The honest limit of the metrics tier: it reads the stylesheet, not a rendered box.** A height
+declared at 26px and then collapsed by a flex parent, or overshot by a padding, is invisible to
+it. Only a browser can say what a control actually measures, and the lead owns the headless one.
+It also does not reject a literal height in general — a panel, a thumbnail, a bar and a waveform
+have heights that belong to nothing but themselves, and a scanner that guessed would fail on
+legitimate code, get weakened, and take the real assertions with it.
+
 **Carried forward, deliberately — rewritten after wave 4's token sweep, which paid most of it
 down.** Phase 1 owned `src/app.css` and made the shared layer token-only. What phase 1 could not
 reach was the components, and this paragraph used to record that debt: "about sixty radius
@@ -665,10 +718,32 @@ that no longer exists:
 **Still owed, and deliberately not forced.** Two classes remain, and both are a *decision* rather
 than a conversion — converting one restyles a screen, which is not what a token sweep is for:
 
-- **~101 off-scale font sizes** (8, 8.5, 9, 10, 10.5, 13, 13.5, 15, 16, 18, 22, 26px). None is in
-  `--v-fs-*`. The heaviest are `Live.svelte` (17), `History.svelte` (14), `FirstRun.svelte` (8) and
-  `TemplateEditor.svelte` (8). Either the scale grows steps or these screens move to it; that is
-  §11's call, not a sweep's.
+- **~~~101 off-scale font sizes~~ — HALF PAID, wave 5 (M1).** The sentence this replaces ended
+  *"either the scale grows steps or these screens move to it"*, and the answer turned out to be
+  both. The reference type scale is **nine** steps and Relay's ladder published only five of them
+  (12.5 · 12 · 11.5 · 11 · 9.5): **15px, 13px, 9px and 8.5px had no token at all**, which is why
+  a hundred and one literals survived a sweep whose whole method was converting a literal to the
+  token that already held its value. There was nothing to convert them to. The four now exist as
+  `--v-fs-ttl` (object title, 600/-.012em), `--v-fs-pr` (prose, 13/1.55), `--v-fs-fig` (a count, a
+  unit, a key cap) and `--v-fs-kind` (the uppercase one-word chip) — **53 literals converted in 20
+  components**, plus **43 more in `src/app.css` itself**, which was typing scale steps by hand more
+  often than any component and was outside every scanner in the file.
+  **Still off-scale: about forty-eight in components and thirteen in `app.css`** — 7, 8, 10, 10.5,
+  13.5, 16, 18, 22, 24 and 26px. These are not in the reference either, so each remains a restyle
+  decision about one control; rounding one into a neighbouring step to quieten a scanner would be
+  the worst of the three available answers.
+  **What this pass did NOT do, stated plainly: the reference is not a clean nine steps either.**
+  The prototype's own stylesheet uses fifteen distinct font sizes, including 10px eight times,
+  10.5px three times and 8px three times. The nine-step table is a distillation of its dominant
+  register, not an inventory of it, and treating it as an inventory is how the remaining
+  forty-eight would get converted wrongly.
+  **The four large steps stay, and each is rendered by something.** They were queried on the
+  grounds that the prototype has no splash, no boot ladder and no first-run wizard, and that is
+  only half right: `--v-fs-d1` (30) is `app.css`'s `.r-title`; `--v-fs-d2` (21) is the big figure
+  in a dock card; `--v-fs-h1` (17) is the boot heading, Settings' slider value, the Dashboard,
+  FirstRun and the Stage search box; `--v-fs-h2` (14) is `Live`, `Help`, `Channels`, `History`,
+  `Browse`, `TemplateEditor`, `DetectionInspector`, `FirstRun` and `Stage`. Two of the four are
+  console surfaces the prototype does have, at a size the prototype also uses.
 - **39 off-scale radii** (2, 4, 7, 8, 9, 10, 11, 12, 13px), in 18 components. Note the awkward one:
   **§1 says "radius is 2px everywhere" and `--v-r-sm` is 3px**, so the eleven literal `2px` corners
   are simultaneously what §1 asks for and not a token. That contradiction is §1's to settle.

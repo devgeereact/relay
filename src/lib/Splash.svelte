@@ -173,7 +173,7 @@
     padding: 0 28px;
   }
   .bar b {
-    font-size: 15px;
+    font-size: var(--v-fs-ttl);
     font-weight: 700;
     letter-spacing: 0.1em;
     color: var(--v-txt);
@@ -344,14 +344,14 @@
     line-height: 1.2;
   }
   .f-t b {
-    font-size: 15px;
+    font-size: var(--v-fs-ttl);
     font-weight: 700;
     letter-spacing: 0.02em;
     text-transform: uppercase;
     color: var(--v-txt);
   }
   .f-t i {
-    font-size: 13px;
+    font-size: var(--v-fs-pr);
     font-style: normal;
     color: var(--v-faint);
   }
@@ -371,7 +371,7 @@
     display: flex;
     align-items: center;
     gap: 10px;
-    font-size: 15px;
+    font-size: var(--v-fs-ttl);
     color: var(--v-dim);
   }
   .f-mid li + li {

@@ -801,6 +801,6 @@
     background:var(--v-surf2); border:1px solid var(--v-line2); border-radius:11px; box-shadow:0 18px 44px -18px #000;
     display:flex; flex-direction:column; gap:2px; }
   .lib-newitem{ text-align:left; padding:9px 11px; border-radius:8px; border:0; background:transparent; color:var(--v-txt);
-    font-family:var(--f-body); font-size:13px; cursor:pointer; }
+    font-family:var(--f-body); font-size:var(--v-fs-pr); cursor:pointer; }
   .lib-newitem:hover{ background:var(--v-surf3); color:var(--v-accent); }
 </style>

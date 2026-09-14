@@ -365,7 +365,7 @@
   /* Width only. The track, the thumb and the filled share come from app.css —
      accent-color let every platform draw its own idea of a slider. */
   .te-row input[type=range]{ flex:1; max-width:150px; }
-  .te-row .r-select{ height:26px; min-width:136px; }
+  .te-row .r-select{ min-width:136px; }  /* height is the shared control's */
   .te-bg{ flex-direction:column; align-items:stretch; gap:6px; }
   .te-bg > span{ align-self:flex-start; }
   .te-check{ display:flex; align-items:center; gap:9px; font-size:var(--v-fs-b2); color:var(--v-dim); }

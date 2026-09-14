@@ -387,7 +387,7 @@
   .sv-where { flex: 1; min-width: 0; }
   /* Was a <b>; it is an <h2> now (R3-12). Same pixels, so the change is purely
      what a screen reader is told. */
-  .sv-where h2 { display: block; margin: 0; font-size: 15px; font-weight: 600; color: var(--v-txt); }
+  .sv-where h2 { display: block; margin: 0; font-size: var(--v-fs-ttl); font-weight: 600; color: var(--v-txt); }
   .sv-where span { font-size: var(--v-fs-cap); color: var(--v-faint); }
   .sv-body { flex: 1; min-height: 0; overflow-y: auto; padding: 12px; }
   .sv-pager { display: flex; align-items: center; gap: 12px; padding: 10px 14px;
@@ -402,8 +402,10 @@
   .sv-count { font-size: var(--v-fs-cap); color: var(--v-faint); }
   .sv-ctl { display: flex; align-items: center; gap: 7px; }
   .sv-ctl .r-lbl { margin: 0; }
-  .sv-ctl .r-select { width: auto; height: 30px; padding: 0 30px 0 10px; font-size:var(--v-fs-b1);
-    background-position: calc(100% - 14px) 13px, calc(100% - 9px) 13px; }
+  /* Width and padding only — the height is the shared control's. It was 30px,
+     four pixels taller than every button on the same bar. */
+  .sv-ctl .r-select { width: auto; padding: 0 30px 0 10px; font-size:var(--v-fs-b1);
+    background-position: calc(100% - 14px) 11px, calc(100% - 9px) 11px; }
 
   .sv-msg, .sv-err { margin: 0; font-size: var(--v-fs-b2); }
   .sv-msg { color: var(--v-emerald); }

@@ -291,7 +291,7 @@
     background: none;
     border: 0;
     color: var(--v-faint);
-    font-size: 15px;
+    font-size: var(--v-fs-ttl);
     cursor: pointer;
     padding: 4px 6px;
     border-radius:var(--v-r-2xl);
@@ -420,7 +420,7 @@
   }
   .ins-quote {
     margin: 0;
-    font-size: 15px;
+    font-size: var(--v-fs-ttl);
     line-height: 1.55;
     color: var(--v-txt);
   }

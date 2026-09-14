@@ -282,7 +282,7 @@
     border-top: 1px solid var(--v-line);
   }
   .ms-opt-t { display: flex; align-items: baseline; gap: 8px; }
-  .ms-opt-t b { font-size: 13px; color: var(--v-txt); }
+  .ms-opt-t b { font-size: var(--v-fs-pr); color: var(--v-txt); }
   .ms-size { font-size:var(--v-fs-lbl); color: var(--v-dim); }
   .ms-opt-d { font-size:var(--v-fs-b1); color: var(--v-dim); line-height: 1.55; margin: 3px 0 8px; }
   /* Amber, not red: nothing is broken, and the operator may still have a good

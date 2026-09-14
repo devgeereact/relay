@@ -577,7 +577,7 @@
   .fig { flex: 1 1 0; min-width: 0; min-height: 0; overflow: hidden;
     display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; }
   .fig + .fig { border-left: 1px solid rgba(255,255,255,.06); }
-  .figk { font-family: var(--f-mono); font-size: 9px; font-weight: 700; letter-spacing: .16em;
+  .figk { font-family: var(--f-mono); font-size: var(--v-fs-fig); font-weight: 700; letter-spacing: .16em;
     text-transform: uppercase; color: var(--v-faint); }
   /* The bottom row is the same three figures in the other layout. Same rule. */
   .fig .figv { font-family: var(--f-mono); font-variant-numeric: tabular-nums; font-weight: 700;
@@ -649,7 +649,7 @@
     0%, 100% { background: #c8121c; }
     50% { background: #7a0a11; }
   }
-  .note-lbl { font-family: var(--f-mono); font-size: 9px; font-weight: 700; letter-spacing: .16em;
+  .note-lbl { font-family: var(--f-mono); font-size: var(--v-fs-fig); font-weight: 700; letter-spacing: .16em;
     text-transform: uppercase; color: var(--v-amber); flex: 0 0 auto; }
   /* Up-next panel — confidence info the preacher wants, kept off the main output. */
   .next { flex: 0 0 auto; display: flex; align-items: baseline; gap: 14px; padding: 14px 20px;
@@ -697,7 +697,7 @@
   .result:active { background: rgba(255,176,0,.1); border-color: rgba(255,176,0,.35); }
   .result:disabled { opacity: .5; }
   .r-ref { font-family: var(--f-mono); font-size:var(--v-fs-b1); letter-spacing: .08em; text-transform: uppercase; color: var(--v-amber); }
-  .r-text { font-family: var(--f-serif); font-size: 15px; color: var(--v-dim); line-height: 1.35;
+  .r-text { font-family: var(--f-serif); font-size: var(--v-fs-ttl); color: var(--v-dim); line-height: 1.35;
     display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
   .no-results { font-family: var(--f-mono); font-size:var(--v-fs-b1); color: var(--v-faint); }
 </style>

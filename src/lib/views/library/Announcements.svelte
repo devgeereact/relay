@@ -308,7 +308,7 @@
   .an-head { display: flex; align-items: center; gap: 12px; padding: 11px 14px;
     border-bottom: 1px solid var(--v-line); }
   .an-where { flex: 1; min-width: 0; }
-  .an-where b { display: block; font-size: 15px; font-weight: 600; color: var(--v-txt); }
+  .an-where b { display: block; font-size: var(--v-fs-ttl); font-weight: 600; color: var(--v-txt); }
   .an-where span { font-size: var(--v-fs-cap); color: var(--v-faint); }
   .an-body { flex: 1; min-height: 0; overflow-y: auto; padding: 12px;
     display: flex; flex-direction: column; gap: 12px; }

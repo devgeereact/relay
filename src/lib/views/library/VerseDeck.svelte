@@ -559,7 +559,7 @@
     color: var(--v-rose);
   }
   .vd-plain b {
-    font-size: 15px;
+    font-size: var(--v-fs-ttl);
     color: var(--v-amber2);
   }
   /* The card fires, so it says so before it is clicked. */
@@ -568,7 +568,7 @@
     right: 8px;
     bottom: 8px;
     font-family: var(--f-mono);
-    font-size: 9px;
+    font-size: var(--v-fs-fig);
     font-weight: 700;
     letter-spacing: 0.1em;
     text-transform: uppercase;
@@ -855,7 +855,7 @@
   }
   .vd-rbody b {
     display: block;
-    font-size: 13px;
+    font-size: var(--v-fs-pr);
     font-weight: 600;
     color: var(--v-txt);
     overflow: hidden;
@@ -901,7 +901,7 @@
     border-radius: var(--v-r-sm);
     background: transparent;
     color: var(--v-faint);
-    font-size: 13px;
+    font-size: var(--v-fs-pr);
     cursor: pointer;
   }
   .vd-ic:hover:not(:disabled) {

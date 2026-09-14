@@ -761,7 +761,7 @@
   .tg-search input{ flex:1; min-width:0; background:transparent; border:0; outline:none; color:var(--v-txt); font-size:var(--v-fs-b2); }
   .tg-search input::placeholder{ color:var(--v-faint); }
   .tg-sort{ display:flex; align-items:center; gap:7px; flex:0 0 auto; }
-  .tg-sort .r-select{ height:24px; width:auto; }
+  .tg-sort .r-select{ width:auto; }  /* height is the shared control's; was 24px */
   .tg-viewtog{ display:flex; gap:2px; background:var(--v-bg); border:1px solid var(--v-line2);
     border-radius:var(--v-r-sm); padding:2px; flex:0 0 auto; }
   .tg-viewtog button{ width:26px; height:20px; display:grid; place-items:center; border:0; border-radius:var(--v-r-sm);

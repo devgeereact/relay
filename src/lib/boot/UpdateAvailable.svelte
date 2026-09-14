@@ -55,7 +55,7 @@
     {/if}
 
     {#if error}
-      <p style="color:var(--v-red);font-size:13px;line-height:1.55;margin:16px 0 0;">{error}</p>
+      <p style="color:var(--v-red);font-size:var(--v-fs-pr);line-height:1.55;margin:16px 0 0;">{error}</p>
       <div class="b-btn-row" style="margin-top:16px;">
         <button class="r-btn ghost" on:click={onLater}>Continue without updating</button>
       </div>

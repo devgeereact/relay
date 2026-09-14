@@ -594,7 +594,7 @@
   }
   .ly-song b {
     display: block;
-    font-size: 13px;
+    font-size: var(--v-fs-pr);
     font-weight: 600;
   }
   .ly-song span {
@@ -642,7 +642,7 @@
   @media (max-width: 1240px) { .ly-legend { display: none; } }
   .ly-where b {
     display: block;
-    font-size: 15px;
+    font-size: var(--v-fs-ttl);
     font-weight: 600;
     color: var(--v-txt);
   }

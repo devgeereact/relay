@@ -349,7 +349,7 @@
     border: 0;
     color: var(--v-dim);
     font-family: var(--f-body);
-    font-size: 13px;
+    font-size: var(--v-fs-pr);
     text-align: left;
     cursor: pointer;
   }
@@ -392,7 +392,7 @@
   }
   .ml-where b {
     display: block;
-    font-size: 15px;
+    font-size: var(--v-fs-ttl);
     font-weight: 600;
     color: var(--v-txt);
   }

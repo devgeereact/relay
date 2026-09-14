@@ -593,7 +593,7 @@
   .br-book {
     display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 10px;
     border-radius: var(--v-r-md); background: none; border: 0; color: var(--v-dim);
-    font-family: var(--f-body); font-size: 13px; text-align: left; cursor: pointer;
+    font-family: var(--f-body); font-size: var(--v-fs-pr); text-align: left; cursor: pointer;
   }
   .br-book .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .br-book .ct { font-size:var(--v-fs-lbl); color: var(--v-faint); }
@@ -605,7 +605,7 @@
     width: calc(100% - 16px); margin: 0 8px 8px; padding: 8px 10px;
     border-radius: var(--v-r-md); border: 1px solid var(--v-line);
     background: var(--v-surf); color: var(--v-txt); font-family: var(--f-body);
-    font-size: 13px; text-align: left; cursor: pointer;
+    font-size: var(--v-fs-pr); text-align: left; cursor: pointer;
   }
   .br-all:hover { border-color: var(--v-line2); }
   .br-all.on { border-color: var(--v-accent-line); background: var(--v-accent-soft); }
@@ -618,9 +618,11 @@
   /* The translation, in the rail footer with the books it describes. */
   .br-tr { display: flex; align-items: center; gap: 8px; }
   .br-tr .r-lbl { margin: 0; flex: 1; min-width: 0; }
-  .br-tr .r-select { width: auto; max-width: 96px; height: 24px; padding: 0 24px 0 8px;
+  /* Width and padding only: the HEIGHT is the shared control's, so this select
+     is the same 26px as every button beside it. It was 24px. */
+  .br-tr .r-select { width: auto; max-width: 96px; padding: 0 24px 0 8px;
     font-size:var(--v-fs-lbl); flex: 0 0 auto;
-    background-position: calc(100% - 12px) 10px, calc(100% - 7px) 10px; }
+    background-position: calc(100% - 12px) 11px, calc(100% - 7px) 11px; }
   .br-tronly { font-size:var(--v-fs-lbl); color: var(--v-dim); }
   .br-pager { flex-wrap: wrap; }
   .br-panelfoot { padding: 10px; border-top: 1px solid var(--v-line); }
