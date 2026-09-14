@@ -503,7 +503,7 @@
            it must never displace or dilute the one indicator that says whether a
            congregation is looking at something. Grey, because nothing is wrong. -->
       {#if $serviceLock.engaged}
-        <span class="lockchip r-mono" title="Deletions, model changes and imports are held back while a service is recording. Nothing on the live path is affected. Lift it in Settings → Backup &amp; Recovery.">
+        <span class="lockchip r-mono" title="Deletions, model changes and imports are held back while a service is recording. Nothing on the live path is affected. Lift it in Settings → History &amp; Backup.">
           PROTECTED
         </span>
       {/if}

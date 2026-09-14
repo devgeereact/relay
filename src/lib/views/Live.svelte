@@ -767,7 +767,7 @@
     if (!langs?.length || $capture.stt?.language) return null; // already pinned
     return {
       title: 'Relay keeps changing its mind about the language.',
-      fix: `It has heard ${langs.join(', ')} in the last few minutes. Pick the language in Settings → Scripture & Bible → Recognition Language — auto-detect struggles with a strong accent, and a wrong guess garbles the transcript.`,
+      fix: `It has heard ${langs.join(', ')} in the last few minutes. Pick the language in Settings → Scripture & Languages → Recognition language — auto-detect struggles with a strong accent, and a wrong guess garbles the transcript.`,
     };
   })();
 

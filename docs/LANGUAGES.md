@@ -78,7 +78,7 @@ All three are complete and every name came from a published translation — **bu
 none has been checked by someone who actually speaks the language.** That is the
 gap that matters now, and it is the one thing no amount of engineering closes.
 
-> **The same table is now in the app**, at **Settings → Languages**, and every number
+> **The same table is now in the app**, at **Settings → Scripture & Languages**, and every number
 > in it is derived from the shipped data files rather than typed in — so this page
 > and the running application cannot disagree about how many aliases exist or which
 > numerals parse. **Its two most important columns are empty on purpose:** native
