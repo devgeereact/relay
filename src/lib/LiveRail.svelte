@@ -8,11 +8,27 @@
   // script case — the entire reason this product exists — and it had no browsing
   // surface at all.
   //
-  // THE ONE RULE THIS FILE KEEPS: nothing here reaches a screen. A search, a
-  // book, a chapter — every press STAGES into the slide grid, and the grid is
-  // where a press becomes a take (and reports its own outcome, per CLAUDE.md
-  // rules 15 and 18). A rail that fired would make a mistyped search a
-  // congregation-facing event.
+  // WHAT A PRESS MEANS HERE (docs/REBRAND.md §2 and §9).
+  //
+  // BROWSING — a book, a chapter — only ever STAGES into the slide grid. There
+  // is no single verse in "Psalms 23" to put on a wall, so there is nothing for
+  // a press to send.
+  //
+  // A SEARCH HIT names one verse, and §9 asks one click to do the whole job:
+  // the verse goes to the programme, its chapter loads into the grid, and that
+  // verse is the active slide. So a single press does exactly that and a DOUBLE
+  // press stages the chapter without putting anything on a screen — the same
+  // grammar as the grid, through the same `pressArbiter`, so the 190ms beat
+  // means a double can never also fire. Three things keep this honest:
+  //
+  //   · it is not a new fire path. `onVerse` lands on the SAME `manualFire` the
+  //     grid's verse cells use, so the fire is `'manual'` (rule 14), passes the
+  //     pre-air validator (rule 36) and reports its own outcome (rule 15);
+  //   · nothing here auto-fires. A search is an operator action, start to
+  //     finish; rule 10 is untouched, and `search.rs` holds that boundary from
+  //     the Rust side;
+  //   · every hit says WHICH KIND of claim it is and why (rule 18). A guess is
+  //     cyan and carries no percentage — never amber, which means ON AIR.
   //
   // Search goes through `searchScripture` in the store — the wrapper the Library
   // already uses. A second search path would be a second answer to "what does
@@ -26,12 +42,19 @@
   // than taken quietly; see the note to the team lead.
   import { onMount, onDestroy } from 'svelte';
   import { listBooks, searchScripture, readErrors } from './stores/capture.js';
+  import { pressArbiter } from './slidegrid.js';
   import EmptyState from './ui/EmptyState.svelte';
   import ErrorState from './ui/ErrorState.svelte';
   import Loading from './ui/Loading.svelte';
 
   /** Stage one chapter in the slide grid. Never fires. */
   export let onChapter = () => {};
+  /**
+   * ONE SEARCH HIT, taken the whole way: the chapter into the grid AND the verse
+   * to the programme (§9). The caller owns the fire, so the caller owns the
+   * outcome — this component never says a screen changed.
+   */
+  export let onVerse = () => {};
   /** The engine is not attached — every list here is empty and every press dead. */
   export let disabled = false;
 
@@ -81,6 +104,26 @@
 
   const toggleBook = (b) => (openBook = openBook === b.book ? null : b.book);
   const chapterList = (n) => Array.from({ length: Math.max(0, n) }, (_, i) => i + 1);
+
+  // Single press = the whole job; double press = stage the chapter and nothing
+  // more. ONE arbiter, the grid's, so a double can never also fire — the
+  // alternative is that every attempt to look at a verse puts it on the wall on
+  // the way past. A rejected fire goes to `onError`, never to a claim of success.
+  const hitPress = pressArbiter({
+    send: (h) => onVerse(h.book, h.chapter, h.verse, h.reference),
+    preview: (h) => onChapter(h.book, h.chapter),
+  });
+  onDestroy(hitPress.cancel);
+
+  /**
+   * What this hit is offering, in one line the operator can read (§9, rule 18).
+   *
+   * The sentence is the BACKEND's — composed once in `search.rs` so the Library,
+   * the Planner, this rail and the preacher's remote cannot describe the same
+   * match four different ways. The fallback exists only for a backend older than
+   * this field; it says nothing rather than inventing a reason.
+   */
+  const why = (h) => h?.why ?? '';
 </script>
 
 <aside class="lrail" aria-label="Scripture">
@@ -100,13 +143,26 @@
 
   <div class="lr-body">
     {#if hitsFor}
-      <!-- A search STAGES the chapter it found. It does not fire: the grid below
-           is where a press becomes a take. -->
-      <p class="lr-cap">{hits.length} found · opens the chapter in the grid</p>
+      <!-- Single press sends the verse to the programme and opens its chapter in
+           the grid; double press only opens the chapter. Both through the grid's
+           own arbiter — see the note at the top of this file. -->
+      <p class="lr-cap">{hits.length} found · click sends · double click opens the chapter</p>
       {#each hits as h (h.id)}
-        <button class="lr-row" {disabled} on:click={() => onChapter(h.book, h.chapter)}>
+        <button
+          class="lr-row lr-hit"
+          {disabled}
+          on:click={() => hitPress.press(h)}
+          on:dblclick={() => hitPress.double(h)}
+          title="Click to send {h.reference} to the programme · double click to open its chapter">
           <span class="lr-i" aria-hidden="true">✦</span>
-          <span class="lr-n"><b>{h.reference}</b> · {h.text.slice(0, 46)}…</span>
+          <span class="lr-n">
+            <span class="lr-ref"><b>{h.reference}</b> · {h.text.slice(0, 46)}…</span>
+            {#if why(h)}
+              <!-- WHY IT MATCHED. Cyan when Relay guessed, muted when it simply
+                   read what was typed. Never amber: amber means ON AIR. -->
+              <span class="lr-why" class:guess={h.guess}>{why(h)}</span>
+            {/if}
+          </span>
         </button>
       {:else}
         {#if $readErrors.searchScripture}
@@ -194,6 +250,21 @@
   .lr-row[aria-expanded='true'] { background: var(--v-sel-soft); color: var(--v-txt); }
   .lr-i { flex: 0 0 auto; width: 12px; text-align: center; font-size: var(--v-fs-cap); color: var(--v-dim); }
   .lr-n { flex: 1; min-width: 0; font-size: var(--v-fs-b2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  /* A hit is two lines — the verse, then why it is here — so it stops being a
+     single centred row. */
+  .lr-hit { align-items: flex-start; }
+  .lr-hit .lr-i { line-height: 1.5; }
+  .lr-hit .lr-n { display: flex; flex-direction: column; gap: 1px; }
+  .lr-ref { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  /* --v-dim, not --v-faint: this line sits on --v-surf3 on hover, and muted text
+     on that pairing is below AA (tokencontrast.test.js fails the build for it). */
+  .lr-why {
+    min-width: 0; overflow: hidden; text-overflow: ellipsis;
+    font-family: var(--f-mono); font-size: var(--v-fs-cap); color: var(--v-dim);
+  }
+  /* Cyan is the colour law's "this is a guess" (CLAUDE.md rule 18). Never amber
+     — that means ON AIR — and never amethyst, which means rehearsal. */
+  .lr-why.guess { color: var(--v-cyan); }
   /* --v-dim, not --v-faint: this count sits on --v-surf3 on hover, and muted text
      on that pairing is below AA (tokencontrast.test.js fails the build for it). */
   .lr-k {

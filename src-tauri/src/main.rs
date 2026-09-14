@@ -39,6 +39,7 @@ mod qa_r5;
 #[cfg(test)]
 mod r6;
 mod router;
+mod search;
 mod servicelock;
 mod songs;
 mod stt;
@@ -1646,151 +1647,173 @@ fn latency_set_enabled(on: bool) -> bool {
     latency::is_enabled()
 }
 
-/// Scripture search for the Planner — resolve a query to verses to add as cues.
-/// First tries to parse explicit references ("john 3:16", "ps 23", "rom 8 1")
-/// via the same detector the live pipeline uses; if none parse, falls back to a
-/// full-text corpus search ("shepherd"). Offline, corpus-only.
+/// One search result: the verse, and WHY it is here.
+///
+/// The verse is `#[serde(flatten)]`ed, so every surface that already reads a
+/// `VerseRow` off this command — the Library, the Planner, the Live rail, the
+/// preacher's remote — keeps reading exactly the fields it read before, and the
+/// explanation is additive. That mattered: DECISIONS §72 deferred "why it
+/// matched" precisely because it changes the shape three surfaces read.
+///
+/// `method` and `why` are the same pairing as `DetectionEvent`'s `method` +
+/// `matched_text` (CLAUDE.md rule 18): the machine fact the surface colours by,
+/// and the human evidence it renders. There is **no percentage** on a
+/// paraphrase, here as there.
+#[derive(Debug, Clone, Serialize)]
+struct SearchHit {
+    #[serde(flatten)]
+    verse: db::VerseRow,
+    /// `reference` · `prefix` · `phrase` · `words` · `paraphrase`.
+    method: &'static str,
+    /// True when Relay guessed rather than read. Cyan on the rail, never amber.
+    guess: bool,
+    /// One line saying why this verse is in the list.
+    why: String,
+    /// The query words that landed. Empty for a reference.
+    matched: Vec<String>,
+}
+
+impl SearchHit {
+    fn new(verse: db::VerseRow, why: search::Why) -> Self {
+        SearchHit {
+            verse,
+            method: why.kind.wire(),
+            guess: why.kind.is_guess(),
+            why: why.sentence,
+            matched: why.matched,
+        }
+    }
+}
+
+/// Scripture search — the Planner's box, the Library, the Live rail and the
+/// preacher's remote all come here, so there is one answer to "what did they
+/// mean". Two questions in one box (`docs/REBRAND.md` §9): which verse is this
+/// REFERENCE, and which verse says these WORDS. Offline, corpus-only.
+///
+/// **Never a fire.** Every row this returns is an offer; only an operator
+/// choosing one reaches a screen (DECISIONS §72, and rule 10 — nothing on this
+/// path can reach `AutoFire` because nothing on it touches the router at all).
 #[tauri::command]
 fn search_scripture(
     db: tauri::State<'_, Db>,
     sem: tauri::State<'_, Semantic>,
     query: String,
-) -> error::Result<Vec<db::VerseRow>> {
+) -> error::Result<Vec<SearchHit>> {
     let conn = db.0.lock()?;
     Ok(search_verses(&conn, &sem.0, query.trim()))
 }
 
-/// `ps23:1` → `ps 23 1`: a space wherever letters meet digits.
-///
-/// The reference parser reads tokens, and `ps23:1` is one token, so the fastest
-/// way to type a reference was the one way that returned nothing at all. Applied
-/// ONLY to the reference pass — a phrase search must keep the query a person
-/// actually typed.
-fn split_digit_runs(q: &str) -> String {
-    let mut out = String::with_capacity(q.len() + 4);
-    let mut prev: Option<char> = None;
-    for c in q.chars() {
-        if let Some(p) = prev {
-            if p.is_ascii_alphabetic() && c.is_ascii_digit()
-                || p.is_ascii_digit() && c.is_ascii_alphabetic()
-            {
-                out.push(' ');
-            }
-        }
-        out.push(c);
-        prev = Some(c);
-    }
-    out
-}
-
-/// Words that carry almost no search signal on their own. A verse matching only
-/// these has not matched the query.
-const WEAK_WORDS: &[&str] = &[
-    "the", "and", "of", "a", "an", "to", "in", "is", "that", "for", "it", "with", "as", "was",
-    "be", "not", "but", "they", "he", "him", "his", "her", "she", "i", "you", "me", "my", "we",
-    "us", "them", "their", "our", "this", "these", "those", "there", "then", "shall", "will",
-    "unto", "upon", "o", "on", "at", "by", "from", "all", "are", "were", "have", "has", "had",
-];
-
-/// How much of the query this verse actually contains, 0.0–1.0.
-///
-/// A weak word is worth 0.3 of a real one, so "the lord is my shepherd" is not
-/// counted as five-fifths matched because a verse happens to contain "the", "is"
-/// and "my". A query word counts when it appears, when a verse word starts with
-/// it (so `shep` finds `shepherd`), or when it is one edit away — which is what
-/// makes a typed query survive a typo without inventing a match.
-fn phrase_coverage(query: &str, text: &str) -> f32 {
-    let words: Vec<String> = text
-        .to_lowercase()
-        .split(|c: char| !c.is_alphanumeric())
-        .filter(|w| !w.is_empty())
-        .map(str::to_string)
-        .collect();
-    let mut total = 0.0f32;
-    let mut hit = 0.0f32;
-    for q in query
-        .to_lowercase()
-        .split(|c: char| !c.is_alphanumeric())
-        .filter(|w| !w.is_empty())
-    {
-        let weight = if WEAK_WORDS.contains(&q) { 0.3 } else { 1.0 };
-        total += weight;
-        let found = words.iter().any(|w| {
-            w == q
-                || (q.len() >= 4 && w.starts_with(q))
-                || (q.len() >= 5 && detection::one_edit_apart(w, q))
-        });
-        if found {
-            hit += weight;
-        }
-    }
-    if total <= 0.0 {
-        0.0
-    } else {
-        hit / total
-    }
-}
-
-/// Below this share of the query, a loose text hit is a guess, and the search
-/// says nothing instead. Four words out of five missing is not a near miss.
-const MIN_COVERAGE: f32 = 0.55;
-
 /// The scripture search itself, over a connection + semantic index — shared by
 /// the `search_scripture` command and the preacher-remote HTTP endpoint.
-fn search_verses(
-    conn: &rusqlite::Connection,
-    sem: &SemanticIndex,
-    query: &str,
-) -> Vec<db::VerseRow> {
+///
+/// Five passes, in band order (`search::MatchKind::band`), first-wins per verse:
+///
+///   1. **Reference** — the query parsed, through the SAME parser the live
+///      pipeline uses. A second parser would be a second thing that could
+///      disagree with the router about what a reference is.
+///   2. **Book prefix** — the query parsed only after a ≥2-letter book prefix was
+///      expanded ("philipp 4 13"). Search-only, and deliberately absent from
+///      `detection.rs`; see the boundary note at the top of `search.rs`.
+///   3. **Phrase** — the whole query, verbatim.
+///   4. **Paraphrase** — the semantic index. Marked a guess, with no percentage.
+///   5. **Words** — FTS5, floored at `search::MIN_COVERAGE`.
+///
+/// Every hit carries its `Why`. Nothing here decides, routes or fires: the
+/// scores order a LIST and never cross the router (CLAUDE.md rule 10).
+fn search_verses(conn: &rusqlite::Connection, sem: &SemanticIndex, query: &str) -> Vec<SearchHit> {
+    use search::{MatchKind, Why};
+
     let q = query.trim();
     if q.is_empty() {
         return vec![];
     }
 
-    // Score candidates and rank: exact reference > exact phrase > semantic
-    // paraphrase > loose text. Semantic is what turns a paraphrase ("there is
-    // therefore no condemnation in christ") into the real verse (Romans 8:1)
-    // plus suggestions — the same engine that drives live detection.
-    let mut scored: Vec<(f32, db::VerseRow)> = Vec::new();
+    let mut scored: Vec<(f32, SearchHit)> = Vec::new();
     let mut seen: std::collections::HashSet<i64> = std::collections::HashSet::new();
+    fn take(
+        score: f32,
+        v: db::VerseRow,
+        why: search::Why,
+        seen: &mut std::collections::HashSet<i64>,
+        scored: &mut Vec<(f32, SearchHit)>,
+    ) {
+        if seen.insert(v.id) {
+            scored.push((score, SearchHit::new(v, why)));
+        }
+    }
 
     // 1) Explicit references ("john 3:16", "ps 23", "ps23:1").
-    let mut refs = detection::detect_direct(q);
-    if refs.is_empty() {
-        // `ps23:1` is ONE token to the parser. Splitting letters from digits is
-        // what makes the quickest way to type a reference work at all.
-        refs = detection::detect_direct(&split_digit_runs(q));
-    }
+    let refs = search::references_in(q);
+    let parsed_a_reference = !refs.is_empty();
     for m in refs {
         let r = &m.reference;
         if let Ok(Some(v)) = db::lookup_verse(conn, &r.book, r.chapter, r.verse) {
-            if seen.insert(v.id) {
-                scored.push((1.0, v));
-            }
+            take(
+                MatchKind::Reference.band(),
+                v,
+                Why::reference(q),
+                &mut seen,
+                &mut scored,
+            );
         }
     }
-    // 2) Exact phrase (the whole query appears verbatim).
-    if q.split_whitespace().count() >= 2 {
-        if let Ok(hits) = db::search_verses_text(conn, q, 12) {
-            for v in hits {
-                if seen.insert(v.id) {
-                    scored.push((0.95, v));
+
+    // 2) A book PREFIX, expanded and handed back to the same parser. Only when
+    //    nothing parsed as typed — an exact alias (`ps`, `mt`, `jn`, `php`)
+    //    already won above, and must never be second-guessed by a prefix.
+    if !parsed_a_reference {
+        for (prefix, book, rewritten) in search::prefix_expansions(q) {
+            for m in search::references_in(&rewritten) {
+                let r = &m.reference;
+                if let Ok(Some(v)) = db::lookup_verse(conn, &r.book, r.chapter, r.verse) {
+                    take(
+                        MatchKind::BookPrefix.band(),
+                        v,
+                        Why::book_prefix(&prefix, book),
+                        &mut seen,
+                        &mut scored,
+                    );
                 }
             }
         }
     }
-    // 3) Semantic paraphrase — top matches by meaning, highest first.
+
+    // 3) Exact phrase (the whole query appears verbatim).
+    if q.split_whitespace().count() >= 2 {
+        if let Ok(hits) = db::search_verses_text(conn, q, 12) {
+            for v in hits {
+                take(
+                    MatchKind::Phrase.band(),
+                    v,
+                    Why::phrase(),
+                    &mut seen,
+                    &mut scored,
+                );
+            }
+        }
+    }
+
+    // 4) Semantic paraphrase — top matches by meaning, highest first. NO
+    //    coverage floor here: a paraphrase is supposed to find a verse whose
+    //    words are different, so a word floor would break the feature it was
+    //    meant to protect (DECISIONS §72).
     for (r, score) in sem.top_k(q, 12) {
         if score < 0.08 {
             continue;
         }
         if let Ok(Some(v)) = db::lookup_verse(conn, &r.book, r.chapter, r.verse) {
-            if seen.insert(v.id) {
-                scored.push((0.5 + score * 0.4, v)); // 0.5..0.9 band
-            }
+            // 0.5..0.9, inside the Paraphrase band's own room.
+            take(
+                MatchKind::Paraphrase.band() + score * 0.4,
+                v,
+                Why::paraphrase(),
+                &mut seen,
+                &mut scored,
+            );
         }
     }
-    // 4) Full-text word/phrase recall (FTS5, bm25-ranked). Catches loose,
+
+    // 5) Full-text word/phrase recall (FTS5, bm25-ranked). Catches loose,
     //    non-contiguous word queries ("lord shepherd") a substring LIKE misses,
     //    and ranks the best-matching verse first.
     for (i, v) in db::search_verses_fts(conn, q, 15)
@@ -1802,23 +1825,34 @@ fn search_verses(
         // "quantum shepherd tractor engine banana" came back with nineteen verses
         // and Ezekiel 26:9 at the top. A confident wrong answer is worse than an
         // empty list: the operator acts on it.
-        if phrase_coverage(q, &v.text) < MIN_COVERAGE {
+        let (share, matched) = search::coverage(q, &v.text);
+        if share < search::MIN_COVERAGE {
             continue;
         }
-        if seen.insert(v.id) {
-            scored.push((0.45 - (i as f32) * 0.008, v)); // 0.45..~0.33 band
-        }
+        take(
+            MatchKind::Words.band() - (i as f32) * 0.008,
+            v,
+            Why::words(matched),
+            &mut seen,
+            &mut scored,
+        );
     }
-    // 4b) Last-ditch substring scan if FTS returned nothing (index still building).
+
+    // 5b) Last-ditch substring scan if FTS returned nothing (index still building).
     if scored.is_empty() {
         if let Ok(hits) = db::search_verses_text(conn, q, 15) {
             for v in hits {
-                if phrase_coverage(q, &v.text) < MIN_COVERAGE {
+                let (share, matched) = search::coverage(q, &v.text);
+                if share < search::MIN_COVERAGE {
                     continue;
                 }
-                if seen.insert(v.id) {
-                    scored.push((0.3, v));
-                }
+                take(
+                    MatchKind::Words.band() - 0.15,
+                    v,
+                    Why::words(matched),
+                    &mut seen,
+                    &mut scored,
+                );
             }
         }
     }
@@ -1918,14 +1952,24 @@ fn remote_api<R: tauri::Runtime>(
                     Err(_) => vec![],
                 }
             };
+            // `why` and `method` ride to the preacher's phone too. The rule they
+            // serve — the operator must see WHICH KIND of claim this is
+            // (CLAUDE.md rule 18) — does not stop at the console, and a surface
+            // that had to compose its own sentence would compose a different one.
             let items: Vec<String> = rows
                 .into_iter()
                 .take(20)
-                .map(|v| {
+                .map(|h| {
                     format!(
-                        "{{\"reference\":{},\"text\":{}}}",
-                        json_str(&format!("{} {}:{}", v.book, v.chapter, v.verse)),
-                        json_str(&v.text)
+                        "{{\"reference\":{},\"text\":{},\"method\":{},\"why\":{},\"guess\":{}}}",
+                        json_str(&format!(
+                            "{} {}:{}",
+                            h.verse.book, h.verse.chapter, h.verse.verse
+                        )),
+                        json_str(&h.verse.text),
+                        json_str(h.method),
+                        json_str(&h.why),
+                        h.guess
                     )
                 })
                 .collect();

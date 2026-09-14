@@ -874,6 +874,32 @@
     railChapter = { book, chapter };
   }
 
+  /**
+   * ONE SEARCH HIT, the whole job in one press (docs/REBRAND.md §9): the verse
+   * goes to the programme, its chapter loads into the grid, and that verse is
+   * the active slide.
+   *
+   * NEVER a new fire path — it is the same `manualFire` a verse cell in the grid
+   * takes, so the fire is recorded `'manual'` (rule 14), passes the pre-air
+   * validator (rule 36) and reports its own outcome (rule 15). The third clause
+   * of §9 needs no code: `cellLive` marks a verse cell from `$liveContent`, so
+   * the verse that just went out IS the active cell once the chapter is staged.
+   *
+   * The chapter is staged FIRST and unconditionally. A fire that fails must still
+   * leave the operator looking at the passage they asked for — that is the
+   * surface they will use to try again by hand.
+   */
+  async function fireSearchHit(book, chapter, verse, reference) {
+    stageChapter(book, chapter);
+    const ref = reference || `${book} ${chapter}:${verse}`;
+    try {
+      await manualFire(ref);
+      flash($t('live.now_live', { reference: ref }));
+    } catch (e) {
+      flash(humanError(e));
+    }
+  }
+
   // The chapter around the live verse — ONLY when no plan is open, and only when
   // the operator has not asked for a different one. A plan is what the operator
   // deliberately staged, and must not be pushed out of the grid by whatever the
@@ -1089,13 +1115,16 @@
   <!-- THE DESK — a 206px browsing rail, then the stage. The rail is the
        prototype's, and the reason it exists is the whole product: the preacher
        goes off-script, and until now the only way to reach an unplanned verse was
-       to type it blind into the manual box. Nothing in the rail reaches a screen;
-       it stages into the grid, and the grid is where a press is a take. -->
+       to type it blind into the manual box. BROWSING a book or a chapter only
+       stages into the grid; a SEARCH HIT names one verse, and one click takes it
+       the whole way (docs/REBRAND.md §9) through the same `manualFire` the grid
+       uses. The rail's own header note carries the rest. -->
   <div class="desk">
     <div class="rail-col">
       <LiveRail
         disabled={!$capture.available}
-        onChapter={stageChapter} />
+        onChapter={stageChapter}
+        onVerse={fireSearchHit} />
       <!-- View controls. Deliberately at the TOP-RIGHT and deliberately small: they
            change how the console looks, never what reaches a screen, and must not
            compete with the transport for an operator's attention. -->

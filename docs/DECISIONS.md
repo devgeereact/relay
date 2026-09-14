@@ -3315,11 +3315,37 @@ verse actually contains — a word counts when it appears, when a verse word sta
   events and the kiosk hub) rather than inferred from the absence of a call. The absence of a
   call is exactly what four separate bugs in this repository looked like.
 
-### Not done
+### Not done — CLOSED 2026-09-14
 
-*Each hit says why it matched* (the brief's §9) would change the shape of what `search_scripture`
-returns, and three surfaces plus the preacher's remote read it. It belongs with the Library pass
-that reworks the search UI, and is recorded in `docs/REBRAND.md` rather than half-built here.
+*Each hit says why it matched* (the brief's §9) is built. It did change the shape of what
+`search_scripture` returns, and the way it changed it is the decision: the verse row is
+`#[serde(flatten)]`ed inside a `SearchHit`, so all four readers keep reading the fields they read
+before and the explanation is purely additive. `e2e::r9_a_hit_is_still_a_verse_row_on_the_wire`
+pins that — nest it and four surfaces render blanks with every other test still green.
+
+Three things came with it, and one of them is a new fuzzy surface:
+
+- **`src-tauri/src/search.rs`** is now the one home for what a query MEANS — five named match
+  kinds, their order (a reference always outranks a phrase), the coverage floor, and the sentence
+  each hit shows. Pure, DB-free, and composed once: a sentence written on four surfaces is four
+  sentences that will disagree. `method` + `why` are the same pairing as `DetectionEvent`'s
+  `method` + `matched_text` (rule 18), and a paraphrase still carries **no percentage**.
+- **A book prefix of two letters or more resolves** ("philipp 4 13", "thessal 4 16"), by expanding
+  the token and handing it back to the SAME parser — never a second one. It is marked a guess, and
+  it is **search-only, deliberately**: `detection.rs` must never learn it, because "am", "is", "so"
+  and "jo" are ordinary words a preacher says all morning and each is a legal prefix here. Held
+  from both sides by `search::tests::the_live_detector_does_not_know_about_prefixes` and
+  `e2e::r9_a_book_prefix_is_a_search_feature_and_never_a_detection`.
+- **One click does the whole job** on the Live rail (§9): the verse to the programme, its chapter
+  into the grid, that verse the active slide. It is not a new fire path — it is the same
+  `manualFire` a grid verse cell takes — and it goes through the grid's own `pressArbiter`, so a
+  double click opens the chapter and fires nothing.
+
+**Rule 10 is untouched and that is the whole safety argument.** Nothing on this path reaches the
+router at all; a search is an operator action from the first keystroke to the press.
+`e2e::r9_nothing_a_search_offers_can_reach_an_auto_fire` states it at the boundary by putting the
+widest thing a search can offer to `Router::decide`, and was watched to fail with
+`may_auto_fire` widened to `UncertainBook`.
 
 ## 73. What a cue is CALLED and what a cue SHOWS are different facts (2026-09-13)
 
