@@ -3585,3 +3585,72 @@ that sends an operator to a section that does not exist is worse than the rename
 re-pointed by finding the control's line inside the new section blocks, not by guessing. The dated
 record was left alone: nothing under `docs/qa/audits/`, and nothing in RELAY_V1_AUDIT, RELAY_GAP or
 the earlier sections of this file, all of which say what was true when they were written.
+
+## 78. A single click cues on a browsing surface and takes on a run surface (2026-09-14)
+
+### What it used to do
+
+`VerseDeck.svelte` is the card deck that five Library panes render — the Bible, saved verses,
+song sections, media and announcements. Clicking a card put its content on the congregation's
+screens. The component said so, deliberately and in those words: *"CLICKING A CARD FIRES IT. The
+card is not a thumbnail to enlarge — it is already the slide at a readable size, and the
+operator's next action after finding it is always the same one."*
+
+That reasoning is sound on a **run** surface. It is the reasoning behind the product's one
+sentence, the least possible effort from the operator, and it is why the AI path stayed at one
+press.
+
+### What was wrong
+
+The Library is not a run surface. It is where an operator browses a songbook on a Tuesday and
+scrolls a chapter looking for the verse they half-remember, and on that surface the press that
+means *"let me look at this"* was the same press that means *"put it in front of four hundred
+people"*. There is no undo on the second one.
+
+`docs/REBRAND.md` draws the line explicitly and in two places — §2 for Live (*"single click
+sends to Program"*) and §10 for the Library (*"single click cues · double click opens"*) — and
+Relay already draws the same line at the top of the Planner, which says out loud that nothing on
+it can reach an output. The Library sits on the Planner's side of it.
+
+The forcing move was the dock head. §10 asks for the legend `single click cues · double click
+opens` printed above the grid. Printing that over a surface that fires is rule 35 in miniature:
+a line that reads the same whether or not the thing behind it is what it says. The alternative —
+keep the behaviour and write a truthful legend — fixes the sentence by keeping the more
+dangerous half.
+
+### The decision
+
+**One press means "show me" where you are building, and "show them" where you are running.**
+
+- `VerseDeck` takes a `press` prop. `'select'` fills the inspector and reaches no output; a
+  double press opens the item for editing. `'fire'` is unchanged and is the **default**, so this
+  is a Library change rather than a fire-path change. Nothing about `manualFire`, `fireMedia` or
+  any wrapper's throw-vs-swallow group moved.
+- The take stays **one action** from a selected item, which is what makes this a relocation
+  rather than a cost: the inspector's `Cue in Live` stages it, `Go Live` fires the queue, and
+  the card's own kebab still offers *Take to screen* directly.
+- The hover legend changes with the prop. `Go live →` over a press that selects is the same lie
+  the dock head would have been.
+- Enter on a list row obeys the prop too. A keyboard operator who has learned that clicking a
+  Library card selects it must not find that Enter on the same card fires it — that asymmetry
+  is exactly the defect P1-5 closed for Space.
+
+The comment quoted above was **rewritten rather than deleted**. It records a real decision, and
+a file that contradicts its own comment teaches the next person to distrust every other comment
+in it. It now says both behaviours, which surface gets which, and why.
+
+### What holds it
+
+`librarypress.test.js`, in both directions and with the third direction that actually rots: a
+Library press reaches no fire path (card, list row and Enter); a deck given no prop still fires;
+and a **source scan** naming any of the five Library panes that stops passing `press="select"` —
+because the failure to expect is a sixth pane added next year that renders the deck, forgets the
+prop, looks identical, and fires. Each was watched to go red against its own reverted defect,
+and the scanner proves it can still match what it is looking for.
+
+### What this does NOT change
+
+The AI path. A suggestion on `Live.svelte` is still accepted in one press, for the reason
+recorded in `Library.svelte`: the preacher has moved on, and an extra press costs the product's
+one sentence exactly when it matters. This decision is about a press on a *catalogue*, not a
+press on a claim the AI has just made.
