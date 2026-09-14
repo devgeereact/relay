@@ -361,8 +361,33 @@
 
   /* The collection switch. `.seg` is the shell's own segmented control (app.css),
      so this only makes the two halves share the width. */
-  .lr-seg { display: flex; width: 100%; }
-  .lr-seg :global(button) { flex: 1 1 0; }
+  /* THE COLLECTION SWITCH. `.seg` is defined in `Live.svelte`, and Svelte scopes a
+     component's styles to that component — so this rail's two buttons matched no
+     rule at all and rendered as PLATFORM buttons: measured `rgb(239,239,239)` on
+     black text with square corners, in a dark control room. The prototype's own
+     `.seg` is the shape copied here (§12's one instrument): a well on the app
+     ground, a hairline, and the pressed half filled with selection blue. */
+  .lr-seg {
+    display: flex; width: 100%; gap: 2px; padding: 2px;
+    background: var(--v-void); border: 1px solid var(--v-line2);
+    border-radius: var(--v-r-sm);
+  }
+  .lr-seg :global(button) {
+    flex: 1 1 0; height: 22px; padding: 0 10px; border: 0; cursor: pointer;
+    border-radius: var(--v-r-sm); background: transparent; color: var(--v-faint);
+    font-family: var(--f-body); font-size: var(--v-fs-b2); font-weight: 600;
+    transition: background var(--v-dur) var(--v-ease), color var(--v-dur) var(--v-ease);
+  }
+  .lr-seg :global(button:hover) { color: var(--v-dim); }
+  .lr-seg :global(button.on),
+  .lr-seg :global(button[aria-pressed='true']) {
+    background: var(--v-accent-fill); color: var(--v-accent-ink);
+  }
+  /* Feedback on the press itself, not on the release (apple-design §1). */
+  .lr-seg :global(button:active) { transform: scale(0.97); }
+  @media (prefers-reduced-motion: reduce) {
+    .lr-seg :global(button:active) { transform: none; filter: brightness(1.15); }
+  }
 
   /* The box and its one action on one row: §9's "one box", with the reference
      fire beside it rather than in a second field on another panel. */

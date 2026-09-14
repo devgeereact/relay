@@ -714,12 +714,19 @@
            with the chosen band as the cue's own template, which is the ordinary
            manual-fire path — it reports its own failure and marks nothing amber
            on its own. -->
-      <div class="trow ltrow">
-        <span>Name band</span>
-        <select class="r-select ltpick" bind:value={ltId} aria-label="Which lower third">
-          {#each bands as t (t.id)}<option value={t.id}>{t.name}</option>{/each}
-        </select>
-      </div>
+      <!-- ONE BLOCK PER TOOL. The countdown above is a bordered card with a
+           caption head; these two were flat rows, so three tools read as one long
+           column of unrelated controls. The prototype's `.tmr` / `.lt3` / `.alrt`
+           are the same card three times, and that is what makes a dock of three
+           tools legible at a glance. -->
+      <div class="qblock">
+        <div class="qhead">
+          <span class="r-lbl">Name band</span>
+          <span class="qspring"></span>
+          <select class="r-select ltpick" bind:value={ltId} aria-label="Which lower third">
+            {#each bands as t (t.id)}<option value={t.id}>{t.name}</option>{/each}
+          </select>
+        </div>
       {#if bands.length}
         <div class="trow ltrow ltsub">
           <input class="r-input tin wide" type="text" bind:value={ltName}
@@ -746,13 +753,21 @@
       {:else}
         <p class="ltcap">No lower third yet — make one in Templates (New → Lower Third).</p>
       {/if}
+      </div>
 
       <!-- ── WORD TO THE PREACHER (§5) ────────────────────────────────────────
            The stage monitor and nothing else. `sendStageAlert` publishes a frame
            kind that exists inside the stage renderer, so no congregation channel
            can show it — the guarantee is in `channels.rs`, not in this label. -->
-      <label class="trow">
-        <span>To preacher</span>
+      <div class="qblock" class:onstage={$stageAlert}>
+        <div class="qhead">
+          <span class="r-lbl">Word to the preacher</span>
+          <span class="qspring"></span>
+          <!-- The badge says WHERE it is, and only while it is there. Amethyst and
+               amber are both spoken for; this is the stage's own red, which is what
+               the preacher's monitor is painting at that moment. -->
+          {#if $stageAlert}<span class="qbadge">on stage</span>{/if}
+        </div>
         <input
           class="r-input tin wide"
           type="text"
@@ -760,9 +775,11 @@
           placeholder="Wrap up · Five minutes left · Stand by"
           aria-label="Word to the preacher — stage monitor only"
           on:keydown={(e) => e.key === 'Enter' && toPreacher()} />
-        <button class="r-btn sm ghost" on:click={toPreacher} disabled={busy || !stageMsg.trim()}>Send to stage</button>
-        <button class="r-btn sm ghost" on:click={clearPreacher} disabled={busy || !$stageAlert}>Take down</button>
-      </label>
+        <div class="qbtns">
+          <button class="r-btn sm pri" on:click={toPreacher} disabled={busy || !stageMsg.trim()}>Send to stage</button>
+          <button class="r-btn sm ghost" on:click={clearPreacher} disabled={busy || !$stageAlert}>Take down</button>
+        </div>
+      </div>
 
       <!-- ── THE EMERGENCY ANNOUNCEMENT ───────────────────────────────────────
            Over live scripture, on every screen at once. Two steps, always. -->
@@ -797,30 +814,24 @@
          one card left, to sit with the signal it is about; it was never a control
          over what a congregation sees, which is what this card is for.
 
-         THE ORDER IS NOT THE PROTOTYPE'S, deliberately. It puts Go Live at the
-         top and Clear screens at the bottom; here Clear screens stays first and
-         full width. The card never scrolls either way, so nothing is out of
-         reach — but the control an operator reaches for without reading is the
-         one that belongs under the thumb, and that is the red one (rule 15's
-         neighbourhood, DECISIONS §20). End service is the only button here that
-         is not about the next thirty seconds, so it goes last.
+         THE ORDER IS THE PROTOTYPE'S, on the operator's instruction (2026-09-14):
+         the session control on top, the two state controls as a pair, and Clear
+         screens full width along the bottom edge. The earlier order put the red
+         one first on the argument that the control reached for without reading
+         belongs under the thumb; the bottom edge of a card that never scrolls is
+         the same distance from a thumb and is where the prototype puts it.
+
+         What rule 15 actually requires is unchanged and still holds: this card
+         never scrolls, Clear screens is never behind an overflow edge, and at one
+         column the whole card is ordered first (see the 640px rule below, pinned
+         by `panic.test.js`).
 
          This card NEVER scrolls. The buttons stretch to fill whatever height the
          card has, so an operator can never have to scroll to reach Clear
          screens. -->
     <div class="dbody ctlbody">
       <div class="r-ctl">
-        <button class="r-cbtn danger wide" on:click={doClear} disabled={!$capture.available}>Clear screens</button>
-        <button class="r-cbtn black" data-on={$screenBlack ? '1' : '0'} on:click={doBlack} disabled={!$capture.available}>
-          {$screenBlack ? 'Black — restore' : 'Blackout'}
-        </button>
-        <button
-          class="r-cbtn rehearse"
-          data-on={$rehearsing ? '1' : '0'}
-          on:click={() => run(() => setRehearsal(!$rehearsing))}
-          disabled={busy || !$capture.available}
-        >{$rehearsing ? 'Rehearsing' : 'Rehearse'}</button>
-        <!-- The label is the STATE, like Blackout and Rehearse beside it. With no
+        <!-- The label is the STATE, like Blackout and Rehearse below it. With no
              service open it says so and is inert: "End service" over nothing to
              end reads exactly like "End service" over a recording church, which
              is the one thing this button may not do. -->
@@ -833,6 +844,16 @@
             ? 'Stop recording this service. The transcript, the fires and the timeline are kept — Library → History reads them back.'
             : 'No service is being recorded. One starts when you start listening.'}
         >{recording ? 'End service' : 'No service'}</button>
+        <button
+          class="r-cbtn rehearse"
+          data-on={$rehearsing ? '1' : '0'}
+          on:click={() => run(() => setRehearsal(!$rehearsing))}
+          disabled={busy || !$capture.available}
+        >{$rehearsing ? 'Rehearsing' : 'Rehearse'}</button>
+        <button class="r-cbtn black" data-on={$screenBlack ? '1' : '0'} on:click={doBlack} disabled={!$capture.available}>
+          {$screenBlack ? 'Black — restore' : 'Blackout'}
+        </button>
+        <button class="r-cbtn danger wide" on:click={doClear} disabled={!$capture.available}>Clear screens</button>
       </div>
     </div>
   </div>
@@ -990,6 +1011,27 @@
      beside it, because a row of fixed-width controls plus a 74px label floor
      is wider than the card at that width. The row wraps instead; the label
      keeps its floor only while there is room for it. */
+  /* ── ONE TOOL, ONE CARD (docs/REBRAND.md §2) ──────────────────────────────
+     The countdown already had this shape; the name band and the word to the
+     preacher did not, so the dock read as one column of loose rows. Same ground,
+     same hairline, same caption head as `.tmr`. */
+  .qblock {
+    display: flex; flex-direction: column; gap: 5px; padding: 7px; margin-bottom: 6px;
+    background: var(--v-surf); border: 1px solid var(--v-line); border-radius: var(--v-r-lg);
+  }
+  .qhead { display: flex; align-items: center; gap: 6px; }
+  .qspring { flex: 1; min-width: 0; }
+  .qbtns { display: grid; grid-template-columns: 1fr auto; gap: 5px; }
+  /* The stage's own red, and only while the message is actually on the monitor.
+     Amber is ON AIR and amethyst is rehearsal; neither is what this is. */
+  .qblock.onstage { border-color: var(--v-red-line); background: rgba(244, 81, 91, .07); }
+  .qbadge {
+    flex: 0 0 auto; padding: 2px 6px; border-radius: var(--v-r-sm);
+    background: var(--v-red-soft); color: var(--v-red);
+    font-family: var(--f-mono); font-size: var(--v-fs-kind);
+    letter-spacing: .08em; text-transform: uppercase;
+  }
+
   .trow { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; row-gap: 4px;
     font-size: var(--v-fs-b2); color: var(--v-dim); }
   .trow > span { flex: 0 1 auto; min-width: 74px; }

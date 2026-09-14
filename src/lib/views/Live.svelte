@@ -939,6 +939,20 @@
   //
   // TAKE is therefore not a new command. It is exactly acceptTop() or fireSlide(),
   // whichever the preview is showing — the same two paths the keyboard already uses.
+  // PREVIEW RUNS ONE AHEAD, whatever the grid is showing. The prototype states
+  // the rule in its own comment — "Preview runs one ahead, so what is coming is
+  // always visible" — and implements it in two places: `take()` sets the cue to
+  // the slide after the one it just put up, and `stepLive()` does the same as it
+  // walks. Relay had it for a PLAN only (`previewNext` below), so a chapter of
+  // scripture or a song's sections left the preview empty while a verse was on
+  // air, and the operator had to go and find the next one by hand.
+  //
+  // It is derived from the rendered cells rather than tracked, so it cannot drift
+  // from what the grid is showing, and it is never a fire of its own: it only
+  // decides what the PREVIEW pane and TAKE are pointed at.
+  $: liveCellIdx = grid.cells.findIndex((c) => cellLive(c));
+  $: gridNextCell =
+    liveCellIdx >= 0 && liveCellIdx + 1 < grid.cells.length ? grid.cells[liveCellIdx + 1] : null;
   $: previewNext = openPlan ? stepFrom(items, liveCueId, liveSlide, 1) : null;
   $: previewCue = previewNext ?? (selCue ? { item: selCue, slide: 0 } : null);
   $: previewSlide = previewCue ? slidesOf(previewCue.item)[previewCue.slide] : null;
@@ -955,19 +969,28 @@
       ? { reference: dets[0].reference, text: dets[0].text ?? '', translation: null }
       : previewSlide
         ? { reference: previewCue.item.label, text: previewSlide.text || previewSlide.label, translation: null }
-        : null;
+        : gridNextCell
+          ? {
+              reference: gridNextCell.reference ?? gridNextCell.label,
+              text: gridNextCell.text || gridNextCell.label,
+              translation: null,
+            }
+          : null;
   $: previewLabel = gridPreview
     ? gridPreview.label
     : dets[0]
       ? dets[0].reference
       : previewCue
         ? cueLabel(previewCue.item.label, previewSlide?.label)
-        : '';
+        : (gridNextCell?.label ?? '');
   /** The take. Never a new code path — the same accept/fire the keys already run. */
   async function take() {
     if (gridPreview) return fireCell(gridPreview);
     if (dets[0]) return acceptTop();
     if (previewCue) return fireSlide(previewCue.item, previewCue.slide);
+    // The one-ahead cell, so TAKE fires what the pane is actually showing. A
+    // preview that cannot be taken is a preview of nothing.
+    if (gridNextCell) return fireCell(gridNextCell);
   }
 
   // ── THE SLIDE GRID ───────────────────────────────────────────────────
@@ -1219,7 +1242,25 @@
    *  store's record of what actually left the machine, not against the press. */
   $: cellLive = (c) =>
     c.kind === 'plan'
-      ? planOnAir && c.cueId === liveCueId && c.slideIdx === liveSlide
+      ? /* AMBER IS NEVER ALLOWED TO LIE (rule 18, DECISIONS §22), and this branch
+           was the one place in the grid that took the console's WORD for it. The
+           other two compare against `$liveContent` — what actually left the
+           machine — while a plan cell asked only the playhead, which is restored
+           from the saved session on every mount. So a relaunch with a remembered
+           `liveOnAir` painted a cell amber and said `Live` over a wall that had
+           nothing on it at all, which is exactly what the resume dialog promises
+           cannot happen ("nothing is put back on any screen").
+
+           A plan cue carries no reference and a song section deliberately sends
+           no label, so the strongest honest comparison is the WORDS, with an
+           empty cue (a media or countdown slide, which has none) falling back to
+           asking whether anything is on the wall at all. */
+        planOnAir &&
+          c.cueId === liveCueId &&
+          c.slideIdx === liveSlide &&
+          !$screenBlack &&
+          !!$liveContent &&
+          (c.text.trim() ? $liveContent.text === c.text : true)
       : c.kind === 'song'
         ? !!c.text.trim() && !$screenBlack && $liveContent?.text === c.text
         : !!c.reference && !$screenBlack && $liveContent?.reference === c.reference;

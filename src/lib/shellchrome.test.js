@@ -271,9 +271,17 @@ describe('the controls card can never scroll a panic control out of reach', () =
     expect(css.slice(0, css.indexOf('}'))).toMatch(/overflow:\s*hidden/);
   });
 
-  it('Clear screens is full width and first', () => {
+  it('the card runs End service · Rehearse · Blackout · Clear screens', () => {
+    // THE ORDER CHANGED ON 2026-09-14, on the operator's instruction, to the
+    // prototype's: the session control on top, the two state controls as a pair,
+    // and Clear screens full width along the bottom edge. What rule 15 requires is
+    // unchanged and still tested: the card never scrolls, so no panic control is
+    // ever behind an overflow edge, and at one column the whole card is ordered
+    // first (`panic.test.js`).
     const card = DOCK.slice(DOCK.indexOf('<div class="dbody ctlbody">'));
-    const order = ['Clear screens', 'Blackout', 'Rehearse'];
+    // By CLASS, not by label: `End service` also appears in the button's own
+    // title text, so a label search finds the prose before the control.
+    const order = ['r-cbtn endsvc', 'rehearse', 'r-cbtn black', 'r-cbtn danger wide'];
     let at = -1;
     for (const label of order) {
       const i = card.indexOf(label);
@@ -492,11 +500,11 @@ describe('§1 · End service is the fourth control, and it reads the service', (
     DOCK.slice(DOCK.indexOf('<div class="dbody ctlbody">'), DOCK.indexOf('</section>', DOCK.indexOf('<div class="dbody ctlbody">')));
 
   it("four buttons, in the repository's order rather than the prototype's", () => {
-    // Clear screens FIRST and full width: the control an operator reaches for
-    // without reading belongs under the thumb (rule 15's neighbourhood). End
-    // service last — it is the only one here that is not about the next thirty
-    // seconds.
-    const order = ['Clear screens', 'Blackout', 'Rehearse', 'End service'];
+    // The prototype's order, adopted on the operator's instruction 2026-09-14:
+    // the session control on top, the two state controls as a pair, Clear screens
+    // full width along the bottom. Matched by CLASS — `End service` also appears
+    // in the button's own title text.
+    const order = ['r-cbtn endsvc', 'rehearse', 'r-cbtn black', 'r-cbtn danger wide'];
     let at = -1;
     for (const label of order) {
       const i = card().indexOf(label);

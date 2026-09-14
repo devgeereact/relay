@@ -323,7 +323,7 @@ describe('the card is the four things §2 names, in one place', () => {
     const body = card.slice(0, card.indexOf('<span class="dk">Controls</span>'));
     expect(body).toContain('Countdown');
     expect(body).toContain('Name band');
-    expect(body).toContain('To preacher');
+    expect(body).toContain('Word to the preacher');
     expect(body).toContain('Announce');
     expect(body).toContain('Load whole plan');
   });
@@ -494,18 +494,27 @@ describe('L2 · the Controls card keeps Relay’s order, on purpose', () => {
   //
   // Clear screens stays first and full width. Rule 15's neighbourhood: the control
   // an operator reaches for without reading is the red one.
-  it('Clear screens is still the first control in the card', () => {
+  it('runs End service · Rehearse · Blackout · Clear screens, the prototype order', () => {
+    // CHANGED 2026-09-14 on the operator's instruction. The card previously led
+    // with Clear screens on the argument that the control reached for without
+    // reading belongs under the thumb; the bottom edge of a card that never
+    // scrolls is the same distance away, and it is where the prototype puts it.
+    // Matched by class: `End service` also appears in that button's title text.
     const ctl = src.slice(src.indexOf('<div class="r-ctl">'));
-    const order = [...ctl.slice(0, ctl.indexOf('</div>')).matchAll(/>\s*\{?[^<>{]*?(Clear screens|Blackout|Rehearse|End service)/g)]
-      .map((m) => m[1]);
-    expect(order[0]).toBe('Clear screens');
-    expect(order).toContain('End service');
-    expect(order.indexOf('Clear screens')).toBeLessThan(order.indexOf('End service'));
+    const body = ctl.slice(0, ctl.indexOf('</div>', ctl.lastIndexOf('danger wide')));
+    const order = ['r-cbtn endsvc', 'rehearse', 'r-cbtn black', 'r-cbtn danger wide'];
+    let at = -1;
+    for (const cls of order) {
+      const i = body.indexOf(cls);
+      expect(i, `${cls} must be in the controls card`).toBeGreaterThan(at);
+      at = i;
+    }
   });
 
-  // …and the reason is written down where the next person to compare the two
-  // will read it, rather than being rediscovered.
-  it('and the card says why it differs from the prototype', () => {
-    expect(src).toMatch(/THE ORDER IS NOT THE PROTOTYPE'S, deliberately/);
+  // …and the card records that the order was DECIDED rather than inherited, and
+  // what the panic rule actually requires — which is not an order at all.
+  it('and the card says the order is the prototype\'s, and what rule 15 needs', () => {
+    expect(src).toMatch(/THE ORDER IS THE PROTOTYPE'S, on the operator's instruction/);
+    expect(src).toMatch(/never scrolls/);
   });
 });

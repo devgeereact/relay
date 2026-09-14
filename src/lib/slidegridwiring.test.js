@@ -37,12 +37,16 @@ describe('the grid is rendered, and its presses go through the arbiter', () => {
   it('BOTH handlers go through the one arbiter, and there is no second path', () => {
     expect(src).toMatch(/on:click=\{\(\) => gridPress\.press\(c\)\}/);
     expect(src).toMatch(/on:dblclick=\{\(\) => gridPress\.double\(c\)\}/);
-    // `fireCell` is reachable from exactly two places: the arbiter's `send`, and
-    // `take()` taking what the operator previewed. Nothing else may call it.
+    // `fireCell` is reachable from exactly THREE places, all of them a person
+    // pressing something: the arbiter's `send`, `take()` taking the cell the
+    // operator double-clicked, and `take()` taking the one-ahead cell the preview
+    // pane is showing. Nothing else may call it — a fourth caller is the second
+    // click path this test exists to prevent.
     const calls = [...src.matchAll(/fireCell\(/g)].length;
-    expect(calls).toBe(2);
+    expect(calls).toBe(3);
     expect(src).toMatch(/send: fireCell,/);
     expect(src).toMatch(/if \(gridPreview\) return fireCell\(gridPreview\);/);
+    expect(src).toMatch(/if \(gridNextCell\) return fireCell\(gridNextCell\);/);
   });
 
   it('the grid never builds output by hand — it reuses the existing fire paths', () => {
@@ -98,10 +102,13 @@ describe('the grid is rendered, and its presses go through the arbiter', () => {
   });
 
   it('a cell reads ON AIR from the store, never from "we pressed the button"', () => {
-    const rule = src.slice(src.indexOf('$: cellLive = '), src.indexOf('$: cellLive = ') + 400);
-    // Plan cells: the store's own onAir + cursor. Verse cells: what the store
-    // says is on screen, and not while the wall is black.
-    expect(rule).toMatch(/planOnAir && c\.cueId === liveCueId && c\.slideIdx === liveSlide/);
+    const rule = src.slice(src.indexOf('$: cellLive = '), src.indexOf('$: cellLive = ') + 1600);
+    // EVERY branch now has to agree with the wall, not only the verse one. The
+    // plan branch used to ask the playhead alone — and the playhead is restored
+    // from the saved session on mount, so a relaunch painted a cell amber and
+    // said `Live` over a wall with nothing on it (2026-09-14, operator-reported).
+    expect(rule).toMatch(/planOnAir &&\s*c\.cueId === liveCueId &&\s*c\.slideIdx === liveSlide/);
+    expect(rule).toMatch(/!\$screenBlack &&\s*!!\$liveContent/);
     expect(rule).toMatch(/!\$screenBlack && \$liveContent\?\.reference === c\.reference/);
     // Nothing optimistic: the arbiter's cell is not consulted.
     expect(rule).not.toMatch(/gridPress|pressed/);
