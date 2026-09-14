@@ -19,6 +19,8 @@
 //
 //   npx vitest run src/lib/screencards.test.js
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import * as svelteRuntime from 'svelte';
 import { tick } from 'svelte';
 
@@ -183,6 +185,65 @@ describe('§5 · one card per screen, and each card is a rendered slide', () => 
     expect(cardFor(el, 'Streaming').querySelector('.ch-cardmeta').textContent.trim()).toBe(
       'Network client · WebSocket',
     );
+  });
+});
+
+describe('§2 · the desk starts where the prototype starts, and fits three cards', () => {
+  // BOTH OF THESE WERE MEASURED IN A BROWSER, not guessed, and both were wrong
+  // on the first render of this workspace (1280×900, against the mock bridge):
+  // an `Outputs` H1 plus a two-line standfirst started the desk 110px lower than
+  // the prototype, and the grid fitted TWO cards across where the prototype fits
+  // three — so an operator with five screens scrolled to reach the third.
+  //
+  // Neither can be held by mounting, because jsdom has no layout. What CAN be
+  // held is the arithmetic that produced the wrong answer, computed from the
+  // real numbers rather than pinned as a literal: change the rail, the
+  // inspector, the gap or the padding and this recomputes and fails.
+  const read = (p) => readFileSync(resolve(__dirname, '..', p), 'utf8');
+  const outputs = read('lib/views/Channels.svelte');
+
+  it('passes NO page title and NO standfirst — the rail and the pane head say it', () => {
+    const call = outputs.slice(outputs.indexOf('<WorkspaceFrame'), outputs.indexOf('<!-- ══ RAIL'));
+    expect(call, 'the page title is back').not.toMatch(/\btitle=/);
+    expect(call, 'the standfirst is back').not.toMatch(/\bstandfirst=/);
+    // …and the frame must not paint an empty `<h1>` in its place — a screen
+    // reader announces "heading level 1" and then nothing.
+    const frame = read('lib/views/WorkspaceFrame.svelte');
+    expect(frame).toMatch(/\{#if title\}<h1 class="rw-h1">/);
+  });
+
+  it('the sentence each section is FOR did not just get deleted', () => {
+    // Role two of the type scale is still rendered — it moved to the rail foot,
+    // where it costs the grid no height and shows on all three sections.
+    expect(outputs).toMatch(/class="ch-raillead">\{activeView\.lead\}/);
+  });
+
+  it('three cards fit across the main column at 1280, by the real numbers', () => {
+    const [, cols] = outputs.match(/columns="([^"]+)"/);
+    const [rail, , inspector] = cols.trim().split(/\s+(?![^(]*\))/);
+    const px = (s) => parseInt(s, 10);
+
+    const [, minTrack] = outputs.match(/\.ch-cards\{[^}]*minmax\((\d+)px/);
+    const [, gridGap] = outputs.match(/\.ch-cards\{[^}]*gap:(\d+)px/);
+    const [, wrapPad] = outputs.match(/\.ch-gridwrap\{[^}]*padding:(\d+)px/);
+
+    // The one number this test cannot read out of my own files: the shell's page
+    // inset either side of the workspace. Stated, not hidden — if the shell
+    // changes it, this assumption is what a reader should check first.
+    const PAGE_INSET = 28;
+    const FRAME_GUTTERS = 16; // two 8px gutters between the three panes
+
+    const across = (page) => {
+      const main = page - PAGE_INSET - px(rail) - px(inspector) - FRAME_GUTTERS;
+      const inner = main - 2 * px(wrapPad) - 2; // pane borders
+      return Math.floor((inner + px(gridGap)) / (px(minTrack) + px(gridGap)));
+    };
+
+    // The measured failure: at 1280 this was 2.
+    expect(across(1280), 'an operator with five screens scrolls for the third').toBeGreaterThanOrEqual(3);
+    expect(across(1440)).toBeGreaterThanOrEqual(3);
+    // …and not so small that the preview stops being a preview.
+    expect(across(1280)).toBeLessThanOrEqual(4);
   });
 });
 
