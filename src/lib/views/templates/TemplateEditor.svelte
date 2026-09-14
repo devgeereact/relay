@@ -662,6 +662,22 @@
     { edge: 'vmiddle', label: 'Align middle', d: 'M3 12h18M7 6v12M14 8v8' },
     { edge: 'bottom', label: 'Align bottom', d: 'M3 20h18M7 5v11M14 9v7' },
   ];
+  // The names for the inspector's two text-alignment rows. They are SEPARATE from
+  // the six above on purpose: the strip moves the object inside the canvas, these
+  // set how the words sit inside the object, and for a while both rows answered to
+  // "Align left". British spelling, like the strip's `Align centre` — the value
+  // stored in the template is still the CSS `center`, which is not a word anybody
+  // reads out loud.
+  const TEXT_ALIGN_LABEL = {
+    left: 'Text aligned left',
+    center: 'Text centred',
+    right: 'Text aligned right',
+  };
+  const VALIGN_LABEL = {
+    top: 'Text at the top of the box',
+    middle: 'Text in the middle of the box',
+    bottom: 'Text at the bottom of the box',
+  };
   // Only an object these four numbers actually place may be aligned — the same
   // question the Position group asks, from the same module, so the strip and the
   // number grid can never disagree about whether an object can move.
@@ -1509,8 +1525,12 @@
             <div class="te-frow">
               <span class="te-fk">Align</span>
               <span class="te-fv te-seg">
+                <!-- "Align left" was this button's name AND the canvas strip's, and the two
+                     do different things: the strip moves the OBJECT, this sets how the WORDS
+                     sit inside it. Two identical commands in one view is a defect you can only
+                     hear, and `qa-inventory` counts both as named. Say which one this is. -->
                 {#each ['left', 'center', 'right'] as a}
-                  <button class="te-segbtn" class:on={sel.align === a} aria-label="Align {a}" on:click={() => set('align', a)}>
+                  <button class="te-segbtn" class:on={sel.align === a} aria-label={TEXT_ALIGN_LABEL[a]} on:click={() => set('align', a)}>
                     <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16"/><path d={a === 'left' ? 'M4 12h10' : a === 'right' ? 'M10 12h10' : 'M7 12h10'}/><path d="M4 18h16"/></svg>
                   </button>
                 {/each}
@@ -1519,8 +1539,11 @@
             <div class="te-frow">
               <span class="te-fk">V-align</span>
               <span class="te-fv te-seg">
+                <!-- These three were named `T`, `M` and `B` — the letter on the face, which is
+                     a label to a reader with the row's `V-align` beside it and nothing at all
+                     to a screen reader arriving at the button. -->
                 {#each ['top', 'middle', 'bottom'] as v}
-                  <button class="te-segbtn" class:on={(sel.valign || 'middle') === v} on:click={() => set('valign', v)}>{v[0].toUpperCase()}</button>
+                  <button class="te-segbtn" class:on={(sel.valign || 'middle') === v} aria-label={VALIGN_LABEL[v]} on:click={() => set('valign', v)}>{v[0].toUpperCase()}</button>
                 {/each}
               </span>
             </div>

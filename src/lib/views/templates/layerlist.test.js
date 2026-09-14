@@ -566,6 +566,50 @@ describe('S1 · the alignment strip writes percentages, and only where they mean
     expect(alignBtn('Align left').disabled).toBe(false);
   });
 
+  // Found by driving the editor in a browser and listing every control whose name
+  // matched /align/: `Align left` and `Align right` each came back TWICE, from two
+  // controls that do different things — the strip moves the OBJECT, the inspector's
+  // segment sets how the WORDS sit inside it. `qa-inventory` counts both as named
+  // and is right; it cannot see that the two names are the same. The V-align row
+  // was worse: its three buttons were called `T`, `M` and `B`, which is the letter
+  // printed on the face and not a name at all once the `V-align` label beside it is
+  // out of reach.
+  it('does not share a name with the inspector row that aligns the words inside the object', async () => {
+    mount();
+    await settle();
+    rowFor('Verse').click();
+    await settle();
+
+    const named = (root) =>
+      [...root.querySelectorAll('button')]
+        .map((b) => (b.getAttribute('aria-label') || '').trim())
+        .filter(Boolean);
+    const strip = named(host.querySelector('.te-alignbar'));
+    const inspector = named(host).filter((n) => !strip.includes(n) || false);
+
+    // The six strip names exist and are unique.
+    expect(strip).toContain('Align left');
+    expect(new Set(strip).size, `duplicate names inside the strip: ${strip.join(', ')}`).toBe(
+      strip.length,
+    );
+
+    // And no control ANYWHERE else in the editor answers to one of them.
+    const outside = [...host.querySelectorAll('button')]
+      .filter((b) => !b.closest('.te-alignbar'))
+      .map((b) => (b.getAttribute('aria-label') || '').trim())
+      .filter(Boolean);
+    const clash = outside.filter((n) => strip.includes(n));
+    expect(clash, `two controls answer to the same name: ${clash.join(', ')}`).toEqual([]);
+
+    // The text rows are named, and named for what they do.
+    expect(outside).toContain('Text aligned left');
+    expect(outside).toContain('Text centred');
+    expect(outside).toContain('Text at the top of the box');
+    // A single letter is not an accessible name.
+    expect(outside.filter((n) => n.length <= 2), `one-character names: ${outside}`).toEqual([]);
+    expect(inspector.length).toBeGreaterThan(0);
+  });
+
   it('and Space evenly refuses rather than pretending, below three movable objects', async () => {
     mount();
     await settle();
