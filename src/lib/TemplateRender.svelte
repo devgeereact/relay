@@ -323,16 +323,11 @@
     stageEl.querySelectorAll('.slide .content').forEach((box) => {
       worst = Math.min(worst, fitOne(box, stageEl));
     });
-    // Report the WORST of the slides on screen, and never throw: this runs inside
-    // a requestAnimationFrame on the page that is on the wall, and a listener that
-    // breaks must not take the render with it.
-    if (onFit) {
-      try {
-        onFit({ scale: worst, legible: worst >= MIN_LEGIBLE_SCALE });
-      } catch {
-        /* a report about legibility may not cost legibility */
-      }
-    }
+    // The WORST of the slides on screen. It is HANDED ON rather than reported
+    // here: how far this had to shrink is only half the verdict, and the other
+    // half — whether it actually fits — cannot be read until a later frame. One
+    // reporter, at the point where the answer is complete (`verifyFit`).
+    lastFitScale = worst;
   }
 
   // ── Fit scheduling (perf) ──────────────────────────────────────────────────
@@ -419,6 +414,9 @@
   let refitSig = '';
   let refitTries = 0;
   const MAX_REFIT = 2;
+  /** How far the last fit had to shrink, 0–1. Half of the verdict; `verifyFit`
+   *  adds the other half (does it actually fit) and reports both, once. */
+  let lastFitScale = 1;
   function fitBoxes() {
     if (!stageEl) return [];
     return [
@@ -453,29 +451,91 @@
       return true; // an unparseable family is not a reason to keep re-fitting
     }
   }
+  /**
+   * THE ONE REPORT, at the point where the verdict is complete.
+   *
+   * `scale` is how far the fit had to shrink; `clipped` is whether the words
+   * actually fit afterwards. They are different failures and only the first was
+   * ever reported — `legible` answered "did we shrink past 45%?" and nothing
+   * answered "does it fit". `Nocturne · Lyrics` settled at 8.5 of a designed 8.5
+   * — `scale: 1.0`, `legible: true` — over a 104px box holding 174px of words.
+   * The most reassuring possible report over the worst possible outcome, which
+   * is rule 35 in the place rule 37 was supposed to be watching.
+   */
+  function report(clipped) {
+    // Never throw: this runs on the page that is ON THE WALL, and a listener that
+    // breaks must not take the render with it.
+    if (onFit) {
+      try {
+        onFit({ scale: lastFitScale, legible: lastFitScale >= MIN_LEGIBLE_SCALE, clipped });
+      } catch {
+        /* a report about legibility may not cost legibility */
+      }
+    }
+  }
+  /** A frame for the browser to lay out, then one to look at what it did. */
+  function nextFrame(fn) {
+    if (typeof requestAnimationFrame === 'undefined') return void setTimeout(fn, 32);
+    requestAnimationFrame(() => requestAnimationFrame(fn));
+  }
+  /**
+   * DID THE FIT ACTUALLY FIT? — and the check has to be taken where it can tell.
+   *
+   * `overflowing()` used to be sampled in the SAME synchronous frame as the
+   * binary search, which is the one moment it cannot see a discrepancy that
+   * materialises a frame later. Rule 42's comment above says exactly this about
+   * the font case; the blindness is general, and the font half is INERT in the
+   * shipped product anyway — Relay bundles no webfont at all (`app.css` line 11:
+   * zero network, so no `fonts.googleapis` links; there is no `@font-face` and no
+   * `.woff` in `src/`), and an empty FontFaceSet makes `document.fonts.check()`
+   * answer true for every family. So `overflowing()` is the only real signal
+   * there is, and it was being read too early to be one.
+   *
+   * Measured by the lead in the Templates gallery: `Nocturne · Lyrics` at
+   * `data-base="8.5"` computing to exactly 8.5cqw — a size the search genuinely
+   * reached and genuinely measured as fitting (from `lo=0.4, hi=22` the mids are
+   * 11.2, 5.8, then exactly 8.5) — painting 174px inside a 104px `overflow:hidden`
+   * box, and staying there. The measurement and the paint disagreed, and nothing
+   * looked again. Under `container-type: size` a fit writes `font-size` in `cqw`
+   * and reads `scrollHeight` back inside one loop; a container still settling, a
+   * container-query length resolved in a later pass and a system-font
+   * substitution all leave that same signature. This component cannot tell them
+   * apart and does not need to: every one of them is invisible to a same-frame
+   * sample and visible to a next-frame one.
+   *
+   * The bound is UNCHANGED (`MAX_REFIT`), so rule 37's genuinely-unfittable
+   * passage is still shrunk, still shown, and now actually reported.
+   */
   function verifyFit(sig) {
     if (sig !== refitSig) {
       refitSig = sig;
       refitTries = 0;
     }
-    const stale = !fittedWithTheRealFont();
-    if (!needsRefit({ fontReady: !stale, overflowing: overflowing(), tries: refitTries, max: MAX_REFIT }))
-      return;
-    refitTries += 1;
-    const again = () => {
-      lastFitSig = '';
-      scheduleFit();
-    };
-    const fonts = typeof document !== 'undefined' ? document.fonts : null;
-    const box = fitBoxes()[0];
-    if (stale && fonts && fonts.load && box) {
-      const family = getComputedStyle(box.querySelector('.lfit') || box).fontFamily;
-      Promise.resolve(fonts.load(`1em ${family}`))
-        .catch(() => {})
-        .then(() => setTimeout(again, 32));
-    } else {
-      setTimeout(again, 60);
-    }
+    nextFrame(() => {
+      // Something has re-fitted since; that pass owns the verdict, not this one.
+      if (sig !== lastFitSig) return;
+      const stale = !fittedWithTheRealFont();
+      const over = overflowing();
+      if (!needsRefit({ fontReady: !stale, overflowing: over, tries: refitTries, max: MAX_REFIT })) {
+        report(over);
+        return;
+      }
+      refitTries += 1;
+      const again = () => {
+        lastFitSig = '';
+        scheduleFit();
+      };
+      const fonts = typeof document !== 'undefined' ? document.fonts : null;
+      const box = fitBoxes()[0];
+      if (stale && fonts && fonts.load && box) {
+        const family = getComputedStyle(box.querySelector('.lfit') || box).fontFamily;
+        Promise.resolve(fonts.load(`1em ${family}`))
+          .catch(() => {})
+          .then(() => setTimeout(again, 32));
+      } else {
+        setTimeout(again, 60);
+      }
+    });
   }
   function scheduleFit() {
     if (fitRaf) return;
@@ -954,15 +1014,8 @@
       // make Live shout "38% of the designed size" on an ordinary song.
       if ((el.textContent || '').trim()) worst = Math.min(worst, best / base);
     });
-    // Never throw: this runs inside a requestAnimationFrame on the page that is
-    // on the wall, and a listener that breaks must not take the render with it.
-    if (onFit) {
-      try {
-        onFit({ scale: worst, legible: worst >= MIN_LEGIBLE_SCALE });
-      } catch {
-        /* a report about legibility may not cost legibility */
-      }
-    }
+    // Handed on, not reported — see `fitText` and `report()`.
+    lastFitScale = worst;
   }
   // Fit is driven by the unified scheduler above (runFit → fitLayers/fitText),
   // gated to prop-change + resize so countdown/clock ticks don't force reflow.
