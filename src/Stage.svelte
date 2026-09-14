@@ -111,10 +111,38 @@
   // preacher might want, each switchable, and the figures either BESIDE the
   // reading or ACROSS THE BOTTOM.
   //
-  // Clean by default: the reading fills the screen with the countdown and the
-  // clock beneath it. Everything else is switched on by the person holding the
-  // device — which is why this is stored per device, in `localStorage`, and not
-  // in Relay's database. Two stage screens in one building are allowed to want
+  // THE SWITCHES REMOVE THINGS. THEY ARE NOT HOW THINGS ARRIVE.
+  //
+  // §5 said "clean by default: reading, countdown and clock; the rest is switched
+  // on", and three of the six shipped OFF — `next`, `note` and `elapsed`. Every
+  // one of those three is something an OPERATOR deliberately produced FOR THE
+  // PREACHER and has no other audience:
+  //
+  //   · `note`    — a line typed against a cue in the Planner (`stage_note`),
+  //                 which no congregation template renders.
+  //   · `next`    — the up-next the operator published (`channels::stage_next`),
+  //                 stage-only by contract.
+  //   · `elapsed` — the service clock, which only exists while a service is
+  //                 actually recording.
+  //
+  // So the operator typed a word to the preacher, the console showed it had gone,
+  // and the preacher's screen showed nothing — because of a switch on a device the
+  // operator cannot see, which nobody had been told to find. Nothing anywhere
+  // reports that. That is rule 35's shape on the one screen whose reader cannot
+  // glance at the console to find out what happened, and it is what the operator
+  // meant by "should be ACTIVE".
+  //
+  // CLEAN BY DEFAULT SURVIVES, and that is the reason this is safe rather than a
+  // busier screen: four of the six render NOTHING unless something exists to
+  // render. No note typed, no `.noterow`. No up-next published, no `.next`. No
+  // service recording, no elapsed figure. A stage screen with nothing sent to it
+  // still shows the reading, the countdown and the clock and nothing else — which
+  // is exactly the state §5's sentence was describing.
+  //
+  // The switches are still the point, and they still go the other way: a lobby TV
+  // that should NOT carry the preacher's note switches it off, once, on that
+  // device — which is why this is stored per device, in `localStorage`, and not in
+  // Relay's database. Two stage screens in one building are allowed to want
   // different things, and the console must not have to know about either.
   //
   // Every read and write is guarded: a private window, blocked site data or a
@@ -129,11 +157,11 @@
   ];
   const DEFAULT_ZONES = {
     reading: true,
-    next: false,
-    note: false,
+    next: true,
+    note: true,
     countdown: true,
     clock: true,
-    elapsed: false,
+    elapsed: true,
   };
   const ZONE_KEY = 'relay.stage.zones';
   let zones = { ...DEFAULT_ZONES };
@@ -234,6 +262,34 @@
   // thing that page is being looked at for — so the figures take the room the
   // reading is not using. Still a flex BASIS, still clipped.
   $: readingHasBody = !!(visible && content?.text);
+
+  // HOW MANY CHARACTERS THE READING HAS, handed to the stylesheet so the verse can
+  // be sized to the room instead of to a fixed ceiling. docs/REBRAND.md §3.4 —
+  // "measured, not tabled", and a stage reading is one of the nested contexts it
+  // names. The arithmetic is in the CSS beside the box it is about; this is just
+  // the one number CSS cannot count for itself.
+  $: verseChars = content?.text ? content.text.length : 60;
+
+  // A WORD TO THE PREACHER, SIZED TO ITS LENGTH.
+  //
+  // §5 fixes the type at 8.5cqw and the panel at `overflow: hidden`, which is the
+  // right pair for the message §5 describes ("Wrap up — 5 minutes"). It is the
+  // wrong pair for the message an operator actually types when something has gone
+  // wrong, which is a sentence or three — those ran past the bottom of the screen
+  // and were CLIPPED, silently, on the one surface in the product whose whole
+  // purpose is that a person reads every word of it while facing a congregation.
+  //
+  // Four steps rather than a continuous fit: the fit this page can afford has no
+  // measurement in it (there is no renderer here and no `TemplateRender` to borrow
+  // — this page draws its own chrome), so a formula would be a guess with a
+  // decimal point on it. Steps are a guess that cannot produce a pathological
+  // size, and the first one is §5's own figure, unchanged, for §5's own case.
+  const ALERT_STEPS = [
+    { max: 24, size: 'xl' }, // a phrase — §5's 8.5cqw
+    { max: 64, size: 'lg' },
+    { max: 150, size: 'md' },
+  ];
+  $: alertSize = ALERT_STEPS.find((s) => alert.length <= s.max)?.size ?? 'sm';
 
   function apply(m) {
     if (m.kind === 'content') {
@@ -386,7 +442,7 @@
     <!-- THE WHOLE SCREEN. A preacher reads this from a platform, mid-sentence,
          without looking for it. Outside the zone layout on purpose: an
          instruction that a switched-off zone could hide is not an instruction. -->
-    <div class="alert" role="status" aria-live="assertive">{alert}</div>
+    <div class="alert {alertSize}" role="status" aria-live="assertive">{alert}</div>
   {/if}
 
   <!-- ══ ZONES ══ NOTHING MAY LEAVE THE SCREEN (docs/REBRAND.md §5).
@@ -399,7 +455,7 @@
       <section class="reading" aria-label="Reading">
         {#if visible && content}
           {#if content.reference}<div class="ref">{content.reference}{content.translation ? ' · ' + content.translation : ''}</div>{/if}
-          {#if content.text}<div class="verse">{#if content.reference}“{content.text}”{:else}{content.text}{/if}</div>{/if}
+          {#if content.text}<div class="verse" style="--vn:{verseChars}">{#if content.reference}“{content.text}”{:else}{content.text}{/if}</div>{/if}
         {:else}
           <div class="idle">— standby —</div>
         {/if}
@@ -554,8 +610,15 @@
      asks, because those are fixed-size rows and a fixed row that overflows is
      just a row nobody sized. */
   main.stage { flex: 1 1 0; display: flex; flex-direction: row; min-height: 0; min-width: 0; }
+  /* THE READING IS ITS OWN CONTAINER, for the same reason the rail is: the type in
+     it is a share of the ROOM THE READING ACTUALLY HAS, not of the frame. With the
+     figures across the bottom the reading is the frame minus a fifth; beside them
+     it is the frame minus a quarter of its width. A verse sized against the frame
+     is right in one of those layouts and wrong in the other, and the zones are
+     switchable, so both happen on the same device. */
   .reading { flex: 1 1 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
     text-align: center; padding: 24px; gap: 18px; min-height: 0; min-width: 0;
+    container-type: size;
     overflow: auto; overscroll-behavior: contain; }
   /* THE RAIL IS ITS OWN CONTAINER. `size`, not `inline-size`, so the stack can be
      a share of the rail's HEIGHT as well — which is what stops three stacked
@@ -625,10 +688,18 @@
   @media (prefers-reduced-motion: no-preference) {
     .fig.warn .figv, .railrow.warn { animation: cdwarn 2s ease-in-out infinite; }
   }
+  /* `inline-size`, not `size`: the row's WIDTH is definite (it is the frame) and
+     its height is what its content asks for under a ceiling. `container-type: size`
+     here would take the content out of the height calculation and collapse the row
+     to nothing — the rail can use `size` because its height is a flex basis. */
   .noterow { flex: 0 0 auto; flex-basis: auto; max-height: 22%; overflow: hidden;
+    container-type: inline-size;
     display: flex; align-items: baseline; gap: 10px; padding: 10px 18px;
     border-top: 1px solid rgba(255,176,0,.24); background: rgba(255,176,0,.08); color: var(--v-amber2);
-    font-family: var(--f-body); font-size: clamp(14px, 2.6vw, 20px); line-height: 1.3; }
+    /* The operator's own words to the preacher. `2.6vw` capped at 20px is a phone
+       size on a platform monitor, on the row whose whole purpose is that somebody
+       standing ten feet away reads it. */
+    font-family: var(--f-body); font-size: clamp(14px, 2.2cqw, 34px); line-height: 1.3; }
   .notetxt { min-width: 0; overflow: hidden; }
   /* The zone panel — one instrument, no native dialog (rule 41). */
   .zonepanel { flex: 0 0 auto; max-height: 46dvh; overflow-y: auto; padding: 14px 18px;
@@ -641,12 +712,49 @@
     border: 1px solid rgba(255,255,255,.14); border-radius: 8px; }
   .zonebtn.on { color: var(--v-amber); border-color: rgba(255,176,0,.45); background: rgba(255,176,0,.1); }
   .zonefoot { margin: 0; font-family: var(--f-mono); font-size:var(--v-fs-mono); color: var(--v-faint); }
-  .ref { font-family: var(--f-mono); font-size: clamp(13px, 3.5vw, 20px); letter-spacing: .18em; text-transform: uppercase; color: var(--v-amber); }
-  .verse { font-family: var(--f-serif); font-size: clamp(26px, 7vw, 64px); line-height: 1.28; color: var(--v-txt); max-width: 16ch; }
+  /* A SHARE OF THE READING, not of the viewport. `3.5vw` capped at 20px put the
+     reference of the passage a preacher is reading aloud at twenty pixels on a
+     fifty-inch platform monitor, which is the size it is on a phone. */
+  .ref { font-family: var(--f-mono); font-size: clamp(13px, 2.6cqw, 40px); letter-spacing: .18em; text-transform: uppercase; color: var(--v-amber); }
+  /* THE READING FILLS THE ROOM IT HAS.
+     `clamp(26px, 7vw, 64px)` is a ceiling, and on the screen this page exists for
+     it was the binding one: a 1920×1080 platform monitor gave a verse 64px of type
+     in an 800px-tall reading area, about a third of the height available, while
+     ProPresenter's stage display fills it. A ceiling cannot know how much text it
+     was given, so it has to be set for the longest passage and is then wrong for
+     every ordinary one — and an ordinary one, a verse or two, is what a stage
+     monitor shows for almost all of a service.
+
+     So it is a FIT instead, in the two bounds that actually constrain it, taking
+     the SMALLER (docs/REBRAND.md §3.4 — measured, not tabled):
+
+       width   the block is capped at `--vcpl` characters and a serif advances 0.49em
+               per character, so the line is `--vcpl × 0.49` ems wide.
+       height  `--vn` characters at `--vcpl` per line is `--vn / --vcpl` lines, plus
+               one for the last part-line, each 1.28em of leading.
+
+     Division by a var() inside calc is the same construction the rail beneath this
+     already uses and which was measured in a browser (`--ch`), not a new trick.
+
+     THE FLOOR IS DELIBERATE AND IT IS THE OLD CEILING'S FLOOR, 26px. Below it the
+     fit has decided a passage cannot be shown whole, and §5's recorded deviation
+     takes over: the reading SCROLLS rather than clipping, because a preacher
+     reading aloud must not lose the end of a passage. That is unchanged behaviour
+     for long passages; what changed is every short one. */
+  .verse { --vcpl: 16; font-family: var(--f-serif); line-height: 1.28; color: var(--v-txt);
+    max-width: calc(var(--vcpl) * 1ch);
+    font-size: max(26px, min(
+      calc(94cqw / var(--vcpl) / 0.49),
+      calc(84cqh / (var(--vn, 60) / var(--vcpl) + 1) / 1.28)
+    )); }
   /* The DEFAULT resting state of the preacher's phone — the thing on screen before
      anything is fired, and therefore the text most likely to be looked at. It was
      2.25:1: the worst contrast in the product, in its least forgiving location. */
-  .idle { font-family: var(--f-mono); color: var(--v-faint); font-size:var(--v-fs-h2); letter-spacing: .1em; }
+  .idle { font-family: var(--f-mono); color: var(--v-faint); letter-spacing: .1em;
+    /* The scale step is the FLOOR on a phone, not the size on a platform monitor —
+       a stage screen resting at "— standby —" in 14px type reads as a screen that
+       has failed rather than one that is waiting. */
+    font-size: max(var(--v-fs-h2), min(3.4cqw, 34px)); }
   /* The last minute — the same rule and the same red as the wall. Reduced motion
      gets a glow instead of a pulse; the colour is the same either way. */
   @media (prefers-reduced-motion: reduce) {
@@ -668,13 +776,21 @@
     text-align: center;
     font-family: var(--f-body);
     font-weight: 700;
-    font-size: 8.5cqw;
     line-height: 1.15;
     color: #fff;
     text-shadow: 0 0.02em 0.06em rgba(0, 0, 0, 0.75);
     background: #c8121c;
     overflow: hidden;
   }
+  /* FOUR STEPS, AND THE FIRST IS §5's FIGURE UNCHANGED. `.alert` is `position:
+     fixed` with no query container above it, so `cqw` here resolves against the
+     small viewport — which is what is wanted: this panel IS the screen. A message
+     the operator typed in a hurry is longer than a phrase, and at 8.5cqw a
+     three-sentence one ran off the bottom of a box that clips. */
+  .alert.xl { font-size: 8.5cqw; }
+  .alert.lg { font-size: 6cqw; }
+  .alert.md { font-size: 4.2cqw; }
+  .alert.sm { font-size: 3cqw; }
   @media (prefers-reduced-motion: no-preference) {
     .alert { animation: stagealert 1.4s ease-in-out infinite; }
   }
@@ -685,16 +801,31 @@
   .note-lbl { font-family: var(--f-mono); font-size: var(--v-fs-fig); font-weight: 700; letter-spacing: .16em;
     text-transform: uppercase; color: var(--v-amber); flex: 0 0 auto; }
   /* Up-next panel — confidence info the preacher wants, kept off the main output. */
-  .next { flex: 0 0 auto; display: flex; align-items: baseline; gap: 14px; padding: 14px 20px;
+  /* BOUNDED AND CLIPPED, like every other row beneath the reading. It was neither,
+     and it got away with it for as long as the zone was off by default: nothing on
+     this row had a ceiling except a `-webkit-line-clamp`, which is a vendor
+     property doing load-bearing layout work. "Nothing may leave the screen" has to
+     hold for the rows that are ON, so switching this one on is what makes the
+     bound necessary. A BASIS, never a height — same reason as the rail. */
+  .next { flex: 0 0 auto; max-height: 20%; overflow: hidden;
+    container-type: inline-size;
+    display: flex; align-items: baseline; gap: 14px; padding: 14px 20px;
     border-top: 1px solid rgba(255,255,255,.08); background: rgba(255,255,255,.02); }
   .next-lbl { font-family: var(--f-mono); font-size: 10px; font-weight: 700; letter-spacing: .16em;
     text-transform: uppercase; color: var(--v-faint); flex: 0 0 auto; }
   .next-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-  .next-ref { font-family: var(--f-mono); font-size:var(--v-fs-b1); letter-spacing: .06em; color: var(--v-amber);
+  /* "The next item in smaller type beneath the reading" — SMALLER THAN THE READING,
+     which is what it is beneath, not smaller than a phone. Both were fixed sizes
+     and both were a twelfth of the verse on a platform monitor. */
+  .next-ref { font-family: var(--f-mono); font-size: clamp(12px, 1.4cqw, 22px); letter-spacing: .06em; color: var(--v-amber);
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .next-text { font-family: var(--f-head); font-size: 16px; color: var(--v-dim); line-height: 1.3;
+  .next-text { font-family: var(--f-head); font-size: clamp(16px, 1.9cqw, 30px); color: var(--v-dim); line-height: 1.3;
     display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-  @media (orientation: landscape) { .verse { font-size: clamp(28px, 6vw, 72px); max-width: 22ch; } }
+  /* Landscape — a platform monitor, a lobby TV, a phone turned sideways — gets a
+     wider measure, and the fit above re-reads it: more characters per line is
+     fewer lines, so the height bound relaxes and the verse grows. One constant,
+     both bounds. */
+  @media (orientation: landscape) { .verse { --vcpl: 22; } }
   @media (prefers-reduced-motion: reduce) { .status.on i { animation: none; } }
 
   /* Preacher control panel — a phone that DRIVES the wall. Touch-sized targets
