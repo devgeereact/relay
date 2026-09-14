@@ -344,6 +344,14 @@ body{ overflow:hidden; text-rendering:optimizeLegibility; -moz-osx-font-smoothin
 .siglamps .sig{ display:inline-flex; align-items:center; gap:5px; flex:0 1 auto; min-width:0;
   font-family:var(--f-mono); font-size:9.5px; letter-spacing:.05em; color:var(--v-faint);
   white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:11ch; }
+/* The NAME needs its own block box. `text-overflow` is a property of a block
+   container and the lamp row is an inline-flex, so the text child sat in an
+   anonymous flex item and was HARD-CLIPPED rather than ellipsed — seen at
+   1440px, `Streaming` lost its last letter with nothing to say it had been cut.
+   A clipped name reads as a different screen; an ellipsis reads as a long one,
+   and that is the whole difference. */
+.siglamps .signm{ display:block; min-width:0; overflow:hidden;
+  text-overflow:ellipsis; white-space:nowrap; }
 .mainscroll{ flex:1; min-height:0; overflow-y:auto; padding:14px; }
 /* THE STATUS BAR. 26px of facts, each a key and a VALUE — never a dash standing
    in for one (§11, and `settingValue` for the rows that can be absent). */

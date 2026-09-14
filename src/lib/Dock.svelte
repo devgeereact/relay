@@ -44,7 +44,7 @@
   } from './stores/capture.js';
   import { humanError } from './errors.js';
   import { rangeFill } from './rangefill.js';
-  import { formatCountdown } from './layers.js';
+  import { formatCountdown, countdownWarning } from './layers.js';
   import {
     countdownSet,
     countdownPress,
@@ -231,7 +231,29 @@
   onDestroy(() => clearInterval(cdTimer));
   // `$live` is read as well as the tick, so the readout moves when either does.
   $: cdRunning = $live?.countdown_to ? countdownRemaining(nowTick) : null;
-  $: cdText = cdRunning == null ? '' : formatCountdown(cdRunning);
+  // ── THE FIGURE, AND THE TWO THINGS IT CAN BE ──────────────────────────────
+  //
+  // It is the largest thing in this panel because it is the one thing an
+  // operator glances at from across a booth — but it is showing one of TWO
+  // facts, and conflating them is how a tool's setting gets read as a wall.
+  //
+  //   ON THE WALL   `cdRunning` — what the screens are actually counting,
+  //                 through the same field and the same formatter the wall and
+  //                 the stage page use, so the three cannot drift.
+  //   NOT ON AIR    the SET duration — what Start would put up. Dimmed, and the
+  //                 caption beside it says which, so a number nobody can see is
+  //                 never mistaken for one a congregation is watching.
+  //
+  // It used to render only in the first case, so the panel's biggest control had
+  // no readout at all until after it had been used.
+  $: cdLive = cdRunning != null;
+  $: cdText = formatCountdown(cdLive ? cdRunning : $countdownSet);
+  // The last minute — or the last tenth of a short countdown, because a minute's
+  // warning on a two-minute countdown is a colour that is on for half of it
+  // (`layers.js`). RED, not amber: amber in this room means ON AIR and is never
+  // allowed to be anything else (rule 18), and "this is about to run out" is the
+  // act-now colour. Only ever while it is genuinely on a wall.
+  $: cdWarn = cdLive && countdownWarning(cdRunning, $countdownSet);
 
   /** Type into hh : mm : ss. Only ever changes the tool, never a screen. */
   function setField(which, value) {
@@ -385,9 +407,19 @@
             on:input={(e) => setField('s', e.target.value)} aria-label="Countdown seconds" />
         </span>
         <span class="spring"></span>
-        {#if cdText}
-          <span class="cdlive r-mono" role="status" aria-live="off" title="What the screens are showing">{cdText}</span>
-        {/if}
+        <span
+          class="tfig r-mono"
+          class:live={cdLive}
+          class:warn={cdWarn}
+          role="status"
+          aria-live="off"
+          title={cdLive ? 'What the screens are counting, right now.' : 'What Start would put on the screens. Nothing is counting.'}
+        >{cdText}</span>
+      </div>
+      <!-- WHICH of the two facts the figure is. One word, beside it, because a
+           big number with no label is the half of a status line that lies. -->
+      <div class="trow cdstate">
+        <span class="cdstatev" class:live={cdLive}>{cdLive ? 'on the screens' : 'not counting'}</span>
       </div>
       <!-- Clear is NOT Clear screens. It returns this tool to its default length
            and touches nothing a congregation can see; the red control one panel
@@ -589,13 +621,36 @@
   /* The figure on the wall. NOT amber: a countdown is content on a screen, but
      this is a readout of it, and amber in this room means ON AIR and is never
      allowed to be anything else (CLAUDE.md rule 18). */
-  .cdlive {
+  /* THE BIGGEST THING IN THE PANEL. An operator reads this from across a booth,
+     so it is a figure, not a chip — mono and tabular so a ticking second never
+     reflows the row beside it (docs/REBRAND.md §1). */
+  .tfig {
     flex: 0 0 auto; min-width: 0 !important;
     font-variant-numeric: tabular-nums;
-    font-size: var(--v-fs-b2); color: var(--v-txt);
-    padding: 1px 5px; border-radius: var(--v-r-sm);
-    background: var(--v-surf3); border: 1px solid var(--v-500);
+    font-size: 21px; line-height: 1; font-weight: 600;
+    letter-spacing: .01em;
+    /* Dim until it is genuinely on a wall: this is the SET duration then, and a
+       setting rendered as brightly as a live figure is the same number telling
+       two different stories. */
+    color: var(--v-faint);
   }
+  .tfig.live { color: var(--v-txt); }
+  /* Red = act now. Never amber: amber means ON AIR and nothing else (rule 18). */
+  .tfig.warn { color: var(--v-red); }
+  .cdstate { margin-top: -2px; }
+  .cdstatev {
+    min-width: 0 !important;
+    font-family: var(--f-mono); font-size: var(--v-fs-cap);
+    letter-spacing: var(--v-tr-caps); text-transform: uppercase; color: var(--v-faint);
+  }
+  .cdstatev.live { color: var(--v-dim); }
+  /* Steps, not a fade, and only where motion is welcome: the blink exists to
+     catch an eye that is not looking at it, and a viewer who asked for no motion
+     still gets the colour, which is the information. */
+  @media (prefers-reduced-motion: no-preference) {
+    .tfig.warn { animation: cdwarn 2s steps(1) infinite; }
+  }
+  @keyframes cdwarn { 50% { opacity: .38; } }
   .cdtrans { gap: 4px; flex-wrap: wrap; }
   .cdtrans > :global(button) { flex: 0 0 auto; }
   .tin { width: 62px; flex: 0 0 auto; }
