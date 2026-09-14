@@ -400,3 +400,158 @@ describe('the rail offers both collections', () => {
     expect(document.activeElement).toBe(host.querySelector('.lr-q'));
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// L5 · THE CHAPTER PICKER
+//
+// The operator's report was a screenshot: fifty numbered chips, 1 to 50, in
+// seven ragged rows, every chip a different width because the numbers are one
+// and two digits. Underneath it were four more costs on the same path —
+// chapters inline in the book list, chapters opening below the fold, a picker
+// drawn for a book with one chapter, and no memory of where you had been.
+//
+// NOTHING HERE MOVES WHAT A PRESS MEANS. Browsing stages and reaches no screen;
+// rule 10's neighbourhood is untouched, and the tests above still hold it.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('the chapter picker', () => {
+  const BOOKS = [
+    { book: 'Genesis', chapters: 50 },
+    { book: 'Psalms', chapters: 150 },
+    // One of the five one-chapter books.
+    { book: 'Jude', chapters: 1 },
+  ];
+
+  function mountBooks(props = {}) {
+    invoke.mockImplementation(async (cmd) => (cmd === 'list_books' ? BOOKS : []));
+    return mount(props);
+  }
+
+  const bookRow = (name) =>
+    [...host.querySelectorAll('.lr-row')].find((r) => r.querySelector('.lr-n')?.textContent === name);
+  const chips = () => [...host.querySelectorAll('.lr-chip')];
+
+  it('lays the chapters on a FIXED GRID of equal cells, not a ragged wrap (source)', () => {
+    // A SOURCE TEST, labelled as one: jsdom does no layout, so it cannot measure
+    // two boxes and compare them. What it CAN hold is the pair of properties
+    // that made them ragged — a wrap, and a chip sized by its own label — and it
+    // was watched to fail with either of them restored.
+    const css = read('./LiveRail.svelte');
+    const block = css.slice(css.indexOf('.lr-chips {'), css.indexOf('.lr-chip {'));
+    expect(block).toContain('display: grid');
+    expect(block).toContain('repeat(auto-fill, minmax(');
+    expect(block).not.toContain('flex-wrap');
+
+    const chip = css.slice(css.indexOf('.lr-chip {'), css.indexOf('.lr-chip:hover'));
+    // Every cell filled by its grid track — NOT `min-width`, which is what let
+    // `50` draw a wider box than `1`.
+    expect(chip).toContain('width: 100%');
+    expect(chip).not.toContain('min-width');
+    // Figures that do not shift inside cells that are finally the same size.
+    expect(chip).toContain('tabular-nums');
+  });
+
+  it('the chapter grid says what a press does, where the press happens', async () => {
+    mountBooks();
+    await settle(0);
+    bookRow('Genesis').click();
+    await tick();
+
+    const cap = host.querySelector('.lr-chapcap');
+    expect(cap).not.toBeNull();
+    // Browsing opens a chapter in the grid. It is NOT the search half's
+    // sentence, which is true of a hit and false of a chapter: §9 makes a single
+    // press on a search HIT send a verse to the programme. One legend over both
+    // meanings would read the same whether or not a congregation is looking at
+    // something, which is rule 35 on a caption.
+    expect(cap.textContent).toMatch(/no screen changes/i);
+    expect(cap.textContent).not.toMatch(/send/i);
+  });
+
+  it('every chapter says, on itself, that it reaches no screen', async () => {
+    mountBooks();
+    await settle(0);
+    bookRow('Genesis').click();
+    await tick();
+    expect(chips()[0].getAttribute('title')).toMatch(/nothing reaches a screen/i);
+  });
+
+  it('a ONE-CHAPTER book opens on one press — a picker with one choice asks nothing', async () => {
+    mountBooks();
+    await settle(0);
+
+    invoke.mockClear();
+    bookRow('Jude').click();
+    await settle(0);
+
+    expect(staged).toEqual([['Jude', 1]]);
+    // Still only staging. The shortcut is a press saved, not a rule relaxed.
+    expect(sent).toEqual([]);
+    const called = invoke.mock.calls.map((c) => c[0]);
+    expect(called).not.toContain('manual_fire');
+    expect(called).not.toContain('fire_content');
+    // …and no picker was drawn for it.
+    expect(chips()).toHaveLength(0);
+  });
+
+  it('marks the chapter it opened, so coming back does not start again at 1', async () => {
+    mountBooks();
+    await settle(0);
+    bookRow('Psalms').click();
+    await settle(0);
+
+    chips()[118].click(); // Psalms 119
+    await tick();
+    expect(staged).toEqual([['Psalms', 119]]);
+
+    // Close the book and open it again — the operator's place is still there.
+    bookRow('Psalms').click();
+    await tick();
+    bookRow('Psalms').click();
+    await settle(0);
+
+    const marked = chips().filter((c) => c.getAttribute('aria-current') === 'true');
+    expect(marked).toHaveLength(1);
+    expect(marked[0].textContent.trim()).toBe('119');
+  });
+
+  it('the mark is the rail’s own action and never wears a colour that claims a screen', () => {
+    const css = read('./LiveRail.svelte');
+    const at = css.indexOf(".lr-chip[aria-current='true'] {");
+    expect(at).toBeGreaterThan(-1);
+    const rule = css.slice(at, css.indexOf('}', at));
+    // Steel = the thing being worked on. Amber means ON AIR, amethyst means
+    // rehearsal, cyan means the AI guessed — none of the three is true of a
+    // chapter an operator opened into the grid.
+    expect(rule).toContain('--v-sel-soft');
+    expect(rule).not.toContain('--v-amber');
+    expect(rule).not.toContain('--v-cyan');
+    expect(rule).not.toContain('--v-amethyst');
+  });
+
+  it('brings a freshly opened book into view rather than leaving it below the fold', async () => {
+    // jsdom does not implement `scrollIntoView`, so the component calls it
+    // optionally and this test supplies it.
+    const seen = [];
+    Element.prototype.scrollIntoView = function stub(opts) {
+      seen.push([this.className, opts]);
+    };
+    try {
+      mountBooks();
+      await settle(0);
+      bookRow('Psalms').click();
+      await settle(0);
+      expect(seen.some(([cls]) => String(cls).includes('lr-row'))).toBe(true);
+    } finally {
+      delete Element.prototype.scrollIntoView;
+    }
+  });
+
+  it('the Fire button is the shared control, not one more hand-rolled shape', async () => {
+    invoke.mockImplementation(async (cmd) =>
+      cmd === 'search_scripture' ? [HIT_TYPED] : cmd === 'list_books' ? BOOKS : [],
+    );
+    mount();
+    await search('ps 23 1');
+    expect(host.querySelector('.lr-fire').classList.contains('r-btn')).toBe(true);
+  });
+});

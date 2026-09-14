@@ -264,10 +264,22 @@
              are the same string and cannot drift apart, which is the same reason
              the two unlabelled controls above were fixed natively. -->
         <h2>{searchMode ? 'Search results' : 'Saved scripture'}</h2>
+        <!-- HOW MANY, AND WHAT A PRESS DOES — the Bible pane's caption has said
+             both since §10 and this one said only the first, on a deck with the
+             same cards and the same one-press rule.
+
+             It is NOT the Bible pane's sentence, deliberately. That one also
+             names what a DOUBLE press does, and `onOpen` is not passed to the
+             deck here — a double press on a saved verse lands on `VerseDeck`'s
+             default no-op, so borrowing that half would describe a control
+             nobody built. This says only the half that is true. (Wiring the
+             other half means loading the verse's chapter, which this pane has
+             no reader for; it belongs to whoever owns the deck, and L5 left it
+             rather than claiming it.) -->
         <span>
           {searchMode
             ? `${numbered.length} match${numbered.length === 1 ? '' : 'es'} · star one to keep it`
-            : `${numbered.length} slide${numbered.length === 1 ? '' : 's'}`}
+            : `${numbered.length} slide${numbered.length === 1 ? '' : 's'}`} · single click selects
         </span>
       </div>
       {#if checked.size}

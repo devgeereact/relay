@@ -54,7 +54,32 @@
   // included, through the same `manualFire`. It is offered only when the query
   // holds a digit, because a reference has a number in it and a half-remembered
   // phrase does not — a fire nobody could satisfy is not a control.
-  import { onMount, onDestroy } from 'svelte';
+  //
+  // ── THE CHAPTER PICKER (L5) ────────────────────────────────────────────────
+  //
+  // Browsing is two presses — a book, then a chapter — and it stays two. The
+  // search box already takes `ps 119 105` the whole way in one go (`search.rs`,
+  // tested), so the grid is for the operator who is LOOKING rather than typing,
+  // and a third input would be a second answer to "what does this query mean".
+  // What was wrong was not the number of presses but that neither one was
+  // certain:
+  //
+  //   · the chapter grid was a `flex-wrap` of chips sized by their own labels,
+  //     so `1` and `50` drew different boxes, every row held a different count,
+  //     and no column lined up with the one above it. Fifty of those, in seven
+  //     ragged rows, is the screenshot this work started from;
+  //   · it was inline in the one scroller the 66 books share, so opening Psalms
+  //     inserted 25 rows of chips into the middle of the book list and pushed
+  //     the 47 books after it off the rail;
+  //   · opening a book near the fold put its chapters below the fold, with
+  //     nothing to say they had appeared;
+  //   · a one-chapter book (Jude, Obadiah, Philemon, 2 and 3 John) drew a
+  //     picker offering exactly one choice — a press that asks nothing;
+  //   · and coming back to a book started again at the top, however far down
+  //     the operator had been.
+  //
+  // All five are fixed below and none of them moves what a press MEANS.
+  import { onMount, onDestroy, tick } from 'svelte';
   import { listBooks, searchScripture, listSongs, searchSongs, readErrors } from './stores/capture.js';
   import { pressArbiter } from './slidegrid.js';
   import EmptyState from './ui/EmptyState.svelte';
@@ -200,7 +225,59 @@
   }
   $: armSearch(q, tab);
 
-  const toggleBook = (b) => (openBook = openBook === b.book ? null : b.book);
+  /**
+   * WHERE YOU WERE — the chapter this rail last opened, `{ book, chapter }`.
+   *
+   * It is a fact about the rail's OWN last action: it is written by `stage()`,
+   * the one function that calls `onChapter`, so unlike a derived badge it cannot
+   * quietly describe something that is no longer true (rule 35). It is not a
+   * claim about a screen, and it is drawn in steel for that reason — never
+   * amber, which means ON AIR, and never cyan, which means the AI guessed.
+   */
+  let openedChapter = null;
+
+  /** The scroller, so an opened book can be brought into view. */
+  let bodyEl;
+
+  /**
+   * Open a chapter in the slide grid. The ONE place `onChapter` is called, so
+   * the mark above and the action can never disagree.
+   */
+  function stage(book, chapter) {
+    openedChapter = { book, chapter };
+    onChapter(book, chapter);
+  }
+
+  async function toggleBook(b) {
+    if (openBook === b.book) {
+      openBook = null;
+      return;
+    }
+    // ONE PRESS FOR A ONE-CHAPTER BOOK. A picker offering exactly one choice is
+    // a decision that asks nothing; this is the same action the single chip
+    // would have taken, one press earlier. It still only stages.
+    if (b.chapters === 1) {
+      openBook = null;
+      stage(b.book, 1);
+      return;
+    }
+    openBook = b.book;
+    // `tick` in an EVENT HANDLER, not in a reactive block — rule 1 is about
+    // `$:`, where it re-enters the scheduler and hard-freezes the webview.
+    await tick();
+    reveal();
+  }
+
+  /**
+   * Put the book that was just opened, and the chapter it was left on, where the
+   * operator can see them. Two scrollers: the rail's own, and the picker's.
+   * `scrollIntoView` is absent in jsdom, hence the optional call.
+   */
+  function reveal() {
+    bodyEl?.querySelector('.lr-row[aria-expanded="true"]')?.scrollIntoView?.({ block: 'nearest' });
+    bodyEl?.querySelector('.lr-chip[aria-current="true"]')?.scrollIntoView?.({ block: 'nearest' });
+  }
+
   const chapterList = (n) => Array.from({ length: Math.max(0, n) }, (_, i) => i + 1);
 
   // Single press = the whole job; double press = stage the chapter and nothing
@@ -209,7 +286,7 @@
   // the way past. A rejected fire goes to `onError`, never to a claim of success.
   const hitPress = pressArbiter({
     send: (h) => onVerse(h.book, h.chapter, h.verse, h.reference),
-    preview: (h) => onChapter(h.book, h.chapter),
+    preview: (h) => stage(h.book, h.chapter),
   });
   onDestroy(hitPress.cancel);
 
@@ -252,7 +329,7 @@
          outcome through the caller (rules 15 and 18). -->
     {#if fireable}
       <button
-        class="lr-fire"
+        class="r-btn lr-fire"
         disabled={!canFire}
         title={disabled
           ? 'Relay\u2019s engine is not attached, so nothing here can reach a screen.'
@@ -261,7 +338,7 @@
     {/if}
   </div>
 
-  <div class="lr-body">
+  <div class="lr-body" bind:this={bodyEl}>
     {#if tab === 'songs'}
       <!-- A press STAGES the song's slides in the grid and touches no screen.
            The grid's own press is what puts a section on the wall. -->
@@ -314,17 +391,43 @@
       {/each}
     {:else}
       {#each books as b (b.book)}
-        <button class="lr-row" {disabled} aria-expanded={openBook === b.book} on:click={() => toggleBook(b)}>
+        <button
+          class="lr-row"
+          {disabled}
+          aria-expanded={openBook === b.book}
+          title={b.chapters === 1
+            ? `Open ${b.book} in the slide grid — nothing reaches a screen`
+            : `Show the ${b.chapters} chapters of ${b.book}`}
+          on:click={() => toggleBook(b)}>
           <span class="lr-i" aria-hidden="true">{openBook === b.book ? '▾' : '▸'}</span>
           <span class="lr-n">{b.book}</span>
           <span class="lr-k r-mono">{b.chapters}</span>
         </button>
         {#if openBook === b.book}
-          <div class="lr-chips">
-            {#each chapterList(b.chapters) as c}
-              <button class="lr-chip" {disabled} on:click={() => onChapter(b.book, c)}
-                aria-label={`${b.book} chapter ${c}`}>{c}</button>
-            {/each}
+          <div class="lr-chapters">
+            <!-- WHAT A PRESS DOES, SAID WHERE THE PRESS HAPPENS. The search half
+                 above carries its own, different sentence, and the two are
+                 deliberately not the same: §9 makes a single press on a SEARCH
+                 HIT send the verse to the programme, while browsing only ever
+                 opens a chapter in the grid. One legend over both meanings is
+                 the sentence that reads the same whether or not a congregation
+                 is looking at something (rule 35). -->
+            <p class="lr-cap lr-chapcap">Opens in the grid · no screen changes</p>
+            <div class="lr-chips">
+              {#each chapterList(b.chapters) as c}
+                <button
+                  class="lr-chip"
+                  {disabled}
+                  aria-current={openedChapter?.book === b.book && openedChapter?.chapter === c
+                    ? 'true'
+                    : undefined}
+                  title={openedChapter?.book === b.book && openedChapter?.chapter === c
+                    ? `${b.book} ${c} — the chapter you opened from here`
+                    : `Open ${b.book} ${c} in the slide grid — nothing reaches a screen`}
+                  on:click={() => stage(b.book, c)}
+                  aria-label={`${b.book} chapter ${c}`}>{c}</button>
+              {/each}
+            </div>
           </div>
         {/if}
       {:else}
@@ -392,14 +495,18 @@
   /* The box and its one action on one row: §9's "one box", with the reference
      fire beside it rather than in a second field on another panel. */
   .lr-qrow { display: flex; align-items: center; gap: 5px; }
+  /* THE SHARED BUTTON (B1's `.r-btn`), with the console's mono caps on it. This
+     was a hand-rolled 26px box drawing `--v-surf3` on `--v-line2` — which is
+     `.r-btn`'s HOVER fill and a different hairline from the search box it sits
+     beside, so it opened one shade too light with nowhere to go under the
+     cursor. The metrics, the fill, the hover and the disabled state are the
+     shared control's now; only the type is local. */
   .lr-fire {
-    flex: 0 0 auto; height: 26px; padding: 0 9px; cursor: pointer;
-    background: var(--v-surf3); border: 1px solid var(--v-line2); border-radius: var(--v-r-sm);
-    color: var(--v-txt); font-family: var(--f-mono); font-size: var(--v-fs-cap);
+    flex: 0 0 auto;
+    font-family: var(--f-mono); font-size: var(--v-fs-cap);
     letter-spacing: var(--v-tr-caps); text-transform: uppercase;
   }
   .lr-fire:hover:not(:disabled) { border-color: var(--v-sel-line); }
-  .lr-fire:disabled { opacity: .4; cursor: not-allowed; }
 
   .lr-q {
     width: 100%; min-width: 0; box-sizing: border-box; height: 26px; padding: 0 8px;
@@ -455,12 +562,53 @@
     text-transform: uppercase; color: var(--v-dim);
   }
 
-  .lr-chips { display: flex; flex-wrap: wrap; gap: 3px; padding: 4px 8px 8px; }
-  .lr-chip {
-    min-width: 22px; padding: 2px 5px; border-radius: var(--v-r-sm); cursor: pointer;
-    background: var(--v-surf3); border: 1px solid var(--v-line2); color: var(--v-dim);
-    font-family: var(--f-mono); font-size: var(--v-fs-cap);
+  /* ── THE CHAPTER PICKER ────────────────────────────────────────────────────
+     A FIXED GRID, NOT A WRAP. These were a `flex-wrap` of chips sized by their
+     own labels — `min-width:22px` plus `padding:0 5px` — so a one-digit chapter
+     and a two-digit one drew different boxes, every row held a different count,
+     and no column lined up with the one above it. Reading 119 out of 150 meant
+     reading every chip on the way. `auto-fill` + `1fr` gives every cell the same
+     width at any rail width, so the rows line up and a chapter can be found by
+     counting columns.
+
+     A CHAPTER CHIP IS NOT A BUTTON-IN-A-ROW, which is why it is not `.r-btn`:
+     it is a fixed square cell in a numeric picker, sized by the grid rather than
+     by its label, and `.r-btn`'s 11px of side padding is the exact property that
+     made these ragged. It draws `.r-btn`'s rest and hover fills so it still
+     belongs to the same family. */
+  .lr-chapters { padding: 2px 8px 8px; }
+  .lr-chapcap { padding: 2px 0 4px; }
+  .lr-chips {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(26px, 1fr));
+    gap: 3px;
+    /* BOUNDED, so a long book does not bury the list it came from. Psalms has
+       150 chapters — 25 rows at this width — and inline in the rail's one
+       scroller that pushed the 47 books after it clean off the column. The
+       picker scrolls itself; the book list stays where the operator left it. */
+    max-height: 168px; overflow-y: auto;
+    scrollbar-width: thin; scrollbar-color: var(--v-surf3) transparent;
   }
-  .lr-chip:hover:not(:disabled) { border-color: var(--v-sel-line); color: var(--v-txt); }
+  .lr-chips::-webkit-scrollbar { width: 6px; }
+  .lr-chips::-webkit-scrollbar-thumb { background: var(--v-surf3); border-radius: var(--v-r-round); }
+  .lr-chip {
+    display: grid; place-items: center;
+    width: 100%; height: 24px; padding: 0;
+    border-radius: var(--v-r-sm); cursor: pointer;
+    background: var(--v-surf2); border: 1px solid var(--v-500); color: var(--v-dim);
+    font-family: var(--f-mono); font-size: var(--v-fs-cap);
+    /* Tabular figures, or 1 and 11 sit at different optical centres inside cells
+       that are finally the same size. */
+    font-variant-numeric: tabular-nums;
+  }
+  .lr-chip:hover:not(:disabled) { background: var(--v-surf3); border-color: var(--v-sel-line); color: var(--v-txt); }
   .lr-chip:disabled { opacity: .5; cursor: not-allowed; }
+  /* WHERE YOU WERE. Steel — the colour of the thing being worked on. NEVER
+     amber, which means ON AIR, and never cyan, which means the AI guessed: this
+     marks a chapter this rail opened into the grid, which is not a claim about
+     any screen. */
+  .lr-chip[aria-current='true'] {
+    background: var(--v-sel-soft); border-color: var(--v-sel-line);
+    color: var(--v-txt); font-weight: 600;
+  }
 </style>
