@@ -722,38 +722,11 @@ input[type="checkbox"]{ accent-color:var(--v-accent); }
 .prac-t b{ font-size:var(--v-fs-b2); font-weight:600; color:var(--v-txt); }
 .prac-t span{ font-size:var(--v-fs-cap); color:var(--v-dim); line-height:1.45; }
 
-/* DEGRADED. Quiet by default and never amber — amber means ON AIR, and nothing
-   here is about what a congregation is looking at. A blocked capability gets a
-   rose dot; a reduced one stays grey, because Relay is still doing the thing. */
-.deg{ position:fixed; left:50%; transform:translateX(-50%); bottom:18px; z-index:790;
-  max-width:min(680px, calc(100vw - 32px)); background:var(--v-surf2);
-  border:1px solid var(--v-line2); border-radius:var(--v-r-md);
-  box-shadow:0 8px 28px rgba(0,0,0,.35); overflow:hidden; }
-/* ABOVE the bottom nav. At its desktop `bottom:18px` the banner sat on top of the
-   narrow-width tab bar and covered six of the eight tab labels — navigation was
-   unreachable for as long as anything was degraded, which is exactly when an
-   operator needs to reach Outputs or Settings. Declared AFTER `.deg` so it wins:
-   same specificity, later rule. */
-@media (max-width:640px){
-  .deg{ bottom: calc(74px + env(safe-area-inset-bottom)); }
-}
-.deg-head{ display:flex; align-items:center; gap:10px; width:100%; padding:9px 12px;
-  background:none; border:0; color:var(--v-txt); font:inherit; cursor:pointer;
-  text-align:left; }
-.deg-head:hover{ background:var(--v-surf3); }
-.deg-dot{ width:7px; height:7px; border-radius:50%; background:var(--v-dim); flex:0 0 auto; }
-.deg.blocked .deg-dot{ background:var(--v-rose); }
-.deg-sum{ flex:1; min-width:0; font-size:var(--v-fs-b2); overflow:hidden;
-  text-overflow:ellipsis; white-space:nowrap; }
-.deg-more{ font-size:9px; letter-spacing:.06em; color:var(--v-faint); flex:0 0 auto; }
-.deg-list{ list-style:none; margin:0; padding:0 12px 10px; display:flex;
-  flex-direction:column; gap:8px; }
-.deg-item{ display:flex; flex-direction:column; gap:2px; padding-left:10px;
-  border-left:2px solid var(--v-line2); }
-.deg-item.blocked{ border-left-color:var(--v-rose); }
-.deg-item b{ font-size:var(--v-fs-b2); font-weight:600; }
-.deg-item span{ font-size:var(--v-fs-cap); color:var(--v-dim); line-height:1.45; }
-.deg-item i{ font-size:var(--v-fs-cap); color:var(--v-faint); font-style:normal; }
+/* WHAT IS REDUCED RIGHT NOW, in the status bar (DECISIONS §45). The floating
+   strip this replaces sat over the console at `bottom:18px`; the verdict it
+   carried is unchanged and lives in `degraded.js`. Never amber — amber means ON
+   AIR and nothing here is about what a congregation is looking at. */
+.st-deg .v{ max-width:34ch; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 
 /* The post-update banner when the database did NOT survive. Rose is the failure
    colour; amber is never spent here because nothing about this is on air. */

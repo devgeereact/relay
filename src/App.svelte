@@ -51,7 +51,6 @@
   // caveats across the top of a live console is a list an operator stops reading.
   let gpuBackends = null; // null = not asked yet; a BUILD fact, not a hardware one
   let droppedPartials = 0;
-  let degOpen = false;
 
   // The NAME, not the id. This line used to map `st.id`, so the banner an
   // operator reads mid-service said "3 is not responding" — a number nothing on
@@ -830,6 +829,21 @@
         <span class="k">Cadence</span><span class="v">{cad === null ? orNoData(null) : `${cad} /s`}</span>
       </span>
       <span class="push"></span>
+      <!-- WHAT IS REDUCED RIGHT NOW (DECISIONS §45). The same `degradations()`
+           verdict the floating strip used to carry, in the strip an operator is
+           already reading. It is ABSENT when nothing is reduced rather than
+           printing a reassuring "all well": a cell that says the same thing when
+           it has nothing to report is rule 35's defect. Rose only when something
+           is BLOCKED; a merely reduced capability is grey, because Relay is still
+           doing the thing. -->
+      {#if degLevel}
+        <span
+          class="st st-deg"
+          title={degraded.map((d) => `${d.title} — ${d.what} ${d.fix}`).join('\n')}>
+          <span class="k">Reduced</span>
+          <span class="v" class:bad={degLevel === 'blocked'}>{summarise(degraded)}</span>
+        </span>
+      {/if}
       <!-- The same rows the chrome lamps are drawn from, counted. A screen counts
            as live only at On Air: in a rehearsal nothing reaches a congregation,
            and a tally that said otherwise would be the colour law broken in
@@ -886,37 +900,15 @@
     </div>
   {/if}
 
-  <!-- DEGRADED. One line, always, on every tab — opened for the detail. It sits
-       BELOW the panic banner (a panic control that failed outranks everything) and
-       ABOVE the update banners, because "something is working less well right now"
-       is more urgent than "there is a new version". -->
-  {#if degLevel}
-    <div class="deg" class:blocked={degLevel === 'blocked'} role="status">
-      <button
-        type="button"
-        class="deg-head"
-        aria-expanded={degOpen}
-        on:click={() => (degOpen = !degOpen)}
-      >
-        <span class="deg-dot"></span>
-        <span class="deg-sum">{summarise(degraded)}</span>
-        <span class="deg-more r-mono">{degOpen ? 'hide' : `${degraded.length} detail${degraded.length === 1 ? '' : 's'}`}</span>
-      </button>
-      {#if degOpen}
-        <ul class="deg-list">
-          {#each degraded as d (d.id)}
-            <li class="deg-item" class:blocked={d.level === 'blocked'}>
-              <b>{d.title}</b>
-              <span>{d.what}</span>
-              <!-- Every row says what to do, or admits there is nothing. "Degraded"
-                   on its own is a mood, not information. -->
-              <i>{d.fix}</i>
-            </li>
-          {/each}
-        </ul>
-      {/if}
-    </div>
-  {/if}
+  <!-- DEGRADED used to be a floating strip above the dock. It is now a STATUS BAR
+       CELL (see `.st-deg` in the footer above): the verdict is unchanged and
+       `degraded.js` is untouched, but it no longer sits over the console.
+
+       What this costs, stated rather than hidden: the strip carried each row's
+       `fix` line in words, and a status cell carries it in a `title`. Nothing is
+       silent — a reduced capability is still named on every tab, all the time,
+       which is what DECISIONS §45 asks for — but the detail is now a hover away
+       rather than a press away. -->
 
   <!-- THE LAUNCH AFTER AN UPDATE.
        Sits ABOVE the "an update is available" banner, because "the last one broke

@@ -166,29 +166,43 @@ describe('where it is shown', () => {
   it('lives in the shell, so it is right on every tab', () => {
     // A volunteer may well be in Settings when the model fails to load.
     expect(app).toMatch(/degradations\(\{/);
-    expect(app).toMatch(/class="deg"/);
+    expect(app).toMatch(/class="st st-deg"/);
   });
 
-  it('is collapsed to one line until opened', () => {
-    // A permanent list of caveats across the top of a live console is a list an
-    // operator stops reading.
-    expect(app).toMatch(/aria-expanded=\{degOpen\}/);
+  it('is a STATUS BAR cell, not a strip over the console', () => {
+    // It used to be a floating banner at `bottom:18px`, which sat over the dock
+    // and over the thing an operator was reading. The verdict did not change; the
+    // place it is read did. The old strip's classes must be gone from both files,
+    // or a stylesheet keeps painting a box nothing renders.
+    expect(app).not.toMatch(/class="deg"/);
+    expect(app).not.toMatch(/deg-head|deg-sum|deg-list|degOpen/);
+    expect(read('src/app.css')).not.toMatch(/\.deg\{|\.deg-head|\.deg-sum|\.deg-list/);
+  });
+
+  it('says nothing at all when nothing is reduced', () => {
+    // A cell that reads the same when it has nothing to report as when it does is
+    // rule 35's defect. The cell is behind `{#if degLevel}`, so an undegraded
+    // console has no Reduced cell rather than a reassuring one.
+    const cell = app.slice(app.indexOf('{#if degLevel}'), app.indexOf('class="st st-deg"'));
+    expect(cell).toMatch(/\{#if degLevel\}/);
     expect(app).toMatch(/summarise\(degraded\)/);
   });
 
-  it('sits below the panic banner and above the update banners', () => {
-    // A panic control that failed outranks everything; "something is working less
-    // well" outranks "there is a new version".
-    expect(app.indexOf('panicbar')).toBeLessThan(app.indexOf('class="deg"'));
-    expect(app.indexOf('class="deg"')).toBeLessThan(app.indexOf('$updateAvailable && !$capturing'));
+  it('still carries every row\'s fix, in the cell\'s title', () => {
+    // The strip printed `what` and `fix` in words. A cell has one line, so the
+    // detail moved into the title rather than being dropped: "Degraded" on its own
+    // is a mood, not information.
+    const cell = app.slice(app.indexOf('class="st st-deg"') - 300, app.indexOf('class="st st-deg"') + 300);
+    expect(cell).toMatch(/d\.title/);
+    expect(cell).toMatch(/d\.what/);
+    expect(cell).toMatch(/d\.fix/);
   });
 
-  it('is never amber', () => {
+  it('is never amber, and is rose only when something is BLOCKED', () => {
     // Amber means ON AIR. Nothing here is about what a congregation is looking at.
-    const css = read('src/app.css');
-    const rule = css.slice(css.indexOf('.deg{'), css.indexOf('.upd.upd-bad{'));
-    expect(rule).not.toMatch(/--v-amber/);
-    expect(rule).toMatch(/--v-rose/);
+    const cell = app.slice(app.indexOf('{#if degLevel}'), app.indexOf('class="st st-deg"') + 400);
+    expect(cell).not.toMatch(/amber/);
+    expect(cell).toMatch(/class:bad=\{degLevel === 'blocked'\}/);
   });
 });
 
