@@ -449,26 +449,38 @@
   );
 </script>
 
-<WorkspaceFrame
-  title="Outputs"
-  standfirst={activeView.lead}
-  columns="206px minmax(0,1fr) 320px">
-  <svelte:fragment slot="head">
-    {#if !$capture.available}
-      <span class="r-badge rose"><span class="bd"></span>Backend not attached</span>
-    {:else}
-      <!-- GREEN, not amber. Green is "confirmed / connected"; amber means
-           something is on the wall, and a screen being online does not put it
-           there. -->
-      <span class="r-badge green"><span class="bd"></span>{onlineCount} of {channels.length} live</span>
-    {/if}
-  </svelte:fragment>
+<!-- NO PAGE TITLE, NO STANDFIRST — and that is the whole point (§2).
+     Measured at 1280×900: the `Outputs` H1 plus its two-line standfirst started
+     this desk 110px lower than the prototype's, which is grid-and-inspector with
+     the words carried by the dock head. The H1 was also the third `Outputs` on
+     the screen, after the tab in the chrome bar and the rail's own pane title.
 
+     The RAIL STAYS, and the two rail entries are NOT folded into a segmented
+     control in the dock head. Doing that would leave Outputs a two-column
+     workspace, and `workspacegrammar.test.js` holds six desks to three tracks
+     through one frame — dropping a column here is exactly the per-file drift
+     that frame exists to prevent. Content looks and Sharing hold real controls
+     and keep their place; only the chrome above them went.
+
+     The sentence each section is FOR moved into the rail foot, where it costs
+     the grid no height and is visible on all three sections. -->
+<WorkspaceFrame columns="206px minmax(0,1fr) 320px">
   <!-- ══ RAIL ══ One vocabulary, three sections. Every output concern lives
        behind exactly one of these words, and the rail keeps all three in view
        rather than making one of them a mode you have to remember you are in. -->
   <aside class="rw-pane">
-    <div class="rw-panehead"><h2 class="rw-panettl">Outputs</h2></div>
+    <div class="rw-panehead">
+      <h2 class="rw-panettl">Outputs</h2>
+      <span class="rw-spring"></span>
+      {#if !$capture.available}
+        <span class="r-badge rose sm-badge"><span class="bd"></span>No engine</span>
+      {:else}
+        <!-- GREEN, not amber. Green is "confirmed / connected"; amber means
+             something is on the wall, and a screen being online does not put it
+             there. -->
+        <span class="r-badge green sm-badge"><span class="bd"></span>{onlineCount}/{channels.length}</span>
+      {/if}
+    </div>
     <nav class="rw-panebody" aria-label="Outputs sections">
       {#each VIEWS as v (v.key)}
         <button class="rw-item r-focus" class:on={view === v.key}
@@ -479,9 +491,18 @@
         </button>
       {/each}
     </nav>
-    <!-- The two facts an operator asks this tab for without opening anything. -->
     <div class="rw-panefoot ch-railfacts">
-      <div class="ch-railfact"><span class="ch-railk">Live</span><span class="ch-railv r-mono">{onlineCount} / {channels.length}</span></div>
+      <!-- What this section is FOR — role two of the type scale, moved off the
+           page head and onto the rail. -->
+      <p class="ch-raillead">{activeView.lead}</p>
+      <!-- The two facts an operator asks this tab for without opening anything.
+           `Backend not attached` still has to be sayable in words somewhere an
+           operator will read it, not only as a badge. -->
+      {#if !$capture.available}
+        <div class="ch-railfact"><span class="ch-railk">Engine</span><span class="ch-railv ch-railbad r-mono">Backend not attached</span></div>
+      {:else}
+        <div class="ch-railfact"><span class="ch-railk">Live</span><span class="ch-railv r-mono">{onlineCount} / {channels.length}</span></div>
+      {/if}
       <div class="ch-railfact"><span class="ch-railk">This machine</span><span class="ch-railv r-mono">{lanIp}</span></div>
     </div>
   </aside>
@@ -939,10 +960,15 @@
 
   /* ── rail ── */
   .ch-railfacts{ gap:0; padding:0; }
+  /* Role two of the type scale, on the rail rather than above the grid. Quiet:
+     it is the sentence you read once, not a heading you read every visit. */
+  .ch-raillead{ margin:0; padding:9px 12px; border-bottom:1px solid var(--v-line);
+    font-size:var(--v-fs-cap); line-height:1.5; color:var(--v-faint); }
   .ch-railfact{ display:flex; align-items:center; justify-content:space-between; gap:8px;
     padding:7px 12px; border-bottom:1px solid var(--v-line); }
   .ch-railfact:last-child{ border-bottom:0; }
   .ch-railk{ font-size:var(--v-fs-cap); color:var(--v-faint); }
+  .ch-railbad{ color:var(--v-rose); }
   .ch-railv{ font-size:var(--v-fs-cap); color:var(--v-dim); font-variant-numeric:tabular-nums;
     overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 
@@ -956,7 +982,11 @@
      the head would otherwise wrap onto a second row and push the list down. */
   .ch-headnote{ font-size:var(--v-fs-cap); letter-spacing:.08em; text-transform:uppercase;
     color:var(--v-faint); }
-  @media (max-width:1180px){ .ch-headnote{ display:none; } }
+  /* MEASURED, not guessed: at 1280 the pane head is ~686px and search + note +
+     button is wider than that, so the button wrapped onto a second row and the
+     grid lost 34px. The note is the half that can go — the cards say the same
+     thing by being cards. */
+  @media (max-width:1400px){ .ch-headnote{ display:none; } }
   .ch-search svg{ color:var(--v-faint); flex:0 0 auto; }
   .ch-search input{ flex:1; min-width:0; background:transparent; border:0; outline:none;
     color:var(--v-txt); font-size:var(--v-fs-b2); }
@@ -976,7 +1006,15 @@
      it. A card is one column at any width; the GRID reflows instead, which is why
      this replaces roughly seventy lines of column bookkeeping with four. */
   .ch-gridwrap{ overflow-y:auto; padding:12px; }
-  .ch-cards{ display:grid; grid-template-columns:repeat(auto-fill,minmax(228px,1fr));
+  /* THE MIN TRACK IS MEASURED AGAINST THE RAIL, not copied from the prototype.
+     The prototype's Outputs has no rail, so its main column is ~206px wider and
+     `minmax(232px,1fr)` lands three across; with the rail the same number lands
+     TWO at 1280 and an operator with five screens scrolls for the third.
+       main column   = page − 28 (page pad) − 206 (rail) − 320 (inspector) − 16
+       inner         = main − 24 (this pane's padding) − 2 (borders)
+       columns       = floor((inner + 12) / (min + 12))
+     At 200: 1280 → 3 · 1440 → 4 · 900 (no inspector) → 3. Checked at all three. */
+  .ch-cards{ display:grid; grid-template-columns:repeat(auto-fill,minmax(200px,1fr));
     gap:12px; align-content:start; }
 
   .ch-card{ display:flex; flex-direction:column; gap:7px; padding:9px; min-width:0;
