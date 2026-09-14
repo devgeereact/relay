@@ -235,6 +235,45 @@ describe('sectionsOf', () => {
     expect(secs[0].timed).toBe(false); // cue 3 is untimed
   });
 
+  it('opens a section where the section CHANGES, not on every titled cue', () => {
+    // The defect, rendered: a plan whose every cue records the section it is IN
+    // — which is how a plan looks after an import, after a duplicate, and after
+    // an operator types the same heading into two consecutive cues — became one
+    // group per cue, and the running order drew EIGHT headings over eight cues
+    // for a service with four sections. Fails against
+    // `if (title || out.length === 0)`.
+    const every = [
+      cue(1, 'Gathering'),
+      cue(2, 'Gathering'),
+      cue(3, 'Word'),
+      cue(4, 'Word'),
+      cue(5, 'Sending'),
+    ];
+    const out = sectionsOf(every);
+    expect(out.map((s) => s.title)).toEqual(['Gathering', 'Word', 'Sending']);
+    expect(out.map((s) => s.items.length)).toEqual([2, 2, 1]);
+  });
+
+  it('reads a plan that only titles the FIRST cue of each section the same way', () => {
+    // The other convention, the one `db/plans.rs` documents. Both have to land on
+    // the same groups or the Planner draws a different plan depending on which
+    // path wrote it.
+    const first = [cue(1, 'Gathering'), cue(2, ''), cue(3, 'Word'), cue(4, ''), cue(5, 'Sending')];
+    const out = sectionsOf(first);
+    expect(out.map((s) => s.title)).toEqual(['Gathering', 'Word', 'Sending']);
+    expect(out.map((s) => s.items.length)).toEqual([2, 2, 1]);
+  });
+
+  it('does not re-open a section across an untitled cue inside it', () => {
+    // An empty title means "still in the section above", so a titled cue after
+    // one of them is a continuation, not a second heading of the same name.
+    // Comparing against the previous ROW rather than the open GROUP gets this
+    // wrong — which is what the prototype's `c.sec !== lastSec` does.
+    const out = sectionsOf([cue(1, 'Gathering'), cue(2, ''), cue(3, 'Gathering')]);
+    expect(out.map((s) => s.title)).toEqual(['Gathering']);
+    expect(out[0].items.length).toBe(3);
+  });
+
   it('is empty for an empty plan', () => {
     expect(sectionsOf([])).toEqual([]);
     expect(sectionsOf(undefined)).toEqual([]);

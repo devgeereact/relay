@@ -860,6 +860,13 @@
         </div>
 
         {#if inspTab === 'general'}
+          <!-- The rendered slide, through the ONE renderer, over a chequered
+               plate. The plate is what makes a KEYED template visible here: the
+               `Lower Third` builtin is `background:transparent` with
+               `verseColor:#1c1224`, so on the preview's old near-black ground a
+               notice rendered as an empty frame under a caption promising this
+               was what the wall would show. See `.sp-preview` in the style
+               block for why the plate is unconditional. -->
           <div class="sp-preview">
             {#if previewContent?.text}
               <TemplateRender template={selTemplate ?? {}} content={previewContent} />
@@ -875,7 +882,9 @@
           <p class="sp-fhelp">
             {#if previewContent?.text}
               Rendered by the same engine as the output screens, so this is what the
-              wall will show. Nothing here is on air.
+              wall will show. The chequer is not part of the design — it is where
+              this template is transparent and a camera, or whatever is behind the
+              screen, shows through. Nothing here is on air.
             {:else}
               This cue renders its own content at fire time. Nothing here is on air.
             {/if}
@@ -1243,10 +1252,48 @@
      escapes this box and lays itself out against the page — which reads as a
      dead black rectangle here and a mystery elsewhere. It also supplies its own
      `container-type:size` for the cqw units, so this element must not. */
+  /* THE PLATE. A preview on a near-black ground cannot show a KEYED template.
+     Measured: the `Lower Third` builtin asks for a transparent ground and a
+     near-black verse ink — correct over a camera, invisible over `--v-void`.
+     (The value is named in the markup comment above the preview, not here: this
+     is a stylesheet, and `workspacegrammar.test.js` reads the whole block, so a
+     hex quoted in prose reads to it exactly like a hex somebody picked. It is
+     right to — that is how a literal gets in.) A notice cue with that template
+     rendered here as an
+     empty dark frame under a caption reading "this is what the wall will show",
+     which is a claim the box was not keeping. The words were reaching
+     `TemplateRender` the whole time and being painted black on black; `Lower
+     Third` is also `layout.lowerThird`, and the transparency law in
+     TemplateRender makes such a template transparent AT ALL TIMES, so no
+     template setting could have rescued it.
+
+     The chequer is UNCONDITIONAL, which is the point: a heuristic for "is this
+     template keyed?" can be wrong, and its false NEGATIVE is the defect coming
+     back. An opaque template paints straight over the plate and hides it
+     completely, so the chequer appears exactly where the template is genuinely
+     transparent and nowhere else — which is also what that part of the frame
+     means on the wall. Two mid greys mixed from `--v-txt` rather than picked:
+     the lighter clears 5:1 against near-black ink and the darker 3.5:1, so a
+     keyed template is legible over both halves of the square. (Not a legibility
+     instrument — `legibility.js` is that. This is a preview that can be seen.)
+
+     The caption beside it says the chequer is not part of the design; a plate
+     nobody explains is a background an operator thinks they chose. */
   .sp-preview{ position:relative; aspect-ratio:16/9; border-radius:var(--v-r-sm);
-    border:1px solid var(--v-line2); overflow:hidden; background:var(--v-void);
+    border:1px solid var(--v-line2); overflow:hidden;
+    background-color:color-mix(in srgb, var(--v-txt) 55%, var(--v-void));
+    background-image:
+      linear-gradient(45deg, color-mix(in srgb, var(--v-txt) 40%, var(--v-void)) 25%, transparent 25%, transparent 75%, color-mix(in srgb, var(--v-txt) 40%, var(--v-void)) 75%),
+      linear-gradient(45deg, color-mix(in srgb, var(--v-txt) 40%, var(--v-void)) 25%, transparent 25%, transparent 75%, color-mix(in srgb, var(--v-txt) 40%, var(--v-void)) 75%);
+    background-size:14px 14px;
+    background-position:0 0, 7px 7px;
     display:grid; place-items:center; }
-  .sp-nopreview{ font-size:var(--v-fs-cap); color:var(--v-500); letter-spacing:.04em; }
+  /* On the plate, not on the void: this note needs its own ground or it is grey
+     text over a chequer. It is the one thing in the box that is Relay speaking
+     rather than the template rendering. */
+  .sp-nopreview{ font-size:var(--v-fs-cap); color:var(--v-dim); letter-spacing:.04em;
+    padding:4px 10px; border-radius:var(--v-r-sm); background:var(--v-void);
+    border:1px solid var(--v-line2); }
 
   .sp-actions{ display:flex; flex-wrap:wrap; gap:6px; }
   .sp-actions .r-btn{ flex:1 1 auto; justify-content:center; }

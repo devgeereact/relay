@@ -47,20 +47,23 @@ const PLANS = [
   { id: 2, title: 'Evening Prayer', plan_date: '2026-09-14', cue_count: 1 },
 ];
 
-const cue = (id, cue_type, label, section_title, duration_sec, payload = {}) => ({
+const cue = (id, cue_type, label, section_title, duration_sec, payload = {}, template_id = null) => ({
   id,
   plan_id: 1,
   cue_type,
   label,
   payload_json: JSON.stringify(payload),
-  template_id: null,
+  template_id,
   section_title,
   duration_sec,
 });
 
+// Two of these repeat the section of the cue above them, because that is the
+// shape the running order got wrong: every cue recording the section it is IN,
+// rather than only the first cue of each section carrying the heading.
 const CUES = [
-  cue(11, 'announce', 'Welcome & notices', 'Gathering', 120, { body: 'Please keep the gate clear' }),
-  cue(12, 'song', 'Great Is Thy Faithfulness', null, 300, {
+  cue(11, 'announce', 'Welcome & notices', 'Gathering', 120, { body: 'Please keep the gate clear' }, 3),
+  cue(12, 'song', 'Great Is Thy Faithfulness', 'Gathering', 300, {
     title: 'Great Is Thy Faithfulness',
     sections: [{ tag: 'V1', label: 'Verse 1', lyrics: 'Great is thy faithfulness' }],
     arrangement_name: 'Standard',
@@ -69,6 +72,11 @@ const CUES = [
     reference: 'Romans 8:28',
     text: 'And we know that all things work together for good',
     verse: 28,
+  }),
+  cue(14, 'scripture', 'Psalms 119:105', 'Word', 0, {
+    reference: 'Psalms 119:105',
+    text: 'Thy word is a lamp unto my feet',
+    verse: 105,
   }),
 ];
 
@@ -83,7 +91,26 @@ function bridge(cmd) {
     case 'plan_items':
       return Promise.resolve(CUES);
     case 'list_templates':
-      return Promise.resolve([{ id: 1, name: 'Classic Serif' }]);
+      return Promise.resolve([
+        { id: 1, name: 'Classic Serif' },
+        // The real builtin, verbatim from `templates.js`: transparent ground,
+        // near-black ink, `lowerThird` — the template the empty preview was
+        // rendered with.
+        {
+          id: 3,
+          name: 'Lower Third',
+          layout: { regions: ['verse_text', 'reference'], align: 'left', lowerThird: true, refFirst: false },
+          style: {
+            font: 'var(--f-body)',
+            background: 'transparent',
+            accent: '#8b5cf6',
+            verseColor: '#1c1224',
+            verseSize: '2.6',
+            refSize: '1.7',
+            italicRef: false,
+          },
+        },
+      ]);
     case 'list_media':
     case 'list_announcements':
     case 'search_scripture':
@@ -168,13 +195,23 @@ describe('§2 · the desk opens on a plan', () => {
     expect(head.textContent.trim()).toBe('Evening Prayer');
   });
 
-  itMounted('groups the running order under its section headings', async () => {
-    // The prototype's heading: a caption and a hairline, emitted when the section
-    // changes. Fails if the rows are drawn as a flat list.
+  itMounted('draws ONE heading per section, not one per cue', async () => {
+    // The defect, rendered at 1440×960: four cues in two sections drew four
+    // headings — `GATHERING / Welcome & notices`, `GATHERING / Great Is Thy
+    // Faithfulness`, `WORD / Romans 8:28`, `WORD / Psalms 119:105`. A heading
+    // that repeats on every row is not a heading, it is a column.
+    //
+    // The count is the assertion. Fails against `sectionsOf`'s old rule (any cue
+    // carrying a title begins a section), which is the state this fixture's
+    // consecutive same-section cues reproduce.
     await mount();
     await until(() => host.querySelector('.sp-row'), 'the running order');
+
     const caps = [...host.querySelectorAll('.sp-seccap')].map((e) => e.textContent.trim());
+    expect(host.querySelectorAll('.sp-row').length).toBe(4);
     expect(caps).toEqual(['Gathering', 'Word']);
+    expect(caps.length).toBeLessThan(host.querySelectorAll('.sp-row').length);
+    // The prototype's heading is a caption and a hairline, one of each.
     expect(host.querySelectorAll('.sp-sec .sp-secln').length).toBe(2);
   });
 
@@ -182,7 +219,7 @@ describe('§2 · the desk opens on a plan', () => {
     await mount();
     await until(() => host.querySelector('.sp-row'), 'the running order');
     const chips = [...host.querySelectorAll('.sp-ck')].map((e) => e.textContent.trim());
-    expect(chips).toEqual(['NOTE', 'SONG', 'WORD']);
+    expect(chips).toEqual(['NOTE', 'SONG', 'WORD', 'WORD']);
   });
 });
 
@@ -294,7 +331,7 @@ describe('§2 · drag reorders on release, and only on release', () => {
     expect(reorders.length).toBe(1);
     // Row 1 moved down one place: the ids that were [11, 12, 13] are now
     // [12, 11, 13]. Fails against an off-by-one in `dropIndex`.
-    expect(reorders[0][1].ids).toEqual([12, 11, 13]);
+    expect(reorders[0][1].ids).toEqual([12, 11, 13, 14]);
   });
 
   itMounted('persists nothing when a drag goes nowhere', async () => {
@@ -371,6 +408,63 @@ describe('§2 · the cue inspector answers the question it is asked', () => {
     expect(labels).toEqual(['Label', 'Section', 'Duration', 'Actions']);
   });
 
+  itMounted('puts a notice\'s words through the renderer, not an empty frame', async () => {
+    // The behavioural half. Rendered at 1440\u00d7960 the notice preview was an empty
+    // dark box; the probe that settled it showed the words WERE reaching
+    // `TemplateRender` and being painted `#1c1224` on `transparent` \u2014 near-black
+    // ink on a near-black ground. So this asserts the half a stylesheet cannot
+    // lie about: the cue's body is in the DOM, inside the preview, through the
+    // one renderer, with the real `Lower Third` builtin resolved onto it. Fails
+    // if `previewContent` stops carrying an announce body (`slidesOf` \u2192
+    // `p.body || p.text`), and fails if the inspector stops resolving the cue's
+    // own template.
+    await mount();
+    await until(() => host.querySelector('.sp-preview'), 'the inspector preview');
+
+    // The component's own `loadTemplates()` in `onMount` races the mock bridge's
+    // dynamic `import('@tauri-apps/api/core')` under vitest and can lose \u2014 a
+    // harness artefact, not the app: the same call awaited here resolves the full
+    // list every time, and a real webview imports from one bundled chunk. Awaiting
+    // it makes the store deterministic without changing what the component reads.
+    const { loadTemplates } = await import('../stores/capture.js');
+    await loadTemplates();
+    await until(
+      () => host.querySelector('.sp-preview').textContent.includes('gate'),
+      'the notice body to reach the renderer',
+    );
+
+    expect(host.querySelector('.sp-preview').textContent).toContain('Please keep the gate clear');
+    expect(host.querySelector('.sp-preview .sp-nopreview')).toBeNull();
+    // …and it is the CUE'S template doing the rendering, which is the one whose
+    // ink made the frame look empty.
+    expect(host.querySelector('.sp-kv').textContent).toContain('Lower Third');
+
+    // …and the operator is told the chequer is not something they chose. A plate
+    // nobody explains is a background an operator thinks is part of the design.
+    //
+    // Asserted on the RENDERED caption, not on the source: the first version of
+    // this grepped the file, and the file explains the plate in a CSS comment, so
+    // it passed with the caption deleted. A scanner that can match a comment is
+    // not checking the screen (CLAUDE.md — one entitlement test did this).
+    const caption = host.querySelector('.sp-preview + .sp-fhelp').textContent;
+    expect(caption).toMatch(/chequer is not part of the design/);
+  });
+
+  it('gives the preview a plate, so a KEYED template is not painted on the void', () => {
+    // The other half, and it has to be a source assertion: jsdom computes no
+    // `color-mix` and no gradient, so nothing mounted can see this. The plate is
+    // unconditional on purpose — an opaque template covers it — because a
+    // heuristic for "is this template keyed?" has a false negative, and the false
+    // negative IS the defect. Fails against `background:var(--v-void)`.
+    const preview = src.slice(src.indexOf('.sp-preview{'));
+    const rule = preview.slice(0, preview.indexOf('}') + 1);
+    expect(rule, 'the preview paints a flat ground again').not.toMatch(
+      /background:\s*var\(--v-void\)/,
+    );
+    expect(rule, 'no chequer behind the render').toMatch(/background-image:[\s\S]*linear-gradient/);
+
+  });
+
   itMounted('states kind, template and fires as name/value rows', async () => {
     await mount();
     await until(() => host.querySelector('.sp-kv'), 'the inspector facts');
@@ -425,7 +519,7 @@ describe('rule 39 · arrangement staleness is untouched', () => {
     // reordered song and the wrong words in a plan (CLAUDE.md rule 39,
     // DECISIONS §55).
     await mount();
-    await until(() => host.querySelectorAll('.sp-row').length === 3, 'the running order');
+    await until(() => host.querySelectorAll('.sp-row').length === CUES.length, 'the running order');
     host.querySelectorAll('.sp-row')[1].click(); // the song
     await settle();
     const slides = [...host.querySelectorAll('.sp-insptabs button')].find((b) =>
