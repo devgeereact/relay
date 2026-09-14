@@ -462,7 +462,7 @@ Legend: **EXISTS** (implemented and reachable from a rendered control) · **PART
 
 | § | Requirement | Status | Evidence | What is actually missing |
 |---|---|---|---|---|
-| 38/49 | Sunday-mode / simplified live screen | **PARTIAL** | Live has a density toggle (Normal/Compact) and a full-screen mode | The brief's stripped layout is a *different* proposal from density. Worth prototyping against a real operator — which is a pilot question (§24), not a design one |
+| 38/49 | Sunday-mode / simplified live screen | **PARTIAL** | Live has a full-screen mode. **The `Normal / Compact` density toggle this row used to cite was deleted on 2026-09-14** on the operator's instruction — this cell claimed it for a while after it was gone | The brief's stripped layout was always a *different* proposal from density, and density is now not even a half-answer. Worth prototyping against a real operator — which is a pilot question (§24), not a design one |
 | 65 | Database audit | **See §13** | 21 tables + 1 FTS | Two concepts have no home, and both are declined rather than missing |
 | 66 | Event architecture audit | **See §14** | Producers now exist for four of the six candidates | Two remain producerless, and both follow §19 |
 | 67 | UI information architecture | **EXISTS** | 8 tabs, **18** Settings sections — Languages (§42) and Privacy (§57) are two of them — retired keys remapped rather than 404'd (`session.js`) | The brief's suggested Settings → Devices would need §19, which is declined |
