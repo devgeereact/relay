@@ -58,6 +58,39 @@ describe('what is staged, as cells', () => {
       .toMatchObject({ source: 'plan', cells: [] });
   });
 
+  // FOUND BY COUNTING. A real eight-cue plan rendered six cells: two song cues
+  // carried `sections: []` in their payload (the payload is only filled when the
+  // song is saved), `slidesOf` answered `[]`, and the loop simply skipped them.
+  // The plan rail said 8, the grid said 6, and nothing said which two or why.
+  it('A CUE WITH NOTHING TO SHOW IS STILL A CELL — the grid may not lose a cue', () => {
+    const plan = [
+      { id: 'a', label: 'Great Is Thy Faithfulness', cue_type: 'song', slides: [] },
+      { id: 'b', label: 'Romans 8:28', cue_type: 'scripture', slides: [{ label: 'Romans 8:28', text: 'And we know' }] },
+      { id: 'c', label: 'Way Maker', cue_type: 'song', slides: [] },
+    ];
+    const cells = planCells(plan, slidesOf);
+    expect(cells).toHaveLength(3);
+    expect(cells.map((c) => c.label)).toEqual(['Great Is Thy Faithfulness', 'Romans 8:28', 'Way Maker']);
+    // Numbered in running order, so the count under the grid agrees with the plan.
+    expect(cells.map((c) => c.n)).toEqual([1, 2, 3]);
+    expect(cells[0].empty).toBe(true);
+    expect(cells[1].empty).toBe(false);
+    expect(cells[2].empty).toBe(true);
+    // And the keys still cannot collide.
+    expect(new Set(cells.map((c) => c.key)).size).toBe(3);
+  });
+
+  it('a cell carries the CONTENT KIND, so a lyric can be drawn as a lyric', () => {
+    const plan = [
+      { id: 'a', label: 'Amazing Grace', cue_type: 'song', slides: [{ label: 'Verse 1', text: 'Amazing grace' }] },
+      { id: 'b', label: 'Notice', cue_type: 'announce', slides: [{ label: 'Notice', text: 'Side gate' }] },
+      { id: 'c', label: 'Mystery', slides: [{ label: 'Mystery', text: '' }] },
+    ];
+    expect(planCells(plan, slidesOf).map((c) => c.ctype)).toEqual(['song', 'announce', 'unknown']);
+    // A verse cell is scripture by construction — there is no other kind of verse.
+    expect(passageCells(VERSES)[0].ctype).toBe('scripture');
+  });
+
   it('survives the absences a real load has — no items, no slides, no verses', () => {
     expect(() => gridSource({ planOpen: true, items: undefined, slidesOf: () => undefined })).not.toThrow();
     expect(passageCells(undefined)).toEqual([]);

@@ -34,6 +34,11 @@ export const PRESS_MS = 190;
  * @property {string} text   the words, for the thumbnail
  * @property {string} tag    the section tag (Verse / Chorus / …), or ''
  * @property {'plan'|'verse'} kind  which fire path this cell takes
+ * @property {string} ctype  the CONTENT kind — 'scripture', 'song', 'media',
+ *                           'announce', 'countdown' — so a caller can render the
+ *                           cell the way the wall would. A lyric slide projects
+ *                           the lyric, never the section name.
+ * @property {boolean} empty this cue has nothing to show. See `planCells`.
  * @property {string|null} cueId    plan cells only
  * @property {number} slideIdx      plan cells only
  * @property {string|null} reference verse cells only
@@ -46,6 +51,20 @@ export const PRESS_MS = 190;
  * shape; the grid answers a different question — "which of these do I want on
  * the wall right now" — and a nested grid answers it more slowly.
  *
+ * A CUE WITH NO SLIDES STILL GETS A CELL, and this is the whole reason the
+ * `empty` flag exists. `slidesOf` answers `[]` for a cue it cannot expand — a
+ * song whose `sections` were never written into its payload, a media cue with no
+ * asset, a `cue_type` this build does not know — and the grid used to drop those
+ * cues on the floor. Measured on a real eight-cue plan: the plan rail counted 8,
+ * the grid counted 6, and nothing anywhere said which two were missing or why.
+ * A cue an operator loaded and cannot see is the "nothing may become
+ * unreachable" rule failing quietly, on the run surface, mid-service.
+ *
+ * So the cue gets a cell that says it is empty. The caller is expected to refuse
+ * the press — there is genuinely nothing to put on a wall — but the cue is
+ * COUNTED and NAMED, which is the difference between a gap the operator can see
+ * and one they find out about when they press `→`.
+ *
  * @param {Array} items plan items, as `Live` already holds them
  * @param {(item:any)=>Array<{label?:string,text?:string,tag?:string}>} slidesOf
  */
@@ -53,6 +72,23 @@ export function planCells(items, slidesOf) {
   const cells = [];
   for (const item of items ?? []) {
     const slides = slidesOf(item) ?? [];
+    const ctype = item.cue_type || 'unknown';
+    if (!slides.length) {
+      cells.push({
+        key: `p:${item.id}:empty`,
+        n: cells.length + 1,
+        label: item.label || '',
+        text: '',
+        tag: '',
+        kind: 'plan',
+        ctype,
+        empty: true,
+        cueId: item.id,
+        slideIdx: 0,
+        reference: null,
+      });
+      continue;
+    }
     slides.forEach((s, i) => {
       cells.push({
         key: `p:${item.id}:${i}`,
@@ -61,6 +97,8 @@ export function planCells(items, slidesOf) {
         text: s.text || '',
         tag: s.tag || '',
         kind: 'plan',
+        ctype,
+        empty: false,
         cueId: item.id,
         slideIdx: i,
         reference: null,
@@ -87,6 +125,8 @@ export function passageCells(verses) {
     text: v.text ?? '',
     tag: `v${v.verse ?? i + 1}`,
     kind: 'verse',
+    ctype: 'scripture',
+    empty: false,
     cueId: null,
     slideIdx: i,
     reference: v.reference ?? null,

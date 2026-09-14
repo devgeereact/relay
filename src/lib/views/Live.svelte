@@ -979,6 +979,55 @@
     onError: (e) => flash(humanError(e)),
   });
 
+  // ── A CELL IS THE WALL IN MINIATURE ──────────────────────────────────────
+  //
+  // The grid drew a grey box with the slide's LABEL in it, so a cell said
+  // "Romans 8:28-31" and nothing about what a congregation would see. The
+  // prototype renders every cell, and it is right: the operator picking under
+  // pressure is matching a shape, not reading a list.
+  //
+  // Through `TemplateRender` — THE one renderer — so a thumbnail cannot disagree
+  // with the wall about a template that has stopped working. No second fit path,
+  // no `if kind == …`; the same component, in a 16:9 `container-type` box, and
+  // cqw does the rest.
+  //
+  // TWO THINGS THIS DELIBERATELY DOES NOT DO.
+  //
+  //  · It does not pass `onFit`. Rule 37's "this is rendering at 38% of its
+  //    designed size" warning is the WALL's measurement and there must be one of
+  //    it. Twenty thumbnails reporting their own fit would drown the one that
+  //    matters, and `noteFit` has exactly one caller: the Program pane.
+  //  · It never serialises or broadcasts a template. The object is handed to a
+  //    local component and goes nowhere near IPC — which is the rule that exists
+  //    because a content-look default carrying an embedded image was 13 MB and
+  //    made every fire take seconds (CLAUDE.md, Testing).
+  //
+  /** The template this cell would actually be painted through. */
+  $: cellTemplate = (c) => {
+    if (c.kind !== 'plan') return previewTpl;
+    const item = items.find((i) => i.id === c.cueId);
+    // A cue's own template choice is PINNED — the operator picked that look for
+    // that item, and §29 says a pinned choice overrides the screen's.
+    const pinned = item?.template_id
+      ? ($templates.find((t) => t.id === item.template_id) ?? null)
+      : null;
+    return resolveOutputTemplate(previewTpl, pinned, !!pinned);
+  };
+
+  /**
+   * What the cell paints — the same shape `fireSlide` actually sends.
+   *
+   * A LYRIC CARRIES NO TITLE. `fire_content` suppresses it for songs (rule 36 —
+   * one place decides), so a song thumbnail that printed the song's name would
+   * be showing the operator something no congregation will ever see. That is the
+   * whole value of a rendered thumbnail and the one way to throw it away.
+   */
+  $: cellContent = (c) => ({
+    reference: c.ctype === 'song' ? null : c.label,
+    text: c.text || '',
+    translation: null,
+  });
+
   /** Is this cell what is on the congregation's screen right now? */
   $: cellLive = (c) =>
     c.kind === 'plan'
@@ -1354,12 +1403,23 @@
                 class="sg-cell"
                 class:islive={cellLive(c)}
                 class:cued={gridPreview?.key === c.key}
+                class:isempty={c.empty}
                 on:click={() => gridPress.press(c)}
                 on:dblclick={() => gridPress.double(c)}
-                disabled={!$capture.available}
-                title="Click to send {c.label} to the programme · double click to preview it">
+                disabled={!$capture.available || c.empty}
+                title={c.empty
+                  ? `${c.label} has nothing to show — open it in the Planner or the Library and give it some words.`
+                  : `Click to send ${c.label} to the programme · double click to preview it`}>
                 <span class="sg-thumb">
-                  <span class="sg-text">{c.text || c.label}</span>
+                  <!-- THE SLIDE, not a description of it. The same renderer the
+                       wall uses, in a 16:9 container — see `cellTemplate`. -->
+                  {#if c.empty}
+                    <span class="sg-void">Nothing to show</span>
+                  {:else}
+                    <TemplateRender template={cellTemplate(c) ?? {}} content={cellContent(c)} />
+                  {/if}
+                  <!-- The KIND, top-left, as the prototype draws it: a cell is
+                       recognised by its shape and confirmed by its tag. -->
                   {#if c.tag}<span class="sg-tag r-mono">{c.tag}</span>{/if}
                   <!-- The word, not only the colour — amber alone is not a label. -->
                   {#if cellLive(c)}<span class="sg-air">On Air</span>
@@ -2026,15 +2086,27 @@
 
   /* ── 2 · slides ───────────────────────────────────────────────── */
   .sg-body{padding:var(--v-sp-sm)}
-  .sgrid{display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr));
+  .sgrid{display:grid; grid-template-columns:repeat(auto-fill,minmax(158px,1fr));
     gap:var(--v-sp-sm)}
   .sg-cell{display:flex; flex-direction:column; gap:5px; padding:0; text-align:left;
     background:none; border:0; cursor:pointer; min-width:0; font-family:var(--f-body)}
   .sg-cell:disabled{opacity:.45; cursor:not-allowed}
+  /* A CELL IS THE WALL IN MINIATURE. `position:relative` + `container-type`
+     are both load-bearing: `TemplateRender`'s root is `position:absolute;
+     inset:0` and it sizes every element in cqw, so the box has to be the
+     container the query resolves against or the type comes out at the page's
+     width. Black ground, like every other surface that shows what a screen
+     shows — a grey card behind a rendered slide is a different slide. */
   .sg-thumb{position:relative; display:block; aspect-ratio:16/9; overflow:hidden;
-    padding:9px 10px; border-radius:var(--v-r-md);
-    background:var(--v-surf2); border:1px solid var(--v-line2);
+    container-type:inline-size;
+    border-radius:var(--v-r-md);
+    background:var(--v-void); border:1px solid var(--v-line2);
     transition:border-color var(--v-dur) var(--v-ease), background var(--v-dur) var(--v-ease)}
+  /* A cue the grid could not expand. It is DRAWN rather than dropped (see
+     `planCells`) so the count under the grid agrees with the plan, and it is
+     disabled rather than firing nothing. */
+  .sg-void{position:absolute; inset:0; display:grid; place-items:center; padding:8px;
+    text-align:center; font-size:10px; letter-spacing:.05em; color:var(--v-faint)}
   .sg-cell:hover .sg-thumb{border-color:var(--v-sel-line)}
   /* Steel blue is SELECTION — the thing you are working on. It is what a preview
      is, and it is deliberately not grey: grey means CUED, a plan position. */
@@ -2043,15 +2115,16 @@
      says is on the screen, never from "we pressed the button". */
   .sg-cell.islive .sg-thumb{border-color:var(--v-amber); background:var(--v-amber-soft)}
   .sg-cell:focus-visible .sg-thumb{outline:2px solid var(--v-sel); outline-offset:2px}
-  .sg-text{display:-webkit-box; -webkit-line-clamp:4; -webkit-box-orient:vertical;
-    overflow:hidden; font-size:11px; line-height:1.45; color:var(--v-dim)}
-  .sg-cell.islive .sg-text,
-  .sg-cell.cued .sg-text{color:var(--v-txt)}
-  .sg-tag{position:absolute; left:6px; bottom:6px; padding:1px 5px;
-    border-radius:var(--v-r-sm); background:var(--v-surf3); color:var(--v-dim);
-    font-size:9px; letter-spacing:.06em; text-transform:uppercase}
-  .sg-air,.sg-prev{position:absolute; right:6px; top:6px; padding:1px 6px;
-    border-radius:var(--v-r-sm); font-size:9px; font-weight:700; letter-spacing:.07em;
+  /* TOP-LEFT, over the rendered slide, on its own scrim. It used to sit
+     bottom-left on a grey card; over a real slide it needs its own ground or it
+     lands on whatever the template happens to be painting there. `--v-surf3` is
+     not a legible ground for dim text (tokencontrast.test.js), so the chip
+     carries its own black and near-white. */
+  .sg-tag{position:absolute; left:5px; top:5px; padding:2px 5px; z-index:2;
+    border-radius:2px; background:rgba(0,0,0,.62); color:#cfd6e2;
+    font-size:8px; font-weight:600; letter-spacing:.08em; text-transform:uppercase}
+  .sg-air,.sg-prev{position:absolute; right:5px; top:5px; padding:2px 5px; z-index:2;
+    border-radius:2px; font-size:8px; font-weight:700; letter-spacing:.1em;
     text-transform:uppercase}
   .sg-air{background:var(--v-amber); color:var(--v-amber-ink)}
   .sg-prev{background:var(--v-sel); color:var(--v-sel-ink)}
