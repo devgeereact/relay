@@ -160,12 +160,12 @@ describe('the contract with the Rust half', () => {
   });
 
   it('the unlock is reachable from the sentence the refusal prints', () => {
-    // Rust's refusal says "unlock in Settings → Backup & Recovery". If the control
+    // Rust's refusal says "unlock in Settings → History & Backup". If the control
     // is not there, the refusal is a dead end and the lock becomes a wall.
     const rs = read('src-tauri/src/servicelock.rs');
-    expect(rs).toMatch(/Settings → Backup & Recovery/);
+    expect(rs).toMatch(/Settings → History & Backup/);
     const settings = read('src/lib/views/Settings.svelte');
-    expect(settings).toMatch(/section === 'backup'/);
+    expect(settings).toMatch(/section === 'history'/);
     expect(settings).toMatch(/setServiceLock\(false\)|unlockService/);
   });
 });

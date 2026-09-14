@@ -56,6 +56,9 @@
   $: if (query !== lastQuery) {
     lastQuery = query;
     page = 0;
+    // The shelf under the rail has just been replaced, so the book on it has
+    // too. Keeping the old selection would silently filter a fresh search.
+    book = null;
     doSearch(query);
   }
   async function doSearch(q) {
@@ -134,9 +137,42 @@
     checked = new Set();
   }
 
+  // ── THE BOOK RAIL (REBRAND §10) ───────────────────────────────────────────
+  //
+  // Same grammar as every other collection: the items down the left, the slides
+  // in the grid. For scripture the item is a BOOK, because that is what a saved
+  // deck is organised by — an operator looking for the Romans verse they kept
+  // does not want to page through Genesis to reach it.
+  //
+  // The rail is derived from what the grid is ACTUALLY showing (saved verses, or
+  // the search results), never from a separate query. A rail that lists books
+  // the grid cannot show is a rail that sends you somewhere empty.
+  let book = null; // null = every book
+  const bookOf = (r) =>
+    r.book || String(r.reference ?? '').replace(/\s+\d+(?::\d+)?(?:\s*[-–]\s*\d+)?\s*$/, '').trim();
+
   $: searchMode = !!query?.trim();
   $: rows = searchMode ? results : saved;
-  $: base = rows.map((r) => ({
+  $: shelf = (() => {
+    const by = new Map();
+    for (const r of rows) {
+      const b = bookOf(r);
+      if (b) by.set(b, (by.get(b) ?? 0) + 1);
+    }
+    return [...by].map(([b, n]) => ({ book: b, count: n }));
+  })();
+  // A book that is no longer on the shelf cannot stay selected: the grid would
+  // be empty with no visible reason why.
+  $: if (book && !shelf.some((s) => s.book === book)) book = null;
+
+  function pickBook(b) {
+    book = b;
+    page = 0;
+  }
+
+  $: base = rows
+    .filter((r) => !book || bookOf(r) === book)
+    .map((r) => ({
     key: r.reference,
     reference: r.reference,
     label: r.reference,
@@ -160,6 +196,31 @@
 </script>
 
 <div class="sv">
+ <div class="sv-split">
+  <!-- The items. Hidden only when there is nothing to list — a rail offering
+       one book called "All" is a label pretending to be a choice. -->
+  {#if shelf.length > 1}
+    <nav class="sv-rail" aria-label="Books">
+      <div class="sv-railhead">Books</div>
+      <div class="sv-raillist r-scroll">
+        <button class="sv-book r-focus" class:on={!book} aria-pressed={!book} on:click={() => pickBook(null)}>
+          <span class="sv-bn">All books</span>
+          <span class="sv-bk r-mono">{rows.length}</span>
+        </button>
+        {#each shelf as s (s.book)}
+          <button
+            class="sv-book r-focus"
+            class:on={book === s.book}
+            aria-pressed={book === s.book}
+            on:click={() => pickBook(s.book)}>
+            <span class="sv-bn">{s.book}</span>
+            <span class="sv-bk r-mono">{s.count}</span>
+          </button>
+        {/each}
+      </div>
+    </nav>
+  {/if}
+
   <section class="sv-panel">
     <header class="sv-head">
       <div class="sv-where">
@@ -241,6 +302,7 @@
       </label>
     </footer>
   </section>
+ </div>
 
   <!-- Announced. "John 3:16 is on the screens" is the confirmation that content
          reached a congregation, and it was silent to a screen reader — the error
@@ -251,6 +313,35 @@
 
 <style>
   .sv { display: flex; flex-direction: column; gap: 10px; min-height: 0; flex: 1; }
+  /* Items left, slides right — the Library's one grammar (REBRAND §10). */
+  .sv-split { display: grid; grid-template-columns: 180px minmax(0, 1fr); gap: 10px;
+    flex: 1; min-height: 0; }
+  @media (max-width: 1140px) { .sv-split { grid-template-columns: 156px minmax(0, 1fr); } }
+  /* Below this the rail is stacked, never squeezed: a book list narrower than a
+     book name is a column of ellipses. */
+  @media (max-width: 860px) { .sv-split { grid-template-columns: minmax(0, 1fr); } }
+
+  .sv-rail { display: flex; flex-direction: column; min-height: 0;
+    background: var(--v-bg); border: 1px solid var(--v-line); border-radius: var(--v-r-lg); }
+  .sv-railhead { padding: 10px 12px 8px; font-size: var(--v-fs-cap); font-weight: 600;
+    letter-spacing: .06em; text-transform: uppercase; color: var(--v-dim);
+    border-bottom: 1px solid var(--v-line); }
+  .sv-raillist { flex: 1; min-height: 0; overflow-y: auto; padding: 6px; display: flex;
+    flex-direction: column; gap: 2px; }
+  .sv-book { display: flex; align-items: center; gap: 8px; width: 100%; height: 28px;
+    padding: 0 8px; border: 1px solid transparent; border-radius: var(--v-r-sm);
+    background: transparent; color: var(--v-dim); font-family: var(--f-body);
+    font-size: 12px; text-align: left; cursor: pointer; }
+  .sv-book:hover:not(.on) { background: var(--v-surf2); color: var(--v-txt); }
+  /* Steel = the thing you are working on. The collection's amber lives on the
+     rail's left edge only, where it tints rather than states. */
+  .sv-book.on { background: var(--v-sel-soft); border-color: var(--v-sel-line); color: var(--v-txt);
+    box-shadow: inset 2px 0 0 var(--v-col-scripture); }
+  .sv-bn { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* --v-dim, not --v-faint: --v-faint on --v-surf3 is below WCAG AA and
+     `tokencontrast.test.js` fails the build for it. */
+  .sv-bk { flex: 0 0 auto; font-size: 10px; color: var(--v-dim); }
+
   .sv-panel { display: flex; flex-direction: column; min-height: 0; flex: 1;
     background: var(--v-bg); border: 1px solid var(--v-line); border-radius: var(--v-r-lg); }
   .sv-head { display: flex; align-items: center; gap: 12px; padding: 11px 14px;

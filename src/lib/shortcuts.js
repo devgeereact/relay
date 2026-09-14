@@ -228,6 +228,28 @@ export function installShortcuts({ clearScreens, blackScreen }) {
           ctx.search();
         }
         break;
+      default:
+        // ---- SECTION KEYS (REBRAND §10). A surface showing a song's sections
+        // registers `sectionKey` and gets the letters nothing above has claimed.
+        //
+        // Its POSITION is the whole guarantee, and it is three guarantees deep:
+        //   · it is below the always-on block, so `Escape` and `b` are already
+        //     gone — a panic key can never be shadowed by a section;
+        //   · it is below `if (typing) return`, so a letter typed into the
+        //     reference box or the lyric editor fires nothing;
+        //   · it is below `a`, `d` and `/`, so a surface offering both keeps the
+        //     older meaning of those three.
+        // `sectionkeys.js::RESERVED` reads this file's own SHORTCUTS table and
+        // refuses to hand out any of those letters in the first place, so the
+        // rule is kept on both doors rather than only on this one.
+        //
+        // With nothing registered it is a no-op and does NOT preventDefault —
+        // a dead branch must not eat a keystroke the browser had a use for.
+        if (ctx.sectionKey && /^[a-z0-9]$/.test(e.key)) {
+          e.preventDefault();
+          ctx.sectionKey(e.key);
+        }
+        break;
     }
   }
 
