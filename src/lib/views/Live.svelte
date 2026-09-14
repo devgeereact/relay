@@ -149,6 +149,11 @@
   import LiveRail from '../LiveRail.svelte';
   import { parsePassage } from '../passage.js';
   import { session, setSession } from '../session.js';
+  // X1 · the transition register and the override's store (docs/REBRAND.md §8).
+  // The picker moved here from the chrome bar (L4); the ranking did not move —
+  // `resolveTransition` is still the ONE place the two authorities are ordered,
+  // and it is still called from `TemplateRender` and nowhere else.
+  import { TRANSITIONS, TRANSITION_MS, DEFAULT_TRANSITION_MS, liveTransition } from '../transitions.js';
   import { get } from 'svelte/store';
   import {
     capture,
@@ -175,7 +180,7 @@
     channelHealth,
     channelWaiting,
     startCountdown,
-    setDetection,
+    setLiveTransition,
     startCapture,
     stopCapture,
     relatedScripture,
@@ -733,14 +738,20 @@
     }
   }
 
-  /** Arming/disarming the AI must not silently fail — the dot would lie about it. */
-  async function toggleDetection() {
-    try {
-      await setDetection(!$capture.detectionOn);
-    } catch (e) {
-      flash(humanError(e));
-    }
-  }
+  // ARMING THE AI IS THE DOCK'S CONTROL, AND ONLY THE DOCK'S (L4).
+  //
+  // This panel carried an `Armed` chip that called `setDetection`, one row below
+  // the dock's ARMED switch, which calls the same command about the same gate.
+  // Two controls for one setting is two places for them to disagree — the same
+  // shape as the two status badges rule 35 was written for, and the dock already
+  // holds the ruling (`shellchrome.test.js`: "detection is ONE switch, in the
+  // card about the signal"). The dock's survives because it is reachable from
+  // Templates and Settings too, which is where an operator who has stopped
+  // trusting the AI actually is.
+  //
+  // THE ARM STATE IS STILL ON THIS SURFACE, as `gateState` on the panel head —
+  // and it says more than a chip could, because it distinguishes disarmed from a
+  // dead model from a stopped microphone. A state line is not a lost control.
 
   function dismissTop() {
     if (!dets[0]) return;
@@ -848,6 +859,56 @@
     } catch (e) {
       errMsg = humanError(e);
     }
+  }
+
+  // ── THE TRANSITION OVERRIDE (docs/REBRAND.md §8 · DECISIONS §84) ──────────
+  //
+  // MOVED HERE FROM THE CHROME BAR (L4), at the operator's instruction, and the
+  // move is the whole change: `resolveTransition` still ranks the two
+  // authorities, `TemplateRender` still keys the replay on the override, both
+  // panic controls are still outside it, and `loadLiveTransition()` is still
+  // called once in the shell's mount so a console reopened mid-service does not
+  // draw a picker that disagrees with screens that are already crossfading.
+  //
+  // WHY THE RACK IS THE RIGHT HOME. The chrome bar carries facts about the room
+  // and one panic control; how a slide replaces the last is neither. It is a
+  // property of the TAKE, so it belongs beside the take — an operator deciding
+  // "make everything cut, now" is already looking at this column.
+  //
+  // `FOLLOW` is a sentinel for "no override", not a transition — an eighth entry
+  // in `TRANSITIONS` would have been a second register, and one of the two would
+  // eventually have been the one somebody read.
+  const FOLLOW = '';
+
+  // A CHANGE THAT DID NOT REACH THE SCREENS PUTS THE CONTROL BACK.
+  //
+  // `setLiveTransition` throws (group 1 in capture.js): a congregation can see the
+  // difference between a cut and an 800 ms crossfade. The honest report is the
+  // picker refusing to move — the store is only written after the backend has
+  // taken the change, and the `value=` binding then redraws the select from the
+  // store. A picker that stayed on "Crossfade" over screens that were cutting
+  // would be rule 35 with a dropdown. The rack has room for the reason, so the
+  // reason is printed rather than left to a hover.
+  let xError = '';
+  async function applyTransition(mode, ms) {
+    try {
+      xError = '';
+      await setLiveTransition(mode, ms);
+    } catch (e) {
+      xError = humanError(e);
+      // Force the selects to redraw from the store, which did NOT move.
+      liveTransition.set(get(liveTransition));
+    }
+  }
+  function pickTransition(e) {
+    const mode = e.currentTarget.value;
+    if (mode === FOLLOW) return applyTransition(null, null);
+    return applyTransition(mode, get(liveTransition)?.ms ?? DEFAULT_TRANSITION_MS);
+  }
+  function pickDuration(e) {
+    const cur = get(liveTransition);
+    if (!cur) return; // disabled; nothing to be the duration of
+    return applyTransition(cur.mode, Number(e.currentTarget.value));
   }
 
   // ── transport controls ───────────────────────────────────────────────────
@@ -1483,49 +1544,111 @@
     </section>
 
 
-    <!-- THE RACK. The reference draws a transition list here (Cut / Fade / Wipe /
-         Stinger / Duration). Relay HAS a transition engine now — seven modes in
-         `transitions.js`, played by the renderer (docs/REBRAND.md §8, DECISIONS
-         §71) — so the old reason for leaving them out ("no engine") has expired.
-         They are still not drawn, for a different and better reason: a transition
-         is a property of the TEMPLATE, resolved through the style model, so a
-         desk-level picker here would either change nothing on the wall or silently
-         edit a template from the run surface. It belongs where the look is chosen.
-         What is here is the real take path: the same accept/fire and the same nav
-         the keys already run, plus the transport MODE, which is the one thing about
-         `→` an operator must never have to guess (CLAUDE.md — same key, two
-         meanings, is how the wrong thing reaches a congregation). -->
+    <!-- ══════ THE TAKE COLUMN — ONE BLOCK, NOT FIVE FRAGMENTS (L4) ══════
+         It was `Take` · TAKE · `‹ Prev` · `Next ›` · `walks the programme` ·
+         `VERSE`, six things stacked at an even 6px gap with no internal seam, so
+         the eye had no way to tell that the caption belonged to the arrows and
+         the arrows belonged to the button above them. Reading it took as long as
+         reading six unrelated controls, on the column an operator uses fastest.
+
+         It is now three BANDS inside one bordered rack, divided by the rack's own
+         hairline: the take, the step, and what the step walks. The transition
+         moved in as a fourth band, at the operator's instruction and below all
+         three, because it changes how a take LOOKS and never what a take does —
+         so it may never be the thing a hurried hand lands on.
+
+         THE MODE BADGE STAYS, and is now inside the band it is about rather than
+         a loose line under it. Required by CLAUDE.md: the transport is MODE-AWARE
+         and says so, because the same key silently meaning two things is how the
+         wrong thing reaches a congregation. The prototype has no equivalent and
+         that is the prototype being wrong, not Relay being noisy. -->
     <aside class="rack">
-      <span class="rack-lbl">Take</span>
-      <button
-        class="take"
-        on:click={take}
-        disabled={!previewContent || !$capture.available}
-        title="Put the previewed content on the outputs">TAKE</button>
-      <!-- FULL WIDTH AND NAMED. Two 30px arrow glyphs side by side was the
+      <div class="rk-band rk-take">
+        <span class="rack-lbl">Take</span>
+        <button
+          class="take"
+          on:click={take}
+          disabled={!previewContent || !$capture.available}
+          title="Put the previewed content on the outputs">TAKE</button>
+      </div>
+
+      <!-- THE STEP, AND WHAT IT WALKS, IN ONE BAND. The two arrows and the
+           caption that explains them used to be separated by the same gap that
+           separated everything else. `role="group"` gives the pair one
+           accessible name, so a screen reader reads them as a transport rather
+           than as two unrelated buttons.
+           FULL WIDTH AND NAMED. Two 30px arrow glyphs side by side was the
            smallest pair of targets on the surface an operator uses fastest, and
            `‹` and `›` name nothing: they are the same two shapes whichever of
            the two things the transport is about to do. -->
-      <button class="r-btn rk wide" title="Previous (←)" on:click={() => step(-1)}>‹ Prev</button>
-      <button class="r-btn rk wide" title="Next (→)" on:click={() => step(1)}>Next ›</button>
-      <!-- WHAT THOSE TWO WALK. Required by CLAUDE.md — the transport is
-           MODE-AWARE and says so; the same key silently meaning two things is
-           how the wrong thing reaches a congregation. The prototype's caption is
-           "walks the programme" and Relay's has to say WHICH walk. -->
-      <span
-        class="rack-cap"
-        title={mode === 'slide'
-          ? 'Arrow keys step through the service plan'
-          : 'Arrow keys walk through the passage on screen'}>
-        <!-- TWO LINES, DELIBERATELY (L2). The prototype breaks this caption by
-             hand rather than leaving it to a 118px column: at mono capitals the
-             phrase is within a pixel or two of the rack's width, so whether it
-             wraps at all depends on the font that happened to load. A break that
-             is decided here is the same on every machine, and it reads as a
-             screen reader's single phrase either way. -->
-        walks the<br />programme
-        <b class="rack-mode r-mono" class:slide={mode === 'slide'}>{mode === 'slide' ? 'SLIDE' : 'VERSE'}</b>
-      </span>
+      <div class="rk-band rk-step" role="group" aria-label="Transport">
+        <button class="r-btn rk wide" title="Previous (←)" on:click={() => step(-1)}>‹ Prev</button>
+        <button class="r-btn rk wide" title="Next (→)" on:click={() => step(1)}>Next ›</button>
+        <span
+          class="rack-cap"
+          title={mode === 'slide'
+            ? 'Arrow keys step through the service plan'
+            : 'Arrow keys walk through the passage on screen'}>
+          <!-- TWO LINES, DELIBERATELY (L2). The prototype breaks this caption by
+               hand rather than leaving it to a 118px column: at mono capitals the
+               phrase is within a pixel or two of the rack's width, so whether it
+               wraps at all depends on the font that happened to load. A break that
+               is decided here is the same on every machine, and it reads as a
+               screen reader's single phrase either way. -->
+          walks the<br />programme
+          <b class="rack-mode r-mono" class:slide={mode === 'slide'}>{mode === 'slide' ? 'SLIDE' : 'VERSE'}</b>
+        </span>
+      </div>
+
+      <!-- THE TRANSITION (docs/REBRAND.md §8 · DECISIONS §84), moved out of the
+           chrome bar (L4).
+
+           TWO AUTHORITIES OVER ONE PROPERTY, AND THE PICKER IS WHAT MAKES THAT
+           HONEST. §71 says a transition is a template's choice; this says an
+           operator may overrule every template at once, which is a second home
+           for one property unless somebody can see which home is answering.
+           Hence the first option: **Follow template**. It is the default, it is
+           what a fresh Relay does, and choosing anything else is a visible act
+           with a visible state — not a preference silently sitting on top of a
+           saved one.
+
+           The duration is disabled while the template is being followed, because
+           there is nothing for it to be the duration OF: a number an operator can
+           set that changes nothing is the §69 defect, and it is what the old theme
+           editor's transition control was for the whole of its life.
+
+           IT IS LAST IN THE RACK, always. TAKE and the arrows are what a hand
+           reaches for without looking; a picker may never be above either of
+           them, and nothing here may grow tall enough to push them. -->
+      <div class="rk-band rk-x" class:on={$liveTransition}>
+        <span class="rack-lbl xcap">Transition</span>
+        <select
+          class="r-select xpick r-focus"
+          aria-label="Slide transition"
+          title="How one slide replaces the last, on every screen. Follow template leaves each template's own choice alone."
+          value={$liveTransition?.mode ?? FOLLOW}
+          on:change={pickTransition}>
+          <option value={FOLLOW}>Follow template</option>
+          {#each TRANSITIONS as x}<option value={x.id}>{x.label}</option>{/each}
+        </select>
+        <select
+          class="r-select xpick xdur r-focus"
+          aria-label="Transition duration"
+          title="How long it runs. Only meaningful while an override is in force."
+          disabled={!$liveTransition}
+          value={String($liveTransition?.ms ?? DEFAULT_TRANSITION_MS)}
+          on:change={pickDuration}>
+          {#each TRANSITION_MS as ms}<option value={String(ms)}>{ms} ms</option>{/each}
+        </select>
+        <!-- A CHANGE THAT DID NOT REACH THE SCREENS SAYS SO. The selects have
+             already snapped back to what the screens are actually doing; this says
+             why, so the operator is not left wondering whether they mis-clicked.
+             It reads differently when it is broken from when it is fine, which is
+             the whole of rule 35. -->
+        {#if xError}
+          <span class="xerr" role="status" title={xError}>not applied</span>
+        {/if}
+      </div>
     </aside>
 
     <!-- PROGRAM — literally what the congregation is looking at, rendered through
@@ -1822,30 +1945,37 @@
                defect that rule exists to name. Relay has no "suggest only" mode
                — a Direct hit above the bar fires unattended whenever detection
                is armed — so it is not offered; a mode nothing implements is a
-               status line that lies. -->
-          <span class="det-meta r-mono" class:on={gateState.armed}>{gateState.label}</span>
-        </header>
+               status line that lies.
 
-        <div class="det-ctl">
-          <!-- NO SENSITIVITY DIAL HERE. It lives in the dock, one row below, on
-               EVERY workspace (docs/REBRAND.md §2 puts it beside the signal it is
-               about). This surface carried a second copy of it, and two controls
-               for one dial is two places to disagree about the same gate — the
-               same shape as the two status badges rule 35 was written for. The
-               dock's is the one that survives because it is reachable from
-               Templates and Settings too, which is where an operator who has
-               stopped trusting the AI actually is. -->
-          <span class="spring"></span>
-          <button class="chip btnchip" class:ok={$capture.detectionOn} on:click={toggleDetection}
-            disabled={!$capture.available} title="Arm or disarm automatic detection">
-            <i class="bd"></i>{$capture.detectionOn ? 'Armed' : 'Off'}
-          </button>
+               THIS LINE IS ALSO WHERE THE ARM STATE LIVES NOW (L4). The column
+               used to carry an `Armed` chip beside it that duplicated the dock's
+               ARMED switch — two controls for one gate, one row apart. The chip
+               has gone and the dock keeps the control; the state did not go
+               anywhere, because it was already here, saying more than the chip
+               could. -->
+          <span class="det-meta r-mono" class:on={gateState.armed}>{gateState.label}</span>
+          <!-- THE MICROPHONE IS THE ONE CONTROL THIS COLUMN KEPT, and it is on the
+               head rather than in a row of its own, because a row holding one
+               button is the loose fragment the chip left behind.
+
+               It is NOT a duplicate of anything in the dock: the dock's Live audio
+               card holds the two decisions about a signal (how readily, and armed
+               or not) and nothing that starts or stops the signal itself. With
+               this gone, the only way to open a microphone would be Settings →
+               Dashboard, which is not a Sunday-morning path. Recorded in the
+               review note as a thing that should move to the dock's audio card
+               (agent L3's file), beside the ARMED switch it belongs with. -->
           <button class="ibtn" on:click={toggleListen} title={$capture.capturing ? 'Stop listening' : 'Start listening'}
             aria-label={$capture.capturing ? 'Stop listening' : 'Start listening'}
             disabled={!$capture.available || !$capture.stt.loaded || listenBusy}>
             <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v4"/></svg>
           </button>
-        </div>
+        </header>
+
+        <!-- NO SENSITIVITY DIAL HERE either. It lives in the dock, one row below,
+             on EVERY workspace (docs/REBRAND.md §2 puts it beside the signal it is
+             about). This surface carried a second copy of it, and two controls for
+             one dial is two places to disagree about the same gate. -->
 
         <!-- The AI has heard something. This is the product's whole reason to exist, and
              it arrived in total silence for a screen-reader operator. "polite", not
@@ -2219,8 +2349,17 @@
      to the full height of the 16:9 preview/program panes beside it, the leftover
      vertical space had to go SOMEWHERE, and it ballooned the MODE chip into a huge
      empty box. A transport rack is compact by nature; keep it that way. */
-  .rack{display:flex; flex-direction:column; gap:6px; min-height:0; align-self:start; padding:10px 8px;
-    background:var(--v-surf); border:1px solid var(--v-line); border-radius:var(--v-r-lg)}
+  /* THREE BANDS AND A SEAM, NOT SIX EVENLY-SPACED THINGS (L4). The rack's own
+     children are the bands; the gap BETWEEN bands is a hairline and the gap
+     INSIDE one is 6px, which is the whole reason the column now reads as
+     `take · step · look` instead of as a list. `padding:0` on the rack so a band
+     can carry the full-width rule; each band pads itself. */
+  .rack{display:flex; flex-direction:column; min-height:0; align-self:start; padding:0;
+    background:var(--v-surf); border:1px solid var(--v-line); border-radius:var(--v-r-lg);
+    overflow:hidden}
+  .rk-band{display:flex; flex-direction:column; gap:6px; padding:10px 8px;
+    border-top:1px solid var(--v-line)}
+  .rk-band:first-child{border-top:0}
   .rack-lbl{font-family:var(--f-mono); font-size:var(--v-fs-fig); font-weight:700; letter-spacing:.14em;
     text-transform:uppercase; color:var(--v-faint); text-align:center}
   /* 64px, as measured in the prototype. The one control on this surface that is
@@ -2269,7 +2408,10 @@
   /* Mono capitals, as the prototype sets it. This caption labels a control; it is
      not prose, and beside a mono TAKE and a mono mode badge the body face was the
      only thing in the rack speaking a different language. */
-  .rack-cap{display:block; margin-top:2px; text-align:center;
+  /* NO MARGIN OF ITS OWN — it is a child of the step band now, and the band's
+     6px gap is what separates it from the arrows it explains. A margin here on
+     top of that gap is how the caption came to read as a fifth loose line. */
+  .rack-cap{display:block; text-align:center;
     font-family:var(--f-mono);
     font-size:var(--v-fs-fig); line-height:1.35; letter-spacing:.09em;
     text-transform:uppercase; color:var(--v-faint)}
@@ -2279,6 +2421,29 @@
      beside it, and SLIDE mode means the arrows walk the plan. It sits on a
      caption, not on a claim about a screen. */
   .rack-mode.slide{color:var(--v-amber)}
+
+  /* ── THE TRANSITION BAND (L4 · docs/REBRAND.md §8 · DECISIONS §84) ────────
+     These rules came out of `app.css`'s X1 block when the control left the
+     chrome. They are scoped here now, beside the only markup that wears them —
+     a shared stylesheet carrying rules for an element in one component is how a
+     dead rule survives a move. */
+  .rk-x .xcap{text-align:center}
+  /* STACKED, because the rack is 118px wide and two selects side by side in it
+     would each be 48px: a picker whose own text ("Fade through black") cannot be
+     read is a control that has to be opened to be understood. */
+  .rk-x .xpick{width:100%; height:22px; padding:0 20px 0 7px; font-size:10.5px;
+    background-position:calc(100% - 11px) 10px,calc(100% - 8px) 10px}
+  /* AN OVERRIDE IS IN FORCE, AND THAT IS VISIBLE WITHOUT OPENING THE DROPDOWN.
+     Deliberately NOT amber (on air), amethyst (rehearsal) or cyan (a guess) —
+     the colour law is fixed and this is none of those three. A brighter border
+     and a brighter text colour say "somebody chose this" without claiming a
+     state. */
+  .rk-x.on .xpick{border-color:var(--v-accent-line); color:var(--v-txt)}
+  /* THE RACK HAS ROOM FOR THE REASON, so the reason is a line and not a hover.
+     Rose, and only ever about a change that did NOT reach the screens. */
+  .xerr{text-align:center; font-size:var(--v-fs-fig); letter-spacing:.06em;
+    text-transform:uppercase; color:var(--v-rose); border:1px solid var(--v-rose);
+    border-radius:var(--v-r-sm); padding:1px 5px}
 
   .ibtn{flex:0 0 auto; width:26px; height:26px; border-radius:var(--v-r-sm); display:grid;
     place-items:center; cursor:pointer; background:var(--v-surf2); border:1px solid var(--v-line2);
@@ -2299,12 +2464,23 @@
      container the query resolves against or the type comes out at the page's
      width. Black ground, like every other surface that shows what a screen
      shows — a grey card behind a rendered slide is a different slide. */
+  /* A 2px BORDER OVER A 1px OUTLINE, both of which take the state's colour —
+     the prototype's treatment, and the reason it exists (L4). A single 1px
+     hairline plus a soft fill is legible in isolation and invisible at a glance
+     in a grid of twenty 158px cells: the eye is scanning twenty rendered slides
+     and one hairline is the smallest thing on the surface. Three pixels of
+     colour on the outside of the picture is not. The `outline` is drawn INSIDE
+     the box (`outline-offset:-1px`) so a coloured cell takes no more space than
+     an uncoloured one and the grid does not re-flow as the playhead moves.
+     No new colour: amber is ON AIR and steel blue is the selection, exactly as
+     before, and `slidegridwiring.test.js` still reads that off these rules. */
   .sg-thumb{position:relative; display:block; aspect-ratio:16/9; overflow:hidden;
     container-type:inline-size;
     border-radius:var(--v-r-md);
-    background:var(--v-void); border:1px solid var(--v-line2);
-    transition:border-color var(--v-dur) var(--v-ease), background var(--v-dur) var(--v-ease),
-      transform 90ms var(--v-ease)}
+    background:var(--v-void); border:2px solid transparent;
+    outline:1px solid var(--v-line2); outline-offset:-1px;
+    transition:border-color var(--v-dur) var(--v-ease), outline-color var(--v-dur) var(--v-ease),
+      background var(--v-dur) var(--v-ease), transform 90ms var(--v-ease)}
   /* A cue the grid could not expand. It is DRAWN rather than dropped (see
      `planCells`) so the count under the grid agrees with the plan, and it is
      disabled rather than firing nothing. */
@@ -2313,10 +2489,14 @@
   .sg-cell:hover .sg-thumb{border-color:var(--v-sel-line)}
   /* Steel blue is SELECTION — the thing you are working on. It is what a preview
      is, and it is deliberately not grey: grey means CUED, a plan position. */
-  .sg-cell.cued .sg-thumb{border-color:var(--v-sel); background:var(--v-sel-soft)}
+  .sg-cell.cued .sg-thumb{border-color:var(--v-sel); outline-color:var(--v-sel);
+    background:var(--v-sel-soft)}
   /* Amber is ON AIR and nothing else. `cellLive` derives it from what the store
      says is on the screen, never from "we pressed the button". */
-  .sg-cell.islive .sg-thumb{border-color:var(--v-amber); background:var(--v-amber-soft)}
+  .sg-cell.islive .sg-thumb{border-color:var(--v-amber); outline-color:var(--v-amber);
+    background:var(--v-amber-soft)}
+  /* FOCUS IS STILL ITS OWN RING, outside the box, so keyboard focus on a cell
+     that is already live is still distinguishable from the live state itself. */
   .sg-cell:focus-visible .sg-thumb{outline:2px solid var(--v-sel); outline-offset:2px}
   /* TOP-LEFT, over the rendered slide, on its own scrim. It used to sit
      bottom-left on a grey card; over a real slide it needs its own ground or it
@@ -2343,6 +2523,10 @@
   .sg-ttl{min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
     font-size:var(--v-fs-cap); color:var(--v-txt)}
   .sg-cell.islive .sg-ttl{color:var(--v-amber)}
+  /* AND THE LABEL, as the prototype colours it. The border says which cell; the
+     label is what an operator is already reading, and colouring it means the two
+     states are legible from the text alone if the picture is a dark slide. */
+  .sg-cell.cued .sg-ttl{color:var(--v-sel)}
   .sg-foot{display:flex; align-items:center; gap:var(--v-sp-sm)}
   /* `· SUNDAY MORNING · 14 SEP` — the plan's own name and date, in the head's
      own face (L2). These used to be set in the body face beside an uppercase
@@ -2372,26 +2556,23 @@
   .sg-head .mini{flex:0 0 auto}
 
   /* ── 3 · detection ─────────────────────────────────────────────────────── */
-  .chip{display:inline-flex; align-items:center; gap:6px; flex:0 0 auto; padding:4px 9px;
-    border-radius:var(--v-r-sm); background:var(--v-surf2); border:1px solid var(--v-line2);
-    font-size:var(--v-fs-cap); color:var(--v-faint)}
-  .chip .bd{width:6px; height:6px; border-radius:50%; background:var(--v-faint)}
-  .chip.ok{color:var(--v-emerald); border-color:var(--v-emerald-line); background:var(--v-emerald-soft)}
-  .chip.ok .bd{background:var(--v-emerald); box-shadow:0 0 6px var(--v-emerald)}
-  .btnchip{cursor:pointer; font-family:var(--f-body)}
-  .btnchip:disabled{opacity:.5; cursor:not-allowed}
-
-  /* The gate's own controls get their own row under the heading. On one line in
-     a 286px column the Armed chip and the microphone button are sized to content
-     and the panel's NAME is the only thing allowed to shrink — the same failure
-     `.pane-head`'s wrap comment records at 1366px, one column narrower. */
-  .det-ctl{flex:0 0 auto; display:flex; align-items:center; gap:8px;
-    padding:8px 12px; border-bottom:1px solid var(--v-line)}
+  /* THE `Armed` CHIP AND ITS ROW ARE GONE (L4), and so are `.chip` / `.btnchip`
+     with them — the only two elements wearing either were that chip. A duplicate
+     control for a gate the dock already switches is two places to disagree about
+     one setting (rule 35's family), and the honest replacement for a control is
+     not a quieter control: it is the state line that was always beside it.
+     `.det-ctl` went the same way. A row that held two things and now holds one is
+     a loose fragment, so the microphone sits on the panel head instead. */
   /* WHAT THE GATE IS DOING — and it reads differently when it is broken. Grey
-     until Relay is genuinely armed and listening; emerald when it is, which is
-     the same green the Armed chip beside it already uses. Never amber: nothing
-     about a gate's readiness is on air. */
-  .det-meta{flex:0 0 auto; font-size:var(--v-fs-fig); letter-spacing:.08em; text-transform:uppercase;
+     until Relay is genuinely armed and listening; emerald when it is. Never
+     amber: nothing about a gate's readiness is on air. It is the LAST thing
+     allowed to shrink on this head — `min-width:0` and an ellipsis rather than
+     `flex:0 0 auto`, because in a 286px column the head now carries a name, this
+     line and a button, and the one that must survive is the one that says
+     whether the AI is listening at all. */
+  .det-meta{flex:0 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis;
+    white-space:nowrap;
+    font-size:var(--v-fs-fig); letter-spacing:.08em; text-transform:uppercase;
     color:var(--v-faint)}
   .det-meta.on{color:var(--v-emerald)}
 
@@ -2522,7 +2703,7 @@
   /* ── accessibility ─────────────────────────────────────────────────────── */
   .take:focus-visible,.rk:focus-visible,.slide:focus-visible,
   .act:focus-visible,
-  .mini:focus-visible,.ibtn:focus-visible,.btnchip:focus-visible,
+  .mini:focus-visible,.ibtn:focus-visible,
   .reh-end:focus-visible{outline:2px solid var(--v-amber); outline-offset:2px}
   @media (prefers-reduced-motion:reduce){
     .reh-dot{animation:none}

@@ -159,32 +159,78 @@ describe('a congregation screen applies an override WITH content, never on its o
   });
 });
 
-describe('the picker gives way and the panic control does not', () => {
-  it('is removed below 1180px rather than pushing Emergency Stop around', () => {
-    // A panic control lives at a fixed screen corner an operator hits without
-    // reading. The negotiable control is the one that disappears — and it must
-    // disappear at the SAME width the wordmark tag does, or a narrow console has
-    // two rules about itself that can disagree.
-    const block = CSS.slice(CSS.indexOf('X1 · THE TRANSITION CONTROL'));
-    expect(block).toMatch(/@media \(max-width:1180px\)\{ \.xfade\{ display:none; \} \}/);
-    // The middle rung: the caption goes before the control does, and what it said
-    // has to survive somewhere a hover and a screen reader can still reach it.
-    expect(block).toMatch(/@media \(max-width:1400px\)\{ \.xcap\{ display:none; \} \}/);
-    const APP = readFileSync(resolve(src, 'App.svelte'), 'utf8');
-    expect(APP).toMatch(/aria-label="Slide transition"/);
-    expect(APP).toMatch(/aria-label="Transition duration"/);
-    // `flex:0 0 auto` so it never grows into the lamps or the panic control.
-    expect(block).toMatch(/\.xfade\{[^}]*flex:0 0 auto/);
-    expect(block).toMatch(/max-width:132px/);
+describe('L4 · the picker is in the take rack, and the take is never below it', () => {
+  const LIVE = readFileSync(resolve(src, 'lib/views/Live.svelte'), 'utf8');
+  const APP = readFileSync(resolve(src, 'App.svelte'), 'utf8');
+
+  // WHY THIS DESCRIBE CHANGED. The control used to share the right end of a 34px
+  // chrome bar with the screen lamps and Emergency Stop, so what had to be proved
+  // was that it disappeared before the panic control moved. It is now in Live's
+  // take rack, beside the transport whose look it changes, and the claim that
+  // replaces it is the same one in the new room: a picker may never sit between an
+  // operator's hand and the two controls that put content on a wall.
+  it('has left the chrome bar entirely, leaving no second copy behind', () => {
+    const chrome = APP.slice(APP.indexOf('<header class="topbar-v">'), APP.indexOf('</header>'));
+    expect(chrome).not.toContain('xfade');
+    expect(chrome).not.toContain('Slide transition');
+    // And nothing in the shell still drives it. A picker that relocated but left
+    // its command behind is the "two authorities" defect one level down.
+    expect(APP).not.toContain('setLiveTransition');
+    expect(APP).not.toContain('TRANSITIONS');
+    // `loadLiveTransition` STAYS in the shell's mount, deliberately: the override
+    // is a backend fact every surface reads, including the five workspaces that
+    // draw no picker, and a console reopened mid-service must not disagree with
+    // screens that are already crossfading (rule 35).
+    //
+    // COMMENTS STRIPPED. The first version of this line matched the whole file,
+    // and the paragraph three lines above this one contains the call verbatim —
+    // so commenting the real call out left the assertion passing over a shell
+    // that no longer read the override at all. Only the code is the claim.
+    const code = APP.replace(/\/\/.*$/gm, '').replace(/<!--[\s\S]*?-->/g, '');
+    expect(code).toMatch(/loadLiveTransition\(\)/);
+  });
+
+  it('is the LAST band in the rack, under TAKE and under the arrows', () => {
+    const rack = LIVE.slice(LIVE.indexOf('<aside class="rack">'), LIVE.indexOf('</aside>'));
+    expect(rack).toContain('aria-label="Slide transition"');
+    expect(rack).toContain('aria-label="Transition duration"');
+    // The order is the claim. TAKE and `Next` are what a hurried hand reaches for
+    // without reading; a dropdown above either of them is a dropdown that gets
+    // opened by mistake in front of a congregation.
+    expect(rack.indexOf('>TAKE<')).toBeLessThan(rack.indexOf('rk-x'));
+    expect(rack.indexOf('Next ›')).toBeLessThan(rack.indexOf('rk-x'));
+  });
+
+  it('cannot grow tall enough to push the take out of the rack', () => {
+    // The rack is `align-self:start` and each band pads itself; the two selects
+    // are STACKED at a fixed 22px rather than laid across a 118px column, which
+    // is what keeps the band's height a constant rather than a function of the
+    // longest option label.
+    const style = LIVE.slice(LIVE.indexOf('<style>'));
+    expect(style).toMatch(/\.rack\{[^}]*align-self:start/);
+    expect(style).toMatch(/\.rk-x \.xpick\{[^}]*width:100%[^}]*height:22px/);
   });
 
   it('does not claim a colour the law has already spoken for', () => {
     // amber = on air, amethyst = rehearsal, cyan = a guess, grey = cued. An
     // override in force is none of those four, so it says so with the accent line
     // and never borrows a state colour it is not entitled to.
-    const block = CSS.slice(CSS.indexOf('X1 · THE TRANSITION CONTROL'));
-    const rules = block.replace(/\/\*[\s\S]*?\*\//g, '');
+    const style = LIVE.slice(LIVE.indexOf('<style>'));
+    const band = style.slice(style.indexOf('  .rk-x .xcap{'), style.indexOf('  .ibtn{'));
+    const rules = band.replace(/\/\*[\s\S]*?\*\//g, '');
     expect(rules).not.toMatch(/--v-amber|--v-amethyst|--v-cyan/);
-    expect(rules).toMatch(/\.xfade\.on \.xpick\{ border-color:var\(--v-accent-line\)/);
+    expect(rules).toMatch(/\.rk-x\.on \.xpick\{border-color:var\(--v-accent-line\)/);
+  });
+
+  it('left no dead rule behind it in the shared stylesheet', () => {
+    // A block in `app.css` that no element matches any more is the thing the next
+    // agent reads and believes. The X1 heading survives as a tombstone that says
+    // where the control went; the rules did not.
+    const block = CSS.slice(CSS.indexOf('X1 · THE TRANSITION CONTROL'));
+    const next = block.indexOf('B1 · ONE BUTTON');
+    const x1 = block.slice(0, next === -1 ? undefined : next);
+    expect(x1).not.toMatch(/\.xfade\{/);
+    expect(x1).not.toMatch(/@media \(max-width:1180px\)/);
+    expect(x1).toMatch(/MOVED/);
   });
 });

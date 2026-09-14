@@ -1133,44 +1133,19 @@ input[type="checkbox"]{ accent-color:var(--v-accent); }
   color:var(--v-amber); box-shadow:inset 0 0 0 1px rgba(255,163,26,.14); }
 
 /* ══════════════════════════════════════════════════════════════════════════
-   X1 · THE TRANSITION CONTROL (docs/REBRAND.md §8 · DECISIONS §84)
-   One block at the end of the file, per the wave-3 preamble, so a collision
-   with another agent's block resolves by moving these lines whole.
+   X1 · THE TRANSITION CONTROL — MOVED (L4)
+   The picker and its duration left this bar for Live's take rack, beside the
+   transport whose look they change (the operator's instruction, and it is the
+   better home: nothing about a transition is a fact about the room). Its rules
+   moved with it, into `views/Live.svelte`'s scoped stylesheet, rather than
+   staying here as a block no element matches — a dead rule in a shared file is
+   the thing the next agent reads and believes.
 
-   IT GIVES WAY AND NOTHING ELSE DOES. This control shares the right end of a
-   34px bar with the screen lamps and Emergency Stop. `flex:0 0 auto` plus a
-   capped select width means it cannot grow into either, and below 1180px it is
-   removed entirely — a panic control lives at a fixed corner an operator hits
-   without reading (rule 15, DECISIONS §20), so the negotiable control is the
-   one that disappears. Same breakpoint the wordmark tag uses, deliberately:
-   one narrow-console rule, not two that can disagree.
+   What did NOT move: `resolveTransition` is still the one ranking (DECISIONS
+   §84), `loadLiveTransition()` is still called once in the shell's mount, and
+   neither panic control passes through any of it. `transitionoverride.test.js`
+   follows the control to Live and holds the same two claims there.
    ══════════════════════════════════════════════════════════════════════════ */
-.xfade{ display:inline-flex; align-items:center; gap:6px; flex:0 0 auto; }
-/* The label is quiet: it names a control, it does not report a state, and the
-   one thing in this bar allowed to be loud is the amber that says a
-   congregation is looking at something. */
-.xcap{ font-size:var(--v-fs-fig); letter-spacing:.09em; text-transform:uppercase;
-  color:var(--v-faint); white-space:nowrap; }
-.xfade .xpick{ height:22px; padding:0 20px 0 7px; font-size:10.5px;
-  background-position:calc(100% - 11px) 10px,calc(100% - 8px) 10px;
-  max-width:132px; }
-.xfade .xdur{ max-width:76px; }
-/* AN OVERRIDE IS IN FORCE, AND THAT IS VISIBLE WITHOUT READING THE DROPDOWN.
-   Deliberately NOT amber (on air), amethyst (rehearsal) or cyan (a guess) — the
-   colour law is fixed and this is none of those three. A brighter border and a
-   brighter text colour say "somebody chose this" without claiming a state. */
-.xfade.on .xpick{ border-color:var(--v-accent-line); color:var(--v-txt); }
-.xerr{ font-size:var(--v-fs-fig); letter-spacing:.06em; text-transform:uppercase;
-  color:var(--v-rose); border:1px solid var(--v-rose); border-radius:var(--v-r-sm);
-  padding:1px 5px; white-space:nowrap; }
-/* A LADDER, NOT A SWITCH. Between 1180 and 1400 the caption goes and the two
-   selects stay: the mode select's own text says what it is ("Fade through
-   black"), and both carry the caption verbatim in `title` and `aria-label`, so
-   nothing is lost that a hover or a screen reader cannot recover. Below 1180 the
-   whole control goes, because at that width the only things left in this bar
-   should be the ON AIR ladder, the lamps and the panic control. */
-@media (max-width:1400px){ .xcap{ display:none; } }
-@media (max-width:1180px){ .xfade{ display:none; } }
 
 /* ══════════════════════════════════════════════════════════════════════════
    B1 · ONE BUTTON, EVERYWHERE (docs/REBRAND.md §1 — the control metrics)
@@ -1229,3 +1204,42 @@ button, [role="button"]{ font-family:var(--f-body); font-size:var(--v-fs-b2); }
   .r-btn:active:not(:disabled),
   .r-cbtn:active:not(:disabled){ transform:none; filter:brightness(.88); }
 }
+
+
+/* ══════════════════════════════════════════════════════════════════════════
+   L4 · THE KEYS LEGEND (the run surface brief, item 5)
+   One block at the end of the file, per the wave-3 preamble, so a collision
+   with another agent's block resolves by moving these lines whole.
+
+   The short form of the cheatsheet, always on the screen, in the chrome slot
+   the transition picker vacated. `App.svelte` renders it from `liveShortcuts`,
+   so it can only ever show a key that is bound AND registered on the surface
+   the operator is looking at — these rules decide nothing about WHICH keys
+   appear, only how much of the strip survives a narrow console.
+   ══════════════════════════════════════════════════════════════════════════ */
+.keyleg{ display:inline-flex; align-items:center; gap:9px; flex:0 1 auto;
+  min-width:0; overflow:hidden; }
+.keyleg .kl{ display:inline-flex; align-items:center; gap:3px; flex:0 0 auto;
+  white-space:nowrap; }
+/* THE CHROME'S OWN KEYCAP. Deliberately not `.cheat kbd`: that one is 10.5px on
+   a dialog with room to breathe, and this bar is 34px. Same shape, one step
+   down — and the step is the TOKEN, not the number it happens to equal, which
+   is what wave 4's sweep is for (`workspacegrammar.test.js`). */
+.keyleg kbd{ display:inline-block; font-family:var(--f-mono); font-size:var(--v-fs-cap);
+  line-height:1; padding:3px 5px; border-radius:var(--v-r-sm);
+  background:var(--v-surf2); border:1px solid var(--v-line2);
+  border-bottom-width:2px; color:var(--v-dim); }
+/* The gloss is quieter than the cap. A legend is a reference, not a state: the
+   colour law's four tokens are spoken for elsewhere and none of them is spent
+   here, so nothing in this strip can be mistaken for a claim about a wall. */
+.keyleg .klw{ font-size:var(--v-fs-fig); letter-spacing:.07em;
+  text-transform:uppercase; color:var(--v-faint); }
+/* A LADDER, AND THE PANIC CONTROL IS NEVER ON IT. Emergency Stop sits at a fixed
+   corner an operator hits without reading (rule 15, DECISIONS §20), so the
+   legend is what gives way — first the context keys (A · D · → · ← · /, which
+   belong to whichever surface is mounted), then the always-on three. The same
+   two widths the transition picker used, deliberately: one narrow-console rule,
+   not two that can disagree. Nothing is lost that `?` cannot recover, which is
+   why this may shrink at all. */
+@media (max-width:1400px){ .keyleg .kl.ctx{ display:none; } }
+@media (max-width:1180px){ .keyleg{ display:none; } }
