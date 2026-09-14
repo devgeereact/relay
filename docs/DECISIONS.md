@@ -3844,3 +3844,48 @@ as blacking out a keyed channel, which `isKeyedTemplate` exists to prevent.
 `cameraplate.test.js` holds the boundary from the other side: `Output.svelte`, `Stage.svelte`,
 `TemplateRender.svelte` and `TemplatePreviewOverlay.svelte` must render no plate, watched to fail by
 putting one in `Output.svelte`.
+
+---
+
+## 83. The name is the card's identity, so it is the last thing allowed to shrink (2026-09-14)
+
+**Context.** Rendered at 1600x1000 against the prototype, a Templates gallery card's name came out
+as `Cla…`, `Wo…` and `L.` — three characters of "Classic Serif". Four things shared the caption row:
+the name, a mono role tag, a `Scripture · 16:9` sub-line, and a pill naming the content look the
+template is bound to. The thumbnail already carried a `16:9` badge, so the aspect was stated twice
+and the kind was stated twice, in a row 194px wide.
+
+**It is arithmetic, not taste.** At the narrowest column the grid admits (`minmax(210px, 1fr)`, less
+16px of padding) the row had 194px. `.tg-role` claimed `max-width:42%`, `.tg-usedfor` claimed
+`max-width:40%`, the star and the ⋮ menu 45px, three gaps 21px — **225px of claims inside 194px**.
+Every one of them was `flex:0 0 auto`. The name was the only flexible item, so the name paid the
+entire shortfall: **−31.1px**, which is a name rendered as an ellipsis. `templatecard.test.js`
+reproduces that exact figure with the rule reverted.
+
+**The decision, and it is an ordering rather than a size.** The name holds a floor
+(`min-width:96px`, wider than "Worship Lyrics", the longest name a fresh install ships) and the role
+tag beside it becomes `flex:0 1 auto; min-width:0` so the KIND ellipses first. An operator can read
+the role in full in the rail, in the inspector and in that element's own tooltip; there is nowhere
+else on the surface that a template's name is stated. The `Scripture · 16:9` sub-line is deleted
+rather than moved — both of its facts were already on the card.
+
+**Two registers, separated by words rather than colour.** The derived ROLE (§78) and the bound
+content LOOK are different questions, and rendered as two identical neutral uppercase pills side by
+side they read as one fact printed twice — which is what the render showed. The look moves to its
+own line beneath the row, the prototype's `.roletag`, and says **Used for** in words. Colour could
+not have separated them: every colour that carries a promise is already spoken for (CLAUDE.md rule
+18), steel blue included.
+
+**Why no existing instrument saw it.** `qa-inventory` reported 0 handlerless buttons and 0 unnamed
+controls, and was right. The mount tests read `.tg-name`'s `textContent`, which is the full name
+whatever the box does to it on screen — a caption that clips is invisible to a test that reads text.
+So the new test prices the row from the stylesheet's own declarations instead: an item that can
+yield (`flex-shrink` other than 0 with `min-width:0`) claims nothing against the floor, because
+flexbox takes the space out of it; an item that cannot claims its declared max-width, or its own
+longest string. **The first version of that test passed over the original defect** — it priced a
+single card, and that card happened to be the one with no content look bound, so the extra pill it
+was written to catch was on a different card. It prices every card now and asserts the worst.
+
+**What this does NOT change.** The role register (§78), the look register `CONTENT_KINDS`, the one
+writer `setContentTemplate` (§25), and the object strip and Used for the gallery inspector gained in
+§80 are all untouched. Nothing here reaches an output.
