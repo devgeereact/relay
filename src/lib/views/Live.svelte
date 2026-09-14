@@ -24,6 +24,10 @@
    * through a mounted plan.
    */
   const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const FULL_MONTHS = [
+    'January', 'February', 'March', 'April', 'May', 'June',
+    'July', 'August', 'September', 'October', 'November', 'December',
+  ];
   export function shortDate(value) {
     const s = typeof value === 'string' ? value.trim() : '';
     const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
@@ -31,6 +35,69 @@
     const month = MONTHS[Number(m[2]) - 1];
     if (!month) return s;
     return `${Number(m[3])} ${month}`;
+  }
+
+  /**
+   * DOES THE PLAN'S OWN NAME ALREADY SAY THIS DATE?
+   *
+   * Measured on a render: the head read `SLIDES · SUNDAY MORNING · 7 SEPTEMBER ·
+   * 7 SEP` — the plan's title carries the date, and the head then printed it
+   * again in a second form. One date said twice in two notations is worse than
+   * either alone: it reads as two dates until you stop and compare them, on the
+   * head an operator glances at mid-service.
+   *
+   * The date CAP is not dropped outright, because a plan named `Sunday morning`
+   * with no date in it needs one — which is exactly the prototype's `SLIDES ·
+   * SUNDAY MORNING · 14 SEP`. It is dropped only when the name has already said
+   * it, and the test for that is containment of a form this app would print or a
+   * person would type: `14 Sep`, `14 September`, `14th September`, `2026-09-14`.
+   *
+   * A NAME THAT MERELY MENTIONS A MONTH IS NOT A MATCH. `September series` beside
+   * a plan dated the 14th is two different facts, and the day number is what
+   * keeps them apart — so the day is always required, never the month alone.
+   *
+   * @param {string} title the plan's own name
+   * @param {string} isoDate its `plan_date`, as the backend stores it
+   */
+  /**
+   * WHAT A CUED PLAN SLIDE IS CALLED — a cue's name and its slide's, joined ONCE.
+   *
+   * This was `` `${cue} · ${slide}` ``, and a one-slide cue names its only slide
+   * after itself: measured on a render, the preview head read `WELCOME & NOTICES
+   * · WELCOME & NOTICES`. A separator between a thing and itself invents a second
+   * fact out of one, on the pane that says what is about to go on a wall.
+   *
+   * Both names are kept when they are two names — `Amazing Grace · Verse 2` is
+   * the one an operator needs — and the comparison is loose about case and
+   * surrounding space only, never about the words themselves.
+   */
+  export function cueLabel(cue, slide) {
+    const a = String(cue ?? '').trim();
+    const b = String(slide ?? '').trim();
+    if (!b || a.toLowerCase() === b.toLowerCase()) return a;
+    if (!a) return b;
+    return `${a} · ${b}`;
+  }
+
+  export function dateStatedIn(title, isoDate) {
+    const t = typeof title === 'string' ? title.toLowerCase() : '';
+    const iso = typeof isoDate === 'string' ? isoDate.trim() : '';
+    if (!t || !iso) return false;
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+    if (!m) return t.includes(iso.toLowerCase());
+    const idx = Number(m[2]) - 1;
+    const short = MONTHS[idx];
+    const full = FULL_MONTHS[idx];
+    if (!short) return t.includes(iso.toLowerCase());
+    const day = Number(m[3]);
+    const days = [String(day), `${day}st`, `${day}nd`, `${day}rd`, `${day}th`, m[3]];
+    for (const d of days) {
+      for (const mon of [short, full]) {
+        if (t.includes(`${d} ${mon}`.toLowerCase())) return true;
+        if (t.includes(`${mon} ${d}`.toLowerCase())) return true;
+      }
+    }
+    return t.includes(iso.toLowerCase());
   }
 </script>
 
@@ -891,7 +958,7 @@
     : dets[0]
       ? dets[0].reference
       : previewCue
-        ? `${previewCue.item.label} · ${previewSlide?.label ?? ''}`.trim()
+        ? cueLabel(previewCue.item.label, previewSlide?.label)
         : '';
   /** The take. Never a new code path — the same accept/fire the keys already run. */
   async function take() {
@@ -1020,7 +1087,25 @@
   // `SLIDES · <plan name> · <date>` (docs/REBRAND.md §2). The date is only a fact
   // about a PLAN — a chapter and a song do not have one — so it is empty for
   // every other source rather than being invented.
-  $: gridSubtitle = grid.source === 'plan' ? shortDate(openPlan?.plan_date) : '';
+  //
+  // …AND NOT WHEN THE NAME HAS ALREADY SAID IT (`dateStatedIn`). A plan called
+  // `Sunday morning · 7 September` printed the date twice, in two notations, on
+  // one line.
+  $: gridSubtitle =
+    grid.source === 'plan' && !dateStatedIn(grid.title, openPlan?.plan_date)
+      ? shortDate(openPlan?.plan_date)
+      : '';
+
+  /**
+   * What a cell's kind chip says — the content kind, in the word `plan.js`'s one
+   * taxonomy already holds for it.
+   *
+   * `ctype` is the CONTENT kind `slidegrid.js` puts on every cell, which is what
+   * a chip over a rendered slide is answering. An empty or unrecognised one goes
+   * through `typeOf`'s `unknown` row, which says UNKNOWN and claims nothing —
+   * never a fallback to scripture, the one kind the AI may fire by itself.
+   */
+  const kindOf = (c) => typeOf(c?.ctype).label;
 
   /**
    * Fire one grid cell.
@@ -1144,13 +1229,36 @@
   //
   // `verseRepeatCount` swallows by contract: a badge that fails to load costs the
   // operator nothing they cannot see for themselves.
+  //
+  // IT IS ASKED ABOUT A REFERENCE, NEVER ABOUT A DISPLAY LABEL. It used to be
+  // handed `previewLabel`, which for a plan cue is a composed name — so a NOTICE
+  // called `Welcome & Notices` was put to `verseRepeatCount` and came back with a
+  // count, and the head read `shown 2×` over a cue that is not a verse and has no
+  // reference to have repeated. The badge's own sentence is "a preacher circling
+  // back to a verse is normal"; a claim about a notice is a different claim, made
+  // by a question nobody asked.
+  //
+  // `previewRef` is the REFERENCE the take would fire, or null:
+  //   · a grid cell   `reference`, which `slidegrid.js` sets for verse cells and
+  //                   leaves null for plan and song cells — the distinction is
+  //                   already made there and is not re-derived here
+  //   · a detection   always a reference
+  //   · a plan cue    only when the cue is scripture, where `slidesOf` puts the
+  //                   reference in the slide's own label
+  $: previewRef = gridPreview
+    ? (gridPreview.reference ?? null)
+    : dets[0]
+      ? (dets[0].reference ?? null)
+      : previewCue && previewCue.item?.cue_type === 'scripture'
+        ? (previewSlide?.label ?? null)
+        : null;
   let previewRepeats = 0;
   let repeatsFor = null;
-  $: if (previewLabel !== repeatsFor) {
-    repeatsFor = previewLabel;
+  $: if (previewRef !== repeatsFor) {
+    repeatsFor = previewRef;
     previewRepeats = 0;
-    if (previewLabel) {
-      const asked = previewLabel;
+    if (previewRef) {
+      const asked = previewRef;
       verseRepeatCount(asked).then((n) => {
         // A slow lookup must not label the NEXT verse with the last one's count.
         if (repeatsFor === asked) previewRepeats = n;
@@ -1475,7 +1583,7 @@
              mono run — `14 · SINGLE CLICK GOES TO AIR · DOUBLE CLICK PREVIEWS` —
              and the count is the first thing in it because "how many" is what an
              operator is looking for when they glance here mid-service. -->
-        <span class="sg-hint r-mono" title="A single click sends the slide to the programme; a double click only previews it."><b class="cnt">{grid.cells.length}</b> · single click goes to air · double click previews</span>
+        <span class="sg-hint r-mono" title="A single click sends the slide to the programme; a double click only previews it."><b class="cnt">{grid.cells.length}</b><span class="sg-say">{' · single click goes to air · double click previews'}</span></span>
         {#if openPlan}
           <button class="mini ghost" on:click={leave} title="Stop running {openPlan.title}">Close plan</button>
         {/if}
@@ -1538,9 +1646,22 @@
                     {#if cellTemplate(c) && isKeyedTemplate(cellTemplate(c))}<CameraPlate />{/if}
                     <TemplateRender template={cellTemplate(c) ?? {}} content={cellContent(c)} />
                   {/if}
-                  <!-- The KIND, top-left, as the prototype draws it: a cell is
-                       recognised by its shape and confirmed by its tag. -->
-                  {#if c.tag}<span class="sg-tag r-mono">{c.tag}</span>{/if}
+                  <!-- THE KIND, TOP-LEFT, IN WHOLE WORDS — as the prototype
+                       draws it: `NOTICE`, `SCRIPTURE`, `SONG`, `MEDIA`.
+                       It used to print the cell's `tag`, which for everything
+                       but a song section is an abbreviation `plan.js::slidesOf`
+                       invents for the plan rail's narrow chip — `SCR`, `NOTE`
+                       and, worst of the three, `BG`, which names nothing an
+                       operator would recognise. `plan.js`'s own table already
+                       records that a truncation is "a name nobody chose"; the
+                       rule applies here too, and the table has the words to fix
+                       it. `typeOf` is the ONE door onto it (rule 36), so a cell
+                       and a running-order row cannot come to disagree about what
+                       a cue is, and an unknown `cue_type` reads UNKNOWN rather
+                       than being presented as scripture. Nothing is lost: the
+                       section or the verse an operator wants is in the cell's
+                       own label, one line below. -->
+                  <span class="sg-tag r-mono">{kindOf(c)}</span>
                   <!-- The word, not only the colour — amber alone is not a label.
                        `Live`, as the prototype plates it (L2): the chip is 8px in
                        a 158px cell, and at that size the one-word form is read
@@ -2143,7 +2264,14 @@
      lands on whatever the template happens to be painting there. `--v-surf3` is
      not a legible ground for dim text (tokencontrast.test.js), so the chip
      carries its own black and near-white. */
+  /* A WHOLE WORD, AND AN ELLIPSIS IF IT EVER WILL NOT FIT. `max-width` is a share
+     of the thumbnail rather than a fixed figure, so the rule holds at whatever
+     width the auto-fill grid gives a cell. A truncated word is honest and is
+     recoverable from the label below; an invented abbreviation is neither, which
+     is what `SCR`, `NOTE` and `BG` were. */
   .sg-tag{position:absolute; left:5px; top:5px; padding:2px 5px; z-index:2;
+    max-width:calc(100% - 10px); overflow:hidden; text-overflow:ellipsis;
+    white-space:nowrap;
     border-radius:2px; background:rgba(0,0,0,.62); color:#cfd6e2;
     font-size:8px; font-weight:600; letter-spacing:.08em; text-transform:uppercase}
   .sg-air,.sg-prev{position:absolute; right:5px; top:5px; padding:2px 5px; z-index:2;
@@ -2165,13 +2293,24 @@
     text-transform:uppercase; color:var(--v-dim)}
   /* WHAT A PRESS DOES, as ONE run (L2). `min-width:0` and the ellipsis matter:
      this is the first thing allowed to give way when the head runs out of room,
-     because the pane's NAME and the view controls both have to survive a narrow
-     window and this sentence is carried verbatim in `title` besides. */
+     because the pane's NAME, `Close plan` and the view controls all have to
+     survive a narrow window and this sentence is carried verbatim in `title`
+     besides — and on every cell's own `title` under the pointer. */
   .sg-hint{flex:0 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis;
     white-space:nowrap; font-size:10px; letter-spacing:.08em;
     text-transform:uppercase; color:var(--v-faint)}
-  /* The count LEADS the line and is the one part of it that is a figure. */
-  .sg-hint .cnt{font-weight:700; color:var(--v-dim)}
+  /* The count LEADS the line and is the one part of it that is a figure. It is
+     also the part that never goes: a count is a FACT about the grid, and the
+     sentence beside it is teaching copy read once. They are separate spans for
+     exactly that reason — the ladder below hides the sentence and keeps the
+     figure, which a single span could not do. */
+  .sg-hint .cnt{flex:0 0 auto; font-weight:700; color:var(--v-dim)}
+  /* NOTHING IN THIS HEAD MAY BE SQUEEZED OUT BY THE SENTENCE. `Close plan` stops
+     a plan from running and the view controls are real features; measured at
+     2000px the head carries five things and fits, and the two narrower rungs the
+     integrator asked about are answered by the ladder at the foot of this file
+     rather than by hoping flexbox picks the right victim. */
+  .sg-head .mini{flex:0 0 auto}
 
   /* ── 3 · detection ─────────────────────────────────────────────────────── */
   .chip{display:inline-flex; align-items:center; gap:6px; flex:0 0 auto; padding:4px 9px;
@@ -2328,6 +2467,19 @@
   @media (max-width:1400px){
     .con-top{grid-template-columns:1fr 104px 1fr}
     .desk{grid-template-columns:180px minmax(0,1fr) 250px}
+    /* A LADDER, NOT A SWITCH — the same shape as `app.css`'s `.xcap`, and for the
+       same reason. The slides head carries five things: the pane's name, the
+       count, this sentence, `Close plan` and the view controls. Four of them are
+       facts or controls; the sentence is teaching copy an operator reads once,
+       and it is the only one that can go without anything becoming unreachable.
+       Measured at 2000px all five fit; below this the sentence yields FIRST and
+       on purpose, rather than flexbox choosing a victim — which at 1366 and 1024
+       would have wrapped `Close plan` onto a second row or pushed it under the
+       fold. It is still on the hint's own `title`, and on every cell's `title`
+       under the pointer, so nothing is lost that a hover or a screen reader
+       cannot recover. The COUNT stays at every width: it is a fact about the
+       grid, not an explanation of it. */
+    .sg-say{display:none}
   }
   /* THE INSPECTOR GOES UNDER, NEVER AWAY. The prototype hides its right column
      below 1240px; Relay may not, because the column holds the AI's claims and
