@@ -381,7 +381,19 @@
     fitRaf = 0;
     if (!stageEl || !visible) return; // don't reflow an offscreen render
     const sig = fitSig();
-    if (sig === lastFitSig) return;
+    if (sig === lastFitSig) {
+      // The FIT is still the right fit. The VERDICT may not be: something told us
+      // the geometry moved, and the verdict is about the geometry. Re-take it
+      // with a fresh budget — a resize is a new situation, not a continuation of
+      // the last one's retries.
+      if (recheck) {
+        recheck = false;
+        refitSig = '';
+        verifyFit(sig);
+      }
+      return;
+    }
+    recheck = false;
     lastFitSig = sig;
     if (layered) fitLayers();
     else fitText();
@@ -417,6 +429,37 @@
   /** How far the last fit had to shrink, 0–1. Half of the verdict; `verifyFit`
    *  adds the other half (does it actually fit) and reports both, once. */
   let lastFitScale = 1;
+  // ── A VERDICT IS ONLY AS GOOD AS THE MOMENT IT WAS TAKEN ───────────────────
+  //
+  // `verifyFit` — and therefore `report` — is reachable ONLY from `runFit`, and
+  // `runFit` early-returns whenever `fitSig()` is unchanged. So the question "is
+  // what I painted actually fitting?" was gated behind the same signature that
+  // decides whether to re-FIT, and that signature cannot see this defect: it is
+  // built from the stage's integer clientWidth/clientHeight and each layer's
+  // stored `w,h,size` plus its text length, and not one of those moves when the
+  // painted content outgrows its box.
+  //
+  // So a render that fitted cleanly while its pane was still settling reported
+  // `clipped: false`, the box then went over, and nothing ever looked again. That
+  // is the console the lead measured at 2000x1175 with `Romans 8:28` on air: 207px
+  // of content in a 174px box inside `.mon.prog`, the first line sliced through
+  // the middle, and neither warning anywhere in `document.body.innerText`. The
+  // instrument was not computing the wrong answer — it had stopped being asked.
+  //
+  // Two triggers re-take a settled verdict, and neither costs anything per frame:
+  //   · a RESIZE, which is the event that says the geometry moved underneath it.
+  //     It already called `scheduleFit`, and `runFit` already threw it away when
+  //     the rounded signature had not changed — which is exactly a pane settling
+  //     by less than a pixel;
+  //   · ONE late re-look after a verdict settles, for a layout that resolves a
+  //     beat after the frame `verifyFit` samples. One per signature, never a
+  //     loop: polling would mean a forced reflow every frame, which is the
+  //     regression the fit gating exists to prevent (a countdown at 4 Hz, a
+  //     Library grid of a dozen renders).
+  const LATE_CHECK_MS = 250;
+  let recheck = false;
+  let lateDoneFor = '';
+  let lateTimer = 0;
   function fitBoxes() {
     if (!stageEl) return [];
     return [
@@ -518,6 +561,18 @@
       const over = overflowing();
       if (!needsRefit({ fontReady: !stale, overflowing: over, tries: refitTries, max: MAX_REFIT })) {
         report(over);
+        // One late re-look per settled verdict, for a layout that resolves a beat
+        // after this frame. The guard is what stops it becoming a poll: the
+        // second time this signature settles, `lateDoneFor` already names it and
+        // nothing more is scheduled.
+        if (lateDoneFor !== sig) {
+          lateDoneFor = sig;
+          clearTimeout(lateTimer);
+          lateTimer = setTimeout(() => {
+            refitSig = '';
+            verifyFit(sig);
+          }, LATE_CHECK_MS);
+        }
         return;
       }
       refitTries += 1;
@@ -548,7 +603,13 @@
   onMount(() => {
     if (typeof ResizeObserver !== 'undefined' && stageEl) {
       // A resize genuinely changes the fit — always re-fit (coalesced to a frame).
-      ro = new ResizeObserver(scheduleFit);
+      // A resize genuinely changes the fit — and when it does NOT change the
+      // (integer, rounded) signature, it still changes the verdict, so it also
+      // asks for that to be re-taken. See `recheck`.
+      ro = new ResizeObserver(() => {
+        recheck = true;
+        scheduleFit();
+      });
       ro.observe(stageEl);
     }
     // Defer the (reflow-heavy) fit until this render is actually on screen. The
@@ -594,6 +655,7 @@
   onDestroy(() => {
     ro?.disconnect();
     io?.disconnect();
+    clearTimeout(lateTimer);
     if (fitRaf && typeof cancelAnimationFrame !== 'undefined') cancelAnimationFrame(fitRaf);
   });
 

@@ -385,6 +385,123 @@ describe('a fit that still clips says so', () => {
     expect(calls).toBeGreaterThan(0);
   });
 
+  it('looks again when the box goes bad AFTER the verdict has settled', async () => {
+    // ROUND 3, AND IT IS ONE CAUSE FOR BOTH QUESTIONS.
+    //
+    // `verifyFit` — and therefore `report` — is reachable ONLY from `runFit`, and
+    // `runFit` early-returns whenever `fitSig()` is unchanged. So the check that
+    // asks "is what I painted actually fitting?" is gated on the same signature
+    // that decides whether to re-fit. Once a verdict has settled, nothing looks
+    // again until that signature moves — and it CANNOT move for this defect:
+    // `fitSig` is built from the stage's integer clientWidth/clientHeight and
+    // each layer's stored `w,h,size` plus its text length, and not one of those
+    // changes when the painted content outgrows its box.
+    //
+    // So a render that fitted cleanly while its pane was still settling reports
+    // `clipped: false`, the box then goes over, and the last thing Live was ever
+    // told is that everything fits. That is the console the lead measured at
+    // 2000x1175 with `Romans 8:28` on air: `.mon.prog` holding 207px of content
+    // in a 174px box, the first line sliced through the middle, and
+    // `document.body.innerText` carrying neither warning. The instrument was not
+    // computing the wrong answer — it had stopped being asked the question.
+    //
+    // TWO EARLIER THEORIES DIED HERE, both killed by probing before building:
+    // the retry budget being reset by a moving signature (it reports fine), and
+    // the binary search keeping an answer it never re-measured (it already lands
+    // on its floor when the measurement is consistently pessimistic).
+    let seen = [];
+    const el = mount(layered, SAMPLE, { onFit: (f) => seen.push(f) });
+    await settle(120); // a clean verdict is reached and reported
+    expect(seen.at(-1)?.clipped, 'it did not settle clean first').toBe(false);
+    clipBoxes(el); // ... and only NOW does the box turn out to be too small
+    await settle(900);
+    expect(
+      seen.at(-1)?.clipped,
+      'a box that went over after the verdict was never looked at again'
+    ).toBe(true);
+  });
+
+  it('and stops looking — a re-check is not a poll', async () => {
+    // The cost of this check is a forced reflow, which is why the fit is gated in
+    // the first place (a countdown ticking at 4 Hz and a Library grid of a dozen
+    // renders are both in this component's history). One late re-look per settled
+    // verdict, not a loop.
+    let calls = 0;
+    const el = mount(layered, SAMPLE, { onFit: () => (calls += 1) });
+    clipBoxes(el);
+    await settle(400);
+    const early = calls;
+    await settle(1200);
+    expect(calls - early, 'the re-check turned into a poll').toBeLessThanOrEqual(1);
+  });
+
+  it('a resize re-takes the verdict, even when the fit itself is unchanged', async () => {
+    // The one event that says "the geometry moved under you". It already calls
+    // `scheduleFit`, and `runFit` already threw it away whenever the rounded
+    // signature had not changed — which is exactly a pane settling by less than
+    // a pixel, the case this whole round is about.
+    const seen = [];
+    let fire = null;
+    const Real = globalThis.ResizeObserver;
+    globalThis.ResizeObserver = class {
+      constructor(cb) {
+        fire = cb;
+      }
+      observe() {}
+      disconnect() {}
+    };
+    try {
+      const el = mount(layered, SAMPLE, { onFit: (f) => seen.push(f) });
+      await settle(400);
+      expect(seen.at(-1)?.clipped).toBe(false);
+      clipBoxes(el);
+      seen.length = 0;
+      fire([]); // the pane settles; nothing about the FIT changes
+      await settle(600);
+      expect(seen.at(-1)?.clipped, 'a resize did not re-take the verdict').toBe(true);
+    } finally {
+      globalThis.ResizeObserver = Real;
+    }
+  });
+
+  it('reports even while the signature keeps moving under it', async () => {
+    // ROUND 3, AND THE REASON THE CONSOLE WAS SILENT. `report()` sat on the
+    // FAILURE branch of the retry budget — it ran only when `needsRefit` returned
+    // false, which happens only once `refitTries` reaches `MAX_REFIT`. And
+    // `verifyFit` resets that counter to zero whenever the signature differs from
+    // the one it last saw. On a still gallery card the signature never moves, the
+    // counter reaches two, and it reports — which is why the round-2 tests passed.
+    // On LIVE it moves constantly: `afterUpdate(scheduleFit)` runs on every store
+    // tick and `fitSig` folds in the stage's pixel width and height and every
+    // layer's text length, so a fired verse, a ticking clock layer or a pane
+    // settling by one pixel each reset the counter. The budget is never spent,
+    // `needsRefit` never returns false, and the box retries in silence for ever.
+    //
+    // Measured by the lead at 2000x1175 with `Romans 8:28` on air: `.mon.prog`
+    // holding a 174px box with 207px of content, the first line sliced through
+    // the middle, and `document.body.innerText` containing neither warning.
+    //
+    // So a settled verdict is now stated when it is known. The retry budget
+    // governs RETRYING, which is its job; it never governed reporting, and the
+    // one surface an operator watches all service is where that showed.
+    let seen = [];
+    const el = mount(layered, SAMPLE, { onFit: (f) => seen.push(f) });
+    clipBoxes(el);
+    // Keep the signature moving the way Live does — each of these changes a text
+    // length, which is one of the terms `fitSig` is built from.
+    const texts = ['Romans 8:28', 'And we know that all things work together', 'For God so loved'];
+    for (let i = 0; i < 6; i++) {
+      app.$set({ content: { ...SAMPLE, text: texts[i % texts.length], reference: `R ${i}` } });
+      await new Promise((r) => setTimeout(r, 70));
+    }
+    await settle(300);
+    expect(seen.length, 'a clipped box on a moving surface reported nothing at all').toBeGreaterThan(0);
+    expect(
+      seen.some((f) => f.clipped),
+      'it retried in silence instead of saying the words were being cut off'
+    ).toBe(true);
+  });
+
   it('Live turns a clip into words, and not into the shrink sentence', () => {
     // A clip and a shrink are different failures: one is "you cannot read this
     // from the back", the other is "you cannot read all of it from anywhere".
