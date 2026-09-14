@@ -779,7 +779,11 @@
      on anything that is not. Armed reads as a warning, not as a live state. */
   .lib-delmsg{ font-size:11px; color:var(--v-rose); word-break:break-word; margin-top:-8px; }
   .lib-del{ color:var(--v-rose); }
-  .lib-del.arm{ background:var(--v-rose); color:var(--v-ink); }
+  /* `--v-ink` was never defined, so this resolved to `unset` — and `color` is
+     inherited, so the ARMED half of a two-step delete drew --v-txt (#e8eaee) on
+     the red fill: 2.82:1, a WCAG AA failure on the one word an operator has to
+     read before a record goes. --v-inverse is the palette's ink and is 5.41:1. */
+  .lib-del.arm{ background:var(--v-rose); color:var(--v-inverse); }
   /* `r-mono` is gone: it now carries a humanised sentence, and monospace is what
      made the old raw-error dumps read like a crash to a volunteer. */
   .lib-detailerr{ font-size:12px; color:var(--v-rose); }

@@ -428,11 +428,22 @@ body{ overflow:hidden; text-rendering:optimizeLegibility; -moz-osx-font-smoothin
      input carries a real 18px box and the bar is drawn by the track
      pseudo-element.
 
+   · THE BROWSER GIVES A RANGE INPUT A MARGIN AND NOTHING HERE TOOK IT BACK.
+     Chromium's UA sheet sets `input[type=range]{ margin:2px; }`, which survives
+     `appearance:none`. So every slider in the product sat 2px inside the edge
+     its neighbours sat on: measured in the Theme editor, the three sliders ended
+     at x=1251 while the typeface select and all three colour wells ended at
+     x=1253 (and 871 vs 873 at a 900px viewport). Two pixels is invisible to
+     anyone reading the stylesheet and plainly wrong in a column — it is the same
+     class of defect as the seven-pixel-wide screen name, found the same way, by
+     rendering it. The vertical 2px was costing a dense 11-12px row four pixels
+     of height as well. Zeroed here, once, for every slider.
+
    A SECOND `input[type=range]` block later in this file would win on equal
    specificity and silently drop `--rp`, leaving a slider that paints half full
    at every value. `rangefill.test.js` refuses one. */
 .r-range, input[type=range]{ -webkit-appearance:none; appearance:none; width:100%; height:18px;
-  background:transparent; cursor:pointer; }
+  margin:0; background:transparent; cursor:pointer; }
 .r-range::-webkit-slider-runnable-track, input[type=range]::-webkit-slider-runnable-track{
   height:3px; border-radius:var(--v-r-round);
   background:linear-gradient(90deg,var(--v-sel) 0 var(--rp,50%),var(--v-surf3) var(--rp,50%) 100%); }

@@ -143,4 +143,17 @@ describe('app.css — one slider block, and it stays the only one', () => {
     // console lands on whatever is underneath it.
     expect(boxRules()[0].body).toMatch(/height:\s*18px/);
   });
+
+  it('takes back the margin the browser gives a range input', () => {
+    // Chromium's UA sheet sets `input[type=range]{ margin:2px; }` and
+    // `appearance:none` does NOT clear it. Every slider in the product therefore
+    // sat 2px inside the right edge its neighbours sat on — measured in the
+    // Theme editor at two viewports: sliders ended at x=1251 and x=871 while the
+    // select and the colour wells beside them ended at x=1253 and x=873.
+    //
+    // Two pixels cannot be seen by reading this stylesheet, which is exactly why
+    // it is asserted here rather than trusted: the same class of defect as the
+    // seven-pixel-wide screen name, and found the same way.
+    expect(boxRules()[0].body).toMatch(/(?:^|;)\s*margin:\s*0(?:px)?\s*(?:;|$)/);
+  });
 });

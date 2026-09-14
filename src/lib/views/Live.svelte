@@ -1891,7 +1891,12 @@
   .out-sw{font:inherit; font-size:10px; letter-spacing:.04em;
     padding:3px 8px; border-radius:var(--v-r-sm); cursor:pointer;
     background:transparent; color:var(--v-faint); border:1px solid var(--v-line)}
-  .out-sw:hover:not(:disabled){color:var(--v-txt); border-color:var(--v-txt-dim)}
+  /* `--v-txt-dim` was never defined. `border-color` is not inherited, so it fell
+     back to currentColor — which this rule sets to --v-txt on the same line, and
+     that made the loudest border in the pane out of the control the comment above
+     calls deliberately quiet. --v-line2 is the app's hover-border step (.r-row,
+     .te-swrow, .r-input all use it). */
+  .out-sw:hover:not(:disabled){color:var(--v-txt); border-color:var(--v-line2)}
   .out-sw:disabled{opacity:.45; cursor:not-allowed}
 
   /* WRAPS RATHER THAN TRUNCATES. On a ~230px rail (1366-wide laptop) the status

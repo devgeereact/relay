@@ -138,6 +138,19 @@ Text: `--v-txt` `#e8eaee` · `--v-dim` `#a9b0bc` · `--v-faint` `#8c94a1` · `--
 (2.27:1, a failure everywhere); it is now 4.52:1 at worst. Do not darken a text token without
 re-checking it against `--v-void`, `--v-surf` **and** `--v-surf2`.
 
+> **A `--v-*` this file never defines is the quietest failure the palette has.** `var(--v-nope)`
+> with no fallback is invalid-at-computed-value-time: the declaration is not dropped, it becomes
+> `unset` — **`inherit`** for an inherited property, **`initial`** for one that is not. Nothing
+> throws, nothing logs, the build stays green, the class is spelled right, and the element
+> renders in a colour nobody chose. Two were live and neither was visible to
+> `tokencontrast.test.js`, which checks the palette a developer reaches for and says so:
+> `History.svelte` armed a two-step **Delete** with `color:var(--v-ink)` and therefore inherited
+> `--v-txt` onto the red fill at **2.82:1** (`--v-inverse`, which it meant, is 5.41:1), and
+> `Live.svelte` hovered a button with `border-color:var(--v-txt-dim)`, fell back to
+> `currentColor`, and gave the control its own comment calls *deliberately quiet* the loudest
+> border in the pane. `tokendefs.test.js` now resolves every `var(--v-…)` under `src/` against
+> this palette.
+
 ### 1.3 The remaining semantic colours
 
 | Token | Hex | Means |
@@ -246,8 +259,22 @@ read *"the screens may still be live"* is motion for its own sake.
   was a different instrument on the run surface. `app.css` draws a 3px track filled to `--rp`
   with a 13px thumb; `src/lib/rangefill.js` keeps `--rp` current on render, on input **and** on
   a rebuilt panel (setting `.value` in code fires no `input` event, which is the case a listener
-  alone misses). Switches and colour wells are both 38×21, so a mixed column lines up on one
-  right edge.
+  alone misses). Switches and colour wells are both 38×21.
+  - **`appearance:none` does not take back the browser's margin.** Chromium's UA sheet gives
+    `input[type=range]` a `margin:2px` that survives it, so for as long as the block did not say
+    `margin:0` every slider in the product sat two pixels inside the edge its neighbours sat on
+    — measured in the Theme editor at x=1251 against x=1253 for the select and the three colour
+    wells beside it, and 871 against 873 at a 900px viewport. Two pixels cannot be seen by
+    reading the stylesheet. Pinned by `rangefill.test.js`.
+  - **What "lines up on one right edge" is, and is not, a promise about.** The token layer sizes
+    the controls and zeroes their margins; a row lines up when the control is the last thing in
+    it. Measured after the margin fix: the Theme editor's column puts sliders, colour wells,
+    inputs and selects on ONE edge at both 1280 and 900. The Template inspector's rows are flush
+    with each other but their controls are not, because `.te-rangerow` and `.te-swatch` place a
+    value readout after the control — deliberate, per §11's "a name and a value". The one that
+    drifts is `.te-swatch`: the 38px well is pinned to the LEFT of that pair, so it ends 158px
+    short of the column at 1280 and 730px short at 900. That is a row-layout decision in
+    `TemplateEditor.svelte`, not a token, and it is recorded here rather than fixed here.
 - **Every modal surface traps focus and restores it on close** (`src/lib/focus.js`,
   `use:trapFocus`). This line used to say *five*; it is ten now and will be wrong again, so
   count rather than trust it: `grep -rl trapFocus src | grep -c svelte`. Note that grepping for
