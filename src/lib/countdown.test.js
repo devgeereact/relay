@@ -17,6 +17,9 @@ import {
   COUNTDOWN_STEP_MS,
   MAX_COUNTDOWN_MS,
   MIN_BROADCAST_MS,
+  countdownRemainingMs,
+  countdownIsPaused,
+  countdownTotalMs,
 } from './countdown.js';
 
 const MIN = 60_000;
@@ -47,6 +50,7 @@ describe('Start', () => {
     expect(countdownPress('start', 7 * MIN, null)).toEqual({
       setMs: 7 * MIN,
       broadcastMs: 7 * MIN,
+      pause: null,
       refused: null,
     });
   });
@@ -83,6 +87,7 @@ describe('± one minute', () => {
     expect(countdownPress('plus', 5 * MIN, null)).toEqual({
       setMs: 6 * MIN,
       broadcastMs: null,
+      pause: null,
       refused: null,
     });
     expect(countdownPress('minus', 5 * MIN, null).setMs).toBe(4 * MIN);
@@ -121,6 +126,7 @@ describe('Clear', () => {
     expect(countdownPress('clear', 47 * MIN, 42_000)).toEqual({
       setMs: DEFAULT_COUNTDOWN_MS,
       broadcastMs: null,
+      pause: null,
       refused: null,
     });
   });
@@ -153,6 +159,109 @@ describe('what the buttons may say about themselves', () => {
   it('Clear is always available', () => {
     expect(countdownCan('clear', 0, null)).toBe(true);
     expect(countdownCan('clear', 5 * MIN, 30_000)).toBe(true);
+  });
+});
+
+// ── PAUSE, AND THE ONE READER IT FORCED ─────────────────────────────────────
+//
+// `docs/REBRAND.md` §7 asks for Start/**Pause** · Reset · ±1 · Clear. Four of the
+// five were built and Pause was not, for a reason the spec records honestly:
+// `countdown_to` is an absolute instant, so every other press is a re-aim, and there
+// is no instant that means "not moving". Pause needed a field of its own
+// (`countdown_paused_ms`) and, with it, ONE reader that knows the exception —
+// because three surfaces each doing their own subtraction is survivable only while
+// the subtraction has no exception.
+
+describe('how long is left — the one reader', () => {
+  it('a running countdown is the gap to its instant', () => {
+    const now = 1_700_000_000_000;
+    expect(countdownRemainingMs({ countdown_to: now + 90_000 }, now)).toBe(90_000);
+  });
+
+  it('a HELD countdown is the held figure, and the instant is ignored entirely', () => {
+    const now = 1_700_000_000_000;
+    // The instant is in the PAST, which is the ordinary case: hold at 4:00 and the
+    // preacher talks for ten minutes. Read as an instant this countdown finished six
+    // minutes ago; read correctly it still says 4:00, which is what the wall, the
+    // stage rail and the transport must all show.
+    expect(
+      countdownRemainingMs({ countdown_to: now - 360_000, countdown_paused_ms: 4 * MIN }, now),
+    ).toBe(4 * MIN);
+    expect(countdownIsPaused({ countdown_paused_ms: 4 * MIN })).toBe(true);
+    expect(countdownIsPaused({ countdown_to: now + 1000 })).toBe(false);
+  });
+
+  // Zero and null are DIFFERENT answers and the renderer needs both: zero shows the
+  // operator's done message, null shows nothing at all. Collapsing them is how a
+  // "Welcome" caption appears over a verse.
+  it('a finished countdown is zero; no countdown at all is null', () => {
+    const now = 1_700_000_000_000;
+    expect(countdownRemainingMs({ countdown_to: now - 1 }, now)).toBe(0);
+    expect(countdownRemainingMs({ reference: 'John 3:16' }, now)).toBe(null);
+    expect(countdownRemainingMs(null, now)).toBe(null);
+  });
+
+  // The span the warning rule works from. It was read by the renderer and written by
+  // nothing for the whole life of the field, so §7's short-countdown rule had never
+  // once fired in the product.
+  it('the aimed length is to − from, and null rather than a guess when either is missing', () => {
+    expect(countdownTotalMs({ countdown_to: 1_000_000, countdown_from: 700_000 })).toBe(300_000);
+    expect(countdownTotalMs({ countdown_to: 1_000_000 })).toBe(null);
+    expect(countdownTotalMs({ countdown_from: 700_000 })).toBe(null);
+    // A span that has gone backwards is an absence, not a negative length.
+    expect(countdownTotalMs({ countdown_to: 500, countdown_from: 900 })).toBe(null);
+  });
+});
+
+describe('Pause and Resume', () => {
+  it('hold asks for the hold and moves no number', () => {
+    const r = countdownPress('pause', 5 * MIN, 90_000, false);
+    expect(r.pause).toBe(true);
+    expect(r.broadcastMs).toBe(null);
+    expect(r.setMs).toBe(5 * MIN);
+    expect(r.refused).toBe(null);
+  });
+
+  it('release asks for the release and moves no number', () => {
+    const r = countdownPress('resume', 5 * MIN, 90_000, true);
+    expect(r.pause).toBe(false);
+    expect(r.broadcastMs).toBe(null);
+  });
+
+  // The same rule as Reset: this transport is about the countdown that is already
+  // there, and Start is the only control that puts one in front of people.
+  it('neither can put a countdown on a screen', () => {
+    expect(countdownPress('pause', 5 * MIN, null).refused).toBe('Nothing is counting down.');
+    expect(countdownPress('resume', 5 * MIN, null).refused).toBe('Nothing is counting down.');
+    expect(countdownPress('pause', 5 * MIN, null).pause).toBe(null);
+    expect(countdownCan('pause', 5 * MIN, null)).toBe(false);
+    expect(countdownCan('resume', 5 * MIN, null)).toBe(false);
+  });
+
+  it('each refuses the state it is already in, and says which', () => {
+    expect(countdownPress('pause', 5 * MIN, 90_000, true).refused).toMatch(/already paused/);
+    expect(countdownPress('resume', 5 * MIN, 90_000, false).refused).toMatch(/already counting/);
+    expect(countdownCan('pause', 5 * MIN, 90_000, true)).toBe(false);
+    expect(countdownCan('resume', 5 * MIN, 90_000, true)).toBe(true);
+  });
+
+  // THE ONE THAT MATTERS. A press of ±1 on a held countdown changes the number and
+  // must not release the hold — `pause: null` means "leave it exactly as it is". The
+  // opposite would start a timer running that the operator deliberately stopped, in
+  // front of a congregation, from a button that says "+1".
+  it('every other press leaves the hold exactly as it is', () => {
+    for (const action of ['start', 'reset', 'plus', 'minus', 'clear']) {
+      expect(countdownPress(action, 5 * MIN, 4 * MIN, true).pause).toBe(null);
+      expect(countdownPress(action, 5 * MIN, 4 * MIN, false).pause).toBe(null);
+    }
+  });
+
+  // Reset and ±1 are about the countdown on the wall, and a held countdown IS on the
+  // wall. They must keep working while it is held.
+  it('Reset and ±1 still work on a held countdown', () => {
+    expect(countdownCan('reset', 5 * MIN, 4 * MIN, true)).toBe(true);
+    expect(countdownPress('plus', 5 * MIN, 4 * MIN, true).broadcastMs).toBe(5 * MIN);
+    expect(countdownPress('minus', 5 * MIN, 4 * MIN, true).broadcastMs).toBe(3 * MIN);
   });
 });
 

@@ -1,5 +1,6 @@
 <script>
   import { formatCountdown, countdownWarning, formatElapsed } from './lib/layers.js';
+  import { countdownRemainingMs, countdownIsPaused, countdownTotalMs } from './lib/countdown.js';
   // Mobile stage-display remote — the preacher opens this on a phone/iPad (via
   // QR or the LAN URL) to see the live verse + reference in real time. No Tauri
   // runtime: it connects to the kiosk WebSocket hub (:8031) for content, exactly
@@ -171,15 +172,24 @@
 
   // Countdown mirror — ticked by the same 1s timer as the wall clock.
   let cdTo = null;
+  let cdFrom = null;
+  let cdPaused = null;
   let cdDone = '';
   let svcStart = null; // service-start epoch, for the elapsed zone
   let nowMs = 0;
-  $: cdRemain = cdTo ? Math.max(0, cdTo - nowMs) : null;
-  $: cdFinished = cdRemain === 0;
+  // ONE READER, shared with the wall and the console (docs/REBRAND.md §7). This was
+  // its own subtraction, which was fine while the answer was a subtraction — and is
+  // not, now that it has an exception. A preacher's own screen counting down through
+  // a countdown the operator has HELD is the surface it matters most on.
+  $: cdContent = { countdown_to: cdTo, countdown_from: cdFrom, countdown_paused_ms: cdPaused };
+  $: cdRemain = countdownRemainingMs(cdContent, nowMs);
+  $: cdFinished = cdRemain === 0 && !countdownIsPaused(cdContent);
   // ONE FORMATTER, shared with the wall (docs/REBRAND.md §7) — this page used to
   // carry its own copy of the same arithmetic.
   $: cdText = cdRemain == null ? '' : formatCountdown(cdRemain);
-  $: cdWarn = cdRemain != null && countdownWarning(cdRemain);
+  // The span now genuinely rides with the content (`countdown_from`), so the
+  // short-countdown half of the warning rule finally has an answer here too.
+  $: cdWarn = cdRemain != null && countdownWarning(cdRemain, countdownTotalMs(cdContent));
   // THREE STACKED PAIRS, and no second piece of arithmetic. `hms` is the one
   // formatter's own `H:MM:SS`, split into its fields and the hours padded — so the
   // rail cannot drift from the figure beneath the reading, or from the wall.
@@ -230,6 +240,8 @@
       content = { reference: m.reference, text: m.text, translation: m.translation };
       note = m.stage_note || '';
       cdTo = m.countdown_to || null;
+      cdFrom = m.countdown_from || null;
+      cdPaused = m.countdown_paused_ms ?? null;
       cdDone = m.countdown_done || '';
       svcStart = m.service_started_at ?? null;
       nowMs = Date.now();
@@ -258,6 +270,12 @@
       visible = false;
       note = '';
       cdTo = null;
+      // Both halves of the countdown go, or a HELD figure survives the control that
+      // removed the countdown and the rail keeps showing it: `countdown_paused_ms`
+      // is read ahead of the instant, so clearing the instant alone would not be
+      // enough. The same trap as `black` above, one field along.
+      cdFrom = null;
+      cdPaused = null;
       next = null;
       // `svcStart` deliberately SURVIVES. A cleared or blacked wall is not the end
       // of a service, and the elapsed zone is the preacher's own clock — taking it

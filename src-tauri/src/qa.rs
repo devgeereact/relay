@@ -76,6 +76,11 @@ pub(crate) fn bare_app() -> tauri::App<tauri::test::MockRuntime> {
         // What the congregation can actually see. `/api/live` reads it, so a test
         // that drives the remote needs it managed or the remote answers "clear".
         .manage(channels::WallState::default())
+        // The countdown in front of the operator, for the transport that re-aims or
+        // HOLDS it. Managed by the real app at startup for the same reason the two
+        // below are: without it `adjust_countdown` would answer "nothing is counting
+        // down" on a fixture where one demonstrably is.
+        .manage(channels::CountdownState::default())
         .manage(Session::default())
         // Whether the screens are answering, and whether a recorded service is
         // being protected. Both are managed by the real app at startup, so a

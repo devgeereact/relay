@@ -189,6 +189,7 @@ mod tests {
             "fire_media",
             "push_announcement",
             "start_countdown",
+            "adjust_countdown",
             "set_detection_enabled",
             "set_sensitivity",
             "set_thresholds",
