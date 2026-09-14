@@ -680,3 +680,254 @@ describe('L2 · a press answers on the way down', () => {
     expect(block).not.toMatch(/transform:/);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 7 · L2 ROUND 2 — FOUR TEXT DEFECTS, MEASURED ON A RENDER AT 2000×1175
+//
+// The branch was rendered against the prototype screenshot. Everything here is a
+// defect in L2's own work that no existing test could see, because each one is a
+// string composed at RUNTIME out of parts that are individually correct.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// A plan whose NAME already carries its date — the shape the render caught, and
+// the one a church actually types. `announce`, `media` and `scripture` cues, so
+// the kind chips can be read off the grid in the same mount.
+const DATED_PLAN = { id: 1, title: 'Sunday morning · 7 September', plan_date: '2026-09-07', cue_count: 3 };
+const PLAIN_PLAN = { id: 1, title: 'Sunday morning', plan_date: '2026-09-07', cue_count: 3 };
+const PLAN_CUES = [
+  { id: 11, cue_type: 'announce', label: 'Welcome & Notices', payload_json: '{"body":"Welcome"}' },
+  { id: 12, cue_type: 'scripture', label: 'Psalms 23:1', payload_json: '{"reference":"Psalms 23:1","text":"The LORD is my shepherd","verse":1}' },
+  { id: 13, cue_type: 'media', label: 'Opening loop', payload_json: '{}' },
+];
+
+async function mountPlan(plan = DATED_PLAN) {
+  const sess = await import('./session.js');
+  invoke.mockImplementation((cmd) => {
+    if (cmd === 'list_output_channels') return Promise.resolve([CHANNEL]);
+    if (cmd === 'list_templates') return Promise.resolve([TPL]);
+    if (cmd === 'list_plans') return Promise.resolve([plan]);
+    if (cmd === 'plan_items') return Promise.resolve(PLAN_CUES);
+    if (cmd === 'list_books') return Promise.resolve([{ book: 'Psalms', chapters: 150 }]);
+    if (cmd === 'rehearsal') return Promise.resolve(false);
+    if (cmd === 'get_sensitivity') return Promise.resolve(50);
+    // The repeat badge's own question. A non-zero answer to ANY reference, so a
+    // badge that should not be drawn cannot hide behind a zero.
+    if (cmd === 'verse_repeat_count') return Promise.resolve(2);
+    return Promise.resolve(null);
+  });
+  sess.setSession({ planId: plan.id, liveCueId: null, liveSlide: 0, liveOnAir: false });
+  const app = new Live({ target: host, props: {} });
+  await settle(140);
+  return { app, sess };
+}
+
+describe('L2/2 · one date, said once', () => {
+  it('a plan whose NAME carries the date does not get it again', async () => {
+    const { sess } = await mountPlan(DATED_PLAN);
+    const caps = [...host.querySelectorAll('.sg-head .sg-cap')].map((e) => e.textContent.trim());
+    // The plan's own name, and nothing after it.
+    expect(caps).toEqual(['· Sunday morning · 7 September']);
+    // Said plainly: the head does not print September twice.
+    const head = host.querySelector('.sg-head').textContent;
+    expect(head.match(/Sep/gi) ?? []).toHaveLength(1);
+    sess.setSession({ planId: null });
+  });
+
+  it('…and a plan named without one still gets the short form', async () => {
+    const { sess } = await mountPlan(PLAIN_PLAN);
+    const caps = [...host.querySelectorAll('.sg-head .sg-cap')].map((e) => e.textContent.trim());
+    expect(caps).toEqual(['· Sunday morning', '· 7 Sep']);
+    sess.setSession({ planId: null });
+  });
+
+  it('recognises the forms a name would state a date in', async () => {
+    const { dateStatedIn } = await import('./views/Live.svelte');
+    for (const title of [
+      'Sunday morning · 7 September',
+      'Sunday morning · 7 Sep',
+      'Sunday 7th September',
+      'September 7 — evening',
+      'Carols 2026-09-07',
+      'SUNDAY MORNING · 7 SEPTEMBER',
+    ]) {
+      expect(dateStatedIn(title, '2026-09-07')).toBe(true);
+    }
+  });
+
+  // A MONTH ALONE IS NOT A DATE. `September series` beside a plan dated the 7th
+  // is two different facts, and the head must keep printing the second.
+  it('and does not mistake a month, a year or another day for this date', async () => {
+    const { dateStatedIn } = await import('./views/Live.svelte');
+    expect(dateStatedIn('September series', '2026-09-07')).toBe(false);
+    expect(dateStatedIn('Sunday morning', '2026-09-07')).toBe(false);
+    expect(dateStatedIn('Sunday morning · 8 September', '2026-09-07')).toBe(false);
+    expect(dateStatedIn('Harvest 2026', '2026-09-07')).toBe(false);
+    // Nothing to compare is never a match — an absent date must not silently
+    // suppress a cap that would have said something.
+    expect(dateStatedIn('Sunday morning', '')).toBe(false);
+    expect(dateStatedIn('', '2026-09-07')).toBe(false);
+    expect(dateStatedIn(null, '2026-09-07')).toBe(false);
+  });
+});
+
+describe('L2/2 · the preview head names the cue once', () => {
+  // A one-slide cue names its only slide after itself, and the head joined the
+  // two with a `·`: `WELCOME & NOTICES · WELCOME & NOTICES`. A separator between
+  // a thing and itself invents a second fact out of one.
+  it('a one-slide cue is not joined to itself', async () => {
+    const { sess } = await mountPlan();
+    const name = host.querySelector('.mon.prev .mon-name');
+    expect(name).not.toBeNull();
+    expect(name.textContent.trim()).toBe('Welcome & Notices');
+    expect(name.textContent).not.toMatch(/·/);
+    sess.setSession({ planId: null });
+  });
+
+  // …AND A CUE WITH REAL SLIDE NAMES STILL SHOWS BOTH. The join is what an
+  // operator needs for `Amazing Grace · Verse 2`; only the echo is wrong.
+  it('two real names are still joined', async () => {
+    const { cueLabel } = await import('./views/Live.svelte');
+    expect(cueLabel('Amazing Grace', 'Verse 2')).toBe('Amazing Grace · Verse 2');
+    expect(cueLabel('Welcome & Notices', 'Welcome & Notices')).toBe('Welcome & Notices');
+    expect(cueLabel('Welcome', ' welcome ')).toBe('Welcome');
+    expect(cueLabel('Welcome', '')).toBe('Welcome');
+    expect(cueLabel('', 'Verse 2')).toBe('Verse 2');
+  });
+
+  // `shown 2×` IS A CLAIM ABOUT A VERSE. It was asked about `previewLabel`, which
+  // for a plan cue is a composed display name — so `verseRepeatCount` was put a
+  // question about a NOTICE and the head printed its answer. The badge is right
+  // for a verse and meaningless for a notice; it is now gated on there being a
+  // reference to have repeated.
+  it('no repeat badge over a cue that has no reference to repeat', async () => {
+    const { sess } = await mountPlan();
+    expect(host.querySelector('.mon.prev .mon-name').textContent.trim()).toBe('Welcome & Notices');
+    expect(host.querySelector('.mon.prev .mon-repeat')).toBeNull();
+    // …and the question was never asked, so it is not merely hidden.
+    expect(invoke.mock.calls.map((c) => c[0])).not.toContain('verse_repeat_count');
+    sess.setSession({ planId: null });
+  });
+
+  it('but a detected verse still carries it', async () => {
+    invoke.mockImplementation((cmd) => {
+      if (cmd === 'list_output_channels') return Promise.resolve([CHANNEL]);
+      if (cmd === 'list_templates') return Promise.resolve([TPL]);
+      if (cmd === 'list_plans') return Promise.resolve([]);
+      if (cmd === 'list_books') return Promise.resolve([{ book: 'Psalms', chapters: 150 }]);
+      if (cmd === 'rehearsal') return Promise.resolve(false);
+      if (cmd === 'get_sensitivity') return Promise.resolve(50);
+      if (cmd === 'verse_repeat_count') return Promise.resolve(2);
+      return Promise.resolve(null);
+    });
+    cap.detections.set([claim()]);
+    new Live({ target: host, props: {} });
+    await settle(140);
+    const badge = host.querySelector('.mon.prev .mon-repeat');
+    expect(badge).not.toBeNull();
+    expect(badge.textContent.trim()).toBe('shown 2×');
+  });
+});
+
+describe('L2/2 · a cell says its kind in a whole word', () => {
+  // `NOTE`, `SCR`, `BG`. The last names nothing an operator would recognise, and
+  // all three are abbreviations `plan.js::slidesOf` invents for the plan rail's
+  // narrow chip — where `plan.js`'s own table already records that a truncation
+  // is "a name nobody chose".
+  it('the chips are words, not three-letter inventions', async () => {
+    const { sess } = await mountPlan();
+    const tags = [...host.querySelectorAll('.sg-cell .sg-tag')].map((e) => e.textContent.trim());
+    expect(tags).toEqual(['NOTICE', 'SCRIPTURE', 'MEDIA']);
+    for (const dead of ['NOTE', 'SCR', 'BG']) expect(tags).not.toContain(dead);
+    sess.setSession({ planId: null });
+  });
+
+  // ONE DOOR (rule 36). A second table here is how a cell and a running-order row
+  // come to disagree about what a cue is.
+  it('the word comes from plan.js’s one taxonomy, not from a second table here', () => {
+    const src = readFileSync(resolve(__dirname, 'views/Live.svelte'), 'utf8');
+    expect(src).toMatch(/const kindOf = \(c\) => typeOf\(c\?\.ctype\)\.label;/);
+    // No hand-written kind words anywhere in this file.
+    expect(src).not.toMatch(/'SCRIPTURE'|'NOTICE'|'MEDIA'|'COUNTDOWN'/);
+  });
+
+  // AN UNRECOGNISED CUE SAYS SO. Never a fallback to scripture — the one kind the
+  // AI is allowed to fire by itself (`plan.js`, `typeOf`).
+  it('a cue_type this build does not know reads UNKNOWN', async () => {
+    const sess = await import('./session.js');
+    invoke.mockImplementation((cmd) => {
+      if (cmd === 'list_output_channels') return Promise.resolve([CHANNEL]);
+      if (cmd === 'list_templates') return Promise.resolve([TPL]);
+      if (cmd === 'list_plans') return Promise.resolve([PLAIN_PLAN]);
+      if (cmd === 'plan_items')
+        return Promise.resolve([
+          { id: 21, cue_type: 'announcement', label: 'From an older build', payload_json: '{"body":"x"}' },
+        ]);
+      if (cmd === 'list_books') return Promise.resolve([{ book: 'Psalms', chapters: 150 }]);
+      if (cmd === 'rehearsal') return Promise.resolve(false);
+      if (cmd === 'get_sensitivity') return Promise.resolve(50);
+      return Promise.resolve(null);
+    });
+    sess.setSession({ planId: 1, liveCueId: null, liveSlide: 0, liveOnAir: false });
+    new Live({ target: host, props: {} });
+    await settle(140);
+    const tags = [...host.querySelectorAll('.sg-cell .sg-tag')].map((e) => e.textContent.trim());
+    expect(tags).toEqual(['UNKNOWN']);
+    sess.setSession({ planId: null });
+  });
+
+  // A WHOLE WORD THAT WILL NOT FIT IS TRUNCATED, NOT RENAMED.
+  it('the chip ellipsis rather than overflowing its cell', () => {
+    const src = readFileSync(resolve(__dirname, 'views/Live.svelte'), 'utf8');
+    const at = src.indexOf('  .sg-tag{');
+    const rule = src.slice(at, at + 420);
+    expect(rule).toMatch(/max-width:calc\(100% - 10px\)/);
+    expect(rule).toMatch(/text-overflow:ellipsis/);
+  });
+});
+
+describe('L2/2 · the slides head at a booth laptop’s width', () => {
+  const src = readFileSync(resolve(__dirname, 'views/Live.svelte'), 'utf8');
+
+  // The head carries five things and fits at 2000px. Below that ONE of them has
+  // to yield, and it must be the teaching sentence — not `Close plan`, which
+  // stops a plan running, and not the view controls, which are real features.
+  it('the sentence yields first, by rule rather than by luck', () => {
+    const rung = src.slice(src.indexOf('@media (max-width:1400px){'));
+    const block = rung.slice(0, rung.indexOf('}\n  /*'));
+    expect(block).toMatch(/\.sg-say\{display:none\}/);
+    // Nothing else in the head is touched by that rung.
+    expect(block).not.toMatch(/\.mini|\.view-ctl|\.view-fs|\.cnt|\.sg-head h2/);
+  });
+
+  // THE COUNT IS A FACT AND STAYS AT EVERY WIDTH. It is a separate span from the
+  // sentence for exactly this reason; one span could not do both.
+  it('the count is not inside the part that hides', async () => {
+    new Live({ target: host, props: {} });
+    await settle();
+    const hint = host.querySelector('.sg-head .sg-hint');
+    expect(hint.querySelector('.cnt')).not.toBeNull();
+    expect(hint.querySelector('.sg-say .cnt')).toBeNull();
+    // …and the sentence keeps its leading space, so the two do not run together
+    // for a screen reader. Svelte drops a literal one at an element boundary,
+    // which is why the text is an expression.
+    expect(hint.textContent.replace(/\s+/g, ' ')).toContain('0 · single click');
+  });
+
+  // NOTHING IS LOST TO A HOVER OR A SCREEN READER — the ladder's own rule.
+  it('the sentence survives on the hint and on every cell', async () => {
+    const { sess } = await mountPlan();
+    expect(host.querySelector('.sg-head .sg-hint').getAttribute('title'))
+      .toMatch(/single click sends the slide to the programme/i);
+    const cell = host.querySelector('.sg-cell:not(:disabled)');
+    expect(cell.getAttribute('title')).toMatch(/double click to preview/i);
+    sess.setSession({ planId: null });
+  });
+
+  // `Close plan` never wraps or shrinks — it is the way OUT of a running plan.
+  it('Close plan holds its size in the head', async () => {
+    const { sess } = await mountPlan();
+    expect(host.querySelector('.sg-head .mini.ghost').textContent.trim()).toBe('Close plan');
+    expect(src).toMatch(/\.sg-head \.mini\{flex:0 0 auto\}/);
+    sess.setSession({ planId: null });
+  });
+});
