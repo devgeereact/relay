@@ -1113,7 +1113,12 @@
             </div>
           </div>
         {:else}
-          <div class="rw-nv"><span class="rw-nvk">Saved rooms</span><span class="rw-nvv">{settingValue(null, { missing: 'none yet' })}</span></div>
+          <!-- `none yet` and `could not be read` are DIFFERENT facts (rule 35). This
+               row printed the first over both, so a failed `list_environments` read
+               exactly like a church that had never saved a room. `readErrors` already
+               carries the distinction; nothing else was needed. -->
+          <div class="rw-nv"><span class="rw-nvk">Saved rooms</span><span class="rw-nvv"
+            >{$readErrors.rooms ? 'could not be read' : settingValue(null, { missing: 'none yet' })}</span></div>
         {/each}
 
       {:else if section === 'ai'}
@@ -1184,7 +1189,8 @@
             </div>
           </div>
         {:else}
-          <div class="rw-nv"><span class="rw-nvk">Profiles</span><span class="rw-nvv">{settingValue(null, { missing: 'none yet' })}</span></div>
+          <div class="rw-nv"><span class="rw-nvk">Profiles</span><span class="rw-nvv"
+            >{$readErrors.listVoiceProfiles ? 'could not be read' : settingValue(null, { missing: 'none yet' })}</span></div>
         {/each}
 
         <div class="s-prose">

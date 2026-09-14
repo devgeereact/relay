@@ -673,7 +673,10 @@
     </div>
   </div>
 
-  {#if errMsg}<div class="lib-importerr r-mono" role="alert">{errMsg}</div>{/if}
+  <!-- Humanised words, so they are not set in the monospace face a crash dump
+       wears. `errors.js` already turned the backend error into a sentence; the
+       face was the only thing still saying "stack trace". -->
+  {#if errMsg}<div class="lib-importerr" role="alert">{errMsg}</div>{/if}
   {#if importMsg}<div class="lib-importmsg r-mono">{importMsg}</div>{/if}
 
 
