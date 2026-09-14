@@ -260,3 +260,118 @@ describe('Live wires the rail without inventing a fire path (source)', () => {
     expect(fn).toContain('humanError(e)');
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// WAVE 3 · BOTH COLLECTIONS, AND ONE BOX
+//
+// `docs/REBRAND.md` §2 gives the run surface a rail that offers Bible AND Songs;
+// Relay's offered scripture only, so half of what a service is made of could not
+// be reached without leaving the surface the service is run from. §9 asks for
+// ONE search box, which is why the inspector column's second scripture field —
+// the manual box, the floor under the AI — is the `Fire` beside this one rather
+// than a panel of its own.
+//
+// The boundary is unchanged and is what these tests are mostly about: the rail
+// STAGES. A song press puts slides in the grid and touches no screen; only the
+// explicit `Fire`, on an explicit press, sends anything.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('the rail offers both collections', () => {
+  const SONGS = [
+    { id: 7, title: 'Blessed Assurance', author: 'Crosby', section_count: 4 },
+    { id: 8, title: 'It Is Well', author: 'Spafford', section_count: 5 },
+  ];
+
+  function mountWithSongs(props = {}) {
+    invoke.mockImplementation(async (cmd) => {
+      if (cmd === 'search_scripture') return [HIT_TYPED, HIT_GUESSED];
+      if (cmd === 'list_songs' || cmd === 'search_songs') return SONGS;
+      return [];
+    });
+    return mount(props);
+  }
+
+  const tabs = () => [...host.querySelectorAll('.lr-seg button')];
+
+  it('has a Bible | Songs switch, and Bible is what it opens on', async () => {
+    mountWithSongs();
+    await settle();
+    expect(tabs().map((b) => b.textContent.trim())).toEqual(['Bible', 'Songs']);
+    expect(tabs()[0].getAttribute('aria-pressed')).toBe('true');
+    expect(tabs()[1].getAttribute('aria-pressed')).toBe('false');
+  });
+
+  it('the Songs half lists songs and a press only STAGES — no screen is touched', async () => {
+    const opened = [];
+    mountWithSongs({ onSong: (id, title) => opened.push([id, title]) });
+    await settle();
+    tabs()[1].click();
+    await settle();
+
+    const rows = [...host.querySelectorAll('.lr-row')];
+    expect(rows.map((r) => r.querySelector('.lr-n').textContent)).toEqual([
+      'Blessed Assurance',
+      'It Is Well',
+    ]);
+
+    invoke.mockClear();
+    rows[0].click();
+    await settle();
+    expect(opened).toEqual([[7, 'Blessed Assurance']]);
+    // THE WHOLE POINT. Nothing that puts content on a screen was called.
+    const called = invoke.mock.calls.map((c) => c[0]);
+    expect(called).not.toContain('fire_content');
+    expect(called).not.toContain('manual_fire');
+    expect(called).not.toContain('fire_media');
+  });
+
+  it('switching halves clears the query, so one collection never reports the other miss', async () => {
+    mountWithSongs();
+    await settle();
+    await search('ps 23 1');
+    expect(hitRows()).toHaveLength(2);
+    tabs()[1].click();
+    await settle();
+    expect(host.querySelector('.lr-q').value).toBe('');
+    expect(hitRows()).toHaveLength(0);
+  });
+
+  it('Fire sends the reference exactly as typed — ranges included', async () => {
+    const fired = [];
+    mountWithSongs({ onReference: (t) => fired.push(t) });
+    await settle();
+    await search('John 3:16-18');
+    const fire = host.querySelector('.lr-fire');
+    expect(fire.disabled).toBe(false);
+    fire.click();
+    // Not `John 3:16`, which is all the corpus search can offer for that query.
+    expect(fired).toEqual(['John 3:16-18']);
+  });
+
+  it('Fire is not offered for a phrase — a fire nobody could satisfy is not a control', async () => {
+    const fired = [];
+    mountWithSongs({ onReference: (t) => fired.push(t) });
+    await settle();
+    await search('seek ye first the kingdom');
+    expect(host.querySelector('.lr-fire').disabled).toBe(true);
+    const box = host.querySelector('.lr-q');
+    box.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await settle();
+    expect(fired).toEqual([]);
+  });
+
+  it('the Songs half has no Fire at all — a song section has no reference to resolve', async () => {
+    mountWithSongs();
+    await settle();
+    tabs()[1].click();
+    await settle();
+    expect(host.querySelector('.lr-fire')).toBeNull();
+  });
+
+  it('exposes focus(), so the console search shortcut still reaches a box', async () => {
+    mountWithSongs();
+    await settle();
+    expect(typeof app.focus).toBe('function');
+    app.focus();
+    expect(document.activeElement).toBe(host.querySelector('.lr-q'));
+  });
+});

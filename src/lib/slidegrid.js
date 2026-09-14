@@ -33,7 +33,7 @@ export const PRESS_MS = 190;
  * @property {string} label  what the cell is called
  * @property {string} text   the words, for the thumbnail
  * @property {string} tag    the section tag (Verse / Chorus / …), or ''
- * @property {'plan'|'verse'} kind  which fire path this cell takes
+ * @property {'plan'|'verse'|'song'} kind  which fire path this cell takes
  * @property {string} ctype  the CONTENT kind — 'scripture', 'song', 'media',
  *                           'announce', 'countdown' — so a caller can render the
  *                           cell the way the wall would. A lyric slide projects
@@ -134,6 +134,39 @@ export function passageCells(verses) {
 }
 
 /**
+ * A song, as cells — one reflowed slide each.
+ *
+ * The rail's Songs half stages a song here (docs/REBRAND.md §2: the run surface
+ * offers both collections). A song slide carries its WORDS, because that is what
+ * the fire sends and what the congregation reads; the section name rides along
+ * as the cell's tag for the operator and is suppressed on the way to the glass
+ * by `fire_content` itself (§10, and rule 36 — one place decides).
+ *
+ * `reference` stays null: a song section has no canonical reference to resolve,
+ * which is exactly why its fire is `fireContent` and not `manualFire`. The
+ * label is what the cue is CALLED in history, the same string `LyricsPane`
+ * already sends, so the two surfaces cannot name the same slide differently.
+ *
+ * @param {Array<{key?:string,label?:string,lyrics?:string}>} slides a reflowed deck
+ * @param {string} title the song's title
+ */
+export function songCells(slides, title) {
+  return (slides ?? []).map((s, i) => ({
+    key: `s:${title}:${s.key ?? i}`,
+    n: i + 1,
+    label: `${title}${s.label ? ` · ${s.label}` : ''}`,
+    text: s.lyrics ?? '',
+    tag: s.label ?? '',
+    kind: 'song',
+    ctype: 'song',
+    empty: !(s.lyrics ?? '').trim(),
+    cueId: null,
+    slideIdx: i,
+    reference: null,
+  }));
+}
+
+/**
  * What is staged right now.
  *
  * A plan wins when one is open — it is the thing the operator deliberately
@@ -145,12 +178,16 @@ export function passageCells(verses) {
  * all empty is a different problem.
  *
  * A HAND PICK OUTRANKS THE PLAN, and only a hand pick. `handPicked` is set when
- * the operator chose this chapter in the Live rail — the most recent deliberate
- * act, so the grid shows it.
+ * the operator chose this chapter — or this song — in the Live rail: the most
+ * recent deliberate act, so the grid shows it.
  * What must never displace a plan is a DETECTION: the preacher quoting something
  * is not the operator asking for it, and `handPicked` stays false on that path.
  *
- * @returns {{ title: string, cells: Cell[], source: 'plan'|'passage'|'none' }}
+ * A hand-picked SONG and a hand-picked CHAPTER cannot both be staged: the rail
+ * clears one when it stages the other, so the song is simply checked first and
+ * there is no third rule to get wrong.
+ *
+ * @returns {{ title: string, cells: Cell[], source: 'plan'|'passage'|'song'|'none' }}
  */
 export function gridSource({
   planOpen,
@@ -159,8 +196,13 @@ export function gridSource({
   slidesOf,
   verses,
   passageTitle,
+  songSlides,
+  songTitle,
   handPicked = false,
 }) {
+  if (handPicked && (songSlides ?? []).length) {
+    return { title: songTitle || '', cells: songCells(songSlides, songTitle || ''), source: 'song' };
+  }
   if (planOpen && !handPicked) {
     return { title: planTitle || 'Plan', cells: planCells(items, slidesOf), source: 'plan' };
   }

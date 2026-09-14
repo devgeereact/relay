@@ -214,3 +214,64 @@ describe('a transition set to Cut animates nothing on the wall', () => {
     expect(keyframes).toMatch(/opacity/);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 1b · AND IT SURVIVES `LOAD WHOLE PLAN` WITH LIVE ALREADY MOUNTED
+//
+// The plan chooser left Live (docs/REBRAND.md §2 — the plan IS the grid), so a
+// plan now arrives one of two ways: the Planner's `Run in Live`, which remounts
+// this view, and Quick tools' `Load whole plan`, which does NOT — the dock is in
+// the shell, so the tab does not change and nothing is destroyed.
+//
+// That second path is new, and it is the one the acceptance clause is most
+// exposed on: a watcher that reloaded the plan is a watcher that could reset the
+// playhead, or worse, while a congregation is looking at a verse. It moves the
+// grid and the playhead, and it must move nothing else.
+describe('loading a plan from Quick tools, with Live already open', () => {
+  it('stages the plan and leaves the programme exactly where it was', async () => {
+    const sess = await import('./session.js');
+    sess.setSession({ planId: null, liveCueId: null, liveSlide: 0, liveOnAir: false });
+
+    const app = new Live({ target: host, props: {} });
+    await settle(120);
+    // A verse is on the wall, put there by the backend event — not by a view.
+    cap.live.set(PROGRAMME);
+    await tick();
+
+    invoke.mockClear();
+    // Exactly what the dock's button does.
+    sess.setSession({ activeTab: 'live', planId: 1 });
+    await settle(120);
+
+    // The plan was staged…
+    expect(invoke.mock.calls.map((c) => c[0])).toContain('plan_items');
+    // …and the congregation is still looking at the same thing.
+    expect(get(cap.live)).toEqual(PROGRAMME);
+    // No fire path was reached on the way.
+    for (const cmd of ['manual_fire', 'fire_content', 'fire_media', 'clear_screens', 'blackout']) {
+      expect(invoke.mock.calls.map((c) => c[0]), `plan load reached ${cmd}`).not.toContain(cmd);
+    }
+    app.$destroy();
+    sess.setSession({ planId: null, liveCueId: null, liveSlide: 0, liveOnAir: false });
+  });
+
+  it('does not reload the plan it already has open', async () => {
+    // The watcher's guard. Live writes `session.planId` back reactively, so a
+    // watcher that acted on its own write would reload the plan on every fire —
+    // and `loadPlan` resets the playhead, which would send the next `→` back to
+    // cue 1: the opening countdown, at the end of the service.
+    const sess = await import('./session.js');
+    sess.setSession({ planId: 1, liveCueId: null, liveSlide: 0, liveOnAir: false });
+
+    const app = new Live({ target: host, props: {} });
+    await settle(140);
+    const first = invoke.mock.calls.filter((c) => c[0] === 'plan_items').length;
+    expect(first).toBe(1);
+
+    await settle(120);
+    const again = invoke.mock.calls.filter((c) => c[0] === 'plan_items').length;
+    expect(again).toBe(1);
+    app.$destroy();
+    sess.setSession({ planId: null, liveCueId: null, liveSlide: 0, liveOnAir: false });
+  });
+});

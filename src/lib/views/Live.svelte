@@ -27,7 +27,7 @@
   // BUILDING a plan is not this screen's job. That is the Planner: a different
   // task, done on a Tuesday, not with a congregation waiting.
   import { onMount, onDestroy } from 'svelte';
-  import { describeScreen, SCREEN_BADGE, screenSwitch, screenKind } from '../outputHealth.js';
+  import { describeScreen } from '../outputHealth.js';
   import TemplateRender from '../TemplateRender.svelte';
   import { resolveOutputTemplate, isKeyedTemplate } from '../layers.js';
   import ModelSetup from '../ModelSetup.svelte';
@@ -42,6 +42,7 @@
   import { humanError as humanErrorBase } from '../errors.js';
   import { typeOf, payloadOf, slidesOf, slideAccent, cueSub, nextOf, stepFrom } from '../plan.js';
   import { gridSource, pressArbiter } from '../slidegrid.js';
+  import { reflow } from '../reflow.js';
   import LiveRail from '../LiveRail.svelte';
   import { parsePassage } from '../passage.js';
   import { session, setSession } from '../session.js';
@@ -70,11 +71,6 @@
     listOutputChannels,
     channelHealth,
     channelWaiting,
-    openChannelOutput,
-    closeChannelOutput,
-    refreshChannelHealth,
-    listMonitors,
-    setChannelDisplay,
     startCountdown,
     setDetection,
     startCapture,
@@ -85,11 +81,11 @@
     navBlocked,
     listPlans,
     planItems,
+    getSong,
     setStageNext,
     rehearsing,
     loadRehearsal,
     setRehearsal,
-    pushAnnouncement,
     verseRepeatCount,
     chapterVerses,
     readErrors,
@@ -155,6 +151,7 @@
     // Loading a plan is the operator asking for the plan. A chapter or a song
     // they staged from the rail earlier must not keep outranking it.
     railChapter = null;
+    railSong = null;
     itemsLoaded = false;
     items = await planItems(p.id);
     itemsLoaded = true;
@@ -168,6 +165,7 @@
     openPlan = null;
     items = [];
     railChapter = null;
+    railSong = null;
     liveCue.set({ cueId: null, slide: 0, onAir: false });
     setSession({ planId: null, liveCueId: null, liveSlide: 0, liveOnAir: false });
   }
@@ -220,37 +218,19 @@
       { rehearsing: $rehearsing, live: !!$live, black: $screenBlack },
       $channelWaiting[c.id] ? Date.now() - $channelWaiting[c.id] : 0,
     ),
-    // Same health row, same pure rule, so the badge and the button can never
-    // describe different screens.
-    w: screenSwitch($channelHealth[c.id] ?? null, c),
   }));
 
-  // ── SWITCHING A SCREEN ON OR OFF ────────────────────────────────────────────
+  // ── SWITCHING A SCREEN ON OR OFF IS NOT THIS SURFACE'S JOB ──────────────────
   //
-  // Exempt from the Service Lock on purpose (`servicelock.rs`): a screen that has
-  // to be restored mid-service is exactly the case the lock must not block.
+  // It was, while Live carried an Output Status pane. The pane has gone (§2 gives
+  // this column to the AI's claims alone) and with it the per-screen on/off
+  // repair, which now lives where the rest of a screen's settings do: Outputs →
+  // Screens, one row per screen, Open and Close. Nothing became unreachable —
+  // that is the distinction `scripts/qa-inventory.mjs` exists to police, and it
+  // is the reason the repair MOVED rather than being deleted.
   //
-  // It is NOT a panic control and must never read like one — it acts on one
-  // screen, it is not on a key, and it does not touch what is on air. Blackout
-  // and Clear remain the two things that do.
-  let switching = null;
-  let screenMsg = '';
-  async function toggleScreen(c, action) {
-    switching = c.id;
-    screenMsg = '';
-    try {
-      if (action === 'on') await openChannelOutput(c.id);
-      else await closeChannelOutput(c.id);
-      // Ask the backend what actually happened rather than assuming the command
-      // that returned did the thing. The pane's whole point is that a screen
-      // answers for itself.
-      await refreshChannelHealth();
-      screenMsg = `${c.name} ${action === 'on' ? 'opened' : 'closed'}.`;
-    } catch (e) {
-      screenMsg = humanError(e);
-    }
-    switching = null;
-  }
+  // What did not move is the pair of whole-room facts below. A lamp answers for
+  // one screen; neither of these is about one screen.
 
   // ── SAFE SCREEN — what the operator is told BEFORE the congregation notices ──
   //
@@ -330,7 +310,7 @@
       dismiss: dismissTop,
       next: () => step(1),
       prev: () => step(-1),
-      search: () => searchEl?.focus(),
+      search: () => railEl?.focus(),
     });
 
     // THE TWO LOOSE ENDS OF A CLEAR, watched at the store rather than owned by a
@@ -404,7 +384,30 @@
         }
       }
     }
+    // Only now: everything above IS the restore, and a watcher armed before it
+    // would race the mount for the same plan.
+    if (!dead) watchChosenPlan = true;
   });
+
+  // ── LOAD WHOLE PLAN, FROM QUICK TOOLS ──────────────────────────────────────
+  //
+  // The dock's header button re-stages the plan the Planner handed over, and the
+  // dock is in the shell — so when Live is ALREADY mounted the tab does not
+  // change and nothing remounts. This is the half that answers it: a plan the
+  // session names and this view does not have open gets loaded, once.
+  //
+  // It cannot loop against the reactive `setSession` above, because that writes
+  // `openPlan.id` — the very value this refuses to act on. And it is armed only
+  // after the mount's own restore, so the two never race for the same plan.
+  //
+  // IT CHANGES NO PROGRAMME. `loadPlan` moves the playhead and the grid; what a
+  // congregation is looking at is `$live`, which nothing here touches. That is
+  // the rule `plannerbuildonly.test.js` and `liveacceptance.test.js` hold.
+  let watchChosenPlan = false;
+  $: if (watchChosenPlan && $session.planId != null && $session.planId !== openPlan?.id) {
+    const chosen = plans.find((p) => p.id === $session.planId);
+    if (chosen) loadPlan(chosen);
+  }
   let unregisterKeys;
   let unsubNav;
   let unsubLive;
@@ -413,9 +416,6 @@
     dead = true;
     unregisterKeys?.();
     unsubNav?.();
-    // The emergency announcement's arm timer, cleared for the same reason as the
-    // countdown's right above it. It was the one of the pair that was missed.
-    clearTimeout(annArmT);
     clearTimeout(liveMsgT);
     unsubLive?.();
     clearTimeout(relatedT); // a pending poll must not fire into a destroyed view
@@ -506,43 +506,13 @@
     }
   }
 
-  // ── EMERGENCY ANNOUNCEMENT ────────────────────────────────────────────────
-  //
-  // Paints a message over whatever is on the wall, on every channel at once —
-  // the fire alarm, the blocked car park, the doctor needed at the back. It goes
-  // through the same template engine as any slide, so it is not a special screen
-  // and needs no per-channel handling.
-  //
-  // ARMED IN TWO STEPS, exactly like the countdown, and for a stronger reason:
-  // this one interrupts live scripture on every screen in the building. A stray
-  // Enter in a text field must not be able to do that.
-  //
-  // `pushAnnouncement` THROWS by contract (it changes what the congregation
-  // sees), and this is the one place that can tell the operator — so the catch
-  // reports rather than swallowing. Saying nothing here would leave them
-  // believing the room had been warned.
-  let annMsg = '';
-  let annArmed = false;
-  let annArmT;
-  async function sendAnnouncement() {
-    const text = annMsg.trim();
-    if (!text) return;
-    if (!annArmed) {
-      annArmed = true;
-      clearTimeout(annArmT);
-      annArmT = setTimeout(() => (annArmed = false), 3000);
-      return;
-    }
-    clearTimeout(annArmT);
-    annArmed = false;
-    try {
-      await pushAnnouncement(text);
-      flash('Announcement on all screens');
-      annMsg = '';
-    } catch (e) {
-      flash(humanError(e));
-    }
-  }
+  // THE EMERGENCY ANNOUNCEMENT moved to Quick tools (docs/REBRAND.md §2 — the
+  // things that change during a service), which is in the dock row and therefore
+  // one reach away on EVERY workspace rather than on this one. It paints over
+  // live scripture on every screen at once; a control like that being reachable
+  // only from the tab you happen to be on was the argument for moving it, not
+  // against. Its two-step arm, and the `pushAnnouncement` contract that makes a
+  // failure loud, moved with it unchanged.
 
   // ── AI suggestions ───────────────────────────────────────────────────────
   $: dets = $detections;
@@ -711,7 +681,14 @@
   }
 
   // ── manual fire + messages ───────────────────────────────────────────────
-  let searchEl;
+  //
+  // THE BOX MOVED; THE PATH DID NOT. §9 asks for one search box and puts it in
+  // the rail, so the inspector's second scripture field went there rather than
+  // being deleted — it is still the floor under the AI (the model is missing,
+  // the plan has run out, the reference is a RANGE the corpus cannot offer as a
+  // single hit). `fireReference` is what the rail's `Fire` calls, and it is the
+  // same `manualFire` a grid verse cell takes: recorded `'manual'` (rule 14),
+  // through the pre-air validator (rule 36), reporting its own outcome (rule 15).
   let manualRef = '';
   let liveMsg = '';
   let liveMsgT;
@@ -735,14 +712,16 @@
       return `Couldn't read "${manualRef.trim()}" as a scripture reference.`;
     return s;
   }
-  async function fireManual() {
-    const ref = manualRef.trim();
-    if (!ref) return;
+  async function fireReference(ref) {
+    const text = String(ref ?? '').trim();
+    if (!text) return;
+    // Held only so `humanError` can quote back what the operator typed.
+    manualRef = text;
     try {
-      await manualFire(ref);
-      flash($t('live.now_live', { reference: ref }));
-      manualRef = '';
+      await manualFire(text);
+      flash($t('live.now_live', { reference: text }));
       errMsg = '';
+      manualRef = '';
     } catch (e) {
       errMsg = humanError(e);
     }
@@ -765,33 +744,11 @@
     listenBusy = false;
   }
 
-  // Open the CONGREGATION screen: the real Main-screen channel, honouring the
-  // template and display the operator configured. When no display has been chosen
-  // yet it picks the first non-primary monitor — a second screen plugged into a
-  // church laptop is a projector essentially every time.
-  async function openMainOutput() {
-    try {
-      const channels = await listOutputChannels();
-      const main =
-        channels.find((c) => c.render_target === 'native_window' && c.name === 'Main screen') ??
-        channels.find((c) => c.render_target === 'native_window');
-      if (!main) {
-        errMsg = 'No screen yet — add one in the Outputs tab.';
-        return;
-      }
-      if (!main.display_target) {
-        const projector = (await listMonitors()).find((m) => !m.primary);
-        if (projector) {
-          await setChannelDisplay(main.id, String(projector.index));
-          flash(`Sending to ${projector.name}`);
-        }
-      }
-      await openChannelOutput(main.id);
-      flash('Output window opened');
-    } catch (e) {
-      errMsg = humanError(e);
-    }
-  }
+  // OPENING THE CONGREGATION SCREEN is an Outputs job now, and the convenience
+  // this surface used to add — pick the first non-primary monitor when nobody has
+  // chosen one — is `FirstRun.svelte`'s, at the moment it actually matters. Live
+  // held a second, differently-worded path to the same three commands; two
+  // surfaces answering "which screen is the wall" is how they come to disagree.
 
   // ── mic quality ──────────────────────────────────────────────────────────
   // Plain-language copy for the dsp.rs warnings. The operator is a volunteer, not
@@ -903,9 +860,38 @@
   // `gridSource`) because it is the more recent deliberate act; a DETECTION never
   // does, which is the distinction the flag exists to keep.
   let railChapter = null; // { book, chapter } chosen in the rail, or null
+  let railSong = null; // { title, slides } staged from the Songs half, or null
+  let railEl; // the rail component, so `/` can still reach its box
+
   /** Stage a chapter from the rail. It does NOT fire — the grid does that. */
   function stageChapter(book, chapter) {
+    railSong = null;
     railChapter = { book, chapter };
+  }
+
+  /**
+   * Stage a SONG from the rail (docs/REBRAND.md §2). It does NOT fire.
+   *
+   * The deck is built by `reflow` — the SAME function the Library's editor uses,
+   * so the slides an operator picks here are the slides they saw there. A second
+   * splitter would be a second answer to "where does this verse end", and the
+   * two would drift on exactly the long sections that need splitting.
+   *
+   * A chapter and a song are never staged at once: whichever the operator asked
+   * for last is what the grid shows, which is what `handPicked` has always meant.
+   */
+  async function stageSong(id, title) {
+    railChapter = null;
+    railSong = { title: title ?? '', slides: [] };
+    try {
+      const full = await getSong(id);
+      if (dead) return;
+      const name = full?.title || title || '';
+      railSong = { title: name, slides: reflow(full?.sections ?? []) };
+    } catch (e) {
+      railSong = null;
+      flash(humanError(e));
+    }
   }
 
   /**
@@ -973,8 +959,15 @@
     slidesOf,
     verses: gridVerses,
     passageTitle: gridChapter ?? '',
-    handPicked: !!railChapter,
+    songSlides: railSong?.slides ?? [],
+    songTitle: railSong?.title ?? '',
+    handPicked: !!railChapter || !!railSong,
   });
+
+  // `SLIDES · <plan name> · <date>` (docs/REBRAND.md §2). The date is only a fact
+  // about a PLAN — a chapter and a song do not have one — so it is empty for
+  // every other source rather than being invented.
+  $: gridSubtitle = grid.source === 'plan' ? (openPlan?.plan_date ?? '') : '';
 
   /**
    * Fire one grid cell.
@@ -993,6 +986,21 @@
         return;
       }
       return fireSlide(item, cell.slideIdx);
+    }
+    // A SONG SECTION staged from the rail. `fireContent` is the path
+    // `LyricsPane` has always fired songs down — not a new one — and it is the
+    // only one that can take words with no reference to resolve. The label names
+    // the cue in history; `fire_content` suppresses it on the way to the glass,
+    // so the congregation reads the words and nothing else (rule 36).
+    if (cell.kind === 'song') {
+      if (!cell.text.trim()) return;
+      try {
+        await fireContent(cell.label, cell.text, 'song');
+        flash(`${cell.label} is on the screens`);
+      } catch (e) {
+        flash(humanError(e));
+      }
+      return;
     }
     if (!cell.reference) return;
     try {
@@ -1062,11 +1070,18 @@
     translation: null,
   });
 
-  /** Is this cell what is on the congregation's screen right now? */
+  /** Is this cell what is on the congregation's screen right now?
+   *
+   *  A song section has no reference to compare — `fire_content` deliberately
+   *  sends none — so it is matched on the WORDS, which are what went out. Amber
+   *  is never allowed to lie, so the comparison is against `$liveContent`, the
+   *  store's record of what actually left the machine, not against the press. */
   $: cellLive = (c) =>
     c.kind === 'plan'
       ? planOnAir && c.cueId === liveCueId && c.slideIdx === liveSlide
-      : !!c.reference && !$screenBlack && $liveContent?.reference === c.reference;
+      : c.kind === 'song'
+        ? !!c.text.trim() && !$screenBlack && $liveContent?.text === c.text
+        : !!c.reference && !$screenBlack && $liveContent?.reference === c.reference;
 
   // How many times the previewed verse has ALREADY gone out this service.
   //
@@ -1208,8 +1223,11 @@
   <div class="desk">
     <div class="rail-col">
       <LiveRail
+        bind:this={railEl}
         disabled={!$capture.available}
         onChapter={stageChapter}
+        onSong={stageSong}
+        onReference={fireReference}
         onVerse={fireSearchHit} />
       <!-- View controls. Deliberately at the TOP-RIGHT and deliberately small: they
            change how the console looks, never what reaches a screen, and must not
@@ -1378,10 +1396,24 @@
          Nothing here claims a screen: `fireCell` reuses the existing fire paths,
          which mark amber only after the fire resolves (rules 15 and 18). -->
     <section class="pane">
-      <header class="pane-head">
+      <!-- THE HEADER SAYS WHAT THIS IS AND WHAT A PRESS DOES (docs/REBRAND.md §2).
+           The hint used to be small print in the pane's FOOTER, under a grid that
+           scrolls — so the one sentence that tells an operator a single click
+           goes straight to the congregation was below the thing it is about, and
+           an operator learning this surface never read it. It is on the head now,
+           beside the count, where the eye lands before the first press. -->
+      <header class="pane-head sg-head">
         <h2>Slides</h2>
+        <!-- WHAT IS STAGED. Nothing, not a dash, when nothing is: the body
+             already says which empty it is, in a sentence. -->
+        {#if grid.title}<span class="sg-cap">· {grid.title}</span>{/if}
+        {#if gridSubtitle}<span class="sg-cap">· {gridSubtitle}</span>{/if}
         <span class="spring"></span>
         <span class="r-mono cnt">{grid.cells.length}</span>
+        <span class="sg-cap sg-hint">single click goes to air · double click previews</span>
+        {#if openPlan}
+          <button class="mini ghost" on:click={leave} title="Stop running {openPlan.title}">Close plan</button>
+        {/if}
       </header>
 
       <div class="pane-body sg-body">
@@ -1439,136 +1471,31 @@
               </button>
             {/each}
           </div>
-        {:else if grid.source === 'plan'}
-          <EmptyState message="This plan has no slides yet — add cues to it in the Planner." />
+        <!-- LOADING IS NOT EMPTY, AND A FAILED READ IS NEITHER (RG-95). The plan
+             pane used to carry these three states and it has gone; the grid is
+             the only surface left that can tell an operator why it has nothing
+             to show, so it says so here rather than printing "this plan has no
+             slides yet" over a read that failed — about a plan they built. -->
+        {:else if openPlan && !itemsLoaded}
+          <Loading what="cues" compact />
+        {:else if openPlan && $readErrors.planItems}
+          <ErrorState compact error={$readErrors.planItems} onRetry={() => loadPlan(openPlan)} />
+        {:else if grid.source === 'plan' || openPlan}
+          <EmptyState message={$t('live.plan_no_cues')} />
+        {:else if $readErrors.chapterVerses}
+          <ErrorState compact error={$readErrors.chapterVerses} onRetry={() => { gridChapter = null; loadChapterFor(stagedRef); }} />
         {:else}
-          <EmptyState message="Nothing staged. Load a plan, or put a verse on screen and its chapter appears here." />
+          <EmptyState message={$t('live.nothing_staged')} />
         {/if}
       </div>
 
+      <!-- THE TRANSPORT'S OWN VOICE. These sentences are the feedback for `→`,
+           `←`, a grid press and the rail's Fire — "Now live: John 3:16", "End of
+           the passage", the humanised reason a fire was refused. They were in the
+           plan pane's footer; the plan pane has gone (the plan IS the grid now)
+           and the messages had to land somewhere an operator is already looking.
+           `role="status"` so every one of them is announced. -->
       <footer class="pane-foot sg-foot">
-        <!-- The same rule: nothing, not a dash. The grid body already says which
-             empty it is, in a sentence. -->
-        {#if grid.title}<span class="sg-cap">{grid.title}</span>{/if}
-        <span class="spring"></span>
-        <span class="sg-cap">single click → programme · double click → preview</span>
-      </footer>
-    </section>
-
-  </div>
-
-  <!-- ══════ ROW B — the claim, and the plan ══════ -->
-  <div class="con-bot">
-    <!-- ── SERVICE PLAN — RUNNING ── -->
-    <section class="pane">
-      <header class="pane-head">
-        <h2>{openPlan ? 'Service Plan — Running' : 'Service Plan'}</h2>
-        <span class="spring"></span>
-        {#if openPlan}
-          <span class="r-mono cnt">{liveIndex >= 0 ? `${liveIndex + 1}/${items.length}` : `${items.length}`}</span>
-          <button class="mini ghost" on:click={leave}>Close</button>
-        {:else}
-          <span class="r-mono cnt">{plans.length}</span>
-        {/if}
-      </header>
-
-      <div class="pane-body plan">
-        {#if openPlan}
-          {#each items as c, i (c.id)}
-            {@const ty = typeOf(c.cue_type)}
-            <div class="rail">
-              <span class="rail-dot" class:on={planOnAir && c.id === liveCueId} class:cued={!planOnAir && c.id === liveCueId}></span>
-              <button
-                class="cue"
-                class:sel={c.id === selId}
-                class:islive={planOnAir && c.id === liveCueId}
-                class:cued={!planOnAir && c.id === liveCueId}
-                on:click={() => (selId = c.id)}>
-                <span class="cue-stripe" style="background:{ty.color}"></span>
-                <span class="cue-num r-mono">{String(i + 1).padStart(2, '0')}</span>
-                <span class="cue-body">
-                  <span class="cue-title" title={c.label}>{c.label}</span>
-                  <span class="cue-meta r-mono">{cueSub(c)}</span>
-                </span>
-                {#if c.id === liveCueId}
-                  <!-- Amber = the congregation is looking at it. CUED = where `→`
-                       resumes from, and NOT on screen — grey, never amber. -->
-                  <span class="r-badge sm-badge" class:amber={planOnAir} class:grey={!planOnAir}>
-                    <span class="bd"></span>{planOnAir ? 'On Air' : 'Cued'}
-                  </span>
-                {/if}
-              </button>
-            </div>
-
-            <!-- The live cue opens into its slides, in place. That is the reference's
-                 "Now Playing" block, and it is where the take actually happens. -->
-            {#if c.id === selId}
-              {#if payloadOf(c).stage_note}
-                <!-- The preacher's stage note. Confidence monitor only — never on the
-                     main output. -->
-                <div class="note">
-                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
-                  {payloadOf(c).stage_note}
-                </div>
-              {/if}
-              {#each slidesOf(c) as s, si}
-                <button
-                  class="slide"
-                  class:islive={planOnAir && c.id === liveCueId && si === liveSlide}
-                  class:cued={!planOnAir && c.id === liveCueId && si === liveSlide}
-                  style="--acc:{slideAccent(s.tag)}"
-                  on:click={() => fireSlide(c, si)}>
-                  <span class="slide-stripe"></span>
-                  <span class="slide-tag r-mono">{s.tag}</span>
-                  <span class="slide-text">{s.text || s.label}</span>
-                </button>
-              {/each}
-            {/if}
-          {/each}
-          {#if !itemsLoaded}
-            <Loading what="cues" compact />
-          {:else if !items.length && $readErrors.planItems}
-            <!-- RG-95, last two surfaces. `planItems` swallowed to `[]`, so a read
-                 that failed rendered "this plan has no cues yet" — on the RUN
-                 surface, mid-service, about a plan the operator built. -->
-            <ErrorState compact error={$readErrors.planItems} onRetry={() => loadPlan(openPlan)} />
-          {:else if !items.length}
-            <EmptyState message={$t('live.plan_no_cues')} />
-          {/if}
-        {:else}
-          <!-- No plan loaded. Not an error — plenty of services run entirely on the
-               AI and the manual box. Offer the plans, don't demand one. -->
-          {#if plansLoaded && plans.length}
-            <div class="pick-intro r-lbl">Service plans — pick one to run</div>
-          {/if}
-          {#each plans as p (p.id)}
-            <button class="cue pick" on:click={() => loadPlan(p)}>
-              <span class="pick-ic" aria-hidden="true">
-                <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2v4M16 2v4"/></svg>
-              </span>
-              <span class="cue-body">
-                <span class="cue-title" title={p.title}>{p.title}</span>
-                <span class="cue-meta r-mono">{p.plan_date} · {p.cue_count} {p.cue_count === 1 ? 'cue' : 'cues'}</span>
-              </span>
-              <span class="pick-run"><svg viewBox="0 0 24 24" width="10" height="10" fill="currentColor" aria-hidden="true"><path d="M5 3v18l15-9L5 3Z"/></svg>Run</span>
-            </button>
-          {/each}
-          <!-- Loading is NOT Empty. Until the query comes back, "no plans" is not a
-               fact — it is the absence of one, and rendering it told an operator with
-               a full library that they had lost their work. -->
-          {#if !plansLoaded}
-            <Loading what="plans" compact />
-          {:else if !plans.length && $readErrors.listPlans}
-            <ErrorState compact error={$readErrors.listPlans} onRetry={loadPlans} />
-          {:else if !plans.length}
-            <EmptyState message={$t('live.no_plans')} />
-          {/if}
-        {/if}
-      </div>
-
-      <footer class="pane-foot">
-        <!-- role="status" so every flash is announced. These sentences ARE the
-             feedback for the transport keys. -->
         <span class="sr-only" role="status" aria-live="polite" aria-atomic="true">{liveMsg}</span>
         {#if liveMsg}
           <span class="flash" aria-hidden="true"><i class="fd"></i>{liveMsg}</span>
@@ -1579,6 +1506,26 @@
     </section>
 
   </div>
+
+  <!-- ══════ THE PLAN IS THE GRID ══════
+       A SERVICE PLAN pane used to sit under the slides, and it was two surfaces
+       in one: a chooser when no plan was open, and a second copy of the running
+       order when one was. Both have gone (docs/REBRAND.md §2 — "the plan IS the
+       grid"), and neither took a control with it.
+
+       CHOOSING WHICH PLAN TO RUN belongs to the Planner. That is where a plan is
+       built, named and dated, and `Run in Live` there already loads it and brings
+       the operator here; a second chooser on the run surface was a second answer
+       to "which plan am I running". `Load whole plan` in the Quick tools header
+       re-stages the one the Planner handed over, which is the prototype's own
+       control and the reason Quick tools has a header button at all.
+
+       THE RUNNING ORDER is the grid: every slide of every cue, in order, each
+       rendered as the wall would render it, with the playhead on the cell that is
+       actually on air. What the removed rail added on top of that was a cue's
+       stage note — an operator-only line for the PREACHER'S monitor, authored in
+       the Planner and delivered by the fire itself. It is not lost from the
+       service; it is no longer previewed here. Recorded in the review note. -->
 
     </div>
 
@@ -1734,151 +1681,45 @@
           {/if}
         </div>
 
-        <!-- Manual fire. NOT in the reference mockup, and kept anyway: it is the one
-             path that works when the AI is wrong, the model is missing, or the plan
-             has run out — removing it to match a picture would remove the product's
-             floor. The rail's search is a different job: it FINDS a verse. This
-             fires a reference, ranges included, with no search in between. -->
-        <footer class="pane-foot entry">
-          <div class="search">
-            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3" stroke-linecap="round"/></svg>
-            <input
-              bind:this={searchEl}
-              bind:value={manualRef}
-              on:keydown={(e) => e.key === 'Enter' && fireManual()}
-              placeholder="Search verses — ps 23, John 3:16-18"
-              aria-label="Manual scripture reference"
-              disabled={!$capture.available} />
-          </div>
-          <button class="wide amber" on:click={fireManual} disabled={!$capture.available}>Fire</button>
-        </footer>
+        <!-- NOTHING BELOW THE CLAIMS. The manual reference box that used to sit
+             here is the rail's `Fire` now (§9's one box); the screens answer for
+             themselves in the chrome lamps and in Outputs; the emergency
+             announcement is a Quick tools job. What is left is the column the
+             prototype draws: the AI's claims, and nothing competing with them. -->
         {#if errMsg}<div class="err" role="alert">{errMsg}</div>{/if}
       </section>
 
-    <!-- OUTPUT STATUS. During a service the only question is "is it up?" — and
-         until now the pane could report a screen that was down and offer no way to
-         bring it back, which sent the operator to another tab mid-service with a
-         congregation waiting. Switching a screen on or off is the REPAIR for the
-         state this pane reports, not configuration; changing a screen's display or
-         its template is configuration and stays in the Outputs tab. -->
-    <section class="pane">
-      <header class="pane-head">
-        <h2>Output Status</h2>
-        <span class="spring"></span>
-        <span class="r-mono cnt">{channels.length}</span>
-      </header>
-      <div class="pane-body outs">
-        {#each outs as o (o.c.id)}
-          <div class="out" class:down={o.s.kind === 'down'}>
-            <span class="out-ic" aria-hidden="true">
-              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
-            </span>
-            <!-- THE NAME GETS ITS OWN ROW, and one line of it. Sharing a row with
-                 the badge inside the 286px column left ~90px for the name against a
-                 110px "Not responding", and the wrap rule broke it mid-word:
-                 "Streaming" rendered as `Stream` / `ing`, and a name cut in half
-                 reads as a DIFFERENT SCREEN — on the one pane whose whole job is
-                 telling an operator which screen has died. The full name is on the
-                 title attribute, and `screencards`/the chrome lamps ellipsise the
-                 same way. -->
-            <b class="out-nm" title={o.c.name}>{o.c.name}</b>
-            <!-- Badge, the screen's own word, and the repair, on one row beneath.
-                 They are all short; the name is the one that is not. -->
-            <!-- TWO DIFFERENT KINDS OF STRING, AND THEY CANNOT SHARE AN ELEMENT.
-                 One span used to render `o.s.note || screenKind(…)`, so one set of
-                 wrap rules had to serve both — and at this width it broke "Native
-                 window" into `Nativ` / `e…` while truncating a whole sentence to
-                 `this screen…`. They want opposite treatments:
-
-                   · the KIND is a NAME (two words, fixed, low value). One line,
-                     ellipsised, beside the badge. Never broken mid-word, for the
-                     same reason the screen's name is not.
-                   · the NOTE is the screen's OWN LAST WORD — a sentence, and the
-                     one string on this pane the chrome lamps genuinely cannot
-                     carry. When it disagrees with the badge, that disagreement is
-                     the finding. So it gets a row of its own, full width, and
-                     wraps rather than truncating.
-
-                 The note appears only when there IS one, so a healthy screen stays
-                 two rows and the pane grows for the screen that has news. -->
-            <div class="out-meta">
-              <span class="r-badge {SCREEN_BADGE[o.s.kind]} sm-badge"><span class="bd"></span>{o.s.label}</span>
-              {#if !o.s.note}
-                <!-- With nothing to report it names the KIND of screen in words —
-                     it used to print the raw database value (`native_window`) at a
-                     volunteer mid-service. -->
-                <span class="out-kind r-mono" title={screenKind(o.c.render_target)}>
-                  {screenKind(o.c.render_target)}
-                </span>
-              {/if}
-              <span class="spring"></span>
-              <!-- ONLY WHEN THERE IS SOMETHING TO PRESS. The inert half of this pair
-                   ("Browser source", "No window") was a label that never did anything,
-                   sitting where the eye looks for a control. The Outputs tab states
-                   the type in full, in a column made for it. -->
-              {#if o.w.action}
-                <button
-                  class="out-sw"
-                  title={o.w.why}
-                  disabled={!$capture.available || switching === o.c.id}
-                  on:click={() => toggleScreen(o.c, o.w.action)}>
-                  {switching === o.c.id ? '…' : o.w.label}
-                </button>
-              {/if}
-            </div>
-            {#if o.s.note}
-              <p class="out-note r-mono">{o.s.note}</p>
-            {/if}
-          </div>
-        {:else}
-          {#if $readErrors.listOutputChannels}
-            <ErrorState compact error={$readErrors.listOutputChannels} />
-          {:else}
-            <EmptyState message="No screens yet — add one in the Outputs tab." />
-          {/if}
-        {/each}
-      </div>
-      {#if nowhereToShow}
-        <p class="out-warn" role="status">
-          Something is on air, and no screen is reporting that it is showing it.
-          Relay is still sending — check the screens above.
-        </p>
-      {/if}
-      {#if fitWarning}
-        <p class="out-warn" role="status">{fitWarning}</p>
-      {/if}
-      {#if screenMsg}
-        <p class="out-warn" role="status">{screenMsg}</p>
-      {/if}
-      <p class="sr-only" aria-live="polite">{downAnnounce}</p>
-      <footer class="pane-foot ann">
-        <!-- EMERGENCY ANNOUNCEMENT. It paints over live scripture on EVERY screen
-             at once, so it belongs with the screens rather than in a drawer of
-             quick tools. Armed in two steps for the reason it always was: a stray
-             Enter must not be able to interrupt a reading in front of a room. -->
-        <div class="sb cd">
-          <span>Announce</span>
-          <input
-            class="cd-msg"
-            type="text"
-            placeholder="Message for every screen"
-            bind:value={annMsg}
-            aria-label="Emergency announcement"
-            on:keydown={(e) => e.key === 'Enter' && sendAnnouncement()}
-            disabled={!$capture.available} />
-          <button class="cd-go" class:armed={annArmed} on:click={sendAnnouncement}
-            disabled={!$capture.available || !annMsg.trim()}>
-            {annArmed ? 'Confirm?' : 'Send'}
-          </button>
-        </div>
-        <button class="wide" on:click={openMainOutput} disabled={!$capture.available}>Open main output</button>
-      </footer>
-    </section>
     </div>
   </div>
 
   {#if $capture.audioError}<div class="audioerr">Audio: {$capture.audioError}</div>{/if}
   {#if $capture.outputError}<div class="audioerr">Output: {$capture.outputError}</div>{/if}
+
+  <!-- ══ WHAT THE LAMPS CANNOT SAY ══
+       The Output Status pane left this column: a screen's state is one lamp per
+       screen in the chrome and a full row in Outputs, and a third opinion about
+       the same screen is exactly what rule 35 was written against. These two
+       lines are NOT that opinion — neither is about one screen:
+
+         · nothing is showing what is on air. A whole-room fact, and the one
+           sentence a lamp cannot compose because no single lamp knows it;
+         · the verse on the wall is smaller than its template asked for. Rule
+           37's measurement, taken by the program pane through the SAME renderer
+           the wall uses, so it is the wall's number rather than a guess.
+
+       Both are reported, never enforced (a service runs on the console preview
+       all the time), and both appear only when they are true. -->
+  {#if nowhereToShow}
+    <div class="out-warn" role="status">
+      <b>No screen is showing this.</b> Something is on air and every screen you have
+      is down, idle or has not answered. Relay is still sending — check them in Outputs.
+    </div>
+  {/if}
+  {#if fitWarning}<div class="out-warn" role="status"><b>Small on the wall.</b> {fitWarning}</div>{/if}
+  <!-- Announced once, on the transition, through the same polite region the AI's
+       suggestions use. A live region that repeats is one an operator learns to
+       tune out. -->
+  <p class="sr-only" aria-live="polite">{downAnnounce}</p>
 
   <!-- Only while listening, and only when something is genuinely wrong. A warning
        that is always on screen is wallpaper. -->
@@ -1983,17 +1824,6 @@
      AI's claims — the whole column is 286px, as measured in the prototype. */
   .con-top{flex:0 0 auto; height:clamp(268px,33vh,364px);
     display:grid; grid-template-columns:1fr 118px 1fr; gap:var(--v-sp-sm); min-height:0}
-  /* Five panels: transcript · slides · detection · plan · controls. The grid
-     takes the widest share of the flexible columns — a cell the operator cannot
-     read is a cell they have to click twice to identify. */
-  /* Two panels now: the claim, and the plan. The transcript and the quick
-     controls used to sit here and are the DOCK's — one row below, on every
-     workspace — and a second copy of a panic control is how two surfaces come to
-     disagree about the same room. */
-  /* One panel now: the plan. The claim column moved to the inspector, where §2
-     puts it and where several claims fit at once — see the note in the markup. */
-  .con-bot{flex:1 1 0; min-height:0;
-    display:grid; grid-template-columns:minmax(0,1fr); gap:var(--v-sp-sm)}
 
   /* ── the desk: rail, stage, inspector ──────────────────────────────────── */
   .desk{flex:1; min-height:0; display:grid;
@@ -2001,21 +1831,20 @@
   .rail-col{display:flex; flex-direction:column; gap:var(--v-sp-sm); min-height:0; min-width:0}
   .rail-col :global(.lrail){flex:1 1 auto; min-height:0}
   .stage{display:flex; flex-direction:column; gap:var(--v-sp-sm); min-height:0; min-width:0}
-  /* The inspector runs the FULL HEIGHT of the workspace: the claims take what is
-     left after the screens, because the claims are the thing that keeps arriving
-     and the screens are a fixed list. */
+  /* The inspector runs the FULL HEIGHT of the workspace and holds ONE pane: the
+     AI's claims (docs/REBRAND.md §2). It used to hold two, and the height was
+     split by `:first-child` / `:last-child` — a pair that BOTH match when there
+     is only one child, so the later rule won and capped the claims at 46% of a
+     column with nothing under it. One child, one rule. */
   .insp-col{display:flex; flex-direction:column; gap:var(--v-sp-sm); min-height:0; min-width:0}
-  .insp-col > .pane:first-child{flex:1 1 auto; min-height:0}
-  .insp-col > .pane:last-child{flex:0 0 auto; max-height:46%}
+  .insp-col > .pane{flex:1 1 auto; min-height:0}
 
-  /* The grid gets the full width under the monitors, and the larger share of
-     what is left: it is the surface an operator picks from, and a cell too small
-     to read is a cell they have to click to identify. */
-  /* 1.15, not 1.35. The grid still takes the larger share — it is what an
-     operator picks from — but at 1.35 the plan panel was left with ~78px of
-     body, which is one cue row and a sliced second. A panel that cannot show a
-     whole row of the thing it lists is a panel an operator scrolls to press. */
-  .con-grid{flex:1.15 1 0; min-height:0; display:flex}
+  /* THE GRID TAKES WHAT IS LEFT. It shared the stage with a SERVICE PLAN pane
+     and the two split the remaining height 1.15 : 1; the plan pane has gone —
+     the plan IS the grid (docs/REBRAND.md §2) — so there is nothing to share
+     with, and the grid stretches under the monitors instead of stopping short
+     and leaving a band of nothing where the second pane used to be. */
+  .con-grid{flex:1 1 0; min-height:0; display:flex}
   .con-grid :global(.pane){flex:1; min-width:0}
 
   /* The view controls sit UNDER the rail, not in a band of their own. They change
@@ -2024,11 +1853,6 @@
   .rail-col .view-ctl{flex:0 0 auto; margin-bottom:0; justify-content:stretch}
   .rail-col .seg{flex:1}
   .rail-col .seg button{flex:1; text-align:center}
-
-  /* The announcement row in the Output Status footer stacks; `.pane-foot` is a
-     row, and an input beside a button beside another button truncates the one
-     thing an operator has to read before pressing it. */
-  .pane-foot.ann{flex-direction:column; align-items:stretch; gap:6px}
 
   .pane{display:flex; flex-direction:column; min-height:0; overflow:hidden;
     background:var(--v-surf); border:1px solid var(--v-line); border-radius:var(--v-r-lg);
@@ -2049,10 +1873,6 @@
   .pane-head h2{margin:0; min-width:0; font-family:var(--f-head); font-size:var(--v-fs-cap);
     line-height:var(--v-lh-lbl); font-weight:600; letter-spacing:.06em; text-transform:uppercase;
     color:var(--v-txt); overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
-  /* The numbered panel chips from the reference. Ordinals, not status — grey. */
-  .pn{flex:0 0 auto; width:18px; height:18px; border-radius:var(--v-r-sm); display:grid;
-    place-items:center; background:var(--v-surf3); border:1px solid var(--v-line2);
-    font-family:var(--f-mono); font-size:10px; font-weight:700; color:var(--v-dim)}
   .pane-body{flex:1; min-height:0; overflow-y:auto; padding:var(--v-sp-sm) 12px;
     display:flex; flex-direction:column; gap:var(--v-sp-sm);
     scrollbar-width:thin; scrollbar-color:var(--v-surf3) transparent}
@@ -2136,113 +1956,6 @@
      caption, not on a claim about a screen. */
   .rack-mode.slide{color:var(--v-amber)}
 
-  /* ── output status ─────────────────────────────────────────────────────── */
-  /* TWO ROWS, not one. On a single flex line the name, the note, the badge and
-     the switch competed for a ~275px rail, and the name lost: "Streaming" was
-     rendered 7px wide and "Lobby screen" 37px, while the note wrapped one word
-     per line and pushed the row to 122px. The screen with the WORST news was the
-     least readable of all, because "Not responding" is the longest badge — on the
-     one pane whose whole job is telling an operator which screen has died.
-     Name + badge on top, the screen's own word + the switch underneath. */
-  /* A SCROLLER THAT SAYS SO. Three of five screens fit at 900px, and the pane
-     scrolls — but macOS overlay scrollbars are invisible at rest, so the pane
-     looked like the whole list. Two `background-attachment: local` gradients: the
-     shadow at an edge appears only while there is more content past it, and goes
-     when you reach the end. No script, no state, nothing to keep in step. */
-  .outs{
-    background:
-      linear-gradient(var(--v-surf) 30%, transparent) top / 100% 14px no-repeat local,
-      linear-gradient(transparent, var(--v-surf) 70%) bottom / 100% 14px no-repeat local,
-      radial-gradient(farthest-side at 50% 0, rgba(0,0,0,.4), transparent) top / 100% 7px no-repeat scroll,
-      radial-gradient(farthest-side at 50% 100%, rgba(0,0,0,.4), transparent) bottom / 100% 7px no-repeat scroll;
-  }
-  .out{display:grid; grid-template-columns:28px minmax(0,1fr);
-    grid-template-areas:"ic nm" "ic meta" "note note";
-    column-gap:10px; row-gap:4px; align-items:center; padding:9px 10px;
-    border-radius:var(--v-r-md);
-    background:var(--v-surf2); border:1px solid var(--v-line)}
-  .out-ic{grid-area:ic; width:28px; height:28px; border-radius:var(--v-r-sm); display:grid;
-    place-items:center; background:var(--v-surf3); color:var(--v-dim)}
-  /* ONE LINE, ELLIPSISED. The old rule wrapped to two lines with
-     `overflow-wrap:anywhere` — written for a ~230px rail where a second line cost
-     12px and an ellipsis cost the screen's identity. Inside the 286px inspector
-     the name shared its row with a 110px badge, so ~90px was left and the rule
-     broke "Streaming" mid-word into `Stream` / `ing`. A name cut in half does not
-     cost the identity of the screen; it substitutes a different one. The name now
-     owns its row, the title attribute carries the whole of it, and
-     `text-overflow` needs `display:block` to do anything at all. */
-  .out-nm{grid-area:nm; display:block; min-width:0;
-    font-size:var(--v-fs-b2); font-weight:600; color:var(--v-txt);
-    white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
-  .out-meta{grid-area:meta; display:flex; align-items:center; gap:8px; min-width:0}
-  /* THE KIND IS A NAME. Two fixed words of low value — one line, ellipsised, and
-     never broken mid-word, for the same reason the screen's own name is not:
-     `Nativ` / `e…` is not a shorter way of saying "native window", it is a
-     different string. */
-  .out-kind{min-width:0; font-size:9px; letter-spacing:.05em; color:var(--v-faint);
-    white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
-  /* THE NOTE IS A SENTENCE, and the one string on this pane the chrome lamps
-     cannot carry — the screen's OWN last word, which is the finding whenever it
-     disagrees with the badge beside it. So it gets the whole width of the row
-     rather than the gap the badge left, and it WRAPS: truncating a sentence to
-     `this screen…` removes exactly the part that was worth reading. Two lines is
-     the ceiling — it is worth reading, and not worth 120px of a pane an operator
-     scans — and `overflow-wrap:anywhere` stays here, where the strings are long
-     and their words are ordinary. */
-  .out-note{grid-area:note; margin:2px 0 0; min-width:0;
-    font-size:9px; line-height:1.45; letter-spacing:.05em; color:var(--v-faint);
-    display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2;
-    overflow:hidden; overflow-wrap:anywhere}
-  /* Deliberately quiet. This is a repair for one screen, not a panic control —
-     Clear and Blackout are the loud pair and nothing else may look like them. */
-  .out-sw{flex:0 0 auto; font:inherit; font-size:10px; letter-spacing:.04em;
-    padding:3px 8px; border-radius:var(--v-r-sm); cursor:pointer;
-    background:transparent; color:var(--v-faint); border:1px solid var(--v-line)}
-  /* `--v-txt-dim` was never defined. `border-color` is not inherited, so it fell
-     back to currentColor — which this rule sets to --v-txt on the same line, and
-     that made the loudest border in the pane out of the control the comment above
-     calls deliberately quiet. --v-line2 is the app's hover-border step. */
-  .out-sw:hover:not(:disabled){color:var(--v-txt); border-color:var(--v-line2)}
-  .out-sw:disabled{opacity:.45; cursor:not-allowed}
-
-  /* A screen that is not answering is a FAILURE, and the row says so without
-     spending amber (which means on air, DECISIONS §22) or reading as decoration.
-     The border is the signal; the badge carries the word. */
-  /* A warning, not a failure and not a live state. Amber would mean ON AIR here
-     and rose text would overstate it — Relay IS still sending. Dim text, rose rule. */
-  .out-warn{margin:8px 10px 0; padding:7px 9px; font-size:var(--v-fs-cap);
-    color:var(--v-dim); background:var(--v-surf2); border-radius:var(--v-r-sm);
-    border-left:2px solid var(--v-rose)}
-  .out.down{border-color:color-mix(in srgb, var(--v-rose) 45%, transparent);
-    background:color-mix(in srgb, var(--v-rose) 7%, var(--v-surf2))}
-  .out.down .out-ic{color:var(--v-rose)}
-  .out.down .out-note{color:var(--v-rose)}
-  .sm-badge{padding:3px 8px; font-size:9px; letter-spacing:.07em; flex:0 0 auto}
-  .sm-badge .bd{width:5px; height:5px}
-
-  /* ── 1 · transcript ────────────────────────────────────────────────────── */
-  .tx{gap:2px; padding-top:10px}
-  .txl{display:flex; gap:10px; padding:7px 8px; border-radius:var(--v-r-md);
-    border-left:2px solid transparent}
-  /* The line the AI is working on right now. Amethyst: it is being considered, not
-     fired — amber would claim it is on the wall. */
-  .txl.cur{background:var(--v-amethyst-soft); border-left-color:var(--v-amethyst)}
-  .txl-at{flex:0 0 auto; width:56px; font-size:var(--v-fs-cap); color:var(--v-faint)}
-  .txl-b{flex:1; min-width:0; font-size:var(--v-fs-b2); line-height:1.55; color:var(--v-dim)}
-  .txl.cur .txl-b{color:var(--v-txt)}
-  .txl-b mark{background:transparent; color:var(--v-txt)}
-  .caret{display:inline-block; width:2px; height:13px; background:var(--v-amethyst);
-    vertical-align:-2px; margin-left:2px; animation:blink 1.05s steps(1) infinite}
-  @keyframes blink{50%{opacity:0}}
-
-  .mic{gap:10px}
-  .mic-lbl{flex:0 0 auto; font-size:var(--v-fs-cap); color:var(--v-faint)}
-  .meter{flex:1; min-width:0; display:flex; gap:2px; align-items:center; height:12px}
-  .sg{flex:1; height:100%; border-radius:1px; background:var(--v-surf3)}
-  .sg.on{background:var(--v-emerald)}
-  .sg.on.mid{background:var(--v-amber)}
-  .sg.on.hot{background:var(--v-red)}
-  .db{flex:0 0 auto; font-size:var(--v-fs-cap); color:var(--v-dim)}
   .ibtn{flex:0 0 auto; width:26px; height:26px; border-radius:var(--v-r-sm); display:grid;
     place-items:center; cursor:pointer; background:var(--v-surf2); border:1px solid var(--v-line2);
     color:var(--v-dim); transition:.14s}
@@ -2395,7 +2108,6 @@
 
   .klbl{font-family:var(--f-mono); font-size:9px; font-weight:700; letter-spacing:.14em;
     text-transform:uppercase; color:var(--v-faint)}
-  .klbl.sec{margin-top:var(--v-sp-sm)}
   .sub{display:flex; align-items:center; gap:var(--v-sp-sm); margin-top:var(--v-sp-sm);
     padding-top:var(--v-sp-sm); border-top:1px solid var(--v-line)}
   .mini{padding:4px 10px; border-radius:var(--v-r-sm); border:0; cursor:pointer;
@@ -2411,14 +2123,6 @@
   .rel-chip:hover:not(:disabled){color:var(--v-txt); background:var(--v-surf3)}
   .rel-chip:disabled{opacity:.45; cursor:default}
 
-  .entry{gap:var(--v-sp-sm)}
-  .search{flex:1; min-width:0; display:flex; align-items:center; gap:9px; height:34px;
-    padding:0 11px; border-radius:var(--v-r-md); background:var(--v-bg);
-    border:1px solid var(--v-line2); color:var(--v-faint)}
-  .search input{flex:1; min-width:0; background:transparent; border:0; outline:none;
-    color:var(--v-txt); font-family:var(--f-mono); font-size:var(--v-fs-mono)}
-  .search input::placeholder{color:var(--v-faint)}
-  .search:focus-within{border-color:var(--v-amber-line); box-shadow:0 0 0 3px var(--v-amber-soft)}
   .err{padding:0 12px 10px; color:var(--v-red); font-size:var(--v-fs-cap)}
 
   .wide{width:100%; height:32px; border-radius:var(--v-r-md); cursor:pointer;
@@ -2426,152 +2130,21 @@
     font-family:var(--f-body); font-size:var(--v-fs-lbl); font-weight:600; transition:.14s}
   .wide:hover:not(:disabled){background:var(--v-surf3)}
   .wide:disabled{opacity:.45; cursor:not-allowed}
-  .wide.amber{flex:0 0 auto; width:auto; padding:0 18px; background:var(--v-amber);
-    border-color:transparent; color:var(--v-amber-ink)}
 
-  /* ── 4 · plan ──────────────────────────────────────────────────────────── */
-  /* A SCROLLER THAT SAYS SO — the same two `background-attachment: local`
-     gradients `.outs` uses, for the same reason and in the same file. Rendered
-     at 1440x960 the panel showed `Sunday Morning` with its `Run` button sliced
-     through the middle and nothing at all to say there was more below it: macOS
-     overlay scrollbars are invisible at rest, so a pane that is scrolling looks
-     exactly like a pane that is broken. The shadow at an edge appears only while
-     there is content past it. No script, no state, nothing to keep in step. */
-  .plan{gap:6px;
-    background:
-      linear-gradient(var(--v-surf) 30%, transparent) top / 100% 14px no-repeat local,
-      linear-gradient(transparent, var(--v-surf) 70%) bottom / 100% 14px no-repeat local,
-      radial-gradient(farthest-side at 50% 0, rgba(0,0,0,.4), transparent) top / 100% 7px no-repeat scroll,
-      radial-gradient(farthest-side at 50% 100%, rgba(0,0,0,.4), transparent) bottom / 100% 7px no-repeat scroll;
-  }
-  .rail{display:flex; align-items:stretch; gap:10px}
-  .rail-dot{flex:0 0 auto; align-self:center; width:9px; height:9px; border-radius:50%;
-    background:var(--v-surf3); border:1px solid var(--v-line2)}
-  .rail-dot.on{background:var(--v-amber); border-color:var(--v-amber); box-shadow:0 0 8px var(--v-amber-glow)}
-  .rail-dot.cued{background:var(--v-grey); border-color:var(--v-grey)}
-  .cue,.slide{display:flex; align-items:center; gap:9px; width:100%; flex:1; text-align:left;
-    cursor:pointer; padding:9px 10px; border-radius:var(--v-r-md); background:var(--v-surf2);
-    border:1px solid var(--v-line); color:var(--v-txt); font-family:var(--f-body); transition:.14s}
-  .cue:hover,.slide:hover{border-color:var(--v-line2); background:var(--v-surf3)}
-  /* SELECTION is steel blue, never cyan. Cyan means "a guess" (rule 18), and this
-     sat one line above the amber rule that says a promise colour may mean only
-     what it says. `LyricsPane` already had it right — "Selection is chrome — the
-     accent, never amber" — and the rebrand created --v-sel for exactly this. */
-  .cue.sel{border-color:var(--v-sel-line)}
-  /* Amber = it is in front of the congregation. Nothing else may use it. */
-  .cue.islive,.slide.islive{border-color:var(--v-amber); background:var(--v-amber-soft)}
-  /* CUED = where → will resume from, but NOT on screen. Deliberately not amber. */
-  .cue.cued,.slide.cued{border-style:dashed; border-color:var(--v-grey)}
-  .cue-stripe,.slide-stripe{width:3px; align-self:stretch; border-radius:99px; flex:0 0 auto}
-  .slide-stripe{background:var(--acc)}
-  .cue-num{flex:0 0 auto; font-size:10px; color:var(--v-faint)}
-  .cue-body{flex:1; min-width:0; display:flex; flex-direction:column; gap:2px}
-  /* Two lines, not an ellipsis. Three plans truncated to 57px on a 1366 laptop
-     ("Sunday M…", "Evening P…", "Harvest T…") are three plans an operator cannot
-     tell apart, on the control that RUNS one of them. */
-  .cue-title{font-size:var(--v-fs-b2); display:-webkit-box; -webkit-box-orient:vertical;
-    -webkit-line-clamp:2; overflow:hidden; overflow-wrap:anywhere}
-  .cue-meta{font-size:9px; letter-spacing:.05em; color:var(--v-faint)}
-  /* Plan picker (no plan loaded) — a plan reads as a real, inviting card. */
-  .pick-intro{ padding:2px 2px 4px; flex:0 0 auto; }
-  /* A pick card is NATURAL height (flex:0 0 auto) — `.cue` is flex:1, which made a
-     single plan card stretch to fill the whole pane. Picks stack at the top. */
-  .cue.pick{ flex:0 0 auto; padding:13px; gap:12px; align-items:center; }
-  .pick-ic{ flex:0 0 auto; width:32px; height:32px; display:grid; place-items:center;
-    border-radius:var(--v-r-md); background:var(--v-surf3); border:1px solid var(--v-line); color:var(--v-dim); transition:.14s; }
-  .cue.pick:hover .pick-ic{ color:var(--v-accent); border-color:var(--v-accent-line); }
-  .cue.pick .cue-title{ font-size:var(--v-fs-b1); font-weight:600; }
-  .cue.pick .cue-meta{ font-size:var(--v-fs-cap); letter-spacing:.03em; }
-  .pick-run{ flex:0 0 auto; display:inline-flex; align-items:center; gap:5px; padding:5px 11px;
-    border-radius:99px; background:var(--v-accent-soft); border:1px solid var(--v-accent-line);
-    color:var(--v-accent); font-size:var(--v-fs-cap); font-weight:600; transition:.14s; }
-  .cue.pick:hover .pick-run{ background:var(--v-accent-fill); color:var(--v-accent-ink); border-color:var(--v-accent-fill); }
-  .slide{align-items:flex-start; margin-left:19px; background:var(--v-bg)}
-  .slide-tag{flex:0 0 auto; min-width:26px; padding-top:2px; font-size:9px; font-weight:700;
-    letter-spacing:.05em; color:var(--acc)}
-  .slide-text{flex:1; min-width:0; font-family:var(--f-serif); font-size:var(--v-fs-b2);
-    line-height:1.5; color:var(--v-dim); white-space:pre-wrap;
-    display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden}
-  .slide.islive .slide-text{color:var(--v-txt)}
-  .note{margin-left:19px; display:flex; align-items:flex-start; gap:7px; padding:8px 10px;
-    border-radius:var(--v-r-md); background:var(--v-amethyst-soft);
-    border:1px solid var(--v-amethyst-line); color:var(--v-amethyst);
-    font-size:var(--v-fs-cap); line-height:1.5}
-  .note svg{flex:0 0 auto; margin-top:2px}
   .flash{display:flex; align-items:center; gap:8px; min-width:0; overflow:hidden;
     text-overflow:ellipsis; white-space:nowrap; font-size:var(--v-fs-cap); color:var(--v-emerald)}
   .flash.idle{color:var(--v-faint)}
   .fd{width:6px; height:6px; border-radius:50%; background:var(--v-emerald);
     box-shadow:0 0 8px var(--v-emerald); flex:0 0 auto}
 
-  /* ── 5 · quick controls ────────────────────────────────────────────────── */
-  .quick{gap:5px}
-  .q4{display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:var(--v-sp-sm)}
-  .q4.tight{gap:6px}
-  .qb{display:flex; flex-direction:column; gap:2px; align-items:flex-start; text-align:left;
-    padding:10px 11px; border-radius:var(--v-r-md); cursor:pointer;
-    background:var(--v-surf2); border:1px solid var(--v-line2); color:var(--v-txt);
-    font-family:var(--f-body); transition:.14s}
-  .qb{min-width:0; padding:8px 10px}
-  /* THE NAME OF A PANIC CONTROL IS NEVER TRUNCATED. At 1366px — the commonest
-     church laptop — this read "Clear scree…" over "Stop all outputs …". A key an
-     operator reaches for once a year, in front of people, must not need guessing;
-     two lines cost 12px and the column already scrolls. */
-  .qb b{font-size:var(--v-fs-b2); font-weight:600; max-width:100%; overflow-wrap:anywhere}
-  .qb span{font-size:10px; color:var(--v-faint); max-width:100%; overflow-wrap:anywhere}
-  .qb:disabled{opacity:.45; cursor:not-allowed}
-  .qb.red{background:var(--v-red-soft); border-color:var(--v-red-line); color:var(--v-red)}
-  /* BLACKOUT IS BLACK, not grey. Grey means CUED — where the transport resumes,
-     and not on screen (CLAUDE.md, frontend shape). Wearing it here meant the one
-     control that takes the wall to black shared a colour with a position marker.
-     The hairline is what keeps it findable on a dark desk. */
-  .qb.black{background:linear-gradient(180deg,#0b0d12,#050609); border-color:rgba(210,220,235,.34); color:#d7deea}
-  .qb.black.on{background:#000; border-color:#e8edf5; color:#fff}
-  .qb.amethyst.on{background:var(--v-amethyst-soft); border-color:var(--v-amethyst-line); color:var(--v-amethyst)}
-  .qb.cyan.on{background:var(--v-cyan-soft); border-color:var(--v-cyan-line); color:var(--v-cyan)}
-  .qb:hover:not(:disabled){filter:brightness(1.12)}
-
-  .modes{display:flex; flex-direction:column; gap:5px}
-  .md{display:flex; align-items:center; gap:9px; padding:6px 10px; border-radius:var(--v-r-md);
-    background:var(--v-surf2); border:1px solid var(--v-line);
-    font-size:var(--v-fs-b2); color:var(--v-faint)}
-  .md i{width:11px; height:11px; border-radius:50%; flex:0 0 auto;
-    border:1px solid var(--v-line2); background:transparent}
-  .md em{font-style:normal; font-size:10px; opacity:.8}
-  .md.on{background:var(--v-amethyst-soft); border-color:var(--v-amethyst-line); color:var(--v-txt)}
-  .md.on i{background:var(--v-amethyst); border-color:var(--v-amethyst)}
-
-  .sb{display:flex; align-items:center; justify-content:space-between; gap:7px; min-width:0;
-    padding:7px 10px; border-radius:var(--v-r-md); cursor:pointer; background:var(--v-surf2);
-    border:1px solid var(--v-line2); color:var(--v-txt); font-family:var(--f-body);
-    font-size:var(--v-fs-cap); transition:.14s}
-  .sb>span{min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
-  .sb:hover:not(:disabled){background:var(--v-surf3)}
-  .sb:disabled{opacity:.45; cursor:not-allowed}
-  .sb i{font-style:normal; color:var(--v-faint)}
-  .sb.cd{cursor:default; gap:6px; justify-content:flex-start}
-  /* The row LABEL never shrinks. "Announce" was ellipsised to "An…" beside a text
-     field that had all the room it wanted — and this is the control that writes
-     over live scripture on every screen at once. */
-  .sb.cd>span:first-child{flex:0 0 auto; overflow:visible}
-  .cd-unit{flex:0 0 auto; font-size:9px; color:var(--v-faint)}
-  .cd-min{width:40px; padding:3px 5px; border-radius:var(--v-r-sm); border:1px solid var(--v-line2);
-    background:var(--v-bg); color:var(--v-txt); font-size:var(--v-fs-cap); text-align:center}
-  /* The announcement field takes the row's spare width — the message, not the
-     label, is the part the operator is reading back before they confirm. */
-  .cd-msg{flex:1 1 auto; min-width:0; padding:3px 7px; border-radius:var(--v-r-sm);
-    border:1px solid var(--v-line2); background:var(--v-bg); color:var(--v-txt);
-    font-size:var(--v-fs-cap)}
-  .cd-go{padding:4px 9px; border-radius:var(--v-r-sm); border:1px solid var(--v-cyan-line);
-    background:var(--v-cyan-soft); color:var(--v-cyan); font-family:var(--f-mono);
-    font-size:10px; font-weight:700; cursor:pointer}
-  .cd-go:hover:not(:disabled){filter:brightness(1.2)}
-  .cd-go:disabled{opacity:.45; cursor:not-allowed}
-  .cd-go.armed{background:var(--v-amber-soft); border-color:var(--v-amber-line); color:var(--v-amber)}
-
-  .amon{display:flex; align-items:center; gap:var(--v-sp-sm); padding:7px 10px;
-    border-radius:var(--v-r-md); background:var(--v-surf2); border:1px solid var(--v-line)}
-  .amon-k{flex:0 0 auto; font-size:var(--v-fs-cap); color:var(--v-faint)}
+  /* A WARNING, NOT A FAILURE AND NOT A LIVE STATE. Amber would mean ON AIR here
+     (DECISIONS §22) and rose TEXT would overstate it — Relay IS still sending.
+     Dim text, rose rule. Unchanged from when these two lines sat in the Output
+     Status pane; only their place on the surface moved. */
+  .out-warn{flex:0 0 auto; padding:7px 9px; font-size:var(--v-fs-cap);
+    color:var(--v-dim); background:var(--v-surf2); border-radius:var(--v-r-sm);
+    border-left:2px solid var(--v-rose)}
+  .out-warn b{color:var(--v-txt)}
 
   /* ── banners ───────────────────────────────────────────────────────────── */
   .audioerr{flex:0 0 auto; background:var(--v-red-soft); color:var(--v-red);
@@ -2585,12 +2158,12 @@
   .sttwarn b{display:block; margin-bottom:2px; color:var(--v-amber2)}
 
   /* ── accessibility ─────────────────────────────────────────────────────── */
-  .take:focus-visible,.rk:focus-visible,.cue:focus-visible,.slide:focus-visible,
-  .act:focus-visible,.qb:focus-visible,.sb:focus-visible,.wide:focus-visible,
-  .mini:focus-visible,.ibtn:focus-visible,.btnchip:focus-visible,.cd-go:focus-visible,
+  .take:focus-visible,.rk:focus-visible,.slide:focus-visible,
+  .act:focus-visible,.wide:focus-visible,
+  .mini:focus-visible,.ibtn:focus-visible,.btnchip:focus-visible,
   .reh-end:focus-visible{outline:2px solid var(--v-amber); outline-offset:2px}
   @media (prefers-reduced-motion:reduce){
-    .caret,.reh-dot{animation:none}
+    .reh-dot{animation:none}
   }
 
   /* ── responsive ────────────────────────────────────────────────────────── */
@@ -2600,23 +2173,21 @@
   }
   /* THE INSPECTOR GOES UNDER, NEVER AWAY. The prototype hides its right column
      below 1240px; Relay may not, because the column holds the AI's claims and
-     their Accept / Dismiss — the two controls the product exists to offer — and
-     the screens pane. A booth laptop is where an operator is most cramped and
-     least able to go hunting, so the column becomes a row beneath the stage
-     instead: nothing is removed, and nothing needs a scroll to reach. */
+     their Accept / Dismiss — the two controls the product exists to offer. A
+     booth laptop is where an operator is most cramped and least able to go
+     hunting, so the column becomes a row beneath the stage instead: nothing is
+     removed, and nothing needs a scroll to reach. */
   @media (max-width:1180px){
     .con{height:auto}
     .desk{grid-template-columns:1fr}
     .insp-col{flex-direction:row; align-items:stretch}
-    .insp-col > .pane:first-child{flex:1 1 60%; min-height:340px}
-    .insp-col > .pane:last-child{flex:1 1 40%; max-height:none}
+    .insp-col > .pane{flex:1 1 auto; min-height:340px}
     /* The rail becomes a strip above the stage rather than a column beside it —
        nothing is removed, because a booth laptop is where an operator is most
        cramped and least able to go hunting. */
     .rail-col{flex-direction:row; align-items:stretch; height:200px}
     .con-top{height:auto; grid-template-columns:1fr 104px 1fr; grid-auto-rows:minmax(230px,auto)}
     .con-grid{flex:0 0 auto; height:320px}
-    .con-bot{grid-template-columns:1fr 1fr; grid-auto-rows:minmax(320px,auto)}
   }
   @media (max-width:760px){
     /* AUTO rows. In one column the 230px floor inherited from the rule above was
@@ -2626,11 +2197,9 @@
     .con-top{grid-template-columns:1fr; grid-auto-rows:auto}
     .con-top>.pane{min-height:230px}
     .rack{min-height:0}
-    .con-bot{grid-template-columns:1fr}
     .rail-col{flex-direction:column; height:auto}
     .insp-col{flex-direction:column}
-    .insp-col > .pane:first-child,
-    .insp-col > .pane:last-child{flex:0 0 auto; min-height:0}
+    .insp-col > .pane{flex:0 0 auto; min-height:0}
     .rack{flex-direction:row; align-items:center; flex-wrap:wrap}
     .rack-cap{flex:1 0 100%; margin-top:0}
   }

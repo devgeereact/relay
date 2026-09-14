@@ -53,7 +53,7 @@
   "live.related_note": "nobody said these — a topical suggestion",
   "live.no_suggestions": "No suggestions yet.",
   "live.detection_off": "Detection is off — manual override still fires.",
-  "live.no_plans": "No service plans yet. Build one in Planner — or run the service from the AI and the manual box below.",
+  "live.nothing_staged": "Nothing staged. Pick a book, a song or a plan — or put a verse on screen and its chapter appears here.",
   "live.plan_no_cues": "This plan has no cues. Add them in Planner.",
   "live.pick_a_cue": "Pick a cue to see its slides. Click a slide to put it on screen.",
   "live.waiting_for_speech": "Waiting for speech…",

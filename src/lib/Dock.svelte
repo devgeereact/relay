@@ -41,9 +41,18 @@
     startCountdown,
     adjustCountdown,
     countdownRemaining,
+    countdownHeld,
+    pauseCountdown,
     sendStageAlert,
     stageAlert,
+    templates,
+    loadTemplates,
+    fireContent,
+    pushAnnouncement,
   } from './stores/capture.js';
+  import { session, setSession } from './session.js';
+  import { templateKind } from './templateKind.js';
+  import TemplateRender from './TemplateRender.svelte';
   import { humanError } from './errors.js';
   import { rangeFill } from './rangefill.js';
   import { formatCountdown, countdownWarning } from './layers.js';
@@ -51,6 +60,7 @@
     countdownSet,
     countdownPress,
     countdownCan,
+    countdownTotalMs,
     msFromFields,
     fieldsFromMs,
   } from './countdown.js';
@@ -277,6 +287,11 @@
   onDestroy(() => clearInterval(cdTimer));
   // `$live` is read as well as the tick, so the readout moves when either does.
   $: cdRunning = $live?.countdown_to ? countdownRemaining(nowTick) : null;
+  // HELD, read from the content on the wall rather than from a flag this panel
+  // keeps. A transport that remembered its own hold would go on saying "Resume"
+  // over a countdown some other surface released — rule 35, on the one control
+  // row an operator watches a service from.
+  $: cdPaused = !!$live && countdownHeld();
   // ── THE FIGURE, AND THE TWO THINGS IT CAN BE ──────────────────────────────
   //
   // It is the largest thing in this panel because it is the one thing an
@@ -299,7 +314,14 @@
   // (`layers.js`). RED, not amber: amber in this room means ON AIR and is never
   // allowed to be anything else (rule 18), and "this is about to run out" is the
   // act-now colour. Only ever while it is genuinely on a wall.
-  $: cdWarn = cdLive && countdownWarning(cdRunning, $countdownSet);
+  // THE TOTAL IS THE CONTENT'S, NOT THE TOOL'S. `countdownWarning` scales the
+  // last-minute threshold to the countdown's own span, and `$countdownSet` is
+  // what Start WOULD put up — a different number the moment an operator types in
+  // the fields while one is running, or ±1s one that started somewhere else. The
+  // engine now carries the real span, so the warning is read from there and the
+  // figure in the dock and the figure on the wall turn red together.
+  $: cdTotal = countdownTotalMs($live) ?? $countdownSet;
+  $: cdWarn = cdLive && countdownWarning(cdRunning, cdTotal);
 
   /** Type into hh : mm : ss. Only ever changes the tool, never a screen. */
   function setField(which, value) {
@@ -313,10 +335,18 @@
    * screen", which is what Clear and an off-air ±1 both are.
    */
   function press(action) {
-    const r = countdownPress(action, $countdownSet, cdRunning);
+    const r = countdownPress(action, $countdownSet, cdRunning, cdPaused);
     countdownSet.set(r.setMs);
     if (r.refused) {
       err = r.refused;
+      return;
+    }
+    // HOLD AND RELEASE. The one press here that is not a re-aim: it changes no
+    // number, it asks the engine to set `countdown_paused_ms`, and it is TWO
+    // actions rather than a toggle — a toggle computed from state this panel
+    // might hold stale is how a press does the opposite of what it says.
+    if (r.pause !== null) {
+      run(() => pauseCountdown(r.pause));
       return;
     }
     if (r.broadcastMs == null) {
@@ -331,6 +361,94 @@
         : adjustCountdown(r.broadcastMs),
     );
   }
+
+  // ── QUICK TOOLS · THE NAME BAND (docs/REBRAND.md §2 and §4) ────────────────
+  //
+  // Who is speaking changes more often than anything else in a service, and until
+  // now the only way to put it on a wall was to build a plan cue for it on a
+  // Tuesday. This is the operator's surface for the lower thirds phase 5 already
+  // shipped (DECISIONS §75) — it adds no renderer, no template kind and no fire
+  // path.
+  //
+  // WHICH FIELD IS WHICH, and why it reads backwards. A band's large line is bound
+  // to `verse` and its small line to `reference` (`layers.js`), and `fire_content`
+  // puts its `text` on the first and its `label` on the second. So the NAME is the
+  // text and the ROLE is the label. The label is also what names the cue in
+  // history, which is the one place this mapping costs something: a name band
+  // shows up there as its role. Recorded rather than papered over — the fix is a
+  // content kind of its own in `fire_content`, which is a backend change.
+  //
+  // The picker offers only templates whose SHAPE is a lower third — `templateKind`
+  // derives that from the layers, so a template an operator built themselves is
+  // offered the moment it has a band, and one that stops being a band stops being
+  // offered. No flag to set, nothing to back-fill.
+  let ltName = '';
+  let ltRole = '';
+  let ltId = null;
+  let ltPreview = false;
+  onMount(() => { loadTemplates(); });
+  $: bands = $templates.filter((t) => templateKind(t) === 'lower-third');
+  $: if (ltId == null && bands.length) ltId = bands[0].id;
+  $: ltTemplate = bands.find((t) => t.id === ltId) ?? null;
+  // What the band would paint, in exactly the shape `fireContent` will send.
+  $: ltContent = { reference: ltRole.trim(), text: ltName.trim(), translation: null };
+  $: ltReady = !!ltName.trim() && !!ltTemplate;
+  const nameToProgramme = () =>
+    run(async () => {
+      if (!ltReady) return;
+      await fireContent(ltRole.trim(), ltName.trim(), 'announce', null, ltTemplate.id);
+    });
+
+  // ── QUICK TOOLS · THE EMERGENCY ANNOUNCEMENT ───────────────────────────────
+  //
+  // It was in Live's inspector column. It paints over live scripture on EVERY
+  // screen at once — the fire alarm, the blocked car park — so being reachable
+  // only from the tab you happen to be on was the argument for moving it here,
+  // not against.
+  //
+  // ARMED IN TWO STEPS, unchanged: a stray Enter in a text field must not be able
+  // to interrupt a reading in front of a room. `pushAnnouncement` THROWS by
+  // contract, and `run()` puts the failure in this card's own error line — saying
+  // nothing would leave an operator believing the room had been warned.
+  let annMsg = '';
+  let annArmed = false;
+  let annArmT;
+  onDestroy(() => clearTimeout(annArmT));
+  async function sendAnnouncement() {
+    const text = annMsg.trim();
+    if (!text) return;
+    if (!annArmed) {
+      annArmed = true;
+      clearTimeout(annArmT);
+      annArmT = setTimeout(() => (annArmed = false), 3000);
+      return;
+    }
+    clearTimeout(annArmT);
+    annArmed = false;
+    await run(async () => {
+      await pushAnnouncement(text);
+      annMsg = '';
+    });
+  }
+
+  // ── QUICK TOOLS · LOAD WHOLE PLAN (docs/REBRAND.md §2) ─────────────────────
+  //
+  // The prototype's one header control. It re-stages the plan the PLANNER handed
+  // over — choosing which plan to run is the Planner's job, and `Run in Live`
+  // there is what writes `session.planId`. With nothing chosen this button has
+  // nothing to load, so it is disabled and says why rather than looking broken.
+  //
+  // The last plan CHOSEN, not the one currently open: Live's Close plan clears
+  // `session.planId`, and a button that went dead the moment an operator closed a
+  // plan would be useless in exactly the case it exists for — putting the running
+  // order back after the preacher went off it.
+  let lastPlanId = null;
+  $: if ($session.planId != null) lastPlanId = $session.planId;
+  $: planChosen = lastPlanId != null;
+  const loadWholePlan = () => {
+    if (lastPlanId == null) return;
+    setSession({ activeTab: 'live', planId: lastPlanId });
+  };
 
   let stageMsg = '';
   const toPreacher = () => run(async () => {
@@ -449,9 +567,18 @@
       <span class="grip" aria-hidden="true"><i></i><i></i><i></i></span>
       <span class="dk">Quick tools</span>
       <span class="dspring"></span>
-      <!-- The meta slot says whether the one thing in this card that can reach a
-           screen is currently on one. Nothing else here claims anything. -->
+      <!-- The meta slot says whether the one thing in this card that reaches the
+           PREACHER'S monitor is currently on it. Nothing else here claims
+           anything. -->
       {#if $stageAlert}<span class="dmeta on-stage r-mono">ON STAGE</span>{/if}
+      <!-- `Load whole plan` — the prototype's one header control (§2). -->
+      <button
+        class="r-btn sm ghost dk-btn"
+        on:click={loadWholePlan}
+        disabled={!planChosen}
+        title={planChosen
+          ? 'Put the running order back in the slide grid on Live'
+          : 'No plan chosen yet — open Planner and press Run in Live'}>Load whole plan</button>
     </div>
     <div class="dbody tools r-scroll">
       <!-- THE COUNTDOWN, WITH ITS TRANSPORT (docs/REBRAND.md §7). hh : mm : ss,
@@ -482,34 +609,114 @@
       <!-- WHICH of the two facts the figure is. One word, beside it, because a
            big number with no label is the half of a status line that lies. -->
       <div class="trow cdstate">
-        <span class="cdstatev" class:live={cdLive}>{cdLive ? 'on the screens' : 'not counting'}</span>
+        <!-- THREE states, not two. A held countdown IS on the screens — it simply
+             is not moving — and reading "on the screens" over a stopped figure is
+             the half of a status line that lies (rule 35). -->
+        <span class="cdstatev" class:live={cdLive} class:held={cdPaused}
+          >{!cdLive ? 'not counting' : cdPaused ? 'on the screens · held' : 'on the screens'}</span>
       </div>
       <!-- Clear is NOT Clear screens. It returns this tool to its default length
            and touches nothing a congregation can see; the red control one panel
            along is the one that blanks a wall. -->
       <div class="trow cdtrans" role="group" aria-label="Countdown transport">
         <button class="r-btn sm ghost" on:click={() => press('start')}
-          disabled={busy || !$capture.available || !countdownCan('start', $countdownSet, cdRunning)}>Start</button>
+          disabled={busy || !$capture.available || !countdownCan('start', $countdownSet, cdRunning, cdPaused)}>Start</button>
+        <!-- PAUSE AND RESUME ARE TWO ACTIONS, NOT A TOGGLE (§7, and the engine
+             field that finally made it possible). Which one is offered is read
+             from the CONTENT on the wall, so a press can never do the opposite of
+             what its label says; with nothing counting, neither is available and
+             `countdownCan` says so through the same refusal the press would give.
+             Nothing here is amber: holding a countdown does not change what is on
+             air, it changes whether it is moving. -->
+        {#if cdPaused}
+          <button class="r-btn sm ghost" on:click={() => press('resume')}
+            title="Let the countdown on the screens carry on from where it was held"
+            disabled={busy || !$capture.available || !countdownCan('resume', $countdownSet, cdRunning, cdPaused)}>Resume</button>
+        {:else}
+          <button class="r-btn sm ghost" on:click={() => press('pause')}
+            title="Hold the countdown on the screens at exactly what it says"
+            disabled={busy || !$capture.available || !countdownCan('pause', $countdownSet, cdRunning, cdPaused)}>Pause</button>
+        {/if}
         <button class="r-btn sm ghost" on:click={() => press('reset')}
-          disabled={busy || !$capture.available || !countdownCan('reset', $countdownSet, cdRunning)}>Reset</button>
+          disabled={busy || !$capture.available || !countdownCan('reset', $countdownSet, cdRunning, cdPaused)}>Reset</button>
         <button class="r-btn sm ghost" on:click={() => press('minus')} aria-label="One minute less"
-          disabled={busy || !$capture.available || !countdownCan('minus', $countdownSet, cdRunning)}>−1</button>
+          disabled={busy || !$capture.available || !countdownCan('minus', $countdownSet, cdRunning, cdPaused)}>−1</button>
         <button class="r-btn sm ghost" on:click={() => press('plus')} aria-label="One minute more"
-          disabled={busy || !$capture.available || !countdownCan('plus', $countdownSet, cdRunning)}>+1</button>
+          disabled={busy || !$capture.available || !countdownCan('plus', $countdownSet, cdRunning, cdPaused)}>+1</button>
         <button class="r-btn sm ghost" on:click={() => press('clear')}
           title="Reset this tool to five minutes. It does not clear the screens.">Clear</button>
       </div>
+      <!-- ── THE NAME BAND (docs/REBRAND.md §2 · §4) ──────────────────────────
+           Set once, fired from here. `To programme` goes through `fireContent`
+           with the chosen band as the cue's own template, which is the ordinary
+           manual-fire path — it reports its own failure and marks nothing amber
+           on its own. -->
+      <div class="trow ltrow">
+        <span>Name band</span>
+        <select class="r-select ltpick" bind:value={ltId} aria-label="Which lower third">
+          {#each bands as t (t.id)}<option value={t.id}>{t.name}</option>{/each}
+        </select>
+      </div>
+      {#if bands.length}
+        <div class="trow ltrow ltsub">
+          <input class="r-input tin wide" type="text" bind:value={ltName}
+            placeholder="Name" autocomplete="off" aria-label="Name for the lower third" />
+          <input class="r-input tin wide" type="text" bind:value={ltRole}
+            placeholder="Role or position" autocomplete="off" aria-label="Role for the lower third" />
+        </div>
+        <div class="trow ltrow ltsub" role="group" aria-label="Name band">
+          <button class="r-btn sm ghost" on:click={() => (ltPreview = !ltPreview)}
+            disabled={!ltReady}
+            title="Render it here. Nothing reaches a screen.">{ltPreview ? 'Hide preview' : 'Preview'}</button>
+          <button class="r-btn sm ghost" on:click={nameToProgramme} disabled={busy || !ltReady || !$capture.available}>To programme</button>
+        </div>
+        {#if ltPreview && ltReady}
+          <!-- THE ONE RENDERER, in a 16:9 box. A second way of drawing a template
+               is a second thing that can disagree with the wall. It is a preview
+               and says so — amber is never used here, because nothing about this
+               is on air. -->
+          <div class="ltprev">
+            <TemplateRender template={ltTemplate} content={ltContent} />
+          </div>
+          <p class="ltcap">preview only — nothing is on a screen</p>
+        {/if}
+      {:else}
+        <p class="ltcap">No lower third yet — make one in Templates (New → Lower Third).</p>
+      {/if}
+
+      <!-- ── WORD TO THE PREACHER (§5) ────────────────────────────────────────
+           The stage monitor and nothing else. `sendStageAlert` publishes a frame
+           kind that exists inside the stage renderer, so no congregation channel
+           can show it — the guarantee is in `channels.rs`, not in this label. -->
       <label class="trow">
         <span>To preacher</span>
         <input
           class="r-input tin wide"
           type="text"
           bind:value={stageMsg}
-          placeholder="stage monitor only"
+          placeholder="Wrap up · Five minutes left · Stand by"
           aria-label="Word to the preacher — stage monitor only"
           on:keydown={(e) => e.key === 'Enter' && toPreacher()} />
-        <button class="r-btn sm ghost" on:click={toPreacher} disabled={busy || !stageMsg.trim()}>Send</button>
-        <button class="r-btn sm ghost" on:click={clearPreacher} disabled={busy || !$stageAlert}>Clear</button>
+        <button class="r-btn sm ghost" on:click={toPreacher} disabled={busy || !stageMsg.trim()}>Send to stage</button>
+        <button class="r-btn sm ghost" on:click={clearPreacher} disabled={busy || !$stageAlert}>Take down</button>
+      </label>
+
+      <!-- ── THE EMERGENCY ANNOUNCEMENT ───────────────────────────────────────
+           Over live scripture, on every screen at once. Two steps, always. -->
+      <label class="trow">
+        <span>Announce</span>
+        <input
+          class="r-input tin wide"
+          type="text"
+          bind:value={annMsg}
+          placeholder="Message for every screen"
+          aria-label="Emergency announcement"
+          on:keydown={(e) => e.key === 'Enter' && sendAnnouncement()}
+          disabled={!$capture.available} />
+        <button class="r-btn sm ghost ann-go" class:armed={annArmed} on:click={sendAnnouncement}
+          disabled={busy || !$capture.available || !annMsg.trim()}>
+          {annArmed ? 'Confirm?' : 'Send'}
+        </button>
       </label>
       {#if err}<p class="derr" role="alert">{err}</p>{/if}
     </div>
@@ -716,6 +923,10 @@
     letter-spacing: var(--v-tr-caps); text-transform: uppercase; color: var(--v-faint);
   }
   .cdstatev.live { color: var(--v-dim); }
+  /* Held is a real third state and it reads as one. Cyan is a GUESS and amber is
+     ON AIR, so neither is available; the text colour is the one that means "the
+     operator did this deliberately". */
+  .cdstatev.held { color: var(--v-txt); }
   /* Steps, not a fade, and only where motion is welcome: the blink exists to
      catch an eye that is not looking at it, and a viewer who asked for no motion
      still gets the colour, which is the information. */
@@ -728,6 +939,31 @@
   .tin { width: 62px; flex: 0 0 auto; }
   .tin.wide { flex: 1 1 auto; width: auto; min-width: 0; }
   .derr { margin: 0; font-size: var(--v-fs-cap); color: var(--v-red); }
+
+  /* ── the name band, the announcement, and the header's one button ──────────
+     No amber anywhere in this block. Amber means ON AIR and none of these
+     controls is a claim that a screen changed — the fires they start report
+     their own outcome through `run()` and the error line above. */
+  .dk-btn { flex: 0 0 auto; margin-left: 6px; }
+  .ltrow > span { min-width: 74px; }
+  .ltpick { flex: 1; min-width: 0; height: 24px; }
+  /* The rows of fields and buttons have no label of their own, so they line up
+     under the one that does rather than starting at the card's edge. */
+  .ltsub { padding-left: 80px; }
+  .ltprev {
+    margin-left: 80px; aspect-ratio: 16 / 9; container-type: inline-size;
+    background: var(--v-void); border: 1px solid var(--v-line2);
+    border-radius: var(--v-r-sm); overflow: hidden;
+  }
+  .ltcap {
+    margin: 0 0 0 80px;
+    font-family: var(--f-mono); font-size: var(--v-fs-cap);
+    letter-spacing: var(--v-tr-caps); color: var(--v-faint);
+  }
+  /* The armed state of a two-step control. RED, not amber: it is "this will
+     interrupt the reading", which is an act-now colour, and amber in this room
+     means a congregation is already looking at something. */
+  .ann-go.armed { border-color: var(--v-red); color: var(--v-red); }
 
   /* The controls card takes the height it is given and divides it among the
      buttons. `overflow:hidden`, not `auto`: a panic control that can be scrolled

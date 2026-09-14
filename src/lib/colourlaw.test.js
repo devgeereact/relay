@@ -109,15 +109,24 @@ describe('the colour law — a taxonomy may not paint a promise', () => {
     expect(offenders).toEqual([]);
   });
 
-  it('Live still reserves amber for ON AIR and grey for CUED, and selection is steel', () => {
+  it('Live still reserves amber for ON AIR, and a preview is steel — never amber', () => {
     // The other half of the law: the promise colours must still be used where they
     // DO mean what they say. Removing them from the taxonomy is only half a fix if
     // the states stop being signalled.
+    //
+    // THE CUE RAIL THIS USED TO READ HAS GONE. `.cue` and `.slide` were the plan
+    // pane's rows; the plan IS the grid now (docs/REBRAND.md §2), so the two
+    // states it signalled are signalled on the CELL instead — and the cell is
+    // what the operator presses, which is the better place for both. The law is
+    // unchanged: amber only for what a congregation is looking at, steel for the
+    // thing you are working on, and a preview is never amber.
     const live = readFileSync(resolve(__dirname, './views/Live.svelte'), 'utf8');
-    expect(live).toMatch(/\.cue\.islive,\.slide\.islive\{border-color:var\(--v-amber\)/);
-    expect(live).toMatch(/\.cue\.cued,\.slide\.cued\{[^}]*var\(--v-grey\)/);
-    // Selection used to be cyan — "a guess" — one line above the amber rule.
-    expect(live).toMatch(/\.cue\.sel\{border-color:var\(--v-sel-line\)\}/);
-    expect(live).not.toMatch(/\.cue\.sel\{border-color:var\(--v-cyan/);
+    expect(live).toMatch(/\.sg-cell\.islive \.sg-thumb\{border-color:var\(--v-amber\)/);
+    expect(live).toMatch(/\.sg-air\{background:var\(--v-amber\)/);
+    // Steel, not cyan (a guess) and not amber (on air).
+    expect(live).toMatch(/\.sg-cell\.cued \.sg-thumb\{border-color:var\(--v-sel\)/);
+    expect(live).toMatch(/\.sg-prev\{background:var\(--v-sel\)/);
+    expect(live).not.toMatch(/\.sg-prev\{background:var\(--v-amber/);
+    expect(live).not.toMatch(/\.sg-cell\.cued \.sg-thumb\{border-color:var\(--v-(amber|cyan)/);
   });
 });

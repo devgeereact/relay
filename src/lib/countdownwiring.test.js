@@ -265,3 +265,68 @@ describe('the word to the preacher survives the dock being destroyed', () => {
     expect(get(cap.stageAlert)).toBe(null);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THE HOLD, ON THE SURFACE THAT RENDERS IT
+//
+// `countdown.js` decides and `capture.js` asks; neither is a control an operator
+// can press. The engine field landed with its own tests and the transport still
+// had four buttons, which is the exact shape of "a rule kept on one door and
+// skipped on its twin" this file exists for.
+//
+// Two things are asserted and nothing else: the press reaches `pauseCountdown`
+// through the ONE arbiter (never a second path), and PAUSE and RESUME are two
+// buttons rather than one toggle — a toggle computed from state this panel might
+// hold stale is how a press does the opposite of what its label says.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('the transport can hold the countdown', () => {
+  it('draws Pause and Resume as two separate presses, not one toggle', () => {
+    const bar = src.slice(src.indexOf('cdtrans'), src.indexOf('</div>', src.indexOf('press(\'clear\')')));
+    expect(bar).toContain("press('pause')");
+    expect(bar).toContain("press('resume')");
+    // Which one is offered is read from the CONTENT on the wall.
+    expect(bar).toMatch(/\{#if cdPaused\}/);
+    // No toggle: neither button computes its own instruction from a local flag.
+    expect(bar).not.toMatch(/press\(cdPaused \?/);
+  });
+
+  it('the hold goes through the one arbiter — there is no second path to it', () => {
+    const script = src.slice(0, src.indexOf('</script>'));
+    const body = script.slice(script.indexOf('function press('));
+    expect(body).toMatch(/pauseCountdown\(r\.pause\)/);
+    // …and that is the only place it is named outside the import list.
+    const afterImports = script.slice(script.indexOf("from './countdown.js'"));
+    expect([...afterImports.matchAll(/\bpauseCountdown\(/g)].length).toBe(1);
+  });
+
+  it('every button on the row is told whether it is held, so +1 cannot release it', () => {
+    // `countdownCan`'s fourth argument. Without it `plus` reads as an ordinary
+    // re-aim and the row would offer a press that quietly restarts a held timer.
+    for (const action of ['start', 'reset', 'minus', 'plus', 'pause', 'resume']) {
+      expect(src, `${action} is not told about the hold`).toContain(
+        `countdownCan('${action}', $countdownSet, cdRunning, cdPaused)`,
+      );
+    }
+    expect(src).toMatch(/countdownPress\(action, \$countdownSet, cdRunning, cdPaused\)/);
+  });
+
+  it('“on the screens” does not read the same over a countdown that has stopped', () => {
+    // Rule 35, on the one figure an operator glances at from across a booth. A
+    // held countdown IS on the screens; it is simply not moving.
+    expect(src).toMatch(/cdPaused \? 'on the screens · held' : 'on the screens'/);
+  });
+
+  it('the warning threshold is scaled to the countdown’s REAL span, not the tool’s', () => {
+    // `$countdownSet` is what Start would put up — a different number the moment
+    // an operator types in the fields while one is running. The engine carries
+    // the real span now, so the dock and the wall turn red together.
+    expect(src).toMatch(/cdTotal = countdownTotalMs\(\$live\) \?\? \$countdownSet/);
+    expect(src).toMatch(/cdWarn = cdLive && countdownWarning\(cdRunning, cdTotal\)/);
+  });
+
+  it('the held state is read from the wall, never remembered by this panel', () => {
+    expect(src).toMatch(/cdPaused = !!\$live && countdownHeld\(\)/);
+    // No local hold flag that could outlive the content it describes.
+    expect(src).not.toMatch(/let cdPaused/);
+  });
+});
