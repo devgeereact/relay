@@ -248,7 +248,7 @@
             busyRef={firing ? deck.find((d) => d.id === firing)?.reference ?? '' : ''}
             {layout}
             showStar={false}
-            can={{ queue: true, favourite: false, edit: false, duplicate: false, add: false }}
+            can={{ queue: true, favourite: false, edit: false, duplicate: false, add: false, select: false }}
             onCheck={toggleCheck}
             onFire={fireCard}
             onQueue={toggleQueue}
