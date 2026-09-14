@@ -130,7 +130,7 @@
 
   async function loadBooks() {
     booksLoaded = false;
-    books = await listBooks();
+    books = (await listBooks()) ?? [];
     booksLoaded = true;
   }
 

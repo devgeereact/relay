@@ -39,6 +39,8 @@
     startCountdown,
     adjustCountdown,
     countdownRemaining,
+    countdownHeld,
+    pauseCountdown,
     sendStageAlert,
     stageAlert,
     templates,
@@ -56,6 +58,7 @@
     countdownSet,
     countdownPress,
     countdownCan,
+    countdownTotalMs,
     msFromFields,
     fieldsFromMs,
   } from './countdown.js';
@@ -251,6 +254,11 @@
   onDestroy(() => clearInterval(cdTimer));
   // `$live` is read as well as the tick, so the readout moves when either does.
   $: cdRunning = $live?.countdown_to ? countdownRemaining(nowTick) : null;
+  // HELD, read from the content on the wall rather than from a flag this panel
+  // keeps. A transport that remembered its own hold would go on saying "Resume"
+  // over a countdown some other surface released — rule 35, on the one control
+  // row an operator watches a service from.
+  $: cdPaused = !!$live && countdownHeld();
   // ── THE FIGURE, AND THE TWO THINGS IT CAN BE ──────────────────────────────
   //
   // It is the largest thing in this panel because it is the one thing an
@@ -273,7 +281,14 @@
   // (`layers.js`). RED, not amber: amber in this room means ON AIR and is never
   // allowed to be anything else (rule 18), and "this is about to run out" is the
   // act-now colour. Only ever while it is genuinely on a wall.
-  $: cdWarn = cdLive && countdownWarning(cdRunning, $countdownSet);
+  // THE TOTAL IS THE CONTENT'S, NOT THE TOOL'S. `countdownWarning` scales the
+  // last-minute threshold to the countdown's own span, and `$countdownSet` is
+  // what Start WOULD put up — a different number the moment an operator types in
+  // the fields while one is running, or ±1s one that started somewhere else. The
+  // engine now carries the real span, so the warning is read from there and the
+  // figure in the dock and the figure on the wall turn red together.
+  $: cdTotal = countdownTotalMs($live) ?? $countdownSet;
+  $: cdWarn = cdLive && countdownWarning(cdRunning, cdTotal);
 
   /** Type into hh : mm : ss. Only ever changes the tool, never a screen. */
   function setField(which, value) {
@@ -287,10 +302,18 @@
    * screen", which is what Clear and an off-air ±1 both are.
    */
   function press(action) {
-    const r = countdownPress(action, $countdownSet, cdRunning);
+    const r = countdownPress(action, $countdownSet, cdRunning, cdPaused);
     countdownSet.set(r.setMs);
     if (r.refused) {
       err = r.refused;
+      return;
+    }
+    // HOLD AND RELEASE. The one press here that is not a re-aim: it changes no
+    // number, it asks the engine to set `countdown_paused_ms`, and it is TWO
+    // actions rather than a toggle — a toggle computed from state this panel
+    // might hold stale is how a press does the opposite of what it says.
+    if (r.pause !== null) {
+      run(() => pauseCountdown(r.pause));
       return;
     }
     if (r.broadcastMs == null) {
@@ -553,20 +576,40 @@
       <!-- WHICH of the two facts the figure is. One word, beside it, because a
            big number with no label is the half of a status line that lies. -->
       <div class="trow cdstate">
-        <span class="cdstatev" class:live={cdLive}>{cdLive ? 'on the screens' : 'not counting'}</span>
+        <!-- THREE states, not two. A held countdown IS on the screens — it simply
+             is not moving — and reading "on the screens" over a stopped figure is
+             the half of a status line that lies (rule 35). -->
+        <span class="cdstatev" class:live={cdLive} class:held={cdPaused}
+          >{!cdLive ? 'not counting' : cdPaused ? 'on the screens · held' : 'on the screens'}</span>
       </div>
       <!-- Clear is NOT Clear screens. It returns this tool to its default length
            and touches nothing a congregation can see; the red control one panel
            along is the one that blanks a wall. -->
       <div class="trow cdtrans" role="group" aria-label="Countdown transport">
         <button class="r-btn sm ghost" on:click={() => press('start')}
-          disabled={busy || !$capture.available || !countdownCan('start', $countdownSet, cdRunning)}>Start</button>
+          disabled={busy || !$capture.available || !countdownCan('start', $countdownSet, cdRunning, cdPaused)}>Start</button>
+        <!-- PAUSE AND RESUME ARE TWO ACTIONS, NOT A TOGGLE (§7, and the engine
+             field that finally made it possible). Which one is offered is read
+             from the CONTENT on the wall, so a press can never do the opposite of
+             what its label says; with nothing counting, neither is available and
+             `countdownCan` says so through the same refusal the press would give.
+             Nothing here is amber: holding a countdown does not change what is on
+             air, it changes whether it is moving. -->
+        {#if cdPaused}
+          <button class="r-btn sm ghost" on:click={() => press('resume')}
+            title="Let the countdown on the screens carry on from where it was held"
+            disabled={busy || !$capture.available || !countdownCan('resume', $countdownSet, cdRunning, cdPaused)}>Resume</button>
+        {:else}
+          <button class="r-btn sm ghost" on:click={() => press('pause')}
+            title="Hold the countdown on the screens at exactly what it says"
+            disabled={busy || !$capture.available || !countdownCan('pause', $countdownSet, cdRunning, cdPaused)}>Pause</button>
+        {/if}
         <button class="r-btn sm ghost" on:click={() => press('reset')}
-          disabled={busy || !$capture.available || !countdownCan('reset', $countdownSet, cdRunning)}>Reset</button>
+          disabled={busy || !$capture.available || !countdownCan('reset', $countdownSet, cdRunning, cdPaused)}>Reset</button>
         <button class="r-btn sm ghost" on:click={() => press('minus')} aria-label="One minute less"
-          disabled={busy || !$capture.available || !countdownCan('minus', $countdownSet, cdRunning)}>−1</button>
+          disabled={busy || !$capture.available || !countdownCan('minus', $countdownSet, cdRunning, cdPaused)}>−1</button>
         <button class="r-btn sm ghost" on:click={() => press('plus')} aria-label="One minute more"
-          disabled={busy || !$capture.available || !countdownCan('plus', $countdownSet, cdRunning)}>+1</button>
+          disabled={busy || !$capture.available || !countdownCan('plus', $countdownSet, cdRunning, cdPaused)}>+1</button>
         <button class="r-btn sm ghost" on:click={() => press('clear')}
           title="Reset this tool to five minutes. It does not clear the screens.">Clear</button>
       </div>
@@ -838,6 +881,10 @@
     letter-spacing: var(--v-tr-caps); text-transform: uppercase; color: var(--v-faint);
   }
   .cdstatev.live { color: var(--v-dim); }
+  /* Held is a real third state and it reads as one. Cyan is a GUESS and amber is
+     ON AIR, so neither is available; the text colour is the one that means "the
+     operator did this deliberately". */
+  .cdstatev.held { color: var(--v-txt); }
   /* Steps, not a fade, and only where motion is welcome: the blink exists to
      catch an eye that is not looking at it, and a viewer who asked for no motion
      still gets the colour, which is the information. */
