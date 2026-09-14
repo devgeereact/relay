@@ -67,7 +67,6 @@
   let view = 'grid'; // grid | list
   let sort = 'default'; // default | name | kind
   let selId = null;
-  let inspTab = 'details';
   let err = '';
 
   const SAMPLE = {
@@ -189,9 +188,10 @@
   // subscribes, which is what keeps every surface showing the same answer.
   /** The content kinds a given template is the look for. */
   $: usedFor = (id) => CONTENT_KINDS.filter((k) => $contentTemplates[k.key] === id);
-  $: defaultForKinds = sel
-    ? CONTENT_KINDS.filter((k) => $contentTemplates[k.key] === sel.id)
-    : [];
+  // `defaultForKinds` went with the Usage tab. It was a READ-ONLY list of the
+  // kinds this template is the look for — the same fact `Used for` states as a
+  // row of chips that also SET it, two headings up. One of the two could act;
+  // the other only agreed with it.
 
   // New template = pick a starting point (a layer stack), save it, open the editor.
   let newOpen = false;
@@ -561,139 +561,131 @@
         </div>
         {#if testErr}<p class="tg-testerr" role="alert">{testErr}</p>{/if}
 
-        <div class="r-seg tg-insptabs">
-          <button class:on={inspTab === 'details'} on:click={() => (inspTab = 'details')}>Details</button>
-          <button class:on={inspTab === 'usage'} on:click={() => (inspTab = 'usage')}>Usage</button>
+        <!-- ══ USED FOR ══ What this template is FOR, as a control rather than
+             a row you can read and not change (docs/REBRAND.md §3.2). It was
+             the one fact in this panel an operator could see and had to leave
+             the workspace to set — the Usage tab said "Content looks are set
+             in Outputs → Content looks", which is a signpost where a control
+             belongs.
+
+             ONE WRITER, still: `setContentTemplate`, the same call the
+             editor's own Used for makes and the same store the rail's look
+             register reads. Steel blue for a ticked kind — it is the thing you
+             are working on, not a claim about any screen. -->
+        <div class="r-lbl tg-flbl">Used for</div>
+        <div class="tg-usedgrid">
+          {#each CONTENT_KINDS as k (k.key)}
+            {@const mine = $contentTemplates[k.key] === sel.id}
+            <button class="tg-usedchip" class:on={mine} aria-pressed={mine}
+              on:click={() => toggleUsedFor(k.key)} disabled={!$capture.available}>
+              <span class="tg-usedtick" aria-hidden="true">{mine ? '✓' : ''}</span>{k.label}
+            </button>
+          {/each}
         </div>
+        {#if lookErr}<p class="tg-testerr" role="alert">{lookErr}</p>{/if}
+        <p class="tg-fhelp">A kind ticked here wears this template on every screen set to <b>Follow the content look</b>. A screen with a look of its own keeps it.</p>
 
-        {#if inspTab === 'details'}
-          <!-- ══ USED FOR ══ What this template is FOR, as a control rather than
-               a row you can read and not change (docs/REBRAND.md §3.2). It was
-               the one fact in this panel an operator could see and had to leave
-               the workspace to set — the Usage tab said "Content looks are set
-               in Outputs → Content looks", which is a signpost where a control
-               belongs.
+        <!-- ══ THE OBJECTS ON THIS SLIDE ══ §3.2's tab strip, on the surface
+             an operator browses from. It names the template's REAL objects
+             through the same `layerLabel` the editor's strip uses, and a press
+             opens that object in the editor with its properties already
+             selected — one action from looking at a template to changing the
+             part of it you meant.
 
-               ONE WRITER, still: `setContentTemplate`, the same call the
-               editor's own Used for makes and the same store the rail's look
-               register reads. Steel blue for a ticked kind — it is the thing you
-               are working on, not a claim about any screen. -->
-          <div class="r-lbl tg-flbl">Used for</div>
-          <div class="tg-usedgrid">
-            {#each CONTENT_KINDS as k (k.key)}
-              {@const mine = $contentTemplates[k.key] === sel.id}
-              <button class="tg-usedchip" class:on={mine} aria-pressed={mine}
-                on:click={() => toggleUsedFor(k.key)} disabled={!$capture.available}>
-                <span class="tg-usedtick" aria-hidden="true">{mine ? '✓' : ''}</span>{k.label}
-              </button>
+             The property groups themselves stayed in the editor, deliberately;
+             the reason and its cost are recorded in DECISIONS §80. -->
+        <div class="r-lbl tg-flbl">Objects</div>
+        {#if selLayers.length}
+          <div class="tg-objtabs" role="list">
+            {#each selLayers as L (L.id)}
+              <button class="tg-objtab" class:off={L.visible === false} role="listitem"
+                title="Edit {layerLabel(L)}"
+                on:click={() => dispatch('edit', { id: sel.id, layerId: L.id })}>{layerLabel(L)}</button>
             {/each}
           </div>
-          {#if lookErr}<p class="tg-testerr" role="alert">{lookErr}</p>{/if}
-          <p class="tg-fhelp">A kind ticked here wears this template on every screen set to <b>Follow the content look</b>. A screen with a look of its own keeps it.</p>
-
-          <!-- ══ THE OBJECTS ON THIS SLIDE ══ §3.2's tab strip, on the surface
-               an operator browses from. It names the template's REAL objects
-               through the same `layerLabel` the editor's strip uses, and a press
-               opens that object in the editor with its properties already
-               selected — one action from looking at a template to changing the
-               part of it you meant.
-
-               The property groups themselves stayed in the editor, deliberately;
-               the reason and its cost are recorded in DECISIONS §80. -->
-          <div class="r-lbl tg-flbl">Objects</div>
-          {#if selLayers.length}
-            <div class="tg-objtabs" role="list">
-              {#each selLayers as L (L.id)}
-                <button class="tg-objtab" class:off={L.visible === false} role="listitem"
-                  title="Edit {layerLabel(L)}"
-                  on:click={() => dispatch('edit', { id: sel.id, layerId: L.id })}>{layerLabel(L)}</button>
-              {/each}
-            </div>
-          {:else}
-            <!-- IN WORDS, not an empty strip. A template with no objects and one
-                 whose objects have not been read look identical, and only one of
-                 those is a fact about the template (rule 35). -->
-            <p class="tg-fhelp">This is a built-in preset, laid out by region rather than as separate objects. <b>Edit</b> converts it to objects you can move.</p>
-          {/if}
-
-          <!-- A row is a NAME and a VALUE (§11), full-bleed against the pane's own
-               12px gutter so the seams reach both edges. -->
-          <div class="r-lbl tg-flbl">Details</div>
-          <div class="tg-rows">
-            <div class="rw-nv">
-              <span class="rw-nvk">Name</span>
-              {#if renaming}
-                <!-- svelte-ignore a11y-autofocus -->
-                <input class="r-input tg-rename rw-nvctl" bind:value={renameDraft} autofocus
-                  aria-label="Template name"
-                  on:blur={commitRename} on:keydown={(e) => e.key === 'Enter' && e.target.blur()} />
-              {:else}
-                <span class="rw-nvv">{sel.name}</span>
-              {/if}
-            </div>
-            <div class="rw-nv"><span class="rw-nvk">Content type</span><span class="rw-nvv">{kindLabel(sel)}</span></div>
-            <!-- A READOUT, not a picker: every template is 16:9 by construction
-                 (TemplateRender sizes in cqw), so there is no orientation to set. -->
-            <div class="rw-nv"><span class="rw-nvk">Orientation</span><span class="rw-nvv">16:9 · 1920×1080</span></div>
-            <div class="rw-nv"><span class="rw-nvk">Background</span><span class="rw-nvv">{bgLabel(sel)}</span></div>
-            <div class="rw-nv">
-              <span class="rw-nvk">Default</span>
-              <span class="rw-nvv">{sel.id === $defaultTemplateId ? 'Yes' : 'No'}</span>
-            </div>
-          </div>
-          <!-- Created / Last modified / "used 26 times" are in the reference and
-               omitted here on purpose: templates carry no timestamps and Relay
-               keeps no per-template usage count, so any figure would be invented. -->
-
-          <div class="r-lbl tg-flbl">Actions</div>
-          <div class="tg-actions">
-            <button class="r-btn ghost sm" class:on={sel.id === $defaultTemplateId} on:click={() => makeDefault(sel)} disabled={!$capture.available}
-              title="The default template is the fallback look every slide wears when a screen or content type has no template of its own">
-              {sel.id === $defaultTemplateId ? 'Default ✓' : 'Set as default'}
-            </button>
-            <button class="r-btn ghost sm" on:click={() => duplicate(sel)}>Duplicate</button>
-            <button class="r-btn ghost sm" on:click={() => exportTemplate(sel)}>Export</button>
-            <button class="r-btn ghost sm" on:click={startRename}>Rename</button>
-            <!-- Two-step, because Tauri's webview has no working confirm() and a
-                 delete that reports success without ever showing a dialog is
-                 exactly the defect rule 41 exists for. -->
-            <button class="r-btn danger sm tg-del" class:arm={delArm === sel.id} on:click={() => del(sel)} disabled={!$capture.available}>
-              {delArm === sel.id ? 'Delete — sure?' : 'Delete'}
-            </button>
-          </div>
-          <p class="rw-foot">The <b>default template</b> is the fallback look a slide wears when neither the screen nor the content type has one of its own.</p>
         {:else}
-          <div class="r-lbl tg-flbl">Assigned to outputs</div>
-          {#if assignedChannels.length}
-            <div class="tg-rows">
-              {#each assignedChannels as c (c.id)}
-                <div class="rw-nv"><span class="rw-nvk">{c.name}</span><span class="rw-nvv">{c.render_target === 'native_window' ? 'display' : c.render_target === 'ndi_encode' ? 'NDI' : 'network'}</span></div>
-              {/each}
-            </div>
-          {:else}
-            <p class="tg-fhelp">Not assigned to any screen. Assign it in <b>Outputs → Screens</b>.</p>
-          {/if}
-
-          <div class="r-lbl tg-flbl">Default content look</div>
-          {#if defaultForKinds.length}
-            <div class="tg-rows">
-              {#each defaultForKinds as ck (ck.key)}
-                <div class="rw-nv"><span class="rw-nvk">{ck.label}</span><span class="rw-nvv">default</span></div>
-              {/each}
-            </div>
-          {:else}
-            <p class="tg-fhelp">Not set as a default content look.</p>
-          {/if}
-          <!-- IT IS NO LONGER ONE PLACE, and saying so would be wrong. This line
-               read "Content looks are set in Outputs → Content looks — the one
-               place a content type is bound to a template", which was a signpost
-               standing where a control belonged. `Used for` on the Details tab
-               now binds them here too. Two surfaces, still ONE writer
-               (`setContentTemplate`) and ONE store, which is the property that
-               actually matters — a second writer is how the matrix and the
-               editor came to disagree in the first place (DECISIONS §25). -->
-          <p class="rw-foot">A content look is bound on <b>Details → Used for</b>, or in <b>Outputs → Content looks</b>. Both write the same binding, so the two can never disagree.</p>
+          <!-- IN WORDS, not an empty strip. A template with no objects and one
+               whose objects have not been read look identical, and only one of
+               those is a fact about the template (rule 35). -->
+          <p class="tg-fhelp">This is a built-in preset, laid out by region rather than as separate objects. <b>Edit</b> converts it to objects you can move.</p>
         {/if}
+
+        <!-- A row is a NAME and a VALUE (§11), full-bleed against the pane's own
+             12px gutter so the seams reach both edges. -->
+        <div class="r-lbl tg-flbl">Details</div>
+        <div class="tg-rows">
+          <div class="rw-nv">
+            <span class="rw-nvk">Name</span>
+            {#if renaming}
+              <!-- svelte-ignore a11y-autofocus -->
+              <input class="r-input tg-rename rw-nvctl" bind:value={renameDraft} autofocus
+                aria-label="Template name"
+                on:blur={commitRename} on:keydown={(e) => e.key === 'Enter' && e.target.blur()} />
+            {:else}
+              <span class="rw-nvv">{sel.name}</span>
+            {/if}
+          </div>
+          <div class="rw-nv"><span class="rw-nvk">Content type</span><span class="rw-nvv">{kindLabel(sel)}</span></div>
+          <div class="rw-nv"><span class="rw-nvk">Background</span><span class="rw-nvv">{bgLabel(sel)}</span></div>
+        </div>
+        <!-- TWO ROWS LEFT THIS TABLE (DECISIONS §69's precedent — a control or
+             a row that cannot tell an operator anything they cannot already
+             see is weight, not information).
+             · **Orientation** read `16:9 · 1920×1080` for every template there
+               has ever been: TemplateRender sizes in cqw, so there is no
+               orientation to set and no template that could answer
+               differently. The pane head and the thumbnail badge both print
+               `16:9` on this same panel, which made it the third copy of a
+               constant.
+             · **Default · Yes/No** stated exactly what the control four lines
+               below it both states AND changes ("Default ✓" / "Set as
+               default"), and what the star on the card states. A row that
+               restates the button under it teaches an operator to read the
+               answer in the place where they cannot act on it. -->
+
+        <!-- WHERE IT IS ACTUALLY WEARING, on the same tab as everything else
+             true of this template. It was behind a `Usage` tab whose other
+             half was a read-only restatement of `Used for` above; one real
+             block does not need a tab, and the tab was the thing hiding it. -->
+        <div class="r-lbl tg-flbl">On these screens</div>
+        {#if assignedChannels.length}
+          <div class="tg-rows">
+            {#each assignedChannels as c (c.id)}
+              <div class="rw-nv"><span class="rw-nvk">{c.name}</span><span class="rw-nvv">{c.render_target === 'native_window' ? 'display' : c.render_target === 'ndi_encode' ? 'NDI' : 'network'}</span></div>
+            {/each}
+          </div>
+        {:else}
+          <p class="tg-fhelp">Not assigned to any screen. Assign it in <b>Outputs → Screens</b>.</p>
+        {/if}
+        <!-- Created / Last modified / "used 26 times" are in the reference and
+             omitted here on purpose: templates carry no timestamps and Relay
+             keeps no per-template usage count, so any figure would be invented. -->
+
+        <div class="r-lbl tg-flbl">Actions</div>
+        <div class="tg-actions">
+          <button class="r-btn ghost sm" class:on={sel.id === $defaultTemplateId} on:click={() => makeDefault(sel)} disabled={!$capture.available}
+            title="The default template is the fallback look every slide wears when a screen or content type has no template of its own">
+            {sel.id === $defaultTemplateId ? 'Default ✓' : 'Set as default'}
+          </button>
+          <button class="r-btn ghost sm" on:click={() => duplicate(sel)}>Duplicate</button>
+          <button class="r-btn ghost sm" on:click={() => exportTemplate(sel)}>Export</button>
+          <button class="r-btn ghost sm" on:click={startRename}>Rename</button>
+          <!-- Two-step, because Tauri's webview has no working confirm() and a
+               delete that reports success without ever showing a dialog is
+               exactly the defect rule 41 exists for. -->
+          <button class="r-btn danger sm tg-del" class:arm={delArm === sel.id} on:click={() => del(sel)} disabled={!$capture.available}>
+            {delArm === sel.id ? 'Delete — sure?' : 'Delete'}
+          </button>
+        </div>
+        <!-- IT IS NO LONGER ONE PLACE, and saying so would be wrong. This line
+             read "Content looks are set in Outputs → Content looks — the one
+             place a content type is bound to a template", which was a signpost
+             standing where a control belonged. `Used for` above binds them
+             here too. Two surfaces, still ONE writer (`setContentTemplate`)
+             and ONE store, which is the property that actually matters — a
+             second writer is how the matrix and the editor came to disagree in
+             the first place (DECISIONS §25). -->
+        <p class="rw-foot">The <b>default template</b> is the fallback look a slide wears when neither the screen nor the content type has one of its own. A content look is bound on <b>Used for</b> above, or in <b>Outputs → Content looks</b>; both write the same binding, so the two can never disagree.</p>
       </div>
     {/if}
   </aside>
@@ -896,8 +888,6 @@
   .tg-previewbtns .r-btn{ flex:1 1 auto; justify-content:center; }
   .tg-testerr{ margin:8px 0 0; padding:8px 10px; border:1px solid var(--v-rose); border-radius:var(--v-r-sm);
     background:var(--v-rose-soft); color:var(--v-rose); font-size:var(--v-fs-cap); line-height:1.45; }
-  .tg-insptabs{ margin:12px 0 0; width:100%; }
-  .tg-insptabs :global(button){ flex:1; }
 
   /* Full-bleed rows against the pane body's own 12px gutter, so a seam reaches
      the pane edge while the prose around it keeps the gutter. The border box

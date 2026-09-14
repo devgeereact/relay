@@ -7,7 +7,7 @@
 // throws away the thing a person spent their time on — where the object sits on
 // the slide.
 import { describe, it, expect } from 'vitest';
-import { duplicateLayer, resetLayer } from './layerops.js';
+import { duplicateLayer, resetLayer, moveLayer } from './layerops.js';
 
 const text = (over = {}) => ({
   id: 't1',
@@ -112,5 +112,65 @@ describe('resetLayer', () => {
     const src = text({ id: 'a', color: '#ff0000' });
     resetLayer([src], 'a');
     expect(src.color).toBe('#ff0000');
+  });
+});
+
+// ── REORDERING, and the band that made the old one a no-op ─────────────────
+//
+// The layer list is the ONE surface that drives paint order, and its Forward /
+// Back buttons used to swap two adjacent entries of the raw array. A band's
+// words are IN that array and are not drawn from it — the band draws them, in
+// the order it names them — so every swap with a word moved nothing anybody
+// could see. On `lowerBible` (a band and its two words, which is the whole
+// template) the control was inert in every direction; add a shape to it and one
+// step back took three presses.
+const band = (over = {}) => ({ id: 'b1', type: 'band', name: 'Band', members: [], ...over });
+const shape = (over = {}) => ({ id: 's1', type: 'shape', name: 'Shape', x: 0, y: 0, w: 10, h: 10, ...over });
+
+describe('moveLayer — the paint order', () => {
+  it('steps a top-level object PAST the band member sitting next to it, not into it', () => {
+    // The shipped shape of `lowerBible` plus one shape: [band, Verse, Ref, shape].
+    const list = [
+      band({ members: ['w1', 'w2'] }),
+      text({ id: 'w1' }),
+      text({ id: 'w2' }),
+      shape(),
+    ];
+    // One press back = the shape is now behind the band. Not "behind a word",
+    // which is a position nothing renders.
+    const out = moveLayer(list, 's1', -1);
+    expect(out.map((l) => l.id)).toEqual(['s1', 'b1', 'w1', 'w2']);
+  });
+
+  it('reports the end of the stack by changing nothing', () => {
+    const list = [band({ members: ['w1'] }), text({ id: 'w1' }), shape()];
+    expect(moveLayer(list, 's1', 1)).toBe(list);
+    expect(moveLayer(list, 'b1', -1)).toBe(list);
+  });
+
+  it('moves a WORD within its band, which is the order the band draws them in', () => {
+    const list = [band({ members: ['w1', 'w2'] }), text({ id: 'w1' }), text({ id: 'w2' })];
+    const out = moveLayer(list, 'w2', -1);
+    expect(out.find((l) => l.id === 'b1').members).toEqual(['w2', 'w1']);
+  });
+
+  it('does not let a word leave its band by being moved', () => {
+    const list = [band({ members: ['w1', 'w2'] }), text({ id: 'w1' }), text({ id: 'w2' })];
+    const out = moveLayer(list, 'w1', -1); // already first
+    expect(out).toBe(list);
+    const both = moveLayer(list, 'w2', 1); // already last
+    expect(both).toBe(list);
+  });
+
+  it('leaves the list alone when the id is not in it', () => {
+    const list = [shape()];
+    expect(moveLayer(list, 'nope', 1)).toBe(list);
+  });
+
+  it('does not mutate the list it was given', () => {
+    const list = [shape({ id: 'a' }), shape({ id: 'b' })];
+    const before = list.map((l) => l.id);
+    moveLayer(list, 'a', 1);
+    expect(list.map((l) => l.id)).toEqual(before);
   });
 });

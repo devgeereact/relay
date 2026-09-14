@@ -14,7 +14,7 @@
   // The preview is the SAME TemplateRender as the wall — WYSIWYG by construction.
   import { createEventDispatcher, onMount, onDestroy } from 'svelte';
   import { rangeFill } from '../../rangefill.js';
-  import { duplicateLayer, resetLayer, removeLayer as dropLayer } from '../../layerops.js';
+  import { duplicateLayer, resetLayer, removeLayer as dropLayer, moveLayer as moveInOrder } from '../../layerops.js';
   import { BUILTINS } from '../../templates.js';
   import { contentTemplates, setContentTemplate, loadContentTemplates } from '../../stores/capture.js';
   import TemplateRender from '../../TemplateRender.svelte';
@@ -31,7 +31,7 @@
   import { BACKGROUNDS } from '../../backgrounds.js';
   import {
     makeLayer, isLayered, layerLabel, regionsToLayers, templateShows, CONTENT_KINDS,
-    LAYER_TYPES, BINDINGS, bandOf, drawBoxes, boundValue,
+    LAYER_TYPES, BINDINGS, bandOf, bandMembers, topLevelLayers, drawBoxes, boundValue,
   } from '../../layers.js';
   import { BAND_GROW_MAX, BAND_TYPE_FLOOR } from '../../templatemodel.js';
 
@@ -102,8 +102,17 @@
   // know what is behind the words, and a green tick there would be worse than no
   // tick at all.
   //
-  // The room numbers come from the active room (RG-10) when there is one, so a
-  // church that told Relay about its hall once gets the distance answer for free.
+  // THE ROOM NUMBERS ARE TYPED, and they are typed every time. This block used
+  // to say they "come from the active room (RG-10) when there is one, so a
+  // church that told Relay about its hall once gets the distance answer for
+  // free" — and nothing here reads a room, in this file or any other:
+  // `rooms.js` captures the input device, the language, the target length and
+  // the channels, and has never held a screen width or a back row. Both fields
+  // start empty, `Number('')` is 0, and `review` correctly answers "unknown"
+  // for the distance until somebody fills them in. The sentence described a
+  // wiring that does not exist, which is the same defect as a control that does
+  // nothing, one layer down: a reader checking whether the answer is trustworthy
+  // was told where it came from, and it came from nowhere.
   let screenWidthM = '';
   let backRowM = '';
   $: room = { screenWidthM: Number(screenWidthM), backRowM: Number(backRowM) };
@@ -127,9 +136,39 @@
 
   $: layered = isLayered(edit);
   $: layers = layered ? edit.layout.layers : [];
-  // Panel shows front-to-back (top of list = front = last in the array).
-  $: panelLayers = [...layers].reverse();
+  // ── THE LAYER LIST ────────────────────────────────────────────────────────
+  //
+  // It used to be `[...layers].reverse()` — the raw array, flattened, with a
+  // band's words rendered as its SIBLINGS. That is not the shape of the model
+  // and it is not what the wall draws: `topLevelLayers` is the stack, and a
+  // band's words are drawn BY the band, in the order it names them, wherever
+  // they happen to sit in the array. A list that shows a word beside the band
+  // that owns it offers an arrow that cannot move it and hides the one fact
+  // about it that matters — which band it is in.
+  //
+  // So: the stack, FRONT FIRST (the top of a list is the front of a stack
+  // everywhere else in this product), each band followed by its own words.
+  //
+  // The words are NOT reversed under their band. A stack's order is what paints
+  // over what; a band's order is reading order — the name above the role — and
+  // reversing it would print the list backwards against the wall it describes.
+  $: panelRows = (() => {
+    const rows = [];
+    for (const L of [...topLevelLayers(layers)].reverse()) {
+      rows.push({ L, member: false });
+      if (L.type === 'band') {
+        for (const m of bandMembers(layers, L)) rows.push({ L: m, member: true });
+      }
+    }
+    return rows;
+  })();
   $: sel = layers.find((l) => l.id === selId) || null;
+  /** The icon for a kind, from the ONE register (`LAYER_TYPES`). The list drew
+   *  its own four-way guess and answered `T` for a band, a region AND a timer —
+   *  three different kinds wearing the text icon in the one place an operator
+   *  goes to tell them apart, while the ＋ menu two rows up drew all three
+   *  correctly from this table. */
+  const typeIcon = (t) => LAYER_TYPES.find((x) => x.type === t)?.icon ?? 'T';
 
   // ── BANDS (docs/REBRAND.md §4) ──────────────────────────────────────────────
   // A band names the objects inside it, so membership is a fact about the band,
@@ -236,15 +275,23 @@
     edit.layout.layers = after;
     edit = edit;
   }
+  // Through `layerops`, for the same reason delete is: the arithmetic of this
+  // one is where the mistake was. A raw adjacent swap of the array moved a band
+  // member — an object NOTHING draws from that array — so the arrows did nothing
+  // visible on every template that has a band, which is every lower third the
+  // product ships. `moveLayer` returns the same list when nothing can move.
   function moveLayer(id, dir) {
-    const a = edit.layout.layers;
-    const i = a.findIndex((l) => l.id === id);
-    const j = i + dir; // +1 = toward front
-    if (i < 0 || j < 0 || j >= a.length) return;
-    [a[i], a[j]] = [a[j], a[i]];
-    edit.layout.layers = [...a];
+    const before = edit.layout.layers || [];
+    const after = moveInOrder(before, id, dir);
+    if (after === before) return;
+    edit.layout.layers = after;
     edit = edit;
   }
+  /** Which way the list's ↑ / ↓ mean for this row. Up the LIST is toward the
+   *  front of the stack (+1), and for a word inside a band it is one place
+   *  EARLIER in the band (−1) — because the list draws a band's words in the
+   *  order the band reads them, not in the order they paint. */
+  const moveDir = (row, up) => (row.member ? (up ? -1 : 1) : up ? 1 : -1);
   function toggleVisible(id) {
     const L = edit.layout.layers.find((l) => l.id === id);
     if (L) { L.visible = L.visible === false; edit = edit; }
@@ -321,8 +368,28 @@
     selId = L.id;
     const r = boardEl.getBoundingClientRect();
     drag = { id: L.id, mode, sx: e.clientX, sy: e.clientY, lx: L.x, ly: L.y, lw: L.w, lh: L.h, bw: r.width, bh: r.height };
+    // CAPTURE THE POINTER, or the drag can outlive the gesture.
+    //
+    // The move/up pair is listened for on `window`, which hears everything that
+    // happens INSIDE the window and nothing that happens outside it. The canvas
+    // sits against the edge of a 1600-wide console: drag an object to the left
+    // edge, keep going, release over the desktop or the title bar, and the
+    // `pointerup` is delivered to something else. `drag` is then still set, and
+    // the next time the pointer crosses the canvas the object follows it with no
+    // button held — a layer that moves when you are not moving it, on the one
+    // surface whose whole job is direct manipulation.
+    //
+    // Capturing retargets every later event for this pointer to this element,
+    // wherever it goes, and the browser releases it implicitly on `pointerup` —
+    // which still bubbles to `window`, so the handlers below are untouched.
+    // Optional-called: jsdom does not implement it, and a missing capture is a
+    // worse drag, never a broken one.
+    e.currentTarget?.setPointerCapture?.(e.pointerId);
     window.addEventListener('pointermove', onDrag);
     window.addEventListener('pointerup', endDrag);
+    // A cancelled pointer (the OS taking over, a touch turning into a scroll)
+    // never sends `pointerup`, and it is the same sticky drag by another route.
+    window.addEventListener('pointercancel', endDrag);
   }
   function onDrag(e) {
     if (!drag) return;
@@ -373,6 +440,7 @@
     guides = { v: null, h: null };
     window.removeEventListener('pointermove', onDrag);
     window.removeEventListener('pointerup', endDrag);
+    window.removeEventListener('pointercancel', endDrag);
   }
   // One-click centring — the "center items" ask. Centres the selected layer on
   // the canvas, horizontally, vertically, or both.
@@ -721,15 +789,23 @@
           </div>
         </div>
         <div class="te-layerlist r-scroll">
-          {#each panelLayers as L (L.id)}
-            <div class="te-layer" class:sel={selId === L.id} class:off={L.visible === false}
+          {#each panelRows as row (row.L.id)}
+            {@const L = row.L}
+            <div class="te-layer" class:sel={selId === L.id} class:off={L.visible === false} class:inband={row.member}
               on:click={() => (selId = L.id)} role="button" tabindex="0"
               on:keydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selId = L.id; } }}>
-              <span class="te-ltype" aria-hidden="true">{L.type === 'background' ? '▦' : L.type === 'shape' ? '▢' : L.type === 'media' ? '▷' : 'T'}</span>
+              <span class="te-ltype" aria-hidden="true">{typeIcon(L.type)}</span>
               <span class="te-lname" title={layerLabel(L)}>{layerLabel(L)}</span>
               <span class="te-lbtns">
-                <button class="te-lmini" title="Forward" on:click|stopPropagation={() => moveLayer(L.id, 1)}>↑</button>
-                <button class="te-lmini" title="Back" on:click|stopPropagation={() => moveLayer(L.id, -1)}>↓</button>
+                <!-- UP AND DOWN THE LIST, which is not the same axis for both
+                     kinds of row — `moveDir` holds the one rule, and the label
+                     says which one this row is under. -->
+                <button class="te-lmini" title={row.member ? 'Earlier in the band' : 'Forward'}
+                  aria-label={row.member ? `Move ${layerLabel(L)} earlier in the band` : `Bring ${layerLabel(L)} forward`}
+                  on:click|stopPropagation={() => moveLayer(L.id, moveDir(row, true))}>↑</button>
+                <button class="te-lmini" title={row.member ? 'Later in the band' : 'Back'}
+                  aria-label={row.member ? `Move ${layerLabel(L)} later in the band` : `Send ${layerLabel(L)} back`}
+                  on:click|stopPropagation={() => moveLayer(L.id, moveDir(row, false))}>↓</button>
                 <button class="te-lmini" title={L.locked ? 'Unlock' : 'Lock'} class:on={L.locked} on:click|stopPropagation={() => toggleLock(L.id)}>{L.locked ? '🔒' : '🔓'}</button>
                 <button class="te-lmini" title="Visibility" on:click|stopPropagation={() => toggleVisible(L.id)}>{L.visible === false ? '◌' : '●'}</button>
                 <button
@@ -745,7 +821,7 @@
           {/each}
           {#if !layers.length}<div class="te-hint r-mono">No layers — use ＋ to add one.</div>{/if}
         </div>
-        <p class="te-panenote">Top of the list is the front. Drag layers on the canvas to move them.</p>
+        <p class="te-panenote">Top of the list is the front. An indented row is a word inside the band above it — the band decides where it sits, so its arrows move it within the band. Drag layers on the canvas to move them.</p>
 
         <!-- READABILITY. Under the layer list, in the panel a designer already has
              open, rather than behind a button they would have to know about. -->
@@ -873,6 +949,18 @@
             {/each}
           </div>
           {#if sel}
+            <!-- WHAT THIS OBJECT IS CALLED. The model has carried a `name` since
+                 the layer editor was written — `layerLabel` prefers it, a
+                 duplicate appends " copy" to it — and NOTHING could set one, so
+                 the layer list showed a name an operator could read and never
+                 change, and every text object on a slide was called "Verse
+                 text" after its binding. Empty falls back to the binding's own
+                 label, which is what a fresh object already shows. -->
+            <div class="te-frow te-objname">
+              <label class="te-fk" for="te-oname">Object name</label>
+              <input id="te-oname" class="r-input te-fv" value={sel.name ?? ''} placeholder={layerLabel(sel)}
+                on:input={(e) => set('name', e.target.value)} />
+            </div>
             <div class="te-objacts">
               <button class="r-btn sm ghost" on:click={() => duplicate(sel.id)}>Duplicate</button>
               <button class="r-btn sm ghost" on:click={() => resetObject(sel.id)}>Reset this object</button>
@@ -1249,6 +1337,7 @@
   .te-objtab:hover:not(.on){ color:var(--v-txt); background:var(--v-surf3); }
   .te-objtab.on{ background:var(--v-sel-fill); border-color:transparent; color:var(--v-sel-ink); }
   .te-objtab.off{ text-decoration:line-through; opacity:.6; }
+  .te-objname{ padding:7px 9px 0; }
   .te-objacts{ display:flex; flex-wrap:wrap; gap:5px; padding:7px 9px 0; }
   .te-objacts .armed{ background:var(--v-red); border-color:transparent; color:#fff; }
   .te-geom{ display:grid; grid-template-columns:repeat(4, 1fr); gap:5px; padding:0 0 4px; }
@@ -1284,6 +1373,12 @@
   .te-layer:hover{ border-color:var(--v-line2); }
   .te-layer.sel{ border-color:var(--v-accent-line); background:var(--v-accent-soft); }
   .te-layer.off{ opacity:.5; }
+  /* A WORD INSIDE A BAND. Indented under the band that owns it, on the band's
+     own surface rather than a card of its own, because it is not a peer of the
+     things in the stack — nothing draws it from there. The rail keeps the
+     nesting legible when the list is long. */
+  .te-layer.inband{ margin-left:14px; background:var(--v-surf); border-left:2px solid var(--v-line2); }
+  .te-layer.inband.sel{ border-left-color:var(--v-accent-line); }
   .te-ltype{ width:16px; text-align:center; color:var(--v-faint); font-family:var(--f-mono); font-size:var(--v-fs-mono); flex:0 0 auto; }
   .te-lname{ flex:1; min-width:0; font-size:var(--v-fs-b2); color:var(--v-txt); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .te-lbtns{ display:flex; gap:1px; flex:0 0 auto; opacity:0; transition:opacity .12s; }
@@ -1446,9 +1541,10 @@
      that is left is the only thing about it that is not a button: it shares the
      row equally with its two neighbours. */
   .te-alignbtn{ flex:1; }
-  .te-geo{ display:grid; grid-template-columns:1fr 1fr; gap:6px; }
-  .te-geo label{ display:flex; align-items:center; gap:6px; font-size:var(--v-fs-cap); color:var(--v-faint); }
-  .te-geo .te-num{ height:28px; }
+  /* `.te-geo` — the SECOND Position group's grid — went out with the group it
+     styled (the one that wrote x/y/w/h without clamping them and moved a locked
+     object). Two of its three rules were still here, and the compiler was
+     printing "Unused CSS selector" for both on every build. */
   .te-err{ flex:0 0 auto; margin:0; padding:10px 14px; border-top:1px solid var(--v-line); color:var(--v-red); font-size:var(--v-fs-cap); line-height:1.5; }
   .te-missing{ margin:auto; padding:40px; }
 

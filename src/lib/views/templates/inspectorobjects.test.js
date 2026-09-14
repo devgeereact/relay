@@ -184,14 +184,14 @@ describe('Used for is a control on the surface that shows it', () => {
     expect(all[all.length - 1][1]).toMatchObject({ kind: 'scripture', templateId: null });
   });
 
-  it('the Usage footnote no longer sends the operator somewhere else for a control that is here', async () => {
+  it('the footnote no longer sends the operator somewhere else for a control that is here', async () => {
     mount();
     await drain();
     pick('Nocturne');
     await drain();
-    host.querySelector('.tg-insptabs button:last-child').click();
-    await drain();
-
+    // It used to be behind a `Usage` tab. That tab's other half was a read-only
+    // restatement of `Used for`, so the tab went and the footnote is simply on
+    // the panel — there is nothing left to press to reach it.
     const foot = host.querySelector('.rw-foot').textContent;
     expect(foot).toMatch(/Used for/);
     expect(foot, 'it must not still claim Outputs is the ONE place').not.toMatch(/the one place/i);
