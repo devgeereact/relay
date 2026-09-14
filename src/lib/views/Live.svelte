@@ -2194,7 +2194,11 @@
     cursor:pointer; padding:9px 10px; border-radius:var(--v-r-md); background:var(--v-surf2);
     border:1px solid var(--v-line); color:var(--v-txt); font-family:var(--f-body); transition:.14s}
   .cue:hover,.slide:hover{border-color:var(--v-line2); background:var(--v-surf3)}
-  .cue.sel{border-color:var(--v-cyan-line)}
+  /* SELECTION is steel blue, never cyan. Cyan means "a guess" (rule 18), and this
+     sat one line above the amber rule that says a promise colour may mean only
+     what it says. `LyricsPane` already had it right — "Selection is chrome — the
+     accent, never amber" — and the rebrand created --v-sel for exactly this. */
+  .cue.sel{border-color:var(--v-sel-line)}
   /* Amber = it is in front of the congregation. Nothing else may use it. */
   .cue.islive,.slide.islive{border-color:var(--v-amber); background:var(--v-amber-soft)}
   /* CUED = where → will resume from, but NOT on screen. Deliberately not amber. */
