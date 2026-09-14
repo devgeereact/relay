@@ -582,7 +582,7 @@ describe('§1 · one button, everywhere', () => {
     // everything. The comment on `.r-btn.danger` QUOTES the retired literal, so
     // a scanner that did not strip comments would report the defect present and
     // the defect fixed at the same time, whichever way round the code was.
-    expect(ruleFor('.r-btn')).toMatch(/background:var\(--v-surf3\)/);
+    expect(ruleFor('.r-btn')).toMatch(/background:var\(--v-surf2\)/);
     expect(ruleFor('.r-btn.danger')).not.toMatch(/239,68,68/);
     expect(css).toMatch(/239,68,68/); // ...it is still there, in the comment.
   });
@@ -590,10 +590,15 @@ describe('§1 · one button, everywhere', () => {
   it('the ordinary button draws the house surface, like every other shared control', () => {
     // The defect: `.r-btn` had no `background` and `border:1px solid transparent`.
     // Stated as an agreement rather than as three literals, because the point is
-    // that these four controls are ONE column, not that surf3 is the colour.
+    // that these four controls are ONE column.
+    //
+    // THE STEP CHANGED on 2026-09-14, measured against the reference: a control at
+    // REST is `--v-surf2` (the artifact's `--c3`) and lifts to `--v-surf3` (its
+    // `--c4`) under the cursor. Every shared control here opened at the hover step,
+    // so the whole console sat one shade light and hover had nowhere to go.
     for (const sel of ['.r-btn', '.r-input, .r-select', '.r-cbtn']) {
       const r = ruleFor(sel);
-      expect(r, `${sel} has no house fill`).toMatch(/background:var\(--v-surf3\)/);
+      expect(r, `${sel} has no house fill`).toMatch(/background:var\(--v-surf2\)/);
       expect(r, `${sel} has no house edge`).toMatch(/border:1px solid var\(--v-500\)/);
     }
     // The transparent button still exists — it is now a NAMED variant rather

@@ -469,11 +469,16 @@ body{ overflow:hidden; text-rendering:optimizeLegibility; -moz-osx-font-smoothin
    and an omission. */
 .r-btn{ display:inline-flex; align-items:center; justify-content:center; gap:7px; height:26px;
   padding:0 11px; border-radius:var(--v-r-sm); cursor:pointer; white-space:nowrap;
-  background:var(--v-surf3); border:1px solid var(--v-500); color:var(--v-txt);
+  /* REST IS --v-surf2, HOVER IS --v-surf3. The artifact draws a control at rest
+     on `--c3` (#292D34) and lifts it to `--c4` (#343942) under the cursor; this
+     rule opened at the HOVER step, so every button in the console sat one shade
+     too light and had nowhere to go when the pointer arrived (a brightness filter
+     is not the same move). Measured against the reference, 2026-09-14. */
+  background:var(--v-surf2); border:1px solid var(--v-500); color:var(--v-txt);
   font-family:var(--f-body); font-size:var(--v-fs-b2); font-weight:600;
   transition:filter var(--v-dur) var(--v-ease), background var(--v-dur) var(--v-ease),
     border-color var(--v-dur) var(--v-ease), transform 90ms var(--v-ease); }
-.r-btn:hover:not(:disabled){ filter:brightness(1.15); }
+.r-btn:hover:not(:disabled){ background:var(--v-surf3); }
 .r-btn:disabled{ opacity:.45; cursor:not-allowed; }
 /* PRIMARY — the ordinary "do the thing" button: Save, Add, Continue, Import.
    Steel blue, because it is chrome and nothing more. It was amber once, then
@@ -532,7 +537,7 @@ body{ overflow:hidden; text-rendering:optimizeLegibility; -moz-osx-font-smoothin
 .r-badge.pulse .bd{ box-shadow:0 0 7px currentColor; animation:vpulse 1.7s ease-in-out infinite; }
 @keyframes vpulse{ 0%,100%{opacity:1} 50%{opacity:.4} }
 
-.r-input, .r-select{ height:26px; width:100%; padding:0 9px; border-radius:var(--v-r-sm); background:var(--v-surf3);
+.r-input, .r-select{ height:26px; width:100%; padding:0 9px; border-radius:var(--v-r-sm); background:var(--v-surf2);
   border:1px solid var(--v-500); color:var(--v-txt); font-family:var(--f-body); font-size:var(--v-fs-b2);
   outline:none; transition:border-color var(--v-dur) var(--v-ease), box-shadow var(--v-dur) var(--v-ease); }
 .r-input.mono{ font-family:var(--f-mono); }
@@ -626,11 +631,11 @@ input[type=color]::-moz-color-swatch{ border:0; border-radius:2px; }
    reach (CLAUDE.md rule 36, DECISIONS section 20), so these are sized to stay
    legible at the smallest dock height rather than to look neat at the largest. */
 .r-ctl{ display:grid; grid-template-columns:1fr 1fr; gap:6px; }
-.r-cbtn{ height:34px; min-height:32px; padding:0 10px; border-radius:var(--v-r-sm); background:var(--v-surf3);
+.r-cbtn{ height:34px; min-height:32px; padding:0 10px; border-radius:var(--v-r-sm); background:var(--v-surf2);
   border:1px solid var(--v-500); color:var(--v-txt); cursor:pointer; white-space:nowrap;
   font-family:var(--f-body); font-size:var(--v-fs-b2); font-weight:600;
   transition:transform 90ms var(--v-ease), background var(--v-dur) var(--v-ease); }
-.r-cbtn:hover:not(:disabled){ background:var(--v-surf3); filter:brightness(1.15); }
+.r-cbtn:hover:not(:disabled){ background:var(--v-surf3); }
 .r-cbtn:active:not(:disabled){ transform:scale(.965); }
 .r-cbtn:disabled{ opacity:.45; cursor:not-allowed; }
 .r-cbtn.wide{ grid-column:1 / -1; }
