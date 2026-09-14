@@ -1061,7 +1061,7 @@ input[type="checkbox"]{ accent-color:var(--v-accent); }
   color:var(--v-amber); box-shadow:inset 0 0 0 1px rgba(255,163,26,.14); }
 
 /* ══════════════════════════════════════════════════════════════════════════
-   X1 · THE TRANSITION CONTROL (docs/REBRAND.md §8 · DECISIONS §83)
+   X1 · THE TRANSITION CONTROL (docs/REBRAND.md §8 · DECISIONS §84)
    One block at the end of the file, per the wave-3 preamble, so a collision
    with another agent's block resolves by moving these lines whole.
 

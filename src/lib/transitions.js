@@ -93,7 +93,7 @@ export function transitionDuration(mode, ms, reducedMotion = false) {
   return Math.min(1000, n);
 }
 
-// ── THE OPERATOR'S LIVE OVERRIDE (docs/DECISIONS.md §83) ───────────────────────
+// ── THE OPERATOR'S LIVE OVERRIDE (docs/DECISIONS.md §84) ───────────────────────
 //
 // §71 made a transition a TEMPLATE's choice. That is the right home for a decision
 // somebody made on a Tuesday, and the wrong home for the one an operator has to
@@ -131,7 +131,7 @@ export const liveTransition = writable(null);
 export const isOverride = (o) => !!o && isTransition(o.mode);
 
 /**
- * WHICH TRANSITION IS IN FORCE, and on whose authority (DECISIONS §83).
+ * WHICH TRANSITION IS IN FORCE, and on whose authority (DECISIONS §84).
  *
  * The order, stated the way §29 states it for templates:
  *

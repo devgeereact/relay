@@ -297,7 +297,7 @@
   $: if (!$live) onAirFrom = null;
   $: onAirFor = onAirFrom === null ? null : elapsed(nowMs - onAirFrom);
 
-  // ── THE TRANSITION CONTROL (docs/REBRAND.md §8 · DECISIONS §83) ────────────
+  // ── THE TRANSITION CONTROL (docs/REBRAND.md §8 · DECISIONS §84) ────────────
   //
   // The one operator-level control over how a slide replaces the last, on every
   // screen at once. `FOLLOW` is a sentinel for "no override", not a transition —
@@ -694,7 +694,7 @@
           {/each}
         </span>
       {/if}
-      <!-- THE TRANSITION CONTROL (docs/REBRAND.md §8 · DECISIONS §83).
+      <!-- THE TRANSITION CONTROL (docs/REBRAND.md §8 · DECISIONS §84).
 
            TWO AUTHORITIES OVER ONE PROPERTY, AND THE PICKER IS WHAT MAKES THAT
            HONEST. §71 says a transition is a template's choice; this says an

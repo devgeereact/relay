@@ -1,4 +1,4 @@
-// X1 · THE OPERATOR'S TRANSITION OVERRIDE (docs/REBRAND.md §8 · DECISIONS §83).
+// X1 · THE OPERATOR'S TRANSITION OVERRIDE (docs/REBRAND.md §8 · DECISIONS §84).
 //
 // `transitions.test.js` holds the seven and the two ways an animation damages a
 // service. This file holds the thing that was added on top of them: a SECOND

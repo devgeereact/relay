@@ -1160,7 +1160,7 @@ fn transition_json(t: Option<&(String, Option<u32>)>) -> String {
 }
 
 /// HOW THE NEXT THING APPEARS — every screen, at once (docs/REBRAND.md §8,
-/// DECISIONS §83).
+/// DECISIONS §84).
 ///
 /// Both doors, because the wall is two kinds of screen: a native output window
 /// (Tauri event) and a kiosk/OBS browser source (the WS hub, which has no backend
@@ -1252,7 +1252,7 @@ pub struct KioskHub {
     /// publishers), so nothing a rehearsal did can be replayed either.
     last_screen: Arc<Mutex<Option<String>>>,
     /// THE OPERATOR'S LIVE TRANSITION OVERRIDE — `(mode, ms)`, or `None` to follow
-    /// each template's own choice (DECISIONS §83).
+    /// each template's own choice (DECISIONS §84).
     ///
     /// ITS OWN SLOT, NOT `last_screen`. Putting it there would have been the bug
     /// rule 43 exists to fix, wearing the fix's clothes: one slot means the newest
@@ -1722,7 +1722,7 @@ pub async fn run_kiosk_server(
                                         ))
                                         .await;
                                     // The operator's transition override, if one is
-                                    // in force (DECISIONS §83). Sent BEFORE the
+                                    // in force (DECISIONS §84). Sent BEFORE the
                                     // retained frame, so a screen that joins late
                                     // is not the only one in the building still
                                     // cutting while the rest crossfade. Like the

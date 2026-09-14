@@ -3891,7 +3891,7 @@ was written to catch was on a different card. It prices every card now and asser
 writer `setContentTemplate` (§25), and the object strip and Used for the gallery inspector gained in
 §80 are all untouched. Nothing here reaches an output.
 =======
-## 83. A transition has two authorities, and the operator's outranks the template's (2026-09-14)
+## 84. A transition has two authorities, and the operator's outranks the template's (2026-09-14)
 
 ### What was open
 

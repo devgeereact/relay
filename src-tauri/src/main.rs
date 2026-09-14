@@ -3044,7 +3044,7 @@ fn sync_kiosk_themes(kiosk: tauri::State<'_, channels::KioskHub>, themes_json: S
 }
 
 /// THE OPERATOR'S TRANSITION OVERRIDE — how the next thing appears, on every
-/// screen (docs/REBRAND.md §8, DECISIONS §83).
+/// screen (docs/REBRAND.md §8, DECISIONS §84).
 ///
 /// `mode: None` clears it and every screen goes back to following its own
 /// template, which is §71 untouched.

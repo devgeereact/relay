@@ -30,7 +30,7 @@
   let visible = false;
   let black = false; // opaque blackout overlay
 
-  // ── THE OPERATOR'S TRANSITION OVERRIDE, SNAPSHOTTED (DECISIONS §83) ──────────
+  // ── THE OPERATOR'S TRANSITION OVERRIDE, SNAPSHOTTED (DECISIONS §84) ──────────
   //
   // Two variables, and the difference between them is the whole rule.
   //

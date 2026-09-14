@@ -725,7 +725,7 @@
   //
   // Reduced motion is a CUT, not a faster animation: the viewer asked for none.
   //
-  // TWO AUTHORITIES, ONE RANKING (DECISIONS §83). The operator's live override
+  // TWO AUTHORITIES, ONE RANKING (DECISIONS §84). The operator's live override
   // outranks the template; `resolveTransition` is the only place that is decided,
   // so the console preview and the wall cannot disagree about it.
   //

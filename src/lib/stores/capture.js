@@ -1750,7 +1750,7 @@ async function persistThemes(list) {
   }
 }
 
-// ══ X1 · THE TRANSITION CONTROL (docs/REBRAND.md §8 · DECISIONS §83) ═══════════
+// ══ X1 · THE TRANSITION CONTROL (docs/REBRAND.md §8 · DECISIONS §84) ═══════════
 // One block, deliberately self-contained: this file is being edited by more than
 // one agent this wave, so an integrator can move these lines whole.
 //
