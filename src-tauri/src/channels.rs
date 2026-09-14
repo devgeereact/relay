@@ -92,6 +92,33 @@ pub struct OutputContent {
     /// the output renders a live MM:SS (ticked locally, so no per-second network
     /// traffic) styled by the template; `reference` is the label above it.
     pub countdown_to: Option<i64>,
+    /// Epoch (ms) this countdown was aimed FROM, so `countdown_to - countdown_from`
+    /// is the length it was aimed for. That span is the ONLY input the warning rule
+    /// has (`layers.js::countdownWarning`: the last minute, or the last tenth of a
+    /// countdown shorter than ten minutes) — without it the rule falls back to a
+    /// flat last minute, which on a two-minute countdown is a colour lit for half
+    /// its life.
+    ///
+    /// It was read by `TemplateRender` and written by NOBODY for as long as it
+    /// existed, so the short-countdown half of §7's rule had never once fired in the
+    /// product. A reader with no writer and a control with no reader are the same
+    /// defect facing opposite ways (DECISIONS §69). Written by `start_countdown` and
+    /// carried, unchanged, by every re-aim.
+    pub countdown_from: Option<i64>,
+    /// **A PAUSED COUNTDOWN IS NOT AN INSTANT, WHICH IS WHY THIS FIELD EXISTS.**
+    ///
+    /// `countdown_to` is an absolute instant: every output ticks against its own
+    /// clock, which is what keeps a per-second timer off the network. Nudging one is
+    /// just re-aiming it (`+1` moves the instant), but HOLDING one cannot be said in
+    /// that language at all — there is no instant that means "not moving".
+    ///
+    /// So when this is `Some(n)`, the countdown is HELD with `n` ms left and every
+    /// reader shows `n` instead of ticking. `countdown_to` is still set — it is where
+    /// the countdown would land if it were resumed at the moment it was held, kept so
+    /// the content still reads as a countdown to `pipeline::preflight`, to the retained
+    /// screen frame and to the slide key. Nothing may compute a remaining time from
+    /// it while this is `Some`.
+    pub countdown_paused_ms: Option<i64>,
     /// Message shown in place of the timer when the countdown reaches zero.
     pub countdown_done: Option<String>,
     /// The decode pass that produced this content (`latency::Trace`), when it came
@@ -869,6 +896,13 @@ fn kiosk_content_json(content: &OutputContent) -> String {
         "service_started_at": content.service_started_at,
         "service_target_ms": content.service_target_ms,
         "countdown_to": content.countdown_to,
+        // BOTH halves of the countdown model, or a kiosk screen is the one surface
+        // that disagrees with the wall — the exact bug `next_reference` caused here.
+        // `countdown_from` is what makes the warning rule's short-countdown case
+        // answerable; `countdown_paused_ms` is the difference between a held timer
+        // and one that carries on counting on a browser source nobody is watching.
+        "countdown_from": content.countdown_from,
+        "countdown_paused_ms": content.countdown_paused_ms,
         "countdown_done": content.countdown_done,
         // Rides to every kiosk client purely so it can report back when it painted
         // — the last leg of the latency chain, over the real church network. See
@@ -943,8 +977,58 @@ fn note_wall<R: tauri::Runtime>(app: &tauri::AppHandle<R>, on_air: bool, black: 
     }
 }
 
+/// THE COUNTDOWN THAT IS IN FRONT OF THE OPERATOR, so the transport can re-aim or
+/// HOLD it without rebuilding it from a mirror.
+///
+/// Reset and ±1 used to be assembled in the console out of `$live` — the label, the
+/// done message and the template all read back off the event and handed to
+/// `start_countdown` again. That works exactly as long as every caller remembers
+/// every field, and a paused countdown adds one more thing to forget: a `+1` that
+/// dropped `countdown_paused_ms` would quietly restart a held timer in front of a
+/// congregation. The engine owns the countdown instead, and the transport asks it to
+/// change one thing about it.
+///
+/// Maintained at the SAME three doors as [`WallState`] — `broadcast_content`, `clear`
+/// and `black` — so it cannot drift (rule 36), with one deliberate difference: it is
+/// noted BEFORE the rehearsal branch, not after. `WallState` answers "what can a
+/// congregation see", so a rehearsal must not touch it. This answers "what countdown
+/// is the operator looking at", and in a rehearsal that is the console's own copy —
+/// which the console already mirrors, and on which ±1 works today. Noting it after
+/// the branch would take the transport away in rehearsal, which is the one place an
+/// operator is meant to be practising with it.
+///
+/// **Lock discipline:** innermost, and never held across an emit (rule 2). Every
+/// reader clones and releases before it broadcasts.
+#[derive(Default)]
+pub struct CountdownState(pub std::sync::Mutex<Option<OutputContent>>);
+
+/// The countdown currently in front of the operator, or None when there is not one.
+/// A clone, taken under the lock and returned with the lock released.
+pub fn live_countdown<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Option<OutputContent> {
+    app.try_state::<CountdownState>()
+        .and_then(|s| s.0.lock().ok().and_then(|g| g.clone()))
+}
+
+/// Remember (or forget) the countdown at one of the three doors. Anything that is
+/// not a countdown forgets it, which is the whole point: a verse, a song or a notice
+/// replaced the countdown, so there is no longer one to re-aim.
+fn note_countdown<R: tauri::Runtime>(app: &tauri::AppHandle<R>, content: Option<&OutputContent>) {
+    let Some(state) = app.try_state::<CountdownState>() else {
+        return;
+    };
+    let next = content
+        .filter(|c| c.countdown_to.is_some() && c.kind.as_deref() == Some("countdown"))
+        .cloned();
+    if let Ok(mut g) = state.0.lock() {
+        *g = next;
+    };
+}
+
 pub fn broadcast_content<R: tauri::Runtime>(app: &tauri::AppHandle<R>, content: OutputContent) {
     let json = kiosk_content_json(&content);
+    // BEFORE the rehearsal branch, deliberately — see `CountdownState`. The lock is
+    // taken and released here, never held across the emit below (rule 2).
+    note_countdown(app, Some(&content));
     if rehearsing(app) {
         // Content-free by design: the reference is congregation/sermon data and this
         // log is written to disk. What matters operationally is only that the
@@ -971,6 +1055,9 @@ pub fn broadcast_content<R: tauri::Runtime>(app: &tauri::AppHandle<R>, content: 
 /// panic control that reports a success it did not achieve is worse than one that
 /// is missing: the operator stops looking at the screen and trusts the toast.
 pub fn clear<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<(), String> {
+    // The countdown left the operator's screen either way, rehearsal or not — so it
+    // is forgotten on both paths here, exactly as it is remembered on both above.
+    note_countdown(app, None);
     if rehearsing(app) {
         return app
             .emit_to(CONSOLE, "output://clear", ())
@@ -987,6 +1074,7 @@ pub fn clear<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<(), String>
 ///
 /// Returns Err for the same reason `clear` does — see above.
 pub fn black<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<(), String> {
+    note_countdown(app, None);
     if rehearsing(app) {
         return app
             .emit_to(CONSOLE, "output://black", ())
@@ -3557,6 +3645,27 @@ mod tests {
         assert_eq!(v["next_text"], "For God sent not...");
         assert_eq!(v["service_started_at"], 1_700_000_000_000_i64);
         assert_eq!(v["service_target_ms"], 1_800_000);
+
+        // BOTH HALVES OF THE COUNTDOWN, for the same reason `next_*` are above: a
+        // kiosk/OBS screen that gets only the instant goes on counting down through a
+        // countdown the operator has HELD, and a projector counting against a console
+        // that says 4:00 is worse than a blank one — nothing about it looks wrong.
+        // `countdown_from` rides too, or a kiosk screen turns the figure red at a
+        // different moment from the native window beside it.
+        let held = OutputContent {
+            kind: Some("countdown".into()),
+            reference: "Service begins in".into(),
+            countdown_to: Some(1_700_000_300_000),
+            countdown_from: Some(1_700_000_000_000),
+            countdown_paused_ms: Some(240_000),
+            countdown_done: Some("Welcome".into()),
+            ..Default::default()
+        };
+        let v: serde_json::Value = serde_json::from_str(&kiosk_content_json(&held)).unwrap();
+        assert_eq!(v["countdown_to"], 1_700_000_300_000_i64);
+        assert_eq!(v["countdown_from"], 1_700_000_000_000_i64);
+        assert_eq!(v["countdown_paused_ms"], 240_000);
+        assert_eq!(v["countdown_done"], "Welcome");
     }
 
     #[test]

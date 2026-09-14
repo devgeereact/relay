@@ -45,6 +45,10 @@ import { migrateTemplate } from '../templatemodel.js';
 import { tNow } from '../i18n.js';
 import { humanError } from '../errors.js';
 import { markTranscript } from '../latency.js';
+// The ONE reader of how long a countdown has left, and of whether it is being held
+// (docs/REBRAND.md §7). The console reads it through the same function the wall and
+// the stage page do, so a held countdown cannot go on ticking on one of the three.
+import { countdownRemainingMs, countdownIsPaused } from '../countdown.js';
 
 /**
  * The audio meter — RMS level + voice-activity, arriving 10–50 times a second.
@@ -335,6 +339,12 @@ export const liveContent = derived(live, ($l) =>
         media_url: $l.media_url,
         media_kind: $l.media_kind,
         countdown_to: $l.countdown_to,
+        // Both halves of the countdown model reach the console preview, or the
+        // preview is the one surface that disagrees with the wall — it would go on
+        // ticking a countdown the operator has held, and the preview exists to be
+        // the thing they can trust.
+        countdown_from: $l.countdown_from,
+        countdown_paused_ms: $l.countdown_paused_ms,
         countdown_done: $l.countdown_done,
       }
     : null,
@@ -1180,8 +1190,13 @@ return sequence.map((i) => sections[i]).filter(Boolean);
  *  future). Derived from the mirrored output content, so it clears the moment
  *  the screen is cleared or any other content goes live. */
 export function countdownRunning() {
-const l = get(live);
-return !!(l && l.countdown_to && l.countdown_to > Date.now());
+return countdownRemaining() !== null;
+}
+
+/** Is the countdown on the wall being HELD? Through the one reader, so the
+ *  transport, the wall and the stage page cannot disagree about it. */
+export function countdownHeld() {
+return countdownIsPaused(get(live));
 }
 
 /** How long the countdown ON THE WALL has left, in ms — or null when there is no
@@ -1189,10 +1204,12 @@ return !!(l && l.countdown_to && l.countdown_to > Date.now());
  *  timer, so the figure in the dock and the figure on the screen cannot drift
  *  (docs/REBRAND.md §7). */
 export function countdownRemaining(atMs = Date.now()) {
-const l = get(live);
-if (!l || !l.countdown_to) return null;
-const left = l.countdown_to - atMs;
-return left > 0 ? left : null;
+const left = countdownRemainingMs(get(live), atMs);
+// `countdownRemainingMs` distinguishes "finished" (0) from "there is no countdown"
+// (null) because a renderer has to show a done message for one and nothing for the
+// other. The TRANSPORT does not: a countdown that has run out is not something ±1
+// can re-aim, so both are null here.
+return left != null && left > 0 ? left : null;
 }
 
 /**
@@ -1206,29 +1223,24 @@ return left > 0 ? left : null;
  *
  * THROWS (contract group 1) — it changes what a congregation is looking at.
  *
- * Two things are carried over from the countdown already on air rather than
- * re-decided, because a press of `+1` must change the time and nothing else:
- *
- *   · its label and its done message, so the wall does not silently rename itself;
- *   · its template, **only when that template was PINNED**. A countdown fired from
- *     the dock resolves through the content look, which DEFERS to each screen's
- *     own template (DECISIONS §29). Feeding the resolved id back in would make it
- *     a pinned cue template and take that deference away — the screen's own
- *     template would stop winning, from a press of `+1`.
+ * **The carry-over now happens in the engine, not here** (`main::adjust_countdown`).
+ * This used to rebuild the whole fire out of `$live` — the label, the done message
+ * and the template read back off the event and handed to `start_countdown` again —
+ * and it worked exactly as long as every caller remembered every field. A held
+ * countdown added one more to forget, and forgetting THAT one restarts a paused
+ * timer in front of a congregation from a press of `+1`. The engine keeps the
+ * countdown and this asks it to change one thing about it; the guarantees that used
+ * to be pinned here (the label does not change, and an UNPINNED template is never
+ * re-pinned — DECISIONS §29) are pinned in `e2e.rs` instead, where they now hold for
+ * every caller rather than for this one.
  */
 export async function adjustCountdown(ms, keepPlan = true) {
-const minutes = Number(ms) / 60_000;
-if (!Number.isFinite(minutes) || minutes <= 0) {
+const remainingMs = Math.round(Number(ms));
+if (!Number.isFinite(remainingMs) || remainingMs <= 0) {
   throw new Error('A countdown needs a length greater than zero.');
 }
-const l = get(live) ?? {};
 const call = await invoke();
-await call('start_countdown', {
-  minutes,
-  label: l.reference ?? 'Service begins in',
-  doneMsg: l.countdown_done ?? '',
-  templateId: l.template_pinned ? (l.template_id ?? null) : null,
-});
+await call('adjust_countdown', { remainingMs, paused: null });
 // `keepPlan` DEFAULTS TRUE here, and it is the only wrapper in this file that
 // does. Every other take replaces what is on the wall, so the plan cue that was
 // amber is no longer what anyone is looking at. This one changes a NUMBER on
@@ -1236,6 +1248,28 @@ await call('start_countdown', {
 // air afterwards, and clearing `onAir` would grey out the correct cue and send
 // the next `→` back to cue 1. A countdown started from the dock already left the
 // plan when it started, so there is nothing left to clear either way.
+if (!keepPlan) leavePlan();
+}
+
+/**
+ * HOLD OR RELEASE THE COUNTDOWN ON THE SCREENS — the half of §7's transport that
+ * did not exist until the engine had a field for it.
+ *
+ * Every other press on that row re-aims an absolute instant, which is something
+ * `countdown_to` can already say. "Stopped" is not an instant, so it is said by
+ * `countdown_paused_ms` instead, and it is said by the engine: a held countdown must
+ * stay held through a `+1`, through a screen reconnecting mid-service, and through
+ * anything else that re-broadcasts it.
+ *
+ * THROWS (contract group 1) — it changes what a congregation is looking at. It
+ * cannot start a countdown: with nothing counting the engine refuses, in words.
+ *
+ * `keepPlan` defaults true for the same reason `adjustCountdown`'s does — holding a
+ * plan's countdown cue leaves that cue exactly as on-air as it was.
+ */
+export async function pauseCountdown(paused, keepPlan = true) {
+const call = await invoke();
+await call('adjust_countdown', { remainingMs: null, paused: !!paused });
 if (!keepPlan) leavePlan();
 }
 

@@ -2752,3 +2752,360 @@ fn r136_a_recovery_in_the_record_always_has_a_loss_to_recover_from() {
         "the screen came back and the record must say so: {kinds:?}"
     );
 }
+
+// ════════════════════════════════════════════════════════════════════════════
+//  THE COUNTDOWN'S MISSING HALF — docs/REBRAND.md §7
+//
+//  §7 asks for a transport of Start/**Pause** · Reset · ±1 · Clear, and Pause was the
+//  one of the five that was never built. The spec records the honest reason:
+//  `countdown_to` is an absolute INSTANT that rides with the content, so every other
+//  press is just re-aiming that instant — and there is no instant that means "not
+//  moving". A held countdown needed a field the engine owns.
+//
+//  These drive the real commands against a real database and assert on what leaves
+//  the machine, because every claim here is about a number a congregation is looking
+//  at while they wait for a service to start.
+// ════════════════════════════════════════════════════════════════════════════
+
+fn cd_now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
+/// Start the five-minute countdown the dock starts, so each test below begins where
+/// an operator does.
+fn start_five(h: &tauri::AppHandle<tauri::test::MockRuntime>) {
+    start_countdown(
+        h.clone(),
+        h.state::<Db>(),
+        5.0,
+        "Service begins in".into(),
+        "Welcome".into(),
+        None,
+    )
+    .expect("start a countdown");
+}
+
+/// A COUNTDOWN CAN BE HELD, AND HOLDING IT CHANGES NOTHING ELSE.
+///
+/// Narrow, and it is the whole feature: after Pause the wall says the same number,
+/// carries the same label and is still a countdown — it has simply stopped moving.
+/// Resume puts the instant back where the hold left it, not back where the countdown
+/// started.
+#[test]
+fn r7_a_countdown_can_be_held_and_released() {
+    let app = app();
+    let h = app.handle().clone();
+    let wall = Wall::watch(&h);
+
+    start_five(&h);
+    settle();
+    let started = wall.last().expect("a countdown on the wall");
+    assert!(
+        started["countdown_paused_ms"].is_null(),
+        "a countdown that has just been STARTED is running: {started}"
+    );
+
+    adjust_countdown(h.clone(), None, Some(true)).expect("hold it");
+    settle();
+    let held = wall.last().expect("the wall");
+    let left = held["countdown_paused_ms"]
+        .as_i64()
+        .expect("a held countdown must say what it is held at");
+    assert!(
+        (4 * 60_000..=5 * 60_000).contains(&left),
+        "the hold must keep the figure it was holding, not reset it: {left}ms"
+    );
+    assert_eq!(
+        held["reference"], "Service begins in",
+        "holding a countdown must not rename it"
+    );
+    // `kind` here, not `content_kind`: a `Wall` records the TAURI event, whose field
+    // is `kind`; the kiosk wire form renames it because that protocol uses `kind` for
+    // the message type. Two doors, two spellings, and this test watches one of them.
+    assert_eq!(
+        held["kind"], "countdown",
+        "it is still a countdown, it has just stopped moving"
+    );
+
+    adjust_countdown(h.clone(), None, Some(false)).expect("release it");
+    settle();
+    let running = wall.last().expect("the wall");
+    assert!(
+        running["countdown_paused_ms"].is_null(),
+        "released, and still carrying the hold: {running}"
+    );
+    let to = running["countdown_to"].as_i64().expect("an instant again");
+    assert!(
+        (to - cd_now_ms() - left).abs() < 5_000,
+        "resume must put back what was HELD ({left}ms), not what was originally set"
+    );
+}
+
+/// **THE ONE THAT COSTS A SERVICE IF IT IS WRONG: A RE-FIRE MUST NOT LOSE THE HOLD.**
+///
+/// `+1` and Reset re-broadcast the countdown. Before the engine owned it, the console
+/// rebuilt that broadcast out of its own mirror — label, done message and template
+/// read back off the event and handed to `start_countdown` again. That worked exactly
+/// as long as every caller remembered every field, and `countdown_paused_ms` is one
+/// more to forget. Forgetting it starts a timer the operator deliberately stopped, in
+/// front of a congregation, from a button that says "+1".
+#[test]
+fn r7_a_held_countdown_is_still_held_after_a_re_aim() {
+    let app = app();
+    let h = app.handle().clone();
+    let wall = Wall::watch(&h);
+
+    start_five(&h);
+    adjust_countdown(h.clone(), None, Some(true)).expect("hold");
+    settle();
+
+    adjust_countdown(h.clone(), Some(6 * 60_000), None).expect("+1");
+    settle();
+    let after = wall.last().expect("the wall");
+    assert_eq!(
+        after["countdown_paused_ms"].as_i64(),
+        Some(6 * 60_000),
+        "a press of +1 released a countdown the operator had stopped: {after}"
+    );
+
+    // …and Reset, which is the same door with a different number.
+    adjust_countdown(h.clone(), Some(5 * 60_000), None).expect("reset");
+    settle();
+    assert_eq!(
+        wall.last().expect("the wall")["countdown_paused_ms"].as_i64(),
+        Some(5 * 60_000),
+        "Reset released the hold"
+    );
+}
+
+/// THE TRANSPORT CAN NEVER PUT A COUNTDOWN ON A WALL BY ITSELF.
+///
+/// Start is the one control that puts a countdown in front of people and there must
+/// be exactly one of those. Every other press is about a countdown that is already
+/// there, so with nothing there they refuse — in words — and touch no screen.
+#[test]
+fn r7_the_transport_can_never_start_a_countdown() {
+    let app = app();
+    let h = app.handle().clone();
+    let wall = Wall::watch(&h);
+
+    for (remaining, paused) in [
+        (Some(5 * 60_000), None),
+        (None, Some(true)),
+        (None, Some(false)),
+    ] {
+        let err = adjust_countdown(h.clone(), remaining, paused)
+            .expect_err("nothing is counting down, so there is nothing to adjust");
+        assert!(
+            err.to_string().contains("Nothing is counting down"),
+            "the refusal has to be readable in a booth: {err}"
+        );
+    }
+    settle();
+    assert_eq!(wall.count(), 0, "a refusal reached a screen");
+
+    // And once a verse has replaced the countdown, the transport is about a countdown
+    // that is no longer there — so it refuses rather than re-aiming the verse.
+    start_five(&h);
+    manual_fire(h.clone(), h.state::<Db>(), "John 3:16".into(), None, None).expect("fire");
+    settle();
+    let before = wall.count();
+    adjust_countdown(h.clone(), Some(60_000), None).expect_err("the countdown is gone");
+    settle();
+    assert_eq!(wall.count(), before, "a refusal reached a screen");
+    assert_eq!(
+        wall.last().expect("the wall")["reference"],
+        "John 3:16",
+        "the verse must still be up"
+    );
+}
+
+/// A CLEARED WALL HAS NO COUNTDOWN TO HOLD.
+///
+/// `clear` and `black` are panic controls, and what they take off a screen must stay
+/// off it. A transport that could re-aim a countdown the operator had just cleared
+/// would put it back — rule 43's failure with a panic control in the role of the
+/// thing that gets undone.
+#[test]
+fn r7_a_cleared_countdown_cannot_be_brought_back_by_the_transport() {
+    let app = app();
+    let h = app.handle().clone();
+    let wall = Wall::watch(&h);
+
+    start_five(&h);
+    clear_screens(h.clone()).expect("clear");
+    settle();
+    let before = wall.count();
+    adjust_countdown(h.clone(), Some(60_000), None).expect_err("the wall is clear");
+    adjust_countdown(h.clone(), None, Some(true)).expect_err("the wall is clear");
+    settle();
+    assert_eq!(
+        wall.count(),
+        before,
+        "the transport put a cleared countdown back on the wall"
+    );
+
+    // Blackout is the harsher of the two and must do at least as much.
+    start_five(&h);
+    blackout(h.clone()).expect("black");
+    settle();
+    let before = wall.count();
+    adjust_countdown(h.clone(), Some(60_000), None).expect_err("the wall is black");
+    settle();
+    assert_eq!(wall.count(), before, "a blacked wall got a countdown back");
+}
+
+/// A RE-AIM CHANGES THE NUMBER AND NOTHING ELSE — including the template.
+///
+/// These assertions used to live in the console's own test file, against a re-aim the
+/// console assembled itself. They belong here now: the engine does the carrying, so
+/// the guarantee holds for every caller rather than for the one that was tested.
+/// DECISIONS §29 is the sharp one — a countdown fired from the dock resolves through
+/// the content LOOK, which DEFERS to whatever template each screen has of its own.
+/// Handing the resolved id back as a cue template would take that deference away, and
+/// a press of "+1" would silently re-skin every screen in the building.
+#[test]
+fn r7_a_re_aim_does_not_rename_or_re_skin_the_countdown() {
+    let app = app();
+    let h = app.handle().clone();
+    let wall = Wall::watch(&h);
+
+    // A content look for countdowns, which is how the dock's countdown is dressed.
+    let look = scratch_template(&h, "Countdown look");
+    {
+        let db = h.state::<Db>();
+        let conn = db.0.lock().expect("db");
+        db::set_content_template(&conn, "countdown", Some(look)).expect("content look");
+    }
+    start_countdown(
+        h.clone(),
+        h.state::<Db>(),
+        5.0,
+        "Doors open in".into(),
+        "Please come in".into(),
+        None,
+    )
+    .expect("start");
+    settle();
+    let started = wall.last().expect("the wall");
+    assert_eq!(started["template_id"].as_i64(), Some(look));
+    assert_eq!(
+        started["template_pinned"], false,
+        "a content look DEFERS to each screen's own template (DECISIONS §29)"
+    );
+
+    adjust_countdown(h.clone(), Some(4 * 60_000), None).expect("−1");
+    settle();
+    let after = wall.last().expect("the wall");
+    assert_eq!(
+        after["reference"], "Doors open in",
+        "the wall renamed itself from a press of the transport"
+    );
+    assert_eq!(
+        after["countdown_done"], "Please come in",
+        "the done message was dropped by a re-aim"
+    );
+    assert_eq!(
+        after["template_pinned"], false,
+        "a re-aim PINNED a template the countdown never pinned — every screen in the \
+         building would have been re-skinned by a press of +1 (DECISIONS §29)"
+    );
+    assert_eq!(
+        after["template_id"].as_i64(),
+        Some(look),
+        "and it must still be wearing the same look"
+    );
+}
+
+/// THE WARNING RULE FINALLY HAS SOMETHING TO WORK FROM.
+///
+/// `countdown_from` was read by `TemplateRender` and written by NOTHING for as long
+/// as it existed, so §7's short-countdown rule — the last tenth of a countdown under
+/// ten minutes, because a minute's warning on a two-minute countdown is a colour lit
+/// for half its life — could never once have fired in the product. A reader with no
+/// writer and a control with no reader are the same defect facing opposite ways
+/// (DECISIONS §69).
+#[test]
+fn r7_a_countdown_says_how_long_it_was_aimed_for() {
+    let app = app();
+    let h = app.handle().clone();
+    let wall = Wall::watch(&h);
+
+    start_countdown(
+        h.clone(),
+        h.state::<Db>(),
+        2.0,
+        "Service begins in".into(),
+        "Welcome".into(),
+        None,
+    )
+    .expect("start");
+    settle();
+    let f = wall.last().expect("the wall");
+    let from = f["countdown_from"].as_i64().expect("aimed from");
+    let to = f["countdown_to"].as_i64().expect("aimed at");
+    assert!(
+        ((to - from) - 120_000).abs() < 2_000,
+        "the span must be the length that was asked for: {}ms",
+        to - from
+    );
+
+    // AND IT SURVIVES A RE-AIM. Re-stamping it on every press would shrink the
+    // warning window to whatever is left, so the colour that means "this is about to
+    // run out" would arrive later each time somebody pressed a button.
+    adjust_countdown(h.clone(), Some(60_000), None).expect("−1");
+    settle();
+    assert_eq!(
+        wall.last().expect("the wall")["countdown_from"].as_i64(),
+        Some(from),
+        "the aimed-from instant was re-stamped by a re-aim"
+    );
+}
+
+/// A HELD COUNTDOWN IS WHAT A SCREEN THAT JOINS LATE IS SHOWN (rule 43).
+///
+/// The hub retains the last frame of the three kinds that decide what a screen is
+/// showing, and a countdown frame is one of them. The failure this guards is precise:
+/// an OBS source restarting, a lobby TV dropping off the wifi, a kiosk page reloading
+/// — each comes back and must be handed the countdown AS IT IS, held. A retained
+/// frame carrying only the instant would come back counting, and a projector counting
+/// down against a console that says 4:00 is worse than a blank screen, because
+/// nothing about it looks wrong.
+#[test]
+fn r7_a_screen_that_joins_while_the_countdown_is_held_is_shown_a_held_countdown() {
+    let app = app();
+    let h = app.handle().clone();
+    // Attaching the hub is part of the assertion: a publisher with no hub is a silent
+    // no-op that would make this pass for the wrong reason.
+    let _kiosk = qa::Kiosk::attach(&h);
+
+    start_five(&h);
+    adjust_countdown(h.clone(), None, Some(true)).expect("hold");
+    settle();
+
+    let retained = h
+        .state::<channels::KioskHub>()
+        .last_screen_handle()
+        .lock()
+        .expect("retained frame")
+        .clone()
+        .expect("a countdown is what the screens are showing");
+    let v: serde_json::Value = serde_json::from_str(&retained).expect("a frame");
+    assert_eq!(v["kind"], "content");
+    let held = v["countdown_paused_ms"]
+        .as_i64()
+        .expect("the retained frame must carry the HOLD, not only the instant");
+    assert!(
+        (4 * 60_000..=5 * 60_000).contains(&held),
+        "and it must be held where it was held: {held}ms"
+    );
+    // The span rides too, so a screen that joined late warns at the same moment the
+    // ones that were there all along do.
+    assert!(
+        v["countdown_from"].as_i64().is_some(),
+        "the retained frame dropped the aimed-from instant: {v}"
+    );
+}

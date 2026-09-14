@@ -274,7 +274,7 @@ suite totals survived the merge**.
 | 4 | Roles and the look register | **done** | a screen may follow the content look (DECISIONS §70), "Used for" on the template, a tag on each gallery card. `e2e::r4_a_screen_may_follow_the_content_look`, `e2e::r4_a_following_screen_wears_a_different_look_for_each_kind` |
 | 5 | Lower thirds | **done** | three starters (Name · Lyric · Scripture), each keyed, each its own template. A non-hex shape fill no longer paints black. The band is now a real `band` layer running to the bottom edge, naming the words inside it (`members`), and **giving ground** before they shrink. `band.test.js` 24, measured in the browser. DECISIONS §75 |
 | 6 | Stage monitor | **done** | a word to the preacher (new `stage_alert` hub message, stage-only by contract, and NEVER a retained frame — `channels::tests` holds `("stage_alert", false)` so a preacher's private message cannot replay to a lobby TV joining late), the reading can no longer push the clock off the top, **switchable zones** persisted per device (`relay.stage.zones`) and the **stacked rail clock**. `e2e::r5_a_word_to_the_preacher_reaches_the_stage_and_not_a_rehearsal`, `e2e::r5_a_word_to_the_preacher_reaches_no_congregation_channel`, `stagezones.test.js` 9, `screenpreview.test.js` 7. **This row said zones and the clock were not built until 2026-09-14 and was wrong.** |
-| 7 | Countdown | **partly done** | one formatter (`formatCountdown`), one warning rule, read by the wall and the stage; **Reset, ±1 and Clear** are built and re-aim the countdown through `countdownPress` / `countdownCan`, rendered in `Dock.svelte`. `countdown.test.js` 21, `countdownwiring.test.js` 10, `layers.test.js` 32, `templatestyle.test.js` 29. **Pause is not built** and needs a backend field (`countdown_paused_ms`) that does not exist. Separately: `countdown_from` is read by the renderer and written by nothing, so §7's warning rule has never fired in the product |
+| 7 | Countdown | **model done; one button unrendered** | one formatter (`formatCountdown`), one warning rule, and now ONE reader of how long is left (`countdown.js::countdownRemainingMs`) — the wall, the stage page and the console all go through it, because the subtraction acquired an exception. **Pause IS built**: `countdown_paused_ms` on `OutputContent`, held and released through `adjust_countdown`, which also carries Reset and ±1 so a re-aim can never drop the hold. `countdown_from` is now WRITTEN by `start_countdown`, so §7's short-countdown warning rule finally fires. `countdown.test.js` 31, `countdownwiring.test.js` 13, `e2e::r7_*` 7, `layers.test.js` 32, `templatestyle.test.js` 29. **What is left is the button**: `Dock.svelte`'s transport row still draws Start · Reset · ±1 · Clear and no Pause, and the dock belongs to the workspace agent — `countdownPress('pause'/'resume')`, `countdownCan(…, paused)` and `capture.js::pauseCountdown` are the three it needs |
 | 8 | Transitions | **done** | seven in one register (`transitions.js`), played by the renderer, migrated from the three old names, reduced motion is a cut. DECISIONS §71. `transitions.test.js` 15 |
 | 9 | Search | **done** | glued digits parse, a literal hit must cover 55% of the query, and nothing a search does reaches a screen (DECISIONS §72). `search.rs` — one pure module, five named match kinds, **every hit says why it matched** and a guess says so in words with no percentage; a ≥2-letter book prefix resolves, **search-only** (`detection.rs` was not opened, and `e2e::r9_nothing_a_search_offers_can_reach_an_auto_fire` states rule 10 at the boundary); one click takes a hit the whole way. `search::tests` 8, `e2e::r9_*` ×9, `livesearchrail.test.js` 11 |
 | 10 | Library | **partly done** | the operator label reaches the record again and still not the glass (DECISIONS §73); announcements say which fields the room sees; the collection rail and reflow editing were already built when the previous line said they were not. **Section keys** (`v c b t i o`, numbered on repeat, per song, `[Bridge:g]` to ask for one), the key printed on the slide it fires, **media looked at before it is added** with the name the operator gives it, and the dead selection tick box off three panes. DECISIONS §76. `sectionkeys.test.js` 42, `medialook.test.js` 4, `db::giving_a_section_its_own_fire_key_flags_the_arrangement_rather_than_repointing_it`. **`b` is BLACKOUT, so a Bridge is on `r`** — CLAUDE.md beats the spec's alphabet. **Not built: a key that fires from the Live tab's own grid, and a caption stored apart from the item's name** (`media_assets` is id / kind / filename / path / created\_at, so a caption needs a column). The grid one is DESIGN, not wiring, and the reason stated here before was wrong: `slidegrid.js`'s `Cell` DOES carry a `tag`. What it lacks is a fire `key`, and the real obstacle is that `assignKeys` assigns within ONE song and calls two sections wanting the same letter a conflict, while Live's grid is flat across every cue in a plan — so two songs in one plan both want `c` and nothing in the code says which owns the namespace. `assignKeys` / `resolveKeystroke` are pure and tested and answer the rest. One thing to decide out loud when it lands: the grid's press path arms a send on a **190 ms** double-click timer (`pressArbiter`), so a key that fires at once and a click that fires after a beat are two latencies on one cell |
@@ -423,13 +423,34 @@ minute, or the last tenth of a countdown shorter than ten minutes — a minute's
 two-minute countdown is a colour that is lit for half its life, and a colour that is always on
 says nothing. Reduced motion gets the glow without the pulse: the information is the colour.
 
-**Pause is not built. Reset and ±1 ARE** (corrected 2026-09-14; this paragraph said neither was).
-`countdown_to` is an absolute instant that rides with the content, so nudging it is re-aiming that
-instant, which `countdownPress` does on the transport with no backend change. **Pausing is
-genuinely different**: a paused countdown is not an instant at all, and representing one needs a
-field the engine owns (`countdown_paused_ms`) that does not exist. That is a backend model rather
-than a transport row, and it is the honest reason Pause is still absent. Clear already exists (the
+**Pause is built now, and the field is the whole story** (this paragraph said it was absent, and
+said why; the why was right). `countdown_to` is an absolute instant that rides with the content, so
+nudging it is re-aiming that instant, which the transport did with no backend change. **Pausing is
+genuinely different**: a paused countdown is not an instant at all, so it is said by a field the
+engine owns — `countdown_paused_ms`, the ms left at the moment it was held. Every reader shows that
+figure instead of ticking, and `countdown_to` stays set only as where the countdown would land if it
+were resumed, so the content still reads as a countdown to `preflight`, to the retained screen frame
+and to the slide key.
+
+**Three things that shape fell out of, each of which would otherwise have been a defect.** *(a)* The
+subtraction now has an EXCEPTION, and it lived in three places — the wall, the stage page and the
+console each did their own `countdown_to - now`. Three copies of one subtraction is survivable;
+three copies of one with an exception is not, because the copy that has never heard of the hold goes
+on counting while the other two hold, and one of the three is the congregation's. `countdown.js`
+owns it once. *(b)* Reset and ±1 re-broadcast the countdown, and the console used to rebuild that
+broadcast out of its own mirror — label, done message and template read back off the event. That
+works while every caller remembers every field, and forgetting THIS one restarts a timer the
+operator deliberately stopped, from a button that says "+1". So the engine keeps the countdown
+(`channels::CountdownState`, noted at the same three doors as `WallState`) and `adjust_countdown`
+changes one thing about it; it can never create one, which keeps Start the only control that puts a
+countdown in front of people. *(c)* The hold rides in the kiosk wire form, so a screen that rejoins
+mid-service is sent a held countdown rather than a running one (rule 43). Clear already existed (the
 screen clears).
+
+**`countdown_from` is written now too.** It was read by `TemplateRender` and written by nothing, so
+§7's short-countdown warning — the last tenth of a countdown under ten minutes — had never once
+fired in the product. `start_countdown` stamps it and no re-aim re-stamps it, because re-stamping
+would shrink the warning window to whatever is left each time somebody pressed a button.
 
 **Phase 8 found two halves of a feature that each looked finished.** The theme editor offered a
 transition and a duration, both saved; the renderer ignored them and said so in a comment — a

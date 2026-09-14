@@ -50,6 +50,67 @@ export const MAX_COUNTDOWN_MS = 12 * 3600_000;
 export const MIN_BROADCAST_MS = 1000;
 
 /**
+ * ══ THE ONE READER OF HOW LONG IS LEFT ══════════════════════════════════════
+ *
+ * `docs/REBRAND.md` §7 asks for one timer read by the slide, the stage rail and the
+ * transport. The FORMATTER has been shared since phase 7 (`layers.js`), and the
+ * arithmetic in front of it was not: the wall, the stage page and the console each
+ * did their own `countdown_to - now`. Three copies of one subtraction is survivable.
+ * Three copies of a subtraction that now has an EXCEPTION is not — a held countdown
+ * whose exception one of the three has never heard of goes on counting down on that
+ * surface while the other two hold, and one of the three is the congregation's.
+ *
+ * So this is the exception, once:
+ *
+ *   · `countdown_paused_ms` set  → that figure, frozen. The instant is ignored.
+ *   · otherwise                  → the gap to `countdown_to`, floored at zero.
+ *   · no countdown at all        → **null**, which is not the same as zero. Zero
+ *                                  means "it finished" and shows the done message;
+ *                                  null means there is nothing here to show.
+ *
+ * @param {object|null} content the live output content
+ * @param {number} nowMs        the caller's tick, so a renderer's clock and this
+ *                              cannot disagree about "now"
+ * @returns {number|null} ms left, 0 when finished, null when there is no countdown
+ */
+export function countdownRemainingMs(content, nowMs = Date.now()) {
+  const c = content || {};
+  const held = Number(c.countdown_paused_ms);
+  if (Number.isFinite(held) && held > 0) return held;
+  const to = Number(c.countdown_to);
+  if (!Number.isFinite(to) || to <= 0) return null;
+  const left = to - (Number(nowMs) || 0);
+  return left > 0 ? left : 0;
+}
+
+/** Is the countdown on this content being HELD? One reader, same reason as above. */
+export function countdownIsPaused(content) {
+  const held = Number(content?.countdown_paused_ms);
+  return Number.isFinite(held) && held > 0;
+}
+
+/**
+ * The length this countdown was AIMED for, in ms, or null when nothing said.
+ *
+ * `countdown_to - countdown_from`. It is the only input the warning rule has for
+ * its short-countdown case (`layers.js::countdownWarning` — the last minute, or the
+ * last tenth of a countdown shorter than ten minutes), and until `countdown_from`
+ * was written by `start_countdown` the answer was always null, so that half of §7's
+ * rule had never once fired in the product.
+ *
+ * Null rather than a guess when either end is missing: a made-up span would put the
+ * warning colour on at the wrong moment, and a colour that is on at the wrong moment
+ * is worse than one that is on a minute early.
+ */
+export function countdownTotalMs(content) {
+  const to = Number(content?.countdown_to);
+  const from = Number(content?.countdown_from);
+  if (!Number.isFinite(to) || !Number.isFinite(from) || !from) return null;
+  const span = to - from;
+  return span > 0 ? span : null;
+}
+
+/**
  * The duration the countdown tool is SET to — the hh:mm:ss fields.
  *
  * Not "what is on the wall": that is the live content's `countdown_to`, and the
@@ -82,13 +143,20 @@ export function fieldsFromMs(ms) {
 /**
  * WHAT ONE PRESS OF THE TRANSPORT ASKS FOR.
  *
- * @param {'start'|'reset'|'plus'|'minus'|'clear'} action
+ * @param {'start'|'reset'|'plus'|'minus'|'pause'|'resume'|'clear'} action
  * @param {number} setMs        what the tool is set to
  * @param {number|null} runningMs  what is left on the WALL, or null when no
- *                                 countdown is on it
- * @returns {{ setMs: number, broadcastMs: number|null, refused: string|null }}
+ *                                 countdown is on it. While one is HELD this is the
+ *                                 held figure — it is still on the wall, it is just
+ *                                 not moving.
+ * @param {boolean} paused      is the countdown on the wall being held right now
+ * @returns {{ setMs: number, broadcastMs: number|null, pause: boolean|null, refused: string|null }}
  *   `setMs`       what the tool should now be set to
  *   `broadcastMs` what to put on the screens, or **null for "touch no screen"**
+ *   `pause`       whether to hold it (`true`), release it (`false`), or **null for
+ *                 "leave the hold exactly as it is"** — which is what every press
+ *                 except Pause and Resume means. `+1` on a held countdown moves the
+ *                 number and must not start it running.
  *   `refused`     why nothing happened, in words an operator can read, or null
  *
  * The distinction between `Reset` and `Clear` is the one §7 leaves implicit and
@@ -102,10 +170,11 @@ export function fieldsFromMs(ms) {
  *          it is NOT "Clear screens". A control called Clear, one row above the
  *          red panic button, must not be able to blank a congregation's screen.
  */
-export function countdownPress(action, setMs, runningMs = null) {
+export function countdownPress(action, setMs, runningMs = null, paused = false) {
   const set = clampSet(setMs);
   const running = Number.isFinite(Number(runningMs)) && Number(runningMs) > 0 ? Number(runningMs) : null;
-  const keep = { setMs: set, broadcastMs: null, refused: null };
+  const held = running !== null && !!paused;
+  const keep = { setMs: set, broadcastMs: null, pause: null, refused: null };
 
   switch (action) {
     case 'start':
@@ -141,8 +210,25 @@ export function countdownPress(action, setMs, runningMs = null) {
       return { ...keep, broadcastMs: next };
     }
 
+    // ── HOLD AND RELEASE ────────────────────────────────────────────────────
+    //
+    // The one press in this transport that is not a re-aim. `countdown_to` is an
+    // absolute instant and ±1 simply moves it; "stopped" is not an instant at all,
+    // which is the honest reason Pause was the last of §7's five controls to exist.
+    // Both of these ask the engine to set `countdown_paused_ms` and neither changes
+    // the number — a held countdown is held at exactly what it said.
+    case 'pause':
+      if (running === null) return { ...keep, refused: 'Nothing is counting down.' };
+      if (held) return { ...keep, refused: 'It is already paused.' };
+      return { ...keep, pause: true };
+
+    case 'resume':
+      if (running === null) return { ...keep, refused: 'Nothing is counting down.' };
+      if (!held) return { ...keep, refused: 'It is already counting.' };
+      return { ...keep, pause: false };
+
     case 'clear':
-      return { setMs: DEFAULT_COUNTDOWN_MS, broadcastMs: null, refused: null };
+      return { setMs: DEFAULT_COUNTDOWN_MS, broadcastMs: null, pause: null, refused: null };
 
     default:
       return { ...keep, refused: null };
@@ -156,9 +242,13 @@ export function countdownPress(action, setMs, runningMs = null) {
  * the refusal it would have given can never disagree — the failure mode a
  * disabled control that does not say why always has.
  */
-export function countdownCan(action, setMs, runningMs = null) {
-  const r = countdownPress(action, setMs, runningMs);
+export function countdownCan(action, setMs, runningMs = null, paused = false) {
+  const r = countdownPress(action, setMs, runningMs, paused);
   if (r.refused) return false;
+  // Pause and Resume reach a screen without changing the number, so "is there
+  // something to broadcast" is the wrong question for them — `pause` is their
+  // instruction and it is never null once the press was not refused.
+  if (action === 'pause' || action === 'resume') return r.pause !== null;
   return action === 'clear' || action === 'plus' || action === 'minus'
     ? true
     : r.broadcastMs !== null;

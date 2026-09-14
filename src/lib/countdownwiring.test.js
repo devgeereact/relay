@@ -15,7 +15,8 @@
 //
 //   npx vitest run src/lib/countdownwiring.test.js
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { tick } from 'svelte';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
@@ -72,51 +73,174 @@ describe('the transport is rendered, and its presses go through the one arbiter'
 });
 
 describe('re-aiming a running countdown changes the number and nothing else', () => {
-  const args = () => invoke.mock.calls.find((c) => c[0] === 'start_countdown')?.[1];
+  const adjust = () => invoke.mock.calls.find((c) => c[0] === 'adjust_countdown')?.[1];
 
-  it('carries the label and the done message over, so the wall does not rename itself', async () => {
+  // THE CONSOLE NO LONGER REBUILDS THE FIRE, AND THAT IS THE POINT.
+  //
+  // It used to: the label, the done message and the template were read back off
+  // `$live` and handed to `start_countdown` again, and the three tests that used to
+  // sit here pinned each of those hand-offs. That worked exactly as long as every
+  // caller remembered every field — and `countdown_paused_ms` is one more to forget,
+  // with the worst possible failure: a `+1` on a held countdown silently restarts it
+  // in front of a congregation.
+  //
+  // So the carry-over moved into the engine (`main::adjust_countdown`), where it
+  // holds for every caller rather than for this one, and the guarantees moved with
+  // it — `e2e::r7_*` pins the label, the done message, the unpinned template
+  // (DECISIONS §29) and the hold. What is left to check HERE is that the console
+  // really does ask for one change rather than re-describing the countdown.
+  it('asks the engine to change the time, and describes nothing else about the countdown', async () => {
     cap.live.set({
       reference: 'Doors open in',
       countdown_to: Date.now() + 300_000,
       countdown_done: 'Please come in',
-    });
-    await cap.adjustCountdown(4 * 60_000);
-    expect(args().label).toBe('Doors open in');
-    expect(args().doneMsg).toBe('Please come in');
-    expect(args().minutes).toBe(4);
-  });
-
-  // DECISIONS §29. A countdown fired from the dock resolves through the CONTENT
-  // LOOK, which defers to whatever template each screen has of its own. The
-  // resolved id comes back on the live content — and handing it back to
-  // `start_countdown` as `templateId` makes it a PINNED cue template, which
-  // overrides the screen's own. A press of "+1" would silently re-skin every
-  // screen in the building.
-  it('does NOT re-pin a template the countdown never pinned', async () => {
-    cap.live.set({
-      reference: 'Service begins in',
-      countdown_to: Date.now() + 300_000,
       template_id: 7,
       template_pinned: false,
     });
     await cap.adjustCountdown(4 * 60_000);
-    expect(args().templateId).toBe(null);
-  });
-
-  it('…but keeps a template the cue DID pin', async () => {
-    cap.live.set({
-      reference: 'Service begins in',
-      countdown_to: Date.now() + 300_000,
-      template_id: 7,
-      template_pinned: true,
-    });
-    await cap.adjustCountdown(4 * 60_000);
-    expect(args().templateId).toBe(7);
+    expect(invoke.mock.calls.map((c) => c[0])).toEqual(['adjust_countdown']);
+    expect(adjust()).toEqual({ remainingMs: 4 * 60_000, paused: null });
+    // Not one word about the label, the done message or the template: a re-aim that
+    // restates them is a re-aim that can get one of them wrong.
+    expect(Object.keys(adjust()).sort()).toEqual(['paused', 'remainingMs']);
   });
 
   it('refuses a target of zero rather than letting the backend substitute five minutes', async () => {
     await expect(cap.adjustCountdown(0)).rejects.toBeTruthy();
     expect(invoke).not.toHaveBeenCalled();
+  });
+});
+
+// ── PAUSE ───────────────────────────────────────────────────────────────────
+//
+// §7 asks for Start/Pause · Reset · ±1 · Clear, and Pause was the one of the five
+// that was never built. Every other press re-aims an absolute instant, which is
+// something `countdown_to` can already say; "stopped" is not an instant, so it took
+// a field the engine owns. These are the console's half of it.
+describe('holding the countdown', () => {
+  const adjust = () => invoke.mock.calls.find((c) => c[0] === 'adjust_countdown')?.[1];
+
+  it('asks for the hold and nothing else — a pause must not move the number', async () => {
+    cap.live.set({ reference: 'Service begins in', countdown_to: Date.now() + 300_000 });
+    await cap.pauseCountdown(true);
+    expect(adjust()).toEqual({ remainingMs: null, paused: true });
+    invoke.mockClear();
+    await cap.pauseCountdown(false);
+    expect(adjust()).toEqual({ remainingMs: null, paused: false });
+  });
+
+  // The transport reads how long is left through the ONE reader, so a held
+  // countdown reads as on the wall — not as "nothing is counting down", which would
+  // re-enable Start and let a second countdown be laid over the first.
+  it('a HELD countdown is still on the wall as far as the transport is concerned', () => {
+    cap.live.set({
+      reference: 'Service begins in',
+      // Deliberately an instant in the PAST: a countdown held for longer than it had
+      // left is the ordinary case (hold at 4:00, the preacher talks for ten minutes).
+      // Read as an instant it is finished; read correctly it is still showing 4:00.
+      countdown_to: Date.now() - 60_000,
+      countdown_paused_ms: 4 * 60_000,
+    });
+    expect(cap.countdownRunning()).toBe(true);
+    expect(cap.countdownRemaining()).toBe(4 * 60_000);
+    expect(cap.countdownHeld()).toBe(true);
+  });
+
+  it('and the transport refuses to start a second one over it', async () => {
+    const { countdownCan, countdownPress } = await import('./countdown.js');
+    expect(countdownCan('start', 5 * 60_000, 4 * 60_000, true)).toBe(false);
+    expect(countdownPress('start', 5 * 60_000, 4 * 60_000, true).refused).toMatch(/already running/);
+    // …while ±1 still re-aims it, WITHOUT releasing the hold.
+    const plus = countdownPress('plus', 5 * 60_000, 4 * 60_000, true);
+    expect(plus.broadcastMs).toBe(5 * 60_000);
+    expect(plus.pause).toBe(null);
+  });
+});
+
+// ── THE WALL ITSELF ─────────────────────────────────────────────────────────
+//
+// Everything above is a decision about a number. This is the number on the screen
+// the congregation is looking at, through the ONE renderer, with the clock moved by
+// hand — because a held countdown that holds in the console and ticks on the wall is
+// worse than no Pause at all.
+describe('a held countdown holds on the wall', () => {
+  let host;
+  let app;
+  const AT = 1_700_000_000_000;
+  const template = {
+    id: 40,
+    name: 'Timer',
+    layout: { regions: ['verse_text', 'reference'], align: 'center' },
+    style: {},
+  };
+  const mount = async (content) => {
+    const TemplateRender = (await import('./TemplateRender.svelte')).default;
+    host = document.createElement('div');
+    document.body.appendChild(host);
+    app = new TemplateRender({ target: host, props: { template, content } });
+    return host;
+  };
+  afterEach(() => {
+    app?.$destroy();
+    host?.remove();
+    vi.useRealTimers();
+  });
+
+  const figure = (el) => el.querySelector('.countdown')?.textContent.trim();
+
+  it('paints the held figure, and does not move when time does', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(AT);
+    const el = await mount({
+      kind: 'countdown',
+      reference: 'Service begins in',
+      // Held at 4:00. The instant is a minute in the PAST — the ordinary state of a
+      // countdown held for longer than it had left. Read as an instant this
+      // countdown is over and the wall would show the done message.
+      countdown_to: AT - 60_000,
+      countdown_from: AT - 360_000,
+      countdown_paused_ms: 4 * 60_000,
+      countdown_done: 'Welcome',
+    });
+    await tick();
+    expect(figure(el)).toBe('4:00');
+    expect(el.textContent).not.toMatch(/Welcome/);
+    // Two minutes of wall-clock later it still says 4:00. This is the whole claim.
+    // `advanceTimersByTime` moves the mocked `Date.now()` as well as the interval,
+    // so the renderer's clock and the wall clock move together — as they do in a room.
+    vi.advanceTimersByTime(120_000);
+    await tick();
+    expect(figure(el)).toBe('4:00');
+  });
+
+  it('and starts moving again the moment the hold is released', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(AT);
+    const el = await mount({
+      kind: 'countdown',
+      reference: 'Service begins in',
+      countdown_to: AT - 60_000,
+      countdown_from: AT - 360_000,
+      countdown_paused_ms: 4 * 60_000,
+    });
+    await tick();
+    expect(figure(el)).toBe('4:00');
+    // What `adjust_countdown` broadcasts on resume: the hold gone, the instant
+    // re-aimed to now + what was left.
+    app.$set({
+      content: {
+        kind: 'countdown',
+        reference: 'Service begins in',
+        countdown_to: AT + 4 * 60_000,
+        countdown_from: AT - 360_000,
+        countdown_paused_ms: null,
+      },
+    });
+    await tick();
+    expect(figure(el)).toBe('4:00');
+    vi.advanceTimersByTime(61_000);
+    await tick();
+    expect(figure(el)).toBe('2:59');
   });
 });
 

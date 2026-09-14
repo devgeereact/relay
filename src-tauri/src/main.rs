@@ -148,6 +148,7 @@ fn main() {
         .manage(Detecting(AtomicBool::new(true)))
         .manage(channels::Rehearsal::default())
         .manage(channels::WallState::default())
+        .manage(channels::CountdownState::default())
         .manage(channels::OutputHealth::default())
         .manage(servicelock::ServiceLock::default())
         .manage(Session::default())
@@ -333,6 +334,7 @@ fn main() {
             save_song,
             delete_song,
             start_countdown,
+            adjust_countdown,
             list_arrangements,
             save_arrangement,
             delete_arrangement,
@@ -2703,9 +2705,16 @@ fn clean_note(note: Option<String>) -> Option<String> {
 /// Start a pre-service countdown on every output. Broadcasts the target epoch
 /// (now + `minutes`), then each output ticks the MM:SS locally — no per-second
 /// network traffic. `label` shows above the timer; `done_msg` replaces it at 0.
+///
+/// This is the one place a countdown is CREATED. Re-aiming and holding one is
+/// [`adjust_countdown`], which can never create one.
+// GENERIC OVER THE RUNTIME (rule 24). It puts content on a wall, so it is fire-path
+// code, and welded to the concrete desktop handle it could not be driven from
+// `e2e.rs` — which is why the countdown was the one fire path with no end-to-end
+// test while every other take had one.
 #[tauri::command]
-fn start_countdown(
-    app: tauri::AppHandle,
+fn start_countdown<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     db: tauri::State<'_, Db>,
     minutes: f64,
     label: String,
@@ -2732,6 +2741,14 @@ fn start_countdown(
             kind: Some("countdown".into()),
             reference: label.trim().to_string(),
             countdown_to: Some(target),
+            // The instant it is aimed FROM, so `to - from` is the length it was
+            // aimed for and the warning rule has a span to work from. This field
+            // had a reader and no writer, so §7's short-countdown rule had never
+            // fired in the product (see `OutputContent::countdown_from`).
+            countdown_from: Some(now_ms),
+            // A countdown that has just been STARTED is running, always. Pausing is
+            // `adjust_countdown`, which is about a countdown already on a screen.
+            countdown_paused_ms: None,
             countdown_done: clean_note(Some(done_msg)),
             template_id: tid,
             template_json: tjson,
@@ -2740,6 +2757,81 @@ fn start_countdown(
         },
     )?;
     persist_cue(&app, "countdown", None);
+    Ok(())
+}
+
+/// RE-AIM OR HOLD THE COUNTDOWN THAT IS ALREADY ON THE SCREENS — Reset, ±1, Pause,
+/// Resume. It can never create one.
+///
+/// `remaining_ms` is how long should be left; `paused` whether it should be held.
+/// `None` for either means "leave that alone", so `+1` moves the time without
+/// touching the hold, and Pause holds it without moving the time.
+///
+/// ## Why this exists rather than a second call to `start_countdown`
+///
+/// The console used to assemble a re-aim out of its mirror of the live content —
+/// label, done message and template read back off the event and handed to
+/// `start_countdown` again. It worked, and it only worked while every caller
+/// remembered every field. `countdown_paused_ms` is one more thing to forget, and
+/// forgetting THAT one restarts a held timer in front of a congregation: the operator
+/// presses `+1` on a paused countdown and it starts running. So the engine keeps the
+/// countdown (`channels::CountdownState`) and this changes one thing about it.
+///
+/// ## Two things it must not do
+///
+/// **It must not put content on a wall by itself.** With no countdown in front of the
+/// operator it refuses, in words, rather than starting one: Start is the control that
+/// puts a countdown in front of people and there must be exactly one of those.
+///
+/// **It must not re-skin the screens.** The content is carried over verbatim, which
+/// includes `template_pinned` — a countdown fired from the dock resolves through the
+/// content LOOK, which defers to each screen's own template (DECISIONS §29). Rebuilding
+/// the fire and handing the resolved id back as a cue template would take that
+/// deference away, and a press of `+1` would silently re-skin every screen in the
+/// building.
+#[tauri::command]
+fn adjust_countdown<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    remaining_ms: Option<i64>,
+    paused: Option<bool>,
+) -> error::Result<()> {
+    let Some(mut content) = channels::live_countdown(&app) else {
+        return Err(error::Error::refused("Nothing is counting down."));
+    };
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
+    // What is left RIGHT NOW: the held figure when it is held, otherwise the gap to
+    // the instant. One reader, so the two halves of the model cannot disagree — the
+    // same rule the frontend keeps in `countdown.js::countdownRemainingMs`.
+    let was_paused = content.countdown_paused_ms;
+    let current = was_paused
+        .unwrap_or_else(|| content.countdown_to.unwrap_or(now_ms) - now_ms)
+        .max(0);
+    let next = remaining_ms.unwrap_or(current);
+    // The backend substitutes five minutes for a non-positive length (see
+    // `start_countdown`), so a re-aim to zero would put 5:00 on the wall — the
+    // opposite of what was pressed. Refused here, where there is somebody to tell.
+    if next < 1000 {
+        return Err(error::Error::refused(
+            "A countdown needs a second or more left. Clear the screens to take it down.",
+        ));
+    }
+    let hold = paused.unwrap_or(was_paused.is_some());
+    // `countdown_to` stays set even while held: it is where the countdown would land
+    // if it were resumed now, and it is what keeps the content reading as a countdown
+    // to `preflight`, to the retained screen frame and to the slide key.
+    content.countdown_to = Some(now_ms + next);
+    content.countdown_paused_ms = hold.then_some(next);
+    // `countdown_from` is NOT re-stamped. It is the instant the countdown was first
+    // aimed from, so the warning span stays the countdown's own length rather than
+    // shrinking to whatever is left each time somebody presses a button.
+    //
+    // `trace_id` is cleared: an operator's press has no decode pass behind it, and
+    // inventing one would put a human action into the AI's latency percentile.
+    content.trace_id = None;
+    broadcast_with_clock(&app, content)?;
     Ok(())
 }
 

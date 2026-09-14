@@ -34,6 +34,10 @@
   // small preview box.
   import { afterUpdate, onMount, onDestroy } from 'svelte';
   import { isLayered, boundValue, templateShows, formatElapsed, formatRemaining, formatCountdown, countdownWarning, topLevelLayers, drawBoxes } from './layers.js';
+  // ONE timer, ONE formatter (docs/REBRAND.md §7). `layers.js` owns the formatter;
+  // `countdown.js` owns the arithmetic in front of it — including the one exception,
+  // a countdown that is being HELD.
+  import { countdownRemainingMs, countdownIsPaused, countdownTotalMs } from './countdown.js';
   import { applySink, getAudioOutput, onAudioOutputChange } from './audioOutput.js';
 
   export let template = {};
@@ -736,9 +740,15 @@
   // never re-key the slide (no per-second crossfade). setInterval (not Svelte's
   // tick()) keeps this clear of the reactive-loop freeze (CLAUDE.md rule #1).
   $: countdownTo = content?.countdown_to ?? null;
+  // A HELD countdown is not counting, so nothing here ticks for it — the figure is
+  // whatever it was held at. The interval is stopped as well as ignored: a timer
+  // firing four times a second to recompute a number that cannot change is the
+  // cheapest thing on this page and still the wrong thing on an output machine that
+  // is also decoding speech.
+  $: countdownHeld = countdownIsPaused(content);
   let now = 0;
   let cdTimer = null;
-  $: if (countdownTo) startClock();
+  $: if (countdownTo && !countdownHeld) startClock();
   else stopClock();
   function startClock() {
     if (cdTimer) return;
@@ -752,23 +762,31 @@
     }
   }
   onDestroy(stopClock);
-  $: remainingMs = countdownTo ? Math.max(0, countdownTo - now) : null;
-  $: countdownDone = remainingMs === 0;
+  // ONE READER (docs/REBRAND.md §7). This used to be its own subtraction, as did the
+  // stage page and the console — survivable while the answer was one subtraction, and
+  // not survivable now that it has an exception: a copy that has never heard of
+  // `countdown_paused_ms` goes on counting down while the other two hold, and this
+  // copy is the congregation's.
+  $: remainingMs = countdownRemainingMs(content, now);
+  // Only ever true when it genuinely ran out. A countdown held at 0:00 cannot exist
+  // (`adjust_countdown` refuses a target under a second), but saying so here keeps
+  // the done message off a screen that is merely paused.
+  $: countdownDone = remainingMs === 0 && !countdownHeld;
   // ONE FORMATTER (docs/REBRAND.md §7). This used to be its own copy of the
   // arithmetic, as did the stage page — and both stopped at minutes, so a
   // 90-minute pre-service countdown read `90:00`.
   $: countdownText = remainingMs == null ? '' : formatCountdown(remainingMs);
-  // The last minute, or the last tenth of a short countdown. `countdown_from`
-  // rides with the content when the fire path knows it; without it the rule falls
-  // back to the last minute, which is the honest answer for a countdown whose
-  // length nobody told us.
+  // The last minute, or the last tenth of a short countdown. The span comes from
+  // `countdown_from`, which `start_countdown` now WRITES — for as long as this
+  // rule has existed, that field was read here and written nowhere, so the
+  // short-countdown half of it had never once fired in the product. Without a span
+  // the rule still falls back to the last minute, which is the honest answer for a
+  // countdown whose length nobody told us.
   // The warning colour is applied INLINE as well as by class: the countdown's own
   // colour is an inline style, and an inline style beats a stylesheet rule, so a
   // `.warn` class alone would have changed nothing on the wall.
   const CD_WARN = '#f4515b';
-  $: countdownWarn =
-    remainingMs != null &&
-    countdownWarning(remainingMs, content?.countdown_from ? countdownTo - content.countdown_from : null);
+  $: countdownWarn = remainingMs != null && countdownWarning(remainingMs, countdownTotalMs(content));
 
   // Re-key on the actual content so a new slide crossfades but identical content
   // (a re-broadcast of the same verse) does not re-animate. Countdown ticks are
