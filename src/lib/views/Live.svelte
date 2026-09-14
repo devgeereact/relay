@@ -1332,10 +1332,19 @@
         {/if}
         <span class="spring"></span>
         <!-- The REFERENCE, amber only when a congregation is genuinely looking
-             at it. Amber is ON AIR and is never allowed to lie. -->
-        <span class="mon-name" class:live={$live && !$rehearsing && !$screenBlack}>
-          {$live ? ($live.reference || 'content') : '—'}
-        </span>
+             at it. Amber is ON AIR and is never allowed to lie.
+             NOTHING, not a dash, when nothing is live. A glyph in a value slot
+             cannot tell "the wall is clear" from "nobody has asked yet", and the
+             tag to the left already says `Program · Clear` in words while the
+             pane below says `Screens clear`. An empty slot makes no claim at all,
+             which is the honest thing for a slot with nothing to report; the
+             integrator's ruling on the dock's dial, one column over, is the same
+             rule and this half of the tree must not grow a second answer. -->
+        {#if $live}
+          <span class="mon-name" class:live={!$rehearsing && !$screenBlack}>
+            {$live.reference || 'content'}
+          </span>
+        {/if}
       </header>
       <div class="screen">
         {#if $live}
@@ -1419,7 +1428,9 @@
       </div>
 
       <footer class="pane-foot sg-foot">
-        <span class="sg-cap">{grid.title || '—'}</span>
+        <!-- The same rule: nothing, not a dash. The grid body already says which
+             empty it is, in a sentence. -->
+        {#if grid.title}<span class="sg-cap">{grid.title}</span>{/if}
         <span class="spring"></span>
         <span class="sg-cap">single click → programme · double click → preview</span>
       </footer>
@@ -1754,15 +1765,34 @@
             <b class="out-nm" title={o.c.name}>{o.c.name}</b>
             <!-- Badge, the screen's own word, and the repair, on one row beneath.
                  They are all short; the name is the one that is not. -->
+            <!-- TWO DIFFERENT KINDS OF STRING, AND THEY CANNOT SHARE AN ELEMENT.
+                 One span used to render `o.s.note || screenKind(…)`, so one set of
+                 wrap rules had to serve both — and at this width it broke "Native
+                 window" into `Nativ` / `e…` while truncating a whole sentence to
+                 `this screen…`. They want opposite treatments:
+
+                   · the KIND is a NAME (two words, fixed, low value). One line,
+                     ellipsised, beside the badge. Never broken mid-word, for the
+                     same reason the screen's name is not.
+                   · the NOTE is the screen's OWN LAST WORD — a sentence, and the
+                     one string on this pane the chrome lamps genuinely cannot
+                     carry. When it disagrees with the badge, that disagreement is
+                     the finding. So it gets a row of its own, full width, and
+                     wraps rather than truncating.
+
+                 The note appears only when there IS one, so a healthy screen stays
+                 two rows and the pane grows for the screen that has news. -->
             <div class="out-meta">
               <span class="r-badge {SCREEN_BADGE[o.s.kind]} sm-badge"><span class="bd"></span>{o.s.label}</span>
-              <!-- The screen's OWN last word, not ours. When it disagrees with the
-                   badge, that disagreement is the finding. With nothing to report
-                   yet it names the KIND of screen in words — it used to print the
-                   raw database value (`native_window`) at a volunteer mid-service. -->
-              <span class="out-note r-mono" title={o.s.note || screenKind(o.c.render_target)}>
-                {o.s.note || screenKind(o.c.render_target)}
-              </span>
+              {#if !o.s.note}
+                <!-- With nothing to report it names the KIND of screen in words —
+                     it used to print the raw database value (`native_window`) at a
+                     volunteer mid-service. -->
+                <span class="out-kind r-mono" title={screenKind(o.c.render_target)}>
+                  {screenKind(o.c.render_target)}
+                </span>
+              {/if}
+              <span class="spring"></span>
               <!-- ONLY WHEN THERE IS SOMETHING TO PRESS. The inert half of this pair
                    ("Browser source", "No window") was a label that never did anything,
                    sitting where the eye looks for a control. The Outputs tab states
@@ -1777,6 +1807,9 @@
                 </button>
               {/if}
             </div>
+            {#if o.s.note}
+              <p class="out-note r-mono">{o.s.note}</p>
+            {/if}
           </div>
         {:else}
           {#if $readErrors.listOutputChannels}
@@ -2105,7 +2138,7 @@
       radial-gradient(farthest-side at 50% 100%, rgba(0,0,0,.4), transparent) bottom / 100% 7px no-repeat scroll;
   }
   .out{display:grid; grid-template-columns:28px minmax(0,1fr);
-    grid-template-areas:"ic nm" "ic meta";
+    grid-template-areas:"ic nm" "ic meta" "note note";
     column-gap:10px; row-gap:4px; align-items:center; padding:9px 10px;
     border-radius:var(--v-r-md);
     background:var(--v-surf2); border:1px solid var(--v-line)}
@@ -2123,10 +2156,22 @@
     font-size:var(--v-fs-b2); font-weight:600; color:var(--v-txt);
     white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
   .out-meta{grid-area:meta; display:flex; align-items:center; gap:8px; min-width:0}
-  /* Wraps, but never past two lines: the note is the screen's own word and it is
-     worth reading, and it is not worth 120px of a pane an operator scans. */
-  .out-note{flex:1 1 auto; min-width:0;
-    font-size:9px; letter-spacing:.05em; color:var(--v-faint);
+  /* THE KIND IS A NAME. Two fixed words of low value — one line, ellipsised, and
+     never broken mid-word, for the same reason the screen's own name is not:
+     `Nativ` / `e…` is not a shorter way of saying "native window", it is a
+     different string. */
+  .out-kind{min-width:0; font-size:9px; letter-spacing:.05em; color:var(--v-faint);
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+  /* THE NOTE IS A SENTENCE, and the one string on this pane the chrome lamps
+     cannot carry — the screen's OWN last word, which is the finding whenever it
+     disagrees with the badge beside it. So it gets the whole width of the row
+     rather than the gap the badge left, and it WRAPS: truncating a sentence to
+     `this screen…` removes exactly the part that was worth reading. Two lines is
+     the ceiling — it is worth reading, and not worth 120px of a pane an operator
+     scans — and `overflow-wrap:anywhere` stays here, where the strings are long
+     and their words are ordinary. */
+  .out-note{grid-area:note; margin:2px 0 0; min-width:0;
+    font-size:9px; line-height:1.45; letter-spacing:.05em; color:var(--v-faint);
     display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2;
     overflow:hidden; overflow-wrap:anywhere}
   /* Deliberately quiet. This is a repair for one screen, not a panic control —
