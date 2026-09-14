@@ -141,7 +141,111 @@ describe('describeScreen — the badge may never claim more than the screen did'
   });
 
   it('repeats the screen’s own last word rather than ours', () => {
-    expect(describeScreen(row({ paint_state: 'clear' }), ON_AIR).note).toBe('screen: clear');
+    expect(describeScreen(row({ paint_state: 'clear' }), ON_AIR).note).toMatch(/screen says clear/);
+    expect(describeScreen(row(), ON_AIR).note).toBe('screen: content');
+  });
+
+  // ── RG-129's half of the badge ──────────────────────────────────────────────
+  //
+  // The tests above cover a screen that has stopped ANSWERING. These cover the
+  // other half of the same bug: a screen that answers punctually, on time, and
+  // says it is showing nothing — while Relay is sending it a verse. Every one of
+  // these reads `On Air`, in amber, if the ok-branch goes back to deciding from
+  // `wall.live`, which is what it did until this wave.
+  describe('THE OTHER HALF: the screen’s own word, not Relay’s belief, decides', () => {
+    it('a screen that says CLEAR while a verse is live is not On Air, and not amber', () => {
+      // The measured RG-129 failure: an output page that reconnected mid-service
+      // came back blank and stayed blank. It kept beating the whole time — it was
+      // answering, it was just answering "clear" — so every instrument Relay had
+      // said On Air about a black screen with a congregation in front of it.
+      const d = describeScreen(row({ paint_state: 'clear' }), ON_AIR);
+      expect(d.label).toBe('Not confirmed');
+      expect(d.kind).not.toBe('onair');
+      expect(SCREEN_BADGE[d.kind]).not.toBe('amber');
+      // Both claims, side by side. When they disagree, that disagreement IS the
+      // finding, so neither half may be dropped.
+      expect(d.note).toMatch(/Relay is sending content/);
+      expect(d.note).toMatch(/screen says clear/);
+    });
+
+    it('a BLACKOUT that did not land does not read as a blackout', () => {
+      // Rule 15 / DECISIONS §20 on the reporting side: a panic control may never
+      // report a success it did not achieve. The screen is still painting the
+      // verse and says so.
+      const d = describeScreen(row({ paint_state: 'content' }), {
+        rehearsing: false,
+        live: true,
+        black: true,
+      });
+      expect(d.label).toBe('Not confirmed');
+      expect(d.note).toMatch(/blacked this screen out/);
+      expect(d.note).toMatch(/screen says content/);
+    });
+
+    it('a screen still showing a verse after a clear does not read Ready', () => {
+      // `clear_screens` returns Ok, nothing is on the programme, and the screen is
+      // still painting the last verse. "Ready" would be the reassuring word over
+      // the failure — rule 35 exactly.
+      const d = describeScreen(row({ paint_state: 'content' }), {
+        rehearsing: false,
+        live: false,
+        black: false,
+      });
+      expect(d.label).toBe('Not confirmed');
+      expect(d.note).toMatch(/nothing is on the programme/);
+    });
+
+    it('…and when the two agree it says so plainly, in three words and no more', () => {
+      expect(describeScreen(row({ paint_state: 'content' }), ON_AIR).label).toBe('On Air');
+      const off = { rehearsing: false, live: false, black: false };
+      expect(describeScreen(row({ paint_state: 'clear' }), off).label).toBe('Ready');
+      expect(describeScreen(row({ paint_state: 'black' }), off).label).toBe('Ready');
+      const blk = { rehearsing: false, live: true, black: true };
+      expect(describeScreen(row({ paint_state: 'black' }), blk).label).toBe('Blackout');
+      // A cleared screen satisfies a blackout too: both mean nothing of ours is
+      // on it, which is the whole of the claim that badge makes.
+      expect(describeScreen(row({ paint_state: 'clear' }), blk).label).toBe('Blackout');
+    });
+
+    it('a row that has not said what it is showing can never earn amber', () => {
+      // Rust reads the state and the age off ONE beat, so a `painting` row always
+      // carries a state. A row without one is a fixture — and a fixture must not
+      // be able to earn a colour a screen would not.
+      for (const bad of [undefined, null, 'ON AIR', '']) {
+        const d = describeScreen(row({ paint_state: bad }), ON_AIR);
+        expect(d.kind, `paint_state ${String(bad)}`).not.toBe('onair');
+        expect(d.note).toMatch(/has not said/);
+      }
+    });
+
+    it('a rehearsal still wins over everything, whatever the screen says', () => {
+      // Amethyst means rehearsal and nothing else. A disagreement inside a
+      // rehearsal is not a congregation-facing fault, and painting it as one
+      // would spend the operator's attention on a room nobody is watching.
+      for (const s of ['content', 'clear', 'black']) {
+        const d = describeScreen(row({ paint_state: s }), { rehearsing: true, live: true });
+        expect(d.label).toBe('Rehearsal');
+      }
+    });
+
+    it('the unconfirmed word is GREY, so it is a fact and not a false alarm', () => {
+      // It appears for a few seconds after every fire, while the screen's next
+      // beat is on its way. Rose there would be an alarm that cries on every
+      // correct fire, and an alarm like that gets ignored on the one that matters.
+      const d = describeScreen(row({ paint_state: 'clear' }), ON_AIR);
+      expect(SCREEN_BADGE[d.kind]).toBe('grey');
+    });
+
+    it('and an unconfirmed screen is not counted as live by the status bar', async () => {
+      // `screenTally` counts `onair` rows. It must not be possible to reach that
+      // count without the screen having said it is painting content.
+      const { screenTally } = await import('./statusbar.js');
+      const described = [
+        describeScreen(row({ id: 1, paint_state: 'content' }), ON_AIR),
+        describeScreen(row({ id: 2, paint_state: 'clear' }), ON_AIR),
+      ];
+      expect(screenTally(described)).toEqual({ live: 1, total: 2 });
+    });
   });
 
   it('claims nothing at all before the first poll', () => {
