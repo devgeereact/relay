@@ -8,6 +8,7 @@
   import { createEventDispatcher, onMount, onDestroy } from 'svelte';
   import TemplateRender from '../../TemplateRender.svelte';
   import WorkspaceFrame from '../WorkspaceFrame.svelte';
+  import DeskStrip from './DeskStrip.svelte';
   import EmptyState from '../../ui/EmptyState.svelte';
   import Loading from '../../ui/Loading.svelte';
   import ErrorState from '../../ui/ErrorState.svelte';
@@ -154,6 +155,11 @@
   }
 
   const kindLabel = (t) => KIND_META[templateKind(t)].one;
+  // THE ROLE TAG on a card (docs/REBRAND.md §3.3): what this template is FOR, in
+  // the prototype's right-hand mono label. DERIVED, like the rail row it belongs
+  // to, so a card and its row can never disagree — and deliberately NEUTRAL in
+  // colour, because every colour that carries a promise is spoken for (rule 18).
+  const kindTag = (t) => KIND_META[templateKind(t)].tag;
 
   // A one-word description of the background, for the Details panel — a real read
   // of style.background, not an invented "resolution / fps".
@@ -274,6 +280,12 @@
   standfirst="How a verse, a song or a notice looks on a screen. Editing one repaints every screen already wearing it."
   columns="206px minmax(0,1fr) 312px">
   <svelte:fragment slot="head">
+    <!-- THE DESK STRIP. Themes moved INTO this workspace (docs/REBRAND.md §2);
+         the shell's strip carries workspaces, and Themes is a desk within
+         Templates rather than a workspace beside it. Nothing became
+         unreachable: every control the Themes tab carried is still rendered,
+         one press away. -->
+    <DeskStrip desk="templates" on:desk />
     <input type="file" accept=".json,application/json" bind:this={fileInput} on:change={onImportFile} style="display:none" />
     <button class="r-btn ghost sm" on:click|stopPropagation={() => fileInput.click()}>Import</button>
     <span class="tg-newwrap">
@@ -392,6 +404,12 @@
                   <span class="tg-name">{t.name}</span>
                   <span class="tg-sub r-mono">{kindLabel(t)} · 16:9</span>
                 </div>
+                <!-- THE ROLE TAG. What this template is FOR, derived from its
+                     shape — never stored, so it cannot claim a role the template
+                     is not. The rail row and this tag come from the one
+                     derivation, which is what stops a card saying Scripture
+                     under a Lower Thirds filter. -->
+                <span class="tg-role r-mono">{kindTag(t)}</span>
                 <!-- USED FOR. A tag on the card, so "which template does
                      scripture wear" is answerable by looking rather than by
                      opening each one. Deliberately NEUTRAL: it says what this
@@ -663,6 +681,11 @@
      carries a promise is spoken for, steel blue (selection) included. */
   .tg-usedfor{ flex:0 0 auto; max-width:40%; padding:1px 6px; border:1px solid var(--v-line2);
     border-radius:var(--v-r-sm); font-size:var(--v-fs-cap); letter-spacing:var(--v-tr-caps);
+    text-transform:uppercase; color:var(--v-faint); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  /* THE ROLE TAG — what this template is FOR. Same neutral treatment as
+     `.tg-usedfor` above and for the same reason: it is a fact about the
+     template, never a claim about a screen, so it borrows no promised colour. */
+  .tg-role{ flex:0 0 auto; max-width:42%; font-size:var(--v-fs-cap); letter-spacing:var(--v-tr-caps);
     text-transform:uppercase; color:var(--v-faint); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .tg-meta{ display:flex; align-items:center; gap:7px; padding:6px 8px; flex:1; min-width:0; }
   .tg-card.row .tg-meta{ padding:0 12px 0 8px; }

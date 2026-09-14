@@ -1261,11 +1261,21 @@ describe('R3-12 · CLOSED — every view a screen reader lands on has a heading'
   //
   // The requirement belongs to the children, and both children are asserted above.
   // Recorded rather than silently dropped from the list.
-  for (const f of ['src/lib/views/Themes.svelte', 'src/lib/views/Templates.svelte']) {
+  // `Templates.svelte` is the router: it picks a desk (Templates or Themes,
+  // DECISIONS §79) and then a mode (gallery or editor). `Themes.svelte` is now
+  // one line thinner than that — the way in from the old tab, mounting the same
+  // workspace on the Themes desk — so the switch it is checked for is the mount
+  // rather than the mode. Both are still routers, and neither may grow a heading:
+  // two headings for one screen is worse than none, because a reader jumping by
+  // heading lands twice on the same view.
+  for (const [f, switchedOn] of [
+    ['src/lib/views/Themes.svelte', /<Templates initialDesk=/],
+    ['src/lib/views/Templates.svelte', /mode === 'editor'/],
+  ]) {
     it(`${f.split('/').pop()} is a router and correctly has none`, () => {
       const t = src(f);
       expect(t).not.toMatch(/<h[1-6][\s>]/);
-      expect(t).toMatch(/mode === 'editor'/); // it really is just the switch
+      expect(t).toMatch(switchedOn); // it really is just the switch
     });
   }
 });
