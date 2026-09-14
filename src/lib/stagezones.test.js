@@ -330,7 +330,45 @@ describe('the reading is sized to the room and to the passage', () => {
     // Guards the guard: the two assertions above are about a variable, and a
     // variable nothing sets is a default nothing can move off. `--vn` is the one
     // number CSS cannot count for itself.
-    expect(SRC).toMatch(/style="--vn:\{verseChars\}"/);
+    expect(SRC).toMatch(/--vn:\{verseChars\}/);
+  });
+
+  it('and the measure is set per passage, not once for every passage', () => {
+    // The same guard for the other half. A `--vcpl` only the stylesheet sets is a
+    // measure that cannot answer to the passage in front of it.
+    expect(SRC).toMatch(/--vcpl:\{verseCpl\}/);
+  });
+
+  it('a long passage is given a wider column than a short one', async () => {
+    // THE DEFECT. The fit takes the smaller of a width bound and a height bound,
+    // and the measure sets both: narrow the column and the line gets short (raising
+    // the width bound) while the passage gets tall (lowering the height bound). One
+    // fixed measure is wrong at one end, and 22 was wrong at the long end — Esther
+    // 8:9 rendered at the 26px floor on a 1920×1080 platform monitor with the time
+    // of day beneath it at 84px. Scripture a third the size of the clock, on the
+    // screen the preacher reads from.
+    const cpl = async (n) => {
+      const { container } = await mount({ ...verse, text: 'x'.repeat(n) });
+      return Number(container.querySelector('.verse').style.getPropertyValue('--vcpl'));
+    };
+    const short = await cpl(64); // Psalms 23:1
+    const long = await cpl(530); // Esther 8:9
+    expect(long, 'a long passage must not be held to a short one’s measure').toBeGreaterThan(
+      short,
+    );
+    // And both inside a measure a person can actually read a line of.
+    for (const v of [short, long]) {
+      expect(v).toBeGreaterThanOrEqual(16);
+      expect(v).toBeLessThanOrEqual(64);
+    }
+    // Monotonic: there is no length at which asking for more text narrows the
+    // column, which is the shape of an arithmetic slip in the square root.
+    let prev = 0;
+    for (const n of [20, 64, 140, 300, 530, 900]) {
+      const v = await cpl(n);
+      expect(v, `measure went backwards at ${n} characters`).toBeGreaterThanOrEqual(prev);
+      prev = v;
+    }
   });
 
   it('the verse really does get its own length', async () => {

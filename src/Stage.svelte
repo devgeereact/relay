@@ -336,6 +336,41 @@
   // the one number CSS cannot count for itself.
   $: verseChars = content?.text ? content.text.length : 60;
 
+  // HOW WIDE THE COLUMN SHOULD BE, which is the other half of the same question.
+  //
+  // The fit below takes the SMALLER of a width bound and a height bound, and the
+  // measure decides both: a narrow column makes the line short (raising the width
+  // bound) and the passage tall (lowering the height bound). One fixed measure is
+  // therefore wrong at one end or the other, and 22 was wrong at the long end —
+  // **Esther 8:9 (530 characters) rendered at the 26px floor on a 1920×1080
+  // platform monitor while the time of day beneath it was 84px.** Scripture a third
+  // the size of the clock, on the screen the preacher reads from.
+  //
+  // The two bounds are equal at the measure that balances them. Writing k for the
+  // width constant and h for the height constant, `h·v² − k·v − k·n = 0`, so
+  //
+  //     v = (R + √(R² + 4·R·n)) / 2,      R = k/h = 2.923 · (width / height)
+  //
+  // of the reading area. R is a CONSTANT here, not a measurement: the aspect it
+  // stands for is the shape of the region, the function is a square root and so is
+  // forgiving of being handed the wrong one, and measuring the box would mean a
+  // forced layout on the one page whose job is to be still. 6.5 is the 16:9 case
+  // with the figure row on — the shape this page has on almost every screen it is
+  // opened on. A taller region just gets a slightly narrower column than its own
+  // optimum, which is the old behaviour, not a new failure.
+  //
+  // Clamped to 16…64: the lower end is the portrait default and the upper end is
+  // the top of the 45–75 character measure that is comfortable to read at all.
+  // Rounded, because `1ch` times a fraction is a sub-pixel column.
+  //
+  // Checked against the real backend at 1920×1080: Psalms 23:1 (64 characters)
+  // asks for 24 and renders at 153px; Esther 8:9 asks for 62 and renders at 59px.
+  // Both were 139px and 26px under the fixed 22.
+  $: verseCpl = Math.min(
+    64,
+    Math.max(16, Math.round((6.5 + Math.sqrt(6.5 * 6.5 + 4 * 6.5 * verseChars)) / 2)),
+  );
+
   // A WORD TO THE PREACHER, SIZED TO ITS LENGTH.
   //
   // §5 fixes the type at 8.5cqw and the panel at `overflow: hidden`, which is the
@@ -528,7 +563,7 @@
     <section class="reading" aria-label="Reading">
       {#if visible && content}
         {#if content.reference}<div class="ref">{content.reference}{content.translation ? ' · ' + content.translation : ''}</div>{/if}
-        {#if content.text}<div class="verse" style="--vn:{verseChars}">{#if content.reference}“{content.text}”{:else}{content.text}{/if}</div>{/if}
+        {#if content.text}<div class="verse" style="--vn:{verseChars}; --vcpl:{verseCpl}">{#if content.reference}“{content.text}”{:else}{content.text}{/if}</div>{/if}
       {:else}
         <div class="idle">— standby —</div>
       {/if}
@@ -946,6 +981,12 @@
      wider measure, and the fit above re-reads it: more characters per line is
      fewer lines, so the height bound relaxes and the verse grows. One constant,
      both bounds. */
+  /* THE MEASURE IS NOW SET PER PASSAGE, in the script, from the passage's own
+     length — see `verseCpl`. These two rules are the FALLBACK for the case the
+     inline property cannot cover: a `.verse` rendered with no `--vcpl` on it. They
+     are the values that shipped before, so nothing gets worse where the inline one
+     is missing. Do not raise the landscape number back to a one-size-fits-all
+     answer: 22 is right for a verse and puts a long passage on the 26px floor. */
   @media (orientation: landscape) { .verse { --vcpl: 22; } }
   @media (prefers-reduced-motion: reduce) { .status.on i { animation: none; } }
 
