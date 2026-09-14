@@ -1271,7 +1271,7 @@ describe('R3-12 · CLOSED — every view a screen reader lands on has a heading'
       const t = src(f);
       expect(t).not.toMatch(/<h[1-6][\s>]/);
       // It really is just the switch: a desk, then a mode within it.
-      expect(t).toMatch(/Mode === 'editor'/);
+      expect(t).toMatch(/mode === 'editor'/);
       expect(t).toMatch(/desk === 'themes'/);
     });
   }

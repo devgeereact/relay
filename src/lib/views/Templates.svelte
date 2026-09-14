@@ -1,23 +1,48 @@
 <script>
-  // THE TEMPLATES WORKSPACE — two desks, one workspace (docs/REBRAND.md §2).
+  // THE TEMPLATES WORKSPACE — two desks, each with a browse and a make surface.
   //
-  // Templates and Themes were two of the eight tabs, and they are one pipeline:
-  // a theme sets default `style` keys, a template overrides them per key, and the
-  // template is what fires. A theme never reaches a wall on its own, so it was
-  // never one of the six things an operator RUNS a service from — it is where you
-  // go while you are already editing a look.
+  // ── The desks (docs/REBRAND.md §2) ────────────────────────────────────────
+  // **Templates** is how a verse, a song or a notice looks on a screen.
+  // **Themes** is the style layer BENEATH templates: a theme sets default
+  // `style` keys and a template overrides them key by key (DECISIONS §27), so a
+  // theme is never the last word and never reaches a wall on its own.
   //
-  // ── THIS FILE IS THE ROUTER AND THE MOUNT POINT ────────────────────────────
+  // Themes used to be a workspace of its own on the shell's strip. It is not one
+  // of the six the rebrand's workspace grammar names, and the thing it edits is
+  // only ever seen THROUGH a template — so it is a desk inside this workspace
+  // rather than a tab beside it. **Nothing became unreachable**: every control
+  // the Themes tab carried is still rendered, one press of the desk strip away,
+  // which is what `node scripts/qa-inventory.mjs` is checked against.
   //
-  // It owns the desk switch and nothing else; the galleries and the editors own
-  // their own bodies. The switch is deliberately visible here rather than folded
-  // into `TemplateGallery`'s `WorkspaceFrame` head slot, so that the boundary is
-  // obvious to the next person: moving it into the head is a one-line change in
-  // each gallery, and doing it there would put half the routing inside a view.
+  // ── TWO AGENTS BUILT THIS MOUNT, AND THE OTHER ONE OWNS IT ────────────────
   //
-  // Each desk keeps its own gallery/editor mode. Switching desk does NOT reset
-  // the other one, and — the rule that matters — switching desk, opening an
-  // editor and saving a template all touch nothing that is on the programme.
+  // The Templates agent (W-templates) built the same fold on its own branch, with
+  // the switcher as `views/templates/DeskStrip.svelte` rendered by BOTH galleries
+  // through an `on:desk` event — which is the right home for it, because that
+  // agent owns those galleries and this one owns only the shell's strip and the
+  // route into this workspace.
+  //
+  // So this file is deliberately shaped to be replaceable by that one:
+  //
+  //   · the same `initialDesk` prop, the same `desk`/`mode` state names, and the
+  //     same `on:desk` handler, so the galleries' event lands either way;
+  //   · `layerId` is carried through `openEditor` exactly as W-templates carries
+  //     it, so nothing of the inspector's object jump is lost if this copy is the
+  //     one that survives a merge;
+  //   · the one block that is genuinely ONLY here is the `.tw-desks` strip
+  //     below, marked at its own tag. **Delete it when `DeskStrip` lands** — two
+  //     switchers four lines apart is the defect DeskStrip exists to prevent.
+  //
+  // ── THE ROUTE HALF, WHICH IS THIS AGENT'S ─────────────────────────────────
+  //
+  // `App.svelte` mounts a workspace with NO PROPS (`<svelte:component
+  // this={current} />`), and `views/Themes.svelte` — which used to pass
+  // `initialDesk="themes"` — is deleted, because a component nothing renders is
+  // an orphan and `qa-inventory` counts them. So which desk you were last on is
+  // carried by the SESSION, like the active tab and `liveDensity`: persisted,
+  // restored on a reload, and set by `migrateSession` for anyone whose saved
+  // session still says `activeTab: 'themes'`. `initialDesk` survives as an
+  // override for any caller that does mount this with a prop.
   import { session, setSession } from '../session.js';
   import { t } from '../i18n.js';
   import TemplateGallery from './templates/TemplateGallery.svelte';
@@ -25,31 +50,61 @@
   import ThemeGallery from './themes/ThemeGallery.svelte';
   import ThemeEditor from './themes/ThemeEditor.svelte';
 
+  /** Which desk to open on when a caller says so explicitly. Without one, the
+   *  session's remembered desk wins. */
+  export let initialDesk = null;
+
   const DESKS = [
     { key: 'templates', label: 'tab.templates' },
     { key: 'themes', label: 'tab.themes' },
   ];
+  const known = (k) => DESKS.some((d) => d.key === k);
   // The desk IS the session, the same way the active tab is: one direction, one
-  // source of truth, and a reload puts the operator back where they were. A local
+  // source of truth, so a reload puts the operator back where they were. A local
   // `let` mirrored back would be a second copy that the next `setSession` from
-  // anywhere overwrites — the bug the bottom nav had.
-  $: desk = DESKS.some((d) => d.key === $session.templatesDesk) ? $session.templatesDesk : 'templates';
-  const goDesk = (key) => setSession({ templatesDesk: key });
+  // anywhere overwrites — the bug the shell's bottom nav had.
+  $: desk = known(initialDesk) ? initialDesk : known($session.templatesDesk) ? $session.templatesDesk : 'templates';
 
-  // Each desk's own browse/edit position. Kept per desk so switching across and
-  // back does not throw away the template somebody had open.
-  let tplMode = 'gallery'; // gallery | editor
-  let tplId = null;
-  let themeMode = 'gallery';
-  let themeId = null;
+  let mode = 'gallery'; // gallery | editor
+  let editingId = null;
+  // Which object the gallery's inspector was pointing at, if it was pointing at
+  // one (docs/REBRAND.md §3.2). Carried through so a press on the object strip
+  // opens the editor on that object rather than on nothing.
+  let editingLayerId = null;
+
+  function openEditor(e) {
+    editingId = e.detail.id;
+    editingLayerId = e.detail.layerId ?? null;
+    mode = 'editor';
+  }
+  function backToGallery() {
+    mode = 'gallery';
+    editingId = null;
+    editingLayerId = null;
+  }
+  // Switching desk always lands on that desk's GALLERY. Coming back to a
+  // half-finished editor an operator has navigated away from would restore a
+  // surface they did not ask for, and the editor's own Back is the way out of it.
+  // Nothing here can reach an output, so a desk change costs a service nothing
+  // (the rebrand's own rule: loading, switching workspace or editing a template
+  // may never change what is on the programme).
+  function goDesk(key) {
+    if (key === desk) return;
+    initialDesk = null; // the operator's press outranks whatever mounted this
+    setSession({ templatesDesk: key });
+    backToGallery();
+  }
+  const onDeskEvent = (e) => goDesk(e.detail.desk);
 </script>
 
 <div class="tw">
-  <!-- Rendered ABOVE the desk rather than inside it, because both desks lay
-       themselves out in `WorkspaceFrame` and the frame owns a full-height grid.
-       Steel blue for the selected desk: it is the thing being worked on, and
-       amber/amethyst/cyan are all spoken for by the colour law. -->
-  <nav class="tw-desks" aria-label="Templates desks">
+  <!-- ▼ THE ONLY BLOCK THAT IS ONLY HERE. Delete it, and `.tw-desks`/`.tw-desk`
+       below, the moment `views/templates/DeskStrip.svelte` lands — that switcher
+       lives in each gallery's head slot, which is where it belongs, and two
+       switchers on one screen is exactly what one shared component prevents.
+       Until then this is the rendered control that keeps Themes reachable, and
+       `qa-inventory` is the instrument that would notice if it were not. -->
+  <nav class="tw-desks" aria-label="Templates workspace desks">
     {#each DESKS as d (d.key)}
       <button
         class="tw-desk r-focus"
@@ -59,28 +114,31 @@
       >{$t(d.label)}</button>
     {/each}
   </nav>
+  <!-- ▲ -->
 
   <div class="tw-body">
     {#if desk === 'themes'}
-      {#if themeMode === 'editor'}
-        <ThemeEditor themeId={themeId} on:back={() => { themeMode = 'gallery'; themeId = null; }} />
+      {#if mode === 'editor'}
+        <ThemeEditor themeId={editingId} on:back={backToGallery} />
       {:else}
-        <ThemeGallery on:edit={(e) => { themeId = e.detail.id; themeMode = 'editor'; }} />
+        <ThemeGallery on:edit={openEditor} on:desk={onDeskEvent} />
       {/if}
-    {:else if tplMode === 'editor'}
-      <TemplateEditor templateId={tplId} on:back={() => { tplMode = 'gallery'; tplId = null; }} />
+    {:else if mode === 'editor'}
+      <TemplateEditor templateId={editingId} layerId={editingLayerId} on:back={backToGallery} />
     {:else}
-      <TemplateGallery on:edit={(e) => { tplId = e.detail.id; tplMode = 'editor'; }} />
+      <TemplateGallery on:edit={openEditor} on:desk={onDeskEvent} />
     {/if}
   </div>
 </div>
 
 <style>
   .tw { display: flex; flex-direction: column; gap: var(--v-sp-sm); height: 100%; min-height: 0; }
+  .tw-body { flex: 1; min-height: 0; }
+  /* ▼ Goes with the block above. */
   .tw-desks { display: flex; align-items: center; gap: 2px; flex: 0 0 auto; }
   /* The same instrument as the chrome's workspace tabs, one level down: a
-     selection underline in steel blue, no pill (§1 — a pill in a control room
-     reads as a toy), 3px corners. */
+     selection underline in steel blue — the thing you are working on — no pill
+     (§1: a pill in a control room reads as a toy), 3px corners. */
   .tw-desk {
     padding: 4px 12px; border: 0; border-radius: var(--v-r-sm); background: transparent;
     color: var(--v-dim); font-family: var(--f-body); font-size: var(--v-fs-b2);
@@ -89,5 +147,5 @@
   }
   .tw-desk:hover:not(.on) { background: var(--v-surf3); color: var(--v-txt); }
   .tw-desk.on { background: var(--v-surf3); color: var(--v-txt); box-shadow: inset 0 -2px 0 var(--v-sel); }
-  .tw-body { flex: 1; min-height: 0; }
+  /* ▲ */
 </style>
