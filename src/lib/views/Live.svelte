@@ -29,10 +29,11 @@
   import { onMount, onDestroy } from 'svelte';
   import { describeScreen, SCREEN_BADGE, screenSwitch, screenKind } from '../outputHealth.js';
   import TemplateRender from '../TemplateRender.svelte';
-  import { resolveOutputTemplate } from '../layers.js';
+  import { resolveOutputTemplate, isKeyedTemplate } from '../layers.js';
   import ModelSetup from '../ModelSetup.svelte';
   import { registerContext } from '../shortcuts.js';
   import { t } from '../i18n.js';
+  import CameraPlate from '../ui/CameraPlate.svelte';
   import EmptyState from '../ui/EmptyState.svelte';
   import ErrorState from '../ui/ErrorState.svelte';
   import Loading from '../ui/Loading.svelte';
@@ -1404,6 +1405,16 @@
                   {#if c.empty}
                     <span class="sg-void">Nothing to show</span>
                   {:else}
+                    <!-- A KEYED template is a band over a camera Relay never
+                         takes, so previewed against nothing it is an empty dark
+                         rectangle — right on the wall, useless on a cell. The
+                         Outputs cards and the Templates gallery already answer
+                         this; a third answer here would be a third surface with
+                         its own opinion about the same template. One rule
+                         (`isKeyedTemplate`), one picture (`CameraPlate`), and
+                         it never reaches an output — the plate is a preview
+                         affordance and `cameraplate.test.js` holds that. -->
+                    {#if isKeyedTemplate(cellTemplate(c))}<CameraPlate />{/if}
                     <TemplateRender template={cellTemplate(c) ?? {}} content={cellContent(c)} />
                   {/if}
                   <!-- The KIND, top-left, as the prototype draws it: a cell is

@@ -140,6 +140,12 @@ describe('the plate may never reach a real output', () => {
     const importers = [
       'src/lib/views/Channels.svelte',
       'src/lib/views/templates/TemplateGallery.svelte',
+      // The Live grid is the fourth preview surface and was the last to get it:
+      // its cells render through the same `TemplateRender`, so a cue pinned to a
+      // lower third was a black rectangle on the ONE surface an operator runs a
+      // service from, while the same template showed its plate two tabs away.
+      // Three surfaces, two answers, is the shape rule 35 is about.
+      'src/lib/views/Live.svelte',
     ];
     for (const f of importers) {
       expect(read(f), f).toMatch(/import CameraPlate from '.*ui\/CameraPlate\.svelte'/);
@@ -147,6 +153,12 @@ describe('the plate may never reach a real output', () => {
     // Nothing hand-rolls the picture any more.
     for (const f of importers) {
       expect(read(f), `${f} must not still carry its own plate markup`).not.toMatch(/class="ch-plate"/);
+      // ONE rule decides, everywhere: the caller asks `isKeyedTemplate` about the
+      // template IT resolved. A surface that decided by name, by kind, or by
+      // "does the background look dark" would be a second opinion about the same
+      // template — which is how the Copy URL builder came to be right in one of
+      // its two copies and wrong in the other.
+      expect(read(f), `${f} must decide with isKeyedTemplate`).toMatch(/isKeyedTemplate\(/);
     }
   });
 });
