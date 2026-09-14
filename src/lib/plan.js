@@ -48,13 +48,23 @@
  */
 export const TAXONOMY_INK = 'var(--v-faint)';
 
-/** Cue-type presentation table. `trig` is how the cue is normally triggered. */
+/**
+ * Cue-type presentation table. `trig` is how the cue is normally triggered;
+ * `chip` is the short word the running order prints in a row's kind chip.
+ *
+ * `chip` is written out per kind on purpose. The prototype's chip fell back to
+ * `kind.slice(0,4)`, and the first kind added after that read "LOWE" in every
+ * running order — a truncation is a name nobody chose, and the row is the one
+ * place an operator reads the kind at a glance. There is no rule generating these
+ * five words; if a sixth cue type arrives it gets a word here, and until it does
+ * `chipOf` prints its own name in full rather than a slice of it.
+ */
 export const TYPE = {
-  scripture: { label: 'SCRIPTURE', color: TAXONOMY_INK, trig: 'AUTO-DETECT' },
-  song: { label: 'SONG', color: TAXONOMY_INK, trig: 'SUGGEST-ONLY' },
-  media: { label: 'MEDIA', color: TAXONOMY_INK, trig: 'MANUAL/LOOP' },
-  announce: { label: 'NOTICE', color: TAXONOMY_INK, trig: 'MANUAL/TIMER' },
-  countdown: { label: 'COUNTDOWN', color: TAXONOMY_INK, trig: 'TIMER' },
+  scripture: { label: 'SCRIPTURE', chip: 'WORD', color: TAXONOMY_INK, trig: 'AUTO-DETECT' },
+  song: { label: 'SONG', chip: 'SONG', color: TAXONOMY_INK, trig: 'SUGGEST-ONLY' },
+  media: { label: 'MEDIA', chip: 'MEDIA', color: TAXONOMY_INK, trig: 'MANUAL/LOOP' },
+  announce: { label: 'NOTICE', chip: 'NOTE', color: TAXONOMY_INK, trig: 'MANUAL/TIMER' },
+  countdown: { label: 'COUNTDOWN', chip: 'TIMER', color: TAXONOMY_INK, trig: 'TIMER' },
   /* A cue_type this build does not know. The three surfaces that read this map
      used to fall back to `scripture`, which is the ONE type that says AUTO-DETECT
      — so an unrecognised row was presented as the only kind of cue the AI is
@@ -62,7 +72,7 @@ export const TYPE = {
      and `docs/data/schema.sql` still documented the notice type under a spelling
      the frontend has never used ('announcement' vs 'announce'), which is exactly
      how a row like that arrives. Say "unknown" and claim nothing. */
-  unknown: { label: 'UNKNOWN', color: TAXONOMY_INK, trig: 'MANUAL' },
+  unknown: { label: 'UNKNOWN', chip: 'UNKNOWN', color: TAXONOMY_INK, trig: 'MANUAL' },
 };
 
 /**
@@ -80,6 +90,21 @@ export const TYPE = {
  */
 export function typeOf(cueType) {
   return TYPE[cueType] || TYPE.unknown;
+}
+
+/**
+ * The word a running-order row prints in its kind chip. Never a slice.
+ *
+ * A `cue_type` this build does not know prints its OWN name, in full and in
+ * capitals — quoting the row rather than guessing at it, which is the same
+ * discipline as `typeOf` answering UNKNOWN instead of falling back to scripture.
+ * A row with no cue_type at all has nothing to quote, so it says UNKNOWN.
+ */
+export function chipOf(cueType) {
+  const known = TYPE[cueType];
+  if (known) return known.chip;
+  const raw = typeof cueType === 'string' ? cueType.trim() : '';
+  return raw ? raw.toUpperCase() : TYPE.unknown.chip;
 }
 
 /** A cue's payload. Never throws — a corrupt row must not take down the console. */
@@ -265,6 +290,73 @@ export function parseDuration(input) {
   const mins = s.match(/^(\d+(?:\.\d+)?)\s*m?$/);
   if (mins) return Math.round(Number(mins[1]) * 60);
   return 0;
+}
+
+/**
+ * Where a pointer-drag of `dy` pixels, started on the row at `from`, lands.
+ *
+ * The arithmetic of the running order's drag lives here rather than in the
+ * component because it is the half that can be wrong: a drag that lands one row
+ * off, or that runs past the end of the plan and throws the cue away, is a
+ * Tuesday-evening reorder that silently is not the order the operator saw. The
+ * component owns the transforms; this owns the index.
+ *
+ * `rowHeight` is the measured row height and may be 0 (an unlaid-out list, and
+ * jsdom always) — a divide by zero would yield `Infinity` and then `NaN`, so a
+ * non-positive height means nothing moved.
+ */
+export function dropIndex(from, dy, rowHeight, count) {
+  const h = Number(rowHeight) || 0;
+  if (!count || h <= 0) return from;
+  const shift = Math.round((Number(dy) || 0) / h);
+  return Math.max(0, Math.min(count - 1, from + shift));
+}
+
+/** The list with the item at `from` moved to `to`. Never mutates its argument. */
+export function reorderTo(items, from, to) {
+  const arr = (items ?? []).slice();
+  if (from < 0 || from >= arr.length || to < 0 || to >= arr.length || from === to) return arr;
+  const [moved] = arr.splice(from, 1);
+  arr.splice(to, 0, moved);
+  return arr;
+}
+
+/**
+ * What the plan rail prints for a plan's date — in WORDS when there is no date.
+ *
+ * `PlanSummary.plan_date` is a `String` in Rust and a plan created in-app always
+ * carries today's date, so an absent one is the unusual case: a row written by an
+ * older build, an import, or a hand-edited database. That is exactly the case a
+ * rail row must not garble. Two failures this closes, both of rule 35's family —
+ * a line that says the same thing whether or not the thing behind it worked:
+ *
+ *   `{p.plan_date}`            → the literal word `undefined`, in a rail of plans
+ *   `{p.plan_date || '—'}`     → an em dash, which in this repository already
+ *                                means "untimed cue" (`fmtDuration`), so a dateless
+ *                                plan would read as a cue length.
+ *
+ * Say the absence. `No date` is a fact about the plan; `undefined` is a fact about
+ * the frontend leaking onto a screen an operator is reading.
+ */
+export function planDateLabel(date) {
+  const s = typeof date === 'string' ? date.trim() : '';
+  return s || 'No date';
+}
+
+/**
+ * What the plan rail prints for a plan's cue count.
+ *
+ * The count is `i64` in `PlanSummary` and cannot be absent from the real backend —
+ * which is the whole reason a missing one has to be said out loud rather than
+ * interpolated: `{p.cue_count} cues` renders `undefined cues`, and the one place
+ * that string can appear is a build where the shape the frontend expects and the
+ * shape the backend sends have come apart. A zero would be a LIE about a plan that
+ * may be full; the honest answer is that this row does not know.
+ */
+export function cueCountLabel(n) {
+  const v = typeof n === 'number' && Number.isFinite(n) ? Math.max(0, Math.trunc(n)) : null;
+  if (v == null) return 'Cue count unknown';
+  return `${v} cue${v === 1 ? '' : 's'}`;
 }
 
 /** `m:ss` for a cue length; `1h 32m` for a whole plan. 0/absent → an em dash. */
