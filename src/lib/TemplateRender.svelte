@@ -181,6 +181,16 @@
   }
   // vertical alignment → flex
   const vAlign = (v) => (v === 'top' ? 'flex-start' : v === 'bottom' ? 'flex-end' : 'center');
+  /**
+   * THE SIZE A TEXT LAYER ASKS FOR, in cqw — the one home for it.
+   *
+   * It is read twice and the two readers must not be able to disagree: the
+   * markup DECLARES it (see `.lfit` below, and the comment there for why that is
+   * load-bearing) and `fitLayers` measures FROM it. The `5` is the same fallback
+   * the fitter used to keep to itself; a layer with no size is a layer nobody
+   * designed, and a silent 0 would fit any box by vanishing.
+   */
+  const baseSize = (L) => (Number(L?.size) > 0 ? Number(L.size) : 5);
   $: refFirst =
     layout.refFirst || (layout.regions?.[0] === 'reference' && !layout.lowerThird);
 
@@ -900,8 +910,21 @@
   // and long text wraps and shrinks — the ProPresenter "scale text up or down"
   // behaviour. `fit` modes: 'both' (default, up+down), 'shrink' (cap at the set
   // size, only shrink), 'none' (use the set size verbatim).
+  //
+  // AND IT REPORTS, like the region fit always has (rule 37). `fitText` called
+  // `onFit` and this did not — so once `TemplateGallery.upgradeLegacyToLayers`
+  // converted the shelf, which it does on mount, rule 37's instrument covered
+  // nothing a church actually renders. Live passes `onFit` to its programme pane
+  // and its "may not be readable from the back" line simply could not fire for a
+  // layered look: the same sentence over a template that was working and one that
+  // had stopped, which is rule 35.
   function fitLayers() {
     if (!stageEl || !layered) return;
+    // The WORST layer on the screen, on the same terms as `fitText`'s worst
+    // slide: a ratio against the size the designer asked for, never above 1, so
+    // "scale" always means how far this had to shrink and never how far a short
+    // word was allowed to grow.
+    let worst = 1;
     stageEl.querySelectorAll('.ltext').forEach((box) => {
       const el = box.querySelector('.lfit');
       if (!el) return;
@@ -926,7 +949,20 @@
         if (fits(mid)) { best = mid; lo = mid; } else { top = mid; }
       }
       el.style.fontSize = `${best}cqw`;
+      // A box with nothing in it was not shrunk, it is EMPTY — a reference layer
+      // on a lyric fire, a `next` line with no next. Reporting its ratio would
+      // make Live shout "38% of the designed size" on an ordinary song.
+      if ((el.textContent || '').trim()) worst = Math.min(worst, best / base);
     });
+    // Never throw: this runs inside a requestAnimationFrame on the page that is
+    // on the wall, and a listener that breaks must not take the render with it.
+    if (onFit) {
+      try {
+        onFit({ scale: worst, legible: worst >= MIN_LEGIBLE_SCALE });
+      } catch {
+        /* a report about legibility may not cost legibility */
+      }
+    }
   }
   // Fit is driven by the unified scheduler above (runFit → fitLayers/fitText),
   // gated to prop-change + resize so countdown/clock ticks don't force reflow.
@@ -1000,12 +1036,35 @@
                still shows. -->
           <div class="ltext" style="{boxStyle(box || L)} align-items:{vAlign(L.valign)};">
             {#key text}
+              <!-- THE SIZE IS DECLARED, NOT ONLY FITTED (rule 37 · rule 42).
+                   `font-size` used to be the ONE type property this element did
+                   not emit — colour, family, weight, alignment, transform,
+                   line-height, tracking, shadow and style were all here, and the
+                   one that decides whether the words fit the box was set only by
+                   `fitLayers`, imperatively, inside a requestAnimationFrame that
+                   is deliberately deferred while a render is off screen. Until it
+                   landed, a layered template painted in whatever `body` says —
+                   `--v-fs-b1`, 12px of UI text — and 12px at line-height 1.32 is
+                   15.8px for ONE line inside a band box that is 14.8px tall on a
+                   gallery card. Four cards in the Templates gallery were rendered
+                   with 39px of content inside a 15px `overflow:hidden` box: the
+                   words sliced, on the surface an operator judges a look from.
+                   The region branch below never had this, because it emits
+                   `font-size:{verseSize}cqw` — two text paths, one of them
+                   missing the base size, which is the shape `bandLayout`'s own
+                   doc comment warns about.
+                   Declaring it makes the un-fitted state the DESIGNED state,
+                   which fits; `fitLayers` then overwrites this same inline
+                   property to refine it, exactly as before. It also means every
+                   moment that wipes the imperative value — a `{#key text}`
+                   rebuild, a style attribute Svelte re-renders — lands on the
+                   template's own size instead of on the app's. `cardfit.test.js`. -->
               <div
                 class="lfit"
                 class:lscroll={L.scroll}
-                data-base={L.size}
+                data-base={baseSize(L)}
                 data-fit={L.fit || 'both'}
-                style="color:{L.color}; font-family:{fontFamOf(L.font)}; font-weight:{L.weight || 400}; text-align:{L.align}; text-transform:{L.transform || 'none'}; line-height:{L.lineHeight || 1.3}; letter-spacing:{(L.letterSpacing || 0)}em; text-shadow:{shadowOf(L.shadow)}; font-style:{L.italic ? 'italic' : 'normal'};">
+                style="font-size:{baseSize(L)}cqw; color:{L.color}; font-family:{fontFamOf(L.font)}; font-weight:{L.weight || 400}; text-align:{L.align}; text-transform:{L.transform || 'none'}; line-height:{L.lineHeight || 1.3}; letter-spacing:{(L.letterSpacing || 0)}em; text-shadow:{shadowOf(L.shadow)}; font-style:{L.italic ? 'italic' : 'normal'};">
                 {#if L.scroll}
                   <span class="lrun" style="--tickdur:{Math.min(60, Math.max(10, (text?.length || 0) * 0.42))}s">{text}</span>
                 {:else}
