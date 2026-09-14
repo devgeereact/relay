@@ -2144,7 +2144,7 @@ fn r9_the_search_finds_a_reference_however_it_is_typed() {
     let top = |q: &str| {
         search_verses(&conn, &sem.0, q)
             .first()
-            .map(|v| format!("{} {}:{}", v.book, v.chapter, v.verse))
+            .map(|h| format!("{} {}:{}", h.verse.book, h.verse.chapter, h.verse.verse))
     };
 
     // Full name, fast abbreviation, non-prefix alias, and the spoken words a
@@ -2174,9 +2174,14 @@ fn r9_a_reference_outranks_a_phrase() {
     let hits = search_verses(&conn, &sem.0, "john 3:16");
     let first = hits.first().expect("a reference always finds its verse");
     assert_eq!(
-        (first.book.as_str(), first.chapter, first.verse),
+        (
+            first.verse.book.as_str(),
+            first.verse.chapter,
+            first.verse.verse
+        ),
         ("John", 3, 16)
     );
+    assert_eq!(first.method, "reference");
 }
 
 #[test]
@@ -2206,7 +2211,11 @@ fn r9_a_query_that_is_mostly_not_scripture_returns_nothing_rather_than_guessing(
         .first()
         .expect("a real phrase must still find its verse");
     assert_eq!(
-        (first.book.as_str(), first.chapter, first.verse),
+        (
+            first.verse.book.as_str(),
+            first.verse.chapter,
+            first.verse.verse
+        ),
         ("Psalms", 23, 1)
     );
 }
@@ -2234,6 +2243,254 @@ fn r9_searching_never_puts_anything_on_a_screen() {
 
     assert_eq!(wall.count(), 0, "a search reached a congregation screen");
     assert!(kiosk.silent(), "a search reached the kiosk hub");
+}
+
+/// THE ACCEPTANCE CLAUSE for `docs/REBRAND.md` §9, read against the real corpus.
+///
+/// `search.rs` proves the PARSE of each of these; this proves the VERSE. The two
+/// halves are deliberately separate: a reference that parses to a book/chapter
+/// nothing in the corpus answers for is a search that returns nothing, and a
+/// parser test cannot see that.
+#[test]
+fn r9_every_shape_in_the_brief_finds_its_verse() {
+    let app = app();
+    let h = app.handle().clone();
+    let db = h.state::<Db>();
+    let conn = db.0.lock().expect("db");
+    let sem = h.state::<Semantic>();
+    let top = |q: &str| {
+        search_verses(&conn, &sem.0, q)
+            .first()
+            .map(|h| format!("{} {}:{}", h.verse.book, h.verse.chapter, h.verse.verse))
+    };
+
+    for (query, want) in [
+        ("ps 23 1", "Psalms 23:1"),
+        ("ps23:1", "Psalms 23:1"),
+        ("psalm 23", "Psalms 23:1"),
+        ("rom 8 28", "Romans 8:28"),
+        ("mt 6 33", "Matthew 6:33"),
+        ("1 cor 13 4", "1 Corinthians 13:4"),
+        ("see ye first the kingdom", "Matthew 6:33"),
+        ("lamp unto my feet", "Psalms 119:105"),
+    ] {
+        assert_eq!(top(query).as_deref(), Some(want), "searching {query:?}");
+    }
+}
+
+/// A BOOK PREFIX IS A SEARCH FEATURE AND NOWHERE ELSE.
+///
+/// "philipp 4 13" is not an alias in `book_aliases.json` and never will be —
+/// the table is for what a preacher SAYS. Expanding a prefix is the widest book
+/// match in the product, so it lives in the search path only, and this test
+/// holds both halves of that: the search finds it, and the live detector, given
+/// the identical string, finds nothing at all (CLAUDE.md rule 10).
+#[test]
+fn r9_a_book_prefix_is_a_search_feature_and_never_a_detection() {
+    let app = app();
+    let h = app.handle().clone();
+    let db = h.state::<Db>();
+    let conn = db.0.lock().expect("db");
+    let sem = h.state::<Semantic>();
+
+    for (query, want) in [
+        ("philipp 4 13", "Philippians 4:13"),
+        ("thessal 4 16", "1 Thessalonians 4:16"),
+        ("revela 22 13", "Revelation 22:13"),
+    ] {
+        let hits = search_verses(&conn, &sem.0, query);
+        let found = hits
+            .iter()
+            .any(|h| format!("{} {}:{}", h.verse.book, h.verse.chapter, h.verse.verse) == want);
+        assert!(found, "searching {query:?} did not offer {want}");
+        // …and the same words, spoken into a sermon, resolve to nothing.
+        assert!(
+            detection::detect_direct(query).is_empty(),
+            "the LIVE detector resolved the book prefix in {query:?} — rule 10"
+        );
+    }
+}
+
+/// EVERY HIT SAYS WHY IT MATCHED — and says which KIND of claim it is.
+///
+/// The half of §9 that DECISIONS §72 recorded as not built, because it changes
+/// the shape three surfaces read. Rule 18 in the search's clothing: the operator
+/// must be able to tell a reference they typed from a verse Relay guessed at,
+/// and a paraphrase carries **no percentage** because a cosine is not one.
+#[test]
+fn r9_every_hit_says_why_it_matched() {
+    let app = app();
+    let h = app.handle().clone();
+    let db = h.state::<Db>();
+    let conn = db.0.lock().expect("db");
+    let sem = h.state::<Semantic>();
+
+    // Every hit of every query, whatever branch produced it.
+    for q in [
+        "ps 23 1",
+        "ps23:1",
+        "philipp 4 13",
+        "the lord is my shepherd",
+        "lamp unto my feet",
+        "there is therefore no condemnation in christ",
+    ] {
+        let hits = search_verses(&conn, &sem.0, q);
+        assert!(!hits.is_empty(), "{q} found nothing");
+        for hit in &hits {
+            assert!(
+                !hit.why.trim().is_empty(),
+                "a hit for {q:?} had no reason: {:?}",
+                hit.verse.reference
+            );
+            assert!(
+                matches!(
+                    hit.method,
+                    "reference" | "prefix" | "phrase" | "words" | "paraphrase"
+                ),
+                "unknown method {:?} for {q:?}",
+                hit.method
+            );
+            // A number that lies is worse than no number (rule 18).
+            assert!(
+                !hit.why.contains('%'),
+                "a search hit quoted a percentage: {:?}",
+                hit.why
+            );
+        }
+    }
+
+    // A reference the operator typed is NOT a guess, and says so.
+    let typed = search_verses(&conn, &sem.0, "rom 8 28");
+    let first = typed.first().expect("rom 8 28");
+    assert_eq!(first.method, "reference");
+    assert!(!first.guess);
+    assert!(first.why.contains("rom 8 28"), "{:?}", first.why);
+
+    // A prefix Relay expanded IS a guess, and names the book it chose.
+    let pref = search_verses(&conn, &sem.0, "philipp 4 13");
+    let hit = pref
+        .iter()
+        .find(|h| h.method == "prefix")
+        .expect("a prefix hit");
+    assert!(hit.guess);
+    assert!(hit.why.contains("Philippians"), "{:?}", hit.why);
+
+    // A PARAPHRASE is a guess, says so in words, and carries no number. This is
+    // the branch rule 18 is really about: a TF-IDF cosine is not a probability,
+    // and the operator has to be able to tell it from a reference they typed.
+    let para = search_verses(
+        &conn,
+        &sem.0,
+        "there is therefore no condemnation in christ",
+    );
+    let guess = para
+        .iter()
+        .find(|h| h.method == "paraphrase")
+        .expect("a close paraphrase must reach the semantic branch");
+    assert!(guess.guess);
+    assert!(guess.why.contains("guess"), "{:?}", guess.why);
+    assert!(guess.matched.is_empty(), "{:?}", guess.matched);
+
+    // A word hit quotes the words that landed, and never the weak ones.
+    let words = search_verses(&conn, &sem.0, "lamp unto my feet");
+    let w = words
+        .iter()
+        .find(|h| h.method == "words" || h.method == "phrase")
+        .expect("a literal hit for a real phrase");
+    if w.method == "words" {
+        assert!(w.matched.contains(&"lamp".to_string()), "{:?}", w.matched);
+        assert!(!w.matched.contains(&"my".to_string()), "{:?}", w.matched);
+    }
+}
+
+/// THE BOUNDARY, STATED AT THE BOUNDARY.
+///
+/// Search does approximate matching over book names and over verse text — the
+/// same CLASS of code as the `fuzzy_book` repair that put Numbers 3:16 on a wall
+/// unattended. The whole safety argument is that a person typed it and chose
+/// from the list, so the guarantee that has to hold is that **no route out of a
+/// search reaches `AutoFire`**.
+///
+/// Asserted by driving the router itself with what a search produces: the widest
+/// thing this feature can offer, put to `decide`, and never allowed to fire.
+#[test]
+fn r9_nothing_a_search_offers_can_reach_an_auto_fire() {
+    let app = app();
+    let h = app.handle().clone();
+    let db = h.state::<Db>();
+    let conn = db.0.lock().expect("db");
+    let sem = h.state::<Semantic>();
+
+    // A search HAS no route to the router: it returns rows. The thing that could
+    // change that is somebody deciding a prefix expansion is good enough to
+    // detect with — so ask the router what it would do with one.
+    let mut router = crate::router::Router::default();
+    for query in ["philipp 4 13", "gene 1 1", "revela 22 13"] {
+        for hit in search_verses(&conn, &sem.0, query) {
+            if hit.method != "prefix" {
+                continue;
+            }
+            let decision = router.decide(
+                &hit.verse.reference,
+                0.99,
+                crate::detection::DetectionMethod::UncertainBook,
+                0,
+            );
+            assert!(
+                !matches!(decision, crate::router::RouteDecision::AutoFire),
+                "a book-prefix guess reached AutoFire for {query:?}"
+            );
+        }
+    }
+}
+
+/// A HIT IS STILL A VERSE ROW ON THE WIRE.
+///
+/// `why` was added as `#[serde(flatten)]` over `VerseRow` precisely so the four
+/// surfaces that already read this command — the Library, the Planner, the Live
+/// rail and the preacher's remote — keep reading the fields they read before.
+/// DECISIONS §72 deferred this work for exactly that reason, so the flattening
+/// is the decision, not an implementation detail: nest it and four surfaces
+/// silently render blanks, with every Rust test still green.
+#[test]
+fn r9_a_hit_is_still_a_verse_row_on_the_wire() {
+    let app = app();
+    let h = app.handle().clone();
+    let db = h.state::<Db>();
+    let conn = db.0.lock().expect("db");
+    let sem = h.state::<Semantic>();
+
+    let hits = search_verses(&conn, &sem.0, "ps 23 1");
+    let first = hits.first().expect("ps 23 1");
+    let json = serde_json::to_value(first).expect("a hit serialises");
+    let obj = json.as_object().expect("an object");
+
+    // Every field a surface read before this change, at the top level.
+    for key in [
+        "id",
+        "book",
+        "chapter",
+        "verse",
+        "text",
+        "reference",
+        "translation",
+    ] {
+        assert!(
+            obj.contains_key(key),
+            "{key} is no longer on the wire: {obj:?}"
+        );
+    }
+    // …and the new ones beside them, not nested under anything.
+    for key in ["method", "guess", "why", "matched"] {
+        assert!(
+            obj.contains_key(key),
+            "{key} did not reach the wire: {obj:?}"
+        );
+    }
+    assert!(
+        !obj.contains_key("verse_row") && !obj.values().any(|v| v.get("reference").is_some()),
+        "the verse row was nested instead of flattened: {obj:?}"
+    );
 }
 
 /// RG-136 — A RECOVERY IN THE SERVICE RECORD MUST HAVE A LOSS TO RECOVER FROM.
