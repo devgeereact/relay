@@ -420,6 +420,36 @@
       el.dataset.sized = '1';
     });
   }
+  /**
+   * IS ANYTHING ON SCREEN WEARING ONLY ITS DECLARED BASE?
+   *
+   * An element the fitter has never sized is a fit that has NOT HAPPENED — not
+   * one that succeeded. That is rule 37's shape ("a fit loop with no notion of
+   * failure always succeeds") one level above the loop, and it is the hole every
+   * round of this audit has fallen through in a different costume.
+   *
+   * The instance that found it: `fitSig` is VALUE-based — each layer's `w,h,size`
+   * and its words — while the DOM is IDENTITY-keyed (`{#each layerViews as …
+   * (L.id)}`). A template arriving with the same geometry and the same words but
+   * different layer ids therefore rebuilds every `.ltext` and `.lfit`, leaving
+   * them at the declared base with nothing remembered to re-apply, while the
+   * signature does not move a character. Measured on the console: 5.2cqw
+   * untouched, 207px of content in a 174px box, no warning, still wrong at six
+   * seconds — and the next content change fitted fine, because that moves the
+   * signature. That is what `loadTemplates()` resolving after the first render
+   * hands over, and what an operator swapping a screen's template mid-service does.
+   *
+   * Asked as a question about the DOM rather than about the trigger, because the
+   * trigger has been something different every round. Attribute reads only: no
+   * `scrollHeight`, no reflow, so this is free on the frames where it says no.
+   */
+  function anythingUnfitted() {
+    if (!stageEl || !layered) return false;
+    for (const el of stageEl.querySelectorAll('.lfit')) {
+      if (!el.dataset.sized) return true;
+    }
+    return false;
+  }
   function runFit() {
     fitRaf = 0;
     if (!stageEl || !visible) return; // don't reflow an offscreen render
@@ -429,16 +459,23 @@
       // base. Give it back the size this layer was fitted at — a style write, no
       // layout read, so it stays free at 4 Hz.
       reapplyFitted();
-      // The FIT is still the right fit. The VERDICT may not be: something told us
-      // the geometry moved, and the verdict is about the geometry. Re-take it
-      // with a fresh budget — a resize is a new situation, not a continuation of
-      // the last one's retries.
-      if (recheck) {
-        recheck = false;
-        refitSig = '';
-        verifyFit(sig);
+      // ANYTHING STILL WEARING ITS BASE HAS NOT BEEN FITTED, so fall through and
+      // fit it for real — which also produces a verdict, and therefore a report.
+      // The signature describes the SHAPE and the DOM is keyed on IDENTITY, so
+      // the two can disagree; asking the DOM is what makes this independent of
+      // whichever trigger caused the disagreement.
+      if (!anythingUnfitted()) {
+        // The FIT is still the right fit. The VERDICT may not be: something told
+        // us the geometry moved, and the verdict is about the geometry. Re-take
+        // it with a fresh budget — a resize is a new situation, not a
+        // continuation of the last one's retries.
+        if (recheck) {
+          recheck = false;
+          refitSig = '';
+          verifyFit(sig);
+        }
+        return;
       }
-      return;
     }
     recheck = false;
     lastFitSig = sig;

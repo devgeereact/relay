@@ -603,6 +603,54 @@ describe('a fit that still clips says so', () => {
     }
   });
 
+  it('fits a template that arrives with the same shape and new layer ids', async () => {
+    // ROUND 5. `fitSig` is VALUE-based — each layer's `w,h,size` and its words —
+    // while the DOM is IDENTITY-keyed: `{#each layerViews as … (L.id)}`. So a
+    // template object carrying the same geometry and the same words but different
+    // layer ids destroys and rebuilds every `.ltext` and `.lfit` — new elements
+    // wearing only the declared base, with nothing remembered on the new `.ltext`
+    // to re-apply — while the signature does not move a character. `runFit`
+    // early-returns, `verifyFit` is never called, and the render sits at its base
+    // size for ever.
+    //
+    // That is the console the lead measured: `.lfit` at 5.2cqw (the converted
+    // legacy verse default, untouched), 207px in a 174px box, `warn:false`, and
+    // unchanged at 3s and at 6s — while the very next CONTENT change fitted
+    // correctly, because that moves the signature. It is round 4's defect one
+    // level up, and it is what `loadTemplates()` resolving after the first render
+    // hands over, or an operator swapping a screen's template mid-service.
+    //
+    // THE GUARANTEE IS THE GENERAL ONE, not this trigger: an element that has
+    // never been sized is a fit that has NOT HAPPENED, not one that succeeded —
+    // which is rule 37's shape ("a fit loop with no notion of failure always
+    // succeeds") one level above the loop. So it is fitted, and therefore
+    // measured, and therefore reported, however it came to be skipped.
+    const seen = [];
+    const el = mount(layered, SAMPLE, { onFit: (f) => seen.push(f) });
+    await settle(400);
+    const before = seen.length;
+    const fittedFirst = [...el.querySelectorAll('.lfit')].map((n) => n.style.fontSize);
+    expect(before, 'it never fitted in the first place').toBeGreaterThan(0);
+
+    // The same look, arriving as a different object.
+    const clone = JSON.parse(JSON.stringify(layered));
+    clone.layout.layers = clone.layout.layers.map((L, i) => ({ ...L, id: `re_${i}` }));
+    app.$set({ template: clone });
+    await settle(600);
+
+    const after = [...el.querySelectorAll('.lfit')];
+    expect(after.length).toBeGreaterThan(0);
+    for (const n of after) {
+      expect(n.style.fontSize, 'the rebuilt element was left at its declared base').not.toBe(
+        `${n.dataset.base}cqw`
+      );
+    }
+    expect(after.map((n) => n.style.fontSize)).toEqual(fittedFirst);
+    expect(seen.length, 'a render that was never fitted was never measured either').toBeGreaterThan(
+      before
+    );
+  });
+
   it('Live turns a clip into words, and not into the shrink sentence', () => {
     // A clip and a shrink are different failures: one is "you cannot read this
     // from the back", the other is "you cannot read all of it from anywhere".
