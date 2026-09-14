@@ -1,3 +1,39 @@
+<script context="module">
+  /**
+   * `2026-09-14` → `14 Sep`, for the one place a plan's date is a HEAD and not a
+   * record (L2, docs/REBRAND.md §2 — the prototype's `SLIDES · SUNDAY MORNING ·
+   * 14 SEP`).
+   *
+   * The year is dropped because this head names the plan an operator is running
+   * RIGHT NOW; a full `2026-09-14` beside the plan's own name reads as a record
+   * id and eats the width the name needs. It is not a second `planDateLabel`:
+   * that one guards an ABSENCE and belongs to the plan rail, where a plan from
+   * another year is a real thing you might be looking at.
+   *
+   * ANYTHING THAT IS NOT A PLAIN ISO DATE COMES BACK VERBATIM. A hand-edited row
+   * or an import can hold whatever a person typed, and a formatter that quietly
+   * reinterpreted it would print a date nobody entered — worse, on a run surface,
+   * than printing the odd string as it stands. A month outside 1–12 is the same
+   * case and gets the same answer.
+   *
+   * `new Date()` IS DELIBERATELY NOT USED. It reads a bare ISO date as UTC
+   * midnight and then renders it in local time, so west of Greenwich every plan
+   * on this head would be dated the day before its own.
+   *
+   * At module scope so it can be tested as the arithmetic it is, rather than only
+   * through a mounted plan.
+   */
+  const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  export function shortDate(value) {
+    const s = typeof value === 'string' ? value.trim() : '';
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+    if (!m) return s;
+    const month = MONTHS[Number(m[2]) - 1];
+    if (!month) return s;
+    return `${Number(m[3])} ${month}`;
+  }
+</script>
+
 <script>
   // LIVE — the one screen the operator runs a whole service from.
   //
@@ -984,7 +1020,7 @@
   // `SLIDES · <plan name> · <date>` (docs/REBRAND.md §2). The date is only a fact
   // about a PLAN — a chapter and a song do not have one — so it is empty for
   // every other source rather than being invented.
-  $: gridSubtitle = grid.source === 'plan' ? (openPlan?.plan_date ?? '') : '';
+  $: gridSubtitle = grid.source === 'plan' ? shortDate(openPlan?.plan_date) : '';
 
   /**
    * Fire one grid cell.
@@ -1246,18 +1282,6 @@
         onSong={stageSong}
         onReference={fireReference}
         onVerse={fireSearchHit} />
-      <!-- View controls. Deliberately at the TOP-RIGHT and deliberately small: they
-           change how the console looks, never what reaches a screen, and must not
-           compete with the transport for an operator's attention. -->
-      <div class="view-ctl">
-        <div class="seg" role="group" aria-label="Console density">
-          <button class:on={!compact} on:click={() => setDensity('normal')}>Normal</button>
-          <button class:on={compact} on:click={() => setDensity('compact')}>Compact</button>
-        </div>
-        <button class="view-fs" on:click={() => setFullscreen(!fullscreen)}>
-          {fullscreen ? 'Show tabs' : 'Full screen'}
-        </button>
-      </div>
     </div>
 
     <div class="stage">
@@ -1286,8 +1310,14 @@
         {/if}
         <!-- Only when there IS something. The pane below already says "Nothing
              cued" in the middle of the empty screen, and the same three words in
-             two places at once reads as two facts. -->
-        {#if previewLabel}<span class="mon-name">{previewLabel}</span>{/if}
+             two places at once reads as two facts.
+             L2 RE-EXAMINED THIS AND LEFT IT. The prototype fills its right-hand
+             slot with `nothing cued` while its frame says the same thing, and the
+             argument above is the better one: this repository already refuses a
+             glyph in a value slot for exactly this reason, and an absent slot
+             makes no claim at all. What DID change is the face — the frame now
+             speaks in the machine's own mono, which was the real difference. -->
+        {#if previewLabel}<span class="mon-name r-mono">{previewLabel}</span>{/if}
       </header>
       <div class="screen">
         {#if previewTpl && previewContent}
@@ -1335,7 +1365,13 @@
         title={mode === 'slide'
           ? 'Arrow keys step through the service plan'
           : 'Arrow keys walk through the passage on screen'}>
-        walks the programme
+        <!-- TWO LINES, DELIBERATELY (L2). The prototype breaks this caption by
+             hand rather than leaving it to a 118px column: at mono capitals the
+             phrase is within a pixel or two of the rack's width, so whether it
+             wraps at all depends on the font that happened to load. A break that
+             is decided here is the same on every machine, and it reads as a
+             screen reader's single phrase either way. -->
+        walks the<br />programme
         <b class="rack-mode r-mono" class:slide={mode === 'slide'}>{mode === 'slide' ? 'SLIDE' : 'VERSE'}</b>
       </span>
     </aside>
@@ -1363,7 +1399,14 @@
         {:else}
           <span class="tag off">Program · Clear</span>
         {/if}
+        <!-- ONE LINE, ONE FACE (L2). The prototype's programme head reads
+             `PROGRAM · ON AIR · AS MAIN SCREEN` as a single run of mono capitals,
+             and ours printed a chip in the body face followed by a sentence-case
+             tail, so the two halves read as two different kinds of statement. The
+             separator is drawn here rather than as a glyph in a value slot: it
+             joins two facts that are both present, and disappears with the tail. -->
         {#if mainChannel}
+          <span class="mon-sep" aria-hidden="true">·</span>
           <span class="mon-as r-mono" title="This pane renders through {mainChannel.name}'s template">as {mainChannel.name}</span>
         {/if}
         <span class="spring"></span>
@@ -1377,7 +1420,7 @@
              integrator's ruling on the dock's dial, one column over, is the same
              rule and this half of the tree must not grow a second answer. -->
         {#if $live}
-          <span class="mon-name" class:live={!$rehearsing && !$screenBlack}>
+          <span class="mon-name r-mono" class:live={!$rehearsing && !$screenBlack}>
             {$live.reference || 'content'}
           </span>
         {/if}
@@ -1426,11 +1469,32 @@
         {#if grid.title}<span class="sg-cap">· {grid.title}</span>{/if}
         {#if gridSubtitle}<span class="sg-cap">· {gridSubtitle}</span>{/if}
         <span class="spring"></span>
-        <span class="r-mono cnt">{grid.cells.length}</span>
-        <span class="sg-cap sg-hint">single click goes to air · double click previews</span>
+        <!-- ONE LINE, WITH THE COUNT LEADING IT (L2). The count and the sentence
+             were two spans in two faces, so the right of this head read as two
+             separate remarks about the grid; the prototype sets them as a single
+             mono run — `14 · SINGLE CLICK GOES TO AIR · DOUBLE CLICK PREVIEWS` —
+             and the count is the first thing in it because "how many" is what an
+             operator is looking for when they glance here mid-service. -->
+        <span class="sg-hint r-mono" title="A single click sends the slide to the programme; a double click only previews it."><b class="cnt">{grid.cells.length}</b> · single click goes to air · double click previews</span>
         {#if openPlan}
           <button class="mini ghost" on:click={leave} title="Stop running {openPlan.title}">Close plan</button>
         {/if}
+        <!-- THE VIEW CONTROLS LIVE HERE NOW (L2), not in the browsing rail.
+             They change how the console LOOKS and never what reaches a screen,
+             and in the rail they were the loudest thing in a column whose whole
+             job is finding a verse — the prototype's rail carries nothing of the
+             kind. This head is where they belong: the grid is the surface both
+             of them actually reclaim space for. Nothing was removed and no
+             accessible name changed, so `qa-inventory` still finds all three. -->
+        <div class="view-ctl">
+          <div class="seg" role="group" aria-label="Console density">
+            <button class:on={!compact} on:click={() => setDensity('normal')}>Normal</button>
+            <button class:on={compact} on:click={() => setDensity('compact')}>Compact</button>
+          </div>
+          <button class="view-fs" on:click={() => setFullscreen(!fullscreen)}>
+            {fullscreen ? 'Show tabs' : 'Full screen'}
+          </button>
+        </div>
       </header>
 
       <div class="pane-body sg-body">
@@ -1477,8 +1541,16 @@
                   <!-- The KIND, top-left, as the prototype draws it: a cell is
                        recognised by its shape and confirmed by its tag. -->
                   {#if c.tag}<span class="sg-tag r-mono">{c.tag}</span>{/if}
-                  <!-- The word, not only the colour — amber alone is not a label. -->
-                  {#if cellLive(c)}<span class="sg-air">On Air</span>
+                  <!-- The word, not only the colour — amber alone is not a label.
+                       `Live`, as the prototype plates it (L2): the chip is 8px in
+                       a 158px cell, and at that size the one-word form is read
+                       rather than deciphered. The COLOUR LAW is untouched — the
+                       plate is still `--v-amber` on `--v-amber-ink` and still
+                       derived from `cellLive`, which reads the store rather than
+                       the press. The console's own head one row up still says
+                       `Program · On Air` in full, which is where the long form
+                       earns its width. -->
+                  {#if cellLive(c)}<span class="sg-air">Live</span>
                   {:else if gridPreview?.key === c.key}<span class="sg-prev">Preview</span>{/if}
                 </span>
                 <span class="sg-meta">
@@ -1770,16 +1842,19 @@
     text-decoration:underline; }
   .inspect-link:hover{ filter:brightness(1.15); }
 
-  /* ── §4 view controls + compact density ── */
-  .view-ctl{ display:flex; align-items:center; justify-content:flex-end; gap:8px; margin-bottom:10px; }
-  .seg{ display:flex; border:1px solid var(--v-line2); border-radius:8px; overflow:hidden; }
-  .seg button{ padding:5px 11px; background:var(--v-surf); border:0; cursor:pointer;
-    font-family:var(--f-body); font-size:var(--v-fs-b2); font-weight:600; color:var(--v-faint); }
+  /* ── §4 view controls + compact density ──
+     Sized DOWN when they moved into the slides head (L2): in the rail they were
+     the column's largest controls, and on a pane head they have to sit beside a
+     caption without out-shouting it. Same three controls, same names. */
+  .view-ctl{ flex:0 0 auto; display:flex; align-items:center; gap:5px; }
+  .seg{ display:flex; border:1px solid var(--v-line2); border-radius:var(--v-r-sm); overflow:hidden; }
+  .seg button{ padding:3px 8px; background:var(--v-surf); border:0; cursor:pointer;
+    font-family:var(--f-body); font-size:10px; font-weight:600; color:var(--v-faint); }
   .seg button.on{ background:var(--v-accent-soft); color:var(--v-accent2); }
   .seg button:not(.on):hover{ color:var(--v-dim); }
-  .view-fs{ height:26px; padding:0 11px; border-radius:8px; cursor:pointer;
+  .view-fs{ height:22px; padding:0 8px; border-radius:var(--v-r-sm); cursor:pointer;
     background:var(--v-surf); border:1px solid var(--v-line2); color:var(--v-faint);
-    font-family:var(--f-body); font-size:var(--v-fs-b2); font-weight:600; }
+    font-family:var(--f-body); font-size:10px; font-weight:600; }
   .view-fs:hover{ color:var(--v-txt); border-color:var(--v-accent-line); }
 
   /* COMPACT — spacing and type only. Nothing is hidden: see the note in the
@@ -1864,19 +1939,14 @@
   .con-grid{flex:1 1 0; min-height:0; display:flex}
   .con-grid :global(.pane){flex:1; min-width:0}
 
-  /* The view controls sit UNDER the rail, not in a band of their own. They change
-     how the console looks and never what reaches a screen, so they get the
-     quietest corner of the desk rather than a row across it. */
-  /* Three controls do not fit across a 206px rail: measured in the browser, the
-     row wanted 135px inside 114px and `Compact` was clipped to `Compa` — a
-     control cut mid-word, which is the defect the 2026-09-10 pass found as
-     `Stream` / `ing`. The row wraps instead, and the full-screen button takes
-     the second line whole rather than being sliced by the rail's edge. */
-  .rail-col .view-ctl{flex:0 0 auto; margin-bottom:0; justify-content:stretch;
-    flex-wrap:wrap; row-gap:6px}
-  .rail-col .seg{flex:1 1 100%}
-  .rail-col .seg button{flex:1; text-align:center}
-  .rail-col .view-fs{flex:1 1 100%}
+  /* THE VIEW CONTROLS LEFT THIS COLUMN (L2). Four rules used to reshape them to
+     survive a 206px rail — a wrapping row, a segment forced to its own line, a
+     full-screen button forced to a second one — all of which existed because
+     three controls do not fit across a browsing rail. On a pane head they do,
+     so the rules went with them rather than being carried as dead weight. The
+     measurement they recorded is kept in the review note: the row wanted 135px
+     inside 114px and `Compact` was clipped to `Compa`, which is why they may
+     never go back into a column that narrow. */
 
   .pane{display:flex; flex-direction:column; min-height:0; overflow:hidden;
     background:var(--v-surf); border:1px solid var(--v-line); border-radius:var(--v-r-lg);
@@ -1908,8 +1978,16 @@
   /* ── PREVIEW / PROGRAM ─────────────────────────────────────────────────── */
   .mon-bar{flex:0 0 auto; display:flex; align-items:center; gap:var(--v-sp-sm);
     padding:8px 10px; border-bottom:1px solid var(--v-line)}
+  /* THE MONO FACE, on the whole head and not on half of it (L2). The prototype
+     sets this line in the mono face at 9.5px with .11em of tracking, which is
+     what makes `PROGRAM · ON AIR · AS MAIN SCREEN` read as ONE statement rather
+     than a chip with a sentence after it. The WORDS are unchanged — the capitals
+     come from `text-transform`, so `.mon-as` still says "as Main screen" to a
+     screen reader and to `livedesk.test.js`, which is the right place for the
+     repository's plain voice to live. */
   .tag{flex:0 0 auto; padding:4px 10px; border-radius:var(--v-r-sm);
-    font-size:var(--v-fs-cap); font-weight:700; letter-spacing:.09em; text-transform:uppercase}
+    font-family:var(--f-mono);
+    font-size:var(--v-fs-cap); font-weight:700; letter-spacing:.11em; text-transform:uppercase}
   /* STEEL BLUE = the thing you are working on, which is what a preview is.
      Amethyst is REHEARSAL and nothing else (rule 18, DECISIONS §22) — this chip
      wore it, so on the one morning both were true the operator read the wrong
@@ -1919,12 +1997,20 @@
   .tag.onair{background:var(--v-amber); color:var(--v-amber-ink)}
   .tag.reh{background:var(--v-amethyst-soft); border:1px solid var(--v-amethyst-line); color:var(--v-amethyst)}
   .tag.off{background:var(--v-grey-soft); border:1px solid var(--v-line2); color:var(--v-dim)}
+  /* HARD RIGHT, MONO, UPPERCASE. The reference is the one figure on this head an
+     operator reads from across a booth, and in the body face it sat at a
+     different weight and rhythm from everything beside it. */
   .mon-name{min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
-    font-size:var(--v-fs-cap); color:var(--v-faint)}
+    font-size:var(--v-fs-cap); letter-spacing:.09em; text-transform:uppercase;
+    color:var(--v-faint)}
   /* Amber ONLY when a congregation is genuinely looking at it. */
   .mon-name.live{color:var(--v-amber)}
   .mon-as{flex:0 0 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
-    font-size:var(--v-fs-fig); letter-spacing:.05em; color:var(--v-faint)}
+    font-size:var(--v-fs-fig); letter-spacing:.11em; text-transform:uppercase; color:var(--v-faint)}
+  /* The join between two facts that are both present. It carries no value of its
+     own, so it is hidden from the accessibility tree rather than read aloud. */
+  .mon-sep{flex:0 0 auto; margin-left:-2px; font-family:var(--f-mono);
+    font-size:var(--v-fs-fig); color:var(--v-faint)}
   /* THE FRAME CARRIES THE STATE. The prototype frames preview in steel blue and
      programme in amber (amethyst in rehearsal), and it is the right instrument:
      an operator glancing up is looking at the picture, not at a chip beside it.
@@ -1940,8 +2026,16 @@
     border:1px solid var(--v-line2)}
   .screen{flex:1; min-height:0; position:relative; overflow:hidden; background:#000;
     border-top:1px solid var(--v-line)}
+  /* THE PROTOTYPE'S `.blank` FACE (L2): mono, tracked, faint, on black. What a
+     monitor says when it has nothing to show is a machine's statement about
+     itself, not prose, and it reads as one in the mono face. The WORDS are
+     Relay's and stay Relay's — the prototype wraps them in em dashes and this
+     repository does not use them (`livedesk.test.js` holds the neighbouring rule
+     that no glyph may stand in for a value, and the house style forbids the
+     dash outright), so the sentence carries itself. */
   .screen-empty{position:absolute; inset:0; display:grid; place-items:center; padding:var(--v-sp-md);
-    text-align:center; font-size:var(--v-fs-b2); color:var(--v-faint)}
+    text-align:center; font-family:var(--f-mono); font-size:var(--v-fs-cap);
+    letter-spacing:.06em; color:var(--v-faint)}
   .blk{position:absolute; inset:0; background:#000}
 
   /* ── the take rack ─────────────────────────────────────────────────────── */
@@ -1958,12 +2052,33 @@
   .take{height:64px; border-radius:var(--v-r-md); border:0; cursor:pointer;
     background:var(--v-amber); color:var(--v-amber-ink); font-family:var(--f-body);
     font-size:var(--v-fs-lbl); font-weight:700; letter-spacing:.1em;
-    box-shadow:0 6px 18px -6px var(--v-amber-glow); transition:filter .14s}
+    box-shadow:0 6px 18px -6px var(--v-amber-glow);
+    transition:transform 90ms var(--v-ease), filter .14s}
   .take:hover:not(:disabled){filter:brightness(1.06)}
   .take:disabled{opacity:.4; cursor:not-allowed; box-shadow:none}
+  /* ── FEEDBACK ON POINTER-DOWN, NOT ON CLICK (L2) ──────────────────────────
+     CSS `:active` begins at pointerdown and ends at release, which is the beat
+     the prototype's `.press` class reproduces in JavaScript — so the rule is
+     already the right one and only these three controls were missing it. The
+     scales are the prototype's measured values (.955 on TAKE, .96 on the arrows,
+     .985 on a cell, which is a large target and needs less).
+     `transform` only, so the compositor does the work and nothing reflows.
+     REDUCED MOTION STILL GETS FEEDBACK — as a cut, not as movement: the same
+     press reads as a brightness step instead, because an operator who asked for
+     no animation still has to be able to tell a press from a dead button. */
+  @media (prefers-reduced-motion: no-preference){
+    .take:active:not(:disabled){transform:scale(.955)}
+    .rk:active:not(:disabled){transform:scale(.96)}
+    .sg-cell:active:not(:disabled) .sg-thumb{transform:scale(.985)}
+  }
+  @media (prefers-reduced-motion: reduce){
+    .take:active:not(:disabled),
+    .rk:active:not(:disabled){filter:brightness(.88)}
+    .sg-cell:active:not(:disabled) .sg-thumb{filter:brightness(.88)}
+  }
   .rk{height:28px; border-radius:var(--v-r-md); cursor:pointer; background:var(--v-surf2);
     border:1px solid var(--v-line2); color:var(--v-dim); font-family:var(--f-body);
-    font-size:var(--v-fs-cap); transition:.14s}
+    font-size:var(--v-fs-cap); transition:transform 90ms var(--v-ease), background .14s, color .14s}
   .rk:hover:not(:disabled){background:var(--v-surf3); color:var(--v-txt)}
   .rk:disabled{opacity:.4; cursor:not-allowed}
   .rk.wide{width:100%}
@@ -1971,8 +2086,13 @@
      rather than beside it. "walks the programme" answers WHAT the two buttons
      do; the mode answers WHICH walk — and they are one sentence, so an operator
      cannot read the first and miss the second. */
+  /* Mono capitals, as the prototype sets it. This caption labels a control; it is
+     not prose, and beside a mono TAKE and a mono mode badge the body face was the
+     only thing in the rack speaking a different language. */
   .rack-cap{display:block; margin-top:2px; text-align:center;
-    font-size:var(--v-fs-fig); line-height:1.35; letter-spacing:.04em; color:var(--v-faint)}
+    font-family:var(--f-mono);
+    font-size:var(--v-fs-fig); line-height:1.35; letter-spacing:.09em;
+    text-transform:uppercase; color:var(--v-faint)}
   .rack-mode{display:block; margin-top:3px;
     font-size:var(--v-fs-cap); font-weight:700; letter-spacing:.1em; color:var(--v-cyan)}
   /* Amber here is NOT "on air": it is the plan's own colour on the plan rail
@@ -2003,7 +2123,8 @@
     container-type:inline-size;
     border-radius:var(--v-r-md);
     background:var(--v-void); border:1px solid var(--v-line2);
-    transition:border-color var(--v-dur) var(--v-ease), background var(--v-dur) var(--v-ease)}
+    transition:border-color var(--v-dur) var(--v-ease), background var(--v-dur) var(--v-ease),
+      transform 90ms var(--v-ease)}
   /* A cue the grid could not expand. It is DRAWN rather than dropped (see
      `planCells`) so the count under the grid agrees with the plan, and it is
      disabled rather than firing nothing. */
@@ -2036,8 +2157,21 @@
     font-size:var(--v-fs-cap); color:var(--v-txt)}
   .sg-cell.islive .sg-ttl{color:var(--v-amber)}
   .sg-foot{display:flex; align-items:center; gap:var(--v-sp-sm)}
+  /* `· SUNDAY MORNING · 14 SEP` — the plan's own name and date, in the head's
+     own face (L2). These used to be set in the body face beside an uppercase
+     `SLIDES`, so the three parts of one title read as three different things. */
   .sg-cap{min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
-    font-size:10px; color:var(--v-dim)}
+    font-family:var(--f-mono); font-size:10px; letter-spacing:.09em;
+    text-transform:uppercase; color:var(--v-dim)}
+  /* WHAT A PRESS DOES, as ONE run (L2). `min-width:0` and the ellipsis matter:
+     this is the first thing allowed to give way when the head runs out of room,
+     because the pane's NAME and the view controls both have to survive a narrow
+     window and this sentence is carried verbatim in `title` besides. */
+  .sg-hint{flex:0 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis;
+    white-space:nowrap; font-size:10px; letter-spacing:.08em;
+    text-transform:uppercase; color:var(--v-faint)}
+  /* The count LEADS the line and is the one part of it that is a figure. */
+  .sg-hint .cnt{font-weight:700; color:var(--v-dim)}
 
   /* ── 3 · detection ─────────────────────────────────────────────────────── */
   .chip{display:inline-flex; align-items:center; gap:6px; flex:0 0 auto; padding:4px 9px;
@@ -2210,11 +2344,6 @@
        nothing is removed, because a booth laptop is where an operator is most
        cramped and least able to go hunting. */
     .rail-col{flex-direction:row; align-items:stretch; height:200px}
-    /* In the ROW layout the view controls were given a column of their own and
-       stretched down 200px beside a full-height book list — two controls
-       floating in an empty panel, which reads as a broken grid rather than as
-       a quiet corner. They take their own width and sit at the top. */
-    .rail-col .view-ctl{flex:0 0 132px; align-content:flex-start; align-self:flex-start}
     .con-top{height:auto; grid-template-columns:1fr 104px 1fr; grid-auto-rows:minmax(230px,auto)}
     .con-grid{flex:0 0 auto; height:320px}
   }

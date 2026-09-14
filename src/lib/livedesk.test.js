@@ -472,3 +472,211 @@ describe('preview and programme', () => {
     expect(host.querySelector('.mon.prog .mon-name')).toBeNull();
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 6 · L2 — THE RUN SURFACE, MATCHED TO THE PROTOTYPE
+//
+// The console was rendered beside the prototype's Live workspace and compared
+// pane by pane. Each of these is a difference that was SEEN in that render, not
+// one reasoned about from the source — so each is written against the surface an
+// operator reads rather than against the rule that produces it.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('L2 · the studio head reads as one statement', () => {
+  const liveSrc = () => readFileSync(resolve(__dirname, 'views/Live.svelte'), 'utf8');
+
+  // The prototype's head is `PROGRAM · ON AIR · AS MAIN SCREEN` in one mono run.
+  // Ours was a chip in the body face with a sentence-case tail after it, so the
+  // two halves of one fact read as two different kinds of remark.
+  it('the state chip and the screen it renders as share one face', () => {
+    const src = liveSrc();
+    const tag = src.slice(src.indexOf('  .tag{'), src.indexOf('  .tag{') + 260);
+    expect(tag).toMatch(/font-family:var\(--f-mono\)/);
+    expect(tag).toMatch(/text-transform:uppercase/);
+    const as = src.slice(src.indexOf('  .mon-as{'), src.indexOf('  .mon-as{') + 240);
+    expect(as).toMatch(/text-transform:uppercase/);
+  });
+
+  // THE CAPITALS ARE THE STYLESHEET'S, NOT THE STRINGS'. `text-transform` leaves
+  // the accessibility tree alone, so the repository's plain voice survives in the
+  // one place it has to — what a screen reader says, and what this file's own
+  // `toContain('Main screen')` above reads.
+  it('the words themselves stay in Relay’s voice', async () => {
+    cap.live.set({ reference: 'Romans 8:28', text: 'x', translation: 'KJV' });
+    new Live({ target: host, props: {} });
+    await settle();
+    expect(host.querySelector('.mon.prog .mon-as').textContent).toContain('as Main screen');
+    // The markup interpolates the channel's own name in Relay's own sentence;
+    // nothing anywhere writes the capitals out. (The comment above the element
+    // quotes the prototype's rendered head, which is why this reads the ELEMENT
+    // rather than the file.)
+    const src = liveSrc();
+    const el = src.slice(src.indexOf('<span class="mon-as'), src.indexOf('<span class="mon-as') + 220);
+    expect(el).toContain('>as {mainChannel.name}<');
+    expect(el).not.toMatch(/AS MAIN SCREEN/);
+  });
+
+  // The reference is the one figure on this head read from across a booth.
+  it('the reference is set in the mono face and hard right', async () => {
+    cap.live.set({ reference: 'Romans 8:28', text: 'x', translation: 'KJV' });
+    new Live({ target: host, props: {} });
+    await settle();
+    const ref = host.querySelector('.mon.prog .mon-name');
+    expect(ref.className).toContain('r-mono');
+    // …and it is still the LAST thing in the head, after the spring.
+    const head = [...host.querySelectorAll('.mon.prog .mon-bar > *')];
+    expect(head[head.length - 1]).toBe(ref);
+    // Amber only because a congregation is looking at it — the law is untouched.
+    expect(ref.className).toContain('live');
+  });
+
+  // The separator joins two facts that are BOTH present, and carries no value of
+  // its own, so it is never read aloud.
+  it('the separator is never read aloud', async () => {
+    cap.live.set({ reference: 'Romans 8:28', text: 'x', translation: 'KJV' });
+    new Live({ target: host, props: {} });
+    await settle();
+    const sep = host.querySelector('.mon.prog .mon-sep');
+    expect(sep).not.toBeNull();
+    expect(sep.getAttribute('aria-hidden')).toBe('true');
+  });
+
+  // A monitor with nothing on it is a machine reporting about itself. The
+  // prototype sets that in mono; ours was in the body face, so an empty screen
+  // read like a sentence someone had written.
+  it('an empty monitor speaks in the machine’s face, without an em dash', () => {
+    const src = liveSrc();
+    const blank = src.slice(src.indexOf('  .screen-empty{'), src.indexOf('  .screen-empty{') + 320);
+    expect(blank).toMatch(/font-family:var\(--f-mono\)/);
+    // The prototype writes `— nothing cued —`; this repository does not use the
+    // dash, and this file's own em-dash rule above is the reason.
+    expect(src).not.toMatch(/—\s*[Nn]othing cued/);
+  });
+});
+
+describe('L2 · the slides head says what it is and what a press does', () => {
+  const liveSrc = () => readFileSync(resolve(__dirname, 'views/Live.svelte'), 'utf8');
+
+  // `14 Sep`, not `2026-09-14`. The year on a head that names the plan being run
+  // right now reads as a record id and eats the width the plan's NAME needs.
+  it('a plan date on this head is short', async () => {
+    const { shortDate } = await import('./views/Live.svelte');
+    expect(shortDate('2026-09-14')).toBe('14 Sep');
+    expect(shortDate('2026-01-02')).toBe('2 Jan');
+    expect(shortDate('2026-12-31')).toBe('31 Dec');
+  });
+
+  // NOTHING IS REINTERPRETED. A hand-edited row or an import can hold whatever a
+  // person typed, and a head that quietly reshaped it would print a date nobody
+  // entered. Absence is still absence — `{#if gridSubtitle}` draws nothing.
+  it('anything that is not a plain ISO date comes back verbatim', async () => {
+    const { shortDate } = await import('./views/Live.svelte');
+    expect(shortDate('Sunday morning')).toBe('Sunday morning');
+    expect(shortDate('2026-13-01')).toBe('2026-13-01');
+    expect(shortDate('14/09/2026')).toBe('14/09/2026');
+    expect(shortDate(undefined)).toBe('');
+    expect(shortDate(null)).toBe('');
+  });
+
+  // WEST OF GREENWICH THIS IS THE WHOLE BUG. `new Date('2026-09-14')` is UTC
+  // midnight, and rendering it locally moves it to the 13th — a plan dated the
+  // day before itself, on the head an operator runs the service from.
+  it('the date is parsed as digits, never through the Date constructor', () => {
+    const src = liveSrc();
+    const at = src.indexOf('export function shortDate(');
+    const fn = src.slice(at, at + 500);
+    expect(fn).not.toMatch(/new Date\(/);
+    expect(fn).not.toMatch(/toLocale[A-Za-z]*\s*\(/);
+  });
+
+  // The count and the sentence were two spans in two faces; the prototype sets
+  // them as one mono run with the count leading, because "how many" is what an
+  // operator is looking for when they glance here mid-service.
+  it('the count LEADS one line, and that line is the hint', async () => {
+    new Live({ target: host, props: {} });
+    await settle();
+    const hint = host.querySelector('.sg-head .sg-hint');
+    expect(hint).not.toBeNull();
+    const words = hint.textContent.replace(/\s+/g, ' ').trim();
+    expect(words).toMatch(/^\d+ · single click goes to air · double click previews$/);
+    // The count is the first thing in it and is the grid's own number.
+    expect(hint.querySelector('.cnt').textContent.trim())
+      .toBe(String(host.querySelectorAll('.sg-cell').length));
+    // …and there is no SECOND count left behind outside the line.
+    expect(host.querySelectorAll('.sg-head .cnt')).toHaveLength(1);
+  });
+
+  // ITEM 9. The view controls were the loudest thing in a browsing rail whose
+  // whole job is finding a verse, and the prototype's rail carries nothing of the
+  // kind. They moved to the head of the pane they actually reclaim space for.
+  // NOTHING WAS DELETED — that is the distinction `qa-inventory` exists to
+  // police, so this asserts the names as well as the place.
+  it('the density and full-screen controls left the rail and are still reachable', async () => {
+    new Live({ target: host, props: {} });
+    await settle();
+    // Gone from the rail column.
+    expect(host.querySelector('.rail-col .view-ctl')).toBeNull();
+    // Present on the slides head, all three, with their names intact.
+    const ctl = host.querySelector('.sg-head .view-ctl');
+    expect(ctl).not.toBeNull();
+    expect([...ctl.querySelectorAll('button')].map((b) => b.textContent.trim()))
+      .toEqual(['Normal', 'Compact', 'Full screen']);
+    expect(ctl.querySelector('.seg').getAttribute('aria-label')).toBe('Console density');
+  });
+});
+
+describe('L2 · the transport says what it walks, in the rack’s own face', () => {
+  it('the caption is mono capitals over two lines', () => {
+    const src = readFileSync(resolve(__dirname, 'views/Live.svelte'), 'utf8');
+    const at = src.indexOf('  .rack-cap{');
+    const rule = src.slice(at, at + 300);
+    expect(rule).toMatch(/font-family:var\(--f-mono\)/);
+    expect(rule).toMatch(/text-transform:uppercase/);
+    // The break is decided here rather than left to whichever font loaded: at
+    // mono capitals the phrase is within a pixel or two of the rack's width.
+    expect(src).toMatch(/walks the<br \/>programme/);
+  });
+
+  // THE MODE BADGE IS RELAY'S AND STAYS. The prototype has no equivalent, and
+  // the same key silently meaning two things is how the wrong thing reaches a
+  // congregation (CLAUDE.md — the transport is MODE-AWARE and says so).
+  it('the mode badge survives the prototype’s caption', async () => {
+    new Live({ target: host, props: {} });
+    await settle();
+    const mode = host.querySelector('.rack .rack-mode');
+    expect(mode).not.toBeNull();
+    expect(['SLIDE', 'VERSE']).toContain(mode.textContent.trim());
+  });
+});
+
+describe('L2 · a press answers on the way down', () => {
+  const src = readFileSync(resolve(__dirname, 'views/Live.svelte'), 'utf8');
+  const NO_PREF = '@media (prefers-reduced-motion: no-preference){';
+  const REDUCE = '@media (prefers-reduced-motion: reduce){';
+
+  // `:active` begins at pointerdown and ends at release — the same beat the
+  // prototype reproduces by adding `.press` on a pointerdown listener. Waiting
+  // for `click` puts the feedback after the action it is feedback for.
+  it('TAKE, the arrows and a cell all answer on `:active`', () => {
+    const motion = src.slice(src.indexOf(NO_PREF), src.indexOf(REDUCE));
+    expect(motion).toMatch(/\.take:active:not\(:disabled\)\{transform:scale\(\.955\)\}/);
+    expect(motion).toMatch(/\.rk:active:not\(:disabled\)\{transform:scale\(\.96\)\}/);
+    expect(motion).toMatch(/\.sg-cell:active:not\(:disabled\) \.sg-thumb\{transform:scale\(\.985\)\}/);
+  });
+
+  // ONLY transform, opacity and filter — the three the compositor can do without
+  // a layout pass. A press that reflowed the grid would be worse than none.
+  it('nothing but a transform moves, and nothing animates a box', () => {
+    const motion = src.slice(src.indexOf(NO_PREF), src.indexOf(REDUCE));
+    expect(motion).not.toMatch(/(width|height|margin|padding|top|left):/);
+  });
+
+  // REDUCED MOTION IS A CUT, NOT A DELETION. An operator who asked for no
+  // animation still has to be able to tell a press from a dead button, so the
+  // same press reads as a brightness step instead of a movement.
+  it('reduced motion keeps the feedback and drops the movement', () => {
+    const at = src.indexOf(REDUCE);
+    const block = src.slice(at, src.indexOf('\n  .rk{', at));
+    expect(block).toMatch(/filter:brightness/);
+    expect(block).not.toMatch(/transform:/);
+  });
+});

@@ -347,16 +347,41 @@ describe('the rail offers both collections', () => {
     expect(fired).toEqual(['John 3:16-18']);
   });
 
+  // NOT OFFERED MEANS NOT THERE (L2). This test said "not offered" and asserted
+  // `disabled`, which is a different claim — and the rail really did draw a grey
+  // Fire beside every empty box and every phrase, for the whole life of the
+  // surface. The prototype's rail has no such button; a control that spends its
+  // life refusing teaches an operator to stop reading the column it sits in.
   it('Fire is not offered for a phrase — a fire nobody could satisfy is not a control', async () => {
     const fired = [];
     mountWithSongs({ onReference: (t) => fired.push(t) });
     await settle();
     await search('seek ye first the kingdom');
-    expect(host.querySelector('.lr-fire').disabled).toBe(true);
+    expect(host.querySelector('.lr-fire')).toBeNull();
     const box = host.querySelector('.lr-q');
     box.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
     await settle();
     expect(fired).toEqual([]);
+  });
+
+  it('nor for an empty box — the rail opens with no Fire in it at all', async () => {
+    mountWithSongs();
+    await settle();
+    expect(host.querySelector('.lr-fire')).toBeNull();
+  });
+
+  // …AND THE ENGINE IS THE OTHER QUESTION. A reference the operator HAS typed is
+  // exactly when the manual fire must still be visible: it is the floor under the
+  // AI (§9), and a floor that disappears when the engine drops reads as a floor
+  // that was never built. Greyed, with the reason in `title` — not removed.
+  it('a real reference with no engine keeps the button, disabled and explained', async () => {
+    mountWithSongs({ disabled: true });
+    await settle();
+    await search('ps 23 1');
+    const fire = host.querySelector('.lr-fire');
+    expect(fire).not.toBeNull();
+    expect(fire.disabled).toBe(true);
+    expect(fire.getAttribute('title')).toMatch(/engine is not attached/);
   });
 
   it('the Songs half has no Fire at all — a song section has no reference to resolve', async () => {

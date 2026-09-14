@@ -328,3 +328,184 @@ describe('the card is the four things §2 names, in one place', () => {
     expect(body).toContain('Load whole plan');
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// L2 · MATCHED TO THE PROTOTYPE
+//
+// The dock was rendered beside the prototype's and compared card by card. The
+// countdown is a bordered block there, with its own caption row and a format
+// picker on the fields; ours was four loose rows in a scrolling column of three
+// unrelated tools, with no picker at all. And the audio card's captions carried
+// the letter-spacing that capitals need without ever being set as capitals.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const { countdownFormat } = await import('./Dock.svelte');
+
+/** The component's own script — `Dock.svelte` now opens with a module one. */
+function instanceScript() {
+  const open = src.lastIndexOf('<script>');
+  return src.slice(open, src.indexOf('</script>', open));
+}
+
+describe('L2 · the countdown is one block', () => {
+  it('every countdown row is inside the block and the next tool is outside it', () => {
+    const from = src.indexOf('<div class="tmr">');
+    expect(from).toBeGreaterThan(-1);
+    const block = src.slice(from, src.indexOf('<!-- ── THE NAME BAND', from));
+    expect(block).toContain('Countdown');
+    expect(block).toContain('cdfields');
+    expect(block).toContain('cdstate');
+    expect(block).toContain('cdtrans');
+    // The seam falls BETWEEN the two tools, which is the whole reason for it.
+    expect(block).not.toContain('Name band');
+    const css = src.slice(src.indexOf('  .tmr {'), src.indexOf('  .tmr {') + 340);
+    expect(css).toMatch(/border: 1px solid/);
+  });
+
+  // THE FIGURE IS NOT AMBER, WHATEVER THE PROTOTYPE DOES. Amber in this room means
+  // a congregation is looking at something (rule 18), and this is a READOUT of a
+  // countdown rather than the countdown.
+  it('the block spends none of the colour law', () => {
+    const css = src.slice(src.indexOf('  .tmr {'), src.indexOf('  .cdstate {'));
+    expect(css).not.toMatch(/--v-amber|--v-amethyst|--v-cyan/);
+  });
+
+  // AND THE THREE STATES STAY. `not counting` is the half of this panel that tells
+  // an operator the big figure is a setting and not a screen.
+  it('the state line is untouched', async () => {
+    mount();
+    await settle();
+    expect(host.querySelector('.cdstatev').textContent.trim()).toBe('not counting');
+  });
+});
+
+describe('L2 · the countdown format picker', () => {
+  afterEach(() => countdownFormat.set('auto'));
+
+  // §7: "One timer, one formatter, read by the slide, the stage rail and the
+  // transport so they cannot drift." The picker ASKS that formatter — it is the
+  // third argument `layers.js::formatCountdown` has always taken.
+  it('feeds the one formatter and adds no second one', () => {
+    const script = instanceScript();
+    expect(script).toMatch(/formatCountdown\([^)]*\$countdownFormat\)/);
+    // No hand-rolled hours, minutes or seconds anywhere in this component.
+    expect(script).not.toMatch(/Math\.floor\([^)]*3600\)/);
+    expect(script).not.toMatch(/padStart\(2, '0'\)/);
+  });
+
+  it('offers exactly the three §7 names', async () => {
+    mount();
+    await settle();
+    const pick = host.querySelector('.cdfmt');
+    expect(pick).not.toBeNull();
+    expect([...pick.options].map((o) => o.value)).toEqual(['auto', 'ms', 'hms']);
+    expect([...pick.options].map((o) => o.textContent.trim())).toEqual(['auto', 'm:ss', 'h:mm:ss']);
+    expect(pick.getAttribute('aria-label')).toBe('Countdown format');
+  });
+
+  it('changes how the same number reads', async () => {
+    mount();
+    await settle();
+    const fig = () => host.querySelector('.tfig').textContent.trim();
+    expect(fig()).toBe('5:00');
+    countdownFormat.set('hms');
+    await tick();
+    expect(fig()).toBe('0:05:00');
+    countdownFormat.set('ms');
+    await tick();
+    expect(fig()).toBe('5:00');
+  });
+
+  // IT CHANGES THE READOUT, AND SAYS SO. A wall's countdown is rendered from
+  // `OutputContent`, which carries no format field, so a control that implied it
+  // reached the screens would be claiming a reach it has not got — rule 35's
+  // family, on the panel an operator watches a service from.
+  it('says which figure it governs, and claims nothing about the screens', async () => {
+    mount();
+    await settle();
+    const title = host.querySelector('.cdfmt').getAttribute('title');
+    expect(title).toMatch(/this readout/i);
+    expect(title).toMatch(/screens read the countdown through their own template/i);
+  });
+
+  // THE CHOICE OUTLIVES THE COMPONENT. The shell renders the dock as
+  // `{#if !liveFullscreen}<Dock />{/if}`, so pressing Full screen DESTROYS it —
+  // the same trap `countdown.js` records for the set duration, and the reason
+  // this store is at module scope rather than a component `let`.
+  it('survives the component being destroyed and rebuilt', async () => {
+    mount();
+    await settle();
+    countdownFormat.set('hms');
+    await tick();
+    app.$destroy();
+    host.remove();
+
+    mount();
+    await settle();
+    expect(host.querySelector('.cdfmt').value).toBe('hms');
+  });
+});
+
+describe('L2 · the audio card is set as the capitals it is tracked for', () => {
+  it('`Sens` renders as capitals without the word being rewritten', async () => {
+    const css = src.slice(src.indexOf('  .dcap {'), src.indexOf('  .dcap {') + 320);
+    expect(css).toMatch(/text-transform: uppercase/);
+    mount();
+    await settle();
+    // The WORDS stay Relay's — a screen reader hears "Sens", not "S E N S".
+    expect([...host.querySelectorAll('.audrow .dcap')].map((e) => e.textContent.trim()))
+      .toEqual(['Sens', 'armed']);
+  });
+
+  // THE VOICE CHIP GOES ON TELLING THE TRUTH. The prototype's reads `VOICE`; ours
+  // already did when there IS voice, and what it says otherwise is the half that
+  // matters — with no engine attached neither word may appear at all, because
+  // `quiet` over a detached engine reads exactly like a live mic in a silent room
+  // (rule 35). This was NOT changed and must not be.
+  it('the chip still reports the gate, and says nothing at all with no engine', () => {
+    expect(src).toMatch(/\$meter\.isVoice \? 'VOICE' : 'quiet'/);
+    const head = src.slice(src.indexOf('{#if !$capture.available}'), src.indexOf('<div class="dbody audbody">'));
+    expect(head).toContain('no engine');
+    expect(head.indexOf('no engine')).toBeLessThan(head.indexOf("'VOICE'"));
+  });
+
+  // THE SAMPLE RATE IS NOT PRINTED, and the prototype's `INPUT · 48 kHz` is
+  // deliberately not copied: the console's meter store drops `sample_rate`, so the
+  // figure would be a constant reading the same on a device running at 16 kHz —
+  // which is the state that silently switches the denoiser off. Rule 35 again.
+  it('the waveform well names the input and claims no rate it cannot read', async () => {
+    const well = src.slice(src.indexOf('<span class="wavelbl'), src.indexOf('<span class="wavelbl') + 120);
+    expect(well).toContain('>INPUT<');
+    // Read the RENDERED card, not the file: the reason this rate is absent is
+    // written in a comment beside the element, and the comment must not be what
+    // the test is looking at.
+    mount();
+    await settle();
+    expect(host.querySelector('.audbody').textContent).not.toMatch(/kHz/);
+  });
+});
+
+describe('L2 · the Controls card keeps Relay’s order, on purpose', () => {
+  // THE PROTOTYPE'S ORDER IS DERIVED FROM A BUTTON RELAY DOES NOT HAVE. It leads
+  // with `Go Live`, which this repository declined (there is no honest frontend
+  // state to drive it — see the note above `.dpanel.ctl`), so copying the order
+  // would put `End service` under the thumb in a green button's place: the one
+  // control here that is NOT about the next thirty seconds.
+  //
+  // Clear screens stays first and full width. Rule 15's neighbourhood: the control
+  // an operator reaches for without reading is the red one.
+  it('Clear screens is still the first control in the card', () => {
+    const ctl = src.slice(src.indexOf('<div class="r-ctl">'));
+    const order = [...ctl.slice(0, ctl.indexOf('</div>')).matchAll(/>\s*\{?[^<>{]*?(Clear screens|Blackout|Rehearse|End service)/g)]
+      .map((m) => m[1]);
+    expect(order[0]).toBe('Clear screens');
+    expect(order).toContain('End service');
+    expect(order.indexOf('Clear screens')).toBeLessThan(order.indexOf('End service'));
+  });
+
+  // …and the reason is written down where the next person to compare the two
+  // will read it, rather than being rediscovered.
+  it('and the card says why it differs from the prototype', () => {
+    expect(src).toMatch(/THE ORDER IS NOT THE PROTOTYPE'S, deliberately/);
+  });
+});

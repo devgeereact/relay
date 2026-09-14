@@ -1,3 +1,18 @@
+<script context="module">
+  // ── HOW THE COUNTDOWN FIGURE READS (docs/REBRAND.md §7, L2) ────────────────
+  //
+  // `auto` | `ms` | `hms`, the three `layers.js::formatCountdown` already takes.
+  // The picker feeds THAT function; it does not carry a second copy of the
+  // arithmetic, which is the whole of §7's "one formatter".
+  //
+  // AT MODULE SCOPE FOR THE SAME REASON THE SET DURATION IS (`countdown.js`):
+  // the shell renders this component as `{#if !liveFullscreen}<Dock />{/if}`, so
+  // pressing Full screen DESTROYS it. A component-local `let` would silently
+  // drop an operator's choice mid-service.
+  import { writable } from 'svelte/store';
+  export const countdownFormat = writable('auto');
+</script>
+
 <script>
   // THE DOCK ROW (docs/REBRAND.md §2) — the strip under the desk that is the
   // same on every workspace, because these four things are true of the room
@@ -308,7 +323,22 @@
   // It used to render only in the first case, so the panel's biggest control had
   // no readout at all until after it had been used.
   $: cdLive = cdRunning != null;
-  $: cdText = formatCountdown(cdLive ? cdRunning : $countdownSet);
+  // ONE FORMATTER, ASKED A QUESTION (§7). `$countdownFormat` is the third
+  // argument `formatCountdown` has always taken; nothing here re-derives hours,
+  // minutes or seconds.
+  //
+  // WHAT THIS PICKER DOES **NOT** REACH, said plainly: the screens. A wall's
+  // countdown is rendered by `TemplateRender` from `OutputContent`, which carries
+  // no format field, so making the choice follow the content would take a column
+  // on the broadcast and an edit to the one renderer — neither of which is this
+  // agent's to make. It changes the notation of the CONSOLE'S readout of the same
+  // number, and the control says so where an operator can read it. Recorded in
+  // the review note as the backend half that is still owed.
+  $: cdText = formatCountdown(cdLive ? cdRunning : $countdownSet, $countdownFormat);
+  // What Start would put up, in the caption beside the name. Only while something
+  // IS counting: off air the big figure below already IS the set duration, and the
+  // same number twice in one block reads as two facts.
+  $: cdSetLabel = formatCountdown($countdownSet, $countdownFormat);
   // The last minute — or the last tenth of a short countdown, because a minute's
   // warning on a two-minute countdown is a colour that is on for half of it
   // (`layers.js`). RED, not amber: amber in this room means ON AIR and is never
@@ -583,68 +613,101 @@
     <div class="dbody tools r-scroll">
       <!-- THE COUNTDOWN, WITH ITS TRANSPORT (docs/REBRAND.md §7). hh : mm : ss,
            then Start · Reset · ±1 · Clear. The figure on the right is the one on
-           the wall — same field, same formatter — not a second clock. -->
-      <div class="trow">
-        <span>Countdown</span>
-        <span class="cdfields">
-          <input class="r-input cdf" type="number" min="0" max="12" value={cdFields.h}
-            on:input={(e) => setField('h', e.target.value)} aria-label="Countdown hours" />
-          <i class="cdsep">:</i>
-          <input class="r-input cdf" type="number" min="0" max="59" value={cdFields.m}
-            on:input={(e) => setField('m', e.target.value)} aria-label="Countdown minutes" />
-          <i class="cdsep">:</i>
-          <input class="r-input cdf" type="number" min="0" max="59" value={cdFields.s}
-            on:input={(e) => setField('s', e.target.value)} aria-label="Countdown seconds" />
-        </span>
-        <span class="spring"></span>
-        <span
-          class="tfig r-mono"
-          class:live={cdLive}
-          class:warn={cdWarn}
-          role="status"
-          aria-live="off"
-          title={cdLive ? 'What the screens are counting, right now.' : 'What Start would put on the screens. Nothing is counting.'}
-        >{cdText}</span>
-      </div>
-      <!-- WHICH of the two facts the figure is. One word, beside it, because a
-           big number with no label is the half of a status line that lies. -->
-      <div class="trow cdstate">
-        <!-- THREE states, not two. A held countdown IS on the screens — it simply
-             is not moving — and reading "on the screens" over a stopped figure is
-             the half of a status line that lies (rule 35). -->
-        <span class="cdstatev" class:live={cdLive} class:held={cdPaused}
-          >{!cdLive ? 'not counting' : cdPaused ? 'on the screens · held' : 'on the screens'}</span>
-      </div>
-      <!-- Clear is NOT Clear screens. It returns this tool to its default length
-           and touches nothing a congregation can see; the red control one panel
-           along is the one that blanks a wall. -->
-      <div class="trow cdtrans" role="group" aria-label="Countdown transport">
-        <button class="r-btn sm ghost" on:click={() => press('start')}
-          disabled={busy || !$capture.available || !countdownCan('start', $countdownSet, cdRunning, cdPaused)}>Start</button>
-        <!-- PAUSE AND RESUME ARE TWO ACTIONS, NOT A TOGGLE (§7, and the engine
-             field that finally made it possible). Which one is offered is read
-             from the CONTENT on the wall, so a press can never do the opposite of
-             what its label says; with nothing counting, neither is available and
-             `countdownCan` says so through the same refusal the press would give.
-             Nothing here is amber: holding a countdown does not change what is on
-             air, it changes whether it is moving. -->
-        {#if cdPaused}
-          <button class="r-btn sm ghost" on:click={() => press('resume')}
-            title="Let the countdown on the screens carry on from where it was held"
-            disabled={busy || !$capture.available || !countdownCan('resume', $countdownSet, cdRunning, cdPaused)}>Resume</button>
-        {:else}
-          <button class="r-btn sm ghost" on:click={() => press('pause')}
-            title="Hold the countdown on the screens at exactly what it says"
-            disabled={busy || !$capture.available || !countdownCan('pause', $countdownSet, cdRunning, cdPaused)}>Pause</button>
-        {/if}
-        <button class="r-btn sm ghost" on:click={() => press('reset')}
-          disabled={busy || !$capture.available || !countdownCan('reset', $countdownSet, cdRunning, cdPaused)}>Reset</button>
-        <button class="r-btn sm ghost" on:click={() => press('minus')} aria-label="One minute less"
-          disabled={busy || !$capture.available || !countdownCan('minus', $countdownSet, cdRunning, cdPaused)}>−1</button>
-        <button class="r-btn sm ghost" on:click={() => press('plus')} aria-label="One minute more"
-          disabled={busy || !$capture.available || !countdownCan('plus', $countdownSet, cdRunning, cdPaused)}>+1</button>
-        <button class="r-btn sm ghost" on:click={() => press('clear')}
-          title="Reset this tool to five minutes. It does not clear the screens.">Clear</button>
+           the wall — same field, same formatter — not a second clock.
+
+           ONE BORDERED BLOCK, NOT FOUR LOOSE ROWS (L2). Quick tools holds three
+           unrelated instruments in one scrolling column — the countdown, the name
+           band and the word to the preacher — and the countdown's four rows had
+           no edge of their own, so the fields of one tool sat flush against the
+           caption of the next. The prototype draws each as a panel and that is
+           what the seam is for. The name band and the alert already have theirs
+           (`.lt3`, `.alrt`); this one was the odd instrument out. -->
+      <div class="tmr">
+        <div class="trow tmrtop">
+          <span class="dcap">Countdown</span>
+          <!-- WHAT IS LOADED, while the figure beside it shows what is LEFT. -->
+          {#if cdLive}<span class="cdset r-mono">· {cdSetLabel}</span>{/if}
+          <span class="spring"></span>
+          <span
+            class="tfig r-mono"
+            class:live={cdLive}
+            class:warn={cdWarn}
+            role="status"
+            aria-live="off"
+            title={cdLive ? 'What the screens are counting, right now.' : 'What Start would put on the screens. Nothing is counting.'}
+          >{cdText}</span>
+        </div>
+        <div class="trow">
+          <span class="cdfields">
+            <input class="r-input cdf" type="number" min="0" max="12" value={cdFields.h}
+              on:input={(e) => setField('h', e.target.value)} aria-label="Countdown hours" />
+            <i class="cdsep">:</i>
+            <input class="r-input cdf" type="number" min="0" max="59" value={cdFields.m}
+              on:input={(e) => setField('m', e.target.value)} aria-label="Countdown minutes" />
+            <i class="cdsep">:</i>
+            <input class="r-input cdf" type="number" min="0" max="59" value={cdFields.s}
+              on:input={(e) => setField('s', e.target.value)} aria-label="Countdown seconds" />
+          </span>
+          <!-- SET IT, DO NOT ONLY NUDGE IT (§7). A pre-service countdown and a
+               90-minute service are both timers, and `5:00` and `0:05:00` are the
+               same number read two ways. The picker is the third argument
+               `formatCountdown` already takes — there is no second formatter here
+               and there must never be one.
+               THE TITLE SAYS WHAT IT GOVERNS. It changes this readout, not a
+               screen: the wall renders its countdown from `OutputContent`, which
+               carries no format, so a control that implied otherwise would be
+               claiming a reach it has not got (rule 35's family). -->
+          <select
+            class="r-select cdfmt"
+            bind:value={$countdownFormat}
+            aria-label="Countdown format"
+            title="How this readout reads. The screens read the countdown through their own template.">
+            <option value="auto">auto</option>
+            <option value="ms">m:ss</option>
+            <option value="hms">h:mm:ss</option>
+          </select>
+          <span class="spring"></span>
+        </div>
+        <!-- WHICH of the two facts the figure is. One word, beside it, because a
+             big number with no label is the half of a status line that lies. -->
+        <div class="trow cdstate">
+          <!-- THREE states, not two. A held countdown IS on the screens — it simply
+               is not moving — and reading "on the screens" over a stopped figure is
+               the half of a status line that lies (rule 35). -->
+          <span class="cdstatev" class:live={cdLive} class:held={cdPaused}
+            >{!cdLive ? 'not counting' : cdPaused ? 'on the screens · held' : 'on the screens'}</span>
+        </div>
+        <!-- Clear is NOT Clear screens. It returns this tool to its default length
+             and touches nothing a congregation can see; the red control one panel
+             along is the one that blanks a wall. -->
+        <div class="trow cdtrans" role="group" aria-label="Countdown transport">
+          <button class="r-btn sm ghost" on:click={() => press('start')}
+            disabled={busy || !$capture.available || !countdownCan('start', $countdownSet, cdRunning, cdPaused)}>Start</button>
+          <!-- PAUSE AND RESUME ARE TWO ACTIONS, NOT A TOGGLE (§7, and the engine
+               field that finally made it possible). Which one is offered is read
+               from the CONTENT on the wall, so a press can never do the opposite of
+               what its label says; with nothing counting, neither is available and
+               `countdownCan` says so through the same refusal the press would give.
+               Nothing here is amber: holding a countdown does not change what is on
+               air, it changes whether it is moving. -->
+          {#if cdPaused}
+            <button class="r-btn sm ghost" on:click={() => press('resume')}
+              title="Let the countdown on the screens carry on from where it was held"
+              disabled={busy || !$capture.available || !countdownCan('resume', $countdownSet, cdRunning, cdPaused)}>Resume</button>
+          {:else}
+            <button class="r-btn sm ghost" on:click={() => press('pause')}
+              title="Hold the countdown on the screens at exactly what it says"
+              disabled={busy || !$capture.available || !countdownCan('pause', $countdownSet, cdRunning, cdPaused)}>Pause</button>
+          {/if}
+          <button class="r-btn sm ghost" on:click={() => press('reset')}
+            disabled={busy || !$capture.available || !countdownCan('reset', $countdownSet, cdRunning, cdPaused)}>Reset</button>
+          <button class="r-btn sm ghost" on:click={() => press('minus')} aria-label="One minute less"
+            disabled={busy || !$capture.available || !countdownCan('minus', $countdownSet, cdRunning, cdPaused)}>−1</button>
+          <button class="r-btn sm ghost" on:click={() => press('plus')} aria-label="One minute more"
+            disabled={busy || !$capture.available || !countdownCan('plus', $countdownSet, cdRunning, cdPaused)}>+1</button>
+          <button class="r-btn sm ghost" on:click={() => press('clear')}
+            title="Reset this tool to five minutes. It does not clear the screens.">Clear</button>
+        </div>
       </div>
       <!-- ── THE NAME BAND (docs/REBRAND.md §2 · §4) ──────────────────────────
            Set once, fired from here. `To programme` goes through `fireContent`
@@ -892,9 +955,14 @@
   }
   .audrow { display: flex; align-items: center; gap: 7px; flex: 0 0 auto; }
   .audrow :global(input[type='range']) { flex: 1 1 auto; min-width: 0; }
+  /* `SENS`, `ARMED`, `COUNTDOWN` (L2). This class already carried the tracking a
+     line of capitals needs and then set the words in lower case, which is the one
+     combination that reads as neither: the prototype's equivalent (`.cap`) is
+     uppercase and the letter-spacing is there because of it. The WORDS in the
+     markup are unchanged, so a screen reader still hears Relay's own voice. */
   .dcap {
     flex: 0 0 auto; font-family: var(--f-mono); font-size: var(--v-fs-cap);
-    letter-spacing: var(--v-tr-caps); color: var(--v-faint);
+    letter-spacing: var(--v-tr-caps); text-transform: uppercase; color: var(--v-faint);
   }
   .dcap.detl { min-width: 34px; }
   .sensv { flex: 0 0 auto; min-width: 18px; text-align: right; font-size: var(--v-fs-cap); color: var(--v-dim); }
@@ -960,6 +1028,26 @@
   .tfig.live { color: var(--v-txt); }
   /* Red = act now. Never amber: amber means ON AIR and nothing else (rule 18). */
   .tfig.warn { color: var(--v-red); }
+  /* ── THE COUNTDOWN AS A BLOCK (L2, docs/REBRAND.md §7) ────────────────────
+     An edge of its own, so a tool's four rows stop running into the tool below
+     it in a scrolling column of three. The border is the panel hairline, not an
+     accent: this is a seam, not a state, and nothing in Quick tools may compete
+     with the Controls card for an operator's eye. */
+  .tmr {
+    display: flex; flex-direction: column; gap: 4px; flex: 0 0 auto;
+    padding: 7px; border: 1px solid var(--v-line2); border-radius: var(--v-r-md);
+    background: var(--v-surf2);
+  }
+  .tmr .trow { margin: 0; }
+  .tmrtop { align-items: center; }
+  /* What Start would load, beside the name — small, and never the size of the
+     figure it sits next to, which is the number that is actually on a screen. */
+  .cdset { min-width: 0 !important; flex: 0 0 auto;
+    font-size: var(--v-fs-cap); color: var(--v-faint); }
+  /* auto / m:ss / h:mm:ss. Sized to its content so it cannot push the fields into
+     a second line on a 1024px booth laptop, where this row already wraps. */
+  .cdfmt { width: auto; min-width: 0; flex: 0 0 auto; height: 22px; padding: 0 20px 0 6px;
+    font-size: 10px; background-position: calc(100% - 7px) center; }
   .cdstate { margin-top: -2px; }
   .cdstatev {
     min-width: 0 !important;

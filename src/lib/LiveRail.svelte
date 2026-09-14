@@ -116,7 +116,23 @@
    * remember do not.
    */
   export const looksLikeReference = (text) => /\d/.test(String(text ?? ''));
-  $: canFire = !disabled && tab === 'bible' && looksLikeReference(q) && q.trim().length >= 2;
+  /**
+   * TWO QUESTIONS, NOT ONE (L2), because they have different answers on screen.
+   *
+   *   `fireable`  — is this query a reference at all? If it is not, there is
+   *                 nothing for a Fire button to do and the prototype's rail
+   *                 draws none. A permanently greyed button beside an empty
+   *                 search box is a control that spends its whole life saying
+   *                 no, and it teaches an operator to stop reading the rail.
+   *   `canFire`   — and is the engine there to take it? THIS one still greys the
+   *                 button rather than removing it: an operator who has typed a
+   *                 real reference and cannot send it must be shown the control
+   *                 they are looking for, disabled, with the reason in `title`.
+   *                 Removing it would read as "Relay has no manual fire", which
+   *                 is the floor under the AI (§9) and is exactly what it has.
+   */
+  $: fireable = tab === 'bible' && looksLikeReference(q) && q.trim().length >= 2;
+  $: canFire = fireable && !disabled;
 
   // Search results, and whether we have asked yet. `[]` before the first call is
   // not "nothing matches" — that sentence is the one that makes an operator
@@ -234,11 +250,13 @@
          `manualFire` a grid cell takes. Amber is forbidden here: this button
          does not mean ON AIR, it means "send this", and the fire reports its own
          outcome through the caller (rules 15 and 18). -->
-    {#if tab === 'bible'}
+    {#if fireable}
       <button
         class="lr-fire"
         disabled={!canFire}
-        title="Send this reference to the programme, exactly as typed — ranges included"
+        title={disabled
+          ? 'Relay\u2019s engine is not attached, so nothing here can reach a screen.'
+          : 'Send this reference to the programme, exactly as typed \u2014 ranges included'}
         on:click={() => onReference(q.trim())}>Fire</button>
     {/if}
   </div>

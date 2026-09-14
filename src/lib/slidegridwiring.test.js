@@ -110,9 +110,15 @@ describe('the grid is rendered, and its presses go through the arbiter', () => {
   it('amber is ON AIR and steel blue is the preview — never the other way round', () => {
     expect(src).toMatch(/\.sg-cell\.islive \.sg-thumb\{border-color:var\(--v-amber\)/);
     expect(src).toMatch(/\.sg-cell\.cued \.sg-thumb\{border-color:var\(--v-sel\)/);
-    // And the state is said in words as well as in colour.
-    expect(src).toMatch(/class="sg-air">On Air</);
+    // And the state is said in words as well as in colour. `Live`, as the
+    // prototype plates it: the chip is 8px inside a 158px cell, and the long form
+    // is the console head's job one row up, where it has the width to earn it.
+    // The COLOUR is the claim and it has not moved — amber, from `cellLive`.
+    expect(src).toMatch(/class="sg-air">Live</);
     expect(src).toMatch(/class="sg-prev">Preview</);
+    // No cell may say ON AIR in any casing: two words for one state on one
+    // surface is how an operator learns to read neither.
+    expect(src).not.toMatch(/class="sg-air">On Air</i);
   });
 
   // A CELL IS THE WALL IN MINIATURE (docs/REBRAND.md §2). The grid drew a grey
@@ -128,7 +134,15 @@ describe('the grid is rendered, and its presses go through the arbiter', () => {
   });
 
   it('the thumb is a CONTAINER, or every cell renders at the page width', () => {
-    const thumb = src.slice(src.indexOf('.sg-thumb{'), src.indexOf('.sg-thumb{') + 400);
+    // THE DECLARATION, not the first mention. This sliced from `indexOf('.sg-thumb{')`
+    // and therefore from whichever rule happened to name the class first — which
+    // stopped being the declaration the moment a `:active` press rule was added
+    // above it, and the test then reported the container query missing from a
+    // stylesheet that still has it. A rule at the stylesheet's own indent is the
+    // declaration; a descendant selector never starts a line that way.
+    const at = src.indexOf('\n  .sg-thumb{');
+    expect(at).toBeGreaterThan(-1);
+    const thumb = src.slice(at, at + 400);
     expect(thumb).toMatch(/position:relative/);
     expect(thumb).toMatch(/aspect-ratio:16\/9/);
     expect(thumb).toMatch(/container-type:inline-size/);

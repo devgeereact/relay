@@ -27,6 +27,40 @@ vi.mock('@tauri-apps/api/event', () => ({ listen: async () => () => {} }));
 const cap = await import('./stores/capture.js');
 const src = readFileSync(resolve(process.cwd(), 'src/lib/Dock.svelte'), 'utf8');
 
+/**
+ * THE COMPONENT'S OWN SCRIPT — not whichever `<script>` happens to come first.
+ *
+ * These scanners sliced `src.slice(0, src.indexOf('</script>'))`, which was the
+ * instance script for exactly as long as `Dock.svelte` had only one. It now opens
+ * with a `<script context="module">` (the format picker's choice has to survive
+ * the shell destroying this component on Full screen, the same reason
+ * `countdown.js` keeps the set duration at module scope), and both scanners
+ * quietly narrowed to that block instead — where `press` does not live. They went
+ * on passing nothing rather than failing, which is the exact failure mode
+ * `ipc.test.js` records twice: a scanner that narrows looks exhaustive while
+ * checking less than it claims.
+ *
+ * `instanceScript()` finds the LAST `<script` that is not a module script, and
+ * the test below holds it to that — so the next block added here cannot make
+ * these two checks vacuous in silence.
+ */
+function instanceScript() {
+  const open = src.lastIndexOf('<script>');
+  const close = src.indexOf('</script>', open);
+  return src.slice(open, close);
+}
+
+it('the scanner below reads the component script, not the module one', () => {
+  // The thing it is FOR: `press` is in the instance script and nowhere else.
+  expect(instanceScript()).toContain('function press(');
+  // And it really is a narrower slice than the file, so a passing scan means
+  // something was found rather than everything was searched.
+  expect(instanceScript().length).toBeLessThan(src.length);
+  // The module script exists and is NOT what the scanners get.
+  expect(src).toContain('<script context="module">');
+  expect(instanceScript()).not.toContain('context="module"');
+});
+
 beforeEach(() => {
   invoke.mockReset();
   invoke.mockResolvedValue(null);
@@ -51,7 +85,7 @@ describe('the transport is rendered, and its presses go through the one arbiter'
   // `startCountdown` or `adjustCountdown` straight — would be a press whose
   // refusals nothing tested.
   it('there is no second path to a screen: every broadcast comes from `press`', () => {
-    const script = src.slice(0, src.indexOf('</script>'));
+    const script = instanceScript();
     const body = script.slice(script.indexOf('function press('));
     expect(body).toMatch(/startCountdown\(/);
     expect(body).toMatch(/adjustCountdown\(/);
@@ -291,7 +325,7 @@ describe('the transport can hold the countdown', () => {
   });
 
   it('the hold goes through the one arbiter — there is no second path to it', () => {
-    const script = src.slice(0, src.indexOf('</script>'));
+    const script = instanceScript();
     const body = script.slice(script.indexOf('function press('));
     expect(body).toMatch(/pauseCountdown\(r\.pause\)/);
     // …and that is the only place it is named outside the import list.
