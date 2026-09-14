@@ -597,7 +597,11 @@
                        rehearsal or a blackout — so one surface could call a screen
                        LIVE while the other called it Rehearsal, about the same
                        screen, in the same second. -->
-                  <span class="r-badge {SCREEN_BADGE[k.d.kind]} ch-lamp"><span class="bd"></span>{k.d.label}</span>
+                  <!-- `title` carries the note the card has no room for. A card
+                       is 232px of picture and two words; the sentence explaining
+                       why a screen is not confirmed lives in the inspector, and
+                       this puts it one hover away rather than one click. -->
+                  <span class="r-badge {SCREEN_BADGE[k.d.kind]} ch-lamp" title={k.d.note}><span class="bd"></span>{k.d.label}</span>
                 </div>
                 <div class="ch-cardmeta r-mono">{kindOf(k.c)} · {transportOf(k.c)}</div>
 
@@ -774,6 +778,20 @@
             <TemplateRender template={previewTemplate} content={$live ? $liveContent : PREVIEW} />
           </div>
           <p class="ch-prevnote r-mono">{previewNote}</p>
+          <!-- THE SCREEN'S OWN LAST WORD, beside Relay's claim about it.
+               `describeScreen` returns a note as well as a label, and until now
+               this panel rendered only the label — so the one surface built to
+               answer for a single screen dropped the half of the answer that
+               says WHY. When Relay and the screen disagree (a verse is live and
+               the screen says it is blank) the badge above reads `Not confirmed`
+               and this line is what makes that word actionable. Live already
+               renders the same string, from the same helper, so the two panes
+               cannot describe one screen differently. Reuses `ch-prevnote`
+               deliberately: same role, same muted mono line, no new CSS in a
+               stylesheet six agents are editing this week. -->
+          {#if selDescribe.note}
+            <p class="ch-prevnote r-mono">{selDescribe.note}</p>
+          {/if}
 
           <!-- NAME is READ-ONLY, and the prototype's editable field is not built.
                There is no `rename_channel` anywhere in Relay — `db/channels.rs`

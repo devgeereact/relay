@@ -273,6 +273,24 @@ describe('§5 · the lamp is the word Live uses, about the same backend fact', (
     expect(lamp.className).toMatch(/amethyst/);
   });
 
+  itMounted('a screen that ANSWERS and says it is blank is not amber either', async () => {
+    // The other half of RG-01, and the shape of RG-129: this screen is beating
+    // on time — it is answering perfectly — and what it is answering is `clear`
+    // while a verse is on the programme. Every instrument Relay had said On Air
+    // about it, because `wall.live` was true, and a congregation looked at a
+    // black wall. The card now repeats what the SCREEN said.
+    const el = await mountOutputs();
+    channelHealth.set({ 1: row({ id: 1, paint_state: 'clear' }) });
+    live.set({ reference: 'Romans 8:28' });
+    await settle();
+    const lamp = cardFor(el, 'Main screen').querySelector('.ch-lamp');
+    expect(lamp.textContent.trim()).toBe('Not confirmed');
+    expect(lamp.className).not.toMatch(/\bamber\b/);
+    // …and the card says which way the two disagree, without a click.
+    expect(lamp.getAttribute('title')).toMatch(/Relay is sending content/);
+    expect(lamp.getAttribute('title')).toMatch(/screen says clear/);
+  });
+
   itMounted('a screen that has gone quiet turns the CARD red, not just its lamp', async () => {
     const el = await mountOutputs();
     channelHealth.set({ 1: row({ id: 1, painting: false, last_beat_ms: 30000 }) });
@@ -374,6 +392,23 @@ describe('§5 · the inspector answers for the screen in hand', () => {
       .nextElementSibling;
     expect(dd.textContent).toMatch(/never/);
     expect(dd.textContent).not.toMatch(/\byes\b/);
+  });
+
+  itMounted('it prints the screen`s own last word when that word contradicts Relay', async () => {
+    // `describeScreen` returns a note as well as a label, and this panel rendered
+    // only the label — so the one surface built to answer for a single screen
+    // dropped the half of the answer that says why. Live has rendered the note in
+    // a row of its own since RG-01; the two panes read the same helper and must
+    // not show different amounts of it.
+    const el = await mountOutputs();
+    channelHealth.set({ 2: row({ id: 2, name: 'Streaming', paint_state: 'clear' }) });
+    live.set({ reference: 'Romans 8:28' });
+    cardFor(el, 'Streaming').click();
+    await settle();
+    const insp = el.querySelector('.rw-insp');
+    expect(insp.textContent).toMatch(/Not confirmed/);
+    expect(insp.textContent).toMatch(/Relay is sending content/);
+    expect(insp.textContent).toMatch(/screen says clear/);
   });
 
   itMounted('the destructive control is Remove, and it is two-step (rule 41)', async () => {
