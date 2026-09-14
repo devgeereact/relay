@@ -388,3 +388,55 @@ export function fmtDuration(seconds, long = false) {
   }
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }
+
+/**
+ * What the cue inspector's preview can honestly say about a cue.
+ *
+ * The panel used to print ONE sentence — "No text to preview" — over the chequered
+ * plate for every cue whose `previewContent.text` was empty, and that sentence read
+ * exactly the same in four situations that are not the same news (CLAUDE.md rule
+ * 35: a status line that says the same thing when the thing behind it is broken as
+ * when it is fine is not a status line):
+ *
+ *   a MEDIA cue          the slide IS the picture; there is nothing to typeset  — fine
+ *   a COUNTDOWN cue      the clock is drawn when it fires, not now              — fine
+ *   a SCRIPTURE / SONG /
+ *     NOTICE cue with no
+ *     words saved        it WOULD reach the screen and there is nothing on it   — BROKEN
+ *   an unrecognised
+ *     `cue_type`         this build cannot say what it renders                  — unknown
+ *
+ * The third is the one worth a Tuesday evening: a cue that will be reached during
+ * a service and put nothing in front of the congregation. Under the old sentence
+ * it was indistinguishable from a countdown behaving correctly.
+ *
+ * `plate` is whether the chequered ground is drawn. The chequer exists to make a
+ * KEYED template visible (see `.sp-preview`) — it is a statement about a rendered
+ * slide, so a cue with no slide to render gets words instead of an empty plate.
+ *
+ * Pure, and here rather than in the component, because this is a rule about what
+ * may be claimed and rules of that shape in this file are the ones that get tested.
+ */
+export function previewState(item, hasText) {
+  if (!item) return { state: 'none', plate: false, message: '' };
+  if (hasText) return { state: 'render', plate: true, message: '' };
+  const known = TYPE[item.cue_type];
+  if (item.cue_type === 'media') {
+    return { state: 'self', plate: false, message: 'The slide is the picture — media plays full-frame.' };
+  }
+  if (item.cue_type === 'countdown') {
+    return { state: 'self', plate: false, message: 'The clock is drawn when this cue fires, so there is nothing to show yet.' };
+  }
+  if (!known) {
+    return {
+      state: 'unknown',
+      plate: false,
+      message: 'This build does not recognise this kind of cue, so it cannot say what it would put on the screen.',
+    };
+  }
+  return {
+    state: 'empty',
+    plate: false,
+    message: `This ${known.label.toLowerCase()} cue has no words saved, so firing it would put nothing on the screen.`,
+  };
+}

@@ -83,13 +83,17 @@ const CUES = [
 let host;
 let app;
 let planRows = PLANS;
+// Overridable per test, the same way `planRows` is. The shared `CUES` list is
+// asserted on by count and by section in the tests above, so a test that needs a
+// countdown or a wordless cue swaps the list rather than appending to it.
+let cueRows = CUES;
 
 function bridge(cmd) {
   switch (cmd) {
     case 'list_plans':
       return Promise.resolve(planRows);
     case 'plan_items':
-      return Promise.resolve(CUES);
+      return Promise.resolve(cueRows);
     case 'list_templates':
       return Promise.resolve([
         { id: 1, name: 'Classic Serif' },
@@ -124,6 +128,7 @@ function bridge(cmd) {
 
 beforeEach(() => {
   planRows = PLANS;
+  cueRows = CUES;
   invoke.mockReset();
   invoke.mockImplementation(bridge);
   capture.update((c) => ({ ...c, available: true }));
@@ -434,7 +439,11 @@ describe('§2 · the cue inspector answers the question it is asked', () => {
     );
 
     expect(host.querySelector('.sp-preview').textContent).toContain('Please keep the gate clear');
-    expect(host.querySelector('.sp-preview .sp-nopreview')).toBeNull();
+    // …and the panel is showing the RENDER, not the sentence that stands in for
+    // one. `.sp-nopreview` used to live inside `.sp-preview`, so this assertion
+    // was on a selector that no longer exists anywhere and would have passed
+    // vacuously; `.sp-noslide` is the box that replaces the plate outright.
+    expect(host.querySelector('.sp-noslide')).toBeNull();
     // …and it is the CUE'S template doing the rendering, which is the one whose
     // ink made the frame look empty.
     expect(host.querySelector('.sp-kv').textContent).toContain('Lower Third');
@@ -535,4 +544,124 @@ describe('rule 39 · arrangement staleness is untouched', () => {
     expect(src).toMatch(/disabled=\{a\.stale\}/);
     expect(src).toContain('sections changed since this was built');
   });
+});
+
+describe('P1/W3 · the slide is the first thing in the inspector', () => {
+  itMounted('renders the cue’s own slide ABOVE the tab strip', async () => {
+    // The prototype's inspector has no tabs at all: it opens on the rendered
+    // slide, then LABEL/SECTION/DURATION, then Kind/Template/Fires, then the
+    // actions. Relay keeps the tabs because they carry function the prototype
+    // never had (rule 39's stale-arrangement warning lives on Slides, and the
+    // operator-only stage note on Notes), but a panel whose whole job is
+    // answering "what does this put on the wall?" may not open on three buttons.
+    //
+    // Fails with the preview moved back under the tab strip.
+    await mount();
+    await until(() => host.querySelector('.sp-preview'), 'the inspector preview');
+    const kids = [...host.querySelector('.sp-inspbody').children];
+    const at = (sel) => kids.findIndex((e) => e.matches(sel));
+    expect(at('.sp-preview')).toBeGreaterThanOrEqual(0);
+    expect(at('.sp-insptabs')).toBeGreaterThanOrEqual(0);
+    expect(at('.sp-preview')).toBeLessThan(at('.sp-insptabs'));
+  });
+
+  itMounted('keeps the slide visible on the Slides and Notes tabs', async () => {
+    // The corollary of moving it out of the General branch: the answer stays on
+    // screen while the tabs choose what is under it. Fails if the preview is put
+    // back inside `{#if inspTab === 'general'}`.
+    await mount();
+    await until(() => host.querySelector('.sp-preview'), 'the inspector preview');
+    for (const name of ['Slides', 'Notes']) {
+      const tab = [...host.querySelectorAll('.sp-insptabs button')].find((b) =>
+        new RegExp(name, 'i').test(b.textContent),
+      );
+      tab.click();
+      await settle();
+      expect(host.querySelector('.sp-preview'), `the slide is gone on ${name}`).toBeTruthy();
+    }
+  });
+});
+
+describe('P1/W3 · rule 35 · an empty preview says WHICH kind of empty', () => {
+  itMounted('a cue that draws its own content at fire time gets words, not an empty plate', async () => {
+    // The panel used to print "No text to preview" over the chequered 16:9 plate
+    // for every cue with nothing to typeset — the same sentence for a media cue
+    // behaving perfectly and for a scripture cue that would put NOTHING in front
+    // of a congregation. The chequer is a statement ABOUT a rendered slide, so a
+    // cue with no slide gets words and no plate.
+    //
+    // Fails against the old single sentence: `.sp-preview` was drawn here too and
+    // read "Media plays full-frame" inside an empty 16:9 box.
+    cueRows = [cue(22, 'media', 'Welcome loop', 'Gathering', 0, { path: '/x.mp4' })];
+    await mount();
+    await until(() => host.querySelector('.sp-noslide'), 'the no-slide box');
+    expect(host.querySelector('.sp-preview'), 'a plate with nothing on it').toBeNull();
+    expect(host.querySelector('.sp-noslidemsg').textContent).toMatch(/media plays full-frame/i);
+    // A media cue is fine, so it is not flagged as a defect in the plan.
+    expect(host.querySelector('.sp-noslide').classList.contains('warn')).toBe(false);
+  });
+
+  itMounted('a cue that would put nothing on the screen is told apart from one that is fine', async () => {
+    // The one worth a Tuesday evening. Fails against the old sentence, which read
+    // identically here and on the media cue above.
+    cueRows = [cue(23, 'scripture', 'Romans 8:28', 'Word', 0, { reference: 'Romans 8:28', text: '' })];
+    await mount();
+    await until(() => host.querySelector('.sp-noslide'), 'the no-slide box');
+    const box = host.querySelector('.sp-noslide');
+    expect(box.textContent).toMatch(/no words saved/i);
+    expect(box.textContent).toMatch(/nothing on the screen/i);
+    expect(box.textContent).not.toMatch(/full-frame/i);
+    expect(box.classList.contains('warn'), 'a broken cue reads as fine').toBe(true);
+  });
+});
+
+describe('P1/W3 · the rail foot', () => {
+  itMounted('is one row of ＋ New · Duplicate · Delete', async () => {
+    // Prototype `.railfoot`. Relay stacked three buttons each repeating the word
+    // "Plan" under a pane already headed "Service plans". Delete stays — this is
+    // the only route to it — but the noun goes.
+    //
+    // Fails against `＋ New Plan` / `Duplicate Plan` / `Delete Plan`.
+    await mount();
+    await until(() => host.querySelector('.sp-railfoot'), 'the rail foot');
+    const names = [...host.querySelectorAll('.sp-railfoot button')].map((b) => b.textContent.trim());
+    expect(names).toEqual(['＋ New', 'Duplicate', 'Delete']);
+  });
+
+  itMounted('deletes a plan on the SECOND press, and never through a native confirm', async () => {
+    // A plan is an evening's work and this was one click straight to
+    // `delete_plan`. The guard is an in-app arm/confirm because the Tauri webview
+    // does not implement `confirm()` — one built on it returns `false` without
+    // showing anything, so the delete never happens and the control reports a
+    // success it did not achieve (CLAUDE.md rule 41).
+    //
+    // Fails against the single-press delete: the first click dispatched
+    // `delete_plan`.
+    await mount();
+    // Wait for the running order, not for the foot: the foot renders before a
+    // plan is open, and Duplicate/Delete are `disabled` until one is. A test that
+    // clicked the disabled button would have "passed" the first half by doing
+    // nothing at all.
+    await until(() => host.querySelector('.sp-row'), 'a plan to be open');
+    const del = host.querySelector('.sp-railfoot .sp-raildel');
+    expect(del.disabled).toBe(false);
+
+    invoke.mockClear();
+    del.click();
+    await settle();
+    expect(invoke.mock.calls.filter(([c]) => c === 'delete_plan')).toEqual([]);
+    expect(del.textContent.trim()).toBe('Click again');
+    expect(del.classList.contains('arm')).toBe(true);
+
+    del.click();
+    await settle();
+    expect(invoke.mock.calls.filter(([c]) => c === 'delete_plan').length).toBe(1);
+  });
+
+  // The static half — "is the guard in-app rather than a native dialog?" — is NOT
+  // written here. `hardrules.test.js`'s *"rule 41 — no native confirm(), alert()
+  // or prompt()"* already sweeps every `.svelte` file in the tree, with a comment
+  // walk so the six files that DISCUSS these calls are not flagged. A second,
+  // weaker copy scoped to one file is how two scanners come to disagree about what
+  // they cover, and this repository has had that exact failure twice.
 });

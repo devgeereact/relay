@@ -18,6 +18,7 @@ import {
   cueCountLabel,
   dropIndex,
   reorderTo,
+  previewState,
 } from './plan.js';
 
 const song = (id, ...labels) => ({
@@ -419,5 +420,63 @@ describe('reorderTo', () => {
     for (const [from, to] of [[0, 0], [-1, 1], [0, 9]]) {
       expect(reorderTo(items, from, to).map((i) => i.id)).toEqual([1, 2]);
     }
+  });
+});
+
+describe('previewState — rule 35, on the cue inspector', () => {
+  // ONE sentence, "No text to preview", stood for four different situations, and
+  // three of them are not the same news. The whole value of this function is that
+  // the four answers differ, so that is what is asserted: not the wording, but
+  // that a cue which would put NOTHING in front of a congregation cannot be
+  // mistaken for one behaving correctly.
+  const c = (cue_type) => ({ cue_type });
+
+  it('a cue with words renders, over the plate', () => {
+    expect(previewState(c('scripture'), true)).toMatchObject({ state: 'render', plate: true });
+    expect(previewState(c('media'), true)).toMatchObject({ state: 'render', plate: true });
+  });
+
+  it('media and countdown draw their own content, and get no plate', () => {
+    for (const kind of ['media', 'countdown']) {
+      const v = previewState(c(kind), false);
+      expect(v.state, kind).toBe('self');
+      expect(v.plate, kind).toBe(false);
+      expect(v.message, kind).toBeTruthy();
+    }
+  });
+
+  it('a scripture, song or notice cue with no words is a DEFECT, not a kind', () => {
+    for (const kind of ['scripture', 'song', 'announce']) {
+      const v = previewState(c(kind), false);
+      expect(v.state, kind).toBe('empty');
+      expect(v.message, kind).toMatch(/no words saved/);
+      expect(v.message, kind).toMatch(/nothing on the screen/);
+    }
+  });
+
+  it('an unrecognised cue_type claims nothing about what it renders', () => {
+    // Same discipline as `typeOf` answering UNKNOWN rather than falling back to
+    // scripture: this build cannot say, so it says it cannot say.
+    const v = previewState(c('lower_third'), false);
+    expect(v.state).toBe('unknown');
+    expect(v.message).toMatch(/does not recognise/);
+    expect(v.message).not.toMatch(/no words saved/);
+  });
+
+  it('the four verdicts are four different sentences', () => {
+    // The defect was that they were one. A future edit that collapses two of them
+    // back together fails here even if every branch above still returns its own
+    // `state`.
+    const said = [
+      previewState(c('media'), false).message,
+      previewState(c('countdown'), false).message,
+      previewState(c('scripture'), false).message,
+      previewState(c('lower_third'), false).message,
+    ];
+    expect(new Set(said).size).toBe(4);
+  });
+
+  it('no cue at all is not an empty cue', () => {
+    expect(previewState(null, false)).toMatchObject({ state: 'none', plate: false, message: '' });
   });
 });

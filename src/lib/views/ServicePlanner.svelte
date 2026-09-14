@@ -34,6 +34,7 @@
     payloadOf,
     slidesOf,
     slideAccent,
+    previewState,
     sectionsOf,
     planRuntime,
     fmtDuration,
@@ -157,8 +158,29 @@
       await refresh();
     });
   }
+  // TWO-STEP DELETE, in-app. A plan is an evening's work and this was ONE click:
+  // `Delete Plan` went straight to `delete_plan` with nothing between it and the
+  // database, on a rail row an operator reaches for while looking at the list. The
+  // guard is an arm/confirm, NEVER a native `confirm()` — the Tauri webview does
+  // not implement it, so it returns `false` without showing anything and a delete
+  // guarded by one deletes nothing while reporting success (CLAUDE.md rule 41).
+  // Same shape as `Channels.svelte` and `library/History.svelte`: first click arms,
+  // second within 3s deletes, and the button says which state it is in.
+  let planDelArm = null;
+  let planDelArmT;
+  function disarmPlanDelete() {
+    clearTimeout(planDelArmT);
+    planDelArm = null;
+  }
   async function removePlan(p, ev) {
     ev.stopPropagation();
+    if (planDelArm !== p.id) {
+      planDelArm = p.id;
+      clearTimeout(planDelArmT);
+      planDelArmT = setTimeout(() => (planDelArm = null), 3000);
+      return;
+    }
+    disarmPlanDelete();
     await act(async () => {
       await deletePlan(p.id);
       if (openPlan?.id === p.id) {
@@ -178,6 +200,11 @@
   }
 
   async function open(p) {
+    // Opening a different plan disarms the delete. The arm is keyed by id so a
+    // stale one could not fire on the wrong plan, but leaving a rail button
+    // reading "Click again" about a plan nobody is looking at is a control whose
+    // words have stopped describing its state.
+    disarmPlanDelete();
     openPlan = p;
     selId = null;
     leftMode = 'cues';
@@ -528,6 +555,13 @@
           translation: payloadOf(selCue).translation || '',
         }
       : { reference: selCue.label, text: selSlides[0]?.text || '', translation: '' };
+
+  // What the preview may honestly claim. `plan.js` owns the verdict so the four
+  // situations it separates are testable without a component (CLAUDE.md rule 35):
+  // a media or countdown cue draws its own content at fire time; a scripture, song
+  // or notice cue with nothing to typeset is a cue that would put NOTHING in front
+  // of a congregation, which is different news and must not read the same.
+  $: pv = previewState(selCue, Boolean(previewContent?.text));
 </script>
 
 <!-- Escape closes the arrangement picker, from anywhere — bound at the window rather
@@ -622,9 +656,21 @@
           </div>
         </form>
       {:else}
-        <button class="r-btn primary sm" on:click={() => (showNew = true)}>＋ New Plan</button>
-        <button class="r-btn ghost sm" disabled={!openPlan} on:click={(e) => clonePlan(openPlan, e)}>Duplicate Plan</button>
-        <button class="r-btn ghost sm sp-raildel" disabled={!openPlan} on:click={(e) => removePlan(openPlan, e)}>Delete Plan</button>
+        <!-- ONE ROW, and the nouns are gone (prototype `.railfoot`: `+ New`,
+             `Duplicate`). The three buttons were stacked and each repeated the
+             word "Plan" under a pane already headed "Service plans" — three tall
+             rows saying the same noun three times, which is what pushed the plan
+             list itself up the rail. Delete stays, because this is the only route
+             to it, and it is now a two-step: the button says which state it is in
+             rather than deleting an evening's work on one press. -->
+        <div class="sp-railfoot">
+          <button class="r-btn primary sm" on:click={() => (showNew = true)}>＋ New</button>
+          <button class="r-btn ghost sm" disabled={!openPlan} on:click={(e) => clonePlan(openPlan, e)}>Duplicate</button>
+          <button class="r-btn ghost sm sp-raildel" class:arm={planDelArm === openPlan?.id}
+            disabled={!openPlan} on:click={(e) => removePlan(openPlan, e)}>
+            {planDelArm === openPlan?.id ? 'Click again' : 'Delete'}
+          </button>
+        </div>
       {/if}
     </div>
   </aside>
@@ -853,6 +899,43 @@
            window. The preview is the answer to the only question this panel is
            asked on a Tuesday: what does this put on the wall? -->
       <div class="rw-panebody pad sp-inspbody">
+        <!-- THE SLIDE IS THE FIRST THING IN THE PANEL (prototype, planner
+             inspector). It used to sit under the tab strip, so a panel whose whole
+             job is answering "what does this put on the wall?" opened on three
+             buttons. The tabs now choose what appears BELOW the answer rather than
+             standing in front of it, and nothing they carried was removed: the
+             slide list is where rule 39's stale-arrangement warning is read, and
+             the stage note is operator-only text that must keep a home. -->
+        {#if pv.plate}
+          <!-- The rendered slide, through the ONE renderer, over a chequered
+               plate. The plate is what makes a KEYED template visible here: the
+               `Lower Third` builtin is `background:transparent` with
+               `verseColor:#1c1224`, so on the preview's old near-black ground a
+               notice rendered as an empty frame under a caption promising this
+               was what the wall would show. See `.sp-preview` in the style block
+               for why the plate is unconditional whenever a slide IS rendered. -->
+          <div class="sp-preview">
+            <TemplateRender template={selTemplate ?? {}} content={previewContent} />
+          </div>
+          <p class="sp-fhelp">
+            Rendered by the same engine as the output screens, so this is what the
+            wall will show. The chequer is not part of the design — it is where
+            this template is transparent and a camera, or whatever is behind the
+            screen, shows through. Nothing here is on air.
+          </p>
+        {:else}
+          <!-- No slide to render, so no plate: the chequer is a statement ABOUT a
+               rendered slide, and an empty one read as a broken template. The WORDS
+               carry it, and they are not one sentence over four situations —
+               `previewState` separates a cue that draws its own content at fire
+               time from one that has no words saved and would put nothing in front
+               of a congregation (CLAUDE.md rule 35). -->
+          <div class="sp-noslide" class:warn={pv.state === 'empty' || pv.state === 'unknown'}>
+            <p class="sp-noslidemsg">{pv.message}</p>
+          </div>
+          <p class="sp-fhelp">Nothing here is on air.</p>
+        {/if}
+
         <div class="r-seg sp-insptabs sp-insptabs-top">
           <button class:on={inspTab === 'general'} on:click={() => (inspTab = 'general')}>General</button>
           <button class:on={inspTab === 'slides'} on:click={() => (inspTab = 'slides')}>Slides</button>
@@ -860,36 +943,6 @@
         </div>
 
         {#if inspTab === 'general'}
-          <!-- The rendered slide, through the ONE renderer, over a chequered
-               plate. The plate is what makes a KEYED template visible here: the
-               `Lower Third` builtin is `background:transparent` with
-               `verseColor:#1c1224`, so on the preview's old near-black ground a
-               notice rendered as an empty frame under a caption promising this
-               was what the wall would show. See `.sp-preview` in the style
-               block for why the plate is unconditional. -->
-          <div class="sp-preview">
-            {#if previewContent?.text}
-              <TemplateRender template={selTemplate ?? {}} content={previewContent} />
-            {:else}
-              <!-- A media or countdown cue has no text to typeset, so the renderer
-                   would draw an empty black box that reads as "broken template"
-                   rather than "nothing to show". Say which it is. -->
-              <div class="sp-nopreview r-mono">
-                {selCue.cue_type === 'media' ? 'Media plays full-frame' : 'No text to preview'}
-              </div>
-            {/if}
-          </div>
-          <p class="sp-fhelp">
-            {#if previewContent?.text}
-              Rendered by the same engine as the output screens, so this is what the
-              wall will show. The chequer is not part of the design — it is where
-              this template is transparent and a camera, or whatever is behind the
-              screen, shows through. Nothing here is on air.
-            {:else}
-              This cue renders its own content at fire time. Nothing here is on air.
-            {/if}
-          </p>
-
           <!-- LABEL is a VALUE, not an input, and that is deliberate rather than
                unfinished. A cue's label is written when the cue is built — from the
                reference, the song and its arrangement, the media filename, the
@@ -1079,8 +1132,11 @@
   .sp-railmeta, .sp-railcues{ font-family:var(--f-mono); font-size:var(--v-fs-cap); color:var(--v-faint);
     letter-spacing:.02em; }
 
+  /* One row of three, each taking an equal share (prototype `.railfoot`). */
+  .sp-railfoot{ display:flex; gap:6px; }
+  .sp-railfoot .r-btn{ flex:1 1 0; min-width:0; justify-content:center; }
   .sp-raildel{ color:var(--v-rose); }
-  .sp-raildel:hover:not(:disabled){ border-color:var(--v-rose); background:var(--v-rose-soft); }
+  .sp-raildel:hover:not(:disabled), .sp-raildel.arm{ border-color:var(--v-rose); background:var(--v-rose-soft); }
   .sp-newform{ display:flex; flex-direction:column; gap:6px; }
   .sp-newbtns{ display:flex; gap:6px; }
   .sp-newbtns .r-btn{ flex:1; }
@@ -1291,9 +1347,18 @@
   /* On the plate, not on the void: this note needs its own ground or it is grey
      text over a chequer. It is the one thing in the box that is Relay speaking
      rather than the template rendering. */
-  .sp-nopreview{ font-size:var(--v-fs-cap); color:var(--v-dim); letter-spacing:.04em;
-    padding:4px 10px; border-radius:var(--v-r-sm); background:var(--v-void);
-    border:1px solid var(--v-line2); }
+  /* A cue with no slide gets a SENTENCE, not an empty 16:9 plate. The plate is a
+     statement about a rendered slide (see `.sp-preview`), so drawing one with
+     nothing in it was the panel claiming a render it had not done. `.warn` is the
+     rose rule — a cue that would put nothing in front of a congregation is a
+     defect in the plan, and rose already means "this is wrong" everywhere else on
+     this desk. It is not a promise colour on the run surface: amber, cyan,
+     amethyst and grey are, and none of them is spent here. */
+  .sp-noslide{ padding:10px 12px; border-radius:var(--v-r-sm);
+    background:var(--v-surf2); border:1px solid var(--v-line2); }
+  .sp-noslide.warn{ border-color:var(--v-rose); background:var(--v-rose-soft); }
+  .sp-noslidemsg{ margin:0; font-size:var(--v-fs-b2); line-height:1.45; color:var(--v-dim); }
+  .sp-noslide.warn .sp-noslidemsg{ color:var(--v-txt); }
 
   .sp-actions{ display:flex; flex-wrap:wrap; gap:6px; }
   .sp-actions .r-btn{ flex:1 1 auto; justify-content:center; }
