@@ -34,11 +34,26 @@
   const dispatch = createEventDispatcher();
 </script>
 
-<div class="r-seg ds-strip" role="tablist" aria-label="Templates workspace desks">
+<!-- A GROUP OF BUTTONS. There are eight `.r-seg` instances in this repository:
+     five (Library's Layout segs) declare `role="group"`, two (Planner's tool
+     and inspector strips) declare no role at all, and this was the only one
+     declaring `role="tablist"` — the only one, in other words, making a role
+     claim it does not keep.
+
+     A tablist makes two promises this strip does not keep: that Left/Right
+     arrows move between the tabs, and that each tab reveals a `tabpanel`.
+     Neither is true — arrows do nothing here, and a desk change re-renders the
+     whole workspace rather than swapping a panel. A keyboard operator told
+     "tab 1 of 2" and then given no arrow keys is worse off than one told
+     nothing, which is the shape of CLAUDE.md rule 35 in an ARIA costume.
+
+     `role="group"` follows the five that state one; `aria-pressed` carries
+     which desk is showing, which is more than any of the other seven expose.
+     `.r-seg` styles on `.on`, so nothing moves visually. -->
+<div class="r-seg ds-strip" role="group" aria-label="Templates workspace desks">
   {#each DESKS as d (d.key)}
     <button
-      role="tab"
-      aria-selected={desk === d.key}
+      aria-pressed={desk === d.key}
       class:on={desk === d.key}
       on:click={() => desk !== d.key && dispatch('desk', { desk: d.key })}>{d.label}</button>
   {/each}

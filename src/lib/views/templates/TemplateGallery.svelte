@@ -12,7 +12,7 @@
   import EmptyState from '../../ui/EmptyState.svelte';
   import Loading from '../../ui/Loading.svelte';
   import ErrorState from '../../ui/ErrorState.svelte';
-  import { templateKind, kindsPresent, KIND_META } from '../../templateKind.js';
+  import { templateKind, kindsPresent, KIND_META, KIND_ORDER } from '../../templateKind.js';
   import { STARTERS, isLayered, regionsToLayers, CONTENT_KINDS, layerLabel, isKeyedTemplate } from '../../layers.js';
   // THE ONE CAMERA PLATE, shared with Outputs (`ui/CameraPlate.svelte`). A KEYED
   // template — a lower third — paints a band and leaves the rest transparent,
@@ -56,6 +56,14 @@
     try {
       selId = await importTemplateFromFile(file);
       await loadTemplates();
+      // SHOW WHAT WAS JUST IMPORTED. An imported file is a template of a kind
+      // nobody here chose, so with a kind filter or a search active it lands
+      // outside the grid: the inspector quietly switches to a template the
+      // operator cannot see, and a successful import is indistinguishable from
+      // one that did nothing. The rail's own look rows already clear the filter
+      // before selecting, for this reason.
+      filter = 'all';
+      q = '';
     } catch (ex) {
       err = humanError(ex);
     }
@@ -143,22 +151,70 @@
     window.removeEventListener('resize', closeMenu);
   });
 
-  $: kinds = kindsPresent($templates);
+  // THE RAIL'S ROWS — the kinds that occur, plus the one being filtered to even
+  // after its last template goes.
+  //
+  // Delete the only Media template while the Media row is selected and
+  // `kindsPresent` stops returning it, so the row vanishes, NOTHING in the rail
+  // is lit, and the grid says "No template matches this filter" about a filter
+  // the operator can no longer see. The way out (All templates) is right there
+  // and looks like the state you are already in. Rendered at zero the rail and
+  // that sentence agree, and the row stays pressable so it can be pressed off.
+  // It is never invented for a kind nobody chose — only for the active filter.
+  $: kinds = railKinds($templates, filter);
+  function railKinds(list, active) {
+    const present = kindsPresent(list);
+    if (active === 'all' || !KIND_META[active] || present.some((k) => k.key === active)) return present;
+    const row = { key: active, count: 0, ...KIND_META[active] };
+    // Back into its own place in the display order, not appended — a row that
+    // jumps to the end as it empties reads as a different row.
+    const at = KIND_ORDER.indexOf(active);
+    const i = present.findIndex((k) => KIND_ORDER.indexOf(k.key) > at);
+    return i === -1 ? [...present, row] : [...present.slice(0, i), row, ...present.slice(i)];
+  }
+  // SORT AND THE DEFAULT ARE PASSED IN, NOT READ FROM SCOPE — and that is the
+  // whole of a bug, not a style preference.
+  //
+  // Svelte collects a reactive block's dependencies SYNTACTICALLY, from the
+  // expression it is given. `sortList` read `sort` and `$defaultTemplateId` out
+  // of component scope, inside its own body, where the compiler does not look —
+  // so `shown` depended on `$templates`, `filter` and `q`, and on nothing else.
+  // Changing the Sort dropdown recomputed nothing: the handler ran, `sort`
+  // updated, and the grid kept the order it already had until some unrelated
+  // edit to the search box or the list happened to invalidate `shown`, at which
+  // point the order the operator asked for minutes ago finally arrived. The
+  // star had the same defect in its second half — making a template the default
+  // did not float it to the top until the next keystroke somewhere else.
+  //
+  // `qa-inventory` could not see either one: both controls have a handler and
+  // an accessible name, and both handlers run. Passing the two values as
+  // arguments puts them in the expression, which is where the dependency is
+  // read from.
   $: shown = sortList(
     $templates
       .filter((t) => filter === 'all' || templateKind(t) === filter)
       .filter((t) => !q.trim() || t.name.toLowerCase().includes(q.trim().toLowerCase())),
+    sort,
+    $defaultTemplateId,
   );
   $: sel = $templates.find((t) => t.id === selId) || null;
 
-  function sortList(list) {
+  function sortList(list, mode, defaultId) {
     const a = [...list];
-    if (sort === 'name') a.sort((x, y) => x.name.localeCompare(y.name));
-    else if (sort === 'kind') a.sort((x, y) => templateKind(x).localeCompare(templateKind(y)) || x.name.localeCompare(y.name));
+    if (mode === 'name') a.sort((x, y) => x.name.localeCompare(y.name));
+    // BY THE RAIL'S OWN ORDER, not alphabetically by the internal key. The rail
+    // lists Scripture first because that is what a church reaches for; sorting
+    // the grid by `templateKind(x).localeCompare(...)` put Announcement first
+    // and Scripture fifth, so the two halves of one surface grouped the same
+    // register two different ways. `KIND_ORDER` is the one display order and
+    // both now read it. (It happened to agree with the labels today only
+    // because every key is the lowercase of its own label's first word — a key
+    // that stops matching its label would have split them silently.)
+    else if (mode === 'kind') a.sort((x, y) => KIND_ORDER.indexOf(templateKind(x)) - KIND_ORDER.indexOf(templateKind(y)) || x.name.localeCompare(y.name));
     // The DEFAULT template floats to the top — it is the fallback look every slide
     // wears, so it is what the operator reaches for first. A stable sort keeps the
     // chosen order within each group.
-    a.sort((x, y) => (y.id === $defaultTemplateId ? 1 : 0) - (x.id === $defaultTemplateId ? 1 : 0));
+    a.sort((x, y) => (y.id === defaultId ? 1 : 0) - (x.id === defaultId ? 1 : 0));
     return a;
   }
 
@@ -328,7 +384,11 @@
     <input type="file" accept=".json,application/json" bind:this={fileInput} on:change={onImportFile} style="display:none" />
     <button class="r-btn ghost sm" on:click|stopPropagation={() => fileInput.click()}>Import</button>
     <span class="tg-newwrap">
-      <button class="r-btn primary sm" on:click|stopPropagation={() => (newOpen = !newOpen)} disabled={!$capture.available}>＋ New template</button>
+      <!-- It OPENS A MENU rather than creating anything, and until it said so
+           the only way to learn that was to press it. Same pair the card's
+           kebab carries, for the same reason. -->
+      <button class="r-btn primary sm" aria-haspopup="menu" aria-expanded={newOpen}
+        on:click|stopPropagation={() => (newOpen = !newOpen)} disabled={!$capture.available}>＋ New template</button>
       {#if newOpen}
         <!-- The click handler is not an interaction: it stops the document-level
              outside-click closer from seeing a click on the menu itself. Every real
@@ -468,13 +528,26 @@
                   <!-- Star = THE default template (the fallback look every slide
                        wears). One default, not a set of four; steel blue when set.
                        Not amber — amber means live on the wall, this only marks a fallback. -->
+                  <!-- NAMED FOR THIS CARD. Every star on the grid used to be
+                       called "Toggle default template" and every kebab "More
+                       actions", so a screen-reader operator scanning twelve
+                       cards heard the same two names twenty-four times and
+                       could not tell which template they were about to change.
+                       `qa-inventory` reported 0 unnamed controls and was right
+                       — a name that does not identify its object is still a
+                       name. The visible title already said which; only the
+                       accessible name did not. -->
                   <button class="tg-star" class:on={t.id === $defaultTemplateId}
                     title={t.id === $defaultTemplateId ? 'Default template — click to clear' : 'Make this the default template'}
-                    aria-label="Toggle default template" on:click|stopPropagation={() => makeDefault(t)}
+                    aria-pressed={t.id === $defaultTemplateId}
+                    aria-label={t.id === $defaultTemplateId ? `${t.name} — default template, press to clear` : `Make ${t.name} the default template`}
+                    on:click|stopPropagation={() => makeDefault(t)}
                     disabled={!$capture.available}>
                     <svg viewBox="0 0 24 24" width="13" height="13" fill={t.id === $defaultTemplateId ? 'currentColor' : 'none'} stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="m12 3 2.6 5.3 5.9.9-4.3 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8-4.3-4.1 5.9-.9L12 3Z"/></svg>
                   </button>
-                  <button class="tg-more" aria-label="More actions" on:click|stopPropagation={(e) => openMenu(e, t)}>
+                  <button class="tg-more" aria-label="More actions for {t.name}"
+                    aria-haspopup="menu" aria-expanded={menuFor === t.id}
+                    on:click|stopPropagation={(e) => openMenu(e, t)}>
                     <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="12" cy="19" r="1.6"/></svg>
                   </button>
                   </div>
@@ -596,9 +669,17 @@
              the reason and its cost are recorded in DECISIONS §80. -->
         <div class="r-lbl tg-flbl">Objects</div>
         {#if selLayers.length}
-          <div class="tg-objtabs" role="list">
+          <!-- A GROUP OF BUTTONS, not a list. These carried `role="list"` and
+               `role="listitem"`, and an explicit role REPLACES the implicit one:
+               a screen reader announced nine list items where an operator has
+               nine things they can press. They are controls — a press opens that
+               object in the editor — so the button role is the one that must
+               survive. Not `role="tab"` either (the editor's strip is a tabset
+               because its tabs switch a panel in place; a press here LEAVES the
+               surface), so the group is named and the buttons are buttons. -->
+          <div class="tg-objtabs" role="group" aria-label="Objects on this slide">
             {#each selLayers as L (L.id)}
-              <button class="tg-objtab" class:off={L.visible === false} role="listitem"
+              <button class="tg-objtab" class:off={L.visible === false}
                 title="Edit {layerLabel(L)}"
                 on:click={() => dispatch('edit', { id: sel.id, layerId: L.id })}>{layerLabel(L)}</button>
             {/each}
