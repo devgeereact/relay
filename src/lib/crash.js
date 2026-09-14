@@ -62,7 +62,7 @@ function render(message) {
   el.style.cssText = `
     position:fixed; inset:0; z-index:99999;
     display:flex; align-items:center; justify-content:center;
-    background:#0a0a0a; color:#f2f2f2;
+    background:#131418; color:#e8eaee;
     font-family:Inter, system-ui, -apple-system, sans-serif;
     padding:24px; overflow:auto;
   `;
@@ -70,16 +70,20 @@ function render(message) {
   const card = document.createElement('div');
   card.style.cssText = `
     max-width:620px; width:100%;
-    background:#1b1b1b; border:1px solid rgba(255,255,255,.13);
-    border-radius:14px; padding:32px;
+    background:#212429; border:1px solid rgba(255,255,255,.13);
+    border-radius:5px; padding:32px;
   `;
 
-  // Rose is used ONLY for the small error mark. The panel itself stays calm —
-  // this screen exists to lower the operator's heart rate, not raise it.
+  // Red is used ONLY for the small error mark. The panel itself stays calm —
+  // this screen exists to lower the operator's heart rate, not raise it. The
+  // recover button is the SELECTION colour, not amber: amber means a
+  // congregation is looking at something, and a button on a crash screen is not
+  // that (CLAUDE.md rule 18). These hexes are literals because this screen must
+  // render when everything else has failed; keep them in step with app.css.
   card.innerHTML = `
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:20px;">
-      <span style="width:9px;height:9px;border-radius:50%;background:#ef4444;flex:none;"></span>
-      <span style="font-size:12px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:#ef4444;">
+      <span style="width:9px;height:9px;border-radius:50%;background:#f4515b;flex:none;"></span>
+      <span style="font-size:12px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:#f4515b;">
         Console error
       </span>
     </div>
@@ -88,42 +92,42 @@ function render(message) {
       The console stopped responding.
     </h1>
 
-    <p style="margin:0 0 22px;font-size:17px;line-height:1.55;color:#f2f2f2;">
-      <strong style="color:#22c55e;">Your output screens are still live.</strong>
+    <p style="margin:0 0 22px;font-size:17px;line-height:1.55;color:#e8eaee;">
+      <strong style="color:#3fcf6a;">Your output screens are still live.</strong>
       The congregation sees no interruption — the projector, the stage monitor and
       any streaming feeds are separate windows and are still showing whatever you
       last put up.
     </p>
 
-    <p style="margin:0 0 24px;font-size:14px;line-height:1.6;color:#b3b3b3;">
+    <p style="margin:0 0 24px;font-size:14px;line-height:1.6;color:#a9b0bc;">
       Recovering reloads only this control panel. It will not blank the screens.
-      ${resume ? `You'll come back to <span style="font-family:'JetBrains Mono',ui-monospace,monospace;color:#f2f2f2;">${resume}</span>.` : ''}
+      ${resume ? `You'll come back to <span style="font-family:'IBM Plex Mono',ui-monospace,monospace;color:#e8eaee;">${resume}</span>.` : ''}
     </p>
 
     <div style="display:flex;gap:10px;flex-wrap:wrap;">
       <button id="relay-crash-recover" style="
-        background:#ffb000;color:#241a00;border:0;border-radius:8px;
+        background:#2e6fd4;color:#ffffff;border:0;border-radius:3px;
         padding:11px 20px;font-size:14px;font-weight:600;cursor:pointer;
         font-family:inherit;">
         Recover console
       </button>
       <button id="relay-crash-dismiss" style="
-        background:transparent;color:#b3b3b3;border:1px solid rgba(255,255,255,.13);
-        border-radius:8px;padding:11px 20px;font-size:14px;font-weight:500;
+        background:transparent;color:#a9b0bc;border:1px solid rgba(255,255,255,.13);
+        border-radius:3px;padding:11px 20px;font-size:14px;font-weight:500;
         cursor:pointer;font-family:inherit;">
         Dismiss and keep working
       </button>
     </div>
 
     <details style="margin-top:24px;">
-      <summary style="cursor:pointer;font-size:12px;color:#8a8a8a;">
+      <summary style="cursor:pointer;font-size:12px;color:#8c94a1;">
         Technical detail (for a bug report)
       </summary>
       <pre style="
-        margin:10px 0 0;padding:12px;background:#141414;
-        border:1px solid rgba(255,255,255,.075);border-radius:8px;
-        font-family:'JetBrains Mono',ui-monospace,monospace;font-size:11px;
-        line-height:1.5;color:#b3b3b3;white-space:pre-wrap;word-break:break-word;
+        margin:10px 0 0;padding:12px;background:#1a1c21;
+        border:1px solid rgba(255,255,255,.075);border-radius:3px;
+        font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:11px;
+        line-height:1.5;color:#a9b0bc;white-space:pre-wrap;word-break:break-word;
         max-height:220px;overflow:auto;"></pre>
     </details>
   `;

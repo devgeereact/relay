@@ -35,7 +35,11 @@ pub fn list_output_channels(conn: &Connection) -> rusqlite::Result<Vec<OutputCha
 }
 
 /// Assign a template to a channel (the "make outputs assignable" control).
-pub fn set_channel_template(conn: &Connection, id: i64, template_id: i64) -> rusqlite::Result<()> {
+pub fn set_channel_template(
+    conn: &Connection,
+    id: i64,
+    template_id: Option<i64>,
+) -> rusqlite::Result<()> {
     conn.execute(
         "UPDATE output_channels SET template_id = ?1 WHERE id = ?2",
         (template_id, id),

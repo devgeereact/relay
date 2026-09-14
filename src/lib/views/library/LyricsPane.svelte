@@ -19,7 +19,7 @@
   //    sends the TEXT of the slide at the moment it is fired, so edits reach the
   //    screen only when the operator fires again — and while something of this
   //    song is live, the editor says so out loud.
-  import { onMount } from 'svelte';
+  import { onDestroy, onMount } from 'svelte';
   import VerseDeck from './VerseDeck.svelte';
   import Arrangements from './Arrangements.svelte';
   import EmptyState from '../../ui/EmptyState.svelte';
@@ -28,6 +28,8 @@
   import { humanError } from '../../errors.js';
   import { safeMode } from '../../boot/boot.js';
   import { parseLyrics, toText, reflow } from '../../reflow.js';
+  import { assignKeys, resolveKeystroke } from '../../sectionkeys.js';
+  import { registerContext } from '../../shortcuts.js';
   import { session } from '../../session.js';
   import {
     listSongs,
@@ -70,7 +72,6 @@
   let firing = '';
   let armedDelete = false;
   let armedT;
-  let checked = new Set();
   let layout = 'grid';
 
   // THE PROJECTION RULE. It decides what a congregation reads, so it survives a
@@ -87,7 +88,32 @@
   // belongs — not on the run surface.
   $: linesPerSlide = Number($session.lyricLines) > 0 ? Number($session.lyricLines) : 4;
 
+  // ── SECTION KEYS (REBRAND §10) ────────────────────────────────────────────
+  //
+  // Registered SYNCHRONOUSLY, before the first `await` below. `registerContext`
+  // is one global slot and last-writer-wins: registering after an await means a
+  // fast tab switch can leave this pane's handlers installed over somebody
+  // else's surface, and the operator then presses a letter on Live and fires a
+  // song they cannot see.
+  let unregisterKeys = () => {};
+  /** What has been typed so far towards a key — `v` waiting for its `2`. */
+  let keyBuffer = '';
+  let keyBufferT;
+
+  function onSectionKey(char) {
+    const r = resolveKeystroke(keyBuffer, char, keySet);
+    keyBuffer = r.buffer;
+    clearTimeout(keyBufferT);
+    // A half-typed key that is never completed must not lie in wait for the
+    // next unrelated keystroke a minute later.
+    if (keyBuffer) keyBufferT = setTimeout(() => (keyBuffer = ''), 1400);
+    if (!r.fire) return;
+    const slide = slides.find((s) => s.hotkey === r.fire);
+    if (slide) fire(slide);
+  }
+
   onMount(async () => {
+    unregisterKeys = registerContext({ sectionKey: onSectionKey });
     try {
       const [list, tpls, ct] = await Promise.all([
         listSongs(),
@@ -105,6 +131,11 @@
       error = humanError(e);
     }
     loading = false;
+  });
+
+  onDestroy(() => {
+    clearTimeout(keyBufferT);
+    unregisterKeys();
   });
 
   let lastQuery = null;
@@ -199,6 +230,11 @@
   // ── Derived ───────────────────────────────────────────────────────────────
   $: dirty = text !== saved;
   $: sections = parseLyrics(text);
+  // THE KEYS. Derived from the section list, per song, on every keystroke — so
+  // the letter printed on a slide is the letter that fires it, always.
+  $: keys = assignKeys(sections);
+  $: keySet = new Set(keys.map((k) => k.key).filter(Boolean));
+  $: keyProblems = [...new Set(keys.map((k) => k.problem).filter(Boolean))];
   // THE DECK. Recomputed from the text on every keystroke, so what the editor
   // shows and what the operator will fire cannot drift apart.
   $: deck = reflow(sections, { linesPerSlide });
@@ -211,6 +247,10 @@
     label: s.label,
     text: s.lyrics,
     translation: null,
+    // THE KEY GOES ON THE FIRST PART ONLY. A section that reflowed into three
+    // slides has one key, and it sends the section — so printing it on all three
+    // would be three claims about one keystroke. `part` is 1-based.
+    hotkey: s.part === 1 ? (keys[s.section]?.key ?? null) : null,
     // A lyric slide projects the LYRIC. The congregation is not singing the title.
     hideReference: true,
   }));
@@ -226,11 +266,6 @@
     } else {
       onQueueChange([...queue, { reference: item.reference, text: item.text }]);
     }
-  }
-  function toggleCheck(item) {
-    const next = new Set(checked);
-    next.has(item.reference) ? next.delete(item.reference) : next.add(item.reference);
-    checked = next;
   }
 
   // ── Deck edits are REAL edits here ────────────────────────────────────────
@@ -388,6 +423,21 @@
               A blank line starts a new section. <code>[Chorus]</code>, <code>Chorus</code> or
               <code>V2</code> on its own line names one. The deck on the right rebuilds as you type.
             </p>
+            <p class="ly-help">
+              Each section gets a <b>key</b> — press it to put that section on the screens. It is
+              printed on the slide. <code>[Bridge:g]</code> asks for a particular letter; a letter
+              Relay already uses (<code>Esc</code>, <code>B</code>, <code>A</code>, <code>D</code>,
+              <code>?</code>, <code>/</code>) is never handed out, so a Bridge is on
+              <code>r</code>, not <code>b</code>.
+            </p>
+            {#if keyProblems.length}
+              <!-- Said out loud rather than swallowed: a key that quietly moved,
+                   or a section with no key at all, is exactly the thing an
+                   operator finds out about mid-service otherwise. -->
+              <ul class="ly-keynote" role="status" aria-live="polite">
+                {#each keyProblems as p}<li>{p}</li>{/each}
+              </ul>
+            {/if}
             <div class="ly-editacts">
               <button class="r-btn ghost sm" disabled={!dirty} on:click={revert}>Revert</button>
               <span class="ly-spring"></span>
@@ -422,13 +472,11 @@
               {template}
               liveRef={$live?.reference ?? null}
               rehearsing={$rehearsing}
-              {checked}
               {queuedRefs}
               busyRef={firing}
               {layout}
               showStar={false}
-              can={{ queue: true, favourite: false, edit: true, duplicate: true, add: true, move: true }}
-              onCheck={toggleCheck}
+              can={{ queue: true, favourite: false, edit: true, duplicate: true, add: true, move: true, select: false }}
               onFire={fire}
               onQueue={toggleQueue}
               onEdit={editSlide}
@@ -615,6 +663,13 @@
     padding: 1px 4px;
     border-radius: var(--v-r-sm);
     background: var(--v-surf2);
+    color: var(--v-dim);
+  }
+  .ly-keynote {
+    margin: 0;
+    padding: 0 0 0 15px;
+    font-size: var(--v-fs-cap);
+    line-height: 1.55;
     color: var(--v-dim);
   }
   .ly-editacts {

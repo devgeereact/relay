@@ -84,12 +84,18 @@ it('R6-3: every kiosk client has a DECISION about every kind the hub publishes',
       template: true,
       themes: true,
       stage_next: false, // monitor-only field; no congregation template renders it
+      // A WORD TO THE PREACHER is for the platform, not the room. This `false` is
+      // the guarantee in docs/REBRAND.md §5 — "it exists inside the stage renderer,
+      // so no congregation screen can show it" — held as a test rather than as a
+      // sentence about where the code happens to live.
+      stage_alert: false,
     },
     'src/Stage.svelte': {
       content: true,
       clear: true,
       black: true, // WAS false, and that was the finding — see the note above
       stage_next: true,
+      stage_alert: true, // the whole point of the message
       channel_template: false, // the stage page has one fixed look
       template: false,
       themes: false,

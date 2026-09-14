@@ -18,6 +18,8 @@
 // no DB can still resolve a theme id. Custom themes are persisted by the desktop
 // app as a JSON blob in the settings KV (see capture.js: loadThemes/saveTheme).
 
+import { resolveStyle } from './templatemodel.js';
+
 /**
  * The style keys a THEME is allowed to own. Everything else in a template's
  * style (per-region overrides, background image, panel, etc.) is a template
@@ -40,6 +42,10 @@ export const THEME_STYLE_KEYS = [
   'verseColor',
   'refColor',
   'background',
+  // The TREATMENT applied to that background — solid, vertical fade, centre
+  // glow, diagonal, vignette (templatemodel.js: BG_STYLES). Without this key a
+  // theme could offer the choice and the wall would never receive it.
+  'bgStyle',
   // effect + rhythm
   'verseShadow',
   'refShadow',
@@ -284,7 +290,14 @@ const TOKEN_RESOLVERS = {
   'theme:reference': (s) => s.refColor ?? s.accent ?? '#ffb000',
   'theme:accent': (s) => s.accent ?? '#ffb000',
   'theme:background': (s) => s.background ?? 'transparent',
-  'theme:font': (s) => s.font ?? 'var(--f-serif)',
+  // THROUGH THE MODEL. This read `s.font`, the whole-template key `migrateStyle`
+  // moves onto the elements and deletes (docs/REBRAND.md §3.1) — so on a migrated
+  // template with no theme behind it, every layer bound to `theme:font` (which is
+  // every text layer in the stage, confidence and countdown starters) resolved to
+  // the serif default instead of the typeface the template actually carries.
+  // `resolveStyle` migrates on the way through and owns the default, so there is
+  // one home for the answer whether the style reaching it is old or new.
+  'theme:font': (s) => resolveStyle(s).verseFont,
 };
 
 /** Is `v` a recognised theme token? */

@@ -14,7 +14,11 @@
   // with a transparent background (e.g. the lower third) lets an OBS/ATEM camera
   // source show through.
   const params = new URLSearchParams(location.search);
-  const templateId = parseInt(params.get('template_id') || '1', 10);
+  // NO `template_id` MEANS THE SCREEN HAS NO LOOK OF ITS OWN and follows the
+  // content look (DECISIONS §70). Defaulting to 1 here made a follower's browser
+  // source wear built-in 1 until a `channel_template` message arrived.
+  const templateIdParam = params.get('template_id');
+  const templateId = templateIdParam == null ? null : parseInt(templateIdParam, 10) || null;
   // The CHANNEL this output belongs to (0 = a raw template preview with no
   // channel). When the operator changes this screen's template, a channel-retemplate
   // broadcast arrives; this output swaps to the new template if the channel matches
@@ -40,7 +44,11 @@
   // `template_pinned` marks an override the operator DELIBERATELY chose for this
   // cue (a Planner item's own template) — it overrides the screen. A content-type
   // DEFAULT is not pinned and defers to the screen's own template.
-  $: activeTemplate = resolveOutputTemplate(t, override, !!content?.template_pinned);
+  // DEFAULT_TEMPLATE is the floor: a screen that follows the content look, when
+  // no content look is set either, still has to paint something legible rather
+  // than nothing at all.
+  $: activeTemplate =
+    resolveOutputTemplate(t, override, !!content?.template_pinned) || DEFAULT_TEMPLATE;
   // THE THEME LAYER. If the resolved template pins a theme (style.themeRef), fill
   // its unset style keys from that theme — the same merge the editor previews, so
   // the wall matches the editor. Custom themes are fetched on desktop (below);
@@ -80,8 +88,14 @@
   }
   async function loadTemplate() {
     const call = await invoke();
+    // A screen with NO template of its own follows the content look, so `null`
+    // here is an answer rather than a missing one (DECISIONS §70).
+    if (templateId == null) {
+      t = null;
+      return;
+    }
     const tpl = await call('get_template', { id: templateId });
-    if (tpl) t = tpl;
+    t = tpl ?? null;
   }
   // Desktop only — the operator's custom themes, so a template pinning one wears
   // it on the real wall. Guarded: a missing command / corrupt blob leaves the
@@ -147,7 +161,10 @@
     } else if (m.kind === 'channel_template') {
       // This screen's assigned template was changed. Filter by our channel (the
       // hub broadcasts to all; each client applies only its own) — live, no re-copy.
-      if (channelId && m.channel === channelId && m.template) t = m.template;
+      // `template: null` is the operator setting this screen to follow the content
+      // look. Ignoring a null (which `if (m.template)` did) leaves an open screen
+      // wearing the look it was given until something reloads it.
+      if (channelId && m.channel === channelId && 'template' in m) t = m.template ?? null;
     } else if (m.kind === 'template' && m.template) {
       // The REAL saved template (with the operator's edits) — this is what makes
       // OBS/kiosk match the console preview exactly, and updates live on save.
@@ -191,7 +208,9 @@
     }
   }
   function startKiosk() {
-    t = builtinById(templateId);
+    // A kiosk client has no database, so it resolves its id against the bundled
+    // built-ins — and a follower resolves to nothing, deliberately.
+    t = templateId == null ? null : builtinById(templateId);
     connectKiosk(location.hostname || 'localhost');
   }
 
@@ -227,8 +246,11 @@
         await listen('channel://retemplate', (e) => {
           // This screen's assigned template was CHANGED (not edited). Swap to the
           // new one live if it is our channel — no reload, no URL change.
-          if (channelId && e.payload?.channel === channelId && e.payload?.template) {
-            t = e.payload.template;
+          // `template: null` means the operator set this screen to FOLLOW the
+          // content look, which is news the screen has to act on — testing the
+          // template for truthiness would drop it silently (DECISIONS §70).
+          if (channelId && e.payload?.channel === channelId && 'template' in (e.payload ?? {})) {
+            t = e.payload.template ?? null;
           }
         }),
       );

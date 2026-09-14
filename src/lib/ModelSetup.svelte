@@ -303,7 +303,7 @@
   }
   .ms-err {
     margin-top: 10px; padding: 8px 10px; border-radius: 8px;
-    background: rgba(239,68,68, 0.18); border: 1px solid rgba(239,68,68, 0.3);
+    background: var(--v-red-soft); border: 1px solid var(--v-red-line);
     color: var(--v-red); font-size: 12px; line-height: 1.55;
     display: flex; align-items: center; gap: 10px;
   }

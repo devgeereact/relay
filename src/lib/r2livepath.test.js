@@ -517,3 +517,35 @@ describe('R2-J · the shell renders outside the boot guards', () => {
     expect(finish).not.toContain('liveCue');
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// R2-H · A CALLER MAY NOT SUPPRESS A LABEL THAT THE BACKEND ALREADY SUPPRESSES
+//
+// `fire_content` is the one place that decides a song's label does not reach the
+// glass (CLAUDE.md rule 36, and `a_lyric_slide_projects_the_lyric_and_not_the_
+// song_title` holds it). Live implemented the same rule a second time by passing
+// an EMPTY STRING as the label for a song cue — so the wall was right, and the
+// service record had nothing to say about which song had been on screen. The
+// Library's own fire passed the label all along, which is the tell: two surfaces
+// disagreeing about a rule only one of them should own.
+//
+// This is a source assertion on purpose. What it holds is not a behaviour of one
+// component but a boundary — "the caller says what it fired; the backend decides
+// what is shown" — and the way that boundary breaks is a caller helpfully
+// blanking an argument.
+describe('R2-H · the label goes to the record, not to the glass', () => {
+  it('no view fires content with a deliberately empty label', () => {
+    const offenders = [];
+    for (const f of ['./views/Live.svelte', './views/library/LyricsPane.svelte', './views/library/Announcements.svelte']) {
+      const src = read(f);
+      // `fireContent('' , …)` or `fireContent("", …)` — a label blanked at the
+      // call site is the rule being implemented twice.
+      if (/fireContent\(\s*['"]{2}\s*,/.test(src)) offenders.push(f);
+    }
+    expect(
+      offenders,
+      'these suppress the label themselves; `fire_content` already does, and doing it here ' +
+        'costs the service record the name of what was fired',
+    ).toEqual([]);
+  });
+});

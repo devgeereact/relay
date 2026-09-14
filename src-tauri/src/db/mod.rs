@@ -1582,6 +1582,71 @@ mod tests {
         assert!(!list_arrangements(&conn, id).unwrap()[0].stale);
     }
 
+    /// W2 · GIVING A SECTION ITS OWN KEY IS A STRUCTURAL EDIT, AND IS FLAGGED
+    ///
+    /// `docs/REBRAND.md` §10 lets an operator name a section's fire key in the
+    /// reflow editor — `[Bridge:g]` — and that key rides in `tag`, because `tag`
+    /// is the only per-section field `song_sections` has that survives a save.
+    ///
+    /// `built_shape` is `[[tag, label], …]`, so a key change moves the shape.
+    /// That is the RIGHT answer and this test exists to prove it is the one that
+    /// happens: rule 39 says Relay flags an arrangement whose ground moved rather
+    /// than guessing, and a new way to change a section had to be checked against
+    /// that rather than assumed to be covered by it. The words did not change, so
+    /// the arrangement still plays the right lyrics — but a person should look.
+    #[test]
+    fn giving_a_section_its_own_fire_key_flags_the_arrangement_rather_than_repointing_it() {
+        use crate::songs::ParsedSection;
+        let conn = fresh_db();
+        ensure_songs(&conn).unwrap();
+        let sec = |t: &str, l: &str, w: &str| ParsedSection {
+            tag: t.into(),
+            label: l.into(),
+            lyrics: w.into(),
+        };
+        let id = import_song(
+            &conn,
+            "Great Are You Lord",
+            "",
+            "",
+            "",
+            None,
+            "d",
+            &[
+                sec("V1", "Verse 1", "one"),
+                sec("B", "Bridge", "bridge"),
+                sec("C", "Chorus", "chorus"),
+            ],
+        )
+        .unwrap();
+        save_arrangement(&conn, id, None, "Live", &[0, 2, 1, 2]).unwrap();
+        assert!(!list_arrangements(&conn, id).unwrap()[0].stale);
+
+        // `[Bridge:g]` — the same label, the same words, a different key.
+        update_song(
+            &conn,
+            id,
+            "Great Are You Lord",
+            "",
+            "",
+            "",
+            None,
+            &[
+                sec("V1", "Verse 1", "one"),
+                sec("G", "Bridge", "bridge"),
+                sec("C", "Chorus", "chorus"),
+            ],
+        )
+        .unwrap();
+        let arr = &list_arrangements(&conn, id).unwrap()[0];
+        assert!(arr.stale, "the section list this was built against changed");
+        assert_eq!(
+            arr.sequence,
+            vec![0, 2, 1, 2],
+            "what the operator chose is kept — Relay flags it, it does not re-point it"
+        );
+    }
+
     /// An arrangement written before `built_shape` existed carries no record of
     /// what it was built against. Reporting it stale would be a claim from an
     /// absence — the same lie in the other direction.

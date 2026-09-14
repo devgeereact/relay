@@ -315,11 +315,11 @@
   {#if !books.length && $readErrors.listBooks}
     <!-- RG-95. An empty book list is either a corpus that is not installed or a
          database that did not answer, and only one of those is fixed in Settings →
-         data health. Sending an operator to the wrong screen costs the minutes
+         Diagnostics. Sending an operator to the wrong screen costs the minutes
          before a service. -->
     <ErrorState error={$readErrors.listBooks} />
   {:else if !books.length}
-    <EmptyState message="No scripture is loaded. Check Settings → data health." />
+    <EmptyState message="No scripture is loaded. Check Settings → Diagnostics." />
   {:else}
     <div class="br-grid">
       <!-- BOOKS. Canonical order, from the backend — never alphabetical. A Bible

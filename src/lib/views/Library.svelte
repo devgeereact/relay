@@ -40,30 +40,63 @@
   import MediaLibrary from './library/MediaLibrary.svelte';
   import Announcements from './library/Announcements.svelte';
   import ImportReview from './library/ImportReview.svelte';
+  import Collections from './library/Collections.svelte';
+  import { COLLECTIONS, collectionOf } from './library/collections.js';
   import {
     capture,
     parseImport,
     importMedia,
     fileToBase64,
+    listSavedScripture,
+    listSongs,
+    listAnnouncements,
+    listMedia,
   } from '../stores/capture.js';
 
-  const tabs = [
-    // BROWSE is first: the Library could search, and could list what had been
-    // saved, but could not open a Bible and read it — which is the thing the
-    // word "library" promises.
-    { key: 'browse', label: 'Bible' },
-    { key: 'scripture', label: 'Saved' },
-    { key: 'lyrics', label: 'Lyrics' },
-    { key: 'media', label: 'Media' },
-    { key: 'announcements', label: 'Announcements' },
-    // GRAPHICS is the reference's sixth pill. It is not a new store: it is the
-    // image half of Media. ProPresenter draws the same line — a still you put
-    // BEHIND words is a different job from a video you play, and mixing them
-    // means hunting past twenty MP4s for a logo. Both read the same table, so
-    // nothing is duplicated and nothing is invented.
-    { key: 'graphics', label: 'Graphics' },
-  ];
+  // ── THE COLLECTION RAIL (REBRAND §10) ─────────────────────────────────────
+  //
+  // The six pills became four collections, because four is what the content
+  // actually is: two of the pills were halves of one kind (a Bible you read and
+  // the verses you saved; the moving half of media and the still half). The
+  // register lives in `library/collections.js` so the bar and this shell cannot
+  // disagree about what a collection contains.
+  //
+  // `active` is still the VIEW key, and it is still the single source of truth
+  // for which pane renders — every existing prop, binding and test on the panes
+  // is untouched by the row above them.
   let active = 'browse';
+  $: openCollection = collectionOf(active) ?? COLLECTIONS[0];
+  // Which view each collection was last left on, so coming back to Scripture
+  // returns you to the Bible or to Saved — whichever you were reading.
+  const lastView = {};
+  $: lastView[openCollection.key] = active;
+
+  function goCollection(key) {
+    const c = COLLECTIONS.find((x) => x.key === key);
+    if (!c) return;
+    active = lastView[key] ?? c.views[0].key;
+  }
+
+  // Counts on the rail. `null` is NOT zero and `-1` is NOT zero: a count that
+  // has not loaded, and a count whose query failed, must not read the same as an
+  // empty collection (rule 35). `countWords`/`countMark` keep those three apart.
+  let counts = { scripture: null, songs: null, notices: null, media: null };
+  async function loadCounts() {
+    const one = async (fn) => {
+      try {
+        return (await fn()).length;
+      } catch {
+        return -1; // said out loud as "count unavailable", never drawn as 0
+      }
+    };
+    const [s, g, n, m] = await Promise.all([
+      one(listSavedScripture),
+      one(listSongs),
+      one(listAnnouncements),
+      one(listMedia),
+    ]);
+    counts = { scripture: s, songs: g, notices: n, media: m };
+  }
   // The template the OUTPUT actually uses, so the live strip is the real thing.
   let liveTemplate = null;
   // ── THE LIVE COLUMN ───────────────────────────────────────────────────────
@@ -182,6 +215,7 @@
   }
 
   onMount(async () => {
+    loadCounts();
     liveTemplate = (await listActiveTemplates().catch(() => []))[0] ?? null;
     await loadTemplates().catch(() => {});
     // Guarded: an unguarded reject here aborts the rest of mount, leaving the
@@ -219,6 +253,8 @@
   function goTab(t) {
     active = t;
     reload += 1;
+    // An import that added songs or media just changed a number on the rail.
+    loadCounts();
   }
 
   // File-type routing — the heart of "import anything, sorted automatically".
@@ -233,28 +269,88 @@
   // impossible and nothing said why.
   const ACCEPT = [...PRO, ...TXT, ...IMG, ...VID, ...DOC].map((e) => `.${e}`).join(',');
 
+  // ── MEDIA GOES THROUGH A LOOK FIRST (REBRAND §10) ─────────────────────────
+  //
+  // "A real file, read locally into the item, previewed before it is added, with
+  // a caption; the slide IS the picture."
+  //
+  // It used to be added the instant the file dialog closed, which is how a
+  // church ends up with `IMG_20240714_113255.jpg` in the library and no idea
+  // which picture that is until they fire it. A lyric import has had a pre-save
+  // review since it was written; media had none, and media is the content type
+  // whose filename tells you the least.
+  //
+  // **The caption is the item's NAME, and that is deliberate.** `media_assets`
+  // is id · kind · filename · path · created_at, so a second line of text
+  // rendered over the picture would need a column and a template field neither
+  // of which exists — and "the slide IS the picture" says a congregation should
+  // not be reading a caption over it anyway. What the operator is naming is the
+  // thing they will search for and recognise at 9am on a Sunday.
+  //
+  // The preview is a `blob:` URL of the file the operator actually chose, never
+  // a stand-in icon; `img-src`/`media-src` in `tauri.conf.json` allow `blob:`.
+  // They are revoked when the sheet closes, because a service's worth of held
+  // object URLs is a leak in the one process that may not run out of memory.
+  let mediaReview = []; // [{ file, kind, name, ext, url }] while the sheet is open
+  let mediaBusy = false;
+
+  const EXT_OF = (name) => (name.split('.').pop() || '').toLowerCase();
+  const STEM_OF = (name) => name.replace(/\.[^.]*$/, '');
+
+  function closeMediaReview() {
+    for (const m of mediaReview) if (m.url) URL.revokeObjectURL(m.url);
+    mediaReview = [];
+  }
+
+  async function commitMedia() {
+    mediaBusy = true;
+    errMsg = '';
+    let added = 0;
+    try {
+      for (const m of mediaReview) {
+        const name = `${(m.name || STEM_OF(m.file.name)).trim() || STEM_OF(m.file.name)}.${m.ext}`;
+        await importMedia(m.kind, name, await fileToBase64(m.file));
+        added += 1;
+      }
+      closeMediaReview();
+      importMsg = `Added ${added} to Media.`;
+      goTab('media');
+    } catch (err) {
+      errMsg = humanError(err);
+    }
+    mediaBusy = false;
+  }
+
   async function onFiles(e) {
     const files = Array.from(e.target.files || []);
     if (!files.length) return;
     importing = true;
     importMsg = '';
     const parsed = []; // lyric songs → pre-save review
-    let media = 0;
+    const media = []; // pictures, video, documents → the look below
     try {
       for (const file of files) {
-        const ext = (file.name.split('.').pop() || '').toLowerCase();
+        const ext = EXT_OF(file.name);
+        const kind = IMG.includes(ext)
+          ? 'image'
+          : VID.includes(ext)
+            ? 'video'
+            : DOC.includes(ext)
+              ? 'document'
+              : null;
         if (PRO.includes(ext) || TXT.includes(ext)) {
           const got = await parseImport(file.name, await fileToBase64(file));
           parsed.push(...got);
-        } else if (IMG.includes(ext)) {
-          await importMedia('image', file.name, await fileToBase64(file));
-          media += 1;
-        } else if (VID.includes(ext)) {
-          await importMedia('video', file.name, await fileToBase64(file));
-          media += 1;
-        } else if (DOC.includes(ext)) {
-          await importMedia('document', file.name, await fileToBase64(file));
-          media += 1;
+        } else if (kind) {
+          media.push({
+            file,
+            kind,
+            ext,
+            name: STEM_OF(file.name),
+            // A document has no frame to show, so it gets no object URL rather
+            // than an <img> that will never paint.
+            url: kind === 'document' ? null : URL.createObjectURL(file),
+          });
         } else {
           importMsg = `Skipped .${ext} (unsupported)`;
         }
@@ -263,10 +359,8 @@
         // Lyrics go through the pre-save review (edit before committing).
         reviewSongs = parsed;
         reviewing = true;
-      } else if (media) {
-        importMsg = `Imported ${media} to Media.`;
-        goTab('media');
       }
+      if (media.length) mediaReview = media;
     } catch (err) {
       errMsg = humanError(err);
     }
@@ -370,7 +464,12 @@
      arrangement picker. `shortcuts.js` already refuses to clear the wall while any
      [role="dialog"] is mounted (rule 16), so this dismisses the sheet and nothing
      else — a modal dismissal is not a live action. -->
-<svelte:window on:keydown={(e) => pasting && e.key === 'Escape' && (pasting = null)} />
+<svelte:window
+  on:keydown={(e) => {
+    if (e.key !== 'Escape') return;
+    if (pasting) pasting = null;
+    else if (mediaReview.length && !mediaBusy) closeMediaReview();
+  }} />
 
 <div class="lib-shell">
   <!-- A screen-reader operator navigates by heading. This tab had none at all,
@@ -418,22 +517,76 @@
   </div>
 {/if}
 
+<!-- LOOK AT IT BEFORE IT IS ADDED. The picture the operator chose, at the size
+     they will recognise it by, and the name they will find it under. Same shape
+     as the paste sheet above, so a modal in this app looks like every other
+     modal in this app — and `role="dialog"` is load-bearing: `shortcuts.js`
+     reads the DOM to decide whether Escape belongs to an overlay or to the
+     panic key (rule 16). -->
+{#if mediaReview.length}
+  <div
+    class="lib-scrim"
+    role="presentation"
+    on:click={(e) => e.target === e.currentTarget && !mediaBusy && closeMediaReview()}>
+    <div class="lib-sheet" role="dialog" aria-modal="true" aria-label="Add to Media" use:trapFocus>
+      <h2 class="lib-sheeth">
+        Add {mediaReview.length} to Media
+      </h2>
+      <p class="lib-pastehelp">
+        Nothing is added until you say so. The name is what you will search for and
+        recognise on a Sunday — the congregation sees the picture, not the name.
+      </p>
+      <div class="lib-mgrid">
+        {#each mediaReview as m, i (m.file.name + i)}
+          <div class="lib-mrow">
+            <div class="lib-mshot">
+              {#if m.kind === 'image'}
+                <img src={m.url} alt="" />
+              {:else if m.kind === 'video'}
+                <!-- svelte-ignore a11y-media-has-caption -->
+                <video src={m.url} preload="metadata" muted playsinline></video>
+              {:else}
+                <span class="lib-mdoc r-mono">{m.ext.toUpperCase()}</span>
+              {/if}
+            </div>
+            <div class="lib-mname">
+              <label class="r-lbl" for="lib-mname-{i}">Name</label>
+              <input id="lib-mname-{i}" class="r-input" bind:value={m.name} />
+              <span class="lib-mfile r-mono">{m.file.name}</span>
+            </div>
+            <button
+              class="r-btn ghost sm"
+              disabled={mediaBusy}
+              on:click={() => {
+                if (m.url) URL.revokeObjectURL(m.url);
+                mediaReview = mediaReview.filter((_, n) => n !== i);
+              }}>Remove</button>
+          </div>
+        {/each}
+      </div>
+      <div class="lib-sheetacts">
+        <button class="r-btn ghost sm" disabled={mediaBusy} on:click={closeMediaReview}>Cancel</button>
+        <span class="lib-spring"></span>
+        <button class="r-btn primary sm" disabled={mediaBusy} on:click={commitMedia}>
+          {mediaBusy ? 'Adding…' : `Add ${mediaReview.length}`}
+        </button>
+      </div>
+    </div>
+  </div>
+{/if}
+
 {#if reviewing}
   <ImportReview songs={reviewSongs} on:done={onReviewDone} on:cancel={() => (reviewing = false)} />
 {:else}
-  <!-- ROW 1 — the content type, and the two things you can do to the library
-       as a whole. Constant across every pane. -->
+  <!-- ROW 1 — the collections, and the two things you can do to the library as
+       a whole. Constant across every pane. -->
   <div class="lib-topline">
-    <div class="subtabs" role="tablist" aria-label="Content type">
-      {#each tabs as t}
-        <button
-          class="r-pill r-focus"
-          role="tab"
-          aria-selected={active === t.key}
-          class:on={active === t.key}
-          on:click={() => (active = t.key)}>{t.label}</button>
-      {/each}
-    </div>
+    <Collections
+      collection={openCollection.key}
+      view={active}
+      {counts}
+      onCollection={goCollection}
+      onView={(v) => (active = v)} />
 
     <span class="lib-spring"></span>
 
@@ -491,10 +644,9 @@
       </select>
     {/if}
 
-    <select class="r-select lib-f" aria-label="Content type" bind:value={active}>
-      {#each tabs as t}<option value={t.key}>{t.label}</option>{/each}
-    </select>
-
+    <!-- The "Content type" select that used to sit here is gone: it was a second
+         copy of the row above it, and the collection rail now says which kind of
+         content you are in AND how much of it there is. -->
     <div class="lib-search">
       <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"
         stroke-width="2" stroke-linecap="round" aria-hidden="true">
@@ -569,8 +721,17 @@
             only={active === 'graphics' ? 'image' : 'moving'}
             {queue}
             onQueueChange={(q) => (queue = q)} />
-        {:else}
+        {:else if active === 'announcements'}
           <Announcements query={debounced} startDraft={announceAction} {queue} onQueueChange={(q) => (queue = q)} />
+        {:else}
+          <!-- Announcements used to be the `{:else}`, which meant an unknown view
+               key rendered the announcement pane and looked entirely normal. Every
+               key comes from the collection register, so this branch is reachable
+               only by a register and a shell that have drifted apart — and it says
+               so rather than showing the wrong content under the right heading. -->
+          <p class="lib-nopane" role="alert">
+            The Library has no pane for “{active}”. Pick a collection above.
+          </p>
         {/if}
       {/key}
     </div>
@@ -599,6 +760,21 @@
     font-size:12px; line-height:1.55 }
   .lib-pastehelp{ margin:0; font-size:11px; color:var(--v-faint) }
   .lib-sheetacts{ display:flex; align-items:center; gap:8px; margin-top:6px }
+  /* The media look. One row per file: what it is, what it will be called. */
+  .lib-mgrid{ display:flex; flex-direction:column; gap:10px; margin:4px 0 2px }
+  .lib-mrow{ display:flex; align-items:center; gap:12px }
+  .lib-mshot{ flex:0 0 auto; width:132px; aspect-ratio:16/9; display:grid; place-items:center;
+    overflow:hidden; border-radius:var(--v-r-md); border:1px solid var(--v-line2);
+    background:var(--v-void) }
+  .lib-mshot img, .lib-mshot video{ width:100%; height:100%; object-fit:contain }
+  .lib-mdoc{ font-size:11px; color:var(--v-dim) }
+  .lib-mname{ flex:1; min-width:0; display:flex; flex-direction:column; gap:3px }
+  .lib-mfile{ font-size:10px; color:var(--v-faint); overflow:hidden; text-overflow:ellipsis;
+    white-space:nowrap }
+  @media (max-width:640px){
+    .lib-mrow{ flex-wrap:wrap }
+    .lib-mshot{ width:100% }
+  }
   .lib-spring{ flex:1 }
   /* ONE layout for every content type: the catalogue, and the live column. */
   .lib-body{ display:grid; grid-template-columns:minmax(0,1fr) 400px; gap:12px; min-height:0;
@@ -619,13 +795,17 @@
     .lib-body{ grid-template-columns:1fr; height:auto; }
     .lib-pane{ min-height:60vh; }
   }
-  .lib-topline{ display:flex; align-items:center; gap:16px; flex-wrap:wrap; }
+  /* The collection rail can be one row or two (a collection with more than one
+     view carries them beneath it), so the actions align to the TOP and hold the
+     collection chips' own height — otherwise they jump half a row the moment an
+     operator opens Scripture. */
+  .lib-topline{ display:flex; align-items:flex-start; gap:16px; flex-wrap:wrap; }
   .lib-spring{ flex:1; }
-  .subtabs{ display:flex; gap:8px; flex-wrap:wrap; }
-  .lib-topactions{ display:flex; gap:8px; flex-shrink:0; align-items:center; }
+  .lib-topactions{ display:flex; gap:8px; flex-shrink:0; align-items:center; height:34px; }
   .lib-importmsg{ font-size:11.5px; color:var(--v-emerald); margin-top:-4px; }
   /* Failures are rose — never the emerald success line above them. */
   .lib-importerr{ font-size:11.5px; color:var(--v-red); margin-top:-4px; }
+  .lib-nopane{ margin:0; padding:18px 4px; font-size:var(--v-fs-b2); color:var(--v-red); }
 
   /* The filter bar. Every control is 40px so the row has one baseline. */
   .lib-filters{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; }

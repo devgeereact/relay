@@ -688,6 +688,49 @@ fn a_lyric_slide_projects_the_lyric_and_not_the_song_title() {
 }
 
 #[test]
+fn r10_a_suppressed_label_is_still_in_the_service_record() {
+    // The other half of the sentence above — "the label still names the cue" —
+    // which was never asserted, and was not true from the run surface: Live
+    // passed an empty string for a song cue, suppressing the label a second time
+    // in the wrong place. The record then said "Manual override" about nothing,
+    // and a Sunday report could not name what had been on the screens.
+    let app = app();
+    let h = app.handle().clone();
+
+    let svc = start_service(
+        h.clone(),
+        h.state::<Session>(),
+        h.state::<Db>(),
+        h.state::<channels::Rehearsal>(),
+        h.state::<servicelock::ServiceLock>(),
+        "Sunday".into(),
+        "2026-09-13".into(),
+    )
+    .expect("start");
+
+    fire_content(
+        h.clone(),
+        h.state::<Db>(),
+        "Blessed Assurance · Verse 1".into(),
+        "Blessed assurance, Jesus is mine".into(),
+        "song".into(),
+        None,
+        None,
+    )
+    .expect("fire the lyric");
+    settle();
+
+    let named = service_timeline(h.state::<Db>(), svc)
+        .expect("timeline")
+        .into_iter()
+        .any(|r| r.detail.as_deref() == Some("Blessed Assurance · Verse 1"));
+    assert!(
+        named,
+        "the cue that was fired is not named anywhere in the service record"
+    );
+}
+
+#[test]
 fn an_announcement_still_shows_its_title() {
     // The lyric rule is for lyrics only. A notice without its heading is a
     // sentence floating on a wall with nothing to say what it is.
@@ -1951,6 +1994,664 @@ fn a_rehearsed_decision_is_not_counted_as_one() {
     assert!(
         !kinds.iter().any(|k| k == "suggestion_dismissed"),
         "a rehearsal is not evidence: {kinds:?}"
+    );
+}
+
+/// W4 acceptance — a screen set to FOLLOW renders scripture, lyrics and
+/// announcements through three different templates, with nobody touching it.
+///
+/// `r4_a_screen_may_follow_the_content_look` proves the setting can be made and
+/// is published. It does not fire anything, so it cannot see whether the map is
+/// then READ — which is precisely the defect that phase closed one level down:
+/// the content-look map could be filled in, saved, and change nothing. A test
+/// that only checks the control passed throughout that too.
+///
+/// What rides is the ID and nothing else. A content-look default must never
+/// serialize its template JSON: a default carrying an embedded image can be
+/// megabytes (one was 13 MB) and broadcasting it on every fire made verses take
+/// seconds. Only a PINNED cue template ships its JSON (CLAUDE.md, DECISIONS §29),
+/// so this asserts the absence as hard as it asserts the presence.
+#[test]
+fn r4_a_following_screen_wears_a_different_look_for_each_kind() {
+    let app = app();
+    let h = app.handle().clone();
+    let wall = qa::Wall::watch(&h);
+
+    let scripture = scratch_template(&h, "Nocturne");
+    let song = scratch_template(&h, "Hymnal");
+    let announce = scratch_template(&h, "Noticeboard");
+    {
+        let db = h.state::<Db>();
+        let conn = db.0.lock().expect("db");
+        db::set_content_template(&conn, "scripture", Some(scripture)).expect("scripture look");
+        db::set_content_template(&conn, "song", Some(song)).expect("song look");
+        db::set_content_template(&conn, "announce", Some(announce)).expect("announce look");
+    }
+
+    // Nobody touches a screen between these three fires. That is the claim.
+    super::manual_fire(h.clone(), h.state::<Db>(), "John 3:16".into(), None, None)
+        .expect("scripture fires");
+    settle();
+    let a = wall.last().expect("scripture reached the wall");
+
+    super::fire_content(
+        h.clone(),
+        h.state::<Db>(),
+        "Verse 1".into(),
+        "Great is thy faithfulness".into(),
+        "song".into(),
+        None,
+        None,
+    )
+    .expect("a song fires");
+    settle();
+    let b = wall.last().expect("the song reached the wall");
+
+    super::fire_content(
+        h.clone(),
+        h.state::<Db>(),
+        "Car park".into(),
+        "Please move the blue Fiesta".into(),
+        "announce".into(),
+        None,
+        None,
+    )
+    .expect("an announcement fires");
+    settle();
+    let c = wall.last().expect("the announcement reached the wall");
+
+    assert_eq!(a["template_id"], scripture, "scripture wears its own look");
+    assert_eq!(b["template_id"], song, "a song wears its own look");
+    assert_eq!(c["template_id"], announce, "a notice wears its own look");
+
+    let ids = [&a["template_id"], &b["template_id"], &c["template_id"]];
+    assert!(
+        ids[0] != ids[1] && ids[1] != ids[2] && ids[0] != ids[2],
+        "three kinds, three different looks, nobody touching a screen: {ids:?}"
+    );
+
+    for (name, out) in [("scripture", &a), ("song", &b), ("announce", &c)] {
+        assert!(
+            out.get("template").is_none_or(|t| t.is_null()),
+            "a content look rides as an ID only — {name} carried its JSON: {out}"
+        );
+    }
+}
+
+/// DECISIONS §70 — a screen with no look of its own follows the content look.
+///
+/// The defect this holds closed is not a crash and was invisible to every
+/// existing test: `set_channel_template` took an `i64`, so a screen always had a
+/// template, and since a screen's own template wins over a content-type default
+/// (§29) the whole content-look map could be filled in and do nothing. A test
+/// that only checked "assigning a template works" passed throughout.
+#[test]
+fn r4_a_screen_may_follow_the_content_look() {
+    let app = app();
+    let h = app.handle().clone();
+    let mut kiosk = qa::Kiosk::attach(&h);
+
+    let (chan, tpl) = {
+        let db = h.state::<Db>();
+        let conn = db.0.lock().expect("db");
+        let ch = db::list_output_channels(&conn).expect("channels");
+        let c = ch.first().expect("a fresh install seeds screens");
+        (c.id, c.template_id)
+    };
+    assert!(
+        tpl.is_some(),
+        "a seeded screen starts with a look of its own"
+    );
+
+    // Set it to follow.
+    super::set_channel_template(
+        h.clone(),
+        h.state::<Db>(),
+        h.state::<channels::KioskHub>(),
+        chan,
+        None,
+    )
+    .expect("a screen may be set to follow");
+
+    {
+        let dbs = h.state::<Db>();
+        let conn = dbs.0.lock().expect("db");
+        let ch = db::list_output_channels(&conn).expect("channels");
+        assert_eq!(
+            ch.iter().find(|c| c.id == chan).and_then(|c| c.template_id),
+            None,
+            "the screen now has no look of its own"
+        );
+    }
+
+    // CLEARING IS NEWS. A screen that is already open has to be told, or it keeps
+    // wearing the look it was given until something reloads it.
+    let msg = kiosk
+        .next()
+        .expect("clearing a screen's template is published");
+    assert!(
+        msg.contains("\"kind\":\"channel_template\"") && msg.contains("\"template\":null"),
+        "the screens must be told the template was cleared: {msg}"
+    );
+
+    // And back again: giving it a look of its own publishes the template itself.
+    super::set_channel_template(
+        h.clone(),
+        h.state::<Db>(),
+        h.state::<channels::KioskHub>(),
+        chan,
+        tpl,
+    )
+    .expect("a screen may be given its own look again");
+    let msg = kiosk.next().expect("assigning a template is published");
+    assert!(
+        msg.contains("\"kind\":\"channel_template\"") && !msg.contains("\"template\":null"),
+        "assigning must carry the template, not a null: {msg}"
+    );
+}
+
+/// A WORD TO THE PREACHER reaches the stage monitor, and a rehearsal holds it.
+///
+/// Two separate guarantees, and they fail in opposite directions:
+///
+///   - it must ARRIVE, or the operator types a message to somebody standing in
+///     front of a congregation and nothing happens;
+///   - it must not arrive during a REHEARSAL. The same defect `stage_next` had:
+///     the congregation wall does not move, so the sandbox looks intact, while
+///     the preacher's own tablet is handed a message from a practice run.
+///
+/// "No congregation screen can show it" is held on the other side, by
+/// `r6-contracts.test.js`, which requires every hub message to have an explicit
+/// per-client verdict — the output page's verdict for this one is `false`.
+#[test]
+fn r5_a_word_to_the_preacher_reaches_the_stage_and_not_a_rehearsal() {
+    let app = app();
+    let h = app.handle().clone();
+    let mut kiosk = qa::Kiosk::attach(&h);
+
+    // Assert arrival FIRST, so this cannot pass by the publish path being broken.
+    super::send_stage_alert(h.clone(), Some("  Wrap up — 5 minutes  ".into())).expect("send");
+    settle();
+    let sent = kiosk
+        .next()
+        .expect("the stage monitor must get the message");
+    assert!(
+        sent.contains("\"kind\":\"stage_alert\"") && sent.contains("Wrap up — 5 minutes"),
+        "the stage monitor got something else: {sent}"
+    );
+    assert!(
+        !sent.contains("  Wrap up"),
+        "a line is trimmed before it is 8.5cqw across somebody's monitor: {sent}"
+    );
+
+    // Blank clears rather than painting a red screen with nothing on it.
+    super::send_stage_alert(h.clone(), Some("   ".into())).expect("clear");
+    settle();
+    let cleared = kiosk.next().expect("clearing is also a message");
+    assert!(
+        cleared.contains("\"kind\":\"stage_alert\"") && cleared.contains("\"text\":null"),
+        "whitespace must clear the alert, not send it: {cleared}"
+    );
+
+    set_rehearsal(
+        h.clone(),
+        h.state::<Session>(),
+        h.state::<channels::Rehearsal>(),
+        true,
+    )
+    .expect("enter rehearsal");
+
+    super::send_stage_alert(h.clone(), Some("Rehearsing".into())).expect("send in rehearsal");
+    settle();
+    assert!(
+        kiosk.silent(),
+        "a rehearsal's word to the preacher escaped to a live stage monitor"
+    );
+}
+
+/// …AND IT REACHES NO CONGREGATION CHANNEL — asserted at the DOORS, not at the
+/// place the code happens to live.
+///
+/// `r5_…` above proves the alert arrives and that a rehearsal holds it. Neither is
+/// the claim in docs/REBRAND.md §5 — "no congregation screen can show it" — and
+/// until now that claim rested on two things that are not tests of the running
+/// system: a sentence about which `.svelte` file the markup sits in, and
+/// `r6-contracts.test.js`, which reads source text.
+///
+/// CLAUDE.md is explicit about why that is not enough: *"A test's assertion surface
+/// is part of its claim."* `stage_next` was gated, tested and leaking for as long as
+/// it was, because the test watched the wall and the leak went out of the other
+/// door. So this one watches BOTH doors at once and asserts the whole shape of what
+/// an alert does:
+///
+///   - the kiosk hub gets exactly ONE frame, and it is a `stage_alert`;
+///   - it carries no field a congregation renderer binds — no `content_kind`, no
+///     `reference`, no `template_json`. `Output.svelte` reads `text` only under
+///     `kind === 'content'`, so a frame with no content kind cannot paint;
+///   - **the Tauri door stays shut**. A native output window is driven by
+///     `output://content` / `clear` / `black` and nothing else, so a projector on
+///     HDMI is unreachable from here by construction — and the Wall is what proves
+///     it, because the Wall is that door.
+///
+/// The last point is the one a source scan can never make. An alert published to
+/// the hub is broadcast to every WebSocket client including `output.html`; what
+/// stops a congregation seeing it is that the frame is not a content frame and no
+/// congregation renderer has a branch for it. A future `emit` added here would pass
+/// `r6-contracts` untouched and fail this.
+#[test]
+fn r5_a_word_to_the_preacher_reaches_no_congregation_channel() {
+    let app = app();
+    let h = app.handle().clone();
+    let wall = Wall::watch(&h);
+    let mut kiosk = qa::Kiosk::attach(&h);
+
+    // A real verse first, so the test is run against a wall that HAS something on
+    // it — the case where a leak would be indistinguishable from the verse.
+    manual_fire(h.clone(), h.state::<Db>(), "John 3:16".into(), None, None).unwrap();
+    settle();
+    let before = wall.count();
+    assert_eq!(before, 1, "the fixture's own fire did not reach the wall");
+    while kiosk.next().is_some() {} // drain the fire's own frames
+
+    super::send_stage_alert(h.clone(), Some("Wrap up — 5 minutes".into())).expect("send");
+    settle();
+
+    let frame = kiosk
+        .next()
+        .expect("the stage monitor must get the message");
+    assert!(
+        frame.contains(r#""kind":"stage_alert""#),
+        "the alert went out as something else: {frame}"
+    );
+    assert!(
+        kiosk.silent(),
+        "an alert published more than one frame; only the stage frame may leave: {frame}"
+    );
+
+    // Nothing a congregation template binds. `content_kind` is the field every
+    // congregation renderer switches on; `reference` and `template_json` are how a
+    // verse and its look travel.
+    for field in ["content_kind", "reference", "template_json", "media_url"] {
+        assert!(
+            !frame.contains(field),
+            "the alert frame carries `{field}`, which is congregation content: {frame}"
+        );
+    }
+
+    // THE OTHER DOOR. A native output window hears Tauri events and nothing else.
+    assert_eq!(
+        wall.count(),
+        before,
+        "a word to the preacher reached the congregation wall"
+    );
+    assert!(
+        !wall.cleared() && !wall.blacked(),
+        "an alert must not disturb what is on the screens"
+    );
+}
+
+/// THE SCRIPTURE SEARCH — the same parser as the live pipeline, and never a fire.
+///
+/// `search_verses` is the one search: the Planner's box, the preacher's remote
+/// and the run surface all go through it. It reads what a person typed and
+/// decides which verse that is, which makes it the same class of code as
+/// `detection.rs` — so it gets the same kind of test.
+#[test]
+fn r9_the_search_finds_a_reference_however_it_is_typed() {
+    let app = app();
+    let h = app.handle().clone();
+    let db = h.state::<Db>();
+    let conn = db.0.lock().expect("db");
+    let sem = h.state::<Semantic>();
+    let top = |q: &str| {
+        search_verses(&conn, &sem.0, q)
+            .first()
+            .map(|h| format!("{} {}:{}", h.verse.book, h.verse.chapter, h.verse.verse))
+    };
+
+    // Full name, fast abbreviation, non-prefix alias, and the spoken words a
+    // person types without thinking.
+    assert_eq!(top("john 3:16").as_deref(), Some("John 3:16"));
+    assert_eq!(top("psa 23 1").as_deref(), Some("Psalms 23:1"));
+    assert_eq!(top("jn 3:16").as_deref(), Some("John 3:16"));
+    assert_eq!(top("rom 8 verse 1").as_deref(), Some("Romans 8:1"));
+
+    // GLUED DIGITS. `ps23:1` is one token to the parser, so the quickest way to
+    // type a reference used to return nothing at all — an empty list, with
+    // nothing to say it had not understood.
+    assert_eq!(top("ps23:1").as_deref(), Some("Psalms 23:1"));
+    assert_eq!(top("jn3:16").as_deref(), Some("John 3:16"));
+}
+
+#[test]
+fn r9_a_reference_outranks_a_phrase() {
+    let app = app();
+    let h = app.handle().clone();
+    let db = h.state::<Db>();
+    let conn = db.0.lock().expect("db");
+    let sem = h.state::<Semantic>();
+
+    // "John 3:16" is also a phrase that appears in no verse; the reference must
+    // win, and win FIRST, because that is what the person typing it meant.
+    let hits = search_verses(&conn, &sem.0, "john 3:16");
+    let first = hits.first().expect("a reference always finds its verse");
+    assert_eq!(
+        (
+            first.verse.book.as_str(),
+            first.verse.chapter,
+            first.verse.verse
+        ),
+        ("John", 3, 16)
+    );
+    assert_eq!(first.method, "reference");
+}
+
+#[test]
+fn r9_a_query_that_is_mostly_not_scripture_returns_nothing_rather_than_guessing() {
+    let app = app();
+    let h = app.handle().clone();
+    let db = h.state::<Db>();
+    let conn = db.0.lock().expect("db");
+    let sem = h.state::<Semantic>();
+
+    // This used to come back with NINETEEN verses, Ezekiel 26:9 at the top,
+    // because the full-text index returns anything that matched any term. A
+    // confident wrong answer is worse than an empty list: the operator acts on it.
+    let junk = search_verses(&conn, &sem.0, "quantum shepherd tractor engine banana");
+    assert!(
+        junk.len() <= 8,
+        "a query with one real word in five came back with {} verses",
+        junk.len()
+    );
+
+    // A word that is in no verse at all finds nothing, and says so by being empty.
+    assert!(search_verses(&conn, &sem.0, "flibbertigibbet").is_empty());
+
+    // And the thing the floor must NOT break: a real phrase still lands.
+    let psalm = search_verses(&conn, &sem.0, "the lord is my shepherd");
+    let first = psalm
+        .first()
+        .expect("a real phrase must still find its verse");
+    assert_eq!(
+        (
+            first.verse.book.as_str(),
+            first.verse.chapter,
+            first.verse.verse
+        ),
+        ("Psalms", 23, 1)
+    );
+}
+
+#[test]
+fn r9_searching_never_puts_anything_on_a_screen() {
+    // A search is an OFFER. Nothing it does may reach an output — not the wall,
+    // not the stage monitor — until an operator chooses a result. Asserted on
+    // both doors rather than inferred from the absence of a call, because the
+    // absence of a call is exactly what four separate bugs in this repository
+    // looked like.
+    let app = app();
+    let h = app.handle().clone();
+    let wall = qa::Wall::watch(&h);
+    let mut kiosk = qa::Kiosk::attach(&h);
+
+    for q in ["john 3:16", "the lord is my shepherd", "ps23:1"] {
+        let db = h.state::<Db>();
+        let conn = db.0.lock().expect("db");
+        let sem = h.state::<Semantic>();
+        let hits = search_verses(&conn, &sem.0, q);
+        assert!(!hits.is_empty(), "{q} found nothing");
+    }
+    settle();
+
+    assert_eq!(wall.count(), 0, "a search reached a congregation screen");
+    assert!(kiosk.silent(), "a search reached the kiosk hub");
+}
+
+/// THE ACCEPTANCE CLAUSE for `docs/REBRAND.md` §9, read against the real corpus.
+///
+/// `search.rs` proves the PARSE of each of these; this proves the VERSE. The two
+/// halves are deliberately separate: a reference that parses to a book/chapter
+/// nothing in the corpus answers for is a search that returns nothing, and a
+/// parser test cannot see that.
+#[test]
+fn r9_every_shape_in_the_brief_finds_its_verse() {
+    let app = app();
+    let h = app.handle().clone();
+    let db = h.state::<Db>();
+    let conn = db.0.lock().expect("db");
+    let sem = h.state::<Semantic>();
+    let top = |q: &str| {
+        search_verses(&conn, &sem.0, q)
+            .first()
+            .map(|h| format!("{} {}:{}", h.verse.book, h.verse.chapter, h.verse.verse))
+    };
+
+    for (query, want) in [
+        ("ps 23 1", "Psalms 23:1"),
+        ("ps23:1", "Psalms 23:1"),
+        ("psalm 23", "Psalms 23:1"),
+        ("rom 8 28", "Romans 8:28"),
+        ("mt 6 33", "Matthew 6:33"),
+        ("1 cor 13 4", "1 Corinthians 13:4"),
+        ("see ye first the kingdom", "Matthew 6:33"),
+        ("lamp unto my feet", "Psalms 119:105"),
+    ] {
+        assert_eq!(top(query).as_deref(), Some(want), "searching {query:?}");
+    }
+}
+
+/// A BOOK PREFIX IS A SEARCH FEATURE AND NOWHERE ELSE.
+///
+/// "philipp 4 13" is not an alias in `book_aliases.json` and never will be —
+/// the table is for what a preacher SAYS. Expanding a prefix is the widest book
+/// match in the product, so it lives in the search path only, and this test
+/// holds both halves of that: the search finds it, and the live detector, given
+/// the identical string, finds nothing at all (CLAUDE.md rule 10).
+#[test]
+fn r9_a_book_prefix_is_a_search_feature_and_never_a_detection() {
+    let app = app();
+    let h = app.handle().clone();
+    let db = h.state::<Db>();
+    let conn = db.0.lock().expect("db");
+    let sem = h.state::<Semantic>();
+
+    for (query, want) in [
+        ("philipp 4 13", "Philippians 4:13"),
+        ("thessal 4 16", "1 Thessalonians 4:16"),
+        ("revela 22 13", "Revelation 22:13"),
+    ] {
+        let hits = search_verses(&conn, &sem.0, query);
+        let found = hits
+            .iter()
+            .any(|h| format!("{} {}:{}", h.verse.book, h.verse.chapter, h.verse.verse) == want);
+        assert!(found, "searching {query:?} did not offer {want}");
+        // …and the same words, spoken into a sermon, resolve to nothing.
+        assert!(
+            detection::detect_direct(query).is_empty(),
+            "the LIVE detector resolved the book prefix in {query:?} — rule 10"
+        );
+    }
+}
+
+/// EVERY HIT SAYS WHY IT MATCHED — and says which KIND of claim it is.
+///
+/// The half of §9 that DECISIONS §72 recorded as not built, because it changes
+/// the shape three surfaces read. Rule 18 in the search's clothing: the operator
+/// must be able to tell a reference they typed from a verse Relay guessed at,
+/// and a paraphrase carries **no percentage** because a cosine is not one.
+#[test]
+fn r9_every_hit_says_why_it_matched() {
+    let app = app();
+    let h = app.handle().clone();
+    let db = h.state::<Db>();
+    let conn = db.0.lock().expect("db");
+    let sem = h.state::<Semantic>();
+
+    // Every hit of every query, whatever branch produced it.
+    for q in [
+        "ps 23 1",
+        "ps23:1",
+        "philipp 4 13",
+        "the lord is my shepherd",
+        "lamp unto my feet",
+        "there is therefore no condemnation in christ",
+    ] {
+        let hits = search_verses(&conn, &sem.0, q);
+        assert!(!hits.is_empty(), "{q} found nothing");
+        for hit in &hits {
+            assert!(
+                !hit.why.trim().is_empty(),
+                "a hit for {q:?} had no reason: {:?}",
+                hit.verse.reference
+            );
+            assert!(
+                matches!(
+                    hit.method,
+                    "reference" | "prefix" | "phrase" | "words" | "paraphrase"
+                ),
+                "unknown method {:?} for {q:?}",
+                hit.method
+            );
+            // A number that lies is worse than no number (rule 18).
+            assert!(
+                !hit.why.contains('%'),
+                "a search hit quoted a percentage: {:?}",
+                hit.why
+            );
+        }
+    }
+
+    // A reference the operator typed is NOT a guess, and says so.
+    let typed = search_verses(&conn, &sem.0, "rom 8 28");
+    let first = typed.first().expect("rom 8 28");
+    assert_eq!(first.method, "reference");
+    assert!(!first.guess);
+    assert!(first.why.contains("rom 8 28"), "{:?}", first.why);
+
+    // A prefix Relay expanded IS a guess, and names the book it chose.
+    let pref = search_verses(&conn, &sem.0, "philipp 4 13");
+    let hit = pref
+        .iter()
+        .find(|h| h.method == "prefix")
+        .expect("a prefix hit");
+    assert!(hit.guess);
+    assert!(hit.why.contains("Philippians"), "{:?}", hit.why);
+
+    // A PARAPHRASE is a guess, says so in words, and carries no number. This is
+    // the branch rule 18 is really about: a TF-IDF cosine is not a probability,
+    // and the operator has to be able to tell it from a reference they typed.
+    let para = search_verses(
+        &conn,
+        &sem.0,
+        "there is therefore no condemnation in christ",
+    );
+    let guess = para
+        .iter()
+        .find(|h| h.method == "paraphrase")
+        .expect("a close paraphrase must reach the semantic branch");
+    assert!(guess.guess);
+    assert!(guess.why.contains("guess"), "{:?}", guess.why);
+    assert!(guess.matched.is_empty(), "{:?}", guess.matched);
+
+    // A word hit quotes the words that landed, and never the weak ones.
+    let words = search_verses(&conn, &sem.0, "lamp unto my feet");
+    let w = words
+        .iter()
+        .find(|h| h.method == "words" || h.method == "phrase")
+        .expect("a literal hit for a real phrase");
+    if w.method == "words" {
+        assert!(w.matched.contains(&"lamp".to_string()), "{:?}", w.matched);
+        assert!(!w.matched.contains(&"my".to_string()), "{:?}", w.matched);
+    }
+}
+
+/// THE BOUNDARY, STATED AT THE BOUNDARY.
+///
+/// Search does approximate matching over book names and over verse text — the
+/// same CLASS of code as the `fuzzy_book` repair that put Numbers 3:16 on a wall
+/// unattended. The whole safety argument is that a person typed it and chose
+/// from the list, so the guarantee that has to hold is that **no route out of a
+/// search reaches `AutoFire`**.
+///
+/// Asserted by driving the router itself with what a search produces: the widest
+/// thing this feature can offer, put to `decide`, and never allowed to fire.
+#[test]
+fn r9_nothing_a_search_offers_can_reach_an_auto_fire() {
+    let app = app();
+    let h = app.handle().clone();
+    let db = h.state::<Db>();
+    let conn = db.0.lock().expect("db");
+    let sem = h.state::<Semantic>();
+
+    // A search HAS no route to the router: it returns rows. The thing that could
+    // change that is somebody deciding a prefix expansion is good enough to
+    // detect with — so ask the router what it would do with one.
+    let mut router = crate::router::Router::default();
+    for query in ["philipp 4 13", "gene 1 1", "revela 22 13"] {
+        for hit in search_verses(&conn, &sem.0, query) {
+            if hit.method != "prefix" {
+                continue;
+            }
+            let decision = router.decide(
+                &hit.verse.reference,
+                0.99,
+                crate::detection::DetectionMethod::UncertainBook,
+                0,
+            );
+            assert!(
+                !matches!(decision, crate::router::RouteDecision::AutoFire),
+                "a book-prefix guess reached AutoFire for {query:?}"
+            );
+        }
+    }
+}
+
+/// A HIT IS STILL A VERSE ROW ON THE WIRE.
+///
+/// `why` was added as `#[serde(flatten)]` over `VerseRow` precisely so the four
+/// surfaces that already read this command — the Library, the Planner, the Live
+/// rail and the preacher's remote — keep reading the fields they read before.
+/// DECISIONS §72 deferred this work for exactly that reason, so the flattening
+/// is the decision, not an implementation detail: nest it and four surfaces
+/// silently render blanks, with every Rust test still green.
+#[test]
+fn r9_a_hit_is_still_a_verse_row_on_the_wire() {
+    let app = app();
+    let h = app.handle().clone();
+    let db = h.state::<Db>();
+    let conn = db.0.lock().expect("db");
+    let sem = h.state::<Semantic>();
+
+    let hits = search_verses(&conn, &sem.0, "ps 23 1");
+    let first = hits.first().expect("ps 23 1");
+    let json = serde_json::to_value(first).expect("a hit serialises");
+    let obj = json.as_object().expect("an object");
+
+    // Every field a surface read before this change, at the top level.
+    for key in [
+        "id",
+        "book",
+        "chapter",
+        "verse",
+        "text",
+        "reference",
+        "translation",
+    ] {
+        assert!(
+            obj.contains_key(key),
+            "{key} is no longer on the wire: {obj:?}"
+        );
+    }
+    // …and the new ones beside them, not nested under anything.
+    for key in ["method", "guess", "why", "matched"] {
+        assert!(
+            obj.contains_key(key),
+            "{key} did not reach the wire: {obj:?}"
+        );
+    }
+    assert!(
+        !obj.contains_key("verse_row") && !obj.values().any(|v| v.get("reference").is_some()),
+        "the verse row was nested instead of flattened: {obj:?}"
     );
 }
 

@@ -10,13 +10,51 @@
 // reduces to the same { tag, label, text } slide, so nothing downstream — not
 // the slide grid, not the transport, not the stage monitor — branches per type.
 
+/**
+ * A TAXONOMY MAY NOT PAINT A PROMISE. (CLAUDE.md rule 18, DECISIONS §21, REBRAND §1.)
+ *
+ * Both tables in this file used to carry a colour per kind, and between them they
+ * spent every colour the law has already spoken for. Measured on the running
+ * console, on Live, with a plan open:
+ *
+ *   a SONG cue's stripe          #ffa31a  = --v-amber     = ON AIR
+ *   a SCRIPTURE / COUNTDOWN cue  #4cc9f0  = --v-cyan      = a guess
+ *   a MEDIA cue, a BG slide      #a96bf5  = --v-amethyst  = rehearsal
+ *   a NOTICE cue, an OUTRO slide #f4515b  = --v-rose      = destructive
+ *   a Chorus chip                #ffa31a  = --v-amber     = ON AIR
+ *   a Verse chip                 #4cc9f0  = --v-cyan      = a guess
+ *   a Bridge chip                #a96bf5  = --v-amethyst  = rehearsal
+ *
+ * All of it inches from `.slide.islive`, which signals the real ON AIR state with
+ * a 15% amber wash — so the chorus chip was MORE saturated amber than a genuinely
+ * live row. `Live.svelte` said so itself, five lines apart: "Amber = it is in
+ * front of the congregation. Nothing else may use it", and then painted --acc.
+ *
+ * The fix is not a new palette. The law has taken orange, sky, violet, red and
+ * neutral grey; selection has taken steel blue and emerald means healthy, which
+ * leaves exactly two free hues on the wheel (magenta ~310°, lime ~80°) for five
+ * content kinds and six section kinds. There is no honest ramp to invent here.
+ *
+ * So the taxonomy is carried by the WORDS, which were already there: every dot in
+ * the Planner sits under a heading that names its kind ("Scripture", "Songs",
+ * "Media", "Announcements") or beside its own label, every cue row prints
+ * `ty.label`, and every section chip prints its own letter (`V1`, `C`, `BR`). The
+ * colour was decoration, and it was decoration that lied. It is now one neutral,
+ * the same metadata ramp `.cue-num` and `.cue-meta` already use beside it.
+ *
+ * If a real taxonomy ramp is ever wanted, magenta and lime are the only two gaps,
+ * and it needs a designer looking at a rendered screen — not a constant edited
+ * here. Do not reach for a promise colour because it is the one that reads well.
+ */
+export const TAXONOMY_INK = 'var(--v-faint)';
+
 /** Cue-type presentation table. `trig` is how the cue is normally triggered. */
 export const TYPE = {
-  scripture: { label: 'SCRIPTURE', color: 'var(--v-cyan)', trig: 'AUTO-DETECT' },
-  song: { label: 'SONG', color: 'var(--v-amber)', trig: 'SUGGEST-ONLY' },
-  media: { label: 'MEDIA', color: 'var(--v-amethyst)', trig: 'MANUAL/LOOP' },
-  announce: { label: 'NOTICE', color: 'var(--v-rose)', trig: 'MANUAL/TIMER' },
-  countdown: { label: 'COUNTDOWN', color: 'var(--v-cyan)', trig: 'TIMER' },
+  scripture: { label: 'SCRIPTURE', color: TAXONOMY_INK, trig: 'AUTO-DETECT' },
+  song: { label: 'SONG', color: TAXONOMY_INK, trig: 'SUGGEST-ONLY' },
+  media: { label: 'MEDIA', color: TAXONOMY_INK, trig: 'MANUAL/LOOP' },
+  announce: { label: 'NOTICE', color: TAXONOMY_INK, trig: 'MANUAL/TIMER' },
+  countdown: { label: 'COUNTDOWN', color: TAXONOMY_INK, trig: 'TIMER' },
   /* A cue_type this build does not know. The three surfaces that read this map
      used to fall back to `scripture`, which is the ONE type that says AUTO-DETECT
      — so an unrecognised row was presented as the only kind of cue the AI is
@@ -24,8 +62,25 @@ export const TYPE = {
      and `docs/data/schema.sql` still documented the notice type under a spelling
      the frontend has never used ('announcement' vs 'announce'), which is exactly
      how a row like that arrives. Say "unknown" and claim nothing. */
-  unknown: { label: 'UNKNOWN', color: 'var(--v-faint)', trig: 'MANUAL' },
+  unknown: { label: 'UNKNOWN', color: TAXONOMY_INK, trig: 'MANUAL' },
 };
+
+/**
+ * The presentation row for a cue type — the ONE door onto `TYPE`.
+ *
+ * This is a choke point, not a convenience (CLAUDE.md rule 36). The fix that
+ * added `unknown` above was applied at three call sites and missed a fourth,
+ * `cueSub`, which is rendered on BOTH the Planner's cue inspector and the Live
+ * run surface: a cue of a kind this build does not recognise was badged UNKNOWN
+ * with "SCRIPTURE · AUTO-DETECT" printed two lines under it — the panel
+ * contradicting itself about the one kind of cue the AI is allowed to fire by
+ * itself. A guarantee is only kept on the doors you checked, so there is now one
+ * door. Never fall back to `TYPE.scripture`; an unrecognised row is a claim
+ * nobody made.
+ */
+export function typeOf(cueType) {
+  return TYPE[cueType] || TYPE.unknown;
+}
 
 /** A cue's payload. Never throws — a corrupt row must not take down the console. */
 export function payloadOf(item) {
@@ -68,25 +123,25 @@ export function slidesOf(item) {
   }
 }
 
-/** Slide-group colour. Matches the Song Editor so a chorus is the same colour everywhere. */
+/**
+ * Slide-chip colour — one neutral, for every tag. See TAXONOMY_INK above.
+ *
+ * This took a tag and returned a hue, which is why a Chorus was ON-AIR amber on
+ * the run surface. The chip already prints the tag (`V1`, `C`, `BR`, `NOTE`), so
+ * the letter is the taxonomy and the colour was only ever saying it twice — once
+ * truthfully and once in a colour that meant something else.
+ *
+ * It still takes `tag` and stays the one door, so the seam survives if a law-free
+ * ramp is ever chosen. A caller must not read the tag and pick its own colour.
+ */
+// eslint-disable-next-line no-unused-vars
 export function slideAccent(tag) {
-  const t = (tag || '').toUpperCase();
-  if (/^\d+$/.test(t)) return 'var(--v-faint)';
-  if (t.startsWith('PC')) return 'var(--v-emerald)';
-  if (t.startsWith('V')) return 'var(--v-cyan)';
-  if (t.startsWith('BR') || /^B\d?$/.test(t)) return 'var(--v-amethyst)';
-  if (t.startsWith('C')) return 'var(--v-amber)';
-  if (t.startsWith('INT') || t.startsWith('IL')) return 'var(--v-emerald)';
-  if (t.startsWith('OUT') || t.startsWith('END') || t.startsWith('TAG') || t.startsWith('REF'))
-    return 'var(--v-rose)';
-  if (t === 'NOTE') return 'var(--v-rose)';
-  if (t === 'BG') return 'var(--v-amethyst)';
-  return 'var(--v-cyan)';
+  return TAXONOMY_INK;
 }
 
 /** The one-line summary under a cue's title in the plan rail. */
 export function cueSub(item) {
-  const ty = TYPE[item.cue_type] || TYPE.scripture;
+  const ty = typeOf(item.cue_type);
   return item.cue_type === 'song'
     ? `SONG · ${slidesOf(item).length} SLIDES`
     : `${ty.label} · ${ty.trig}`;
