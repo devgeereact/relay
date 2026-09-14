@@ -439,28 +439,32 @@
                 <TemplateRender template={t} content={SAMPLE} />
                 {#if view === 'grid'}<span class="tg-aspect r-mono">16:9</span>{/if}
               </div>
+              <!-- THE CAPTION — the prototype's `.cell .meta` plus `.roletag`
+                   beneath it. ONE row: the name on the left, what the template
+                   IS on the right, the card's own controls at the end; then, on
+                   its own line, what it is USED FOR.
+                   It was four things in one row (name, kind, a `Scripture · 16:9`
+                   sub-line, a bound-look pill) and every one but the name was
+                   `flex:0 0 auto`, so the name paid the whole shortfall: 225px of
+                   claims inside a 194px row rendered "Classic Serif" as `Cla…`.
+                   `templatecard.test.js` prices the row from these rules. -->
               <div class="tg-meta">
-                <div class="tg-metatext">
-                  <span class="tg-name">{t.name}</span>
-                  <span class="tg-sub r-mono">{kindLabel(t)} · 16:9</span>
-                </div>
-                <!-- THE ROLE TAG. What this template is FOR, derived from its
-                     shape — never stored, so it cannot claim a role the template
-                     is not. The rail row and this tag come from the one
-                     derivation, which is what stops a card saying Scripture
-                     under a Lower Thirds filter. -->
-                <span class="tg-role r-mono">{kindTag(t)}</span>
-                <!-- USED FOR. A tag on the card, so "which template does
-                     scripture wear" is answerable by looking rather than by
-                     opening each one. Deliberately NEUTRAL: it says what this
-                     template is FOR, not what any screen is doing right now,
-                     and every colour that carries a promise is spoken for
-                     (CLAUDE.md rule 18) — steel blue included, which means
-                     "the thing you are working on". -->
-                {#if usedFor(t.id).length}
-                  <span class="tg-usedfor r-mono" title="Used for {usedFor(t.id).map((k) => k.label).join(', ')}">{usedFor(t.id).map((k) => k.label).join(' · ')}</span>
-                {/if}
-                <div class="tg-cardbtns">
+                <div class="tg-metarow">
+                  <!-- THE NAME IS THE CARD'S IDENTITY, so it is the LAST thing
+                       allowed to shrink: it holds a floor and the kind beside it
+                       ellipses first. The kind is still readable in full in the
+                       rail, the inspector and this element's own tooltip. -->
+                  <span class="tg-name" title={t.name}>{t.name}</span>
+                  <!-- THE ROLE TAG (the prototype's `.kd`). What this template is
+                       FOR, derived from its shape — never stored, so it cannot
+                       claim a role the template is not. The rail row and this tag
+                       come from the one derivation, which is what stops a card
+                       saying Scripture under a Lower Thirds filter. It carries
+                       the kind ALONE now: the `Scripture · 16:9` sub-line said
+                       the same thing a second time, and stated an aspect the
+                       thumbnail's own badge already states. -->
+                  <span class="tg-role r-mono" title="Content type · {kindLabel(t)}">{kindTag(t)}</span>
+                  <div class="tg-cardbtns">
                   <!-- Star = THE default template (the fallback look every slide
                        wears). One default, not a set of four; steel blue when set.
                        Not amber — amber means live on the wall, this only marks a fallback. -->
@@ -473,7 +477,21 @@
                   <button class="tg-more" aria-label="More actions" on:click|stopPropagation={(e) => openMenu(e, t)}>
                     <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="12" cy="19" r="1.6"/></svg>
                   </button>
+                  </div>
                 </div>
+                <!-- USED FOR — the prototype's `.roletag`, its own line beneath
+                     the row, so "which template does scripture wear" is
+                     answerable by looking rather than by opening each one.
+                     It says **Used for** in words. The derived ROLE above and the
+                     bound LOOK here are two registers (DECISIONS §78); rendered
+                     as two identical uppercase pills side by side they read as
+                     one fact printed twice, which is exactly what the 1600x1000
+                     render showed. Words are the only way to separate them:
+                     every colour that carries a promise is already spoken for
+                     (CLAUDE.md rule 18), steel blue included. -->
+                {#if usedFor(t.id).length}
+                  <span class="tg-roletag r-mono">Used for {usedFor(t.id).map((k) => k.label).join(' · ')}</span>
+                {/if}
               </div>
             </div>
           {/each}
@@ -776,10 +794,11 @@
     color:var(--v-txt); background:rgba(10,10,10,.62); padding:1px 5px; border-radius:var(--v-r-sm); }
   .tg-aspect.static{ position:static; background:var(--v-surf2); color:var(--v-faint); }
 
-  /* NOT A STATUS. A role tag, in mono, in the muted step — every colour that
-     carries a promise is spoken for, steel blue (selection) included. */
-  .tg-usedfor{ flex:0 0 auto; max-width:40%; padding:1px 6px; border:1px solid var(--v-line2);
-    border-radius:var(--v-r-sm); font-size:var(--v-fs-cap); letter-spacing:var(--v-tr-caps);
+  /* NOT A STATUS. The used-for line, in mono, in the muted step — every colour
+     that carries a promise is spoken for, steel blue (selection) included.
+     It is a BLOCK on its own line (the prototype's `.roletag`), not a pill
+     competing with the name: it used to claim up to 40% of the caption row. */
+  .tg-roletag{ display:block; min-width:0; font-size:var(--v-fs-cap); letter-spacing:var(--v-tr-caps);
     text-transform:uppercase; color:var(--v-faint); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   /* ── USED FOR, and the objects on this slide (§3.2) ────────────────────── */
   /* A ticked kind is steel blue: "the thing you are working on". It is a fact
@@ -808,16 +827,25 @@
   .tg-objtab.off{ text-decoration:line-through; opacity:.6; }
 
   /* THE ROLE TAG — what this template is FOR. Same neutral treatment as
-     `.tg-usedfor` above and for the same reason: it is a fact about the
-     template, never a claim about a screen, so it borrows no promised colour. */
-  .tg-role{ flex:0 0 auto; max-width:42%; font-size:var(--v-fs-cap); letter-spacing:var(--v-tr-caps);
+     `.tg-roletag` above and for the same reason: it is a fact about the
+     template, never a claim about a screen, so it borrows no promised colour.
+     It is `flex:0 1 auto` with `min-width:0` on purpose: under pressure the KIND
+     ellipses and the name does not. It claimed `flex:0 0 auto; max-width:42%`,
+     which is half of how the name came to render as three characters. */
+  .tg-role{ flex:0 1 auto; min-width:0; font-size:var(--v-fs-cap); letter-spacing:var(--v-tr-caps);
     text-transform:uppercase; color:var(--v-faint); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .tg-meta{ display:flex; align-items:center; gap:7px; padding:6px 8px; flex:1; min-width:0; }
+
+  /* THE CAPTION is a column: the name's row, then the used-for line. */
+  .tg-meta{ display:flex; flex-direction:column; justify-content:center; gap:2px;
+    padding:6px 8px; flex:1; min-width:0; }
   .tg-card.row .tg-meta{ padding:0 12px 0 8px; }
-  .tg-metatext{ flex:1; min-width:0; }
-  .tg-name{ display:block; font-size:var(--v-fs-b2); font-weight:600; color:var(--v-txt);
+  .tg-metarow{ display:flex; align-items:center; gap:7px; min-width:0; }
+  /* THE FLOOR, and the whole point of it: 96px is wider than the longest name a
+     fresh install ships ("Worship Lyrics"), so no seeded built-in is ever
+     abbreviated. `templatecard.test.js` prices the row against the grid's own
+     narrowest column and fails if the row cannot honour this. */
+  .tg-name{ flex:1 1 auto; min-width:96px; font-size:var(--v-fs-b2); font-weight:600; color:var(--v-txt);
     overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .tg-sub{ display:block; font-size:var(--v-fs-cap); color:var(--v-faint); margin-top:1px; }
   .tg-cardbtns{ display:flex; align-items:center; gap:1px; flex:0 0 auto; position:relative; }
   .tg-star, .tg-more{ width:22px; height:22px; display:grid; place-items:center; border:0; background:none;
     color:var(--v-faint); cursor:pointer; border-radius:var(--v-r-sm); }
