@@ -250,18 +250,84 @@
     ...(zones.clock ? ['clock'] : []),
     ...(zones.elapsed && elapsedText ? ['elapsed'] : []),
   ];
+  // EVERY FIGURE ON THE RAIL SAYS WHAT IT IS.
+  //
+  // ProPresenter's stage display puts each element in its own region under a
+  // small upper-case label, and the reason is not decoration: a platform monitor
+  // is read in one glance, from ten metres, by somebody mid-sentence. The figure
+  // row ACROSS THE BOTTOM already did this — COUNTDOWN · TIME · ELAPSED — and the
+  // rail BESIDE THE READING did not, so the same two facts were labelled in one
+  // layout and bare in the other. Driven in a browser with a countdown running,
+  // the rail read
+  //
+  //     00 · 03 · 42 · 12:01 AM · 45:00
+  //
+  // five rows of identical white mono, and nothing on the screen said which was
+  // the countdown, which was the wall clock and which was the service. `45:00`
+  // could as easily have been a countdown as an elapsed time; the preacher's only
+  // way to tell was to watch which direction it moved.
+  //
+  // So the rail is built here, row by row, as {label, value} — which also puts
+  // the two layouts on ONE list instead of two `{#if}` ladders that could drift.
+  // The pairs are labelled from the END, so a formatter that ever returned MM:SS
+  // rather than H:MM:SS still labels the minutes as minutes.
+  const PAIR_KEYS = ['Hrs', 'Min', 'Sec'];
+  $: railList = figureList.flatMap((f) => {
+    if (f === 'countdown') {
+      return cdFinished
+        ? [{ k: 'Countdown', v: cdDone || '0:00', done: true }]
+        : cdPairs.map((p, i) => ({
+            k: PAIR_KEYS[PAIR_KEYS.length - cdPairs.length + i] ?? '',
+            v: p,
+            warn: cdWarn,
+          }));
+    }
+    if (f === 'clock') return [{ k: 'Time', v: clock }];
+    return [{ k: 'Elapsed', v: elapsedText }];
+  });
   // How many ROWS the beside-rail holds: a running countdown is three of them, a
-  // finished one is a single line of words.
-  $: railRows = figureList.reduce(
-    (n, f) => n + (f === 'countdown' ? Math.max(1, cdPairs.length) : 1),
-    0,
-  );
+  // finished one is a single line of words. It is the list's own length now, so a
+  // row added to the list cannot be missed by a second piece of counting.
+  $: railRows = railList.length;
   $: beside = figures === 'beside' && figureList.length > 0 && zones.reading;
   // Has the reading anything of its own to fill the screen with? A countdown cue
   // carries a LABEL and no body, and a pre-service countdown on a phone is the one
   // thing that page is being looked at for — so the figures take the room the
   // reading is not using. Still a flex BASIS, still clipped.
   $: readingHasBody = !!(visible && content?.text);
+  // …AND "THE READING HAS NO BODY" IS NOT THE SAME CLAIM AS "A COUNTDOWN IS
+  // RUNNING", WHICH IS THE ONE THE EXCEPTION WAS WRITTEN FOR.
+  //
+  // `.figrow.tall` was keyed on `!readingHasBody` alone and justified by "a
+  // pre-service countdown is the whole reason anyone is looking at this page".
+  // The commonest state with no body is not a countdown — it is STANDBY, before
+  // anything has been fired at all. Driven at 1920×1080 with nothing on screen,
+  // the wall clock took 58% of a platform monitor at 361px while "— standby —"
+  // sat above it at 34px: the time of day, four times the size of the only words
+  // on the screen, because of an exception meant for a countdown that was not
+  // running. The condition now says what the comment always said.
+  //
+  // The rail is the same exception facing sideways, and it did not have it at
+  // all: a countdown BESIDE a bodiless reading left 74% of the screen black and
+  // squeezed the figures into a quarter. One flag, both layouts — the twin door
+  // this repository keeps finding a guarantee missing from.
+  $: figuresTakeTheRoom = !readingHasBody && figureList.includes('countdown');
+  // ACROSS THE BOTTOM, EVERY FIGURE IS ONE SIZE.
+  //
+  // `--ch` was per-figure, so each one filled its own cell — and side by side on
+  // one baseline that is three type sizes pretending to be a row. It only shows
+  // when the row is tall enough that the height bound stops binding, which is
+  // exactly the case nobody checks: on a 1080×1920 portrait panel TIME rendered
+  // at 94px beside ELAPSED at 150px. The widest value decides for all of them, so
+  // the row is uniform and the longest figure still cannot be clipped.
+  //
+  // THE RAIL IS DELIBERATELY NOT DOING THIS. Its rows are stacked, where a size
+  // difference reads as emphasis rather than as raggedness, and §5 asks for the
+  // countdown's pairs to FILL the rail — which sizing them for an eight-character
+  // clock two rows down would quietly undo.
+  $: figCh = figureList
+    .map((f) => (f === 'countdown' ? (cdFinished ? cdDone || '0:00' : cdText) : f === 'clock' ? clock : elapsedText))
+    .reduce((n, v) => Math.max(n, v.length || 5), 5);
 
   // HOW MANY CHARACTERS THE READING HAS, handed to the stylesheet so the verse can
   // be sized to the room instead of to a fixed ceiling. docs/REBRAND.md §3.4 —
@@ -450,17 +516,23 @@
        the only fixed sizes, and they are `flex-basis`, never `height` — a height
        is a floor a long passage pushes past, which is how a clock leaves the top
        of a monitor nobody is standing next to. -->
+  <!-- A ZONE THAT IS SWITCHED OFF GIVES UP ITS ROOM.
+       `main.stage` holds the reading and the rail, and `beside` already requires
+       the reading zone — so with Reading off it was an EMPTY `flex: 1 1 0`
+       competing with `.figrow.only`, which is the same. The two split the screen
+       and a stage monitor showing only a clock gave half of itself to a region
+       with nothing in it. Rendered at 1920×1080 with Reading off: 480px of black
+       above the figures. -->
+  {#if zones.reading}
   <main class="stage" class:beside>
-    {#if zones.reading}
-      <section class="reading" aria-label="Reading">
-        {#if visible && content}
-          {#if content.reference}<div class="ref">{content.reference}{content.translation ? ' · ' + content.translation : ''}</div>{/if}
-          {#if content.text}<div class="verse" style="--vn:{verseChars}">{#if content.reference}“{content.text}”{:else}{content.text}{/if}</div>{/if}
-        {:else}
-          <div class="idle">— standby —</div>
-        {/if}
-      </section>
-    {/if}
+    <section class="reading" aria-label="Reading">
+      {#if visible && content}
+        {#if content.reference}<div class="ref">{content.reference}{content.translation ? ' · ' + content.translation : ''}</div>{/if}
+        {#if content.text}<div class="verse" style="--vn:{verseChars}">{#if content.reference}“{content.text}”{:else}{content.text}{/if}</div>{/if}
+      {:else}
+        <div class="idle">— standby —</div>
+      {/if}
+    </section>
 
     {#if beside}
       <!-- THE RAIL IS ITS OWN CONTAINER (`container-type: size`), so every figure
@@ -468,33 +540,25 @@
            against the frame is the bug this replaces: it looked right at one rail
            width and overflowed at every other. `--rows` is what keeps the stack
            inside its own height however many zones are switched on. -->
-      <aside class="rail" style="--rows:{railRows}" aria-label="Figures">
-        {#each figureList as f (f)}
-          {#if f === 'countdown'}
-            {#if cdFinished}
-              <div class="railrow done"><span class="figv">{cdDone || '0:00'}</span></div>
-            {:else}
-              {#each cdPairs as p, i (i)}
-                <div class="railrow" class:warn={cdWarn} style="--ch:{p.length}"><span class="figv">{p}</span></div>
-              {/each}
-            {/if}
-          {:else if f === 'clock'}
-            <div class="railrow" style="--ch:{clock.length || 5}"><span class="figv">{clock}</span></div>
-          {:else}
-            <div class="railrow" style="--ch:{elapsedText.length || 5}"><span class="figv">{elapsedText}</span></div>
-          {/if}
+      <aside class="rail" class:wide={figuresTakeTheRoom} style="--rows:{railRows}" aria-label="Figures">
+        {#each railList as r, i (i)}
+          <div class="railrow" class:done={r.done} class:warn={r.warn} style="--ch:{r.v.length || 5}">
+            <span class="figk">{r.k}</span>
+            <span class="figv">{r.v}</span>
+          </div>
         {/each}
       </aside>
     {/if}
   </main>
+  {/if}
 
   {#if !beside && figureList.length}
     <!-- ACROSS THE BOTTOM. Also its own container, for the same reason. -->
-    <div class="figrow" class:tall={!readingHasBody} class:only={!zones.reading}
-      style="--figs:{figureList.length}" aria-label="Figures">
+    <div class="figrow" class:tall={figuresTakeTheRoom} class:only={!zones.reading}
+      style="--figs:{figureList.length}; --ch:{figCh}" aria-label="Figures">
       {#each figureList as f (f)}
         {@const v = f === 'countdown' ? (cdFinished ? cdDone || '0:00' : cdText) : f === 'clock' ? clock : elapsedText}
-        <div class="fig" class:warn={f === 'countdown' && cdWarn} style="--ch:{v.length || 5}">
+        <div class="fig" class:warn={f === 'countdown' && cdWarn}>
           <span class="figk">{f === 'countdown' ? 'Countdown' : f === 'clock' ? 'Time' : 'Elapsed'}</span>
           <span class="figv">{v}</span>
         </div>
@@ -627,6 +691,12 @@
   .rail { flex: 0 0 26%; max-width: 26%; min-width: 0; min-height: 0; overflow: hidden;
     container-type: size; display: flex; flex-direction: column;
     border-left: 1px solid rgba(255,255,255,.08); background: rgba(255,255,255,.02); }
+  /* THE SAME EXCEPTION `.figrow.tall` MAKES, FACING SIDEWAYS. A countdown with no
+     verse beneath it left three quarters of a platform monitor black and put the
+     figures the room is actually watching into a quarter of the width. Still a
+     BASIS, still clipped — the rail is its own container, so every figure in it
+     simply re-reads the wider rail. */
+  .rail.wide { flex-basis: 52%; max-width: 52%; }
   /* A FIGURE ON THIS RAIL WEARS NO PROMISE COLOUR. The clock, the elapsed time
      and the countdown were all `--v-amber`, and amber on this console means ON
      AIR and nothing else (rule 18, DECISIONS §21, `colourlaw.test.js`). Driven
@@ -640,7 +710,14 @@
      different hue. A clock is a fact about time, so it takes the page's own ink.
      `--v-txt` is also BRIGHTER than amber on `--v-void`, so the figure a
      preacher reads from a platform did not get quieter. */
-  .railrow { flex: 1 1 0; min-height: 0; overflow: hidden; display: grid; place-items: center;
+  .railrow { flex: 1 1 0; min-height: 0; overflow: hidden;
+    /* LABEL ON TOP, FIGURE BENEATH — the region shape the bottom row already had.
+       `auto auto` + `align-content: center`, not `auto 1fr`: a rail with one zone
+       switched on is a row a thousand pixels tall, and a figure centred in what is
+       left of that leaves its own label stranded at the ceiling. The label belongs
+       to the figure, so the two are centred together as one block. */
+    display: grid; grid-template-rows: auto auto; align-content: center;
+    justify-items: center; gap: 2px;
     font-family: var(--f-mono); font-variant-numeric: tabular-nums; font-weight: 700;
     color: var(--v-txt); line-height: 1; letter-spacing: .01em;
     /* A share of the rail in BOTH axes: wide enough to fill it, never taller than
@@ -650,10 +727,13 @@
        browser: `62cqw` fills a rail with a TWO-character pair and puts a clock
        ("02:14 AM", eight characters) at 205px in a 333px rail — clipped to about a
        character and a half, silently, because the row is `overflow: hidden`. The
-       0.62 advance is the mono figure docs/REBRAND.md §3.4 already measured. */
+       0.62 advance is the mono figure docs/REBRAND.md §3.4 already measured.
+       The height share dropped from 78% to 58% when the label arrived above it:
+       a row is the label plus the figure now, and a figure still sized for the
+       whole row would push its own label off the top of a box that clips. */
     font-size: min(
       calc(88cqw / (var(--ch, 2) * 0.62)),
-      calc(78cqh / var(--rows, 3))
+      calc(58cqh / var(--rows, 3))
     ); }
   .railrow + .railrow { border-top: 1px solid rgba(255,255,255,.06); }
   .railrow.warn { color: var(--v-red); }
@@ -661,28 +741,67 @@
      size that still fits the rail it is a share of. */
   .railrow.done { font-family: var(--f-body); letter-spacing: 0; line-height: 1.15;
     padding: 0 6cqw; text-align: center;
-    font-size: min(16cqw, calc(70cqh / var(--rows, 1))); }
-  /* ACROSS THE BOTTOM — a fixed BASIS, clipped, never a height. */
-  .figrow { flex: 0 0 20%; min-height: 0; overflow: hidden; container-type: size;
+    font-size: min(16cqw, calc(52cqh / var(--rows, 1))); }
+  /* ACROSS THE BOTTOM — a fixed BASIS, clipped, never a height.
+     A FIFTH OF A PLATFORM MONITOR FOR A WALL CLOCK IS NOT A HIERARCHY.
+     ProPresenter's stage display has one rule above every other: the current
+     slide dominates and everything else is visibly subordinate. This did the
+     opposite, and it was measurable rather than a matter of taste — at 1920×1080
+     with the clock and the service timer on, the READING settled at 76px and the
+     time of day rendered at 110px. At 1024×768 it was 40px of scripture under
+     62px of clock. The preacher's own screen said the loudest thing in the room
+     was what o'clock it was.
+     15% gives the reading 54px back at 1080 and leaves the clock at a size no
+     platform has ever struggled with (the figure is bounded below). */
+  .figrow { flex: 0 0 15%; min-height: 0; overflow: hidden; container-type: size;
     display: flex; border-top: 1px solid rgba(255,255,255,.08); background: rgba(255,255,255,.02); }
   /* A pre-service countdown is the whole reason anyone is looking at this page, and
      a countdown cue has a label and no body. The figures take the room the reading
      is not using — a different BASIS, never a height, and still clipped. */
   .figrow.tall { flex-basis: 58%; }
   .figrow.only { flex: 1 1 0; }
+  /* A GRID, NOT A CENTRED COLUMN. Each figure used to be sized to its OWN
+     character count, so the three blocks were three different heights and their
+     labels landed 647px, 706px and 671px down a 1080px screen — three labels on
+     three lines pretending to be a row. Two things put them back on one line:
+     every figure in the row is now one size (`figCh`), and the label row is the
+     same height in every cell because the label is the same size everywhere. */
   .fig { flex: 1 1 0; min-width: 0; min-height: 0; overflow: hidden;
-    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; }
+    display: grid; grid-template-rows: auto auto; align-content: center;
+    justify-items: center; gap: 2px; }
   .fig + .fig { border-left: 1px solid rgba(255,255,255,.06); }
-  .figk { font-family: var(--f-mono); font-size: var(--v-fs-fig); font-weight: 700; letter-spacing: .16em;
-    text-transform: uppercase; color: var(--v-faint); }
+  /* ── ONE LABEL, EVERY REGION ────────────────────────────────────────────────
+     ProPresenter's stage display is a set of labelled regions, and what makes it
+     read as ONE instrument rather than five widgets is that every label is the
+     same label: same size, same weight, same tracking, same case.
+     Relay had three treatments and all three were CONSOLE pixels on a PLATFORM
+     monitor — `.figk` at `--v-fs-fig` (9px), `.note-lbl` at 9px, `.next-lbl` at a
+     hardcoded 10px — on a page where the reference, the verse, the note, the
+     up-next and every figure are all sized to the room. Photographed at
+     1920×1080, TIME and ELAPSED were hairlines: legible on the phone this page is
+     also for, invisible from the platform it is mostly for.
+     A LABEL IS DELIBERATELY NOT A SHARE OF ITS REGION. Every other size on this
+     page is a container unit, and that is right for content — a figure should
+     fill the box it is in. A label is not content; it is the same small word in
+     every box, and the rail (a quarter of the width) and the figure row (all of
+     it) would give the same word two wildly different sizes. `vmin` is the frame,
+     which is what "the same everywhere" means here, floored at the console's own
+     figure token so a phone still gets the size the phone was designed at. */
+  .figk, .note-lbl, .next-lbl {
+    font-family: var(--f-mono); font-weight: 700; letter-spacing: .16em;
+    text-transform: uppercase; line-height: 1.1;
+    font-size: clamp(var(--v-fs-fig), 1.9vmin, 24px); }
+  .figk { color: var(--v-faint); }
   /* The bottom row is the same three figures in the other layout. Same rule. */
   .fig .figv { font-family: var(--f-mono); font-variant-numeric: tabular-nums; font-weight: 700;
     color: var(--v-txt); line-height: 1;
     /* Same rule as the rail: the width a figure may take is its share of the row
-       divided by the characters it actually has. */
+       divided by the characters it actually has.
+       Height share 58% → 52%: the row is shorter now (see `.figrow`) and it
+       carries a label that has to fit above the figure rather than beside it. */
     font-size: min(
       calc(92cqw / var(--figs, 1) / (var(--ch, 5) * 0.62)),
-      58cqh
+      52cqh
     ); }
   .fig.warn .figv { color: var(--v-red); }
   @media (prefers-reduced-motion: no-preference) {
@@ -798,8 +917,11 @@
     0%, 100% { background: #c8121c; }
     50% { background: #7a0a11; }
   }
-  .note-lbl { font-family: var(--f-mono); font-size: var(--v-fs-fig); font-weight: 700; letter-spacing: .16em;
-    text-transform: uppercase; color: var(--v-amber); flex: 0 0 auto; }
+  /* The ink stays as it is. Amber is this page's own accent — the lockup, the
+     reference, the up-next citation and every active control wear it too — so
+     repainting one label would make the page less coherent, not more. What
+     changed is the FORM: it is now the same label as every other. */
+  .note-lbl { color: var(--v-amber); flex: 0 0 auto; }
   /* Up-next panel — confidence info the preacher wants, kept off the main output. */
   /* BOUNDED AND CLIPPED, like every other row beneath the reading. It was neither,
      and it got away with it for as long as the zone was off by default: nothing on
@@ -811,8 +933,7 @@
     container-type: inline-size;
     display: flex; align-items: baseline; gap: 14px; padding: 14px 20px;
     border-top: 1px solid rgba(255,255,255,.08); background: rgba(255,255,255,.02); }
-  .next-lbl { font-family: var(--f-mono); font-size: 10px; font-weight: 700; letter-spacing: .16em;
-    text-transform: uppercase; color: var(--v-faint); flex: 0 0 auto; }
+  .next-lbl { color: var(--v-faint); flex: 0 0 auto; }
   .next-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
   /* "The next item in smaller type beneath the reading" — SMALLER THAN THE READING,
      which is what it is beneath, not smaller than a phone. Both were fixed sizes

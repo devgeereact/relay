@@ -195,7 +195,9 @@ describe('the stacked rail clock', () => {
     const rail = container.querySelector('.rail');
     expect(rail, 'the figures did not move beside the reading').toBeTruthy();
 
-    const rows = [...rail.querySelectorAll('.railrow')].map((n) => n.textContent.trim());
+    // S4 · the VALUE span, not the row's text — every rail row now carries its
+    // own label as well, so `textContent` would read "Hrs 01".
+    const rows = [...rail.querySelectorAll('.railrow .figv')].map((n) => n.textContent.trim());
     // HH / MM / SS, each its own row, plus the clock row (on by default).
     const [hh, mm, ss] = formatCountdown(remaining, 'hms').split(':');
     expect(rows.slice(0, 3)).toEqual([hh.padStart(2, '0'), mm, ss]);
@@ -448,5 +450,182 @@ describe('the colour law reaches the stage monitor', () => {
   it('the warning state is still red, because that one IS a warning', () => {
     expect(rule('.railrow.warn')).toContain('var(--v-red)');
     expect(rule('.fig.warn .figv')).toContain('var(--v-red)');
+  });
+});
+
+// ═══ S4 · THE PROPRESENTER-7 READING OF THIS SCREEN ═══════════════════════════
+//
+// ProPresenter's stage display is a set of DISCRETE, LABELLED REGIONS on black:
+// the current slide dominates, everything else is visibly subordinate, and every
+// region carries the same small quiet upper-case label. Relay already had every
+// element PP7 has. What it did not have was a hierarchy or a label system, and
+// all four defects below were found by rendering the page in a browser at
+// 1920×1080, 1024×768 and 1080×1920 and looking at the picture.
+describe('S4 · the stage reads as one instrument', () => {
+  const style = SRC.slice(SRC.indexOf('<style>'));
+  const rule = (sel) => {
+    const i = style.indexOf(`${sel} {`);
+    expect(i, `no rule for ${sel}`).toBeGreaterThan(-1);
+    return style.slice(i, style.indexOf('}', i));
+  };
+
+  // A figure nobody can name is a figure nobody can use. The row ACROSS THE
+  // BOTTOM said COUNTDOWN · TIME · ELAPSED; the rail BESIDE THE READING said
+  // nothing at all, so with a countdown running it read
+  //     00 · 03 · 42 · 12:01 AM · 45:00
+  // — five rows of identical white mono, and the only way to tell the service
+  // clock from the countdown was to watch which way it moved. Same two facts, two
+  // layouts, labelled in one and bare in the other: the twin-door shape.
+  it('every figure on the rail says what it is', async () => {
+    const { container } = await mount({
+      ...verse,
+      text: null,
+      countdown_to: Date.now() + 3_725_000,
+      service_started_at: Date.now() - 60_000,
+    });
+    await click('Zones');
+    await click('Figures beside the reading');
+    await tick();
+
+    const rows = [...container.querySelectorAll('.rail .railrow')];
+    expect(rows.length, 'the rail did not render').toBeGreaterThan(1);
+    for (const row of rows) {
+      const k = row.querySelector('.figk');
+      expect(k, `a rail row with no label: "${row.textContent.trim()}"`).toBeTruthy();
+      expect(k.textContent.trim().length, 'a blank label is not a label').toBeGreaterThan(0);
+    }
+    expect(rows.map((r) => r.querySelector('.figk').textContent.trim())).toEqual([
+      'Hrs',
+      'Min',
+      'Sec',
+      'Time',
+      'Elapsed',
+    ]);
+  });
+
+  // The labels were console pixels on a platform monitor: `.figk` 9px, `.note-lbl`
+  // 9px, `.next-lbl` a hardcoded 10px — three treatments, none of which scaled, on
+  // a page where the reference, the verse, the note, the up-next and every figure
+  // are all sized to the room. Photographed at 1920×1080 they were hairlines.
+  it('every region label is ONE label, and it is sized to the room', () => {
+    const r = rule('.figk, .note-lbl, .next-lbl');
+    expect(r, 'the label must grow with the screen, not sit at a console size').toMatch(/vmin/);
+    expect(r, 'and it must still floor at the size the phone was designed at').toContain(
+      'var(--v-fs-fig)',
+    );
+    // One declaration, so the three cannot drift apart again. Each keeps only its
+    // own ink and flex behaviour.
+    // Matched at a line start, so this reads the STANDALONE rule and not the
+    // grouped selector it also appears in — `indexOf('.next-lbl {')` finds the
+    // group first, which would make this assertion pass for the wrong reason.
+    for (const sel of ['note-lbl', 'next-lbl']) {
+      const own = style.match(new RegExp(`\\n  \\.${sel} \\{([^}]*)\\}`));
+      expect(own, `no standalone rule for .${sel}`).toBeTruthy();
+      expect(own[1], `.${sel} must not carry its own font-size any more`).not.toMatch(
+        /font-size/,
+      );
+    }
+    // The old hardcoded one, by value, so restoring it fails here rather than
+    // being caught only by an eye.
+    expect(style).not.toMatch(/\.next-lbl[^}]*font-size:\s*10px/);
+  });
+
+  // `.figrow.tall` gives the figures 58% of the screen, and its own comment says
+  // why: "a pre-service countdown is the whole reason anyone is looking at this
+  // page". It was keyed on the reading having no BODY, which is also true of
+  // STANDBY — so a page with nothing fired at all gave the wall clock 58% of a
+  // platform monitor at 361px while "— standby —" sat above it at 34px.
+  it('a wall clock does not get the room a countdown asked for', async () => {
+    const { container } = await mount(verse);
+    // Standby: content cleared, no countdown anywhere.
+    socket.onmessage({ data: JSON.stringify({ kind: 'clear' }) });
+    await tick();
+    const row = container.querySelector('.figrow');
+    expect(row, 'the clock zone is on by default').toBeTruthy();
+    expect(
+      row.classList.contains('tall'),
+      'the time of day took the room a countdown asked for',
+    ).toBe(false);
+
+    // …and the exception still fires for the case it was written for.
+    cleanup();
+    const cd = await mount({ ...verse, text: null, countdown_to: Date.now() + 120_000 });
+    expect(
+      cd.container.querySelector('.figrow').classList.contains('tall'),
+      'a pre-service countdown IS the reason anyone is looking at this page',
+    ).toBe(true);
+  });
+
+  // The same exception facing sideways, which the rail did not have at all: a
+  // countdown beside a bodiless reading left 74% of a platform monitor black and
+  // squeezed the figures the room is watching into a quarter of the width.
+  it('and the rail takes the room too, for the same reason', async () => {
+    const { container } = await mount({
+      ...verse,
+      text: null,
+      countdown_to: Date.now() + 120_000,
+    });
+    await click('Zones');
+    await click('Figures beside the reading');
+    await tick();
+
+    const rail = container.querySelector('.rail');
+    expect(rail).toBeTruthy();
+    expect(rail.classList.contains('wide')).toBe(true);
+    expect(rule('.rail.wide'), 'a BASIS, never a height').toMatch(/flex-basis/);
+    expect(rule('.rail.wide')).not.toMatch(/[^-]height:\s*\d/);
+
+    // A reading with words in it keeps its room.
+    socket.onmessage({ data: JSON.stringify(verse) });
+    await tick();
+    expect(container.querySelector('.rail').classList.contains('wide')).toBe(false);
+  });
+
+  // `main.stage` holds the reading and the rail, and the rail already requires the
+  // reading zone — so with Reading switched OFF it was an empty `flex: 1 1 0`
+  // competing with `.figrow.only`, which is the same. They split the screen, and a
+  // stage monitor showing only a clock gave half of itself to a region with
+  // nothing in it: 480px of black above the figures at 1920×1080.
+  it('a zone that is switched off gives up its room', async () => {
+    const { container } = await mount({ ...verse, service_started_at: Date.now() - 60_000 });
+    expect(container.querySelector('main.stage')).toBeTruthy();
+
+    await click('Zones');
+    await click('Reading');
+    await tick();
+
+    expect(container.querySelector('.reading'), 'the reading is off').toBeNull();
+    expect(
+      container.querySelector('main.stage'),
+      'an empty region must not keep holding half the screen',
+    ).toBeNull();
+    // …and the figures take what it gave up.
+    expect(container.querySelector('.figrow').classList.contains('only')).toBe(true);
+  });
+
+  // Side by side on one baseline, each figure was sized to its OWN character
+  // count, so the row was two or three type sizes pretending to be a row. It only
+  // shows where the height bound stops binding — measured on a 1080×1920 portrait
+  // panel, TIME at 94px beside ELAPSED at 150px.
+  it('every figure across the bottom is one size, set by the longest of them', async () => {
+    const { container } = await mount({
+      ...verse,
+      text: null,
+      countdown_to: Date.now() + 120_000,
+      service_started_at: Date.now() - 60_000,
+    });
+    const row = container.querySelector('.figrow');
+    const figs = [...row.querySelectorAll('.fig')];
+    expect(figs.length, 'countdown · time · elapsed').toBe(3);
+    // The size now lives ONCE, on the row.
+    expect(row.style.getPropertyValue('--ch').trim()).not.toBe('');
+    for (const f of figs) {
+      expect(f.style.getPropertyValue('--ch'), 'a per-figure size is the defect').toBe('');
+    }
+    // And it is the LONGEST value, or the longest figure is the one that clips.
+    const longest = Math.max(
+      ...[...row.querySelectorAll('.figv')].map((n) => n.textContent.trim().length),
+    );
+    expect(Number(row.style.getPropertyValue('--ch'))).toBe(longest);
   });
 });
