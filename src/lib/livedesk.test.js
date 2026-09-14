@@ -314,9 +314,23 @@ describe('the inspector column', () => {
 
     // The reference fire, ranges included, in §9's one box.
     expect(rail).toMatch(/on:click=\{\(\) => onReference\(q\.trim\(\)\)\}/);
-    // The emergency announcement, two-step, now on every workspace.
-    expect(dock).toMatch(/aria-label="Emergency announcement"/);
-    expect(dock).toMatch(/annArmed \? 'Confirm\?' : 'Send'/);
+    // THE EMERGENCY ANNOUNCEMENT IS THE ONE THAT DID NOT LAND ANYWHERE, and
+    // that is now deliberate rather than an oversight. It left this column for
+    // Quick tools, and on 2026-09-14 the operator had it removed from there too
+    // (L3). So the honest assertion is the opposite of the one that used to sit
+    // here: no rendered control anywhere reaches `push_announcement`.
+    //
+    // This is a real consequence and it is asserted rather than left implicit —
+    // `capture.js::pushAnnouncement` and the Rust command both still exist, so
+    // `ipc.test.js` and `qa-inventory`'s command count are BOTH still green over
+    // a command nothing renders. Deleting the pair is the lead's call; until
+    // then this test is what says so out loud.
+    for (const f of ['LiveRail.svelte', 'Dock.svelte', 'views/Live.svelte']) {
+      const s = readFileSync(resolve(__dirname, f), 'utf8');
+      expect(s, `${f} still renders an announcement control`)
+        .not.toMatch(/aria-label="Emergency announcement"/);
+    }
+    expect(dock).not.toMatch(/annArmed/);
     // The per-screen repair, and the way to open the wall.
     expect(channels).toMatch(/openChannelOutput/);
     expect(channels).toMatch(/closeChannelOutput/);
