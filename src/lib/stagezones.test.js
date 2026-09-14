@@ -366,7 +366,10 @@ describe('a word to the preacher', () => {
       await tick();
       const el = container.querySelector('.alert');
       expect(el, 'the message did not render at all').toBeTruthy();
-      expect(el.className).toContain(step);
+      // `classList`, not a substring of `className` — the Svelte scope hash is in
+      // there too, and a two-letter needle in a haystack that changes every build
+      // is a test that passes for the wrong reason one day.
+      expect(el.classList.contains(step), `got "${el.className}"`).toBe(true);
       expect(el.textContent).toContain(text);
     });
   }
