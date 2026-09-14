@@ -111,8 +111,24 @@ describe('§11 · one type scale, three roles', () => {
   const frame = read(FRAME);
 
   it('the frame defines page title, standfirst and row', () => {
-    expect(frame, 'no page-title role').toMatch(/\.rw-h1\{[\s\S]*?font-size:var\(--v-fs-h1\)/);
+    // ROLE ONE IS AN EYEBROW NOW, not a display heading. This line used to
+    // require `--v-fs-h1`, and that was the wrong half of the claim to hold: the
+    // thing worth protecting is that the role is defined ONCE, here, in a token —
+    // not that it is 24px. Six workspaces had drifted into two products because
+    // Outputs dropped its title block while four others still opened with an H1
+    // over a two-line standfirst, and on four of those the H1 was the workspace's
+    // own name directly under the tab you had just pressed. It is now a mono
+    // caption on the same band as the sentence and the controls, and still an
+    // `<h1>` so heading navigation still lands on it.
+    expect(frame, 'no page-title role').toMatch(/\.rw-h1\{[\s\S]*?font-size:var\(--v-fs-cap\)/);
+    // …and it must still BE a heading. Styling it down is allowed; demoting it
+    // to a <span> would take Settings' section name away from a screen reader.
+    expect(frame, 'the page title is no longer a heading').toMatch(/<h1 class="rw-h1">/);
     expect(frame, 'no standfirst role').toMatch(/\.rw-lead\{[\s\S]*?font-size:var\(--v-fs-b2\)/);
+    // One line on the band, with the whole sentence in its `title` — a head that
+    // wraps to two lines is a head that is a different height per workspace,
+    // which is the drift this whole file exists to catch.
+    expect(frame, 'the standfirst may not wrap the band').toMatch(/\.rw-lead\{[\s\S]*?text-overflow:ellipsis/);
     // A row is a NAME and a VALUE — §11 is explicit, and the value half is what
     // `settingvalue.js` exists to fill honestly.
     expect(frame, 'no row name').toMatch(/\.rw-nvk\)?\{/);

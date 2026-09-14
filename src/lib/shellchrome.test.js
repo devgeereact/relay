@@ -125,6 +125,19 @@ describe('§2 · the chrome lamps are never a second opinion about a screen', ()
     expect(map).not.toMatch(/green|emerald/i);
   });
 
+  it('a long screen name is ELLIPSED, not hard-clipped', () => {
+    // Measured at 1440×960: `Streaming` lost its last letter with nothing to say
+    // it had been cut, because `text-overflow` is a property of a block container
+    // and the lamp row is an inline-flex — the text child sat in an anonymous
+    // flex item and the declaration did nothing. A clipped name reads as a
+    // different screen; an ellipsis reads as a long one.
+    expect(APP).toMatch(/<span class="signm">\{lampWord\(sc\.name\)\}<\/span>/);
+    const css = read('src/app.css');
+    const rule = css.slice(css.indexOf('.siglamps .signm{'), css.indexOf('}', css.indexOf('.siglamps .signm{')));
+    expect(rule).toContain('display:block');
+    expect(rule).toContain('text-overflow:ellipsis');
+  });
+
   it('a long screen name truncates rather than wrapping the chrome', () => {
     // The bar is 34px. A second row of lamps pushes the whole desk — and the
     // slide grid, which is the job — down by a row.

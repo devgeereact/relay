@@ -624,7 +624,7 @@
         <span class="siglamps" aria-label="Screens">
           {#each screenLamps as sc (sc.id)}
             <span class="sig" title="{sc.name} — {sc.label}{sc.note ? ` (${sc.note})` : ''}">
-              <i class="lamp {LAMP_TONE[sc.kind] ?? 'grey'}"></i>{lampWord(sc.name)}
+              <i class="lamp {LAMP_TONE[sc.kind] ?? 'grey'}"></i><span class="signm">{lampWord(sc.name)}</span>
             </span>
           {/each}
         </span>
