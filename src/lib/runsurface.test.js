@@ -239,3 +239,77 @@ describe('L4 · and the workspace digits really are dead keys', () => {
     unregister();
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// C2 · THE MICROPHONE-QUALITY BANNER IS OUT (operator instruction 2026-09-14)
+//
+//   "take out this notification section completely… and nothing should go
+//    there."
+//
+// The amber box at the foot of Live carried the `dsp.rs` warnings — clipping,
+// too quiet, noisy — and beside it the language-instability note. Both are gone,
+// and "nothing should go there" is the half of the instruction a test can hold:
+// the easy way to half-obey it is to shrink the banner into a chip, which is the
+// same claim in less space.
+//
+// WHAT IT COST IS WRITTEN DOWN RATHER THAN ARGUED WITH. `too_quiet` was the one
+// place in the console that named a muted microphone as a muted microphone, and
+// a rule-12 failure that nothing announces is exactly the shape the field audits
+// were written about. The operator asked for it out; the last assertion here
+// holds the note that says so at the site, so the next person finds the
+// consequence rather than rediscovering it on a Sunday.
+//
+// Each assertion was watched to fail with the banners restored.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('C2 · the mic-quality and language banners are gone from the run surface', () => {
+  // The TEMPLATE only: everything after the instance script and before the
+  // stylesheet, with its comments stripped. Both halves matter — the script
+  // still names `langWarning` in the note recording why it went, and a scanner
+  // that read the whole file would report the defect present and the defect
+  // fixed at once (the reason `workspacegrammar.test.js` strips prose too).
+  const MARKUP = LIVE.slice(LIVE.lastIndexOf('</script>'), LIVE.lastIndexOf('<style>'))
+    .replace(/<!--[\s\S]*?-->/g, '');
+
+  it('neither banner is rendered, and neither string table is left behind', () => {
+    expect(MARKUP, 'the banner element is still rendered').not.toMatch(/sttwarn/);
+    expect(MARKUP).not.toMatch(/qualityWarning|langWarning/);
+    // The copy goes with the box. A string table nothing renders is a banner
+    // waiting to be put back by somebody who reads it as dead code.
+    const script = LIVE.slice(0, LIVE.indexOf('</script>')).replace(/\/\/[^\n]*/g, '');
+    expect(script).not.toMatch(/Almost no sound is reaching Relay/);
+    expect(script).not.toMatch(/const QUALITY = \{/);
+    // …and the rule that dressed it.
+    expect(STYLE, '.sttwarn still has a rule of its own').not.toMatch(/\.sttwarn\s*\{/);
+  });
+
+  it('and nothing quieter has been put in its place', () => {
+    // The slot: between the live region that announces a screen going down and
+    // the inspector. Comments are stripped above, so what is left between the
+    // two anchors is only markup — and there must be none of it.
+    const ANCHOR = 'aria-live="polite">{downAnnounce}</p>';
+    const from = MARKUP.indexOf(ANCHOR);
+    const to = MARKUP.indexOf('<DetectionInspector');
+    expect(from, 'the anchors this test measures between have moved').toBeGreaterThan(-1);
+    expect(to).toBeGreaterThan(from);
+    expect(MARKUP.slice(from + ANCHOR.length, to).trim(), 'something is in the empty slot').toBe('');
+  });
+
+  it('the events are untouched — only the surface went', () => {
+    // `audio://quality` and `stt://language_unstable` still cross the bridge and
+    // are still stored, so `ipc.test.js`'s contract does not move and a future
+    // surface has the facts to hand. Removing a listener to tidy up would be a
+    // second, much larger change hiding inside a layout one.
+    const CAPTURE = read('src/lib/stores/capture.js');
+    expect(CAPTURE).toMatch(/listen\('audio:\/\/quality'/);
+    expect(CAPTURE).toMatch(/listen\('stt:\/\/language_unstable'/);
+  });
+
+  it('and the file says what a muted microphone now costs', () => {
+    // Not prose for its own sake: this is the only record, at the only place
+    // somebody restoring the banner would be reading.
+    const note = LIVE.match(/<!--[\s\S]*?THE MICROPHONE-QUALITY AND LANGUAGE BANNERS ARE GONE[\s\S]*?-->/);
+    expect(note, 'the removal is undocumented at the site').not.toBeNull();
+    expect(note[0]).toMatch(/too_quiet/);
+    expect(note[0]).toMatch(/ONLY place/);
+  });
+});
