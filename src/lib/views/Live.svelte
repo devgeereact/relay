@@ -216,6 +216,9 @@
   $: liveCueId = $liveCue.cueId;
   $: liveSlide = $liveCue.slide;
   $: planOnAir = $liveCue.onAir;
+  // ONE resolution, read by the render AND by the branch that decides whether
+  // there is anything to render with — two calls could disagree.
+  $: progTpl = resolveOutputTemplate(previewTpl, $liveTemplateOverride, $liveTemplatePinned);
   const setLive = (cueId, slide) => liveCue.set({ cueId, slide, onAir: true });
 
   $: if (openPlan) setSession({ planId: openPlan.id, liveCueId, liveSlide, liveOnAir: planOnAir });
@@ -1534,12 +1537,23 @@
         {/if}
       </header>
       <div class="screen">
-        {#if $live}
+        {#if $live && progTpl}
           <TemplateRender
-            template={resolveOutputTemplate(previewTpl, $liveTemplateOverride, $liveTemplatePinned)}
+            template={progTpl}
             content={$liveContent}
             onFit={noteFit}
           />
+        {:else if $live}
+          <!-- CONTENT, AND NOTHING TO RENDER IT WITH. Measured on 2026-09-14: with
+               no template resolved this pane drew an amber ON AIR frame over a
+               black rectangle and said nothing, while the PREVIEW pane one column
+               left said `No active template — activate one in Templates` in the
+               same situation. One pane explained itself and the other did not —
+               and the silent one was the one claiming to be on air. A blank frame
+               and a blackout look identical and are not the same fact (rule 35). -->
+          <div class="screen-empty">
+            {$live.reference || 'Content'} is on air, but no template is active — activate one in Templates
+          </div>
         {:else}
           <!-- Nothing is on the wall. Say so in words — a blank rectangle and a
                black-out look identical, and they are not the same fact. -->
