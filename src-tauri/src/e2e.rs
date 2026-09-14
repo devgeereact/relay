@@ -2128,6 +2128,87 @@ fn r5_a_word_to_the_preacher_reaches_the_stage_and_not_a_rehearsal() {
     );
 }
 
+/// …AND IT REACHES NO CONGREGATION CHANNEL — asserted at the DOORS, not at the
+/// place the code happens to live.
+///
+/// `r5_…` above proves the alert arrives and that a rehearsal holds it. Neither is
+/// the claim in docs/REBRAND.md §5 — "no congregation screen can show it" — and
+/// until now that claim rested on two things that are not tests of the running
+/// system: a sentence about which `.svelte` file the markup sits in, and
+/// `r6-contracts.test.js`, which reads source text.
+///
+/// CLAUDE.md is explicit about why that is not enough: *"A test's assertion surface
+/// is part of its claim."* `stage_next` was gated, tested and leaking for as long as
+/// it was, because the test watched the wall and the leak went out of the other
+/// door. So this one watches BOTH doors at once and asserts the whole shape of what
+/// an alert does:
+///
+///   - the kiosk hub gets exactly ONE frame, and it is a `stage_alert`;
+///   - it carries no field a congregation renderer binds — no `content_kind`, no
+///     `reference`, no `template_json`. `Output.svelte` reads `text` only under
+///     `kind === 'content'`, so a frame with no content kind cannot paint;
+///   - **the Tauri door stays shut**. A native output window is driven by
+///     `output://content` / `clear` / `black` and nothing else, so a projector on
+///     HDMI is unreachable from here by construction — and the Wall is what proves
+///     it, because the Wall is that door.
+///
+/// The last point is the one a source scan can never make. An alert published to
+/// the hub is broadcast to every WebSocket client including `output.html`; what
+/// stops a congregation seeing it is that the frame is not a content frame and no
+/// congregation renderer has a branch for it. A future `emit` added here would pass
+/// `r6-contracts` untouched and fail this.
+#[test]
+fn r5_a_word_to_the_preacher_reaches_no_congregation_channel() {
+    let app = app();
+    let h = app.handle().clone();
+    let wall = Wall::watch(&h);
+    let mut kiosk = qa::Kiosk::attach(&h);
+
+    // A real verse first, so the test is run against a wall that HAS something on
+    // it — the case where a leak would be indistinguishable from the verse.
+    manual_fire(h.clone(), h.state::<Db>(), "John 3:16".into(), None, None).unwrap();
+    settle();
+    let before = wall.count();
+    assert_eq!(before, 1, "the fixture's own fire did not reach the wall");
+    while kiosk.next().is_some() {} // drain the fire's own frames
+
+    super::send_stage_alert(h.clone(), Some("Wrap up — 5 minutes".into())).expect("send");
+    settle();
+
+    let frame = kiosk
+        .next()
+        .expect("the stage monitor must get the message");
+    assert!(
+        frame.contains(r#""kind":"stage_alert""#),
+        "the alert went out as something else: {frame}"
+    );
+    assert!(
+        kiosk.silent(),
+        "an alert published more than one frame; only the stage frame may leave: {frame}"
+    );
+
+    // Nothing a congregation template binds. `content_kind` is the field every
+    // congregation renderer switches on; `reference` and `template_json` are how a
+    // verse and its look travel.
+    for field in ["content_kind", "reference", "template_json", "media_url"] {
+        assert!(
+            !frame.contains(field),
+            "the alert frame carries `{field}`, which is congregation content: {frame}"
+        );
+    }
+
+    // THE OTHER DOOR. A native output window hears Tauri events and nothing else.
+    assert_eq!(
+        wall.count(),
+        before,
+        "a word to the preacher reached the congregation wall"
+    );
+    assert!(
+        !wall.cleared() && !wall.blacked(),
+        "an alert must not disturb what is on the screens"
+    );
+}
+
 /// THE SCRIPTURE SEARCH — the same parser as the live pipeline, and never a fire.
 ///
 /// `search_verses` is the one search: the Planner's box, the preacher's remote
