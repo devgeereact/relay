@@ -166,6 +166,50 @@ export function applyTranscript(t, { text, is_final }, at) {
 // a decision, not a history of recents.
 export const detections = writable([]);
 
+/**
+ * CLAIMS THAT HAVE BEEN DECIDED — the receipt, not a second claim list.
+ *
+ * `detections` above holds only what is still awaiting an operator, which is
+ * right and must stay that way. But it leaves one hole, and it is the one the
+ * whole product turns on: **an auto-fire never enters it at all.** A `Direct`
+ * hit above the bar goes straight to the screens and the pending suggestion is
+ * REMOVED, so the only thing an operator sees is a verse appearing on the
+ * programme with nothing anywhere saying the AI put it there or what kind of
+ * claim it was. Rule 18 says the operator must see which kind of claim the AI is
+ * making; on the one path where the AI acts alone, they could not.
+ *
+ * So this is a bounded, newest-first log of what HAPPENED to a claim, and every
+ * entry names who acted:
+ *
+ *   'auto'      the AI fired it unprompted. Only ever `status === 'auto'` from
+ *               the backend — a manual fire emits the same event with
+ *               `status: 'manual'` and must never be written up as the AI's.
+ *   'accepted'  the operator pressed Accept AND the fire resolved. Recorded
+ *               after the await, never before: a card reading "put on the
+ *               screens" over a fire that failed is rule 15 in another coat.
+ *   'dismissed' the operator dismissed it.
+ *
+ * It is a RECEIPT, so it is not a trap under the `A` key the way a stale
+ * suggestion is — nothing here is actionable. It is capped rather than pruned by
+ * age for the same reason: the operator asking "what just went out, and did a
+ * person decide it" is asking about the last few seconds either way.
+ */
+export const resolvedDetections = writable([]);
+
+/** How many receipts are kept. Small: this is the last few, not a history. */
+export const MAX_RESOLVED = 4;
+
+/** Write one receipt. Never called with anything but a claim that really ended. */
+function noteResolved(d, outcome) {
+  if (!d?.reference) return;
+  resolvedDetections.update((list) =>
+    [{ ...d, outcome, resolvedAt: Date.now() }, ...list.filter((x) => x.reference !== d.reference)].slice(
+      0,
+      MAX_RESOLVED,
+    ),
+  );
+}
+
 // Output templates (Phase 8), loaded from the DB.
 export const templates = writable([]);
 
@@ -771,6 +815,12 @@ unlistenStt = await listen('stt://transcript', (e) => {
 capture.update((s) => ({ ...s, audioError: null }));
 unlistenDetect = await listen('detection://match', (e) => {
   const d = e.payload;
+  // THE AI ACTED BY ITSELF. This is the only moment that fact exists on the
+  // frontend — the suggestion is about to be removed and nothing else records
+  // it. Strictly `'auto'`: a manual fire emits this same event with
+  // `status: 'manual'`, and writing that up as the AI's decision would be the
+  // `persist_fire` bug (rule 14) reproduced in the UI.
+  if (d?.status === 'auto') noteResolved(d, 'auto');
   detections.update((list) => {
     const now = Date.now();
     // Sweep the stale ones out on the way past. A new suggestion is the moment
@@ -855,16 +905,25 @@ transcript.update((t) => ({ ...t, partial: '' }));
  */
 export async function confirmDetection(reference) {
 const call = await invoke();
+// Read the claim BEFORE the round trip — the receipt below needs the method and
+// the words, and by the time it is written the card is gone from the list.
+const claim = get(detections).find((d) => d.reference === reference) ?? null;
 const thresholds = await call('confirm_detection', { reference });
 // Accepting an AI suggestion also takes us out of the plan — same reason as
 // manualFire.
 leavePlan();
 detections.update((list) => list.filter((d) => d.reference !== reference));
+// AFTER the await, never before. "Accepted — put on the screens" over a fire
+// that threw is rule 15 in another coat, and this function's own doc comment
+// records that exact bug happening to the card itself.
+if (claim) noteResolved(claim, 'accepted');
 capture.update((s) => ({ ...s, thresholds }));
 }
 
 /** Operator dismisses a suggestion → drop it + tighten the gate. */
 export async function dismissDetection(reference) {
+const claim = get(detections).find((d) => d.reference === reference) ?? null;
+if (claim) noteResolved(claim, 'dismissed');
 detections.update((list) => list.filter((d) => d.reference !== reference));
 // Noted before the round trip: dismissing is a decision the operator has already
 // made, and the practice drill is about the decision, not about whether the

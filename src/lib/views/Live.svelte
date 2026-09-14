@@ -53,6 +53,8 @@
     liveTemplatePinned,
     transcript,
     detections,
+    resolvedDetections,
+    MAX_RESOLVED,
     live,
     screenBlack,
     liveCue,
@@ -550,14 +552,66 @@
   // ── AI suggestions ───────────────────────────────────────────────────────
   $: dets = $detections;
 
+  /**
+   * WHAT THE GATE IS ACTUALLY DOING, in words, on the run surface.
+   *
+   * Rule 35: a status line that reads the same when the thing behind it is
+   * broken as when it is fine is not a status line. "Auto-fire on" is true of a
+   * listening, armed, model-loaded Relay and of nothing else — a dead model, a
+   * stopped microphone and a disarmed detector each get their own sentence, in
+   * the order an operator would have to fix them.
+   *
+   * Relay deliberately has no "suggest only" mode, which the prototype offers: a
+   * Direct hit above the bar fires unattended whenever detection is armed. A
+   * mode nothing implements is a control that saves a preference nothing reads
+   * (DECISIONS §69), so it is not drawn.
+   */
+  $: gateState = !$capture.detectionOn
+    ? { armed: false, label: 'detection off' }
+    : !$capture.stt?.loaded
+      ? { armed: false, label: 'no speech model' }
+      : !$capture.capturing
+        ? { armed: false, label: 'not listening' }
+        : { armed: true, label: 'auto-fire on' };
+
+  /** How an ended claim is described. Every wording names WHO acted. */
+  function outcomeLabel(d) {
+    if (d.outcome === 'accepted') return 'Accepted — put on the screens';
+    if (d.outcome === 'dismissed') return 'Dismissed by the operator';
+    // An auto-fire can only be a heard reference (rule 10 — a paraphrase is
+    // capped at Suggest at any score). It still says WHICH, rather than assuming
+    // the rule held: if a paraphrase ever appears on this line, that is the
+    // finding, and it is visible on the surface an operator is already watching.
+    return `Auto-fired · ${heard(d) ? 'heard' : 'paraphrase'}`;
+  }
+
+  /**
+   * THE COLUMN — pending claims, then the receipts, bounded.
+   *
+   * Pending first, deliberately, where the prototype is strictly newest-first: a
+   * receipt records something that already happened and a pending claim is a
+   * decision the operator still owes, and a record must never push a decision
+   * out of a bounded column.
+   */
+  $: claimCards = [
+    ...dets.map((d) => ({ d, outcome: null, key: `p:${d.reference}` })),
+    ...$resolvedDetections.map((d) => ({
+      d,
+      outcome: outcomeLabel(d),
+      key: `r:${d.reference}:${d.resolvedAt}`,
+    })),
+  ].slice(0, MAX_RESOLVED);
+
   // heard() / methodLabel() live in lib/detect.js — pure, and unit-tested there,
   // because they are the frontend half of the auto-fire safety rule (see that file).
   // Await it, and flash ONLY if the verse actually went up. This used to fire and
   // forget, then say "Now live: John 3:16" regardless — while confirmDetection
   // swallowed the failure and removed the suggestion card. The operator pressed A, the
   // card vanished, the toast said it was live, and the wall was unchanged.
-  async function acceptTop() {
-    const d = dets[0];
+  /** The `A` key, and the TAKE of a claim: the top pending card. */
+  const acceptTop = () => accept(dets[0]);
+
+  async function accept(d) {
     if (!d) return;
     // A reference that parsed but resolves to no verse cannot be fired, and the
     // backend already knows — it marks the suggestion `in_library: false`. Without
@@ -1101,8 +1155,11 @@
   $: inspectAlts = inspecting
     ? dets.filter((d) => d.reference !== inspecting.reference).slice(0, 4)
     : [];
-  function inspectTop() {
-    inspecting = dets[0] ?? null;
+  /** Interrogate ONE claim — the card that was pressed, not `dets[0]`. With a
+   *  column of claims, "why this match?" on the third card must open the third
+   *  card's reasoning. */
+  function inspect(d) {
+    inspecting = d ?? null;
   }
   async function inspectAccept() {
     inspecting = null;
@@ -1193,8 +1250,14 @@
   <div class="con-top">
     <!-- PREVIEW — what the next TAKE would put on the wall. Amethyst, because it
          is by definition NOT on air; amber is reserved for the pane on the right. -->
-    <section class="pane">
+    <section class="pane mon prev">
       <header class="mon-bar">
+        <!-- STEEL BLUE, not amethyst. Amethyst means REHEARSAL and nothing else
+             (rule 18) — a Preview chip wearing it says "nothing is reaching the
+             congregation" on a console where that may or may not be true, and on
+             the one day both are true the operator reads the wrong one. Steel
+             blue is the thing you are working on, which is exactly what a
+             preview is, and it is what the grid's own cued cell already uses. -->
         <span class="tag preview">Preview</span>
         <span class="spring"></span>
         <!-- "Shown earlier" belongs HERE, on the thing about to go out, not on the
@@ -1222,6 +1285,7 @@
       </div>
     </section>
 
+
     <!-- THE RACK. The reference draws a transition list here (Cut / Fade / Wipe /
          Stinger / Duration). Relay HAS a transition engine now — seven modes in
          `transitions.js`, played by the renderer (docs/REBRAND.md §8, DECISIONS
@@ -1241,27 +1305,40 @@
         on:click={take}
         disabled={!previewContent || !$capture.available}
         title="Put the previewed content on the outputs">TAKE</button>
-      <div class="rack-nav">
-        <button class="rk" title="Previous (←)" aria-label="Previous" on:click={() => step(-1)}>‹</button>
-        <button class="rk" title="Next (→)" aria-label="Next" on:click={() => step(1)}>›</button>
-      </div>
-      <button class="rk wide" on:click={dismissTop} disabled={!dets.length}>Dismiss</button>
-      <span class="rack-lbl push">Mode</span>
+      <!-- FULL WIDTH AND NAMED. Two 30px arrow glyphs side by side was the
+           smallest pair of targets on the surface an operator uses fastest, and
+           `‹` and `›` name nothing: they are the same two shapes whichever of
+           the two things the transport is about to do. -->
+      <button class="rk wide" title="Previous (←)" on:click={() => step(-1)}>‹ Prev</button>
+      <button class="rk wide" title="Next (→)" on:click={() => step(1)}>Next ›</button>
+      <!-- WHAT THOSE TWO WALK. Required by CLAUDE.md — the transport is
+           MODE-AWARE and says so; the same key silently meaning two things is
+           how the wrong thing reaches a congregation. The prototype's caption is
+           "walks the programme" and Relay's has to say WHICH walk. -->
       <span
-        class="rack-mode r-mono"
-        class:slide={mode === 'slide'}
+        class="rack-cap"
         title={mode === 'slide'
           ? 'Arrow keys step through the service plan'
           : 'Arrow keys walk through the passage on screen'}>
-        {mode === 'slide' ? 'SLIDE' : 'VERSE'}
+        walks the programme
+        <b class="rack-mode r-mono" class:slide={mode === 'slide'}>{mode === 'slide' ? 'SLIDE' : 'VERSE'}</b>
       </span>
     </aside>
 
     <!-- PROGRAM — literally what the congregation is looking at, rendered through
          the SAME TemplateRender as the real output window, so the pane cannot
          disagree with the wall. -->
-    <section class="pane">
+    <section class="pane mon prog"
+      class:onair={$live && !$rehearsing && !$screenBlack}
+      class:inreh={$live && $rehearsing}>
       <header class="mon-bar">
+        <!-- AS WHICH SCREEN. The pane renders through the MAIN channel's
+             template, so it is a preview OF ONE SCREEN and never said which —
+             and a console that shows one look while a lobby TV shows another is
+             exactly the disagreement an operator has no way to spot. The
+             prototype prints it and it is right to. `mainChannel` is the same
+             one the template resolution above already picked, so the sentence
+             and the render cannot come apart. -->
         {#if $rehearsing}
           <span class="tag reh">Rehearsal</span>
         {:else if $screenBlack}
@@ -1271,10 +1348,17 @@
         {:else}
           <span class="tag off">Program · Clear</span>
         {/if}
+        {#if mainChannel}
+          <span class="mon-as r-mono" title="This pane renders through {mainChannel.name}'s template">as {mainChannel.name}</span>
+        {/if}
         <span class="spring"></span>
-        <span class="mon-name">{$live ? ($live.reference || 'content') : '—'}</span>
+        <!-- The REFERENCE, amber only when a congregation is genuinely looking
+             at it. Amber is ON AIR and is never allowed to lie. -->
+        <span class="mon-name" class:live={$live && !$rehearsing && !$screenBlack}>
+          {$live ? ($live.reference || 'content') : '—'}
+        </span>
       </header>
-      <div class="screen" class:lit={$live && !$rehearsing && !$screenBlack}>
+      <div class="screen">
         {#if $live}
           <TemplateRender
             template={resolveOutputTemplate(previewTpl, $liveTemplateOverride, $liveTemplatePinned)}
@@ -1290,90 +1374,6 @@
       </div>
     </section>
 
-    <!-- OUTPUT STATUS. During a service the only question is "is it up?" — and
-         until now the pane could report a screen that was down and offer no way to
-         bring it back, which sent the operator to another tab mid-service with a
-         congregation waiting. Switching a screen on or off is the REPAIR for the
-         state this pane reports, not configuration; changing a screen's display or
-         its template is configuration and stays in the Outputs tab. -->
-    <section class="pane">
-      <header class="pane-head">
-        <h2>Output Status</h2>
-        <span class="spring"></span>
-        <span class="r-mono cnt">{channels.length}</span>
-      </header>
-      <div class="pane-body outs">
-        {#each outs as o (o.c.id)}
-          <div class="out" class:down={o.s.kind === 'down'}>
-            <span class="out-ic" aria-hidden="true">
-              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
-            </span>
-            <b class="out-nm" title={o.c.name}>{o.c.name}</b>
-            <span class="r-badge {SCREEN_BADGE[o.s.kind]} sm-badge"><span class="bd"></span>{o.s.label}</span>
-            <!-- The screen's OWN last word, not ours. When it disagrees with the
-                 badge, that disagreement is the finding. With nothing to report
-                 yet it names the KIND of screen in words — it used to print the
-                 raw database value (`native_window`) at a volunteer mid-service. -->
-            <span class="out-note r-mono">{o.s.note || screenKind(o.c.render_target)}</span>
-            <!-- ONLY WHEN THERE IS SOMETHING TO PRESS. The inert half of this pair
-                 ("Browser source", "No window") was a label that never did anything,
-                 sitting where the eye looks for a control and taking ~85px from the
-                 screen's name and the badge on a ~230px rail. The Outputs tab states
-                 the type in full, in a column made for it. -->
-            {#if o.w.action}
-              <button
-                class="out-sw"
-                title={o.w.why}
-                disabled={!$capture.available || switching === o.c.id}
-                on:click={() => toggleScreen(o.c, o.w.action)}>
-                {switching === o.c.id ? '…' : o.w.label}
-              </button>
-            {/if}
-          </div>
-        {:else}
-          {#if $readErrors.listOutputChannels}
-            <ErrorState compact error={$readErrors.listOutputChannels} />
-          {:else}
-            <EmptyState message="No screens yet — add one in the Outputs tab." />
-          {/if}
-        {/each}
-      </div>
-      {#if nowhereToShow}
-        <p class="out-warn" role="status">
-          Something is on air, and no screen is reporting that it is showing it.
-          Relay is still sending — check the screens above.
-        </p>
-      {/if}
-      {#if fitWarning}
-        <p class="out-warn" role="status">{fitWarning}</p>
-      {/if}
-      {#if screenMsg}
-        <p class="out-warn" role="status">{screenMsg}</p>
-      {/if}
-      <p class="sr-only" aria-live="polite">{downAnnounce}</p>
-      <footer class="pane-foot ann">
-        <!-- EMERGENCY ANNOUNCEMENT. It paints over live scripture on EVERY screen
-             at once, so it belongs with the screens rather than in a drawer of
-             quick tools. Armed in two steps for the reason it always was: a stray
-             Enter must not be able to interrupt a reading in front of a room. -->
-        <div class="sb cd">
-          <span>Announce</span>
-          <input
-            class="cd-msg"
-            type="text"
-            placeholder="Message for every screen"
-            bind:value={annMsg}
-            aria-label="Emergency announcement"
-            on:keydown={(e) => e.key === 'Enter' && sendAnnouncement()}
-            disabled={!$capture.available} />
-          <button class="cd-go" class:armed={annArmed} on:click={sendAnnouncement}
-            disabled={!$capture.available || !annMsg.trim()}>
-            {annArmed ? 'Confirm?' : 'Send'}
-          </button>
-        </div>
-        <button class="wide" on:click={openMainOutput} disabled={!$capture.available}>Open main output</button>
-      </footer>
-    </section>
   </div>
 
   <!-- ══════ THE SLIDE GRID — full width, directly under the monitors ══════
@@ -1450,190 +1450,6 @@
 
   <!-- ══════ ROW B — the claim, and the plan ══════ -->
   <div class="con-bot">
-    <!-- ── AI DETECTION — CURRENT CLAIM ── -->
-    <section class="pane">
-      <header class="pane-head">
-        <h2>AI Detection — Current Claim</h2>
-        <span class="spring"></span>
-        <label class="sens" title="How readily the AI fires. Lower = fewer, surer catches; higher = more, noisier. Same dial as Settings.">
-          <span class="sens-lbl r-mono">SENS</span>
-          <input type="range" min="0" max="100" step="1" value={sensitivity}
-            on:input={(e) => onSensitivity(+e.target.value)} disabled={!$capture.available}
-            aria-label="Detection sensitivity" use:rangeFill={sensitivity} />
-          <span class="sens-val r-mono">{sensitivity}</span>
-        </label>
-        <button class="chip btnchip" class:ok={$capture.detectionOn} on:click={toggleDetection}
-          disabled={!$capture.available} title="Arm or disarm automatic detection">
-          <i class="bd"></i>{$capture.detectionOn ? 'Armed' : 'Off'}
-        </button>
-        <button class="ibtn" on:click={toggleListen} title={$capture.capturing ? 'Stop listening' : 'Start listening'}
-          aria-label={$capture.capturing ? 'Stop listening' : 'Start listening'}
-          disabled={!$capture.available || !$capture.stt.loaded || listenBusy}>
-          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v4"/></svg>
-        </button>
-      </header>
-
-      <!-- The AI has heard something. This is the product's whole reason to exist, and
-           it arrived in total silence for a screen-reader operator. "polite", not
-           "assertive": a suggestion is an offer, not an emergency. -->
-      <span class="sr-only" role="status" aria-live="polite" aria-atomic="true">
-        {#if dets.length}
-          {heard(dets[0]) ? 'Heard' : 'Possible paraphrase'}: {dets[0].reference}.
-          Press A to put it on screen, D to dismiss.
-        {/if}
-      </span>
-
-      <div class="pane-body det">
-        <!-- No STT model = the AI cannot listen. Relay degrades to a fully working
-             MANUAL tool, never a dead one — and it can fix itself in one click.
-             It sits in THIS panel because this is the panel it is about; as a
-             full-width band it took ninety pixels off every other one. -->
-        {#if $capture.available && !$capture.stt.loaded}
-          <ModelSetup compact />
-        {/if}
-        {#if dets.length}
-          {@const d = dets[0]}
-          <!-- HEARD vs GUESSED. Not two flavours of one thing, and they must not look
-               like it. A direct hit's number is a real parse confidence. A paraphrase
-               is a TF-IDF cosine — a distance, NOT a probability (router.rs forbids it
-               from ever auto-firing at ANY score). So the guess gets cyan, and gets no
-               number at all: a number that lies is worse than no number. -->
-          <div class="claim" class:guess={!heard(d)}>
-            <div class="claim-top">
-              <span class="claim-ref">{d.reference}</span>
-              {#if heard(d)}
-                <span class="mchip">{$t(methodKey(d))} {Math.round(d.confidence * 100)}%</span>
-              {:else}
-                <span class="mchip guess">{$t(methodKey(d))}</span>
-              {/if}
-            </div>
-
-            {#if heard(d)}
-              <!-- A bar, not just a number: "0.92" means nothing to a volunteer. -->
-              <div class="conf" role="meter" aria-valuemin="0" aria-valuemax="100"
-                aria-valuenow={Math.round(d.confidence * 100)} aria-label="Detection confidence">
-                <i style="width:{Math.round(d.confidence * 100)}%"></i>
-              </div>
-            {:else}
-              <p class="guess-note">{$t('live.not_a_spoken_reference')}</p>
-            {/if}
-
-            {#if d.matched_text}
-              <!-- THE EVIDENCE — the words that actually triggered the match. Captured
-                   in Rust for months and dropped at the IPC boundary. -->
-              <div class="mt">
-                <span class="klbl">{heard(d) ? $t('live.heard') : $t('live.matched_on')} (from transcript)</span>
-                <p class="mt-q">“{d.matched_text}”</p>
-              </div>
-            {/if}
-
-            {#if d.text}<p class="claim-verse">“{d.text}”</p>{/if}
-
-            <!-- A "Method / Reference" grid used to sit here, repeating the two
-                 facts already at the top of this card: the reference IS the
-                 headline and the method IS the chip beside it. It cost about 40px
-                 of a 281px panel and helped push Accept and Dismiss out of sight. -->
-
-            <!-- PARSED, BUT THERE IS NO SUCH VERSE. Relay keeps showing it — the
-                 suggestion is the operator's evidence that a number was misheard,
-                 and dropping it would be silence. What it must not do is offer an
-                 amber Accept that looks exactly like a working one and fails after
-                 the click. The disabled control says WHY, because a disabled
-                 control that does not is its own finding. -->
-            {#if !inLibrary(d)}
-              <p class="claim-absent">
-                {$t('live.not_in_bible', { reference: d.reference })}
-              </p>
-            {/if}
-            <div class="acts">
-              <button class="act go" on:click={acceptTop} disabled={!inLibrary(d)}>
-                {#if inLibrary(d)}
-                  <b>Accept &amp; fire</b><span>Send to outputs</span>
-                {:else}
-                  <b>Nothing to send</b><span>That verse does not exist</span>
-                {/if}
-              </button>
-              <button class="act no" on:click={dismissTop}>
-                <b>Dismiss</b><span>Not this verse</span>
-              </button>
-            </div>
-
-            <!-- WHY did it say that? The evidence chip above is the short answer;
-                 this is the long one, including what accepting or dismissing does
-                 to the gate. -->
-            <button class="inspect-link" on:click={inspectTop}>
-              Why this match?
-            </button>
-            <p class="khint"><kbd>A</kbd> accept · <kbd>D</kbd> dismiss</p>
-          </div>
-        {:else}
-          <EmptyState
-            message={$capture.detectionOn ? $t('live.no_suggestions') : $t('live.detection_off')} />
-        {/if}
-
-        <!-- OTHER PENDING CLAIMS. The reference calls this strip "Recent Claims";
-             Relay's store holds only what is still AWAITING A DECISION (accepted and
-             dismissed claims leave it), so it is labelled for what it actually is. -->
-        {#if dets.length > 1}
-          <div class="sub">
-            <span class="klbl">Also pending</span>
-            <span class="r-mono cnt">{dets.length - 1}</span>
-          </div>
-          {#each dets.slice(1) as x (x.reference + x.at)}
-            <div class="rc">
-              <span class="rc-ref">{x.reference}</span>
-              <span class="mchip sm" class:guess={!heard(x)}>
-                {$t(methodKey(x))}{#if heard(x)} {Math.round(x.confidence * 100)}%{/if}
-              </span>
-              {#if !inLibrary(x)}
-                <span class="rc-absent">not in your Bible</span>
-              {/if}
-              <span class="spring"></span>
-              <button class="mini" on:click={() => pushRef(x.reference)} disabled={!inLibrary(x)}>
-                Fire
-              </button>
-              <button class="mini ghost" on:click={() => dismissDetection(x.reference)}>Dismiss</button>
-            </div>
-          {/each}
-        {/if}
-
-        <!-- RELATED SCRIPTURE. Deliberately the quietest thing on this panel.
-             Nobody SAID these references — it is a keyword match against 19 themes,
-             the weakest evidence in the product. So: no tally colour, no confidence,
-             and it does nothing until the operator clicks it. -->
-        {#if related?.refs?.length}
-          <div class="sub"><span class="klbl">{$t('live.related', { theme: related.theme })}</span></div>
-          <p class="rel-note">{$t('live.related_note')}</p>
-          <div class="rel-chips">
-            {#each related.refs as r (r.reference)}
-              <button class="rel-chip r-focus" on:click={() => pushRelated(r.reference)}
-                disabled={!$capture.available || !r.text}
-                title={r.text ?? 'Not in your Bible text'}>{r.reference}</button>
-            {/each}
-          </div>
-        {/if}
-      </div>
-
-      <!-- Manual fire. NOT in the reference mockup, and kept anyway: it is the one
-           path that works when the AI is wrong, the model is missing, or the plan
-           has run out — removing it to match a picture would remove the product's
-           floor. -->
-      <footer class="pane-foot entry">
-        <div class="search">
-          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3" stroke-linecap="round"/></svg>
-          <input
-            bind:this={searchEl}
-            bind:value={manualRef}
-            on:keydown={(e) => e.key === 'Enter' && fireManual()}
-            placeholder="Search verses — ps 23, John 3:16-18"
-            aria-label="Manual scripture reference"
-            disabled={!$capture.available} />
-        </div>
-        <button class="wide amber" on:click={fireManual} disabled={!$capture.available}>Fire</button>
-      </footer>
-      {#if errMsg}<div class="err" role="alert">{errMsg}</div>{/if}
-    </section>
-
     <!-- ── SERVICE PLAN — RUNNING ── -->
     <section class="pane">
       <header class="pane-head">
@@ -1756,6 +1572,264 @@
   </div>
 
     </div>
+
+    <!-- ══════ THE INSPECTOR — the AI's claims, then the screens ══════
+         docs/REBRAND.md §2 gives the workspace a right-hand column and puts the
+         detection panel in it. The reason is not layout: ONE CLAIM AT A TIME WAS
+         NEVER THE TRUTH. A decode window can name several references, and an
+         operator choosing between them needs to see them together — which is
+         rule 29 read from the operator's side ("one window may inform the
+         operator about several verses; it may put at most ONE on a wall"). The
+         old panel showed `dets[0]` as a headline and demoted the rest to a strip
+         of one-line rows with a `Fire` button, so the second candidate was
+         offered at a glance and decided at a squint.
+
+         ORDER: PENDING FIRST, then the receipts. The prototype is strictly
+         newest-first; Relay is not, deliberately. A receipt is a record of
+         something that already happened and a pending claim is a decision the
+         operator still owes, and a record must never push a decision out of a
+         bounded column. -->
+    <div class="insp-col">
+      <section class="pane">
+        <header class="pane-head">
+          <h2>AI Detection</h2>
+          <span class="spring"></span>
+          <!-- WHAT THE GATE IS ACTUALLY DOING, and it reads differently when the
+               thing behind it is broken (rule 35). "Auto-fire on" over a dead
+               model, a stopped microphone or a disarmed detector is the same
+               reassuring sentence over four different situations, which is the
+               defect that rule exists to name. Relay has no "suggest only" mode
+               — a Direct hit above the bar fires unattended whenever detection
+               is armed — so it is not offered; a mode nothing implements is a
+               status line that lies. -->
+          <span class="det-meta r-mono" class:on={gateState.armed}>{gateState.label}</span>
+        </header>
+
+        <div class="det-ctl">
+          <label class="sens" title="How readily the AI fires. Lower = fewer, surer catches; higher = more, noisier. Same dial as Settings.">
+            <span class="sens-lbl r-mono">SENS</span>
+            <input type="range" min="0" max="100" step="1" value={sensitivity}
+              on:input={(e) => onSensitivity(+e.target.value)} disabled={!$capture.available}
+              aria-label="Detection sensitivity" use:rangeFill={sensitivity} />
+            <span class="sens-val r-mono">{sensitivity}</span>
+          </label>
+          <span class="spring"></span>
+          <button class="chip btnchip" class:ok={$capture.detectionOn} on:click={toggleDetection}
+            disabled={!$capture.available} title="Arm or disarm automatic detection">
+            <i class="bd"></i>{$capture.detectionOn ? 'Armed' : 'Off'}
+          </button>
+          <button class="ibtn" on:click={toggleListen} title={$capture.capturing ? 'Stop listening' : 'Start listening'}
+            aria-label={$capture.capturing ? 'Stop listening' : 'Start listening'}
+            disabled={!$capture.available || !$capture.stt.loaded || listenBusy}>
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v4"/></svg>
+          </button>
+        </div>
+
+        <!-- The AI has heard something. This is the product's whole reason to exist, and
+             it arrived in total silence for a screen-reader operator. "polite", not
+             "assertive": a suggestion is an offer, not an emergency. -->
+        <span class="sr-only" role="status" aria-live="polite" aria-atomic="true">
+          {#if dets.length}
+            {heard(dets[0]) ? 'Heard' : 'Possible paraphrase'}: {dets[0].reference}.
+            Press A to put it on screen, D to dismiss.
+          {/if}
+        </span>
+
+        <div class="pane-body det">
+          <!-- No STT model = the AI cannot listen. Relay degrades to a fully working
+               MANUAL tool, never a dead one — and it can fix itself in one click. -->
+          {#if $capture.available && !$capture.stt.loaded}
+            <ModelSetup compact />
+          {/if}
+
+          {#each claimCards as card, i (card.key)}
+            {@const d = card.d}
+            <!-- HEARD vs GUESSED. Not two flavours of one thing, and they must not
+                 look like it. A direct hit's number is a real parse confidence. A
+                 paraphrase is a TF-IDF cosine — a distance, NOT a probability
+                 (router.rs forbids it from ever auto-firing at ANY score). So the
+                 guess gets cyan, and gets no number at all: a number that lies is
+                 worse than no number. Cyan, NOT amethyst, which means rehearsal. -->
+            <article class="clm" class:guess={!heard(d)} class:done={!!card.outcome}>
+              <div class="clm-top">
+                <span class="clm-ref">{d.reference}</span>
+                <span class="cbadge" class:p={!heard(d)}>{heard(d) ? 'Heard' : 'Paraphrase'}</span>
+              </div>
+
+              {#if heard(d)}
+                <!-- A bar, not just a number: "0.92" means nothing to a volunteer. -->
+                <div class="conf" role="meter" aria-valuemin="0" aria-valuemax="100"
+                  aria-valuenow={Math.round(d.confidence * 100)} aria-label="Detection confidence">
+                  <i style="width:{Math.round(d.confidence * 100)}%"></i>
+                </div>
+              {:else}
+                <p class="guess-note">{$t('live.not_a_spoken_reference')}</p>
+              {/if}
+
+              {#if d.matched_text}
+                <!-- THE EVIDENCE — the words that actually triggered the match. -->
+                <p class="mt-q">“{d.matched_text}”</p>
+              {/if}
+
+              {#if d.text}<p class="clm-verse">{d.text}</p>{/if}
+
+              <!-- PARSED, BUT THERE IS NO SUCH VERSE. Relay keeps showing it — the
+                   suggestion is the operator's evidence that a number was misheard,
+                   and dropping it would be silence. -->
+              {#if !inLibrary(d)}
+                <p class="claim-absent">{$t('live.not_in_bible', { reference: d.reference })}</p>
+              {/if}
+
+              {#if card.outcome}
+                <!-- WHO ACTED. Each wording names an actor, because "fired" alone
+                     is exactly the fact an operator cannot reconstruct afterwards:
+                     did the AI do that, or did I? -->
+                <p class="clm-done">{card.outcome}</p>
+              {:else}
+                <div class="cacts">
+                  <button class="act go" on:click={() => accept(d)} disabled={!inLibrary(d)}>
+                    {#if inLibrary(d)}
+                      <b>Accept &amp; fire</b><span>Send to outputs</span>
+                    {:else}
+                      <b>Nothing to send</b><span>That verse does not exist</span>
+                    {/if}
+                  </button>
+                  <button class="act no" on:click={() => dismissDetection(d.reference)}>
+                    <b>Dismiss</b><span>Not this verse</span>
+                  </button>
+                </div>
+                <button class="inspect-link" on:click={() => inspect(d)}>Why this match?</button>
+                {#if i === 0}<p class="khint"><kbd>A</kbd> accept · <kbd>D</kbd> dismiss</p>{/if}
+              {/if}
+            </article>
+          {:else}
+            <EmptyState
+              message={$capture.detectionOn ? $t('live.no_suggestions') : $t('live.detection_off')} />
+          {/each}
+
+          <!-- RELATED SCRIPTURE. Deliberately the quietest thing on this panel.
+               Nobody SAID these references — it is a keyword match against 19 themes,
+               the weakest evidence in the product. So: no tally colour, no confidence,
+               and it does nothing until the operator clicks it. -->
+          {#if related?.refs?.length}
+            <div class="sub"><span class="klbl">{$t('live.related', { theme: related.theme })}</span></div>
+            <p class="rel-note">{$t('live.related_note')}</p>
+            <div class="rel-chips">
+              {#each related.refs as r (r.reference)}
+                <button class="rel-chip r-focus" on:click={() => pushRelated(r.reference)}
+                  disabled={!$capture.available || !r.text}
+                  title={r.text ?? 'Not in your Bible text'}>{r.reference}</button>
+              {/each}
+            </div>
+          {/if}
+        </div>
+
+        <!-- Manual fire. NOT in the reference mockup, and kept anyway: it is the one
+             path that works when the AI is wrong, the model is missing, or the plan
+             has run out — removing it to match a picture would remove the product's
+             floor. The rail's search is a different job: it FINDS a verse. This
+             fires a reference, ranges included, with no search in between. -->
+        <footer class="pane-foot entry">
+          <div class="search">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3" stroke-linecap="round"/></svg>
+            <input
+              bind:this={searchEl}
+              bind:value={manualRef}
+              on:keydown={(e) => e.key === 'Enter' && fireManual()}
+              placeholder="Search verses — ps 23, John 3:16-18"
+              aria-label="Manual scripture reference"
+              disabled={!$capture.available} />
+          </div>
+          <button class="wide amber" on:click={fireManual} disabled={!$capture.available}>Fire</button>
+        </footer>
+        {#if errMsg}<div class="err" role="alert">{errMsg}</div>{/if}
+      </section>
+
+    <!-- OUTPUT STATUS. During a service the only question is "is it up?" — and
+         until now the pane could report a screen that was down and offer no way to
+         bring it back, which sent the operator to another tab mid-service with a
+         congregation waiting. Switching a screen on or off is the REPAIR for the
+         state this pane reports, not configuration; changing a screen's display or
+         its template is configuration and stays in the Outputs tab. -->
+    <section class="pane">
+      <header class="pane-head">
+        <h2>Output Status</h2>
+        <span class="spring"></span>
+        <span class="r-mono cnt">{channels.length}</span>
+      </header>
+      <div class="pane-body outs">
+        {#each outs as o (o.c.id)}
+          <div class="out" class:down={o.s.kind === 'down'}>
+            <span class="out-ic" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+            </span>
+            <b class="out-nm" title={o.c.name}>{o.c.name}</b>
+            <span class="r-badge {SCREEN_BADGE[o.s.kind]} sm-badge"><span class="bd"></span>{o.s.label}</span>
+            <!-- The screen's OWN last word, not ours. When it disagrees with the
+                 badge, that disagreement is the finding. With nothing to report
+                 yet it names the KIND of screen in words — it used to print the
+                 raw database value (`native_window`) at a volunteer mid-service. -->
+            <span class="out-note r-mono">{o.s.note || screenKind(o.c.render_target)}</span>
+            <!-- ONLY WHEN THERE IS SOMETHING TO PRESS. The inert half of this pair
+                 ("Browser source", "No window") was a label that never did anything,
+                 sitting where the eye looks for a control and taking ~85px from the
+                 screen's name and the badge on a ~230px rail. The Outputs tab states
+                 the type in full, in a column made for it. -->
+            {#if o.w.action}
+              <button
+                class="out-sw"
+                title={o.w.why}
+                disabled={!$capture.available || switching === o.c.id}
+                on:click={() => toggleScreen(o.c, o.w.action)}>
+                {switching === o.c.id ? '…' : o.w.label}
+              </button>
+            {/if}
+          </div>
+        {:else}
+          {#if $readErrors.listOutputChannels}
+            <ErrorState compact error={$readErrors.listOutputChannels} />
+          {:else}
+            <EmptyState message="No screens yet — add one in the Outputs tab." />
+          {/if}
+        {/each}
+      </div>
+      {#if nowhereToShow}
+        <p class="out-warn" role="status">
+          Something is on air, and no screen is reporting that it is showing it.
+          Relay is still sending — check the screens above.
+        </p>
+      {/if}
+      {#if fitWarning}
+        <p class="out-warn" role="status">{fitWarning}</p>
+      {/if}
+      {#if screenMsg}
+        <p class="out-warn" role="status">{screenMsg}</p>
+      {/if}
+      <p class="sr-only" aria-live="polite">{downAnnounce}</p>
+      <footer class="pane-foot ann">
+        <!-- EMERGENCY ANNOUNCEMENT. It paints over live scripture on EVERY screen
+             at once, so it belongs with the screens rather than in a drawer of
+             quick tools. Armed in two steps for the reason it always was: a stray
+             Enter must not be able to interrupt a reading in front of a room. -->
+        <div class="sb cd">
+          <span>Announce</span>
+          <input
+            class="cd-msg"
+            type="text"
+            placeholder="Message for every screen"
+            bind:value={annMsg}
+            aria-label="Emergency announcement"
+            on:keydown={(e) => e.key === 'Enter' && sendAnnouncement()}
+            disabled={!$capture.available} />
+          <button class="cd-go" class:armed={annArmed} on:click={sendAnnouncement}
+            disabled={!$capture.available || !annMsg.trim()}>
+            {annArmed ? 'Confirm?' : 'Send'}
+          </button>
+        </div>
+        <button class="wide" on:click={openMainOutput} disabled={!$capture.available}>Open main output</button>
+      </footer>
+    </section>
+    </div>
   </div>
 
   {#if $capture.audioError}<div class="audioerr">Audio: {$capture.audioError}</div>{/if}
@@ -1857,8 +1931,13 @@
      are the same size because they are the same question asked twice — what is
      about to go out, and what is out. The 1.19fr that made Preview wider was a
      hierarchy the room does not have. */
+  /* THREE COLUMNS, and the two monitors are EQUAL. Output Status used to take a
+     300px fourth column out of this row, which made the pair unequal and pushed
+     both below the size at which a rendered slide is recognisable. The screens
+     now live in the workspace's own inspector column (`.insp-col`), beneath the
+     AI's claims — the whole column is 286px, as measured in the prototype. */
   .con-top{flex:0 0 auto; height:clamp(268px,33vh,364px);
-    display:grid; grid-template-columns:1fr 118px 1fr 300px; gap:var(--v-sp-sm); min-height:0}
+    display:grid; grid-template-columns:1fr 118px 1fr; gap:var(--v-sp-sm); min-height:0}
   /* Five panels: transcript · slides · detection · plan · controls. The grid
      takes the widest share of the flexible columns — a cell the operator cannot
      read is a cell they have to click twice to identify. */
@@ -1866,15 +1945,23 @@
      controls used to sit here and are the DOCK's — one row below, on every
      workspace — and a second copy of a panic control is how two surfaces come to
      disagree about the same room. */
+  /* One panel now: the plan. The claim column moved to the inspector, where §2
+     puts it and where several claims fit at once — see the note in the markup. */
   .con-bot{flex:1 1 0; min-height:0;
-    display:grid; grid-template-columns:1.25fr 1fr; gap:var(--v-sp-sm)}
+    display:grid; grid-template-columns:minmax(0,1fr); gap:var(--v-sp-sm)}
 
-  /* ── the desk: rail, then stage ────────────────────────────────────────── */
+  /* ── the desk: rail, stage, inspector ──────────────────────────────────── */
   .desk{flex:1; min-height:0; display:grid;
-    grid-template-columns:206px minmax(0,1fr); gap:var(--v-sp-sm)}
+    grid-template-columns:206px minmax(0,1fr) 286px; gap:var(--v-sp-sm)}
   .rail-col{display:flex; flex-direction:column; gap:var(--v-sp-sm); min-height:0; min-width:0}
   .rail-col :global(.lrail){flex:1 1 auto; min-height:0}
   .stage{display:flex; flex-direction:column; gap:var(--v-sp-sm); min-height:0; min-width:0}
+  /* The inspector runs the FULL HEIGHT of the workspace: the claims take what is
+     left after the screens, because the claims are the thing that keeps arriving
+     and the screens are a fixed list. */
+  .insp-col{display:flex; flex-direction:column; gap:var(--v-sp-sm); min-height:0; min-width:0}
+  .insp-col > .pane:first-child{flex:1 1 auto; min-height:0}
+  .insp-col > .pane:last-child{flex:0 0 auto; max-height:46%}
 
   /* The grid gets the full width under the monitors, and the larger share of
      what is left: it is the surface an operator picks from, and a cell too small
@@ -1930,13 +2017,29 @@
     padding:8px 10px; border-bottom:1px solid var(--v-line)}
   .tag{flex:0 0 auto; padding:4px 10px; border-radius:var(--v-r-sm);
     font-size:var(--v-fs-cap); font-weight:700; letter-spacing:.09em; text-transform:uppercase}
-  .tag.preview{background:var(--v-amethyst); color:var(--v-void)}
+  /* STEEL BLUE = the thing you are working on, which is what a preview is.
+     Amethyst is REHEARSAL and nothing else (rule 18, DECISIONS §22) — this chip
+     wore it, so on the one morning both were true the operator read the wrong
+     one. The grid's cued cell has always been steel blue; these two now agree. */
+  .tag.preview{background:var(--v-sel); color:var(--v-sel-ink)}
   /* Amber, and only when the congregation is genuinely looking at it. */
   .tag.onair{background:var(--v-amber); color:var(--v-amber-ink)}
   .tag.reh{background:var(--v-amethyst-soft); border:1px solid var(--v-amethyst-line); color:var(--v-amethyst)}
   .tag.off{background:var(--v-grey-soft); border:1px solid var(--v-line2); color:var(--v-dim)}
   .mon-name{min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
     font-size:var(--v-fs-cap); color:var(--v-faint)}
+  /* Amber ONLY when a congregation is genuinely looking at it. */
+  .mon-name.live{color:var(--v-amber)}
+  .mon-as{flex:0 0 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+    font-size:9px; letter-spacing:.05em; color:var(--v-faint)}
+  /* THE FRAME CARRIES THE STATE. The prototype frames preview in steel blue and
+     programme in amber (amethyst in rehearsal), and it is the right instrument:
+     an operator glancing up is looking at the picture, not at a chip beside it.
+     Amber is ON AIR, amethyst is REHEARSAL, and neither is ever spent elsewhere. */
+  .mon .screen{transition:box-shadow var(--v-dur) var(--v-ease)}
+  .mon.prev .screen{box-shadow:inset 0 0 0 2px var(--v-sel)}
+  .mon.prog.onair .screen{box-shadow:inset 0 0 0 2px var(--v-amber)}
+  .mon.prog.inreh .screen{box-shadow:inset 0 0 0 2px var(--v-amethyst)}
   /* Slate, not amber and not rose: a repeat is a fact, not an alarm. Amber means
      ON AIR and must never be spent on anything else (DECISIONS §22). */
   .mon-repeat{margin-right:8px; padding:1px 6px; border-radius:var(--v-r-sm);
@@ -1944,7 +2047,6 @@
     border:1px solid var(--v-line2)}
   .screen{flex:1; min-height:0; position:relative; overflow:hidden; background:#000;
     border-top:1px solid var(--v-line)}
-  .screen.lit{box-shadow:inset 0 0 0 2px var(--v-amber)}
   .screen-empty{position:absolute; inset:0; display:grid; place-items:center; padding:var(--v-sp-md);
     text-align:center; font-size:var(--v-fs-b2); color:var(--v-faint)}
   .blk{position:absolute; inset:0; background:#000}
@@ -1958,30 +2060,31 @@
     background:var(--v-surf); border:1px solid var(--v-line); border-radius:var(--v-r-lg)}
   .rack-lbl{font-family:var(--f-mono); font-size:9px; font-weight:700; letter-spacing:.14em;
     text-transform:uppercase; color:var(--v-faint); text-align:center}
-  .take{height:44px; border-radius:var(--v-r-md); border:0; cursor:pointer;
+  /* 64px, as measured in the prototype. The one control on this surface that is
+     always the same press, in the same place, however tired the operator is. */
+  .take{height:64px; border-radius:var(--v-r-md); border:0; cursor:pointer;
     background:var(--v-amber); color:var(--v-amber-ink); font-family:var(--f-body);
     font-size:var(--v-fs-lbl); font-weight:700; letter-spacing:.1em;
     box-shadow:0 6px 18px -6px var(--v-amber-glow); transition:filter .14s}
   .take:hover:not(:disabled){filter:brightness(1.06)}
   .take:disabled{opacity:.4; cursor:not-allowed; box-shadow:none}
-  .rack-nav{display:grid; grid-template-columns:1fr 1fr; gap:6px}
-  .rk{height:30px; border-radius:var(--v-r-md); cursor:pointer; background:var(--v-surf2);
+  .rk{height:28px; border-radius:var(--v-r-md); cursor:pointer; background:var(--v-surf2);
     border:1px solid var(--v-line2); color:var(--v-dim); font-family:var(--f-body);
     font-size:var(--v-fs-cap); transition:.14s}
   .rk:hover:not(:disabled){background:var(--v-surf3); color:var(--v-txt)}
   .rk:disabled{opacity:.4; cursor:not-allowed}
   .rk.wide{width:100%}
-  /* A small top gap before the MODE group; NOT margin-top:auto — with the rack no
-     longer stretched there is no free space to push into, and auto once let the
-     chip swallow it. */
-  .rack-lbl.push{margin-top:4px}
-  /* A compact, content-width pill — inline-flex + align-self:center so it hugs its
-     text and centres under the MODE label, and a fixed height so it can never
-     stretch no matter what the flex context does. */
-  .rack-mode{flex:0 0 auto; align-self:center; height:30px; display:inline-flex; align-items:center; justify-content:center;
-    padding:0 14px; border-radius:999px;
-    background:var(--v-surf2); border:1px solid var(--v-line2);
+  /* The caption the prototype puts under the transport, with the MODE inside it
+     rather than beside it. "walks the programme" answers WHAT the two buttons
+     do; the mode answers WHICH walk — and they are one sentence, so an operator
+     cannot read the first and miss the second. */
+  .rack-cap{display:block; margin-top:2px; text-align:center;
+    font-size:9px; line-height:1.35; letter-spacing:.04em; color:var(--v-faint)}
+  .rack-mode{display:block; margin-top:3px;
     font-size:var(--v-fs-cap); font-weight:700; letter-spacing:.1em; color:var(--v-cyan)}
+  /* Amber here is NOT "on air": it is the plan's own colour on the plan rail
+     beside it, and SLIDE mode means the arrows walk the plan. It sits on a
+     caption, not on a claim about a screen. */
   .rack-mode.slide{color:var(--v-amber)}
 
   /* ── output status ─────────────────────────────────────────────────────── */
@@ -2147,6 +2250,21 @@
   .btnchip{cursor:pointer; font-family:var(--f-body)}
   .btnchip:disabled{opacity:.5; cursor:not-allowed}
 
+  /* The gate's own controls get their own row under the heading. On one line in
+     a 286px column the dial, the Armed chip and the microphone button are sized
+     to content and the panel's NAME is the only thing allowed to shrink — the
+     same failure `.pane-head`'s wrap comment records at 1366px, one column
+     narrower. */
+  .det-ctl{flex:0 0 auto; display:flex; align-items:center; gap:8px;
+    padding:8px 12px; border-bottom:1px solid var(--v-line)}
+  /* WHAT THE GATE IS DOING — and it reads differently when it is broken. Grey
+     until Relay is genuinely armed and listening; emerald when it is, which is
+     the same green the Armed chip beside it already uses. Never amber: nothing
+     about a gate's readiness is on air. */
+  .det-meta{flex:0 0 auto; font-size:9px; letter-spacing:.08em; text-transform:uppercase;
+    color:var(--v-faint)}
+  .det-meta.on{color:var(--v-emerald)}
+
   /* Sensitivity dial — compact, on the run surface. Reaches the same thresholds
      as Settings, and is now the SAME INSTRUMENT: the track, the thumb and the
      filled share all come from app.css, so the dial an operator learns in
@@ -2163,68 +2281,78 @@
      dial a different instrument from the one in Settings. */
   .sens input[type="range"]{width:88px;}
 
-  .claim{background:var(--v-surf2); border:1px solid var(--v-amber-line);
-    border-radius:var(--v-r-lg); padding:14px; box-shadow:0 0 20px -6px var(--v-amber-glow)}
+  /* ── A CLAIM CARD ─────────────────────────────────────────────────────────
+     One card per claim, in a column, because a decode window can name several
+     references and an operator choosing between them needs to see them
+     together. The left rule carries the KIND and is the fastest thing to read
+     down a column: amber for a reference Relay HEARD, cyan for a guess, grey
+     once the claim has been decided and nothing is owed. */
+  .clm{background:var(--v-surf2); border:1px solid var(--v-line);
+    border-left:3px solid var(--v-amber);
+    border-radius:var(--v-r-md); padding:11px 12px;
+    display:flex; flex-direction:column; gap:8px}
   /* A GUESS MUST LOOK LIKE A GUESS. Amber reads as "Relay is confident" and a
-     paraphrase has not earned it — its score is a cosine, and router.rs will not let
-     it auto-fire at ANY value. Cyan, NOT amethyst: amethyst already means REHEARSAL,
-     and a colour that means "nothing is reaching the congregation" cannot also mean
-     "this guess is shaky", or on the day both are true the operator reads the wrong one. */
-  .claim.guess{border-color:var(--v-cyan-soft); box-shadow:none}
-  .claim-top{display:flex; align-items:center; justify-content:space-between; gap:var(--v-sp-sm)}
-  .claim-ref{font-family:var(--f-head); font-size:var(--v-fs-h1); line-height:var(--v-lh-h1);
-    font-weight:600; letter-spacing:var(--v-tr-tight); color:var(--v-txt)}
-  .mchip{flex:0 0 auto; padding:4px 10px; border-radius:99px; font-family:var(--f-mono);
-    font-size:var(--v-fs-cap); font-weight:600; background:var(--v-amber-soft);
-    border:1px solid var(--v-amber-line); color:var(--v-amber)}
-  .mchip.guess{background:var(--v-cyan-soft); border-color:var(--v-cyan-line); color:var(--v-cyan)}
-  .mchip.sm{padding:3px 8px; font-size:10px}
-  /* Confidence as a BAR — "0.92" means nothing to a volunteer. Only ever drawn for a
-     heard reference, the only one whose number means what it appears to mean. */
-  .conf{height:3px; border-radius:2px; background:var(--v-surf3); margin:10px 0 0; overflow:hidden}
+     paraphrase has not earned it — its score is a cosine, and router.rs will not
+     let it auto-fire at ANY value. Cyan, NOT amethyst: amethyst already means
+     REHEARSAL, and a colour that means "nothing is reaching the congregation"
+     cannot also mean "this guess is shaky", or on the day both are true the
+     operator reads the wrong one. */
+  .clm.guess{border-left-color:var(--v-cyan)}
+  /* DECIDED. Grey, and quieter — it is a receipt, and nothing on it is
+     actionable. It must never look like a claim still waiting for a press. */
+  .clm.done{opacity:.62; border-left-color:var(--v-line2); background:var(--v-surf)}
+  .clm-top{display:flex; align-items:center; gap:8px}
+  .clm-ref{flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+    font-family:var(--f-head); font-size:var(--v-fs-h2); line-height:1.2;
+    font-weight:700; letter-spacing:var(--v-tr-tight); color:var(--v-txt)}
+  .cbadge{flex:0 0 auto; padding:2px 6px; border-radius:2px; font-family:var(--f-mono);
+    font-size:8.5px; font-weight:600; letter-spacing:.08em; text-transform:uppercase;
+    background:var(--v-amber-soft); color:var(--v-amber)}
+  .cbadge.p{background:var(--v-cyan-soft); color:var(--v-cyan)}
+  /* Confidence as a BAR — "0.92" means nothing to a volunteer. Only ever drawn
+     for a heard reference, the only one whose number means what it appears to
+     mean. A paraphrase gets the sentence below instead, and no number at all. */
+  .conf{height:3px; border-radius:2px; background:var(--v-surf3); margin:0; overflow:hidden}
   .conf i{display:block; height:100%; background:var(--v-amber); border-radius:2px}
-  .guess-note{margin:8px 0 0; font-size:var(--v-fs-cap); color:var(--v-cyan)}
-  .klbl{font-family:var(--f-mono); font-size:9px; font-weight:700; letter-spacing:.14em;
+  .guess-note{margin:0; font-size:var(--v-fs-cap); line-height:1.45; color:var(--v-cyan)}
+  /* THE EVIDENCE — the words that actually triggered the match. */
+  .mt-q{margin:0; font-size:var(--v-fs-cap); line-height:1.5; color:var(--v-dim)}
+  /* The verse, in the serif face the wall uses. Clamped: the whole thing is
+     already rendered in its real template in the Preview pane, so a second full
+     copy buys nothing and runs to ten lines on a psalm. */
+  .clm-verse{margin:0; font-family:var(--f-serif);
+    font-size:var(--v-fs-b2); line-height:1.5; color:var(--v-txt);
+    display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:4; overflow:hidden}
+  .clm.guess .clm-verse{color:var(--v-dim)}
+  /* WHO ACTED. Quiet, because a receipt is not an offer. */
+  .clm-done{margin:0; font-family:var(--f-mono); font-size:9px; letter-spacing:.08em;
     text-transform:uppercase; color:var(--v-faint)}
-  .klbl.sec{margin-top:var(--v-sp-sm)}
-  .mt{margin-top:12px}
-  .mt-q{margin:5px 0 0; font-size:var(--v-fs-b1); line-height:1.55; color:var(--v-txt)}
-  /* Clamped: the whole verse is already rendered in its real template in the
-     Preview pane directly above, so a second full copy here buys nothing and can
-     run to ten lines on a psalm. Three lines is enough to recognise it by. */
-  .claim-verse{margin:10px 0 0; font-family:var(--f-serif); font-style:italic;
-    font-size:var(--v-fs-b2); line-height:1.55; color:var(--v-dim);
-    display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:3; overflow:hidden}
   /* No verse behind the reference. Rose is the failure colour on this screen;
      amber is never spent here, because nothing about this is on air. */
-  .claim-absent{margin:10px 0 0; font-size:var(--v-fs-cap); line-height:1.5;
+  .claim-absent{margin:0; font-size:var(--v-fs-cap); line-height:1.5;
     color:var(--v-rose)}
-  .rc-absent{font-size:var(--v-fs-cap); color:var(--v-rose)}
-  /* THE DECISION NEVER SCROLLS AWAY. Measured at 1440x900 with one ordinary
-     suggestion: this card needed 436px in a 281px panel, so "Accept & fire" and
-     "Dismiss" sat 35px below the bottom edge with no scrollbar visible — the two
-     controls the whole product exists to offer, on the panel an operator watches
-     during a sermon. Sticky, with the panel's own surface behind it. */
-  .acts{display:grid; grid-template-columns:1fr 1fr; gap:var(--v-sp-sm); margin-top:14px;
-    position:sticky; bottom:0; z-index:1; padding:8px 0 2px; background:var(--v-surf);
-    box-shadow:0 -8px 10px -8px var(--v-surf)}
-  .act{display:flex; flex-direction:column; gap:2px; align-items:center; padding:9px 10px;
-    border-radius:var(--v-r-md); cursor:pointer; border:1px solid transparent;
-    font-family:var(--f-body); transition:filter .14s}
-  .act b{font-size:var(--v-fs-b2); font-weight:600}
-  .act span{font-size:10px; opacity:.8}
-  .act:hover{filter:brightness(1.08)}
+  .cacts{display:grid; grid-template-columns:1fr 1fr; gap:6px}
+  .act{display:flex; flex-direction:column; gap:1px; align-items:center; padding:7px 8px;
+    border-radius:var(--v-r-sm); cursor:pointer; border:1px solid transparent;
+    font-family:var(--f-body); transition:filter .14s; min-width:0}
+  .act b{font-size:var(--v-fs-cap); font-weight:700}
+  .act span{font-size:9px; opacity:.85; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:100%}
+  .act:hover:not(:disabled){filter:brightness(1.08)}
+  /* DISABLED, NOT HIDDEN. A reference that parsed against no verse still has to
+     be shown — it is the operator's evidence that a number was misheard — and
+     the control that cannot take it says why rather than failing after a press. */
+  .act:disabled{cursor:not-allowed; opacity:.45}
   .act.go{background:var(--v-emerald); color:var(--v-void)}
   .act.no{background:var(--v-red); color:#fff}
-  .khint{margin:10px 0 0; text-align:center; font-size:10px; color:var(--v-faint)}
+  .khint{margin:0; text-align:center; font-size:10px; color:var(--v-faint)}
   .khint kbd{font-family:var(--f-mono); font-size:9px; color:var(--v-dim);
     background:var(--v-surf3); border:1px solid var(--v-line2); border-radius:var(--v-r-sm); padding:2px 5px}
 
+  .klbl{font-family:var(--f-mono); font-size:9px; font-weight:700; letter-spacing:.14em;
+    text-transform:uppercase; color:var(--v-faint)}
+  .klbl.sec{margin-top:var(--v-sp-sm)}
   .sub{display:flex; align-items:center; gap:var(--v-sp-sm); margin-top:var(--v-sp-sm);
     padding-top:var(--v-sp-sm); border-top:1px solid var(--v-line)}
-  .rc{display:flex; align-items:center; gap:var(--v-sp-sm); padding:7px 10px;
-    border-radius:var(--v-r-md); background:var(--v-surf2); border:1px solid var(--v-line)}
-  .rc-ref{font-size:var(--v-fs-b2); font-weight:600; color:var(--v-txt)}
   .mini{padding:4px 10px; border-radius:var(--v-r-sm); border:0; cursor:pointer;
     font-family:var(--f-body); font-size:var(--v-fs-cap); font-weight:600;
     background:var(--v-amber); color:var(--v-amber-ink)}

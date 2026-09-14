@@ -74,8 +74,19 @@ describe('what Live tells the operator', () => {
   it('the program pane — which renders through the SAME component as the wall — listens', () => {
     // The measurement has to be the wall's, not a guess about it. The console
     // preview uses the identical renderer, which is what makes this honest.
-    const pane = live.slice(live.indexOf('resolveOutputTemplate(previewTpl'));
-    expect(pane.slice(0, 400)).toMatch(/onFit=\{noteFit\}/);
+    //
+    // Anchored on the MARKUP, not on the first mention of the resolver: the
+    // slide grid now renders every cell through that same resolver too, and a
+    // slice taken from the first textual hit silently moved to a thumbnail —
+    // which would still have passed had the thumbnails been the ones reporting.
+    const from = live.indexOf('<section class="pane mon prog"');
+    expect(from, 'the program pane is still identifiable in the markup').toBeGreaterThan(-1);
+    const pane = live.slice(from, live.indexOf('</section>', from));
+    expect(pane).toMatch(/resolveOutputTemplate\(previewTpl, \$liveTemplateOverride/);
+    expect(pane).toMatch(/onFit=\{noteFit\}/);
+    // And there is exactly ONE of it. Twenty thumbnails each reporting their own
+    // fit would bury the one report that is about a congregation's screen.
+    expect([...live.matchAll(/onFit=\{noteFit\}/g)]).toHaveLength(1);
   });
 
   it('says how small it went, and what to do about it', () => {
