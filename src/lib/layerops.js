@@ -213,3 +213,125 @@ export function moveLayer(layers, id, dir) {
   }
   return out;
 }
+
+// ── WHERE AN OBJECT SITS, WRITTEN THE WAY A DRAG WRITES IT ─────────────────
+//
+// An alignment button and a drag are the same operation with different input:
+// both end by storing a SHARE OF THE FRAME on x/y/w/h, rounded to a tenth, and
+// clamped so the object cannot leave the canvas. They are here rather than in
+// the editor for the reason the rest of this module is: the mistakes are
+// invisible on screen. "Align right" that writes `x = 100` puts a 30%-wide
+// object three quarters off the frame and looks, in a 240px preview, like a
+// centred object with a wide margin.
+//
+// Nothing here writes a pixel. The renderer sizes in cqw — a share of the
+// output's width — so a pixel stored by an editor on one machine would render
+// at a different place on every screen it reached.
+
+/** A tenth of a percent, which is the resolution the canvas drag stores. */
+const r1 = (v) => Math.round(v * 10) / 10;
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+
+/**
+ * Can x/y/w/h actually MOVE this object?
+ *
+ * Three kinds answer no, and the answer is not "it is a bit special" — it is
+ * that nothing draws them from those four numbers, so a control that writes
+ * them is a control that changes nothing (DECISIONS §69):
+ *   · a BACKGROUND is full-frame by definition;
+ *   · a BAND is placed by `top`/`side`, which are its own controls;
+ *   · a WORD IN A BAND is placed by the band that owns it.
+ * A LOCKED object answers no as well, and that one is a different kind of no:
+ * it could move, and the operator has said it may not.
+ */
+export function isMovable(layers, layer) {
+  const L = typeof layer === 'string'
+    ? (Array.isArray(layers) ? layers : []).find((x) => x && x.id === layer)
+    : layer;
+  if (!L) return false;
+  if (L.locked) return false;
+  if (L.type === 'background' || L.type === 'band') return false;
+  return !bandOf(layers, L.id);
+}
+
+/** Every object in the stack that an alignment may legitimately move. */
+export function movableLayers(layers) {
+  const list = Array.isArray(layers) ? layers : [];
+  return list.filter((L) => isMovable(list, L));
+}
+
+/** The six edges an align button can mean, and what each writes. */
+const EDGES = {
+  left: (L) => ['x', 0],
+  hcenter: (L) => ['x', 50 - (Number(L.w) || 0) / 2],
+  right: (L) => ['x', 100 - (Number(L.w) || 0)],
+  top: (L) => ['y', 0],
+  vmiddle: (L) => ['y', 50 - (Number(L.h) || 0) / 2],
+  bottom: (L) => ['y', 100 - (Number(L.h) || 0)],
+};
+
+export const ALIGN_EDGES = Object.keys(EDGES);
+
+/**
+ * Put one object against an edge of the frame, or on its centre line.
+ *
+ * Returns the SAME list (by reference) when nothing can move — an unknown id, an
+ * unknown edge, or an object whose placement these four numbers do not decide —
+ * so a caller can tell "did nothing" from "moved" without comparing contents,
+ * exactly as `moveLayer` does.
+ */
+export function alignLayer(layers, id, edge) {
+  const list = Array.isArray(layers) ? layers : [];
+  const i = list.findIndex((l) => l && l.id === id);
+  if (i < 0 || !EDGES[edge] || !isMovable(list, list[i])) return list;
+  const L = list[i];
+  const [k, raw] = EDGES[edge](L);
+  const extent = Number(k === 'x' ? L.w : L.h) || 0;
+  const v = r1(clamp(raw, 0, 100 - extent));
+  if (v === L[k]) return list;
+  return [...list.slice(0, i), { ...L, [k]: v }, ...list.slice(i + 1)];
+}
+
+/**
+ * Space every movable object evenly along one axis.
+ *
+ * THE OUTER TWO DO NOT MOVE. Distribution is a statement about the gaps between
+ * things, not about where the group sits, and a version that also re-centred the
+ * row would look — on the one press an operator gave it — like it had moved
+ * everything somewhere arbitrary.
+ *
+ * It spaces CENTRES rather than edges. Edge-to-edge spacing is the other
+ * defensible reading, and it is the one that behaves unpredictably here: the
+ * objects on a slide are a 90%-wide verse and a 40%-wide reference far more
+ * often than they are equal tiles, and equalising the gaps between boxes of very
+ * different widths moves the big one a long way for no reason the operator asked
+ * for.
+ *
+ * Fewer than three objects is not a failure and not a no-op to be silent about:
+ * with two, every arrangement is already evenly spaced. The list comes back
+ * unchanged and the caller disables the control rather than offering one that
+ * cannot do anything.
+ */
+export function spaceEvenly(layers, axis) {
+  const list = Array.isArray(layers) ? layers : [];
+  const k = axis === 'y' ? 'y' : 'x';
+  const ext = k === 'x' ? 'w' : 'h';
+  const movable = movableLayers(list);
+  if (movable.length < 3) return list;
+
+  const centre = (L) => (Number(L[k]) || 0) + (Number(L[ext]) || 0) / 2;
+  const sorted = [...movable].sort((a, b) => centre(a) - centre(b));
+  const first = centre(sorted[0]);
+  const last = centre(sorted[sorted.length - 1]);
+  const step = (last - first) / (sorted.length - 1);
+
+  const moved = new Map();
+  sorted.forEach((L, i) => {
+    if (i === 0 || i === sorted.length - 1) return;
+    const extent = Number(L[ext]) || 0;
+    const v = r1(clamp(first + step * i - extent / 2, 0, 100 - extent));
+    if (v !== L[k]) moved.set(L.id, { ...L, [k]: v });
+  });
+  if (!moved.size) return list;
+  return list.map((L) => moved.get(L?.id) ?? L);
+}
