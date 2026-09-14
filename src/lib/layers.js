@@ -476,6 +476,36 @@ function fullScreen() {
   };
 }
 
+/** SONG LYRICS: the words, large, and NOTHING else.
+ *
+ *  THE ROLE YOU COULD FILTER TO AND NOT CREATE. `Worship Lyrics` ships as a
+ *  seeded built-in and `templateKind` has always had a rule for a verse with no
+ *  reference — but no starter made one, so the Templates rail offered a **Songs**
+ *  row an operator could never add to. A kind you can filter to but not create
+ *  is the same defect as one you can create but not filter to, in the other
+ *  direction (docs/REBRAND.md §3.3; DECISIONS §78).
+ *
+ *  The values are the built-in's, in the layer model: sans (a lyric is scanned
+ *  in a second and a half between breaths, not read like a paragraph), white on
+ *  near-black for the most contrast a projector in a lit room can get, and no
+ *  reference layer at all — a congregation is not singing the title. */
+function songLyrics() {
+  return {
+    layout: {
+      layers: [
+        makeLayer('background', { fill: '#07070a' }),
+        makeLayer('text', {
+          name: 'Words', bind: 'verse', x: 6, y: 24, w: 88, h: 52,
+          font: 'var(--f-body)', size: 7.6, color: '#ffffff',
+          align: 'center', valign: 'middle', lineHeight: 1.24, shadow: 0.3,
+        }),
+      ],
+      align: 'center',
+    },
+    style: {},
+  };
+}
+
 // ── THE THREE LOWER THIRDS ─────────────────────────────────────────────────
 //
 // A band is keyed over a live camera, so NONE of these carries a background
@@ -685,8 +715,20 @@ function timerScreen() {
   };
 }
 
+// A NEW TEMPLATE IS A KIND, NOT A BLANK. Starting from nothing means setting a
+// dozen properties before anything renders; starting from the kind means
+// adjusting two. Every starter here is a complete, working template.
+//
+// THE ROSTER AND THE RAIL MUST AGREE. `templateKind` derives a role from a
+// template's shape and the gallery rail offers one row per role that occurs —
+// so a role with no starter is a row an operator can never add to, and a starter
+// whose shape derives to `custom` is a template that vanishes from its own row.
+// `templateKind.test.js` holds both halves: it names the role every starter
+// lands on, and `every role but Custom can be created from a starter` is what
+// caught the missing lyrics one.
 export const STARTERS = [
   { key: 'fullscreen', label: 'Full-Screen Scripture', make: fullScreen, hint: 'Verse centred with its reference beneath.' },
+  { key: 'lyrics', label: 'Song Lyrics', make: songLyrics, hint: 'The words alone, large — no title, no reference.' },
   { key: 'lower.name', label: 'Lower Third — Name', make: lowerName, hint: 'Who is speaking, and what they are. Keyed over camera.' },
   { key: 'lower.lyric', label: 'Lower Third — Lyric', make: lowerLyric, hint: 'The words alone — no reference. Keyed over camera.' },
   { key: 'lower.bible', label: 'Lower Third — Scripture', make: lowerBible, hint: 'Verse with its reference beneath. Keyed over camera.' },

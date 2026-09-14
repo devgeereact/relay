@@ -102,3 +102,109 @@ describe('the theme door — a background style reaches the wall', () => {
     expect(slideBG(out.style)).toContain('radial-gradient');
   });
 });
+
+// ── ADDED 2026-09-14 · the two doors this file did not have, and the claim the
+//    deletion exists for ───────────────────────────────────────────────────────
+//
+// The two above are the doors a template ENTERS by. Two more read a stored style
+// on the way to something else, and one of them is the recorded near-miss:
+// `regionsToLayers` read `style.font` directly, so once migration ran on the way
+// out of the database it found nothing there and silently substituted the serif
+// default — and `TemplateGallery.upgradeLegacyToLayers` SAVES what it returns, so
+// one visit to the Templates tab would have re-typefaced a church's shelf, once,
+// for good.
+//
+// And the claim none of it was testing: **an old template renders identically
+// after the migration**. That is the whole point of a migration that DELETES. One
+// that quietly repaints is worse than the two homes it replaced, because the two
+// homes at least disagreed visibly.
+import { migrateStyle, migrateTemplate, resolveStyle, LEGACY_STYLE_KEYS } from './templatemodel.js';
+import { regionsToLayers } from './layers.js';
+import { readFileSync } from 'node:fs';
+
+/** A template as it existed BEFORE the model: whole-template keys, no per-element
+ *  ones. This is what a shelf saved a year ago still holds. */
+const legacyTpl = () => ({
+  id: 9,
+  name: 'Old Shelf',
+  layout: { regions: ['verse_text', 'reference'], align: 'center', lowerThird: false },
+  style: {
+    font: 'var(--f-display)',
+    textShadow: 0.7,
+    background: '#101018',
+    accent: '#e8a33d',
+    verseColor: '#f4e4c8',
+    verseSize: '5.5',
+    refSize: '2.6',
+  },
+});
+
+describe('the render door — resolveStyle', () => {
+  it('migrates whatever it is handed, because it cannot trust the door in front of it', () => {
+    // A template reaching the renderer from a kiosk page, a retained frame or a
+    // broadcast payload has been through a different path. Only this one is on
+    // every one of them.
+    const s = resolveStyle(legacyTpl().style);
+    for (const k of LEGACY_STYLE_KEYS) expect(s, k).not.toHaveProperty(k);
+    expect(s.verseFont).toBe('var(--f-display)');
+    expect(s.refFont).toBe('var(--f-display)');
+  });
+});
+
+describe('the conversion door — regionsToLayers', () => {
+  const verseFace = (l) => l.layers.find((L) => L.name === 'Verse').font;
+
+  it('gives the same typeface for a raw legacy template and an already-migrated one', () => {
+    // THE RECORDED NEAR-MISS, pinned. `upgradeLegacyToLayers` saves this result,
+    // so a difference between these two is a permanent, silent re-typefacing.
+    expect(verseFace(regionsToLayers(legacyTpl())), 'raw').toBe('var(--f-display)');
+    expect(verseFace(regionsToLayers(migrateTemplate(legacyTpl()))), 'migrated').toBe('var(--f-display)');
+  });
+});
+
+describe('no door reads a legacy key directly', () => {
+  it('nothing outside the model reaches for style.font or style.textShadow', () => {
+    // A grep, deliberately: the four doors above are the ones that exist today,
+    // and a FIFTH reader added next year is exactly how this class of defect came
+    // back the first time. Anything wanting `style.font` goes through the model,
+    // which is why the model DELETES rather than shadows — there is nothing left
+    // to read.
+    const offenders = [];
+    for (const f of [
+      'src/lib/layers.js',
+      'src/lib/themes.js',
+      'src/lib/templates.js',
+      'src/lib/TemplateRender.svelte',
+    ]) {
+      for (const line of readFileSync(f, 'utf8').split('\n')) {
+        // A comment may NAME the key — that is how the reason is recorded beside
+        // the code. Line comments, both block-comment forms, and HTML comments.
+        if (/^\s*(\/\/|\/\*|\*|<!--)/.test(line)) continue;
+        for (const k of LEGACY_STYLE_KEYS) {
+          if (new RegExp(`(style|s)\\??\\.${k}\\b`).test(line)) offenders.push(`${f}: ${line.trim()}`);
+        }
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+});
+
+describe('an old template renders identically after the migration', () => {
+  it('every property the renderer reads is the same before and after', () => {
+    const before = resolveStyle(legacyTpl().style);
+    const after = resolveStyle(migrateTemplate(legacyTpl()).style);
+    expect(after).toEqual(before);
+  });
+
+  it('and migrating a second time changes nothing again', () => {
+    const once = migrateStyle(legacyTpl().style);
+    expect(migrateStyle(once)).toEqual(once);
+    expect(resolveStyle(migrateStyle(once))).toEqual(resolveStyle(legacyTpl().style));
+  });
+
+  it('a template that never had a legacy key is untouched', () => {
+    // The whole mechanism must be invisible to a shelf that opted in later.
+    const modern = { verseFont: 'var(--f-serif)', refFont: 'var(--f-body)', verseShadow: 0.2 };
+    expect(migrateStyle(modern)).toEqual(modern);
+  });
+});

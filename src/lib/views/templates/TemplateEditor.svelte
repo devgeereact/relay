@@ -36,6 +36,13 @@
   import { BAND_GROW_MAX, BAND_TYPE_FLOOR } from '../../templatemodel.js';
 
   export let templateId;
+  /** Which object to open on, if the caller knew. The gallery inspector's object
+   *  strip (docs/REBRAND.md §3.2) names a template's real objects and a press
+   *  lands here — so "change the reference on Nocturne" is one action rather
+   *  than open-the-editor-then-find-it. `null` opens with nothing selected,
+   *  exactly as before; an id that is not on this template is ignored rather
+   *  than selecting the wrong object. */
+  export let layerId = null;
   const dispatch = createEventDispatcher();
 
   let edit = null;
@@ -50,6 +57,10 @@
     if (!$templates.length) await loadTemplates();
     loadThemes();
     load(templateId);
+    // Land on the object the caller named — but only if this template really has
+    // it. An id from somewhere else would select nothing and leave the panel
+    // showing another object's properties under that object's name.
+    if (layerId && (edit?.layout?.layers ?? []).some((L) => L.id === layerId)) selId = layerId;
     detectFonts(true);
   });
 

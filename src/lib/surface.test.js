@@ -1263,15 +1263,15 @@ describe('R3-12 · CLOSED — every view a screen reader lands on has a heading'
   // Recorded rather than silently dropped from the list.
   //
   // `Themes.svelte` used to be the second entry here and no longer exists: Themes
-  // became a DESK inside the Templates workspace (docs/REBRAND.md §2), so one
-  // router now picks between four children instead of two routers picking between
-  // two each. Its children are unchanged and still asserted above.
+  // became a DESK inside the Templates workspace (docs/REBRAND.md §2, DECISIONS
+  // §79), so one router now picks between four children instead of two routers
+  // picking between two each. Its children are unchanged and still asserted above.
   for (const f of ['src/lib/views/Templates.svelte']) {
     it(`${f.split('/').pop()} is a router and correctly has none`, () => {
       const t = src(f);
       expect(t).not.toMatch(/<h[1-6][\s>]/);
       // It really is just the switch: a desk, then a mode within it.
-      expect(t).toMatch(/Mode === 'editor'/);
+      expect(t).toMatch(/mode === 'editor'/);
       expect(t).toMatch(/desk === 'themes'/);
     });
   }

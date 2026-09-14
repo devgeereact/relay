@@ -3585,3 +3585,144 @@ that sends an operator to a section that does not exist is worse than the rename
 re-pointed by finding the control's line inside the new section blocks, not by guessing. The dated
 record was left alone: nothing under `docs/qa/audits/`, and nothing in RELAY_V1_AUDIT, RELAY_GAP or
 the earlier sections of this file, all of which say what was true when they were written.
+
+---
+
+## 78. A role is derived from what a template renders, and only a role with a renderer is offered (2026-09-14)
+
+**Context.** `docs/REBRAND.md` §3.3 asks for ten roles in one register (`LOOKS`): scripture,
+lyrics, announcement, preservice, media, stage, `lower.name`, `lower.lyric`, `lower.bible`,
+supersource — assigned from the template's own inspector and shown as a tag on its card. The Status
+table recorded that only five existed, because the others named kinds nothing rendered. Phases 5, 6
+and 12 have since landed (the `band` layer, stage zones, the `region` composite), so the register
+had to be reconciled against what actually renders today.
+
+**What was found first, and it was not the register.** `templateKind` — the one function every
+Templates-rail row, every card tag and the inspector's "Content type" row reads — was written for
+the legacy REGION model (`layout.regions`) and was never taught the LAYER model that phases 2, 5, 6
+and 12 are entirely made of. **Every one of the twelve starters classified as `custom`**, the three
+lower thirds and the SuperSource composite included. The rail could hold a row for a role it had a
+renderer for and never show it; a lower third's inspector said *Content type · Custom*. The five
+seeded built-ins are region templates, which is the only reason the rail ever showed a role at all —
+so the defect was invisible on a fresh install and total for anything an operator created. This is
+the repository's own recurring shape: a rule kept on one surface and skipped on its twin.
+
+**The decision.** A role stays **derived from what the template renders, never stored**. There is no
+`role` column, nothing to back-fill and nothing for a row to claim that the template is not. Both
+models are read by the one function; `templateKind.test.js` names the role every starter lands on,
+so a starter added without a rule is named by a failing test rather than quietly becoming Custom.
+
+**Which of the ten are offered, and which are refused.**
+
+| Spec role | Verdict | Why |
+|---|---|---|
+| scripture | **offered** | verse + reference, in either model |
+| lyrics | **offered** | verse alone — a congregation is not singing the title |
+| announcement | **offered** | a text layer that SCROLLS. The ticker binds a verse and a reference, so without the scroll rule it would read as scripture |
+| media | **offered** | a `media` layer with no words of its own |
+| stage | **offered** | a MONITOR-ONLY binding (`next`, `next_reference`, `note`, `elapsed`, `remaining`). CLAUDE.md already says those fields ride to output and no congregation template renders them, so they are a real structural fact rather than a naming convention |
+| supersource | **offered** | a `region` layer — a template rendered inside a template |
+| `lower.name` · `lower.lyric` · `lower.bible` | **collapsed to one `lower-third`** | a `band` layer is a lower third. But `lower.name` and `lower.bible` are the SAME shape — a band with a verse line and a reference line — and the only thing separating "Ade Ogunlana / GUEST SPEAKER" from a verse and its citation is which words the operator points at them. Telling them apart by alignment would be a guess about a style choice an operator may change at any time |
+| preservice | **refused** | nothing in a template's shape identifies one. "Lobby Warm" is a verse and a citation on a warm gradient, which is what every other scripture template is. A row for it would claim templates it cannot tell apart — which is precisely the defect phase 4 closed |
+
+One role is offered that the spec's list omits: **timer**. Relay fires a countdown, `CONTENT_KINDS`
+has carried `countdown` for as long as the look register has existed, and the timer starter renders
+it. A role this product has and the spec forgot is still a role.
+
+**A rule the reconciliation produced, and the defect it found.** The rail offers one row per role
+that occurs, and the New menu offers one starter per kind — so **a role you can filter to but not
+create is the same defect as one you can create but not filter to**, in the other direction.
+`Songs` was exactly that: `Worship Lyrics` ships as a seeded built-in, `templateKind` has always had
+a rule for a verse with no reference, and **no starter made one**. An operator could select the
+Songs row and never add to it. A `lyrics` starter now exists, carrying the built-in's own values in
+the layer model, and `every role but Custom can be CREATED from a starter` holds the two lists
+together.
+
+**One thing the tripwire caught that reading would not have.** The countdown rule was first written
+as "a `timer` layer", which is what `LAYER_TYPES` calls it and what `makeLayer('timer')` is spelled
+as. There is no such layer at runtime: `makeLayer` normalises it to a TEXT layer bound to
+`countdown`. The rule read perfectly and matched nothing, and only the starter roster test said so.
+
+**What this does NOT change.** The look register an operator BINDS — `CONTENT_KINDS`, the five kinds
+the fire path, the database and the Outputs matrix all speak — is untouched, and so is DECISIONS
+§29's resolution order. A derived role says what a template is FOR; it binds nothing, changes
+nothing on any screen, and is deliberately neutral in colour, because every colour that carries a
+promise is already spoken for (CLAUDE.md rule 18).
+
+---
+
+## 79. Themes is a desk inside Templates, not a workspace beside it (2026-09-14)
+
+**Context.** `docs/REBRAND.md` §2 names the workspaces the shell's strip carries, and Themes is not
+one of them. A theme is the style layer BENEATH templates (DECISIONS §27): it sets default `style`
+keys, a template overrides them key by key, and it never reaches a wall on its own. The only way to
+see a theme is through a template.
+
+**The decision.** The Templates workspace holds two desks — Templates and Themes — behind one
+segmented strip in the workspace head. `ThemeGallery` and `ThemeEditor` did not move and were not
+forked; `Templates.svelte` mounts the same two components. Switching desk always lands on that
+desk's gallery: returning to a half-finished editor an operator navigated away from restores a
+surface they did not ask for, and the editor's own Back is the way out of it. Nothing on either desk
+can reach an output, so a desk change costs a live service nothing.
+
+**One component, two desks.** Both desks render the same `DeskStrip`, rather than each hand-rolling
+a segmented control. A strip built twice can offer a desk on one side and not the other, and can
+lose a desk from one copy while the other keeps it — which is the `Copy URL` defect this branch
+already records, where one component built the same URL twice four lines apart and only one copy was
+corrected.
+
+**Nothing became unreachable.** Every control the Themes tab carried is still rendered, one press
+away, and `node scripts/qa-inventory.mjs` reports the same single orphan it reported before
+(`__r6probe.svelte`, a test probe). `src/lib/views/Themes.svelte` survives as a one-line way in from
+the old tab while the shell's strip is reshaped in the same wave — the two changes land separately,
+and a tab that opens a dead screen in between is worse than either. **It is to be deleted when the
+shell drops the `themes` entry**, and it says so in its own first paragraph: left behind, it is a
+component nothing renders, and an orphan is how a surface stops being covered while its tests stay
+green.
+
+---
+
+## 80. The inspector names the objects; the property groups stayed in the editor (2026-09-14)
+
+**Context.** `docs/REBRAND.md` §3.2 asks for an inspector that is objects rather than a ladder: a
+wrapping tab strip of the objects on this slide, then that object's properties grouped Text /
+Position / Effects, and Reset this object. The rebrand's Status table records phase 3 as **done**,
+and it is — inside `TemplateEditor`, a separate screen. What the **gallery's** inspector showed was
+a preview, three buttons, a Details|Usage switch and five read-only rows.
+
+**Two facts in that panel could be read and not changed from the surface they were read on.** One of
+them mattered: the Usage tab printed *"Content looks are set in Outputs → Content looks — the one
+place a content type is bound to a template"*, which is a signpost standing exactly where a control
+belongs. The other was the whole object model — a template's objects were not named at all on the
+surface an operator browses from.
+
+**What was built.** The gallery inspector now carries **Used for**, writing through
+`setContentTemplate` — the SAME single writer the Outputs matrix and the editor's own Used for call
+(DECISIONS §25), reading the same store, so a third surface cannot start disagreeing about what is
+bound — and the **object strip**, naming the template's real objects through the same `layerLabel`
+the editor's strip uses. A press opens the editor **on that object** (`TemplateEditor` gained a
+`layerId` prop, ignored when the id is not on the template rather than selecting the wrong object),
+so "change the reference on Nocturne" is one action from looking at it.
+
+**What was NOT built, and why.** The per-object **property groups** stayed in the editor. Moving
+them means extracting roughly three hundred lines of markup that read and write `sel` directly, plus
+`set` / `num` / `geom` / `bindToken` / `center` / `resetObject` / `duplicate` / `removeLayer`, the
+font-detection session state, the band-membership writer and the undo stack — into a component both
+screens drive. That is a real refactor of the surface that paints a congregation's screen, and it
+sits under `band.test.js` (24), `templatestyle.test.js` (29), `layerops.test.js` (14),
+`composite.test.js` (9) and `templateinspector.test.js`. It is worth doing. It is not worth doing in
+the tail of another pass, by somebody who cannot see the screens — which is the same reason phase 11
+left the Settings reorganisation alone.
+
+**So this is a partial closure and is recorded as one.** §3.2 is satisfied in the editor and
+**half** satisfied in the gallery: the objects are named and one press away, the properties are not
+edited in place. A reviewer should read the claim as exactly that, and the honest next step is the
+extraction above rather than a second copy of the property markup — a second copy is how a shadow, a
+transform or a fit fix lands on one panel and not the other, which is the reason the band's members
+are drawn by the one text path and not by the band.
+
+**One thing not attempted at all.** The prototype outlines the SELECTED object on the preview
+(`.frame.sel-v`). `TemplateRender` is the ONE renderer and it renders what a wall shows; a selection
+outline is booth furniture, and the editor draws it on its own canvas overlay rather than inside the
+renderer. Putting it inside `TemplateRender` to serve a browse surface would put an editor concern
+into the component the congregation sees. Not done, on purpose.
