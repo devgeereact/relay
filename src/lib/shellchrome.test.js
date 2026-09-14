@@ -355,6 +355,44 @@ describe('the live-audio card shows the signal and the two decisions about it', 
     expect(script).not.toMatch(/gate\s*=/);
   });
 
+  // ── §7 · THE COUNTDOWN FIGURE ─────────────────────────────────────────────
+  //
+  // It is the largest thing in the Quick tools panel because it is the one thing
+  // an operator reads from across a booth. That makes conflating its two states
+  // expensive: the SET duration and what the screens are counting are different
+  // facts, and a big number with no label is the half of a status line that lies.
+  it('the countdown figure says WHICH of its two facts it is showing', async () => {
+    const cap = await import('./stores/capture.js');
+    cap.live.set(null);
+    await mount();
+    // Nothing on the wall: it still renders — the panel's biggest control used to
+    // have no readout at all until after it had been used — and it says so.
+    const fig = host.querySelector('.tfig');
+    expect(fig).toBeTruthy();
+    expect(fig.classList.contains('live')).toBe(false);
+    expect(host.querySelector('.cdstatev').textContent.trim()).toBe('not counting');
+
+    cap.live.set({ countdown_to: Date.now() + 5 * 60_000 });
+    await settle();
+    expect(host.querySelector('.tfig').classList.contains('live')).toBe(true);
+    expect(host.querySelector('.cdstatev').textContent.trim()).toBe('on the screens');
+    cap.live.set(null);
+  });
+
+  it('the warning state is red, never amber, and only while it is on a wall', async () => {
+    // Amber in this room means ON AIR and is never allowed to be anything else
+    // (rule 18). The warning window itself is `layers.js::countdownWarning` — one
+    // rule, shared with the wall and the stage page.
+    const css = DOCK.slice(DOCK.indexOf('.tfig {'));
+    expect(css).toMatch(/\.tfig\.warn \{ color: var\(--v-red\); \}/);
+    // The TOKEN, not the word — the comment beside it says "never amber", which
+    // is the sentence a naive grep would have been satisfied by.
+    expect(css.slice(0, css.indexOf('.cdstate'))).not.toMatch(/var\(--v-amber/);
+    // `cdLive &&` is the half that stops a SET duration under a minute from
+    // pulsing red at an operator about a countdown nobody can see.
+    expect(DOCK).toMatch(/\$: cdWarn = cdLive && countdownWarning\(/);
+  });
+
   it('the transcript card says what is producing the transcript, or that nothing is', async () => {
     await mount();
     // With no model loaded it must not read like a working recogniser that has
