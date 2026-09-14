@@ -68,7 +68,27 @@ const visible = (L) => L && L.visible !== false;
 export function templateKind(t) {
   const layout = t?.layout ?? {};
   const layers = Array.isArray(layout.layers) ? layout.layers : [];
-  if (layers.length) return kindFromLayers(layers);
+  if (layers.length) {
+    const fromLayers = kindFromLayers(layers);
+    // A DECLARATION SURVIVES A CONVERSION THAT LOST THE BAND.
+    //
+    // `regionsToLayers` draws a legacy lower third's backing bar as a `shape`
+    // named 'Band'; it does not emit a `band` layer. `kindFromLayers` therefore
+    // finds no band, falls through to "a verse line and a reference line", and
+    // answers `scripture` — while `layout.lowerThird`, copied forward by that
+    // same conversion (`{ ...layout, layers }`), sat right there saying
+    // otherwise. Reading the shape and ignoring the declaration is how six of
+    // the operator's eight lower thirds silently left the Quick tools picker:
+    // `upgradeLegacyToLayers` runs on mount and SAVES, so every seeded band in
+    // the database has been through it. `nameband.test.js` has the read.
+    //
+    // The declaration is read, never assumed: a template that has NOT declared
+    // itself keeps whatever its layers say, and layers that positively name a
+    // richer shape win — a `band` already agrees, and a `region` is a composite,
+    // which is a claim about structure that a flag on the old model cannot make.
+    if (layout.lowerThird && fromLayers !== 'supersource') return 'lower-third';
+    return fromLayers;
+  }
 
   const regions = Array.isArray(layout.regions) ? layout.regions : [];
   const has = (r) => regions.includes(r);

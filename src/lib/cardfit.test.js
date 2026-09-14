@@ -47,6 +47,7 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { tick } from 'svelte';
 import TemplateRender from './TemplateRender.svelte';
 import { regionsToLayers, drawBoxes, boundValue, STARTERS } from './layers.js';
 import { fitScale, faceOf } from './templatemodel.js';
@@ -333,6 +334,13 @@ describe('a fit that still clips says so', () => {
    *  jsdom does no layout, so every box measures 0 — this drives the component's
    *  REAL logic (`overflowing()`, `needsRefit`, the retry bound, the report) with
    *  the one fact a browser would have supplied. */
+  /** The stub has to be RE-APPLIED after any content change, because `.ltext`
+   *  now lives inside `{#key slideKey}` — the layered path's slide transition
+   *  (`layeredtransition.test.js`) — so a new slide builds new boxes and the
+   *  properties defined here go with the old ones. A browser needs no equivalent:
+   *  a freshly-built 100px box with 200px of content in it is still clipped, and
+   *  re-stubbing is how that fact is carried into a DOM that measures nothing.
+   *  `reclip` below is the one place that waits for the rebuild first. */
   function clipBoxes(el, { scroll = 200, client = 100 } = {}) {
     for (const box of el.querySelectorAll('.ltext')) {
       Object.defineProperty(box, 'scrollHeight', { value: scroll, configurable: true });
@@ -342,6 +350,15 @@ describe('a fit that still clips says so', () => {
     }
   }
   const settle = (ms = 600) => new Promise((r) => setTimeout(r, ms));
+  /** Change the content and keep the clipped boxes clipped. `tick()` is a
+   *  microtask and the fit is scheduled in a `requestAnimationFrame`, so the
+   *  re-stub always lands on the rebuilt boxes BEFORE anything measures them —
+   *  no race, and no fit pass that silently measured an unstubbed box. */
+  async function reclip(el, content) {
+    app.$set({ content });
+    await tick();
+    clipBoxes(el);
+  }
 
   it('reports `clipped` when the words do not fit, however small it went', async () => {
     let seen = null;
@@ -491,7 +508,7 @@ describe('a fit that still clips says so', () => {
     // length, which is one of the terms `fitSig` is built from.
     const texts = ['Romans 8:28', 'And we know that all things work together', 'For God so loved'];
     for (let i = 0; i < 6; i++) {
-      app.$set({ content: { ...SAMPLE, text: texts[i % texts.length], reference: `R ${i}` } });
+      await reclip(el, { ...SAMPLE, text: texts[i % texts.length], reference: `R ${i}` });
       await new Promise((r) => setTimeout(r, 70));
     }
     await settle(300);
@@ -521,12 +538,18 @@ describe('a fit that still clips says so', () => {
     // IS in the signature.
     //
     // ── THE TRANSITION HYPOTHESIS IS NOT IT, AND THE MARKUP SETTLES IT ─────────
-    // `{#key slideKey}` and `in:slideIn` wrap ONLY the region branch's `.slide`.
-    // The layered branch — every `.ltext` and `.lfit` — sits above that block and
-    // has no transition on it at all, so nothing here is ever measured mid-flight.
-    // (And `transitions.js` animates only opacity, transform and filter, none of
-    // which move `scrollHeight`, which is what that comment in the renderer has
-    // always said.) Fourth theory, fourth probe, and this one found the bug.
+    // WHEN THIS WAS WRITTEN, `{#key slideKey}` and `in:slideIn` wrapped ONLY the
+    // region branch's `.slide`, and this comment said the layered branch had no
+    // transition on it at all. That is no longer true — the layered path was
+    // missing the transition entirely, which was its own operator-reported bug
+    // (`layeredtransition.test.js`), and `.ltext` now sits inside the same key.
+    // The CONCLUSION is unchanged, and for the reason the renderer has always
+    // given: `transitions.js` animates only opacity, transform and filter, and
+    // none of the three moves `scrollHeight` or `clientHeight`, so the fitter
+    // measures the same box whether or not a transition is running. What did
+    // change is the harness — see `reclip`, because a rebuilt box loses a stub a
+    // browser would never have needed.
+    // Fourth theory, fourth probe, and this one found the bug.
     // The claim is that the new words are MEASURED, so it is counted rather than
     // compared: `onFit` reports once per fit pass, and jsdom has no layout, so
     // every fit converges on the same number whatever the text says. A size that
@@ -556,7 +579,7 @@ describe('a fit that still clips says so', () => {
     await settle(400);
     clipBoxes(el);
     seen.length = 0;
-    app.$set({ content: { reference: 'Romans 8:28', text: 'DDDD EEEE FFFF' } });
+    await reclip(el, { reference: 'Romans 8:28', text: 'DDDD EEEE FFFF' });
     await settle(700);
     expect(seen.length, 'an equal-length fire reported nothing at all').toBeGreaterThan(0);
     expect(seen.at(-1)?.clipped, 'it went back to saying everything fits').toBe(true);
