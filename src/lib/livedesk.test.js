@@ -117,7 +117,11 @@ describe('the slide grid paints slides', () => {
     invoke.mockClear();
 
     host.querySelectorAll('.sg-cell')[1].click();
-    await settle(260); // one beat (190ms) and a breath
+    // REAL timers, because the beat is the thing under test. 500ms against a
+    // 190ms beat: a 70ms margin flaked once on a loaded machine, and a run
+    // surface's timing test that fails at random is worse than no test —
+    // somebody eventually reruns it until it is green instead of reading it.
+    await settle(500);
 
     const fired = invoke.mock.calls.filter(([c]) => c === 'manual_fire');
     expect(fired).toHaveLength(1);
@@ -133,7 +137,7 @@ describe('the slide grid paints slides', () => {
     const cell = host.querySelectorAll('.sg-cell')[2];
     cell.click();
     cell.dispatchEvent(new window.MouseEvent('dblclick', { bubbles: true }));
-    await settle(260);
+    await settle(500);
 
     expect(invoke.mock.calls.filter(([c]) => c === 'manual_fire')).toHaveLength(0);
     // It went to the preview instead, which is the whole point of the beat.
