@@ -69,6 +69,7 @@ beforeEach(() => {
   cap.detections.set([]);
   cap.resolvedDetections.set([]);
   cap.liveCue.set({ cueId: null, slide: 0, onAir: false });
+  cap.channelHealth.set({});
   host = document.createElement('div');
   document.body.appendChild(host);
   // Warm the bridge before mounting. Under vitest the very FIRST
@@ -261,7 +262,104 @@ describe('the AI detection column', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 3 · THE MONITORS SAY WHICH IS WHICH
+// 3 · THE SCREENS MOVED, AND NOTHING WAS LEFT BEHIND
+//
+// Output Status left the studio row so the two monitors could be equal. It has
+// rule 35's whole history behind it, so the move is only defensible if every
+// control it carried is still on the run surface — the per-screen badge, the
+// screen's own word, the on/off REPAIR (which is what an operator reaches for
+// when a projector drops mid-service), the emergency announcement, and Open main
+// output. This is the test that says so.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('the inspector column', () => {
+  it('sits beside the stage and holds the claims ABOVE the screens', async () => {
+    new Live({ target: host, props: {} });
+    await settle();
+    const insp = host.querySelector('.insp-col');
+    expect(insp).not.toBeNull();
+    expect(insp.parentElement.className).toContain('desk');
+    expect(insp.previousElementSibling.className).toContain('stage');
+
+    const panes = [...insp.children].filter((e) => e.className.includes('pane'));
+    expect(panes).toHaveLength(2);
+    expect(panes[0].textContent).toContain('AI Detection');
+    expect(panes[1].textContent).toContain('Output Status');
+  });
+
+  it('the screens pane kept every control it had in the studio row', async () => {
+    // A screen that is OFF — the state the repair exists for. With no health row
+    // at all `screenSwitch` deliberately offers nothing ("we have not asked yet"
+    // is not "it is off"), so the pane would have nothing to press through no
+    // fault of this change.
+    cap.channelHealth.set({ 1: { id: 1, name: 'Main screen', supported: true, online: false } });
+    new Live({ target: host, props: {} });
+    await settle();
+    const screens = [...host.querySelectorAll('.insp-col .pane')].at(-1);
+    expect(screens.textContent).toContain('Main screen');
+    // The repair, the emergency announcement, and the way to open the wall.
+    expect(screens.querySelector('.out-sw')).not.toBeNull();
+    expect(screens.querySelector('input[aria-label="Emergency announcement"]')).not.toBeNull();
+    expect(screens.textContent).toContain('Open main output');
+  });
+
+  // Rule 35: a status line that reads the same when the thing behind it is
+  // broken as when it is fine is not a status line.
+  it('the gate says what it is DOING, and says something else when it cannot', async () => {
+    cap.capture.update((s) => ({ ...s, detectionOn: true, capturing: true }));
+    new Live({ target: host, props: {} });
+    await settle();
+    expect(host.querySelector('.det-meta').textContent.trim()).toBe('auto-fire on');
+    host.innerHTML = '';
+
+    cap.capture.update((s) => ({ ...s, detectionOn: true, capturing: false }));
+    new Live({ target: host, props: {} });
+    await settle();
+    expect(host.querySelector('.det-meta').textContent.trim()).toBe('not listening');
+    host.innerHTML = '';
+
+    cap.capture.update((s) => ({ ...s, detectionOn: false, capturing: true }));
+    new Live({ target: host, props: {} });
+    await settle();
+    expect(host.querySelector('.det-meta').textContent.trim()).toBe('detection off');
+    cap.capture.update((s) => ({ ...s, detectionOn: false, capturing: false }));
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 4 · THE DIAL DOES NOT INVENT A POSITION
+//
+// `getSensitivity` is a GROUP 2 wrapper: with no backend it answers 50 and says
+// nothing. 50 is also a real setting — it is `Thresholds::default()` — so the
+// dial could not tell "the gate is at 50" from "nobody answered", which is rule
+// 35 on a control instead of on a badge. Found by W-shell while building the
+// dock's copy of the same dial.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('the sensitivity dial', () => {
+  it('reads the real position when there is an engine to ask', async () => {
+    invoke.mockImplementation((cmd) => {
+      if (cmd === 'get_sensitivity') return Promise.resolve(31);
+      if (cmd === 'list_output_channels') return Promise.resolve([CHANNEL]);
+      if (cmd === 'list_books' || cmd === 'list_templates' || cmd === 'list_plans')
+        return Promise.resolve([]);
+      return Promise.resolve(null);
+    });
+    new Live({ target: host, props: {} });
+    await settle();
+    expect(host.querySelector('.sens-val').textContent.trim()).toBe('31');
+  });
+
+  it('SHOWS NO NUMBER when nothing answered — 50 is a real setting', async () => {
+    cap.capture.update((s) => ({ ...s, available: false }));
+    new Live({ target: host, props: {} });
+    await settle();
+    expect(host.querySelector('.sens-val').textContent.trim()).toBe('—');
+    expect(host.querySelector('.sens input[type="range"]').disabled).toBe(true);
+    cap.capture.update((s) => ({ ...s, available: true }));
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 5 · THE MONITORS SAY WHICH IS WHICH
 // ─────────────────────────────────────────────────────────────────────────────
 describe('preview and programme', () => {
   it('the programme names the screen it is rendering AS', async () => {

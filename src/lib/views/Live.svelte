@@ -369,9 +369,17 @@
 
     await loadRehearsal();
     if (dead) return;
-    getSensitivity().then((v) => {
-      if (!dead) sensitivity = v;
-    });
+    // ONLY WHEN THERE IS AN ENGINE TO ASK. `getSensitivity` is a GROUP 2 wrapper:
+    // with no backend it answers 50 and says nothing — and 50 is a real setting,
+    // so the dial cannot tell "the gate is at 50" from "nobody answered". That is
+    // rule 35 on a control rather than on a badge. The dial shows `—` until a
+    // real answer lands, and `sensKnown` is what the value column reads.
+    if ($capture.available)
+      getSensitivity().then((v) => {
+        if (dead) return;
+        sensitivity = v;
+        sensKnown = true;
+      });
     // Populate the reactive `$templates` store so the preview/program panes
     // resolve (and stay live to edits) from it, not just a one-shot snapshot.
     await loadTemplates().catch(() => {});
@@ -658,11 +666,14 @@
   // It writes the SAME thresholds the Settings sliders do (one baseline) — the
   // whole point is dialling out false fires mid-service without leaving Live.
   let sensitivity = 50;
+  /** Has a real backend answer landed? See the note at the read in `onMount`. */
+  let sensKnown = false;
   async function onSensitivity(v) {
     // Optimistic, then CORRECTED — never assumed. The slider used to be written
     // from the request and the result thrown away, so a refused change left the
     // dial showing a position the gate had never reached.
     sensitivity = v;
+    sensKnown = true;
     try {
       const landed = await setSensitivity(v);
       // The backend owns the curve and its inverse; trust its number, not ours.
@@ -672,6 +683,7 @@
       // than remembered here, and say so. A slider that silently disagrees with the
       // thing it controls is the whole finding.
       sensitivity = await getSensitivity();
+      sensKnown = true;
       flash(`Sensitivity stayed at ${sensitivity} — ${humanError(e)}`);
     }
   }
@@ -1618,7 +1630,7 @@
             <input type="range" min="0" max="100" step="1" value={sensitivity}
               on:input={(e) => onSensitivity(+e.target.value)} disabled={!$capture.available}
               aria-label="Detection sensitivity" use:rangeFill={sensitivity} />
-            <span class="sens-val r-mono">{sensitivity}</span>
+            <span class="sens-val r-mono">{sensKnown ? sensitivity : '—'}</span>
           </label>
           <span class="spring"></span>
           <button class="chip btnchip" class:ok={$capture.detectionOn} on:click={toggleDetection}
