@@ -251,7 +251,24 @@
   //      screen happens to be connected would take the operator's tool away at the
   //      exact moment they are fixing the screen.
   let fitWarning = '';
+  // TWO DIFFERENT FAILURES, AND THE WORSE ONE USED TO BE SILENT.
+  //
+  //  · SHRUNK — it all fits, but small. "You may not be able to read this from
+  //    the back." Rule 37's original case, and `scale` is the honest measure.
+  //  · CLIPPED — it does NOT fit, at the size it settled on, inside a box that is
+  //    `overflow:hidden`. Words the congregation will simply never see. This
+  //    could happen at `scale: 1.0` — nothing had to shrink — so `legible` was
+  //    true and this pane said nothing at all (rule 35). It is checked first,
+  //    because a template that is cutting words off is not improved by being told
+  //    how big its type is.
   function noteFit(f) {
+    if (f.clipped) {
+      fitWarning =
+        'This template is cutting words off — they do not fit the box, ' +
+        (f.legible ? '' : `even shrunk to ${Math.round(f.scale * 100)}% of the template's size, `) +
+        'so part of the text is not on the screen. Try a shorter passage or a template with more room.';
+      return;
+    }
     fitWarning = f.legible
       ? ''
       : `This is rendering at ${Math.round(f.scale * 100)}% of the template's size to fit — ` +

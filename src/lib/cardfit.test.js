@@ -69,6 +69,8 @@ const THUMB_H = (THUMB_W * 9) / 16;
 const UI_BODY_PX = 12;
 /** `TemplateRender`'s own floor — 45% of the size the designer asked for. */
 const MIN_LEGIBLE_SCALE = 0.45;
+/** One report per fit pass, plus one per bounded retry (`MAX_REFIT = 2`). */
+const MIN_LEGIBLE_REPORTS = 3;
 
 let host;
 let app;
@@ -256,7 +258,9 @@ describe('rule 37 has an instrument on the path that ships', () => {
   it('a layered template reports its fit, like a region one always has', async () => {
     let seen = null;
     mount(layered, SAMPLE, { onFit: (f) => (seen = f) });
-    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    // The report is deliberately taken a frame LATER than the fit — see the
+    // round-2 block below for why that is the whole point.
+    await new Promise((r) => setTimeout(r, 300));
     expect(seen, 'a layered fit reported nothing at all').not.toBeNull();
     expect(typeof seen.scale).toBe('number');
     expect(Number.isFinite(seen.scale)).toBe(true);
@@ -270,9 +274,125 @@ describe('rule 37 has an instrument on the path that ships', () => {
     // Same guarantee `safescreen.test.js` holds over the region path. This runs
     // inside a requestAnimationFrame on the page that is ON THE WALL.
     const src = readFileSync(resolve(__dirname, './TemplateRender.svelte'), 'utf8');
-    const fn = src.slice(src.indexOf('function fitLayers'), src.indexOf('// Fit is driven by'));
-    expect(fn).toMatch(/if \(onFit\)/);
-    expect(fn).toMatch(/try \{/);
-    expect(fn).toMatch(/catch/);
+    expect(src).toMatch(/if \(onFit\)/);
+    const fn = src.slice(src.indexOf('if (onFit)'));
+    expect(fn.slice(0, 300)).toMatch(/try \{/);
+    expect(fn.slice(0, 300)).toMatch(/catch/);
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// ROUND 2 — THE FIT THAT SAID YES TO A BOX IT DOES NOT FIT.
+//
+// With the size declared, the lead re-rendered and three of the four clipped
+// cards were simply OFF SCREEN (tops at 1097, 1280, 1463 in a 1000px viewport) —
+// the IntersectionObserver deferral, working as intended; scrolling them in drops
+// the count to one. The one that remained was `Nocturne · Lyrics`, fully in view,
+// `data-base="8.5"`, computing to exactly 20.6975px = exactly 8.5cqw at a 243.5px
+// card. Its box measured 104px and its content 174px, and it stayed that way.
+//
+// 8.5 IS REACHABLE AS A SEARCH RESULT, which is what makes this the interesting
+// case rather than "the fit never ran": from `lo = 0.4, hi = 22` the mids are
+// 11.2, then 5.8, then exactly 8.5. So the binary search asked "does 8.5 fit?",
+// the DOM said yes, and the painted result is 70px over an `overflow:hidden` box.
+// The measurement and the paint disagree.
+//
+// ── WHY `verifyFit` DID NOT CATCH IT, AND IT IS NOT THE FONT ────────────────
+// Rule 42 exists for exactly this shape and has two signals. The first,
+// `fittedWithTheRealFont()`, is INERT in the shipped product: Relay bundles no
+// webfont at all — `src/app.css` line 11 says so, and there is no `@font-face`,
+// no `fonts.googleapis` link and no `.woff` anywhere in `src/`, because every
+// feature must work at zero network. An empty FontFaceSet makes
+// `document.fonts.check()` answer true for any family, so that guard can never
+// say "stale". That is correct rather than broken — with no webfont there is no
+// swap — but it leaves `overflowing()` as the ONLY real signal `verifyFit` has.
+//
+// And `overflowing()` was sampled in the SAME synchronous frame as the fit, which
+// is the one moment it cannot see a discrepancy that materialises a frame later.
+// Rule 42's own comment says this about the font case; the blindness is general.
+// Under `container-type: size` the fit writes `font-size` in `cqw` and reads
+// `scrollHeight` back inside one loop, and a container that is still settling, a
+// container-query length resolved in a later pass, or a system-font substitution
+// all produce the same signature: a measurement that says yes and a paint that
+// clips. This repository cannot tell those apart without a browser, and it does
+// not have to — all three are invisible to a same-frame sample and visible to a
+// next-frame one.
+//
+// So the sample moves to a later frame, under the SAME `MAX_REFIT` bound. No cap
+// is raised, no tolerance widened, no threshold touched.
+//
+// ── AND WHEN THE BOUND IS SPENT, IT SAYS SO ────────────────────────────────
+// `Nocturne · Lyrics` fitted at 8.5 of a designed 8.5 — `scale: 1.0`,
+// `legible: true` — over a box showing roughly 60% of its words. `legible` only
+// ever answered "did we shrink past 45%?", never "does it actually fit", so the
+// most reassuring possible report sat over the worst possible outcome. Rule 35.
+describe('a fit that still clips says so', () => {
+  const layered = SHELF.find((t) => /Lower Third · Scripture/.test(t.name));
+
+  /** Make the rendered boxes report an overflow jsdom cannot produce on its own.
+   *  jsdom does no layout, so every box measures 0 — this drives the component's
+   *  REAL logic (`overflowing()`, `needsRefit`, the retry bound, the report) with
+   *  the one fact a browser would have supplied. */
+  function clipBoxes(el, { scroll = 200, client = 100 } = {}) {
+    for (const box of el.querySelectorAll('.ltext')) {
+      Object.defineProperty(box, 'scrollHeight', { value: scroll, configurable: true });
+      Object.defineProperty(box, 'clientHeight', { value: client, configurable: true });
+      Object.defineProperty(box, 'scrollWidth', { value: 0, configurable: true });
+      Object.defineProperty(box, 'clientWidth', { value: client, configurable: true });
+    }
+  }
+  const settle = (ms = 600) => new Promise((r) => setTimeout(r, ms));
+
+  it('reports `clipped` when the words do not fit, however small it went', async () => {
+    let seen = null;
+    const el = mount(layered, SAMPLE, { onFit: (f) => (seen = f) });
+    clipBoxes(el);
+    await settle();
+    expect(seen, 'nothing was reported at all').not.toBeNull();
+    expect(seen.clipped, 'a clipped box reported no clip').toBe(true);
+  });
+
+  it('and does not cry clip over a box that fits', async () => {
+    let seen = null;
+    mount(layered, SAMPLE, { onFit: (f) => (seen = f) });
+    await settle(300);
+    expect(seen).not.toBeNull();
+    expect(seen.clipped).toBe(false);
+  });
+
+  it('sees an overflow that only appears AFTER the fit frame', async () => {
+    // The whole point. A same-frame sample cannot see this; that is what let
+    // `Nocturne · Lyrics` settle at its designed size over a box it overflows.
+    let seen = null;
+    const el = mount(layered, SAMPLE, { onFit: (f) => (seen = f) });
+    await new Promise((r) => requestAnimationFrame(r)); // the fit frame passes clean
+    clipBoxes(el); // ... and only THEN does the box turn out to be too small
+    await settle();
+    expect(seen?.clipped, 'the check was still taken in the fit frame').toBe(true);
+  });
+
+  it('gives up after the bounded retries rather than re-fitting for ever', async () => {
+    // Rule 37: a passage that fits at NO size is shrunk and REPORTED, not
+    // retried until the page stops responding. The bound is `MAX_REFIT`, and it
+    // is the existing one — this fix does not raise it.
+    const src = readFileSync(resolve(__dirname, './TemplateRender.svelte'), 'utf8');
+    expect(src).toMatch(/const MAX_REFIT = 2;/);
+    let calls = 0;
+    const el = mount(layered, SAMPLE, { onFit: () => (calls += 1) });
+    clipBoxes(el);
+    await settle(900);
+    expect(calls, 'a clipped box re-fitted without end').toBeLessThanOrEqual(MIN_LEGIBLE_REPORTS);
+    expect(calls).toBeGreaterThan(0);
+  });
+
+  it('Live turns a clip into words, and not into the shrink sentence', () => {
+    // A clip and a shrink are different failures: one is "you cannot read this
+    // from the back", the other is "you cannot read all of it from anywhere".
+    const live = readFileSync(resolve(__dirname, './views/Live.svelte'), 'utf8');
+    const fn = live.slice(live.indexOf('function noteFit'), live.indexOf('function noteFit') + 700);
+    expect(fn).toMatch(/f\.clipped/);
+    // The existing sentence is still there for the shrink case.
+    expect(live).toMatch(/may not be readable from the back/);
+    expect(live).toMatch(/Math\.round\(f\.scale \* 100\)/);
   });
 });
