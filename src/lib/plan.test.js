@@ -8,11 +8,16 @@ import {
   slidesOf,
   nextOf,
   stepFrom,
+  chipOf,
   cueSub,
   sectionsOf,
   planRuntime,
   fmtDuration,
   parseDuration,
+  planDateLabel,
+  cueCountLabel,
+  dropIndex,
+  reorderTo,
 } from './plan.js';
 
 const song = (id, ...labels) => ({
@@ -264,5 +269,116 @@ describe('fmtDuration', () => {
     expect(fmtDuration(0)).toBe('—');
     expect(fmtDuration(null)).toBe('—');
     expect(fmtDuration(-5)).toBe('—');
+  });
+});
+
+describe('chipOf — the kind, in a word, in the running order', () => {
+  it('names every kind this build has', () => {
+    expect(chipOf('scripture')).toBe('WORD');
+    expect(chipOf('song')).toBe('SONG');
+    expect(chipOf('announce')).toBe('NOTE');
+    expect(chipOf('media')).toBe('MEDIA');
+    expect(chipOf('countdown')).toBe('TIMER');
+  });
+
+  it('never truncates a kind it does not know', () => {
+    // The prototype fell back to `kind.slice(0,4)` and the first kind added after
+    // that read "LOWE" in every running order. A truncation is a name nobody
+    // chose; quoting the row is not a guess.
+    expect(chipOf('lower_third')).toBe('LOWER_THIRD');
+    expect(chipOf('announcement')).toBe('ANNOUNCEMENT');
+    for (const kind of ['lower_third', 'announcement', 'sermon']) {
+      expect(chipOf(kind)).not.toBe(kind.slice(0, 4).toUpperCase());
+    }
+  });
+
+  it('says UNKNOWN only when there is nothing to quote', () => {
+    for (const empty of ['', '   ', null, undefined, 7, {}]) {
+      expect(chipOf(empty)).toBe('UNKNOWN');
+    }
+  });
+});
+
+describe('planDateLabel — an absence, in words', () => {
+  it('keeps a real date exactly as the backend sent it', () => {
+    expect(planDateLabel('2026-09-14')).toBe('2026-09-14');
+  });
+
+  it('never renders the word undefined, and never an em dash', () => {
+    // `{p.plan_date}` printed the literal `undefined` in the plan rail against a
+    // summary that did not carry the field. An em dash would be no better: this
+    // repository already spends it on "untimed cue" (`fmtDuration`), so a
+    // dateless plan would read as a cue length.
+    for (const absent of [undefined, null, '', '   ', 42, {}]) {
+      expect(planDateLabel(absent)).toBe('No date');
+    }
+    expect(planDateLabel(undefined)).not.toContain('undefined');
+    expect(planDateLabel(undefined)).not.toBe(fmtDuration(0));
+  });
+});
+
+describe('cueCountLabel — a count, or an admission', () => {
+  it('counts, and gets the plural right', () => {
+    expect(cueCountLabel(0)).toBe('0 cues');
+    expect(cueCountLabel(1)).toBe('1 cue');
+    expect(cueCountLabel(8)).toBe('8 cues');
+  });
+
+  it('never renders "undefined cues"', () => {
+    // The defect verbatim: `{p.cue_count} cue{s}` over a summary whose shape and
+    // the frontend's had come apart.
+    for (const absent of [undefined, null, NaN, '8', {}]) {
+      expect(cueCountLabel(absent)).toBe('Cue count unknown');
+      expect(cueCountLabel(absent)).not.toContain('undefined');
+    }
+  });
+
+  it('says it does not know rather than saying zero', () => {
+    // A zero is a claim about a plan that may be full. The two must not be the
+    // same sentence — rule 35's family.
+    expect(cueCountLabel(undefined)).not.toBe(cueCountLabel(0));
+  });
+});
+
+describe('dropIndex — where a dragged cue lands', () => {
+  const H = 34;
+
+  it('lands on the row the drag actually covered', () => {
+    expect(dropIndex(0, 0, H, 5)).toBe(0);
+    expect(dropIndex(0, H, H, 5)).toBe(1);
+    expect(dropIndex(3, -2 * H, H, 5)).toBe(1);
+  });
+
+  it('stops hard at both ends — a cue cannot be dragged out of the plan', () => {
+    expect(dropIndex(0, -900, H, 5)).toBe(0);
+    expect(dropIndex(4, 900, H, 5)).toBe(4);
+  });
+
+  it('moves nothing when the rows have no measurable height', () => {
+    // `offsetHeight` is 0 in an unlaid-out list (and always in jsdom). Dividing
+    // by it yields Infinity and then NaN, and `Math.max(0, Math.min(n, NaN))` is
+    // NaN — an index that would splice the cue away entirely.
+    expect(dropIndex(2, 120, 0, 5)).toBe(2);
+    expect(Number.isNaN(dropIndex(2, 120, 0, 5))).toBe(false);
+  });
+
+  it('moves nothing in an empty plan', () => {
+    expect(dropIndex(0, 120, H, 0)).toBe(0);
+  });
+});
+
+describe('reorderTo', () => {
+  it('moves an item without mutating the list it was given', () => {
+    const items = [{ id: 1 }, { id: 2 }, { id: 3 }];
+    const out = reorderTo(items, 0, 2);
+    expect(out.map((i) => i.id)).toEqual([2, 3, 1]);
+    expect(items.map((i) => i.id)).toEqual([1, 2, 3]);
+  });
+
+  it('is a copy, not a no-op, when the move goes nowhere', () => {
+    const items = [{ id: 1 }, { id: 2 }];
+    for (const [from, to] of [[0, 0], [-1, 1], [0, 9]]) {
+      expect(reorderTo(items, from, to).map((i) => i.id)).toEqual([1, 2]);
+    }
   });
 });
