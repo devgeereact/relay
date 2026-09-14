@@ -156,7 +156,7 @@ describe('RG-61 · the last step names what to do before the first Sunday', () =
     // is the same as not naming it.
     expect(SRC).toMatch(/Practise/);
     expect(SRC).toMatch(/drills on the <b>Help<\/b> tab/);
-    expect(SRC).toMatch(/Settings → Dashboard/);
+    expect(SRC).toMatch(/Settings → Diagnostics/);
     expect(SRC).toMatch(/Rehearse<\/b> on the Live tab/);
   });
 

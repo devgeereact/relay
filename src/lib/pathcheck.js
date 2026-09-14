@@ -172,7 +172,7 @@ export function verdict(w, timedOut = false) {
     audio:
       'Relay never heard a voice. Check the microphone is not muted, and that the level meter moves when you speak — Relay listens for speech, not for noise.',
     transcript:
-      'Relay heard you but produced no words. That is the speech model: check one is loaded in Settings → Network.',
+      'Relay heard you but produced no words. That is the speech model: check one is loaded in Settings → Network & Integrations.',
     detection: `Relay wrote down what you said but did not recognise a reference. What it heard was “${w.heard ?? ''}”. Try saying it as “${PHRASE}”.`,
     fire: `Relay recognised ${w.detected ?? 'a reference'} but did not put it up. That is usually correct — a paraphrase or an uncertain match is only ever offered, never fired. Try saying the reference directly.`,
     output:

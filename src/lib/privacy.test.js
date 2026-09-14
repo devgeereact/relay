@@ -17,9 +17,14 @@ import path from 'node:path';
 const ROOT = path.resolve(__dirname, '../..');
 const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
 const settings = read('src/lib/views/Settings.svelte');
+// Privacy and Advanced are ONE section now (docs/REBRAND.md §11), so the slice
+// runs from the section to the marker comment that opens its one control. The
+// claim is unchanged and is the reason the marker exists: everything above it is
+// a REPORT, and `it is a report, not a control panel` below asserts that not one
+// handler appears in this slice.
 const privacy = settings.slice(
   settings.indexOf("section === 'privacy'"),
-  settings.indexOf("section === 'advanced'"),
+  settings.indexOf('ADVANCED · crash reporting'),
 );
 
 describe('nothing on it is hardcoded', () => {
@@ -70,5 +75,14 @@ describe('it is a report, not a control panel', () => {
 
   it('is reachable as its own section', () => {
     expect(settings).toMatch(/key: 'privacy'/);
+  });
+
+  it('and the slice this file reads is a real one, not an empty string', () => {
+    // Both boundaries are string searches. If either stops matching, `slice`
+    // silently returns something — an empty string, or the whole file — and every
+    // assertion above turns vacuous or nonsensical without failing for the right
+    // reason. This is the guard on the instrument.
+    expect(privacy.length).toBeGreaterThan(500);
+    expect(privacy).not.toMatch(/Turn crash reporting on/);
   });
 });

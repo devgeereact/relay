@@ -69,7 +69,7 @@
         ['It can put a spoken reference straight up.', 'If the preacher clearly says “Romans 8:28”, Relay is confident and shows it.'],
         ['It will NEVER put a guess up.', 'If it only <i>thinks</i> a sentence sounds like a verse, it offers it to you as a suggestion. Press <kbd>A</kbd> to accept, <kbd>D</kbd> to dismiss. Nothing reaches the congregation without you.'],
         ['You always win.', 'Type any reference in the box and press Enter, and it goes up immediately — regardless of what the AI thinks.'],
-        ['It is too eager / too cautious', 'Settings → <b>AI Detection Thresholds</b>. Relay also learns from every suggestion you accept or reject.'],
+        ['It is too eager / too cautious', 'Settings → <b>AI &amp; Detection</b>. Relay also learns from every suggestion you accept or reject.'],
       ],
     },
     {

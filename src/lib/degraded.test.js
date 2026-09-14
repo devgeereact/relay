@@ -72,7 +72,7 @@ describe('what counts as blocked, and what counts as reduced', () => {
     const [d] = degradations({ ...OK, safeMode: true });
     expect(d.id).toBe('safemode');
     expect(d.level).toBe('blocked');
-    expect(d.fix).toMatch(/Backup & Recovery/);
+    expect(d.fix).toMatch(/Settings → General/);
   });
 
   it('detection being off only counts while the microphone is live', () => {
