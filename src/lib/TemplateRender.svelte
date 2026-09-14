@@ -1275,6 +1275,43 @@
          so each screen opts into (or out of) media and controls what sits over or
          under it. A lower third with no media layer never shows the picture; a
          full-screen template with a media layer on top lets the picture fill it. -->
+    <!-- ── THE SLIDE TRANSITION, ON THIS PATH TOO ─────────────────────────────
+         `{#key slideKey}` + `in:slideIn` lived in the REGION branch only, so every
+         layered template cut regardless of what its style, its theme or the
+         operator's live override said — and layered is what everything new is.
+         Same key, same `slideIn`, and the same already-resolved `transitionMode` /
+         `transitionMs` pair the region branch reads — so the ranking of override
+         over template (DECISIONS §84) is still done in exactly one place, above.
+         ONE mechanism, not a second one for the other half of the renderer, which
+         is how the console preview and the wall stay agreed.
+
+         WHAT IS INSIDE THE KEY, and why it is not simply the whole stack. The
+         region path keeps `bglayer` and the full-frame media element OUTSIDE its
+         key and animates only `.slide` — the words and the band they sit in. This
+         is that same division:
+
+           · `background` and `media` are FURNITURE and stay out. A wrapper around
+             the whole `{#each}` would rebuild them on every fire, and rebuilding a
+             `media` layer tears down its <video> and restarts the loop, mid-fire,
+             on a congregation screen.
+           · `region` stays out because it does not need help: the composite is a
+             nested `<svelte:self>` with the same content and its own style, so it
+             resolves and runs its own transition. Keying it here would remount a
+             whole renderer per fire to duplicate an animation it already does.
+           · `shape`, `band` and `text` are the slide, and they animate.
+
+         A TICKING LAYER MUST NOT RE-ANIMATE. `slideKey` excludes `now` and
+         `clockNow` deliberately, so a countdown redrawing four times a second sits
+         still inside this key. The transition is hung here and NOT on the `{#key
+         text}` below, which a clock rebuilds every second — that would fade the
+         figure once a quarter second for the whole pre-service countdown.
+
+         The panic controls do not pass through any of this. A clear drops `content`
+         to null and the `{#if content}` above takes the whole stack away; a blackout
+         is decided by the output page, not here. There is no `out:` transition
+         anywhere in this file — `transitionoverride.test.js` asserts exactly that —
+         so a clear and a blackout are instant at every duration the picker offers
+         (rule 15, DECISIONS §20). An intro cannot delay a removal. -->
     {#each layerViews as { L, text, box } (L.id)}
       {#if L.visible !== false}
         {#if L.type === 'background'}
@@ -1295,14 +1332,20 @@
             </div>
           {/if}
         {:else if L.type === 'shape'}
-          <div class="lshape" style="{boxStyle(L)} {shapePaint(L)} border-radius:{L.radius || 0}cqw;"></div>
+          {#key slideKey}
+            <div class="lshape" style="{boxStyle(L)} {shapePaint(L)} border-radius:{L.radius || 0}cqw;"
+              in:slideIn={{ mode: transitionMode, duration: transitionMs }}></div>
+          {/key}
         {:else if L.type === 'band'}
           <!-- THE BAND (docs/REBRAND.md §4): a real element running from its own
                `top` to the bottom edge, inset by the side safe area. Its words are
                NOT its children — they are emitted beside it with boxes this band
                computed, so they take the one text path below. Its alpha is applied
                exactly (`shapePaint`); it has never been scaled by 0.9 here. -->
-          <div class="lband" style="{boxStyle(box || L)} {shapePaint(L)} border-radius:{L.radius || 0}cqw;"></div>
+          {#key slideKey}
+            <div class="lband" style="{boxStyle(box || L)} {shapePaint(L)} border-radius:{L.radius || 0}cqw;"
+              in:slideIn={{ mode: transitionMode, duration: transitionMs }}></div>
+          {/key}
         {:else if L.type === 'region'}
           <!-- A REAL RENDERED SLIDE, inside its own container (docs/REBRAND.md §6).
                `container-type: inline-size` is the feature: cqw inside this box is
@@ -1326,7 +1369,9 @@
           <!-- Verse/reference/translation layers are hidden during a default
                countdown (they carry no content then); a static or clock layer
                still shows. -->
-          <div class="ltext" style="{boxStyle(box || L)} align-items:{vAlign(L.valign)};">
+          {#key slideKey}
+          <div class="ltext" style="{boxStyle(box || L)} align-items:{vAlign(L.valign)};"
+            in:slideIn={{ mode: transitionMode, duration: transitionMs }}>
             {#key text}
               <!-- THE SIZE IS DECLARED, NOT ONLY FITTED (rule 37 · rule 42).
                    `font-size` used to be the ONE type property this element did
@@ -1368,6 +1413,7 @@
               </div>
             {/key}
           </div>
+          {/key}
         {/if}
       {/if}
     {/each}
