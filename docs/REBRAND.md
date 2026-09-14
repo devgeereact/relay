@@ -230,21 +230,32 @@ the stage note and the stage alert must be unable to reach a congregation channe
 `REBRAND status` reads this table. One row per phase; a phase is **done** only when the three
 gates in the phases section are green on it — `cargo test`, `npx vitest run`, `npm run build`.
 
+**Reconciled on 2026-09-14 by the integrator**, against the combined branch with all seven
+workspace branches merged. Two agents had already found this table wrong in BOTH directions: W2
+found the collection rail and reflow editing built while the row said neither existed, and W7 found
+three §9 claims absent that the row implied were half done. Three more rows were found claiming
+work absent that another agent had since built. **Evidence is now per-FILE counts, never a whole
+suite total**: ten rows quoted a suite figure that was true on one agent's branch and stale the
+moment anything else merged, which is exactly how the four registers came to disagree
+(`CLAUDE.md`, "do not restate any of the four in a fifth place"). Whole-suite figures live in
+`docs/qa/QA_HARNESS.md` §0 beside the command that produces them. The combined branch runs
+**709 Rust** (0 failed, 16 ignored) and **1358 frontend across 101 files**.
+
 | # | Phase | State | Evidence |
 |---|---|---|---|
-| 2* | Workspace grammar (§2 — **no phase number in the brief**) | **partly done** | the sidebar became a 34px chrome bar with the workspaces in it, the footer became a 26px status bar, a dock row (audio · transcript · quick tools · controls) lives in the SHELL, and the studio split is two equal monitors either side of a 118px take column. **Slide grid and single-click-to-air not built** |
-| 1 | Tokens and chrome | **done** | palette, radius, type scale, one slider / switch / colour well, the four control colours. `tokencontrast.test.js` 7 green, `rangefill.test.js` 9 new, suite 974 |
-| 2 | Template model | **done** | `templatemodel.js` (migrate · resolve · slideBG · fit estimate), migration on three doors, the renderer reads the model. 34 + 6 new tests, suite 1014 |
+| 2* | Workspace grammar (§2 — **no phase number in the brief**) | **done** | the sidebar became a 34px chrome bar with the workspaces in it, the footer became a 26px status bar, a dock row (audio · transcript · quick tools · controls) lives in the SHELL, and the studio split is two equal monitors either side of a 118px take column. The **slide grid** and **single click to Programme** are built too: `slidegrid.js` (`planCells` · `passageCells` · `gridSource` · `pressArbiter`, `PRESS_MS` 190) rendered by `Live.svelte`'s `.sgrid`, single press sends and double previews. `slidegrid.test.js` 19, `slidegridwiring.test.js` 9. **This row said "not built" until 2026-09-14 and was wrong.** |
+| 1 | Tokens and chrome | **done** | palette, radius, type scale, one slider / switch / colour well, the four control colours. `tokencontrast.test.js` 7, `rangefill.test.js` 13 |
+| 2 | Template model | **done** | `templatemodel.js` (migrate · resolve · slideBG · fit estimate), migration on three doors, the renderer reads the model. `templatemodel.test.js` 37 |
 | 3 | The object inspector | **done** | object tab strip (measured: 17 objects wrap onto 8 rows, none past the edge, nothing behind a scrollbar), ONE Position group with real numbers, Duplicate (a deep copy that is now load-bearing), Reset this object, two-step Delete. `layerops.test.js` 14, `templateinspector.test.js` 3, `band.test.js` 24 |
-| 4 | Roles and the look register | **done** | a screen may follow the content look (DECISIONS §70), "Used for" on the template, a tag on each gallery card. `e2e::r4_a_screen_may_follow_the_content_look`, suite 1034 / cargo 668 |
+| 4 | Roles and the look register | **done** | a screen may follow the content look (DECISIONS §70), "Used for" on the template, a tag on each gallery card. `e2e::r4_a_screen_may_follow_the_content_look`, `e2e::r4_a_following_screen_wears_a_different_look_for_each_kind` |
 | 5 | Lower thirds | **done** | three starters (Name · Lyric · Scripture), each keyed, each its own template. A non-hex shape fill no longer paints black. The band is now a real `band` layer running to the bottom edge, naming the words inside it (`members`), and **giving ground** before they shrink. `band.test.js` 24, measured in the browser. DECISIONS §75 |
-| 6 | Stage monitor | **partly done** | a word to the preacher (new `stage_alert` hub message, stage-only by contract), the reading can no longer push the clock off the top. `e2e::r5_a_word_to_the_preacher_reaches_the_stage_and_not_a_rehearsal`, cargo 669, suite 1043. **Switchable zones and the stacked rail clock not built** |
-| 7 | Countdown | **partly done** | one formatter (`formatCountdown`), one warning rule, read by the wall and the stage. `layers.test.js` +8, `templatestyle.test.js` +2, suite 1053. **Pause / ±1 / Reset not built** |
-| 8 | Transitions | **done** | seven in one register (`transitions.js`), played by the renderer, migrated from the three old names, reduced motion is a cut. DECISIONS §71. `transitions.test.js` 15 + 6 elsewhere, suite 1072 |
-| 9 | Search | **done** | glued digits parse, a literal hit must cover 55% of the query, and nothing a search does reaches a screen (DECISIONS §72). Now: `search.rs` — one pure module, five named match kinds, **every hit says why it matched** and a guess says so in words with no percentage; a ≥2-letter book prefix resolves, search-only; one click takes a hit the whole way. `search::tests` 8, `e2e::r9_*` ×8, `livesearchrail.test.js` 11. cargo 705 / suite 1200 |
-| 10 | Library | **partly done** | the operator label reaches the record again and still not the glass (DECISIONS §73); announcements say which fields the room sees; the collection rail and reflow editing were already built when the previous line said they were not. **Section keys** (`v c b t i o`, numbered on repeat, per song, `[Bridge:g]` to ask for one), the key printed on the slide it fires, **media looked at before it is added** with the name the operator gives it, and the dead selection tick box off three panes. `sectionkeys.test.js` 42, `medialook.test.js` 4, `db::giving_a_section_its_own_fire_key_flags_the_arrangement…`, cargo 693 / suite 1235. **`b` is BLACKOUT, so a Bridge is on `r`** — CLAUDE.md beats the spec's alphabet. **Not built: a key that fires from the Live tab's own grid, and a caption stored apart from the item's name (needs a `media_assets` column).** The grid is left to the integrator by agreement with W1, and it is DESIGN rather than wiring: `slidegrid.js`'s cells are a flat list and carry no section, so `Cell` needs a `key` and `planCells` needs the song's sections rather than only `slidesOf`'s text. `assignKeys` / `resolveKeystroke` are pure and tested and answer the rest. One thing to decide out loud when it lands: the grid's press path arms a send on a **190 ms** double-click timer (`pressArbiter`), so a key that fires at once and a click that fires after a beat are two latencies on one cell |
-| 11 | Settings | **done** | eleven sections merged from eighteen (two deleted as duplicates, not merged); the three roles now come from `WorkspaceFrame` rather than from five private copies; Theme and a twice-offered Reset removed (DECISIONS §69, taking the tally to nine); Screens & looks says which screens actually follow a content look (§70). `settingssections.test.js` 19, suite 1209 / cargo 692. Rendered and measured in the browser harness — thinnest section 49% of a 575px pane, no section is three rows |
-| 12 | SuperSource | **done** | a `region` layer that is its own container, a depth cap, a built-ins-only inner template, the SuperSource starter and its inspector block. DECISIONS §74. `composite.test.js` 9, suite 1092 |
+| 6 | Stage monitor | **done** | a word to the preacher (new `stage_alert` hub message, stage-only by contract, and NEVER a retained frame — `channels::tests` holds `("stage_alert", false)` so a preacher's private message cannot replay to a lobby TV joining late), the reading can no longer push the clock off the top, **switchable zones** persisted per device (`relay.stage.zones`) and the **stacked rail clock**. `e2e::r5_a_word_to_the_preacher_reaches_the_stage_and_not_a_rehearsal`, `e2e::r5_a_word_to_the_preacher_reaches_no_congregation_channel`, `stagezones.test.js` 9, `screenpreview.test.js` 7. **This row said zones and the clock were not built until 2026-09-14 and was wrong.** |
+| 7 | Countdown | **partly done** | one formatter (`formatCountdown`), one warning rule, read by the wall and the stage; **Reset, ±1 and Clear** are built and re-aim the countdown through `countdownPress` / `countdownCan`, rendered in `Dock.svelte`. `countdown.test.js` 21, `countdownwiring.test.js` 10, `layers.test.js` 32, `templatestyle.test.js` 29. **Pause is not built** and needs a backend field (`countdown_paused_ms`) that does not exist. Separately: `countdown_from` is read by the renderer and written by nothing, so §7's warning rule has never fired in the product |
+| 8 | Transitions | **done** | seven in one register (`transitions.js`), played by the renderer, migrated from the three old names, reduced motion is a cut. DECISIONS §71. `transitions.test.js` 15 |
+| 9 | Search | **done** | glued digits parse, a literal hit must cover 55% of the query, and nothing a search does reaches a screen (DECISIONS §72). `search.rs` — one pure module, five named match kinds, **every hit says why it matched** and a guess says so in words with no percentage; a ≥2-letter book prefix resolves, **search-only** (`detection.rs` was not opened, and `e2e::r9_nothing_a_search_offers_can_reach_an_auto_fire` states rule 10 at the boundary); one click takes a hit the whole way. `search::tests` 8, `e2e::r9_*` ×9, `livesearchrail.test.js` 11 |
+| 10 | Library | **partly done** | the operator label reaches the record again and still not the glass (DECISIONS §73); announcements say which fields the room sees; the collection rail and reflow editing were already built when the previous line said they were not. **Section keys** (`v c b t i o`, numbered on repeat, per song, `[Bridge:g]` to ask for one), the key printed on the slide it fires, **media looked at before it is added** with the name the operator gives it, and the dead selection tick box off three panes. DECISIONS §76. `sectionkeys.test.js` 42, `medialook.test.js` 4, `db::giving_a_section_its_own_fire_key_flags_the_arrangement_rather_than_repointing_it`. **`b` is BLACKOUT, so a Bridge is on `r`** — CLAUDE.md beats the spec's alphabet. **Not built: a key that fires from the Live tab's own grid, and a caption stored apart from the item's name** (`media_assets` is id / kind / filename / path / created\_at, so a caption needs a column). The grid one is DESIGN, not wiring, and the reason stated here before was wrong: `slidegrid.js`'s `Cell` DOES carry a `tag`. What it lacks is a fire `key`, and the real obstacle is that `assignKeys` assigns within ONE song and calls two sections wanting the same letter a conflict, while Live's grid is flat across every cue in a plan — so two songs in one plan both want `c` and nothing in the code says which owns the namespace. `assignKeys` / `resolveKeystroke` are pure and tested and answer the rest. One thing to decide out loud when it lands: the grid's press path arms a send on a **190 ms** double-click timer (`pressArbiter`), so a key that fires at once and a click that fires after a beat are two latencies on one cell |
+| 11 | Settings | **done** | eleven sections merged from eighteen (two deleted as duplicates, not merged); the three roles now come from `WorkspaceFrame` rather than from five private copies; Theme and a twice-offered Reset removed (DECISIONS §69, taking the tally to nine); Screens & looks says which screens actually follow a content look (§70). DECISIONS §77. `settingssections.test.js` 19 |
+| 12 | SuperSource | **done** | a `region` layer that is its own container, a depth cap, a built-ins-only inner template, the SuperSource starter and its inspector block. DECISIONS §74. `composite.test.js` 9 |
 
 **Where phase 1 departed from the prototype, and why.** Both are cases of the rule in Context —
 the repository wins where the two disagree:
@@ -338,10 +349,12 @@ and on the preacher's PHONE — which is the other thing this page is — clippi
 of a passage away from the person reading it aloud. What the spec is really asking for is that
 the header cannot be pushed off the top, and that is what changed.
 
-**Switchable zones and the stacked rail clock are not built.** Zones are a per-screen setting
-with nowhere yet to persist them, and the three-pair rail needs the same container-inside-a-
-container concept phases 5 and 12 are waiting on. Offering a switch that saves nothing is the
-defect phase 4 just closed.
+**Switchable zones and the stacked rail clock ARE built** (corrected 2026-09-14; this paragraph
+said they were not). The blocker recorded here was that zones had nowhere to persist. They persist
+per DEVICE, in `localStorage` under `relay.stage.zones`, which is the right home: a stage tablet
+and a lobby TV are different screens with different jobs, and a preference that followed the
+service record would make one of them wear the other's choices. `stagezones.test.js` holds that
+the choice survives a reload.
 
 **Phase 7 removed a second clock.** The m:ss arithmetic lived twice — the wall and the
 preacher's phone each had their own copy. They agreed, which is exactly what made it worth
@@ -356,9 +369,12 @@ minute, or the last tenth of a countdown shorter than ten minutes — a minute's
 two-minute countdown is a colour that is lit for half its life, and a colour that is always on
 says nothing. Reduced motion gets the glow without the pulse: the information is the colour.
 
-**Start/Pause, Reset and ±1 are not built.** `countdown_to` is an absolute instant that rides
-with the content; pausing and nudging need a countdown the engine OWNS rather than a timestamp it
-broadcast once, which is a backend model rather than a transport row. Clear already exists (the
+**Pause is not built. Reset and ±1 ARE** (corrected 2026-09-14; this paragraph said neither was).
+`countdown_to` is an absolute instant that rides with the content, so nudging it is re-aiming that
+instant, which `countdownPress` does on the transport with no backend change. **Pausing is
+genuinely different**: a paused countdown is not an instant at all, and representing one needs a
+field the engine owns (`countdown_paused_ms`) that does not exist. That is a backend model rather
+than a transport row, and it is the honest reason Pause is still absent. Clear already exists (the
 screen clears).
 
 **Phase 8 found two halves of a feature that each looked finished.** The theme editor offered a
@@ -374,17 +390,22 @@ two defects immediately: `ps23:1` returned an empty list, and a query with one r
 returned nineteen confident verses. Both are fixed and pinned; the second one is the search-shaped
 version of the defect this product exists to prevent.
 
-**"Each hit says why it matched" is not built.** It changes the shape of what `search_scripture`
-returns, and three surfaces plus the preacher's remote read it. It belongs with the Library pass
-(phase 10), which reworks that UI anyway.
+**"Each hit says why it matched" IS built** (corrected 2026-09-14; this paragraph said it was not,
+while the Status row two pages up said it was). It did change the shape of what `search_scripture`
+returns, and the way it changed it is the point: the verse row is `#[serde(flatten)]`ed inside a
+`SearchHit`, so all four readers keep reading the fields they read before and the explanation is
+purely additive. `e2e::r9_a_hit_is_still_a_verse_row_on_the_wire` pins it. DECISIONS §72.
 
 **Phase 10 took the half of the Library that was a defect, not a redesign.** The rule that a
 song's section label must not reach the glass was held at the backend and implemented AGAIN in
 Live, which passed an empty label — so the wall was right and the service record could not name
 what had been on it. One rule, one home; both halves are now tested.
 
-**The rest of §10 is a redesign, and it is not started.** The collections rail, reflow lyric
-editing, section keys (`v c b t i o`) and media upload are new surfaces rather than repairs.
+**The rest of §10 was called "not started" and most of it was already built** (corrected
+2026-09-14). The collections rail and reflow lyric editing existed when that sentence was written;
+section keys and media-look-before-add landed on 2026-09-14. What is genuinely not built is a key
+that fires from the **Live** tab's own grid, and a caption stored apart from an item's name. See
+the Status row for why the first is design rather than wiring.
 Section keys in particular add a global keystroke path that can put content on a wall, next to
 the panic keys — that is `shortcuts.js` territory, where this repository has already had one
 bug of exactly that shape (Escape wiping the wall from behind a menu), and it deserves its own

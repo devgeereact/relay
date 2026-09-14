@@ -3478,3 +3478,110 @@ place and its words, for the same reason a reset keeps `bind`.
 
 **Not decided here.** Zones (§5) and a composite's regions (§6) want the same missing concept and
 can use this one; nothing in it assumes a lower third. Neither is built.
+
+## 76. A section key is derived from the section's own name, and a panic key is never one of them (2026-09-14)
+
+**Context.** `docs/REBRAND.md` §10 asks for section keys: press one letter and that part of the
+song goes to the programme. It names the alphabet outright, `v c b t i o`, for Verse, Chorus,
+Bridge, Tag, Intro and Outro.
+
+On this console `B` is BLACKOUT. It is a panic control, it fires from the one global keydown
+listener, and CLAUDE.md rule 15 with DECISIONS §20 both say a panic key is never shadowed. **The
+spec and CLAUDE.md disagree here and CLAUDE.md wins.** This is the only place in the rebrand where
+the two actually collided.
+
+**Decision.** `b` is reserved, a Bridge does not get it, and it takes the next free letter of its
+own name instead: `bridge`, `b` is taken, so `r`. The letter is printed on the slide it fires and
+the surface says how it was reached.
+
+Two other answers were available and both are worse.
+
+- **Hand the Bridge `b` anyway** and let `shortcuts.js` win the race. The operator then reads a key
+  printed on a slide that blacks the wall out rather than firing it: a cheatsheet that lies, on the
+  one surface where a lie costs a congregation.
+- **Give the Bridge no key.** Honest, and useless.
+
+Deriving the fallback from the section's own word is what keeps the third answer from being a
+fourth invention. Nobody has to remember that a Bridge is on `r`; it is the next letter of the word
+they are already reading.
+
+**`RESERVED` is read out of `shortcuts.js`'s own `SHORTCUTS` table, never restated.** A global key
+bound next year is unassignable the moment it is bound, with no edit to `sectionkeys.js`. The
+failure this guards against is the one CLAUDE.md names: a guarantee is only kept on the doors you
+checked, and a second copy of the reserved list is a door nobody will check.
+
+**The guarantee is kept on both doors on purpose.** `RESERVED` means a panic letter is never handed
+out in the first place; and `shortcuts.js` puts the section-key branch in the `default:` of its
+existing context switch, which is below the always-on block (so `Escape` and `b` are already gone),
+below `if (typing) return` (so a letter typed into the reference box or the lyric editor fires
+nothing), and below `a`, `d` and `/` (so a surface offering both keeps the older meaning of those
+three). With nothing registered the branch is a no-op and does not `preventDefault`, because a dead
+branch must not eat a keystroke the browser had a use for.
+
+**Two sections may not share a key.** Two that merely share a KIND are numbered apart, one verse is
+`v` and two are `v1` and `v2`, which is not sharing. Two that both ASK for a letter are a conflict:
+the first keeps it, the rest get none and say why. Guessing which one the operator meant is rule
+39 in miniature, and an arrangement that silently plays the wrong section is the same class of harm
+as an index that moved.
+
+**Not decided here.** A key that fires from the **Live** tab's own slide grid is not built. It is
+design rather than wiring: `assignKeys` assigns within ONE song and treats two sections wanting the
+same letter as a conflict, while Live's grid is a flat list across every cue in a plan, so two songs
+in one plan both want `c`. Which song owns the namespace is a real question with no answer in the
+code, and it is left to a person.
+
+## 77. Eleven Settings sections, and two of the eighteen were deleted rather than merged (2026-09-14)
+
+**Context.** `docs/REBRAND.md` §11 asks Settings to become eleven sections. This repository had
+eighteen. Seven of them were one screen cut in half: Network and Integrations, Scripture and
+Languages, Privacy and Advanced, History and Backup, Audio and Voice Profiles.
+
+A section that is three rows on a full-height page teaches an operator that the rail is long and
+mostly empty, and that is how a control comes to be lost. This is the same surface where seven
+controls were found saving a preference nothing read (§69).
+
+**Decision.** Eleven sections. Nine merged in pairs. **Two were deleted rather than merged**,
+because every row on them was a second copy of something else.
+
+- **`account`** carried Licence, Version and Environment, all three already in the Overview rail
+  that renders on every section, plus a sentence saying there are no accounts, already a row on the
+  Privacy report. Three rows, three duplicates.
+- **`dashboard`** was a name for a shape rather than a question. **The readiness surface itself is
+  untouched**: it is still the boot ladder's own 23 probes re-run through the same `freshChecks()`
+  and `makeProbes()`, and CLAUDE.md's instruction to extend it and never fork it stands. It now
+  lives in **Diagnostics**, which is the section an operator reaches for when they ask "is this
+  machine going to work?". One question, one section.
+
+**Voice profiles merged into AI & Detection, not into Audio.** A profile is a calibration of the
+gate above it. Splitting the dial from the thing it calibrates across two rail entries is how an
+operator comes to believe they are unrelated.
+
+**Safe mode moved to General.** It is not a backup and it is not a recovery. It is whether this copy
+of Relay is armed at all.
+
+**The three type roles now come from the frame.** Settings had five, and two of them were one role
+rendered twice with different padding and a different key colour. All five private copies are
+deleted and `WorkspaceFrame` owns the page head, the row and the footnote. The standfirst in
+particular is now rendered once, by the frame, and no section repeats it a size smaller at the top
+of its own panel.
+
+**What rendering found that reading did not.** Three `class:` directives named classes no stylesheet
+defines. Two of them, `class:bad` and `class:warn`, were on the update-preflight rows, so a check
+that FAILED painted the same grey as one that passed, on the screen whose entire job is to say
+whether an update is safe. That is rule 35 again: a status line that says the same thing when the
+thing behind it is broken. `settingssections.test.js` now scans every `class:` directive in the file
+against both stylesheets, because a class nobody defines is silent in every other instrument this
+project has.
+
+**The cost is real and was predicted.** A comment in the file refused this merge once, on the
+grounds that it moves every control an operator has learned where to find, and that it is worth
+doing with somebody watching the screens. That is still true. The pilot churches have learned the
+old rail.
+
+**A rename is only done when the references move with it.** Fourteen operator-facing and
+developer-facing cross-references named a section by a label that no longer exists, including one in
+`latency.js` pointing at "Settings → Speech", a section this repository has never had. A refusal
+that sends an operator to a section that does not exist is worse than the rename itself. Each was
+re-pointed by finding the control's line inside the new section blocks, not by guessing. The dated
+record was left alone: nothing under `docs/qa/audits/`, and nothing in RELAY_V1_AUDIT, RELAY_GAP or
+the earlier sections of this file, all of which say what was true when they were written.
