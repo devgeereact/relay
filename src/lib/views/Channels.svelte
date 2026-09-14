@@ -36,7 +36,9 @@
   // repository has produced four separate bugs with one root cause.
   import {
     describeScreen,
+    screenFault,
     screenReporting,
+    screenSwitch,
     SCREEN_BADGE,
     screenKind,
     screenTransport,
@@ -192,7 +194,26 @@
   // the stage-remote URL fell into, one selection away from showing `localhost`
   // to someone about to type it into a phone.
   $: selAddr = sel ? outputUrl(lanIp, sel.id, sel.template_id, sel.name) : '';
-  $: onlineCount = channels.filter((c) => status[c.id]?.online).length;
+  // ── THE RAIL'S TALLY IS THE SCREENS' OWN WORD, NOT RELAY'S ─────────────────
+  //
+  // This read `status[c.id]?.online`, and `online` is the fact rule 35 exists to
+  // keep out of a status line. For a `network_client` `main.rs` sets it to `true`
+  // UNCONDITIONALLY — the output is served the whole time the app runs, whether
+  // or not any browser is pulling it — so a church whose three OBS sources had
+  // all crashed read **3 / 3 in green**, on the rail of the tab they would open
+  // to find out. The cards two columns away were correctly painting all three
+  // rose at the same moment: one desk, two verdicts about the same screens.
+  //
+  // `screenFault(...) === 'ok'` is the half of the ONE helper that answers "is it
+  // answering" — the screen's own beat, which is the only fact here that can go
+  // false by itself. A native window nobody has opened and a browser source
+  // nobody has pointed at Relay are both correctly NOT counted.
+  $: answering = channels.filter((c) => screenFault(status[c.id] ?? null) === 'ok').length;
+  // Rose the moment any screen is one the operator must act on, using the very
+  // verdict the card shows. Green over a screen that has stopped answering is the
+  // reassuring-sentence-over-a-broken-thing failure in the smallest possible
+  // space, and this badge is above the fold on every one of the three sections.
+  $: anyDown = channels.some((c) => verdicts[c.id]?.kind === 'down');
   // Which screens a content look actually reaches. A screen's OWN template wins
   // (DECISIONS §29), so a look changes nothing on a screen that has one — and
   // that is precisely the defect phase 4 found: the map could be filled in, saved
@@ -232,15 +253,36 @@
       console.warn('QR generation failed', e);
     }
   }
-  async function copyStage() {
+  // ── A COPY THAT FAILED MUST NOT LOOK LIKE ONE THAT DID NOTHING ─────────────
+  //
+  // All three copy buttons swallowed to a `console.warn`: the label stayed
+  // "Copy URL", nothing moved, and the operator's reasonable conclusion was that
+  // they had missed the button. They then paste the previous thing on their
+  // clipboard into OBS. The console is where nobody is looking during a service,
+  // and a control that reports NOTHING on failure is the same defect as one that
+  // reports success (rule 15's shape, on a non-panic control).
+  //
+  // Not `ErrorState`: that humanises a TYPED error from Rust and this is a
+  // browser refusal, not a backend fault. The button says so itself, in the same
+  // place and by the same mechanic as "Copied ✓", so the answer is where the
+  // question was asked. The address is rendered as text beside every one of these
+  // buttons, so a failed copy is recoverable by typing.
+  const COPY_FAILED = 'Copy failed';
+  /** Idle · copied · refused, for the buttons whose flag is a plain boolean. */
+  const copyLabel = (flag, idle) =>
+    flag === COPY_FAILED ? COPY_FAILED : flag ? 'Copied ✓' : idle;
+  async function writeClip(text) {
     try {
-      await navigator.clipboard.writeText(stageUrl);
-      copiedStage = true;
-      setTimeout(() => (copiedStage = false), 1500);
+      await navigator.clipboard.writeText(text);
+      return true;
     } catch (e) {
-      // The address is on screen to type by hand; log rather than swallow.
       console.warn('Clipboard write blocked', e);
+      return false;
     }
+  }
+  async function copyStage() {
+    copiedStage = (await writeClip(stageUrl)) ? true : COPY_FAILED;
+    setTimeout(() => (copiedStage = false), 1500);
   }
 
   /** Run a mutation, refresh, and hand any error to the ONE humaniser. */
@@ -294,7 +336,18 @@
     adding = true;
     // A new screen adopts the DEFAULT template (falling back to the first built-in
     // if none is set) — the operator can reassign it per screen afterwards.
-    await act(() => addChannel(name, newTarget, $defaultTemplateId ?? 1));
+    //
+    // OPEN THE NEW SCREEN IN THE INSPECTOR. Adding a screen is never the whole
+    // job: a network client is useless until its URL is pasted into OBS, and a
+    // native window until it is pointed at a display. The form asks for neither,
+    // and both live in the inspector — which stayed shut, so the operator was left
+    // on a grid of cards with the thing they had just made somewhere in it. The
+    // panel that holds the next step is the one that should be open.
+    let newId = null;
+    await act(async () => {
+      newId = await addChannel(name, newTarget, $defaultTemplateId ?? 1);
+    });
+    if (newId != null) selId = newId;
     adding = false;
     // `act` never rethrows — it parks the reason in `error`, which the pane
     // renders. Keep the typed name on a failure so the operator can press again
@@ -321,25 +374,28 @@
     await act(() => deleteChannel(c.id));
   }
 
+  // `copyFailedId` is a SECOND flag rather than a sentinel in `copiedId`, because
+  // `copiedId` is compared against a channel id all over the markup and a string
+  // parked in it would quietly match nothing.
+  let copyFailedId = null;
   async function copyUrl(c) {
-    try {
-      await navigator.clipboard.writeText(obsUrl(c));
+    if (await writeClip(obsUrl(c))) {
       copiedId = c.id;
-      setTimeout(() => (copiedId = null), 1500);
-    } catch (e) {
-      console.warn('Clipboard write blocked', e);
+      copyFailedId = null;
+    } else {
+      copyFailedId = c.id;
+      copiedId = null;
     }
+    setTimeout(() => {
+      copiedId = null;
+      copyFailedId = null;
+    }, 1500);
   }
 
   let copiedLan = false;
   async function copyLan() {
-    try {
-      await navigator.clipboard.writeText(lanIp);
-      copiedLan = true;
-      setTimeout(() => (copiedLan = false), 1500);
-    } catch (e) {
-      console.warn('Clipboard write blocked', e);
-    }
+    copiedLan = (await writeClip(lanIp)) ? true : COPY_FAILED;
+    setTimeout(() => (copiedLan = false), 1500);
   }
 
   // A screen's preview shows what that screen REALLY shows — the same renderer
@@ -417,7 +473,32 @@
   // file has been caught by exactly that twice — `stageUrl()` and
   // `lookName('scripture')` — so the lookups are inline rather than delegated to
   // `templateOf` / `monitorOf`, which read stores inside a function body.
-  $: wall = { rehearsing: $rehearsing, live: !!$live, black: $screenBlack };
+  // ── ONE VERDICT PER SCREEN, FOR EVERY SCREEN ───────────────────────────────
+  //
+  // Computed over `channels`, not over `shown`: the rail's tally is about the
+  // building, and a screen typed out of the search box has not stopped being
+  // down. The cards, the inspector and the rail badge all read THIS object, so
+  // the three cannot describe one screen three ways — which is rule 35 stated as
+  // a data structure rather than as a promise three call sites have to keep.
+  //
+  // EVERY DEPENDENCY IS NAMED IN THE EXPRESSION — `status`, `$rehearsing`,
+  // `$live`, `$screenBlack`, `$channelWaiting`, `channels` — because Svelte
+  // tracks the identifiers it can SEE and not the ones a called function, or a
+  // pre-rolled object, happens to read. This file has been caught by exactly that
+  // twice (`stageUrl()` and `lookName('scripture')`), and `outputhealth.test.js`
+  // holds the rule by scanning this very call site: the `wall` object that used
+  // to sit here was hoisted into a separate `$:` and the guard failed on it, as
+  // it should have. The stores are written out.
+  $: verdicts = Object.fromEntries(
+    channels.map((c) => [
+      c.id,
+      describeScreen(
+        status[c.id] ?? null,
+        { rehearsing: $rehearsing, live: !!$live, black: $screenBlack },
+        $channelWaiting[c.id] ? Date.now() - $channelWaiting[c.id] : 0,
+      ),
+    ]),
+  );
   // What the cards paint. Live: the actual programme, so every card repaints
   // together the moment a verse fires. Idle: the stand-in, so a template is still
   // legible on a Tuesday.
@@ -435,15 +516,14 @@
       st,
       tpl,
       mon,
-      // THE SAME RULE LIVE USES, with the same four inputs (rule 35). The cards
+      // THE SAME RULE LIVE USES, with the same four inputs (rule 35), and now the
+      // same OBJECT the inspector and the rail read — see `verdicts`. The cards
       // used to derive their word from `FAULT_WORD[screenFault(st)]`, which knows
       // nothing about rehearsal or a blackout — so a card could read LIVE in
       // amber-adjacent green over a rehearsal no congregation was watching.
-      d: describeScreen(
-        st,
-        { rehearsing: $rehearsing, live: !!$live, black: $screenBlack },
-        $channelWaiting[c.id] ? Date.now() - $channelWaiting[c.id] : 0,
-      ),
+      d: verdicts[c.id],
+      // The same helper the inspector's Actions row uses — see `selSwitch`.
+      sw: screenSwitch(st, c),
       // A KEYED template is a lower third: it paints a band and leaves the rest
       // transparent, so on a black card it reads as a stripe floating in nothing.
       // The plate is what it is actually over — a camera — and it is LABELLED, so
@@ -456,7 +536,15 @@
   // on. Neither is a picker for a networked screen on purpose — see the markup.
   const outputOf = (c, mon) => {
     if (c.render_target === 'native_window') return mon ? `${mon.name} · ${mon.width}×${mon.height}` : 'Primary display';
-    if (c.render_target === 'ndi_encode') return '—';
+    // NDI IS PARKED, AND THE CARD SHOULD SAY SO WHERE IT IS READ, not only in a
+    // `title` nobody hovers. This was an em dash, which reads as "not set yet" —
+    // a thing an operator would go looking for a way to configure. There is none
+    // and there is not going to be one in this build: NDI needs a proprietary SDK
+    // Relay does not ship, and `open_ndi_output` returns that as a plain error.
+    // The card correctly offers NO control here, which is the half that matters
+    // (an affordance that cannot work is worse than an absence); this is the
+    // other half, which is telling the operator why the absence is deliberate.
+    if (c.render_target === 'ndi_encode') return 'not available in this build';
     return ':8032 / :8031';
   };
   // The inspector resolves through `previewTemplate` above — the SAME expression,
@@ -464,13 +552,20 @@
   // selected screen that has been typed out of the list must not lose its panel.
   $: selPlate = isKeyedTemplate(previewTemplate);
   $: selReport = screenReporting(selStatus);
-  // The inspector's own lamp — the SAME helper, the same four inputs, so the
-  // panel and the card behind it cannot describe one screen two ways.
-  $: selDescribe = describeScreen(
-    selStatus,
-    { rehearsing: $rehearsing, live: !!$live, black: $screenBlack },
-    sel && $channelWaiting[sel.id] ? Date.now() - $channelWaiting[sel.id] : 0,
-  );
+  // The inspector's own lamp — the SAME OBJECT the card behind it reads, so the
+  // panel and the card cannot describe one screen two ways.
+  $: selDescribe = (sel && verdicts[sel.id]) || { kind: 'unknown', label: 'Checking…', note: '' };
+  // ── THE ON/OFF CONTROL COMES FROM THE HELPER THAT OWNS IT ──────────────────
+  //
+  // This was a private `selStatus?.online ? 'Turn off' : 'Turn on'` ternary, in
+  // markup, on both the card and the inspector — a third and fourth opinion about
+  // a screen, in the one file that already carries a paragraph about why the
+  // badge beside it is not one. `screenSwitch` exists for this, Live already uses
+  // it, and `outputhealth.test.js` pins the case the ternary got wrong: before the
+  // first poll `status[id]` is undefined, so `!online` was true and the card
+  // offered **Turn on** for a screen that may well already be open. That is a
+  // guess printed as a control, and pressing it opens a second window.
+  $: selSwitch = screenSwitch(selStatus, sel);
 </script>
 
 <!-- NO PAGE TITLE, NO STANDFIRST — and that is the whole point (§2).
@@ -499,10 +594,16 @@
       {#if !$capture.available}
         <span class="r-badge rose sm-badge"><span class="bd"></span>No engine</span>
       {:else}
-        <!-- GREEN, not amber. Green is "confirmed / connected"; amber means
-             something is on the wall, and a screen being online does not put it
-             there. -->
-        <span class="r-badge green sm-badge"><span class="bd"></span>{onlineCount}/{channels.length}</span>
+        <!-- NEVER AMBER: amber means something is on the wall, and a screen
+             answering does not put it there. Green is "confirmed", and it is now
+             earned — the count is screens that have themselves reported painting,
+             not screens Relay is serving. ROSE the moment one has stopped, using
+             the same verdict the card shows, because a green tally over a dead
+             screen is the reassuring-sentence-over-a-broken-thing failure in the
+             smallest space on the desk. -->
+        <span class="r-badge {anyDown ? 'rose' : 'green'} sm-badge"
+          title="{answering} of {channels.length} screens are reporting that they are still painting">
+          <span class="bd"></span>{answering}/{channels.length}</span>
       {/if}
     </div>
     <nav class="rw-panebody" aria-label="Outputs sections">
@@ -525,7 +626,10 @@
       {#if !$capture.available}
         <div class="ch-railfact"><span class="ch-railk">Engine</span><span class="ch-railv ch-railbad r-mono">Backend not attached</span></div>
       {:else}
-        <div class="ch-railfact"><span class="ch-railk">Live</span><span class="ch-railv r-mono">{onlineCount} / {channels.length}</span></div>
+        <!-- "Answering", not "Live". The old word claimed the screens were
+             showing something; the fact behind it only ever said Relay was
+             serving them. This one names exactly what the number counts. -->
+        <div class="ch-railfact"><span class="ch-railk">Answering</span><span class="ch-railv r-mono" class:ch-railbad={anyDown}>{answering} / {channels.length}</span></div>
       {/if}
       <div class="ch-railfact"><span class="ch-railk">This machine</span><span class="ch-railv r-mono">{lanIp}</span></div>
     </div>
@@ -649,10 +753,19 @@
                         <option value={String(m.index)}>{m.name} · {m.width}×{m.height}{m.primary ? ' (primary)' : ''}</option>
                       {/each}
                     </select>
-                    {#if k.st?.online}
+                    <!-- `screenSwitch`, not a ternary on `online`. Before the
+                         first poll `k.st` is null and `!online` was true, so this
+                         offered **Open** for a screen that may already be open —
+                         a guess printed as a control, and pressing it opens a
+                         second window on the projector. The helper answers
+                         `action: null` for that case and the control says
+                         Checking… instead. `outputhealth.test.js` pins it. -->
+                    {#if k.sw.action === 'off'}
                       <button class="r-btn ghost sm" on:click={() => closeNative(k.c)}>Close</button>
-                    {:else}
+                    {:else if k.sw.action === 'on'}
                       <button class="r-btn ghost sm" on:click={() => openNative(k.c)} disabled={!$capture.available}>Open</button>
+                    {:else}
+                      <span class="ch-cardout r-mono" title={k.sw.why}>{k.sw.label}</span>
                     {/if}
                   {:else}
                     <!-- READ-ONLY, and deliberately NOT the prototype's picker. A
@@ -663,7 +776,7 @@
                          defect DECISIONS §69 closed seven of. -->
                     <span class="ch-cardout r-mono">{outputOf(k.c, k.mon)}</span>
                     {#if !isNdi(k.c)}
-                      <button class="r-btn ghost sm" on:click={() => copyUrl(k.c)}>{copiedId === k.c.id ? 'Copied ✓' : 'URL'}</button>
+                      <button class="r-btn ghost sm" on:click={() => copyUrl(k.c)}>{copyFailedId === k.c.id ? COPY_FAILED : copiedId === k.c.id ? 'Copied ✓' : 'URL'}</button>
                     {/if}
                   {/if}
                 </span>
@@ -750,7 +863,7 @@
           <span class="rw-nvk">This machine</span>
           <span class="rw-nvctl ch-addr-row">
             <span class="ch-addr">{lanIp}</span>
-            <button class="r-btn ghost sm" on:click={copyLan}>{copiedLan ? 'Copied ✓' : 'Copy'}</button>
+            <button class="r-btn ghost sm" on:click={copyLan}>{copyLabel(copiedLan, 'Copy')}</button>
           </span>
         </div>
         <div class="rw-nv"><span class="rw-nvk">Output / stage pages</span><span class="rw-nvv">:8032 · http</span></div>
@@ -878,7 +991,28 @@
               <dt>URL</dt><dd class="ch-addr">{selAddr}</dd>
             {/if}
             {#if !isNative(sel) && !isNdi(sel)}
-              <dt>Clients</dt><dd>{selStatus?.clients ?? 0}</dd>
+              <!-- AN ABSENCE, NOT A ZERO (the rule `latency.rs` learned the hard
+                   way, rule 31). The kiosk hub counts clients PER TEMPLATE ID:
+                   `run_kiosk_server` registers a client only inside
+                   `if let Some(id) = template_id`, and `main.rs` computes the
+                   count as `c.template_id.map(|t| clients.count(t))`. A screen
+                   that FOLLOWS THE CONTENT LOOK has no template id on either
+                   side, so its count is structurally 0 — with OBS attached and
+                   painting, the panel built to answer for one screen printed
+                   `Clients 0`, which is the same thing it prints when nothing is
+                   connected at all. Rule 35, in one integer.
+                   Relay cannot count this, so it says so instead of guessing. The
+                   question the operator actually wants is answered by Reporting
+                   one row down, which is the screen's own word and does not go
+                   through a template id at all. -->
+              <dt>Clients</dt>
+              <dd>
+                {#if sel.template_id == null}
+                  not counted<i class="ch-infonote">this screen follows the content look, and viewers are counted per template</i>
+                {:else}
+                  {selStatus?.clients ?? 0}
+                {/if}
+              </dd>
             {/if}
             <!-- REPORTING. The screen's own last word, kept separate from Relay's
                  — when the two disagree, that disagreement is the finding. The
@@ -893,13 +1027,18 @@
           <div class="r-lbl ch-flbl">Actions</div>
           <div class="ch-actions">
             {#if isNative(sel)}
-              {#if selStatus?.online}
+              <!-- `screenSwitch` decides, not `online`. See the note beside
+                   `selSwitch`: this ternary offered **Turn on** for a screen it
+                   had not yet asked about. -->
+              {#if selSwitch.action === 'off'}
                 <button class="r-btn ghost sm" on:click={() => closeNative(sel)}>Turn off</button>
-              {:else}
+              {:else if selSwitch.action === 'on'}
                 <button class="r-btn primary sm" on:click={() => openNative(sel)} disabled={!$capture.available}>Turn on</button>
+              {:else}
+                <span class="ch-fixed" title={selSwitch.why}>{selSwitch.label}</span>
               {/if}
             {:else if !isNdi(sel)}
-              <button class="r-btn ghost sm" on:click={() => copyUrl(sel)}>{copiedId === sel.id ? 'Copied ✓' : 'Copy URL'}</button>
+              <button class="r-btn ghost sm" on:click={() => copyUrl(sel)}>{copyFailedId === sel.id ? COPY_FAILED : copiedId === sel.id ? 'Copied ✓' : 'Copy URL'}</button>
               <button class="r-btn ghost sm" on:click={() => showQr(sel)}>{qrOpen === sel.id ? 'Hide QR' : 'Show QR'}</button>
             {/if}
             <button class="r-btn ghost sm ch-del" class:arm={delArm === sel.id} on:click={() => remove(sel)} disabled={!$capture.available}>
@@ -987,7 +1126,7 @@
         </p>
         <div class="ch-stage-actions">
           <button class="r-btn primary sm" on:click={showStageQr}>{stageQrOpen ? 'Hide QR' : 'Show QR'}</button>
-          <button class="r-btn ghost sm" on:click={copyStage}>{copiedStage ? 'Copied ✓' : 'Copy link'}</button>
+          <button class="r-btn ghost sm" on:click={copyStage}>{copyLabel(copiedStage, 'Copy link')}</button>
         </div>
         {#if stageQrOpen}
           <img class="ch-stage-qr" src={stageQr} alt="QR code to open the stage remote" width="150" height="150" />
