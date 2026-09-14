@@ -180,4 +180,19 @@ describe('the slide grid says how many, and what a press does', () => {
       expect(read(p), `${p} does not open in the grid`).toMatch(/let layout = 'grid'/);
     }
   });
+
+  // L5. The SAVED pane carries the same cards and the same one-press rule as the
+  // Bible pane above, and said nothing about either. It now says the half that
+  // is true and no more: `onOpen` is not passed to its deck, so a double press
+  // lands on `VerseDeck`'s default no-op and "double click opens" would describe
+  // a control nobody built.
+  it('the Saved pane says what a press does, and promises only what it has', () => {
+    const saved = read('src/lib/views/library/Scripture.svelte');
+    expect(saved).toMatch(/· single click selects/);
+    expect(saved).not.toMatch(/single click cues/);
+    // The claim this pane may not make, because its deck has no `onOpen`.
+    expect(saved).not.toMatch(/double click opens/);
+    expect(saved, 'a double-press handler appeared — the legend can now say so')
+      .not.toMatch(/onOpen=\{/);
+  });
 });
