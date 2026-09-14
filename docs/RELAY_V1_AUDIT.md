@@ -128,21 +128,26 @@ tests serve the real `dist/`, which is gitignored, so a fresh clone fails `cargo
 a bare `404`. CI is green only because it runs `npm run build` first, at an ordering nothing
 states.
 
-**Re-run on 2026-09-14, on `rebrand/base`.** Not a pass of its own: the rebrand branch and the
-2026-09-13 field-audit branch were merged onto one base, so every count in this section had two
-values and neither was the tree's. These are the merged tree's, measured, and they are what
+**Re-run on 2026-09-14, on `rebrand/all` after the seven-workspace rebrand wave.** Not a pass of
+its own: seven agents rebuilt six workspaces and the shell against the settled prototype, and every
+count in this section moved because of it. These are the assembled tree's, measured after the last
+merge — **not one of the seven agents' own suite totals survived it** — and they are what
 [`qa/QA_HARNESS.md`](qa/QA_HARNESS.md) §0 now carries. **The verdict does not move, and nothing
-here is evidence about a service** — no code changed meaning in the merge.
+here is evidence about a service**: the wave changed what an operator sees and touches, not what
+the router may do, and it measured no word error rate in any language.
 
 | | Command | Result |
 |---|---|---|
-| Rust suite | `cd src-tauri && cargo test` | **692 passed**, 0 failed, 16 ignored |
-| Frontend suite | `npx vitest run` | **1165 passed**, 0 skipped, 87 files |
-| End-to-end fire path | `cargo test e2e::` | **46 passed, 0 ignored** |
+| Rust suite | `cd src-tauri && cargo test` | **709 passed**, 0 failed, 16 ignored |
+| Frontend suite | `npx vitest run` | **1604 passed**, 0 skipped, 114 files |
+| End-to-end fire path | `cargo test e2e::` | **53 passed, 0 ignored** |
 | Format and lint gates | `cargo fmt --all`, `cargo clippy --all-targets -- -D warnings` | clean |
 | Frontend build | `npm run build` | clean, no warnings |
 | Version agreement | `npm run version:check` | `0.2.0-2` consistent across all three files; 2 update endpoints |
-| Surface inventory | `node scripts/qa-inventory.mjs` | 52 components (51 reachable), 479 controls, 134 commands, **0 dead controls, 0 unreachable commands, 0 controls without an accessible name** |
+| Surface inventory | `node scripts/qa-inventory.mjs` | 54 components (53 reachable), 482 controls, 134 commands, **0 dead controls, 0 unreachable commands, 0 controls without an accessible name** |
+
+The previous run, on `rebrand/base` before the wave, read 692 / 1165 / 46 — kept here as the chain
+rather than overwritten, because a count with no history is a count nobody can check.
 
 **What this run could not reach**: the standing list, unchanged — a microphone, a projector, a
 certificate and a congregation. It also could not reach the packaged bundle: `npm run tauri build`
