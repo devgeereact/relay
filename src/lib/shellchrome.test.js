@@ -78,7 +78,14 @@ describe('§2 · the strip is the six workspaces, in order', () => {
     // would be two answers to "which desk am I on", which is why the router
     // renders none of its own.
     expect(TPL).toMatch(/on:desk=\{changeDesk\}/);
-    expect(TPL).toMatch(/setSession\(\{ templatesDesk: e\.detail\.desk \}\)/);
+    // The CHOICE is written to the session — not the exact expression that
+    // writes it. This asserted `setSession({ templatesDesk: e.detail.desk })`
+    // verbatim and failed on a version that validates the desk against `DESKS`
+    // before writing it, which is strictly better code. A source grep for one
+    // spelling tests the author's keystrokes; what this file is for is that the
+    // choice persists, and `templatesdesk.test.js` mounts the real component and
+    // holds that end to end.
+    expect(TPL).toMatch(/setSession\(\{\s*templatesDesk/);
     expect(read('src/lib/views/templates/TemplateGallery.svelte')).toMatch(/<DeskStrip desk="templates" on:desk/);
     expect(read('src/lib/views/themes/ThemeGallery.svelte')).toMatch(/<DeskStrip desk="themes" on:desk/);
   });

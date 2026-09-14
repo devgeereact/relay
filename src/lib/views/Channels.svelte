@@ -47,6 +47,12 @@
   import EmptyState from '../ui/EmptyState.svelte';
   import Loading from '../ui/Loading.svelte';
   import TemplateRender from '../TemplateRender.svelte';
+  // THE ONE CAMERA PLATE. This markup and its CSS lived here twice, four hundred
+  // lines apart, and the Templates gallery needed a third copy for exactly the
+  // same reason (a keyed template previewed against nothing is an empty dark
+  // rectangle). One component now; the DECISION stays with each caller, because
+  // `isKeyedTemplate` is about the template the caller resolved.
+  import CameraPlate from '../ui/CameraPlate.svelte';
   // DEFAULT_TEMPLATE is the FLOOR, and it is the output page's floor too — a
   // screen that follows the content look when no look is set still has to paint
   // something legible. Imported here so the preview and the wall reach the same
@@ -578,7 +584,7 @@
                        picture on this surface could be mistaken for something
                        Relay is sending, and Relay sends no video. -->
                   {#if k.plate}
-                    <div class="ch-plate" aria-hidden="true"><span class="ch-platelbl r-mono">camera</span></div>
+                    <CameraPlate />
                   {/if}
                   <TemplateRender template={k.tpl} content={cardContent} />
                 </div>
@@ -759,7 +765,7 @@
             <!-- The same plate rule as the cards: a keyed template is a band over
                  something, and on this surface that something is a camera. -->
             {#if selPlate}
-              <div class="ch-plate" aria-hidden="true"><span class="ch-platelbl r-mono">camera</span></div>
+              <CameraPlate />
             {/if}
             <!-- Resolve EXACTLY like the real output: the screen's OWN template
                  wins (so a lower-third previews as a band, not a full screen), a
@@ -1037,11 +1043,10 @@
      lays itself out against the page. */
   .ch-frame{ position:relative; aspect-ratio:16/9; min-width:0; overflow:hidden;
     border:1px solid var(--v-line2); border-radius:var(--v-r-sm); background:var(--v-void); }
-  /* What a lower third is actually over. Labelled, always — see the markup. */
-  .ch-plate{ position:absolute; inset:0;
-    background:linear-gradient(135deg, var(--v-surf3), var(--v-void) 46%, var(--v-surf2)); }
-  .ch-platelbl{ position:absolute; left:5%; top:6%; font-size:var(--v-fs-cap);
-    letter-spacing:.14em; text-transform:uppercase; color:var(--v-faint); }
+  /* `.ch-plate` / `.ch-platelbl` moved into `ui/CameraPlate.svelte` with the
+     markup they styled — a rule left behind here would be a rule nobody renders,
+     and this file has already been caught by a `class:` directive naming a class
+     no stylesheet defined. */
 
   .ch-cardtop{ display:flex; align-items:center; gap:8px; min-width:0; }
   .ch-cardname{ flex:1; min-width:0; font-size:var(--v-fs-b2); font-weight:600; color:var(--v-txt);

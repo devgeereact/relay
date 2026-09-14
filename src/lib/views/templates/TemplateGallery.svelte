@@ -13,7 +13,15 @@
   import Loading from '../../ui/Loading.svelte';
   import ErrorState from '../../ui/ErrorState.svelte';
   import { templateKind, kindsPresent, KIND_META } from '../../templateKind.js';
-  import { STARTERS, isLayered, regionsToLayers, CONTENT_KINDS, layerLabel } from '../../layers.js';
+  import { STARTERS, isLayered, regionsToLayers, CONTENT_KINDS, layerLabel, isKeyedTemplate } from '../../layers.js';
+  // THE ONE CAMERA PLATE, shared with Outputs (`ui/CameraPlate.svelte`). A KEYED
+  // template — a lower third — paints a band and leaves the rest transparent,
+  // because the rest is a camera the switcher supplies. Previewed against
+  // nothing, `Lower Third`'s near-black type on a transparent frame is an empty
+  // dark rectangle: correct on the wall, useless on a card. PREVIEW ONLY —
+  // nothing may put a plate behind a real output, where the transparency is the
+  // whole point.
+  import CameraPlate from '../../ui/CameraPlate.svelte';
   import { testTemplateOnOutputs } from '../../templateTest.js';
   import TemplatePreviewOverlay from '../../TemplatePreviewOverlay.svelte';
   import { humanError } from '../../errors.js';
@@ -427,6 +435,7 @@
               on:click={() => (selId = t.id)} role="button" tabindex="0"
               on:keydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selId = t.id; } }}>
               <div class="tg-thumb">
+                {#if isKeyedTemplate(t)}<CameraPlate />{/if}
                 <TemplateRender template={t} content={SAMPLE} />
                 {#if view === 'grid'}<span class="tg-aspect r-mono">16:9</span>{/if}
               </div>
@@ -512,6 +521,7 @@
 
       <div class="rw-panebody pad">
         <div class="tg-preview">
+          {#if isKeyedTemplate(sel)}<CameraPlate />{/if}
           <TemplateRender template={sel} content={SAMPLE} />
         </div>
         <div class="tg-selname">{sel.name}</div>
