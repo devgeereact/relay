@@ -16,6 +16,8 @@
 // operator types. Binding is what makes a layer template render live scripture
 // rather than lorem ipsum.
 
+import { migrateStyle, STYLE_DEFAULTS } from './templatemodel.js';
+
 let _seq = 0;
 /** A stable-ish unique id. Not crypto — just needs to be unique within a template. */
 function newId(prefix = 'l') {
@@ -599,7 +601,19 @@ export const STARTERS = [
 // its region path for un-converted templates, so this is only run on demand.
 export function regionsToLayers(template) {
   const layout = template?.layout ?? {};
-  const style = template?.style ?? {};
+  // THROUGH THE MODEL, NOT AROUND IT. This read `style.font` and
+  // `style.textShadow` — the whole-template keys `migrateStyle` writes onto the
+  // elements and then DELETES (docs/REBRAND.md §3.1). Every template Relay seeds
+  // carries a `font`, so once migration ran on the way out of the database this
+  // conversion found nothing there and silently substituted the serif default:
+  // `var(--f-display)` and `var(--f-body)` templates came back in the wrong
+  // typeface. Not a preview, either — `TemplateGallery.upgradeLegacyToLayers`
+  // runs on mount and SAVES the result, so the first visit to the Templates tab
+  // after an upgrade would have re-typefaced a church's shelf, once, for good.
+  //
+  // `migrateStyle` is idempotent and pure, so calling it here is correct whether
+  // the caller hands over a migrated template or a raw one off a disk.
+  const style = migrateStyle(template?.style ?? {});
   const regions = Array.isArray(layout.regions) ? layout.regions : [];
   const band = !!layout.lowerThird;
   const refFirst = layout.refFirst || regions[0] === 'reference';
@@ -632,11 +646,11 @@ export function regionsToLayers(template) {
   const mkVerse = (y, h) =>
     makeLayer('text', {
       name: 'Verse', bind: 'verse', x: band ? 8 : 8, y, w: band ? 84 : 84, h,
-      font: style.font || 'var(--f-serif)', color: verseColor,
+      font: style.verseFont || STYLE_DEFAULTS.verseFont, color: verseColor,
       size: Number(style.verseSize) || (band ? 2.6 : 5.2),
       align: style.verseAlign || layout.align || (band ? 'left' : 'center'), valign: 'middle',
       transform: style.verseTransform || 'none', lineHeight: Number(style.verseLineHeight) || 1.32,
-      letterSpacing: Number(style.verseLetterSpacing) || 0, shadow: Number(style.verseShadow ?? style.textShadow) || 0,
+      letterSpacing: Number(style.verseLetterSpacing) || 0, shadow: Number(style.verseShadow) || 0,
       italic: false, scroll: !!style.scroll,
       // The region renderer wraps a verse in “curly quotes” when a reference is
       // also shown; carry that so a converted preset reads identically.
@@ -645,11 +659,11 @@ export function regionsToLayers(template) {
   const mkRef = (y, h) =>
     makeLayer('text', {
       name: 'Reference', bind: 'reference', x: band ? 8 : 8, y, w: band ? 84 : 84, h,
-      font: style.font || 'var(--f-serif)', color: refColor,
+      font: style.refFont || STYLE_DEFAULTS.refFont, color: refColor,
       size: Number(style.refSize) || (band ? 1.6 : 2.5),
       align: style.refAlign || layout.align || (band ? 'left' : 'center'), valign: 'middle',
       transform: style.refTransform || 'none', lineHeight: 1.2,
-      letterSpacing: Number(style.refLetterSpacing) || 0, shadow: Number(style.refShadow ?? style.textShadow) || 0,
+      letterSpacing: Number(style.refLetterSpacing) || 0, shadow: Number(style.refShadow) || 0,
       italic: !!style.italicRef, scroll: false,
     });
 

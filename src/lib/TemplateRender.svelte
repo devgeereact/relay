@@ -46,7 +46,7 @@
   // regression on every existing call site.
   export let theme = null;
   import { applyTheme, themeById, templateThemeRef, BUILTIN_THEMES } from './themes.js';
-  import { resolveStyle, slideBG, faceOf, fitScale } from './templatemodel.js';
+  import { resolveStyle, slideBG, faceOf, fitScale, keepShrinking, FIT_STEP } from './templatemodel.js';
   import { transitionCss, transitionDuration, DEFAULT_TRANSITION } from './transitions.js';
   import { builtinById } from './templates.js';
   // Sound is OPT-IN per surface. This same renderer draws the Templates editor
@@ -217,7 +217,7 @@
   /** Called with `{ scale, legible }` when a fit has been forced below the floor. */
   export let onFit = null;
 
-  function fitOne(box) {
+  function fitOne(box, container) {
     const verse = box.querySelector('.verse');
     const ref = box.querySelector('.reference');
     // The countdown renders at 2× the verse size — fit from THAT base, not the
@@ -238,36 +238,57 @@
     // WHERE THE LOOP IS LIKELY TO LAND. Each measured step forces a synchronous
     // reflow, so starting at 1 and shrinking costs one layout per 5% for a long
     // passage — on the page that is on the wall. The estimate uses the same 0.95
-    // curve, the face's own advance and the box's REAL aspect, so it is a seed
-    // rather than an answer: the measurement below still decides.
+    // curve and the face's own advance, so it is a seed rather than an answer:
+    // the measurement below still decides.
+    //
+    // THE BOX IS DESCRIBED IN THE UNITS THE SIZES ARE IN. `vBase` is cqw — a
+    // share of the CONTAINER's width (`.stage`, which carries `container-type`),
+    // not of this box. `.slide` pads by 6%/7% and `.content` caps at 90%/92% of
+    // that, so the box is roughly three quarters of the container and the two
+    // are never the same rectangle. Handing `fitScale` the box's own aspect with
+    // the shares left at 100 described a container the size of the box, which
+    // over-stated the room by that ratio and made the seed uniformly optimistic.
+    // The container's aspect plus the box's real share of it in each dimension is
+    // the same rectangle expressed in the same units as the size.
     let scale = 1;
     if (!(verse && verse.classList.contains('countdown'))) {
       const w = box.clientWidth || 0;
       const h = box.clientHeight || 0;
-      if (w > 0 && h > 0) {
+      const cw = container?.clientWidth || 0;
+      const ch = container?.clientHeight || 0;
+      if (w > 0 && h > 0 && cw > 0 && ch > 0) {
         scale = fitScale({
           text: verse ? verse.textContent || '' : '',
           size: vBase,
           face: faceOf(verseFontFamily),
-          aspect: w / h,
+          aspect: cw / ch,
+          widthPct: (100 * w) / cw,
+          heightPct: (100 * h) / ch,
           lineHeight: verseLineHeight,
         });
       }
     }
     apply(scale);
 
+    // BOUNDED BY A SIZE, NOT BY A COUNT. This was `guard < 40`, and 0.95^40 is
+    // 0.1285 — so a box needing less than that got the loop's last guess and kept
+    // it, still overflowing, inside `overflow: hidden`. That is rule 42's sliced
+    // verse arriving by a different road, and it does not take a long passage:
+    // one short line at a large designed size in a shallow box needs a scale
+    // below the old floor. `keepShrinking` stops on the answer instead
+    // (templatemodel.js), so the curve is unchanged and only the cases that never
+    // fitted move.
     let guard = 0;
-    while (overflows() && guard < 40) {
-      scale *= 0.95;
+    while (keepShrinking({ overflowing: overflows(), scale })) {
+      scale *= FIT_STEP;
       apply(scale);
-      guard++;
     }
     // The estimate can be pessimistic — a verse of short words wraps sooner in
     // arithmetic than it does in a real line-breaker. Grow back while it still
     // genuinely fits, so a seeded fit lands exactly where the plain loop would
     // have. Never above 1: the template's own size is the ceiling.
     while (scale < 1 && guard < 40) {
-      const bigger = Math.min(1, scale / 0.95);
+      const bigger = Math.min(1, scale / FIT_STEP);
       apply(bigger);
       if (overflows()) {
         apply(scale);
@@ -283,8 +304,10 @@
     // During a crossfade the outgoing and incoming slides coexist — fit both so
     // whichever is on top is already sized correctly.
     let worst = 1;
+    // `stageEl` IS the container `cqw` resolves against (`container-type: size`),
+    // so it is what the box's share is measured against.
     stageEl.querySelectorAll('.slide .content').forEach((box) => {
-      worst = Math.min(worst, fitOne(box));
+      worst = Math.min(worst, fitOne(box, stageEl));
     });
     // Report the WORST of the slides on screen, and never throw: this runs inside
     // a requestAnimationFrame on the page that is on the wall, and a listener that

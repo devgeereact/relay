@@ -373,6 +373,14 @@ only what it has changed and the model fills the rest:
   `parseImportedTemplate` (a file), and `resolveStyle` itself. Migrating at the renderer alone
   would keep the wall correct while the legacy key sat in the database for the next reader that
   does not resolve.
+- **A deletion is only safe if every reader moved with it**, and two did not. `regionsToLayers`
+  (which `TemplateGallery` runs on mount and **saves**) and `themes.js`'s `theme:font` resolver
+  both read `style.font` — real in the shape they were written against, absent in the shape that
+  now reaches them. Every seeded template carries a `font`, so the first visit to the Templates
+  tab after an upgrade would have re-typefaced the whole shelf to serif, silently, once, for good.
+  Both now read the model (`migrateStyle` / `resolveStyle`), which is idempotent, so they are
+  correct whether the style handed to them is old or new. **Read the model; never read a key the
+  model owns.**
 
 **Auto-fit is measured, and now seeded** (§3.4). The DOM loop still decides — it reads
 `scrollHeight` against `clientHeight` and shrinks until the box holds the text — but it starts
@@ -382,6 +390,20 @@ reflow on the page that is on the wall, so a long passage used to cost twenty of
 estimate is pessimistic the loop grows the text back while it genuinely fits, so a seeded fit
 lands where the plain loop would have. **jsdom has no layout**, so the measured half cannot be
 tested; `templatemodel.test.js` holds the arithmetic, and the floor it reports is rule 37's.
+
+The three box arguments are **one description and must not be mixed**: `aspect` is the
+CONTAINER's aspect (what `cqw` is a share of), and `widthPct`/`heightPct` are the text box's
+share of that container. `.stage` carries `container-type`; the box measured is `.content`,
+about three quarters of it — so passing the BOX's own aspect with the shares left at 100
+describes a container the size of the box and over-states the room by that ratio.
+
+**Both loops stop on the answer, not on a round count.** They shared a `guard < 40`, and 0.95^40
+is 0.1285: a box needing less than that got the loop's last guess and kept it, still overflowing,
+inside an `overflow: hidden` box — rule 42's sliced verse reached by running out of rounds. It
+takes only one short line at a large designed size in a shallow box, which is an ordinary band or
+stage zone, not a pathological template. `keepShrinking` / `FIT_STEP` / `FIT_MIN_SCALE` are one
+home for the curve and its floor. The floor is on the **arithmetic**; rule 37's 45% is a separate
+line that **reports** rather than stops.
 
 **`TemplateRender.svelte` is the ONE renderer** — the fullscreen output *and* the Templates
 editor preview both use it, so the editor is WYSIWYG by construction. Stage displays and

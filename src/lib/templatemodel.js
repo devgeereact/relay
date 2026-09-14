@@ -226,6 +226,47 @@ export function faceOf(family) {
 }
 
 /**
+ * THE SHRINK CURVE, and the floor under it. One home, because the estimate here
+ * and the measured loop in `TemplateRender.svelte` have to agree: an estimate
+ * that shrinks on a different curve from the measurement disagrees with it on
+ * exactly the passages that matter.
+ *
+ * WHY THE BOUND IS A SCALE AND NOT A ROUND COUNT. Both loops used to stop after
+ * 40 rounds of ×0.95. 0.95^40 is 0.1285, so a box that needed 0.099 got 0.1285 —
+ * and the loop returned it, having never fitted anything. The text is inside an
+ * `overflow: hidden` box, so what a congregation saw was a verse with its top and
+ * bottom lines sliced through the middle: rule 42's harm, reached by running out
+ * of rounds rather than by measuring the wrong face.
+ *
+ * It is not a long-passage problem. A short line at a large designed size in a
+ * shallow box (a band, a stage zone) needs a scale below 0.1285 to fit one line,
+ * and that is an ordinary template, not a pathological one.
+ *
+ * A count cannot express "small enough"; a scale can. The curve is unchanged, so
+ * anything that fits today lands on exactly the same value — the loop simply no
+ * longer stops before it has an answer. `FIT_MIN_SCALE` is 1% of the size the
+ * template's designer asked for: at 6cqw on a 1920px wall that is about one
+ * pixel, the last size above nothing. It is a floor on the ARITHMETIC and not on
+ * legibility — rule 37's 45% floor is a separate line, and it REPORTS rather
+ * than stops.
+ */
+export const FIT_STEP = 0.95;
+export const FIT_MIN_SCALE = 0.01;
+
+/**
+ * Should the fit shrink again? Pure, and exported, for the same reason
+ * `needsRefit` is: both the estimate and the measured loop on the wall ask this
+ * question, and they must not answer it differently.
+ *
+ * @param overflowing does the block still not fit?
+ * @param scale       the scale about to be stepped down from.
+ * @param min         the floor (see `FIT_MIN_SCALE`).
+ */
+export function keepShrinking({ overflowing, scale, min = FIT_MIN_SCALE }) {
+  return !!overflowing && scale * FIT_STEP >= min;
+}
+
+/**
  * How many lines this text takes at this size, in a box `widthPct` of the
  * output's width.
  *
@@ -253,22 +294,30 @@ export function estimateLines({ text, size, face = 'serif', widthPct = 100 }) {
  *
  * The ×0.95 loop mirrors the DOM fitter in `TemplateRender.svelte` step for
  * step, deliberately: an estimate that shrinks on a different curve from the
- * measurement would disagree with it on exactly the passages that matter.
+ * measurement would disagree with it on exactly the passages that matter. Both
+ * use `FIT_STEP` and `keepShrinking`, so there is one curve and one floor.
+ *
+ * THE THREE BOX ARGUMENTS ARE ONE DESCRIPTION, AND MIXING THEM IS A BUG.
+ * `aspect` is the CONTAINER's aspect — the thing `cqw` is a share of. `widthPct`
+ * and `heightPct` are the text box's share of that container, in each dimension.
+ * Together they say: the container is 100 wide and `100/aspect` tall (a 16:9
+ * frame is 56.25cqw tall), and the box is `widthPct`% and `heightPct`% of that.
+ * Passing the BOX's own aspect while leaving the two shares at 100 describes a
+ * container the size of the box, which over-states the room available by exactly
+ * the ratio between them.
  */
 export function fitScale({ text, size, face = 'serif', aspect = 16 / 9, widthPct = 100, heightPct = 100, lineHeight = STYLE_DEFAULTS.verseLineHeight }) {
   const ratio = num(aspect, 16 / 9);
   const a = ratio > 0 ? ratio : 16 / 9;
+  const boxWidth = num(widthPct, 100);
   const boxHeight = (100 / a) * (num(heightPct, 100) / 100);
   const lh = num(lineHeight, STYLE_DEFAULTS.verseLineHeight);
   const base = num(size, STYLE_DEFAULTS.verseSize);
+  const overflowsAt = (s) => {
+    const sz = base * s;
+    return estimateLines({ text, size: sz, face, widthPct: boxWidth }) * sz * lh > boxHeight;
+  };
   let scale = 1;
-  let guard = 0;
-  while (guard < 40) {
-    const sz = base * scale;
-    const lines = estimateLines({ text, size: sz, face, widthPct });
-    if (lines * sz * lh <= boxHeight) break;
-    scale *= 0.95;
-    guard++;
-  }
+  while (keepShrinking({ overflowing: overflowsAt(scale), scale })) scale *= FIT_STEP;
   return scale;
 }
