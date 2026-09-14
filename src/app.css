@@ -840,7 +840,7 @@ input[type="checkbox"]{ accent-color:var(--v-accent); }
 .upd-t b{ font-size:var(--v-fs-pr); color:var(--v-accent2); }
 .upd-t span{ font-size:var(--v-fs-b1); color:var(--v-dim); line-height:1.5; }
 .upd-pct{ font-size:var(--v-fs-b1); color:var(--v-txt); }
-.upd.err{ border-color:rgba(239,68,68,.35); color:var(--v-txt); font-size:var(--v-fs-h3); line-height:1.55; }
+.upd.err{ border-color:var(--v-red-line); color:var(--v-txt); font-size:var(--v-fs-h3); line-height:1.55; }
 
 /* A PANIC CONTROL FAILED — clear or blackout did not reach the outputs, so the
    congregation may still be looking at the last thing the operator put up.

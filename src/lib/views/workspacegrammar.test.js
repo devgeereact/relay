@@ -18,8 +18,8 @@
 // Written the way CLAUDE.md asks: each assertion fails if the defect it names is
 // reintroduced. Checked by reverting each rule and watching it go red.
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
-import { resolve, dirname } from 'node:path';
+import { readFileSync, readdirSync } from 'node:fs';
+import { resolve, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -567,6 +567,34 @@ describe('§1 · the control metrics', () => {
 //      it right.
 //
 // Each assertion below was watched to fail with its own defect put back.
+// ── THE RED THAT IS IN NO TOKEN ─────────────────────────────────────────────
+//
+// `rgba(239,68,68,…)` is a retired literal: this palette's red is `#f4515b` and
+// its edge is `--v-red-line` = `rgba(244,81,91,.5)`. The two are close enough to
+// pass a glance and different enough to read as two products when they meet — a
+// failure panel's edge beside a danger button's.
+//
+// It survived four waves because the token sweep scans HEX and says out loud that
+// it does not scan `rgba()`. This is that gap, closed for the one literal that
+// actually got loose, rather than a broad rule that would fail on legitimate
+// alpha values the palette itself publishes.
+describe('the retired red never comes back', () => {
+  const files = [
+    'src/app.css',
+    ...readdirSync(resolve(__dirname, '../../..', 'src/lib'), { recursive: true })
+      .filter((f) => typeof f === 'string' && f.endsWith('.svelte'))
+      .map((f) => join('src/lib', f)),
+  ];
+
+  it('is in no stylesheet and no component', () => {
+    const offenders = files.filter((f) => {
+      const body = read(f).replace(/\/\*[\s\S]*?\*\//g, '');
+      return /rgba\(\s*239\s*,\s*68\s*,\s*68/.test(body);
+    });
+    expect(offenders, 'use var(--v-red) / --v-red-soft / --v-red-line').toEqual([]);
+  });
+});
+
 describe('§1 · one button, everywhere', () => {
   const css = read('src/app.css');
   const bare = css.replace(/\/\*[\s\S]*?\*\//g, '');

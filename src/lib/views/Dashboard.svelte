@@ -492,7 +492,8 @@
     border-color: var(--v-accent-line);
   }
   .d-hero.bad {
-    border-color: rgba(239, 68, 68, 0.5);
+    /* The token, not the retired literal — one red across every failure edge. */
+    border-color: var(--v-red-line);
   }
   .d-hero-t {
     flex: 1;

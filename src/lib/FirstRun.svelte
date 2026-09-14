@@ -883,7 +883,9 @@
     padding: 11px 13px;
     border-radius: var(--v-r-md);
     background: var(--v-red-soft);
-    border: 1px solid rgba(239, 68, 68, 0.3);
+    /* The token, not the retired literal: `rgba(239,68,68,…)` is in no token in
+       this repository and drew a different red from every other failure edge. */
+    border: 1px solid var(--v-red-line);
     color: var(--v-txt);
     font-size:var(--v-fs-h3);
     line-height: 1.55;
