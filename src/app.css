@@ -1029,3 +1029,33 @@ input[type="checkbox"]{ accent-color:var(--v-accent); }
 @keyframes view-spin{ to{ transform:rotate(360deg); } }
 .view-loaderr{ display:flex; flex-direction:column; align-items:center; gap:14px;
   padding:56px 24px; color:var(--v-dim); text-align:center; }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   S1 · SHELL AND CHROME (wave 3). Append-only block — see the wave brief.
+   Two additions, both of them things the prototype has and the app did not.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* THE WORDMARK'S SECOND HALF (docs/REBRAND.md §1, the prototype's `.wordmark`).
+   `RELAY` is the product; `studio` is the room. Mono, a third the weight, on the
+   wordmark's own baseline rather than beside it as a second name — a tag, not a
+   rename. It is the first thing to go when the bar runs out of room: `flex` is
+   left at its default so the brand block never shrinks, and this child is hidden
+   below 1180px where the workspaces and the screen lamps are competing for the
+   same pixels (see .topbar-v's wrap rule at 640px — the panic control is what
+   that one is protecting, and this is the cheapest thing in the bar). */
+.chrome-brand .chrome-tag{ font-family:var(--f-mono); font-size:9.5px; font-weight:500;
+  letter-spacing:.06em; color:var(--v-faint); align-self:baseline; }
+@media (max-width:1180px){ .chrome-brand .chrome-tag{ display:none; } }
+
+/* END SERVICE (docs/REBRAND.md §1's fourth control). The colour IS the state:
+   an ordinary dock button while there is nothing to end, amber the moment a
+   service is recording. That satisfies §1 ("End service amber") and CLAUDE.md
+   rule 18 ("amber IS on air, and nothing else") at once, because the only time
+   it burns amber is the time the claim is true.
+
+   Green — the prototype's Go Live — is deliberately absent: Relay has no Go Live
+   (a service opens when the microphone does) and green is not in the colour law.
+   `.r-cbtn.golive` above is left untouched and is now an orphan class; it is the
+   integrator's to delete, not this block's to redefine. */
+.r-cbtn.endsvc[data-on="1"]{ background:var(--v-amber-soft); border-color:var(--v-amber-line);
+  color:var(--v-amber); box-shadow:inset 0 0 0 1px rgba(255,163,26,.14); }

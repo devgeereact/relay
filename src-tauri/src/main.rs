@@ -5781,16 +5781,40 @@ fn end_service<R: tauri::Runtime>(
 struct ServiceLockState {
     engaged: bool,
     held_back: Vec<&'static str>,
+    /// Is a service row OPEN right now — the fact `end_service` acts on.
+    ///
+    /// This is deliberately NOT `engaged`. The lock is armed by `start_service`
+    /// and released by `end_service`, so the two usually agree — but the operator
+    /// can lift the lock in one action (`set_service_lock`, "operator override is
+    /// a first-class control"), and after that `engaged` is false over a service
+    /// that is still recording. A control that ended a service off `engaged`
+    /// would read "nothing to end" at exactly that moment: a status control that
+    /// cannot detect its own failure (CLAUDE.md rule 35).
+    ///
+    /// It reads the session directly, which is the same state `end_service`
+    /// clears — so the button and the command can never disagree about whether
+    /// there is a service. `current_service` was deleted as a dead command and
+    /// this does NOT bring it back: no id, no title, no times cross the bridge,
+    /// only whether one is open.
+    recording: bool,
 }
 
 #[tauri::command]
-fn service_lock(lock: tauri::State<'_, servicelock::ServiceLock>) -> ServiceLockState {
+fn service_lock(
+    session: tauri::State<'_, Session>,
+    lock: tauri::State<'_, servicelock::ServiceLock>,
+) -> ServiceLockState {
     ServiceLockState {
         engaged: lock.engaged(),
         held_back: servicelock::PROTECTED
             .iter()
             .map(|(_, what)| *what)
             .collect(),
+        // A poisoned session lock is not a service. It is also not a reason to
+        // fail a status read the whole shell polls — `is_ok_and` answers false
+        // and the operator sees "no service" rather than a console that cannot
+        // draw its own dock.
+        recording: session.0.lock().is_ok_and(|s| s.is_some()),
     }
 }
 
