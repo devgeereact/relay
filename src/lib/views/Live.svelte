@@ -1506,8 +1506,8 @@
            smallest pair of targets on the surface an operator uses fastest, and
            `‹` and `›` name nothing: they are the same two shapes whichever of
            the two things the transport is about to do. -->
-      <button class="rk wide" title="Previous (←)" on:click={() => step(-1)}>‹ Prev</button>
-      <button class="rk wide" title="Next (→)" on:click={() => step(1)}>Next ›</button>
+      <button class="r-btn rk wide" title="Previous (←)" on:click={() => step(-1)}>‹ Prev</button>
+      <button class="r-btn rk wide" title="Next (→)" on:click={() => step(1)}>Next ›</button>
       <!-- WHAT THOSE TWO WALK. Required by CLAUDE.md — the transport is
            MODE-AWARE and says so; the same key silently meaning two things is
            how the wrong thing reaches a congregation. The prototype's caption is
@@ -2252,12 +2252,16 @@
     .rk:active:not(:disabled){filter:brightness(.88)}
     .sg-cell:active:not(:disabled) .sg-thumb{filter:brightness(.88)}
   }
-  .rk{height:28px; border-radius:var(--v-r-md); cursor:pointer; background:var(--v-surf2);
-    border:1px solid var(--v-line2); color:var(--v-dim); font-family:var(--f-body);
-    font-size:var(--v-fs-cap); transition:transform 90ms var(--v-ease), background .14s, color .14s}
-  .rk:hover:not(:disabled){background:var(--v-surf3); color:var(--v-txt)}
-  .rk:disabled{opacity:.4; cursor:not-allowed}
-  .rk.wide{width:100%}
+  /* THE TRANSPORT IS AN ORDINARY BUTTON (B1). It drew its own box and was three
+     steps off the shared control at once — 28px against 26, a `--v-line2`
+     hairline against the `--v-500` every other control draws, and `--v-fs-cap`
+     against the button's `--v-fs-b2` — on the pair an operator reaches for more
+     often than anything else on this surface. It is `.r-btn` now, and this rule
+     keeps only the two things a transport needs that a button does not.
+     `flex:0 0 auto` is load-bearing rather than tidy: the rack is a flex COLUMN,
+     where a fixed height is still shrinkable, so without it a short dock quietly
+     squeezes Prev and Next below the shared 26px and nothing says so. */
+  .rk.wide{width:100%; flex:0 0 auto}
   /* The caption the prototype puts under the transport, with the MODE inside it
      rather than beside it. "walks the programme" answers WHAT the two buttons
      do; the mode answers WHICH walk — and they are one sentence, so an operator
@@ -2477,11 +2481,17 @@
 
   .err{padding:0 12px 10px; color:var(--v-red); font-size:var(--v-fs-cap)}
 
-  .wide{width:100%; height:32px; border-radius:var(--v-r-md); cursor:pointer;
-    background:var(--v-surf2); border:1px solid var(--v-line2); color:var(--v-txt);
-    font-family:var(--f-body); font-size:var(--v-fs-lbl); font-weight:600; transition:.14s}
-  .wide:hover:not(:disabled){background:var(--v-surf3)}
-  .wide:disabled{opacity:.45; cursor:not-allowed}
+  /* `.wide` WAS A WHOLE SECOND BUTTON, AND IT WAS THE ONE THAT WON (B1).
+     It declared a complete skin — 32px, `--v-surf2`, a `--v-line2` hairline,
+     `--v-fs-lbl` — under a name that reads like a layout utility, and the only
+     element in this file wearing it is the transport pair. `.rk` and `.wide`
+     have the SAME specificity, so source order decided, and `.wide` is two
+     hundred lines further down: every property the two rules shared was taken
+     from here and `.rk`'s box was dead code for the whole of its life.
+     That is why the transport measured 32px in the browser while this file
+     plainly said 28 — and why reading either rule on its own explains nothing.
+     The skin is gone; the transport is `.r-btn`, and `.rk.wide` up the file
+     keeps the width. A class named for a layout may not carry a look. */
 
   .flash{display:flex; align-items:center; gap:8px; min-width:0; overflow:hidden;
     text-overflow:ellipsis; white-space:nowrap; font-size:var(--v-fs-cap); color:var(--v-emerald)}
@@ -2511,7 +2521,7 @@
 
   /* ── accessibility ─────────────────────────────────────────────────────── */
   .take:focus-visible,.rk:focus-visible,.slide:focus-visible,
-  .act:focus-visible,.wide:focus-visible,
+  .act:focus-visible,
   .mini:focus-visible,.ibtn:focus-visible,.btnchip:focus-visible,
   .reh-end:focus-visible{outline:2px solid var(--v-amber); outline-offset:2px}
   @media (prefers-reduced-motion:reduce){

@@ -675,7 +675,20 @@ describe('L2 · a press answers on the way down', () => {
   // same press reads as a brightness step instead of a movement.
   it('reduced motion keeps the feedback and drops the movement', () => {
     const at = src.indexOf(REDUCE);
-    const block = src.slice(at, src.indexOf('\n  .rk{', at));
+    // END AT THE BLOCK'S OWN BRACE, not at whatever rule happens to follow it.
+    // This read to `'\n  .rk{'` until B1 folded `.rk` into the shared `.r-btn`
+    // and deleted that rule — `indexOf` then returned -1, the slice ran to the
+    // end of the file, and a test about six lines started reporting on six
+    // hundred. It failed loudly here, which is luck: the same anchor could as
+    // easily have slipped forward over a `transform` and passed.
+    const end = src.indexOf('\n  }', at);
+    expect(end, 'the reduced-motion block is not closed where expected').toBeGreaterThan(at);
+    const block = src.slice(at, end);
+    // The scanner can still SEE the rules it is judging — without this, a slice
+    // that narrowed to nothing would satisfy the `not.toMatch` below and report
+    // a guarantee it never checked.
+    expect(block).toMatch(/\.take:active/);
+    expect(block).toMatch(/\.rk:active/);
     expect(block).toMatch(/filter:brightness/);
     expect(block).not.toMatch(/transform:/);
   });

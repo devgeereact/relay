@@ -455,12 +455,25 @@ body{ overflow:hidden; text-rendering:optimizeLegibility; -moz-osx-font-smoothin
    NOT MOVED, deliberately: `.exit-fs` is still 30px. It is the only control on
    a chromeless full-screen surface, with nothing to line up with and a viewing
    distance the rest of this table does not assume. */
+/* THE ORDINARY BUTTON DRAWS THE HOUSE SURFACE — B1. It was the only shared
+   control that did not. `.r-input`, `.r-select` and `.r-cbtn` all open
+   `background:var(--v-surf3); border:1px solid var(--v-500)` a few rules from
+   here; `.r-btn` opened with no background at all and a TRANSPARENT border, so
+   a button with no variant on it drew no fill and no edge. Thirteen of them
+   ship that way. It is invisible while you read the stylesheet — every variant
+   below supplies its own fill, so the base is only ever seen bare — and plainly
+   wrong in the one place it matters, a settings rail that stacks an input, a
+   select and a button and gives two of the three an edge.
+   The transparent button is not lost; it is `.r-btn.quiet` below, which is what
+   the bare base was being used AS. Naming it is the difference between a choice
+   and an omission. */
 .r-btn{ display:inline-flex; align-items:center; justify-content:center; gap:7px; height:26px;
-  padding:0 11px; border-radius:var(--v-r-sm); border:1px solid transparent; cursor:pointer; white-space:nowrap;
+  padding:0 11px; border-radius:var(--v-r-sm); cursor:pointer; white-space:nowrap;
+  background:var(--v-surf3); border:1px solid var(--v-500); color:var(--v-txt);
   font-family:var(--f-body); font-size:var(--v-fs-b2); font-weight:600;
   transition:filter var(--v-dur) var(--v-ease), background var(--v-dur) var(--v-ease),
     border-color var(--v-dur) var(--v-ease), transform 90ms var(--v-ease); }
-.r-btn:active{ transform:scale(.98); }
+.r-btn:hover:not(:disabled){ filter:brightness(1.15); }
 .r-btn:disabled{ opacity:.45; cursor:not-allowed; }
 /* PRIMARY — the ordinary "do the thing" button: Save, Add, Continue, Import.
    Steel blue, because it is chrome and nothing more. It was amber once, then
@@ -474,10 +487,27 @@ body{ overflow:hidden; text-rendering:optimizeLegibility; -moz-osx-font-smoothin
    amber stopped meaning anything. */
 .r-btn.amber{ background:var(--v-amber); color:var(--v-amber-ink); box-shadow:0 6px 18px -6px var(--v-amber-glow); }
 .r-btn.amber:hover:not(:disabled){ filter:brightness(1.06); }
-.r-btn.ghost{ background:var(--v-surf2); border-color:var(--v-line2); color:var(--v-txt); }
+/* ONE EDGE, NOT TWO. `ghost` is the quieter FILL — it is not a second edge.
+   It drew `--v-line2` (rgba(255,255,255,.13)) while the base, the input, the
+   select and the control button all draw `--v-500` (#3A404A), and the two sit
+   side by side constantly: Cancel beside Save, a ghost beside a primary in
+   every dialog foot in the product. A hairline that changes between two
+   touching buttons is the thing an operator reads as "inconsistent" without
+   being able to name it. The fill still differs, which is the whole job. */
+.r-btn.ghost{ background:var(--v-surf2); border-color:var(--v-500); color:var(--v-txt); }
 .r-btn.ghost:hover:not(:disabled){ background:var(--v-surf3); }
-.r-btn.danger{ background:transparent; border-color:rgba(239,68,68,.5); color:var(--v-rose); }
-.r-btn.danger:hover:not(:disabled){ background:var(--v-rose-soft); }
+/* QUIET — no fill, no edge. This is what a `.r-btn` with no variant used to
+   draw by accident; it is a real look (a link-weight action inside a dense
+   list) and it keeps the button's metrics, so it still lines up in a column. */
+.r-btn.quiet{ background:transparent; border-color:transparent; color:var(--v-dim); }
+.r-btn.quiet:hover:not(:disabled){ background:var(--v-surf2); color:var(--v-txt); }
+/* DANGER — one red, from the token. It drew `rgba(239,68,68,.5)`, which is in
+   no token in this repository: `--v-red-line` is `rgba(244,81,91,.5)`. Two
+   different reds under one variant name, in one stylesheet — `.r-cbtn.danger`
+   eight rules down already used the token, so Clear screens and a Delete button
+   were drawing different edges while claiming the same meaning. */
+.r-btn.danger{ background:transparent; border-color:var(--v-red-line); color:var(--v-red); }
+.r-btn.danger:hover:not(:disabled){ background:var(--v-red-soft); }
 .r-btn.sm{ height:22px; padding:0 8px; font-size:var(--v-fs-lbl); }
 
 .r-iconbtn{ width:26px; height:26px; border-radius:var(--v-r-sm); display:grid; place-items:center; cursor:pointer;
@@ -1136,3 +1166,61 @@ input[type="checkbox"]{ accent-color:var(--v-accent); }
    should be the ON AIR ladder, the lamps and the panic control. */
 @media (max-width:1400px){ .xcap{ display:none; } }
 @media (max-width:1180px){ .xfade{ display:none; } }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   B1 · ONE BUTTON, EVERYWHERE (docs/REBRAND.md §1 — the control metrics)
+   One block at the end of the file, per the wave-3 preamble, so a collision
+   with another agent's block resolves by moving these lines whole. The
+   corrections to `.r-btn` itself are NOT here: a second `.r-btn{}` at the foot
+   of the file would be the very defect this block exists to remove, so those
+   were made in place and are described where they sit.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* A BUTTON DOES NOT INHERIT ITS FONT, AND 128 OF THEM WERE NOT GIVEN ONE.
+   This is the largest single source of button drift in the app and it is
+   invisible to every existing instrument, because nothing is declared wrongly
+   — the declaration is simply absent. A `<button>` is a replaced-ish element
+   whose font comes from the UA sheet, not from the page: unstyled, Chrome
+   draws it `400 13.333px Arial`. Not Inter. Not a step on the type scale. Not
+   even the same WEIGHT as the text beside it.
+
+   That is the rail row measured at 13.33px, and it is also why a shape census
+   grouping on `font-size · weight · family` finds twenty-odd shapes per
+   workspace: two buttons a centimetre apart, one styled and one not, are a
+   different typeface at a size the scale does not contain.
+
+   An element selector loses to every class rule in this file and to every
+   Svelte-scoped rule (which carry a `.svelte-*` class of their own), so this
+   can only ever paint a button that nothing else had dressed. It cannot
+   override a deliberate choice — `Stage.svelte`'s 18px phone buttons and the
+   dock's control buttons both declare their own and are untouched. It is a
+   floor, not a policy.
+
+   `font: inherit` would be the tidier-looking line and it is the wrong one: it
+   would also inherit the SIZE of whatever the button happens to sit inside, so
+   the same control would render at three sizes in three panes. The point is
+   one button everywhere, so the floor names the step it wants. */
+button, [role="button"]{ font-family:var(--f-body); font-size:var(--v-fs-b2); }
+
+/* PRESS IS POINTER-DOWN, AND REDUCED MOTION STILL GETS A PRESS.
+   `:active` begins at pointerdown and ends at release, which is the beat a
+   press is — a class toggled on `click` arrives after the gesture is over and
+   reads as a flicker. Live.svelte's transport already had this (agent L2); it
+   was missing from the two shared controls, which is where most of the app's
+   buttons actually are.
+
+   `.r-btn`'s scale was unconditional before this, and `.r-cbtn`'s still is a
+   few hundred lines up — so an operator who has asked the OS for no animation
+   got movement anyway from every button in the product. Under `reduce` the
+   transform is switched OFF and the press becomes a brightness cut instead,
+   because somebody who wants no motion still has to be able to tell a press
+   from a dead button. That is the non-transform equivalent, not an absence.
+   `transform` only in the motion branch, so the compositor does the work and
+   nothing on a live console reflows under an operator's finger. */
+@media (prefers-reduced-motion: no-preference){
+  .r-btn:active:not(:disabled){ transform:scale(.98); }
+}
+@media (prefers-reduced-motion: reduce){
+  .r-btn:active:not(:disabled),
+  .r-cbtn:active:not(:disabled){ transform:none; filter:brightness(.88); }
+}

@@ -538,3 +538,150 @@ describe('§1 · the control metrics', () => {
     expect(offenders, 'the shared control owns its height — override width and padding only').toEqual([]);
   });
 });
+
+// ───────────────────────────────────────────────────────────────────────────
+// ONE BUTTON, EVERYWHERE — wave 3, agent B1. docs/REBRAND.md §1.
+//
+// The metrics tier above holds the HEIGHTS. It was written against a real
+// defect and it holds, and it is also why the remaining drift stayed invisible:
+// every number in that table agreed while the app still rendered twenty-odd
+// distinct button shapes per workspace, because a shape is not a height. It is
+// height AND radius AND size AND weight AND fill AND edge AND colour AND
+// FAMILY, and the last four were never checked anywhere.
+//
+// Four defects, each of which survived a green run of everything above:
+//
+//   1. `.r-btn` was the ONLY shared control with no background and a
+//      transparent border. `.r-input`, `.r-select` and `.r-cbtn` all open
+//      `--v-surf3` + `--v-500`. Thirteen buttons ship with no variant on them
+//      and therefore no fill and no edge at all.
+//   2. `ghost` drew its hairline from `--v-line2`, everything else from
+//      `--v-500`. Those two buttons touch — Cancel beside Save — in every
+//      dialog foot in the product.
+//   3. `.r-btn.danger` drew `rgba(239,68,68,.5)`, which is in no token in this
+//      repository. `.r-cbtn.danger` drew `var(--v-red-line)`, which is
+//      `rgba(244,81,91,.5)`. One variant name, two reds, one stylesheet.
+//   4. A `<button>` does not inherit its font. 128 of the 366 in the tree were
+//      never given one, so the UA drew them `400 13.333px Arial` — a different
+//      TYPEFACE at a size the scale does not contain, beside buttons that got
+//      it right.
+//
+// Each assertion below was watched to fail with its own defect put back.
+describe('§1 · one button, everywhere', () => {
+  const css = read('src/app.css');
+  const bare = css.replace(/\/\*[\s\S]*?\*\//g, '');
+  const ruleFor = (sel) => {
+    const i = bare.indexOf(sel + '{');
+    expect(i, `no rule for ${sel}`).toBeGreaterThan(-1);
+    return bare.slice(i, bare.indexOf('}', i));
+  };
+
+  it('the scanner reads declarations and not the prose about them', () => {
+    // Same guard the two scanners above carry, for the same reason: both of
+    // this repository's other stylesheet scanners quietly narrowed and passed
+    // everything. The comment on `.r-btn.danger` QUOTES the retired literal, so
+    // a scanner that did not strip comments would report the defect present and
+    // the defect fixed at the same time, whichever way round the code was.
+    expect(ruleFor('.r-btn')).toMatch(/background:var\(--v-surf3\)/);
+    expect(ruleFor('.r-btn.danger')).not.toMatch(/239,68,68/);
+    expect(css).toMatch(/239,68,68/); // ...it is still there, in the comment.
+  });
+
+  it('the ordinary button draws the house surface, like every other shared control', () => {
+    // The defect: `.r-btn` had no `background` and `border:1px solid transparent`.
+    // Stated as an agreement rather than as three literals, because the point is
+    // that these four controls are ONE column, not that surf3 is the colour.
+    for (const sel of ['.r-btn', '.r-input, .r-select', '.r-cbtn']) {
+      const r = ruleFor(sel);
+      expect(r, `${sel} has no house fill`).toMatch(/background:var\(--v-surf3\)/);
+      expect(r, `${sel} has no house edge`).toMatch(/border:1px solid var\(--v-500\)/);
+    }
+    // The transparent button still exists — it is now a NAMED variant rather
+    // than what you get by forgetting to pick one.
+    expect(ruleFor('.r-btn.quiet')).toMatch(/background:transparent/);
+  });
+
+  it('one edge — no button variant swaps the hairline for a different one', () => {
+    // The defect: `.r-btn.ghost{ border-color:var(--v-line2) }`.
+    // `--v-line2` is a DIVIDER token (rgba(255,255,255,.13)); it is right on a
+    // rule between two rows and wrong on a control that sits beside a control.
+    for (const sel of ['.r-btn.ghost', '.r-btn.primary', '.r-btn.amber', '.r-btn.danger', '.r-btn.quiet']) {
+      expect(ruleFor(sel), `${sel} draws a second hairline`).not.toMatch(/border-color:var\(--v-line2\)/);
+    }
+  });
+
+  it('danger is ONE red, and it comes from the token', () => {
+    // The defect: two reds under one variant name. Asserted as agreement
+    // between the two controls, which is the property that was actually broken
+    // — a literal-hunting scanner would also condemn `.r-cbtn.black`, whose
+    // absolute black IS the claim it makes, and would then be weakened.
+    const btn = ruleFor('.r-btn.danger');
+    const cbtn = ruleFor('.r-cbtn.danger');
+    expect(btn).toMatch(/border-color:var\(--v-red-line\)/);
+    expect(cbtn).toMatch(/border-color:var\(--v-red-line\)/);
+    for (const r of [btn, cbtn]) expect(r, 'an untokenised red').not.toMatch(/rgba\(\s*\d/);
+  });
+
+  it('a press is pointer-down, and reduced motion still gets a press', () => {
+    // The defect: `.r-btn:active{transform:scale(.98)}` unconditional, with no
+    // `reduce` branch — so an operator who asked the OS for no animation got
+    // movement from every button in the product, and `.r-cbtn` still would have
+    // without the explicit `transform:none` below.
+    const motion = bare.slice(bare.lastIndexOf('@media (prefers-reduced-motion: no-preference){'));
+    expect(motion).toMatch(/\.r-btn:active:not\(:disabled\)\{ transform:scale\(\.98\); \}/);
+    const reduce = bare.slice(bare.lastIndexOf('@media (prefers-reduced-motion: reduce){'));
+    // Switched OFF, not merely un-restated: a media query cannot unset a
+    // declaration made outside it, and `.r-cbtn`'s scale is made outside it.
+    expect(reduce).toMatch(/\.r-btn:active/);
+    expect(reduce).toMatch(/\.r-cbtn:active/);
+    expect(reduce).toMatch(/transform:none/);
+    // ...and it is a cut, not an absence. A press an operator cannot perceive
+    // is a button they cannot tell from a dead one.
+    expect(reduce).toMatch(/filter:brightness/);
+  });
+
+  it('every button is given a font, by a floor that cannot outrank a choice', () => {
+    // The defect: nothing declared a font for a bare `<button>`, and a button
+    // does not inherit one. This is the rail row that measured 13.33px.
+    const floor = ruleFor('button, [role="button"]');
+    expect(floor).toMatch(/font-family:var\(--f-body\)/);
+    expect(floor).toMatch(/font-size:var\(--v-fs-b2\)/);
+    // It must stay an ELEMENT selector. Promote it to a class and it starts
+    // overriding the components that DID declare a font — `Stage.svelte`'s 18px
+    // phone buttons are sized for a preacher holding the device at arm's length,
+    // and a floor that could flatten those is a worse bug than the one it fixes.
+    expect(bare).not.toMatch(/\.r-btn, ?\[role="button"\]\{/);
+    // `font:inherit` is the tidier-looking line and the wrong one: it takes the
+    // SIZE of whatever pane the button sits in, so one control renders at three
+    // sizes in three places. The floor names its step.
+    expect(floor).not.toMatch(/font:\s*inherit/);
+  });
+
+  it('the transport uses the shared button rather than redrawing it', () => {
+    // Live's `.rk` was 28px with a `--v-line2` edge and `--v-fs-cap` type — the
+    // pair an operator touches most on the run surface, three steps off the
+    // shared control at once. What is left of the rule is width and flex, which
+    // is the shape a legitimate override has.
+    const live = read('src/lib/views/Live.svelte');
+    const css = styleOf(live);
+    expect(live).toMatch(/class="r-btn rk wide" title="Previous/);
+    expect(live).toMatch(/class="r-btn rk wide" title="Next/);
+    expect(css.match(/\.rk\{[^}]*\}/), '.rk draws its own box again').toBeNull();
+    // AND the rule that was ACTUALLY drawing them. `.wide` declared a complete
+    // second button — 32px, surf2, a line2 hairline — under a name that reads
+    // as a layout utility, at equal specificity to `.rk` and two hundred lines
+    // below it, so it won every property the two shared. The file said 28px,
+    // the browser drew 32, and both rules were correct on their own terms.
+    // A test that only watched `.rk` would have called this fixed while the
+    // transport still measured 32.
+    // ANCHORED. Written as /\.wide\{/ first, which matched the `.wide{` INSIDE
+    // `.rk.wide{width:100%; flex:0 0 auto}` two hundred lines above — a rule
+    // that legitimately carries no box — so the assertion read a clean body and
+    // passed with the skin restored. Watched to fail only after this anchor.
+    const wide = css.match(/(?:^|[\s,};])\.wide\{([^}]*)\}/);
+    for (const p of ['height', 'background', 'border', 'font-size', 'font-family']) {
+      expect(wide?.[1] ?? '', `.wide is a button skin again (${p})`)
+        .not.toMatch(new RegExp(`(^|[;\\s])${p}\\s*:`));
+    }
+  });
+});
