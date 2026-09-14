@@ -1254,18 +1254,25 @@ describe('R3-12 · CLOSED — every view a screen reader lands on has a heading'
     });
   }
 
-  // `Themes.svelte` and `Templates.svelte` are ROUTERS — three lines that pick a
-  // child. They were on the original list, and putting a heading in them would
-  // have produced two headings for one screen, which is worse than none: a reader
-  // jumping by heading would land twice on the same view.
+  // `Templates.svelte` is a ROUTER — it picks a desk and then a child. It was on
+  // the original list, and putting a heading in it would have produced two
+  // headings for one screen, which is worse than none: a reader jumping by
+  // heading would land twice on the same view.
   //
-  // The requirement belongs to the children, and both children are asserted above.
+  // The requirement belongs to the children, and all four are asserted above.
   // Recorded rather than silently dropped from the list.
-  for (const f of ['src/lib/views/Themes.svelte', 'src/lib/views/Templates.svelte']) {
+  //
+  // `Themes.svelte` used to be the second entry here and no longer exists: Themes
+  // became a DESK inside the Templates workspace (docs/REBRAND.md §2), so one
+  // router now picks between four children instead of two routers picking between
+  // two each. Its children are unchanged and still asserted above.
+  for (const f of ['src/lib/views/Templates.svelte']) {
     it(`${f.split('/').pop()} is a router and correctly has none`, () => {
       const t = src(f);
       expect(t).not.toMatch(/<h[1-6][\s>]/);
-      expect(t).toMatch(/mode === 'editor'/); // it really is just the switch
+      // It really is just the switch: a desk, then a mode within it.
+      expect(t).toMatch(/Mode === 'editor'/);
+      expect(t).toMatch(/desk === 'themes'/);
     });
   }
 });
