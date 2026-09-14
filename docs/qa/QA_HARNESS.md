@@ -222,9 +222,19 @@ about the same failure.
 
 The chip was a warning, not decoration, so it stayed absent when the wall was genuinely clear
 and when the screens were blacked out. `src/lib/liveoutputrail.test.js` read **17 passing
-tests** at that point; it holds **11** today, and none of them is about staging — the five that
-were about this state went with the feature. Reproduce with
+tests** at that point, and none of them is about staging — the five that were about this state
+went with the feature. Reproduce the current figure with
 `grep -cE '^\s*(it|test)\(' src/lib/liveoutputrail.test.js`.
+
+**SUPERSEDED AGAIN, 2026-09-14 — and the whole section above is now history.** The rebrand
+(`docs/REBRAND.md` §10) took the programme monitor out of the Library altogether. It was a
+second run surface inside a browsing workspace: a monitor, a HEARD panel, a transcript and five
+run controls, every one of which already had an owner on `Live.svelte` or in the dock row. The
+Library's right column is the item INSPECTOR now, and `LiveOutputRail.svelte` is the queue and
+Go Live — which is all it uniquely owned. So **the badge this section is about no longer
+exists**, and neither does the surface on which it could lie; the amber rule is held where the
+programme pane actually lives, on Live. The retired claims and where each went are listed at
+the top of `liveoutputrail.test.js`, deliberately, rather than being silently dropped.
 
 Full state of all six, with the file and test names, is in **§4.2**.
 
@@ -546,7 +556,8 @@ is not covered, however green its tests** — fourteen passing tests were writte
 | **Paraphrase ≠ Direct** | **Yes** | `detect.test.js`: a spoken reference is HEARD, a paraphrase is not "however high its score", the three methods get three distinguishable keys, and *"a paraphrase NEVER shows a percentage — at any score"* |
 | **Clear ≠ Blackout** | **Yes, as separate contracts** | `panic.test.js`: `clearScreens` returns FALSE on backend failure and the caller must not flash success; a failed clear raises the panic banner; *"blackout has the identical contract — it is a panic control too"*; a success clears a stale warning; no crying wolf with no backend at all |
 | **Cued ≠ On Air** | **Yes** | `transport.test.js`: Esc/clear takes the plan off air but REMEMBERS the position; blackout the same; a FAILED hand-fire leaves the plan exactly as it was; clearing twice is idempotent and does not lose the position |
-| **Preview ≠ Programme** | **Yes — on the surface that has one** | **Corrected 2026-09-05.** This row used to cite *"`liveoutputrail.test.js` — 17 tests"* about staging and a TAKE button, and **both the component and those tests were deleted on 2026-08-15** (audit P1-2): `PreviewProgram.svelte` had no importer and `Library.svelte::stage()` had no caller, so the preview half could not render. Scoring a safety distinction against deleted evidence is the failure this table exists to prevent. What holds it today: **`Live.svelte` owns the distinction for the plan path**, where it is implemented and reachable (`previewNext` / `previewCue` / `previewSlide` beside the program pane, both rendered through the one `TemplateRender`), and `r2livepath.test.js` §R2-E pins the Library's side as an ABSENCE — *"the Library run column has no preview half at all"*, *"the rail declares no preview prop and offers no Take button"*, and Go Live fires the queue, which is reachable. `liveoutputrail.test.js`'s 11 tests are about the monitor and the panic tiles: amber only when a congregation is genuinely looking, amethyst in rehearsal, no amber under a blackout, and a panic control that never reports a success it did not achieve |
+| **Preview ≠ Programme** | **Yes — on the surface that has one** | **Corrected 2026-09-05.** This row used to cite *"`liveoutputrail.test.js` — 17 tests"* about staging and a TAKE button, and **both the component and those tests were deleted on 2026-08-15** (audit P1-2): `PreviewProgram.svelte` had no importer and `Library.svelte::stage()` had no caller, so the preview half could not render. Scoring a safety distinction against deleted evidence is the failure this table exists to prevent. What holds it today: **`Live.svelte` owns the distinction for the plan path**, where it is implemented and reachable (`previewNext` / `previewCue` / `previewSlide` beside the program pane, both rendered through the one `TemplateRender`), and `r2livepath.test.js` §R2-E pins the Library's side as an ABSENCE — *"the Library run column has no preview half at all"*, *"the rail declares no preview prop and offers no Take button"*, and Go Live fires the queue, which is reachable. **Restated 2026-09-14**: the Library's monitor and panic tiles were removed with the §10 rebuild (they duplicated `Live.svelte` and the dock row), so this row rests on Live alone — which is where the distinction was always implemented — plus `r2livepath.test.js` §R2-E and `r6-contracts.test.js` §R6-6, both of which still pin the Library's side as an ABSENCE. `liveoutputrail.test.js` is now about the queue and Go Live: order, a failed take that leaves the item in the queue rather than looking like a success, and the absence of the panels themselves |
+| **A Library press ≠ a take** | **Yes, and it was not before** | Added 2026-09-14 (REBRAND §2 · §10). A single click on a Library card used to put scripture on a congregation's wall; on a BROWSING surface that is the same press as looking. `VerseDeck`'s `press` prop defaults to the old fire-on-press so every other caller is unmoved, and the five Library panes opt into `select`. `librarypress.test.js` pins both halves — a Library press reaches no fire path, and a deck given no prop still fires — plus a source scan that names any Library pane which stops opting in. Each watched to fail against its own reverted defect |
 
 **Preview ≠ Programme was the gap you flagged, and closing it found two things.**
 

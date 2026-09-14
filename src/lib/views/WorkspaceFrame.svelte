@@ -31,7 +31,17 @@
   // put the whole grammar outside that scanner's reach, which is how an
   // instrument quietly stops covering the thing it was written for.)
 
-  /** The page title — role one of the three. */
+  /**
+   * The page title — role one of the three.
+   *
+   * OPTIONAL, and the empty case renders NOTHING rather than an empty `<h1>`.
+   * Outputs is the workspace that wanted this: its rail already says `OUTPUTS`
+   * and its pane head already says `SCREENS`, so the page title was the same
+   * word a third time above 110px of chrome, and a desk that starts 110px lower
+   * than the prototype is most of why the app did not read as the prototype. An
+   * empty heading is also a real a11y defect — a screen reader announces "heading
+   * level 1" and then nothing.
+   */
   export let title = '';
   /** The standfirst: one sentence about what this workspace is FOR. Role two. */
   export let standfirst = '';
@@ -41,10 +51,12 @@
 
 <div class="rw" style="--rw-cols:{columns}">
   <header class="rw-head">
-    <div class="rw-headtext">
-      <h1 class="rw-h1">{title}</h1>
-      {#if standfirst}<p class="rw-lead">{standfirst}</p>{/if}
-    </div>
+    {#if title || standfirst}
+      <div class="rw-headtext">
+        {#if title}<h1 class="rw-h1">{title}</h1>{/if}
+        {#if standfirst}<p class="rw-lead">{standfirst}</p>{/if}
+      </div>
+    {/if}
     <slot name="head" />
   </header>
   <div class="rw-body"><slot /></div>

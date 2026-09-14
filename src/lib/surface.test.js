@@ -182,30 +182,41 @@ describe('R3-01 · Escape belongs to the popup menu, not to the panic key', () =
   });
   afterEach(() => teardown?.());
 
-  it('LiveOutputRail — the Countdown menu, on the run surface mid-service', async () => {
-    const LiveOutputRail = (await import('./views/library/LiveOutputRail.svelte')).default;
-    const el = mountInto(LiveOutputRail, { queue: [] });
+  // REPOINTED 2026-09-14. This case drove `LiveOutputRail`'s Countdown menu. That
+  // menu is gone: REBRAND §10 took the four duplicated run controls out of the
+  // Library (the dock row owns Countdown, Clear, Blackout and Rehearse app-wide),
+  // and the Dock's countdown is a spinner with no popup at all.
+  //
+  // The CLAIM is unchanged and the Library still has a popup that has to keep it:
+  // the New Item menu in the shell, open while a service is running, with its own
+  // Escape handler. It had no test. The VerseDeck kebab case below is the second
+  // instance and is untouched.
+  it('Library — the New Item menu, open mid-service', async () => {
+    const Library = (await import('./views/Library.svelte')).default;
+    invoke.mockResolvedValue([]);
+    const el = mountInto(Library, {});
     await settle();
 
-    const countdown = [...el.querySelectorAll('.lo-tile')].find((b) =>
-      b.textContent.includes('Countdown'),
+    const openIt = [...el.querySelectorAll('button')].find((b) =>
+      b.textContent.includes('New Item'),
     );
-    countdown.click();
+    expect(openIt, 'the New Item trigger').toBeTruthy();
+    openIt.click();
     await tick();
 
-    // The menu is open, and it now declares itself so `shortcuts.js` can see it.
-    const menu = el.querySelector('.lo-menu');
+    // The menu is open, and it declares itself so `shortcuts.js` can see it.
+    const menu = el.querySelector('.lib-newmenu');
     expect(menu).toBeTruthy();
     expect(menu.getAttribute('role')).toBe('menu');
 
-    press('Escape', menu.querySelector('.lo-mi'));
+    press('Escape', menu.querySelector('.lib-newitem'));
     await tick();
 
-    // FIXED 2026-08-14 (P1-3). Both halves: the wall is untouched, and the menu
-    // actually closed. Before, the operator got the one outcome they did not ask
-    // for and none of the one they did — mid-service, on the run rail.
+    // Both halves, as in the original 2026-08-14 fix (P1-3): the wall is
+    // untouched, and the menu actually closed. Dismissing an overlay is not a
+    // live action, and the operator must get the outcome they asked for.
     expect(clearScreens).not.toHaveBeenCalled();
-    expect(el.querySelector('.lo-menu')).toBe(null);
+    expect(el.querySelector('.lib-newmenu')).toBe(null);
   });
 
   it('VerseDeck — the per-slide kebab menu, reachable from every Library tab', async () => {
@@ -749,25 +760,28 @@ describe('R3-06 · every surface goes through the ONE humaniser', () => {
 // `library/` share the same markup shape.
 // ─────────────────────────────────────────────────────────────────────────────
 describe('R3-07 · the run rail says a Take failed, out loud', () => {
-  it('.lo-err carries no live-region role', async () => {
+  it('.lo-err carries a live-region role', async () => {
+    // The failure is driven through GO LIVE now rather than through the Countdown
+    // menu — REBRAND §10 moved Countdown to the dock row, and Go Live is the one
+    // control left in the Library that can reach a screen, which makes it exactly
+    // the subject this case was written for.
     const LiveOutputRail = (await import('./views/library/LiveOutputRail.svelte')).default;
-    invoke.mockImplementation((cmd) =>
-      cmd === 'start_countdown' ? Promise.reject('no output channel') : Promise.resolve([]),
-    );
-    const el = mountInto(LiveOutputRail, { queue: [] });
+    invoke.mockResolvedValue([]);
+    const el = mountInto(LiveOutputRail, {
+      queue: [{ reference: 'John 3:16', text: 'For God so loved the world' }],
+      onFireQueued: () => Promise.reject('no output channel'),
+    });
     await settle();
 
-    [...el.querySelectorAll('.lo-tile')].find((b) => b.textContent.includes('Countdown'))?.click();
-    await tick();
-    el.querySelector('.lo-mi')?.click();
+    [...el.querySelectorAll('button')].find((b) => b.textContent.includes('Go Live'))?.click();
     await settle();
     await settle();
 
     const err = el.querySelector('.lo-err');
     expect(err).toBeTruthy();
-    // FIXED 2026-08-14 (R3-08). This was the worst of the seven: the run rail is
-    // the most dangerous surface in the app, and the line saying a Take or a
-    // Countdown FAILED was silent to a screen-reader operator.
+    // FIXED 2026-08-14 (R3-08). This was the worst of the seven: the Library's
+    // output rail is the most dangerous surface in the workspace, and the line
+    // saying a Take FAILED was silent to a screen-reader operator.
     expect(err.getAttribute('role')).toBe('alert');
   });
 });
@@ -1254,28 +1268,25 @@ describe('R3-12 · CLOSED — every view a screen reader lands on has a heading'
     });
   }
 
-  // `Themes.svelte` and `Templates.svelte` are ROUTERS — three lines that pick a
-  // child. They were on the original list, and putting a heading in them would
-  // have produced two headings for one screen, which is worse than none: a reader
-  // jumping by heading would land twice on the same view.
+  // `Templates.svelte` is a ROUTER — it picks a desk and then a child. It was on
+  // the original list, and putting a heading in it would have produced two
+  // headings for one screen, which is worse than none: a reader jumping by
+  // heading would land twice on the same view.
   //
-  // The requirement belongs to the children, and both children are asserted above.
+  // The requirement belongs to the children, and all four are asserted above.
   // Recorded rather than silently dropped from the list.
-  // `Templates.svelte` is the router: it picks a desk (Templates or Themes,
-  // DECISIONS §79) and then a mode (gallery or editor). `Themes.svelte` is now
-  // one line thinner than that — the way in from the old tab, mounting the same
-  // workspace on the Themes desk — so the switch it is checked for is the mount
-  // rather than the mode. Both are still routers, and neither may grow a heading:
-  // two headings for one screen is worse than none, because a reader jumping by
-  // heading lands twice on the same view.
-  for (const [f, switchedOn] of [
-    ['src/lib/views/Themes.svelte', /<Templates initialDesk=/],
-    ['src/lib/views/Templates.svelte', /mode === 'editor'/],
-  ]) {
+  //
+  // `Themes.svelte` used to be the second entry here and no longer exists: Themes
+  // became a DESK inside the Templates workspace (docs/REBRAND.md §2, DECISIONS
+  // §79), so one router now picks between four children instead of two routers
+  // picking between two each. Its children are unchanged and still asserted above.
+  for (const f of ['src/lib/views/Templates.svelte']) {
     it(`${f.split('/').pop()} is a router and correctly has none`, () => {
       const t = src(f);
       expect(t).not.toMatch(/<h[1-6][\s>]/);
-      expect(t).toMatch(switchedOn); // it really is just the switch
+      // It really is just the switch: a desk, then a mode within it.
+      expect(t).toMatch(/mode === 'editor'/);
+      expect(t).toMatch(/desk === 'themes'/);
     });
   }
 });

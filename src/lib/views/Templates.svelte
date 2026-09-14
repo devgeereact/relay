@@ -14,11 +14,18 @@
   // the Themes tab carried is still rendered, one press of the desk strip away,
   // which is what `node scripts/qa-inventory.mjs` is checked against.
   //
-  // ── The two modes, per desk ───────────────────────────────────────────────
-  // A GALLERY of everything and an EDITOR for one. The split is the same shape
-  // as Planner (build list vs one plan): a browse surface and a make surface
-  // want opposite layouts, so they are separate components rather than one
-  // screen doing both badly.
+  // ── Where the desk strip lives ────────────────────────────────────────────
+  // In the galleries, through the ONE shared `DeskStrip`, which both render and
+  // neither owns. This file is the router: it hears `on:desk` and writes the
+  // choice, and it renders no strip of its own — two strips would be two answers
+  // to "which desk am I on".
+  //
+  // ── The desk IS the session ───────────────────────────────────────────────
+  // The same way the active tab is: one direction, one source of truth, and a
+  // reload puts the operator back where they were. A local `let` mirrored back
+  // would be a second copy that the next `setSession` from anywhere overwrites.
+  // `migrateSession` sends an operator whose last session was the old Themes TAB
+  // to this workspace, on the Themes desk.
   //
   // Switching desk always lands on that desk's GALLERY. Coming back to a
   // half-finished editor an operator has navigated away from would restore a

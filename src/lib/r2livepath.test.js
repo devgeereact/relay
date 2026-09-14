@@ -314,17 +314,25 @@ describe('R2-G · the component-test apparatus is real', () => {
     expect(String(afterUpdate)).not.toBe('function afterUpdate() {}');
   });
 
-  it('…and it shows: mounting the run column really does reach the backend', async () => {
-    const LiveOutputRail = (await import('./views/library/LiveOutputRail.svelte')).default;
+  it('…and it shows: mounting a Library pane really does reach the backend', async () => {
+    // REPOINTED 2026-09-14. This mounted `LiveOutputRail` and asserted
+    // `list_output_channels`, because the Library's right column used to carry a
+    // programme monitor that polled the channel list. REBRAND §10 replaced that
+    // column with the item inspector (the monitor already had an owner in
+    // `Live.svelte`), so the old subject no longer makes that call — and the
+    // guard is about the RUNTIME, not about that one command.
+    //
+    // The claim is unchanged and so is its value: mount a real Library component
+    // and watch `onMount` actually reach the bridge. Under the SSR stubs Svelte 4
+    // hands out without `conditions: ['browser']`, this is zero calls, and the
+    // whole frontend suite passes by doing nothing.
+    const Inspector = (await import('./views/library/Inspector.svelte')).default;
     invoke.mockResolvedValue([]);
     const host = document.createElement('div');
     document.body.appendChild(host);
-    const app = new LiveOutputRail({ target: host, props: { queue: [] } });
+    const app = new Inspector({ target: host, props: { item: null } });
     await new Promise((r) => setTimeout(r, 20));
-    // Its onMount awaits `listOutputChannels()`. This used to be zero calls — so
-    // `channels` stayed `[]` in every test, and `monitorTemplate`, which decides
-    // WHICH screen the run column is showing you, was never exercised once.
-    expect(invoke.mock.calls.map((c) => c[0])).toContain('list_output_channels');
+    expect(invoke.mock.calls.map((c) => c[0])).toContain('list_plans');
     app.$destroy();
     host.remove();
   });

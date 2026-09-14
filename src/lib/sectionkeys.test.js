@@ -581,6 +581,12 @@ describe('a song joins a service through the plan', () => {
     './views/library/Browse.svelte',
     './views/library/VerseDeck.svelte',
     './views/library/LiveOutputRail.svelte',
+    // Added 2026-09-14 with the §10 rebuild. The inspector is where the two
+    // things you can do to a selected item now live, so it is exactly the
+    // surface a future "add the whole song" button would land on — and the rule
+    // it would break ("a song joins a service through the plan") is the sentence
+    // printed at the bottom of that pane.
+    './views/library/Inspector.svelte',
   ];
 
   it('the scanner can still see a control — it is not blind to its own subject', () => {

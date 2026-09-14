@@ -57,6 +57,46 @@
   /** Favourite stars only make sense where something can be favourited. */
   export let showStar = true;
 
+  /**
+   * WHAT ONE PRESS ON A CARD MEANS — and it is not the same answer everywhere.
+   *
+   * `'fire'` (the default, and what every caller did before this prop existed):
+   * the press puts the slide on the screens. That is right on a RUN surface,
+   * where the operator has already decided and the next action after finding a
+   * thing is always the same one.
+   *
+   * `'select'`: the press selects the card into the inspector and reaches no
+   * output at all; a DOUBLE press opens it (`onOpen`). That is right on a BUILD
+   * surface. `docs/REBRAND.md` §2 and §10 draw the line exactly there — single
+   * click goes to air on **Live**, and cues on the **Library** — and Relay
+   * already draws the same line at the top of the Planner, which says out loud
+   * that nothing on it can reach an output. The Library sits on the Planner's
+   * side of that line: browsing a songbook is not a decision about what a
+   * congregation reads next, and it should not cost the same press as one.
+   *
+   * The take is still ONE action from a selected item — the inspector's
+   * `Cue in Live`, and the kebab's `Take to screen`, both unchanged.
+   *
+   * No press timer. `slidegrid.js::pressArbiter` exists because on Live a single
+   * press is a take and a double must never fire one on its way past; here the
+   * single press is a selection, which costs nothing and is in fact what an
+   * operator wants before they open a card, so the two may both run.
+   */
+  export let press = 'fire';
+  /** The double press, in `select` mode. Open this item for editing. */
+  export let onOpen = () => {};
+  /** The single press, in `select` mode. */
+  export let onSelect = () => {};
+
+  $: selects = press === 'select';
+  /** What the primary press on a card does, said the same way in every label. */
+  const verb = (v, sel) =>
+    sel ? `Select ${v.label ?? v.reference}` : `Put ${v.reference} on the screens`;
+  function primary(v) {
+    if (selects) onSelect(v);
+    else onFire(v);
+  }
+
   let menuFor = '';
 
   /**
@@ -86,7 +126,10 @@
       if (e.key !== 'Enter') return;
       e.preventDefault();
       e.stopPropagation();
-      onFire(v);
+      // Enter does what the PRESS does on this surface, not what it does on the
+      // other one. A keyboard operator who has learned that clicking a Library
+      // card selects it must not find that Enter on the same card fires it.
+      primary(v);
     };
   }
 
@@ -111,10 +154,11 @@
         role="button"
         tabindex="0"
         data-verse={v.verse}
-        aria-label={$safeMode
+        aria-label={$safeMode && !selects
           ? `Safe mode — ${v.reference} cannot reach a screen`
-          : `Put ${v.reference} on the screens`}
-        on:click={() => onFire(v)}
+          : verb(v, selects)}
+        on:click={() => primary(v)}
+        on:dblclick={() => selects && onOpen(v)}
         on:keydown={rowKey(v)}>
         <span class="vd-n r-mono">{v.slideNo}</span>
         {#if v.media}
@@ -164,16 +208,33 @@
         class:reh={air && rehearsing}
         class:on={selectedRef === v.reference}
         class:checked={checked.has(v.reference)}>
-        <!-- CLICKING A CARD FIRES IT. The card is not a thumbnail to enlarge —
-             it is already the slide at a readable size, and the operator's next
-             action after finding it is always the same one. -->
+        <!-- WHAT CLICKING A CARD DOES DEPENDS ON WHICH SURFACE IT IS ON, and
+             both halves of that are deliberate.
+
+             `press="fire"` — the default, and what this deck did everywhere
+             until the Library was rebuilt. The card is not a thumbnail to
+             enlarge: it is already the slide at a readable size, and on a run
+             surface the operator's next action after finding it is always the
+             same one.
+
+             `press="select"` — the LIBRARY. One press selects the card into the
+             inspector and reaches no output; a double press opens it. The
+             Library is a build surface (REBRAND §2/§10: single click goes to
+             air on Live and cues on Library), and a congregation-facing act
+             should cost a deliberate press rather than the same press as
+             browsing. The take is still one action away — the inspector's
+             `Cue in Live`, and this card's own kebab.
+
+             Neither is "the right one". They are two surfaces with two jobs,
+             and the prop is what stops the next person having to guess which. -->
         <button
           class="vd-shot r-focus"
-          disabled={$safeMode}
-          aria-label={$safeMode
+          disabled={$safeMode && !selects}
+          aria-label={$safeMode && !selects
             ? `Safe mode — ${v.reference} cannot reach a screen`
-            : `Put ${v.reference} on the screens`}
-          on:click={() => onFire(v)}>
+            : verb(v, selects)}
+          on:click={() => primary(v)}
+          on:dblclick={() => selects && onOpen(v)}>
           {#if v.media}
             <!-- A picture or a video is its own thumbnail. Drawing it through a
                  text template would show an empty frame with a filename under it. -->
@@ -207,7 +268,10 @@
               {v.text}
             </span>
           {/if}
-          <span class="vd-go">Go live →</span>
+          <!-- The hover legend says what the press WILL do. It read "Go live →"
+               over a press that selects, which is the one sentence this deck may
+               not get wrong. -->
+          <span class="vd-go">{selects ? 'Open ⤢' : 'Go live →'}</span>
         </button>
 
         <!-- The label wrapping this box is EMPTY (it only carries the drawn tick),

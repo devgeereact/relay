@@ -58,10 +58,17 @@
     {/each}
   </div>
 
-  <!-- The views inside the open collection. Rendered only when there is a real
-       choice: scripture is a Bible you read AND the verses you saved, media is
-       the moving half and the still half. The other two hold one pane each. -->
+  <!-- The views inside the open collection, ON THE SAME LINE as the collections.
+       They used to sit on a row of their own, and that row was the second of
+       FOUR stacked above the first item an operator could see. A choice between
+       two panes of one collection is a refinement of the chip beside it, not a
+       tier of navigation — so it reads as one, the way a breadcrumb does.
+
+       Rendered only when there is a real choice: scripture is a Bible you read
+       AND the verses you saved, media is the moving half and the still half. The
+       other two hold one pane each. -->
   {#if open.views.length > 1}
+    <span class="cr-sep" aria-hidden="true"></span>
     <div class="cr-views" role="tablist" aria-label="{open.label} views">
       {#each open.views as v (v.key)}
         <button
@@ -77,8 +84,10 @@
 </div>
 
 <style>
-  .cr { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+  /* ONE ROW. Collections, then a hairline, then the views inside the open one. */
+  .cr { display: flex; align-items: center; gap: 8px; min-width: 0; flex-wrap: wrap; }
   .cr-row { display: flex; gap: 8px; flex-wrap: wrap; }
+  .cr-sep { width: 1px; height: 20px; background: var(--v-line2); flex: 0 0 auto; }
 
   /* Square-shouldered, 3px like everything else on this desk. No pills. */
   .cr-c {

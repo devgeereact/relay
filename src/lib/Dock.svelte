@@ -3,16 +3,25 @@
   // same on every workspace, because these four things are true of the room
   // rather than of whatever you happen to be looking at:
   //
-  //   Live audio       is the microphone hearing anything
+  //   Live audio       what the microphone is hearing, and the two decisions
+  //                    about that signal
   //   Live transcript  what it heard, as it hears it
   //   Quick tools      the three things that change during a service
-  //   Controls         the four that change what a congregation sees
+  //   Controls         the ones that change what a congregation sees
   //
   // It lives in the shell rather than inside Live, which is the point: an
   // operator editing a template still needs to see the level and still needs
   // Clear screens within one reach. Hunting for a panic control through a
   // workspace switch is the failure this prevents.
-  import { onDestroy } from 'svelte';
+  //
+  // ── FOUR EQUAL CARDS ON A TROUGH ───────────────────────────────────────────
+  //
+  // The four are one height (178px) and one rhythm: a head with a grip, a mono
+  // caption and a right-hand meta slot, then a body that scrolls inside itself.
+  // They sit on a darker ground with 1px seams between them rather than flush to
+  // the desk — the row reads as four instruments in a rack, which is what they
+  // are, instead of four differently-sized panels that happen to be adjacent.
+  import { onDestroy, onMount } from 'svelte';
   import {
     capture,
     meter,
@@ -25,6 +34,8 @@
     blackScreen,
     setRehearsal,
     setDetection,
+    getSensitivity,
+    setSensitivity,
     startCountdown,
     adjustCountdown,
     countdownRemaining,
@@ -32,6 +43,7 @@
     stageAlert,
   } from './stores/capture.js';
   import { humanError } from './errors.js';
+  import { rangeFill } from './rangefill.js';
   import { formatCountdown } from './layers.js';
   import {
     countdownSet,
@@ -41,14 +53,19 @@
     fieldsFromMs,
   } from './countdown.js';
 
-  const SEGS = 24;
-  const SEG_ARR = Array.from({ length: SEGS });
   $: lvl = Math.max(0, Math.min(1, $meter.level ?? 0));
-  $: litSegs = Math.round(lvl * SEGS);
   $: dbLabel = lvl > 0.0001 ? `${Math.round(20 * Math.log10(lvl))} dB` : '−∞ dB';
 
   // The last few lines, newest at the bottom, plus whatever is still being said.
   $: lines = $transcript.finals.slice(-4);
+  // What the transcript is being produced BY. Not a decoration: the language is
+  // re-elected every window on accented speech (`stt://language_unstable`), and
+  // "local" is the offline-first promise stated where an operator can see it.
+  // With no model loaded it says so — the alternative reads identically to a
+  // working recogniser that simply has not heard anything yet (rule 35).
+  $: trMeta = $capture.stt?.loaded
+    ? `local · ${$capture.detectedLang || $capture.stt?.language || 'auto'}`
+    : 'no model';
 
   let busy = false;
   let err = '';
@@ -65,6 +82,136 @@
     busy = false;
   }
 
+  // ── LIVE AUDIO · THE WAVEFORM ──────────────────────────────────────────────
+  //
+  // A meter says how loud; a waveform says what the microphone has been hearing,
+  // which is the question an operator is actually asking when the AI goes quiet.
+  // It is the REAL envelope: one sample per `audio://chunk`, which arrives every
+  // 200 ms hop, so the trace is about 38 seconds of the CLEANED stream — the same
+  // signal the voice gate and whisper see.
+  //
+  // ── WHAT IS DELIBERATELY NOT DRAWN ─────────────────────────────────────────
+  //
+  // The prototype draws the sensitivity gate as a dashed line across the trace.
+  // Relay must not: rule 12 (DECISIONS §19) says audio levels are LEARNED and
+  // nothing may compare a signal to an absolute level. A line at a fixed height
+  // would draw the voice gate as a threshold it is not, and the one time that
+  // picture would matter — a quiet preacher on a church laptop — it would be
+  // wrong in exactly the way that made Relay silently deaf. `$meter.isVoice` is
+  // the gate's own answer and it is the chip in the head, in words.
+  //
+  // There is no animation loop: it repaints when the data moves and at no other
+  // time, so reduced motion needs no special case and an idle console costs
+  // nothing.
+  const WN = 190;
+  let wave = new Array(WN).fill(0);
+  let cv = null;
+  let cw = 0;
+  let ch = 0;
+
+  /** Push one measured level and repaint. Nothing here interpolates or invents. */
+  function pushSample(v) {
+    wave = [...wave.slice(1), v];
+    draw();
+  }
+  // A plain reactive statement, never `tick()` — re-entering Svelte's scheduler
+  // from a `$:` block infinite-loops the webview's JS thread (rule 1).
+  $: pushSample(lvl);
+
+  function sizeCanvas() {
+    if (!cv) return;
+    const r = cv.getBoundingClientRect();
+    const d = (typeof window !== 'undefined' && window.devicePixelRatio) || 1;
+    cw = Math.max(1, Math.round(r.width));
+    ch = Math.max(28, Math.round(r.height));
+    cv.width = Math.round(cw * d);
+    cv.height = Math.round(ch * d);
+    const cx = cv.getContext('2d');
+    if (cx) cx.setTransform(d, 0, 0, d, 0, 0);
+    draw();
+  }
+
+  function draw() {
+    if (!cv || !cw) return;
+    const cx = cv.getContext('2d');
+    if (!cx) return;
+    const mid = ch / 2;
+    cx.clearRect(0, 0, cw, ch);
+    // ONE mirrored envelope rather than 190 separate bars: a trace reads as a
+    // signal, a picket fence reads as a chart.
+    const step = cw / (WN - 1);
+    cx.beginPath();
+    cx.moveTo(0, mid - wave[0] * mid * 0.94);
+    for (let i = 1; i < WN; i++) {
+      cx.quadraticCurveTo((i - 1) * step + step / 2, mid - wave[i - 1] * mid * 0.94, i * step, mid - wave[i] * mid * 0.94);
+    }
+    for (let i = WN - 1; i >= 0; i--) cx.lineTo(i * step, mid + wave[i] * mid * 0.94);
+    cx.closePath();
+    const g = cx.createLinearGradient(0, 0, cw, 0);
+    g.addColorStop(0, 'rgba(63,207,106,.10)');
+    g.addColorStop(0.72, 'rgba(63,207,106,.34)');
+    g.addColorStop(1, 'rgba(63,207,106,.62)');
+    cx.fillStyle = g;
+    cx.fill();
+    cx.strokeStyle = 'rgba(63,207,106,.85)';
+    cx.lineWidth = 1.1;
+    cx.stroke();
+    cx.strokeStyle = 'rgba(232,234,238,.09)';
+    cx.lineWidth = 1;
+    cx.beginPath();
+    cx.moveTo(0, mid);
+    cx.lineTo(cw, mid);
+    cx.stroke();
+  }
+
+  // ── THE SENSITIVITY DIAL, BESIDE THE SIGNAL IT IS ABOUT ────────────────────
+  //
+  // The one operator dial (DECISIONS §26), read from and written to the live
+  // thresholds in Rust — there is exactly one forward mapping and one inverse,
+  // and neither lives here. `setSensitivity` THROWS (group 1), so a dial that did
+  // not take says so and then shows what the engine actually holds, rather than
+  // leaving the thumb where the operator dragged it.
+  //
+  // ── AND IT MUST NOT SHOW A NUMBER NOBODY SET ───────────────────────────────
+  //
+  // `getSensitivity` is GROUP 2 (it swallows) and returns **50** when there is no
+  // backend — which is also a perfectly ordinary real setting, so the reading
+  // alone cannot tell "the engine says 50" from "there is no engine". That is
+  // rule 35 on the one control governing what the AI may put on a wall unasked;
+  // `setSensitivity` was repaired for exactly this reason and its reader was not
+  // (recorded in the review note — `capture.js` is another agent's file).
+  //
+  // What this card CAN do without reaching into that file is refuse to claim a
+  // value while the bridge is not attached at all, which is the case an operator
+  // actually meets. `$capture.available` is that fact.
+  let sensitivity = 50;
+  let sensRead = false;
+  $: sensReadable = sensRead && $capture.available;
+  onMount(async () => {
+    sizeCanvas();
+    try {
+      sensitivity = await getSensitivity();
+      sensRead = true;
+    } catch {
+      sensRead = false;
+    }
+  });
+  async function onSensitivity(v) {
+    sensitivity = v;
+    err = '';
+    try {
+      const landed = await setSensitivity(v);
+      if (Number.isFinite(landed)) sensitivity = landed;
+    } catch (e) {
+      try {
+        sensitivity = await getSensitivity();
+      } catch {
+        /* the dial is already disabled in this case */
+      }
+      err = `Sensitivity stayed at ${sensitivity} — ${humanError(e)}`;
+    }
+  }
+
   // ── QUICK TOOLS · THE COUNTDOWN (docs/REBRAND.md §7) ─────────────────────
   //
   // One timer, one formatter. The figure below is `formatCountdown` reading the
@@ -75,7 +222,9 @@
   // The SET duration lives in `countdown.js`, at module scope, because this
   // component is `{#if !liveFullscreen}<Dock />{/if}` in the shell: pressing Full
   // screen destroys it. A component-local `let` would silently lose whatever the
-  // operator had typed, mid-service.
+  // operator had typed, mid-service. (The waveform history above is deliberately
+  // NOT module scope: 38 seconds of trace is a picture, not something an operator
+  // typed, and it redraws itself within a breath.)
   $: cdFields = fieldsFromMs($countdownSet);
   let nowTick = Date.now();
   const cdTimer = setInterval(() => (nowTick = Date.now()), 500);
@@ -126,7 +275,7 @@
     stageMsg = '';
   });
 
-  // The four controls. `clearScreens` and `blackScreen` return a BOOLEAN and set
+  // The controls. `clearScreens` and `blackScreen` return a BOOLEAN and set
   // `panicError` themselves — they are called from a global key handler as well
   // as from here, and neither caller can catch (rule 15). So they are not run
   // through `run()`: their failure is already on the shell's panic banner.
@@ -134,22 +283,69 @@
   const doBlack = () => blackScreen();
 </script>
 
+<svelte:window on:resize={sizeCanvas} />
+
 <section class="dock" aria-label="Dock">
   <div class="dpanel">
-    <span class="dk">Live audio</span>
-    <div class="dbody arow">
-      <span class="meter" aria-hidden="true">
-        {#each SEG_ARR as _, i}
-          <i class="sg" class:on={i < litSegs} class:mid={i >= 15 && i < 20} class:hot={i >= 20}></i>
-        {/each}
-      </span>
-      <span class="db r-mono">{dbLabel}</span>
+    <div class="dhead">
+      <span class="grip" aria-hidden="true"><i></i><i></i><i></i></span>
+      <span class="dk">Live audio</span>
+      <span class="dspring"></span>
       <span class="vad r-mono" class:on={$meter.isVoice}>{$meter.isVoice ? 'VOICE' : 'quiet'}</span>
+      <span class="db r-mono">{dbLabel}</span>
+    </div>
+    <div class="dbody audbody">
+      <div class="wavewrap">
+        <!-- The trace itself carries no information a screen reader can use; the
+             two facts it illustrates are the VOICE chip and the dB figure in the
+             head, both of which are text. -->
+        <canvas class="wave" bind:this={cv} aria-hidden="true"></canvas>
+        <span class="wavescale" aria-hidden="true"></span>
+        <!-- `INPUT`, and no sample rate. The rate IS on the bridge (`audio://chunk`
+             carries `sample_rate`) but the console's meter store drops it, so
+             printing "48 kHz" here would be a constant that reads the same on a
+             device running at 16 — which is the state that silently switches the
+             denoiser off. Named in the review note rather than guessed at. -->
+        <span class="wavelbl r-mono" aria-hidden="true">INPUT</span>
+      </div>
+      <!-- THE TWO DECISIONS ABOUT THIS SIGNAL, beside the signal. Both used to be
+           three panels away — sensitivity on Live, detection in the Controls card
+           — and both are answers to "what should Relay do with what it is
+           hearing", which is the question this card is asking. -->
+      <div class="audrow">
+        <span class="dcap">Sens</span>
+        <input
+          class="r-range"
+          type="range"
+          min="0"
+          max="100"
+          step="1"
+          value={sensitivity}
+          disabled={!sensReadable}
+          aria-label="Detection sensitivity"
+          use:rangeFill={sensitivity}
+          on:input={(e) => onSensitivity(+e.target.value)} />
+        <span class="sensv r-mono">{sensReadable ? sensitivity : '—'}</span>
+        <button
+          class="r-switch"
+          class:on={$detectionOn}
+          role="switch"
+          aria-checked={$detectionOn}
+          aria-label="Detection"
+          disabled={busy || !$capture.available}
+          on:click={() => run(() => setDetection(!$detectionOn))}></button>
+        <span class="dcap detl">{$detectionOn ? 'armed' : 'off'}</span>
+      </div>
     </div>
   </div>
 
   <div class="dpanel">
-    <span class="dk">Live transcript</span>
+    <div class="dhead">
+      <span class="grip" aria-hidden="true"><i></i><i></i><i></i></span>
+      <span class="dk">Live transcript</span>
+      <span class="dspring"></span>
+      <span class="dmeta r-mono">{trMeta}</span>
+    </div>
     <div class="dbody tbody r-scroll">
       {#each lines as l}
         <p class="tl">{l}</p>
@@ -164,8 +360,15 @@
   </div>
 
   <div class="dpanel">
-    <span class="dk">Quick tools</span>
-    <div class="dbody tools">
+    <div class="dhead">
+      <span class="grip" aria-hidden="true"><i></i><i></i><i></i></span>
+      <span class="dk">Quick tools</span>
+      <span class="dspring"></span>
+      <!-- The meta slot says whether the one thing in this card that can reach a
+           screen is currently on one. Nothing else here claims anything. -->
+      {#if $stageAlert}<span class="dmeta on-stage r-mono">ON STAGE</span>{/if}
+    </div>
+    <div class="dbody tools r-scroll">
       <!-- THE COUNTDOWN, WITH ITS TRANSPORT (docs/REBRAND.md §7). hh : mm : ss,
            then Start · Reset · ±1 · Clear. The figure on the right is the one on
            the wall — same field, same formatter — not a second clock. -->
@@ -218,51 +421,62 @@
   </div>
 
   <div class="dpanel">
-    <span class="dk">Controls</span>
-    <!-- FOUR CONTROLS, FOUR COLOURS, NONE SHARED — because the two most
-         consequential buttons in the room used to look alike.
-         Clear screens red, Blackout black with a hairline, Rehearse amethyst,
-         Detection cyan.
-         NOT the same four as docs/REBRAND.md §1, and the difference is deliberate
-         rather than an oversight. §1's fourth is "Go Live green → End service
-         amber (it owns the on-air session)". Relay has no honest state to drive
-         that pair: `start_service` is called from `startCapture`, `end_service`
-         only from Library → History, and the frontend has no way to ASK whether a
-         service is recording — `current_service` was deliberately deleted
-         (CLAUDE.md, "No dead-but-built commands"). A Go Live / End service button
-         driven by a frontend flag would read "Go Live" after a console crash while
-         the service was still open in the database: a status control that cannot
-         detect its own failure, which is rule 35. Detection on/off is what is here
-         instead, and it answers for itself. -->
-    <div class="dbody r-ctl">
-      <button class="r-cbtn danger" on:click={doClear} disabled={!$capture.available}>Clear screens</button>
-      <button class="r-cbtn black" data-on={$screenBlack ? '1' : '0'} on:click={doBlack} disabled={!$capture.available}>
-        {$screenBlack ? 'Black — restore' : 'Blackout'}
-      </button>
-      <button
-        class="r-cbtn rehearse"
-        data-on={$rehearsing ? '1' : '0'}
-        on:click={() => run(() => setRehearsal(!$rehearsing))}
-        disabled={busy || !$capture.available}
-      >{$rehearsing ? 'Rehearsing' : 'Rehearse'}</button>
-      <button
-        class="r-cbtn"
-        on:click={() => run(() => setDetection(!$detectionOn))}
-        disabled={busy || !$capture.available}
-      >Detection {$detectionOn ? 'on' : 'off'}</button>
+    <div class="dhead">
+      <span class="grip" aria-hidden="true"><i></i><i></i><i></i></span>
+      <span class="dk">Controls</span>
+    </div>
+    <!-- THREE CONTROLS, THREE COLOURS, NONE SHARED — because the two most
+         consequential buttons in the room used to look alike. Clear screens red
+         and full width, Blackout black with a hairline, Rehearse amethyst.
+         Detection moved one card left, to sit with the signal it is about; it was
+         never a control over what a congregation sees, which is what this card
+         is for.
+
+         NOT the same set as docs/REBRAND.md §1 and the prototype, and the
+         difference is deliberate rather than an oversight. Both have a fourth:
+         "Go Live green → End service amber (it owns the on-air session)". Relay
+         has no honest state to drive that pair. `start_service` is called from
+         `startCapture`, `end_service` only from the service history, and the
+         frontend has no way to ASK whether a service is recording —
+         `current_service` was deliberately deleted (CLAUDE.md, "No dead-but-built
+         commands"). A Go Live / End service button driven by a frontend flag
+         would read "Go Live" after a console crash while the service was still
+         open in the database: a status control that cannot detect its own
+         failure, which is rule 35 and beats the spec.
+
+         This card NEVER scrolls. The buttons stretch to fill whatever height the
+         card has, so an operator can never have to scroll to reach Clear screens
+         (rule 15's neighbourhood). -->
+    <div class="dbody ctlbody">
+      <div class="r-ctl">
+        <button class="r-cbtn danger wide" on:click={doClear} disabled={!$capture.available}>Clear screens</button>
+        <button class="r-cbtn black" data-on={$screenBlack ? '1' : '0'} on:click={doBlack} disabled={!$capture.available}>
+          {$screenBlack ? 'Black — restore' : 'Blackout'}
+        </button>
+        <button
+          class="r-cbtn rehearse"
+          data-on={$rehearsing ? '1' : '0'}
+          on:click={() => run(() => setRehearsal(!$rehearsing))}
+          disabled={busy || !$capture.available}
+        >{$rehearsing ? 'Rehearsing' : 'Rehearse'}</button>
+      </div>
     </div>
   </div>
 </section>
 
 <style>
-  /* Fixed height, four columns, and every panel scrolls inside itself — the dock
-     may never grow and take the desk with it. */
+  /* FOUR EQUAL CARDS ON A TROUGH. The row is a fixed 178px (docs/REBRAND.md §2 —
+     measured on the prototype, not sketched) and the `gap:1px` over a darker
+     ground IS the seam: four instruments in a rack, not four adjacent panels.
+     Every card scrolls inside itself; the dock may never grow and take the desk
+     with it. */
   .dock {
     flex: 0 0 auto;
-    height: 152px;
+    height: 178px;
     display: grid;
-    grid-template-columns: minmax(0, 1.1fr) minmax(0, 1.4fr) minmax(0, 1.2fr) minmax(0, 1fr);
-    background: var(--v-bg);
+    grid-template-columns: minmax(0, 1.25fr) minmax(0, 1.5fr) minmax(0, 1.1fr) minmax(0, 1fr);
+    gap: 1px;
+    background: var(--v-rule);
     border-top: 1px solid var(--v-rule);
     min-height: 0;
   }
@@ -271,10 +485,26 @@
     flex-direction: column;
     min-width: 0;
     min-height: 0;
-    border-right: 1px solid var(--v-rule);
-    padding: 6px 9px 8px;
+    background: var(--v-bg);
   }
-  .dpanel:last-child { border-right: 0; }
+  /* The head is its own band on the darker surface, so the four captions line up
+     across the row whatever is underneath them. */
+  .dhead {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 26px;
+    padding: 3px 9px;
+    background: var(--v-surf);
+    border-bottom: 1px solid var(--v-rule);
+  }
+  .dspring { flex: 1; min-width: 0; }
+  /* The grip. It does not drag anything and does not pretend to: it is the
+     furniture that says "this is a dock panel", the same mark OBS and every desk
+     in this genre uses, and it is `aria-hidden` because it is not a control. */
+  .grip { display: flex; flex-direction: column; gap: 2px; opacity: .4; flex: 0 0 auto; }
+  .grip i { width: 9px; height: 1px; background: var(--v-dim); display: block; }
   .dk {
     font-family: var(--f-mono);
     font-size: var(--v-fs-cap);
@@ -282,25 +512,46 @@
     letter-spacing: var(--v-tr-caps);
     text-transform: uppercase;
     color: var(--v-faint);
-    margin-bottom: 6px;
     flex: 0 0 auto;
   }
-  .dbody { flex: 1 1 0; min-height: 0; }
-
-  .arow { display: flex; align-items: center; gap: 8px; }
-  .meter { display: flex; gap: 2px; flex: 1; min-width: 0; }
-  .sg {
-    flex: 1;
-    height: 16px;
-    min-width: 2px;
-    border-radius: 1px;
-    background: var(--v-surf3);
+  /* The right-hand meta slot: one short fact about this card, in the head, where
+     the eye already is. Truncates rather than wrapping — a wrapped head would
+     change the card's height and break the row's rhythm. */
+  .dmeta {
+    flex: 0 1 auto; min-width: 0; font-size: var(--v-fs-cap); color: var(--v-faint);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
-  .sg.on { background: var(--v-emerald); }
-  .sg.on.mid { background: var(--v-amber); }
-  .sg.on.hot { background: var(--v-red); }
-  .db { font-size: var(--v-fs-cap); color: var(--v-dim); flex: 0 0 auto; }
+  .dmeta.on-stage {
+    color: var(--v-red); font-weight: 600; letter-spacing: var(--v-tr-caps);
+  }
+  .dbody { flex: 1 1 0; min-height: 0; padding: 8px 9px; }
+
+  .audbody { display: flex; flex-direction: column; gap: 7px; }
+  .wavewrap {
+    position: relative; flex: 1 1 auto; min-height: 44px;
+    border: 1px solid var(--v-rule); border-radius: var(--v-r-sm);
+    background: linear-gradient(180deg, #0F1116, #0A0B0E); overflow: hidden;
+  }
+  .wave { display: block; width: 100%; height: 100%; }
+  .wavescale {
+    position: absolute; inset: 0; pointer-events: none;
+    background: repeating-linear-gradient(90deg, rgba(190,205,235,.035) 0 1px, transparent 1px 46px);
+  }
+  .wavelbl {
+    position: absolute; left: 8px; top: 5px; font-size: 8.5px;
+    letter-spacing: .09em; color: var(--v-faint); pointer-events: none;
+  }
+  .audrow { display: flex; align-items: center; gap: 7px; flex: 0 0 auto; }
+  .audrow :global(input[type='range']) { flex: 1 1 auto; min-width: 0; }
+  .dcap {
+    flex: 0 0 auto; font-family: var(--f-mono); font-size: var(--v-fs-cap);
+    letter-spacing: var(--v-tr-caps); color: var(--v-faint);
+  }
+  .dcap.detl { min-width: 34px; }
+  .sensv { flex: 0 0 auto; min-width: 18px; text-align: right; font-size: var(--v-fs-cap); color: var(--v-dim); }
+  .db { flex: 0 0 auto; font-size: var(--v-fs-cap); color: var(--v-dim); }
   .vad {
+    flex: 0 0 auto;
     font-size: 8.5px; font-weight: 600; letter-spacing: var(--v-tr-caps);
     text-transform: uppercase; padding: 2px 6px; border-radius: var(--v-r-sm);
     /* --v-dim, not --v-faint: muted text on --v-surf3 is 3.79:1, below AA, and
@@ -316,7 +567,7 @@
   .tl.part { color: var(--v-sel); }
   .tl.empty { color: var(--v-faint); font-family: var(--f-mono); font-size: var(--v-fs-cap); }
 
-  .tools { display: flex; flex-direction: column; gap: 6px; justify-content: flex-start; }
+  .tools { display: flex; flex-direction: column; gap: 6px; justify-content: flex-start; overflow-y: auto; }
   .trow { display: flex; align-items: center; gap: 6px; font-size: var(--v-fs-b2); color: var(--v-dim); }
   .trow > span { flex: 0 0 auto; min-width: 74px; }
   .spring { flex: 1 1 auto; min-width: 0 !important; }
@@ -351,5 +602,10 @@
   .tin.wide { flex: 1 1 auto; width: auto; min-width: 0; }
   .derr { margin: 0; font-size: var(--v-fs-cap); color: var(--v-red); }
 
-  .r-ctl { align-content: start; gap: 5px; }
+  /* The controls card takes the height it is given and divides it among the
+     buttons. `overflow:hidden`, not `auto`: a panic control that can be scrolled
+     out of reach is a panic control that will be, exactly once, on a Sunday. */
+  .ctlbody { display: flex; flex-direction: column; overflow: hidden; }
+  .ctlbody .r-ctl { flex: 1; align-content: stretch; grid-auto-rows: 1fr; gap: 5px; }
+  .ctlbody :global(.r-cbtn) { height: auto; min-height: 32px; }
 </style>

@@ -360,6 +360,44 @@ export const FAULT_WORD = {
 };
 
 /**
+ * REPORTING — does this screen still answer for itself, and when did it last?
+ *
+ * The Outputs inspector's own row (docs/REBRAND.md §5: `Type · Transport · Output
+ * · URL · Reporting`). It lives HERE, beside `screenFault` and `describeScreen`,
+ * for the reason rule 35 keeps giving: a word about a screen's health composed
+ * inside a component is a word no other surface can be held to, and the inspector
+ * already carried two of them written out by hand — a ternary chain for the
+ * header badge and a second one for "Screen says", neither of which any test
+ * could reach without mounting the view.
+ *
+ * `word` answers "is it reporting?" and `note` is the evidence — Relay's own
+ * claim and the screen's own claim side by side, because when the two disagree
+ * that disagreement IS the finding.
+ *
+ * `never` is not `no`. One is "attached, and has never once said it was
+ * painting"; the other is "nothing is attached to ask". They want different
+ * repairs, and collapsing them into one reassuring word is rule 35 exactly.
+ *
+ * @param st the channel's `ChannelLiveness` row, or null before the first poll
+ */
+export function screenReporting(st) {
+  const fault = screenFault(st);
+  if (fault === 'unknown') return { word: '—', note: '' };
+  if (fault === 'unsupported') return { word: '—', note: st.detail ?? '' };
+  if (fault === 'offline') return { word: 'no', note: st.detail ?? 'nothing is attached' };
+  if (fault === 'never')
+    return { word: 'never', note: 'attached, and has never reported painting' };
+  if (fault === 'silent')
+    return { word: 'stopped', note: `last answered ${Math.round(st.last_beat_ms / 1000)}s ago` };
+  return {
+    word: 'yes',
+    note: st.paint_state
+      ? `screen: ${st.paint_state} · ${Math.round((st.last_beat_ms ?? 0) / 1000)}s ago`
+      : '',
+  };
+}
+
+/**
  * The plain-language word for a screen's render target.
  *
  * ONE definition, because two surfaces name the same thing: the Outputs table's

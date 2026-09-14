@@ -136,7 +136,13 @@ describe('where a session lands', () => {
 // Nothing could catch that, because App.svelte is not unit-testable and the map
 // was not a value. It is now both.
 describe('a tab that moved sends the operator where it went', () => {
-  const KNOWN = ['live', 'channels', 'templates', 'themes', 'library', 'planner', 'settings', 'help'];
+  // `KNOWN` is what App.svelte calls `routes`: the six workspaces in the strip,
+  // plus Help, which is reachable from inside Settings but is not a workspace.
+  // Handing the resolver the STRIP alone would bounce Settings' two "Open Help"
+  // buttons straight back to Live — a control that looks like it worked and did
+  // nothing — so the two lists are deliberately different and this is the one the
+  // resolver is given.
+  const KNOWN = ['live', 'library', 'planner', 'templates', 'channels', 'settings', 'help'];
 
   it('sends each relocated surface to the tab that absorbed it', async () => {
     const { resolveActiveTab } = await import('./session.js?tabs1');
@@ -145,6 +151,20 @@ describe('a tab that moved sends the operator where it went', () => {
     // Both became sections INSIDE Settings.
     expect(resolveActiveTab('dashboard', KNOWN)).toBe('settings');
     expect(resolveActiveTab('history', KNOWN)).toBe('settings');
+    // Themes became a DESK inside the Templates workspace (docs/REBRAND.md §2).
+    // Without the map entry an operator who was last on Themes lands on Live and
+    // has no reason to believe the surface still exists.
+    expect(resolveActiveTab('themes', KNOWN)).toBe('templates');
+  });
+
+  // HELP LEFT THE STRIP AND IS NOT A REDIRECT. It did not move anywhere, so it is
+  // deliberately absent from `MOVED_TABS`: an operator whose session remembers
+  // Help must land on Help. This is the assertion that makes "off the strip" and
+  // "unreachable" two different things.
+  it('keeps Help reachable even though it is not a workspace', async () => {
+    const { resolveActiveTab, MOVED_TABS } = await import('./session.js?tabs5');
+    expect(resolveActiveTab('help', KNOWN)).toBe('help');
+    expect(MOVED_TABS).not.toHaveProperty('help');
   });
 
   it('leaves a tab that still exists alone', async () => {
@@ -169,5 +189,26 @@ describe('a tab that moved sends the operator where it went', () => {
     for (const [from, to] of Object.entries(MOVED_TABS)) {
       expect(KNOWN, `${from} redirects to '${to}', which is not a tab`).toContain(to);
     }
+  });
+
+  // ── The desk, not just the workspace ──────────────────────────────────────
+  //
+  // `MOVED_TABS` gets somebody who was on the old Themes tab into the Templates
+  // WORKSPACE. That workspace has two desks, and landing on the wrong one reads
+  // exactly like the surface having been deleted — which is the failure the whole
+  // redirect exists to prevent, one level deeper. `migrateSession` is the half
+  // that answers "which desk", and it is pure so it can be asserted here.
+  it('somebody last on the Themes tab lands on the Themes desk', async () => {
+    const { migrateSession } = await import('./session.js?desk1');
+    expect(migrateSession({ activeTab: 'themes', templatesDesk: 'templates' }).templatesDesk).toBe('themes');
+  });
+
+  it('leaves a session that never saw the old tab alone', async () => {
+    const { migrateSession } = await import('./session.js?desk2');
+    // The whole point of a migration is that it is a no-op for everyone else.
+    const fresh = { activeTab: 'live', templatesDesk: 'templates' };
+    expect(migrateSession(fresh)).toEqual(fresh);
+    const chosen = { activeTab: 'templates', templatesDesk: 'themes' };
+    expect(migrateSession(chosen)).toEqual(chosen);
   });
 });

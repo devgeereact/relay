@@ -27,6 +27,40 @@
   export let query = '';
   export let queue = [];
   export let onQueueChange = () => {};
+  /** Hand the selected verse up for the inspector (REBRAND §10). */
+  export let onSelect = () => {};
+
+  /**
+   * ONE PRESS SELECTS — see the note on `VerseDeck`'s `press` prop. The Library
+   * is a build surface; the take is the inspector's `Cue in Live` and the card's
+   * own kebab. A SAVED VERSE IS SCRIPTURE, so the reference is content and rides
+   * to the preview (DECISIONS §73).
+   */
+  let selectedRef = '';
+  function selectVerse(v) {
+    selectedRef = v.reference;
+    onSelect({
+      kind: 'scripture',
+      title: v.reference,
+      titleLabel: 'Reference',
+      translation: v.translation ?? null,
+      words: v.text ?? '',
+      slide: { reference: v.reference, text: v.text ?? '', translation: v.translation ?? null },
+      reference: v.reference,
+      plan: {
+        cueType: 'scripture',
+        label: v.reference,
+        payload: {
+          book: v.book,
+          chapter: v.chapter,
+          verse: v.verse,
+          reference: v.reference,
+          text: v.text,
+          translation: v.translation,
+        },
+      },
+    });
+  }
 
   let saved = [];
   let results = [];
@@ -277,6 +311,9 @@
           {queuedRefs}
           busyRef={firing}
           {layout}
+          press="select"
+          {selectedRef}
+          onSelect={selectVerse}
           onCheck={toggleCheck}
           onFire={fire}
           onQueue={toggleQueue}
