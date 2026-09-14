@@ -227,10 +227,27 @@ export function stepFrom(items, cueId, slideIdx, dir) {
 /**
  * Group an ordered cue list into the sections the Planner draws.
  *
- * A cue carrying a `section_title` BEGINS a section; the section runs until the
- * next cue that carries one. Cues before the first titled cue belong to an
- * untitled leading group (`title: ''`) — a plan is not required to start with a
- * heading, and dropping those cues on the floor would hide them from the operator.
+ * A SECTION BEGINS WHERE THE SECTION CHANGES. A cue whose `section_title` is
+ * empty continues the section above it, and so does one that repeats the title
+ * already open — which is the correction this function needed.
+ *
+ * The rule used to be "any cue carrying a title begins a section", which is the
+ * convention `db/plans.rs` documents and exactly one of the two the data uses.
+ * The other is the obvious one: every cue records the section it is IN, which is
+ * how a plan looks after an import, after a duplicate, and after an operator has
+ * typed the same heading into two consecutive cues. Under the old rule that plan
+ * became one group per cue, and the running order rendered EIGHT headings over
+ * eight cues — `GATHERING / Welcome & notices`, `GATHERING / Great Is Thy
+ * Faithfulness` — for a service with four sections in it. A heading that repeats
+ * on every row is not a heading; it is a column, and a noisy one.
+ *
+ * Comparing against the OPEN GROUP rather than against the previous row is what
+ * makes both conventions land on the same four groups: a run of empty titles does
+ * not close the section, so a titled cue after one of them is still inside it.
+ *
+ * Cues before the first titled cue belong to an untitled leading group
+ * (`title: ''`) — a plan is not required to start with a heading, and dropping
+ * those cues on the floor would hide them from the operator.
  *
  * Returns `[{ title, items, seconds, timed }]`, where `seconds` totals only the
  * cues that have a duration and `timed` says whether every cue in the section had
@@ -240,8 +257,9 @@ export function sectionsOf(items) {
   const out = [];
   for (const it of items ?? []) {
     const title = (it.section_title || '').trim();
-    if (title || out.length === 0) {
-      out.push({ title: out.length === 0 && !title ? '' : title, items: [], seconds: 0, timed: true });
+    const open = out[out.length - 1];
+    if (!open || (title && title !== open.title)) {
+      out.push({ title, items: [], seconds: 0, timed: true });
     }
     const sec = out[out.length - 1];
     sec.items.push(it);
