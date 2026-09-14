@@ -3680,6 +3680,18 @@ shell drops the `themes` entry**, and it says so in its own first paragraph: lef
 component nothing renders, and an orphan is how a surface stops being covered while its tests stay
 green.
 
+**Which desk you were on lives in the SESSION, not in a local `let`.** The shell mounts a workspace
+with no props, so a desk held in the component is a desk forgotten on every reload — and the
+`themes → templates` tab redirect would then have nowhere to land an operator whose saved
+`activeTab` still names the old tab. Landing them on the Templates desk reads exactly like the
+Themes surface having been deleted, which is the failure the redirect exists to prevent, one level
+deeper. `session.templatesDesk` sits beside `activeTab` and `liveDensity` for the reason those do:
+a booth's habits do not change between Sundays. The desk is DERIVED from the store and a press
+writes the store — assigning a local copy as well would give the choice two homes, and the local one
+would win until the next reload told the operator otherwise, which is §3.1's defect in a different
+room. An unknown saved value falls through to Templates rather than rendering nothing, for the same
+reason `resolveActiveTab` exists: a persisted key outlives the layout it was written under.
+
 ---
 
 ## 80. The inspector names the objects; the property groups stayed in the editor (2026-09-14)
@@ -3795,3 +3807,40 @@ The AI path. A suggestion on `Live.svelte` is still accepted in one press, for t
 recorded in `Library.svelte`: the preacher has moved on, and an extra press costs the product's
 one sentence exactly when it matters. This decision is about a press on a *catalogue*, not a
 press on a claim the AI has just made.
+
+---
+
+## 82. A keyed template previewed against nothing needs a camera plate, and only a preview may have one (2026-09-14)
+
+**Context.** The `Lower Third` built-in rendered as an empty dark rectangle on its Templates gallery
+card and in its inspector preview. Not a renderer fault: `background: transparent` with
+`verseColor: #1c1224` is a band of near-black type over a camera the switcher supplies, and Relay
+never takes that feed (NDI is parked; a camera reaches the building through OBS or an ATEM). Legible
+over a camera, invisible over nothing. Four of the five seeded built-ins previewed correctly and the
+keyed one could not.
+
+**The decision.** Any surface that PREVIEWS a template against nothing paints a labelled camera
+plate behind it when the resolved template is keyed. The test is `isKeyedTemplate` — the helper
+Outputs and the fire path already share, which asks the only question that matters (*does anything
+paint the whole frame?*) rather than reading a `lowerThird` flag a layer-model lower third does not
+have.
+
+**One component, not a third copy.** Outputs had already solved this, with the markup and its CSS
+written out **twice inside `Channels.svelte`, four hundred lines apart**. The Templates gallery
+needed it in two more places. Rather than a third and fourth copy it is
+`src/lib/ui/CameraPlate.svelte`, rendered by all four. The DECISION stays with each caller, because
+the caller is the one that knows which template it resolved; only the picture needed a home. Same
+reasoning as `DeskStrip`, and as the `Copy URL` builder this branch already records — one of two
+copies corrected, the other not.
+
+**It is labelled, always.** An unlabelled picture on these surfaces could be mistaken for something
+Relay is sending, and **Relay sends no video**. The word is what keeps the plate from being a claim.
+It is `aria-hidden`, because a screen-reader operator should not be told about a camera nobody sent.
+
+**It may never reach a real output, and that is the half carrying a guarantee.** The output page is
+transparent precisely so a keyed template keys out for OBS/ATEM; that transparency is the feature. A
+plate behind a real output would paint over the camera the band exists to caption — the same failure
+as blacking out a keyed channel, which `isKeyedTemplate` exists to prevent.
+`cameraplate.test.js` holds the boundary from the other side: `Output.svelte`, `Stage.svelte`,
+`TemplateRender.svelte` and `TemplatePreviewOverlay.svelte` must render no plate, watched to fail by
+putting one in `Output.svelte`.
