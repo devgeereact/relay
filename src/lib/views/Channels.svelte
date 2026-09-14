@@ -41,6 +41,11 @@
   import EmptyState from '../ui/EmptyState.svelte';
   import Loading from '../ui/Loading.svelte';
   import TemplateRender from '../TemplateRender.svelte';
+  // DEFAULT_TEMPLATE is the FLOOR, and it is the output page's floor too — a
+  // screen that follows the content look when no look is set still has to paint
+  // something legible. Imported here so the preview and the wall reach the same
+  // answer rather than two different kinds of nothing.
+  import { DEFAULT_TEMPLATE } from '../templates.js';
   import { CONTENT_KINDS, resolveOutputTemplate } from '../layers.js';
   import { outputUrl } from '../outputurl.js';
   import {
@@ -304,9 +309,53 @@
     }
   }
 
-  // A screen's preview shows its OWN template with stand-in content — the same
-  // renderer the wall uses, so it is WYSIWYG rather than a drawing of one.
+  // A screen's preview shows what that screen REALLY shows — the same renderer
+  // the wall uses, resolved by the same resolver, so it is WYSIWYG rather than a
+  // drawing of one. The stand-in is scripture, which is why the idle preview
+  // resolves against the SCRIPTURE content look below.
   const PREVIEW = { reference: 'John 3:16', text: 'For God so loved the world…', translation: 'KJV' };
+
+  // WHAT THIS SCREEN WOULD ACTUALLY WEAR.
+  //
+  // `templateOf(sel)` is `null` for a screen set to FOLLOW THE CONTENT LOOK, and
+  // null is the answer, not a missing one (DECISIONS §70). This used to be
+  // written `templateOf(sel) ?? {}`, which is truthy — so `resolveOutputTemplate`
+  // never reached its `if (!channelTpl) return override` branch, `isKeyedTemplate({})`
+  // said "keyed" (no layers, no background), the transparency law kept the empty
+  // object, and a following screen previewed as a blank frame. The one screen
+  // whose look you cannot read off its own row was the one the preview could not
+  // answer for, on the panel built to answer it.
+  //
+  // `Output.svelte` does exactly this — `resolveOutputTemplate(t, override, pinned)
+  // || DEFAULT_TEMPLATE` with a null `t` — and two surfaces describing one screen
+  // must not be able to reach different conclusions about it.
+  //
+  // Idle, the override is the SCRIPTURE content look, because the stand-in content
+  // is a verse: that is the look this screen would wear if scripture fired now. A
+  // content look is never `pinned` (only a cue's deliberate choice is), so a screen
+  // with a template of its own is unaffected — which is DECISIONS §29, visible.
+  //
+  // NAMED, not called. `lookName('scripture')` would read `$templates` and
+  // `$contentTemplates` INSIDE a function, and Svelte tracks the identifiers in
+  // the expression — so the preview would be correct once, by luck of ordering,
+  // and never update when the look changed. This file has already been caught by
+  // exactly that (`stageUrl()`, a few lines up), twice.
+  $: scriptureLook = $templates.find((t) => t.id === $contentTemplates.scripture) ?? null;
+  $: previewOverride = $live ? $liveTemplateOverride : scriptureLook;
+  $: previewTemplate =
+    resolveOutputTemplate(
+      sel ? templateOf(sel) : null,
+      previewOverride,
+      $live ? $liveTemplatePinned : false,
+    ) || DEFAULT_TEMPLATE;
+  // What the preview is a preview OF. "Sample" said the same thing for a screen
+  // with its own look and for one following a look it never showed — rule 35 in
+  // small: a line that reads the same in two different situations is not a line.
+  $: previewNote = $live
+    ? 'Live — mirroring the program'
+    : sel && sel.template_id == null
+      ? `Sample — follows the content look · ${scriptureLook?.name ?? 'the default look'}`
+      : 'Sample — nothing on screen';
 </script>
 
 <WorkspaceFrame
@@ -594,11 +643,9 @@
                  wins (so a lower-third previews as a band, not a full screen), a
                  pinned cue choice overrides, a content look defers. The preview
                  shows how THIS screen actually looks live, not the program feed. -->
-            <TemplateRender
-              template={resolveOutputTemplate(templateOf(sel) ?? {}, $live ? $liveTemplateOverride : null, $live ? $liveTemplatePinned : false)}
-              content={$live ? $liveContent : PREVIEW} />
+            <TemplateRender template={previewTemplate} content={$live ? $liveContent : PREVIEW} />
           </div>
-          <p class="ch-prevnote r-mono">{$live ? 'Live — mirroring the program' : 'Sample — nothing on screen'}</p>
+          <p class="ch-prevnote r-mono">{previewNote}</p>
 
           <div class="r-lbl ch-flbl">Screen info</div>
           <dl class="ch-info">

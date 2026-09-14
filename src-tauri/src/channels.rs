@@ -2337,6 +2337,16 @@ mod tests {
         assert!(u.contains("name=Stage%2F2"), "got {u}");
     }
 
+    /// RG-127. These two tests serve the real `dist/`, which is gitignored, so on a
+    /// fresh clone they fail with `got HTTP/1.1 404 Not Found` — a message that says
+    /// nothing about the frontend never having been built, and costs whoever reads
+    /// it an hour in the HTTP server. The fix is the sentence, not the test: the
+    /// pages genuinely are the built frontend and mocking that away would delete the
+    /// thing being asserted.
+    const NO_DIST: &str = "the page was not served. If this is a fresh clone or a \
+        new worktree, `dist/` is gitignored and these two tests serve the REAL \
+        built frontend: run `npm install && npm run build` first (RG-127).";
+
     /// The embedded LAN server serves the output/stage pages (200 + html) and
     /// 404s the unknown — this is what makes a packaged app reachable by OBS/
     /// kiosk/phone with no dev server.
@@ -2359,7 +2369,7 @@ mod tests {
         let resp = String::from_utf8_lossy(&buf[..n]);
         assert!(
             resp.starts_with("HTTP/1.1 200"),
-            "got {}",
+            "{NO_DIST} — got {}",
             &resp[..resp.len().min(60)]
         );
         assert!(resp.contains("text/html"));
@@ -2612,7 +2622,7 @@ mod tests {
             .unwrap();
         assert!(
             String::from_utf8_lossy(&buf[..n]).starts_with("HTTP/1.1 200"),
-            "a request split across packets must still be served"
+            "a request split across packets must still be served — {NO_DIST}"
         );
     }
 
@@ -3219,6 +3229,77 @@ mod tests {
         assert!(
             !frames.iter().any(|f| f.contains("Romans 8:28")),
             "a verse outlived the control that removed it: {frames:?}"
+        );
+    }
+
+    /// A WORD TO THE PREACHER MUST NOT STAND IN FOR THE READING — at the SERVER.
+    ///
+    /// `is_screen_frame` says an alert is not retained and `FRAME_VERDICTS` agrees,
+    /// but both are statements about a matcher. This drives the real hello path:
+    /// verse, then alert, then a client connects. Two ways it could go wrong and
+    /// only one of them is a matcher bug —
+    ///
+    ///   - the alert becomes the retained frame, and the screen that rejoined
+    ///     mid-reading is handed a message meant for a moment that has passed
+    ///     instead of the verse it should be painting (rule 43's own failure, with
+    ///     the alert in the role of `stage_next`);
+    ///   - the alert is retained ALONGSIDE the verse and replayed on hello, which
+    ///     would put a red full-screen instruction on a congregation output ten
+    ///     minutes after the operator sent it, on a page whose only defence is that
+    ///     the message never arrives.
+    ///
+    /// The second is the congregation-facing one and no matcher test can see it:
+    /// it is a property of what `hello` sends.
+    #[tokio::test]
+    async fn a_word_to_the_preacher_is_not_replayed_to_a_screen_that_joins_after_it() {
+        let port = free_port();
+        let hub = KioskHub::default();
+        tokio::spawn(run_kiosk_server(
+            log_only(),
+            hub.sender(),
+            hub.templates_handle(),
+            hub.clients_handle(),
+            hub.themes_handle(),
+            hub.last_screen_handle(),
+            OutputHealth::default(),
+            port,
+        ));
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+
+        hub.publish(
+            r#"{"kind":"content","reference":"Romans 8:28","text":"And we know"}"#.to_string(),
+        );
+        hub.publish(r#"{"kind":"stage_alert","text":"Wrap up — 5 minutes"}"#.to_string());
+
+        let (ws, _) = tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{port}"))
+            .await
+            .expect("connect");
+        let (mut write, mut read) = ws.split();
+        write
+            .send(tokio_tungstenite::tungstenite::Message::Text(
+                r#"{"kind":"hello","template_id":7}"#.to_string(),
+            ))
+            .await
+            .expect("send hello");
+
+        let mut frames = Vec::new();
+        for _ in 0..4 {
+            let Ok(Some(Ok(msg))) =
+                tokio::time::timeout(std::time::Duration::from_millis(900), read.next()).await
+            else {
+                break;
+            };
+            frames.push(msg.into_text().unwrap());
+        }
+        assert!(
+            frames.iter().any(|f| f.contains("Romans 8:28")),
+            "the alert stood in for the reading and the joining screen was left \
+             without it: {frames:?}"
+        );
+        assert!(
+            !frames.iter().any(|f| f.contains("stage_alert")),
+            "a word to the preacher was replayed to a screen that joined later — on \
+             a congregation output that is a red screen nobody sent: {frames:?}"
         );
     }
 
