@@ -2193,6 +2193,11 @@
        nothing is removed, because a booth laptop is where an operator is most
        cramped and least able to go hunting. */
     .rail-col{flex-direction:row; align-items:stretch; height:200px}
+    /* In the ROW layout the view controls were given a column of their own and
+       stretched down 200px beside a full-height book list — two controls
+       floating in an empty panel, which reads as a broken grid rather than as
+       a quiet corner. They take their own width and sit at the top. */
+    .rail-col .view-ctl{flex:0 0 132px; align-content:flex-start; align-self:flex-start}
     .con-top{height:auto; grid-template-columns:1fr 104px 1fr; grid-auto-rows:minmax(230px,auto)}
     .con-grid{flex:0 0 auto; height:320px}
   }

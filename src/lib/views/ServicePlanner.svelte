@@ -955,13 +955,18 @@
           <div class="r-lbl sp-flbl">Label</div>
           <div class="sp-fval" title={selCue.label}>{selCue.label}</div>
 
-          <div class="r-lbl sp-flbl">Section</div>
-          <input class="r-input sp-fin" bind:this={sectionInput} bind:value={secDraft}
+          <!-- A placeholder is NOT an accessible name: it is unread by some screen
+               readers and it disappears the moment somebody types. Both fields had
+               only one, so the two editable controls in this inspector were the only
+               unnamed controls in the product (measured, 2026-09-14). The visible
+               label above each is the name, bound by `for`/`id`. -->
+          <label class="r-lbl sp-flbl" for="sp-section">Section</label>
+          <input id="sp-section" class="r-input sp-fin" bind:this={sectionInput} bind:value={secDraft}
             placeholder="No section — part of the one above"
             on:blur={saveSection} on:keydown={(e) => e.key === 'Enter' && e.target.blur()} />
 
-          <div class="r-lbl sp-flbl">Duration</div>
-          <input class="r-input sp-fin r-mono" bind:value={durDraft}
+          <label class="r-lbl sp-flbl" for="sp-duration">Duration</label>
+          <input id="sp-duration" class="r-input sp-fin r-mono" bind:value={durDraft}
             placeholder={selCue.cue_type === 'scripture' ? 'Untimed — fires on cue' : 'e.g. 5 or 4:30'}
             on:blur={saveDuration} on:keydown={(e) => e.key === 'Enter' && e.target.blur()} />
           <p class="sp-fhelp">A bare number is minutes. Leave blank for a cue that fires when it is reached rather than on a clock.</p>

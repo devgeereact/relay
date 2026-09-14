@@ -722,7 +722,7 @@
     </div>
   </div>
 
-  <div class="dpanel">
+  <div class="dpanel ctl">
     <div class="dhead">
       <span class="grip" aria-hidden="true"><i></i><i></i><i></i></span>
       <span class="dk">Controls</span>
@@ -798,6 +798,44 @@
     min-height: 0;
     background: var(--v-bg);
   }
+  /* NARROW. Four instruments in a rack need a rack: below 900px the row's own
+     columns are too thin for their heads (measured at 768: `Load whole plan`
+     overlapped the next card's CONTROLS caption), and at phone width `Clear
+     screens` was sliced by the card's edge — a panic control an operator cannot
+     read is the defect rule 15 exists to prevent. Two columns at 900, one at
+     640, and the dock scrolls rather than clipping.
+
+     `height:auto` with a max is deliberate: the fixed 178px is a rack height for
+     a desk, and stacked cards on a phone need their own. */
+  @media (max-width: 900px) {
+    .dock {
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      height: auto;
+      max-height: 46vh;
+      overflow-y: auto;
+    }
+    /* A stacked card sizes to its CONTENT. `.dbody` is `flex:1 1 0` for the rack
+       layout, where the card has a known 178px to divide; in a grid row of auto
+       height that basis collapses the body to nothing — measured at 768 as a
+       **19px body over 122px of content**, which put the whole Controls card,
+       Clear screens included, behind an `overflow:hidden` edge. That is the
+       failure rule 15 exists to prevent, and it was introduced by the stacking
+       rule above, so it is fixed here rather than anywhere else. */
+    .dpanel { min-height: 150px; }
+    .dbody { flex: 1 1 auto; }
+  }
+  @media (max-width: 640px) {
+    .dock { grid-template-columns: minmax(0, 1fr); }
+    /* ONE COLUMN PUTS THE PANIC CONTROL LAST, and a panic control an operator
+       has to scroll to is not a panic control (rule 15, DECISIONS §20).
+       Measured at 430: `Clear screens` sat inside its card and BELOW the
+       viewport. In a stack the Controls card goes first; the meters and the
+       transcript are things you read, and reading can scroll. */
+    .dpanel.ctl { order: -1; }
+  }
+  /* A head that has to choose between its caption and its button wraps rather
+     than overlapping the card beside it. */
+  .dhead { flex-wrap: wrap; row-gap: 2px; }
   /* The head is its own band on the darker surface, so the four captions line up
      across the row whatever is underneath them. */
   .dhead {
@@ -879,8 +917,14 @@
   .tl.empty { color: var(--v-faint); font-family: var(--f-mono); font-size: var(--v-fs-cap); }
 
   .tools { display: flex; flex-direction: column; gap: 6px; justify-content: flex-start; overflow-y: auto; }
-  .trow { display: flex; align-items: center; gap: 6px; font-size: var(--v-fs-b2); color: var(--v-dim); }
-  .trow > span { flex: 0 0 auto; min-width: 74px; }
+  /* WRAP, don't spill. Measured at 1024: the countdown figure and `Take down`
+     ran 37px and 56px PAST this card's right edge and over the Controls card
+     beside it, because a row of fixed-width controls plus a 74px label floor
+     is wider than the card at that width. The row wraps instead; the label
+     keeps its floor only while there is room for it. */
+  .trow { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; row-gap: 4px;
+    font-size: var(--v-fs-b2); color: var(--v-dim); }
+  .trow > span { flex: 0 1 auto; min-width: 74px; }
   .spring { flex: 1 1 auto; min-width: 0 !important; }
 
   /* hh : mm : ss. Mono figures so a changing number never reflows the row beside
