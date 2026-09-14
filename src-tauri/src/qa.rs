@@ -1649,7 +1649,12 @@ mod cold_start {
         assert!(names.len() >= 5, "the built-in templates are missing");
         // 31 at the time of the cold-start audit: 4 original built-ins +
         // "Worship Lyrics" + 26 presets (9 solid looks, 5 lyric/lower-third/stage
-        // variants, and 3 themed families of 4).
+        // variants, and 3 themed families of 4). 39 since REBRAND wave 4 added
+        // the eight-look SHELF — the prototype's lower thirds, its two SuperSource
+        // composites, its stage look, its media frame, High Visibility and Notice
+        // Board (`data/shelf_templates.json`). The figure is prose, not an
+        // assertion, for the reason stated above; the real count is asserted in
+        // `db::mod::seeds_the_builtin_templates` against the code's own total.
         for want in ["Classic Serif", "Worship Lyrics"] {
             assert!(names.iter().any(|n| n == want), "the seed lost {want:?}");
         }

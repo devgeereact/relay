@@ -230,6 +230,40 @@ the stage note and the stage alert must be unable to reach a congregation channe
 `REBRAND status` reads this table. One row per phase; a phase is **done** only when the three
 gates in the phases section are green on it — `cargo test`, `npx vitest run`, `npm run build`.
 
+<!-- ── T2 · the shelf (wave 4) ─────────────────────────────────────────────── -->
+**Fourth wave · T2, 2026-09-14 — every template the prototype ships, and the honest half of that
+sentence is which ones Relay already had.** The prototype's `TEMPLATES` array holds seventeen
+starters. Nine of them already shipped under Relay's own names (Classic Serif, Worship Lyrics, Lower
+Third, Lower Third Light, Lobby Warm, Nocturne · Scripture, Lyric Bold, Pure Contrast's black ground,
+and Stage Mono under the *same* name), so they were not rebuilt: a shelf with two of each is harder to
+read, not fuller. The remaining **eight** are new, and they live in ONE data file that both sides read
+— `src-tauri/data/shelf_templates.json`, `include_str!`d by `db/templates.rs` and read byte-for-byte
+by `src/lib/shelf.test.js`, because the last shipped design that lived in two places drifted by a row
+and a kiosk rendered a song through a scripture look.
+
+They are built out of the primitives phases 5, 6 and 12 already produced, not a parallel shape: the
+two lower thirds are `band` layers with declared `members` (§4, DECISIONS §75), the two SuperSource
+composites are `region` layers whose fill is a REAL built-in at region width (§6, DECISIONS §74), and
+the stage look carries monitor-only bindings. **§5's switchable zones are still not built** — a zone
+that is off is translated as a layer that is not present, which is the same screen and no new
+machinery, and that is the whole of the claim.
+
+**Three departures, each recorded in the file beside the value it changes.** *(a)* Relay publishes no
+monospace family on purpose (`app.css`), so the prototype's `font:'mono'` is the display sans. *(b)*
+`SuperSource · Word left`'s fill is prototype template 7, which is not one of Relay's five built-ins —
+and a region may name only a built-in, or the wall and the stream render different things; built-in 2
+is used. *(c)* Media Frame has no caption: Relay's media fire carries `media_url` and nothing else, so
+a caption line would be blank at every fire.
+
+**What derives, and what honestly does not.** Six of the eight land on the role they are for, and the
+gallery rail gains **SuperSource, Stage and Media** rows a fresh install could not show before. Notice
+Board derives as *scripture* and that is not a miss: a full-screen notice and a full-screen verse are
+the same shape, which is exactly why `templateKind` refuses to guess pre-service (DECISIONS §78). A
+church declares that role through the content-look register, not through the shape.
+
+**Nothing about what a fresh install contains changed in kind** — it already ships 31 ready-to-use
+looks, and now ships 39. `the_bare_fixture_is_a_first_launch_and_nothing_more` did not move.
+
 **Third wave, 2026-09-14 — nine agents against a measured gap list, and three of the nine gaps were wrong.**
 The lead rendered the console at 1600x1000 against the prototype, workspace by workspace, and briefed
 eight agents (shell, Live, Library, Planner, Templates, Outputs, Settings, countdown) plus a ninth for

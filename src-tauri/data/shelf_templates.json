@@ -1,0 +1,160 @@
+{
+  "_readme": [
+    "THE SHELF — the looks the prototype ships that Relay did not have (REBRAND wave 4, agent T2).",
+    "",
+    "ONE FILE, TWO READERS. `db/templates.rs` include_str!s this and seeds it by NAME (never by id,",
+    "so a church's channel foreign keys are never repointed); `src/lib/shelf.test.js` reads the same",
+    "bytes and renders every entry through the real TemplateRender. That is deliberate: the last time",
+    "a shipped design lived in two places — BUILTINS in templates.js and builtin_templates() in Rust —",
+    "they drifted by one row and a kiosk resolving template_id=4 rendered a song through a scripture",
+    "look. Two readers, one file, no parity to remember.",
+    "",
+    "Every entry is in the LAYER model (`layout.layers`), because that is where the primitives the",
+    "prototype's looks are made of actually live: the `band` with its declared `members` (DECISIONS",
+    "§75), the `region` that is its own container (DECISIONS §74), and monitor-only bindings for a",
+    "stage screen. Geometry is PERCENT of the 16:9 frame; type sizes are cqw. Layer ids only have to",
+    "be unique within their own template.",
+    "",
+    "WHAT IS NOT HERE, AND WHY: the prototype's other eleven starters. Nine already ship under Relay's",
+    "own names and one ships under the same name; duplicating a look an operator already has is a",
+    "shelf that is harder to read, not a shelf that is fuller. The diff is in the commit message and",
+    "the review note."
+  ],
+  "templates": [
+
+    {
+      "name": "High Visibility",
+      "_proto": "id 7 — pure black, white verse AND white reference, 8.4cqw. The one look that is not a design: it is the answer to a lit room and a cheap lens. Relay already ships a High Visibility THEME (themes.js); this is the template of the same name, which did not exist.",
+      "layout": {
+        "align": "center",
+        "layers": [
+          { "id": "hv-bg", "type": "background", "name": "Background", "x": 0, "y": 0, "w": 100, "h": 100, "fill": "#000000", "opacity": 1, "dim": 0 },
+          { "id": "hv-verse", "type": "text", "name": "Verse", "bind": "verse", "x": 6, "y": 14, "w": 88, "h": 58, "font": "var(--f-body)", "color": "#ffffff", "size": 8.4, "align": "center", "valign": "middle", "lineHeight": 1.2, "letterSpacing": 0, "shadow": 0, "italic": false },
+          { "id": "hv-ref", "type": "text", "name": "Reference", "bind": "reference", "x": 6, "y": 76, "w": 88, "h": 14, "font": "var(--f-body)", "color": "#ffffff", "size": 4.6, "align": "center", "valign": "middle", "lineHeight": 1.2, "letterSpacing": 0, "shadow": 0, "italic": false }
+        ]
+      },
+      "style": {}
+    },
+
+    {
+      "name": "Notice Board",
+      "_proto": "id 8 — Announcement. A title in cyan over a blue gradient, the notice beneath it.",
+      "_kind": "It derives as SCRIPTURE, and that is honest rather than a bug. A full-screen announcement and a full-screen verse are the same shape — a large line and a small one — which is the exact reason templateKind refuses to guess `preservice` (DECISIONS §78). A church points this at announcements through the content-look register (`tpl_announcement`), which is where a ROLE is declared in Relay, not derived.",
+      "layout": {
+        "align": "center",
+        "layers": [
+          { "id": "nb-bg", "type": "background", "name": "Background", "x": 0, "y": 0, "w": 100, "h": 100, "fill": "linear-gradient(160deg,#11213A,#070C15)", "opacity": 1, "dim": 0 },
+          { "id": "nb-verse", "type": "text", "name": "Notice", "bind": "verse", "x": 6, "y": 26, "w": 88, "h": 46, "font": "var(--f-body)", "color": "#eaf2ff", "size": 6.8, "align": "center", "valign": "middle", "lineHeight": 1.24, "letterSpacing": 0, "shadow": 0.3, "italic": false },
+          { "id": "nb-ref", "type": "text", "name": "Title", "bind": "reference", "x": 6, "y": 74, "w": 88, "h": 12, "font": "var(--f-body)", "color": "#4cc9f0", "size": 3.2, "align": "center", "valign": "middle", "lineHeight": 1.2, "letterSpacing": 0.04, "shadow": 0, "italic": false }
+        ]
+      },
+      "style": {}
+    },
+
+    {
+      "name": "Media Frame",
+      "_proto": "id 17 — the picture, framed on a near-black ground (side 6, pad 6), rather than bleeding to the edges the way the `media` starter does.",
+      "_departure": "The prototype puts a caption under the picture. Relay's media fire carries media_url and NOTHING else (main.rs::fire_media — no reference, no text), so a caption layer here would be a line that is blank at every fire: a picture of a feature. It is left out until media content carries a title.",
+      "layout": {
+        "align": "center",
+        "layers": [
+          { "id": "mf-bg", "type": "background", "name": "Background", "x": 0, "y": 0, "w": 100, "h": 100, "fill": "#07080c", "opacity": 1, "dim": 0 },
+          { "id": "mf-media", "type": "media", "name": "Picture", "x": 6, "y": 10.7, "w": 88, "h": 78.6, "fit": "contain", "opacity": 1, "radius": 0.6 }
+        ]
+      },
+      "style": {}
+    },
+
+    {
+      "name": "Lower Third · Lyric",
+      "_proto": "id 14 — `rhide:true`: a lyric band carries words and NO reference at all, because a song's reference is its title and a title under every line reads like a slide rather than a caption. Band from top 64, fill #05070C at 86%, baseline lift 5.",
+      "layout": {
+        "align": "left",
+        "layers": [
+          {
+            "id": "lyb-band", "type": "band", "name": "Band",
+            "x": 5, "y": 64, "w": 90, "h": 36,
+            "top": 64, "side": 5, "pad": 3, "lift": 5, "grow": 16,
+            "members": ["lyb-words"],
+            "fill": "#05070c", "opacity": 0.86, "radius": 0
+          },
+          { "id": "lyb-words", "type": "text", "name": "Words", "bind": "verse", "x": 8, "y": 72, "w": 84, "h": 18, "font": "var(--f-body)", "color": "#ffffff", "size": 3.2, "align": "left", "valign": "middle", "lineHeight": 1.16, "letterSpacing": 0, "shadow": 0, "italic": false }
+        ]
+      },
+      "style": {}
+    },
+
+    {
+      "name": "Lower Third · Scripture",
+      "_proto": "id 15 — the verse with its reference BELOW, right-aligned and tracked so it reads as a citation and not as a second sentence. Serif, band from top 62, fill #0A0906 at 90%, baseline lift 4.4.",
+      "layout": {
+        "align": "left",
+        "layers": [
+          {
+            "id": "lbb-band", "type": "band", "name": "Band",
+            "x": 5, "y": 62, "w": 90, "h": 38,
+            "top": 62, "side": 5, "pad": 3, "lift": 4.4, "grow": 16,
+            "members": ["lbb-verse", "lbb-ref"],
+            "fill": "#0a0906", "opacity": 0.9, "radius": 0
+          },
+          { "id": "lbb-verse", "type": "text", "name": "Verse", "bind": "verse", "x": 8, "y": 70, "w": 84, "h": 14, "font": "var(--f-serif)", "color": "#fff7e8", "size": 3.0, "align": "left", "valign": "middle", "lineHeight": 1.2, "letterSpacing": 0, "shadow": 0, "italic": false },
+          { "id": "lbb-ref", "type": "text", "name": "Reference", "bind": "reference", "x": 8, "y": 85, "w": 84, "h": 6, "font": "var(--f-serif)", "color": "#ffa31a", "size": 1.7, "align": "right", "valign": "middle", "lineHeight": 1.1, "letterSpacing": 0.08, "shadow": 0, "italic": false }
+        ]
+      },
+      "style": {}
+    },
+
+    {
+      "name": "SuperSource · Word right",
+      "_proto": "id 10 — `ss:{layout:'wordright',split:30,pad:10,bord:true,bc:'#E2ECFA',plate:'sanctuary',wtpl:1}`. `split` is the CAMERA share in both arrangements, and a percentage pad resolves against WIDTH — so 10% bars eat 10/0.5625 = 17.78 points of HEIGHT. Getting either wrong overran the word region by 3x in the prototype, and the numbers here are its corrected ones.",
+      "_camera": "The camera half (x 0..30) is not painted, because Relay does not take a camera feed — the switcher puts the picture there (DECISIONS §74). The plate fills the bars ABOVE and BELOW only; a full-frame background would hide the very feed this look exists to composite with.",
+      "_fill": "`wtpl:1` is Classic Serif, and it is a REAL rendered template at region width, not a picture of one. templateRef names a BUILT-IN because a kiosk or OBS page has no database (DECISIONS §74).",
+      "layout": {
+        "align": "center",
+        "layers": [
+          { "id": "ssr-top", "type": "shape", "name": "Plate · top", "x": 0, "y": 0, "w": 100, "h": 17.78, "fill": "radial-gradient(120% 90% at 22% 12%,#1d2b44 0%,#0b1220 55%,#05070C 100%)", "opacity": 1, "radius": 0 },
+          { "id": "ssr-bot", "type": "shape", "name": "Plate · bottom", "x": 0, "y": 82.22, "w": 100, "h": 17.78, "fill": "radial-gradient(120% 90% at 22% 12%,#1d2b44 0%,#0b1220 55%,#05070C 100%)", "opacity": 1, "radius": 0 },
+          { "id": "ssr-word", "type": "region", "name": "Word region", "x": 30, "y": 17.78, "w": 70, "h": 64.44, "templateRef": 1, "radius": 0, "outline": 0.12, "outlineColor": "#e2ecfa", "plate": null, "opacity": 1 }
+        ]
+      },
+      "style": {}
+    },
+
+    {
+      "name": "SuperSource · Word left",
+      "_proto": "id 11 — `ss:{layout:'wordleft',split:30,pad:10,bord:false,plate:'warm',wtpl:7}`. Word on the left 70%, camera on the right 30%, no outline.",
+      "_departure": "`wtpl:7` is the prototype's High Visibility, which is not one of Relay's five built-ins — and a region may only name a built-in, or the wall and the stream render different things. Built-in 2 (Stage Mono: black ground, white verse, cyan reference) is the closest built-in shape and is used instead. The High Visibility template on this same shelf cannot be the fill for exactly that reason.",
+      "layout": {
+        "align": "center",
+        "layers": [
+          { "id": "ssl-top", "type": "shape", "name": "Plate · top", "x": 0, "y": 0, "w": 100, "h": 17.78, "fill": "radial-gradient(80% 70% at 78% 22%,#3a2a17 0%,#1a1410 52%,#080604 100%)", "opacity": 1, "radius": 0 },
+          { "id": "ssl-bot", "type": "shape", "name": "Plate · bottom", "x": 0, "y": 82.22, "w": 100, "h": 17.78, "fill": "radial-gradient(80% 70% at 78% 22%,#3a2a17 0%,#1a1410 52%,#080604 100%)", "opacity": 1, "radius": 0 },
+          { "id": "ssl-word", "type": "region", "name": "Word region", "x": 0, "y": 17.78, "w": 70, "h": 64.44, "templateRef": 2, "radius": 0, "outline": 0, "outlineColor": "#e2ecfa", "plate": null, "opacity": 1 }
+        ]
+      },
+      "style": {}
+    },
+
+    {
+      "name": "Stage · Large type",
+      "_proto": "id 13 — rail on the RIGHT (railW 30), `next:true`, `timer:true`, clock and note off. 7cqw verse, #7FD4FF meta.",
+      "_zones": "§5's switchable zones are not built (DECISIONS §75 records that they want the same declared-membership concept a band now has). A zone that is OFF is translated here as a layer that is not present, which is the same screen and no new machinery. The rail and the strip are shape tiles; the figures inside them are ordinary bound text.",
+      "_geometry": "pad 3.6cqw and gap 2.4cqw are cqw on BOTH axes, so vertically they are 3.6/56.25 and 2.4/56.25 of the frame height — 6.4 and 4.27 points. The strip is 15 points of height at the bottom.",
+      "layout": {
+        "align": "left",
+        "layers": [
+          { "id": "slt-bg", "type": "background", "name": "Background", "x": 0, "y": 0, "w": 100, "h": 100, "fill": "#04060a", "opacity": 1, "dim": 0 },
+          { "id": "slt-verse", "type": "text", "name": "Verse", "bind": "verse", "x": 3.6, "y": 6.4, "w": 64.96, "h": 48, "font": "var(--f-body)", "color": "#ffffff", "size": 7, "align": "left", "valign": "middle", "lineHeight": 1.2, "letterSpacing": 0, "shadow": 0, "italic": false },
+          { "id": "slt-ref", "type": "text", "name": "Reference", "bind": "reference", "x": 3.6, "y": 56, "w": 64.96, "h": 12, "font": "var(--f-body)", "color": "#7fd4ff", "size": 3.4, "align": "left", "valign": "middle", "lineHeight": 1.2, "letterSpacing": 0.06, "shadow": 0, "italic": false },
+          { "id": "slt-rail", "type": "shape", "name": "Rail", "x": 70.96, "y": 6.4, "w": 25.64, "h": 67.93, "fill": "#0b0d12", "opacity": 0.9, "radius": 1.6 },
+          { "id": "slt-rail-lab", "type": "text", "name": "Countdown label", "bind": "static", "text": "COUNTDOWN", "x": 72.96, "y": 9.4, "w": 21.64, "h": 5, "font": "var(--f-body)", "color": "#7fd4ff", "size": 1.6, "align": "left", "valign": "middle", "transform": "uppercase", "lineHeight": 1.2, "letterSpacing": 0.14, "shadow": 0, "italic": false },
+          { "id": "slt-timer", "type": "text", "name": "Countdown", "bind": "countdown", "x": 72.96, "y": 15, "w": 21.64, "h": 14, "font": "var(--f-body)", "color": "#7fd4ff", "size": 5, "align": "left", "valign": "middle", "lineHeight": 1.1, "letterSpacing": 0, "shadow": 0, "italic": false, "text": "" },
+          { "id": "slt-strip", "type": "shape", "name": "Strip", "x": 3.6, "y": 78.6, "w": 92.8, "h": 15, "fill": "#0b0d12", "opacity": 0.9, "radius": 1.6 },
+          { "id": "slt-next-lab", "type": "text", "name": "Next label", "bind": "static", "text": "NEXT", "x": 5.6, "y": 80.4, "w": 40, "h": 4.5, "font": "var(--f-body)", "color": "#7fd4ff", "size": 1.5, "align": "left", "valign": "middle", "transform": "uppercase", "lineHeight": 1.2, "letterSpacing": 0.14, "shadow": 0, "italic": false },
+          { "id": "slt-next", "type": "text", "name": "Next", "bind": "next_reference", "x": 5.6, "y": 85.2, "w": 55.6, "h": 7, "font": "var(--f-body)", "color": "#ffffff", "size": 2.8, "align": "left", "valign": "middle", "lineHeight": 1.2, "letterSpacing": 0, "shadow": 0, "italic": false }
+        ]
+      },
+      "style": {}
+    }
+  ]
+}

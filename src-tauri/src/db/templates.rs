@@ -8,6 +8,7 @@ use rusqlite::Connection;
 use rusqlite::OptionalExtension;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::sync::OnceLock;
 
 /// An output template: layout (regions + alignment) and style (fonts, colors,
 /// sizes). `layout` and `style` are opaque JSON blobs interpreted by the shared
@@ -438,15 +439,81 @@ fn theme_templates() -> &'static [(&'static str, &'static str, &'static str)] {
     ]
 }
 
+/// THE SHELF — the prototype's own looks, in the LAYER model.
+///
+/// Everything above is region-model JSON written as a Rust string literal. These
+/// are not, for one reason: the shapes the prototype's remaining looks are made
+/// of — a `band` that names the words inside it (DECISIONS §75), a `region` that
+/// is its own container (DECISIONS §74), a screen carrying monitor-only bindings
+/// — exist only in the layer model, and hand-writing them twice (once for the
+/// seed, once for whatever renders them in a test) is exactly how `BUILTINS` and
+/// `builtin_templates()` drifted by a row and a kiosk rendered a song through a
+/// scripture look.
+///
+/// So the shapes live in ONE file that both sides read: Rust `include_str!`s it
+/// here, and `src/lib/shelf.test.js` reads the same bytes and renders every entry
+/// through the real `TemplateRender`. Added by NAME like every other preset, so
+/// no id an operator's channel points at is ever disturbed.
+const SHELF_JSON: &str = include_str!("../../data/shelf_templates.json");
+
+#[derive(Deserialize)]
+struct ShelfFile {
+    templates: Vec<ShelfEntry>,
+}
+
+#[derive(Deserialize)]
+struct ShelfEntry {
+    name: String,
+    layout: Value,
+    style: Value,
+}
+
+/// The shelf, parsed once. A malformed file yields an EMPTY shelf rather than a
+/// panic — this runs on every database open, and a church whose app will not
+/// start is a worse outcome than a church missing eight designs. It cannot ship
+/// broken: `the_shelf_file_parses_and_every_entry_is_a_layer_stack` fails the
+/// build, and the frontend reads the same bytes.
+fn shelf_templates() -> &'static [(String, String, String)] {
+    static SHELF: OnceLock<Vec<(String, String, String)>> = OnceLock::new();
+    SHELF.get_or_init(|| match serde_json::from_str::<ShelfFile>(SHELF_JSON) {
+        Ok(f) => f
+            .templates
+            .into_iter()
+            .map(|e| (e.name, e.layout.to_string(), e.style.to_string()))
+            .collect(),
+        Err(e) => {
+            eprintln!("shelf_templates.json could not be read ({e}) — shipping without the shelf");
+            Vec::new()
+        }
+    })
+}
+
 /// Add every preset that is not already present, matched BY NAME so it is safe on
 /// every boot and never disturbs the ids an operator's channels point at.
 /// Additive, like `ensure_lyrics_template` — an operator who deleted or renamed a
 /// preset does not get it silently resurrected under a different name, only the
 /// ones genuinely absent are inserted.
 /// Every ready-to-use design that ships on top of the five built-ins: the
-/// standalone presets plus the coordinated theme families.
-fn all_presets() -> impl Iterator<Item = &'static (&'static str, &'static str, &'static str)> {
-    preset_templates().iter().chain(theme_templates().iter())
+/// standalone presets, the coordinated theme families, and the shelf.
+fn all_presets() -> impl Iterator<Item = (&'static str, &'static str, &'static str)> {
+    region_presets().chain(
+        shelf_templates()
+            .iter()
+            .map(|(n, l, s)| (n.as_str(), l.as_str(), s.as_str())),
+    )
+}
+
+/// The REGION-model half of the shelf — the standalone presets and the theme
+/// families. Kept nameable on its own because the properties a region template
+/// can be checked for (`style.background`, `style.verseColor`) simply do not
+/// exist on a layer template, where the same facts live per element. A test that
+/// asserted them over both would either fail on the layer entries or be softened
+/// until it asserted nothing about either.
+fn region_presets() -> impl Iterator<Item = (&'static str, &'static str, &'static str)> {
+    preset_templates()
+        .iter()
+        .chain(theme_templates().iter())
+        .map(|(n, l, s)| (*n, *l, *s))
 }
 
 /// How many presets ship on top of the five built-ins — so tests can assert the
@@ -730,7 +797,7 @@ mod preset_template_tests {
                 "custom"
             }
         };
-        let mut kinds: Vec<&str> = all_presets().map(|(_, l, _)| kind(l)).collect();
+        let mut kinds: Vec<&str> = region_presets().map(|(_, l, _)| kind(l)).collect();
         kinds.sort();
         kinds.dedup();
         for want in ["scripture", "song", "lower-third"] {
@@ -779,7 +846,7 @@ mod preset_template_tests {
         // front of a congregation. Parse each, and require a light verse colour on
         // a dark field — the contrast a lit room needs (lower-third bands excepted,
         // where the text sits on a solid accent and is dark on purpose).
-        for (name, layout, style) in all_presets() {
+        for (name, layout, style) in region_presets() {
             let l: serde_json::Value =
                 serde_json::from_str(layout).unwrap_or_else(|_| panic!("{name}: bad layout json"));
             let s: serde_json::Value =
@@ -803,6 +870,149 @@ mod preset_template_tests {
                     "{name}: verse colour {vc} is not light-on-dark readable"
                 );
             }
+        }
+    }
+
+    // ── THE SHELF (the prototype's own looks, layer model) ───────────────────
+
+    /// A fresh install actually CONTAINS these looks, by name.
+    ///
+    /// Not a count: `preset_template_count()` is derived from `all_presets()`, so
+    /// dropping the shelf out of that chain moves the expectation with it and
+    /// every count-based test stays green over a shelf nobody ships. Watched to
+    /// fail by removing the shelf from `all_presets`.
+    #[test]
+    fn a_fresh_database_ships_every_shelf_look() {
+        let conn = fresh();
+        ensure_preset_templates(&conn).unwrap();
+        let mut stmt = conn
+            .prepare("SELECT region_config_json FROM templates WHERE name = ?1")
+            .unwrap();
+        for (name, _, _) in shelf_templates() {
+            let layout: String = stmt
+                .query_row([name], |r| r.get(0))
+                .unwrap_or_else(|_| panic!("a fresh install is missing {name:?}"));
+            assert!(
+                layout.contains("\"layers\""),
+                "{name} was seeded without its layer stack"
+            );
+        }
+    }
+
+    /// The shelf is a DATA FILE, so the build has to be the thing that proves it
+    /// parses. `shelf_templates()` deliberately degrades to an empty vec rather
+    /// than panicking at database-open time, which means a malformed file is
+    /// SILENT at runtime — this is the instrument that makes it loud instead.
+    #[test]
+    fn the_shelf_file_parses_and_every_entry_is_a_layer_stack() {
+        let parsed: ShelfFile = serde_json::from_str(SHELF_JSON)
+            .expect("src-tauri/data/shelf_templates.json must parse");
+        assert!(
+            !parsed.templates.is_empty(),
+            "the shelf file parsed to nothing"
+        );
+        assert_eq!(
+            shelf_templates().len(),
+            parsed.templates.len(),
+            "shelf_templates() swallowed an entry"
+        );
+        for e in &parsed.templates {
+            let layers = e.layout["layers"].as_array().unwrap_or_else(|| {
+                panic!("{}: no layout.layers — the shelf is layer-model", e.name)
+            });
+            assert!(!layers.is_empty(), "{}: an empty layer stack", e.name);
+            for l in layers {
+                assert!(l["id"].is_string(), "{}: a layer with no id", e.name);
+                assert!(l["type"].is_string(), "{}: a layer with no type", e.name);
+            }
+        }
+    }
+
+    /// Every box is inside the frame. Geometry is percent of the 16:9 stage, and
+    /// a layer that starts at 96 and is 10 wide is four points off the screen —
+    /// arithmetic the renderer will happily obey and nobody will see until it is
+    /// on a wall. Background layers are exempt (they ignore geometry).
+    #[test]
+    fn no_shelf_layer_hangs_off_the_frame() {
+        let parsed: ShelfFile = serde_json::from_str(SHELF_JSON).unwrap();
+        for e in &parsed.templates {
+            for l in e.layout["layers"].as_array().unwrap() {
+                if l["type"] == "background" {
+                    continue;
+                }
+                let n = |k: &str| l[k].as_f64().unwrap_or(0.0);
+                let (x, y, w, h) = (n("x"), n("y"), n("w"), n("h"));
+                let who = format!("{} / {}", e.name, l["name"].as_str().unwrap_or("?"));
+                assert!(x >= 0.0 && y >= 0.0, "{who}: negative origin");
+                assert!(w > 0.0 && h > 0.0, "{who}: a zero-size box renders nothing");
+                assert!(x + w <= 100.0001, "{who}: runs off the right edge");
+                assert!(y + h <= 100.0001, "{who}: runs off the bottom edge");
+            }
+        }
+    }
+
+    /// A band's `members` must name layers that are actually in the template
+    /// (DECISIONS §75). A dead id lays out perfectly and silently drops a line.
+    #[test]
+    fn every_band_on_the_shelf_names_words_that_exist() {
+        let parsed: ShelfFile = serde_json::from_str(SHELF_JSON).unwrap();
+        let mut bands = 0;
+        for e in &parsed.templates {
+            let layers = e.layout["layers"].as_array().unwrap();
+            let ids: Vec<&str> = layers.iter().filter_map(|l| l["id"].as_str()).collect();
+            for l in layers.iter().filter(|l| l["type"] == "band") {
+                bands += 1;
+                let members = l["members"]
+                    .as_array()
+                    .unwrap_or_else(|| panic!("{}: a band with no members list", e.name));
+                assert!(!members.is_empty(), "{}: a band that holds nothing", e.name);
+                for m in members {
+                    let id = m.as_str().unwrap();
+                    assert!(
+                        ids.contains(&id),
+                        "{}: band member {id} does not exist",
+                        e.name
+                    );
+                }
+            }
+        }
+        assert!(bands >= 2, "the shelf lost its lower thirds");
+    }
+
+    /// A composite's fill must be a BUILT-IN (DECISIONS §74): a kiosk or OBS page
+    /// has no database and resolves `templateRef` against the bundled list, so a
+    /// region pointing anywhere else renders one thing on the wall and another in
+    /// the stream. And a composite may not be another composite's fill.
+    #[test]
+    fn every_region_on_the_shelf_names_a_builtin_that_is_not_itself_a_composite() {
+        let parsed: ShelfFile = serde_json::from_str(SHELF_JSON).unwrap();
+        let n_builtins = builtin_templates().len() as i64;
+        let mut regions = 0;
+        for e in &parsed.templates {
+            for l in e.layout["layers"].as_array().unwrap() {
+                if l["type"] != "region" {
+                    continue;
+                }
+                regions += 1;
+                let r = l["templateRef"]
+                    .as_i64()
+                    .unwrap_or_else(|| panic!("{}: a region with no templateRef", e.name));
+                assert!(
+                    (1..=n_builtins).contains(&r),
+                    "{}: templateRef {r} is not one of the {n_builtins} built-ins — \
+                     a kiosk would render something else",
+                    e.name
+                );
+            }
+        }
+        assert!(regions >= 2, "the shelf lost its SuperSource composites");
+        // The built-ins are region-model and carry no `region` layer of their own,
+        // so no composite on the shelf can nest. Asserted rather than assumed.
+        for (name, layout, _) in builtin_templates() {
+            assert!(
+                !layout.contains(r#""region""#),
+                "built-in {name} became a composite — a composite may not be a composite's fill"
+            );
         }
     }
 
