@@ -86,11 +86,23 @@ describe('§2 · one workspace grammar, not three', () => {
   it('the frame is the one place the columns are described', () => {
     const frame = read(FRAME);
     expect(frame).toMatch(/grid-template-columns:var\(--rw-cols\)/);
-    // Rail · main · inspector. Every caller passes three tracks, in that order.
+    // Rail · main · inspector, in that order — and every caller describes its body
+    // by passing that track to the frame rather than by declaring a grid.
+    //
+    // SETTINGS IS TWO TRACKS, deliberately (docs/REBRAND.md §11): a rail plus one
+    // reading column, capped and centred. It is the one workspace with no "thing
+    // in hand" for an inspector to be about, so its third column had nothing to
+    // put there and filled itself with a second copy of four rows that live in the
+    // sections — including a second sentence about whether the update check has
+    // ever succeeded, which is two surfaces for one rule-35 fact. The exception is
+    // named here rather than loosening the count for everyone: a desk that DOES
+    // have a selected object and quietly drops its inspector should still fail.
+    const TWO_COLUMN = ['src/lib/views/Settings.svelte'];
     for (const f of DESKS) {
       const [, cols] = read(f).match(/columns="([^"]+)"/) ?? [];
       expect(cols, `${f} passes no column track to the frame`).toBeTruthy();
-      expect(cols.trim().split(/\s+(?![^(]*\))/).length, `${f}: ${cols}`).toBe(3);
+      const tracks = cols.trim().split(/\s+(?![^(]*\))/).length;
+      expect(tracks, `${f}: ${cols}`).toBe(TWO_COLUMN.includes(f) ? 2 : 3);
     }
   });
 });
