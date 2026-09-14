@@ -266,7 +266,7 @@
             <!-- Two-step, because Tauri's webview has no working confirm() and a
                  delete that reports success without ever showing a dialog is
                  exactly the defect rule 41 exists for. -->
-            <button class="r-btn ghost sm th-del" class:arm={delArm === sel.id} on:click={() => del(sel)}>
+            <button class="r-btn danger sm th-del" class:arm={delArm === sel.id} on:click={() => del(sel)}>
               {delArm === sel.id ? 'Delete — sure?' : 'Delete'}
             </button>
           </div>
@@ -327,7 +327,12 @@
   .th-flbl{ margin:14px 0 6px; }
   .th-actions{ display:flex; gap:5px; }
   .th-actions .r-btn{ flex:1 1 auto; justify-content:center; }
-  .th-del{ color:var(--v-rose); }
-  .th-del:hover, .th-del.arm{ border-color:var(--v-rose); background:var(--v-rose-soft); }
+  /* CONVERTED — B2. A third copy of the same hand-rolled destructive button:
+     `.r-btn ghost sm` with rose text over a `--v-500` hairline, which is what
+     `.r-btn.danger` already is except for the edge. Templates' Delete, Themes'
+     Delete and the editor's Delete were three shapes for one word. Only the
+     ARMED state is local — the variant has no opinion about rule 41's second
+     press, and that is the half worth keeping. */
+  .th-del.arm{ border-color:var(--v-red); background:var(--v-red-soft); }
   .th-empty{ margin:auto; padding:24px; text-align:center; }
 </style>

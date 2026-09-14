@@ -338,6 +338,8 @@
     overflow-y: auto;
     padding: 0 8px 8px;
   }
+  /* A LIST ROW, not a button — B2. One media kind per row in the rail, a name
+     and a count, filtering the grid beside it. Selected, not pressed. */
   .ml-kind {
     display: flex;
     align-items: center;

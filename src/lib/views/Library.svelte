@@ -804,17 +804,27 @@
   .lib-importerr{ font-size:var(--v-fs-b2); color:var(--v-red); margin-top:-4px; }
   .lib-nopane{ margin:0; padding:18px 4px; font-size:var(--v-fs-b2); color:var(--v-red); }
 
-  .lib-more{ width:30px; height:30px; }
+  /* NO SIZE — B2. It rendered `.r-iconbtn lib-more` and then overrode the
+     shared 26px to 30px, in a head bar whose other controls are `.r-btn ghost
+     sm` and `.r-btn primary sm`. A third icon-button size (Browse had 24, this
+     30, app.css 26) is exactly the drift nobody can see while reading any one
+     of the three rules. The override is gone; the rule is kept as the record. */
   .lib-search{ position:relative; display:flex; align-items:center; flex:1 1 240px;
     min-width:200px; max-width:360px; }
   .lib-search svg{ position:absolute; left:13px; color:var(--v-faint); pointer-events:none; }
   .lib-search input{ padding-left:36px; }
 
   .lib-newwrap{ position:relative; }
+  /* AN INVISIBLE CLICK-CATCHER, not a button — B2. A transparent full-viewport
+     button element behind an open menu so a press anywhere closes it, keyboard
+     included. Two of them, one per menu. It has no shape by design. */
   .lib-newscrim{ position:fixed; inset:0; z-index:40; background:transparent; border:0; cursor:default; }
   .lib-newmenu{ position:absolute; right:0; top:calc(100% + 6px); z-index:50; min-width:180px; padding:6px;
     background:var(--v-surf2); border:1px solid var(--v-line2); border-radius:11px; box-shadow:0 18px 44px -18px #000;
     display:flex; flex-direction:column; gap:2px; }
+  /* A MENU ROW, not a button — B2. Five of them across the New and ⋮ menus:
+     full-bleed, left-aligned, no edge, because the floating menu is the
+     surface they sit on. */
   .lib-newitem{ text-align:left; padding:9px 11px; border-radius:8px; border:0; background:transparent; color:var(--v-txt);
     font-family:var(--f-body); font-size:var(--v-fs-pr); cursor:pointer; }
   .lib-newitem:hover{ background:var(--v-surf3); color:var(--v-accent); }

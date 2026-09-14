@@ -98,6 +98,8 @@
   .cr-sep { width: 1px; height: 20px; background: var(--v-line2); flex: 0 0 auto; }
 
   /* Square-shouldered, 3px radius like everything else on this desk. No pills. */
+  /* A LIST ROW, not a button — B2. One collection per row, carrying its own
+     colour key (`.cc-*`). Selected, not pressed. */
   .cr-c {
     display: inline-flex; align-items: center; gap: 7px;
     height: 34px; padding: 0 11px 0 9px;
@@ -136,6 +138,8 @@
   .cr-k { color: var(--v-dim); font-size: 10px; flex: 0 0 auto; }
 
   .cr-views { display: flex; gap: 4px; flex-wrap: wrap; }
+  /* A SEGMENT, not a button — B2. One of the view choices under the collection
+     list: one of N, drawn as a strip, selected rather than pressed. */
   .cr-v {
     height: 22px; padding: 0 9px; border: 1px solid transparent; border-radius: var(--v-r-sm);
     background: transparent; color: var(--v-dim);

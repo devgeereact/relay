@@ -378,6 +378,8 @@
     border-bottom: 1px solid var(--v-line); }
   .sv-raillist { flex: 1; min-height: 0; overflow-y: auto; padding: 6px; display: flex;
     flex-direction: column; gap: 2px; }
+  /* A LIST ROW, not a button — B2. One book per row in the rail, selected into
+     the deck beside it rather than pressed. */
   .sv-book { display: flex; align-items: center; gap: 8px; width: 100%; height: 28px;
     padding: 0 8px; border: 1px solid transparent; border-radius: var(--v-r-sm);
     background: transparent; color: var(--v-dim); font-family: var(--f-body);
@@ -405,6 +407,11 @@
   .sv-pager { display: flex; align-items: center; gap: 12px; padding: 10px 14px;
     border-top: 1px solid var(--v-line); flex-wrap: wrap; }
   .sv-pages { display: flex; align-items: center; gap: 4px; flex: 1; }
+  /* A PAGER, not a row of buttons — B2. `‹`, then one cell PER PAGE, then `›`.
+     The numbered cells grow with their digits (`min-width` plus padding, not a
+     fixed width), and the whole strip is one control reading "you are here, of
+     this many" — the shared button's fixed metrics would make it a toolbar of
+     numbered actions. Deliberate; not drift. */
   .sv-pg { min-width: 28px; height: 28px; padding: 0 7px; border-radius: var(--v-r-sm); border: 0;
     background: transparent; color: var(--v-dim); font-family: var(--f-mono); font-size:var(--v-fs-b1);
     font-variant-numeric: tabular-nums; cursor: pointer; }

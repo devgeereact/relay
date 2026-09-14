@@ -320,6 +320,10 @@
   .te-pjump .rw-itemname{ flex:0 0 auto; }
   .te-pv{ flex:1; min-width:0; text-align:right; font-size:var(--v-fs-cap); color:var(--v-faint);
     overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  /* A ROW AFFORDANCE, not a button — B2. The ✕ that clears one theme key, 24px,
+     sharing a `.te-prow` with a full-width `.rw-item`. It takes the row's own
+     height rather than declaring one, which is why there is no `height` here and
+     why the shared control would not fit beside the row it belongs to. */
   .te-pclear{ flex:0 0 auto; width:24px; border:0; background:none; color:var(--v-faint);
     cursor:pointer; font-size:var(--v-fs-cap); line-height:1; }
   .te-pclear:hover{ color:var(--v-rose); background:var(--v-rose-soft); }
@@ -347,6 +351,9 @@
   /* The strip WRAPS. A tab that has scrolled out of sight behind a hidden
      scrollbar is a tab nobody knows is there. */
   .te-objtabs{ display:flex; flex-wrap:wrap; gap:3px; padding:8px 12px 0; flex:0 0 auto; }
+  /* A TAB, not a button — B2. `role="tab"` in a `role="tablist"`, sized by its
+     label, carrying a selected state. Same shape and same job as the template
+     editor's `.te-objtab`, which is what makes the two desks read as one. */
   .te-objtab{ padding:3px 8px; border-radius:var(--v-r-sm); border:1px solid var(--v-line2);
     background:var(--v-surf2); color:var(--v-dim); font-size:var(--v-fs-lbl); font-weight:600;
     cursor:pointer; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;

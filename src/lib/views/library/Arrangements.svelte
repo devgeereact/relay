@@ -180,6 +180,12 @@
     <p class="r-lbl ar-sub">Play order</p>
     {#if draft.sequence.length}
       <ol class="ar-seq">
+        <!-- `sm`, NOT `xs` — B2. These three carried `class="r-btn ghost xs"` and
+             `.xs` is defined in no stylesheet in this repository: app.css publishes
+             `sm` and nothing else. So they rendered at the FULL 26px while the
+             Cancel / Save pair twelve lines below, and every other small control on
+             this desk, rendered at 22px — a variant name that reads as a decision
+             and does nothing. Held by `buttonshapes.test.js`. -->
         {#each draft.sequence as idx, n}
           <li class="ar-step" class:missing={sections()[idx] === undefined}>
             <span class="ar-stepno r-mono">{n + 1}</span>
@@ -187,17 +193,17 @@
               {sections()[idx]?.tag || sections()[idx]?.label || 'section that no longer exists'}
             </span>
             <button
-              class="r-btn ghost xs r-focus"
+              class="r-btn ghost sm r-focus"
               aria-label="Move {n + 1} earlier"
               disabled={n === 0}
               on:click={() => move(n, -1)}>↑</button>
             <button
-              class="r-btn ghost xs r-focus"
+              class="r-btn ghost sm r-focus"
               aria-label="Move {n + 1} later"
               disabled={n === draft.sequence.length - 1}
               on:click={() => move(n, 1)}>↓</button>
             <button
-              class="r-btn ghost xs r-focus"
+              class="r-btn ghost sm r-focus"
               aria-label="Remove step {n + 1}"
               on:click={() => removeAt(n)}>✕</button>
           </li>
@@ -333,6 +339,10 @@
     flex-wrap: wrap;
     gap: 6px;
   }
+  /* A CHIP, not a button — B2. One per section of the song, in a wrapping
+     palette you click as many times as you sing it. It names a thing rather
+     than an action, and a wrapping row of them in the button shape would read
+     as a row of commands. */
   .ar-chip {
     padding: 4px 10px;
     border: 1px solid var(--v-line2);
