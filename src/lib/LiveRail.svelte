@@ -34,14 +34,28 @@
   // already uses. A second search path would be a second answer to "what does
   // this query mean", and the two would drift.
   //
-  // WHAT IS DELIBERATELY NOT HERE: the prototype's Songs half of this rail. A
-  // song section has no canonical reference, so a song cell could not be fired
-  // through `manualFire` (which resolves a reference) or `fireSlide` (which
-  // needs a plan cue) — it would need `fireContent`, and giving the grid a third
-  // wrapper is a decision about the fire path, not about a rail. Left out rather
-  // than taken quietly; see the note to the team lead.
+  // ── THE SONGS HALF (docs/REBRAND.md §2) ────────────────────────────────────
+  //
+  // The rail used to be scripture only, and said so: a song section has no
+  // canonical reference, so a song cell cannot be fired through `manualFire`.
+  // That objection was about the GRID, not about the rail. The rail only ever
+  // STAGES — pressing a song loads its slides into the grid and touches no
+  // screen — and the grid's press then goes through `fireContent`, which is the
+  // path `LyricsPane` has fired songs down since phase 1. No third wrapper, no
+  // new fire path, and nothing here auto-fires.
+  //
+  // ── ONE BOX, TWO JOBS (§9) ─────────────────────────────────────────────────
+  //
+  // The console's right-hand column used to carry a second scripture box with a
+  // `Fire` button — the one path that still works when the AI is wrong, the
+  // model is missing or the verse is a RANGE the corpus cannot offer as a single
+  // hit. §9 asks for one box, so that job came here rather than being deleted:
+  // `Fire` beside this field sends the reference exactly as typed, ranges
+  // included, through the same `manualFire`. It is offered only when the query
+  // holds a digit, because a reference has a number in it and a half-remembered
+  // phrase does not — a fire nobody could satisfy is not a control.
   import { onMount, onDestroy } from 'svelte';
-  import { listBooks, searchScripture, readErrors } from './stores/capture.js';
+  import { listBooks, searchScripture, listSongs, searchSongs, readErrors } from './stores/capture.js';
   import { pressArbiter } from './slidegrid.js';
   import EmptyState from './ui/EmptyState.svelte';
   import ErrorState from './ui/ErrorState.svelte';
@@ -49,6 +63,15 @@
 
   /** Stage one chapter in the slide grid. Never fires. */
   export let onChapter = () => {};
+  /** Stage one SONG in the slide grid, by id. Never fires — see the note above. */
+  export let onSong = () => {};
+  /**
+   * Fire the reference exactly as it was typed — ranges included. This is the
+   * manual box that used to live in the inspector column, and it is still the
+   * floor under the AI: the caller owns the fire, so the caller owns the
+   * outcome, and nothing here says a screen changed.
+   */
+  export let onReference = () => {};
   /**
    * ONE SEARCH HIT, taken the whole way: the chapter into the grid AND the verse
    * to the programme (§9). The caller owns the fire, so the caller owns the
@@ -62,6 +85,38 @@
   let books = [];
   let booksLoaded = false;
   let openBook = null;
+
+  /** Which collection the rail is showing — 'bible' or 'songs' (§2). */
+  let tab = 'bible';
+  let songs = [];
+  let songsLoaded = false;
+  let songsAsked = false;
+
+  /**
+   * The search field, so the `/` shortcut can still reach it.
+   *
+   * The console's `search` context used to focus the inspector's manual box.
+   * That box is this one now, so the focus has to come with it — otherwise the
+   * shortcut survives as a key that quietly does nothing, which is the failure
+   * `NavResult` exists to prevent, one surface along.
+   */
+  let qEl;
+  export function focus() {
+    qEl?.focus();
+    qEl?.select?.();
+  }
+
+  /**
+   * Is this query a REFERENCE the operator wants fired as typed?
+   *
+   * A display test, never a fire. It decides whether the `Fire` button is
+   * offered beside the box — nothing about it reaches a screen on its own, and a
+   * query it lets through that the backend cannot parse comes back as an error
+   * the caller renders. A reference has a number in it; the words you half
+   * remember do not.
+   */
+  export const looksLikeReference = (text) => /\d/.test(String(text ?? ''));
+  $: canFire = !disabled && tab === 'bible' && looksLikeReference(q) && q.trim().length >= 2;
 
   // Search results, and whether we have asked yet. `[]` before the first call is
   // not "nothing matches" — that sentence is the one that makes an operator
@@ -79,11 +134,38 @@
     booksLoaded = true;
   }
 
+  /**
+   * The song list, fetched the first time the Songs half is opened and on every
+   * query after that.
+   *
+   * `songsAsked` is the same distinction the hits keep: `[]` before the first
+   * call is not "you have no songs", and that sentence is the one that makes an
+   * operator think their library is gone.
+   */
+  async function loadSongs(query) {
+    songsLoaded = false;
+    songsAsked = true;
+    const text = String(query ?? '').trim();
+    songs = (text ? await searchSongs(text) : await listSongs()) ?? [];
+    songsLoaded = true;
+  }
+  $: if (tab === 'songs') loadSongs(q);
+
+  function setTab(next) {
+    if (tab === next) return;
+    tab = next;
+    // The query means a different thing on each half, and carrying it across
+    // shows "nothing matches" over a collection the operator has not searched.
+    q = '';
+    hits = [];
+    hitsFor = null;
+  }
+
   // Debounced, because `search_scripture` runs a semantic pass over the corpus
   // and an operator types a reference one character at a time.
   function armSearch(text) {
     clearTimeout(searchT);
-    const query = text.trim();
+    const query = tab === 'bible' ? text.trim() : '';
     if (query.length < 2) {
       hits = [];
       hitsFor = null;
@@ -100,7 +182,7 @@
       }
     }, 220);
   }
-  $: armSearch(q);
+  $: armSearch(q, tab);
 
   const toggleBook = (b) => (openBook = openBook === b.book ? null : b.book);
   const chapterList = (n) => Array.from({ length: Math.max(0, n) }, (_, i) => i + 1);
@@ -126,23 +208,64 @@
   const why = (h) => h?.why ?? '';
 </script>
 
-<aside class="lrail" aria-label="Scripture">
+<aside class="lrail" aria-label="Library rail">
+  <!-- BOTH COLLECTIONS (docs/REBRAND.md §2). The rail named itself SCRIPTURE and
+       offered nothing else, so the one thing a service is half made of could
+       only be reached by leaving the run surface. -->
   <div class="lr-head">
-    <span class="lr-k r-mono">Scripture</span>
+    <div class="seg lr-seg" role="group" aria-label="Collection">
+      <button class:on={tab === 'bible'} aria-pressed={tab === 'bible'} on:click={() => setTab('bible')}>Bible</button>
+      <button class:on={tab === 'songs'} aria-pressed={tab === 'songs'} on:click={() => setTab('songs')}>Songs</button>
+    </div>
   </div>
 
-  <div class="lr-head">
+  <div class="lr-head lr-qrow">
     <input
       class="lr-q"
       type="search"
+      bind:this={qEl}
       bind:value={q}
       {disabled}
-      placeholder="ps 23 1 · seek ye first…"
-      aria-label="Search scripture" />
+      on:keydown={(e) => { if (e.key === 'Enter' && canFire) onReference(q.trim()); }}
+      placeholder={tab === 'bible' ? 'ps 23 1 · seek ye first…' : 'song title or author'}
+      aria-label={tab === 'bible' ? 'Search scripture' : 'Search songs'} />
+    <!-- THE FLOOR UNDER THE AI, in the one box §9 asks for. It sends the
+         reference exactly as typed — `ps 23`, `John 3:16-18` — through the same
+         `manualFire` a grid cell takes. Amber is forbidden here: this button
+         does not mean ON AIR, it means "send this", and the fire reports its own
+         outcome through the caller (rules 15 and 18). -->
+    {#if tab === 'bible'}
+      <button
+        class="lr-fire"
+        disabled={!canFire}
+        title="Send this reference to the programme, exactly as typed — ranges included"
+        on:click={() => onReference(q.trim())}>Fire</button>
+    {/if}
   </div>
 
   <div class="lr-body">
-    {#if hitsFor}
+    {#if tab === 'songs'}
+      <!-- A press STAGES the song's slides in the grid and touches no screen.
+           The grid's own press is what puts a section on the wall. -->
+      {#each songs as s (s.id)}
+        <button class="lr-row" {disabled} on:click={() => onSong(s.id, s.title)}
+          title="Open “{s.title}” in the slide grid — nothing reaches a screen until you press a slide">
+          <span class="lr-i" aria-hidden="true">♪</span>
+          <span class="lr-n">{s.title}</span>
+          <span class="lr-k r-mono">{s.section_count}</span>
+        </button>
+      {:else}
+        {#if !songsAsked || !songsLoaded}
+          <Loading what="songs" compact />
+        {:else if $readErrors.listSongs || $readErrors.searchSongs}
+          <ErrorState compact error={$readErrors.listSongs ?? $readErrors.searchSongs} onRetry={() => loadSongs(q)} />
+        {:else if q.trim()}
+          <EmptyState message={`No song matches “${q.trim()}”.`} />
+        {:else}
+          <EmptyState message="No songs yet — add one in the Library." />
+        {/if}
+      {/each}
+    {:else if hitsFor}
       <!-- Single press sends the verse to the programme and opens its chapter in
            the grid; double press only opens the chapter. Both through the grid's
            own arbiter — see the note at the top of this file. -->
@@ -166,7 +289,7 @@
         </button>
       {:else}
         {#if $readErrors.searchScripture}
-          <ErrorState compact error={$readErrors.searchScripture} onRetry={() => armSearch(q)} />
+          <ErrorState compact error={$readErrors.searchScripture} onRetry={() => armSearch(q, tab)} />
         {:else}
           <EmptyState message={`Nothing matches “${hitsFor}”. Try a reference (ps 23 1) or the words you remember.`} />
         {/if}
@@ -218,8 +341,25 @@
     border-bottom: 1px solid var(--v-line);
   }
 
+  /* The collection switch. `.seg` is the shell's own segmented control (app.css),
+     so this only makes the two halves share the width. */
+  .lr-seg { display: flex; width: 100%; }
+  .lr-seg :global(button) { flex: 1 1 0; }
+
+  /* The box and its one action on one row: §9's "one box", with the reference
+     fire beside it rather than in a second field on another panel. */
+  .lr-qrow { display: flex; align-items: center; gap: 5px; }
+  .lr-fire {
+    flex: 0 0 auto; height: 26px; padding: 0 9px; cursor: pointer;
+    background: var(--v-surf3); border: 1px solid var(--v-line2); border-radius: var(--v-r-sm);
+    color: var(--v-txt); font-family: var(--f-mono); font-size: var(--v-fs-cap);
+    letter-spacing: var(--v-tr-caps); text-transform: uppercase;
+  }
+  .lr-fire:hover:not(:disabled) { border-color: var(--v-sel-line); }
+  .lr-fire:disabled { opacity: .4; cursor: not-allowed; }
+
   .lr-q {
-    width: 100%; box-sizing: border-box; height: 26px; padding: 0 8px;
+    width: 100%; min-width: 0; box-sizing: border-box; height: 26px; padding: 0 8px;
     background: var(--v-void); border: 1px solid var(--v-line2); border-radius: var(--v-r-sm);
     color: var(--v-txt); font-family: var(--f-body); font-size: var(--v-fs-b2);
   }

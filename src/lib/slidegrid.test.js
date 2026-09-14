@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { gridSource, planCells, passageCells, pressArbiter, PRESS_MS } from './slidegrid.js';
+import { gridSource, planCells, passageCells, songCells, pressArbiter, PRESS_MS } from './slidegrid.js';
 
 const slidesOf = (item) => item.slides ?? [];
 
@@ -239,5 +239,86 @@ describe('a hand pick outranks the plan; a detection never does', () => {
     });
     expect(g.source).toBe('plan');
     expect(g.cells.length).toBe(3);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// WAVE 3 · A SONG IS THE THIRD THING THAT CAN BE STAGED
+//
+// `docs/REBRAND.md` §2 gives the run surface a rail with both collections, and a
+// song press stages its slides here. The rule the cells have to carry is §10's:
+// a section LABEL is the operator's, the WORDS are the congregation's. The cell
+// keeps both and they are separate fields — `fire_content` is what suppresses
+// the label on the way to the glass, so a cell that folded the two together
+// would be showing the operator something no congregation will ever see.
+// ─────────────────────────────────────────────────────────────────────────────
+const DECK = [
+  { key: '0-0', section: 0, label: 'Verse 1', lyrics: 'Blessed assurance\nJesus is mine' },
+  { key: '1-0', section: 1, label: 'Chorus', lyrics: 'This is my story' },
+];
+
+describe('a song, as cells', () => {
+  it('is one cell per reflowed slide, carrying the WORDS and tagging the section', () => {
+    const cells = songCells(DECK, 'Blessed Assurance');
+    expect(cells).toHaveLength(2);
+    expect(cells[0]).toMatchObject({
+      kind: 'song',
+      ctype: 'song',
+      tag: 'Verse 1',
+      label: 'Blessed Assurance · Verse 1',
+      text: 'Blessed assurance\nJesus is mine',
+      empty: false,
+    });
+    expect(cells.map((c) => c.n)).toEqual([1, 2]);
+  });
+
+  // A song section has no canonical reference, which is exactly why its fire is
+  // `fireContent` and not `manualFire`. A cell that invented one would send the
+  // grid down the scripture path and resolve some verse nobody asked for.
+  it('never carries a reference — there is no verse to resolve', () => {
+    for (const c of songCells(DECK, 'Blessed Assurance')) {
+      expect(c.reference).toBeNull();
+      expect(c.cueId).toBeNull();
+    }
+  });
+
+  it('a section with a name and no words is marked empty, not dropped', () => {
+    // Same rule as `planCells`: a cue an operator can neither see nor be told
+    // about is the "nothing may become unreachable" rule failing quietly.
+    const cells = songCells([{ key: '0-0', label: 'Bridge', lyrics: '   ' }], 'Untitled');
+    expect(cells).toHaveLength(1);
+    expect(cells[0].empty).toBe(true);
+  });
+
+  it('gives every cell a distinct key', () => {
+    const keys = songCells(DECK, 'Blessed Assurance').map((c) => c.key);
+    expect(new Set(keys).size).toBe(keys.length);
+  });
+
+  it('a song the operator picked wins over an open plan, like any other hand pick', () => {
+    const g = gridSource({
+      planOpen: true, planTitle: 'Sunday Morning', items: PLAN, slidesOf,
+      verses: VERSES, passageTitle: 'Psalms 23',
+      songSlides: DECK, songTitle: 'Blessed Assurance', handPicked: true,
+    });
+    expect(g.source).toBe('song');
+    expect(g.title).toBe('Blessed Assurance');
+    expect(g.cells).toHaveLength(2);
+  });
+
+  it('a song that has not loaded yet does not blank the plan', () => {
+    const g = gridSource({
+      planOpen: true, planTitle: 'Sunday Morning', items: PLAN, slidesOf,
+      verses: [], songSlides: [], songTitle: 'Blessed Assurance', handPicked: true,
+    });
+    expect(g.source).toBe('plan');
+  });
+
+  it('and a song never displaces a plan unless a hand picked it', () => {
+    const g = gridSource({
+      planOpen: true, planTitle: 'Sunday Morning', items: PLAN, slidesOf,
+      verses: [], songSlides: DECK, songTitle: 'Blessed Assurance', handPicked: false,
+    });
+    expect(g.source).toBe('plan');
   });
 });

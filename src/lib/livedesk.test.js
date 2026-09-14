@@ -268,17 +268,22 @@ describe('the AI detection column', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 3 · THE SCREENS MOVED, AND NOTHING WAS LEFT BEHIND
+// 3 · THE COLUMN IS THE AI'S CLAIMS, AND FOUR THINGS LEFT IT
 //
-// Output Status left the studio row so the two monitors could be equal. It has
-// rule 35's whole history behind it, so the move is only defensible if every
-// control it carried is still on the run surface — the per-screen badge, the
-// screen's own word, the on/off REPAIR (which is what an operator reaches for
-// when a projector drops mid-service), the emergency announcement, and Open main
-// output. This is the test that says so.
+// `docs/REBRAND.md` §2 gives the run surface a 286px right column and puts ONE
+// thing in it: what the AI thinks it heard. Relay's carried four more — a second
+// scripture box with its own Fire, an Output Status pane, the emergency
+// announcement and Open main output — so the claims an operator is meant to be
+// reading competed with three panels about something else.
+//
+// All four MOVED. That is the only defensible version of this change, and it is
+// what these tests hold: the column is one pane, and every control it used to
+// carry is rendered somewhere an operator can still reach.
+//
+// Watched to fail: put any of the four back and the first test counts two panes.
 // ─────────────────────────────────────────────────────────────────────────────
 describe('the inspector column', () => {
-  it('sits beside the stage and holds the claims ABOVE the screens', async () => {
+  it('sits beside the stage and holds the claims — and nothing else', async () => {
     new Live({ target: host, props: {} });
     await settle();
     const insp = host.querySelector('.insp-col');
@@ -287,25 +292,43 @@ describe('the inspector column', () => {
     expect(insp.previousElementSibling.className).toContain('stage');
 
     const panes = [...insp.children].filter((e) => e.className.includes('pane'));
-    expect(panes).toHaveLength(2);
+    expect(panes).toHaveLength(1);
     expect(panes[0].textContent).toContain('AI Detection');
-    expect(panes[1].textContent).toContain('Output Status');
+
+    // The four that left, each by the thing that would still render it here.
+    cap.channelHealth.set({ 1: { id: 1, name: 'Main screen', supported: true, online: false } });
+    await settle();
+    expect(insp.querySelector('.out'), 'a per-screen status row').toBeNull();
+    expect(insp.querySelector('input[aria-label="Manual scripture reference"]')).toBeNull();
+    expect(insp.querySelector('input[aria-label="Emergency announcement"]')).toBeNull();
+    expect(insp.textContent).not.toContain('Open main output');
   });
 
-  it('the screens pane kept every control it had in the studio row', async () => {
-    // A screen that is OFF — the state the repair exists for. With no health row
-    // at all `screenSwitch` deliberately offers nothing ("we have not asked yet"
-    // is not "it is off"), so the pane would have nothing to press through no
-    // fault of this change.
-    cap.channelHealth.set({ 1: { id: 1, name: 'Main screen', supported: true, online: false } });
-    new Live({ target: host, props: {} });
-    await settle();
-    const screens = [...host.querySelectorAll('.insp-col .pane')].at(-1);
-    expect(screens.textContent).toContain('Main screen');
-    // The repair, the emergency announcement, and the way to open the wall.
-    expect(screens.querySelector('.out-sw')).not.toBeNull();
-    expect(screens.querySelector('input[aria-label="Emergency announcement"]')).not.toBeNull();
-    expect(screens.textContent).toContain('Open main output');
+  // NOTHING BECAME UNREACHABLE. This is the level `scripts/qa-inventory.mjs`
+  // polices — a rendered control, not a wrapper — so it is asserted against the
+  // files that render them rather than against the store.
+  it('every control the column carried is rendered somewhere else', () => {
+    const rail = readFileSync(resolve(__dirname, 'LiveRail.svelte'), 'utf8');
+    const dock = readFileSync(resolve(__dirname, 'Dock.svelte'), 'utf8');
+    const channels = readFileSync(resolve(__dirname, 'views/Channels.svelte'), 'utf8');
+
+    // The reference fire, ranges included, in §9's one box.
+    expect(rail).toMatch(/on:click=\{\(\) => onReference\(q\.trim\(\)\)\}/);
+    // The emergency announcement, two-step, now on every workspace.
+    expect(dock).toMatch(/aria-label="Emergency announcement"/);
+    expect(dock).toMatch(/annArmed \? 'Confirm\?' : 'Send'/);
+    // The per-screen repair, and the way to open the wall.
+    expect(channels).toMatch(/openChannelOutput/);
+    expect(channels).toMatch(/closeChannelOutput/);
+  });
+
+  // The two facts that are about the ROOM rather than about one screen. A lamp
+  // answers for one screen and cannot compose either sentence, so both stayed.
+  it('the whole-room warnings stayed on the run surface', () => {
+    const live = readFileSync(resolve(__dirname, 'views/Live.svelte'), 'utf8');
+    expect(live).toMatch(/\{#if nowhereToShow\}/);
+    expect(live).toMatch(/\{#if fitWarning\}/);
+    expect(live).toMatch(/aria-live="polite">\{downAnnounce\}/);
   });
 
   // Rule 35: a status line that reads the same when the thing behind it is
@@ -371,56 +394,26 @@ describe('the sensitivity dial', () => {
 // panel that scrolls with no scrollbar reads as a panel that is broken.
 // ─────────────────────────────────────────────────────────────────────────────
 describe('the 286px column does not clip', () => {
-  it('a screen NAME gets its own row and one line — "Streaming" is not "Stream"/"ing"', async () => {
+  // THE SCREEN-NAME CLIPPING PAIR MOVED WITH THE PANE THEY WERE ABOUT. They held
+  // `.out-nm` and `.out-kind` / `.out-note` in Live's Output Status rows — the
+  // pane §2 removed from this column. A screen's name is still ellipsised in two
+  // places and both are tested where they live: the chrome lamps
+  // (`shellchrome.test.js`) and the Outputs cards. Re-asserting them here would
+  // be a third opinion about a screen on the one surface rule 35 says must not
+  // hold one, which is the whole reason the pane left.
+  //
+  // What this file still owes the column is that the thing left IN it fits.
+  it('a claim card is readable at 286px — the reference is never broken mid-word', async () => {
     const live = readFileSync(resolve(__dirname, 'views/Live.svelte'), 'utf8');
-    const rule = live.slice(live.indexOf('  .out-nm{'), live.indexOf('  .out-meta{'));
-    // `text-overflow` does nothing without a block-level box, which is how the
-    // chrome lamps hit the same wall.
-    expect(rule).toMatch(/display:block/);
-    expect(rule).toMatch(/white-space:nowrap/);
-    expect(rule).toMatch(/text-overflow:ellipsis/);
-    // The wrap rule that broke it mid-word is gone from the NAME.
-    expect(rule).not.toMatch(/overflow-wrap:anywhere/);
-    expect(rule).not.toMatch(/line-clamp/);
+    const rule = live.slice(live.indexOf('  .clm-ref{'), live.indexOf('  .clm-ref{') + 400);
+    expect(rule).toMatch(/overflow:hidden|text-overflow:ellipsis|min-width:0/);
 
-    // And in the DOM the name is alone on its grid row, with the badge below.
-    cap.channelHealth.set({ 1: { id: 1, name: 'Main screen', supported: true, online: false } });
+    cap.detections.set([claim({ reference: '1 Thessalonians 5:16', in_library: true })]);
     new Live({ target: host, props: {} });
     await settle();
-    const row = host.querySelector('.out');
-    expect(row.querySelector('.out-nm').nextElementSibling.className).toContain('out-meta');
-    // The whole name is still reachable, whatever the width does to it.
-    expect(row.querySelector('.out-nm').getAttribute('title')).toBe('Main screen');
-  });
-
-  // THE SAME WRAP, ONE ELEMENT OVER. One span rendered `o.s.note || screenKind(…)`,
-  // so one set of wrap rules had to serve a two-word NAME and a whole SENTENCE —
-  // and it broke "Native window" into `Nativ` / `e…` while truncating the note to
-  // `this screen…`. They want opposite treatments, so they are two elements now.
-  it('the screen KIND is one ellipsised line; the NOTE is a sentence with a row of its own', async () => {
-    const live = readFileSync(resolve(__dirname, 'views/Live.svelte'), 'utf8');
-    const kind = live.slice(live.indexOf('  .out-kind{'), live.indexOf('  /* THE NOTE IS A SENTENCE'));
-    expect(kind).toMatch(/white-space:nowrap/);
-    expect(kind).toMatch(/text-overflow:ellipsis/);
-    expect(kind).not.toMatch(/overflow-wrap:anywhere/);
-
-    const note = live.slice(live.indexOf('  .out-note{'), live.indexOf('  .out-warn{'));
-    // Its own grid row, so it gets the width rather than the gap the badge left.
-    expect(note).toMatch(/grid-area:note/);
-    expect(live).toMatch(/grid-template-areas:"ic nm" "ic meta" "note note"/);
-    // It wraps rather than truncating — a sentence cut to `this screen…` loses
-    // exactly the part that was worth reading.
-    expect(note).toMatch(/line-clamp:2/);
-
-    // And in the DOM the two are separate elements, never both at once.
-    cap.channelHealth.set({
-      1: { id: 1, name: 'Main screen', supported: true, online: true, painting: false, last_beat_ms: 9000 },
-    });
-    new Live({ target: host, props: {} });
-    await settle();
-    const row = host.querySelector('.out');
-    expect(row.querySelector('.out-note')).not.toBeNull();
-    expect(row.querySelector('.out-kind')).toBeNull();
+    const card = host.querySelector('.insp-col .clm');
+    expect(card).not.toBeNull();
+    expect(card.querySelector('.clm-ref').textContent).toBe('1 Thessalonians 5:16');
   });
 
   // THE INTEGRATOR'S RULING, applied to this half of the tree: a glyph in a value
@@ -442,14 +435,13 @@ describe('the 286px column does not clip', () => {
     expect(host.querySelector('.mon.prog .screen').textContent).toContain('Screens clear');
   });
 
-  it('the plan panel SAYS it has more below it', async () => {
+  // THE SCROLLER-SHADOW RECIPE went with the two panes it was written for — the
+  // Output Status list and the plan rail, both of which left this surface. What
+  // it was guarding is still true of the pane that remains: a body that scrolls
+  // must actually be a scroller rather than an overflow, or the content past the
+  // fold is unreachable on a booth laptop.
+  it('a pane body is a real scroller, not an overflow', () => {
     const live = readFileSync(resolve(__dirname, 'views/Live.svelte'), 'utf8');
-    const rule = live.slice(live.indexOf('  .plan{'), live.indexOf('  .rail{'));
-    // The same `background-attachment: local` recipe `.outs` uses: the shadow at
-    // an edge appears only while there is content past it.
-    expect(rule).toMatch(/no-repeat local/);
-    expect(rule).toMatch(/no-repeat scroll/);
-    // And the body it sits in is a real scroller, not an overflow.
     const body = live.slice(live.indexOf('  .pane-body{'), live.indexOf('  .pane-body::'));
     expect(body).toMatch(/min-height:0/);
     expect(body).toMatch(/overflow-y:auto/);

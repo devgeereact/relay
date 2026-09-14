@@ -46,12 +46,30 @@ describe('the grid is rendered, and its presses go through the arbiter', () => {
   });
 
   it('the grid never builds output by hand — it reuses the existing fire paths', () => {
-    // CLAUDE.md: never hand-roll an OutputContent. A plan cell is fireSlide; a
-    // verse cell is the same manualFire the search box uses.
+    // CLAUDE.md: never hand-roll an OutputContent. Three cell kinds, three
+    // EXISTING wrappers and no fourth: a plan cell is `fireSlide`, a verse cell
+    // is the same `manualFire` the rail's Fire takes, and a song section staged
+    // from the rail is the `fireContent` `LyricsPane` has always used. What this
+    // still refuses is a hand-built payload — `invoke`, `broadcast`, an object
+    // literal with `template_json` in it.
     const body = src.slice(src.indexOf('async function fireCell('), src.indexOf('const gridPress'));
     expect(body).toMatch(/return fireSlide\(item, cell\.slideIdx\);/);
     expect(body).toMatch(/await manualFire\(cell\.reference\);/);
-    expect(body).not.toMatch(/fireContent\(/);
+    expect(body).toMatch(/await fireContent\(cell\.label, cell\.text, 'song'\);/);
+    expect(body).not.toMatch(/invoke\(/);
+    expect(body).not.toMatch(/template_json/);
+    expect(body).not.toMatch(/broadcast/);
+  });
+
+  // A song section has no reference to resolve, which is exactly why it takes
+  // `fireContent` and not `manualFire` — and why the grid must not try. A
+  // `manualFire` handed a song's label would either miss or, worse, resolve some
+  // verse nobody asked for.
+  it('a song cell is never sent down the scripture path', () => {
+    const body = src.slice(src.indexOf('async function fireCell('), src.indexOf('const gridPress'));
+    const songBranch = body.slice(body.indexOf("if (cell.kind === 'song')"), body.indexOf('if (!cell.reference)'));
+    expect(songBranch).toMatch(/fireContent/);
+    expect(songBranch).not.toMatch(/manualFire/);
   });
 
   it('a fire that fails is reported — the arbiter is given somewhere to put it', () => {

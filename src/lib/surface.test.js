@@ -598,16 +598,23 @@ describe('RG-95 · a list that failed to load never says the library is empty', 
     expect(el.textContent).not.toMatch(/Empty plan/);
   });
 
-  it('the RUN surface does the same, on all three of its lists', () => {
+  it('the RUN surface does the same, on both of its lists', () => {
     // Live is not mounted anywhere in this suite — it needs the whole store — so
     // this reads the source, the way `safescreen.test.js` and `r2livepath.test.js`
     // already do for it. What matters is that each empty sentence is now behind an
     // error branch keyed to the read that produces it.
+    //
+    // TWO LISTS, NOT THREE, and the change is where they are rather than what
+    // they do. The plan CHOOSER and the Output Status pane both left Live
+    // (docs/REBRAND.md §2): plans are chosen in the Planner, and a screen's state
+    // is one lamp in the chrome and a full row in Outputs. What is left on this
+    // surface is the SLIDE GRID, and it is the only thing that can now tell an
+    // operator why it has nothing to show — so RG-95's rule lands on it. Both
+    // sources it draws from are covered: the plan's cues, and a chapter's verses.
     const f = src('src/lib/views/Live.svelte');
     for (const [key, sentence] of [
-      ['planItems', "live.plan_no_cues"],
-      ['listPlans', 'live.no_plans'],
-      ['listOutputChannels', 'No screens yet'],
+      ['planItems', 'live.plan_no_cues'],
+      ['chapterVerses', 'live.nothing_staged'],
     ]) {
       expect(f, `the ${key} list has no error branch`).toMatch(
         new RegExp(`readErrors\\.${key}`),
