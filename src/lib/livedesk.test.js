@@ -393,6 +393,55 @@ describe('the 286px column does not clip', () => {
     expect(row.querySelector('.out-nm').getAttribute('title')).toBe('Main screen');
   });
 
+  // THE SAME WRAP, ONE ELEMENT OVER. One span rendered `o.s.note || screenKind(…)`,
+  // so one set of wrap rules had to serve a two-word NAME and a whole SENTENCE —
+  // and it broke "Native window" into `Nativ` / `e…` while truncating the note to
+  // `this screen…`. They want opposite treatments, so they are two elements now.
+  it('the screen KIND is one ellipsised line; the NOTE is a sentence with a row of its own', async () => {
+    const live = readFileSync(resolve(__dirname, 'views/Live.svelte'), 'utf8');
+    const kind = live.slice(live.indexOf('  .out-kind{'), live.indexOf('  /* THE NOTE IS A SENTENCE'));
+    expect(kind).toMatch(/white-space:nowrap/);
+    expect(kind).toMatch(/text-overflow:ellipsis/);
+    expect(kind).not.toMatch(/overflow-wrap:anywhere/);
+
+    const note = live.slice(live.indexOf('  .out-note{'), live.indexOf('  .out-warn{'));
+    // Its own grid row, so it gets the width rather than the gap the badge left.
+    expect(note).toMatch(/grid-area:note/);
+    expect(live).toMatch(/grid-template-areas:"ic nm" "ic meta" "note note"/);
+    // It wraps rather than truncating — a sentence cut to `this screen…` loses
+    // exactly the part that was worth reading.
+    expect(note).toMatch(/line-clamp:2/);
+
+    // And in the DOM the two are separate elements, never both at once.
+    cap.channelHealth.set({
+      1: { id: 1, name: 'Main screen', supported: true, online: true, painting: false, last_beat_ms: 9000 },
+    });
+    new Live({ target: host, props: {} });
+    await settle();
+    const row = host.querySelector('.out');
+    expect(row.querySelector('.out-note')).not.toBeNull();
+    expect(row.querySelector('.out-kind')).toBeNull();
+  });
+
+  // THE INTEGRATOR'S RULING, applied to this half of the tree: a glyph in a value
+  // slot cannot tell "nothing there" from "we have not asked yet" — the same
+  // defect as "up to date" over a dead update channel, and what R3-13 already
+  // holds for an unbound template row. An EMPTY slot makes no claim at all, which
+  // is the honest thing for a slot with nothing to report.
+  it('no em dash stands in for a value anywhere on this surface', async () => {
+    const live = readFileSync(resolve(__dirname, 'views/Live.svelte'), 'utf8');
+    expect(live).not.toMatch(/'—'/);
+    expect(live).not.toMatch(/>—</);
+
+    // The programme's reference slot is simply absent when nothing is live — and
+    // the state is still said, twice, in words.
+    new Live({ target: host, props: {} });
+    await settle();
+    expect(host.querySelector('.mon.prog .mon-name')).toBeNull();
+    expect(host.querySelector('.mon.prog .tag').textContent).toContain('Clear');
+    expect(host.querySelector('.mon.prog .screen').textContent).toContain('Screens clear');
+  });
+
   it('the plan panel SAYS it has more below it', async () => {
     const live = readFileSync(resolve(__dirname, 'views/Live.svelte'), 'utf8');
     const rule = live.slice(live.indexOf('  .plan{'), live.indexOf('  .rail{'));
@@ -426,6 +475,8 @@ describe('preview and programme', () => {
     await settle();
     const prog = host.querySelector('.mon.prog');
     expect(prog.className).not.toContain('onair');
-    expect(host.querySelector('.mon.prog .mon-name').className).not.toContain('live');
+    // The reference slot is not there at all — see the em-dash test above. There
+    // is no element to carry amber, which is stronger than one that carries none.
+    expect(host.querySelector('.mon.prog .mon-name')).toBeNull();
   });
 });
