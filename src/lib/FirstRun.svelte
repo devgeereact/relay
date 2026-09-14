@@ -605,7 +605,7 @@
     padding: 6px;
     text-align: left;
     font: inherit;
-    font-size: 12px;
+    font-size:var(--v-fs-b1);
     color: var(--v-faint);
     cursor: pointer;
     text-decoration: underline;
@@ -735,7 +735,7 @@
     display: block;
     width: 100%;
     background: var(--v-surf3);
-    border-radius: 5px;
+    border-radius:var(--v-r-lg);
     margin-bottom: 9px;
   }
   .fr-mon b {
@@ -818,7 +818,7 @@
   }
   .fr-lang .t span {
     display: block;
-    font-size: 11.5px;
+    font-size:var(--v-fs-b2);
     color: var(--v-faint);
     margin-top: 2px;
   }
@@ -837,7 +837,7 @@
     display: block;
     margin-bottom: 4px;
     color: var(--v-emerald);
-    font-size: 14px;
+    font-size:var(--v-fs-h2);
   }
   .fr-ok kbd,
   .fr-facts li kbd {
@@ -869,7 +869,7 @@
     background: var(--v-red-soft);
     border: 1px solid rgba(239, 68, 68, 0.3);
     color: var(--v-txt);
-    font-size: 12.5px;
+    font-size:var(--v-fs-h3);
     line-height: 1.55;
   }
 

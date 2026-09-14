@@ -139,7 +139,7 @@
   .cr-v {
     height: 22px; padding: 0 9px; border: 1px solid transparent; border-radius: var(--v-r-sm);
     background: transparent; color: var(--v-dim);
-    font-family: var(--f-body); font-size: 11px; cursor: pointer;
+    font-family: var(--f-body); font-size:var(--v-fs-lbl); cursor: pointer;
   }
   .cr-v:hover:not(.on) { color: var(--v-txt); background: var(--v-surf2); }
   .cr-v.on { color: var(--v-txt); background: var(--v-surf3); border-color: var(--v-line2); }

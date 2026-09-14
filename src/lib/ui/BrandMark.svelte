@@ -52,7 +52,7 @@
   .mark i {
     width: 0.1em;
     min-width: 2px;
-    border-radius: 99px;
+    border-radius: var(--v-r-round);
     background: var(--fill);
   }
   /* The outer pair sit back, as on the design sheet. */

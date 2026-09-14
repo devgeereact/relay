@@ -595,7 +595,7 @@
   .ly-song span {
     display: block;
     margin-top: 2px;
-    font-size: 11px;
+    font-size:var(--v-fs-lbl);
     color: var(--v-faint);
   }
   .ly-song.on span {
@@ -694,7 +694,7 @@
     height: auto;
     resize: none;
     font-family: var(--f-mono);
-    font-size: 12.5px;
+    font-size:var(--v-fs-h3);
     line-height: 1.65;
     tab-size: 2;
   }

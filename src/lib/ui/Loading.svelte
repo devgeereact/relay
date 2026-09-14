@@ -38,10 +38,10 @@
     align-items: center;
     gap: 9px;
     padding: 10px 2px;
-    font-size: 12.5px;
+    font-size:var(--v-fs-h3);
   }
   .ld.compact {
-    font-size: 11.5px;
+    font-size:var(--v-fs-b2);
     padding: 6px 2px;
   }
   /* A quiet pulse. It is doing something, and the operator should not wonder whether
@@ -52,7 +52,7 @@
     width: 7px;
     height: 7px;
     border-radius: 50%;
-    background: var(--v-faint, #88888d);
+    background: var(--v-faint);
     flex: 0 0 auto;
     animation: ld-pulse 1.4s ease-in-out infinite;
   }

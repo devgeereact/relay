@@ -56,7 +56,7 @@
       <button class="r-btn ghost" on:click={onNormal}>Start normally</button>
     </div>
 
-    <p style="margin:16px 0 0;font-size:12px;color:var(--v-faint);">
+    <p style="margin:16px 0 0;font-size:var(--v-fs-b1);color:var(--v-faint);">
       Safe mode stays on until you turn it off in Settings — it will not quietly switch
       itself back the next time you launch. Do not run a service in it.
     </p>

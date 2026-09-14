@@ -294,7 +294,7 @@
     font-size: 15px;
     cursor: pointer;
     padding: 4px 6px;
-    border-radius: 6px;
+    border-radius:var(--v-r-2xl);
   }
   .ins-x:hover {
     color: var(--v-txt);
@@ -328,7 +328,7 @@
   .klbl {
     margin: 0 0 7px;
     font-family: var(--f-mono);
-    font-size: 9.5px;
+    font-size:var(--v-fs-cap);
     font-weight: 600;
     letter-spacing: 0.13em;
     text-transform: uppercase;
@@ -346,7 +346,7 @@
     background: var(--v-cyan-soft);
     color: var(--v-cyan);
     font-family: var(--f-mono);
-    font-size: 11px;
+    font-size:var(--v-fs-mono);
     font-weight: 700;
     letter-spacing: 0.1em;
     text-transform: uppercase;
@@ -374,8 +374,8 @@
     padding: 10px 12px;
     border-radius: var(--v-r-md);
     background: var(--v-cyan-soft);
-    border: 1px solid rgba(34, 211, 238, 0.28);
-    font-size: 12px;
+    border: 1px solid var(--v-cyan-line);
+    font-size:var(--v-fs-b1);
     line-height: 1.6;
     color: var(--v-dim);
   }
@@ -391,12 +391,12 @@
     gap: 6px 12px;
   }
   .ins-dl dt {
-    font-size: 12px;
+    font-size:var(--v-fs-b1);
     color: var(--v-faint);
   }
   .ins-dl dd {
     margin: 0;
-    font-size: 12px;
+    font-size:var(--v-fs-b1);
     color: var(--v-txt);
     text-align: right;
   }
@@ -405,7 +405,7 @@
     border: 0;
     padding: 0;
     font: inherit;
-    font-size: 12px;
+    font-size:var(--v-fs-b1);
     color: var(--v-accent2);
     cursor: pointer;
     text-decoration: underline;
@@ -429,7 +429,7 @@
   }
   .ins-time {
     margin: 8px 0 0;
-    font-size: 11px;
+    font-size:var(--v-fs-lbl);
     color: var(--v-faint);
   }
   .ins-empty {
@@ -440,7 +440,7 @@
   }
   .ins-note {
     margin: 10px 0 0;
-    font-size: 12px;
+    font-size:var(--v-fs-b1);
     line-height: 1.6;
     color: var(--v-faint);
   }
@@ -455,12 +455,12 @@
   }
   .ins-terms li {
     padding: 5px 11px;
-    border-radius: 999px;
+    border-radius: var(--v-r-sm);
     background: var(--v-cyan-soft);
-    border: 1px solid rgba(34, 211, 238, 0.3);
+    border: 1px solid var(--v-cyan-line);
     color: var(--v-cyan);
     font-family: var(--f-mono);
-    font-size: 11.5px;
+    font-size:var(--v-fs-b2);
   }
 
   .ins-alts {
@@ -494,7 +494,7 @@
   .ins-learn {
     margin: 0;
     max-width: 46ch;
-    font-size: 12px;
+    font-size:var(--v-fs-b1);
     line-height: 1.55;
     color: var(--v-faint);
   }

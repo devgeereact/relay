@@ -735,8 +735,8 @@
     border:1px solid var(--v-line); background:var(--v-bg) }
   .lib-sheeth{ margin:0 0 4px; font-size:var(--v-fs-h3); font-weight:600 }
   .lib-pastebox{ min-height:220px; resize:vertical; font-family:var(--f-mono,monospace);
-    font-size:12px; line-height:1.55 }
-  .lib-pastehelp{ margin:0; font-size:11px; color:var(--v-faint) }
+    font-size:var(--v-fs-b1); line-height:1.55 }
+  .lib-pastehelp{ margin:0; font-size:var(--v-fs-lbl); color:var(--v-faint) }
   .lib-sheetacts{ display:flex; align-items:center; gap:8px; margin-top:6px }
   /* The media look. One row per file: what it is, what it will be called. */
   .lib-mgrid{ display:flex; flex-direction:column; gap:10px; margin:4px 0 2px }
@@ -745,7 +745,7 @@
     overflow:hidden; border-radius:var(--v-r-md); border:1px solid var(--v-line2);
     background:var(--v-void) }
   .lib-mshot img, .lib-mshot video{ width:100%; height:100%; object-fit:contain }
-  .lib-mdoc{ font-size:11px; color:var(--v-dim) }
+  .lib-mdoc{ font-size:var(--v-fs-lbl); color:var(--v-dim) }
   .lib-mname{ flex:1; min-width:0; display:flex; flex-direction:column; gap:3px }
   .lib-mfile{ font-size:10px; color:var(--v-faint); overflow:hidden; text-overflow:ellipsis;
     white-space:nowrap }
@@ -784,9 +784,9 @@
   .lib-topline{ display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
   .lib-spring{ flex:1 1 0; min-width:0; }
   .lib-topactions{ display:flex; gap:8px; flex-shrink:0; align-items:center; height:34px; }
-  .lib-importmsg{ font-size:11.5px; color:var(--v-emerald); margin-top:-4px; }
+  .lib-importmsg{ font-size:var(--v-fs-b2); color:var(--v-emerald); margin-top:-4px; }
   /* Failures are rose — never the emerald success line above them. */
-  .lib-importerr{ font-size:11.5px; color:var(--v-red); margin-top:-4px; }
+  .lib-importerr{ font-size:var(--v-fs-b2); color:var(--v-red); margin-top:-4px; }
   .lib-nopane{ margin:0; padding:18px 4px; font-size:var(--v-fs-b2); color:var(--v-red); }
 
   .lib-more{ width:30px; height:30px; }

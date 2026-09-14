@@ -479,7 +479,7 @@
     justify-content: center;
     text-align: center;
     font-family: var(--f-serif);
-    font-size: 12px;
+    font-size:var(--v-fs-b1);
     line-height: 1.5;
     color: var(--v-dim);
   }
@@ -647,7 +647,7 @@
     background: var(--v-surf);
   }
   .vd-n {
-    font-size: 11px;
+    font-size:var(--v-fs-lbl);
     color: var(--v-faint);
   }
   /* The key cap. Grey on --v-surf2, so --v-dim rather than --v-faint —
@@ -669,7 +669,7 @@
   .vd-ref {
     flex: 1;
     min-width: 0;
-    font-size: 12.5px;
+    font-size:var(--v-fs-h3);
     color: var(--v-dim);
     overflow: hidden;
     text-overflow: ellipsis;
@@ -730,7 +730,7 @@
     background: transparent;
     color: var(--v-txt);
     font-family: var(--f-body);
-    font-size: 12.5px;
+    font-size:var(--v-fs-h3);
     cursor: pointer;
     white-space: nowrap;
   }
@@ -806,7 +806,7 @@
   .vd-rtext {
     display: -webkit-box;
     margin-top: 2px;
-    font-size: 12.5px;
+    font-size:var(--v-fs-h3);
     line-height: 1.45;
     color: var(--v-dim);
     overflow: hidden;

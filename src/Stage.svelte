@@ -504,7 +504,7 @@
      left behind, because it hardcodes hexes instead of using the --v-* tokens.
 
      #88888d is --v-faint: 5.61:1 here. Still quiet, and actually readable. */
-  .status { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; font-family: var(--f-mono); font-size: 11px; color: var(--v-faint); }
+  .status { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; font-family: var(--f-mono); font-size:var(--v-fs-mono); color: var(--v-faint); }
   .status.on { color: var(--v-emerald); }
   .status i { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
   .status.on i { box-shadow: 0 0 8px currentColor; animation: p 1.7s ease-in-out infinite; }
@@ -589,17 +589,17 @@
     border-top: 1px solid rgba(255,255,255,.1); background: rgba(255,255,255,.03); }
   .zonegrid { display: flex; flex-wrap: wrap; gap: 8px; }
   .zonebtn { flex: 1 1 auto; min-height: 44px; padding: 0 14px; cursor: pointer;
-    font-family: var(--f-mono); font-size: 12px; font-weight: 700; letter-spacing: .08em;
+    font-family: var(--f-mono); font-size:var(--v-fs-b1); font-weight: 700; letter-spacing: .08em;
     color: var(--v-dim); background: rgba(255,255,255,.04);
     border: 1px solid rgba(255,255,255,.14); border-radius: 8px; }
   .zonebtn.on { color: var(--v-amber); border-color: rgba(255,176,0,.45); background: rgba(255,176,0,.1); }
-  .zonefoot { margin: 0; font-family: var(--f-mono); font-size: 11px; color: var(--v-faint); }
+  .zonefoot { margin: 0; font-family: var(--f-mono); font-size:var(--v-fs-mono); color: var(--v-faint); }
   .ref { font-family: var(--f-mono); font-size: clamp(13px, 3.5vw, 20px); letter-spacing: .18em; text-transform: uppercase; color: var(--v-amber); }
   .verse { font-family: var(--f-serif); font-size: clamp(26px, 7vw, 64px); line-height: 1.28; color: var(--v-txt); max-width: 16ch; }
   /* The DEFAULT resting state of the preacher's phone — the thing on screen before
      anything is fired, and therefore the text most likely to be looked at. It was
      2.25:1: the worst contrast in the product, in its least forgiving location. */
-  .idle { font-family: var(--f-mono); color: var(--v-faint); font-size: 14px; letter-spacing: .1em; }
+  .idle { font-family: var(--f-mono); color: var(--v-faint); font-size:var(--v-fs-h2); letter-spacing: .1em; }
   /* The last minute — the same rule and the same red as the wall. Reduced motion
      gets a glow instead of a pulse; the colour is the same either way. */
   @media (prefers-reduced-motion: reduce) {
@@ -643,7 +643,7 @@
   .next-lbl { font-family: var(--f-mono); font-size: 10px; font-weight: 700; letter-spacing: .16em;
     text-transform: uppercase; color: var(--v-faint); flex: 0 0 auto; }
   .next-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-  .next-ref { font-family: var(--f-mono); font-size: 12px; letter-spacing: .06em; color: var(--v-amber);
+  .next-ref { font-family: var(--f-mono); font-size:var(--v-fs-b1); letter-spacing: .06em; color: var(--v-amber);
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .next-text { font-family: var(--f-head); font-size: 16px; color: var(--v-dim); line-height: 1.3;
     display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
@@ -652,7 +652,7 @@
 
   /* Preacher control panel — a phone that DRIVES the wall. Touch-sized targets
      (44px+), high contrast, and it never touches the mirror above it. */
-  .ctl-toggle { flex: 0 0 auto; font-family: var(--f-mono); font-size: 11px; font-weight: 700;
+  .ctl-toggle { flex: 0 0 auto; font-family: var(--f-mono); font-size:var(--v-fs-mono); font-weight: 700;
     letter-spacing: .12em; text-transform: uppercase; color: var(--v-dim); cursor: pointer;
     background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.14);
     border-radius: 8px; padding: 7px 12px; }
@@ -667,23 +667,23 @@
   .nav-btn:active { background: rgba(255,255,255,.1); }
   .nav-btn:disabled { opacity: .4; }
   .search { display: flex; gap: 10px; }
-  .search input { flex: 1; min-height: 48px; padding: 0 16px; font-family: var(--f-body); font-size: 17px;
+  .search input { flex: 1; min-height: 48px; padding: 0 16px; font-family: var(--f-body); font-size:var(--v-fs-h1);
     color: var(--v-txt); background: var(--v-void); border: 1px solid rgba(255,255,255,.18);
     border-radius: 12px; -webkit-appearance: none; }
   .search input::placeholder { color: var(--v-faint); }
   .search input:focus { outline: none; border-color: rgba(255,176,0,.5); }
   .go { flex: 0 0 auto; min-width: 56px; min-height: 48px; font-family: var(--f-mono); font-weight: 700;
-    font-size: 14px; color: var(--v-void); background: var(--v-amber); border: none; border-radius: 12px; cursor: pointer; }
+    font-size:var(--v-fs-h2); color: var(--v-void); background: var(--v-amber); border: none; border-radius: 12px; cursor: pointer; }
   .go:disabled { opacity: .5; }
-  .ctl-err { font-family: var(--f-mono); font-size: 12px; color: var(--v-amber2); }
+  .ctl-err { font-family: var(--f-mono); font-size:var(--v-fs-b1); color: var(--v-amber2); }
   .results { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
   .result { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; width: 100%; text-align: left;
     padding: 12px 14px; background: rgba(255,255,255,.03); border: 1px solid rgba(255,255,255,.1);
     border-radius: 12px; cursor: pointer; }
   .result:active { background: rgba(255,176,0,.1); border-color: rgba(255,176,0,.35); }
   .result:disabled { opacity: .5; }
-  .r-ref { font-family: var(--f-mono); font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--v-amber); }
+  .r-ref { font-family: var(--f-mono); font-size:var(--v-fs-b1); letter-spacing: .08em; text-transform: uppercase; color: var(--v-amber); }
   .r-text { font-family: var(--f-serif); font-size: 15px; color: var(--v-dim); line-height: 1.35;
     display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-  .no-results { font-family: var(--f-mono); font-size: 12px; color: var(--v-faint); }
+  .no-results { font-family: var(--f-mono); font-size:var(--v-fs-b1); color: var(--v-faint); }
 </style>

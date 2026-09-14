@@ -591,7 +591,7 @@
     font-family: var(--f-body); font-size: 13px; text-align: left; cursor: pointer;
   }
   .br-book .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .br-book .ct { font-size: 11px; color: var(--v-faint); }
+  .br-book .ct { font-size:var(--v-fs-lbl); color: var(--v-faint); }
   .br-book:hover:not(.on) { background: var(--v-surf2); color: var(--v-txt); }
   .br-book.on { background: var(--v-accent-fill); color: var(--v-accent-ink); font-weight: 600; }
   .br-book.on .ct { color: rgba(255, 255, 255, 0.75); }
@@ -605,7 +605,7 @@
   .br-all:hover { border-color: var(--v-line2); }
   .br-all.on { border-color: var(--v-accent-line); background: var(--v-accent-soft); }
   .br-all .ct { font-size: 10.5px; color: var(--v-faint); }
-  .br-sel { width: auto; max-width: 122px; height: 24px; padding: 0 24px 0 8px; font-size: 11px;
+  .br-sel { width: auto; max-width: 122px; height: 24px; padding: 0 24px 0 8px; font-size:var(--v-fs-lbl);
     flex: 0 0 auto;
     background-position: calc(100% - 12px) 10px, calc(100% - 7px) 10px; }
   .br-fav { flex: 0 0 auto; width: 24px; height: 24px; }
@@ -614,9 +614,9 @@
   .br-tr { display: flex; align-items: center; gap: 8px; }
   .br-tr .r-lbl { margin: 0; flex: 1; min-width: 0; }
   .br-tr .r-select { width: auto; max-width: 96px; height: 24px; padding: 0 24px 0 8px;
-    font-size: 11px; flex: 0 0 auto;
+    font-size:var(--v-fs-lbl); flex: 0 0 auto;
     background-position: calc(100% - 12px) 10px, calc(100% - 7px) 10px; }
-  .br-tronly { font-size: 11px; color: var(--v-dim); }
+  .br-tronly { font-size:var(--v-fs-lbl); color: var(--v-dim); }
   .br-pager { flex-wrap: wrap; }
   .br-panelfoot { padding: 10px; border-top: 1px solid var(--v-line); }
 
@@ -630,7 +630,7 @@
     border-bottom: 1px solid var(--v-line);
   }
   .br-where {
-    flex: 0 1 auto; min-width: 0; font-size: 14px; font-weight: 600; color: var(--v-txt);
+    flex: 0 1 auto; min-width: 0; font-size:var(--v-fs-h2); font-weight: 600; color: var(--v-txt);
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
   /* The legend is furniture, not a heading: mono, faint, and it is the FIRST

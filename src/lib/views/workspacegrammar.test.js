@@ -199,3 +199,210 @@ describe('§1 · the decisions that kept being re-litigated per file', () => {
     expect(offenders.filter((o) => !/#e0526a|#fff\b/.test(o))).toEqual([]);
   });
 });
+
+// ───────────────────────────────────────────────────────────────────────────
+// THE TOKEN SWEEP — wave 4, agent K1. docs/REBRAND.md §1 and §12.
+//
+// Everything above holds SIX desks. That limit was deliberate and it was
+// recorded as owed: the palette in `src/app.css` matched the prototype while
+// the components ignored it, and the "Carried forward, deliberately" paragraph
+// in docs/REBRAND.md said so rather than pretending otherwise.
+//
+// This block is the wider edge. It is in three tiers on purpose, because the
+// three defects do not have the same blast radius and a single list would have
+// to be the smallest of them:
+//
+//   1. PILLS and 2. HAND-TYPED SCALE STEPS are checked over EVERY component,
+//      because after this sweep there are none left anywhere. A repo-wide
+//      assertion that passes today is the cheapest one to keep true.
+//   3. RAW HEX and LITERAL RADII are checked over a NAMED list, because
+//      eighteen components still carry one or both for reasons that are judged
+//      rather than mechanical — a wall that is really black, ink on a filled
+//      destructive button, a mask channel, a radius the scale does not publish.
+//      Those are listed in docs/REBRAND.md. Widening this list is the work;
+//      quietly dropping a file out of it to make a build green is not.
+//
+// WHAT THIS STILL DOES NOT COVER, stated so nobody reads it as more than it is:
+//   · off-scale font sizes (8, 8.5, 9, 10, 10.5, 13, 13.5, 15, 16, 18, 22, 26px)
+//     are NOT rejected. They are not in --v-fs-*, so converting one is a
+//     restyle decision, not a sweep. ~101 remain and are listed in REBRAND.
+//   · off-scale radii (2, 4, 7, 8, 9, 10, 11, 12, 13px) likewise. §1 asks for
+//     2px and --v-r-sm is 3px; that contradiction is REBRAND's to settle.
+//   · `rgba()` is not scanned at all. Seven Splash glows were the RETIRED
+//     amethyst and no scanner here would have found them.
+//   · template CONTENT is out of scope by design (themes.js, layers.js,
+//     templates.js, TemplateRender.svelte): a colour an operator saved into a
+//     slide is data, not chrome.
+//   · `crash.js` is exempt from tier 2. Its whole premise is that the
+//     stylesheet may not have loaded, so a token there would be a blank panel
+//     at the worst possible moment.
+const COMPONENTS = [
+  'src/App.svelte', 'src/Output.svelte', 'src/Stage.svelte',
+  'src/lib/DetectionInspector.svelte', 'src/lib/Dock.svelte', 'src/lib/FirstRun.svelte',
+  'src/lib/LiveRail.svelte', 'src/lib/ModelSetup.svelte', 'src/lib/Splash.svelte',
+  'src/lib/TemplatePreviewOverlay.svelte', 'src/lib/TemplateRender.svelte',
+  'src/lib/boot/BootDiagnostics.svelte', 'src/lib/boot/BootSequence.svelte',
+  'src/lib/boot/BootShell.svelte', 'src/lib/boot/CheckList.svelte',
+  'src/lib/boot/CrashReportRecovery.svelte', 'src/lib/boot/DatabaseMigration.svelte',
+  'src/lib/boot/HardwareCheck.svelte', 'src/lib/boot/PluginLoading.svelte',
+  'src/lib/boot/RecoverSession.svelte', 'src/lib/boot/SafeModeStartup.svelte',
+  'src/lib/boot/UpdateAvailable.svelte',
+  'src/lib/ui/BrandMark.svelte', 'src/lib/ui/CameraPlate.svelte',
+  'src/lib/ui/EmptyState.svelte', 'src/lib/ui/ErrorState.svelte', 'src/lib/ui/Loading.svelte',
+  'src/lib/views/Channels.svelte', 'src/lib/views/Dashboard.svelte', 'src/lib/views/Help.svelte',
+  'src/lib/views/Library.svelte', 'src/lib/views/Live.svelte',
+  'src/lib/views/ServicePlanner.svelte', 'src/lib/views/Settings.svelte',
+  'src/lib/views/Templates.svelte', 'src/lib/views/WorkspaceFrame.svelte',
+  'src/lib/views/library/Announcements.svelte', 'src/lib/views/library/Arrangements.svelte',
+  'src/lib/views/library/Browse.svelte', 'src/lib/views/library/Collections.svelte',
+  'src/lib/views/library/History.svelte', 'src/lib/views/library/ImportReview.svelte',
+  'src/lib/views/library/Inspector.svelte', 'src/lib/views/library/LiveOutputRail.svelte',
+  'src/lib/views/library/LyricsPane.svelte', 'src/lib/views/library/MediaLibrary.svelte',
+  'src/lib/views/library/Scripture.svelte', 'src/lib/views/library/VerseDeck.svelte',
+  'src/lib/views/templates/DeskStrip.svelte', 'src/lib/views/templates/TemplateEditor.svelte',
+  'src/lib/views/templates/TemplateGallery.svelte', 'src/lib/views/themes/ThemeEditor.svelte',
+  'src/lib/views/themes/ThemeGallery.svelte',
+];
+
+// Swept clean of BOTH a raw hex and a literal radius, and held that way.
+const SWEPT = [
+  'src/App.svelte', 'src/lib/Dock.svelte', 'src/lib/LiveRail.svelte',
+  'src/lib/TemplatePreviewOverlay.svelte',
+  'src/lib/boot/BootDiagnostics.svelte', 'src/lib/boot/BootSequence.svelte',
+  'src/lib/boot/BootShell.svelte', 'src/lib/boot/CheckList.svelte',
+  'src/lib/boot/CrashReportRecovery.svelte', 'src/lib/boot/DatabaseMigration.svelte',
+  'src/lib/boot/HardwareCheck.svelte', 'src/lib/boot/PluginLoading.svelte',
+  'src/lib/boot/RecoverSession.svelte', 'src/lib/boot/SafeModeStartup.svelte',
+  'src/lib/boot/UpdateAvailable.svelte',
+  'src/lib/ui/BrandMark.svelte', 'src/lib/ui/CameraPlate.svelte',
+  'src/lib/ui/EmptyState.svelte', 'src/lib/ui/Loading.svelte',
+  'src/lib/views/Channels.svelte', 'src/lib/views/Dashboard.svelte',
+  'src/lib/views/Settings.svelte', 'src/lib/views/Templates.svelte',
+  'src/lib/views/WorkspaceFrame.svelte',
+  'src/lib/views/library/Announcements.svelte', 'src/lib/views/library/Browse.svelte',
+  'src/lib/views/library/Collections.svelte', 'src/lib/views/library/Inspector.svelte',
+  'src/lib/views/library/LiveOutputRail.svelte', 'src/lib/views/library/LyricsPane.svelte',
+  'src/lib/views/library/MediaLibrary.svelte', 'src/lib/views/library/Scripture.svelte',
+  'src/lib/views/templates/DeskStrip.svelte', 'src/lib/views/themes/ThemeEditor.svelte',
+];
+
+// Swept clean of a raw hex, but still carrying a radius the scale does not
+// publish. Kept as its own tier so the hex guarantee covers nine more files
+// than the radius one does, rather than both collapsing to the smaller number.
+const SWEPT_HEX_ONLY = [
+  'src/lib/DetectionInspector.svelte', 'src/lib/ModelSetup.svelte',
+  'src/lib/ui/ErrorState.svelte', 'src/lib/views/ServicePlanner.svelte',
+  'src/lib/views/library/Arrangements.svelte', 'src/lib/views/library/History.svelte',
+  'src/lib/views/library/ImportReview.svelte',
+  'src/lib/views/templates/TemplateGallery.svelte', 'src/lib/views/themes/ThemeGallery.svelte',
+];
+
+// A comment is not a paint. Two files document a retired hex in prose
+// (`--v-txt (#e8eaee)`, `This was #141417`) and a scanner that counts those
+// either fails on a correct file or teaches the next person to delete the
+// explanation — which is the more valuable half.
+const styleOf = (src) => {
+  const i = src.lastIndexOf('<style>');
+  return (i === -1 ? '' : src.slice(i)).replace(/\/\*[\s\S]*?\*\//g, '');
+};
+
+describe('§1 · the token sweep — wave 4', () => {
+  it('the scanner can still see the things it scans for', () => {
+    // Both scanners here have a twin in this repository that quietly narrowed
+    // and passed everything (ipc.test.js, twice). So: prove the comment
+    // stripper does not strip code, and prove the style slicer finds a style.
+    expect(styleOf('<style>a{color:#abc}/* #def */</style>')).toContain('#abc');
+    expect(styleOf('<style>a{color:#abc}/* #def */</style>')).not.toContain('#def');
+    expect(styleOf(read('src/lib/views/Live.svelte')).length).toBeGreaterThan(1000);
+    expect(COMPONENTS.length).toBeGreaterThan(SWEPT.length);
+  });
+
+  it('no component anywhere is a pill', () => {
+    // Was thirteen, in LiveRail, ModelSetup, DetectionInspector, BrandMark,
+    // Arrangements, History, Help and Live. `--v-r-round` is still 99px and is
+    // still correct for the shapes that are genuinely round — a slider thumb, a
+    // status dot, a switch knob, a scrollbar thumb (app.css paints the shell's
+    // that way) and the two-pixel bars of the brand mark. Those ask for the
+    // TOKEN. The literal is what this rejects, so the round shapes survive and
+    // the accidental pills cannot come back.
+    const offenders = [];
+    for (const f of COMPONENTS) {
+      for (const m of styleOf(read(f)).matchAll(/border-radius:\s*9{2,3}px/g)) {
+        offenders.push(`${f}: ${m[0]}`);
+      }
+    }
+    expect(offenders, 'use var(--v-r-round) if the shape is really round').toEqual([]);
+  });
+
+  it('no component types a scale step as a number', () => {
+    // The scale is read OUT of app.css rather than restated here, so this test
+    // cannot drift from the thing it is about — and if a step's value changes,
+    // every hand-typed copy of the OLD value stops being caught, which is the
+    // correct behaviour: it is no longer a duplicate of anything.
+    //
+    // The defect: `font-size:12.5px` renders identically to `var(--v-fs-h3)`
+    // until the day the scale moves, and then one heading is 1.5px out of step
+    // with its twin and nobody can see why. Ninety-five of these were
+    // converted; the wave-3 Settings pass had already found six.
+    const css = read('src/app.css');
+    const steps = new Map();
+    for (const m of css.matchAll(/--v-fs-([a-z0-9]+)\s*:\s*([0-9.]+)px/g)) {
+      if (!steps.has(m[2])) steps.set(m[2], m[1]);
+    }
+    expect(steps.size, 'no --v-fs-* scale found in app.css').toBeGreaterThan(5);
+
+    const offenders = [];
+    for (const f of COMPONENTS) {
+      // The WHOLE file: four of these were inline `style="font-size:12px"` on
+      // a boot gate, which is exactly where a hand-typed size hides from a
+      // stylesheet-only scan.
+      for (const m of read(f).matchAll(/font-size:\s*([0-9.]+)px/g)) {
+        if (steps.has(m[1])) offenders.push(`${f}: ${m[0]} is var(--v-fs-${steps.get(m[1])})`);
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  it('a swept component paints with tokens, never with a raw hex', () => {
+    const offenders = [];
+    for (const f of [...SWEPT, ...SWEPT_HEX_ONLY]) {
+      for (const m of styleOf(read(f)).matchAll(/#[0-9a-fA-F]{3,8}\b/g)) {
+        offenders.push(`${f}: ${m[0]}`);
+      }
+    }
+    // No allowlist. That is the point of a named list rather than a glob: a
+    // file is in it because it has none, and a file that needs an exception is
+    // in the REBRAND paragraph instead, with the reason.
+    expect(offenders).toEqual([]);
+  });
+
+  it('and a swept component asks the scale for its corners', () => {
+    const offenders = [];
+    for (const f of SWEPT) {
+      for (const m of styleOf(read(f)).matchAll(/border-radius:\s*[0-9.]+px/g)) {
+        offenders.push(`${f}: ${m[0]}`);
+      }
+    }
+    expect(offenders, 'use --v-r-sm / -lg / -2xl / -round').toEqual([]);
+  });
+
+  it('--f-mono is declared once, and it is the figure face §1 asks for', () => {
+    // It was declared TWICE in app.css, in two :root blocks. The legacy one said
+    // 'JetBrains Mono' and was dead — same specificity, and the design-system
+    // block is later in the file, so 'IBM Plex Mono' won. Verified by resolving
+    // it in a real DOM before removing it, not by reading the cascade.
+    //
+    // Nothing was broken, which is why it mattered: a reader looking up the
+    // console's figure face found the wrong answer first, and reordering the two
+    // blocks would have silently changed every clock, confidence and latency in
+    // the app.
+    const css = read('src/app.css');
+    const decls = [...css.matchAll(/--f-mono\s*:\s*([^;]+);/g)].map((m) => m[1].trim());
+    expect(decls, 'two declarations is one too many').toHaveLength(1);
+    expect(decls[0]).toMatch(/IBM Plex Mono/);
+    // JetBrains Mono must stay in the bundle regardless: templates offer it BY
+    // NAME, and that is a choice an operator saved into a slide.
+    expect(read('src/lib/fonts.js')).toMatch(/jetbrains-mono/);
+    expect(read('src/lib/views/templates/TemplateEditor.svelte')).toMatch(/'JetBrains Mono'/);
+  });
+});

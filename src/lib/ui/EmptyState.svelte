@@ -38,7 +38,7 @@
     padding: 10px 2px;
   }
   .es.compact {
-    font-size: 12.5px;
+    font-size:var(--v-fs-h3);
     padding: 6px 2px;
   }
   /* An action inside an empty state ("Build one in Planner") gets room to breathe. */

@@ -574,18 +574,78 @@ rediscovering it:**
   what that button does. It is a divergence from the prototype, NOT a colour-law violation, and it
   was left alone rather than changed by somebody who could not see the screens.
 
-**A limit of the new instrument, recorded rather than closed by force.** `workspacegrammar.test.js`
-asserts no raw hex and no px font sizes — over its `DESKS` array only. Editors, Live and Library
-sit outside it. Widening the array to swallow a stray literal would either force an unrelated
-conversion or dilute what the array asserts, so the array stays honest and the gap is written
-down. A literal `#141417` survived in the template editor exactly this way, and was found by eye.
+**A limit of the new instrument — widened in wave 4, and still a limit.**
+`workspacegrammar.test.js` asserted no raw hex and no px font sizes over its `DESKS` array of six.
+It now carries a second block covering **53 components**, in three tiers, because the three defects
+do not have the same blast radius and one list would have to be the smallest of them:
 
-**Carried forward, deliberately.** Phase 1 owns `src/app.css`, and the shared layer is now
-token-only: every literal radius there reads `--v-r-*`. Components still hold about sixty
-radius literals of their own, twenty of them `99px` — so a few pills survive on surfaces phases
-2, 10 and 11 rewrite anyway. "No pills" is true of the design system as of phase 1; it is not
-yet true of every rendered screen, and saying otherwise would be the kind of claim this
-repository files as a finding.
+- **no pill** and **no hand-typed copy of a scale step** hold over *every* component, because after
+  the wave-4 sweep there are none left anywhere. The type scale is read out of `src/app.css` rather
+  than restated in the test, so the assertion cannot drift from the thing it is about.
+- **no raw hex** holds over a named list of **43**, and **no literal radius** over **34** of those.
+  A file is on a list because it has none; a file that needs an exception is in the paragraph
+  below, with its reason, rather than in an allowlist inside the test.
+
+Each of the five assertions was watched to fail with its defect reintroduced — including the inline
+`style="font-size:12px"` variant, which is where four of them were hiding from a stylesheet-only
+scan. **What it still does not cover** is written into the test as well as here: off-scale font
+sizes and off-scale radii (neither is a conversion — see below), `rgba()` (not scanned at all, and
+seven retired-amethyst glows in `Splash.svelte` were found by eye, not by it), and template
+content, which is deliberately out of scope.
+
+**Carried forward, deliberately — rewritten after wave 4's token sweep, which paid most of it
+down.** Phase 1 owned `src/app.css` and made the shared layer token-only. What phase 1 could not
+reach was the components, and this paragraph used to record that debt: "about sixty radius
+literals, twenty of them `99px`".
+
+**Paid.** Every `99px`/`999px` pill is gone — **eleven** of them. (The wave-4 brief said thirteen.
+Grepping the base for `border-radius: ?9{2,3}px` under `src` returns eleven, and the number in this
+paragraph is the one that was measured rather than the one that was handed over.) They were in
+`LiveRail`, `ModelSetup`,
+`DetectionInspector`, `BrandMark`, `Arrangements`, `History`, `Help` and `Live`. Each was judged
+rather than swept: the five shapes that are genuinely round (a slider thumb, a status dot, a switch
+knob, a scrollbar thumb, and the 2px bars of the brand mark) kept their shape and now ask for
+`--v-r-round`; the rest were pills by accident and are `--v-r-sm`. **"No pills" is now true of every
+rendered screen, not only of the design system.** Also paid: **95** font sizes that were a scale
+step typed as a number, **9** radii that were a token's value typed as a number, and every raw hex
+in **43** components.
+
+Three things the sweep found that were not on its list, all of them chrome painted from a palette
+that no longer exists:
+
+- **`--f-mono` was declared twice in `src/app.css`**, as `'JetBrains Mono'` in the legacy `:root`
+  and `'IBM Plex Mono'` in the design-system one. Same specificity, later wins, so §1's figure face
+  was already what shipped and the legacy line was dead — but a reader looking it up found the wrong
+  answer first, and reordering the two blocks would have silently changed every clock, confidence
+  and latency in the app. Resolved in a real DOM to confirm which won, then reduced to one
+  declaration. JetBrains Mono stays in the bundle: `TemplateEditor` offers it to templates BY NAME,
+  and that is a choice an operator saved into a slide.
+- **`Arrangements.svelte` fell back to an `--r-*` token family `app.css` does not define**, so
+  eleven `var(--r-dim, #8b8f98)`-shaped literals were not fallbacks at all — they were the live
+  paint, from the pre-rebrand palette.
+- **`Splash.svelte` glowed in the retired amethyst** (`rgba(139,92,246,…)`, seven times; the live
+  token is `#a96bf5`). `ModelSetup` and `DetectionInspector` did the same with the old amber,
+  emerald and cyan as raw `rgba()`; those had exact `--v-*-soft` / `--v-*-line` tokens and now use
+  them. No scanner here finds an `rgba()`, which is why this is written down.
+
+**Still owed, and deliberately not forced.** Two classes remain, and both are a *decision* rather
+than a conversion — converting one restyles a screen, which is not what a token sweep is for:
+
+- **~101 off-scale font sizes** (8, 8.5, 9, 10, 10.5, 13, 13.5, 15, 16, 18, 22, 26px). None is in
+  `--v-fs-*`. The heaviest are `Live.svelte` (17), `History.svelte` (14), `FirstRun.svelte` (8) and
+  `TemplateEditor.svelte` (8). Either the scale grows steps or these screens move to it; that is
+  §11's call, not a sweep's.
+- **39 off-scale radii** (2, 4, 7, 8, 9, 10, 11, 12, 13px), in 18 components. Note the awkward one:
+  **§1 says "radius is 2px everywhere" and `--v-r-sm` is 3px**, so the eleven literal `2px` corners
+  are simultaneously what §1 asks for and not a token. That contradiction is §1's to settle.
+
+**Eighteen components still carry a raw hex or a literal radius, each for a judged reason** — a wall
+preview that is really black (`Live`, `Output`, `VerseDeck`, `TemplateEditor`), `#fff` as ink on a
+filled destructive button (`Help`, `Live`, `FirstRun`, `VerseDeck`), `#000` as a *mask* channel
+rather than a colour (`Splash`), a gradient's second stop the palette does not publish (`Help`'s
+`#c8302f`, `Stage`'s alert red), and a chip that documents why it carries its own ground (`Live`'s
+`#cfd6e2`). `src/lib/crash.js` is exempt from all of it, on its own stated premise: it renders when
+the stylesheet may not have loaded, so a token there is a blank panel at the worst possible moment.
 
 **One thing phase 1 changed that the spec did not ask for.** Blackout on the run surface wore
 `--v-grey`, and grey means CUED. The control that takes the wall to black shared a colour with a

@@ -1749,7 +1749,7 @@
      from the --v-* design tokens in app.css. No raw hex, no arbitrary px: every
      colour is a token and every gap comes off the 8pt scale. */
   .inspect-link{ align-self:flex-start; margin-top:9px; background:none; border:0; padding:0;
-    font-family:var(--f-body); font-size:12px; color:var(--v-cyan); cursor:pointer;
+    font-family:var(--f-body); font-size:var(--v-fs-b1); color:var(--v-cyan); cursor:pointer;
     text-decoration:underline; }
   .inspect-link:hover{ filter:brightness(1.15); }
 
@@ -1757,12 +1757,12 @@
   .view-ctl{ display:flex; align-items:center; justify-content:flex-end; gap:8px; margin-bottom:10px; }
   .seg{ display:flex; border:1px solid var(--v-line2); border-radius:8px; overflow:hidden; }
   .seg button{ padding:5px 11px; background:var(--v-surf); border:0; cursor:pointer;
-    font-family:var(--f-body); font-size:11.5px; font-weight:600; color:var(--v-faint); }
+    font-family:var(--f-body); font-size:var(--v-fs-b2); font-weight:600; color:var(--v-faint); }
   .seg button.on{ background:var(--v-accent-soft); color:var(--v-accent2); }
   .seg button:not(.on):hover{ color:var(--v-dim); }
   .view-fs{ height:26px; padding:0 11px; border-radius:8px; cursor:pointer;
     background:var(--v-surf); border:1px solid var(--v-line2); color:var(--v-faint);
-    font-family:var(--f-body); font-size:11.5px; font-weight:600; }
+    font-family:var(--f-body); font-size:var(--v-fs-b2); font-weight:600; }
   .view-fs:hover{ color:var(--v-txt); border-color:var(--v-accent-line); }
 
   /* COMPACT — spacing and type only. Nothing is hidden: see the note in the
@@ -1780,7 +1780,7 @@
      where the view controls would be. Keep clear of it rather than under it. */
   .con.compact :global(.pane){ border-radius:10px; }
   .con.compact :global(.pane-head){ padding:8px 11px; }
-  .con.compact :global(.pane-head h2){ font-size:11px; }
+  .con.compact :global(.pane-head h2){ font-size:var(--v-fs-lbl); }
   .con.compact :global(.pane-body){ padding:10px 11px; }
 
   .con{
@@ -1884,7 +1884,7 @@
     display:flex; flex-direction:column; gap:var(--v-sp-sm);
     scrollbar-width:thin; scrollbar-color:var(--v-surf3) transparent}
   .pane-body::-webkit-scrollbar{width:6px}
-  .pane-body::-webkit-scrollbar-thumb{background:var(--v-surf3); border-radius:99px}
+  .pane-body::-webkit-scrollbar-thumb{background:var(--v-surf3); border-radius:var(--v-r-round)}
   .pane-foot{flex:0 0 auto; display:flex; align-items:center; gap:var(--v-sp-sm);
     padding:var(--v-sp-sm) 12px; border-top:1px solid var(--v-line)}
 
@@ -2024,7 +2024,7 @@
 
   /* ── 3 · detection ─────────────────────────────────────────────────────── */
   .chip{display:inline-flex; align-items:center; gap:6px; flex:0 0 auto; padding:4px 9px;
-    border-radius:99px; background:var(--v-surf2); border:1px solid var(--v-line2);
+    border-radius:var(--v-r-sm); background:var(--v-surf2); border:1px solid var(--v-line2);
     font-size:var(--v-fs-cap); color:var(--v-faint)}
   .chip .bd{width:6px; height:6px; border-radius:50%; background:var(--v-faint)}
   .chip.ok{color:var(--v-emerald); border-color:var(--v-emerald-line); background:var(--v-emerald-soft)}
@@ -2125,7 +2125,7 @@
   .rel-note{margin:0; font-size:10px; color:var(--v-faint)}
   .rel-chips{display:flex; flex-wrap:wrap; gap:6px}
   .rel-chip{font-family:var(--f-mono); font-size:var(--v-fs-cap); color:var(--v-dim);
-    background:var(--v-surf2); border:1px solid var(--v-line2); border-radius:99px;
+    background:var(--v-surf2); border:1px solid var(--v-line2); border-radius:var(--v-r-sm);
     padding:5px 11px; cursor:pointer}
   .rel-chip:hover:not(:disabled){color:var(--v-txt); background:var(--v-surf3)}
   .rel-chip:disabled{opacity:.45; cursor:default}

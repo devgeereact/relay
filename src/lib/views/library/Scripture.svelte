@@ -368,7 +368,7 @@
   .sv-book { display: flex; align-items: center; gap: 8px; width: 100%; height: 28px;
     padding: 0 8px; border: 1px solid transparent; border-radius: var(--v-r-sm);
     background: transparent; color: var(--v-dim); font-family: var(--f-body);
-    font-size: 12px; text-align: left; cursor: pointer; }
+    font-size:var(--v-fs-b1); text-align: left; cursor: pointer; }
   .sv-book:hover:not(.on) { background: var(--v-surf2); color: var(--v-txt); }
   /* Steel = the thing you are working on. The collection's amber lives on the
      rail's left edge only, where it tints rather than states. */
@@ -393,7 +393,7 @@
     border-top: 1px solid var(--v-line); flex-wrap: wrap; }
   .sv-pages { display: flex; align-items: center; gap: 4px; flex: 1; }
   .sv-pg { min-width: 28px; height: 28px; padding: 0 7px; border-radius: var(--v-r-sm); border: 0;
-    background: transparent; color: var(--v-dim); font-family: var(--f-mono); font-size: 12px;
+    background: transparent; color: var(--v-dim); font-family: var(--f-mono); font-size:var(--v-fs-b1);
     font-variant-numeric: tabular-nums; cursor: pointer; }
   .sv-pg:hover:not(:disabled):not(.on) { background: var(--v-surf2); color: var(--v-txt); }
   .sv-pg.on { background: var(--v-accent-fill); color: var(--v-accent-ink); font-weight: 600; }
@@ -401,7 +401,7 @@
   .sv-count { font-size: var(--v-fs-cap); color: var(--v-faint); }
   .sv-ctl { display: flex; align-items: center; gap: 7px; }
   .sv-ctl .r-lbl { margin: 0; }
-  .sv-ctl .r-select { width: auto; height: 30px; padding: 0 30px 0 10px; font-size: 12px;
+  .sv-ctl .r-select { width: auto; height: 30px; padding: 0 30px 0 10px; font-size:var(--v-fs-b1);
     background-position: calc(100% - 14px) 13px, calc(100% - 9px) 13px; }
 
   .sv-msg, .sv-err { margin: 0; font-size: var(--v-fs-b2); }
