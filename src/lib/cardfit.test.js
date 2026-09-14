@@ -502,6 +502,107 @@ describe('a fit that still clips says so', () => {
     ).toBe(true);
   });
 
+  it('re-fits when the words change but their LENGTH does not', async () => {
+    // ROUND 4, AND IT IS THE THING I NAMED IN ROUND 2 AND SHOULD HAVE FIXED THEN.
+    //
+    // `.lfit` lives inside `{#key text}`, so ANY content change destroys it and
+    // builds a new one — which carries the DECLARED base size and no fitted size
+    // at all. `fitSig` folds in each layer's text LENGTH, not its text, so two
+    // different passages of equal length produce an identical signature,
+    // `runFit` early-returns, and the freshly-built element is never fitted. It
+    // paints at the base, it clips, and `verifyFit` is never called either — so
+    // nothing is measured, nothing is retried and nothing is reported.
+    //
+    // That is the lead's console, measured at 2000x1175 after a fire: `.lfit` at
+    // 36.465px, which is 5.2cqw on a ~700px pane — 5.2 being exactly the default
+    // verse size, i.e. the declared base untouched. 207px of content in a 174px
+    // box, no warning anywhere, still wrong six seconds later, and corrected by a
+    // 10px window resize — because a resize moves `stageEl.clientWidth` and that
+    // IS in the signature.
+    //
+    // ── THE TRANSITION HYPOTHESIS IS NOT IT, AND THE MARKUP SETTLES IT ─────────
+    // `{#key slideKey}` and `in:slideIn` wrap ONLY the region branch's `.slide`.
+    // The layered branch — every `.ltext` and `.lfit` — sits above that block and
+    // has no transition on it at all, so nothing here is ever measured mid-flight.
+    // (And `transitions.js` animates only opacity, transform and filter, none of
+    // which move `scrollHeight`, which is what that comment in the renderer has
+    // always said.) Fourth theory, fourth probe, and this one found the bug.
+    // The claim is that the new words are MEASURED, so it is counted rather than
+    // compared: `onFit` reports once per fit pass, and jsdom has no layout, so
+    // every fit converges on the same number whatever the text says. A size that
+    // merely differs from the base proves nothing once a remembered size can be
+    // re-applied — which is the other half of this fix, below.
+    const seen = [];
+    mount(layered, { reference: 'Romans 8:28', text: 'AAAA BBBB CCCC' }, {
+      onFit: (f) => seen.push(f),
+    });
+    await settle(400);
+    const first = seen.length;
+    expect(first, 'it never fitted in the first place').toBeGreaterThan(0);
+
+    // Same length, different words — the one thing the signature could not see.
+    app.$set({ content: { reference: 'Romans 8:28', text: 'DDDD EEEE FFFF' } });
+    await settle(400);
+    expect(seen.length, 'the new words were never measured').toBeGreaterThan(first);
+  });
+
+  it('and says so when that re-fit still clips', async () => {
+    // The second half of the same defect: `verifyFit` is only ever called after a
+    // fit, so a skipped fit is also a skipped verdict. This is why Live was silent.
+    const seen = [];
+    const el = mount(layered, { reference: 'Romans 8:28', text: 'AAAA BBBB CCCC' }, {
+      onFit: (f) => seen.push(f),
+    });
+    await settle(400);
+    clipBoxes(el);
+    seen.length = 0;
+    app.$set({ content: { reference: 'Romans 8:28', text: 'DDDD EEEE FFFF' } });
+    await settle(700);
+    expect(seen.length, 'an equal-length fire reported nothing at all').toBeGreaterThan(0);
+    expect(seen.at(-1)?.clipped, 'it went back to saying everything fits').toBe(true);
+  });
+
+  it('a size that was fitted survives the element that was fitted', async () => {
+    // THE OTHER HALF, and the reason the signature cannot simply carry the full
+    // text for every layer. A countdown or clock layer's text changes on every
+    // tick, so `{#key text}` rebuilds ITS `.lfit` four times a second — and
+    // folding that text into the signature would re-run the binary search at 4 Hz,
+    // which is the forced-reflow storm the fit gating exists to prevent. The
+    // digits hold their width as they count, so the size found once stays right:
+    // it is re-APPLIED to the new element, a style write with no layout read,
+    // rather than re-measured.
+    const el = mount(layered, SAMPLE);
+    await settle(400);
+    const box = el.querySelector('.ltext');
+    const fit = box.querySelector('.lfit');
+    const wanted = fit.style.fontSize;
+    expect(wanted).toBeTruthy();
+    // Exactly what a `{#key}` rebuild leaves behind: the declared base, unsized.
+    fit.style.fontSize = `${fit.dataset.base}cqw`;
+    delete fit.dataset.sized;
+    app.$set({ content: { ...SAMPLE } }); // an update that moves no signature
+    await settle(200);
+    expect(box.querySelector('.lfit').style.fontSize, 'the fitted size was not carried over').toBe(
+      wanted
+    );
+  });
+
+  it('a ticking layer is still kept OUT of the signature, by name', () => {
+    // The regression this guards is a performance one, and it is in the
+    // renderer's history twice: re-fitting on every countdown tick is a forced
+    // synchronous reflow at 4 Hz on every mounted output at once. Somebody
+    // "simplifying" `fitSig` to carry the text for every layer would reintroduce
+    // it, and nothing else in this suite would notice.
+    const src = readFileSync(resolve(__dirname, './TemplateRender.svelte'), 'utf8');
+    const fn = src.slice(src.indexOf('function fitSig'), src.indexOf('function reapplyFitted'));
+    expect(fn).toMatch(/isTicking\(L\)\s*\?\s*t\.length\s*:\s*t/);
+    for (const bind of ['countdown', 'clock', 'elapsed', 'remaining']) {
+      expect(src, `${bind} is a ticking bind in layerText and must be one here`).toMatch(
+        new RegExp(`TICKING = \\[[^\\]]*'${bind}'`)
+      );
+    }
+  });
+
   it('Live turns a clip into words, and not into the shrink sentence', () => {
     // A clip and a shrink are different failures: one is "you cannot read this
     // from the back", the other is "you cannot read all of it from anywhere".

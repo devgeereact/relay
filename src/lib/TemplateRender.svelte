@@ -181,6 +181,12 @@
   }
   // vertical alignment → flex
   const vAlign = (v) => (v === 'top' ? 'flex-start' : v === 'bottom' ? 'flex-end' : 'center');
+  /** Does this layer's text change on a CLOCK rather than on content? The four
+   *  binds `layerText` reads from a ticking source — the ones whose words move
+   *  several times a second and whose size deliberately must not be re-measured
+   *  when they do. */
+  const TICKING = ['countdown', 'clock', 'elapsed', 'remaining'];
+  const isTicking = (L) => TICKING.includes(L?.bind);
   /**
    * THE SIZE A TEXT LAYER ASKS FOR, in cqw — the one home for it.
    *
@@ -370,18 +376,59 @@
       for (const L of layers) {
         if (L.visible === false) continue;
         if (L.type === 'text' || L.type === 'timer') {
-          s += `|${L.w},${L.h},${L.size},${(layerText(L) || '').length}`;
+          // THE WORDS, NOT THEIR LENGTH — because `{#key text}` rebuilds this
+          // layer's `.lfit` on ANY text change, and a rebuilt element carries the
+          // declared base and no fitted size. A length was close enough to look
+          // right and let two passages of equal length share a signature: the fit
+          // was skipped, the new element kept the base, it clipped, and
+          // `verifyFit` never ran so nothing was reported either. Measured on the
+          // console after a fire — `.lfit` at 5.2cqw, the untouched default verse
+          // size, 207px of content in a 174px box, no warning, corrected only by a
+          // window resize (which moves `clientWidth`, which IS in the signature).
+          //
+          // A TICKING layer is the exception it has always been, and it is why
+          // this cannot simply be the text everywhere: a countdown or clock
+          // changes its text four times a second, so its length is what is folded
+          // in, exactly as before, and the reflow storm that gating exists to
+          // prevent stays prevented. Its rebuilt element keeps its size through
+          // `reapplyFitted` instead — the digits hold width as they count.
+          const t = layerText(L) || '';
+          s += `|${L.w},${L.h},${L.size},${isTicking(L) ? t.length : t}`;
         }
       }
       return s;
     }
     return `R${w}x${h}|${verseSize}|${refSize}|${content?.reference ?? ''}|${(content?.text ?? '').length}|${bandMode ? 1 : 0}|${countdownTo ? 1 : 0}`;
   }
+  /**
+   * Hand a rebuilt element the size its layer was already fitted at.
+   *
+   * `{#key text}` destroys and rebuilds a layer's `.lfit` whenever its words
+   * change, and the new one carries only the DECLARED base. When the words
+   * changed for a real reason the signature moves and a fresh fit runs; when they
+   * changed because a clock ticked, it must not — so the answer is re-applied
+   * instead of re-measured. Pure style writes: no `scrollHeight`, no reflow.
+   */
+  function reapplyFitted() {
+    if (!stageEl || !layered) return;
+    stageEl.querySelectorAll('.ltext').forEach((box) => {
+      const px = box.dataset.fitted;
+      if (!px) return;
+      const el = box.querySelector('.lfit');
+      if (!el || el.dataset.sized) return;
+      el.style.fontSize = `${px}cqw`;
+      el.dataset.sized = '1';
+    });
+  }
   function runFit() {
     fitRaf = 0;
     if (!stageEl || !visible) return; // don't reflow an offscreen render
     const sig = fitSig();
     if (sig === lastFitSig) {
+      // A ticking layer's element was just rebuilt and is wearing the declared
+      // base. Give it back the size this layer was fitted at — a style write, no
+      // layout read, so it stays free at 4 Hz.
+      reapplyFitted();
       // The FIT is still the right fit. The VERDICT may not be: something told us
       // the geometry moved, and the verdict is about the geometry. Re-take it
       // with a fresh budget — a resize is a new situation, not a continuation of
@@ -1071,6 +1118,12 @@
         if (fits(mid)) { best = mid; lo = mid; } else { top = mid; }
       }
       el.style.fontSize = `${best}cqw`;
+      // THIS SIZE OUTLIVES THIS ELEMENT. `{#key text}` will throw the element
+      // away on the next tick or the next verse; the answer stays on the `.ltext`,
+      // which is keyed by the layer's own id and survives. `reapplyFitted` hands
+      // it to whatever element takes its place.
+      el.dataset.sized = '1';
+      box.dataset.fitted = String(best);
       // A box with nothing in it was not shrunk, it is EMPTY — a reference layer
       // on a lyric fire, a `next` line with no next. Reporting its ratio would
       // make Live shout "38% of the designed size" on an ordinary song.
