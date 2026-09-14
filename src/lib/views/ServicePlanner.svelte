@@ -30,6 +30,7 @@
   import { setSession } from '../session.js';
   import {
     TYPE,
+    typeOf,
     payloadOf,
     slidesOf,
     slideAccent,
@@ -319,7 +320,19 @@
     });
   }
 
-  /** Hand this plan to the LIVE tab and go there. The one path from build to run. */
+  /**
+   * Hand this plan to the LIVE tab and go there. The one path from build to run.
+   *
+   * It hands over a PLAN and a PLAYHEAD and says nothing about the wall.
+   * `liveCueId: null` starts this plan at the top; `liveOnAir` is deliberately
+   * ABSENT from the patch, because position and on-air-ness are separate facts
+   * (CLAUDE.md, `liveCue`) and the second belongs to Live and to the panic
+   * controls. Adding `liveOnAir: false` here would have this workspace assert
+   * that a congregation's screen is clear — which is a panic control's claim, and
+   * one it is not allowed to make on someone else's behalf (DECISIONS §20).
+   * Nothing is invoked: loading a plan must not clear the programme (§2).
+   * Pinned by `plannerbuildonly.test.js`.
+   */
   function runPlan() {
     setSession({ planId: openPlan.id, liveCueId: null, liveSlide: 0, activeTab: 'live' });
   }
@@ -594,7 +607,7 @@
               {/if}
 
               {#each sec.items as c (c.id)}
-                {@const ty = TYPE[c.cue_type] || TYPE.unknown}
+                {@const ty = typeOf(c.cue_type)}
                 {@const n = items.findIndex((i) => i.id === c.id)}
                 <div class="sp-row" class:sel={c.id === selId} class:dragover={dragOverId === c.id}
                   draggable={true}
@@ -723,11 +736,13 @@
       <div class="rw-panehead"><h2 class="rw-panettl">Cue details</h2></div>
       <div class="sp-empty r-empty">Pick a cue to edit it.</div>
     {:else}
-      <!-- `TYPE.unknown`, NEVER `TYPE.scripture`. A cue of a kind this build does
-           not recognise was drawn as Scripture — amber dot, "SCRIPTURE", the
-           scripture trigger — which is a claim about what will reach a screen,
-           made from an absence. `unknown` says nothing and claims nothing. -->
-      {@const ty = TYPE[selCue.cue_type] || TYPE.unknown}
+      <!-- `typeOf`, NEVER a bare `TYPE[…]` with a scripture fallback. A cue of a
+           kind this build does not recognise was drawn as Scripture — amber dot,
+           "SCRIPTURE", the scripture trigger — which is a claim about what will
+           reach a screen, made from an absence. `typeOf` says UNKNOWN and claims
+           nothing, and being the one door is what stopped this panel badging the
+           cue UNKNOWN while `cueSub` printed SCRIPTURE · AUTO-DETECT under it. -->
+      {@const ty = typeOf(selCue.cue_type)}
       <div class="rw-panehead">
         <h2 class="rw-panettl">Cue details</h2>
         <span class="rw-spring"></span>

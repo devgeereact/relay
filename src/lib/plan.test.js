@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
+import { readFileSync, readdirSync } from 'node:fs';
+import { resolve, join } from 'node:path';
 import {
+  TYPE,
+  typeOf,
   payloadOf,
   slidesOf,
   nextOf,
@@ -112,6 +116,77 @@ describe('cueSub', () => {
   it('counts a song by its slides', () => {
     expect(cueSub(song(1, 'Verse', 'Chorus', 'Bridge'))).toBe('SONG · 3 SLIDES');
     expect(cueSub(verse(2, 'John 3:16'))).toBe('SCRIPTURE · AUTO-DETECT');
+  });
+});
+
+// ── TYPE has ONE door, and it never answers "scripture" from an absence ──────
+//
+// The fix that added `TYPE.unknown` was applied at three call sites and missed
+// the fourth. `cueSub` kept `|| TYPE.scripture`, and it is rendered on BOTH the
+// Planner's cue inspector and the Live run surface — so a cue of a kind this
+// build does not recognise was badged UNKNOWN / MANUAL with "SCRIPTURE ·
+// AUTO-DETECT" printed two lines beneath it. Reproduced in a browser against the
+// real component before this was written: the inspector read
+// {type: 'UNKNOWN', trig: 'MANUAL', sub: 'SCRIPTURE · AUTO-DETECT'}.
+//
+// Scripture is the one kind the AI may fire by itself, so saying it about a row
+// nobody can identify is a claim made from an absence. `cue_type` is plain TEXT
+// with no CHECK constraint, and `docs/data/schema.sql` documents the notice type
+// under a spelling the frontend has never used ('announcement' vs 'announce'),
+// which is exactly how such a row arrives.
+const foreign = (cue_type) => ({
+  id: 9,
+  cue_type,
+  label: 'Legacy notice row',
+  payload_json: JSON.stringify({ body: 'Imported from an older schema.' }),
+});
+
+describe('typeOf — the one door onto TYPE', () => {
+  it('answers UNKNOWN for a cue_type this build does not recognise', () => {
+    for (const t of ['announcement', 'sermon', '', null, undefined, 'SCRIPTURE']) {
+      expect(typeOf(t)).toBe(TYPE.unknown);
+    }
+  });
+
+  it('answers the real row for every kind this build does know', () => {
+    for (const k of ['scripture', 'song', 'media', 'announce', 'countdown']) {
+      expect(typeOf(k)).toBe(TYPE[k]);
+    }
+  });
+
+  it('never lets an unrecognised cue claim the trigger only scripture has', () => {
+    // The fourth door. Fails against `TYPE[item.cue_type] || TYPE.scripture`.
+    expect(cueSub(foreign('announcement'))).toBe('UNKNOWN · MANUAL');
+    expect(cueSub(foreign('announcement'))).not.toContain('AUTO-DETECT');
+    expect(cueSub(foreign('announcement'))).not.toContain('SCRIPTURE');
+  });
+
+  it('has no fifth door — nothing in src/ falls back to TYPE.scripture', () => {
+    // A scanner rather than a list, because the defect this replaces was a call
+    // site nobody thought to enumerate. It covers Live.svelte too, which is not
+    // this branch's file: the point is that reintroducing the fallback anywhere
+    // fails here, wherever "anywhere" turns out to be next time.
+    const root = resolve(__dirname, '..');
+    const hits = [];
+    const walk = (d) => {
+      for (const e of readdirSync(d, { withFileTypes: true })) {
+        const p = join(d, e.name);
+        if (e.isDirectory()) walk(p);
+        else if (/\.(js|svelte)$/.test(e.name) && !e.name.endsWith('.test.js')) {
+          const src = readFileSync(p, 'utf8');
+          // Strip comments: three files DESCRIBE this defect in prose, and a
+          // scanner that greps a comment is how one entitlement test passed on
+          // a broken file.
+          const code = src
+            .replace(/<!--[\s\S]*?-->/g, '')
+            .replace(/\/\*[\s\S]*?\*\//g, '')
+            .replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+          if (/(\|\||\?\?)\s*TYPE\.scripture\b/.test(code)) hits.push(p.slice(root.length + 1));
+        }
+      }
+    };
+    walk(root);
+    expect(hits).toEqual([]);
   });
 });
 
