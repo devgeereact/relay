@@ -946,7 +946,11 @@
      their own outcome through `run()` and the error line above. */
   .dk-btn { flex: 0 0 auto; margin-left: 6px; }
   .ltrow > span { min-width: 74px; }
-  .ltpick { flex: 1; min-width: 0; height: 24px; }
+  /* 26px, the shared control height — measured at 24 in a render against the
+     reference table. A dock card holds a mixed column (this picker, two text
+     fields, two buttons) and the whole point of the table is that such a
+     column lines up on one right edge. */
+  .ltpick { flex: 1; min-width: 0; }
   /* The rows of fields and buttons have no label of their own, so they line up
      under the one that does rather than starting at the card's edge. */
   .ltsub { padding-left: 80px; }
