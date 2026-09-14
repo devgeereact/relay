@@ -3845,7 +3845,6 @@ as blacking out a keyed channel, which `isKeyedTemplate` exists to prevent.
 `TemplateRender.svelte` and `TemplatePreviewOverlay.svelte` must render no plate, watched to fail by
 putting one in `Output.svelte`.
 
-<<<<<<< HEAD
 ---
 
 ## 83. The name is the card's identity, so it is the last thing allowed to shrink (2026-09-14)
@@ -3890,7 +3889,9 @@ was written to catch was on a different card. It prices every card now and asser
 **What this does NOT change.** The role register (§78), the look register `CONTENT_KINDS`, the one
 writer `setContentTemplate` (§25), and the object strip and Used for the gallery inspector gained in
 §80 are all untouched. Nothing here reaches an output.
-=======
+
+---
+
 ## 84. A transition has two authorities, and the operator's outranks the template's (2026-09-14)
 
 ### What was open
@@ -3997,4 +3998,3 @@ The console's programme pane does not replay yet. `views/Live.svelte` renders `T
 needs no new prop — it follows the `liveTransition` store the moment it is rendered by a build that
 has this — but that file was owned by another agent in the same wave and was left alone. Verified
 only that the mechanism is there, not that the pane moves. **NOT TESTED in a browser.**
->>>>>>> worktree-agent-a104bebe05ded4fb2

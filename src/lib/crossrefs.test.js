@@ -20,6 +20,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { resolve, join } from 'node:path';
+import { execFileSync } from 'node:child_process';
 
 const root = resolve(__dirname, '../..');
 const read = (p) => readFileSync(resolve(root, p), 'utf8');
@@ -405,5 +406,77 @@ describe('RG-67 · every cross-reference resolves', () => {
       dangling,
       `ids referenced with no register row: ${[...new Set(dangling)].join(', ')}`,
     ).toEqual([]);
+  });
+});
+
+// A merge left `<<<<<<< HEAD`, `=======` and `>>>>>>> branch` in `docs/DECISIONS.md`,
+// and it was committed, pushed, and survived a full green suite.
+//
+// The instrument that reads that file is the describe block above. It resolves
+// `DECISIONS §N` citations against the real headings, and a conflict marker does not
+// break heading parsing — so §83 and §84 both still resolved while the document
+// between them was two half versions of itself. The check passed and the artefact
+// was wrong.
+//
+// That is a general shape, not a DECISIONS problem. A marker in a `.rs` file fails
+// the compiler and a marker in a `.svelte` file fails `vite build`, so those two
+// announce themselves. A marker in a Markdown document, a JSON fixture or a `.sql`
+// file is silent — and the documents here are load-bearing: `docs/data/schema.sql`
+// is `include_str!`d into the shipped binary.
+//
+// Every TRACKED file, because that is the set that can be pushed. `git ls-files`
+// rather than the directory walk above: that walk skips `node_modules`, `target` and
+// dot-directories by name, and a scanner that decides its own scope is exactly how
+// the other scanners in this repository narrowed until they passed over everything.
+describe('a conflict marker never reaches a commit', () => {
+  const tracked = execFileSync('git', ['ls-files'], {
+    cwd: root,
+    encoding: 'utf8',
+    maxBuffer: 64 * 1024 * 1024,
+  })
+    .split('\n')
+    .filter(Boolean);
+
+  it('reads the real tracked set (the guard on the one below)', () => {
+    // A scanner over an empty list reports a clean tree. These three must be in it.
+    expect(tracked.length).toBeGreaterThan(200);
+    for (const f of ['docs/DECISIONS.md', 'CLAUDE.md', 'src/lib/crossrefs.test.js']) {
+      expect(tracked, `${f} is not in the tracked set`).toContain(f);
+    }
+  });
+
+  it('no tracked file contains an unresolved conflict marker', () => {
+    // Anchored to the start of a line, which is where git writes them. The middle
+    // marker is matched at exactly seven `=` on its own line, so a Markdown setext
+    // rule under a heading is not a false positive. The patterns are BUILT rather
+    // than written out, so this file cannot find itself and report a clean tree by
+    // being excluded from its own scan.
+    const MARKERS = [
+      new RegExp('^' + '<'.repeat(7) + ' ', 'm'),
+      new RegExp('^' + '='.repeat(7) + '$', 'm'),
+      new RegExp('^' + '>'.repeat(7) + ' ', 'm'),
+    ];
+    const hit = [];
+    for (const rel of tracked) {
+      const abs = resolve(root, rel);
+      if (!existsSync(abs)) continue; // a delete staged but not yet committed
+      let text;
+      try {
+        text = readFileSync(abs, 'utf8');
+      } catch {
+        continue; // unreadable — nothing git wrote a marker into
+      }
+      // A binary file read as utf8 is mojibake, not a document; skip it rather than
+      // match a byte pattern inside a PNG.
+      if (text.includes(' ')) continue;
+      for (const re of MARKERS) {
+        const m = re.exec(text);
+        if (m) {
+          hit.push(`${rel}:${text.slice(0, m.index).split('\n').length}`);
+          break;
+        }
+      }
+    }
+    expect(hit, `unresolved conflict markers: ${hit.join(', ')}`).toEqual([]);
   });
 });
