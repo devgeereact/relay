@@ -200,8 +200,21 @@ describe('a transition set to Cut animates nothing on the wall', () => {
     expect(declarations(keyframes)).toBe('');
   });
 
-  it('an absent transition is a cut, and still animates nothing', async () => {
+  it('an absent transition takes the DEFAULT, which is the reference\'s crossfade', async () => {
+    // Changed 2026-09-14 with `DEFAULT_TRANSITION`. A template that states no
+    // transition used to cut; the reference ships `--xd:320ms` on a crossfade and
+    // the operator reported the console cutting every time. What a `cut` does is
+    // unchanged and is the test directly above this one.
     const { animation, keyframes } = await fireTwice(undefined, undefined);
+    expect(animation).toMatch(/\b320ms\b/);
+    expect(declarations(keyframes)).not.toBe('');
+  });
+
+  it('…and a mode this build has never heard of animates nothing', async () => {
+    // Carried through as a name and neutralised in `transitionDuration`, so the
+    // wall is still: 0ms, no declarations. A template from a newer version cannot
+    // have its motion guessed at.
+    const { animation, keyframes } = await fireTwice('a-mode-from-2027', 400);
     expect(animation).toMatch(/\b0ms\b/);
     expect(declarations(keyframes)).toBe('');
   });

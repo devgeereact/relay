@@ -14,6 +14,8 @@ import { describe, it, expect } from 'vitest';
 import {
   TRANSITIONS,
   DEFAULT_TRANSITION,
+  DEFAULT_TRANSITION_MS,
+  UNKNOWN_TRANSITION,
   isTransition,
   transitionCss,
   transitionDuration,
@@ -24,7 +26,13 @@ const IDS = ['cut', 'crossfade', 'dissolve', 'fadeblack', 'pushleft', 'slideup',
 describe('the register', () => {
   it('is the seven the spec names, cut first', () => {
     expect(TRANSITIONS.map((t) => t.id)).toEqual(IDS);
-    expect(DEFAULT_TRANSITION).toBe('cut');
+    // The DEFAULT moved to `crossfade` on 2026-09-14: the reference ships
+    // `--xd:320ms` with its picker open on Crossfade, and the operator reported
+    // "transition not rendering as in the artifacts" against a console that cut
+    // every time. An UNKNOWN mode is still a cut — a template from a newer build
+    // must not have its motion guessed at.
+    expect(DEFAULT_TRANSITION).toBe('crossfade');
+    expect(UNKNOWN_TRANSITION).toBe('cut');
   });
 
   it('every one has a label and a sentence an operator can read', () => {
@@ -113,9 +121,17 @@ describe('transitionDuration', () => {
     expect(transitionDuration('crossfade', 250)).toBe(250);
   });
 
-  it('a missing or nonsense duration is a cut, not an instant flash', () => {
+  it('an ABSENT duration is the default; an explicit zero and a nonsense one are cuts', () => {
+    // Changed 2026-09-14. A template that states a mode and no `transitionMs` —
+    // most of them, because the editor only writes the pair when somebody touches
+    // the duration — used to resolve to 0 ms and play nothing: the mode right, the
+    // register right, the renderer right, and the wall cutting. That was half of
+    // "transition not rendering as in the artifacts".
+    expect(transitionDuration('crossfade', undefined)).toBe(DEFAULT_TRANSITION_MS);
+    expect(transitionDuration('crossfade', null)).toBe(DEFAULT_TRANSITION_MS);
+    expect(transitionDuration('crossfade', '')).toBe(DEFAULT_TRANSITION_MS);
+    // An explicit 0 is an operator asking for a cut by the back door; they get one.
     expect(transitionDuration('crossfade', 0)).toBe(0);
-    expect(transitionDuration('crossfade', null)).toBe(0);
     expect(transitionDuration('crossfade', 'soon')).toBe(0);
   });
 

@@ -24,6 +24,7 @@ import {
   TRANSITIONS,
   TRANSITION_MS,
   DEFAULT_TRANSITION,
+  transitionDuration,
   DEFAULT_TRANSITION_MS,
   resolveTransition,
   isOverride,
@@ -48,9 +49,18 @@ describe('which transition is in force, and on whose authority', () => {
     });
   });
 
-  it('falls to a cut when neither authority has said anything', () => {
+  it('falls to the default when neither authority has said anything', () => {
+    // The DEFAULT moved to `crossfade` on 2026-09-14 to match the reference. What
+    // has NOT changed is the other half: a mode this build does not recognise is
+    // still a cut, because guessing at motion a newer template asked for is the
+    // one thing an override may not do.
     expect(resolveTransition({}, null).mode).toBe(DEFAULT_TRANSITION);
-    expect(resolveTransition(undefined, undefined).mode).toBe('cut');
+    expect(resolveTransition(undefined, undefined).mode).toBe(DEFAULT_TRANSITION);
+    // An unknown mode is carried through as a NAME and neutralised where motion is
+    // decided — `transitionDuration` returns 0 for anything outside the register —
+    // so the resolver stays a pure ranking and the renderer stays the one place
+    // that says what animates. Asserted as the EFFECT, not as the string.
+    expect(transitionDuration('a-mode-from-2027', 400, false)).toBe(0);
   });
 
   it('lets the operator overrule a template that wanted motion', () => {

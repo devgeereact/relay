@@ -38,8 +38,21 @@ export const TRANSITIONS = Object.freeze([
 /** Is this a mode we know? Anything else is treated as a cut. */
 export const isTransition = (id) => TRANSITIONS.some((t) => t.id === id);
 
-/** The default, and what an unknown or absent mode becomes. */
-export const DEFAULT_TRANSITION = 'cut';
+/** What a template with no stated transition plays.
+ *
+ * `crossfade` at `DEFAULT_TRANSITION_MS`, because that is what the reference
+ * ships (`--xd:320ms`, its picker opens on Crossfade) and the operator reported
+ * "transition not rendering as in the artifacts" against a console that cut every
+ * time. A cut is still one press away and is still what `prefers-reduced-motion`
+ * resolves to, so nobody who needs stillness gets motion.
+ *
+ * NOT the same value as `UNKNOWN_TRANSITION` below: a mode this build has never
+ * heard of — a template from a newer version — must be a CUT rather than a guess,
+ * which is the rule `isOverride` already holds for the operator's override. */
+export const DEFAULT_TRANSITION = 'crossfade';
+
+/** What an unknown or absent mode becomes: nothing animates. */
+export const UNKNOWN_TRANSITION = 'cut';
 
 /**
  * The inline CSS for `mode` at progress `t` (0 → 1).
@@ -86,7 +99,14 @@ export function transitionCss(mode, t) {
  */
 export function transitionDuration(mode, ms, reducedMotion = false) {
   if (reducedMotion || !isTransition(mode) || mode === 'cut') return 0;
-  const n = Number(ms);
+  // AN ABSENT DURATION IS THE DEFAULT, NOT ZERO. Found 2026-09-14 while chasing
+  // "transition not rendering as in the artifacts": a template that states a mode
+  // and no `transitionMs` — which is most of them, since the editor only writes
+  // the pair when an operator touches the duration — resolved to 0 ms and played
+  // nothing. The mode was right, the register was right, the renderer was right,
+  // and the wall cut. An explicit 0 is still 0: that is an operator asking for a
+  // cut by the back door, and they get one.
+  const n = ms === undefined || ms === null || ms === '' ? DEFAULT_TRANSITION_MS : Number(ms);
   if (!Number.isFinite(n) || n <= 0) return 0;
   // A transition longer than a second on a wall is an operator waiting for the
   // machine, mid-service.
