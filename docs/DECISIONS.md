@@ -3679,3 +3679,50 @@ and a tab that opens a dead screen in between is worse than either. **It is to b
 shell drops the `themes` entry**, and it says so in its own first paragraph: left behind, it is a
 component nothing renders, and an orphan is how a surface stops being covered while its tests stay
 green.
+
+---
+
+## 80. The inspector names the objects; the property groups stayed in the editor (2026-09-14)
+
+**Context.** `docs/REBRAND.md` §3.2 asks for an inspector that is objects rather than a ladder: a
+wrapping tab strip of the objects on this slide, then that object's properties grouped Text /
+Position / Effects, and Reset this object. The rebrand's Status table records phase 3 as **done**,
+and it is — inside `TemplateEditor`, a separate screen. What the **gallery's** inspector showed was
+a preview, three buttons, a Details|Usage switch and five read-only rows.
+
+**Two facts in that panel could be read and not changed from the surface they were read on.** One of
+them mattered: the Usage tab printed *"Content looks are set in Outputs → Content looks — the one
+place a content type is bound to a template"*, which is a signpost standing exactly where a control
+belongs. The other was the whole object model — a template's objects were not named at all on the
+surface an operator browses from.
+
+**What was built.** The gallery inspector now carries **Used for**, writing through
+`setContentTemplate` — the SAME single writer the Outputs matrix and the editor's own Used for call
+(DECISIONS §25), reading the same store, so a third surface cannot start disagreeing about what is
+bound — and the **object strip**, naming the template's real objects through the same `layerLabel`
+the editor's strip uses. A press opens the editor **on that object** (`TemplateEditor` gained a
+`layerId` prop, ignored when the id is not on the template rather than selecting the wrong object),
+so "change the reference on Nocturne" is one action from looking at it.
+
+**What was NOT built, and why.** The per-object **property groups** stayed in the editor. Moving
+them means extracting roughly three hundred lines of markup that read and write `sel` directly, plus
+`set` / `num` / `geom` / `bindToken` / `center` / `resetObject` / `duplicate` / `removeLayer`, the
+font-detection session state, the band-membership writer and the undo stack — into a component both
+screens drive. That is a real refactor of the surface that paints a congregation's screen, and it
+sits under `band.test.js` (24), `templatestyle.test.js` (29), `layerops.test.js` (14),
+`composite.test.js` (9) and `templateinspector.test.js`. It is worth doing. It is not worth doing in
+the tail of another pass, by somebody who cannot see the screens — which is the same reason phase 11
+left the Settings reorganisation alone.
+
+**So this is a partial closure and is recorded as one.** §3.2 is satisfied in the editor and
+**half** satisfied in the gallery: the objects are named and one press away, the properties are not
+edited in place. A reviewer should read the claim as exactly that, and the honest next step is the
+extraction above rather than a second copy of the property markup — a second copy is how a shadow, a
+transform or a fit fix lands on one panel and not the other, which is the reason the band's members
+are drawn by the one text path and not by the band.
+
+**One thing not attempted at all.** The prototype outlines the SELECTED object on the preview
+(`.frame.sel-v`). `TemplateRender` is the ONE renderer and it renders what a wall shows; a selection
+outline is booth furniture, and the editor draws it on its own canvas overlay rather than inside the
+renderer. Putting it inside `TemplateRender` to serve a browse surface would put an editor concern
+into the component the congregation sees. Not done, on purpose.

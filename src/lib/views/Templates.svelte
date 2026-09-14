@@ -39,14 +39,20 @@
   let desk = initialDesk; // templates | themes
   let mode = 'gallery'; // gallery | editor
   let editingId = null;
+  // Which object the gallery's inspector was pointing at, if it was pointing at
+  // one (docs/REBRAND.md §3.2). Carried through so a press on the object strip
+  // opens the editor on that object rather than on nothing.
+  let editingLayerId = null;
 
   function openEditor(e) {
     editingId = e.detail.id;
+    editingLayerId = e.detail.layerId ?? null;
     mode = 'editor';
   }
   function backToGallery() {
     mode = 'gallery';
     editingId = null;
+    editingLayerId = null;
   }
   function changeDesk(e) {
     desk = e.detail.desk;
@@ -61,7 +67,7 @@
     <ThemeGallery on:edit={openEditor} on:desk={changeDesk} />
   {/if}
 {:else if mode === 'editor'}
-  <TemplateEditor templateId={editingId} on:back={backToGallery} />
+  <TemplateEditor templateId={editingId} layerId={editingLayerId} on:back={backToGallery} />
 {:else}
   <TemplateGallery on:edit={openEditor} on:desk={changeDesk} />
 {/if}

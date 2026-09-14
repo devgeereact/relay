@@ -13,7 +13,7 @@
   import Loading from '../../ui/Loading.svelte';
   import ErrorState from '../../ui/ErrorState.svelte';
   import { templateKind, kindsPresent, KIND_META } from '../../templateKind.js';
-  import { STARTERS, isLayered, regionsToLayers, CONTENT_KINDS } from '../../layers.js';
+  import { STARTERS, isLayered, regionsToLayers, CONTENT_KINDS, layerLabel } from '../../layers.js';
   import { testTemplateOnOutputs } from '../../templateTest.js';
   import TemplatePreviewOverlay from '../../TemplatePreviewOverlay.svelte';
   import { humanError } from '../../errors.js';
@@ -21,6 +21,7 @@
     capture,
     templates,
     contentTemplates,
+    setContentTemplate,
     loadTemplates,
     readErrors,
     saveTemplate,
@@ -252,6 +253,36 @@
       testErr = humanError(e);
     }
   }
+
+  // ── USED FOR ────────────────────────────────────────────────────────────
+  // THE SAME WRITER the editor's own "Used for" calls (`setContentTemplate`,
+  // DECISIONS §25 and §70), not a second path to the same table. A kind ticked
+  // here wears this template on every screen set to Follow the content look; a
+  // screen with a look of its own keeps it (DECISIONS §29 — a screen's own
+  // template wins). The read side is `$contentTemplates`, the one store, so this
+  // control and the rail's look register cannot disagree about what is bound.
+  let lookErr = '';
+  async function toggleUsedFor(kind) {
+    if (!sel) return;
+    const mine = $contentTemplates[kind] === sel.id;
+    lookErr = '';
+    try {
+      await setContentTemplate(kind, mine ? null : sel.id);
+    } catch (e) {
+      lookErr = humanError(e);
+    }
+  }
+
+  // ── THE OBJECTS ON THIS SLIDE ───────────────────────────────────────────
+  // The object tab strip (docs/REBRAND.md §3.2), reading the template's real
+  // layers through `layerLabel` — the same namer the editor's strip uses, so the
+  // two strips cannot disagree about what an object is called. It wraps rather
+  // than scrolls: a tab behind a hidden scrollbar is a tab nobody knows is there.
+  //
+  // A region-model template has no objects to list; the strip says so in words
+  // rather than rendering an empty row, because an empty strip and a template
+  // whose objects have not loaded look identical (rule 35).
+  $: selLayers = Array.isArray(sel?.layout?.layers) ? sel.layout.layers : [];
 
   // Inline rename in the inspector.
   let renaming = false;
@@ -508,8 +539,58 @@
         </div>
 
         {#if inspTab === 'details'}
+          <!-- ══ USED FOR ══ What this template is FOR, as a control rather than
+               a row you can read and not change (docs/REBRAND.md §3.2). It was
+               the one fact in this panel an operator could see and had to leave
+               the workspace to set — the Usage tab said "Content looks are set
+               in Outputs → Content looks", which is a signpost where a control
+               belongs.
+
+               ONE WRITER, still: `setContentTemplate`, the same call the
+               editor's own Used for makes and the same store the rail's look
+               register reads. Steel blue for a ticked kind — it is the thing you
+               are working on, not a claim about any screen. -->
+          <div class="r-lbl tg-flbl">Used for</div>
+          <div class="tg-usedgrid">
+            {#each CONTENT_KINDS as k (k.key)}
+              {@const mine = $contentTemplates[k.key] === sel.id}
+              <button class="tg-usedchip" class:on={mine} aria-pressed={mine}
+                on:click={() => toggleUsedFor(k.key)} disabled={!$capture.available}>
+                <span class="tg-usedtick" aria-hidden="true">{mine ? '✓' : ''}</span>{k.label}
+              </button>
+            {/each}
+          </div>
+          {#if lookErr}<p class="tg-testerr" role="alert">{lookErr}</p>{/if}
+          <p class="tg-fhelp">A kind ticked here wears this template on every screen set to <b>Follow the content look</b>. A screen with a look of its own keeps it.</p>
+
+          <!-- ══ THE OBJECTS ON THIS SLIDE ══ §3.2's tab strip, on the surface
+               an operator browses from. It names the template's REAL objects
+               through the same `layerLabel` the editor's strip uses, and a press
+               opens that object in the editor with its properties already
+               selected — one action from looking at a template to changing the
+               part of it you meant.
+
+               The property groups themselves stayed in the editor, deliberately;
+               the reason and its cost are recorded in DECISIONS §80. -->
+          <div class="r-lbl tg-flbl">Objects</div>
+          {#if selLayers.length}
+            <div class="tg-objtabs" role="list">
+              {#each selLayers as L (L.id)}
+                <button class="tg-objtab" class:off={L.visible === false} role="listitem"
+                  title="Edit {layerLabel(L)}"
+                  on:click={() => dispatch('edit', { id: sel.id, layerId: L.id })}>{layerLabel(L)}</button>
+              {/each}
+            </div>
+          {:else}
+            <!-- IN WORDS, not an empty strip. A template with no objects and one
+                 whose objects have not been read look identical, and only one of
+                 those is a fact about the template (rule 35). -->
+            <p class="tg-fhelp">This is a built-in preset, laid out by region rather than as separate objects. <b>Edit</b> converts it to objects you can move.</p>
+          {/if}
+
           <!-- A row is a NAME and a VALUE (§11), full-bleed against the pane's own
                12px gutter so the seams reach both edges. -->
+          <div class="r-lbl tg-flbl">Details</div>
           <div class="tg-rows">
             <div class="rw-nv">
               <span class="rw-nvk">Name</span>
@@ -575,7 +656,15 @@
           {:else}
             <p class="tg-fhelp">Not set as a default content look.</p>
           {/if}
-          <p class="rw-foot">Content looks are set in <b>Outputs → Content looks</b> — the one place a content type is bound to a template.</p>
+          <!-- IT IS NO LONGER ONE PLACE, and saying so would be wrong. This line
+               read "Content looks are set in Outputs → Content looks — the one
+               place a content type is bound to a template", which was a signpost
+               standing where a control belonged. `Used for` on the Details tab
+               now binds them here too. Two surfaces, still ONE writer
+               (`setContentTemplate`) and ONE store, which is the property that
+               actually matters — a second writer is how the matrix and the
+               editor came to disagree in the first place (DECISIONS §25). -->
+          <p class="rw-foot">A content look is bound on <b>Details → Used for</b>, or in <b>Outputs → Content looks</b>. Both write the same binding, so the two can never disagree.</p>
         {/if}
       </div>
     {/if}
@@ -682,6 +771,32 @@
   .tg-usedfor{ flex:0 0 auto; max-width:40%; padding:1px 6px; border:1px solid var(--v-line2);
     border-radius:var(--v-r-sm); font-size:var(--v-fs-cap); letter-spacing:var(--v-tr-caps);
     text-transform:uppercase; color:var(--v-faint); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  /* ── USED FOR, and the objects on this slide (§3.2) ────────────────────── */
+  /* A ticked kind is steel blue: "the thing you are working on". It is a fact
+     about the template, never a claim about a screen, so it borrows neither
+     amber (on air) nor amethyst (rehearsal). */
+  .tg-usedgrid{ display:flex; flex-wrap:wrap; gap:4px; margin-bottom:8px; }
+  .tg-usedchip{ display:inline-flex; align-items:center; gap:5px; padding:4px 8px;
+    border:1px solid var(--v-line2); border-radius:var(--v-r-sm); background:var(--v-surf2);
+    color:var(--v-dim); font-family:var(--f-body); font-size:var(--v-fs-cap); cursor:pointer;
+    transition:background var(--v-dur) var(--v-ease), color var(--v-dur) var(--v-ease); }
+  .tg-usedchip:hover:not(.on):not(:disabled){ color:var(--v-txt); background:var(--v-surf3); }
+  .tg-usedchip.on{ background:var(--v-sel-fill); border-color:transparent; color:var(--v-sel-ink); font-weight:600; }
+  .tg-usedchip:disabled{ opacity:.4; cursor:not-allowed; }
+  .tg-usedtick{ width:8px; display:inline-block; text-align:center; }
+
+  /* THE OBJECT STRIP WRAPS, never scrolls — a tab that has gone behind a hidden
+     scrollbar is a tab nobody knows is there. Same rule as the editor's strip. */
+  .tg-objtabs{ display:flex; flex-wrap:wrap; gap:3px; margin-bottom:8px; }
+  .tg-objtab{ padding:3px 8px; border:1px solid var(--v-line2); border-radius:var(--v-r-sm);
+    background:var(--v-surf2); color:var(--v-dim); font-family:var(--f-body);
+    font-size:var(--v-fs-cap); cursor:pointer; }
+  .tg-objtab:hover{ color:var(--v-txt); background:var(--v-surf3); }
+  /* A hidden object is struck through rather than dropped: an object that is not
+     drawn is still an object, and one that has vanished from the strip is one an
+     operator cannot switch back on. */
+  .tg-objtab.off{ text-decoration:line-through; opacity:.6; }
+
   /* THE ROLE TAG — what this template is FOR. Same neutral treatment as
      `.tg-usedfor` above and for the same reason: it is a fact about the
      template, never a claim about a screen, so it borrows no promised colour. */
