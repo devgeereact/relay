@@ -282,6 +282,17 @@ the spec names — a lower third's **Band**, a stage monitor's **Zones**, a comp
 Word bg / Word / Ref** — arrive with the phases that build those kinds (5, 6 and 12). Listing
 them now would be a tab strip offering objects no renderer draws.
 
+**And the strip was only ever in the EDITOR.** The surface an operator browses from — the gallery's
+inspector — was a preview, three buttons and five read-only rows, two of which were facts that
+could be read and not changed from the surface they were read on. One of those printed *"Content
+looks are set in Outputs → Content looks"*, a signpost standing where a control belongs. **Used
+for** now binds from the inspector through the same single writer, and the **object strip** names
+the template's real objects there, a press from that object's own properties. The per-object
+**property groups** stayed in the editor, deliberately and at a stated cost: DECISIONS §80 records
+what the extraction would take and why it is not a job for the tail of another pass. §3.2 is
+therefore closed in the editor and **half** closed in the gallery, and is to be read as exactly
+that.
+
 **Phase 4 found the reason the look register existed and did nothing.** `set_channel_template`
 took a non-null id, so every screen always had a template of its own — and since a screen's own
 template wins over a content-type default (§29), the content-look map could be filled in, saved,
@@ -289,12 +300,31 @@ and change nothing on any screen in the building. The sentence under the picker 
 opposite of what the code did, which is how it survived. A screen can now be set to **Follow the
 content look**; §29 is unchanged for a screen that has one.
 
-**The ten roles are not all here.** The register is `CONTENT_KINDS` — scripture, songs, media,
-announcements, timer — which is what the fire path, the database and the matrix already speak.
-The spec's remaining five (`preservice`, `stage`, `lower.name`, `lower.lyric`, `lower.bible`,
-`supersource`) name kinds nothing renders yet; they arrive with phases 5, 6 and 12. A role
-offered before its renderer exists is a control that saves a setting nothing reads, which is the
-defect this phase just closed.
+**The ten roles are not all here** — written when phases 5, 6 and 12 were still ahead, and
+**reconciled on 2026-09-14 now that they have landed** (DECISIONS §78). Two registers were being
+run together and the reconciliation separated them:
+
+- The register an operator **binds** is still `CONTENT_KINDS` — scripture, songs, media,
+  announcements, timer — because that is what the fire path, the database and the matrix speak. It
+  is unchanged, and so is §29's resolution order.
+- The register that says what a template **is for** is derived from the template's own shape and
+  stored nowhere. It is what the rail's rows and a card's tag read.
+
+And what the reconciliation actually found was not the register. `templateKind` — the one function
+every rail row, card tag and inspector row reads — had only ever been taught the legacy REGION
+model, so **all twelve starters classified as `custom`**, the three lower thirds and the SuperSource
+composite included. A role could have a renderer, have a row, and never appear on it. The five
+seeded built-ins are region templates, which is the only reason the rail showed a role at all: the
+defect was invisible on a fresh install and total for anything an operator created.
+
+Of the spec's ten: seven are offered; the three lower-third variants collapse to **one**, because
+`lower.name` and `lower.bible` are the same shape and only the words pointed at them differ;
+`preservice` is **refused**, because nothing in a shape identifies one and a row for it would claim
+templates it cannot tell apart. `timer` is offered and the spec's list omits it. The rule that a
+role offered before its renderer exists is a control saving a setting nothing reads is intact — and
+it now has a second edge: **a role you can filter to but not create is the same defect in the other
+direction**, which is what `Songs` was until a `lyrics` starter landed beside the built-in that had
+always been there.
 
 **Phase 5 was left deliberately incomplete, and W4 built the concept it was waiting for.**
 The reason it was deferred stands as written: "the band gives ground before the words do" means a
