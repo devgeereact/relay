@@ -428,6 +428,19 @@
 </div>
 
 <style>
+  /* ── ONE TYPE SCALE (docs/REBRAND.md §11 · §12) ────────────────────────────
+     This file had SIX literal font sizes: 13.5px, 13px, 12.5px, 11px, 10px and
+     9.5px, mixed in among the `--v-fs-*` tokens the rest of the readiness
+     surface uses. Three of them were a token's value typed out by hand (9.5 is
+     `cap`, 11 is `lbl`, 12.5 is `h3`), and three were steps the scale does not
+     have — so a Dashboard row heading was a pixel and a half larger than a
+     Settings row heading for no reason anybody chose, and a change to the scale
+     would have moved one and not the other.
+
+     §11's whole claim is *one* type scale with three roles. A view that types
+     its own numbers is not in that scale; it is beside it, agreeing by
+     coincidence until somebody edits the tokens. Every size here is now a
+     token, and `settingssections.test.js` holds both files to it. */
   .dash {
     display: flex;
     flex-direction: column;
@@ -587,7 +600,7 @@
   .d-walklist li.miss { color: var(--v-rose); }
   .d-walklist li.miss .d-walkdot { background: var(--v-rose); }
   .d-walklabel { flex: 1; min-width: 0; }
-  .d-walkat { font-size: 10px; color: var(--v-faint); }
+  .d-walkat { font-size: var(--v-fs-cap); line-height: var(--v-lh-cap); color: var(--v-faint); }
   .d-walkverdict {
     margin: 12px 0 0;
     font-size: var(--v-fs-b2);
@@ -628,7 +641,8 @@
   }
   .d-act b {
     display: block;
-    font-size: 13.5px;
+    font-size: var(--v-fs-h3);
+    line-height: var(--v-lh-h3);
     font-weight: 600;
   }
   .d-act span {
@@ -665,14 +679,16 @@
     border-color: var(--v-accent-line);
   }
   .d-row b {
-    font-size: 13px;
+    font-size: var(--v-fs-h3);
+    line-height: var(--v-lh-h3);
     font-weight: 500;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
   .d-row span {
-    font-size: 11px;
+    font-size: var(--v-fs-lbl);
+    line-height: var(--v-lh-lbl);
     color: var(--v-faint);
     flex: 0 0 auto;
   }
@@ -685,7 +701,8 @@
   .d-table th {
     text-align: left;
     font-family: var(--f-mono);
-    font-size: 9.5px;
+    font-size: var(--v-fs-cap);
+    line-height: var(--v-lh-cap);
     font-weight: 600;
     letter-spacing: 0.12em;
     text-transform: uppercase;
@@ -729,7 +746,7 @@
     background: var(--v-red-soft);
     border: 1px solid rgba(239, 68, 68, 0.3);
     color: var(--v-txt);
-    font-size: 12.5px;
+    font-size: var(--v-fs-h3);
     line-height: 1.55;
   }
 

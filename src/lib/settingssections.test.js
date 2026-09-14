@@ -198,10 +198,49 @@ describe('acceptance 1 · no setting writes a preference nothing reads', () => {
   });
 
   it('no control on this page is shown as a switch it cannot move', () => {
-    // The rendered shape of the same defect. A `disabled` switch and a "Soon" chip
-    // are what the two removed rows looked like; if either idiom comes back, some
-    // control is being drawn as live-looking furniture again.
-    expect(MARKUP_ONLY).not.toMatch(/role="switch"[\s\S]{0,200}?disabled/);
+    // The rendered shape of the same defect. A switch that can never be thrown
+    // and a "Soon" chip are what the two removed rows looked like; if either
+    // idiom comes back, some control is being drawn as live-looking furniture
+    // again.
+    //
+    // ── WHY THIS ASKS WHAT DISABLES THE SWITCH, NOT WHETHER ──────────────────
+    // It used to read `not.toMatch(/role="switch"[\s\S]{0,200}?disabled/)`:
+    // any `disabled` within 200 characters of a switch failed it. That caught
+    // the two dead rows, which carried a BARE `disabled` — an attribute with no
+    // expression, true for the life of the build, on a control with no handler
+    // behind it. It also catches `disabled={!$capture.available}`, which is a
+    // different thing entirely: a live fact about this machine right now, that
+    // an operator can change by attaching the engine, on a control that does
+    // move the moment they do.
+    //
+    // Forbidding both would have kept §12 out of the two sections that need it
+    // most — a switch is the instrument the spec asks for, and crash reporting
+    // and latency measuring genuinely cannot be set while the backend is away.
+    // So the claim is sharpened rather than dropped, and it is STRICTER than
+    // the old one in the case it was written for: a switch may carry no literal
+    // `disabled` at all, and any conditional one must name a live store, which
+    // the two dead rows could never have satisfied.
+    // `[^<]`, not `[^>]`: an arrow function in `on:click` carries a `>`, so a
+    // scanner bounded by the first `>` stops in the middle of the handler and
+    // reads a truncated tag. Attributes contain no `<`, so the close tag is the
+    // honest boundary.
+    const switches = [...MARKUP_ONLY.matchAll(/<button\b[^<]*?role="switch"[^<]*?><\/button>/g)].map(
+      (m) => m[0],
+    );
+    // The guard on the instrument: a scanner that finds nothing passes anything.
+    expect(switches.length, 'Settings renders at least one switch').toBeGreaterThan(0);
+    for (const s of switches) {
+      // A bare `disabled`, or one set from a literal, is furniture.
+      expect(s, `a switch with a literal disable: ${s}`).not.toMatch(
+        /disabled(?![-\w=])|disabled=\{(true|false)\}|disabled="/,
+      );
+      const cond = s.match(/disabled=\{([^}]*)\}/);
+      if (cond) {
+        expect(cond[1], `a switch disabled by something that is not live: ${s}`).toMatch(/\$/);
+      }
+      // And it must actually do something — the other half of "cannot move".
+      expect(s, `a switch with no handler: ${s}`).toMatch(/on:click=/);
+    }
     expect(MARKUP_ONLY).not.toMatch(/>Soon</);
     expect(MARKUP_ONLY).not.toMatch(/Not available yet/);
   });
@@ -214,6 +253,90 @@ describe('acceptance 1 · no setting writes a preference nothing reads', () => {
     expect(STYLE).not.toMatch(/\.s-toggle\{/);
     expect(STYLE).not.toMatch(/\.s-knob\{/);
     expect(APPCSS).toMatch(/\.r-switch\{[^}]*width:38px;\s*height:21px/);
+  });
+
+  // ── E1 · §12 · ONE INSTRUMENT, AND IT IS ACTUALLY USED ────────────────────
+  //
+  // W6 removed Settings' PRIVATE switch and the test above holds that absence.
+  // Absence is only half of §12: the page then had no switch at all, and its
+  // three real binary settings — safe mode, latency measuring, crash reporting
+  // — were three different text buttons instead. `Turn on`, `Stop measuring`,
+  // `Turn crash reporting on`: three grammars for one question, two of which
+  // showed the ACTION rather than the STATE, so the only way to read whether
+  // Relay was reporting crashes was to read the label and invert it.
+  //
+  // §12 asks for one instrument everywhere so a mixed column lines up on one
+  // right edge. These are the three that make that true.
+  describe('§12 · every binary setting wears the one switch', () => {
+    /** The three real on/off settings on this page, and where each one lives. */
+    const BINARY = [
+      { label: 'Safe mode', section: 'general', handler: 'setSafeMode' },
+      { label: 'Measuring latency', section: 'diagnostics', handler: 'toggleLatency' },
+      { label: 'Send crash reports', section: 'privacy', handler: 'toggleCrash' },
+    ];
+
+    for (const b of BINARY) {
+      it(`${b.label} is a switch, not a sentence on a button`, () => {
+        // NOT `[^>]*` for the attributes: an arrow function contains a `>`, so
+        // a tag scanner written that way stops at `() =` and silently reports
+        // that a switch has no handler. It ends at `></button>`, which is what
+        // actually closes one of these.
+        const sw = MARKUP_ONLY.match(
+          new RegExp(`<button\\b[^<]*?aria-label="${b.label}"[^<]*?></button>`),
+        )?.[0];
+        expect(sw, `no switch labelled “${b.label}”`).toBeTruthy();
+        // The shared instrument from `app.css`, never a local one.
+        expect(sw).toMatch(/class="r-switch"/);
+        // Announced as a switch, and its state readable without sight.
+        expect(sw).toMatch(/role="switch"/);
+        expect(sw).toMatch(/aria-checked=\{/);
+        expect(sw).toMatch(new RegExp(`on:click=[^<]*${b.handler}`));
+      });
+    }
+
+    it('and the text buttons those three replaced are gone', () => {
+      // The labels themselves, so a reintroduction is caught by the words an
+      // operator would read rather than by a class name.
+      expect(MARKUP_ONLY).not.toMatch(/>\s*\{\$safeMode \? 'Turn off' : 'Turn on'\}/);
+      expect(MARKUP_ONLY).not.toMatch(/Stop measuring/);
+      expect(MARKUP_ONLY).not.toMatch(/Turn crash reporting o/);
+    });
+
+    it('no switch on this page is thrown from a local mirror of a remote fact', () => {
+      // Rule 15/35 on a control rather than on a status line: a switch that
+      // flips on click and only afterwards asks the backend has reported a
+      // success it has not achieved. Each of the three reads the value the
+      // engine returned — a derived store, or a field assigned from the reply.
+      expect(SCRIPT_ONLY).toMatch(/\$: crashOn = !!crash\.enabled;/);
+      expect(SCRIPT_ONLY).toMatch(/const now = await latencySetEnabled\(on\);/);
+      // `safeMode` is the derived store, not a `let` in this file.
+      expect(SCRIPT_ONLY).not.toMatch(/let safeMode\b/);
+    });
+
+    it('measuring says “not read yet” rather than “on” over a backend it never asked', () => {
+      // The control this replaced read `lat?.enabled ?? true`, which printed the
+      // word a healthy measuring pipeline shows whenever the report was null —
+      // one reading over two situations, which is rule 35 exactly. The tri-state
+      // keeps them apart, and the switch is not rendered at all until there is a
+      // fact to throw it from.
+      expect(SCRIPT_ONLY).toMatch(/\$: latMeasuring = lat \? !!lat\.enabled : null;/);
+      expect(MARKUP_ONLY).not.toMatch(/lat\?\.enabled \?\? true/);
+      const row = MARKUP_ONLY.slice(
+        MARKUP_ONLY.indexOf('<div class="rw-nvk">Measuring</div>'),
+      ).slice(0, 900);
+      expect(row).toMatch(/latMeasuring === null/);
+      expect(row).toMatch(/missing: 'not read yet'/);
+      expect(row).toMatch(/\{#if latMeasuring !== null\}/);
+    });
+
+    it('an ACTION is still a button — the two grammars are not merged the other way', () => {
+      // The opposite failure: everything becoming a switch. Resetting the
+      // measurement performs something once and has no state to show, so it
+      // stays an `r-btn`, beside the switch rather than instead of it.
+      expect(MARKUP_ONLY).toMatch(
+        /<button class="r-btn" on:click=\{resetLatency\}[^>]*>Start a fresh measurement</,
+      );
+    });
   });
 
   it('the footnote counts the removals, and the count is the tally §69 holds', () => {
@@ -431,6 +554,35 @@ describe('§11 · the row', () => {
     // the shortcut key caps used to do, from a private row grammar of their own.
     expect(STYLE).not.toMatch(/\.s-scrow\{/);
     expect(MARKUP_ONLY).toMatch(/class="s-sckeys rw-nvctl"/);
+  });
+
+  // ── E1 · ONE SCALE MEANS ONE SCALE ────────────────────────────────────────
+  //
+  // §11 asks for one type scale with three roles, and `WorkspaceFrame` owns the
+  // roles — a claim the tests above check for Settings' MARKUP. Neither of them
+  // could see the other half: `Dashboard.svelte`, which renders inside Settings
+  // as the Diagnostics readiness surface, carried SIX literal font sizes
+  // (13.5px, 13px, 12.5px, 11px, 10px, 9.5px). Three were a token's value typed
+  // out by hand and three were steps the scale does not have, so a Dashboard row
+  // heading and a Settings row heading were a pixel and a half apart by
+  // accident, and an edit to the tokens would have moved one and not the other.
+  //
+  // A literal is not forbidden because it is ugly. It is forbidden because it
+  // does not MOVE: a scale one view has opted out of is not a scale, it is a
+  // coincidence with a maintenance cost, and the coincidence is invisible until
+  // somebody changes a token and half the product follows.
+  it('neither file E1 owns types a font size the scale does not know', () => {
+    const DASH = read('src/lib/views/Dashboard.svelte');
+    for (const [name, src] of [
+      ['Settings.svelte', SRC],
+      ['Dashboard.svelte', DASH],
+    ]) {
+      const style = src.slice(src.indexOf('<style>'));
+      const literals = [...style.matchAll(/font-size:\s*([0-9.]+)(px|rem|em)/g)].map(
+        (m) => m[1] + m[2],
+      );
+      expect(literals, `${name} sets a font size outside --v-fs-*`).toEqual([]);
+    }
   });
 });
 
