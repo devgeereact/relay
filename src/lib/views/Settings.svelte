@@ -46,7 +46,8 @@
       (Object.keys(CATALOGUES[code] ?? {}).filter((k) => !k.startsWith('_')).length / TOTAL) * 100,
     );
   import { capture, meter, templates, initAudio, startCapture, stopCapture, setThresholds, setSttLanguage, setInputDevice, listTranslations, getActiveTranslation, setActiveTranslation, localIp, loadTemplates, getContentTemplates, setContentTemplate, getCrashReporting, setCrashReporting, serviceTargetMinutes, loadServiceTarget, setServiceTarget, latencyReport, latencyReset, latencySetEnabled, serviceLock, loadServiceLock, setServiceLock, rooms, loadRooms, saveRoom, useRoom, deleteRoom,
-    listOutputChannels, setChannelDisplay, activeVoiceProfile, languageReport, exportDiagnostics, readErrors } from '../stores/capture.js';
+    listOutputChannels, setChannelDisplay, activeVoiceProfile, languageReport, exportDiagnostics, readErrors,
+    demoStatus, loadDemoContent, removeDemoContent } from '../stores/capture.js';
   import Loading from '../ui/Loading.svelte';
   import ErrorState from '../ui/ErrorState.svelte';
   import { captureRoom, observedNote, applyRoom, describeApply } from '../rooms.js';
@@ -397,6 +398,79 @@
       updReady = null;
     }
   });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // DEMO CONTENT — a sample service to press, and one action that takes it back.
+  //
+  // It lives on History & Backup because this is the section that already owns the
+  // DATABASE as a thing an operator manages: it is where past services are read and
+  // erased, where the pre-update snapshot of "your entire history" is explained, and
+  // where the service lock that guards every deletion is lifted. Loading and
+  // removing a sample dataset is a bulk write and a bulk delete on that same store.
+  // It also sits directly under the setup walk-through, which is the other control
+  // on this page aimed at somebody who has just installed Relay and wants to see it
+  // work — and the two answer the same question from different ends: the walk-through
+  // proves the MACHINE works, the demo set gives them something to run on it.
+  //
+  // It is deliberately NOT in the Library or the Planner. Those are where a church's
+  // own content lives, and a "load sample content" button among their songs is a
+  // mis-click away from an import they did not want on a Sunday morning.
+  // The plan's title, quoted so the operator knows what to look for in the Planner.
+  // Rust owns it (`db::demo::PLAN_TITLE`); `demo.test.js` asserts the two agree, so
+  // a rename on one side cannot leave this sentence pointing at nothing.
+  const DEMO_PLAN_TITLE = 'Demo · Sunday Morning Service';
+  let demo = { loaded: false, total: 0, edited: 0, groups: [] };
+  let demoBusy = false;
+  let demoErr = '';
+  let demoNote = '';
+  // Two-step removal, in-app. `confirm()` returns false in this webview without
+  // ever showing a dialog, so a guard built on one guards nothing (rule 41).
+  let demoArmed = false;
+
+  async function refreshDemo() {
+    demo = await demoStatus();
+  }
+  // Polled when the section opens, not on mount: the panel is only ever read here,
+  // and a fresh install has nothing for it to say.
+  $: if (section === 'history') refreshDemo();
+
+  async function doLoadDemo() {
+    demoBusy = true;
+    demoErr = '';
+    demoNote = '';
+    try {
+      demo = await loadDemoContent(new Date().toISOString().slice(0, 10));
+      demoNote = `Loaded ${demo.total} demo items. Open Planner to find “${DEMO_PLAN_TITLE}”.`;
+    } catch (e) {
+      // GROUP 1 throws, and a bulk write that failed in silence would leave the
+      // operator pressing a button and watching nothing appear.
+      demoErr = humanError(e);
+    } finally {
+      demoBusy = false;
+    }
+  }
+
+  async function doRemoveDemo() {
+    demoBusy = true;
+    demoErr = '';
+    demoNote = '';
+    try {
+      const gone = await removeDemoContent();
+      // WHAT WAS KEPT IS SAID OUT LOUD. A demo item the operator edited is theirs
+      // now and survives the removal; if nothing says so, they find an orphan in
+      // their Library weeks later and cannot account for it.
+      demoNote =
+        gone.kept > 0
+          ? `Removed ${gone.removed} demo items. ${gone.kept} you had changed ${gone.kept === 1 ? 'was' : 'were'} kept — ${gone.kept === 1 ? 'it is' : 'they are'} yours now, and can be deleted from the Library.`
+          : `Removed ${gone.removed} demo items.`;
+      demoArmed = false;
+      await refreshDemo();
+    } catch (e) {
+      demoErr = humanError(e);
+    } finally {
+      demoBusy = false;
+    }
+  }
 
   let lockErr = '';
   async function unlockService() {
@@ -1337,6 +1411,56 @@
             <b>New here?</b> The setup walk-through picks your projector, checks the microphone is actually hearing something, and ends by putting a real verse on your real screen — so you have <i>seen</i> it work before Sunday.
           </p>
           <button class="r-btn ghost sm" on:click={restartSetup}>Run the setup walk-through</button>
+        </div>
+
+        <!-- DEMO CONTENT. See the block in the script for why it lives on this
+             section and not in the Library. Two facts are always on screen: what is
+             loaded, and how many of it the operator has since changed — because the
+             changed ones are KEPT by a removal, and that has to be knowable BEFORE
+             the button is pressed, not discovered from the sentence afterwards. -->
+        <div class="rw-group">Demo content</div>
+        <div class="s-prose">
+          {#if demo.loaded}
+            <p class="rw-foot" style="margin-top:0; padding-top:0; border-top:0;">
+              <b>Relay's demo content is loaded</b> — {demo.total} items:
+              {demo.groups.map((g) => `${g.count} ${g.what}`).join(' · ')}.
+              Everything it added is named “Demo · …”, except the saved verses, whose
+              names are real Bible references and stay true ones.
+              {#if demo.edited > 0}
+                <b style="color:var(--v-amber);"
+                  >{demo.edited} of them {demo.edited === 1 ? 'has' : 'have'} been changed since.</b
+                >
+                Removing will <b>keep</b> {demo.edited === 1 ? 'that one' : 'those'} and delete the
+                rest — there is no undo in Relay, so anything you have edited is treated as yours.
+              {/if}
+            </p>
+            {#if demoArmed}
+              <button class="r-btn danger sm" disabled={demoBusy} on:click={doRemoveDemo}>
+                {demoBusy ? 'Removing…' : 'Yes, remove the demo content'}
+              </button>
+              <button class="r-btn ghost sm" disabled={demoBusy} on:click={() => (demoArmed = false)}>
+                Cancel
+              </button>
+            {:else}
+              <button class="r-btn ghost sm" disabled={demoBusy} on:click={() => (demoArmed = true)}>
+                Remove demo content
+              </button>
+            {/if}
+          {:else}
+            <p class="rw-foot" style="margin-top:0; padding-top:0; border-top:0;">
+              <b>Nothing to press yet?</b> Relay can add a sample Sunday — a service plan with a
+              countdown, notices, three public-domain hymns, a passage and a background; plus the
+              songs, notices and saved verses behind it — so every workspace has something real in
+              it. It is all named “Demo · …”, it is never loaded by itself, and one action takes it
+              back out. <b>It adds no service history:</b> nothing here will ever look like a
+              service that happened.
+            </p>
+            <button class="r-btn ghost sm" disabled={demoBusy} on:click={doLoadDemo}>
+              {demoBusy ? 'Loading…' : 'Load demo content'}
+            </button>
+          {/if}
+          {#if demoErr}<p class="s-alert" role="alert">{demoErr}</p>{/if}
+          {#if demoNote}<p class="rw-foot" role="status">{demoNote}</p>{/if}
         </div>
 
         <!-- SERVICE LOCK. Reachable from the sentence the refusal itself prints,

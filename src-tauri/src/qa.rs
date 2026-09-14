@@ -239,6 +239,38 @@ mod tests {
                  something added a convenience to the bare fixture"
             );
         }
+
+        // AND IT HAS NO CONTENT IN IT.
+        //
+        // Added when the demo dataset was built, because this test DID NOT CATCH
+        // IT. Wiring `db::demo::load` into `init_fresh` — the exact failure this
+        // tripwire exists to prevent, a fresh install arriving with a service plan,
+        // three songs, three notices and five saved verses already in it — was
+        // watched to leave this test green. Everything above asserts what a first
+        // launch CONTAINS; nothing asserted what it must not, so a seed that only
+        // added rows was invisible. That is now closed from both ends: this, and
+        // `db::demo::a_fresh_install_carries_no_demo_content`.
+        //
+        // The ledger is the right probe rather than a row count per table: it is
+        // the one fact that means "something seeded content it intends to own", and
+        // it stays true if the dataset grows a table this list has never heard of.
+        assert!(
+            !db::demo::is_loaded(&conn).unwrap(),
+            "a fresh install has no demo content — something taught Relay to seed itself"
+        );
+        for (what, sql) in [
+            ("a service plan", "SELECT COUNT(*) FROM service_plans"),
+            ("a song", "SELECT COUNT(*) FROM songs"),
+            ("an announcement", "SELECT COUNT(*) FROM announcements"),
+            ("a saved verse", "SELECT COUNT(*) FROM saved_scripture"),
+            ("a media asset", "SELECT COUNT(*) FROM media_assets"),
+        ] {
+            let n: i64 = conn.query_row(sql, [], |r| r.get(0)).unwrap();
+            assert_eq!(
+                n, 0,
+                "a fresh install ships with no content of its own, and this one has {what}"
+            );
+        }
     }
 
     /// The stage-monitor door exists and is watchable. Guards the harness itself:

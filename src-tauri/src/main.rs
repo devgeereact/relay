@@ -351,6 +351,9 @@ fn main() {
             list_media,
             import_media,
             delete_media,
+            demo_status,
+            load_demo_content,
+            remove_demo_content,
             fire_content,
             fire_media,
             get_content_templates,
@@ -2570,6 +2573,68 @@ fn delete_media(
         let _ = std::fs::remove_file(p); // best-effort
     }
     Ok(())
+}
+
+/// Demo content: what is loaded right now.
+///
+/// A read. It guards nothing and changes nothing — a panel that cannot say what is
+/// loaded is worse than no panel, and a service lock on a read would be a refusal
+/// with nothing behind it.
+#[tauri::command]
+fn demo_status(db: tauri::State<'_, Db>) -> error::Result<db::demo::DemoStatus> {
+    let conn = db.0.lock()?;
+    db::demo::status(&conn).map_err(Into::into)
+}
+
+/// Demo content: load the sample service.
+///
+/// **This is the ONLY thing that ever writes demo content** — not a migration, not
+/// a first run, not an empty database (`db/demo.rs`). It refuses when a set is
+/// already loaded rather than doubling it: two copies of the same plan is exactly
+/// the mess an operator would then have to clear by hand.
+///
+/// Held back during a recorded service. It is a bulk write of the same class as
+/// `save_reviewed_songs`, and the Library and Planner it fills are one click from
+/// the transport at 10:31.
+#[tauri::command]
+fn load_demo_content(
+    db: tauri::State<'_, Db>,
+    lock: tauri::State<'_, servicelock::ServiceLock>,
+    date: String,
+) -> error::Result<db::demo::DemoStatus> {
+    lock.guard("load_demo_content")?;
+    let conn = db.0.lock()?;
+    if db::demo::is_loaded(&conn)? {
+        return Err(error::Error::refused(
+            "Relay's demo content is already loaded. Remove it first if you want a fresh copy.",
+        ));
+    }
+    db::demo::load(&conn, &date, &db::media_dir()).map_err(Into::into)
+}
+
+/// Demo content: take it back out.
+///
+/// Removes exactly the rows the ledger recorded and nothing else. A demo item the
+/// operator has since edited is KEPT and released from the ledger; the count comes
+/// back so the console can say so rather than leaving them to find out.
+///
+/// Held back during a recorded service for the plainest of the two reasons the lock
+/// exists: it deletes, and there is no undo.
+#[tauri::command]
+fn remove_demo_content(
+    db: tauri::State<'_, Db>,
+    lock: tauri::State<'_, servicelock::ServiceLock>,
+) -> error::Result<db::demo::DemoRemoval> {
+    lock.guard("remove_demo_content")?;
+    let gone = {
+        let conn = db.0.lock()?;
+        db::demo::remove(&conn)?
+    };
+    // Files last, outside the lock, best-effort — the same shape as `delete_media`.
+    for p in &gone.files {
+        let _ = std::fs::remove_file(p);
+    }
+    Ok(gone)
 }
 
 /// Lyrics: import songs from a ProPresenter file. The webview reads the picked
