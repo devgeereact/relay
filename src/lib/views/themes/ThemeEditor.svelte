@@ -130,7 +130,7 @@
      that concern's properties (§3.2) — not a page of stacked cards. -->
 <WorkspaceFrame
   title="Theme editor"
-  standfirst="Everything this theme does not pin falls through to the renderer's own default."
+  standfirst="What this theme does not pin falls through to the renderer."
   columns="206px minmax(0,1fr) 312px">
   <svelte:fragment slot="head">
     {#if draft}

@@ -370,9 +370,22 @@
      ordinary document structure rather than a workaround, and it is what keeps a
      screen-reader operator able to jump into a pane rather than only onto the
      page (surface.test.js R3-12). -->
+<!-- 104 CHARACTERS AGAINST A 74-CHARACTER BUDGET, so this sentence was clipped
+     at every window size the app opens at — and the clipped half was the half
+     that matters. `.rw-lead` is deliberately one line with an ellipsis (a
+     standfirst that wraps makes the head a different height per workspace,
+     which `workspacegrammar.test.js` exists to catch); the rule is sound and
+     the copy broke its own budget, so the copy is what changed.
+
+     The half that went is the half the workspace already says out loud: the
+     KINDS rail lists Scripture, Songs, Lower Thirds and Announcements, and
+     every card carries a live preview of exactly what it looks like on a
+     screen. The half that stayed is the consequence, which nothing else here
+     states — an operator editing a template on a Tuesday is editing what is
+     already on five screens. -->
 <WorkspaceFrame
   title="Templates"
-  standfirst="How a verse, a song or a notice looks on a screen. Editing one repaints every screen already wearing it."
+  standfirst="Editing a template repaints every screen already wearing it."
   columns="206px minmax(0,1fr) 312px">
   <svelte:fragment slot="head">
     <!-- THE DESK STRIP. Themes moved INTO this workspace (docs/REBRAND.md §2);

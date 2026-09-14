@@ -132,7 +132,7 @@
      frame carries the page's <h1>; each pane head carries an <h2>. -->
 <WorkspaceFrame
   title="Themes"
-  standfirst="The style layer beneath templates. A template overrides a theme key by key, so a theme sets the defaults and never the last word."
+  standfirst="The style layer beneath templates. A template overrides it key by key."
   columns="206px minmax(0,1fr) 312px">
   <svelte:fragment slot="head">
     <!-- THE SAME STRIP the Templates desk renders, from the one component — so

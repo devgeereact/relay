@@ -980,3 +980,48 @@ describe('§1 · a button is the shared one, or a named shape — Planner · Out
     expect(s).not.toMatch(/s-raillbl/);
   });
 });
+
+// `.rw-lead` is one line with an ellipsis, on purpose: a standfirst that wraps
+// makes the head a different height per workspace, which is the drift this file
+// exists to catch. The rule states its own budget in the comment above it — "past
+// ~74 characters a line stops being read and starts being skimmed" — and then one
+// workspace shipped a 104-character sentence, so the Templates band was clipped at
+// every window size the app opens at, and the clipped half was the consequence
+// ("repaints every screen already wearing it") rather than the description.
+//
+// Nothing could see it. The rule is correct, the markup is correct, the whole
+// sentence IS in the `title`, and `qa-inventory` counts a control, not a sentence.
+// Only rendering the workspace and measuring the box showed it: scrollWidth 562
+// against clientWidth 537.
+describe('a standfirst fits the line it is given', () => {
+  const VIEWS = 'src/lib/views';
+
+  /** Every literal `standfirst="…"` in the view tree, with the file it came from. */
+  const literals = () => {
+    const out = [];
+    for (const rel of readdirSync(resolve(__dirname, '../../..', VIEWS), { recursive: true })) {
+      if (typeof rel !== 'string' || !rel.endsWith('.svelte')) continue;
+      const src = read(`${VIEWS}/${rel}`);
+      for (const m of src.matchAll(/standfirst="([^"]+)"/g)) out.push([rel, m[1]]);
+    }
+    return out;
+  };
+
+  it('reads the real views (the guard on the one below)', () => {
+    // A scanner that finds nothing reports every sentence short enough.
+    const found = literals();
+    expect(found.length, 'no literal standfirst found anywhere').toBeGreaterThan(0);
+    expect(found.map(([f]) => f)).toContain('templates/TemplateGallery.svelte');
+  });
+
+  it('no workspace states its sentence past the budget its own rule names', () => {
+    // 74 is the number the rule in `WorkspaceFrame.svelte` names. It is a CEILING
+    // and not a promise of fitting: the band is shared with the title and the
+    // controls, so the real box is narrower on a small window and a sentence near
+    // the ceiling can still ellipse. Anything OVER it is clipped everywhere.
+    const over = literals()
+      .filter(([, s]) => s.length > 74)
+      .map(([f, s]) => `${f}: ${s.length} chars`);
+    expect(over, `standfirst past 74 characters: ${over.join(', ')}`).toEqual([]);
+  });
+});
