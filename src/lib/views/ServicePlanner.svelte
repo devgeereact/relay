@@ -461,7 +461,7 @@
       {:else if railPlans.length}
         {#each railPlans as p (p.id)}
           <button class="sp-railcard r-focus" class:sel={openPlan?.id === p.id} on:click={() => open(p)}>
-            <span class="sp-railtitle">{p.title}</span>
+            <span class="sp-railtitle" title={p.title}>{p.title}</span>
             <span class="sp-railfootline">
               <span class="sp-railmeta r-mono">{p.plan_date || 'No date'}</span>
               <span class="sp-railcues r-mono">{p.cue_count} cue{p.cue_count === 1 ? '' : 's'}</span>
@@ -547,7 +547,10 @@
         </div>
         <button class="r-btn ghost sm" disabled={!items.length} on:click={addSection}>＋ Add Section</button>
         <span class="sp-spring"></span>
-        <span class="r-lbl sp-toolnote">Build only — never reaches an output</span>
+        <!-- Shortened so it FITS. It is a standing safety caveat and it was being
+             ellipsised to "Build only — never reaches …" at 1440px, which is half a
+             caveat: "never reaches" what? The full sentence is on the title. -->
+        <span class="r-lbl sp-toolnote" title="Building a plan here never reaches an output. Run it in Live.">Build only — never goes live</span>
       </div>
 
       {#if leftMode === 'cues'}
@@ -576,7 +579,7 @@
               {/if}
 
               {#each sec.items as c (c.id)}
-                {@const ty = TYPE[c.cue_type] || TYPE.scripture}
+                {@const ty = TYPE[c.cue_type] || TYPE.unknown}
                 {@const n = items.findIndex((i) => i.id === c.id)}
                 <div class="sp-row" class:sel={c.id === selId} class:dragover={dragOverId === c.id}
                   draggable={true}
@@ -705,7 +708,7 @@
       <div class="sp-insphead"><span class="sp-inspttl">Cue Details</span></div>
       <div class="sp-empty r-empty">Pick a cue to edit it.</div>
     {:else}
-      {@const ty = TYPE[selCue.cue_type] || TYPE.scripture}
+      {@const ty = TYPE[selCue.cue_type] || TYPE.unknown}
       <div class="sp-insphead">
         <span class="sp-inspttl">Cue Details</span>
         <span class="sp-inspttrig r-mono">{ty.trig}</span>
@@ -902,6 +905,12 @@
   /* ── main ── */
   .sp-main{ display:flex; flex-direction:column; min-height:0; gap:12px; }
   .sp-offline{ flex:0 0 auto; }
+  /* Nothing open yet: the sentence sits in the middle of the space it is talking
+     about, the way the Outputs inspector and the Cue Details panel already do.
+     Top-left in a 600×750 void read as a stray line of text rather than an
+     invitation. */
+  .sp-main > :global(.r-empty),
+  .sp-main > :global(.es){ margin:auto; text-align:center; max-width:44ch; }
 
   .sp-head{ display:flex; align-items:flex-start; gap:14px; flex:0 0 auto; }
   .sp-headmain{ flex:1; min-width:0; }

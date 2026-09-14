@@ -429,23 +429,42 @@ fn fts_match(conn: &Connection, match_q: &str, limit: i64) -> rusqlite::Result<V
 /// Keep the supplied words (drop only the braces); drop the glosses entirely;
 /// then collapse the whitespace the removed glosses leave behind.
 pub(super) fn clean_verse(text: &str) -> String {
+    let without_subscription = strip_subscriptions(text);
+    let text = without_subscription.as_str();
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
-    while let Some(open) = rest.find('{') {
+    // Where `out` ended when the last brace group was DROPPED as a gloss, and
+    // `None` the moment anything else is appended. See `stray_close`.
+    let mut dropped_at: Option<usize> = None;
+    loop {
+        let open = rest.find('{');
+        // A `}` before the next `{` has no group of its own. Deal with it first,
+        // or it survives into the verse (see `stray_close`).
+        let stray = match open {
+            Some(o) => rest[..o].find('}'),
+            None => rest.find('}'),
+        };
+        if let Some(s) = stray {
+            rest = stray_close(&mut out, rest, s, dropped_at.take());
+            continue;
+        }
+        let Some(open) = open else { break };
         out.push_str(&rest[..open]);
-        let after = &rest[open + 1..];
-        match after.find('}') {
+        match match_end(rest, open) {
             Some(close) => {
-                let inner = &after[..close];
-                let tail = &after[close + 1..];
-                if !is_gloss(inner, is_trailing_run(tail)) {
+                let inner = &rest[open + 1..close];
+                let tail = &rest[close + 1..];
+                if is_gloss(inner, is_trailing_run(tail)) {
+                    dropped_at = Some(out.len());
+                } else {
                     out.push_str(inner); // supplied word — keep, minus braces
+                    dropped_at = None;
                 }
                 rest = tail;
             }
             None => {
                 // Unbalanced brace — keep the remainder verbatim, sans '{'.
-                out.push_str(after);
+                out.push_str(&rest[open + 1..]);
                 rest = "";
                 break;
             }
@@ -454,6 +473,101 @@ pub(super) fn clean_verse(text: &str) -> String {
     out.push_str(rest);
     // Collapse the double spaces a dropped gloss leaves and trim the ends.
     out.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Remove the translators' subscriptions, which the source marks with `«…»`.
+///
+/// **These are not verse text and they reached a congregation's wall as though
+/// they were.** Hebrews 13:25 rendered *"Grace be with you all. Amen. «Written
+/// to the Hebrews from Italy, by Timothy.»"* — a note about where a letter was
+/// posted, on the screen, under the last words of the epistle. Fourteen verses
+/// carry one, all at the end of a book: Romans, both Corinthians, Galatians,
+/// Ephesians, Philippians, Colossians, both Thessalonians, both Timothys, Titus,
+/// Philemon and Hebrews.
+///
+/// This is RG-100's rule applied to the other delimiter. The guillemets are the
+/// only non-ASCII characters in the whole corpus and they mark nothing else, so
+/// the group is the note — no wording rule is needed and none is used. The
+/// braces INSIDE a subscription (`«{To the} Galatians written from Rome.»`) go
+/// with it, which is why this runs before the brace pass rather than after.
+///
+/// Checked group by group over all 31,102 verses: every one is balanced, every
+/// one is terminal, and the only verse with anything after its closing `»` is
+/// Ephesians 6:24, where that anything is itself a marginal note the brace pass
+/// then drops. Removing them changes fourteen verses and no others, and leaves
+/// no verse empty.
+fn strip_subscriptions(text: &str) -> String {
+    if !text.contains('«') {
+        return text.to_string();
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(open) = rest.find('«') {
+        out.push_str(&rest[..open]);
+        rest = match rest[open..].find('»') {
+            // An unclosed subscription runs to the end of the verse — which is
+            // where every one of them sits anyway. The corpus has none, and
+            // keeping the remainder would put the note back on the wall.
+            None => "",
+            Some(close) => &rest[open + close + '»'.len_utf8()..],
+        };
+    }
+    out.push_str(rest);
+    out
+}
+
+/// Byte index of the `}` that MATCHES the `{` at `open`, counting depth.
+///
+/// **The first `}` is not the matching one when a note contains a supplied-word
+/// group**, and the KJV source has one that does: Micah 7:12 ends
+/// `{{and from} the fortified cities: or, even to the fortified cities}`. Taking
+/// the first `}` split that note into a fragment no rule in `is_gloss` matches,
+/// so the whole marginal note was kept AS SCRIPTURE — RG-100's exact failure,
+/// surviving RG-100's fix because the fix reasoned about position and this is a
+/// parsing error underneath it.
+fn match_end(s: &str, open: usize) -> Option<usize> {
+    let mut depth = 0i32;
+    for (i, c) in s[open..].char_indices() {
+        match c {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(open + i);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// A `}` with no `{` of its own, which the source data does contain.
+///
+/// Two shapes, and they want opposite handling, which is why this is a function
+/// and not a `retain`:
+///
+/// * **A note's own brace, misplaced past some of its own words.** Hebrews 10:34
+///   is `{in yourselves...: or, that ye have in or, for} yourselves}` — the group
+///   is dropped correctly and ` yourselves}` is left standing on the wall as
+///   though it were scripture. When a gloss was just dropped, everything since
+///   belongs to it and goes with it.
+/// * **A stray character after real text.** Romans 16:27 and 1 Corinthians 16:24
+///   end `…Cenchrea.}»`. Nothing was dropped before it, so only the brace goes;
+///   deleting the clause would delete the verse's own words.
+///
+/// Returns what is left to scan.
+fn stray_close<'a>(
+    out: &mut String,
+    rest: &'a str,
+    at: usize,
+    dropped_at: Option<usize>,
+) -> &'a str {
+    match dropped_at {
+        Some(n) => out.truncate(n),
+        None => out.push_str(&rest[..at]),
+    }
+    &rest[at + 1..]
 }
 
 /// Is this brace group part of the run of marginal notes at the END of a verse?
@@ -474,7 +588,9 @@ fn is_trailing_run(tail: &str) -> bool {
         if !tail.starts_with('{') {
             return false;
         }
-        match tail.find('}') {
+        // Depth-matched, for the same reason `clean_verse` is: a note that
+        // contains a supplied-word group closes later than its first `}`.
+        match match_end(tail, 0) {
             Some(close) => tail = &tail[close + 1..],
             None => return false,
         }
@@ -1260,5 +1376,117 @@ mod corpus_tests {
         // Revelation 12:18 was the first clause of 13:1, standing alone.
         assert_eq!(books[65].chapters[11].len(), 17);
         assert!(at(66, 13, 1).starts_with("And I stood upon the sand of the sea, and saw a beast"));
+    }
+
+    /// NO BRACE MAY REACH A WALL, ANYWHERE IN THE BIBLE.
+    ///
+    /// RG-100 closed the two defects it could see by reasoning about POSITION,
+    /// and left a parsing error underneath it: `clean_verse` took the first `}`
+    /// as a group's close, and the source contains nested and misplaced braces.
+    /// Four verses shipped with note text on them, found by scanning the cleaned
+    /// corpus rather than by re-reading the rule:
+    ///
+    /// * **Micah 7:12** ended with its whole marginal note — *"{and from the
+    ///   fortified cities: or, even to the fortified cities}"* — as scripture,
+    ///   which is Luke 17:36's failure verbatim, one fix later.
+    /// * **Hebrews 10:34**, the one note RG-100 carved out as mid-verse, was
+    ///   dropped correctly and left *"substance. yourselves}"* behind it.
+    /// * **Romans 16:27** and **1 Corinthians 16:24** ended *"Cenchrea.}»"*.
+    ///
+    /// This asserts the WHOLE corpus, not those four, because naming them is how
+    /// the fifth is missed: a brace in a cleaned verse is never scripture in any
+    /// verse, so the sweep is the claim. It fails on all four against the old
+    /// parser — verified by restoring `after.find('}')`.
+    #[test]
+    fn no_cleaned_verse_anywhere_carries_a_brace() {
+        let raw = KJV_JSON.trim_start_matches('\u{feff}');
+        let books: Vec<KjvBook> = serde_json::from_str(raw).expect("kjv.json parses");
+        let mut bad = Vec::new();
+        for (bi, book) in books.iter().enumerate() {
+            for (ci, ch) in book.chapters.iter().enumerate() {
+                for (vi, v) in ch.iter().enumerate() {
+                    let cleaned = clean_verse(v);
+                    if cleaned.contains(['{', '}']) {
+                        bad.push(format!("book {} {}:{} — {cleaned}", bi + 1, ci + 1, vi + 1));
+                    }
+                }
+            }
+        }
+        assert!(bad.is_empty(), "note text on the wall:\n{}", bad.join("\n"));
+    }
+
+    /// The four, by their words, so a regression says WHICH one came back.
+    #[test]
+    fn a_note_wrapped_around_a_supplied_word_is_still_a_note() {
+        // Micah 7:12. The note contains `{and from}`, so the first `}` closed it
+        // early and the fragment matched no rule in `is_gloss`.
+        assert_eq!(
+            clean_verse(
+                "and from sea to sea. {{and from} the fortified cities: or, even to the fortified cities}"
+            ),
+            "and from sea to sea."
+        );
+        // Hebrews 10:34. The note's own brace sits past two of its own words.
+        assert_eq!(
+            clean_verse(
+                "an enduring substance. {in yourselves...: or, that ye have in or, for} yourselves}"
+            ),
+            "an enduring substance."
+        );
+        // Romans 16:27's stray brace, with the subscription markers taken off so
+        // this asserts the brace rule alone. Nothing was dropped before this
+        // brace, so only the brace goes — truncating here would delete the
+        // verse's own words.
+        assert_eq!(
+            clean_verse("Amen. {Written to the Romans} by Phebe of Cenchrea.}"),
+            "Amen. Written to the Romans by Phebe of Cenchrea."
+        );
+    }
+
+    /// A TRANSLATOR'S SUBSCRIPTION IS NOT THE LAST WORDS OF THE EPISTLE.
+    ///
+    /// Fourteen verses ended with one, on a congregation's wall, under the
+    /// benediction: Hebrews 13:25 read *"Grace be with you all. Amen. «Written
+    /// to the Hebrews from Italy, by Timothy.»"*. Same rule as the braces, other
+    /// delimiter — and the braces inside a subscription go with it, which is the
+    /// case that decides the ORDER of the two passes.
+    #[test]
+    fn a_subscription_is_never_the_verse() {
+        assert_eq!(
+            clean_verse(
+                "Grace {be} with you all. Amen. «{Written to the Hebrews from Italy, by Timothy.}»"
+            ),
+            "Grace be with you all. Amen."
+        );
+        // Ephesians 6:24 — the only verse with anything after its closing `»`,
+        // and that anything is a marginal note the brace pass then drops.
+        assert_eq!(
+            clean_verse(
+                "Grace {be} with all them that love our Lord Jesus Christ in sincerity. Amen. \
+                 «{To the} Ephesians written from Rome, by Tychicus.» {in sincerity: or, with incorruption}"
+            ),
+            "Grace be with all them that love our Lord Jesus Christ in sincerity. Amen."
+        );
+    }
+
+    /// No cleaned verse anywhere carries EITHER delimiter, and none is emptied
+    /// by the removal. The second half matters: a rule that strips a whole verse
+    /// is worse than the note it removes.
+    #[test]
+    fn no_cleaned_verse_anywhere_carries_a_subscription() {
+        let raw = KJV_JSON.trim_start_matches('\u{feff}');
+        let books: Vec<KjvBook> = serde_json::from_str(raw).expect("kjv.json parses");
+        let mut bad = Vec::new();
+        for (bi, book) in books.iter().enumerate() {
+            for (ci, ch) in book.chapters.iter().enumerate() {
+                for (vi, v) in ch.iter().enumerate() {
+                    let cleaned = clean_verse(v);
+                    if cleaned.contains(['«', '»']) || cleaned.trim().is_empty() {
+                        bad.push(format!("book {} {}:{} — {cleaned}", bi + 1, ci + 1, vi + 1));
+                    }
+                }
+            }
+        }
+        assert!(bad.is_empty(), "not the verse:\n{}", bad.join("\n"));
     }
 }

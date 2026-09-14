@@ -415,6 +415,14 @@
     flex-direction: column;
     gap: 12px;
   }
+  /* A SCROLLER WHOSE CHILDREN SHRINK NEVER SCROLLS. These panels are flex items,
+     so they took `flex-shrink: 1` and squeezed instead of overflowing: the
+     Transcript panel was cut to 48px around 74px of content, `overflow: hidden`
+     on `.lo-panel` clipped the sentence mid-line, and because nothing overflowed
+     the container there was no scrollbar to reach the rest. */
+  .lo-scroll > :global(*) {
+    flex: 0 0 auto;
+  }
   .lo-panel {
     background: var(--v-bg);
     border: 1px solid var(--v-line);

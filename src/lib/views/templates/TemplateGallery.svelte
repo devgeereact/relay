@@ -279,6 +279,14 @@
       <span class="tg-newwrap">
         <button class="r-btn primary sm" on:click|stopPropagation={() => (newOpen = !newOpen)} disabled={!$capture.available}>＋ New Template</button>
         {#if newOpen}
+          <!-- The click handler is not an interaction: it stops the document-level
+               outside-click closer from seeing a click on the menu itself. Every real
+               control inside is a <button>, so the keyboard already reaches all of them,
+               and Escape is handled globally — `shortcuts.js` gives Escape to any mounted
+               [role="menu"] rather than clearing the screens. A keydown handler here would
+               have to stopPropagation too, which would swallow Space (rule 11: Space means
+               advance, app-wide) for as long as a menu is open. -->
+          <!-- svelte-ignore a11y-click-events-have-key-events -->
           <div class="tg-newmenu" on:click|stopPropagation role="menu" tabindex="-1">
             <div class="tg-newsec r-lbl">Start from</div>
             {#each STARTERS as s}
@@ -491,6 +499,14 @@
 <!-- Fixed-position row menu — anchored to the ⋮ button's screen rect so it is
      never clipped by the card or the scroll area. -->
 {#if menuFor && menuTpl}
+  <!-- The click handler is not an interaction: it stops the document-level
+       outside-click closer from seeing a click on the menu itself. Every real
+       control inside is a <button>, so the keyboard already reaches all of them,
+       and Escape is handled globally — `shortcuts.js` gives Escape to any mounted
+       [role="menu"] rather than clearing the screens. A keydown handler here would
+       have to stopPropagation too, which would swallow Space (rule 11: Space means
+       advance, app-wide) for as long as a menu is open. -->
+  <!-- svelte-ignore a11y-click-events-have-key-events -->
   <div class="tg-menu" style="left:{menuPos.x}px; top:{menuPos.y}px" on:click|stopPropagation role="menu" tabindex="-1">
     <button on:click={() => { menuFor = null; dispatch('edit', { id: menuTpl.id }); }}>Edit</button>
     <button on:click={() => duplicate(menuTpl)}>Duplicate</button>

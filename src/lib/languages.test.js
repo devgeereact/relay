@@ -45,12 +45,33 @@ describe('the report is derived, never asserted', () => {
     expect(Object.keys(aliases).filter((k) => !k.startsWith('_')).sort()).toEqual(['ha', 'sw', 'yo']);
   });
 
-  it('Yorùbá numerals are still absent from the data — the largest known gap', () => {
-    // Yorùbá is subtractive (16 = ẹrìndínlógún) and the largest addressable market
-    // of the three. If somebody adds them, this fails and LANGUAGES.md gets updated,
-    // which is the correct direction for a test like this to break.
+  it('Yorùbá numerals are present, and marked unreviewed so they cannot fire', () => {
+    // This test used to assert the ABSENCE of `yo` and to say that if somebody
+    // added them it should fail and LANGUAGES.md should be updated. Somebody did.
+    // The claim it now holds is the one that matters: the numbers parse, and the
+    // block still carries `unreviewed`, which is what caps every reference
+    // resolved through it at *suggest* (detection.rs, `parsed_an_unreviewed_numeral`).
+    //
+    // Deleting that flag is a native speaker's signature, not a refactor — so it
+    // must fail loudly, here and in `r4_05b`, if it ever goes without one.
     const numerals = JSON.parse(read('src-tauri/data/numerals.json'));
-    expect(Object.keys(numerals).filter((k) => !k.startsWith('_')).sort()).toEqual(['ha', 'sw']);
+    expect(Object.keys(numerals).filter((k) => !k.startsWith('_')).sort()).toEqual([
+      'ha',
+      'sw',
+      'yo',
+    ]);
+    expect(numerals.yo.unreviewed, 'the Yorùbá cap has been lifted').toBe(true);
+    // Vigesimal and subtractive: one word IS the number, so it carries
+    // `standalone` rather than the ones/tens the Swahili and Hausa FSM walks.
+    expect(Object.keys(numerals.yo.standalone ?? {}).length).toBeGreaterThan(20);
+    expect(numerals.yo.ones, 'Yorùbá has no ones/tens shape to walk').toBeUndefined();
+  });
+
+  it('the Languages screen can say "suggest only", not just yes or no', () => {
+    // The column has three states because the data does. A bare "yes" beside
+    // Kiswahili would claim an unreviewed table behaves like a reviewed one.
+    expect(settings).toMatch(/suggest only/);
+    expect(settings).toMatch(/l\.numerals_auto_fire/);
   });
 });
 

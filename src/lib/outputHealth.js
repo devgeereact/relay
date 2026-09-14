@@ -358,3 +358,24 @@ export const FAULT_WORD = {
   silent: 'NOT RESPONDING',
   ok: 'LIVE',
 };
+
+/**
+ * The plain-language word for a screen's render target.
+ *
+ * ONE definition, because two surfaces name the same thing: the Outputs table's
+ * TYPE column and Live's Output Status pane. Live had no word at all — its status
+ * line fell back to printing the raw column value (`native_window`) at a volunteer
+ * mid-service, which is the same defect as rendering a raw `Err` string.
+ */
+export function screenKind(renderTarget) {
+  if (renderTarget === 'native_window') return 'Native window';
+  if (renderTarget === 'ndi_encode') return 'NDI';
+  return 'Network client';
+}
+
+/** How the pixels leave the machine. Pairs with `screenKind`. */
+export function screenTransport(renderTarget) {
+  if (renderTarget === 'native_window') return 'HDMI / display';
+  if (renderTarget === 'ndi_encode') return 'unavailable';
+  return 'WebSocket';
+}

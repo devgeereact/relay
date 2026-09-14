@@ -345,6 +345,36 @@ body{ overflow:hidden; text-rendering:optimizeLegibility; -moz-osx-font-smoothin
 
 .r-range{ width:100%; height:6px; accent-color:var(--v-accent); cursor:pointer; }
 
+/* ── Sliders ────────────────────────────────────────────────────────────────
+   Every range input in the app EXCEPT Live's sensitivity dial was a browser
+   default: `accent-color` colours the filled part but leaves the track the UA's
+   own light grey, so nineteen sliders across Settings, the Template editor and
+   the Theme editor rendered a WHITE bar on a dark surface. It read as unfinished
+   rather than as a control.
+
+   Styled here rather than in each view because it is one control with one look;
+   Live's `.sens` rules are more specific and keep their own (identical) sizing.
+   The input carries a real 18px box, and the 4px bar is drawn by the track
+   pseudo-element — styling the input itself as the bar is what left the dial with
+   a 4px pointer target. */
+input[type="range"]{ -webkit-appearance:none; appearance:none; height:18px;
+  background:transparent; cursor:pointer; outline:none; }
+input[type="range"]::-webkit-slider-runnable-track{ height:4px; border-radius:99px;
+  background:var(--v-surf3); }
+input[type="range"]::-moz-range-track{ height:4px; border-radius:99px; background:var(--v-surf3); }
+input[type="range"]::-webkit-slider-thumb{ -webkit-appearance:none; appearance:none;
+  width:13px; height:13px; border-radius:50%; background:var(--v-accent);
+  border:2px solid var(--v-surf); box-shadow:var(--v-shadow-sm); margin-top:-6.5px; }
+input[type="range"]::-moz-range-thumb{ width:13px; height:13px; border-radius:50%;
+  background:var(--v-accent); border:2px solid var(--v-surf); box-shadow:var(--v-shadow-sm); }
+input[type="range"]:focus-visible{ box-shadow:0 0 0 3px var(--v-accent-soft); border-radius:99px; }
+input[type="range"]:disabled{ opacity:.5; cursor:not-allowed; }
+
+/* Native checkboxes: the app has two hand-drawn ones (the crash gate, the verse
+   deck) and one plain — which rendered as a white box on a dark panel. One line
+   is enough to make the plain one belong. */
+input[type="checkbox"]{ accent-color:var(--v-accent); }
+
 /* Pill toggle (visual switch) */
 .r-switch{ width:44px; height:24px; border-radius:99px; position:relative; flex:0 0 auto; cursor:pointer;
   background:var(--v-surf3); border:1px solid var(--v-line2); transition:.18s; }
@@ -417,7 +447,12 @@ body{ overflow:hidden; text-rendering:optimizeLegibility; -moz-osx-font-smoothin
 }
 @media (max-width:640px){
   .side{ display:none; }
-  .topbar-v{ height:54px; padding:0 16px; }
+  /* WRAPS rather than clipping. At 375px this row wanted 490px and the thing that
+     fell off the right edge was **Emergency Stop** — the control the whole product
+     is arranged around. A second line is free; a panic button you cannot reach is
+     not. */
+  .topbar-v{ height:auto; min-height:54px; padding:8px 16px; flex-wrap:wrap; row-gap:6px; }
+  .topbar-title{ min-width:0; }
   .topbar-title{ font-size:20px; }
   .topbar-icons{ gap:12px; }
   .mainscroll{ padding:16px 14px 84px; }
@@ -520,6 +555,14 @@ body{ overflow:hidden; text-rendering:optimizeLegibility; -moz-osx-font-smoothin
   max-width:min(680px, calc(100vw - 32px)); background:var(--v-surf2);
   border:1px solid var(--v-line2); border-radius:var(--v-r-md);
   box-shadow:0 8px 28px rgba(0,0,0,.35); overflow:hidden; }
+/* ABOVE the bottom nav. At its desktop `bottom:18px` the banner sat on top of the
+   narrow-width tab bar and covered six of the eight tab labels — navigation was
+   unreachable for as long as anything was degraded, which is exactly when an
+   operator needs to reach Outputs or Settings. Declared AFTER `.deg` so it wins:
+   same specificity, later rule. */
+@media (max-width:640px){
+  .deg{ bottom: calc(74px + env(safe-area-inset-bottom)); }
+}
 .deg-head{ display:flex; align-items:center; gap:10px; width:100%; padding:9px 12px;
   background:none; border:0; color:var(--v-txt); font:inherit; cursor:pointer;
   text-align:left; }
@@ -675,8 +718,13 @@ body{ overflow:hidden; text-rendering:optimizeLegibility; -moz-osx-font-smoothin
 /* DIRECT CHILD, not a descendant. `.b-check .txt span` also matched the
    "not probed" chip nested inside the <b>, turning an inline pill into a
    full-width block and breaking every stub row's layout. */
-.b-check .txt > span{ display:block; font-size:var(--v-fs-b2); color:var(--v-faint); margin-top:2px;
-  overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+/* WRAPS, like the note beside it, for the same reason. The boot screen is wide
+   and these sit on one line there anyway; the Dashboard renders the SAME rows in a
+   ~325px card, where every one of them was ellipsised mid-word — "Rust core
+   attached over …", "SQLite opened, sc…", "Local whisper…". Two lines is the whole
+   sentence in the only place it does not already fit. */
+.b-check .txt > span{ display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical;
+  font-size:var(--v-fs-b2); color:var(--v-faint); margin-top:2px; overflow:hidden; }
 /* Wraps rather than ellipsising. "not available in this build — needs the NDI S…"
    is a truncation that hides the only actionable half of the sentence, on the
    one row of the one screen where a church is being told a feature is missing. */

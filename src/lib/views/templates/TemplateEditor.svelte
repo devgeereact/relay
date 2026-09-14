@@ -548,6 +548,14 @@
     <span class="te-histwrap">
       <button class="r-btn ghost sm" class:on={histOpen} on:click|stopPropagation={toggleHistory} disabled={!edit?.id} title="Restore an earlier saved version of this template">History</button>
       {#if histOpen}
+        <!-- The click handler is not an interaction: it stops the document-level
+             outside-click closer from seeing a click on the menu itself. Every real
+             control inside is a <button>, so the keyboard already reaches all of them,
+             and Escape is handled globally — `shortcuts.js` gives Escape to any mounted
+             [role="menu"] rather than clearing the screens. A keydown handler here would
+             have to stopPropagation too, which would swallow Space (rule 11: Space means
+             advance, app-wide) for as long as a menu is open. -->
+        <!-- svelte-ignore a11y-click-events-have-key-events -->
         <div class="te-histmenu" on:click|stopPropagation role="menu" tabindex="-1">
           <div class="te-histhead r-lbl">Saved versions</div>
           {#if versions.length}
@@ -589,6 +597,14 @@
           <div class="te-addwrap">
             <button class="te-addbtn" on:click|stopPropagation={() => (addOpen = !addOpen)} aria-label="Add layer">＋</button>
             {#if addOpen}
+              <!-- The click handler is not an interaction: it stops the document-level
+                   outside-click closer from seeing a click on the menu itself. Every real
+                   control inside is a <button>, so the keyboard already reaches all of them,
+                   and Escape is handled globally — `shortcuts.js` gives Escape to any mounted
+                   [role="menu"] rather than clearing the screens. A keydown handler here would
+                   have to stopPropagation too, which would swallow Space (rule 11: Space means
+                   advance, app-wide) for as long as a menu is open. -->
+              <!-- svelte-ignore a11y-click-events-have-key-events -->
               <div class="te-addmenu" on:click|stopPropagation role="menu" tabindex="-1">
                 <div class="te-addsec r-lbl">Add layer</div>
                 {#each LAYER_TYPES as t}
@@ -608,7 +624,7 @@
               on:click={() => (selId = L.id)} role="button" tabindex="0"
               on:keydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selId = L.id; } }}>
               <span class="te-ltype" aria-hidden="true">{L.type === 'background' ? '▦' : L.type === 'shape' ? '▢' : L.type === 'media' ? '▷' : 'T'}</span>
-              <span class="te-lname">{layerLabel(L)}</span>
+              <span class="te-lname" title={layerLabel(L)}>{layerLabel(L)}</span>
               <span class="te-lbtns">
                 <button class="te-lmini" title="Forward" on:click|stopPropagation={() => moveLayer(L.id, 1)}>↑</button>
                 <button class="te-lmini" title="Back" on:click|stopPropagation={() => moveLayer(L.id, -1)}>↓</button>
@@ -735,7 +751,12 @@
           </div>
 
           {#if !sel}
-            <p class="te-guide">Select a layer to edit it, or add one with ＋.</p>
+            <!-- NOT `te-guide`. That class is the canvas's 1px alignment hairline
+                 (position:absolute, background:var(--v-accent)), and this paragraph
+                 was silently inheriting all of it: grey text on a solid amethyst bar
+                 at about 1.9:1, pulled out of flow across the top of the panel. Two
+                 unrelated things, one class name. -->
+            <p class="te-fnote te-emptyhint">Select a layer to edit it, or add one with ＋.</p>
           {:else if sel.type === 'background'}
             <h3 class="te-sec">Background</h3>
             <div class="te-frow">
@@ -904,8 +925,12 @@
     margin-top:4px; }
 
   .te-shell{ display:flex; flex-direction:column; height:100%; min-height:0; gap:12px; }
+  .te-layers{ overflow-y:auto; }
   .te-spring{ flex:1; }
-  .te-top{ display:flex; align-items:center; gap:10px; flex:0 0 auto; }
+  /* WRAPS. Unwrapped, this row was 1184px of controls in 1158px at a 1440-wide
+     window, and the one it pushed off the right edge was **Save Template** — the
+     primary action of the screen, unreachable with a mouse. */
+  .te-top{ display:flex; align-items:center; gap:10px; flex:0 0 auto; flex-wrap:wrap; row-gap:8px; }
   .te-name{ font-family:var(--f-head); font-size:var(--v-fs-h3); font-weight:600; color:var(--v-txt); }
   .te-histwrap{ position:relative; }
   .te-histmenu{ position:absolute; top:34px; right:0; z-index:60; width:230px; max-height:320px; overflow-y:auto;
@@ -946,7 +971,11 @@
   .te-addico{ width:16px; text-align:center; color:var(--v-faint); font-family:var(--f-mono); }
   .te-addsec{ padding:6px 8px 3px; }
 
-  .te-layerlist{ flex:1; min-height:0; overflow-y:auto; padding:8px; display:flex; flex-direction:column; gap:4px; }
+  /* The layer list is what this panel is FOR. As `flex:1` it took whatever the
+     readability block below it left over — 75px for 138px of layers, so a
+     three-layer template showed one and a half rows. It keeps its own scroll and a
+     floor of four rows; the panel scrolls for the rest. */
+  .te-layerlist{ flex:0 0 auto; min-height:120px; max-height:38vh; overflow-y:auto; padding:8px; display:flex; flex-direction:column; gap:4px; }
   .te-layer{ display:flex; align-items:center; gap:8px; padding:8px 9px; border-radius:var(--v-r-md); background:var(--v-surf2); border:1px solid var(--v-line); cursor:pointer; transition:.12s; }
   .te-layer:hover{ border-color:var(--v-line2); }
   .te-layer.sel{ border-color:var(--v-accent-line); background:var(--v-accent-soft); }
@@ -1021,7 +1050,8 @@
   .te-frow{ display:grid; grid-template-columns:64px minmax(0,1fr); align-items:center; gap:10px; }
   .te-fk{ font-size:var(--v-fs-b2); color:var(--v-dim); }
   .te-fv{ min-width:0; }
-  .te-fnote, .te-guide{ font-size:var(--v-fs-cap); color:var(--v-faint); margin:0; line-height:1.5; }
+  .te-fnote{ font-size:var(--v-fs-cap); color:var(--v-faint); margin:0; line-height:1.5; }
+  .te-emptyhint{ color:var(--v-dim); }
   .te-minilink{ background:none; border:0; padding:0; text-align:left; color:var(--v-dim); font-family:var(--f-mono); font-size:9px; cursor:pointer; letter-spacing:.04em; }
   .te-fwarn{ margin:0; padding:8px 10px; border:1px solid var(--v-amber-soft); border-radius:var(--v-r-sm); background:var(--v-amber-soft); color:var(--v-amber2); font-size:var(--v-fs-cap); line-height:1.45; }
   .te-stepper{ display:flex; align-items:center; }

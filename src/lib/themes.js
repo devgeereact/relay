@@ -478,3 +478,23 @@ export const THEME_SAMPLE_CONTENT = {
   text: 'The LORD is my shepherd; I shall not want. He maketh me to lie down in green pastures.',
   translation: 'KJV',
 };
+
+/**
+ * The typefaces a theme may choose, and their names.
+ *
+ * ONE list. The editor's dropdown had the names and the gallery's inspector had
+ * only the values, so the row a reader opens to find out what a theme looks like
+ * read `var(--f-display)` — a CSS custom property, printed at a volunteer.
+ */
+export const THEME_FONTS = [
+  { value: 'var(--f-serif)', label: 'Serif' },
+  { value: 'var(--f-body)', label: 'Body (sans)' },
+  { value: 'var(--f-display)', label: 'Display' },
+  { value: 'var(--f-head)', label: 'Heading (Inter)' },
+];
+
+/** The readable name for a theme's `style.font`, or the raw value if it is custom. */
+export function fontLabel(value) {
+  if (!value) return '—';
+  return THEME_FONTS.find((f) => f.value === value)?.label ?? value;
+}

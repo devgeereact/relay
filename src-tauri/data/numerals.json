@@ -30,47 +30,184 @@
     "  'mia na tatu' (connector) is 100+3. Both are handled.",
     "",
     "Sources: Swahili — Omniglot / Languages and Numbers. Hausa — Omniglot /",
-    "Languages and Numbers / teachyourselfhausa.com."
+    "Languages and Numbers / teachyourselfhausa.com.",
+    "",
+    "YORÙBÁ (`yo`) DOES NOT USE THE STATE MACHINE ABOVE. Its numbers are single",
+    "vigesimal-subtractive words, so it carries `standalone` instead of ones/tens,",
+    "and it is marked `unreviewed` — nothing resolved through it may auto-fire."
   ],
-
   "sw": {
     "_language": "Kiswahili (Swahili)",
     "ones": {
-      "moja": 1, "mbili": 2, "tatu": 3, "nne": 4, "tano": 5,
-      "sita": 6, "saba": 7, "nane": 8, "tisa": 9,
-      "kwanza": 1, "pili": 2
+      "moja": 1,
+      "mbili": 2,
+      "tatu": 3,
+      "nne": 4,
+      "tano": 5,
+      "sita": 6,
+      "saba": 7,
+      "nane": 8,
+      "tisa": 9,
+      "kwanza": 1,
+      "pili": 2
     },
     "_ones_note": "kwanza/pili are the ORDINALS (first/second). 'mstari wa kwanza' = verse one — how a preacher actually says it. From 3 up, the ordinal and cardinal are the same word.",
     "tens": {
-      "kumi": 10, "ishirini": 20, "thelathini": 30, "arobaini": 40,
-      "hamsini": 50, "sitini": 60, "sabini": 70, "themanini": 80, "tisini": 90
+      "kumi": 10,
+      "ishirini": 20,
+      "thelathini": 30,
+      "arobaini": 40,
+      "hamsini": 50,
+      "sitini": 60,
+      "sabini": 70,
+      "themanini": 80,
+      "tisini": 90
     },
-    "hundred_post": ["mia"],
-    "connectors": ["na"],
-    "chapter_words": ["sura"],
-    "verse_words": ["mstari", "aya"],
-    "linkers": ["ya", "wa", "cha", "la"],
+    "hundred_post": [
+      "mia"
+    ],
+    "connectors": [
+      "na"
+    ],
+    "chapter_words": [
+      "sura"
+    ],
+    "verse_words": [
+      "mstari",
+      "aya"
+    ],
+    "linkers": [
+      "ya",
+      "wa",
+      "cha",
+      "la"
+    ],
     "_linkers_note": "Grammatical glue: 'sura YA tatu', 'mstari WA kwanza'. Skipped between a keyword and its number — never treated as numbers themselves."
   },
-
   "ha": {
     "_language": "Hausa",
     "ones": {
-      "daya": 1, "ɗaya": 1, "biyu": 2, "uku": 3, "hudu": 4, "huɗu": 4,
-      "biyar": 5, "shida": 6, "bakwai": 7, "takwas": 8, "tara": 9,
-      "farko": 1, "fari": 1
+      "daya": 1,
+      "ɗaya": 1,
+      "biyu": 2,
+      "uku": 3,
+      "hudu": 4,
+      "huɗu": 4,
+      "biyar": 5,
+      "shida": 6,
+      "bakwai": 7,
+      "takwas": 8,
+      "tara": 9,
+      "farko": 1,
+      "fari": 1
     },
     "_ones_note": "farko/fari = 'first'. 'aya ta farko' = verse one. Hooked ɗ and ƙ fold to d and k automatically, so both spellings are safe to list.",
     "tens": {
-      "goma": 10, "ashirin": 20, "talatin": 30, "arba'in": 40,
-      "hamsin": 50, "sittin": 60, "saba'in": 70, "tamanin": 80, "tis'in": 90
+      "goma": 10,
+      "ashirin": 20,
+      "talatin": 30,
+      "arba'in": 40,
+      "hamsin": 50,
+      "sittin": 60,
+      "saba'in": 70,
+      "tamanin": 80,
+      "tis'in": 90
     },
-    "hundred_post": ["dari", "ɗari"],
-    "connectors": ["da", "sha"],
+    "hundred_post": [
+      "dari",
+      "ɗari"
+    ],
+    "connectors": [
+      "da",
+      "sha"
+    ],
     "_connectors_note": "'sha' builds the teens (goma sha uku = 13); 'da' joins tens and units (ashirin da uku = 23).",
-    "chapter_words": ["sura", "babi"],
-    "verse_words": ["aya"],
-    "linkers": ["ta", "na"],
+    "chapter_words": [
+      "sura",
+      "babi"
+    ],
+    "verse_words": [
+      "aya"
+    ],
+    "linkers": [
+      "ta",
+      "na"
+    ],
     "_linkers_note": "'sura TA uku', 'aya TA farko'."
+  },
+  "yo": {
+    "_language": "Yorùbá",
+    "_status": "UNREVIEWED BY A NATIVE SPEAKER. See `unreviewed` below.",
+    "unreviewed": true,
+    "_unreviewed_note": "Every word in this block was authored without a native-speaker review, so a reference resolved through it is demoted to `UncertainNumber` and can never auto-fire — it is offered to the operator, who accepts it in one press. `docs/LANGUAGES.md` says the same thing in prose. Delete this flag when a Yorùbá speaker has checked the numbers, and the cap lifts by itself.",
+    "_shape_note": [
+      "YORÙBÁ IS NOT SHAPED LIKE SWAHILI AND HAUSA, so it uses `standalone` and",
+      "neither `ones` nor `tens`. Yorùbá counting is vigesimal and subtractive:",
+      "16 is ẹrìndínlógún, 'four taken from twenty', ONE word. There is no",
+      "tens + connector + ones to run a state machine over. A `standalone` word IS",
+      "the whole number and combines with nothing, so a wrong entry can only ever",
+      "produce a wrong number where it stands — it can never silently change a",
+      "neighbouring one.",
+      "",
+      "ONLY THE ORDINAL k- FORMS ARE LISTED, and that is a safety choice as much as",
+      "a usage one. A preacher says 'orí kẹta, ẹsẹ̀ kẹrìndínlógún' — the ordinal is",
+      "the register chapter and verse are actually spoken in. The bare cardinals are",
+      "left out because `normalize()` folds tone marks and dots-below, and several",
+      "of them then collide with ordinary sermon words: èje (7) and ẹ̀jẹ̀ (blood)",
+      "both fold to 'eje', and ogún (20), ògùn (medicine) and Ògún all fold to",
+      "'ogun'. That is rule 10's failure in another language, so those words are",
+      "not here.",
+      "",
+      "Composite numbers above twenty (21 = ọ̀kànlélógún, 25 = ẹ̀ẹ́dọ́gbọ̀n) are",
+      "deliberately absent. They parse to nothing, which is exactly what they did",
+      "before this block existed — no regression, and no invented number."
+    ],
+    "standalone": {
+      "kìíní": 1,
+      "kejì": 2,
+      "kẹta": 3,
+      "kẹrin": 4,
+      "kàrún": 5,
+      "kẹfà": 6,
+      "keje": 7,
+      "kẹjọ": 8,
+      "kẹsàn": 9,
+      "kẹwàá": 10,
+      "kọkànlá": 11,
+      "kejìlá": 12,
+      "kẹtàlá": 13,
+      "kẹrìnlá": 14,
+      "kẹẹ́dógún": 15,
+      "kẹrìndínlógún": 16,
+      "kẹtàdínlógún": 17,
+      "kejìdínlógún": 18,
+      "kọkàndínlógún": 19,
+      "kogún": 20,
+      "kọgbọ̀n": 30,
+      "kogójì": 40,
+      "kàádọ́ta": 50,
+      "kọgọ́ta": 60,
+      "kàádọ́rin": 70,
+      "kọgọ́rin": 80,
+      "kàádọ́rùn": 90,
+      "kọgọ́rùn": 100,
+      "ogún": 20,
+      "ọgbọ̀n": 30,
+      "ogójì": 40,
+      "àádọ́ta": 50,
+      "ọgọ́ta": 60,
+      "àádọ́rin": 70,
+      "ọgọ́rin": 80,
+      "àádọ́rùn": 90,
+      "ọgọ́rùn": 100
+    },
+    "_standalone_note": "The ordinal k- forms for 1-20 and the round tens, plus the round tens as bare CARDINALS: a chapter of twenty or more is said 'orí ogún', not with a k- form. The bare units 1-9 are deliberately absent — that is where the homographs are once normalize() folds the tone marks (èje 7 / ẹ̀jẹ̀ blood, àrún 5 / àrùn disease, ẹ̀jọ 8 / ejò snake), and the k- ordinal already covers how a preacher says them. One collision is accepted and named: ogún (20) folds together with ògùn (medicine) and Ògún. It costs at most a SUGGESTION the operator ignores, because everything in this block is capped — see `unreviewed`. normalize() folds the tone marks and dots-below, so 'kẹrìndínlógún' and 'kerindinlogun' are one key and only one spelling has to be listed.",
+    "chapter_words": [
+      "orí"
+    ],
+    "verse_words": [
+      "ẹsẹ̀"
+    ],
+    "_words_note": "'orí kẹta' = chapter three; 'ẹsẹ̀ kẹrìndínlógún' = verse sixteen. Yorùbá needs no linker between the word and the number, so `linkers` is absent."
   }
 }

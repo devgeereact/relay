@@ -213,6 +213,7 @@ fn main() {
             let kiosk_templates = kiosk.templates_handle();
             let kiosk_clients = kiosk.clients_handle();
             let kiosk_themes = kiosk.themes_handle();
+            let kiosk_last = kiosk.last_screen_handle();
             // Warm the custom-themes blob so a kiosk connecting before any theme is
             // saved this session still gets the operator's themes on `hello`.
             {
@@ -247,6 +248,7 @@ fn main() {
                 kiosk_templates,
                 kiosk_clients,
                 kiosk_themes,
+                kiosk_last,
                 app.state::<channels::OutputHealth>().inner().clone(),
                 8031,
             ));
@@ -4846,6 +4848,13 @@ fn parse_display(s: &str) -> Option<usize> {
 #[derive(serde::Serialize)]
 struct ChannelLiveness {
     id: i64,
+    /// The screen's NAME, as the operator typed it.
+    ///
+    /// It is here because the shell's degraded banner had only the id and said
+    /// "3 is not responding" — a number a volunteer cannot map to a screen while a
+    /// congregation waits. `degraded.js` documented these as names for months; the
+    /// producer sent ids, and no test could see the difference.
+    name: String,
     online: bool,
     clients: usize,
     detail: String,
@@ -4876,36 +4885,53 @@ fn beat_of(health: &channels::OutputHealth, id: i64) -> (Option<u64>, Option<&'s
     }
 }
 
-/// Live status for every channel. Polled by the Channels screen.
-#[tauri::command]
-fn channel_status(
-    app: tauri::AppHandle,
-    db: tauri::State<'_, Db>,
-    kiosk: tauri::State<'_, channels::KioskHub>,
-    health: tauri::State<'_, channels::OutputHealth>,
-) -> error::Result<Vec<ChannelLiveness>> {
-    let list = {
-        let conn = db.0.lock()?;
-        db::list_output_channels(&conn)?
-    };
-    let open = channels::open_channel_ids(&app);
-    let clients = kiosk.clients_handle();
-
-    // A screen going quiet, and coming back, belong in the service's record — they
-    // are exactly what an operator is trying to reconstruct afterwards ("the
-    // projector was blank for a bit, when?"). This poll is the only regular tick on
-    // this path, so it is the edge detector; `transition` fires once per change,
-    // never once per poll.
-    for c in &list {
+/// Record output loss and recovery edges into the service's timeline.
+///
+/// **An edge is only detected while a service is RECORDING, because that is the
+/// only time it can be written down.** Two individually reasonable things are
+/// wrong together (RG-136, field service 2026-09-13): `OutputHealth::transition`
+/// CONSUMES the edge it reports — `reported` advances whether or not anything
+/// records it — and `log_event` is a silent no-op with no service running. So a
+/// screen already dead before the operator pressed record had its `output_lost`
+/// computed, thrown away and marked as reported, and the matching recovery landed
+/// in the service record with no partner. A report and a replay built on that
+/// table then understate the outage count, and the one they lose is the one that
+/// began before anybody was watching.
+///
+/// Outside a service every attached channel is FORGOTTEN rather than advanced, so
+/// recording starts from a clean baseline: a screen that is already dead is
+/// reported lost inside the service once the grace window has passed, and its
+/// recovery has a partner. This deliberately does not try to back-date the lost
+/// event into a service that had not started — an event cannot belong to a
+/// service that did not exist, and inventing a time for it would be worse than
+/// the gap it fills.
+///
+/// Split out of `channel_status` so it can be driven by a test: the command needs
+/// a `KioskHub` and a webview to answer at all, and neither has anything to do
+/// with the question this decides.
+fn record_output_edges<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    health: &channels::OutputHealth,
+    list: &[db::OutputChannel],
+    open: &[i64],
+    recording: bool,
+) {
+    for c in list {
         let attached = match c.render_target.as_str() {
             "native_window" => open.contains(&c.id),
             "network_client" => true,
             _ => false,
         };
-        if !attached {
+        if !attached || !recording {
             // Not attached: neither "lost" nor "recovered" says anything true about
             // it, and a window the operator closed on purpose must not read as a
             // fault (RG-01's grace rule, one layer down).
+            //
+            // Not recording: the edge could be computed, but nothing could write it
+            // down, and `transition` would consume it on the way to being dropped
+            // (RG-136). Forgetting is what keeps the next service's first poll a
+            // real first sighting rather than a continuation of a state no record
+            // ever saw.
             health.forget_transition(c.id);
             continue;
         }
@@ -4927,7 +4953,7 @@ fn channel_status(
                 _ => c.name.clone(),
             };
             log_event(
-                &app,
+                app,
                 if now_painting {
                     db::EventKind::OutputRecovered
                 } else {
@@ -4937,6 +4963,40 @@ fn channel_status(
             );
         }
     }
+}
+
+/// Live status for every channel. Polled by the Channels screen.
+#[tauri::command]
+fn channel_status(
+    app: tauri::AppHandle,
+    db: tauri::State<'_, Db>,
+    kiosk: tauri::State<'_, channels::KioskHub>,
+    health: tauri::State<'_, channels::OutputHealth>,
+) -> error::Result<Vec<ChannelLiveness>> {
+    let list = {
+        let conn = db.0.lock()?;
+        db::list_output_channels(&conn)?
+    };
+    let open = channels::open_channel_ids(&app);
+    let clients = kiosk.clients_handle();
+
+    // A screen going quiet, and coming back, belong in the service's record — they
+    // are exactly what an operator is trying to reconstruct afterwards ("the
+    // projector was blank for a bit, when?"). This poll is the only regular tick on
+    // this path, so it is the edge detector.
+    //
+    // Whether a service is RECORDING is read here and passed in, so the lock is
+    // taken and released before `record_output_edges` runs: `log_event` locks
+    // `Session` itself, and holding it across that call would deadlock the poll
+    // against the service it is trying to write to. `Db` is already released
+    // above, which keeps the global order of rule 6 (Db before Session).
+    let recording = app
+        .state::<Session>()
+        .0
+        .lock()
+        .map(|s| s.is_some())
+        .unwrap_or(false);
+    record_output_edges(&app, &health, &list, &open, recording);
 
     Ok(list
         .into_iter()
@@ -4953,6 +5013,7 @@ fn channel_status(
                 let painting = online && health.painting(c.id);
                 ChannelLiveness {
                     id: c.id,
+                    name: c.name.clone(),
                     online,
                     clients: 0,
                     detail: match (online, painting, age) {
@@ -4988,6 +5049,7 @@ fn channel_status(
                 let painting = health.painting(c.id);
                 ChannelLiveness {
                     id: c.id,
+                    name: c.name.clone(),
                     online: true,
                     clients: n,
                     // The viewer count answers "did a browser connect". The beat
@@ -5019,6 +5081,7 @@ fn channel_status(
             // NDI is parked, not broken — `open_ndi_output` says so too.
             "ndi_encode" => ChannelLiveness {
                 id: c.id,
+                name: c.name.clone(),
                 online: false,
                 clients: 0,
                 detail: "NDI output is not available in this build".into(),
@@ -5029,6 +5092,7 @@ fn channel_status(
             },
             other => ChannelLiveness {
                 id: c.id,
+                name: c.name.clone(),
                 online: false,
                 clients: 0,
                 detail: format!("Unknown render target '{other}'"),

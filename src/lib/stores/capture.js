@@ -342,6 +342,24 @@ async function invoke() {
   return core.invoke;
 }
 
+/**
+ * Is the Rust core answering, right now?
+ *
+ * GROUP 2 — swallows, and its safe default is `false`: a probe that cannot reach
+ * the backend has not proved the backend is there. Deliberately `ping` and never
+ * `greet` (CLAUDE.md rule 26): `greet` prints `console: webview up` and its whole
+ * value is that it does so exactly once per console mount, so nothing that repeats
+ * may call it.
+ */
+export async function ping() {
+  try {
+    const call = await invoke();
+    return (await call('ping')) === true;
+  } catch {
+    return false;
+  }
+}
+
 /** Probe the backend, load devices + STT status. Safe to call on mount.
  *  Resilient: as long as the Tauri bridge is present, `available` is true —
  *  a single failing command (or the event listeners) never disables the app. */
