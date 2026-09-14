@@ -45,11 +45,26 @@
 
   let error = '';
   let msg = '';
+  /**
+   * IS A TAKE ALREADY IN FLIGHT?
+   *
+   * `onQueueChange(rest)` runs AFTER the await, which is correct — a fire that
+   * failed must leave the item in Up Next — and it is also what made the second
+   * press dangerous: until the first one resolves, `queue` still has the same item
+   * at its head, so pressing twice takes the SAME verse twice and neither press
+   * advances. Two broadcasts, two `manual_fire` rows, and a router that calibrates
+   * itself from that column (CLAUDE.md rule 14).
+   *
+   * This is not a panic control, so gating it is allowed. Clear screens and
+   * Blackout are never gated and are not on this rail (rule 15, DECISIONS §20).
+   */
+  let taking = false;
 
   const moveInQueue = (ref, d) => onQueueChange(move(queue, ref, d));
   const dropFromQueue = (ref) => onQueueChange(dequeue(queue, ref));
 
   async function goLive() {
+    if (taking) return;
     error = '';
     msg = '';
     // The QUEUE is the staging area — "Up Next" is a switcher that holds N items
@@ -61,12 +76,14 @@
       msg = 'Nothing staged and nothing queued.';
       return;
     }
+    taking = true;
     try {
       await onFireQueued(item);
       onQueueChange(rest);
     } catch (e) {
       error = humanError(e);
     }
+    taking = false;
   }
 </script>
 
@@ -111,9 +128,9 @@
          front of people, and it is the only amber on this workspace. -->
     <button
       class="r-btn amber lo-golive"
-      disabled={$safeMode || !queue.length}
+      disabled={$safeMode || !queue.length || taking}
       on:click={goLive}>
-      {queue.length ? `Go Live — ${queue[0].reference}` : 'Go Live'}
+      {taking ? 'Sending…' : queue.length ? `Go Live — ${queue[0].reference}` : 'Go Live'}
     </button>
 
     <!-- Announced. "John 3:16 is on the screens" is the confirmation that content

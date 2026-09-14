@@ -45,8 +45,11 @@
     stopCapture,
     setRehearsal,
     serviceLock,
+    readErrors,
   } from '../stores/capture.js';
   import * as walk from '../pathcheck.js';
+  import Loading from '../ui/Loading.svelte';
+  import ErrorState from '../ui/ErrorState.svelte';
 
   let health = freshChecks().diagnostics;
   let checking = true;
@@ -141,9 +144,23 @@
   }
 
   $: if (walking && walk.isComplete(w)) stopWalk();
+  // THREE FACTS, NOT ONE. Both lists below start empty and are filled by GROUP 2
+  // reads that swallow to `[]`, so "No plans yet. Build one in Planner" was also
+  // what this pane said for the few frames before the database answered, and what
+  // it said for the rest of the session when the read had FAILED. That is the
+  // sentence `Loading.svelte` was written for, verbatim, standing on a second
+  // surface — and it is the one message that makes an operator think they have
+  // lost their work. `asked` flips once the first answer (or failure) is in.
   let services = [];
   let plans = [];
   let channels = [];
+  let askedServices = false;
+  let askedPlans = false;
+  // Named, because the retry button has to re-ASK. A "Try again" wired to anything
+  // other than the original read is a button that cannot work (rule 35 again).
+  const loadServices = () =>
+    listServices().then((s) => ((services = s ?? []), (askedServices = true)));
+  const loadPlans = () => listPlans().then((p) => ((plans = p ?? []), (askedPlans = true)));
   let error = '';
   let busy = '';
 
@@ -181,8 +198,8 @@
   onMount(async () => {
     // Deliberately not awaited together with the checks: the lists are cheap and
     // should paint immediately, while the probes land one at a time.
-    listServices().then((s) => (services = s ?? []));
-    listPlans().then((p) => (plans = p ?? []));
+    loadServices();
+    loadPlans();
     listOutputChannels().then((c) => (channels = c ?? []));
     refresh();
   });
@@ -379,6 +396,10 @@
               </li>
             {/each}
           </ul>
+        {:else if !askedPlans}
+          <Loading what="plans" compact />
+        {:else if $readErrors.listPlans}
+          <ErrorState compact error={$readErrors.listPlans} onRetry={loadPlans} />
         {:else}
           <p class="d-empty">
             No plans yet. Build one in <button class="d-link" on:click={() => go('planner')}>Planner</button>
@@ -416,6 +437,10 @@
           {/each}
         </tbody>
       </table>
+    {:else if !askedServices}
+      <Loading what="services" compact />
+    {:else if $readErrors.listServices}
+      <ErrorState compact error={$readErrors.listServices} onRetry={loadServices} />
     {:else}
       <p class="d-empty">
         No services recorded yet. Relay writes one automatically the first time you start

@@ -276,12 +276,30 @@
     }
   }
 
+  /**
+   * IS AN ADD ALREADY IN FLIGHT?
+   *
+   * `newName` is cleared AFTER the await, and Enter in the name box calls this as
+   * well as the button — so a held Enter, or a double click on a slow write, added
+   * the same screen twice. Two output channels with one name is not a cosmetic
+   * mess: every surface that picks a screen by name (the chrome lamps, the Live
+   * status pane, Copy URL) then has two rows it cannot tell apart, and one of them
+   * has no template assignment anybody made on purpose.
+   */
+  let adding = false;
   async function add() {
+    if (adding) return;
     const name = newName.trim();
     if (!name) return;
+    adding = true;
     // A new screen adopts the DEFAULT template (falling back to the first built-in
     // if none is set) — the operator can reassign it per screen afterwards.
     await act(() => addChannel(name, newTarget, $defaultTemplateId ?? 1));
+    adding = false;
+    // `act` never rethrows — it parks the reason in `error`, which the pane
+    // renders. Keep the typed name on a failure so the operator can press again
+    // rather than retype it.
+    if (error) return;
     newName = '';
     newTarget = 'native_window';
     showAdd = false;
@@ -543,7 +561,9 @@
             <option value="native_window">Native window (HDMI / display)</option>
             <option value="network_client">Network client (OBS / kiosk)</option>
           </select>
-          <button class="r-btn primary sm" on:click={add} disabled={!newName.trim()}>Add</button>
+          <button class="r-btn primary sm" on:click={add} disabled={!newName.trim() || adding}>
+            {adding ? 'Adding…' : 'Add'}
+          </button>
           <button class="r-btn ghost sm" on:click={() => (showAdd = false)}>Cancel</button>
         </div>
       {/if}
@@ -679,7 +699,18 @@
     <section class="rw-pane">
       <div class="rw-panehead"><h2 class="rw-panettl">Content looks</h2></div>
       <div class="rw-panebody">
-        {#if !$templates.length}
+        <!-- RG-95, third door. `$templates` starts empty and `loadTemplates`
+             swallows to `[]`, so this pane said "No templates yet — make one in the
+             Templates tab first" in BOTH of the other two situations: while the read
+             was still in flight, and when it had failed. A fresh install ships five
+             built-in templates, so that sentence can never be true of a working
+             Relay — and the operator's answer to it is to go and build five more.
+             Same three facts, same order, same components as Screens above. -->
+        {#if loading && !$templates.length}
+          <Loading what="templates" />
+        {:else if !$templates.length && $readErrors.loadTemplates}
+          <ErrorState error={$readErrors.loadTemplates} onRetry={loadTemplates} />
+        {:else if !$templates.length}
           <EmptyState message="No templates yet — make one in the Templates tab first." />
         {:else}
           {#each CONTENT_KINDS as k (k.key)}

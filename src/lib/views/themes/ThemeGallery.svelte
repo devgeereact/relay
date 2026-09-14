@@ -17,7 +17,8 @@
     THEME_SAMPLE_CONTENT,
     fontLabel,
   } from '../../themes.js';
-  import { customThemes, loadThemes, saveTheme, deleteTheme, exportTheme, importThemeFromFile } from '../../stores/capture.js';
+  import ErrorState from '../../ui/ErrorState.svelte';
+  import { customThemes, loadThemes, saveTheme, deleteTheme, exportTheme, importThemeFromFile, readErrors } from '../../stores/capture.js';
   import { humanError } from '../../errors.js';
 
   const dispatch = createEventDispatcher();
@@ -171,6 +172,17 @@
     </div>
 
     <div class="rw-panebody pad">
+      <!-- RG-95 again, and this pane hid it better than the others because the
+           BUILT-INS always render. `loadThemes` swallows to `[]` and records the
+           reason; nothing here read it. So a read that failed looked like a church
+           that had simply never made a theme — the rail said `Custom 0`, the grid
+           said "No theme matches this filter", and the operator's answer to both is
+           to build the themes they already have. It sits ABOVE the grid rather than
+           inside the else, because the customs are missing whether or not the
+           built-ins happen to be on screen. -->
+      {#if $readErrors.loadThemes}
+        <ErrorState error={$readErrors.loadThemes} onRetry={loadThemes} />
+      {/if}
       {#if shown.length}
         <div class="th-grid">
           {#each shown as t (t.id)}

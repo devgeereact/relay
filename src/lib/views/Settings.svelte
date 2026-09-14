@@ -577,6 +577,9 @@
 
   // Real translations from the corpus + which one to read from.
   let translations = [];
+  /** Named so the ErrorState's "Try again" can re-ASK. A retry wired to anything
+      other than the original read is a button that cannot work (rule 35). */
+  const loadTranslations = async () => (translations = (await listTranslations()) ?? []);
   let activeTranslation = null;
   let dataLoaded = false; // async settings data has resolved at least once
   let lanIp = '';
@@ -713,7 +716,7 @@
     // of mount, so crash state, content-type templates and the LAN IP would all
     // silently fail to initialise off a single backend hiccup.
     try {
-      translations = await listTranslations();
+      await loadTranslations();
       activeTranslation = await getActiveTranslation();
       crash = await getCrashReporting();
       await loadTemplates();
@@ -1280,6 +1283,14 @@
             {/each}
           {:else if !dataLoaded}
             <div class="r-empty" style="font-size:var(--v-fs-b1);">Loading translations…</div>
+          {:else if $readErrors.listTranslations}
+            <!-- The KJV is BUNDLED (`src-tauri/data/kjv.json`, `include_str!`), so
+                 "No translations loaded" cannot be true of a Relay that is working.
+                 It was, however, exactly what this row said when `list_translations`
+                 failed — the read swallows to `[]` and nothing here asked why. An
+                 operator reading that goes looking for a Bible to import; the actual
+                 answer is on the other branch. -->
+            <ErrorState error={$readErrors.listTranslations} onRetry={loadTranslations} />
           {:else}
             <div class="r-empty" style="font-size:var(--v-fs-b1);">No translations loaded.</div>
           {/if}

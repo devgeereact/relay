@@ -95,9 +95,32 @@
   /** What the primary press on a card does, said the same way in every label. */
   const verb = (v, sel) =>
     sel ? `Select ${v.label ?? v.reference}` : `Put ${v.reference} on the screens`;
+
+  /**
+   * IS THIS CARD ALREADY ON ITS WAY TO A SCREEN?
+   *
+   * Every pane that renders this deck sets `busyRef` before it awaits the fire and
+   * clears it afterwards — Announcements, Scripture, Browse, LyricsPane and
+   * MediaLibrary, five surfaces, one prop. The grid card already WORE that fact as
+   * a "Sending…" badge, and none of the three press paths (the grid button, the
+   * list row's `role="button"` div, the kebab's "Take to screen") consulted it. A
+   * deck that knows a fire is in flight and still answers the second press sends
+   * the same verse twice: two broadcasts, and two `manual_fire` rows for a router
+   * that calibrates itself from that column (rule 14).
+   *
+   * The guard goes HERE rather than on the three call sites, for the reason rule 36
+   * gives: a check added at three doors is a check that will be missing from the
+   * fourth. `disabled` on the two real buttons is the visible half; this is the half
+   * that also covers the list row, which is a div and cannot be disabled at all.
+   */
+  $: sending = (v) => !!busyRef && busyRef === v.reference;
+  function fire(v) {
+    if (sending(v)) return;
+    onFire(v);
+  }
   function primary(v) {
     if (selects) onSelect(v);
-    else onFire(v);
+    else fire(v);
   }
 
   let menuFor = '';
@@ -227,10 +250,12 @@
             class="vd-ic r-focus"
             aria-label={$safeMode
               ? `Safe mode — ${v.reference} cannot reach a screen`
-              : `Put ${v.reference} on the screens`}
+              : sending(v)
+                ? `Sending ${v.reference} to the screens`
+                : `Put ${v.reference} on the screens`}
             title={$safeMode ? 'Safe mode is on — outputs are disarmed' : null}
-            disabled={$safeMode}
-            on:click|stopPropagation={() => onFire(v)}>→</button>
+            disabled={$safeMode || sending(v)}
+            on:click|stopPropagation={() => fire(v)}>→</button>
         </span>
       </div>
     {/each}
@@ -267,10 +292,12 @@
              and the prop is what stops the next person having to guess which. -->
         <button
           class="vd-shot r-focus"
-          disabled={$safeMode && !selects}
+          disabled={($safeMode && !selects) || (!selects && sending(v))}
           aria-label={$safeMode && !selects
             ? `Safe mode — ${v.reference} cannot reach a screen`
-            : verb(v, selects)}
+            : !selects && sending(v)
+              ? `Sending ${v.reference} to the screens`
+              : verb(v, selects)}
           on:click={() => primary(v)}
           on:dblclick={() => selects && onOpen(v)}>
           {#if v.media}
@@ -403,10 +430,10 @@
               <div class="vd-menu" role="menu" tabindex="-1" on:keydown={menuEsc}>
                 <button
                   class="vd-mi air"
-                  disabled={$safeMode}
+                  disabled={$safeMode || sending(v)}
                   title={$safeMode ? 'Safe mode is on — outputs are disarmed' : null}
-                  on:click={() => { menuFor = ''; onFire(v); }}>
-                  {$safeMode ? 'Take to screen — safe mode is on' : 'Take to screen'}
+                  on:click={() => { menuFor = ''; fire(v); }}>
+                  {$safeMode ? 'Take to screen — safe mode is on' : sending(v) ? 'Sending…' : 'Take to screen'}
                 </button>
                 {#if can.queue}
                   <button class="vd-mi" on:click={() => { menuFor = ''; onQueue(v); }}>

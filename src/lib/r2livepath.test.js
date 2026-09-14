@@ -184,7 +184,12 @@ describe('R2-E · the Library run column has no preview half at all', () => {
 
   it('and Go Live fires the queue, which is reachable', () => {
     expect(rail).toMatch(/const \{ item, rest \} = take\(queue\)/);
-    expect(rail).toMatch(/disabled=\{\$safeMode \|\| !queue\.length\}/);
+    // Safe mode disarms it and an empty queue leaves nothing to send. `|| taking`
+    // joined those two in 2026-09-14 — a take already in flight must not answer a
+    // second press (`golive.test.js`) — so this asserts the two REASONS rather than
+    // the whole expression, which would otherwise have to be edited by anyone who
+    // adds a third and would tempt them to delete it instead.
+    expect(rail).toMatch(/disabled=\{\$safeMode \|\| !queue\.length/);
   });
 });
 

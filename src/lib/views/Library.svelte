@@ -138,17 +138,29 @@
   // A FAILURE surface, humanised and rose — kept separate from the green
   // importMsg so a broken fire or import can never be shown in success colour.
   let errMsg = '';
-  /** Fire something the operator queued. Same manual_fire as every other path.
-      This is a LIVE-FIRE path — a swallowed rejection is a Fire button that does
-      nothing to the wall and says nothing about why, so it must surface. */
+  /**
+   * Fire something the operator queued. Same manual_fire as every other path.
+   *
+   * THIS THROWS, DELIBERATELY — and it is the half of the contract that was
+   * missing. `LiveOutputRail` is built so that "a FIRE THAT FAILED leaves the item
+   * in the queue and says why" (`liveoutputrail.test.js`), and it can only do that
+   * if the rejection reaches it: `onQueueChange(rest)` runs after the await, so a
+   * handler that resolves on failure drops the verse out of Up Next as though it
+   * had reached a screen. The operator's next press then sends the SECOND item,
+   * which is exactly the outcome that test exists to prevent.
+   *
+   * The test passed the whole time, because the test supplies a rejecting prop and
+   * the app supplied this one. A guarantee is only kept on the doors you checked
+   * (CLAUDE.md, Detection notes) — this is the door.
+   *
+   * The rail humanises it through `errors.js` and announces it with `role="alert"`
+   * on its own footer, next to the button that was pressed, so there is nothing for
+   * `errMsg` to add here.
+   */
   async function fireQueued(item) {
     errMsg = '';
-    try {
-      if (item.mediaId) await fireMedia(item.mediaId);
-      else await manualFire(item.reference);
-    } catch (e) {
-      errMsg = humanError(e);
-    }
+    if (item.mediaId) await fireMedia(item.mediaId);
+    else await manualFire(item.reference);
   }
 
   // ONE search box for the whole Library. Each pane decides what the words mean
