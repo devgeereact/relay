@@ -429,55 +429,62 @@
             <span>{subheading}</span>
           </div>
 
-          <span class="br-legend r-mono">
-            {numbered.length} item{numbered.length === 1 ? '' : 's'} · single click cues ·
-            double click opens
-          </span>
-
           {#if checked.size}
+            <!-- The bulk actions REPLACE THE LEGEND, not the navigation. They
+                 used to replace the Sort control, and when the translation,
+                 chapter and verse pickers moved onto this row that same `{:else}`
+                 would have taken the Bible's navigation away from an operator who
+                 had ticked a verse — reachable again only by clearing a selection
+                 they might want to keep. The legend is the one thing here that is
+                 furniture. -->
             <button class="r-btn primary sm" on:click={queueChecked}>
               Queue {checked.size} selected
             </button>
             <button class="r-btn ghost sm" on:click={() => (checked = new Set())}>Clear</button>
           {:else}
-            <!-- Moved off the shell's deleted filter bar: a translation, a
-                 chapter, a verse and Favourites are all facts about SCRIPTURE,
-                 and only this pane has any. -->
-            <select
-              class="r-select sm br-sel"
-              aria-label="Translation"
-              disabled={translations.length < 2}
-              value={activeTranslation}
-              on:change={(e) => onTranslation(Number(e.currentTarget.value))}>
-              {#each translations as t}
-                <option value={t.id}>{t.abbreviation || t.name}</option>
-              {/each}
-              {#if !translations.length}<option>KJV</option>{/if}
-            </select>
-            <select class="r-select sm br-sel" aria-label="Chapter" bind:value={chapter}>
-              {#each Array(chapterCount) as _, i}
-                <option value={i + 1}>Chapter {i + 1}</option>
-              {/each}
-            </select>
-            <select class="r-select sm br-sel" aria-label="Verse" bind:value={verse} disabled={!verseCount}>
-              <option value={null}>All verses</option>
-              {#each Array(verseCount) as _, i}
-                <option value={i + 1}>Verse {i + 1}</option>
-              {/each}
-            </select>
-            <button
-              class="r-btn ghost sm br-fav"
-              class:on={favouritesOnly}
-              aria-pressed={favouritesOnly}
-              on:click={() => (favouritesOnly = !favouritesOnly)}>
-              <svg width="13" height="13" viewBox="0 0 24 24" fill={favouritesOnly ? 'currentColor' : 'none'} stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h12v18l-6-4.5L6 21z" /></svg>
-              Favourites
-            </button>
-            <select class="r-select sm br-sel" bind:value={sort} aria-label="Sort">
-              <option value="verse">Verse order</option>
-              <option value="length">Shortest first</option>
-            </select>
+            <span class="br-legend r-mono">
+              {numbered.length} item{numbered.length === 1 ? '' : 's'} · single click cues ·
+              double click opens
+            </span>
           {/if}
+
+          <!-- Moved off the shell's deleted filter bar: a translation, a
+               chapter, a verse and Favourites are all facts about SCRIPTURE,
+               and only this pane has any. -->
+          <select
+            class="r-select sm br-sel"
+            aria-label="Translation"
+            disabled={translations.length < 2}
+            value={activeTranslation}
+            on:change={(e) => onTranslation(Number(e.currentTarget.value))}>
+            {#each translations as t}
+              <option value={t.id}>{t.abbreviation || t.name}</option>
+            {/each}
+            {#if !translations.length}<option>KJV</option>{/if}
+          </select>
+          <select class="r-select sm br-sel" aria-label="Chapter" bind:value={chapter}>
+            {#each Array(chapterCount) as _, i}
+              <option value={i + 1}>Chapter {i + 1}</option>
+            {/each}
+          </select>
+          <select class="r-select sm br-sel" aria-label="Verse" bind:value={verse} disabled={!verseCount}>
+            <option value={null}>All verses</option>
+            {#each Array(verseCount) as _, i}
+              <option value={i + 1}>Verse {i + 1}</option>
+            {/each}
+          </select>
+          <button
+            class="r-btn ghost sm br-fav"
+            class:on={favouritesOnly}
+            aria-pressed={favouritesOnly}
+            on:click={() => (favouritesOnly = !favouritesOnly)}>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill={favouritesOnly ? 'currentColor' : 'none'} stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h12v18l-6-4.5L6 21z" /></svg>
+            Favourites
+          </button>
+          <select class="r-select sm br-sel" bind:value={sort} aria-label="Sort">
+            <option value="verse">Verse order</option>
+            <option value="length">Shortest first</option>
+          </select>
 
           <div class="r-seg" role="group" aria-label="Layout">
             <button class:on={layout === 'grid'} aria-label="Grid" on:click={() => (layout = 'grid')}>
