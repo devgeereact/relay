@@ -1997,6 +1997,87 @@ fn a_rehearsed_decision_is_not_counted_as_one() {
     );
 }
 
+/// W4 acceptance — a screen set to FOLLOW renders scripture, lyrics and
+/// announcements through three different templates, with nobody touching it.
+///
+/// `r4_a_screen_may_follow_the_content_look` proves the setting can be made and
+/// is published. It does not fire anything, so it cannot see whether the map is
+/// then READ — which is precisely the defect that phase closed one level down:
+/// the content-look map could be filled in, saved, and change nothing. A test
+/// that only checks the control passed throughout that too.
+///
+/// What rides is the ID and nothing else. A content-look default must never
+/// serialize its template JSON: a default carrying an embedded image can be
+/// megabytes (one was 13 MB) and broadcasting it on every fire made verses take
+/// seconds. Only a PINNED cue template ships its JSON (CLAUDE.md, DECISIONS §29),
+/// so this asserts the absence as hard as it asserts the presence.
+#[test]
+fn r4_a_following_screen_wears_a_different_look_for_each_kind() {
+    let app = app();
+    let h = app.handle().clone();
+    let wall = qa::Wall::watch(&h);
+
+    let scripture = scratch_template(&h, "Nocturne");
+    let song = scratch_template(&h, "Hymnal");
+    let announce = scratch_template(&h, "Noticeboard");
+    {
+        let db = h.state::<Db>();
+        let conn = db.0.lock().expect("db");
+        db::set_content_template(&conn, "scripture", Some(scripture)).expect("scripture look");
+        db::set_content_template(&conn, "song", Some(song)).expect("song look");
+        db::set_content_template(&conn, "announce", Some(announce)).expect("announce look");
+    }
+
+    // Nobody touches a screen between these three fires. That is the claim.
+    super::manual_fire(h.clone(), h.state::<Db>(), "John 3:16".into(), None, None)
+        .expect("scripture fires");
+    settle();
+    let a = wall.last().expect("scripture reached the wall");
+
+    super::fire_content(
+        h.clone(),
+        h.state::<Db>(),
+        "Verse 1".into(),
+        "Great is thy faithfulness".into(),
+        "song".into(),
+        None,
+        None,
+    )
+    .expect("a song fires");
+    settle();
+    let b = wall.last().expect("the song reached the wall");
+
+    super::fire_content(
+        h.clone(),
+        h.state::<Db>(),
+        "Car park".into(),
+        "Please move the blue Fiesta".into(),
+        "announce".into(),
+        None,
+        None,
+    )
+    .expect("an announcement fires");
+    settle();
+    let c = wall.last().expect("the announcement reached the wall");
+
+    assert_eq!(a["template_id"], scripture, "scripture wears its own look");
+    assert_eq!(b["template_id"], song, "a song wears its own look");
+    assert_eq!(c["template_id"], announce, "a notice wears its own look");
+
+    let ids = [&a["template_id"], &b["template_id"], &c["template_id"]];
+    assert!(
+        ids[0] != ids[1] && ids[1] != ids[2] && ids[0] != ids[2],
+        "three kinds, three different looks, nobody touching a screen: {ids:?}"
+    );
+
+    for (name, out) in [("scripture", &a), ("song", &b), ("announce", &c)] {
+        assert!(
+            out.get("template").is_none_or(|t| t.is_null()),
+            "a content look rides as an ID only — {name} carried its JSON: {out}"
+        );
+    }
+}
+
 /// DECISIONS §70 — a screen with no look of its own follows the content look.
 ///
 /// The defect this holds closed is not a crash and was invisible to every

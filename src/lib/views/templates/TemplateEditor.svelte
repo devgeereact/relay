@@ -14,7 +14,7 @@
   // The preview is the SAME TemplateRender as the wall — WYSIWYG by construction.
   import { createEventDispatcher, onMount, onDestroy } from 'svelte';
   import { rangeFill } from '../../rangefill.js';
-  import { duplicateLayer, resetLayer } from '../../layerops.js';
+  import { duplicateLayer, resetLayer, removeLayer as dropLayer } from '../../layerops.js';
   import { BUILTINS } from '../../templates.js';
   import { contentTemplates, setContentTemplate, loadContentTemplates } from '../../stores/capture.js';
   import TemplateRender from '../../TemplateRender.svelte';
@@ -31,8 +31,9 @@
   import { BACKGROUNDS } from '../../backgrounds.js';
   import {
     makeLayer, isLayered, layerLabel, regionsToLayers, templateShows, CONTENT_KINDS,
-    LAYER_TYPES, BINDINGS,
+    LAYER_TYPES, BINDINGS, bandOf, drawBoxes, boundValue,
   } from '../../layers.js';
+  import { BAND_GROW_MAX, BAND_TYPE_FLOOR } from '../../templatemodel.js';
 
   export let templateId;
   const dispatch = createEventDispatcher();
@@ -119,6 +120,31 @@
   $: panelLayers = [...layers].reverse();
   $: sel = layers.find((l) => l.id === selId) || null;
 
+  // ── BANDS (docs/REBRAND.md §4) ──────────────────────────────────────────────
+  // A band names the objects inside it, so membership is a fact about the band,
+  // not about the word. `bandOf` is the one reader of that list (`layers.js`).
+  $: selBand = sel ? bandOf(layers, sel.id) : null;
+  $: bandWords = sel && sel.type === 'band'
+    ? (Array.isArray(sel.members) ? sel.members : []).map((id) => layers.find((l) => l.id === id)).filter(Boolean)
+    : [];
+  $: bands = layers.filter((l) => l.type === 'band');
+  // WHERE THINGS ARE ACTUALLY DRAWN. The canvas's handle boxes have to land on
+  // the words, and a band's words are placed by the band — so the overlay reads
+  // the same derived geometry the renderer does, rather than a second guess at
+  // it (`drawBoxes`, one home).
+  $: drawn = drawBoxes(layers, (L) => boundValue(L, previewContent));
+
+  /** Put a text object into a band, or take it out again. */
+  function setBandMembership(id, bandId) {
+    edit.layout.layers = layers.map((l) => {
+      if (l.type !== 'band') return l;
+      const members = (Array.isArray(l.members) ? l.members : []).filter((m) => m !== id);
+      if (l.id === bandId) members.push(id);
+      return { ...l, members };
+    });
+    edit = edit;
+  }
+
   function convertToLayers() {
     edit.layout = regionsToLayers(edit);
     edit = edit;
@@ -179,7 +205,10 @@
       return;
     }
     disarmDelete();
-    edit.layout.layers = edit.layout.layers.filter((l) => l.id !== id);
+    // Through `layerops`, not through a filter: a band names its members by id,
+    // and a filter here would leave the band pointing at an object that is gone.
+    // Nothing would break — which is exactly why it would have survived.
+    edit.layout.layers = dropLayer(edit.layout.layers, id);
     if (selId === id) selId = edit.layout.layers[edit.layout.layers.length - 1]?.id ?? null;
     edit = edit;
   }
@@ -772,13 +801,26 @@
                 {#if guides.h != null}<div class="te-guide te-guide-h" style="top:{guides.h}%"></div>{/if}
                 {#each layers as L (L.id)}
                   {#if L.visible !== false && L.type !== 'background'}
-                    <div class="te-hbox" class:sel={selId === L.id} class:locked={L.locked}
-                      style="left:{L.x}%; top:{L.y}%; width:{L.w}%; height:{L.h}%;"
-                      on:pointerdown={(e) => startDrag(e, L, 'move')} role="button" tabindex="0"
+                    <!-- THE HANDLE GOES WHERE THE OBJECT IS DRAWN, which for a band
+                         and its words is not the box they store (`drawBoxes`). A
+                         handle sitting somewhere the words are not reads as a broken
+                         editor, and it is the WYSIWYG guarantee failing one layer
+                         above the renderer.
+
+                         A band and its words are PLACED, not dragged: dragging writes
+                         x/y/w/h, and nothing draws them from x/y/w/h, so the drag
+                         would move the outline and leave the type where it was — a
+                         control that changes nothing (DECISIONS §69). Their real
+                         controls are in the panel. -->
+                    {@const b = drawn.get(L.id) || L}
+                    {@const placed = L.type === 'band' || !!bandOf(layers, L.id)}
+                    <div class="te-hbox" class:sel={selId === L.id} class:locked={L.locked || placed}
+                      style="left:{b.x}%; top:{b.y}%; width:{b.w}%; height:{b.h}%;"
+                      on:pointerdown={(e) => (placed ? (selId = L.id) : startDrag(e, L, 'move'))} role="button" tabindex="0"
                       on:keydown={onCanvasKey} aria-label={layerLabel(L)}>
                       {#if selId === L.id}
                         <span class="te-htag">{layerLabel(L)}{#if L.locked} 🔒{/if}</span>
-                        {#if !L.locked}
+                        {#if !L.locked && !placed}
                           {#each HANDLES as h}
                             <span class="te-hh te-hh-{h}" on:pointerdown={(e) => startDrag(e, L, h)} role="button" tabindex="-1" aria-label="Resize {h}"></span>
                           {/each}
@@ -863,11 +905,24 @@
             {/each}
           </div>
 
-          {#if sel}
-            <!-- POSITION. These were reachable only by dragging on the canvas, so
-                 a keyboard-only operator could not place an object at all and
-                 nobody could place one exactly. Percentages of the frame, like
-                 everything else in a template. -->
+          {#if sel && sel.type !== 'band' && !bandOf(layers, sel.id)}
+            <!-- POSITION — ONE GROUP, §3.2. These were reachable only by dragging
+                 on the canvas, so a keyboard-only operator could not place an
+                 object at all and nobody could place one exactly. Percentages of
+                 the frame, like everything else in a template.
+
+                 THERE USED TO BE TWO. A second Position group sat at the bottom of
+                 this panel writing the same four keys, and both rendered for every
+                 selected object — the same heading twice, over two different number
+                 grids. They did not agree: this one clamps to 0–100 and refuses a
+                 locked object, that one did neither, so typing into the lower grid
+                 moved a layer the operator had locked. The three Centre buttons were
+                 the only thing it had that this did not, and they are here now.
+
+                 A BAND AND ITS WORDS ARE NOT HERE, because x/y/w/h is not where any
+                 of them sits: a band is placed by `top`/`side` and its words by the
+                 band. Four numbers that change nothing is the defect DECISIONS §69
+                 closed, so they get the controls that do move them instead. -->
             <h3 class="te-sec">Position</h3>
             <div class="te-geom">
               {#each [['x', 'X'], ['y', 'Y'], ['w', 'W'], ['h', 'H']] as [k, label]}
@@ -886,7 +941,13 @@
                 </label>
               {/each}
             </div>
+            <div class="te-alignrow">
+              <button class="te-alignbtn" on:click={() => center('x')} title="Centre horizontally">Centre H</button>
+              <button class="te-alignbtn" on:click={() => center('y')} title="Centre vertically">Centre V</button>
+              <button class="te-alignbtn" on:click={() => center('both')} title="Centre on canvas">Centre</button>
+            </div>
             {#if sel.locked}<p class="te-fnote">This object is locked. Unlock it in the layer list to move it.</p>{/if}
+            <p class="te-fnote">Percent of the screen. Drag on the canvas — layers snap to centre and edges (hold Shift to place freely) — or type exact values.</p>
           {/if}
 
           {#if !sel}
@@ -955,6 +1016,37 @@
               <label class="te-fk" for="te-rop">Opacity</label>
               <span class="te-fv te-rangerow"><input id="te-rop" class="r-range" type="range" min="0" max="1" step="0.05" value={sel.opacity ?? 1} on:input={(e) => num('opacity', e.target.value)} use:rangeFill={sel.opacity ?? 1} /><span class="te-rnum r-mono">{Math.round((sel.opacity ?? 1) * 100)}%</span></span>
             </div>
+          {:else if sel.type === 'band'}
+            <!-- THE BAND (docs/REBRAND.md §4). Its geometry is NOT x/y/w/h: it runs
+                 from Top to the bottom edge, inset by Side, and its words sit inside
+                 it. These four are the numbers that actually move it. -->
+            <h3 class="te-sec">Position</h3>
+            <div class="te-frow"><label class="te-fk" for="te-btop">Top</label><span class="te-fv te-rangerow"><input id="te-btop" class="r-range" type="range" min="50" max="95" step="1" value={sel.top ?? 74} on:input={(e) => num('top', e.target.value)} use:rangeFill={((sel.top ?? 74) - 50) / 45} /><span class="te-rnum r-mono">{Math.round(sel.top ?? 74)}%</span></span></div>
+            <div class="te-frow"><label class="te-fk" for="te-bside">Side</label><span class="te-fv te-rangerow"><input id="te-bside" class="r-range" type="range" min="0" max="20" step="0.5" value={sel.side ?? 6} on:input={(e) => num('side', e.target.value)} use:rangeFill={(sel.side ?? 6) / 20} /><span class="te-rnum r-mono">{(sel.side ?? 6).toFixed(1)}%</span></span></div>
+            <div class="te-frow"><label class="te-fk" for="te-bpad">Inner</label><span class="te-fv te-rangerow"><input id="te-bpad" class="r-range" type="range" min="0" max="12" step="0.5" value={sel.pad ?? 3} on:input={(e) => num('pad', e.target.value)} use:rangeFill={(sel.pad ?? 3) / 12} /><span class="te-rnum r-mono">{(sel.pad ?? 3).toFixed(1)}%</span></span></div>
+            <div class="te-frow"><label class="te-fk" for="te-blift">Lift</label><span class="te-fv te-rangerow"><input id="te-blift" class="r-range" type="range" min="0" max="15" step="0.5" value={sel.lift ?? 3} on:input={(e) => num('lift', e.target.value)} use:rangeFill={(sel.lift ?? 3) / 15} /><span class="te-rnum r-mono">{(sel.lift ?? 3).toFixed(1)}%</span></span></div>
+            <p class="te-fnote">The band runs from <b>Top</b> to the bottom edge. <b>Lift</b> holds its words off the baseline; the words are centred in what is left.</p>
+
+            <h3 class="te-sec">Effects</h3>
+            <div class="te-frow"><label class="te-fk" for="te-bfill">Fill</label><span class="te-fv te-swatch"><input id="te-bfill" type="color" value={isColor(sel.fill) ? sel.fill : '#101319'} on:input={(e) => set('fill', e.target.value)} disabled={isThemeToken(sel.fill)} /><span class="te-hex r-mono">{isThemeToken(sel.fill) ? 'theme' : isColor(sel.fill) ? sel.fill.toUpperCase() : 'gradient'}</span></span></div>
+            <div class="te-frow"><label class="te-fk" for="te-bfillbind">Theme link</label><select id="te-bfillbind" class="r-select te-fv" value={isThemeToken(sel.fill) ? sel.fill : 'custom'} on:change={(e) => bindToken('fill', e.target.value, '#101319')}><option value="custom">Custom fill</option>{#each COLOUR_TOKENS as t}<option value={t.token}>{t.label}</option>{/each}</select></div>
+            <!-- OPACITY MEANS WHAT IT SAYS (§4). The band's body sits at exactly the
+                 alpha set here — nothing multiplies it down on the way to the wall. -->
+            <div class="te-frow"><label class="te-fk" for="te-bop">Opacity</label><span class="te-fv te-rangerow"><input id="te-bop" class="r-range" type="range" min="0" max="1" step="0.05" value={sel.opacity ?? 1} on:input={(e) => num('opacity', e.target.value)} use:rangeFill={sel.opacity ?? 1} /><span class="te-rnum r-mono">{Math.round((sel.opacity ?? 1) * 100)}%</span></span></div>
+            <div class="te-frow"><label class="te-fk" for="te-brad">Radius</label><span class="te-fv te-rangerow"><input id="te-brad" class="r-range" type="range" min="0" max="8" step="0.2" value={sel.radius || 0} on:input={(e) => num('radius', e.target.value)} use:rangeFill={(sel.radius || 0) / 8} /><span class="te-rnum r-mono">{(sel.radius || 0).toFixed(1)}</span></span></div>
+            <div class="te-frow"><label class="te-fk" for="te-bgrow">Gives ground</label><span class="te-fv te-rangerow"><input id="te-bgrow" class="r-range" type="range" min="0" max="16" step="1" value={sel.grow ?? BAND_GROW_MAX} on:input={(e) => num('grow', e.target.value)} use:rangeFill={(sel.grow ?? BAND_GROW_MAX) / 16} /><span class="te-rnum r-mono">{Math.round(sel.grow ?? BAND_GROW_MAX)} pts</span></span></div>
+            <p class="te-fnote">A long line makes the band climb — up to this many points, never past a third of the screen — before the type shrinks below {Math.round(BAND_TYPE_FLOOR * 100)}% of its set size. A short one does not move it. Set 0 to keep the band still and let the words shrink.</p>
+
+            <span class="r-lbl te-showlbl">Words in this band</span>
+            {#if bandWords.length}
+              <div class="te-showgrid">
+                {#each bandWords as m (m.id)}
+                  <button class="te-showchip" on:click={() => (selId = m.id)}>{layerLabel(m)}</button>
+                {/each}
+              </div>
+            {:else}
+              <p class="te-fnote">No words yet. Add a text object, then <b>Put in band</b> from its own panel.</p>
+            {/if}
           {:else if sel.type === 'shape'}
             <h3 class="te-sec">Shape</h3>
             <div class="te-frow"><label class="te-fk" for="te-sfill">Fill</label><span class="te-fv te-swatch"><input id="te-sfill" type="color" value={isColor(sel.fill) ? sel.fill : '#101319'} on:input={(e) => set('fill', e.target.value)} disabled={isThemeToken(sel.fill)} /><span class="te-hex r-mono">{isThemeToken(sel.fill) ? 'theme' : isColor(sel.fill) ? sel.fill.toUpperCase() : '#101319'}</span></span></div>
@@ -963,6 +1055,24 @@
             <div class="te-frow"><label class="te-fk" for="te-srad">Radius</label><span class="te-fv te-rangerow"><input id="te-srad" class="r-range" type="range" min="0" max="8" step="0.2" value={sel.radius || 0} on:input={(e) => num('radius', e.target.value)} use:rangeFill={sel.radius || 0} /><span class="te-rnum r-mono">{(sel.radius || 0).toFixed(1)}</span></span></div>
           {:else}
             <!-- text / timer -->
+            {#if bands.length}
+              <!-- WHICH BAND THIS BELONGS TO, said in one place. Membership lives on
+                   the band as a list of ids, so this row writes the band, not the
+                   word — a word cannot be in two bands, and taking it out of one is
+                   the same operation as putting it in another. -->
+              <h3 class="te-sec">Band</h3>
+              <div class="te-frow">
+                <label class="te-fk" for="te-inband">In band</label>
+                <select id="te-inband" class="r-select te-fv" value={selBand ? selBand.id : ''} on:change={(e) => setBandMembership(sel.id, e.target.value)}>
+                  <option value="">Not in a band</option>
+                  {#each bands as b (b.id)}<option value={b.id}>{layerLabel(b)}</option>{/each}
+                </select>
+              </div>
+              {#if selBand}
+                <div class="te-frow"><label class="te-fk" for="te-bh">Height</label><span class="te-fv te-rangerow"><input id="te-bh" class="r-range" type="range" min="2" max="24" step="0.5" value={sel.h ?? 10} on:input={(e) => num('h', e.target.value)} use:rangeFill={((sel.h ?? 10) - 2) / 22} /><span class="te-rnum r-mono">{(sel.h ?? 10).toFixed(1)}%</span></span></div>
+                <p class="te-fnote">Placed by <b>{layerLabel(selBand)}</b>: the band sets where this line sits and how wide it is. Height is its share of the band, and the band grows it when it gives ground.</p>
+              {/if}
+            {/if}
             <h3 class="te-sec">Text</h3>
             <div class="te-frow">
               <label class="te-fk" for="te-bind">Content</label>
@@ -1036,21 +1146,6 @@
             <button class="te-swrow" on:click={() => set('scroll', !sel.scroll)}><span>Scroll (ticker)</span><span class="r-switch" class:on={sel.scroll}></span></button>
           {/if}
 
-          {#if sel && sel.type !== 'background'}
-            <h3 class="te-sec">Position</h3>
-            <div class="te-geo">
-              <label>X<input class="te-num r-mono" type="number" min="0" max="100" value={Math.round(sel.x)} on:input={(e) => num('x', e.target.value)} /></label>
-              <label>Y<input class="te-num r-mono" type="number" min="0" max="100" value={Math.round(sel.y)} on:input={(e) => num('y', e.target.value)} /></label>
-              <label>W<input class="te-num r-mono" type="number" min="2" max="100" value={Math.round(sel.w)} on:input={(e) => num('w', e.target.value)} /></label>
-              <label>H<input class="te-num r-mono" type="number" min="2" max="100" value={Math.round(sel.h)} on:input={(e) => num('h', e.target.value)} /></label>
-            </div>
-            <div class="te-alignrow">
-              <button class="te-alignbtn" on:click={() => center('x')} title="Centre horizontally">Centre H</button>
-              <button class="te-alignbtn" on:click={() => center('y')} title="Centre vertically">Centre V</button>
-              <button class="te-alignbtn" on:click={() => center('both')} title="Centre on canvas">Centre</button>
-            </div>
-            <p class="te-fnote">Percent of the screen. Drag on the canvas — layers snap to centre and edges (hold Shift to place freely) — or type exact values.</p>
-          {/if}
         </div>
         {#if err}<div class="te-err" role="alert">{err}</div>{/if}
       </aside>
@@ -1248,7 +1343,14 @@
   .te-rangerow{ display:flex; align-items:center; gap:9px; }
   .te-rangerow .r-range{ flex:1; min-width:0; }
   .te-rnum{ flex:0 0 auto; min-width:40px; text-align:right; font-size:var(--v-fs-cap); color:var(--v-dim); }
-  .te-swatch{ display:flex; align-items:center; gap:9px; }
+  /* A NAME AND A VALUE, and the value on the right edge — §11 and §12, the shape
+     `.te-rangerow` and `.te-swrow` already hold. The colour well is a fixed 38px
+     (app.css) and the hex readout is auto-width text, so with nothing flexible
+     between them the pair packed left and the row's content stopped 158px short of
+     its right edge at 1280, and 730px short at 900. The box always spanned the
+     column; what was short was everything in it, which is why it reads as a
+     ragged column rather than as a broken control. */
+  .te-swatch{ display:flex; align-items:center; gap:9px; justify-content:space-between; }
   .te-hex{ font-size:var(--v-fs-cap); color:var(--v-dim); text-transform:uppercase; }
   .te-seg{ display:flex; gap:2px; background:var(--v-bg); border:1px solid var(--v-line); border-radius:var(--v-r-md); padding:3px; }
   .te-seg button{ flex:1; height:26px; display:grid; place-items:center; border:0; border-radius:var(--v-r-sm); background:none; color:var(--v-dim); cursor:pointer; font-size:var(--v-fs-cap); }

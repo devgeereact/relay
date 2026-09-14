@@ -3406,3 +3406,49 @@ x / y / width / height as real numbers in the inspector (phase 3's Position grou
 camera-left and camera-right are the same template with the region's `x` moved, and the gap is the
 space between two boxes. Three more controls writing the same four numbers would be three more
 ways for a template to disagree with itself.
+
+## 75. A band names the words inside it, and gives them ground before they shrink (2026-09-14)
+
+**Context.** `docs/REBRAND.md` §4 asks for a lower-third band that is a real element and that
+"gives ground before the words do": it grows upward, by up to 16 points and never past a third of
+the frame, before the type is allowed to shrink below 78% of the size its designer asked for.
+
+Phase 5 shipped the three lower thirds and refused to build the growth, for a good reason. A
+template here is a flat list of independently placed objects. There is no parent, no child and no
+"these two belong together", so the only cheap way to know which words a band should grow for is
+to look at the objects near it — or to fire the rule when a shape happens to be **named** `Band`.
+That is a coupling with nothing in the data behind it: true of some templates and not others,
+invisible to anyone reading the file, and gone the moment somebody renames an object.
+
+**Decision.** Build the relationship instead of guessing it. A `band` is a layer TYPE, and it
+carries `members` — the ids of the objects that live inside it.
+
+- Membership is **declared**. It is in the saved template, it survives a rename, an object in no
+  band is in no band, and a template that never opted in is untouched by any of this.
+- The band is a real element: from `top` to the **bottom edge**, inset by `side` on both edges,
+  `pad` as the inner gutter, `lift` as the baseline lift, and its words centred in what is left.
+- `bandFit` decides the climb and `bandLayout` turns it into boxes. Both live in
+  `templatemodel.js`, beside `fitScale`, and use its curve — an estimate that shrank on a
+  different curve from the measurement would disagree with it on exactly the passages that matter.
+  The estimate seeds the DOM; `TemplateRender` still MEASURES. Rules 37 and 42 are untouched.
+- How far a band may climb is read off **the band**, never defaulted by a caller. It began as a
+  parameter with a constant default, which is a second home for a property — the defect this whole
+  model exists to prevent.
+
+**A member is not drawn inside the band.** The band computes the boxes; the words are drawn by the
+same text path as every other text layer. Nesting them would mean a second text path — one for a
+positioned layer and one for a flowed one — and two text paths is how a shadow, a transform or a
+fit fix lands on one kind of layer and not the other. Four bugs in this repository have that
+shape. `drawBoxes` is the one home for the derived geometry, so the editor's canvas cannot put a
+selection handle where the words are not.
+
+**What this cost, and what caught it.** `members` is the first layer property that is an array,
+which makes `duplicateLayer`'s deep copy load-bearing for the first time — and `structuredClone`
+alone is exactly *wrong* for it. It copies the ids faithfully, so the duplicate points at the
+ORIGINAL's words: both bands lay out the same objects, and editing either moves the other's type.
+Duplicating a band now copies its words too. Deleting a word tells its band, or the band keeps a
+dead id in its saved JSON for ever while rendering perfectly. Resetting a band's LOOK keeps its
+place and its words, for the same reason a reset keeps `bind`.
+
+**Not decided here.** Zones (§5) and a composite's regions (§6) want the same missing concept and
+can use this one; nothing in it assumes a lower third. Neither is built.
