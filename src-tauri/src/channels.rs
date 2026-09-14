@@ -1478,6 +1478,33 @@ pub async fn run_kiosk_server(
                                     }
                                 }
                                 if v.get("kind").and_then(|k| k.as_str()) == Some("hello") {
+                                    // THE WHOLE REPLY USED TO SIT INSIDE
+                                    // `if let Some(id) = template_id`, AND THAT IS
+                                    // RULE 43 WITH A HOLE IN IT.
+                                    //
+                                    // `Output.svelte` sends `template_id: null`
+                                    // whenever the URL is CHANNEL-keyed — which is
+                                    // the URL `Copy URL` produces and the one
+                                    // CLAUDE.md tells operators to use, because a
+                                    // channel-keyed source follows a template swap
+                                    // and a `template_id`-keyed one does not. So
+                                    // the recommended URL was the one shape that
+                                    // got no themes and, worse, NO RETAINED FRAME:
+                                    // an OBS source restarting mid-reading came
+                                    // back black and stayed black until the next
+                                    // fire, which is the exact failure rule 43 and
+                                    // DECISIONS §68 exist to prevent. Measured on a
+                                    // running build: `?channel=1` joined blank,
+                                    // `?channel=1&template_id=1` joined with the
+                                    // verse.
+                                    //
+                                    // Registration and the template reply still
+                                    // need an id — a client with no template id has
+                                    // no template to be counted against, and the
+                                    // liveness count is per template id. The themes
+                                    // and the retained frame need nothing: they are
+                                    // about what is ON THE SCREENS, not about which
+                                    // look this screen wears.
                                     if let Some(id) = v.get("template_id").and_then(|i| i.as_i64()) {
                                         // Replace, don't add: a client that says
                                         // hello twice (a kiosk page reloading onto
@@ -1494,34 +1521,27 @@ pub async fn run_kiosk_server(
                                                 .send(tokio_tungstenite::tungstenite::Message::Text(out))
                                                 .await;
                                         }
-                                        // Send the custom themes too, so this client
-                                        // can resolve a template pinning a custom
-                                        // theme (builtins it already knows). Always
-                                        // a valid JSON array (see set_themes).
-                                        let blob = themes.lock().map(|t| t.clone()).unwrap_or_else(|_| "[]".into());
+                                    }
+                                    // Send the custom themes, so this client can
+                                    // resolve a template pinning a custom theme
+                                    // (builtins it already knows). Always a valid
+                                    // JSON array (see set_themes).
+                                    let blob = themes.lock().map(|t| t.clone()).unwrap_or_else(|_| "[]".into());
+                                    let _ = write
+                                        .send(tokio_tungstenite::tungstenite::Message::Text(
+                                            format!(r#"{{"kind":"themes","themes":{blob}}}"#),
+                                        ))
+                                        .await;
+                                    // AND WHAT IS ON THE SCREENS RIGHT NOW.
+                                    // Sent LAST so the template it needs to render
+                                    // with has already arrived. `clear` and `black`
+                                    // are retained the same way, so this can never
+                                    // undo a panic control.
+                                    let retained = last_screen.lock().ok().and_then(|l| l.clone());
+                                    if let Some(frame) = retained {
                                         let _ = write
-                                            .send(tokio_tungstenite::tungstenite::Message::Text(
-                                                format!(r#"{{"kind":"themes","themes":{blob}}}"#),
-                                            ))
+                                            .send(tokio_tungstenite::tungstenite::Message::Text(frame))
                                             .await;
-                                        // AND WHAT IS ON THE SCREENS RIGHT NOW.
-                                        // A client that joins mid-service used to
-                                        // be told its template and its themes and
-                                        // then left blank until the next fire — so
-                                        // an OBS source restarting, or this page
-                                        // reloading, put a black rectangle in front
-                                        // of a congregation for as long as the
-                                        // reading lasted. Sent LAST so the template
-                                        // it needs to render with has already
-                                        // arrived. `clear` and `black` are retained
-                                        // the same way, so this can never undo a
-                                        // panic control.
-                                        let retained = last_screen.lock().ok().and_then(|l| l.clone());
-                                        if let Some(frame) = retained {
-                                            let _ = write
-                                                .send(tokio_tungstenite::tungstenite::Message::Text(frame))
-                                                .await;
-                                        }
                                     }
                                 }
                             }
@@ -3170,6 +3190,71 @@ mod tests {
         assert!(
             got.as_deref().unwrap_or("").contains("Romans 8:28"),
             "a screen that reconnected mid-reading was left blank: {got:?}"
+        );
+    }
+
+    /// …AND A CHANNEL-KEYED SCREEN IS ONE OF THEM.
+    ///
+    /// The test above says hello with a `template_id`, and for a long time that was
+    /// the only hello the hub answered at all — the whole reply sat inside
+    /// `if let Some(id) = template_id`. `Output.svelte` sends `template_id: null`
+    /// whenever the URL is CHANNEL-keyed, which is what `Copy URL` writes and what
+    /// CLAUDE.md tells operators to use, because only a channel-keyed source follows
+    /// a template swap. So the recommended URL was the one shape that joined blank:
+    /// measured on a running build, `output.html?channel=1` came back with nothing
+    /// after a fire while `?channel=1&template_id=1` came back with the verse.
+    ///
+    /// That is rule 43's own failure — an OBS source restarting mid-reading showing
+    /// a congregation black — reached through the door the documentation points at.
+    #[tokio::test]
+    async fn a_screen_that_joins_without_a_template_id_is_still_sent_what_is_on_the_screens() {
+        let port = free_port();
+        let hub = KioskHub::default();
+        tokio::spawn(run_kiosk_server(
+            log_only(),
+            hub.sender(),
+            hub.templates_handle(),
+            hub.clients_handle(),
+            hub.themes_handle(),
+            hub.last_screen_handle(),
+            OutputHealth::default(),
+            port,
+        ));
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+
+        hub.publish(
+            r#"{"kind":"content","reference":"Psalms 23:1","text":"The LORD is my shepherd"}"#
+                .to_string(),
+        );
+
+        let (ws, _) = tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{port}"))
+            .await
+            .expect("connect");
+        let (mut write, mut read) = ws.split();
+        // EXACTLY what a channel-keyed output page sends.
+        write
+            .send(tokio_tungstenite::tungstenite::Message::Text(
+                r#"{"kind":"hello","template_id":null}"#.to_string(),
+            ))
+            .await
+            .expect("send hello");
+
+        let mut got = None;
+        for _ in 0..4 {
+            let Ok(Some(Ok(msg))) =
+                tokio::time::timeout(std::time::Duration::from_secs(2), read.next()).await
+            else {
+                break;
+            };
+            let text = msg.into_text().unwrap();
+            if text.contains(r#""kind":"content""#) {
+                got = Some(text);
+                break;
+            }
+        }
+        assert!(
+            got.as_deref().unwrap_or("").contains("Psalms 23:1"),
+            "a channel-keyed screen that joined mid-reading was left blank: {got:?}"
         );
     }
 

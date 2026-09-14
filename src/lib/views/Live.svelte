@@ -1414,7 +1414,15 @@
                          (`isKeyedTemplate`), one picture (`CameraPlate`), and
                          it never reaches an output — the plate is a preview
                          affordance and `cameraplate.test.js` holds that. -->
-                    {#if isKeyedTemplate(cellTemplate(c))}<CameraPlate />{/if}
+                    <!-- `isKeyedTemplate({})` is TRUE — no layers and no
+                         background is, structurally, a template that keys out.
+                         That is right for the question it answers (may a
+                         blackout black this channel) and wrong as a reason to
+                         draw a camera: with no active template every cell would
+                         wear a plate and the grid would claim a camera behind a
+                         wall that has no look at all. The plate needs a template
+                         that EXISTS and keys; the absence gets nothing. -->
+                    {#if cellTemplate(c) && isKeyedTemplate(cellTemplate(c))}<CameraPlate />{/if}
                     <TemplateRender template={cellTemplate(c) ?? {}} content={cellContent(c)} />
                   {/if}
                   <!-- The KIND, top-left, as the prototype draws it: a cell is
