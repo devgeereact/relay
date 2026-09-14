@@ -300,38 +300,27 @@
     wasDown = nowDown;
   }
 
-  onMount(async () => {
-    await loadRehearsal();
-    getSensitivity().then((v) => (sensitivity = v));
-    // Populate the reactive `$templates` store so the preview/program panes
-    // resolve (and stay live to edits) from it, not just a one-shot snapshot.
-    await loadTemplates().catch(() => {});
-    await loadDefaultTemplate().catch(() => {});
-    channels = await listOutputChannels().catch(() => []);
-    await loadPlans();
+  // HAS THIS VIEW ALREADY GONE AWAY? `onMount` is async and Svelte does not wait
+  // for it: `onDestroy` runs the instant the operator switches workspace, which
+  // can be in the middle of the awaits below. Every step after an await has to
+  // ask this before it writes anything that outlives the component — a store, a
+  // subscription, the playhead.
+  let dead = false;
 
-    // Resume where the operator actually was. The output windows are separate
-    // webviews and survive a console crash, so the verse is still on the wall —
-    // restoring the cursor WITHOUT re-firing makes the transport agree with what
-    // the congregation is looking at.
-    const saved = get(session);
-    if (saved.planId) {
-      const p = plans.find((x) => x.id === saved.planId);
-      if (p) {
-        await loadPlan(p);
-        if (saved.liveCueId && items.some((i) => i.id === saved.liveCueId)) {
-          // Restore the playhead AND whether it was genuinely on air — never
-          // assume on air. This runs on every return to the Live tab, not only
-          // after a crash, and the operator may simply have cleared the screens.
-          liveCue.set({
-            cueId: saved.liveCueId,
-            slide: saved.liveSlide ?? 0,
-            onAir: saved.liveOnAir === true,
-          });
-          selId = saved.liveCueId;
-        }
-      }
-    }
+  onMount(async () => {
+    // ── EVERYTHING THAT OUTLIVES THIS VIEW IS SET UP BEFORE THE FIRST AWAIT ──
+    //
+    // This used to sit at the BOTTOM of the async body, after five backend round
+    // trips, and that was a live-safety bug rather than untidiness.
+    // `registerContext` is ONE global slot and the last writer wins, so a
+    // workspace switch inside the mount window ran `onDestroy` against three
+    // `undefined`s — tearing nothing down — and then let a view that no longer
+    // exists take ownership of `→`, `←` and `Space` on whatever tab the operator
+    // had moved to. They press the key they press more than any other and a plan
+    // slide reaches the congregation from a surface they cannot see.
+    //
+    // None of the three needs data, so none of them waits for any.
+    // Pinned by `liveunmount.test.js`.
 
     // ONE registration for the whole live surface. Previously the Console
     // registered accept/dismiss/search and the Planner registered next/prev, so
@@ -375,11 +364,56 @@
         navBlocked.set(null);
       }
     });
+
+    await loadRehearsal();
+    if (dead) return;
+    getSensitivity().then((v) => {
+      if (!dead) sensitivity = v;
+    });
+    // Populate the reactive `$templates` store so the preview/program panes
+    // resolve (and stay live to edits) from it, not just a one-shot snapshot.
+    await loadTemplates().catch(() => {});
+    await loadDefaultTemplate().catch(() => {});
+    if (dead) return;
+    channels = await listOutputChannels().catch(() => []);
+    if (dead) return;
+    await loadPlans();
+    if (dead) return;
+
+    // Resume where the operator actually was. The output windows are separate
+    // webviews and survive a console crash, so the verse is still on the wall —
+    // restoring the cursor WITHOUT re-firing makes the transport agree with what
+    // the congregation is looking at.
+    const saved = get(session);
+    if (saved.planId) {
+      const p = plans.find((x) => x.id === saved.planId);
+      if (p) {
+        // `loadPlan` RESETS the playhead. Doing that from a view the operator has
+        // already left would put the next `→` back at cue 1 — the opening
+        // countdown, at the end of the service.
+        if (dead) return;
+        await loadPlan(p);
+        if (dead) return;
+        if (saved.liveCueId && items.some((i) => i.id === saved.liveCueId)) {
+          // Restore the playhead AND whether it was genuinely on air — never
+          // assume on air. This runs on every return to the Live tab, not only
+          // after a crash, and the operator may simply have cleared the screens.
+          liveCue.set({
+            cueId: saved.liveCueId,
+            slide: saved.liveSlide ?? 0,
+            onAir: saved.liveOnAir === true,
+          });
+          selId = saved.liveCueId;
+        }
+      }
+    }
   });
   let unregisterKeys;
   let unsubNav;
   let unsubLive;
   onDestroy(() => {
+    // FIRST, so anything the async mount is still holding stops before it writes.
+    dead = true;
     unregisterKeys?.();
     unsubNav?.();
     // The emergency announcement's arm timer, cleared for the same reason as the
@@ -1012,9 +1046,10 @@
      Row B: 1 Live Transcript · 2 AI Detection · 3 Service Plan · 4 Quick Controls
      Everything below is a re-dressing of the controls that were already here — no
      command was added, removed or rewired. Where the reference draws a control
-     Relay has no backend for (a transition rack, Fit/Safe-Area, Hold Outputs,
-     Override Mode, ±5s audio scrub, a monitor bus), it is NOT drawn: a dead
-     button in a live console is the exact failure this codebase keeps fixing. -->
+     Relay has no backend for (Fit/Safe-Area, Hold Outputs, Override Mode, ±5s
+     audio scrub, a monitor bus), it is NOT drawn: a dead button in a live console
+     is the exact failure this codebase keeps fixing. (The transition rack has
+     since come off that list for a different reason — see the rack itself.) -->
 <div class="con" class:compact class:fullscreen>
   <!-- ══ REHEARSAL ══
        Unmissable, or it is worse than useless. Both ways of being wrong about this
@@ -1109,13 +1144,18 @@
       </div>
     </section>
 
-    <!-- THE RACK. The reference's transition list (Cut / Fade / Wipe / Stinger /
-         Duration) is not drawn — Relay has no transition engine, and drawing five
-         buttons that do nothing would be inventing a feature. What is here is the
-         real take path: the same accept/fire and the same nav the keys already run,
-         plus the transport MODE, which is the one thing about `→` an operator must
-         never have to guess (CLAUDE.md — same key, two meanings, is how the wrong
-         thing reaches a congregation). -->
+    <!-- THE RACK. The reference draws a transition list here (Cut / Fade / Wipe /
+         Stinger / Duration). Relay HAS a transition engine now — seven modes in
+         `transitions.js`, played by the renderer (docs/REBRAND.md §8, DECISIONS
+         §71) — so the old reason for leaving them out ("no engine") has expired.
+         They are still not drawn, for a different and better reason: a transition
+         is a property of the TEMPLATE, resolved through the style model, so a
+         desk-level picker here would either change nothing on the wall or silently
+         edit a template from the run surface. It belongs where the look is chosen.
+         What is here is the real take path: the same accept/fire and the same nav
+         the keys already run, plus the transport MODE, which is the one thing about
+         `→` an operator must never have to guess (CLAUDE.md — same key, two
+         meanings, is how the wrong thing reaches a congregation). -->
     <aside class="rack">
       <span class="rack-lbl">Take</span>
       <button

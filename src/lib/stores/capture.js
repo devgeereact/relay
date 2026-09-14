@@ -20,7 +20,8 @@
 //   GROUP 1 — THROWS. Anything that changes what is on the screens, what the AI is
 //   allowed to do, or whether the microphone is live. `manualFire`, `confirmDetection`,
 //   `setDetection`, `setRehearsal`, `navVerse`, `startCapture`, `stopCapture`,
-//   `fireContent`, `startCountdown`. The caller MUST handle it and tell the operator.
+//   `fireContent`, `startCountdown`, `adjustCountdown`. The caller MUST handle it and
+//   tell the operator.
 //   A silent failure here is a lie told to someone standing in front of a congregation.
 //
 //   GROUP 2 — SWALLOWS, and returns a safe default. Reads: `listPlans`, `listSongs`,
@@ -1123,6 +1124,61 @@ const l = get(live);
 return !!(l && l.countdown_to && l.countdown_to > Date.now());
 }
 
+/** How long the countdown ON THE WALL has left, in ms — or null when there is no
+ *  countdown on the wall. The transport reads THIS, never its own clock: one
+ *  timer, so the figure in the dock and the figure on the screen cannot drift
+ *  (docs/REBRAND.md §7). */
+export function countdownRemaining(atMs = Date.now()) {
+const l = get(live);
+if (!l || !l.countdown_to) return null;
+const left = l.countdown_to - atMs;
+return left > 0 ? left : null;
+}
+
+/**
+ * RE-AIM THE RUNNING COUNTDOWN — Reset and ±1 on the transport.
+ *
+ * Separate from `startCountdown` on purpose. That one REFUSES while a countdown
+ * is running, which is right for "Start" (a second countdown over the first is
+ * always a mistake) and wrong for every transport press, all of which are about
+ * the countdown that is already there. One broadcast per press; the outputs go
+ * on ticking locally, so this adds no per-second traffic.
+ *
+ * THROWS (contract group 1) — it changes what a congregation is looking at.
+ *
+ * Two things are carried over from the countdown already on air rather than
+ * re-decided, because a press of `+1` must change the time and nothing else:
+ *
+ *   · its label and its done message, so the wall does not silently rename itself;
+ *   · its template, **only when that template was PINNED**. A countdown fired from
+ *     the dock resolves through the content look, which DEFERS to each screen's
+ *     own template (DECISIONS §29). Feeding the resolved id back in would make it
+ *     a pinned cue template and take that deference away — the screen's own
+ *     template would stop winning, from a press of `+1`.
+ */
+export async function adjustCountdown(ms, keepPlan = true) {
+const minutes = Number(ms) / 60_000;
+if (!Number.isFinite(minutes) || minutes <= 0) {
+  throw new Error('A countdown needs a length greater than zero.');
+}
+const l = get(live) ?? {};
+const call = await invoke();
+await call('start_countdown', {
+  minutes,
+  label: l.reference ?? 'Service begins in',
+  doneMsg: l.countdown_done ?? '',
+  templateId: l.template_pinned ? (l.template_id ?? null) : null,
+});
+// `keepPlan` DEFAULTS TRUE here, and it is the only wrapper in this file that
+// does. Every other take replaces what is on the wall, so the plan cue that was
+// amber is no longer what anyone is looking at. This one changes a NUMBER on
+// content that is already up: if a plan's countdown cue is on air, it is still on
+// air afterwards, and clearing `onAir` would grey out the correct cue and send
+// the next `→` back to cue 1. A countdown started from the dock already left the
+// plan when it started, so there is nothing left to clear either way.
+if (!keepPlan) leavePlan();
+}
+
 /** Start a pre-service countdown on every output. Outputs tick MM:SS locally
  *  from the broadcast target; `label` shows above, `doneMsg` replaces it at 0.
  *  Guarded: refuses to start a second countdown while one is still running —
@@ -1687,12 +1743,21 @@ return guardedRead('listOutputChannels', async (call) => {
 }
 
 /**
- * Assign a template to a screen — or `null`, which means THIS SCREEN HAS NO LOOK
- * OF ITS OWN and follows the content look (DECISIONS §70).
+ * THE WORD CURRENTLY SENT TO THE PREACHER — what Relay last put on the stage
+ * monitor, or null.
  *
- * GROUP 1 (throws). It is an operator action with a visible result; a failure
- * that is swallowed leaves the picker showing a look the screen is not wearing.
+ * A store rather than a component variable, and the reason is the dock: the shell
+ * renders it as `{#if !liveFullscreen}<Dock />{/if}`, so pressing Full screen
+ * DESTROYS the panel. With the flag living in the component, a word that was still
+ * on the preacher's monitor came back as "nothing sent" — which disabled the only
+ * control that takes it down. The operator could send a new one and never clear
+ * the old one.
+ *
+ * It is a mirror of what Relay SENT, written only after the call resolves, and it
+ * claims nothing more than that.
  */
+export const stageAlert = writable(null);
+
 /**
  * A WORD TO THE PREACHER — one line, the whole stage monitor, and no other
  * screen (docs/REBRAND.md §5). Empty or whitespace clears it.
@@ -1704,8 +1769,18 @@ return guardedRead('listOutputChannels', async (call) => {
 export async function sendStageAlert(text) {
 const call = await invoke();
 await call('send_stage_alert', { text: text ?? null });
+// After, never before: a failed send must not leave the dock saying a word is on
+// the preacher's monitor.
+stageAlert.set(text?.trim() ? text.trim() : null);
 }
 
+/**
+ * Assign a template to a screen — or `null`, which means THIS SCREEN HAS NO LOOK
+ * OF ITS OWN and follows the content look (DECISIONS §70).
+ *
+ * GROUP 1 (throws). It is an operator action with a visible result; a failure
+ * that is swallowed leaves the picker showing a look the screen is not wearing.
+ */
 export async function setChannelTemplate(id, templateId) {
 const call = await invoke();
 await call('set_channel_template', { id, templateId: templateId ?? null });

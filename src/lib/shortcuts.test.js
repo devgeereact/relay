@@ -81,10 +81,14 @@ describe('global panic keys', () => {
 
 describe('context actions', () => {
   let teardown, unregister;
-  const noop = { clearScreens: () => {}, blackScreen: () => {} };
+  // Spies rather than bare no-ops: the `R` test below has to be able to say that
+  // the panic controls did NOT fire, which is half of what it claims.
+  const noop = { clearScreens: vi.fn(), blackScreen: vi.fn() };
 
   beforeEach(() => {
     cheatsheet.set(false);
+    noop.clearScreens.mockClear();
+    noop.blackScreen.mockClear();
     teardown = installShortcuts(noop);
   });
 
@@ -143,6 +147,41 @@ describe('context actions', () => {
     stop();
     press(' ');
     expect(next).not.toHaveBeenCalled();
+  });
+
+  // `R` IS NOT A KEY, AND MUST NOT BECOME ONE.
+  //
+  // The rebrand's Live brief lists it beside Space, Esc, B and the arrows, and the
+  // obvious thing to bind it to is Rehearse — which is exactly why this test
+  // exists. Rehearsal is the one toggle whose two states look like success from
+  // the console and opposite from the room: entering it mid-service takes the
+  // congregation's screens dark while everything in the booth still moves, and
+  // leaving it by accident puts a practice run in front of people. A single
+  // unmodified keystroke, on a surface where an operator's hand is already on the
+  // keyboard, is not a proportionate control for that. Rehearse stays a button
+  // that reports its own failure (CLAUDE.md rule 15 · DECISIONS §20).
+  //
+  // Stated as a test rather than a comment because the next person to read the
+  // brief will reach for `case 'r':` and this is what tells them not to.
+  it('R does nothing — not accept, not advance, and above all not rehearse', () => {
+    const calls = {
+      accept: vi.fn(),
+      dismiss: vi.fn(),
+      next: vi.fn(),
+      prev: vi.fn(),
+      search: vi.fn(),
+    };
+    unregister = registerContext(calls);
+    press('r');
+    press('R');
+    for (const fn of Object.values(calls)) expect(fn).not.toHaveBeenCalled();
+    // And it is not a panic key wearing another letter.
+    expect(noop.clearScreens).not.toHaveBeenCalled();
+    expect(noop.blackScreen).not.toHaveBeenCalled();
+  });
+
+  it('…and the table does not advertise it', () => {
+    expect(SHORTCUTS.some((s) => s.keys.some((k) => k.toLowerCase() === 'r'))).toBe(false);
   });
 });
 
