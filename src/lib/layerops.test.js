@@ -7,7 +7,10 @@
 // throws away the thing a person spent their time on — where the object sits on
 // the slide.
 import { describe, it, expect } from 'vitest';
-import { duplicateLayer, resetLayer, moveLayer } from './layerops.js';
+import {
+  duplicateLayer, resetLayer, moveLayer,
+  alignLayer, spaceEvenly, isMovable, movableLayers,
+} from './layerops.js';
 
 const text = (over = {}) => ({
   id: 't1',
@@ -172,5 +175,122 @@ describe('moveLayer — the paint order', () => {
     const before = list.map((l) => l.id);
     moveLayer(list, 'a', 1);
     expect(list.map((l) => l.id)).toEqual(before);
+  });
+});
+
+// ── ALIGNING AND SPACING — wave 3, agent S1 ────────────────────────────────
+//
+// The same class of mistake as the two above, and here for the same reason: it
+// is invisible on screen. "Align right" that stores `x = 100` puts a 60%-wide
+// object more than half off the frame, and in a 240px preview that looks like a
+// centred object with a generous margin.
+//
+// Each assertion below was watched to fail with its own defect reintroduced —
+// the clamp removed, `isMovable` softened to `type !== 'background'`, and the
+// three-object floor dropped to two.
+describe('alignLayer', () => {
+  const box = (over) => text({ ...over });
+
+  it('puts an object against an edge as a SHARE of the frame, never a pixel', () => {
+    expect(alignLayer([box({ id: 'a', x: 10, w: 60 })], 'a', 'left')[0].x).toBe(0);
+    expect(alignLayer([box({ id: 'a', y: 20, h: 30 })], 'a', 'top')[0].y).toBe(0);
+  });
+
+  it("CLAMPS the far edges by the object's own size", () => {
+    // THE DEFECT: `x = 100` for "right", `y = 100` for "bottom". The number grid
+    // in the Position panel would then read a perfectly plausible 100 over an
+    // object that is mostly off the canvas.
+    expect(alignLayer([box({ id: 'a', w: 60 })], 'a', 'right')[0].x).toBe(40);
+    expect(alignLayer([box({ id: 'a', h: 30 })], 'a', 'bottom')[0].y).toBe(70);
+  });
+
+  it("centres on the object's middle, to a tenth", () => {
+    expect(alignLayer([box({ id: 'a', w: 33 })], 'a', 'hcenter')[0].x).toBe(33.5);
+    expect(alignLayer([box({ id: 'a', h: 33 })], 'a', 'vmiddle')[0].y).toBe(33.5);
+  });
+
+  it('refuses the three kinds these four numbers do not place', () => {
+    // Not a nicety. Nothing draws a background, a band or a word-in-a-band from
+    // x/y/w/h, so a button that writes them is a button that changes nothing —
+    // the defect DECISIONS §69 closed, one control along.
+    const band = { id: 'b1', type: 'band', members: ['w1'], top: 74, side: 6 };
+    const list = [band, box({ id: 'w1' }), { id: 'bg', type: 'background', x: 0, y: 0, w: 100, h: 100 }, box({ id: 'a' })];
+    expect(alignLayer(list, 'b1', 'left')).toBe(list);
+    expect(alignLayer(list, 'w1', 'left')).toBe(list);
+    expect(alignLayer(list, 'bg', 'left')).toBe(list);
+    // ...and it does move the one object that IS placed by them, so the three
+    // refusals above are a rule rather than a function that never works.
+    expect(alignLayer(list, 'a', 'left')).not.toBe(list);
+  });
+
+  it('refuses a LOCKED object — the padlock means the same thing on every surface', () => {
+    const list = [box({ id: 'a', locked: true })];
+    expect(alignLayer(list, 'a', 'left')).toBe(list);
+  });
+
+  it('returns the SAME list when nothing moved, so a caller can tell', () => {
+    const list = [box({ id: 'a', x: 0 })];
+    expect(alignLayer(list, 'a', 'left')).toBe(list);
+    expect(alignLayer(list, 'nope', 'left')).toBe(list);
+    expect(alignLayer(list, 'a', 'diagonally')).toBe(list);
+  });
+});
+
+describe('spaceEvenly', () => {
+  const at = (id, x, w = 10) => text({ id, x, w, y: 0, h: 10 });
+
+  it('holds the outer two still and evens the centres between them', () => {
+    // Distribution is a statement about the gaps, not about where the group
+    // sits. A version that re-centred the row as well would look, on the one
+    // press an operator gave it, like it had moved everything somewhere
+    // arbitrary.
+    expect(spaceEvenly([at('a', 0), at('b', 5), at('c', 40)], 'x').map((l) => l.x))
+      .toEqual([0, 20, 40]);
+  });
+
+  it('works down the frame as well as across it', () => {
+    const col = (id, y) => text({ id, x: 0, w: 10, y, h: 10 });
+    expect(spaceEvenly([col('a', 0), col('b', 1), col('c', 60)], 'y').map((l) => l.y))
+      .toEqual([0, 30, 60]);
+  });
+
+  it('sorts by where things ARE, not by where they sit in the array', () => {
+    const out = spaceEvenly([at('c', 40), at('a', 0), at('b', 5)], 'x');
+    expect(out.find((l) => l.id === 'b').x).toBe(20);
+    expect(out.find((l) => l.id === 'a').x).toBe(0);
+    expect(out.find((l) => l.id === 'c').x).toBe(40);
+  });
+
+  it('needs three, and says so by changing nothing', () => {
+    const two = [at('a', 0), at('b', 40)];
+    expect(spaceEvenly(two, 'x')).toBe(two);
+  });
+
+  it('counts only the objects it may move', () => {
+    const list = [
+      { id: 'b1', type: 'band', members: ['w1'], top: 74 },
+      text({ id: 'w1' }),
+      { id: 'bg', type: 'background', x: 0, y: 0, w: 100, h: 100 },
+      at('a', 0), at('b', 40),
+    ];
+    expect(movableLayers(list).map((l) => l.id)).toEqual(['a', 'b']);
+    // Two movable objects on a five-object slide is still two, so it declines.
+    expect(spaceEvenly(list, 'x')).toBe(list);
+  });
+
+  it('never pushes an object off the frame', () => {
+    const out = spaceEvenly([at('a', 0, 4), text({ id: 'b', x: 50, w: 80, y: 0, h: 10 }), at('c', 96, 4)], 'x');
+    const moved = out.find((l) => l.id === 'b');
+    expect(moved.x).toBeGreaterThanOrEqual(0);
+    expect(moved.x + moved.w).toBeLessThanOrEqual(100);
+  });
+});
+
+describe('isMovable', () => {
+  it('takes an id or the object itself, and answers the same either way', () => {
+    const list = [text({ id: 'a' })];
+    expect(isMovable(list, 'a')).toBe(true);
+    expect(isMovable(list, list[0])).toBe(true);
+    expect(isMovable(list, 'ghost')).toBe(false);
   });
 });

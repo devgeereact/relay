@@ -14,7 +14,10 @@
   // The preview is the SAME TemplateRender as the wall — WYSIWYG by construction.
   import { createEventDispatcher, onMount, onDestroy } from 'svelte';
   import { rangeFill } from '../../rangefill.js';
-  import { duplicateLayer, resetLayer, removeLayer as dropLayer, moveLayer as moveInOrder } from '../../layerops.js';
+  import {
+    duplicateLayer, resetLayer, removeLayer as dropLayer, moveLayer as moveInOrder,
+    alignLayer, spaceEvenly, isMovable, movableLayers,
+  } from '../../layerops.js';
   import { BUILTINS } from '../../templates.js';
   import { contentTemplates, setContentTemplate, loadContentTemplates } from '../../stores/capture.js';
   import TemplateRender from '../../TemplateRender.svelte';
@@ -118,6 +121,31 @@
   $: room = { screenWidthM: Number(screenWidthM), backRowM: Number(backRowM) };
   $: legible = themedEdit ? review(themedEdit.style ?? {}, previewContent, room) : null;
   let showDistances = false;
+
+  // ── AND IT IS FOLDED AWAY UNTIL IT IS ASKED FOR ────────────────────────────
+  //
+  // Seven paragraphs of small italic prose, three verdict rows, two number
+  // fields and a button sat permanently under the layer list — the largest thing
+  // in the column an operator opens to find their layers, and the least used.
+  // Nothing is deleted: opening it gives back exactly what was there.
+  //
+  // THE ONE LINE THAT STAYS VISIBLE HAS TO BE A REAL STATUS LINE (rule 35). A
+  // collapsed panel that always read "Readability" would say the same thing over
+  // a template with two contrast failures as over one with none, which is the
+  // defect the rule names, and would be worse than the essay it replaced. So the
+  // summary is derived from the same `review` the rows are, and the three answers
+  // are distinct: something to look at, something that CANNOT be checked from
+  // here (a photograph behind the words — `review` counts those separately and
+  // refuses to call them a pass), and a clean result.
+  let legOpen = false;
+  $: legSummary = !legible
+    ? ''
+    : legible.problems
+      ? `${legible.problems} to look at`
+      : legible.unknowns
+        ? `${legible.unknowns} it cannot check`
+        : 'nothing flagged';
+  $: legState = !legible ? '' : legible.problems ? 'bad' : legible.unknowns ? 'unknown' : 'ok';
   onDestroy(() => clearTimeout(liveTimer));
 
   function load(id) {
@@ -152,16 +180,23 @@
   // The words are NOT reversed under their band. A stack's order is what paints
   // over what; a band's order is reading order — the name above the role — and
   // reversing it would print the list backwards against the wall it describes.
-  $: panelRows = (() => {
+  //
+  // A FUNCTION, not only a reactive value, because the drag needs to ask this
+  // question of a list it has not committed yet. `reorderTo` steps `moveLayer`
+  // one place at a time and has to re-read the resulting order after each step;
+  // asking `panelRows` would be asking about the list as it was before the
+  // gesture started.
+  function panelOrderOf(list) {
     const rows = [];
-    for (const L of [...topLevelLayers(layers)].reverse()) {
+    for (const L of [...topLevelLayers(list)].reverse()) {
       rows.push({ L, member: false });
       if (L.type === 'band') {
-        for (const m of bandMembers(layers, L)) rows.push({ L: m, member: true });
+        for (const m of bandMembers(list, L)) rows.push({ L: m, member: true });
       }
     }
     return rows;
-  })();
+  }
+  $: panelRows = panelOrderOf(layers);
   $: sel = layers.find((l) => l.id === selId) || null;
   /** The icon for a kind, from the ONE register (`LAYER_TYPES`). The list drew
    *  its own four-way guess and answered `T` for a band, a region AND a timer —
@@ -183,6 +218,57 @@
   // the same derived geometry the renderer does, rather than a second guess at
   // it (`drawBoxes`, one home).
   $: drawn = drawBoxes(layers, (L) => boundValue(L, previewContent));
+
+  // ── THE ROW'S THUMBNAIL ────────────────────────────────────────────────────
+  //
+  // WHAT IT IS, said plainly because the alternative is a reader trusting it for
+  // something it cannot do: a **placement proxy**, not a render. It shows where
+  // this one object sits in the frame and what colour it is, live, as the drag
+  // moves it. It does NOT show the words, the typeface, the fit or anything the
+  // renderer decides — `TemplateRender` is the one renderer (CLAUDE.md) and a
+  // 34px-wide second one drawing a rough likeness of a slide would be exactly the
+  // fork that rule exists to prevent, and would be wrong in a way nobody could
+  // see at that size.
+  //
+  // It reads the SAME two sources the canvas overlay does: `drawn` for the
+  // geometry (a band and its words are placed by the band, not by x/y/w/h) and
+  // the THEMED copy of the template for the colour, so a layer bound to
+  // `theme:accent` shows the accent the wall would use rather than the token
+  // string. Both are derived, so nothing here can disagree with the artboard.
+  $: themedLayers = new Map((themedEdit?.layout?.layers ?? []).map((L) => [L.id, L]));
+
+  // A colour Relay itself put in a template, or a colour an operator typed into
+  // one. It reaches an inline `style`, so it is matched rather than trusted: a
+  // hex, an rgb/hsl call, a gradient, or a bare CSS keyword. Anything else falls
+  // back to a neutral, which is the honest answer for "I cannot draw this".
+  const PAINTABLE = /^(#[0-9a-f]{3,8}|(?:rgb|rgba|hsl|hsla)\([^;{}]*\)|(?:linear|radial|conic)-gradient\([^;{}]*\)|[a-z]{3,20})$/i;
+  const paint = (v, fallback) =>
+    typeof v === 'string' && PAINTABLE.test(v.trim()) ? v.trim() : fallback;
+
+  function thumbOf(L) {
+    const b = drawn.get(L.id) || L;
+    const t = themedLayers.get(L.id) || L;
+    const full = L.type === 'background';
+    const box = {
+      x: full ? 0 : Math.max(0, Math.min(100, Number(b.x) || 0)),
+      y: full ? 0 : Math.max(0, Math.min(100, Number(b.y) || 0)),
+      w: full ? 100 : Math.max(2, Math.min(100, Number(b.w) || 0)),
+      h: full ? 100 : Math.max(2, Math.min(100, Number(b.h) || 0)),
+    };
+    const words = L.type === 'text' || L.type === 'timer';
+    return {
+      ...box,
+      words,
+      // A text object's box is drawn as an outline with two bars in the ink; a
+      // shape, band or background is drawn as the fill itself.
+      fill: words ? 'transparent' : paint(t.fill, 'var(--v-line2)'),
+      ink: paint(t.color, 'var(--v-dim)'),
+      // Media and a slide region show something Relay does not have here, so
+      // they read as an empty frame rather than as a solid nobody chose.
+      hollow: L.type === 'media' || L.type === 'region',
+      opacity: L.visible === false ? 0.25 : Math.max(0.15, Math.min(1, Number(t.opacity ?? 1))),
+    };
+  }
 
   /** Put a text object into a band, or take it out again. */
   function setBandMembership(id, bandId) {
@@ -292,6 +378,108 @@
    *  EARLIER in the band (−1) — because the list draws a band's words in the
    *  order the band reads them, not in the order they paint. */
   const moveDir = (row, up) => (row.member ? (up ? -1 : 1) : up ? 1 : -1);
+
+  // ── DRAG TO REORDER ────────────────────────────────────────────────────────
+  //
+  // The arrows are still there and still the keyboard's way through this. What
+  // this adds is the gesture everybody arrives expecting, and it is built ON the
+  // arrows rather than beside them: `reorderTo` steps `moveLayer` one place at a
+  // time until the dragged row reaches the index the drop named. That matters
+  // more than it looks. `moveLayer` is the module that knows a band's words are
+  // not in the stack, that a word steps within its band and may never step out
+  // of it, and that a band carries its words with it; a drop handler that spliced
+  // the array itself would be a SECOND answer to all three, and the first one
+  // took a bug in every lower third the product ships to find.
+  //
+  // A drag never crosses a context. The stack and each band are separate orders,
+  // so dropping a word onto a shape is not a move that exists — and the loop
+  // below would half-do it, shuffling the word inside its band and stopping. The
+  // row refuses the drop instead, and shows no line where it cannot land.
+  let dragId = null;   // the row being carried
+  let overId = null;   // the row it is currently over, if the drop is legal
+
+  /** Which ORDER a row belongs to: the stack, or one particular band. */
+  function rowContext(list, id) {
+    const band = bandOf(list, id);
+    return band ? band.id : '__stack__';
+  }
+
+  /**
+   * The row a drop on `id` actually MEANS for the row being carried, or null if
+   * the drop has no meaning at all.
+   *
+   * Same context: itself. A top-level object dropped on a band's WORD: the BAND
+   * — a band's words are indented under it and the only position in the stack
+   * that row stands for is the band's own, so refusing would leave a dead zone
+   * across most of the list on every lower third the product ships. A word
+   * dropped on a top-level row: NOTHING. Leaving a band is what the "In band"
+   * control is for, and it is not something a gesture may do by accident (the
+   * same sentence `moveLayer` makes about the arrows).
+   */
+  function dropTarget(list, dragged, id) {
+    if (!dragged || dragged === id) return null;
+    const from = rowContext(list, dragged);
+    const to = rowContext(list, id);
+    if (from === to) return id;
+    if (from !== '__stack__') return null;
+    return to === dragged ? null : to; // `to` is the band's own id
+  }
+  const canDropOn = (id) => !!dropTarget(layers, dragId, id);
+
+  function reorderTo(id, dropOn) {
+    const before = edit?.layout?.layers || [];
+    const targetId = dropTarget(before, id, dropOn);
+    if (!targetId) return;
+    const ids = (l) => panelOrderOf(l).map((r) => r.L.id);
+    const start = ids(before).indexOf(id);
+    const want = ids(before).indexOf(targetId);
+    if (start < 0 || want < 0 || start === want) return;
+    const up = want < start; // up the LIST is toward the front of the stack
+    let list = before;
+    // Bounded by construction: every iteration either moves the row one place
+    // (so the distance to `want` shrinks) or returns the same list and stops.
+    // The guard is belt and braces against a future `moveLayer` that cycles.
+    for (let guard = 0; guard <= before.length * 2; guard++) {
+      const order = panelOrderOf(list);
+      const at = order.findIndex((r) => r.L.id === id);
+      if (at < 0 || at === want) break;
+      const next = moveInOrder(list, id, moveDir(order[at], up));
+      if (next === list) break; // nowhere further to go — already at the end
+      list = next;
+    }
+    if (list === before) return;
+    edit.layout.layers = list;
+    selId = id;
+    edit = edit;
+  }
+
+  function onRowDragStart(e, L) {
+    // A LOCKED ROW DOES NOT MOVE. The lock already refuses the canvas drag and
+    // the arrow-key nudge; a rail that reordered it anyway would mean the same
+    // padlock answered yes on one surface and no on another.
+    if (L.locked) { e.preventDefault(); return; }
+    dragId = L.id;
+    selId = L.id;
+    try {
+      e.dataTransfer.effectAllowed = 'move';
+      // Firefox starts no drag at all without some data on the transfer.
+      e.dataTransfer.setData('text/plain', L.id);
+    } catch { /* jsdom has no dataTransfer; the reorder is driven directly */ }
+  }
+  function onRowDragOver(e, L) {
+    if (!canDropOn(L.id)) { overId = null; return; }
+    e.preventDefault();
+    try { e.dataTransfer.dropEffect = 'move'; } catch { /* see above */ }
+    overId = L.id;
+  }
+  function onRowDrop(e, L) {
+    e.preventDefault();
+    if (canDropOn(L.id)) reorderTo(dragId, L.id);
+    dragId = null;
+    overId = null;
+  }
+  const onRowDragEnd = () => { dragId = null; overId = null; };
+
   function toggleVisible(id) {
     const L = edit.layout.layers.find((l) => l.id === id);
     if (L) { L.visible = L.visible === false; edit = edit; }
@@ -444,10 +632,55 @@
   }
   // One-click centring — the "center items" ask. Centres the selected layer on
   // the canvas, horizontally, vertically, or both.
+  // THE SAME ARITHMETIC AS THE STRIP, not a second copy of it. These three
+  // buttons predate the alignment strip and write the same two numbers; leaving
+  // them with their own `50 - w/2` would be two answers to one question, which is
+  // exactly how this panel ended up with two Position groups that disagreed.
+  // They stay because Preview mode hides the canvas chrome, strip included, and a
+  // control that vanishes with the rulers is not a control.
   function center(axis) {
-    if (!sel || sel.type === 'background') return;
-    if (axis === 'x' || axis === 'both') set('x', r1(50 - sel.w / 2));
-    if (axis === 'y' || axis === 'both') set('y', r1(50 - sel.h / 2));
+    if (axis === 'x' || axis === 'both') alignSel('hcenter');
+    if (axis === 'y' || axis === 'both') alignSel('vmiddle');
+  }
+
+  // ── THE ALIGNMENT STRIP ────────────────────────────────────────────────────
+  //
+  // Six edges and two spacings, over the canvas, where the object is. They write
+  // the same four numbers the drag writes — a SHARE OF THE FRAME, rounded to a
+  // tenth, clamped so nothing leaves the canvas — through `layerops`, which is
+  // where the arithmetic lives for the same reason `moveLayer` does: an "align
+  // right" that stores `x = 100` looks, in a 240px preview, like a centred object
+  // with a wide margin.
+  //
+  // NOTHING HERE WRITES A PIXEL. The renderer sizes in cqw, so a pixel an editor
+  // stored on one machine would land somewhere else on every screen it reached.
+  const ALIGN_BUTTONS = [
+    { edge: 'left', label: 'Align left', d: 'M4 3v18M8 7h11M8 14h7' },
+    { edge: 'hcenter', label: 'Align centre', d: 'M12 3v18M6 7h12M8 14h8' },
+    { edge: 'right', label: 'Align right', d: 'M20 3v18M5 7h11M9 14h7' },
+    { edge: 'top', label: 'Align top', d: 'M3 4h18M7 8v11M14 8v7' },
+    { edge: 'vmiddle', label: 'Align middle', d: 'M3 12h18M7 6v12M14 8v8' },
+    { edge: 'bottom', label: 'Align bottom', d: 'M3 20h18M7 5v11M14 9v7' },
+  ];
+  // Only an object these four numbers actually place may be aligned — the same
+  // question the Position group asks, from the same module, so the strip and the
+  // number grid can never disagree about whether an object can move.
+  $: canAlign = !!sel && isMovable(layers, sel);
+  // Spacing needs three: with two, every arrangement is already evenly spaced.
+  $: spaceable = movableLayers(layers).length;
+  function alignSel(edge) {
+    const before = edit?.layout?.layers || [];
+    const after = alignLayer(before, selId, edge);
+    if (after === before) return;
+    edit.layout.layers = after;
+    edit = edit;
+  }
+  function spaceOut(axis) {
+    const before = edit?.layout?.layers || [];
+    const after = spaceEvenly(before, axis);
+    if (after === before) return;
+    edit.layout.layers = after;
+    edit = edit;
   }
   // Nudge with arrow keys when a layer is selected (1% steps, 5% with Shift).
   function onCanvasKey(e) {
@@ -791,23 +1024,63 @@
         <div class="te-layerlist r-scroll">
           {#each panelRows as row (row.L.id)}
             {@const L = row.L}
+            {@const th = thumbOf(L)}
+            <!-- A LIST ROW, carried by its own grip. The whole row is the drop
+                 target; `dragover` has to preventDefault or the browser refuses
+                 the drop, and it only does so where the drop is legal, so a row
+                 in another order shows no line and takes nothing. -->
             <div class="te-layer" class:sel={selId === L.id} class:off={L.visible === false} class:inband={row.member}
+              class:dragging={dragId === L.id} class:dropto={overId === L.id}
+              draggable={!L.locked}
+              on:dragstart={(e) => onRowDragStart(e, L)}
+              on:dragover={(e) => onRowDragOver(e, L)}
+              on:dragleave={() => { if (overId === L.id) overId = null; }}
+              on:drop={(e) => onRowDrop(e, L)}
+              on:dragend={onRowDragEnd}
               on:click={() => (selId = L.id)} role="button" tabindex="0"
               on:keydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selId = L.id; } }}>
-              <span class="te-ltype" aria-hidden="true">{typeIcon(L.type)}</span>
+              <span class="te-lgrip" aria-hidden="true" title={L.locked ? 'Locked — unlock it to reorder by dragging' : 'Drag to reorder'}>⠿</span>
+              <!-- THE PLACEMENT PROXY (`thumbOf`). Not a render and not a claim
+                   to be one: one box, where this object sits, in its own colour.
+                   aria-hidden, because the row already says the object's name and
+                   a screen reader has nothing to gain from a coloured rectangle. -->
+              <span class="te-lthumb" aria-hidden="true">
+                <span
+                  class="te-lthumbbox"
+                  class:words={th.words}
+                  class:hollow={th.hollow}
+                  style="left:{th.x}%; top:{th.y}%; width:{th.w}%; height:{th.h}%; background:{th.fill}; opacity:{th.opacity};"
+                >{#if th.words}<i style="background:{th.ink}"></i><i style="background:{th.ink}"></i>{/if}</span>
+              </span>
               <span class="te-lname" title={layerLabel(L)}>{layerLabel(L)}</span>
+              <span class="te-lstate">
+                <button class="te-lmini" title={L.visible === false ? 'Show' : 'Hide'} class:dim={L.visible === false}
+                  aria-label={L.visible === false ? `Show ${layerLabel(L)}` : `Hide ${layerLabel(L)}`}
+                  on:click|stopPropagation={() => toggleVisible(L.id)}>{L.visible === false ? '◌' : '●'}</button>
+                <button class="te-lmini" title={L.locked ? 'Unlock' : 'Lock'} class:on={L.locked}
+                  aria-label={L.locked ? `Unlock ${layerLabel(L)}` : `Lock ${layerLabel(L)}`}
+                  on:click|stopPropagation={() => toggleLock(L.id)}>{L.locked ? '🔒' : '🔓'}</button>
+              </span>
+              <!-- WHAT KIND IT IS, in the row that has room for it now. The
+                   glyph still comes from the ONE register (`typeIcon` →
+                   `LAYER_TYPES`) — it drew its own four-way guess once and
+                   answered `T` for a band, a region AND a timer. -->
+              <span class="te-lkind">
+                <span class="te-ltype" aria-hidden="true">{typeIcon(L.type)}</span>
+                <span class="te-lkindtxt">{row.member ? 'in band' : LAYER_TYPES.find((t) => t.type === L.type)?.label ?? L.type}</span>
+              </span>
               <span class="te-lbtns">
                 <!-- UP AND DOWN THE LIST, which is not the same axis for both
                      kinds of row — `moveDir` holds the one rule, and the label
-                     says which one this row is under. -->
+                     says which one this row is under. They stay: a drag is not
+                     reachable from a keyboard, and reordering a template is not
+                     something only a mouse may do. -->
                 <button class="te-lmini" title={row.member ? 'Earlier in the band' : 'Forward'}
                   aria-label={row.member ? `Move ${layerLabel(L)} earlier in the band` : `Bring ${layerLabel(L)} forward`}
                   on:click|stopPropagation={() => moveLayer(L.id, moveDir(row, true))}>↑</button>
                 <button class="te-lmini" title={row.member ? 'Later in the band' : 'Back'}
                   aria-label={row.member ? `Move ${layerLabel(L)} later in the band` : `Send ${layerLabel(L)} back`}
                   on:click|stopPropagation={() => moveLayer(L.id, moveDir(row, false))}>↓</button>
-                <button class="te-lmini" title={L.locked ? 'Unlock' : 'Lock'} class:on={L.locked} on:click|stopPropagation={() => toggleLock(L.id)}>{L.locked ? '🔒' : '🔓'}</button>
-                <button class="te-lmini" title="Visibility" on:click|stopPropagation={() => toggleVisible(L.id)}>{L.visible === false ? '◌' : '●'}</button>
                 <button
                   class="te-lmini danger"
                   class:armed={armedDelete === L.id}
@@ -821,12 +1094,27 @@
           {/each}
           {#if !layers.length}<div class="te-hint r-mono">No layers — use ＋ to add one.</div>{/if}
         </div>
-        <p class="te-panenote">Top of the list is the front. An indented row is a word inside the band above it — the band decides where it sits, so its arrows move it within the band. Drag layers on the canvas to move them.</p>
+        <p class="te-panenote">Top of the list is the front. Drag a row by its grip to reorder, or use ↑ ↓. An indented row is a word inside the band above it — the band decides where it sits, so it moves within the band and not out of it. A locked row will not move, here or on the canvas.</p>
 
         <!-- READABILITY. Under the layer list, in the panel a designer already has
              open, rather than behind a button they would have to know about. -->
         {#if legible}
-          <div class="r-lbl te-legtitle">Readability</div>
+          <!-- A DISCLOSURE ROW, not a button — the panel's own heading with its
+               current verdict on it and a chevron at the end. It is a <button>
+               so the whole row is the target and the keyboard reaches it; it
+               carries `aria-expanded`, so what it does is stated rather than
+               drawn. -->
+          <!-- Folding the panel also puts the distance strip away. Its only
+               switch lives INSIDE the panel, so leaving it on over a closed
+               panel would paint four extra renders across the canvas with
+               nothing on screen able to turn them off. -->
+          <button class="te-legtoggle" aria-expanded={legOpen} on:click={() => { legOpen = !legOpen; if (!legOpen) showDistances = false; }}>
+            <span class="r-lbl">Readability</span>
+            <span class="te-legsum" class:bad={legState === 'bad'} class:unknown={legState === 'unknown'}>{legSummary}</span>
+            <span class="te-legchev" aria-hidden="true">{legOpen ? '▴' : '▾'}</span>
+          </button>
+        {/if}
+        {#if legible && legOpen}
           <ul class="te-leg">
             {#each [['Verse', legible.verse], ['Reference', legible.reference], ['From the back', legible.distance]] as [label, c] (label)}
               <li class="te-legrow" class:bad={c.state === 'low' || c.state === 'small'} class:unknown={c.state === 'unknown'}>
@@ -853,6 +1141,38 @@
 
       <!-- ══ CANVAS ══ -->
       <section class="te-canvas">
+        {#if !previewMode}
+          <!-- THE ALIGNMENT STRIP, over the canvas, where the object is. It
+               writes the same percentages the drag writes, through `layerops`.
+               Hidden in Preview, which is the mode that takes the editor's
+               chrome away — the rulers and the handle boxes go with it. -->
+          <div class="te-alignbar" role="toolbar" aria-label="Align the selected object">
+            <span class="r-lbl te-alignlbl">Align</span>
+            {#each ALIGN_BUTTONS as a (a.edge)}
+              <button
+                class="r-iconbtn te-abtn"
+                disabled={!canAlign}
+                title={canAlign ? a.label : 'Select an object the canvas can move'}
+                aria-label={a.label}
+                on:click={() => alignSel(a.edge)}
+              >
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d={a.d}/></svg>
+              </button>
+            {/each}
+            <span class="te-adiv" aria-hidden="true"></span>
+            <!-- SPACE EVENLY says what it does to WHAT. There is one selection in
+                 this editor, and "distribute the selection" over one object is a
+                 control that cannot mean anything — so these act on every object
+                 the canvas can move, and the label and the tooltip both say so
+                 rather than leaving an operator to find out by pressing it. -->
+            <button class="r-btn ghost sm te-abtn2" disabled={spaceable < 3}
+              title={spaceable < 3 ? 'Needs three objects the canvas can move' : `Space all ${spaceable} movable objects evenly across the frame`}
+              on:click={() => spaceOut('x')}>Space across</button>
+            <button class="r-btn ghost sm te-abtn2" disabled={spaceable < 3}
+              title={spaceable < 3 ? 'Needs three objects the canvas can move' : `Space all ${spaceable} movable objects evenly down the frame`}
+              on:click={() => spaceOut('y')}>Space down</button>
+          </div>
+        {/if}
         {#if showDistances}
           <!-- STEPPING BACK, simulated. Shrinking the render by the ratio of the
                distances is exactly what a person does when they walk away from a
@@ -974,36 +1294,23 @@
           {/if}
         {/if}
         <div class="te-designbody r-scroll">
-          <h3 class="te-sec">Template</h3>
-          <div class="te-frow"><label class="te-fk" for="te-name">Name</label><input id="te-name" class="r-input te-fv" bind:value={edit.name} /></div>
-          <!-- PER-SCREEN CONTENT VISIBILITY. Tick the kinds this screen shows. An
-               online wall shows everything; a stage / confidence monitor might show
-               only scripture, songs and the timer — when a picture or announcement
-               fires, this screen ignores it and holds what it had. -->
-          <span class="r-lbl te-showlbl">Used for</span>
-          <div class="te-showgrid">
-            {#each CONTENT_KINDS as k}
-              <button
-                class="te-showchip"
-                class:on={$contentTemplates[k.key] === edit.id}
-                on:click={() => toggleUsedFor(k.key)}
-              >
-                <span class="te-showtick" aria-hidden="true">{$contentTemplates[k.key] === edit.id ? '✓' : ''}</span>{k.label}
-              </button>
-            {/each}
-          </div>
-          <p class="te-fnote">A kind ticked here wears this template on every screen set to <b>Follow the content look</b>. A screen with a look of its own keeps it.</p>
-          {#if lookErr}<p class="te-fwarn" role="alert">{lookErr}</p>{/if}
+          <!-- ══ THE SELECTED OBJECT COMES FIRST (§3.2) ══════════════════════
+               This panel used to open on the TEMPLATE — its name, the kinds of
+               content it is used for, the kinds it shows — and an operator who
+               had just clicked an object on the canvas then had to scroll past
+               all of it to reach that object's properties. The tab strip above
+               says which object is selected; what follows it is that object,
+               and the template's own facts are one section at the foot.
 
-          <span class="r-lbl te-showlbl">Shows on this screen</span>
-          <div class="te-showgrid">
-            {#each CONTENT_KINDS as k}
-              <button class="te-showchip" class:on={templateShows(edit, k.key)} on:click={() => toggleShows(k.key)}>
-                <span class="te-showtick" aria-hidden="true">{templateShows(edit, k.key) ? '✓' : ''}</span>{k.label}
-              </button>
-            {/each}
-          </div>
-
+               ONE DEVIATION FROM §3.2, STATED RATHER THAN HIDDEN: the reference
+               groups an object as Text / Position / Effects and this renders
+               Position FIRST, because Position is the one group every movable
+               kind has and there is exactly ONE of it. Putting it between Text
+               and Effects would mean emitting the group inside each kind's
+               branch — and this file already carries the scar of a duplicated
+               Position group that did not agree with its twin and moved a
+               locked object. One group in a slightly different place is a much
+               smaller problem than two groups. -->
           {#if sel && sel.type !== 'band' && !bandOf(layers, sel.id)}
             <!-- POSITION — ONE GROUP, §3.2. These were reachable only by dragging
                  on the canvas, so a keyboard-only operator could not place an
@@ -1245,6 +1552,64 @@
             <button class="te-swrow" on:click={() => set('scroll', !sel.scroll)}><span>Scroll (ticker)</span><span class="r-switch" class:on={sel.scroll}></span></button>
           {/if}
 
+          <!-- ══ AND THE TEMPLATE ITSELF, UNDERNEATH ═════════════════════════
+               Unchanged controls; what moved is where they sit. The rule above
+               the heading is a real boundary: everything above it is about one
+               object on this slide, everything below it is about the template
+               all of them belong to. -->
+          <h3 class="te-sec te-templatesec">Template</h3>
+          <div class="te-frow"><label class="te-fk" for="te-name">Name</label><input id="te-name" class="r-input te-fv" bind:value={edit.name} /></div>
+          <!-- ── TWO REGISTERS OF FIVE CHIPS, AND THEY ARE NOT THE SAME FACT ──
+               Found by agent S2 while auditing the gallery, and reported here
+               because both live in this file. They read as one fact printed
+               twice because they were two identical neutral chip rows over the
+               same five `CONTENT_KINDS` labels — and because the paragraph
+               explaining the SECOND one was attached to the FIRST, so the next
+               reader inherited the same confusion the render produced. The
+               comment is now on the register it describes.
+
+                 · USED FOR is a GLOBAL BINDING, written by `setContentTemplate`
+                   (DECISIONS §70): when scripture fires, every screen set to
+                   *Follow the content look* wears THIS template. It says nothing
+                   about how this template renders.
+                 · The one below is a PER-TEMPLATE FILTER on `layout.shows`, read
+                   at runtime by `Output.svelte` and `layers.js::templateShows`.
+
+               The label below was **"Shows on this screen"**, and the word
+               *screen* was the damage: the thing in hand is a TEMPLATE, and
+               several screens can wear it. `Used for` keeps its name — it is a
+               term of art carried by `docs/REBRAND.md` §3.3, DECISIONS §70, the
+               gallery card and `inspectorobjects.test.js`, and renaming it here
+               alone would make two surfaces call one binding two things. -->
+          <span class="r-lbl te-showlbl">Used for</span>
+          <div class="te-showgrid">
+            {#each CONTENT_KINDS as k}
+              <button
+                class="te-showchip"
+                class:on={$contentTemplates[k.key] === edit.id}
+                on:click={() => toggleUsedFor(k.key)}
+              >
+                <span class="te-showtick" aria-hidden="true">{$contentTemplates[k.key] === edit.id ? '✓' : ''}</span>{k.label}
+              </button>
+            {/each}
+          </div>
+          <p class="te-fnote">A kind ticked here wears this template on every screen set to <b>Follow the content look</b>. A screen with a look of its own keeps it.</p>
+          {#if lookErr}<p class="te-fwarn" role="alert">{lookErr}</p>{/if}
+
+          <!-- WHAT A SCREEN WEARING THIS TEMPLATE WILL RENDER. An online wall
+               shows everything; a stage / confidence monitor might show only
+               scripture, songs and the timer — when a picture or an announcement
+               fires, a screen wearing this template ignores it and holds what it
+               had. This is the paragraph that used to sit over `Used for`. -->
+          <span class="r-lbl te-showlbl">Content this template renders</span>
+          <div class="te-showgrid">
+            {#each CONTENT_KINDS as k}
+              <button class="te-showchip" class:on={templateShows(edit, k.key)} on:click={() => toggleShows(k.key)}>
+                <span class="te-showtick" aria-hidden="true">{templateShows(edit, k.key) ? '✓' : ''}</span>{k.label}
+              </button>
+            {/each}
+          </div>
+          <p class="te-fnote">An unticked kind is not blanked — a screen wearing this template holds what it already had.</p>
         </div>
         {#if err}<div class="te-err" role="alert">{err}</div>{/if}
       </aside>
@@ -1257,19 +1622,41 @@
      italic — the same treatment the language table gives an absence, because it is
      the same kind of answer: nobody has failed, the question cannot be answered
      from here. */
-  .te-legtitle{ margin-top:16px; }
-  .te-leg{ list-style:none; margin:6px 0 0; padding:0; display:flex;
+  /* A DISCLOSURE ROW, not a button — the folded readability panel's own heading
+     with its verdict on the right and a chevron at the end. Full width, no fill
+     and no edge at rest, because it is the heading of the block below it rather
+     than an action beside it; hovering gives it the panel's hover ground so it
+     reads as pressable. Named so a shape census can tell it from a button that
+     lost its class. */
+  .te-legtoggle{ display:flex; align-items:center; gap:8px; width:100%; margin-top:2px;
+    padding:8px 12px; border:0; border-top:1px solid var(--v-line); background:none;
+    color:var(--v-dim); cursor:pointer; text-align:left; }
+  .te-legtoggle:hover{ background:var(--v-surf2); }
+  .te-legtoggle .r-lbl{ flex:0 0 auto; }
+  /* THE VERDICT, in the one line that is always on screen. Rose when there is
+     something to look at, dim italic when Relay CANNOT answer (a photograph
+     behind the words), neither when it is clean — three different sentences for
+     three different situations, which is what makes it a status line and not a
+     label (rule 35). */
+  .te-legsum{ flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+    text-align:right; font-size:var(--v-fs-cap); color:var(--v-faint); }
+  .te-legsum.bad{ color:var(--v-rose); }
+  .te-legsum.unknown{ font-style:italic; }
+  .te-legchev{ flex:0 0 auto; font-size:var(--v-fs-fig); color:var(--v-faint); }
+  .te-leg{ list-style:none; margin:6px 0 0; padding:0 12px; display:flex;
     flex-direction:column; gap:6px; }
   .te-legrow{ display:flex; flex-direction:column; gap:1px; }
   .te-legrow b{ font-size:var(--v-fs-cap); color:var(--v-txt); font-weight:600; }
   .te-legrow span{ font-size:var(--v-fs-cap); color:var(--v-dim); line-height:1.4; }
   .te-legrow.bad span{ color:var(--v-rose); }
   .te-legrow.unknown span{ color:var(--v-faint); font-style:italic; }
+  /* The opened panel indents to the same 12px gutter the pane's note uses. It
+     had none, so the two number fields sat flush against the pane's border. */
   .te-legroom{ display:grid; grid-template-columns:1fr auto; gap:6px 8px;
-    align-items:center; margin-top:10px; }
+    align-items:center; margin-top:10px; padding:0 12px; }
   .te-leglab{ font-size:var(--v-fs-cap); color:var(--v-dim); }
   .te-legin{ width:70px; text-align:right; }
-  .te-legbtn{ margin-top:10px; width:100%; }
+  .te-legbtn{ margin:10px 12px 0; width:calc(100% - 24px); }
   .te-dists{ display:flex; gap:12px; margin-bottom:12px; flex-wrap:wrap; }
   .te-dist{ margin:0; }
   .te-distbox{ width:190px; aspect-ratio:16/9; overflow:hidden; position:relative;
@@ -1318,8 +1705,13 @@
   .r-btn.confirm:hover:not(:disabled){ filter:brightness(1.08); }
   .r-btn.ghost.on{ background:var(--v-surf3); color:var(--v-txt); border-color:var(--v-line2); }
 
-  .te-body{ flex:1; min-height:0; display:grid; grid-template-columns:222px minmax(0,1fr) 300px; gap:12px; }
-  @media (max-width:1180px){ .te-body{ grid-template-columns:186px minmax(0,1fr) 268px; } }
+  /* THE LAYER RAIL IS WIDER, and the canvas pays for it. At 222px the name cell
+     was ~72px: `Refere…`, `Backgr…`, on a three-layer template, which is the
+     simplest one that exists. The rail is the column an operator opens this
+     screen to use; the artboard loses 42px out of about a thousand and is still
+     the largest thing on the desk. */
+  .te-body{ flex:1; min-height:0; display:grid; grid-template-columns:264px minmax(0,1fr) 300px; gap:12px; }
+  @media (max-width:1180px){ .te-body{ grid-template-columns:216px minmax(0,1fr) 268px; } }
   @media (max-width:980px){ .te-shell{ height:auto; } .te-body{ grid-template-columns:1fr; } }
 
   .te-pane{ display:flex; flex-direction:column; min-height:0; overflow:hidden; background:var(--v-surf); border:1px solid var(--v-line); border-radius:var(--v-r-lg); }
@@ -1368,38 +1760,113 @@
      readability block below it left over — 75px for 138px of layers, so a
      three-layer template showed one and a half rows. It keeps its own scroll and a
      floor of four rows; the panel scrolls for the rest. */
-  .te-layerlist{ flex:0 0 auto; min-height:120px; max-height:38vh; overflow-y:auto; padding:8px; display:flex; flex-direction:column; gap:4px; }
-  .te-layer{ display:flex; align-items:center; gap:8px; padding:8px 9px; border-radius:var(--v-r-md); background:var(--v-surf2); border:1px solid var(--v-line); cursor:pointer; transition:.12s; }
+  /* The list now takes what is left of the panel rather than a fixed slice of
+     the viewport: the readability block underneath it folds to one row, so the
+     thing that used to crowd it is 30px tall until it is asked for. Four rows'
+     worth of floor, and the panel scrolls past that. */
+  .te-layerlist{ flex:1 1 auto; min-height:152px; overflow-y:auto; padding:8px; display:flex; flex-direction:column; gap:4px; }
+  /* ── A LAYER ROW, as ProPresenter draws one ───────────────────────────────
+     A LIST ROW, not a button. Two lines: the object's NAME on the first, with
+     the two state toggles that are always true of it (shown / locked); what
+     KIND it is on the second, with the reorder and delete affordances revealed
+     over it on hover. The name gets a whole line because the previous row put
+     five 20px buttons beside it and left ~72px — `Refere…` on a template with
+     three layers. Ellipsis is still there for a name that is genuinely too long;
+     it is no longer there for `Reference`. */
+  .te-layer{ display:grid; grid-template-columns:12px 38px minmax(0,1fr); grid-template-rows:auto auto;
+    align-items:center; column-gap:7px; row-gap:2px; padding:7px 9px; border-radius:var(--v-r-md);
+    background:var(--v-surf2); border:1px solid var(--v-line); cursor:pointer; transition:.12s; }
   .te-layer:hover{ border-color:var(--v-line2); }
   .te-layer.sel{ border-color:var(--v-accent-line); background:var(--v-accent-soft); }
   .te-layer.off{ opacity:.5; }
+  /* THE ROW BEING CARRIED, and the row it would land on. The drop line is drawn
+     on the target rather than between rows: a 1px gap between cards is not a
+     target anybody can hit, and an indicator that needs its own hit area is an
+     indicator that changes where the drop goes. */
+  .te-layer.dragging{ opacity:.45; }
+  .te-layer.dropto{ border-color:var(--v-accent); box-shadow:0 0 0 1px var(--v-accent); }
   /* A WORD INSIDE A BAND. Indented under the band that owns it, on the band's
      own surface rather than a card of its own, because it is not a peer of the
      things in the stack — nothing draws it from there. The rail keeps the
      nesting legible when the list is long. */
   .te-layer.inband{ margin-left:14px; background:var(--v-surf); border-left:2px solid var(--v-line2); }
   .te-layer.inband.sel{ border-left-color:var(--v-accent-line); }
-  .te-ltype{ width:16px; text-align:center; color:var(--v-faint); font-family:var(--f-mono); font-size:var(--v-fs-mono); flex:0 0 auto; }
-  .te-lname{ flex:1; min-width:0; font-size:var(--v-fs-b2); color:var(--v-txt); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .te-lbtns{ display:flex; gap:1px; flex:0 0 auto; opacity:0; transition:opacity .12s; }
+  /* THE GRIP, spanning both lines — the part of the row that says it can be
+     picked up. `draggable` is on the row, not on this, because a 12px drag
+     target is a drag nobody starts by accident and also one nobody starts on
+     purpose; this marks where to take hold of it. */
+  .te-lgrip{ grid-column:1; grid-row:1 / span 2; align-self:stretch; display:grid; place-items:center;
+    color:var(--v-faint); opacity:.45; font-size:var(--v-fs-lbl); cursor:grab; line-height:1; }
+  .te-layer:hover .te-lgrip{ opacity:1; }
+  .te-layer.dragging .te-lgrip{ cursor:grabbing; }
+  /* THE PLACEMENT PROXY, spanning both lines. A 16:9 frame the colour of the
+     stage with ONE box in it — where this object sits, in its own colour. It is
+     deliberately not a slide: `TemplateRender` is the one renderer and a 38px
+     imitation of it would be a fork that is wrong where nobody can see. */
+  .te-lthumb{ grid-column:2; grid-row:1 / span 2; position:relative; width:38px; aspect-ratio:16/9;
+    border-radius:var(--v-r-sm); overflow:hidden; background:var(--v-void);
+    box-shadow:inset 0 0 0 1px var(--v-line); }
+  .te-lthumbbox{ position:absolute; box-sizing:border-box; border-radius:1px;
+    display:flex; flex-direction:column; justify-content:center; gap:1px; padding:0 1px; }
+  .te-lthumbbox.hollow{ box-shadow:inset 0 0 0 1px var(--v-line2); }
+  /* A TEXT object shows as two bars in its own ink rather than as a filled
+     rectangle — at this size a solid block and a paragraph look identical, and
+     only one of them is what a text layer paints. */
+  .te-lthumbbox.words{ box-shadow:inset 0 0 0 1px var(--v-line); }
+  .te-lthumbbox i{ display:block; height:1px; border-radius:1px; opacity:.85; }
+  .te-lthumbbox i:last-child{ width:60%; }
+  /* The two toggles sit in the SAME grid cell as the name, pinned to its right
+     end, and the name reserves exactly their width. They are not flex siblings
+     because a flexed name would still be measured against a 1fr track and would
+     truncate before it needed to; a reserved gutter truncates at the real edge.
+     The two numbers below are the widths of what is in those gutters (2 and 3
+     `.te-lmini` at 20px, plus the gaps) and nothing else. */
+  .te-lname{ grid-column:3; grid-row:1; min-width:0; padding-right:46px; font-size:var(--v-fs-b2); color:var(--v-txt);
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  /* SHOWN and LOCKED are states, not actions, so they sit on the name line and
+     are always visible. A hidden layer whose eye only appears on hover is a
+     layer an operator has to go looking for. */
+  .te-lstate{ grid-column:3; grid-row:1; justify-self:end; display:flex; gap:1px; }
+  .te-lkind{ grid-column:3; grid-row:2; display:flex; align-items:center; gap:5px; min-width:0; padding-right:68px; }
+  .te-ltype{ color:var(--v-faint); font-family:var(--f-mono); font-size:var(--v-fs-fig); flex:0 0 auto; }
+  .te-lkindtxt{ min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+    font-size:var(--v-fs-kind); letter-spacing:.06em; text-transform:uppercase; color:var(--v-faint); }
+  /* The actions share the second line with the kind label and cover it on hover.
+     They are revealed rather than resident because five of them resident is a
+     toolbar per row, and because what they do is undoable while the two states
+     above are what the object IS. */
+  .te-lbtns{ grid-column:3; grid-row:2; justify-self:end; display:flex; gap:1px;
+    opacity:0; transition:opacity .12s; }
   .te-layer:hover .te-lbtns, .te-layer.sel .te-lbtns{ opacity:1; }
-  /* A ROW AFFORDANCE, not a button — forward · back · lock · visibility ·
-     delete, 20px, revealed by hovering the layer row they belong to. Five of
-     them inside a 26px-tall list row: the shared button would not fit, and
+  /* A ROW AFFORDANCE, not a button — shown · locked · forward · back · delete,
+     20px, inside a two-line list row. The shared button would not fit, and
      giving each one a fill and an edge would turn every layer row into a
      toolbar. The armed `Sure?` state is the two-step delete (rule 41). */
   .te-lmini{ width:20px; height:20px; display:grid; place-items:center; border:0; background:none; color:var(--v-faint); cursor:pointer; border-radius:var(--v-r-sm); font-size:var(--v-fs-lbl); }
   .te-lmini:hover{ color:var(--v-txt); background:var(--v-surf3); }
   .te-lmini.danger:hover{ color:var(--v-rose); }
+  /* A hidden layer's eye is dimmer than the rest of the row is, so "hidden"
+     reads from the control as well as from the row's opacity. */
+  .te-lmini.dim{ color:var(--v-faint); opacity:.6; }
   /* A locked layer's button stays lit even at rest, so the lock state reads at a
      glance without hovering the row. */
   .te-lmini.on{ color:var(--v-amber); opacity:1; }
-  .te-layer .te-lbtns:has(.te-lmini.on){ opacity:1; }
   .te-hint{ padding:14px 8px; text-align:center; font-size:var(--v-fs-cap); color:var(--v-faint); }
   .te-panenote{ margin:0; padding:10px 12px; border-top:1px solid var(--v-line); flex:0 0 auto; font-size:var(--v-fs-cap); line-height:1.5; color:var(--v-faint); }
 
   /* canvas */
   .te-canvas{ display:flex; flex-direction:column; min-height:0; overflow:hidden; background:var(--v-surf); border:1px solid var(--v-line); border-radius:var(--v-r-lg); }
+  /* THE ALIGNMENT STRIP. A toolbar across the head of the canvas — the six edges
+     and the two spacings — wrapping rather than clipping, because it sits above
+     an artboard that is already the widest thing on the desk. Every control in it
+     is a shared instrument (`.r-iconbtn`, `.r-btn ghost sm`); the only local
+     rules are position and the hairline between the two halves. */
+  .te-alignbar{ flex:0 0 auto; display:flex; align-items:center; flex-wrap:wrap; gap:4px;
+    padding:8px 12px; border-bottom:1px solid var(--v-line); }
+  .te-alignlbl{ margin-right:4px; }
+  .te-abtn:disabled, .te-abtn2:disabled{ opacity:.4; cursor:not-allowed; }
+  .te-abtn2{ margin-left:2px; }
+  .te-adiv{ width:1px; align-self:stretch; margin:0 6px; background:var(--v-line2); }
   /* ProPresenter-clean canvas: a flat, calm dark stage with a soft vignette for
      depth — no busy grid competing with the artboard. */
   /* `--v-void`, not a hand-picked hex. This was `#141417` — one step off the
@@ -1462,6 +1929,11 @@
   .te-designbody{ flex:1; min-height:0; overflow-y:auto; padding:14px; display:flex; flex-direction:column; gap:10px; }
   .te-sec{ margin:8px 0 2px; font-family:var(--f-head); font-size:var(--v-fs-h3); font-weight:600; color:var(--v-txt); }
   .te-sec:first-child{ margin-top:0; }
+  /* THE BOUNDARY between one object and the template it belongs to. A rule, not
+     a gap: everything above it is about the selected object and everything below
+     it is about the whole template, and that distinction is the point of having
+     moved this section down here at all. */
+  .te-templatesec{ margin-top:18px; padding-top:14px; border-top:1px solid var(--v-line); }
   .te-frow{ display:grid; grid-template-columns:64px minmax(0,1fr); align-items:center; gap:10px; }
   .te-fk{ font-size:var(--v-fs-b2); color:var(--v-dim); }
   .te-fv{ min-width:0; }
