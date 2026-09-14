@@ -34,11 +34,15 @@
     payloadOf,
     slidesOf,
     slideAccent,
-    cueSub,
     sectionsOf,
     planRuntime,
     fmtDuration,
     parseDuration,
+    chipOf,
+    planDateLabel,
+    cueCountLabel,
+    dropIndex,
+    reorderTo,
   } from '../plan.js';
   import {
     capture,
@@ -109,11 +113,30 @@
   let allAnnounce = []; // full announcement list, filtered locally
   let addSearching = false;
 
-  // Templates are loaded here, not assumed. The Planner names a cue's template in
-  // the running order and offers the picker in the inspector; without this the
-  // store is empty on a cold open of this tab and every cue reads "Template 4".
+  // THE DESK OPENS ON A PLAN, not on an invitation to pick one.
+  //
+  // This workspace used to open as a page title, a paragraph and three empty
+  // panes: the running order said "Pick a plan on the left to open it" and the
+  // inspector said "Pick a cue to edit it", so the first thing an operator saw was
+  // two sentences telling them the screen was not ready yet. A desk is a desk with
+  // the work already on it — the prototype opens on the most recent plan and so
+  // does this.
+  //
+  // It is a READ and nothing else. `open()` lists media, announcements and cues;
+  // it invokes nothing that takes a screen, which is what
+  // `plannerbuildonly.test.js` holds. And it defers to the operator: if they have
+  // already clicked a plan while the list was still arriving, `openPlan` is set and
+  // this does nothing rather than yanking them back to the newest one.
+  //
+  // Templates are loaded here too, not assumed. The inspector offers the template
+  // picker for the selected cue; without this the store is empty on a cold open of
+  // this tab and every cue reads "Template 4".
   onMount(() => {
-    refresh().finally(() => (loading = false));
+    refresh()
+      .then(() => {
+        if (!openPlan && plans.length) return open(plans[0]);
+      })
+      .finally(() => (loading = false));
     loadTemplates();
   });
 
@@ -290,22 +313,79 @@
     });
   }
 
-  // Drag-reorder the cue list.
-  let dragId = null;
-  let dragOverId = null;
-  function onDragStart(id, e) {
+  // ── Drag-reorder: pointer events, 1:1 with the finger, committed on release ──
+  //
+  // This was HTML5 drag-and-drop (`draggable`, `dragover`, `drop`). Three things
+  // were wrong with that for a running order. The row did not move — the browser
+  // drew its own translucent ghost and the list sat still, so there was no moment
+  // at which the operator could see the order they were about to get. The drop
+  // target was whichever row the pointer happened to be over, which on a list of
+  // 34px rows is a different row from the gap you were aiming at. And
+  // `dragstart`/`drop` are mouse-only in practice: a touch drag on a laptop's
+  // trackpad-as-touchscreen, or a pen, never begins one.
+  //
+  // Pointer events are one code path for mouse, pen and touch. The row follows the
+  // pointer exactly, its neighbours slide out of the way by one row height so the
+  // gap is visible, and NOTHING is persisted until release — a drag abandoned
+  // mid-list leaves the plan exactly as it was.
+  //
+  // The arithmetic is `plan.dropIndex`, not a line in this handler, because the
+  // ends of the list are where a reorder goes wrong and that is worth a test.
+  let drag = null; // { id, from, rows, y0, h, dy } while a row is in hand
+  let dragId = null; // the row currently in hand, for the class
+
+  function onGripDown(id, e) {
+    if (e.button != null && e.button !== 0) return; // left button / touch only
+    const row = e.currentTarget?.closest?.('.sp-row');
+    const list = row?.parentNode;
+    if (!row || !list) return;
+    const rows = [...list.querySelectorAll('.sp-row')];
+    const from = rows.indexOf(row);
+    if (from < 0) return;
+    // `offsetHeight` is 0 in a list that has not been laid out (and always in
+    // jsdom); `dropIndex` treats a non-positive height as "nothing moved", and the
+    // fallback keeps a real drag working on a list mid-layout.
+    drag = { id, from, rows, y0: e.clientY, h: row.offsetHeight || 34, dy: 0 };
     dragId = id;
-    if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
+    selId = id; // what you are dragging is what the inspector is about
+    try {
+      e.currentTarget.setPointerCapture?.(e.pointerId);
+    } catch {
+      /* no capture (jsdom, or a mouse fallback) — the window handlers still fire */
+    }
+    e.preventDefault();
   }
-  function onDropCue(targetId) {
-    const from = items.findIndex((i) => i.id === dragId);
-    const to = items.findIndex((i) => i.id === targetId);
+
+  function onDragMove(e) {
+    if (!drag) return;
+    drag.dy = e.clientY - drag.y0;
+    const shift = Math.round(drag.dy / drag.h);
+    drag.rows.forEach((r, i) => {
+      if (i === drag.from) {
+        r.style.transform = `translateY(${drag.dy}px)`;
+        return;
+      }
+      let t = 0;
+      if (shift > 0 && i > drag.from && i <= drag.from + shift) t = -drag.h;
+      if (shift < 0 && i < drag.from && i >= drag.from + shift) t = drag.h;
+      r.style.transform = t ? `translateY(${t}px)` : '';
+    });
+  }
+
+  function onDragEnd() {
+    if (!drag) return;
+    const { from, rows, dy, h } = drag;
+    drag = null;
     dragId = null;
-    dragOverId = null;
-    if (from < 0 || to < 0 || from === to) return;
-    const arr = items.slice();
-    const [moved] = arr.splice(from, 1);
-    arr.splice(to, 0, moved);
+    // Clear every transform BEFORE the list re-renders: the each block is keyed, so
+    // Svelte reuses these exact nodes and an inline transform left behind would
+    // paint the new order shifted by a row.
+    rows.forEach((r) => {
+      r.style.transform = '';
+    });
+    const to = dropIndex(from, dy, h, items.length);
+    if (to === from) return;
+    const arr = reorderTo(items, from, to);
     items = arr;
     // Optimistic reorder, but NOT fire-and-forget: if the backend rejects, the
     // on-screen order and the persisted order silently diverge. Reload from the
@@ -349,11 +429,6 @@
     ? plans.filter((p) => p.title.toLowerCase().includes(planQ.trim().toLowerCase()))
     : plans;
 
-  /** The template a cue renders with, or the honest fallback. */
-  function templateName(id) {
-    if (id == null) return 'Channel default';
-    return $templates.find((t) => t.id === id)?.name ?? `Template ${id}`;
-  }
   $: selTemplate = selCue?.template_id != null
     ? $templates.find((t) => t.id === selCue.template_id) || null
     : null;
@@ -460,29 +535,37 @@
      picker fell through to the global panic key: it cleared the congregation's screens
      and left the picker open. (shortcuts.js now also refuses to clear while any
      [role="dialog"] is mounted, so the two halves cannot disagree.) -->
-<svelte:window on:keydown={(e) => arrPick && e.key === 'Escape' && (arrPick = null)} />
+<!-- The drag listens at the WINDOW, not on the row. A pointer that leaves the
+     list mid-drag — over the inspector, off the top of the pane, out of the
+     window entirely — still has to end the drag somewhere, and a handler bound to
+     the row never hears that `pointerup`. Bound to the row, an abandoned drag left
+     a cue stuck to the cursor with its neighbours shifted, and the next click
+     committed a reorder nobody asked for. `pointercancel` is in the list for the
+     same reason: a touch drag interrupted by the OS never sends `pointerup`. -->
+<svelte:window
+  on:keydown={(e) => arrPick && e.key === 'Escape' && (arrPick = null)}
+  on:pointermove={onDragMove}
+  on:pointerup={onDragEnd}
+  on:pointercancel={onDragEnd} />
 
-<!-- The standfirst carries the one caveat that matters here, so it is always on
-     screen. It used to be a note in the toolbar that `display:none`d itself below
-     1240px — the sentence explaining that this workspace cannot reach a
-     congregation disappeared first on the smallest screens. -->
-<WorkspaceFrame
-  title="Planner"
-  standfirst="Build the running order for a service. Nothing on this workspace can reach an output screen — running it is Live's job."
-  columns="206px minmax(0,1fr) 330px">
+<!-- NO STANDFIRST, and the caveat did not go with it.
+     The paragraph under the page title said "nothing on this workspace can reach
+     an output screen — running it is Live's job", and it cost two rows at the top
+     of a desk that should open ON a plan. The sentence now sits under the running
+     order as the pane's own footer (`.sp-caveat`), where the prototype puts it and
+     where it is stronger than it was as a standfirst: it is a pane FOOTER, outside
+     the scroller, so it never scrolls away; it carries no media query, so unlike
+     the toolbar note this replaced it cannot `display:none` itself on a narrow
+     screen; and it is rendered in every mode, with or without a plan open. Do not
+     restore the standfirst as well — half a caveat beside the whole one is weaker
+     than the whole one alone, which is why this sentence has now moved twice. -->
+<WorkspaceFrame title="Planner" columns="206px minmax(0,1fr) 330px">
   <svelte:fragment slot="head">
     {#if !$capture.available}
       <span class="r-badge rose"><span class="bd"></span>Backend not attached — plans need the desktop app</span>
     {/if}
     {#if err}<span class="sp-err r-mono" role="alert">{err}</span>
     {:else if msg}<span class="sp-msg r-mono">{msg}</span>{/if}
-    <!-- The ONLY path from build to run. Nothing else on this screen reaches an
-         output — an operator arranging next Sunday's songs on a Tuesday must not
-         be able to put one on the wall by clicking the wrong thing. -->
-    <button class="r-btn primary sm" on:click={runPlan} disabled={!openPlan || !items.length}>
-      Run in Live
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>
-    </button>
   </svelte:fragment>
 
   <!-- ══ RAIL: every plan, always reachable ══ -->
@@ -504,9 +587,15 @@
         {#each railPlans as p (p.id)}
           <button class="sp-railcard r-focus" class:sel={openPlan?.id === p.id} on:click={() => open(p)}>
             <span class="sp-railtitle" title={p.title}>{p.title}</span>
+            <!-- Both halves go through `plan.js`, and neither interpolates the
+                 field raw. `{p.cue_count} cue{s}` printed "undefined cues" in this
+                 rail against a plan summary that did not carry the field, and
+                 `{p.plan_date || 'No date'}` is only right until somebody
+                 shortens it to an em dash, which this repository already spends
+                 on an untimed cue. A rail row is read, so it says words. -->
             <span class="sp-railfootline">
-              <span class="sp-railmeta r-mono">{p.plan_date || 'No date'}</span>
-              <span class="sp-railcues r-mono">{p.cue_count} cue{p.cue_count === 1 ? '' : 's'}</span>
+              <span class="sp-railmeta r-mono">{planDateLabel(p.plan_date)}</span>
+              <span class="sp-railcues r-mono">{cueCountLabel(p.cue_count)}</span>
             </span>
           </button>
         {/each}
@@ -542,39 +631,37 @@
 
   <!-- ══ MAIN: the running order ══ -->
   <section class="rw-pane sp-main">
+    <!-- The dock head: the plan's name on the left, what it costs and what you
+         can do to it on the right — the prototype's shape (REBRAND §2). `Run in
+         Live` moved here from the page head so the one path off this workspace
+         sits beside the plan it would hand over, not above three panes. -->
     <div class="rw-panehead sp-panehead">
       <h2 class="rw-panettl sp-plantitle">{openPlan ? openPlan.title : 'Running order'}</h2>
       {#if openPlan}
-        <span class="sp-hm r-mono">
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 11h18"/></svg>
-          {openPlan.plan_date || 'No date'}
-        </span>
-        <!-- "(est.)" is not decoration. Most plans contain a scripture cue,
-             which is untimed by nature, so the sum is a floor and never the
-             service length. Presenting a partial total as a real one is how a
-             service runs long. -->
-        <span class="sp-hm r-mono">
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
-          {items.length} cue{items.length === 1 ? '' : 's'} · {fmtDuration(runtime.seconds, true)}{runtime.partial ? ' (est.)' : ''}
-        </span>
-        <span class="rw-spring"></span>
-        <div class="r-seg sp-toolseg">
-          <button class:on={leftMode === 'cues'} on:click={() => (leftMode = 'cues')}>Running Order</button>
-          <button class:on={leftMode === 'add'} on:click={() => { leftMode = 'add'; if (!addQ.trim()) { addMedia = allMedia.slice(0, 8); addAnnounce = allAnnounce.slice(0, 8); } }}>＋ Add Cue</button>
-        </div>
-        <button class="r-btn ghost sm" disabled={!items.length} on:click={addSection}>＋ Add Section</button>
+        <span class="sp-hm r-mono">{planDateLabel(openPlan.plan_date)}</span>
+        <!-- "est" is not decoration. Most plans contain a scripture cue, which is
+             untimed by nature, so the sum is a floor and never the service length.
+             Presenting a partial total as a real one is how a service runs long. -->
+        <span class="sp-hm r-mono">{cueCountLabel(items.length)} · {fmtDuration(runtime.seconds, true)}{runtime.partial ? ' est' : ''}</span>
       {/if}
-      <!-- The standing safety caveat used to be repeated here, abbreviated to
-           "Build only — never goes live". It is gone, and the caveat is NOT:
-           `WorkspaceFrame`'s standfirst says it in full, two rows above, and
-           `.rw-lead` carries no media query and no `display:none`, so unlike the
-           toolbar note this replaced it cannot vanish on a narrow screen. That
-           was the whole reason the sentence moved to the standfirst.
-           One guarantee, one place — the abbreviated copy had already had to be
-           shortened once because it was being ellipsised to "never reaches …",
-           and half a caveat beside the whole one is weaker than the whole one
-           alone. It also cost a pane-head row at ≤1440. Do not restore it:
-           check the standfirst instead. -->
+      <span class="rw-spring"></span>
+      {#if openPlan}
+        <div class="r-seg sp-toolseg">
+          <button class:on={leftMode === 'cues'} on:click={() => (leftMode = 'cues')}>Running order</button>
+          <button class:on={leftMode === 'add'} on:click={() => { leftMode = 'add'; if (!addQ.trim()) { addMedia = allMedia.slice(0, 8); addAnnounce = allAnnounce.slice(0, 8); } }}>＋ Add cue</button>
+        </div>
+        <button class="r-btn ghost sm" disabled={!items.length} on:click={addSection}>＋ Section</button>
+      {/if}
+      <!-- The ONLY path from build to run, and it hands over a plan — it does not
+           put anything on a screen (`runPlan`, and `plannerbuildonly.test.js`).
+           Steel blue, NOT the prototype's amber: amber means a congregation is
+           looking at something (CLAUDE.md rule 18, DECISIONS §21), and a button on
+           the one workspace that cannot reach an output is the last place allowed
+           to borrow it. -->
+      <button class="r-btn primary sm" on:click={runPlan} disabled={!openPlan || !items.length}>
+        Run in Live
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>
+      </button>
     </div>
 
     {#if loading}
@@ -589,38 +676,23 @@
       {#if leftMode === 'cues'}
         <div class="rw-panebody sp-tablewrap">
           {#if items.length}
-            <div class="sp-thead r-lbl">
-              <span></span>
-              <span class="sp-th-n">#</span>
-              <span>Cue</span>
-              <span>Type</span>
-              <span class="sp-th-tpl">Template</span>
-              <span class="sp-th-r">Duration</span>
-              <span class="sp-th-tg">Trigger</span>
-              <span></span>
-            </div>
-
             {#each sections as sec (sec.items[0].id)}
+              <!-- A section heading is a CAPTION and a hairline to the right edge,
+                   not a container: `sectionsOf` derives the grouping from the same
+                   ordered list the transport walks, so a heading can never claim a
+                   cue the plan does not have in it. -->
               {#if sec.title}
-                <div class="sp-section">
-                  <span class="sp-secbar"></span>
-                  <span class="sp-sectitle">{sec.title}</span>
-                  <span class="sp-secmeta r-mono">
-                    {fmtDuration(sec.seconds)}{sec.timed ? '' : '+'} · {sec.items.length} cue{sec.items.length === 1 ? '' : 's'}
-                  </span>
+                <div class="sp-sec">
+                  <span class="sp-seccap">{sec.title}</span>
+                  <span class="sp-secln"></span>
                 </div>
               {/if}
 
               {#each sec.items as c (c.id)}
-                {@const ty = typeOf(c.cue_type)}
                 {@const n = items.findIndex((i) => i.id === c.id)}
-                <div class="sp-row" class:sel={c.id === selId} class:dragover={dragOverId === c.id}
-                  draggable={true}
-                  on:dragstart={(e) => onDragStart(c.id, e)}
-                  on:dragover|preventDefault={() => (dragOverId = c.id)}
-                  on:dragleave={() => { if (dragOverId === c.id) dragOverId = null; }}
-                  on:drop|preventDefault={() => onDropCue(c.id)}
+                <div class="sp-row" class:sel={c.id === selId} class:dragging={dragId === c.id}
                   on:click={() => (selId = c.id)} role="button" tabindex="0"
+                  aria-pressed={c.id === selId}
                   on:keydown={(e) => {
                     // A role="button" must answer to Enter AND Space; this one only
                     // took Enter, so it was focusable but half-operable. preventDefault
@@ -630,14 +702,32 @@
                       selId = c.id;
                     }
                   }}>
-                  <span class="sp-grip" aria-hidden="true">
-                    <svg width="10" height="14" viewBox="0 0 10 14" fill="currentColor"><circle cx="2" cy="2" r="1.1"/><circle cx="8" cy="2" r="1.1"/><circle cx="2" cy="7" r="1.1"/><circle cx="8" cy="7" r="1.1"/><circle cx="2" cy="12" r="1.1"/><circle cx="8" cy="12" r="1.1"/></svg>
-                  </span>
-                  <span class="sp-num r-mono">{n + 1}</span>
+                  <!-- The grip is a real control, not a decoration with a cursor.
+                       It was an `aria-hidden` span, so reordering a plan was a
+                       mouse-only act and a keyboard operator had no way to do it
+                       from the running order at all. Pointer-drag for a mouse, pen
+                       or finger; ↑/↓ for a keyboard, through the same
+                       `move_plan_item` the inspector uses. -->
+                  <button
+                    class="sp-grip"
+                    type="button"
+                    aria-label="Reorder {c.label} — drag, or use arrow up and arrow down"
+                    on:pointerdown={(e) => onGripDown(c.id, e)}
+                    on:click|stopPropagation={() => (selId = c.id)}
+                    on:keydown|stopPropagation={(e) => {
+                      if (e.key === 'ArrowUp' && n > 0) { e.preventDefault(); move(c.id, -1, e); }
+                      else if (e.key === 'ArrowDown' && n < items.length - 1) { e.preventDefault(); move(c.id, 1, e); }
+                    }}>
+                    <svg width="10" height="14" viewBox="0 0 10 14" fill="currentColor" aria-hidden="true"><circle cx="2" cy="2" r="1.1"/><circle cx="8" cy="2" r="1.1"/><circle cx="2" cy="7" r="1.1"/><circle cx="8" cy="7" r="1.1"/><circle cx="2" cy="12" r="1.1"/><circle cx="8" cy="12" r="1.1"/></svg>
+                  </button>
+                  <!-- The kind, in a word. One neutral ink for every kind: the
+                       colours a taxonomy would want are all spoken for
+                       (`TAXONOMY_INK`, CLAUDE.md rule 18), so the WORD is the
+                       taxonomy and `chipOf` never truncates it. -->
+                  <span class="sp-ck r-mono">{chipOf(c.cue_type)}</span>
                   <!-- One line unless the cue actually has something extra to say.
-                       A subtitle under every row (the cue type, which the TYPE
-                       column already states) doubled the row height and squeezed
-                       the cue name — the one thing an operator scans for. -->
+                       A subtitle under every row doubled the row height and
+                       squeezed the cue name — the one thing an operator scans for. -->
                   <span class="sp-cuebody">
                     <span class="sp-cuetitle" title={c.label}>{c.label}</span>
                     {#if payloadOf(c).stage_note}
@@ -647,21 +737,7 @@
                       </span>
                     {/if}
                   </span>
-                  <span class="sp-ty r-mono" style="color:{ty.color};">
-                    <span class="sp-dot" style="background:{ty.color};"></span>{ty.label}
-                  </span>
-                  <span class="sp-tpl r-mono" class:sp-inherit={c.template_id == null}>{templateName(c.template_id)}</span>
                   <span class="sp-dur r-mono">{fmtDuration(c.duration_sec)}</span>
-                  <!-- The reference's STATUS column reads UP NEXT / PENDING / AUTO.
-                       Those are RUN states and this screen cannot know them — on a
-                       Tuesday nothing is up next. What IS true at build time is how
-                       the cue will be triggered, which is what this column shows. -->
-                  <span class="sp-tg r-mono">{ty.trig}</span>
-                  <span class="sp-rowbtns">
-                    <button class="sp-mini" title="Move up" disabled={n === 0} on:click={(e) => move(c.id, -1, e)}>↑</button>
-                    <button class="sp-mini" title="Move down" disabled={n === items.length - 1} on:click={(e) => move(c.id, 1, e)}>↓</button>
-                    <button class="sp-mini danger" title="Remove cue" on:click={(e) => remove(c.id, e)}>✕</button>
-                  </span>
                 </div>
               {/each}
             {/each}
@@ -733,13 +809,27 @@
         </div>
       {/if}
     {/if}
+
+    <!-- THE CAVEAT. Outside every `{#if}` above, so it is on screen while a plan
+         is loading, while none is open, in both left modes and on an empty plan —
+         and outside the scroller, so a long running order cannot push it off. It
+         is the sentence that says what this whole workspace is, and the two
+         places it lived before could each hide it: a toolbar note with a
+         `display:none` below 1240px, then a page standfirst that cost two rows of
+         a desk. A caveat that can disappear is not a caveat. -->
+    <div class="rw-panefoot sp-caveat">
+      <p>
+        {#if leftMode === 'cues'}Drag <b>⠿</b> to reorder. {/if}Build only — nothing here
+        reaches an output. Run it in <b>Live</b>.
+      </p>
+    </div>
   </section>
 
   <!-- ══ INSPECTOR: the selected cue ══ -->
   <aside class="rw-pane rw-insp sp-insp">
     {#if !selCue}
       <div class="rw-panehead"><h2 class="rw-panettl">Cue details</h2></div>
-      <div class="sp-empty r-empty">Pick a cue to edit it.</div>
+      <div class="sp-empty r-empty">Select a cue.</div>
     {:else}
       <!-- `typeOf`, NEVER a bare `TYPE[…]` with a scripture fallback. A cue of a
            kind this build does not recognise was drawn as Scripture — amber dot,
@@ -748,46 +838,28 @@
            nothing, and being the one door is what stopped this panel badging the
            cue UNKNOWN while `cueSub` printed SCRIPTURE · AUTO-DETECT under it. -->
       {@const ty = typeOf(selCue.cue_type)}
-      <div class="rw-panehead">
-        <h2 class="rw-panettl">Cue details</h2>
-        <span class="rw-spring"></span>
-        <span class="sp-inspttrig r-mono">{ty.trig}</span>
-      </div>
+      <!-- One head, one title. The trigger used to be badged up here as well as
+           stated in the Fires row below, and two copies of one fact is how they
+           come to disagree — this panel has already had a badge say UNKNOWN while
+           the line under it said SCRIPTURE · AUTO-DETECT. `Fires` is the copy. -->
+      <div class="rw-panehead"><h2 class="rw-panettl">Cue details</h2></div>
 
+      <!-- THE ORDER IS THE POINT (prototype, planner inspector): what this cue
+           will LOOK like, then the three things about it you can change, then the
+           three that are simply true of it, then the three things you can do to
+           it. The panel used to open with a kind badge, a heading and a subtitle
+           — three restatements of the row the operator had just clicked — and
+           put the rendered preview five fields down, below the fold on a 900px
+           window. The preview is the answer to the only question this panel is
+           asked on a Tuesday: what does this put on the wall? -->
       <div class="rw-panebody pad sp-inspbody">
-        <div class="sp-insptype r-mono" style="color:{ty.color};">
-          <span class="sp-dot" style="background:{ty.color};"></span>{ty.label}
-        </div>
-        <h3 class="sp-inspname">{selCue.label}</h3>
-        <div class="sp-inspsub r-mono">{cueSub(selCue)}</div>
-
-        <div class="r-seg sp-insptabs">
+        <div class="r-seg sp-insptabs sp-insptabs-top">
           <button class:on={inspTab === 'general'} on:click={() => (inspTab = 'general')}>General</button>
           <button class:on={inspTab === 'slides'} on:click={() => (inspTab = 'slides')}>Slides</button>
           <button class:on={inspTab === 'notes'} on:click={() => (inspTab = 'notes')}>Notes</button>
         </div>
 
         {#if inspTab === 'general'}
-          <div class="r-lbl sp-flbl">Section</div>
-          <input class="r-input sp-fin" bind:this={sectionInput} bind:value={secDraft}
-            placeholder="No section — part of the one above"
-            on:blur={saveSection} on:keydown={(e) => e.key === 'Enter' && e.target.blur()} />
-
-          <div class="r-lbl sp-flbl">Template</div>
-          <select class="r-select sp-fin" value={selCue.template_id ?? ''} on:change={saveTemplate}>
-            <option value="">Channel default</option>
-            {#each $templates as t (t.id)}
-              <option value={t.id}>{t.name}</option>
-            {/each}
-          </select>
-
-          <div class="r-lbl sp-flbl">Duration</div>
-          <input class="r-input sp-fin r-mono" bind:value={durDraft}
-            placeholder={selCue.cue_type === 'scripture' ? 'Untimed — fires on cue' : 'e.g. 5 or 4:30'}
-            on:blur={saveDuration} on:keydown={(e) => e.key === 'Enter' && e.target.blur()} />
-          <p class="sp-fhelp">A bare number is minutes. Leave blank for a cue that fires when it is reached rather than on a clock.</p>
-
-          <div class="r-lbl sp-flbl">Preview</div>
           <div class="sp-preview">
             {#if previewContent?.text}
               <TemplateRender template={selTemplate ?? {}} content={previewContent} />
@@ -809,10 +881,70 @@
             {/if}
           </p>
 
+          <!-- LABEL is a VALUE, not an input, and that is deliberate rather than
+               unfinished. A cue's label is written when the cue is built — from the
+               reference, the song and its arrangement, the media filename, the
+               announcement's title — and there is no `set_plan_label` command on
+               the bridge to write a new one back. A box an operator can type into
+               that silently discards what they typed is worse than a line of text:
+               it is a control that reports a success it did not achieve. Renaming
+               a cue needs a backend command first; until it exists, this says what
+               the cue is called and claims nothing else. -->
+          <div class="r-lbl sp-flbl">Label</div>
+          <div class="sp-fval" title={selCue.label}>{selCue.label}</div>
+
+          <div class="r-lbl sp-flbl">Section</div>
+          <input class="r-input sp-fin" bind:this={sectionInput} bind:value={secDraft}
+            placeholder="No section — part of the one above"
+            on:blur={saveSection} on:keydown={(e) => e.key === 'Enter' && e.target.blur()} />
+
+          <div class="r-lbl sp-flbl">Duration</div>
+          <input class="r-input sp-fin r-mono" bind:value={durDraft}
+            placeholder={selCue.cue_type === 'scripture' ? 'Untimed — fires on cue' : 'e.g. 5 or 4:30'}
+            on:blur={saveDuration} on:keydown={(e) => e.key === 'Enter' && e.target.blur()} />
+          <p class="sp-fhelp">A bare number is minutes. Leave blank for a cue that fires when it is reached rather than on a clock.</p>
+
+          <!-- Name and VALUE rows, the frame's third type role (REBRAND §11). Kind
+               and Fires are read-only facts about the cue; Template is the one of
+               the three an operator sets, so it keeps its control in the value
+               column rather than being demoted to a sentence. -->
+          <div class="sp-kv">
+            <div class="rw-nv">
+              <span class="rw-nvk">Kind</span>
+              <span class="rw-nvv">{ty.label}</span>
+            </div>
+            <div class="rw-nv">
+              <span class="rw-nvk">Template</span>
+              <span class="rw-nvctl">
+                <select class="r-select sp-tplsel" aria-label="Template for this cue"
+                  value={selCue.template_id ?? ''} on:change={saveTemplate}>
+                  <option value="">Channel default</option>
+                  {#each $templates as t (t.id)}
+                    <option value={t.id}>{t.name}</option>
+                  {/each}
+                </select>
+              </span>
+            </div>
+            <div class="rw-nv">
+              <span class="rw-nvk">Fires</span>
+              <!-- `ty.trig`, never a guess from the kind at this call site: it is
+                   the ONE door (`typeOf`), so an unrecognised cue says MANUAL here
+                   rather than claiming the auto-detect only scripture has. -->
+              <span class="rw-nvv">{ty.trig}</span>
+            </div>
+          </div>
+
+          <!-- Move up · MOVE DOWN · Delete. "Move down" was missing, and its absence
+               was load-bearing once the running order's per-row ↑↓✕ buttons went:
+               with only "Move up" on the panel, a cue could be walked towards the
+               top of a plan and never back down it without a drag, which is to say
+               never at all without a mouse. Duplicate stays — it is the quickest
+               route to a second cue of the same shape and nothing else offers it. -->
           <div class="r-lbl sp-flbl">Actions</div>
           <div class="sp-actions">
             <button class="r-btn ghost sm" on:click={duplicateCue}>Duplicate</button>
             <button class="r-btn ghost sm" disabled={items[0]?.id === selCue.id} on:click={(e) => move(selCue.id, -1, e)}>Move up</button>
+            <button class="r-btn ghost sm" disabled={items[items.length - 1]?.id === selCue.id} on:click={(e) => move(selCue.id, 1, e)}>Move down</button>
             <button class="r-btn ghost sm sp-raildel" on:click={(e) => remove(selCue.id, e)}>Delete</button>
           </div>
         {:else if inspTab === 'slides'}
@@ -961,7 +1093,6 @@
   .sp-main > :global(.rw-panebody.pad){ display:flex; }
   .sp-main > :global(.rw-panebody.pad) > :global(.r-empty),
   .sp-main > :global(.rw-panebody.pad) > :global(.es){ margin:auto; text-align:center; max-width:44ch; }
-  .sp-hm svg{ color:var(--v-faint); flex:0 0 auto; }
   .sp-toolseg{ flex:0 0 auto; }
   .sp-msg{ font-size:var(--v-fs-lbl); color:var(--v-emerald); max-width:220px;
     overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -970,94 +1101,74 @@
   .sp-err{ font-size:var(--v-fs-lbl); color:var(--v-red); max-width:280px;
     overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 
-  /* ── the running order table ── */
-  /* Breakpoints are derived from the TABLE's width, not the viewport's. The
-     workspace costs the rail (206), the inspector (330), two gaps and the page
-     gutter — about 580px of chrome, down from 814 when a nav sidebar still ate a
-     column. Sized off the raw viewport the table kept all eight columns inside a
-     box that could not hold them, clipped the row buttons off the right edge and
-     ran DURATION and TRIGGER together.
-     The frame drops the inspector at 1240px, which hands 330px back — so the
-     columns that went at 1330 come back at 1240 and only go again when the table
-     itself is genuinely short of room.
-     (`@container` states that intent directly, but esbuild's CSS minifier cannot
-     parse it and silently emitted broken rules — dev looked right, the packaged
-     build would not have been.) */
-  .sp-tablewrap{ overflow-y:auto; }
-  /* The cue name is what an operator scans; it gets the flexible column and a
-     floor, and every other column is sized to its content so the name is never
-     the one that collapses. */
-  .sp-thead, .sp-row{ display:grid;
-    grid-template-columns:18px 22px minmax(160px,1fr) 96px 122px 62px 88px 78px;
-    align-items:center; gap:8px; padding:0 10px; }
-  .sp-thead{ height:28px; position:sticky; top:0; z-index:2; background:var(--v-bg);
-    border-bottom:1px solid var(--v-line); color:var(--v-faint); }
-  .sp-th-n{ text-align:center; }
-  .sp-th-r{ text-align:right; }
-  /* Trigger goes first, then Template — both are stated in full in the inspector
-     for the selected cue, so neither is the last copy of anything. */
-  @media (max-width:1330px){
-    .sp-thead, .sp-row{ grid-template-columns:18px 22px minmax(150px,1fr) 92px 172px 60px 78px; }
-    .sp-tg, .sp-th-tg{ display:none; }
-  }
-  @media (max-width:1240px){
-    .sp-thead, .sp-row{ grid-template-columns:18px 22px minmax(160px,1fr) 96px 122px 62px 88px 78px; }
-    .sp-tg, .sp-th-tg{ display:block; }
-  }
-  @media (max-width:960px){
-    .sp-thead, .sp-row{ grid-template-columns:18px 22px minmax(130px,1fr) 96px 62px 78px; }
-    .sp-tg, .sp-th-tg, .sp-tpl, .sp-th-tpl{ display:none; }
-  }
-  /* Below the three-column break the table has the whole width back, so both
-     columns return. */
-  @media (max-width:900px){
-    .sp-thead, .sp-row{ grid-template-columns:18px 22px minmax(160px,1fr) 96px 122px 62px 88px 78px; }
-    .sp-tg, .sp-th-tg, .sp-tpl, .sp-th-tpl{ display:block; }
-  }
-
-  .sp-row{ min-height:34px; border-bottom:1px solid var(--v-line); cursor:pointer;
-    transition:background .12s, box-shadow .12s; }
-  .sp-row:last-child{ border-bottom:0; }
-  .sp-row:hover{ background:var(--v-surf2); }
+  /* ── the running order ── */
+  /* Rows, not a table. This was an eight-column grid — grip, number, cue, type,
+     template, duration, trigger, three buttons — with three media queries
+     dropping columns as the pane narrowed, which is a lot of machinery for a list
+     whose job is to be read top to bottom. The prototype's row is four things:
+     the grip you drag, the KIND in a word, the name, and how long it runs. What
+     the columns used to carry has not been lost — the inspector states the
+     template, the trigger and the kind in full for the selected cue, which is
+     also the only cue any of the three is true of — and a row that fits at every
+     width needs no breakpoints at all. */
+  .sp-tablewrap{ overflow-y:auto; padding:6px 0; }
+  .sp-row{ display:flex; align-items:center; gap:8px; padding:5px 10px; min-height:30px;
+    cursor:pointer; user-select:none; background:transparent;
+    border:1px solid transparent; border-radius:var(--v-r-sm);
+    margin:0 6px 2px; width:calc(100% - 12px);
+    transition:background var(--v-dur) var(--v-ease), border-color var(--v-dur) var(--v-ease); }
+  .sp-row:hover:not(.sel){ background:var(--v-surf2); border-color:var(--v-line); }
   /* Selection is steel blue — the thing you are working on (docs/REBRAND.md §1).
      It is NOT amber: amber means a cue is live on the wall, and a cue merely
      being edited on a Tuesday is not. */
-  .sp-row.sel{ background:var(--v-sel-soft); box-shadow:inset 2px 0 0 var(--v-sel); }
-  .sp-row.dragover{ box-shadow:inset 0 2px 0 var(--v-sel); }
-  .sp-grip{ color:var(--v-500); cursor:grab; display:grid; place-items:center; }
+  .sp-row.sel{ background:var(--v-sel-soft); border-color:var(--v-sel); }
+  /* The row in hand: lifted, and above its neighbours as they slide past it.
+     `transform` is set from the drag handler, so this must not declare one. */
+  .sp-row.dragging{ position:relative; z-index:5; background:var(--v-surf3);
+    border-color:var(--v-sel); box-shadow:var(--v-shadow-lg); transition:none; }
+  .sp-row.dragging .sp-grip{ cursor:grabbing; }
+
+  .sp-grip{ display:grid; place-items:center; flex:0 0 auto; padding:2px; cursor:grab;
+    background:transparent; border:0; border-radius:var(--v-r-sm); color:var(--v-500);
+    touch-action:none; /* or the browser scrolls the pane instead of dragging the row */ }
   .sp-row:hover .sp-grip{ color:var(--v-faint); }
-  .sp-num{ font-size:var(--v-fs-lbl); color:var(--v-faint); text-align:center; }
-  .sp-cuebody{ min-width:0; }
+  .sp-grip:focus-visible{ outline:2px solid var(--v-sel); outline-offset:1px; color:var(--v-txt); }
+
+  /* The kind chip. One neutral ink for every kind (`TAXONOMY_INK`): the colours a
+     per-kind ramp would want are all spoken for by the colour law, and a chip that
+     borrows one is a promise nobody made. The WORD is the taxonomy. */
+  .sp-ck{ flex:0 0 auto; min-width:52px; text-align:center; font-size:var(--v-fs-cap);
+    font-weight:600; letter-spacing:.08em; padding:2px 6px; border-radius:var(--v-r-sm);
+    background:var(--v-surf3); border:1px solid var(--v-line);
+    /* `--v-dim`, not `--v-faint`: the muted token is 3.76:1 on `--v-surf3` and
+       `tokencontrast.test.js` fails the pair on sight. A kind an operator cannot
+       read is a chip that is decoration after all. */
+    color:var(--v-dim); }
+  .sp-row.sel .sp-ck{ color:var(--v-txt); }
+
+  .sp-cuebody{ flex:1; min-width:0; }
   .sp-cuetitle{ display:block; font-size:var(--v-fs-b2); font-weight:500; color:var(--v-txt);
     overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .sp-cuenote{ display:flex; align-items:center; gap:4px; margin-top:1px; max-width:100%;
     font-size:var(--v-fs-cap); color:var(--v-accent2); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .sp-cuenote svg{ flex:0 0 auto; }
-  .sp-ty{ display:inline-flex; align-items:center; gap:6px; font-size:var(--v-fs-cap); letter-spacing:.06em; }
-  .sp-dot{ width:6px; height:6px; border-radius:2px; flex:0 0 auto; }
-  .sp-tpl{ font-size:var(--v-fs-cap); color:var(--v-dim);
-    overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .sp-inherit{ color:var(--v-faint); font-style:italic; }
-  .sp-dur{ font-size:var(--v-fs-lbl); color:var(--v-dim); text-align:right; font-variant-numeric:tabular-nums; }
-  .sp-tg{ font-size:var(--v-fs-cap); color:var(--v-faint); letter-spacing:.05em; }
-  .sp-rowbtns{ display:flex; gap:4px; justify-content:flex-end; opacity:0; transition:opacity .12s; }
-  .sp-row:hover .sp-rowbtns, .sp-row.sel .sp-rowbtns, .sp-row:focus-within .sp-rowbtns{ opacity:1; }
-  .sp-mini{ width:20px; height:20px; border-radius:var(--v-r-sm); display:grid; place-items:center; cursor:pointer;
-    font-size:var(--v-fs-lbl); background:var(--v-surf3); border:1px solid var(--v-line); color:var(--v-dim); }
-  .sp-mini:hover:not(:disabled){ color:var(--v-accent); border-color:var(--v-line2); }
-  .sp-mini.danger:hover:not(:disabled){ color:var(--v-rose); border-color:var(--v-rose); }
-  .sp-mini:disabled{ opacity:.3; cursor:not-allowed; }
+  .sp-dur{ flex:0 0 auto; font-family:var(--f-mono); font-size:var(--v-fs-cap); color:var(--v-faint);
+    font-variant-numeric:tabular-nums; }
   .sp-drop{ padding:22px; text-align:center; font-size:var(--v-fs-b2); color:var(--v-faint); }
 
-  /* Section header row. Amber bar = the reference's own accent for a section, and
-     it is safe here: it is a heading in a build tool, not a live-state indicator
-     on a cue. */
-  .sp-section{ display:flex; align-items:center; gap:10px; padding:7px 10px 6px;
-    background:var(--v-bg); border-bottom:1px solid var(--v-line); position:sticky; top:28px; z-index:1; }
-  .sp-secbar{ width:3px; height:14px; border-radius:2px; background:var(--v-amber); flex:0 0 auto; }
-  .sp-sectitle{ font-size:var(--v-fs-lbl); font-weight:600; letter-spacing:var(--v-tr-wide);
-    text-transform:uppercase; color:var(--v-txt); }
-  .sp-secmeta{ margin-left:auto; font-size:var(--v-fs-cap); color:var(--v-faint); }
+  /* A section heading: a caption and a hairline that runs to the right edge. It
+     was a sticky bar with an amber rule down its left side — amber, on a build
+     surface, for a heading. The line is the furniture; the word is the heading. */
+  .sp-sec{ display:flex; align-items:center; gap:8px; padding:10px 12px 4px; }
+  .sp-seccap{ flex:0 0 auto; font-family:var(--f-mono); font-size:var(--v-fs-cap);
+    line-height:var(--v-lh-cap); font-weight:600; letter-spacing:var(--v-tr-caps);
+    text-transform:uppercase; color:var(--v-faint); }
+  .sp-secln{ flex:1; height:1px; background:var(--v-line); }
+
+  /* THE CAVEAT — a pane footer, never a media query. See the markup. */
+  .sp-caveat{ padding:8px 12px; }
+  .sp-caveat p{ margin:0; font-size:var(--v-fs-cap); line-height:var(--v-lh-cap); color:var(--v-faint); }
+  .sp-caveat b{ color:var(--v-dim); font-weight:600; }
 
   /* ── add panel ── */
   .sp-addpanel{ overflow-y:auto; }
@@ -1079,6 +1190,11 @@
   .sp-cdunit{ font-size:var(--v-fs-lbl); color:var(--v-faint); margin-left:-3px; }
   .sp-cdgo{ margin-left:auto; }
 
+  /* The add panel's kind dot. One neutral for every kind, like the row chip: the
+     heading above each group names the kind, and a dot that borrowed a colour
+     would be the taxonomy painting a promise again. */
+  .sp-dot{ width:6px; height:6px; border-radius:2px; flex:0 0 auto; }
+
   .sp-results{ display:flex; flex-direction:column; }
   .sp-result{ display:flex; align-items:flex-start; gap:9px; width:100%; padding:8px 12px;
     background:transparent; border:0; border-bottom:1px solid var(--v-line);
@@ -1094,18 +1210,29 @@
 
   /* ── inspector ── */
   .sp-inspbody{ padding:12px; }
-  /* Not a pill: §1 is explicit that a pill in a control room reads as a toy. */
-  .sp-inspttrig{ flex:0 0 auto; font-size:var(--v-fs-cap); letter-spacing:.06em; color:var(--v-faint);
-    padding:2px 7px; border-radius:var(--v-r-sm); background:var(--v-surf2); border:1px solid var(--v-line2); }
-  .sp-insptype{ display:inline-flex; align-items:center; gap:6px; font-size:var(--v-fs-cap); letter-spacing:.06em; }
-  .sp-inspname{ margin:6px 0 2px; font-family:var(--f-head); font-size:var(--v-fs-h2); line-height:var(--v-lh-h2);
-    letter-spacing:var(--v-tr-h2); font-weight:600; color:var(--v-txt); }
-  .sp-inspsub{ font-size:var(--v-fs-cap); color:var(--v-faint); }
   .sp-insptabs{ margin:14px 0 4px; width:100%; }
   .sp-insptabs :global(button){ flex:1; }
+  /* The tab strip is the first thing in the body now that the kind badge, the
+     heading and the subtitle — three restatements of the row already selected in
+     the running order — are gone, so it does not need a 14px run-up. */
+  .sp-insptabs-top{ margin-top:0; margin-bottom:10px; }
 
   .sp-flbl{ margin:14px 0 6px; }
   .sp-fin{ width:100%; }
+  /* A FIELD-SHAPED VALUE, deliberately not an input. It lines up with the boxes
+     above and below it and it is plainly not one of them: no border, no cursor,
+     nothing to click. A disabled input in this slot would look like a box that
+     had stopped working rather than a fact. */
+  .sp-fval{ font-size:var(--v-fs-b2); line-height:var(--v-lh-b2); color:var(--v-txt);
+    padding:2px 0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+  /* The three name/value rows. They carry the frame's `.rw-nv` grammar, so the
+     seams and the right-aligned mono value are the same ones the Outputs and
+     Settings desks use — hence the surrounding box rather than a restatement of
+     the row itself. */
+  .sp-kv{ margin-top:16px; border:1px solid var(--v-line); border-radius:var(--v-r-sm);
+    background:var(--v-surf2); overflow:hidden; }
+  .sp-tplsel{ max-width:172px; }
   .sp-fhelp{ margin:6px 0 0; font-size:var(--v-fs-cap); line-height:1.45; color:var(--v-faint); }
   .sp-note{ width:100%; resize:vertical; font-family:inherit; line-height:1.45; }
 

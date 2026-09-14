@@ -1,0 +1,444 @@
+// W3 · THE PLANNER IS A DESK — the instrument for the rebrand pass on this
+// workspace (docs/REBRAND.md §2, prototype "PLANNER").
+//
+// `plannerbuildonly.test.js` holds the thing this workspace must never do. This
+// file holds the four things it must do, each of which was found by rendering the
+// prototype and the app side by side at 1440px and reading the difference:
+//
+//   1. it OPENS ON A PLAN. The desk used to open as a page title, a paragraph and
+//      three empty panes, the middle one saying "Pick a plan on the left to open
+//      it" — a workspace whose first screen is an instruction for making it
+//      useful.
+//   2. the caveat that this workspace cannot reach an output is ALWAYS ON SCREEN.
+//      It has now lived in three places: a toolbar note that `display:none`d
+//      itself below 1240px, a page standfirst that cost two rows of the desk, and
+//      now the running order's own footer. A caveat that can disappear is not a
+//      caveat, so the test is about where it CANNOT be, not where it is.
+//   3. a plan rail row never prints the word `undefined`. Driven against a bridge
+//      whose plan summaries were missing `plan_date`/`cue_count`, the rail read
+//      "No date · undefined cues" — the frontend leaking onto a screen an
+//      operator reads.
+//   4. a cue is dragged 1:1 and the order COMMITS ON RELEASE — nothing is
+//      persisted while the row is still in hand.
+//
+// Written the way CLAUDE.md asks: every assertion below was watched to fail with
+// the change it covers reverted. The reversion for each is named in its comment.
+
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import * as svelteRuntime from 'svelte';
+import { tick } from 'svelte';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+
+const invoke = vi.fn();
+vi.mock('@tauri-apps/api/core', () => ({ invoke: (...a) => invoke(...a) }));
+
+const { capture } = await import('../stores/capture.js');
+
+// The same self-detecting gate as `plannerbuildonly.test.js`: without
+// `resolve: { conditions: ['browser'] }` in `vitest.config.js`, `onMount` is a
+// literal empty function and every one of these tests would pass over a Planner
+// that never loaded a thing.
+const LIFECYCLE_LIVE = /\{\s*\}$/.test(svelteRuntime.onMount.toString()) === false;
+const itMounted = LIFECYCLE_LIVE ? it : it.skip;
+
+const PLANS = [
+  { id: 1, title: 'Sunday Morning', plan_date: '2026-09-14', cue_count: 3 },
+  { id: 2, title: 'Evening Prayer', plan_date: '2026-09-14', cue_count: 1 },
+];
+
+const cue = (id, cue_type, label, section_title, duration_sec, payload = {}) => ({
+  id,
+  plan_id: 1,
+  cue_type,
+  label,
+  payload_json: JSON.stringify(payload),
+  template_id: null,
+  section_title,
+  duration_sec,
+});
+
+const CUES = [
+  cue(11, 'announce', 'Welcome & notices', 'Gathering', 120, { body: 'Please keep the gate clear' }),
+  cue(12, 'song', 'Great Is Thy Faithfulness', null, 300, {
+    title: 'Great Is Thy Faithfulness',
+    sections: [{ tag: 'V1', label: 'Verse 1', lyrics: 'Great is thy faithfulness' }],
+    arrangement_name: 'Standard',
+  }),
+  cue(13, 'scripture', 'Romans 8:28', 'Word', 0, {
+    reference: 'Romans 8:28',
+    text: 'And we know that all things work together for good',
+    verse: 28,
+  }),
+];
+
+let host;
+let app;
+let planRows = PLANS;
+
+function bridge(cmd) {
+  switch (cmd) {
+    case 'list_plans':
+      return Promise.resolve(planRows);
+    case 'plan_items':
+      return Promise.resolve(CUES);
+    case 'list_templates':
+      return Promise.resolve([{ id: 1, name: 'Classic Serif' }]);
+    case 'list_media':
+    case 'list_announcements':
+    case 'search_scripture':
+    case 'search_songs':
+    case 'list_arrangements':
+      return Promise.resolve([]);
+    default:
+      return Promise.resolve(null);
+  }
+}
+
+beforeEach(() => {
+  planRows = PLANS;
+  invoke.mockReset();
+  invoke.mockImplementation(bridge);
+  capture.update((c) => ({ ...c, available: true }));
+});
+
+afterEach(() => {
+  app?.$destroy();
+  host?.remove();
+  app = host = null;
+  document.body.innerHTML = '';
+});
+
+async function settle() {
+  await new Promise((r) => setTimeout(r, 0));
+  await tick();
+}
+
+async function until(predicate, what, tries = 50) {
+  for (let i = 0; i < tries; i += 1) {
+    if (predicate()) return;
+    await settle();
+  }
+  throw new Error(`timed out waiting for: ${what}`);
+}
+
+async function mount() {
+  const ServicePlanner = (await import('./ServicePlanner.svelte')).default;
+  host = document.createElement('div');
+  document.body.appendChild(host);
+  app = new ServicePlanner({ target: host });
+  return host;
+}
+
+const PLANNER = resolve(__dirname, 'ServicePlanner.svelte');
+const src = readFileSync(PLANNER, 'utf8');
+
+describe('§2 · the desk opens on a plan', () => {
+  itMounted('draws the newest plan, its cues and its sections without a click', async () => {
+    // Fails with the `open(plans[0])` in `onMount` removed: the running order is
+    // the EmptyState and `.sp-row` never appears.
+    await mount();
+    await until(() => host.querySelector('.sp-row'), 'the running order to draw itself');
+
+    expect(host.querySelectorAll('.sp-row').length).toBe(CUES.length);
+    expect(host.textContent).toContain('Sunday Morning');
+    expect(host.textContent).not.toContain('Pick a plan on the left to open it.');
+
+    // …and the inspector is about something, rather than asking to be given
+    // something: opening a plan selects its first cue.
+    expect(host.textContent).not.toContain('Select a cue.');
+    expect(host.querySelector('.sp-row.sel')).toBeTruthy();
+  });
+
+  itMounted('still opens whichever plan the operator picks instead', async () => {
+    // Opening a plan for the operator is only acceptable if picking a different
+    // one still works, so that is what is asserted. The `!openPlan` guard beside
+    // the auto-open is NOT pinned and deliberately so: `refresh()` resolves and
+    // the `.then` runs before the rail has rendered a single row, so there is no
+    // instant at which a click could interleave, and a test written for it
+    // passed with the guard removed. A test that cannot fail is a theory that
+    // was never tested (CLAUDE.md rule 40); the guard stays as cheap defence
+    // against a future `refresh()` that awaits more, and it stays unpinned.
+    await mount();
+    await until(() => host.querySelectorAll('.sp-railcard').length === 2, 'both plans in the rail');
+    host.querySelectorAll('.sp-railcard')[1].click();
+    await settle();
+    await settle();
+    const head = host.querySelector('.sp-plantitle');
+    expect(head.textContent.trim()).toBe('Evening Prayer');
+  });
+
+  itMounted('groups the running order under its section headings', async () => {
+    // The prototype's heading: a caption and a hairline, emitted when the section
+    // changes. Fails if the rows are drawn as a flat list.
+    await mount();
+    await until(() => host.querySelector('.sp-row'), 'the running order');
+    const caps = [...host.querySelectorAll('.sp-seccap')].map((e) => e.textContent.trim());
+    expect(caps).toEqual(['Gathering', 'Word']);
+    expect(host.querySelectorAll('.sp-sec .sp-secln').length).toBe(2);
+  });
+
+  itMounted('prints the kind of every cue as a word, never a truncation', async () => {
+    await mount();
+    await until(() => host.querySelector('.sp-row'), 'the running order');
+    const chips = [...host.querySelectorAll('.sp-ck')].map((e) => e.textContent.trim());
+    expect(chips).toEqual(['NOTE', 'SONG', 'WORD']);
+  });
+});
+
+describe('§2 · the caveat cannot disappear', () => {
+  it('is not a standfirst any more, and there is only one of it', () => {
+    // Two copies of a safety sentence is how one of them gets shortened until it
+    // says something else — which is exactly what happened to the toolbar note
+    // ("never reaches …"). Fails if the standfirst is restored alongside it.
+    expect(src).not.toMatch(/standfirst=/);
+    expect([...src.matchAll(/nothing here\s*\n?\s*reaches an output/g)].length).toBe(1);
+  });
+
+  it('carries no media query that could hide it', () => {
+    // The defect verbatim: `@media (max-width:1240px){ .sp-toolnote{ display:none } }`
+    // — the sentence saying this workspace cannot reach a congregation went first
+    // on the smallest screens.
+    const style = src.slice(src.lastIndexOf('<style>'));
+    const rules = [...style.matchAll(/@media[^{]*\{([\s\S]*?)\n  \}/g)].map((m) => m[1]);
+    for (const r of rules) expect(r).not.toContain('sp-caveat');
+    expect(style).not.toMatch(/\.sp-caveat[^{]*\{[^}]*display:\s*none/);
+  });
+
+  itMounted('is on screen with a plan open, in both modes, and with none open', async () => {
+    const says = () => host.querySelector('.sp-caveat')?.textContent ?? '';
+    planRows = [];
+    await mount();
+    await until(() => !host.querySelector('.r-empty, .es') === false, 'the empty desk');
+    expect(says()).toContain('nothing here');
+
+    planRows = PLANS;
+    app.$destroy();
+    host.remove();
+    await mount();
+    await until(() => host.querySelector('.sp-row'), 'the running order');
+    expect(says()).toContain('Drag');
+    expect(says()).toContain('nothing here');
+
+    // …and in the add-cue panel, where "drag to reorder" is not true but the
+    // caveat still is.
+    const add = [...host.querySelectorAll('button')].find((b) => /Add cue/i.test(b.textContent));
+    add.click();
+    await settle();
+    expect(says()).not.toContain('Drag');
+    expect(says()).toContain('nothing here');
+  });
+
+  itMounted('sits outside the scroller, so a long plan cannot push it off', async () => {
+    await mount();
+    await until(() => host.querySelector('.sp-caveat'), 'the caveat');
+    expect(host.querySelector('.sp-tablewrap .sp-caveat')).toBeNull();
+    expect(host.querySelector('.sp-addpanel .sp-caveat')).toBeNull();
+  });
+});
+
+describe('§2 · a plan rail row never leaks a frontend word', () => {
+  itMounted('says what it does not know, rather than printing undefined', async () => {
+    // Driven against a summary whose shape and the frontend's have come apart —
+    // which is the one build in which that string can reach a screen. Fails
+    // against `{p.plan_date || 'No date'}` + `{p.cue_count} cues`, which is what
+    // rendered "No date · undefined cues".
+    planRows = [{ id: 9, title: 'A plan from somewhere else' }];
+    await mount();
+    await until(() => host.querySelector('.sp-railcard'), 'the rail');
+
+    const row = host.querySelector('.sp-railcard').textContent;
+    expect(row).not.toContain('undefined');
+    expect(row).toContain('No date');
+    expect(row).toContain('Cue count unknown');
+  });
+
+  itMounted('prints a real summary exactly as the backend sent it', async () => {
+    await mount();
+    await until(() => host.querySelector('.sp-railcard'), 'the rail');
+    const row = host.querySelector('.sp-railcard').textContent;
+    expect(row).toContain('2026-09-14');
+    expect(row).toContain('3 cues');
+  });
+});
+
+describe('§2 · drag reorders on release, and only on release', () => {
+  /** A pointer event jsdom will actually construct. */
+  function pointer(el, type, clientY) {
+    el.dispatchEvent(
+      new MouseEvent(type, { bubbles: true, cancelable: true, clientY, button: 0 }),
+    );
+  }
+
+  itMounted('commits the new order once, on pointerup', async () => {
+    await mount();
+    await until(() => host.querySelector('.sp-row'), 'the running order');
+
+    const grips = host.querySelectorAll('.sp-grip');
+    expect(grips.length).toBe(CUES.length);
+
+    invoke.mockClear();
+    pointer(grips[0], 'pointerdown', 0);
+    // Two moves, a whole row each: nothing may be persisted while the cue is
+    // still in the operator's hand. Fails against a handler that reorders on
+    // move rather than on release.
+    pointer(window, 'pointermove', 20);
+    pointer(window, 'pointermove', 40);
+    await settle();
+    expect(invoke.mock.calls.map(([c]) => c)).not.toContain('reorder_plan');
+
+    pointer(window, 'pointerup', 40);
+    await settle();
+
+    const reorders = invoke.mock.calls.filter(([c]) => c === 'reorder_plan');
+    expect(reorders.length).toBe(1);
+    // Row 1 moved down one place: the ids that were [11, 12, 13] are now
+    // [12, 11, 13]. Fails against an off-by-one in `dropIndex`.
+    expect(reorders[0][1].ids).toEqual([12, 11, 13]);
+  });
+
+  itMounted('persists nothing when a drag goes nowhere', async () => {
+    await mount();
+    await until(() => host.querySelector('.sp-row'), 'the running order');
+    const grip = host.querySelector('.sp-grip');
+
+    invoke.mockClear();
+    pointer(grip, 'pointerdown', 0);
+    pointer(window, 'pointermove', 3);
+    pointer(window, 'pointerup', 3);
+    await settle();
+    expect(invoke.mock.calls.map(([c]) => c)).not.toContain('reorder_plan');
+  });
+
+  itMounted('leaves no row stuck to the cursor when a drag is cancelled', async () => {
+    // A touch drag interrupted by the OS never sends `pointerup`. Fails if
+    // `pointercancel` is not wired: the row keeps its inline transform and the
+    // next render paints the list shifted by a row.
+    await mount();
+    await until(() => host.querySelector('.sp-row'), 'the running order');
+    const grip = host.querySelector('.sp-grip');
+
+    pointer(grip, 'pointerdown', 0);
+    pointer(window, 'pointermove', 40);
+    expect(host.querySelector('.sp-row').style.transform).toContain('translateY');
+    pointer(window, 'pointercancel', 40);
+    await settle();
+    for (const r of host.querySelectorAll('.sp-row')) expect(r.style.transform).toBe('');
+  });
+
+  it('drags with pointer events, not with HTML5 drag-and-drop', () => {
+    // `dragstart`/`drop` never fire for a pen or a finger, and the browser draws
+    // its own ghost instead of moving the row. Fails if either is reintroduced.
+    expect(src).not.toMatch(/on:dragstart|on:dragover|on:drop\b|draggable=/);
+    expect(src).toMatch(/on:pointerdown=\{\(e\) => onGripDown\(/);
+  });
+
+  itMounted('lets a keyboard reorder a plan at all', async () => {
+    // The grip was an `aria-hidden` span with a `cursor:grab`, so the running
+    // order could only be reordered with a mouse. Fails against that span.
+    await mount();
+    await until(() => host.querySelector('.sp-row'), 'the running order');
+    const grip = host.querySelectorAll('.sp-grip')[0];
+    expect(grip.tagName).toBe('BUTTON');
+    expect(grip.getAttribute('aria-label')).toMatch(/reorder/i);
+
+    invoke.mockClear();
+    grip.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+    await settle();
+    const moves = invoke.mock.calls.filter(([c]) => c === 'move_plan_item');
+    expect(moves.length).toBe(1);
+    expect(moves[0][1]).toMatchObject({ id: 11, direction: 1 });
+  });
+});
+
+describe('§2 · the cue inspector answers the question it is asked', () => {
+  itMounted('shows the rendered preview BEFORE the fields, not below them', async () => {
+    // "What will this put on the wall" is the only question this panel is asked
+    // on a Tuesday, and the preview was the fifth thing in it — below the fold on
+    // a short window. Fails against the old order (type badge, name, subtitle,
+    // Section, Template, Duration, then the preview).
+    await mount();
+    await until(() => host.querySelector('.sp-preview'), 'the inspector preview');
+
+    const body = host.querySelector('.sp-inspbody');
+    const order = [...body.querySelectorAll('.sp-preview, .sp-flbl, .sp-kv, .sp-actions')];
+    const at = (sel) => order.findIndex((e) => e.matches(sel));
+    expect(at('.sp-preview')).toBe(0);
+    expect(at('.sp-preview')).toBeLessThan(at('.sp-kv'));
+    expect(at('.sp-kv')).toBeLessThan(at('.sp-actions'));
+
+    const labels = [...body.querySelectorAll('.sp-flbl')].map((e) => e.textContent.trim());
+    expect(labels).toEqual(['Label', 'Section', 'Duration', 'Actions']);
+  });
+
+  itMounted('states kind, template and fires as name/value rows', async () => {
+    await mount();
+    await until(() => host.querySelector('.sp-kv'), 'the inspector facts');
+    const keys = [...host.querySelectorAll('.sp-kv .rw-nvk')].map((e) => e.textContent.trim());
+    expect(keys).toEqual(['Kind', 'Template', 'Fires']);
+    // The first cue is an announcement: it may not claim the auto-detect that
+    // only scripture has (`typeOf`, the one door).
+    expect(host.querySelector('.sp-kv').textContent).toContain('NOTICE');
+    expect(host.querySelector('.sp-kv').textContent).not.toContain('AUTO-DETECT');
+  });
+
+  itMounted('offers Move up, Move down and Delete', async () => {
+    // "Move down" did not exist. With the running order's per-row buttons gone,
+    // its absence meant a cue could be walked up a plan and never back down it
+    // without a mouse. Fails against the two-button row.
+    await mount();
+    await until(() => host.querySelector('.sp-actions'), 'the inspector actions');
+    const names = [...host.querySelectorAll('.sp-actions button')].map((b) => b.textContent.trim());
+    expect(names).toEqual(['Duplicate', 'Move up', 'Move down', 'Delete']);
+
+    // The first cue is at the top, so Move up is off and Move down is live.
+    const [, up, down] = host.querySelectorAll('.sp-actions button');
+    expect(up.disabled).toBe(true);
+    expect(down.disabled).toBe(false);
+
+    invoke.mockClear();
+    down.click();
+    await settle();
+    const moves = invoke.mock.calls.filter(([c]) => c === 'move_plan_item');
+    expect(moves.length).toBe(1);
+    expect(moves[0][1]).toMatchObject({ id: 11, direction: 1 });
+  });
+
+  itMounted('shows a cue label it cannot save as a value, not as a dead input', async () => {
+    // There is no `set_plan_label` on the bridge. A box an operator can type into
+    // that silently discards what they typed is a control reporting a success it
+    // did not achieve (rule 15's family). Fails against an `<input>` bound to the
+    // label with no command behind it.
+    await mount();
+    await until(() => host.querySelector('.sp-fval'), 'the label row');
+    expect(host.querySelector('.sp-fval').textContent.trim()).toBe('Welcome & notices');
+    const labelled = [...host.querySelectorAll('.sp-inspbody input, .sp-inspbody textarea')].map(
+      (e) => e.value,
+    );
+    expect(labelled).not.toContain('Welcome & notices');
+  });
+});
+
+describe('rule 39 · arrangement staleness is untouched', () => {
+  itMounted('still names a stale arrangement as needing checking, on the cue', async () => {
+    // The rebrand may not quietly drop the one thing that stands between a
+    // reordered song and the wrong words in a plan (CLAUDE.md rule 39,
+    // DECISIONS §55).
+    await mount();
+    await until(() => host.querySelectorAll('.sp-row').length === 3, 'the running order');
+    host.querySelectorAll('.sp-row')[1].click(); // the song
+    await settle();
+    const slides = [...host.querySelectorAll('.sp-insptabs button')].find((b) =>
+      /Slides/i.test(b.textContent),
+    );
+    slides.click();
+    await settle();
+    expect(host.querySelector('.sp-slidemeta').textContent).toContain('ARRANGEMENT: STANDARD');
+  });
+
+  it('still refuses a stale arrangement entry to a plan', () => {
+    // The picker is the door; this asserts the door is still shut, in the file.
+    expect(src).toMatch(/disabled=\{a\.stale\}/);
+    expect(src).toContain('sections changed since this was built');
+  });
+});
