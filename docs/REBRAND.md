@@ -230,6 +230,28 @@ the stage note and the stage alert must be unable to reach a congregation channe
 `REBRAND status` reads this table. One row per phase; a phase is **done** only when the three
 gates in the phases section are green on it — `cargo test`, `npx vitest run`, `npm run build`.
 
+**Second wave, 2026-09-14 — the first pass driven by RENDERING the app rather than reading it.**
+The prototype was opened in a headless browser and operated, workspace by workspace, and the
+console was rendered beside it against a mock Tauri bridge; the gap list the seven agents worked
+from was measured from those two renders, not inferred from the source. That matters because it
+found things no suite could: the Templates gallery's cards rendered BLANK (and the first diagnosis
+was wrong — the fixture was passing `layout`/`style` as JSON strings, which `db::Template` cannot
+produce, and the real defect underneath was `templateKind` never having been taught the layer
+model, so every one of the twelve starters classified as `custom`); the Planner printed a section
+heading on EVERY row; a keyed template previewed against nothing was an empty black box on three
+surfaces; and Live cut a screen's name in half — `Stream` / `ing` — inside the 286px column.
+Each was fixed, re-rendered by the integrator, and only then called done. **What the wave did not
+touch: the release decision, the model question, or word error rate.**
+
+Shipped by that wave: six workspaces on the strip in the prototype's order (Themes folded into
+Templates as a desk, Help still a real route — `qa-inventory` says nothing became unreachable),
+screen lamps and a transition-free chrome, a status bar whose every figure can say `no data`, four
+equal 178px docks, a slide grid of RENDERED slides, the AI's claims in the 286px inspector with no
+percentage on a guess, Outputs as cards that repaint what each screen is showing, a Library of real
+slides with one row of chrome, a Planner of drag rows with a cue inspector, a Settings reading
+column with the last two dead controls removed (DECISIONS §69's tally: eleven), and the roles
+register reconciled against what actually renders (DECISIONS §78–§81).
+
 **Reconciled on 2026-09-14 by the integrator**, against the combined branch with all seven
 workspace branches merged. Two agents had already found this table wrong in BOTH directions: W2
 found the collection rail and reflow editing built while the row said neither existed, and W7 found
@@ -238,8 +260,10 @@ work absent that another agent had since built. **Evidence is now per-FILE count
 suite total**: ten rows quoted a suite figure that was true on one agent's branch and stale the
 moment anything else merged, which is exactly how the four registers came to disagree
 (`CLAUDE.md`, "do not restate any of the four in a fifth place"). Whole-suite figures live in
-`docs/qa/QA_HARNESS.md` §0 beside the command that produces them. The combined branch runs
-**709 Rust** (0 failed, 16 ignored) and **1358 frontend across 101 files**.
+`docs/qa/QA_HARNESS.md` §0 beside the command that produces them. After the second wave the
+combined branch runs **709 Rust** (0 failed, 16 ignored) and **1604 frontend across 114 files** —
+and that figure was measured on the assembled tree, because **not one of the seven agents' own
+suite totals survived the merge**.
 
 | # | Phase | State | Evidence |
 |---|---|---|---|
