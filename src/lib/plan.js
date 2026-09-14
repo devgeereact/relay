@@ -27,6 +27,23 @@ export const TYPE = {
   unknown: { label: 'UNKNOWN', color: 'var(--v-faint)', trig: 'MANUAL' },
 };
 
+/**
+ * The presentation row for a cue type — the ONE door onto `TYPE`.
+ *
+ * This is a choke point, not a convenience (CLAUDE.md rule 36). The fix that
+ * added `unknown` above was applied at three call sites and missed a fourth,
+ * `cueSub`, which is rendered on BOTH the Planner's cue inspector and the Live
+ * run surface: a cue of a kind this build does not recognise was badged UNKNOWN
+ * with "SCRIPTURE · AUTO-DETECT" printed two lines under it — the panel
+ * contradicting itself about the one kind of cue the AI is allowed to fire by
+ * itself. A guarantee is only kept on the doors you checked, so there is now one
+ * door. Never fall back to `TYPE.scripture`; an unrecognised row is a claim
+ * nobody made.
+ */
+export function typeOf(cueType) {
+  return TYPE[cueType] || TYPE.unknown;
+}
+
 /** A cue's payload. Never throws — a corrupt row must not take down the console. */
 export function payloadOf(item) {
   try {
@@ -86,7 +103,7 @@ export function slideAccent(tag) {
 
 /** The one-line summary under a cue's title in the plan rail. */
 export function cueSub(item) {
-  const ty = TYPE[item.cue_type] || TYPE.scripture;
+  const ty = typeOf(item.cue_type);
   return item.cue_type === 'song'
     ? `SONG · ${slidesOf(item).length} SLIDES`
     : `${ty.label} · ${ty.trig}`;
