@@ -181,9 +181,22 @@
   // `setSensitivity` was repaired for exactly this reason and its reader was not
   // (recorded in the review note — `capture.js` is another agent's file).
   //
-  // What this card CAN do without reaching into that file is refuse to claim a
-  // value while the bridge is not attached at all, which is the case an operator
-  // actually meets. `$capture.available` is that fact.
+  // What this card CAN do without reaching into that file is say so, in words,
+  // in the ONE place each dock card already has for "I have no answer" — the
+  // meta slot in its head, beside `no model` on the transcript card. Not in the
+  // value column: a glyph there cannot tell "nobody answered" from "the gate is
+  // at 50" (R3-13's rule, and the same defect as "up to date" over a dead update
+  // channel), and an 18px column cannot hold the sentence that could. So the
+  // figure stays a figure, the caveat is a sentence, and neither pretends to be
+  // the other.
+  //
+  // The number itself is left exactly as `getSensitivity` returned it, fallback
+  // included. Substituting a distinct "unknown" value would put a reading on
+  // screen that is nobody's setting — a second lie to cover the first.
+  //
+  // `$capture.available` is the only signal available here, so it is the one the
+  // card reports: it answers "is the bridge attached at all", which is the case
+  // an operator actually meets, and it does not claim to answer more than that.
   let sensitivity = 50;
   let sensRead = false;
   $: sensReadable = sensRead && $capture.available;
@@ -313,8 +326,19 @@
       <span class="grip" aria-hidden="true"><i></i><i></i><i></i></span>
       <span class="dk">Live audio</span>
       <span class="dspring"></span>
-      <span class="vad r-mono" class:on={$meter.isVoice}>{$meter.isVoice ? 'VOICE' : 'quiet'}</span>
-      <span class="db r-mono">{dbLabel}</span>
+      <!-- THE META SLOT IS WHERE THIS CARD SAYS IT HAS NO ANSWER, in the same
+           vocabulary the transcript card's `no model` uses: one place per card,
+           one kind of sentence, in words.
+           With no engine attached, `quiet` and `−∞ dB` are not measurements —
+           they read exactly like a live microphone in a silent room, which is the
+           one thing they must not be mistaken for (rule 35). So neither is shown;
+           the card says what is actually true instead. -->
+      {#if !$capture.available}
+        <span class="dmeta">no engine</span>
+      {:else}
+        <span class="vad r-mono" class:on={$meter.isVoice}>{$meter.isVoice ? 'VOICE' : 'quiet'}</span>
+        <span class="db r-mono">{dbLabel}</span>
+      {/if}
     </div>
     <div class="dbody audbody">
       <div class="wavewrap">
@@ -347,7 +371,13 @@
           aria-label="Detection sensitivity"
           use:rangeFill={sensitivity}
           on:input={(e) => onSensitivity(+e.target.value)} />
-        <span class="sensv r-mono">{sensReadable ? sensitivity : '—'}</span>
+        <!-- NUMERIC ONLY. A glyph here cannot tell "nobody answered" from "the
+             gate is at 50" (R3-13's rule), and an 18px column cannot hold the
+             sentence that could — so the sentence is in the meta slot above and
+             this stays a figure. The number shown is the one `getSensitivity`
+             returned, fallback included: inventing a distinct "unknown" value
+             would put a reading on screen that is nobody's setting. -->
+        <span class="sensv r-mono">{sensitivity}</span>
         <button
           class="r-switch"
           class:on={$detectionOn}

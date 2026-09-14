@@ -351,15 +351,35 @@ describe('the live-audio card shows the signal and the two decisions about it', 
     cap.capture.update((s) => ({ ...s, available: false }));
   });
 
-  it('with no engine attached the dial is disabled and claims no value', async () => {
+  it('with no engine attached the card says so in WORDS, and the figure stays a figure', async () => {
     // `getSensitivity` swallows and returns 50 with no backend, and 50 is also a
     // perfectly ordinary real setting — so the reading alone cannot tell the two
     // apart. On the one control that governs what the AI may put on a wall
     // unasked, a plausible number nobody set is rule 35 with a dial on it.
+    //
+    // The caveat goes in the card's META SLOT, the one place each dock card
+    // already has for "I have no answer" — `no model` on the transcript card is
+    // the same sentence about a different absence. NOT in the value column: a
+    // glyph there cannot tell "nobody answered" from "the gate is at 50"
+    // (R3-13), and an 18px column cannot hold the sentence that could.
     await mount();
-    const dial = host.querySelector('input[aria-label="Detection sensitivity"]');
-    expect(dial.disabled).toBe(true);
-    expect(host.querySelector('.sensv').textContent.trim()).toBe('—');
+    const meta = [...host.querySelectorAll('.dmeta')].map((n) => n.textContent.trim());
+    expect(meta).toContain('no engine');
+    // The dial is inert, because there is nothing to set.
+    expect(host.querySelector('input[aria-label="Detection sensitivity"]').disabled).toBe(true);
+    // And the figure is a figure: the value `getSensitivity` returned, not a
+    // glyph and not an invented "unknown" number, which would be a second
+    // reading nobody set laid over the first.
+    expect(host.querySelector('.sensv').textContent.trim()).toMatch(/^\d+$/);
+  });
+
+  it('and it does not print `quiet` over a microphone that is not there', async () => {
+    // `quiet` and `−∞ dB` read exactly like a live microphone in a silent room,
+    // which is the one thing they must not be mistaken for when there is no
+    // engine at all. Neither is shown; the card says what is true instead.
+    await mount();
+    expect(host.querySelector('.vad')).toBeNull();
+    expect(host.querySelector('.db')).toBeNull();
   });
 
   it('detection is ONE switch, in the card about the signal', async () => {
