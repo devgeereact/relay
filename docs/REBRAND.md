@@ -230,6 +230,42 @@ the stage note and the stage alert must be unable to reach a congregation channe
 `REBRAND status` reads this table. One row per phase; a phase is **done** only when the three
 gates in the phases section are green on it — `cargo test`, `npx vitest run`, `npm run build`.
 
+**Third wave, 2026-09-14 — nine agents against a measured gap list, and three of the nine gaps were wrong.**
+The lead rendered the console at 1600x1000 against the prototype, workspace by workspace, and briefed
+eight agents (shell, Live, Library, Planner, Templates, Outputs, Settings, countdown) plus a ninth for
+the transition control once `channels.rs` was clear. Assembled tree: **722 Rust** (0 failed, 16 ignored)
+and **1729 frontend across 117 files**, with `cargo fmt`, `clippy -D warnings` and `npm run build` clean.
+
+**What the wave built.** The chrome carries `RELAY studio`, the screen lamps and, for the first time,
+the transition picker and its duration, applied end to end: a retained hub frame of its own (never
+`last_screen`, which would erase the verse a late screen is shown), `output://transition` for the native
+window, and one ranking function that says which authority answered (DECISIONS §84). **End service**
+became the fourth control in the dock, driven by a new `recording` fact on `service_lock` read from
+`Session` rather than from `engaged`, because an operator may lift the lock mid-service and a button off
+`engaged` would say "nothing to end" over an open record. Live's 286px column is the AI's claims alone:
+the manual reference box moved to the rail as §9's one box, the announcement to Quick tools, and the two
+whole-room facts a lamp cannot compose stayed. Quick tools gained the name band. Pause is built on
+`countdown_paused_ms`, and `countdown_from` is now WRITTEN, so §7's warning rule fires for the first time.
+The Library's collection colour became one 3px edge. The Planner's cue inspector renders the cue rather
+than a chequer plate. The Templates gallery's caption stopped clipping a name to three characters.
+Settings' three binary rows became the one switch.
+
+**Three defects nothing else could see.** `describeScreen`'s ok-branch still decided On Air from
+`wall.live`, so a screen beating punctually whose own answer was `clear` read **On Air, in amber**: RG-129's
+shape, and a blackout that did not land, and a `clear_screens` that returned `Ok` over a screen still
+showing the last verse. The two claims must now agree or the badge says so and prints both.
+**Deleting a service plan had no confirmation at all**, one click straight to `delete_plan`.
+And Settings' measuring row read `lat?.enabled ?? true`, printing *on* over a backend that had never
+answered. All three are rule 35 or rule 41 in a new coat.
+
+**Two gaps the agents refused, with evidence, and they were right.** The prototype's cue-kind colour ramp
+cannot be built: `colourlaw.test.js` names those exact six mappings as the defect it exists to stop, and
+PR #73 removed them the same morning after measuring them on the running console. And Settings' rows stay
+hairline seams inside one pane rather than eleven bordered cards, which wave 2 chose deliberately.
+A third was withdrawn by the lead: the Library's empty chapter was the harness's own missing fixture data.
+
+**What this wave does NOT change: the release decision, the model question, or word error rate.**
+
 **Second wave, 2026-09-14 — the first pass driven by RENDERING the app rather than reading it.**
 The prototype was opened in a headless browser and operated, workspace by workspace, and the
 console was rendered beside it against a mock Tauri bridge; the gap list the seven agents worked
@@ -274,8 +310,8 @@ suite totals survived the merge**.
 | 4 | Roles and the look register | **done** | a screen may follow the content look (DECISIONS §70), "Used for" on the template, a tag on each gallery card. `e2e::r4_a_screen_may_follow_the_content_look`, `e2e::r4_a_following_screen_wears_a_different_look_for_each_kind` |
 | 5 | Lower thirds | **done** | three starters (Name · Lyric · Scripture), each keyed, each its own template. A non-hex shape fill no longer paints black. The band is now a real `band` layer running to the bottom edge, naming the words inside it (`members`), and **giving ground** before they shrink. `band.test.js` 24, measured in the browser. DECISIONS §75 |
 | 6 | Stage monitor | **done** | a word to the preacher (new `stage_alert` hub message, stage-only by contract, and NEVER a retained frame — `channels::tests` holds `("stage_alert", false)` so a preacher's private message cannot replay to a lobby TV joining late), the reading can no longer push the clock off the top, **switchable zones** persisted per device (`relay.stage.zones`) and the **stacked rail clock**. `e2e::r5_a_word_to_the_preacher_reaches_the_stage_and_not_a_rehearsal`, `e2e::r5_a_word_to_the_preacher_reaches_no_congregation_channel`, `stagezones.test.js` 9, `screenpreview.test.js` 7. **This row said zones and the clock were not built until 2026-09-14 and was wrong.** |
-| 7 | Countdown | **model done; one button unrendered** | one formatter (`formatCountdown`), one warning rule, and now ONE reader of how long is left (`countdown.js::countdownRemainingMs`) — the wall, the stage page and the console all go through it, because the subtraction acquired an exception. **Pause IS built**: `countdown_paused_ms` on `OutputContent`, held and released through `adjust_countdown`, which also carries Reset and ±1 so a re-aim can never drop the hold. `countdown_from` is now WRITTEN by `start_countdown`, so §7's short-countdown warning rule finally fires. `countdown.test.js` 31, `countdownwiring.test.js` 13, `e2e::r7_*` 7, `layers.test.js` 32, `templatestyle.test.js` 29. **What is left is the button**: `Dock.svelte`'s transport row still draws Start · Reset · ±1 · Clear and no Pause, and the dock belongs to the workspace agent — `countdownPress('pause'/'resume')`, `countdownCan(…, paused)` and `capture.js::pauseCountdown` are the three it needs |
-| 8 | Transitions | **done** | seven in one register (`transitions.js`), played by the renderer, migrated from the three old names, reduced motion is a cut. DECISIONS §71. `transitions.test.js` 15 |
+| 7 | Countdown | **done** | one formatter (`formatCountdown`), one warning rule, and now ONE reader of how long is left (`countdown.js::countdownRemainingMs`) — the wall, the stage page and the console all go through it, because the subtraction acquired an exception. **Pause IS built**: `countdown_paused_ms` on `OutputContent`, held and released through `adjust_countdown`, which also carries Reset and ±1 so a re-aim can never drop the hold. `countdown_from` is now WRITTEN by `start_countdown`, so §7's short-countdown warning rule finally fires. `countdown.test.js` 31, `countdownwiring.test.js` 13, `e2e::r7_*` 7, `layers.test.js` 32, `templatestyle.test.js` 29. **The button landed in wave 3**: `Dock.svelte`'s transport row draws Start · Pause · Reset · ±1 · Clear, wired to `countdownPress('pause'/'resume')` and `capture.js::pauseCountdown`, with `paused` passed to `countdownCan` so a `+1` cannot release a hold. Pause and Resume are two actions rather than one toggle, because a toggle computed from state the caller might hold stale is how a press does the opposite of what it says |
+| 8 | Transitions | **done** | seven in one register (`transitions.js`), played by the renderer, migrated from the three old names, reduced motion is a cut. DECISIONS §71. `transitions.test.js` 15. **Wave 3 gave it an operator**: the chrome bar carries the picker and its duration, the override rides its own retained hub frame (never `last_screen`, which would erase the verse a late screen is shown), the native window gets `output://transition`, and the duration control is disabled while a template is followed rather than offered as a number that changes nothing. `resolveTransition` is the ONE place the two authorities are ranked and it reports which answered. DECISIONS §84 |
 | 9 | Search | **done** | glued digits parse, a literal hit must cover 55% of the query, and nothing a search does reaches a screen (DECISIONS §72). `search.rs` — one pure module, five named match kinds, **every hit says why it matched** and a guess says so in words with no percentage; a ≥2-letter book prefix resolves, **search-only** (`detection.rs` was not opened, and `e2e::r9_nothing_a_search_offers_can_reach_an_auto_fire` states rule 10 at the boundary); one click takes a hit the whole way. `search::tests` 8, `e2e::r9_*` ×9, `livesearchrail.test.js` 11 |
 | 10 | Library | **partly done** | the operator label reaches the record again and still not the glass (DECISIONS §73); announcements say which fields the room sees; the collection rail and reflow editing were already built when the previous line said they were not. **Section keys** (`v c b t i o`, numbered on repeat, per song, `[Bridge:g]` to ask for one), the key printed on the slide it fires, **media looked at before it is added** with the name the operator gives it, and the dead selection tick box off three panes. DECISIONS §76. `sectionkeys.test.js` 42, `medialook.test.js` 4, `db::giving_a_section_its_own_fire_key_flags_the_arrangement_rather_than_repointing_it`. **`b` is BLACKOUT, so a Bridge is on `r`** — CLAUDE.md beats the spec's alphabet. **Not built: a key that fires from the Live tab's own grid, and a caption stored apart from the item's name** (`media_assets` is id / kind / filename / path / created\_at, so a caption needs a column). The grid one is DESIGN, not wiring, and the reason stated here before was wrong: `slidegrid.js`'s `Cell` DOES carry a `tag`. What it lacks is a fire `key`, and the real obstacle is that `assignKeys` assigns within ONE song and calls two sections wanting the same letter a conflict, while Live's grid is flat across every cue in a plan — so two songs in one plan both want `c` and nothing in the code says which owns the namespace. `assignKeys` / `resolveKeystroke` are pure and tested and answer the rest. One thing to decide out loud when it lands: the grid's press path arms a send on a **190 ms** double-click timer (`pressArbiter`), so a key that fires at once and a click that fires after a beat are two latencies on one cell |
 | 11 | Settings | **done** | eleven sections merged from eighteen (two deleted as duplicates, not merged); the three roles now come from `WorkspaceFrame` rather than from five private copies; Theme and a twice-offered Reset removed (DECISIONS §69, taking the tally to nine); Screens & looks says which screens actually follow a content look (§70). DECISIONS §77. `settingssections.test.js` 19 |
