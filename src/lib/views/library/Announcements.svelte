@@ -246,7 +246,7 @@
           busyRef={firing}
           {layout}
           showStar={false}
-          can={{ queue: true, favourite: false, edit: true, duplicate: true, add: false, move: false }}
+          can={{ queue: true, favourite: false, edit: true, duplicate: true, add: false, move: false, select: false }}
           onCheck={toggleCheck}
           onFire={send}
           onQueue={toggleQueue}
