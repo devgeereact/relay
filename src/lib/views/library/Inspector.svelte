@@ -20,8 +20,9 @@
    *
    * What the Library needed instead is what a browser needs: the thing you
    * picked, drawn the way the room will see it, and the two things you do with
-   * it. The queue it uniquely owned did NOT go away — it is `UpNext.svelte`,
-   * below this pane.
+   * it. The queue it uniquely owned did NOT go away: `LiveOutputRail.svelte`
+   * still renders Up Next and Go Live, below this pane, and its name is more
+   * accurate than it was — that file now concerns OUTPUT and nothing else.
    *
    * ── THE PREVIEW IS THE REAL RENDERER ──────────────────────────────────────
    *
@@ -182,7 +183,15 @@
               translation: item.slide.translation ?? null,
             }} />
         {:else}
-          <span class="li-plain">{item.slide.text}</span>
+          <!-- Even with no template loaded the frame must show what the WALL
+               would show. `VerseDeck`'s card makes the same promise in the same
+               words: a lyric slide projects the lyric, and a verse carries its
+               reference, because `slide.reference` is null for exactly the kinds
+               whose label is the operator's own bookkeeping (DECISIONS §73). -->
+          <span class="li-plain">
+            {#if item.slide.reference}<b>{item.slide.reference}</b>{/if}
+            {item.slide.text}
+          </span>
         {/if}
       </div>
 
@@ -257,7 +266,8 @@
     background: var(--v-void); border-bottom: 1px solid var(--v-line);
   }
   .li-frame img, .li-frame video { width: 100%; height: 100%; object-fit: contain; }
-  .li-plain { padding: 10px; font-size: 12px; color: var(--v-dim); text-align: center; }
+  .li-plain { padding: 10px; font-size: 12px; line-height: 1.5; color: var(--v-dim); text-align: center; }
+  .li-plain b { display: block; color: var(--v-txt); }
 
   .li-grp { display: flex; flex-direction: column; border-bottom: 1px solid var(--v-line); }
   .li-grph { margin: 0; padding: 9px 12px 5px; }
