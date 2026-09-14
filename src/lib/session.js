@@ -51,7 +51,29 @@ const EMPTY = {
   // not have to choose it again every week.
   liveDensity: 'normal', // 'normal' | 'compact'
   liveFullscreen: false, // hide the shell chrome around Live
+  // Which DESK the Templates workspace is showing (docs/REBRAND.md §2). Themes
+  // stopped being a tab of its own and became the second desk here; this is which
+  // one you were last on. Persisted for the same reason `liveDensity` is — a
+  // volunteer who spent Tuesday evening on themes should come back to themes.
+  templatesDesk: 'templates', // 'templates' | 'themes'
 };
+
+/**
+ * Fold a saved session forward onto the layout the app actually has.
+ *
+ * ONE case so far, and it is the tab-strip change: somebody last on the old
+ * Themes TAB has `activeTab: 'themes'` in localStorage. `MOVED_TABS` sends them
+ * to the Templates workspace, which is where Themes went — but the workspace has
+ * two desks, and without this they would land on the wrong one and conclude the
+ * Themes surface had been deleted.
+ *
+ * Pure, and applied to every load, so it is testable and so it cannot be skipped
+ * on the corrupt-payload path.
+ */
+export function migrateSession(s) {
+  if (s.activeTab === 'themes') return { ...s, templatesDesk: 'themes' };
+  return s;
+}
 
 function load() {
   const raw = (() => {
@@ -69,7 +91,7 @@ function load() {
   try {
     const parsed = JSON.parse(raw);
     // Merge over EMPTY so an older/partial payload can't leave holes.
-    return { ...EMPTY, ...parsed };
+    return migrateSession({ ...EMPTY, ...parsed });
   } catch {
     // A CORRUPT payload is NOT a fresh install, and the difference matters. There
     // was a session here — it may have been mid-service thirty seconds ago — we
@@ -164,14 +186,25 @@ export function restartSetup() {
 //                              a run surface).
 //   history       → Settings — same: a record of past services is config, not a
 //                              tab an operator runs a service from.
+//   themes        → Templates — the style layer beneath templates became a DESK
+//                              inside the Templates workspace (docs/REBRAND.md
+//                              §2). One pipeline, one workspace: a theme never
+//                              reaches a wall on its own, so it was never one of
+//                              the six things an operator runs a service from.
 //
 // Add an entry here whenever a tab is folded into another surface. A key that is
 // genuinely gone (not moved) belongs nowhere in this map — it should fall through
 // to the run surface.
+//
+// `help` is deliberately NOT here. It left the tab STRIP, but it is still a real
+// route (App.svelte's `routes`), reached from Settings → Support & guide and from
+// the cheatsheet: an operator whose session remembers Help should land on Help,
+// not be redirected somewhere it went to, because it did not go anywhere.
 export const MOVED_TABS = {
   stagedisplays: 'channels',
   dashboard: 'settings',
   history: 'settings',
+  themes: 'templates',
 };
 
 /**
