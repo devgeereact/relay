@@ -1096,8 +1096,12 @@
         </div>
         <p class="te-panenote">Top of the list is the front. Drag a row by its grip to reorder, or use ↑ ↓. An indented row is a word inside the band above it — the band decides where it sits, so it moves within the band and not out of it. A locked row will not move, here or on the canvas.</p>
 
-        <!-- READABILITY. Under the layer list, in the panel a designer already has
-             open, rather than behind a button they would have to know about. -->
+        <!-- READABILITY. Still under the layer list, in the panel a designer
+             already has open — but FOLDED, because what was here was seven
+             paragraphs of small italic prose, three verdict rows, two number
+             fields and a button: the biggest thing in the column and the least
+             used. It is one row now, and that row carries the verdict, so it is
+             not "behind a button you have to know about" either. -->
         {#if legible}
           <!-- A DISCLOSURE ROW, not a button — the panel's own heading with its
                current verdict on it and a chevron at the end. It is a <button>
