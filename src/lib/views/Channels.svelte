@@ -1132,7 +1132,15 @@
   /* ── inspector ── */
   .ch-inspttl{ flex:1; text-transform:none; letter-spacing:var(--v-tr-h2);
     font-size:var(--v-fs-h3); line-height:var(--v-lh-h3); }
-  .ch-close{ width:22px; height:22px; flex:0 0 auto; }
+  /* THE SHARED ICON BUTTON, at the shared size. This forced 22×22 over
+     `.r-iconbtn`'s 26 — a companion class quietly redrawing the control it was
+     attached to, which is the `.wide` defect in miniature and invisible from
+     either rule alone. It sits in a 34px `.rw-panehead`, so there was never a
+     space problem to solve. All that is left is the flex, which is layout.
+     It was not alone: `.br-fav` draws 24 and `.lib-more` 30, so four of this
+     product's icon buttons were four different sizes. Those two are in the
+     Library half and belong to whoever holds it. */
+  .ch-close{ flex:0 0 auto; }
 
   /* position:relative is load-bearing — TemplateRender's root is
      position:absolute; inset:0, so without it the preview escapes this box and
@@ -1172,7 +1180,11 @@
 
   .ch-empty{ margin:auto; padding:20px 14px; text-align:center; line-height:1.5; }
 
-  /* Sits at the end of the list, where the eye lands after reading it. */
+  /* A CREATE TARGET, not a button. A dashed full-width card at the end of the
+     screens list, where the eye lands after reading it — the shape says "this
+     is where a new one goes" before the words do. `.r-btn` would make it one
+     more control at the bottom of a column of screen rows and lose exactly
+     that — a dashed edge is the only thing here that means "empty". */
   .ch-addcard{ display:flex; flex-direction:column; align-items:center; gap:5px;
     width:calc(100% - 24px); margin:12px; padding:16px; cursor:pointer;
     background:transparent; border:1px dashed var(--v-line2); border-radius:var(--v-r-sm);

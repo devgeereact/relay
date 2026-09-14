@@ -1198,6 +1198,12 @@
     border-color:var(--v-sel); box-shadow:var(--v-shadow-lg); transition:none; }
   .sp-row.dragging .sp-grip{ cursor:grabbing; }
 
+  /* A HANDLE, not a button. It is the grab point of the row it sits in — no
+     fill, no edge, `cursor:grab`, and the pointer is meant to press and HOLD
+     it rather than click and release. It is still a button ELEMENT because the
+     keyboard has to be able to reorder too (↑/↓ on it call the same
+     `move_plan_item` the inspector uses), which is the only reason it has a
+     focus ring of its own. A `.r-btn` here would put a lozenge in every row. */
   .sp-grip{ display:grid; place-items:center; flex:0 0 auto; padding:2px; cursor:grab;
     background:transparent; border:0; border-radius:var(--v-r-sm); color:var(--v-500);
     touch-action:none; /* or the browser scrolls the pane instead of dragging the row */ }
@@ -1266,6 +1272,11 @@
   .sp-dot{ width:6px; height:6px; border-radius:2px; flex:0 0 auto; }
 
   .sp-results{ display:flex; flex-direction:column; }
+  /* A SEARCH RESULT ROW, not a button. Two lines — a reference and the opening
+     of the verse, clamped — in a seamed list that scrolls. It is pressable and
+     that is all it shares with a button: a column of these at 26px with a fill
+     and an edge each would be a list of controls rather than a list of things,
+     and the verse text would have nowhere to go. */
   .sp-result{ display:flex; align-items:flex-start; gap:9px; width:100%; padding:8px 12px;
     background:transparent; border:0; border-bottom:1px solid var(--v-line);
     color:var(--v-txt); cursor:pointer; text-align:left;
@@ -1391,6 +1402,11 @@
     display:flex; flex-direction:column; gap:8px; box-shadow:var(--v-shadow-lg); }
   .sp-arrtitle{ font-family:var(--f-head); font-weight:600; font-size:var(--v-fs-h3); color:var(--v-txt); }
   .sp-arrsub{ margin:2px 0 6px; }
+  /* A CHOICE CARD, not a button. Each one is an arrangement — a name over the
+     section sequence it would play, and for a stale one a third line saying
+     why it cannot be chosen — so it is a thing being described, not an action
+     being offered. The Cancel beneath them IS a button and wears `.r-btn`,
+     which is the distinction this dialog is making visible. */
   .sp-arropt{ display:flex; flex-direction:column; gap:3px; width:100%; text-align:left; padding:10px 12px;
     border-radius:var(--v-r-sm); background:var(--v-surf2); border:1px solid var(--v-line); color:var(--v-txt);
     cursor:pointer; transition:.12s; }

@@ -462,6 +462,12 @@
   .h-search{max-width:340px}
   .h-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:var(--v-sp-sm)}
   .h-card{padding:0;overflow:hidden}
+  /* A DISCLOSURE HEADER, not a button. It IS the top of the card it opens —
+     full bleed to both edges, with the chevron that says which way it is
+     facing — so the whole head is the target rather than a control parked in
+     one corner of it. `aria-expanded` carries the state; a `.r-btn` would
+     shrink a hit area the width of the card (`.h-grid` floors it at 320px) to
+     a 26px lozenge, and detach it from the panel it opens. */
   .h-head{display:flex;align-items:center;gap:11px;width:100%;padding:14px 16px;
     background:none;border:0;color:var(--v-txt);font:inherit;text-align:left;cursor:pointer}
   .h-head b{flex:1;font-size:var(--v-fs-b2)}

@@ -639,6 +639,11 @@
     flex-direction: column;
     gap: 8px;
   }
+  /* AN ACTION TILE, not a button. Title over a sentence explaining what will
+     happen — "Opens the output window. It starts blank." — because these are
+     the four things a volunteer reaches for before a service and each one
+     needs saying out loud. A `.r-btn` is a 26px box with one label in it and
+     has nowhere to put the second line. */
   .d-act {
     display: block;
     width: 100%;
@@ -686,6 +691,10 @@
     flex-direction: column;
     gap: 6px;
   }
+  /* A LIST ROW, not a button. One saved plan: its title at one end, its id at
+     the other, inside an `<li>`. Pressing it navigates to Planner — it does
+     not act on the plan — so it reads as the plan rather than as a control
+     about the plan. */
   .d-row {
     display: flex;
     width: 100%;
@@ -754,6 +763,16 @@
     line-height: 1.65;
     color: var(--v-faint);
   }
+  /* A TEXT LINK, not a button — and a button ELEMENT only because it navigates
+     inside the app rather than to a URL (there is nowhere for an anchor's href
+     to point). Spelled out rather than written as a tag, because
+     `qa-inventory.mjs` scans the whole file for an opening button tag and a
+     mention of one inside a comment is reported as a real control with no
+     handler and no accessible name. One of the two sits INSIDE a sentence —
+     "Build one in Planner — or run the service straight from…" — where a
+     26px lozenge with a fill and an edge would break the line it is part of.
+     The other names the same affordance beside a heading, and the two must
+     keep looking alike. */
   .d-link {
     background: none;
     border: 0;
@@ -769,7 +788,13 @@
     padding: 11px 13px;
     border-radius: var(--v-r-md);
     background: var(--v-red-soft);
-    border: 1px solid rgba(239, 68, 68, 0.3);
+    /* The token, not the literal. This drew `rgba(239,68,68,.3)` — the same
+       retired red B1 took out of `.r-btn.danger`, which is in no token in this
+       repository; `--v-red-line` is `rgba(244,81,91,.5)`. Two reds in one
+       product is how one of them stops meaning anything. `rgba()` is the one
+       thing the token sweep in `workspacegrammar.test.js` says out loud that
+       it does not scan, which is why this survived it. */
+    border: 1px solid var(--v-red-line);
     color: var(--v-txt);
     font-size: var(--v-fs-h3);
     line-height: 1.55;

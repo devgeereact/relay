@@ -829,14 +829,22 @@
       </div>
       <nav class="rw-panebody s-railnav">
         {#each SECTIONS as s}
+          <!-- THE SHARED RAIL ROW, not a copy of it. This wore `.s-railbtn`, a
+               hand-typed duplicate of `WorkspaceFrame`'s `.rw-item` that agreed
+               with it on everything except the two numbers nobody re-reads: a
+               32px row against the shared 34, and a 10px gap against 9. The two
+               rails sit in the same chrome at the same place on screen, so a
+               reader comparing Settings with Planner sees a 2px step and cannot
+               name it. Keeping the icon's own class is the whole legitimate
+               override — the row is the frame's. -->
           <button
-            class="s-railbtn r-focus"
+            class="rw-item r-focus"
             class:on={section === s.key}
             aria-pressed={section === s.key}
             on:click={() => (section = s.key)}
           >
             <svg class="s-railic" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">{@html ICONS[s.icon]}</svg>
-            <span class="s-raillbl">{s.label}</span>
+            <span class="rw-itemname">{s.label}</span>
           </button>
         {/each}
       </nav>
@@ -1925,17 +1933,16 @@
 
   /* ── SECTION RAIL ── */
   .s-railnav{ display:flex; flex-direction:column; }
-  .s-railbtn{ display:flex; align-items:center; gap:10px; width:100%; text-align:left; cursor:pointer;
-    min-height:32px; padding:6px 12px; border:0; border-bottom:1px solid var(--v-line); background:transparent;
-    color:var(--v-dim); font-family:var(--f-body); font-size:var(--v-fs-b2); line-height:var(--v-lh-b2);
-    font-weight:500; transition:background var(--v-dur) var(--v-ease), color var(--v-dur) var(--v-ease); }
-  .s-railbtn:last-child{ border-bottom:0; }
-  .s-railbtn:hover:not(.on){ background:var(--v-surf2); color:var(--v-txt); }
-  /* Steel blue = the thing you are working on (docs/REBRAND.md §1). */
-  .s-railbtn.on{ background:var(--v-sel-soft); color:var(--v-txt); font-weight:600;
-    box-shadow:inset 2px 0 0 var(--v-sel); }
+  /* THE ROW IS `.rw-item`, in WorkspaceFrame — see the markup. `.s-railbtn`
+     lived here: twelve declarations that restated the shared rail row, plus a
+     `:last-child`, a `:hover:not(.on)` and an `.on` that restated it again,
+     and it disagreed with the original on exactly two numbers (32px vs 34px,
+     gap 10 vs 9). All that is left is the icon, which the frame does not know
+     about — the shape a legitimate override has. `.s-raillbl` went with it:
+     the label is `.rw-itemname`, which adds the `flex:1; min-width:0` its
+     hand-rolled twin never had, so a long section name now actually ellipses
+     instead of pushing the count off the end of the row. */
   .s-railic{ flex:0 0 auto; }
-  .s-raillbl{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 
   /* ── THE READING COLUMN ──────────────────────────────────────────────────
      §11 is a rail plus ONE column, and the prototype caps it at 880px and
@@ -2073,6 +2080,12 @@
   .s-checklist{ display:flex; flex-direction:column; gap:0; }
   .s-check-code{ font-family:var(--f-mono); font-size:var(--v-fs-mono); font-weight:600; letter-spacing:.05em;
     color:var(--v-txt); }
+  /* A RADIO, not a button. One seamed row per translation, carrying its own
+     dot, and exactly one of them is chosen at a time — `aria-pressed` and the
+     dot say which. It keeps its own shape deliberately: `.r-btn` is a control
+     you press and let go of, and a stack of them down the page would read as
+     several things to do rather than one choice to make. (The list is however
+     many translations the corpus holds, so there is no fixed count here.) */
   .s-tr{ display:flex; align-items:center; gap:11px; width:100%; text-align:left; cursor:pointer;
     background:transparent; border:0; border-bottom:1px solid var(--v-line); padding:8px 12px;
     color:var(--v-txt); font-family:var(--f-body); font-size:var(--v-fs-b2);

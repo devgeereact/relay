@@ -690,3 +690,265 @@ describe('§1 · one button, everywhere', () => {
     }
   });
 });
+
+// ───────────────────────────────────────────────────────────────────────────
+// EVERY BUTTON IS THE SHARED ONE, OR IT IS A NAMED SHAPE — wave 3, agent B3.
+// docs/REBRAND.md §1. Planner · Outputs · Settings, and the four surfaces a
+// volunteer meets before any of them: the Dashboard, Help, the model setup and
+// the first-run wizard.
+//
+// B1's block above fixed the INSTRUMENT — `.r-btn` now draws the house fill and
+// edge, every button inherits the UI face, rest and hover are the right two
+// steps. What it could not fix is the long tail: 181 buttons in the tree do not
+// wear `.r-btn` at all, and reading them one at a time cannot tell you which of
+// those are drift and which are deliberate. That is the distinction this block
+// exists to force, and it forces it by making the deliberate ones SAY SO.
+//
+// So the rule has two halves, and the second is not the lesser one:
+//
+//   1. a button that is a button uses the shared shape;
+//   2. a control that is genuinely NOT that — a rail row, a radio, a list row,
+//      a disclosure header, a drag handle, a create target, a text link inside
+//      a sentence — keeps its own shape and carries a comment saying what it
+//      is. An unexplained shape is indistinguishable from an accident, which
+//      is exactly how the two defects below survived every existing scanner.
+//
+// The two that were drift, both found by grouping buttons by the shape they
+// draw rather than by reading files one at a time:
+//
+//   · Settings' section rail wore `.s-railbtn`, a hand-typed duplicate of
+//     `WorkspaceFrame`'s `.rw-item` — the same twelve declarations, agreeing on
+//     everything except 32px against the shared 34 and a 9px gap typed as 10.
+//     Both rails sit in the same chrome at the same place on screen. Nothing
+//     could see it: each file is internally consistent and the drift only
+//     exists in the column where the two meet, which is a claim this file
+//     already makes about grids and did not make about rows.
+//   · `.ch-close` forced 22×22 over `.r-iconbtn`'s 26 — a companion class
+//     quietly redrawing the control it is attached to, which is the `.wide`
+//     defect B1 found in `Live.svelte` in miniature. B1's height scanner could
+//     not reach it twice over: `r-iconbtn` is not in its shared list, and
+//     `.ch-close` is not a shared class name.
+//
+// Each assertion below was watched to fail with its own defect put back.
+describe('§1 · a button is the shared one, or a named shape — Planner · Outputs · Settings', () => {
+  // Every surface B3 owns. Boot's nine screens are in the list because they are
+  // all already `.r-btn` and an assertion that is true today is the cheapest one
+  // to keep true — a gate added to the launch ladder next year is covered by
+  // construction rather than by somebody remembering this file.
+  const B3 = [
+    'src/lib/views/ServicePlanner.svelte',
+    'src/lib/views/Channels.svelte',
+    'src/lib/views/Settings.svelte',
+    'src/lib/views/Dashboard.svelte',
+    'src/lib/views/Help.svelte',
+    'src/lib/ModelSetup.svelte',
+    'src/lib/FirstRun.svelte',
+    'src/lib/boot/BootDiagnostics.svelte',
+    'src/lib/boot/CrashReportRecovery.svelte',
+    'src/lib/boot/DatabaseMigration.svelte',
+    'src/lib/boot/HardwareCheck.svelte',
+    'src/lib/boot/PluginLoading.svelte',
+    'src/lib/boot/RecoverSession.svelte',
+    'src/lib/boot/SafeModeStartup.svelte',
+    'src/lib/boot/UpdateAvailable.svelte',
+  ];
+
+  // A shape that comes from somewhere else — app.css, or WorkspaceFrame for the
+  // rail row. Wearing one of these IS the answer to "what shape is this".
+  const SHARED = ['r-btn', 'r-cbtn', 'r-iconbtn', 'r-switch', 'r-range', 'r-pill', 'ws-tab', 'rw-item'];
+  // Not shapes: a variant of the shared button, a focus ring, a typeface, or a
+  // state the markup toggles. None of these answers the question.
+  const NOT_A_SHAPE = /^(primary|amber|ghost|danger|quiet|sm|r-focus|r-mono|on|sel|arm|wide)$/;
+
+  // Comments are the POINT of half of this, so the style block is read raw.
+  // `styleOf` above strips them, and using it here would have made the naming
+  // assertion unfalsifiable — it could never have seen a comment to require.
+  const rawStyleOf = (src) => {
+    const i = src.lastIndexOf('<style>');
+    return i === -1 ? '' : src.slice(i);
+  };
+  const templateOf = (src) =>
+    src.replace(/<style[\s\S]*?<\/style>/g, '').replace(/<script[\s\S]*?<\/script>/g, '');
+
+  // A `<button>`'s attributes cannot be matched with `[^>]*`: an inline handler
+  // contains `=>`, and the first regex written here stopped at the `>` of the
+  // arrow and read the class of whatever came after it. Brace- and quote-aware,
+  // so `on:click={() => f()}` is one attribute and not a truncation point.
+  const buttonsIn = (tpl) => {
+    const out = [];
+    for (let i = tpl.indexOf('<button'); i !== -1; i = tpl.indexOf('<button', i + 1)) {
+      let depth = 0;
+      let quote = null;
+      let j = i + 7;
+      for (; j < tpl.length; j++) {
+        const c = tpl[j];
+        if (quote) {
+          if (c === quote) quote = null;
+          continue;
+        }
+        if (c === '"' || c === "'") quote = c;
+        else if (c === '{') depth++;
+        else if (c === '}') depth--;
+        else if (c === '>' && depth === 0) break;
+      }
+      out.push({ at: i, attrs: tpl.slice(i + 7, j) });
+    }
+    return out;
+  };
+  const classesOf = (attrs) => {
+    const m = attrs.match(/\bclass="([^"]*)"/);
+    return m ? m[1].split(/\s+/).filter(Boolean) : [];
+  };
+  // A classless button is legitimate inside `.r-seg`, whose shared rule is
+  // `.r-seg button` — the segment child is dressed by its container, which is
+  // still one shared shape and not a hand-rolled one. Nearest-opener wins: a
+  // `</div>` between the segment and the button means it is not in it.
+  const inSegment = (tpl, at) => {
+    const seg = tpl.lastIndexOf('class="r-seg', at);
+    return seg !== -1 && seg > tpl.lastIndexOf('</div>', at);
+  };
+  // The class's OWN rule, at the start of a line. Anchored deliberately: the
+  // first version searched for `.sp-grip{` anywhere and matched it inside
+  // `.sp-row.dragging .sp-grip{`, two rules above the real one, and would then
+  // have reported an unnamed shape about a shape that is named.
+  const declaredWithAComment = (rawStyle, cls) => {
+    const m = rawStyle.match(new RegExp(`\\n[ \\t]*\\.${cls}\\s*\\{`));
+    if (!m) return false;
+    return rawStyle.slice(0, m.index).trimEnd().endsWith('*/');
+  };
+
+  it('the scanner can see the buttons it judges, and both answers it accepts', () => {
+    // Both of this repository's other markup scanners quietly narrowed and
+    // passed everything (ipc.test.js, twice). So: prove this one still reads
+    // the three shapes the assertions below distinguish between, before
+    // trusting any of them.
+    // AND the attribute reader is not the obvious one. `<button ...>` cannot be
+    // matched with `[^>]*`, because an inline handler contains `=>` and a
+    // greedy-stop-at-`>` reader ends the tag inside the arrow. Every button in
+    // the tree today happens to put `class` BEFORE its handler, so the naive
+    // reader passes every assertion below — which is precisely the shape both
+    // of `ipc.test.js`'s narrowed scanners had. Asserted against a synthetic
+    // tag, because the tree cannot currently falsify it.
+    const [arrowed] = buttonsIn('<button on:click={() => f(">")} class="x y">go</button>');
+    expect(classesOf(arrowed.attrs), 'the attribute reader stops inside an arrow').toEqual(['x', 'y']);
+
+    const planner = read('src/lib/views/ServicePlanner.svelte');
+    const tpl = templateOf(planner);
+    const btns = buttonsIn(tpl);
+    expect(btns.length, 'the Planner scan found no buttons at all').toBeGreaterThan(20);
+    // …a shared one,
+    expect(btns.some((b) => classesOf(b.attrs).includes('r-btn'))).toBe(true);
+    // …a segment child with no class of its own,
+    expect(btns.some((b) => classesOf(b.attrs).length === 0 && inSegment(tpl, b.at))).toBe(true);
+    // …and a named shape that is not a button.
+    expect(declaredWithAComment(rawStyleOf(planner), 'sp-result')).toBe(true);
+    // And the comment check is a real check: `.sp-results` two lines above it
+    // carries none, so this must come back false or it is testing nothing.
+    expect(declaredWithAComment(rawStyleOf(planner), 'sp-results')).toBe(false);
+  });
+
+  it('every button is the shared shape, a segment child, or a shape with a name and a reason', () => {
+    const offenders = [];
+    for (const f of B3) {
+      const src = read(f);
+      const tpl = templateOf(src);
+      const style = rawStyleOf(src);
+      for (const b of buttonsIn(tpl)) {
+        const classes = classesOf(b.attrs);
+        if (classes.some((c) => SHARED.includes(c))) continue;
+        if (classes.length === 0 && inSegment(tpl, b.at)) continue;
+        const shapes = classes.filter((c) => !NOT_A_SHAPE.test(c));
+        const line = tpl.slice(0, b.at).split('\n').length;
+        if (!shapes.length) {
+          offenders.push(`${f}:~${line} a button with no shape at all`);
+          continue;
+        }
+        // ONE of its classes has to answer the question. A control may carry a
+        // layout class and a shape class; it may not carry only layout.
+        if (!shapes.some((c) => declaredWithAComment(style, c))) {
+          offenders.push(
+            `${f}:~${line} .${shapes.join('.')} — no rule of its own with a comment saying what it is`,
+          );
+        }
+      }
+    }
+    expect(
+      offenders,
+      'use .r-btn, or give the shape a class with a comment saying what it is instead',
+    ).toEqual([]);
+  });
+
+  it('and no companion class redraws the shared control it is attached to', () => {
+    // THE `.wide` DEFECT, generalised. `.r-btn rk wide` drew a complete second
+    // button from a rule named like a layout utility; `.r-iconbtn ch-close`
+    // drew a smaller one from a rule named after the control it closes. Both
+    // read as innocent alone, and neither is visible unless you ask what the
+    // OTHER class in the list is doing.
+    //
+    // PAINT IS ALLOWED, BOX IS NOT. `.sp-raildel` and `.ch-del` tint a Delete
+    // rose on hover and when armed, which is a real thing a variant does; a
+    // scanner that banned `background` outright would condemn those, be
+    // weakened, and take the box rules with it. Width and padding are B1's
+    // stated allowance and stay out of this list for the same reason.
+    const BOX = [
+      'height',
+      'min-height',
+      'border-radius',
+      'border',
+      'font-family',
+      'font-size',
+      'font-weight',
+      'padding',
+    ];
+    const offenders = [];
+    for (const f of B3) {
+      const src = read(f);
+      const style = rawStyleOf(src).replace(/\/\*[\s\S]*?\*\//g, '');
+      const companions = new Set();
+      for (const b of buttonsIn(templateOf(src))) {
+        const classes = classesOf(b.attrs);
+        if (!classes.some((c) => SHARED.includes(c))) continue;
+        for (const c of classes) if (!SHARED.includes(c) && !NOT_A_SHAPE.test(c)) companions.add(c);
+      }
+      for (const m of style.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+        const sel = m[1].trim().replace(/\s+/g, ' ');
+        const named = [...sel.matchAll(/\.([\w-]+)/g)].some((x) => companions.has(x[1]));
+        // …and a descendant rule that reaches a shared button from outside it,
+        // which is the same smuggling route one level up.
+        const reaches = /[\s>](?::global\()?(?:button|\.r-btn|\.r-iconbtn|\.r-cbtn)\b/.test(sel);
+        if (!named && !reaches) continue;
+        for (const p of BOX) {
+          if (new RegExp(`(^|[;{\\s])${p}\\s*:`).test(m[2])) {
+            offenders.push(`${f}: ${sel} declares ${p}`);
+          }
+        }
+      }
+    }
+    expect(
+      offenders,
+      'the shared control owns its box — a companion class may paint, not redraw',
+    ).toEqual([]);
+  });
+
+  it("Settings' section rail is the shared rail row, not a second copy of it", () => {
+    // The defect: `.s-railbtn`, twelve declarations restating `.rw-item` and
+    // disagreeing with it on 32px vs 34px and gap 10 vs 9. Asserted on BOTH
+    // halves, because deleting the rule while leaving the class on the markup
+    // gives an undressed button, and deleting the class while leaving the rule
+    // gives a Svelte warning nobody reads.
+    const raw = read('src/lib/views/Settings.svelte');
+    // Prose stripped, for the reason B1's scanner strips it: the markup and the
+    // stylesheet both now carry a comment NAMING the rule that was deleted, so
+    // a scanner reading the whole file would report the defect present and the
+    // defect fixed at once, whichever way round the code actually was.
+    const s = raw.replace(/\/\*[\s\S]*?\*\//g, '').replace(/<!--[\s\S]*?-->/g, '');
+    expect(s, 'the section rail draws its own row again').not.toMatch(/s-railbtn/);
+    expect(raw, 'the scanner is reading a file with no prose in it at all').toMatch(/s-railbtn/);
+    expect(s, 'the section rail rows are not the shared rail row').toMatch(/class="rw-item r-focus"/);
+    // …and the label is the shared one, which carries the `flex:1; min-width:0`
+    // the hand-rolled twin never had — so a long section name ellipses instead
+    // of pushing the count off the end of the row.
+    expect(s).toMatch(/<span class="rw-itemname">\{s\.label\}<\/span>/);
+    expect(s).not.toMatch(/s-raillbl/);
+  });
+});

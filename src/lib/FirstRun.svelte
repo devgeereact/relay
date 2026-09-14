@@ -598,6 +598,12 @@
     border-color: rgba(34, 197, 94, 0.5);
     color: var(--v-emerald);
   }
+  /* A WAY OUT, not a button. It is deliberately the quietest thing in the
+     wizard: it sits at the FOOT of the step rail, under everything, drawn as
+     underlined text in `--v-faint`, because the whole surface exists to get a
+     volunteer through setup, and a Skip drawn like the Continue in the step's
+     own foot would be pressed by mistake. `.r-btn.quiet` is the shared shape for a
+     link-weight action and this is deliberately quieter still. */
   .fr-skip {
     margin-top: auto;
     background: none;
@@ -715,6 +721,11 @@
     flex-wrap: wrap;
     margin-bottom: 16px;
   }
+  /* A PICKER TILE, not a button. Each one draws the monitor it names — a box
+     at that display's real aspect ratio, over its name and its resolution — so
+     an operator picks the screen by recognising its SHAPE, which is the only
+     way to tell two 1920×1080 displays apart. Choosing one is a selection, not
+     an act: nothing is put on it. */
   .fr-mon {
     flex: 1 1 150px;
     background: var(--v-surf2);
@@ -781,6 +792,11 @@
     gap: 7px;
     max-width: 420px;
   }
+  /* A RADIO, not a button — and it says so: `role="radio"` inside a
+     `role="radiogroup"`, with `aria-checked` and its own dot. Exactly one
+     language is chosen, and a row of `.r-btn`s would offer several things to
+     do where there is one choice to make. Same shape and same reasoning as
+     Settings' translation list. */
   .fr-lang {
     display: flex;
     align-items: center;
