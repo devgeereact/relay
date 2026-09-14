@@ -1,5 +1,4 @@
-// QUICK TOOLS — the three things that change during a service, plus the one that
-// interrupts it.
+// QUICK TOOLS — the three things that change during a service.
 //
 // `docs/REBRAND.md` §2 names the card's contents: the countdown, the **name
 // band**, and the **word to the preacher**, with `Load whole plan` in its header.
@@ -8,21 +7,23 @@
 // §68) with no operator surface at all, which is the same defect as a command
 // with no rendered control — built, shipped and unreachable.
 //
-// The emergency announcement is here too. It was in Live's inspector column,
-// where §2 puts the AI's claims alone; it paints over live scripture on EVERY
-// screen at once, so being reachable only from the tab you happen to be on was
-// the argument for moving it rather than against.
+// The emergency announcement was a FOURTH thing in this card, moved here from
+// Live's inspector column. It was removed on 2026-09-14 on the operator's
+// instruction (L3) — it is the one control in the card that paints over live
+// scripture on every screen at once, and §2 says three. What that leaves behind
+// is asserted below rather than left to be discovered.
 //
 // WHAT THESE TESTS ARE FOR, in order of how badly each would hurt:
 //
 //   1. nothing an operator types for the PREACHER may reach a congregation
 //      channel. The guarantee is `channels.rs`'s, and this holds the door on
 //      this side: the stage row's press reaches `send_stage_alert` and no fire.
-//   2. the announcement is armed in two steps. A stray Enter in a text field
-//      must not be able to interrupt a reading in front of a room.
-//   3. the name band is an ordinary manual fire through an EXISTING path, with
+//   2. the name band is an ordinary manual fire through an EXISTING path, with
 //      the operator's chosen band as the cue's own template — not a new kind, not
 //      a new renderer, and never automatic.
+//   3. the three tools are ONE instrument — one card, one head, one field shape,
+//      one button row — because three degrees of finish in one 200px column is
+//      what the operator was actually looking at.
 //
 //   npx vitest run src/lib/quicktools.test.js
 
@@ -203,54 +204,46 @@ describe('the word to the preacher', () => {
   });
 });
 
-describe('the emergency announcement', () => {
-  const type = async (text) => {
-    const box = host.querySelector('[aria-label="Emergency announcement"]');
-    box.value = text;
-    box.dispatchEvent(new Event('input'));
-    await settle();
-  };
-
-  it('takes TWO presses — one stray Enter cannot interrupt a reading', async () => {
+// ── THE EMERGENCY ANNOUNCEMENT IS GONE, AND THIS IS THE TEST THAT SAYS SO ──
+//
+// Removed from Quick tools on the operator's instruction (2026-09-14, L3). Three
+// tests used to sit here holding its two-step arm; they are not weakened, they
+// are answered by the control not existing. What replaces them is the assertion
+// that it is REMOVED rather than hidden — a `hidden` attribute or a `{#if false}`
+// would have passed every one of the three tests it replaced.
+//
+// The wrapper's own contract (`pushAnnouncement` THROWS) is still held, by
+// `announce.test.js` and `qa-r5-groups.test.js`. That is correct and unchanged:
+// the contract is about the wrapper, not about this card.
+describe('the emergency announcement is not in Quick tools', () => {
+  it('no control renders it, and nothing in this card can reach the command', async () => {
     mount();
     await settle();
-    await type('Fire alarm — please leave by the side doors');
-
-    const go = () => [...host.querySelectorAll('button')].find((b) => b.className.includes('ann-go'));
-    go().click();
-    await settle();
-    expect(called('push_announcement')).toHaveLength(0);
-    expect(go().textContent.trim()).toBe('Confirm?');
-
-    go().click();
-    await settle();
-    expect(called('push_announcement')).toHaveLength(1);
-    expect(called('push_announcement')[0][1]).toEqual({
-      message: 'Fire alarm — please leave by the side doors',
-    });
+    expect(host.querySelector('[aria-label="Emergency announcement"]')).toBeNull();
+    expect(host.textContent).not.toContain('Announce');
+    // Not merely hidden. A removed control leaves no state and no handler behind
+    // it — a `hidden` attribute would satisfy the query above and still ship the
+    // path, which is the distinction the brief asked for.
+    expect(src).not.toContain('annMsg');
+    expect(src).not.toContain('annArmed');
+    expect(src).not.toContain('ann-go');
+    // The wrapper is not imported and is called from nowhere. Asserted against
+    // the SCRIPT rather than the file, because the file still names it in the
+    // comment that explains its absence — and a scanner that reads the prose
+    // about a rule instead of the rule is a scanner that passes everything.
+    expect(instanceScript()).not.toMatch(/^\s*pushAnnouncement,/m);
+    expect(instanceScript()).not.toMatch(/pushAnnouncement\s*\(/);
   });
 
-  it('Enter alone arms it and does not send it', async () => {
+  it('and pressing every button in Quick tools reaches no announcement', async () => {
     mount();
     await settle();
-    await type('Doctor needed at the back');
-    const box = host.querySelector('[aria-label="Emergency announcement"]');
-    box.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    invoke.mockClear();
+    // Scoped to this card: the Controls card beside it holds the panic buttons,
+    // and the audio card's switch opens a microphone.
+    for (const b of host.querySelectorAll('.tools button')) if (!b.disabled) b.click();
     await settle();
     expect(called('push_announcement')).toHaveLength(0);
-  });
-
-  it('a failure is reported — an operator must never believe the room was warned', async () => {
-    mount();
-    await settle();
-    await type('Fire alarm');
-    invoke.mockRejectedValue({ kind: 'internal', message: 'the output lock is poisoned' });
-    const go = () => [...host.querySelectorAll('button')].find((b) => b.className.includes('ann-go'));
-    go().click();
-    await settle();
-    go().click();
-    await settle();
-    expect(host.querySelector('[role="alert"]')).not.toBeNull();
   });
 });
 
@@ -317,14 +310,17 @@ function getSession() {
   return v;
 }
 
-describe('the card is the four things §2 names, in one place', () => {
-  it('holds the countdown, the name band, the word to the preacher and the announcement', () => {
+describe('the card is the three things §2 names, in one place', () => {
+  // THREE, not four. §2 says "the three things that change during a service" and
+  // the card carried a fourth — the one control in it that paints over live
+  // scripture on every screen at once. It was removed on 2026-09-14 (L3) and the
+  // card is now what the spec says it is.
+  it('holds the countdown, the name band and the word to the preacher', () => {
     const card = src.slice(src.indexOf('<span class="dk">Quick tools</span>'));
     const body = card.slice(0, card.indexOf('<span class="dk">Controls</span>'));
     expect(body).toContain('Countdown');
     expect(body).toContain('Name band');
     expect(body).toContain('Word to the preacher');
-    expect(body).toContain('Announce');
     expect(body).toContain('Load whole plan');
   });
 });
@@ -349,7 +345,7 @@ function instanceScript() {
 
 describe('L2 · the countdown is one block', () => {
   it('every countdown row is inside the block and the next tool is outside it', () => {
-    const from = src.indexOf('<div class="tmr">');
+    const from = src.indexOf('<div class="qblock tmr">');
     expect(from).toBeGreaterThan(-1);
     const block = src.slice(from, src.indexOf('<!-- ── THE NAME BAND', from));
     expect(block).toContain('Countdown');
@@ -358,8 +354,10 @@ describe('L2 · the countdown is one block', () => {
     expect(block).toContain('cdtrans');
     // The seam falls BETWEEN the two tools, which is the whole reason for it.
     expect(block).not.toContain('Name band');
-    const css = src.slice(src.indexOf('  .tmr {'), src.indexOf('  .tmr {') + 340);
-    expect(css).toMatch(/border: 1px solid/);
+    // THE SEAM IS `.qblock`'S NOW, NOT `.tmr`'S (L3). L2 gave the countdown a
+    // border of its own and that is exactly how it ended up looking like a
+    // different kind of card from its two neighbours — see the next describe.
+    expect(rule('.qblock')).toMatch(/border: 1px solid/);
   });
 
   // THE FIGURE IS NOT AMBER, WHATEVER THE PROTOTYPE DOES. Amber in this room means
@@ -376,6 +374,134 @@ describe('L2 · the countdown is one block', () => {
     mount();
     await settle();
     expect(host.querySelector('.cdstatev').textContent.trim()).toBe('not counting');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// L3 · ONE INSTRUMENT, THREE TIMES
+//
+// The operator's words: "fix COUNTDOWN section to look professional and clean
+// and same to NAME BAND, WORD TO THE PREACHER". All three blocks existed after
+// L2 — the defect was that they were three different cards. The countdown sat on
+// `--v-surf2` behind `--v-line2` at `--v-r-md` with a `.dcap` caption, a bare
+// field row and a wrapping flex of buttons; the name band sat on `--v-surf`
+// behind `--v-line` at `--v-r-lg` with an `.r-lbl` caption, fields indented 80px
+// under a label that was in the head, and a flex button row; the word to the
+// preacher had the third arrangement again.
+//
+// These tests hold the agreement rather than the literals. A literal-hunting
+// scan would condemn the countdown's figure and the alert's red, which are the
+// two things that SHOULD differ, and would then be weakened until it held
+// nothing.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** One CSS rule out of the component's `<style>`, by selector. */
+function rule(sel) {
+  const style = src.slice(src.indexOf('<style>'));
+  const at = style.indexOf('\n  ' + sel + ' {');
+  if (at < 0) return '';
+  return style.slice(at, style.indexOf('}', at) + 1);
+}
+
+/** The three tool blocks, as they are written in the markup. */
+function toolBlocks() {
+  const card = src.slice(src.indexOf('<span class="dk">Quick tools</span>'));
+  const body = card.slice(0, card.indexOf('<span class="dk">Controls</span>'));
+  return [...body.matchAll(/<div class="([^"]*\bqblock\b[^"]*)"/g)].map((m) => m[1]);
+}
+
+describe('L3 · the three tools are one card, three times', () => {
+  it('every tool is a `qblock`, and none of them draws a second kind of card', () => {
+    // Three blocks, each carrying the shared class. `.tmr` and `.onstage` survive
+    // as MODIFIERS — one for the tool that needs a figure, one for the tool that
+    // turns red — and the test says so rather than forbidding every extra class.
+    const blocks = toolBlocks();
+    expect(blocks).toHaveLength(3);
+    for (const cls of blocks) expect(cls.split(/\s+/)).toContain('qblock');
+
+    // The ground, the hairline, the corner, the padding and the inner gap are
+    // declared ONCE. This is the assertion that fails if the countdown gets its
+    // own card back: a `.tmr` (or a `.qblock.tmr`) that redeclares any of them.
+    const tmr = rule('.tmr');
+    for (const prop of ['background', 'border', 'border-radius', 'padding', 'gap']) {
+      expect(tmr, `.tmr redeclares ${prop} — it is not the same card as its neighbours`)
+        .not.toMatch(new RegExp('(^|[^-\\w])' + prop + ':'));
+    }
+    const shared = rule('.qblock');
+    for (const prop of ['background', 'border', 'border-radius', 'padding', 'gap']) {
+      expect(shared, `.qblock does not own ${prop}`).toMatch(new RegExp('(^|[^-\\w])' + prop + ':'));
+    }
+  });
+
+  it('every tool head is the same head — a mono caption left, its own slot right', async () => {
+    mount();
+    await settle();
+    const heads = [...host.querySelectorAll('.qblock .qhead')];
+    expect(heads).toHaveLength(3);
+    for (const h of heads) {
+      // ONE caption class across all three. The countdown used `.dcap` and the
+      // other two `.r-lbl`; they render the same and are not the same thing, so
+      // one of them had to go and the shared one stayed.
+      const lbl = h.querySelector('.r-lbl');
+      expect(lbl, 'a tool head with no shared label').not.toBeNull();
+      expect(h.querySelector('.qspring'), 'a head with nothing pushing its right slot over').not.toBeNull();
+      // The caption is the FIRST thing in the head, in every one of them.
+      expect(h.firstElementChild.classList.contains('r-lbl')).toBe(true);
+    }
+    expect(heads.map((h) => h.querySelector('.r-lbl').textContent.trim()))
+      .toEqual(['Countdown', 'Name band', 'Word to the preacher']);
+  });
+
+  it('every button row is the same grid, and none of them is a wrapping flex', () => {
+    const btns = rule('.qbtns');
+    expect(btns).toMatch(/display: grid/);
+    expect(btns).toMatch(/gap: 5px/);
+    // The transport may narrow its CELL — it holds six buttons where the others
+    // hold two — but it may not go back to being a different kind of row. A
+    // wrapping flex of fixed-width controls is what ran the countdown figure and
+    // `Take down` past this card's right edge at 1024.
+    const trans = rule('.cdtrans');
+    expect(trans).not.toMatch(/display: flex/);
+    expect(trans).not.toMatch(/flex-wrap/);
+
+    // And every row in the markup uses it.
+    const card = src.slice(src.indexOf('<span class="dk">Quick tools</span>'));
+    const body = card.slice(0, card.indexOf('<span class="dk">Controls</span>'));
+    const rows = [...body.matchAll(/<div class="([^"]*)"[^>]*role="group"/g)].map((m) => m[1]);
+    expect(rows.length).toBeGreaterThanOrEqual(2);
+    for (const cls of rows) expect(cls.split(/\s+/)).toContain('qbtns');
+  });
+
+  it('the name band no longer hangs its contents off an 80px indent', async () => {
+    // It was the one tool whose fields, buttons, preview and caption started a
+    // third of the way across a 200px card, under a label that is in the HEAD.
+    for (const sel of ['.ltsub', '.ltrow', '.ltcap']) {
+      expect(rule(sel), `${sel} is still here`).toBe('');
+    }
+    expect(rule('.ltprev')).not.toMatch(/margin-left/);
+
+    mount();
+    await settle();
+    // The two fields are stacked and full width, as the prototype's `.lt3` has
+    // them — not a pair squeezed side by side into ~95px each.
+    const name = host.querySelector('[aria-label="Name for the lower third"]');
+    const role = host.querySelector('[aria-label="Role for the lower third"]');
+    expect(name.parentElement).toBe(role.parentElement);
+    expect(name.parentElement.classList.contains('qblock')).toBe(true);
+    for (const f of [name, role]) expect(f.classList.contains('wide')).toBe(true);
+  });
+
+  it('`Send to stage` is a button variant this stylesheet actually defines', () => {
+    // `pri` is not a class in `src/app.css`. The one button in Quick tools meant
+    // to read as the primary action had been rendering as a plain `.r-btn` for as
+    // long as it has existed — invisible, because a plain button is a perfectly
+    // ordinary thing to look at.
+    expect(src).not.toMatch(/class="r-btn sm pri"/);
+    const css = readFileSync(resolve(process.cwd(), 'src/app.css'), 'utf8');
+    for (const v of [...src.matchAll(/class="r-btn ([a-z ]+)"/g)].flatMap((m) => m[1].split(/\s+/))) {
+      expect(css, `.r-btn.${v} is used in Dock.svelte and defined nowhere`)
+        .toMatch(new RegExp('\\.r-btn\\.' + v + '[{ ,:]'));
+    }
   });
 });
 
@@ -453,8 +579,10 @@ describe('L2 · the audio card is set as the capitals it is tracked for', () => 
     mount();
     await settle();
     // The WORDS stay Relay's — a screen reader hears "Sens", not "S E N S".
+    // FOUR now, not two: the microphone's own row joined this card in wave 3
+    // (L3) so a volunteer can change the input without leaving the run surface.
     expect([...host.querySelectorAll('.audrow .dcap')].map((e) => e.textContent.trim()))
-      .toEqual(['Sens', 'armed']);
+      .toEqual(['Mic', 'off', 'Sens', 'armed']);
   });
 
   // THE VOICE CHIP GOES ON TELLING THE TRUTH. The prototype's reads `VOICE`; ours
@@ -475,7 +603,9 @@ describe('L2 · the audio card is set as the capitals it is tracked for', () => 
   // which is the state that silently switches the denoiser off. Rule 35 again.
   it('the waveform well names the input and claims no rate it cannot read', async () => {
     const well = src.slice(src.indexOf('<span class="wavelbl'), src.indexOf('<span class="wavelbl') + 120);
-    expect(well).toContain('>INPUT<');
+    // `INPUT · 20s`. The SPAN is printed because the trace is drawn on a time
+    // axis now — a picture that does not state its own scale cannot be read.
+    expect(well).toContain('INPUT · ');
     // Read the RENDERED card, not the file: the reason this rate is absent is
     // written in a comment beside the element, and the comment must not be what
     // the test is looking at.

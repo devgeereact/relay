@@ -11,6 +11,91 @@
   // drop an operator's choice mid-service.
   import { writable } from 'svelte/store';
   export const countdownFormat = writable('auto');
+
+  // ── THE WAVEFORM'S TIME BASE (L3) ──────────────────────────────────────────
+  //
+  // The trace used to be drawn on an EVENT axis: one column per `audio://chunk`,
+  // pushed from a `$:` block. Two things were wrong with that, and the operator
+  // could see both ("running in bits"):
+  //
+  //   1. A `$:` block re-runs only when the value it reads is INVALIDATED, and
+  //      Svelte's `safe_not_equal` does not invalidate a primitive that has not
+  //      changed. Two identical readings in a row — a silent room, a muted
+  //      channel — advanced the trace by nothing at all, so it froze.
+  //   2. An event axis is not a time axis. `main.rs` emits every THIRD chunk and
+  //      `audio::Chunker`'s hop is 200 ms, so a reading arrives about every
+  //      600 ms — and only while the path is healthy. A column therefore meant
+  //      "one delivery", and a pipeline that had stalled drew a frozen picture
+  //      that read exactly like a quiet room.
+  //
+  // So the axis is now WALL-CLOCK TIME over `WAVE_SPAN_MS`, and these two are
+  // pure so they can be asserted without a canvas (jsdom has no 2d context).
+  //
+  // NOTHING HERE IS A LEVEL THRESHOLD (CLAUDE.md rule 12, DECISIONS §19).
+  // `WAVE_GAP_MS` is a timeout on the ARRIVAL of a reading; it compares no
+  // signal to any absolute loudness and never decides whether something is
+  // speech. `$meter.isVoice` remains the gate's own answer and the only one
+  // drawn, in words, in the head.
+  export const WAVE_SPAN_MS = 20_000;
+  // Longer than three expected deliveries, so ordinary jitter never trips it.
+  export const WAVE_GAP_MS = 2_000;
+
+  /**
+   * Append one MEASURED reading and drop what has scrolled off the left edge.
+   *
+   * One reading older than the span is KEPT, deliberately: without it the trace
+   * would begin at the first reading inside the window and the left-hand edge
+   * would be a made-up zero rather than the real signal running off the side.
+   */
+  export function pushReading(buf, t, v, spanMs = WAVE_SPAN_MS) {
+    const last = buf.length ? buf[buf.length - 1] : null;
+    // A clock that went backwards (a resumed laptop, a corrected system time)
+    // would otherwise place new readings to the LEFT of old ones and draw the
+    // envelope inside out. Start again rather than draw a lie.
+    const base = last && last.t > t ? [] : buf;
+    const out = [...base, { t, v: Math.max(0, Math.min(1, v)) }];
+    const cut = t - spanMs;
+    let i = 0;
+    while (i + 1 < out.length && out[i + 1].t <= cut) i++;
+    return out.slice(i);
+  }
+
+  /**
+   * The readings, positioned in time and BROKEN WHERE NOTHING WAS MEASURED.
+   *
+   * `x` is 1 at `now` and 0 one span ago. A pause longer than `gapMs` starts a
+   * new segment instead of joining the two: the audio in that gap was never
+   * measured, and a line drawn across it would claim a quiet room where the
+   * honest picture is an absence. Same rule as `latency.rs` — a stage never
+   * reached is an ABSENCE, not a zero.
+   */
+  export function waveSegments(buf, now, spanMs = WAVE_SPAN_MS, gapMs = WAVE_GAP_MS) {
+    const segs = [];
+    let cur = null;
+    let prev = null;
+    for (const r of buf) {
+      if (!r || !Number.isFinite(r.t) || !Number.isFinite(r.v)) continue;
+      if (prev && r.t - prev.t > gapMs) cur = null;
+      if (!cur) {
+        cur = [];
+        segs.push(cur);
+      }
+      cur.push({ x: 1 - (now - r.t) / spanMs, v: Math.max(0, Math.min(1, r.v)) });
+      prev = r;
+    }
+    return segs.filter((s) => s.length);
+  }
+
+  /**
+   * Has the microphone stopped reporting?
+   *
+   * Only ever asked while capturing. `since` is the moment capture started or
+   * the last reading landed, whichever is later — so the answer is "nothing has
+   * arrived for longer than three deliveries", never "the room is quiet".
+   */
+  export function waveStale(since, now, gapMs = WAVE_GAP_MS) {
+    return Number.isFinite(since) && now - since > gapMs;
+  }
 </script>
 
 <script>
@@ -36,7 +121,7 @@
   // They sit on a darker ground with 1px seams between them rather than flush to
   // the desk — the row reads as four instruments in a rack, which is what they
   // are, instead of four differently-sized panels that happen to be adjacent.
-  import { onDestroy, onMount } from 'svelte';
+  import { afterUpdate, onDestroy, onMount } from 'svelte';
   import {
     capture,
     meter,
@@ -63,7 +148,9 @@
     templates,
     loadTemplates,
     fireContent,
-    pushAnnouncement,
+    setInputDevice,
+    startCapture,
+    stopCapture,
   } from './stores/capture.js';
   import { session, setSession } from './session.js';
   import { templateKind } from './templateKind.js';
@@ -83,8 +170,45 @@
   $: lvl = Math.max(0, Math.min(1, $meter.level ?? 0));
   $: dbLabel = lvl > 0.0001 ? `${Math.round(20 * Math.log10(lvl))} dB` : '−∞ dB';
 
-  // The last few lines, newest at the bottom, plus whatever is still being said.
-  $: lines = $transcript.finals.slice(-4);
+  // ── LIVE TRANSCRIPT · WHAT IT HEARD, WHEN IT HEARD IT (L3) ─────────────────
+  //
+  // Timestamped lines, newest at the bottom, with whatever is still being said
+  // marked `now` and carrying a caret — the prototype's `.trl` / `.trl.cur`.
+  // Four lines was a keyhole: a preacher's sentence closes every second or two,
+  // so anything an operator looked away from was gone. The pane scrolls itself
+  // instead.
+  //
+  // ZIPPED BEFORE IT IS SLICED, and this is the whole reason it is written this
+  // way. `finals` and `finalsAt` are stamped in lockstep at the source
+  // (`capture.js`), and the ONE previous consumer that aligned them by length
+  // drifted them the moment the rolling cap froze `finals.length` — every line
+  // then carried the timestamp of a different line. Pairing by index across the
+  // FULL arrays and slicing the pairs cannot reproduce that.
+  const TR_LINES = 40;
+  $: tlines = $transcript.finals
+    .map((t, i) => ({ t, at: $transcript.finalsAt?.[i] ?? '' }))
+    .slice(-TR_LINES);
+
+  // ── THE PANE FOLLOWS THE PREACHER, UNLESS THE OPERATOR IS READING BACK ─────
+  //
+  // `afterUpdate`, never `tick()` inside a `$:` block — that re-enters Svelte's
+  // scheduler and hard-freezes the webview with no error (rule 1), and this is
+  // the one surface that updates several times a second.
+  //
+  // It sticks to the bottom only while it was ALREADY at the bottom. An operator
+  // who has scrolled up is looking for something; yanking them back to the live
+  // line every 200 ms would make the history unreadable in exactly the moment
+  // they needed it.
+  let trBody = null;
+  let trStuck = true;
+  const TR_SLACK = 24;
+  function onTrScroll() {
+    if (!trBody) return;
+    trStuck = trBody.scrollHeight - trBody.scrollTop - trBody.clientHeight <= TR_SLACK;
+  }
+  afterUpdate(() => {
+    if (trStuck && trBody) trBody.scrollTop = trBody.scrollHeight;
+  });
   // What the transcript is being produced BY. Not a decoration: the language is
   // re-elected every window on accented speech (`stt://language_unstable`), and
   // "local" is the offline-first promise stated where an operator can see it.
@@ -144,9 +268,20 @@
   //
   // A meter says how loud; a waveform says what the microphone has been hearing,
   // which is the question an operator is actually asking when the AI goes quiet.
-  // It is the REAL envelope: one sample per `audio://chunk`, which arrives every
-  // 200 ms hop, so the trace is about 38 seconds of the CLEANED stream — the same
-  // signal the voice gate and whisper see.
+  // Every point is a REAL measurement — `chunk.rms` over one 200 ms window of the
+  // CLEANED stream, the same signal the voice gate and whisper see. Nothing is
+  // decayed, smoothed or held.
+  //
+  // ── WHAT IT CANNOT SHOW, AND WHY THAT IS NOT A FRONTEND BUG ────────────────
+  //
+  // `main.rs::start_capture` emits `audio://chunk` on every THIRD chunk, so two
+  // thirds of the stream never crosses the bridge at all. The trace is therefore
+  // a reading every ~600 ms, not a continuous envelope, and no amount of drawing
+  // can recover what was not sent. What the drawing CAN do — and now does — is
+  // put each reading at the time it was taken, scroll at wall-clock rate, and
+  // decline to join two readings across a silence nobody measured. The comment
+  // this replaced claimed "every 200 ms hop" and "about 38 seconds"; both were
+  // wrong (it is ~600 ms, and 190 of those is nearly two minutes).
   //
   // ── WHAT IS DELIBERATELY NOT DRAWN ─────────────────────────────────────────
   //
@@ -158,23 +293,71 @@
   // wrong in exactly the way that made Relay silently deaf. `$meter.isVoice` is
   // the gate's own answer and it is the chip in the head, in words.
   //
-  // There is no animation loop: it repaints when the data moves and at no other
-  // time, so reduced motion needs no special case and an idle console costs
-  // nothing.
-  const WN = 190;
-  let wave = new Array(WN).fill(0);
+  // ── THE ONE ANIMATION LOOP, AND WHAT IT COSTS ──────────────────────────────
+  //
+  // A time axis has to be repainted on a clock rather than on an event, or the
+  // trace stands still between deliveries and then jumps 600 ms to the left —
+  // which is the "running in bits" the operator reported. So there IS a frame
+  // loop now, and the honest accounting is: it runs ONLY while the microphone is
+  // live, it is throttled to ~20 fps, and it is cancelled on stop and on
+  // destroy. An idle console still costs nothing.
+  //
+  // It is not decorative motion — it is the reading — so it is not suppressed
+  // under `prefers-reduced-motion`; a still picture of a live signal would be
+  // the defect, not the courtesy.
+  const FRAME_MS = 50;
+  let waveBuf = [];
   let cv = null;
   let cw = 0;
   let ch = 0;
+  let raf = 0;
+  let lastFrame = 0;
+  // The moment capture started, or the last reading, whichever is later. Capture
+  // start seeds it so the first ~2 s of a service is not reported as a fault.
+  let signalSince = 0;
+  // A plain `let` driven by the 500 ms tick below, never `tick()` from a `$:`
+  // block — re-entering Svelte's scheduler there hard-freezes the webview
+  // (rule 1).
+  $: micLive = $capture.capturing && $capture.available;
+  $: noSignal = micLive && waveStale(signalSince, nowTick);
 
-  /** Push one measured level and repaint. Nothing here interpolates or invents. */
-  function pushSample(v) {
-    wave = [...wave.slice(1), v];
+  function onReading(m) {
+    const now = Date.now();
+    waveBuf = pushReading(waveBuf, now, m?.level ?? 0);
+    signalSince = now;
+    // Repaint immediately when the loop is not running, so a reading taken with
+    // the microphone stopped (the reset `stopCapture` performs) still lands.
+    if (!raf) draw();
+  }
+
+  function frame(ts) {
+    raf = requestAnimationFrame(frame);
+    if (ts - lastFrame < FRAME_MS) return;
+    lastFrame = ts;
     draw();
   }
-  // A plain reactive statement, never `tick()` — re-entering Svelte's scheduler
-  // from a `$:` block infinite-loops the webview's JS thread (rule 1).
-  $: pushSample(lvl);
+  function startLoop() {
+    if (!raf && typeof requestAnimationFrame === 'function') raf = requestAnimationFrame(frame);
+  }
+  function stopLoop() {
+    if (raf) cancelAnimationFrame(raf);
+    raf = 0;
+    draw();
+  }
+  // Only on the TRANSITION, so starting the microphone re-seeds the grace window
+  // rather than inheriting a `signalSince` from the previous service — which
+  // would report `no signal` on the first frame of the next one.
+  let wasLive = false;
+  $: if (micLive !== wasLive) {
+    wasLive = micLive;
+    if (micLive) {
+      signalSince = Date.now();
+      startLoop();
+    } else {
+      stopLoop();
+    }
+  }
+  onDestroy(stopLoop);
 
   function sizeCanvas() {
     if (!cv) return;
@@ -192,28 +375,40 @@
   function draw() {
     if (!cv || !cw) return;
     const cx = cv.getContext('2d');
+    // jsdom has no 2d context, so the pure half of this — `pushReading`,
+    // `waveSegments`, `waveStale` — is what the tests assert.
     if (!cx) return;
     const mid = ch / 2;
     cx.clearRect(0, 0, cw, ch);
-    // ONE mirrored envelope rather than 190 separate bars: a trace reads as a
-    // signal, a picket fence reads as a chart.
-    const step = cw / (WN - 1);
-    cx.beginPath();
-    cx.moveTo(0, mid - wave[0] * mid * 0.94);
-    for (let i = 1; i < WN; i++) {
-      cx.quadraticCurveTo((i - 1) * step + step / 2, mid - wave[i - 1] * mid * 0.94, i * step, mid - wave[i] * mid * 0.94);
-    }
-    for (let i = WN - 1; i >= 0; i--) cx.lineTo(i * step, mid + wave[i] * mid * 0.94);
-    cx.closePath();
+
     const g = cx.createLinearGradient(0, 0, cw, 0);
     g.addColorStop(0, 'rgba(63,207,106,.10)');
     g.addColorStop(0.72, 'rgba(63,207,106,.34)');
     g.addColorStop(1, 'rgba(63,207,106,.62)');
-    cx.fillStyle = g;
-    cx.fill();
-    cx.strokeStyle = 'rgba(63,207,106,.85)';
-    cx.lineWidth = 1.1;
-    cx.stroke();
+
+    // ONE mirrored envelope per segment rather than a bar per reading: a trace
+    // reads as a signal, a picket fence reads as a chart. A segment BREAK is
+    // audio nobody measured, and it is drawn as a break — see `waveSegments`.
+    for (const seg of waveSegments(waveBuf, Date.now())) {
+      const px = (p) => p.x * cw;
+      const up = (p) => mid - p.v * mid * 0.94;
+      const dn = (p) => mid + p.v * mid * 0.94;
+      cx.beginPath();
+      cx.moveTo(px(seg[0]), up(seg[0]));
+      for (let i = 1; i < seg.length; i++) {
+        const a = seg[i - 1];
+        const b = seg[i];
+        cx.quadraticCurveTo((px(a) + px(b)) / 2, up(a), px(b), up(b));
+      }
+      for (let i = seg.length - 1; i >= 0; i--) cx.lineTo(px(seg[i]), dn(seg[i]));
+      cx.closePath();
+      cx.fillStyle = g;
+      cx.fill();
+      cx.strokeStyle = 'rgba(63,207,106,.85)';
+      cx.lineWidth = 1.1;
+      cx.stroke();
+    }
+
     cx.strokeStyle = 'rgba(232,234,238,.09)';
     cx.lineWidth = 1;
     cx.beginPath();
@@ -255,6 +450,13 @@
   // `$capture.available` is the only signal available here, so it is the one the
   // card reports: it answers "is the bridge attached at all", which is the case
   // an operator actually meets, and it does not claim to answer more than that.
+  // The readings, taken from the store rather than from a `$:` on the derived
+  // level — see the module block: an identical consecutive reading does not
+  // invalidate a primitive, so the trace used to stand still through exactly the
+  // stretch an operator is asking about. A `writable` set with a fresh object
+  // notifies every time, which is the property this relies on.
+  onMount(() => meter.subscribe(onReading));
+
   let sensitivity = 50;
   let sensRead = false;
   $: sensReadable = sensRead && $capture.available;
@@ -267,6 +469,34 @@
       sensRead = false;
     }
   });
+  // ── THE MICROPHONE, ON THE RUN SURFACE (L3, operator instruction) ──────────
+  //
+  // The device list and the on/off already existed — in Settings → Audio, three
+  // workspaces away from the person watching the level. A volunteer who picks
+  // the wrong input at 10:29 had to leave the run surface to fix it. Same store,
+  // same wrappers, same contracts; this is a second door onto one control, not a
+  // second control (rule 35's cousin — two opinions about one fact is the bug).
+  //
+  // THE DEVICE IS CHOSEN BEFORE CAPTURE, NOT DURING IT. `start_capture` takes
+  // the device name as an argument, so changing it mid-capture would change a
+  // label and nothing else. Disabled while live, exactly as Settings has it.
+  //
+  // COLOUR: the switch is `--v-sel` (steel — the thing you are working on) and
+  // the voice chip is emerald, both already in this card. AMBER IS ON AIR and is
+  // not spent on a microphone (rule 18); a live mic is not a congregation
+  // looking at something.
+  //
+  // It cannot claim a success it did not have: `startCapture`/`stopCapture` both
+  // THROW (contract group 1), `run()` puts the failure in this card's error
+  // line, and the LABEL is driven by `$capture.capturing` — which a failed stop
+  // deliberately leaves set (see `stopCapture`'s own note). So a stop that did
+  // not stop still reads Listening over a live microphone, which is the truth.
+  const toggleMic = () =>
+    run(async () => {
+      if ($capture.capturing) await stopCapture();
+      else await startCapture($capture.inputDevice || null);
+    });
+
   async function onSensitivity(v) {
     sensitivity = v;
     err = '';
@@ -429,37 +659,26 @@
       await fireContent(ltRole.trim(), ltName.trim(), 'announce', null, ltTemplate.id);
     });
 
-  // ── QUICK TOOLS · THE EMERGENCY ANNOUNCEMENT ───────────────────────────────
+  // ── THE EMERGENCY ANNOUNCEMENT IS NOT HERE, AND THAT IS DELIBERATE ─────────
   //
-  // It was in Live's inspector column. It paints over live scripture on EVERY
-  // screen at once — the fire alarm, the blocked car park — so being reachable
-  // only from the tab you happen to be on was the argument for moving it here,
-  // not against.
+  // Removed from Quick tools on the operator's instruction (2026-09-14, L3). It
+  // was the fourth thing in a card §2 defines as "the three things that change
+  // during a service", and it is the only one of the four that paints over live
+  // scripture on every screen at once.
   //
-  // ARMED IN TWO STEPS, unchanged: a stray Enter in a text field must not be able
-  // to interrupt a reading in front of a room. `pushAnnouncement` THROWS by
-  // contract, and `run()` puts the failure in this card's own error line — saying
-  // nothing would leave an operator believing the room had been warned.
-  let annMsg = '';
-  let annArmed = false;
-  let annArmT;
-  onDestroy(() => clearTimeout(annArmT));
-  async function sendAnnouncement() {
-    const text = annMsg.trim();
-    if (!text) return;
-    if (!annArmed) {
-      annArmed = true;
-      clearTimeout(annArmT);
-      annArmT = setTimeout(() => (annArmed = false), 3000);
-      return;
-    }
-    clearTimeout(annArmT);
-    annArmed = false;
-    await run(async () => {
-      await pushAnnouncement(text);
-      annMsg = '';
-    });
-  }
+  // WHAT THAT LEAVES, said plainly rather than left to be discovered: the
+  // `push_announcement` command is still registered in Rust and
+  // `capture.js::pushAnnouncement` still wraps it, so `ipc.test.js` is satisfied
+  // and `scripts/qa-inventory.mjs` still counts it addressed — but NOTHING
+  // RENDERED REACHES IT any more. By this repository's own standard that is
+  // attack surface nobody is watching, and the precedent for the five commands
+  // deleted on 2026-08-30 is to delete it rather than to hide it. That is a
+  // change to `src-tauri/` and to another agent's file, so it is recorded for
+  // the lead to decide rather than taken here.
+  //
+  // `announce.test.js`, `r2livepath.test.js` and `qa-r5-groups.test.js` still
+  // hold the WRAPPER's throw contract, which is correct: the contract is about
+  // the wrapper, not about this card.
 
   // ── QUICK TOOLS · LOAD WHOLE PLAN (docs/REBRAND.md §2) ─────────────────────
   //
@@ -516,6 +735,13 @@
            the card says what is actually true instead. -->
       {#if !$capture.available}
         <span class="dmeta">no engine</span>
+      {:else if noSignal}
+        <!-- THE MICROPHONE IS LIVE AND NOTHING IS ARRIVING. `quiet` and `−∞ dB`
+             would be the same two words a silent room gets, over a path that has
+             stopped delivering — one sentence for two opposite situations is
+             exactly what rule 35 forbids. It says nothing about loudness: it is a
+             timeout on the ARRIVAL of a reading (rule 12 is untouched). -->
+        <span class="dmeta nosig r-mono">no signal</span>
       {:else}
         <span class="vad r-mono" class:on={$meter.isVoice}>{$meter.isVoice ? 'VOICE' : 'quiet'}</span>
         <span class="db r-mono">{dbLabel}</span>
@@ -528,17 +754,54 @@
              head, both of which are text. -->
         <canvas class="wave" bind:this={cv} aria-hidden="true"></canvas>
         <span class="wavescale" aria-hidden="true"></span>
-        <!-- `INPUT`, and no sample rate. The rate IS on the bridge (`audio://chunk`
+        <!-- `INPUT`, THE SPAN, and no sample rate. The span is printed because
+             the axis is now time and a picture that does not state its own scale
+             cannot be read: the same trace at 20s and at 2 minutes tells two
+             different stories about the same signal.
+             The RATE is still absent. It IS on the bridge (`audio://chunk`
              carries `sample_rate`) but the console's meter store drops it, so
              printing "48 kHz" here would be a constant that reads the same on a
              device running at 16 — which is the state that silently switches the
              denoiser off. Named in the review note rather than guessed at. -->
-        <span class="wavelbl r-mono" aria-hidden="true">INPUT</span>
+        <span class="wavelbl r-mono" aria-hidden="true">INPUT · {WAVE_SPAN_MS / 1000}s</span>
       </div>
       <!-- THE TWO DECISIONS ABOUT THIS SIGNAL, beside the signal. Both used to be
            three panels away — sensitivity on Live, detection in the Controls card
            — and both are answers to "what should Relay do with what it is
            hearing", which is the question this card is asking. -->
+      <!-- THE MICROPHONE, beside the signal it produces. Which input, and
+           whether it is open: the two facts a volunteer needs at 10:29 and had
+           to leave the run surface to reach. Same store and same wrappers as
+           Settings → Audio (see the note above `toggleMic`).
+           The device is fixed for the life of a capture, because that is what
+           `start_capture` takes — so the picker is disabled while listening
+           rather than silently doing nothing. -->
+      <div class="audrow">
+        <span class="dcap">Mic</span>
+        <select
+          class="r-select micpick"
+          value={$capture.inputDevice}
+          on:change={(e) => setInputDevice(e.target.value)}
+          disabled={!$capture.available || $capture.capturing}
+          title={$capture.capturing
+            ? 'Stop listening to change the microphone — the device is chosen when capture opens.'
+            : 'Which microphone Relay opens when you start listening.'}
+          aria-label="Microphone input device">
+          <option value="">System default</option>
+          {#each $capture.devices as d (d.name)}<option value={d.name}>{d.name}</option>{/each}
+        </select>
+        <!-- Steel, not amber. Amber is ON AIR and a live microphone is not a
+             congregation looking at something (rule 18). -->
+        <button
+          class="r-switch"
+          class:on={$capture.capturing}
+          role="switch"
+          aria-checked={$capture.capturing}
+          aria-label="Microphone"
+          disabled={busy || !$capture.available}
+          on:click={toggleMic}></button>
+        <span class="dcap detl">{$capture.capturing ? 'live' : 'off'}</span>
+      </div>
       <div class="audrow">
         <span class="dcap">Sens</span>
         <input
@@ -579,15 +842,19 @@
       <span class="dspring"></span>
       <span class="dmeta r-mono">{trMeta}</span>
     </div>
-    <div class="dbody tbody r-scroll">
-      {#each lines as l}
-        <p class="tl">{l}</p>
+    <div class="dbody tbody r-scroll" bind:this={trBody} on:scroll={onTrScroll}>
+      {#each tlines as l, i (i + '·' + l.at)}
+        <p class="trl"><span class="tt r-mono">{l.at}</span><span class="tx">{l.t}</span></p>
       {/each}
       {#if $transcript.partial}
-        <p class="tl part">{$transcript.partial}</p>
+        <!-- WHAT IS BEING SAID RIGHT NOW. `now` rather than a clock time,
+             because it has not closed yet and stamping it would date a line that
+             is still being revised. Steel — the thing being worked on — never
+             cyan (a guess about scripture) and never amber. -->
+        <p class="trl cur"><span class="tt r-mono">now</span><span class="tx">{$transcript.partial}<i class="caret" aria-hidden="true"></i></span></p>
       {/if}
-      {#if !lines.length && !$transcript.partial}
-        <p class="tl empty">{$capture.capturing ? 'listening…' : 'not listening'}</p>
+      {#if !tlines.length && !$transcript.partial}
+        <p class="trl empty">{$capture.capturing ? 'listening…' : 'not listening'}</p>
       {/if}
     </div>
   </div>
@@ -612,22 +879,30 @@
     </div>
     <div class="dbody tools r-scroll">
       <!-- THE COUNTDOWN, WITH ITS TRANSPORT (docs/REBRAND.md §7). hh : mm : ss,
-           then Start · Reset · ±1 · Clear. The figure on the right is the one on
-           the wall — same field, same formatter — not a second clock.
+           then Start · Pause · Reset · ±1 · Clear. The figure on the right is the
+           one on the wall — same field, same formatter — not a second clock.
 
-           ONE BORDERED BLOCK, NOT FOUR LOOSE ROWS (L2). Quick tools holds three
-           unrelated instruments in one scrolling column — the countdown, the name
-           band and the word to the preacher — and the countdown's four rows had
-           no edge of their own, so the fields of one tool sat flush against the
-           caption of the next. The prototype draws each as a panel and that is
-           what the seam is for. The name band and the alert already have theirs
-           (`.lt3`, `.alrt`); this one was the odd instrument out. -->
-      <div class="tmr">
-        <div class="trow tmrtop">
-          <span class="dcap">Countdown</span>
+           ── ONE INSTRUMENT, THREE TIMES (L3, operator instruction 2026-09-14) ──
+           L2 gave each tool an edge of its own and stopped there, so the three
+           still read as three degrees of finish: the countdown sat on a different
+           ground with a different hairline and a different corner from the other
+           two, its caption was a different class, its fields were a bare row
+           while the name band's were indented 80px under a label that was not
+           there, and the three button rows were a wrapping flex, a plain flex and
+           a two-column grid.
+
+           The prototype's `.tmr` / `.lt3` / `.alrt` are the SAME CARD three
+           times — one ground, one 7px padding, one head (mono caption left, its
+           own control or badge right), one 26px full-width field, one grid button
+           row at 5px. That is what `.qblock` now is, and all three use it. The
+           per-tool classes that remain (`.tmr`, `.onstage`) carry only what is
+           genuinely that tool's: the countdown's figure, the alert's red. -->
+      <div class="qblock tmr">
+        <div class="qhead">
+          <span class="r-lbl">Countdown</span>
           <!-- WHAT IS LOADED, while the figure beside it shows what is LEFT. -->
           {#if cdLive}<span class="cdset r-mono">· {cdSetLabel}</span>{/if}
-          <span class="spring"></span>
+          <span class="qspring"></span>
           <span
             class="tfig r-mono"
             class:live={cdLive}
@@ -637,7 +912,7 @@
             title={cdLive ? 'What the screens are counting, right now.' : 'What Start would put on the screens. Nothing is counting.'}
           >{cdText}</span>
         </div>
-        <div class="trow">
+        <div class="qrow">
           <span class="cdfields">
             <input class="r-input cdf" type="number" min="0" max="12" value={cdFields.h}
               on:input={(e) => setField('h', e.target.value)} aria-label="Countdown hours" />
@@ -666,21 +941,21 @@
             <option value="ms">m:ss</option>
             <option value="hms">h:mm:ss</option>
           </select>
-          <span class="spring"></span>
+          <span class="qspring"></span>
         </div>
         <!-- WHICH of the two facts the figure is. One word, beside it, because a
-             big number with no label is the half of a status line that lies. -->
-        <div class="trow cdstate">
-          <!-- THREE states, not two. A held countdown IS on the screens — it simply
-               is not moving — and reading "on the screens" over a stopped figure is
-               the half of a status line that lies (rule 35). -->
+             big number with no label is the half of a status line that lies.
+             THREE states, not two. A held countdown IS on the screens — it simply
+             is not moving — and reading "on the screens" over a stopped figure is
+             the half of a status line that lies (rule 35). -->
+        <div class="qrow cdstate">
           <span class="cdstatev" class:live={cdLive} class:held={cdPaused}
             >{!cdLive ? 'not counting' : cdPaused ? 'on the screens · held' : 'on the screens'}</span>
         </div>
         <!-- Clear is NOT Clear screens. It returns this tool to its default length
              and touches nothing a congregation can see; the red control one panel
              along is the one that blanks a wall. -->
-        <div class="trow cdtrans" role="group" aria-label="Countdown transport">
+        <div class="qbtns cdtrans" role="group" aria-label="Countdown transport">
           <button class="r-btn sm ghost" on:click={() => press('start')}
             disabled={busy || !$capture.available || !countdownCan('start', $countdownSet, cdRunning, cdPaused)}>Start</button>
           <!-- PAUSE AND RESUME ARE TWO ACTIONS, NOT A TOGGLE (§7, and the engine
@@ -714,11 +989,11 @@
            with the chosen band as the cue's own template, which is the ordinary
            manual-fire path — it reports its own failure and marks nothing amber
            on its own. -->
-      <!-- ONE BLOCK PER TOOL. The countdown above is a bordered card with a
-           caption head; these two were flat rows, so three tools read as one long
-           column of unrelated controls. The prototype's `.tmr` / `.lt3` / `.alrt`
-           are the same card three times, and that is what makes a dock of three
-           tools legible at a glance. -->
+      <!-- THE SAME CARD AS THE COUNTDOWN ABOVE AND THE ALERT BELOW (L3). The
+           picker is the head's right-hand slot, exactly where the countdown puts
+           its figure and the alert puts its badge; the two fields are the
+           prototype's stacked full-width `.tin`s rather than a pair squeezed
+           into a ~200px card under an 80px indent that had no label above it. -->
       <div class="qblock">
         <div class="qhead">
           <span class="r-lbl">Name band</span>
@@ -728,17 +1003,15 @@
           </select>
         </div>
       {#if bands.length}
-        <div class="trow ltrow ltsub">
-          <input class="r-input tin wide" type="text" bind:value={ltName}
-            placeholder="Name" autocomplete="off" aria-label="Name for the lower third" />
-          <input class="r-input tin wide" type="text" bind:value={ltRole}
-            placeholder="Role or position" autocomplete="off" aria-label="Role for the lower third" />
-        </div>
-        <div class="trow ltrow ltsub" role="group" aria-label="Name band">
+        <input class="r-input tin wide" type="text" bind:value={ltName}
+          placeholder="Name" autocomplete="off" aria-label="Name for the lower third" />
+        <input class="r-input tin wide" type="text" bind:value={ltRole}
+          placeholder="Role or position" autocomplete="off" aria-label="Role for the lower third" />
+        <div class="qbtns" role="group" aria-label="Name band">
           <button class="r-btn sm ghost" on:click={() => (ltPreview = !ltPreview)}
             disabled={!ltReady}
             title="Render it here. Nothing reaches a screen.">{ltPreview ? 'Hide preview' : 'Preview'}</button>
-          <button class="r-btn sm ghost" on:click={nameToProgramme} disabled={busy || !ltReady || !$capture.available}>To programme</button>
+          <button class="r-btn sm primary" on:click={nameToProgramme} disabled={busy || !ltReady || !$capture.available}>To programme</button>
         </div>
         {#if ltPreview && ltReady}
           <!-- THE ONE RENDERER, in a 16:9 box. A second way of drawing a template
@@ -748,10 +1021,10 @@
           <div class="ltprev">
             <TemplateRender template={ltTemplate} content={ltContent} />
           </div>
-          <p class="ltcap">preview only — nothing is on a screen</p>
+          <p class="qcap">preview only — nothing is on a screen</p>
         {/if}
       {:else}
-        <p class="ltcap">No lower third yet — make one in Templates (New → Lower Third).</p>
+        <p class="qcap">No lower third yet — make one in Templates (New → Lower Third).</p>
       {/if}
       </div>
 
@@ -775,29 +1048,15 @@
           placeholder="Wrap up · Five minutes left · Stand by"
           aria-label="Word to the preacher — stage monitor only"
           on:keydown={(e) => e.key === 'Enter' && toPreacher()} />
+        <!-- `primary`, not `pri`. `pri` is not a class this stylesheet defines,
+             so the one button in Quick tools that is meant to read as the
+             primary action had been rendering as a plain `.r-btn` — invisible,
+             because a plain button is a perfectly ordinary thing to look at. -->
         <div class="qbtns">
-          <button class="r-btn sm pri" on:click={toPreacher} disabled={busy || !stageMsg.trim()}>Send to stage</button>
+          <button class="r-btn sm primary" on:click={toPreacher} disabled={busy || !stageMsg.trim()}>Send to stage</button>
           <button class="r-btn sm ghost" on:click={clearPreacher} disabled={busy || !$stageAlert}>Take down</button>
         </div>
       </div>
-
-      <!-- ── THE EMERGENCY ANNOUNCEMENT ───────────────────────────────────────
-           Over live scripture, on every screen at once. Two steps, always. -->
-      <label class="trow">
-        <span>Announce</span>
-        <input
-          class="r-input tin wide"
-          type="text"
-          bind:value={annMsg}
-          placeholder="Message for every screen"
-          aria-label="Emergency announcement"
-          on:keydown={(e) => e.key === 'Enter' && sendAnnouncement()}
-          disabled={!$capture.available} />
-        <button class="r-btn sm ghost ann-go" class:armed={annArmed} on:click={sendAnnouncement}
-          disabled={busy || !$capture.available || !annMsg.trim()}>
-          {annArmed ? 'Confirm?' : 'Send'}
-        </button>
-      </label>
       {#if err}<p class="derr" role="alert">{err}</p>{/if}
     </div>
   </div>
@@ -957,6 +1216,13 @@
   .dmeta.on-stage {
     color: var(--v-red); font-weight: 600; letter-spacing: var(--v-tr-caps);
   }
+  /* A live microphone delivering nothing. RED because it is act-now — a service
+     is being recorded and none of it is arriving — and never amber, which means
+     a congregation is looking at something (rule 18). */
+  .dmeta.nosig {
+    color: var(--v-red); font-weight: 600; letter-spacing: var(--v-tr-caps);
+    text-transform: uppercase;
+  }
   .dbody { flex: 1 1 0; min-height: 0; padding: 8px 9px; }
 
   .audbody { display: flex; flex-direction: column; gap: 7px; }
@@ -976,6 +1242,12 @@
   }
   .audrow { display: flex; align-items: center; gap: 7px; flex: 0 0 auto; }
   .audrow :global(input[type='range']) { flex: 1 1 auto; min-width: 0; }
+  /* The device names a church actually has are long ("MacBook Pro Microphone",
+     "Scarlett 2i2 USB"). It takes the row's spare width and truncates rather than
+     pushing the switch off the card's edge. Width only — the height is the
+     shared control's, which is the whole point of the four-row column here:
+     select · slider · switch all land on one line. */
+  .micpick { flex: 1 1 auto; min-width: 0; }
   /* `SENS`, `ARMED`, `COUNTDOWN` (L2). This class already carried the tracking a
      line of capitals needs and then set the words in lower case, which is the one
      combination that reads as neither: the prototype's equivalent (`.cap`) is
@@ -998,44 +1270,81 @@
   }
   .vad.on { background: var(--v-emerald-soft); color: var(--v-emerald); border-color: var(--v-emerald-line); }
 
-  .tbody { overflow-y: auto; display: flex; flex-direction: column; gap: 3px; }
-  .tl { margin: 0; font-size: var(--v-fs-b2); line-height: 1.45; color: var(--v-dim); }
+  /* ── LIVE TRANSCRIPT · THE PROTOTYPE'S `.trl` (L3) ────────────────────────
+     A timestamp column and a text column, with what is still being said set
+     apart by a steel left edge rather than only by a colour — an operator
+     glancing across the dock has to find the live line without reading it. */
+  .tbody { overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
+  .trl {
+    margin: 0; display: flex; gap: 8px; padding: 3px 5px;
+    border-radius: var(--v-r-sm); border-left: 2px solid transparent;
+  }
+  .trl .tt {
+    flex: 0 0 auto; padding-top: 1px;
+    font-size: var(--v-fs-fig); color: var(--v-faint);
+  }
+  .trl .tx { font-size: var(--v-fs-b2); line-height: 1.45; color: var(--v-dim); min-width: 0; }
   /* What is still being said is the SELECTION colour — it is the thing being
-     worked on, not a claim about a screen. */
-  .tl.part { color: var(--v-sel); }
-  .tl.empty { color: var(--v-faint); font-family: var(--f-mono); font-size: var(--v-fs-cap); }
+     worked on, not a claim about a screen. Never cyan (that means the AI has
+     guessed at a verse) and never amber. */
+  .trl.cur { background: var(--v-sel-soft); border-left-color: var(--v-sel); }
+  .trl.cur .tx { color: var(--v-txt); }
+  .caret {
+    display: inline-block; width: 6px; height: 11px; margin-left: 2px;
+    vertical-align: -1px; background: var(--v-sel);
+  }
+  /* Steps, not a fade. A viewer who asked for no motion still gets the caret,
+     which is the information — it just stops blinking. */
+  @media (prefers-reduced-motion: no-preference) {
+    .caret { animation: trcaret 1s steps(1) infinite; }
+  }
+  @keyframes trcaret { 50% { opacity: 0; } }
+  .trl.empty { color: var(--v-faint); font-family: var(--f-mono); font-size: var(--v-fs-cap); }
 
   .tools { display: flex; flex-direction: column; gap: 6px; justify-content: flex-start; overflow-y: auto; }
-  /* WRAP, don't spill. Measured at 1024: the countdown figure and `Take down`
-     ran 37px and 56px PAST this card's right edge and over the Controls card
-     beside it, because a row of fixed-width controls plus a 74px label floor
-     is wider than the card at that width. The row wraps instead; the label
-     keeps its floor only while there is room for it. */
-  /* ── ONE TOOL, ONE CARD (docs/REBRAND.md §2) ──────────────────────────────
-     The countdown already had this shape; the name band and the word to the
-     preacher did not, so the dock read as one column of loose rows. Same ground,
-     same hairline, same caption head as `.tmr`. */
+  /* ── ONE INSTRUMENT, THREE TIMES (L3, docs/REBRAND.md §2) ─────────────────
+     The prototype's `.tmr`, `.lt3` and `.alrt` are one card repeated: the same
+     ground, the same 7px padding, the same 5px inner gap, a head whose left is a
+     mono caption and whose right is that tool's one control or badge, a 26px
+     full-width field, and a grid button row at 5px. All three tools use this.
+
+     The countdown used to sit on `--v-surf2` behind `--v-line2` at `--v-r-md`
+     while the other two used `--v-surf` / `--v-line` / `--v-r-lg`; that is three
+     differences between two neighbours in one 200px column, which is why they
+     read as three degrees of finish. `.r-tile` is the house card and these are
+     its tokens. */
   .qblock {
     display: flex; flex-direction: column; gap: 5px; padding: 7px; margin-bottom: 6px;
     background: var(--v-surf); border: 1px solid var(--v-line); border-radius: var(--v-r-lg);
   }
-  .qhead { display: flex; align-items: center; gap: 6px; }
-  .qspring { flex: 1; min-width: 0; }
-  .qbtns { display: grid; grid-template-columns: 1fr auto; gap: 5px; }
+  .qhead { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; row-gap: 4px; }
+  .qspring { flex: 1 1 auto; min-width: 0; }
+  /* ONE BUTTON ROW. `auto-fit` collapses the tracks it does not need, so two
+     buttons fill the card in halves and the countdown's six wrap into equal
+     cells — one rule, three tools, and no row that lays out differently from the
+     one above it. Never a wrapping flex of fixed-width controls: at 1024 that
+     ran the countdown figure and `Take down` 37px and 56px past this card's
+     right edge, over the Controls card beside it. A grid cannot do that. */
+  .qbtns { display: grid; grid-template-columns: repeat(auto-fit, minmax(62px, 1fr)); gap: 5px; }
+  .qbtns > :global(button) { min-width: 0; padding: 0 6px; }
+  /* A row inside a block: fields and the one-word states. Same 5px rhythm. */
+  .qrow { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; row-gap: 4px;
+    font-size: var(--v-fs-b2); color: var(--v-dim); }
+  /* The caption under a preview or in place of a missing one. */
+  .qcap {
+    margin: 0;
+    font-family: var(--f-mono); font-size: var(--v-fs-cap);
+    letter-spacing: var(--v-tr-caps); color: var(--v-faint);
+  }
   /* The stage's own red, and only while the message is actually on the monitor.
      Amber is ON AIR and amethyst is rehearsal; neither is what this is. */
-  .qblock.onstage { border-color: var(--v-red-line); background: rgba(244, 81, 91, .07); }
+  .qblock.onstage { border-color: var(--v-red-line); background: var(--v-red-soft); }
   .qbadge {
     flex: 0 0 auto; padding: 2px 6px; border-radius: var(--v-r-sm);
     background: var(--v-red-soft); color: var(--v-red);
     font-family: var(--f-mono); font-size: var(--v-fs-kind);
     letter-spacing: .08em; text-transform: uppercase;
   }
-
-  .trow { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; row-gap: 4px;
-    font-size: var(--v-fs-b2); color: var(--v-dim); }
-  .trow > span { flex: 0 1 auto; min-width: 74px; }
-  .spring { flex: 1 1 auto; min-width: 0 !important; }
 
   /* hh : mm : ss. Mono figures so a changing number never reflows the row beside
      it (docs/REBRAND.md §1). */
@@ -1070,26 +1379,23 @@
   .tfig.live { color: var(--v-txt); }
   /* Red = act now. Never amber: amber means ON AIR and nothing else (rule 18). */
   .tfig.warn { color: var(--v-red); }
-  /* ── THE COUNTDOWN AS A BLOCK (L2, docs/REBRAND.md §7) ────────────────────
-     An edge of its own, so a tool's four rows stop running into the tool below
-     it in a scrolling column of three. The border is the panel hairline, not an
-     accent: this is a seam, not a state, and nothing in Quick tools may compete
-     with the Controls card for an operator's eye. */
-  .tmr {
-    display: flex; flex-direction: column; gap: 4px; flex: 0 0 auto;
-    padding: 7px; border: 1px solid var(--v-line2); border-radius: var(--v-r-md);
-    background: var(--v-surf2);
-  }
-  .tmr .trow { margin: 0; }
-  .tmrtop { align-items: center; }
+  /* ── WHAT IS LEFT OF `.tmr` (L3) ──────────────────────────────────────────
+     The ground, the hairline, the corner, the padding and the inner gap are
+     `.qblock`'s now — this tool is not a different kind of card from the two
+     below it. `flex:0 0 auto` is all that remains, so a scrolling column of
+     three does not squash the one with the most rows in it. */
+  .tmr { flex: 0 0 auto; }
   /* What Start would load, beside the name — small, and never the size of the
      figure it sits next to, which is the number that is actually on a screen. */
-  .cdset { min-width: 0 !important; flex: 0 0 auto;
-    font-size: var(--v-fs-cap); color: var(--v-faint); }
+  .cdset { flex: 0 0 auto; font-size: var(--v-fs-cap); color: var(--v-faint); }
   /* auto / m:ss / h:mm:ss. Sized to its content so it cannot push the fields into
-     a second line on a 1024px booth laptop, where this row already wraps. */
-  .cdfmt { width: auto; min-width: 0; flex: 0 0 auto; height: 22px; padding: 0 20px 0 6px;
-    font-size: 10px; background-position: calc(100% - 7px) center; }
+     a second line on a 1024px booth laptop, where this row already wraps.
+     WIDTH AND PADDING ONLY — the height is the shared control's (§1's reference
+     table): a mixed column of a select, three fields and six buttons is exactly
+     the column that table exists to keep on one line. It used to be 22px here
+     and 26px everywhere else in the same card. */
+  .cdfmt { width: auto; min-width: 0; flex: 0 0 auto; padding: 0 20px 0 6px;
+    font-size: var(--v-fs-lbl); background-position: calc(100% - 7px) center; }
   .cdstate { margin-top: -2px; }
   .cdstatev {
     min-width: 0 !important;
@@ -1108,40 +1414,31 @@
     .tfig.warn { animation: cdwarn 2s steps(1) infinite; }
   }
   @keyframes cdwarn { 50% { opacity: .38; } }
-  .cdtrans { gap: 4px; flex-wrap: wrap; }
-  .cdtrans > :global(button) { flex: 0 0 auto; }
+  /* The transport is six buttons where the other two rows have two, so it gets a
+     narrower cell floor — width only; `.qbtns` owns the grid, the gap and the
+     rhythm. */
+  .cdtrans { grid-template-columns: repeat(auto-fit, minmax(50px, 1fr)); }
   .tin { width: 62px; flex: 0 0 auto; }
   .tin.wide { flex: 1 1 auto; width: auto; min-width: 0; }
   .derr { margin: 0; font-size: var(--v-fs-cap); color: var(--v-red); }
 
-  /* ── the name band, the announcement, and the header's one button ──────────
+  /* ── the name band and the header's one button ────────────────────────────
      No amber anywhere in this block. Amber means ON AIR and none of these
      controls is a claim that a screen changed — the fires they start report
      their own outcome through `run()` and the error line above. */
   .dk-btn { flex: 0 0 auto; margin-left: 6px; }
-  .ltrow > span { min-width: 74px; }
-  /* 26px, the shared control height — measured at 24 in a render against the
-     reference table. A dock card holds a mixed column (this picker, two text
-     fields, two buttons) and the whole point of the table is that such a
-     column lines up on one right edge. */
-  .ltpick { flex: 1; min-width: 0; }
-  /* The rows of fields and buttons have no label of their own, so they line up
-     under the one that does rather than starting at the card's edge. */
-  .ltsub { padding-left: 80px; }
+  /* The head's right-hand slot, like the countdown's figure and the alert's
+     badge. Width only — the height is the shared control's. */
+  .ltpick { flex: 1 1 auto; min-width: 0; }
+  /* NO 80px INDENT (L3). It hung the fields, the buttons, the preview and the
+     caption under a label that is in the HEAD, not in the column — so a third of
+     a 200px card was empty and the name band was the one tool whose contents did
+     not start at the card's edge. */
   .ltprev {
-    margin-left: 80px; aspect-ratio: 16 / 9; container-type: inline-size;
+    aspect-ratio: 16 / 9; container-type: inline-size;
     background: var(--v-void); border: 1px solid var(--v-line2);
     border-radius: var(--v-r-sm); overflow: hidden;
   }
-  .ltcap {
-    margin: 0 0 0 80px;
-    font-family: var(--f-mono); font-size: var(--v-fs-cap);
-    letter-spacing: var(--v-tr-caps); color: var(--v-faint);
-  }
-  /* The armed state of a two-step control. RED, not amber: it is "this will
-     interrupt the reading", which is an act-now colour, and amber in this room
-     means a congregation is already looking at something. */
-  .ann-go.armed { border-color: var(--v-red); color: var(--v-red); }
 
   /* The controls card takes the height it is given and divides it among the
      buttons. `overflow:hidden`, not `auto`: a panic control that can be scrolled
