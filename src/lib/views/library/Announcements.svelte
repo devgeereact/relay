@@ -24,6 +24,34 @@
   export let query = '';
   export let queue = [];
   export let onQueueChange = () => {};
+  /** Hand the selected notice up for the inspector (REBRAND §10). */
+  export let onSelect = () => {};
+
+  /**
+   * ONE PRESS SELECTS — see the note on `VerseDeck`'s `press` prop.
+   *
+   * AN ANNOUNCEMENT'S HEADING IS CONTENT (DECISIONS §73): both the title and the
+   * body reach the room, which is the opposite of a song's section label and the
+   * reason this pane's form says which field goes where. So the preview carries
+   * the reference, exactly as scripture does.
+   */
+  let selectedRef = '';
+  function selectNotice(a) {
+    selectedRef = a.reference;
+    onSelect({
+      kind: 'notice',
+      title: a.label,
+      titleLabel: 'Heading',
+      words: a.text ?? '',
+      slide: { reference: a.label, text: a.text ?? '' },
+      reference: a.reference,
+      plan: {
+        cueType: 'announce',
+        label: a.label,
+        payload: { announce_id: a.id, title: a.label, body: a.text },
+      },
+    });
+  }
 
   let items = [];
   let msg = '';
@@ -239,6 +267,10 @@
           busyRef={firing}
           {layout}
           showStar={false}
+          press="select"
+          {selectedRef}
+          onSelect={selectNotice}
+          onOpen={(d) => open(items.find((x) => x.id === d.id))}
           can={{ queue: true, favourite: false, edit: true, duplicate: true, add: false, move: false, select: false }}
           onFire={send}
           onQueue={toggleQueue}
