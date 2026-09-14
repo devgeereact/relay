@@ -590,6 +590,8 @@
   /* ── Books ─────────────────────────────────────────────────────────────── */
   .br-panelhead { margin: 0; padding: 13px 14px 9px; }
   .br-booklist { flex: 1; min-height: 0; overflow-y: auto; padding: 0 8px 8px; }
+  /* A LIST ROW, not a button — B2. One of sixty-six book rows in a scrolling
+     rail, a name and a count, selected rather than pressed. */
   .br-book {
     display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 10px;
     border-radius: var(--v-r-md); background: none; border: 0; color: var(--v-dim);
@@ -600,6 +602,8 @@
   .br-book:hover:not(.on) { background: var(--v-surf2); color: var(--v-txt); }
   .br-book.on { background: var(--v-accent-fill); color: var(--v-accent-ink); font-weight: 600; }
   .br-book.on .ct { color: rgba(255, 255, 255, 0.75); }
+  /* A LIST ROW, not a button — B2. The "All books" row that heads the rail;
+     the same shape as `.br-book` with the seam above it instead of below. */
   .br-all {
     display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
     width: calc(100% - 16px); margin: 0 8px 8px; padding: 8px 10px;
@@ -613,7 +617,13 @@
   .br-sel { width: auto; max-width: 122px; height: 24px; padding: 0 24px 0 8px; font-size:var(--v-fs-lbl);
     flex: 0 0 auto;
     background-position: calc(100% - 12px) 10px, calc(100% - 7px) 10px; }
-  .br-fav { flex: 0 0 auto; width: 24px; height: 24px; }
+  /* NO SIZE — B2. It renders `.r-iconbtn br-fav` and then overrode the shared
+     26px to 24px; Library's `.lib-more` overrode the same control to 30px. Three
+     icon-button sizes in two workspaces, each internally consistent, which is
+     why none of them looked wrong from inside its own file. What is left here is
+     position and the pressed state, which is the shape a legitimate override
+     has. */
+  .br-fav { flex: 0 0 auto; }
   .br-fav.on { border-color: var(--v-accent-line); color: var(--v-accent2); background: var(--v-accent-soft); }
   /* The translation, in the rail footer with the books it describes. */
   .br-tr { display: flex; align-items: center; gap: 8px; }

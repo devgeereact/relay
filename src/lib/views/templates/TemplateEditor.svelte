@@ -613,19 +613,19 @@
     {#if edit}<span class="te-name">{edit.name}</span><span class="te-sub r-mono">{layered ? layers.length + ' layers' : 'legacy'} · 1920×1080</span>{/if}
     {#if edit && layered}
       <div class="te-undo">
-        <button class="te-zbtn" on:click={undo} disabled={!canUndo} title="Undo (Ctrl/⌘+Z)" aria-label="Undo">
+        <button class="r-iconbtn te-zbtn" on:click={undo} disabled={!canUndo} title="Undo (Ctrl/⌘+Z)" aria-label="Undo">
           <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14 4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-1"/></svg>
         </button>
-        <button class="te-zbtn" on:click={redo} disabled={!canRedo} title="Redo (Ctrl/⌘+Shift+Z)" aria-label="Redo">
+        <button class="r-iconbtn te-zbtn" on:click={redo} disabled={!canRedo} title="Redo (Ctrl/⌘+Shift+Z)" aria-label="Redo">
           <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 14 5-5-5-5"/><path d="M20 9H9a5 5 0 0 0 0 10h1"/></svg>
         </button>
       </div>
     {/if}
     <span class="te-spring"></span>
     <div class="te-zoom">
-      <button class="te-zbtn" on:click={() => (zoomIdx = Math.max(0, zoomIdx - 1))} disabled={zoomIdx === 0} aria-label="Zoom out">−</button>
+      <button class="r-iconbtn te-zbtn" on:click={() => (zoomIdx = Math.max(0, zoomIdx - 1))} disabled={zoomIdx === 0} aria-label="Zoom out">−</button>
       <span class="te-pct r-mono">{zoom}%</span>
-      <button class="te-zbtn" on:click={() => (zoomIdx = Math.min(ZOOMS.length - 1, zoomIdx + 1))} disabled={zoomIdx === ZOOMS.length - 1} aria-label="Zoom in">+</button>
+      <button class="r-iconbtn te-zbtn" on:click={() => (zoomIdx = Math.min(ZOOMS.length - 1, zoomIdx + 1))} disabled={zoomIdx === ZOOMS.length - 1} aria-label="Zoom in">+</button>
     </div>
     {#if edit}
       <label class="te-theme" title="The theme this template inherits. Your own settings override it.">
@@ -697,7 +697,7 @@
         <div class="te-panehead">
           <span class="r-lbl">Layers</span>
           <div class="te-addwrap">
-            <button class="te-addbtn" on:click|stopPropagation={() => (addOpen = !addOpen)} aria-label="Add layer">＋</button>
+            <button class="r-iconbtn te-addbtn" on:click|stopPropagation={() => (addOpen = !addOpen)} aria-label="Add layer">＋</button>
             {#if addOpen}
               <!-- The click handler is not an interaction: it stops the document-level
                    outside-click closer from seeing a click on the menu itself. Every real
@@ -710,11 +710,11 @@
               <div class="te-addmenu" on:click|stopPropagation role="menu" tabindex="-1">
                 <div class="te-addsec r-lbl">Add layer</div>
                 {#each LAYER_TYPES as t}
-                  <button on:click={() => addLayer(t.type)}><span class="te-addico">{t.icon}</span>{t.label}</button>
+                  <button class="te-addmi" on:click={() => addLayer(t.type)}><span class="te-addico">{t.icon}</span>{t.label}</button>
                 {/each}
                 <div class="te-addsec r-lbl">Bound text</div>
                 {#each BINDINGS.filter((b) => b.key !== 'static') as b}
-                  <button on:click={() => addBoundText(b.key)}><span class="te-addico">T</span>{b.label}</button>
+                  <button class="te-addmi" on:click={() => addBoundText(b.key)}><span class="te-addico">T</span>{b.label}</button>
                 {/each}
               </div>
             {/if}
@@ -953,9 +953,9 @@
               {/each}
             </div>
             <div class="te-alignrow">
-              <button class="te-alignbtn" on:click={() => center('x')} title="Centre horizontally">Centre H</button>
-              <button class="te-alignbtn" on:click={() => center('y')} title="Centre vertically">Centre V</button>
-              <button class="te-alignbtn" on:click={() => center('both')} title="Centre on canvas">Centre</button>
+              <button class="r-btn ghost te-alignbtn" on:click={() => center('x')} title="Centre horizontally">Centre H</button>
+              <button class="r-btn ghost te-alignbtn" on:click={() => center('y')} title="Centre vertically">Centre V</button>
+              <button class="r-btn ghost te-alignbtn" on:click={() => center('both')} title="Centre on canvas">Centre</button>
             </div>
             {#if sel.locked}<p class="te-fnote">This object is locked. Unlock it in the layer list to move it.</p>{/if}
             <p class="te-fnote">Percent of the screen. Drag on the canvas — layers snap to centre and edges (hold Shift to place freely) — or type exact values.</p>
@@ -1000,8 +1000,8 @@
             <div class="te-frow">
               <span class="te-fk">Fit</span>
               <span class="te-fv te-seg">
-                <button class:on={(sel.fit || 'cover') === 'cover'} on:click={() => set('fit', 'cover')}>Cover</button>
-                <button class:on={sel.fit === 'contain'} on:click={() => set('fit', 'contain')}>Contain</button>
+                <button class="te-segbtn" class:on={(sel.fit || 'cover') === 'cover'} on:click={() => set('fit', 'cover')}>Cover</button>
+                <button class="te-segbtn" class:on={sel.fit === 'contain'} on:click={() => set('fit', 'contain')}>Contain</button>
               </span>
             </div>
             <div class="te-frow"><label class="te-fk" for="te-mop">Opacity</label><span class="te-fv te-rangerow"><input id="te-mop" class="r-range" type="range" min="0" max="1" step="0.05" value={sel.opacity ?? 1} on:input={(e) => num('opacity', e.target.value)} use:rangeFill={sel.opacity ?? 1} /><span class="te-rnum r-mono">{Math.round((sel.opacity ?? 1) * 100)}%</span></span></div>
@@ -1102,7 +1102,7 @@
                 {#each fonts as f}<option value={f}>{f}</option>{/each}
               </select>
             </div>
-            <button class="te-minilink" on:click={() => detectFonts(false)}>Use all computer fonts {fontMsg}</button>
+            <button class="r-btn quiet sm te-minilink" on:click={() => detectFonts(false)}>Use all computer fonts {fontMsg}</button>
             {#if missingFont}<p class="te-fwarn">“{fontLabel(missingFont)}” isn't installed here — outputs use a default. Install it to use it.</p>{/if}
             <div class="te-frow"><label class="te-fk" for="te-size">Size</label><span class="te-fv te-stepper"><input id="te-size" class="te-num r-mono" type="number" min="1" max="16" step="0.1" value={sel.size} on:input={(e) => num('size', e.target.value)} /><span class="te-unit r-mono">cqw</span></span></div>
             <div class="te-frow"><label class="te-fk" for="te-col">Colour</label><span class="te-fv te-swatch"><input id="te-col" type="color" value={isColor(sel.color) ? sel.color : '#ffffff'} on:input={(e) => set('color', e.target.value)} disabled={isThemeToken(sel.color)} /><span class="te-hex r-mono">{isThemeToken(sel.color) ? 'theme' : isColor(sel.color) ? sel.color.toUpperCase() : '#FFFFFF'}</span></span></div>
@@ -1111,7 +1111,7 @@
               <span class="te-fk">Align</span>
               <span class="te-fv te-seg">
                 {#each ['left', 'center', 'right'] as a}
-                  <button class:on={sel.align === a} aria-label="Align {a}" on:click={() => set('align', a)}>
+                  <button class="te-segbtn" class:on={sel.align === a} aria-label="Align {a}" on:click={() => set('align', a)}>
                     <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16"/><path d={a === 'left' ? 'M4 12h10' : a === 'right' ? 'M10 12h10' : 'M7 12h10'}/><path d="M4 18h16"/></svg>
                   </button>
                 {/each}
@@ -1121,7 +1121,7 @@
               <span class="te-fk">V-align</span>
               <span class="te-fv te-seg">
                 {#each ['top', 'middle', 'bottom'] as v}
-                  <button class:on={(sel.valign || 'middle') === v} on:click={() => set('valign', v)}>{v[0].toUpperCase()}</button>
+                  <button class="te-segbtn" class:on={(sel.valign || 'middle') === v} on:click={() => set('valign', v)}>{v[0].toUpperCase()}</button>
                 {/each}
               </span>
             </div>
@@ -1203,6 +1203,8 @@
     background:var(--v-surf2); border:1px solid var(--v-line2); border-radius:var(--v-r-md);
     box-shadow:var(--v-shadow-lg); padding:5px; }
   .te-histhead{ padding:6px 8px 4px; }
+  /* A MENU ROW, not a button — one saved version per row inside the History
+     [role="menu"], full width, "Latest" at one end and "Restore" at the other. */
   .te-histitem{ display:flex; align-items:center; justify-content:space-between; gap:10px; width:100%;
     text-align:left; padding:8px 10px; border:0; background:none; color:var(--v-txt); border-radius:var(--v-r-sm); cursor:pointer; }
   .te-histitem:hover{ background:var(--v-surf3); }
@@ -1213,7 +1215,15 @@
   .te-sub{ font-size:var(--v-fs-cap); color:var(--v-faint); }
   .te-undo{ display:inline-flex; align-items:center; gap:2px; margin-left:10px; }
   .te-zoom{ display:flex; align-items:center; gap:4px; }
-  .te-zbtn{ width:26px; height:26px; border-radius:var(--v-r-sm); background:var(--v-surf2); border:1px solid var(--v-line2); color:var(--v-dim); cursor:pointer; font-size:var(--v-fs-ttl); line-height:1; }
+  /* CONVERTED — B2. Undo · Redo · zoom out · zoom in were a hand-rolled 26px
+     square drawing a `--v-line2` DIVIDER hairline where every other icon button
+     in the product draws `.r-iconbtn`'s. Same shape, different edge, in a bar
+     that also carries six `.r-btn`s. The `--v-fs-ttl` the zoom glyphs carried
+     went with it: `−` and `+` are type where Undo and Redo are svg, and a
+     control that is one size when its icon is a character and another when it
+     is a path is the same drift one level down. What is left is the line box,
+     which is not a size. */
+  .te-zbtn{ line-height:1; }
   .te-zbtn:disabled{ opacity:.4; cursor:not-allowed; }
   .te-pct{ min-width:42px; text-align:center; font-size:var(--v-fs-cap); color:var(--v-dim); }
   .r-btn.confirm{ background:var(--v-emerald); color:var(--v-void); border-color:transparent; }
@@ -1229,6 +1239,9 @@
   /* The object strip WRAPS. A tab that has scrolled out of sight behind a
      hidden scrollbar is a tab nobody knows is there. */
   .te-objtabs{ display:flex; flex-wrap:wrap; gap:3px; padding:7px 9px 0; }
+  /* A TAB, not a button. `role="tab"` inside a `role="tablist"`, and the strip
+     WRAPS rather than scrolls (see the markup). A tab is sized by its label and
+     carries a selected state that a button variant does not have. */
   .te-objtab{ padding:3px 8px; border-radius:var(--v-r-sm); border:1px solid var(--v-line2);
     background:var(--v-surf2); color:var(--v-dim); font-size:var(--v-fs-lbl); font-weight:600;
     cursor:pointer; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
@@ -1245,10 +1258,20 @@
 
   /* layers panel */
   .te-addwrap{ position:relative; }
-  .te-addbtn{ width:24px; height:24px; border-radius:var(--v-r-sm); background:var(--v-accent-fill); color:#fff; border:0; cursor:pointer; font-size:var(--v-fs-ttl); line-height:1; }
+  /* CONVERTED — B2. The ＋ that adds a layer was a 24px accent-filled square
+     against `.te-zbtn`'s 26px: two icon-button shapes in one file, one of them
+     also the only accent-filled square in the product. Keeping the fill was
+     tried and dropped — a component that repaints a shared control has invented
+     a variant nobody else can use, and "add a layer" is not more consequential
+     than the Undo two rows away. It is now exactly `.r-iconbtn`, and nothing is
+     left but the line box the `＋` glyph needs. */
+  .te-addbtn{ line-height:1; }
+  /* A DROPDOWN MENU, not a row of buttons. Full-bleed rows inside a floating
+     [role="menu"] — they have no edge and no fill of their own because the menu
+     is the surface. Named so the next shape census can tell this from drift. */
+  .te-addmi{ display:flex; align-items:center; gap:9px; text-align:left; padding:7px 9px; border:0; background:none; color:var(--v-txt); font-size:var(--v-fs-b2); border-radius:var(--v-r-sm); cursor:pointer; }
+  .te-addmi:hover{ background:var(--v-surf3); }
   .te-addmenu{ position:absolute; top:28px; right:0; z-index:30; width:186px; background:var(--v-surf2); border:1px solid var(--v-line2); border-radius:var(--v-r-md); box-shadow:var(--v-shadow-lg); padding:5px; display:flex; flex-direction:column; }
-  .te-addmenu button{ display:flex; align-items:center; gap:9px; text-align:left; padding:7px 9px; border:0; background:none; color:var(--v-txt); font-size:var(--v-fs-b2); border-radius:var(--v-r-sm); cursor:pointer; }
-  .te-addmenu button:hover{ background:var(--v-surf3); }
   .te-addico{ width:16px; text-align:center; color:var(--v-faint); font-family:var(--f-mono); }
   .te-addsec{ padding:6px 8px 3px; }
 
@@ -1265,6 +1288,11 @@
   .te-lname{ flex:1; min-width:0; font-size:var(--v-fs-b2); color:var(--v-txt); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .te-lbtns{ display:flex; gap:1px; flex:0 0 auto; opacity:0; transition:opacity .12s; }
   .te-layer:hover .te-lbtns, .te-layer.sel .te-lbtns{ opacity:1; }
+  /* A ROW AFFORDANCE, not a button — forward · back · lock · visibility ·
+     delete, 20px, revealed by hovering the layer row they belong to. Five of
+     them inside a 26px-tall list row: the shared button would not fit, and
+     giving each one a fill and an edge would turn every layer row into a
+     toolbar. The armed `Sure?` state is the two-step delete (rule 41). */
   .te-lmini{ width:20px; height:20px; display:grid; place-items:center; border:0; background:none; color:var(--v-faint); cursor:pointer; border-radius:var(--v-r-sm); font-size:var(--v-fs-lbl); }
   .te-lmini:hover{ color:var(--v-txt); background:var(--v-surf3); }
   .te-lmini.danger:hover{ color:var(--v-rose); }
@@ -1344,7 +1372,13 @@
   .te-fv{ min-width:0; }
   .te-fnote{ font-size:var(--v-fs-cap); color:var(--v-faint); margin:0; line-height:1.5; }
   .te-emptyhint{ color:var(--v-dim); }
-  .te-minilink{ background:none; border:0; padding:0; text-align:left; color:var(--v-dim); font-family:var(--f-mono); font-size:var(--v-fs-fig); cursor:pointer; letter-spacing:.04em; }
+  /* CONVERTED — B2. "Use all computer fonts" was a mono, letter-spaced text
+     link sitting directly under a `.r-select` in a column of `.te-frow`s. That
+     is exactly what `.r-btn.quiet` is: no fill, no edge, but the button's
+     metrics, so it lines up with the column instead of floating in it. Left
+     here: the alignment, because a quiet button centres its label by default
+     and this one begins under the select's left edge. */
+  .te-minilink{ justify-content:flex-start; padding-left:0; align-self:flex-start; }
   .te-fwarn{ margin:0; padding:8px 10px; border:1px solid var(--v-amber-soft); border-radius:var(--v-r-sm); background:var(--v-amber-soft); color:var(--v-amber2); font-size:var(--v-fs-cap); line-height:1.45; }
   .te-stepper{ display:flex; align-items:center; }
   .te-num{ height:32px; padding:0 8px; border-radius:var(--v-r-md); background:var(--v-bg); border:1px solid var(--v-line2); color:var(--v-txt); font-size:var(--v-fs-b2); outline:none; width:100%; box-sizing:border-box; }
@@ -1363,28 +1397,55 @@
      ragged column rather than as a broken control. */
   .te-swatch{ display:flex; align-items:center; gap:9px; justify-content:space-between; }
   .te-hex{ font-size:var(--v-fs-cap); color:var(--v-dim); text-transform:uppercase; }
+  /* The TROUGH of a segmented control. It stays local rather than becoming
+     app.css's `.r-seg` because these sit in the RIGHT half of a `.te-frow`,
+     flexed to fill it, while `.r-seg` is an inline strip that sizes to its
+     labels. */
   .te-seg{ display:flex; gap:2px; background:var(--v-bg); border:1px solid var(--v-line); border-radius:var(--v-r-md); padding:3px; }
-  .te-seg button{ flex:1; height:26px; display:grid; place-items:center; border:0; border-radius:var(--v-r-sm); background:none; color:var(--v-dim); cursor:pointer; font-size:var(--v-fs-cap); }
-  .te-seg button:hover{ color:var(--v-txt); }
-  .te-seg button.on{ background:var(--v-surf3); color:var(--v-txt); }
+  /* A SEGMENT, not a button — Cover/Contain, three alignments, three
+     v-alignments. One choice out of N inside one trough that carries the edge
+     for all of them; a member has no edge of its own because an edge per member
+     would draw N boxes where the control is one. Named rather than styled
+     through `.te-seg button`, so a census that groups by class can tell this
+     from a button that lost its class. */
+  .te-segbtn{ flex:1; height:26px; display:grid; place-items:center; border:0; border-radius:var(--v-r-sm); background:none; color:var(--v-dim); cursor:pointer; font-size:var(--v-fs-cap); }
+  .te-segbtn:hover{ color:var(--v-txt); }
+  .te-segbtn.on{ background:var(--v-surf3); color:var(--v-txt); }
+  /* A SWITCH ROW, not a button — Italic, Scroll. A full-width row whose right
+     end is an `.r-switch`; it is a button element so the whole row is the target. */
   .te-swrow{ display:flex; align-items:center; justify-content:space-between; width:100%; background:var(--v-surf2); border:1px solid var(--v-line); border-radius:var(--v-r-md); padding:9px 12px; color:var(--v-txt); font-size:var(--v-fs-b2); cursor:pointer; }
   .te-swrow:hover{ border-color:var(--v-line2); }
   .te-sublbl{ margin:10px 0 6px; }
   .te-bglib{ display:grid; grid-template-columns:repeat(3, 1fr); gap:6px; max-height:196px; overflow-y:auto; padding-right:4px; scrollbar-width:thin; scrollbar-color:var(--v-surf3) transparent; }
+  /* A GRID CELL, not a button. The background image IS the control — a 16:9
+     tile in a picker grid, selected by a ring rather than by a fill. */
   .te-bgtile{ aspect-ratio:16/9; border-radius:var(--v-r-sm); border:1px solid var(--v-line2); background-size:cover; background-position:center; cursor:pointer; padding:0; }
   .te-bgtile.on{ border-color:var(--v-accent); box-shadow:0 0 0 1px var(--v-accent); }
+  /* THE EMPTY GRID CELL, not a button — B2. The "no image" tile: a `.te-bgtile`
+     with a ✕ where the picture would be, so clearing the background is the same
+     gesture in the same grid as choosing one. Only the FILL is local, because
+     the cell has no image to be its own ground. */
   .te-bgnone{ display:grid; place-items:center; background:var(--v-surf2); color:var(--v-faint); font-size:var(--v-fs-pr); }
   .te-bgnone:hover{ color:var(--v-rose); }
   /* Per-screen content visibility chips */
   .te-showlbl{ margin-top:4px; }
   .te-showgrid{ display:flex; flex-wrap:wrap; gap:6px; }
+  /* A CHIP, not a button — a tick plus a label, wrapping in a grid, each one an
+     independent on/off. A chip states a fact about the thing you are editing;
+     a button does something when pressed, and the row of them here would read
+     as a row of actions if it wore the button shape. */
   .te-showchip{ display:inline-flex; align-items:center; gap:5px; padding:6px 10px; border-radius:var(--v-r-md); background:var(--v-surf2); border:1px solid var(--v-line2); color:var(--v-faint); font-size:var(--v-fs-cap); cursor:pointer; }
   .te-showchip:hover{ color:var(--v-txt); border-color:var(--v-accent-line); }
   .te-showchip.on{ background:var(--v-accent-soft); border-color:var(--v-accent-line); color:var(--v-txt); }
   .te-showtick{ width:9px; text-align:center; color:var(--v-emerald); font-weight:700; }
   .te-alignrow{ display:flex; gap:6px; }
-  .te-alignbtn{ flex:1; height:30px; border-radius:var(--v-r-md); background:var(--v-surf2); border:1px solid var(--v-line2); color:var(--v-dim); font-size:var(--v-fs-cap); cursor:pointer; }
-  .te-alignbtn:hover{ color:var(--v-txt); border-color:var(--v-accent-line); background:var(--v-accent-soft); }
+  /* CONVERTED — B2. Centre H · Centre V · Centre is three equal buttons in one
+     row, which is the definition of the shared control, and it was drawing a
+     30px box with an `--v-r-md` corner and a divider hairline — three steps off
+     `.r-btn.ghost` at once, four rows under a `.r-btn sm ghost` Duplicate. All
+     that is left is the only thing about it that is not a button: it shares the
+     row equally with its two neighbours. */
+  .te-alignbtn{ flex:1; }
   .te-geo{ display:grid; grid-template-columns:1fr 1fr; gap:6px; }
   .te-geo label{ display:flex; align-items:center; gap:6px; font-size:var(--v-fs-cap); color:var(--v-faint); }
   .te-geo .te-num{ height:28px; }

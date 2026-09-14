@@ -341,7 +341,7 @@
         <div class="tg-newmenu" on:click|stopPropagation role="menu" tabindex="-1">
           <div class="tg-newsec r-lbl">Start from</div>
           {#each STARTERS as s}
-            <button on:click={() => newFrom(s)}>
+            <button class="tg-newmi" on:click={() => newFrom(s)}>
               <span class="tg-newname">{s.label}</span>
               <span class="tg-newhint">{s.hint}</span>
             </button>
@@ -418,10 +418,10 @@
         </select>
       </label>
       <div class="tg-viewtog">
-        <button class:on={view === 'grid'} on:click={() => (view = 'grid')} aria-label="Grid view" title="Grid">
+        <button class="tg-viewbtn" class:on={view === 'grid'} on:click={() => (view = 'grid')} aria-label="Grid view" title="Grid">
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
         </button>
-        <button class:on={view === 'list'} on:click={() => (view = 'list')} aria-label="Row view" title="Rows">
+        <button class="tg-viewbtn" class:on={view === 'list'} on:click={() => (view = 'list')} aria-label="Row view" title="Rows">
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>
         </button>
       </div>
@@ -657,7 +657,7 @@
             <!-- Two-step, because Tauri's webview has no working confirm() and a
                  delete that reports success without ever showing a dialog is
                  exactly the defect rule 41 exists for. -->
-            <button class="r-btn ghost sm tg-del" class:arm={delArm === sel.id} on:click={() => del(sel)} disabled={!$capture.available}>
+            <button class="r-btn danger sm tg-del" class:arm={delArm === sel.id} on:click={() => del(sel)} disabled={!$capture.available}>
               {delArm === sel.id ? 'Delete — sure?' : 'Delete'}
             </button>
           </div>
@@ -711,10 +711,10 @@
        advance, app-wide) for as long as a menu is open. -->
   <!-- svelte-ignore a11y-click-events-have-key-events -->
   <div class="tg-menu" style="left:{menuPos.x}px; top:{menuPos.y}px" on:click|stopPropagation role="menu" tabindex="-1">
-    <button on:click={() => { menuFor = null; dispatch('edit', { id: menuTpl.id }); }}>Edit</button>
-    <button on:click={() => duplicate(menuTpl)}>Duplicate</button>
-    <button on:click={() => { const t = menuTpl; menuFor = null; exportTemplate(t); }}>Export</button>
-    <button class="danger" class:arm={delArm === menuTpl.id} on:click={() => del(menuTpl)}>{delArm === menuTpl.id ? 'Sure?' : 'Delete'}</button>
+    <button class="tg-mi" on:click={() => { menuFor = null; dispatch('edit', { id: menuTpl.id }); }}>Edit</button>
+    <button class="tg-mi" on:click={() => duplicate(menuTpl)}>Duplicate</button>
+    <button class="tg-mi" on:click={() => { const t = menuTpl; menuFor = null; exportTemplate(t); }}>Export</button>
+    <button class="tg-mi danger" class:arm={delArm === menuTpl.id} on:click={() => del(menuTpl)}>{delArm === menuTpl.id ? 'Sure?' : 'Delete'}</button>
   </div>
 {/if}
 
@@ -743,16 +743,21 @@
   .tg-newmenu{ position:absolute; top:30px; right:0; z-index:40; width:250px; background:var(--v-surf2);
     border:1px solid var(--v-line2); border-radius:var(--v-r-md); box-shadow:var(--v-shadow-lg); padding:4px; }
   .tg-newsec{ padding:6px 8px 4px; }
-  .tg-newmenu button{ display:flex; flex-direction:column; gap:2px; width:100%; text-align:left; padding:8px 9px;
+  /* A MENU ROW, not a button — two lines (a starter's name over its hint) inside
+     the New template [role="menu"]. Two lines is the whole reason it is not a
+     `.r-btn`: the shared control is a single 26px line of centred label. Named
+     rather than reached through `.tg-newmenu button`, so a shape census can tell
+     a deliberate menu row from a button that lost its class. */
+  .tg-newmi{ display:flex; flex-direction:column; gap:2px; width:100%; text-align:left; padding:8px 9px;
     border:0; background:none; color:var(--v-txt); border-radius:var(--v-r-sm); cursor:pointer; }
-  .tg-newmenu button:hover{ background:var(--v-surf3); }
+  .tg-newmi:hover{ background:var(--v-surf3); }
   .tg-newname{ font-size:var(--v-fs-b2); font-weight:600; }
   .tg-newhint{ font-size:var(--v-fs-cap); color:var(--v-faint); line-height:1.35; }
   /* --v-faint is 3.79:1 on --v-surf3 and nothing is allowed to pair them
      (app.css, RG-74). The hover background IS surf3, so the hint lifts a step
      with it rather than dropping below AA for as long as the pointer is there —
      a contrast failure that only exists on hover is still a contrast failure. */
-  .tg-newmenu button:hover .tg-newhint{ color:var(--v-dim); }
+  .tg-newmi:hover .tg-newhint{ color:var(--v-dim); }
 
   .tg-search{ display:flex; align-items:center; gap:7px; background:var(--v-bg); border:1px solid var(--v-line2);
     border-radius:var(--v-r-sm); padding:0 9px; height:24px; flex:1 1 160px; max-width:260px; }
@@ -764,10 +769,13 @@
   .tg-sort .r-select{ width:auto; }  /* height is the shared control's; was 24px */
   .tg-viewtog{ display:flex; gap:2px; background:var(--v-bg); border:1px solid var(--v-line2);
     border-radius:var(--v-r-sm); padding:2px; flex:0 0 auto; }
-  .tg-viewtog button{ width:26px; height:20px; display:grid; place-items:center; border:0; border-radius:var(--v-r-sm);
+  /* A SEGMENTED TOGGLE, not two buttons — grid or rows, one of two, inside one
+     trough that carries the edge for the pair. Named (`.tg-viewbtn`) so it is
+     legible as a segment rather than as two icon buttons that lost their fill. */
+  .tg-viewbtn{ width:26px; height:20px; display:grid; place-items:center; border:0; border-radius:var(--v-r-sm);
     background:none; color:var(--v-faint); cursor:pointer; }
-  .tg-viewtog button:hover{ color:var(--v-txt); }
-  .tg-viewtog button.on{ background:var(--v-surf3); color:var(--v-txt); }
+  .tg-viewbtn:hover{ color:var(--v-txt); }
+  .tg-viewbtn.on{ background:var(--v-surf3); color:var(--v-txt); }
 
   /* ── the grid, and the rows it becomes ────────────────────────────────── */
   .tg-grid{ display:grid; grid-template-columns:repeat(auto-fill, minmax(210px, 1fr)); gap:10px; }
@@ -805,6 +813,9 @@
      about the template, never a claim about a screen, so it borrows neither
      amber (on air) nor amethyst (rehearsal). */
   .tg-usedgrid{ display:flex; flex-wrap:wrap; gap:4px; margin-bottom:8px; }
+  /* A CHIP, not a button — `aria-pressed`, a tick and a label, wrapping in a
+     grid. Each one states whether this template is what that content kind
+     wears; a row of them in the button shape would read as a row of actions. */
   .tg-usedchip{ display:inline-flex; align-items:center; gap:5px; padding:4px 8px;
     border:1px solid var(--v-line2); border-radius:var(--v-r-sm); background:var(--v-surf2);
     color:var(--v-dim); font-family:var(--f-body); font-size:var(--v-fs-cap); cursor:pointer;
@@ -817,6 +828,9 @@
   /* THE OBJECT STRIP WRAPS, never scrolls — a tab that has gone behind a hidden
      scrollbar is a tab nobody knows is there. Same rule as the editor's strip. */
   .tg-objtabs{ display:flex; flex-wrap:wrap; gap:3px; margin-bottom:8px; }
+  /* A TAB, not a button. Same shape as the editor's `.te-objtab` and the same
+     job — it names one object in the template and a press opens that object.
+     Sized by its label, wrapping rather than scrolling. */
   .tg-objtab{ padding:3px 8px; border:1px solid var(--v-line2); border-radius:var(--v-r-sm);
     background:var(--v-surf2); color:var(--v-dim); font-family:var(--f-body);
     font-size:var(--v-fs-cap); cursor:pointer; }
@@ -847,6 +861,10 @@
   .tg-name{ flex:1 1 auto; min-width:96px; font-size:var(--v-fs-b2); font-weight:600; color:var(--v-txt);
     overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .tg-cardbtns{ display:flex; align-items:center; gap:1px; flex:0 0 auto; position:relative; }
+  /* ICON-ONLY CARD AFFORDANCES, not buttons — a star that marks the default
+     template and a kebab that opens the row menu, both 22px in the card's own
+     title row. A fill and an edge on either would put two chrome boxes on top
+     of a thumbnail whose whole job is to show a template. */
   .tg-star, .tg-more{ width:22px; height:22px; display:grid; place-items:center; border:0; background:none;
     color:var(--v-faint); cursor:pointer; border-radius:var(--v-r-sm); }
   .tg-star.on{ color:var(--v-sel); }
@@ -856,11 +874,14 @@
   .tg-menu{ position:fixed; z-index:200; width:150px; display:flex; flex-direction:column;
     background:var(--v-surf2); border:1px solid var(--v-line2); border-radius:var(--v-r-md);
     box-shadow:var(--v-shadow-lg); padding:4px; }
-  .tg-menu button{ text-align:left; padding:6px 9px; border:0; background:none; color:var(--v-txt);
+  /* A MENU ROW, not a button — the ⋮ row menu's items. Full-bleed, left-aligned,
+     no edge, because the floating menu is the surface they sit on. Named so the
+     shape census reads them as menu rows rather than as unstyled buttons. */
+  .tg-mi{ text-align:left; padding:6px 9px; border:0; background:none; color:var(--v-txt);
     font-size:var(--v-fs-b2); border-radius:var(--v-r-sm); cursor:pointer; }
-  .tg-menu button:hover{ background:var(--v-surf3); }
-  .tg-menu .danger{ color:var(--v-rose); }
-  .tg-menu .danger.arm{ background:var(--v-rose-soft); }
+  .tg-mi:hover{ background:var(--v-surf3); }
+  .tg-mi.danger{ color:var(--v-rose); }
+  .tg-mi.danger.arm{ background:var(--v-rose-soft); }
 
   /* The error sits in the pane's own foot, behind the same hairline every other
      footnote uses, rather than floating as a bordered card of its own. */
@@ -890,8 +911,13 @@
   .tg-fhelp b{ color:var(--v-dim); }
   .tg-actions{ display:flex; flex-wrap:wrap; gap:5px; }
   .tg-actions .r-btn{ flex:1 1 auto; justify-content:center; }
-  .tg-del{ color:var(--v-rose); }
-  .tg-del:hover:not(:disabled), .tg-del.arm{ border-color:var(--v-rose); background:var(--v-rose-soft); }
+  /* CONVERTED — B2. It was `.r-btn ghost sm` repainted rose: a ghost's `--v-500`
+     hairline with red text inside it. The editor's own Delete, one press away in
+     the same workspace, is `.r-btn sm danger` and draws a RED edge — so the same
+     word wore two shapes depending on which surface you deleted from. `danger`
+     is the variant that exists for this; what is left is the ARMED half, which
+     is a state the variant has no opinion about (rule 41's two-step). */
+  .tg-del.arm{ background:var(--v-red-soft); border-color:var(--v-red); }
 
   .tg-empty{ margin:auto; padding:24px; text-align:center; }
 </style>

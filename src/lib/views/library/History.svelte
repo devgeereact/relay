@@ -266,7 +266,7 @@
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
           Export .md
         </button>
-        <button class="r-btn ghost sm lib-del" class:arm={delArm} on:click={doDelete}
+        <button class="r-btn danger sm lib-del" class:arm={delArm} on:click={doDelete}
           disabled={!$capture.available}
           title="Erase this service's transcript, detections and timeline. This cannot be undone.">
           {delArm ? 'Click again to erase' : 'Erase service'}
@@ -655,11 +655,11 @@
       <div class="lib-pager">
         <span class="r-mono">Showing {page * PER + 1}–{Math.min(services.length, page * PER + PER)} of {services.length}</span>
         <div class="pg">
-          <button class="pgbtn" disabled={page === 0} on:click={() => (page -= 1)} aria-label="Previous page">
+          <button class="r-iconbtn pgbtn" disabled={page === 0} on:click={() => (page -= 1)} aria-label="Previous page">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
           </button>
           <span class="pgnum r-mono">Page {page + 1} / {pageCount}</span>
-          <button class="pgbtn" disabled={page >= pageCount - 1} on:click={() => (page += 1)} aria-label="Next page">
+          <button class="r-iconbtn pgbtn" disabled={page >= pageCount - 1} on:click={() => (page += 1)} aria-label="Next page">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
           </button>
         </div>
@@ -704,6 +704,9 @@
     line-height:1.5; }
   /* The replay. A timeline row is a button now, so it has to keep looking like a
      row and gain a focus ring rather than a button's chrome. */
+  /* A LIST ROW, not a button — B2. One timeline entry, full width, expanding in
+     place when pressed. It carries `.fault` as a state; a button variant would
+     have to be a fifth red. */
   .lib-tl-row{ width:100%; text-align:left; border:1px solid transparent; cursor:pointer;
     font:inherit; }
   .lib-tl-row:hover{ background:var(--v-surf3); }
@@ -778,7 +781,11 @@
   /* Rose, not amber: nothing on this screen is on air, and amber is never spent
      on anything that is not. Armed reads as a warning, not as a live state. */
   .lib-delmsg{ font-size:var(--v-fs-lbl); color:var(--v-rose); word-break:break-word; margin-top:-8px; }
-  .lib-del{ color:var(--v-rose); }
+  /* CONVERTED — B2. The fourth copy of the hand-rolled destructive button:
+     `.r-btn ghost sm` repainted rose. `.r-btn.danger` is that, with the edge
+     the ghost was still drawing from `--v-500`. The ARMED half below stays —
+     it is a filled state the variant does not describe, and its contrast was
+     fixed once already. */
   /* `--v-ink` was never defined, so this resolved to `unset` — and `color` is
      inherited, so the ARMED half of a two-step delete drew --v-txt (#e8eaee) on
      the red fill: 2.82:1, a WCAG AA failure on the one word an operator has to
@@ -825,9 +832,11 @@
   .lib-pager .r-mono{ font-size:10.5px; color:var(--v-faint); }
   .pg{ display:flex; align-items:center; gap:8px; }
   .pgnum{ font-size:var(--v-fs-lbl); color:var(--v-dim); }
-  .pgbtn{ width:32px; height:32px; display:grid; place-items:center; border-radius:8px; cursor:pointer;
-    background:var(--v-surf2); border:1px solid var(--v-line); color:var(--v-dim); }
-  .pgbtn:hover:not(:disabled){ color:var(--v-accent); border-color:var(--v-line2); }
+  /* CONVERTED — B2. Prev / next page were a 32px square with an 8px corner, in a
+     file that renders `.r-iconbtn lib-openbtn` (26px, `--v-r-sm`) forty lines
+     above them. Two icon-button shapes in one view, six pixels and a corner
+     apart, which is exactly the drift nobody can name while reading either rule
+     on its own. The shared instrument has no disabled state, so that stays. */
   .pgbtn:disabled{ opacity:.35; cursor:not-allowed; }
 
   /* ── Responsive ── */

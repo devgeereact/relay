@@ -571,6 +571,8 @@
     overflow-y: auto;
     padding: 0 8px 8px;
   }
+  /* A LIST ROW, not a button — B2. One song per row in the rail: a title over a
+     sub-line, selected into the pane rather than pressed to do something. */
   .ly-song {
     display: block;
     width: 100%;

@@ -522,6 +522,13 @@
     box-shadow: 0 0 0 1px var(--v-amethyst);
   }
 
+  /* A CARD THAT IS A BUTTON ELEMENT, not a button — B2. It is the slide
+     itself at a readable size; it is a native button only so Enter, focus and
+     the disabled state come from the platform rather than from a `role="button"`
+     div (see the JSDoc on the row handler for what that cost once). It must
+     never wear `.r-btn`: a 26px fill would paint chrome over the one thing on
+     this card the operator is actually reading. The black ground is the WALL,
+     not a surface token — a slide preview shows what a projector would show. */
   .vd-shot {
     position: relative;
     display: block;
@@ -672,6 +679,9 @@
     outline-offset: 2px;
   }
 
+  /* AN ICON-ONLY TOGGLE ON A CARD, not a button — B2. It floats over the slide
+     preview at its top right and its state is the star being filled or hollow.
+     A fill and an edge would be a chrome box sitting on the artwork. */
   .vd-star {
     position: absolute;
     top: 8px;
@@ -765,6 +775,9 @@
     position: relative;
     z-index: 5;
   }
+  /* AN ICON-ONLY KEBAB, not a button — B2. 22px in the card's footer beside the
+     reference. It opens the row menu and has no label, so there is nothing for
+     the shared control's padding and type to carry. */
   .vd-kebab {
     width: 22px;
     height: 22px;
@@ -780,6 +793,10 @@
     background: var(--v-surf3);
     color: var(--v-txt);
   }
+  /* AN INVISIBLE CLICK-CATCHER, not a button — B2. A transparent full-viewport
+     button element behind the open menu so a press anywhere closes it, keyboard
+     included. It is deliberately unpaintable: give it any shape at all and it
+     becomes a sheet of colour over the whole workspace. */
   .vd-scrim {
     position: fixed;
     inset: 0;
@@ -808,6 +825,10 @@
     flex-direction: column;
     gap: 2px;
   }
+  /* A MENU ROW, not a button — B2. Nine of them inside the card's `role="menu"`
+     popup: full-bleed, left-aligned, no edge, because the menu is the surface.
+     `.vd-mi.air` is the one that reaches a screen and `.vd-mi.danger` deletes;
+     both are states of the row, not button variants. */
   .vd-mi {
     text-align: left;
     padding: 8px 10px;
@@ -919,6 +940,11 @@
     align-items: center;
     gap: 4px;
   }
+  /* A ROW AFFORDANCE, not a button — B2. Favourite · queue · take, at the right
+     end of a LIST-layout row. Three shared buttons inside a list row would be a
+     toolbar per row; these are 24px glyphs that let the row stay a row. Their
+     accessible names are the long ones the markup composes — that is where the
+     promise lives, and it is the half that must never be shortened. */
   .vd-ic {
     width: 24px;
     height: 24px;

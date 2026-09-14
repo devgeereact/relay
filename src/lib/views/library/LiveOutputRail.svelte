@@ -93,7 +93,7 @@
     <span class="rw-spring"></span>
     {#if queue.length}
       <span class="r-mono lo-count">{queue.length}</span>
-      <button class="lo-link" on:click={() => onQueueChange(clearAll())}>Clear</button>
+      <button class="r-btn quiet sm" on:click={() => onQueueChange(clearAll())}>Clear</button>
     {/if}
   </header>
 
@@ -144,14 +144,11 @@
 <style>
   .lo { min-height: 0; }
   .lo-count { font-size: var(--v-fs-cap); color: var(--v-faint); }
-  .lo-link {
-    border: 0;
-    background: transparent;
-    color: var(--v-accent2);
-    font-family: var(--f-body);
-    font-size:var(--v-fs-b2);
-    cursor: pointer;
-  }
+  /* CONVERTED — B2. "Clear" was `.lo-link`: accent-coloured text with no box and
+     no hover, sitting in a pane head. It is `.r-btn.quiet` — no fill, no edge,
+     but the button's metrics and a hover fill, which is how an operator finds
+     out it is pressable before pressing it. Nothing is left, so the rule is
+     gone rather than emptied. */
 
   .lo-none {
     margin: 0;
@@ -189,6 +186,10 @@
     white-space: nowrap;
   }
   .lo-qacts { flex: 0 0 auto; display: flex; gap: 2px; }
+  /* A ROW AFFORDANCE, not a button — B2. Up · down · remove at the right end of
+     a queue row. 22px, because three shared icon buttons would be taller than
+     the row they sit in and would turn a scannable queue into a stack of
+     toolbars. Kept deliberately; not drift. */
   .lo-ic {
     width: 22px;
     height: 22px;
