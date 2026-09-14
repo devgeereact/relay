@@ -6,13 +6,21 @@
    * views that collection holds (only where it holds more than one — a row of
    * one button is a label pretending to be a choice).
    *
-   * WHAT THE COLOUR IS ALLOWED TO DO. It tints the 22px icon tile and nothing
-   * else. Amber on this console means ON AIR, red means destructive, amethyst
-   * means rehearsal; a collection wearing one of those as a filled badge would
-   * be a status claim about a shelf of content, which is exactly the class of
-   * lie rule 35 exists to stop. Selection is steel blue, as it is everywhere
-   * else, and it is carried by the chip's border and ground — never by the
-   * collection colour, so the two can never be confused for one another.
+   * WHAT THE COLOUR IS ALLOWED TO DO. It paints ONE 3px left edge of the chip
+   * and nothing else — the form REBRAND §1 and §10 ask for, and the form the
+   * prototype uses. Amber on this console means ON AIR, red means destructive,
+   * amethyst means rehearsal; `--v-col-scripture` IS `--v-amber`, so a chip
+   * whose ground went amber-soft would be the on-air wash, at chip size, on a
+   * shelf of content that is not on air. That is exactly the class of lie rule
+   * 35 exists to stop.
+   *
+   * So this deviates from the prototype in two places, deliberately, and
+   * CLAUDE.md wins where the two disagree (rule 18, DECISIONS §21): the
+   * prototype fills a pressed chip with the collection colour and writes the
+   * chip's text in it. Relay does neither. Selection is steel blue, as it is
+   * everywhere else, carried by the chip's other three borders and its ground —
+   * and the left edge is restated afterwards, because an open collection is the
+   * one chip that must still say WHICH collection it is.
    */
   import { COLLECTIONS, countMark, countWords } from './collections.js';
 
@@ -89,41 +97,43 @@
   .cr-row { display: flex; gap: 8px; flex-wrap: wrap; }
   .cr-sep { width: 1px; height: 20px; background: var(--v-line2); flex: 0 0 auto; }
 
-  /* Square-shouldered, 3px like everything else on this desk. No pills. */
+  /* Square-shouldered, 3px radius like everything else on this desk. No pills. */
   .cr-c {
-    display: inline-flex; align-items: center; gap: 8px;
-    height: 34px; padding: 0 11px 0 6px;
+    display: inline-flex; align-items: center; gap: 7px;
+    height: 34px; padding: 0 11px 0 9px;
     border: 1px solid var(--v-line2); border-radius: var(--v-r-sm);
+    /* THE COLLECTION COLOUR, AND THE WHOLE OF ITS SPEND. Declared after the
+       shorthand above, which would otherwise reset it. */
+    border-left: 3px solid var(--cc);
     background: var(--v-surf2); color: var(--v-dim);
     font-family: var(--f-body); font-size: var(--v-fs-lbl, 11px); font-weight: 600;
     letter-spacing: .01em; cursor: pointer;
     transition: background var(--v-dur, .12s) var(--v-ease, ease), border-color var(--v-dur, .12s) var(--v-ease, ease);
   }
   .cr-c:hover:not(.on) { background: var(--v-surf3); color: var(--v-txt); }
-  /* SELECTION IS STEEL, always and only. */
-  .cr-c.on { border-color: var(--v-sel-line); background: var(--v-sel-soft); color: var(--v-txt); }
-
-  /* The one place a collection colour is allowed to land: a small square tile.
-     Soft ground, full-strength glyph — a tint, not a badge. */
-  .cr-i {
-    display: grid; place-items: center; width: 22px; height: 22px;
-    border-radius: 2px; border: 1px solid var(--cc-line); background: var(--cc-soft); color: var(--cc);
-    flex: 0 0 auto;
+  /* SELECTION IS STEEL, always and only — and `border-color` is four-sided, so
+     the collection's own edge is restated after it. Without that line the open
+     chip is the one chip that has stopped saying which collection it is. */
+  .cr-c.on {
+    border-color: var(--v-sel-line); border-left-color: var(--cc);
+    background: var(--v-sel-soft); color: var(--v-txt);
   }
-  .cc-scripture { --cc: var(--v-col-scripture); --cc-soft: var(--v-amber-soft); --cc-line: var(--v-amber-line); }
-  .cc-song      { --cc: var(--v-col-song);      --cc-soft: var(--v-sel-soft);   --cc-line: var(--v-sel-line); }
-  .cc-notice    { --cc: var(--v-col-notice);    --cc-soft: var(--v-red-soft);   --cc-line: var(--v-red-line); }
-  .cc-media     { --cc: var(--v-col-media);     --cc-soft: var(--v-amethyst-soft); --cc-line: var(--v-amethyst-line); }
+
+  .cc-scripture { --cc: var(--v-col-scripture); }
+  .cc-song      { --cc: var(--v-col-song); }
+  .cc-notice    { --cc: var(--v-col-notice); }
+  .cc-media     { --cc: var(--v-col-media); }
+
+  /* The glyph is a recognition aid, not a second colour. It takes the chip's
+     own ink, which is what changes when the chip opens. */
+  .cr-i { display: grid; place-items: center; width: 14px; height: 14px; flex: 0 0 auto; }
 
   .cr-n { white-space: nowrap; }
-  /* Mono, so a count that changes never reflows the name beside it. It sits on
-     --v-surf3, so it uses --v-dim: --v-faint on --v-surf3 is below WCAG AA and
-     `tokencontrast.test.js` fails the build for it. */
-  .cr-k {
-    min-width: 20px; padding: 0 5px; height: 16px; line-height: 16px; text-align: center;
-    border-radius: 2px; background: var(--v-surf3); color: var(--v-dim);
-    font-size: 10px; flex: 0 0 auto;
-  }
+  /* Mono, so a count that changes never reflows the name beside it. Bare, on the
+     chip's own --v-surf2 ground: a badge around a number on a square chip is the
+     pill §1 spent a paragraph removing. A count is a fact the operator reads,
+     so it is --v-dim, not --v-faint. */
+  .cr-k { color: var(--v-dim); font-size: 10px; flex: 0 0 auto; }
 
   .cr-views { display: flex; gap: 4px; flex-wrap: wrap; }
   .cr-v {
