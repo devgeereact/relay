@@ -34,7 +34,13 @@
   // The SAME rule Live uses. Two surfaces describing one screen must not be able
   // to reach different conclusions about it — that asymmetry is how this
   // repository has produced four separate bugs with one root cause.
-  import { screenFault, FAULT_WORD, screenKind, screenTransport } from '../outputHealth.js';
+  import {
+    describeScreen,
+    screenReporting,
+    SCREEN_BADGE,
+    screenKind,
+    screenTransport,
+  } from '../outputHealth.js';
   // Was: `error = String(err)`, rendered in a MONOSPACE font, five times over — a raw
   // Rust Err string shown to a church volunteer who has never seen one.
   import ErrorState from '../ui/ErrorState.svelte';
@@ -46,7 +52,7 @@
   // something legible. Imported here so the preview and the wall reach the same
   // answer rather than two different kinds of nothing.
   import { DEFAULT_TEMPLATE } from '../templates.js';
-  import { CONTENT_KINDS, resolveOutputTemplate } from '../layers.js';
+  import { CONTENT_KINDS, resolveOutputTemplate, isKeyedTemplate } from '../layers.js';
   import { outputUrl } from '../outputurl.js';
   import {
     capture,
@@ -64,6 +70,9 @@
     openChannelOutput,
     closeChannelOutput,
     channelHealth,
+    channelWaiting,
+    rehearsing,
+    screenBlack,
     startChannelHealth,
     setChannelDisplay,
     addChannel,
@@ -342,9 +351,19 @@
   // exactly that (`stageUrl()`, a few lines up), twice.
   $: scriptureLook = $templates.find((t) => t.id === $contentTemplates.scripture) ?? null;
   $: previewOverride = $live ? $liveTemplateOverride : scriptureLook;
+  // `$templates` is NAMED here, not reached through `templateOf`. It used to be
+  // `sel ? templateOf(sel) : null`, and `templateOf` reads the store inside a
+  // function body — so the inspector's preview was correct when a screen was
+  // selected and never again. Edit that template on the Templates tab and every
+  // CARD repainted (they name the store) while the panel beside them kept the old
+  // look: two previews of one screen, disagreeing, on the same page. Same trap as
+  // `stageUrl()` and `lookName('scripture')`, which this file has already been
+  // caught by twice.
+  $: selOwn =
+    sel && sel.template_id != null ? ($templates.find((t) => t.id === sel.template_id) ?? null) : null;
   $: previewTemplate =
     resolveOutputTemplate(
-      sel ? templateOf(sel) : null,
+      sel ? selOwn : null,
       previewOverride,
       $live ? $liveTemplatePinned : false,
     ) || DEFAULT_TEMPLATE;
@@ -356,28 +375,112 @@
     : sel && sel.template_id == null
       ? `Sample — follows the content look · ${scriptureLook?.name ?? 'the default look'}`
       : 'Sample — nothing on screen';
+
+  // ── EVERY CARD RENDERS WHAT THAT SCREEN IS SHOWING RIGHT NOW ────────────────
+  //
+  // docs/REBRAND.md §5. The list used to be a TABLE of names and words, which is
+  // the one thing an operator cannot check by looking: "Main screen · Classic
+  // Serif · LIVE" is four true facts that do not answer *is the lower third
+  // sitting over the camera, or filling the frame*. A card answers it by being
+  // the wall's own renderer, fed the wall's own content, resolved by the wall's
+  // own resolver — so a screen wearing the wrong look is visible rather than
+  // inferable.
+  //
+  // ONE reactive statement, and every dependency NAMED IN IT. `$templates`,
+  // `$contentTemplates` (through `previewOverride`), `monitors`, `status` and
+  // `shown` all appear here as identifiers, because Svelte tracks the identifiers
+  // in the expression and not the ones a called function happens to read. This
+  // file has been caught by exactly that twice — `stageUrl()` and
+  // `lookName('scripture')` — so the lookups are inline rather than delegated to
+  // `templateOf` / `monitorOf`, which read stores inside a function body.
+  $: wall = { rehearsing: $rehearsing, live: !!$live, black: $screenBlack };
+  // What the cards paint. Live: the actual programme, so every card repaints
+  // together the moment a verse fires. Idle: the stand-in, so a template is still
+  // legible on a Tuesday.
+  $: cardContent = $live ? $liveContent : PREVIEW;
+  $: cards = shown.map((c) => {
+    const st = status[c.id] ?? null;
+    const own = c.template_id == null ? null : ($templates.find((t) => t.id === c.template_id) ?? null);
+    const tpl =
+      resolveOutputTemplate(own, previewOverride, $live ? $liveTemplatePinned : false) ||
+      DEFAULT_TEMPLATE;
+    const i = parseInt(c.display_target ?? '', 10);
+    const mon = Number.isFinite(i) ? (monitors.find((m) => m.index === i) ?? null) : null;
+    return {
+      c,
+      st,
+      tpl,
+      mon,
+      // THE SAME RULE LIVE USES, with the same four inputs (rule 35). The cards
+      // used to derive their word from `FAULT_WORD[screenFault(st)]`, which knows
+      // nothing about rehearsal or a blackout — so a card could read LIVE in
+      // amber-adjacent green over a rehearsal no congregation was watching.
+      d: describeScreen(
+        st,
+        { rehearsing: $rehearsing, live: !!$live, black: $screenBlack },
+        $channelWaiting[c.id] ? Date.now() - $channelWaiting[c.id] : 0,
+      ),
+      // A KEYED template is a lower third: it paints a band and leaves the rest
+      // transparent, so on a black card it reads as a stripe floating in nothing.
+      // The plate is what it is actually over — a camera — and it is LABELLED, so
+      // it can never be mistaken for something Relay is sending.
+      plate: isKeyedTemplate(tpl),
+    };
+  });
+  // What drives this screen, in the words the prototype's meta line uses. A
+  // native screen names its display; a networked one names the ports it is served
+  // on. Neither is a picker for a networked screen on purpose — see the markup.
+  const outputOf = (c, mon) => {
+    if (c.render_target === 'native_window') return mon ? `${mon.name} · ${mon.width}×${mon.height}` : 'Primary display';
+    if (c.render_target === 'ndi_encode') return '—';
+    return ':8032 / :8031';
+  };
+  // The inspector resolves through `previewTemplate` above — the SAME expression,
+  // not a lookup into `cards`, because `cards` is filtered by the search box and a
+  // selected screen that has been typed out of the list must not lose its panel.
+  $: selPlate = isKeyedTemplate(previewTemplate);
+  $: selReport = screenReporting(selStatus);
+  // The inspector's own lamp — the SAME helper, the same four inputs, so the
+  // panel and the card behind it cannot describe one screen two ways.
+  $: selDescribe = describeScreen(
+    selStatus,
+    { rehearsing: $rehearsing, live: !!$live, black: $screenBlack },
+    sel && $channelWaiting[sel.id] ? Date.now() - $channelWaiting[sel.id] : 0,
+  );
 </script>
 
-<WorkspaceFrame
-  title="Outputs"
-  standfirst={activeView.lead}
-  columns="206px minmax(0,1fr) 320px">
-  <svelte:fragment slot="head">
-    {#if !$capture.available}
-      <span class="r-badge rose"><span class="bd"></span>Backend not attached</span>
-    {:else}
-      <!-- GREEN, not amber. Green is "confirmed / connected"; amber means
-           something is on the wall, and a screen being online does not put it
-           there. -->
-      <span class="r-badge green"><span class="bd"></span>{onlineCount} of {channels.length} live</span>
-    {/if}
-  </svelte:fragment>
+<!-- NO PAGE TITLE, NO STANDFIRST — and that is the whole point (§2).
+     Measured at 1280×900: the `Outputs` H1 plus its two-line standfirst started
+     this desk 110px lower than the prototype's, which is grid-and-inspector with
+     the words carried by the dock head. The H1 was also the third `Outputs` on
+     the screen, after the tab in the chrome bar and the rail's own pane title.
 
+     The RAIL STAYS, and the two rail entries are NOT folded into a segmented
+     control in the dock head. Doing that would leave Outputs a two-column
+     workspace, and `workspacegrammar.test.js` holds six desks to three tracks
+     through one frame — dropping a column here is exactly the per-file drift
+     that frame exists to prevent. Content looks and Sharing hold real controls
+     and keep their place; only the chrome above them went.
+
+     The sentence each section is FOR moved into the rail foot, where it costs
+     the grid no height and is visible on all three sections. -->
+<WorkspaceFrame columns="206px minmax(0,1fr) 320px">
   <!-- ══ RAIL ══ One vocabulary, three sections. Every output concern lives
        behind exactly one of these words, and the rail keeps all three in view
        rather than making one of them a mode you have to remember you are in. -->
   <aside class="rw-pane">
-    <div class="rw-panehead"><h2 class="rw-panettl">Outputs</h2></div>
+    <div class="rw-panehead">
+      <h2 class="rw-panettl">Outputs</h2>
+      <span class="rw-spring"></span>
+      {#if !$capture.available}
+        <span class="r-badge rose sm-badge"><span class="bd"></span>No engine</span>
+      {:else}
+        <!-- GREEN, not amber. Green is "confirmed / connected"; amber means
+             something is on the wall, and a screen being online does not put it
+             there. -->
+        <span class="r-badge green sm-badge"><span class="bd"></span>{onlineCount}/{channels.length}</span>
+      {/if}
+    </div>
     <nav class="rw-panebody" aria-label="Outputs sections">
       {#each VIEWS as v (v.key)}
         <button class="rw-item r-focus" class:on={view === v.key}
@@ -388,9 +491,18 @@
         </button>
       {/each}
     </nav>
-    <!-- The two facts an operator asks this tab for without opening anything. -->
     <div class="rw-panefoot ch-railfacts">
-      <div class="ch-railfact"><span class="ch-railk">Live</span><span class="ch-railv r-mono">{onlineCount} / {channels.length}</span></div>
+      <!-- What this section is FOR — role two of the type scale, moved off the
+           page head and onto the rail. -->
+      <p class="ch-raillead">{activeView.lead}</p>
+      <!-- The two facts an operator asks this tab for without opening anything.
+           `Backend not attached` still has to be sayable in words somewhere an
+           operator will read it, not only as a badge. -->
+      {#if !$capture.available}
+        <div class="ch-railfact"><span class="ch-railk">Engine</span><span class="ch-railv ch-railbad r-mono">Backend not attached</span></div>
+      {:else}
+        <div class="ch-railfact"><span class="ch-railk">Live</span><span class="ch-railv r-mono">{onlineCount} / {channels.length}</span></div>
+      {/if}
       <div class="ch-railfact"><span class="ch-railk">This machine</span><span class="ch-railv r-mono">{lanIp}</span></div>
     </div>
   </aside>
@@ -412,6 +524,7 @@
           <input placeholder="Search screens…" bind:value={q} aria-label="Search screens" />
         </div>
         <span class="rw-spring"></span>
+        <span class="ch-headnote r-mono">each card renders what that screen shows right now</span>
         <button class="r-btn primary sm" on:click={() => (showAdd = !showAdd)} disabled={!$capture.available}>
           ＋ Add Screen
         </button>
@@ -429,102 +542,103 @@
         </div>
       {/if}
 
-      <div class="rw-panebody ch-tablewrap">
+      <div class="rw-panebody ch-gridwrap">
         {#if loading}
           <Loading what="screens" />
-        {:else if shown.length}
-          <div class="ch-thead r-lbl">
-            <span class="ch-th-n">#</span>
-            <span>Screen</span>
-            <span>Type</span>
-            <span class="ch-th-tpl">Template</span>
-            <span class="ch-th-out">Output target</span>
-            <span>Status</span>
-            <span></span>
-          </div>
+        {:else if cards.length}
+          <!-- A GRID OF SCREENS, NOT A TABLE OF WORDS — docs/REBRAND.md §5.
+               This was a table: name, type, template, target, status. Five true
+               facts, and not one of them answers the question an operator opens
+               this tab to ask — *is the lower third sitting over the camera or
+               filling the frame; is the lobby screen wearing the warm look or the
+               main one*. A word cannot be checked by looking.
 
-          {#each shown as c (c.id)}
-            {@const st = status[c.id]}
-            {@const mon = monitorOf(c)}
-            <div class="ch-row" class:sel={c.id === selId}
-              on:click={() => (selId = selId === c.id ? null : c.id)} role="button" tabindex="0"
-              on:keydown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selId = selId === c.id ? null : c.id; }
-              }}>
-              <span class="ch-num r-mono">{channels.findIndex((x) => x.id === c.id) + 1}</span>
-
-              <span class="ch-namecell">
-                <span class="ch-ico" class:live={st?.online}>
-                  {#if isNative(c)}
-                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
-                  {:else if isNdi(c)}
-                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h16M12 4v16"/><circle cx="12" cy="12" r="9"/></svg>
-                  {:else}
-                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18"/></svg>
+               Each card is the wall's OWN renderer (`TemplateRender`, the one
+               renderer), fed the wall's OWN content, resolved by the wall's OWN
+               resolver — so every card repaints together the moment a verse
+               fires, each in its own look. A screen wearing the wrong template is
+               then visible rather than inferable. -->
+          <div class="ch-cards">
+            {#each cards as k (k.c.id)}
+              <div class="ch-card" class:sel={k.c.id === selId} class:down={k.d.kind === 'down'}
+                role="button" tabindex="0" aria-label="{k.c.name} — {k.d.label}"
+                on:click={() => (selId = selId === k.c.id ? null : k.c.id)}
+                on:keydown={(e) => {
+                  // Only the card itself. Without this, Space inside the template
+                  // picker — which is how a keyboard OPENS a select — was
+                  // swallowed by preventDefault and toggled the selection instead.
+                  if (e.target !== e.currentTarget) return;
+                  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selId = selId === k.c.id ? null : k.c.id; }
+                }}>
+                <div class="ch-frame">
+                  <!-- A KEYED template is a lower third: it paints a band and
+                       leaves the rest transparent, so against the card's black it
+                       reads as a stripe floating in nothing. The plate is what the
+                       band is actually over, and it is LABELLED — an unlabelled
+                       picture on this surface could be mistaken for something
+                       Relay is sending, and Relay sends no video. -->
+                  {#if k.plate}
+                    <div class="ch-plate" aria-hidden="true"><span class="ch-platelbl r-mono">camera</span></div>
                   {/if}
-                </span>
-                <span class="ch-nametxt">
-                  <span class="ch-name">{c.name}</span>
-                  <span class="ch-sub r-mono">{st?.detail ?? '—'}</span>
-                </span>
-              </span>
-
-              <span class="ch-ty r-mono">{kindOf(c)}<i>{transportOf(c)}</i></span>
-
-              <span class="ch-tpl r-mono">{c.template_id == null ? 'Content look' : (templateOf(c)?.name ?? 'None')}</span>
-
-              <!-- Resolution is shown ONLY for a native screen with a display
-                   assigned, because that is the only case where Relay knows one:
-                   it is the monitor's size, read from the OS. A networked screen's
-                   resolution is a property of the browser source at the other end,
-                   which Relay has never been told. -->
-              <span class="ch-out r-mono">
-                {#if isNative(c)}
-                  {mon ? `${mon.width}×${mon.height}` : 'Primary display'}
-                {:else if isNdi(c)}
-                  —
-                {:else}
-                  :8032 / :8031
-                {/if}
-              </span>
-
-              <span
-                class="ch-status r-mono"
-                class:on={screenFault(st) === 'ok'}
-                class:un={screenFault(st) === 'unsupported'}
-                class:down={screenFault(st) === 'silent' || screenFault(st) === 'never'}
-              >
-                <span class="bd"></span>{FAULT_WORD[screenFault(st)]}
-              </span>
-
-              <span class="ch-rowbtns" on:click|stopPropagation role="presentation">
-                {#if isNative(c)}
-                  {#if st?.online}
-                    <button class="r-btn ghost sm" on:click={() => closeNative(c)}>Close</button>
-                  {:else}
-                    <button class="r-btn ghost sm" on:click={() => openNative(c)} disabled={!$capture.available}>Open</button>
-                  {/if}
-                {:else if !isNdi(c)}
-                  <button class="r-btn ghost sm" on:click={() => copyUrl(c)}>{copiedId === c.id ? 'Copied ✓' : 'Copy URL'}</button>
-                  <button class="r-iconbtn" title="Show QR — scan to open on another device" aria-label="Show QR code" on:click={() => showQr(c)} class:qr-on={qrOpen === c.id}>
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M14 14h3v3M20 14v.01M14 20h.01M17 20h.01M20 17v3"/></svg>
-                  </button>
-                {/if}
-              </span>
-            </div>
-
-            {#if qrOpen === c.id}
-              <div class="ch-qr">
-                <img class="ch-qr-img" src={qrData} alt="QR code to open {c.name} output" width="132" height="132" />
-                <div class="ch-qr-info">
-                  <div class="r-lbl">Scan on the other device</div>
-                  <div class="ch-qr-url r-mono">{obsUrl(c)}</div>
-                  <div class="ch-qr-hint r-mono">Open Camera or a QR app and point it here. Same Wi-Fi required.</div>
+                  <TemplateRender template={k.tpl} content={cardContent} />
                 </div>
-                <button class="r-btn ghost sm" on:click={() => (qrOpen = null)}>Close</button>
+
+                <div class="ch-cardtop">
+                  <span class="ch-cardname">{k.c.name}</span>
+                  <!-- THE SAME WORD LIVE USES, from the same helper on the same
+                       backend fact (rule 35). The table decided this from
+                       `FAULT_WORD[screenFault(st)]`, which knows nothing about a
+                       rehearsal or a blackout — so one surface could call a screen
+                       LIVE while the other called it Rehearsal, about the same
+                       screen, in the same second. -->
+                  <span class="r-badge {SCREEN_BADGE[k.d.kind]} ch-lamp"><span class="bd"></span>{k.d.label}</span>
+                </div>
+                <div class="ch-cardmeta r-mono">{kindOf(k.c)} · {transportOf(k.c)}</div>
+
+                <!-- `stopPropagation`: using a control must not also toggle the
+                     selection of the card underneath it. -->
+                <span class="ch-cardrow" on:click|stopPropagation role="presentation">
+                  <select class="r-select ch-cardpick" aria-label="Template for {k.c.name}"
+                    value={k.c.template_id ?? ''} on:change={(e) => assignTemplate(k.c, e)}
+                    disabled={!$capture.available}>
+                    <option value="">Follow the content look</option>
+                    {#each $templates as t (t.id)}
+                      <option value={t.id}>{t.name}</option>
+                    {/each}
+                  </select>
+                </span>
+
+                <span class="ch-cardrow" on:click|stopPropagation role="presentation">
+                  {#if isNative(k.c)}
+                    <select class="r-select ch-cardpick" aria-label="Display for {k.c.name}"
+                      value={k.c.display_target ?? ''} on:change={(e) => assignDisplay(k.c, e)}
+                      disabled={!$capture.available}>
+                      <option value="">Primary display</option>
+                      {#each monitors as m (m.index)}
+                        <option value={String(m.index)}>{m.name} · {m.width}×{m.height}{m.primary ? ' (primary)' : ''}</option>
+                      {/each}
+                    </select>
+                    {#if k.st?.online}
+                      <button class="r-btn ghost sm" on:click={() => closeNative(k.c)}>Close</button>
+                    {:else}
+                      <button class="r-btn ghost sm" on:click={() => openNative(k.c)} disabled={!$capture.available}>Open</button>
+                    {/if}
+                  {:else}
+                    <!-- READ-ONLY, and deliberately NOT the prototype's picker. A
+                         networked screen's source is a page on somebody else's
+                         device; `display_target` is parsed as a monitor INDEX and
+                         is read for nothing else, so a picker here would save a
+                         preference nothing in Relay reads — which is the exact
+                         defect DECISIONS §69 closed seven of. -->
+                    <span class="ch-cardout r-mono">{outputOf(k.c, k.mon)}</span>
+                    {#if !isNdi(k.c)}
+                      <button class="r-btn ghost sm" on:click={() => copyUrl(k.c)}>{copiedId === k.c.id ? 'Copied ✓' : 'URL'}</button>
+                    {/if}
+                  {/if}
+                </span>
               </div>
-            {/if}
-          {/each}
+            {/each}
+          </div>
         {:else if !channels.length && $readErrors.listOutputChannels}
           <!-- RG-95, second pass. This view HAD an `<ErrorState>` and it could not
                fire: every read in `onMount` is a GROUP 2 wrapper that swallows to a
@@ -623,9 +737,12 @@
       {:else}
         <div class="rw-panehead">
           <h2 class="rw-panettl ch-inspttl">{sel.name}</h2>
-          <span class="ch-status r-mono" class:on={selStatus?.online} class:un={selStatus && !selStatus.supported}>
-            <span class="bd"></span>{selStatus ? (!selStatus.supported ? 'UNAVAILABLE' : selStatus.online ? 'LIVE' : 'IDLE') : '—'}
-          </span>
+          <!-- ONE HELPER, not a ternary chain. This read
+               `!supported ? UNAVAILABLE : online ? LIVE : IDLE` — a third ladder
+               about a screen's health, written out in markup where no test could
+               reach it without mounting the view, and blind to the rehearsal and
+               the blackout the cards beside it already knew about. -->
+          <span class="r-badge {SCREEN_BADGE[selDescribe.kind]} ch-lamp"><span class="bd"></span>{selDescribe.label}</span>
           <button class="r-iconbtn ch-close" aria-label="Close panel" on:click={() => (selId = null)}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
           </button>
@@ -639,6 +756,11 @@
                fall back to a sample so the template is still previewable. This is
                what makes "select a screen" agree with what is actually on air. -->
           <div class="ch-preview">
+            <!-- The same plate rule as the cards: a keyed template is a band over
+                 something, and on this surface that something is a camera. -->
+            {#if selPlate}
+              <div class="ch-plate" aria-hidden="true"><span class="ch-platelbl r-mono">camera</span></div>
+            {/if}
             <!-- Resolve EXACTLY like the real output: the screen's OWN template
                  wins (so a lower-third previews as a band, not a full screen), a
                  pinned cue choice overrides, a content look defers. The preview
@@ -647,29 +769,14 @@
           </div>
           <p class="ch-prevnote r-mono">{previewNote}</p>
 
-          <div class="r-lbl ch-flbl">Screen info</div>
-          <dl class="ch-info">
-            <dt>Type</dt><dd>{kindOf(sel)}</dd>
-            <dt>Transport</dt><dd>{transportOf(sel)}</dd>
-            <dt>Template</dt><dd>{sel.template_id == null ? 'Follows the content look' : (templateOf(sel)?.name ?? 'None')}</dd>
-            {#if isNative(sel)}
-              <dt>Display</dt><dd>{monitorOf(sel) ? `${monitorOf(sel).name} · ${monitorOf(sel).width}×${monitorOf(sel).height}` : 'Primary'}</dd>
-            {:else if !isNdi(sel)}
-              <dt>Address</dt><dd class="ch-addr">{selAddr}</dd>
-              <dt>Clients</dt><dd>{selStatus?.clients ?? 0}</dd>
-            {/if}
-            <dt>State</dt><dd>{selStatus?.detail ?? 'Unknown'}</dd>
-            <!-- The screen's own last word, kept separate from Relay's. When the
-                 two disagree, that disagreement is the finding. -->
-            <dt>Screen says</dt>
-            <dd>
-              {#if !selStatus}Unknown
-              {:else if !selStatus.supported}—
-              {:else if selStatus.last_beat_ms === null}has never reported painting
-              {:else}{selStatus.paint_state ?? 'unknown'} · {Math.round(selStatus.last_beat_ms / 1000)}s ago
-              {/if}
-            </dd>
-          </dl>
+          <!-- NAME is READ-ONLY, and the prototype's editable field is not built.
+               There is no `rename_channel` anywhere in Relay — `db/channels.rs`
+               offers insert, delete, set_template and set_display and nothing
+               else. An input here would take an operator's typing and drop it,
+               which is precisely the defect DECISIONS §69 closed seven of on the
+               Settings tab. It is a value until there is a command behind it. -->
+          <div class="r-lbl ch-flbl">Name</div>
+          <p class="ch-fixed">{sel.name}</p>
 
           <div class="r-lbl ch-flbl">Template</div>
           <select class="r-select ch-fin" value={sel.template_id ?? ''} on:change={(e) => assignTemplate(sel, e)} disabled={!$capture.available}>
@@ -702,22 +809,63 @@
             </select>
           {/if}
 
+          <!-- Type · Transport · Output · URL · Reporting (docs/REBRAND.md §5),
+               each a name and a value like every other row on the desk (§11). -->
+          <div class="r-lbl ch-flbl">Screen info</div>
+          <dl class="ch-info">
+            <dt>Type</dt><dd>{kindOf(sel)}</dd>
+            <dt>Transport</dt><dd>{transportOf(sel)}</dd>
+            <dt>Output</dt><dd>{outputOf(sel, monitorOf(sel))}</dd>
+            {#if isNdi(sel)}
+              <dt>URL</dt><dd>—</dd>
+            {:else}
+              <dt>URL</dt><dd class="ch-addr">{selAddr}</dd>
+            {/if}
+            {#if !isNative(sel) && !isNdi(sel)}
+              <dt>Clients</dt><dd>{selStatus?.clients ?? 0}</dd>
+            {/if}
+            <!-- REPORTING. The screen's own last word, kept separate from Relay's
+                 — when the two disagree, that disagreement is the finding. The
+                 word comes from `outputHealth.js` so it cannot drift from the
+                 lamp above it, and `never` is deliberately not `no`: one is
+                 "attached and has never once answered", the other is "nothing is
+                 attached to ask", and they want different repairs. -->
+            <dt>Reporting</dt>
+            <dd>{selReport.word}{#if selReport.note}<i class="ch-infonote">{selReport.note}</i>{/if}</dd>
+          </dl>
+
           <div class="r-lbl ch-flbl">Actions</div>
           <div class="ch-actions">
             {#if isNative(sel)}
               {#if selStatus?.online}
-                <button class="r-btn ghost sm" on:click={() => closeNative(sel)}>Close output</button>
+                <button class="r-btn ghost sm" on:click={() => closeNative(sel)}>Turn off</button>
               {:else}
-                <button class="r-btn primary sm" on:click={() => openNative(sel)} disabled={!$capture.available}>Open output</button>
+                <button class="r-btn primary sm" on:click={() => openNative(sel)} disabled={!$capture.available}>Turn on</button>
               {/if}
             {:else if !isNdi(sel)}
               <button class="r-btn ghost sm" on:click={() => copyUrl(sel)}>{copiedId === sel.id ? 'Copied ✓' : 'Copy URL'}</button>
-              <button class="r-btn ghost sm" on:click={() => showQr(sel)}>Show QR</button>
+              <button class="r-btn ghost sm" on:click={() => showQr(sel)}>{qrOpen === sel.id ? 'Hide QR' : 'Show QR'}</button>
             {/if}
             <button class="r-btn ghost sm ch-del" class:arm={delArm === sel.id} on:click={() => remove(sel)} disabled={!$capture.available}>
-              {delArm === sel.id ? 'Click again to confirm' : 'Remove screen'}
+              {delArm === sel.id ? 'Click again to confirm' : 'Remove'}
             </button>
           </div>
+
+          <!-- THE QR LIVES HERE NOW, and it had to move with the button.
+               `showQr` sets `qrOpen`, and the only markup that rendered the code
+               was inside the table's `{#each}` — so the inspector's own Show QR
+               button set a flag that painted nothing once the table became a grid.
+               A control whose result renders somewhere else is a control that
+               stops working the moment that somewhere else changes shape. -->
+          {#if qrOpen === sel.id}
+            <div class="ch-qr">
+              <img class="ch-qr-img" src={qrData} alt="QR code to open {sel.name} output" width="132" height="132" />
+              <div class="ch-qr-info">
+                <div class="r-lbl">Scan on the other device</div>
+                <div class="ch-qr-hint r-mono">Open Camera or a QR app and point it here. Same Wi-Fi required.</div>
+              </div>
+            </div>
+          {/if}
 
           <!-- WHAT RELAY DOES NOT MEASURE.
                The reference puts a CHANNEL HEALTH panel here — bandwidth, dropped
@@ -731,8 +879,8 @@
             Relay reports whether an output window is open and how many clients are
             connected. It does <b>not</b> measure latency, bandwidth, frame rate or
             dropped frames — nothing in the pipeline times or counts delivery, so any
-            such figure here would be invented. A screen reading <b>LIVE</b> means
-            something is attached, not that the picture is good.
+            such figure here would be invented. A screen that is <b>reporting</b> is
+            one that says it is still painting, not one whose picture is good.
           </p>
         </div>
       {/if}
@@ -812,10 +960,15 @@
 
   /* ── rail ── */
   .ch-railfacts{ gap:0; padding:0; }
+  /* Role two of the type scale, on the rail rather than above the grid. Quiet:
+     it is the sentence you read once, not a heading you read every visit. */
+  .ch-raillead{ margin:0; padding:9px 12px; border-bottom:1px solid var(--v-line);
+    font-size:var(--v-fs-cap); line-height:1.5; color:var(--v-faint); }
   .ch-railfact{ display:flex; align-items:center; justify-content:space-between; gap:8px;
     padding:7px 12px; border-bottom:1px solid var(--v-line); }
   .ch-railfact:last-child{ border-bottom:0; }
   .ch-railk{ font-size:var(--v-fs-cap); color:var(--v-faint); }
+  .ch-railbad{ color:var(--v-rose); }
   .ch-railv{ font-size:var(--v-fs-cap); color:var(--v-dim); font-variant-numeric:tabular-nums;
     overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 
@@ -825,6 +978,15 @@
     border:1px solid var(--v-line2); border-radius:var(--v-r-sm); padding:0 10px; height:26px;
     flex:0 1 240px; min-width:140px; }
   .ch-search:focus-within{ border-color:var(--v-accent-line); box-shadow:0 0 0 3px var(--v-accent-soft); }
+  /* What the grid IS, said once at the top. It drops out below the width where
+     the head would otherwise wrap onto a second row and push the list down. */
+  .ch-headnote{ font-size:var(--v-fs-cap); letter-spacing:.08em; text-transform:uppercase;
+    color:var(--v-faint); }
+  /* MEASURED, not guessed: at 1280 the pane head is ~686px and search + note +
+     button is wider than that, so the button wrapped onto a second row and the
+     grid lost 34px. The note is the half that can go — the cards say the same
+     thing by being cards. */
+  @media (max-width:1400px){ .ch-headnote{ display:none; } }
   .ch-search svg{ color:var(--v-faint); flex:0 0 auto; }
   .ch-search input{ flex:1; min-width:0; background:transparent; border:0; outline:none;
     color:var(--v-txt); font-size:var(--v-fs-b2); }
@@ -839,69 +1001,67 @@
   .ch-pad{ padding:12px; }
   .ch-nomargin{ margin-top:0; }
 
-  /* ── table ── */
-  .ch-tablewrap{ overflow-y:auto; }
-  .ch-thead, .ch-row{ display:grid;
-    grid-template-columns:26px minmax(172px,1fr) 110px 124px 112px 100px 128px;
-    align-items:center; gap:10px; padding:0 12px; }
-  .ch-thead{ height:28px; position:sticky; top:0; z-index:2; background:var(--v-bg);
-    border-bottom:1px solid var(--v-line); color:var(--v-faint); }
-  .ch-th-n{ text-align:center; }
-  /* Template and Output target drop first — both are shown in full in the
-     inspector for the selected screen, so neither is the last copy. */
-  @media (max-width:1520px){
-    .ch-thead, .ch-row{ grid-template-columns:26px minmax(172px,1fr) 110px 124px 100px 128px; }
-    .ch-out, .ch-th-out{ display:none; }
-  }
-  @media (max-width:1330px){
-    .ch-thead, .ch-row{ grid-template-columns:26px minmax(150px,1fr) 110px 100px 128px; }
-    .ch-tpl, .ch-th-tpl{ display:none; }
-  }
+  /* ── the screen cards ──
+     The table's seven-column grid and its six responsive overrides are gone with
+     it. A card is one column at any width; the GRID reflows instead, which is why
+     this replaces roughly seventy lines of column bookkeeping with four. */
+  .ch-gridwrap{ overflow-y:auto; padding:12px; }
+  /* THE MIN TRACK IS MEASURED AGAINST THE RAIL, not copied from the prototype.
+     The prototype's Outputs has no rail, so its main column is ~206px wider and
+     `minmax(232px,1fr)` lands three across; with the rail the same number lands
+     TWO at 1280 and an operator with five screens scrolls for the third.
+       main column   = page − 28 (page pad) − 206 (rail) − 320 (inspector) − 16
+       inner         = main − 24 (this pane's padding) − 2 (borders)
+       columns       = floor((inner + 12) / (min + 12))
+     At 200: 1280 → 3 · 1440 → 4 · 900 (no inspector) → 3. Checked at all three. */
+  .ch-cards{ display:grid; grid-template-columns:repeat(auto-fill,minmax(200px,1fr));
+    gap:12px; align-content:start; }
 
-  /* Dense, with a hairline seam — 52px per row was a card pretending to be a row,
-     and on a booth laptop it cost two screens' worth of list. */
-  .ch-row{ min-height:42px; border-bottom:1px solid var(--v-line); cursor:pointer;
-    transition:background .12s, box-shadow .12s; }
-  .ch-row:last-child{ border-bottom:0; }
-  .ch-row:hover{ background:var(--v-surf2); }
-  /* Steel blue = the thing you are working on. Never amber: amber means live on
-     the wall, and selecting a screen to configure it puts nothing anywhere. */
-  .ch-row.sel{ background:var(--v-sel-soft); box-shadow:inset 2px 0 0 var(--v-sel); }
-  .ch-num{ font-size:var(--v-fs-lbl); color:var(--v-faint); text-align:center; }
+  .ch-card{ display:flex; flex-direction:column; gap:7px; padding:9px; min-width:0;
+    cursor:pointer; text-align:left; background:var(--v-surf);
+    border:1px solid var(--v-line); border-radius:var(--v-r-sm);
+    transition:border-color .14s, background .14s; }
+  .ch-card:hover{ border-color:var(--v-line2); }
+  /* Steel blue = the thing you are working on. Never amber: amber means a
+     congregation is looking at something, and selecting a card to configure it
+     puts nothing anywhere. */
+  .ch-card.sel{ border-color:var(--v-sel); background:var(--v-sel-soft); }
+  /* A screen that is not answering, in the failure colour — on the CARD, so it is
+     visible while the eye is on the picture rather than only in the lamp beside
+     the name. `.down` wins over `.sel`, because a selected broken screen is still
+     a broken screen. */
+  .ch-card.down{ border-color:var(--v-rose); }
 
-  .ch-namecell{ display:flex; align-items:center; gap:10px; min-width:0; }
-  .ch-ico{ width:26px; height:26px; border-radius:var(--v-r-sm); display:grid; place-items:center;
-    background:var(--v-surf2); border:1px solid var(--v-line); color:var(--v-faint); flex:0 0 auto; }
-  .ch-ico.live{ color:var(--v-emerald); border-color:var(--v-emerald-soft); background:var(--v-emerald-soft); }
-  .ch-nametxt{ min-width:0; }
-  .ch-name{ display:block; font-size:var(--v-fs-b2); font-weight:500; color:var(--v-txt);
+  /* The 16:9 frame. `position:relative` is load-bearing — TemplateRender's root is
+     `position:absolute; inset:0`, so without it every card's preview escapes and
+     lays itself out against the page. */
+  .ch-frame{ position:relative; aspect-ratio:16/9; min-width:0; overflow:hidden;
+    border:1px solid var(--v-line2); border-radius:var(--v-r-sm); background:var(--v-void); }
+  /* What a lower third is actually over. Labelled, always — see the markup. */
+  .ch-plate{ position:absolute; inset:0;
+    background:linear-gradient(135deg, var(--v-surf3), var(--v-void) 46%, var(--v-surf2)); }
+  .ch-platelbl{ position:absolute; left:5%; top:6%; font-size:var(--v-fs-cap);
+    letter-spacing:.14em; text-transform:uppercase; color:var(--v-faint); }
+
+  .ch-cardtop{ display:flex; align-items:center; gap:8px; min-width:0; }
+  .ch-cardname{ flex:1; min-width:0; font-size:var(--v-fs-b2); font-weight:600; color:var(--v-txt);
     overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .ch-sub{ display:block; font-size:var(--v-fs-cap); color:var(--v-faint); margin-top:1px;
+  /* The lamp must never be squeezed to nothing by a long screen name: a run
+     surface once rendered a failing screen's name seven pixels wide, and this is
+     the same mistake turned the other way round. */
+  .ch-lamp{ flex:0 0 auto; }
+  .ch-cardmeta{ margin-top:-3px; font-size:var(--v-fs-cap); letter-spacing:.08em;
+    text-transform:uppercase; color:var(--v-faint);
     overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 
-  .ch-ty{ font-size:var(--v-fs-cap); color:var(--v-dim); min-width:0; }
-  .ch-ty i{ display:block; font-style:normal; color:var(--v-faint); margin-top:1px; }
-  .ch-tpl, .ch-out{ font-size:var(--v-fs-cap); color:var(--v-dim);
+  .ch-cardrow{ display:flex; align-items:center; gap:6px; min-width:0; }
+  .ch-cardpick{ flex:1; min-width:0; }
+  .ch-cardout{ flex:1; min-width:0; font-size:var(--v-fs-cap); color:var(--v-dim);
     overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 
-  .ch-status{ display:inline-flex; align-items:center; gap:6px; font-size:var(--v-fs-cap);
-    letter-spacing:.06em; color:var(--v-faint); flex:0 0 auto; }
-  .ch-status .bd{ width:6px; height:6px; border-radius:50%; background:currentColor; flex:0 0 auto; }
-  /* Green = connected (the design sheet's own usage guide), not amber. */
-  .ch-status.on{ color:var(--v-emerald); }
-  .ch-status.un{ color:var(--v-500); }
-  /* A screen that stopped answering. Rose is the failure colour (DESIGN_SYSTEM);
-     amber is never spent here because amber means on air. */
-  .ch-status.down{ color:var(--v-rose); }
-
-  .ch-rowbtns{ display:flex; gap:5px; justify-content:flex-end; align-items:center; }
-
-  .ch-qr{ display:flex; align-items:center; gap:14px; padding:12px;
-    background:var(--v-bg); border-bottom:1px solid var(--v-line); }
+  .ch-qr{ display:flex; align-items:center; gap:14px; padding:12px 0 0; }
   .ch-qr-img{ border-radius:var(--v-r-sm); flex:0 0 auto; }
   .ch-qr-info{ flex:1; min-width:0; }
-  .ch-qr-url{ font-size:var(--v-fs-cap); color:var(--v-accent2); margin:4px 0;
-    overflow-wrap:anywhere; }
   .ch-qr-hint{ font-size:var(--v-fs-cap); color:var(--v-faint); }
 
   /* ── content looks ── */
@@ -927,6 +1087,13 @@
   .ch-prevnote{ margin:6px 0 0; font-size:var(--v-fs-cap); color:var(--v-faint); }
 
   .ch-flbl{ margin:15px 0 6px; }
+  /* A value where the prototype has an input — see the markup for why. It is
+     styled as a value, not as a disabled field: a greyed-out box invites clicking
+     and then says nothing. */
+  .ch-fixed{ margin:0; font-size:var(--v-fs-b2); color:var(--v-txt); overflow-wrap:anywhere; }
+  /* The evidence under the Reporting word, on its own line so a long one cannot
+     push the word it is evidence for off the row. */
+  .ch-infonote{ display:block; font-style:normal; font-size:var(--v-fs-cap); color:var(--v-faint); }
   .ch-fin{ width:100%; }
   .ch-finhint{ margin:6px 0 0; font-size:var(--v-fs-cap); line-height:1.45; color:var(--v-faint); }
 

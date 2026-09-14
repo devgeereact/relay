@@ -10,6 +10,9 @@
   import Dashboard from './Dashboard.svelte';
   import { locale, setLocale, LOCALES, t } from '../i18n.js';
   import { restartSetup, setSession } from '../session.js';
+  // THE shortcut table — one array, shared with the keydown handler, the
+  // cheatsheet, Help and `sectionkeys.js::RESERVED`. See the note further down.
+  import { SHORTCUTS } from '../shortcuts.js';
   import { humanError } from '../errors.js';
   import { settingValue, CHECKING } from '../settingvalue.js';
   import { safeMode, setSafeMode } from '../boot/boot.js';
@@ -104,70 +107,49 @@
   };
 
   // ─────────────────────────────────────────────────────────────────────────
-  // GENERAL PREFERENCES. Harmless UI preferences, persisted to localStorage.
-  // (Auto-start / tray hooks require an OS-level integration Relay does not yet
-  // ship, so those are stored as intent and applied when that lands — noted in
-  // the design log. The functional controls — language, safe mode, thresholds,
-  // templates — live in their own sections and are wired to the real engine.)
-  // ─────────────────────────────────────────────────────────────────────────
-  const PREFS_KEY = 'relay.prefs.v1';
-  const DEFAULT_PREFS = {
-    autoStart: false,
-    minimizeTray: true,
-  };
-  let prefs = { ...DEFAULT_PREFS };
-  function loadPrefs() {
-    try {
-      prefs = { ...DEFAULT_PREFS, ...(JSON.parse(localStorage.getItem(PREFS_KEY) || '{}')) };
-    } catch {
-      prefs = { ...DEFAULT_PREFS };
-    }
-  }
-  function savePrefs() {
-    try {
-      localStorage.setItem(PREFS_KEY, JSON.stringify(prefs));
-    } catch {
-      /* locked-down webview — the defaults are a fine answer */
-    }
-  }
-  function setPref(key, value) {
-    prefs = { ...prefs, [key]: value };
-    savePrefs();
-  }
-  // THEME WAS REMOVED HERE, and it is the eighth control to go for the reason in
-  // DECISIONS §69. It was a three-way segmented control (Light · Dark · System)
-  // that wrote `prefs.theme` to localStorage and stamped `data-theme` on the
-  // document element. **Nothing in this application reads either.** There is no
-  // rule anywhere in `app.css` or in any component that keys off that attribute,
-  // and no other module
-  // opens `relay.prefs.v1` — so picking Light saved a preference, changed a
-  // dataset attribute no stylesheet consults, and repainted nothing. Its own comment
-  // admitted as much ("picking Light/System does not yet repaint"), which is the
-  // same shape as Confirm Before Going Live: a control that documents its own
-  // lie rather than not existing.
+  // THERE ARE NO UI PREFERENCES LEFT, AND THAT IS THE POINT (DECISIONS §69).
   //
-  // It is not "Soon" either. docs/REBRAND.md §1 is explicit — **dark only**, "the
-  // booth is dark and the wall is black" — so a light sheet is not a deferred
-  // feature, it is a decision against. A picker offering two choices the product
-  // has decided not to have is worse than no picker.
-
-  // The four toggles rendered as a data-driven list, matching the reference's
-  // stacked switch rows.
-  // `soon` toggles need OS-level integration that does not ship yet (a Tauri
-  // autostart plugin, a system-tray icon). A switch that flips and "sticks" but
-  // does nothing is exactly the lying control this app refuses everywhere else,
-  // so these are shown disabled with a "Soon" tag instead of pretending to work.
-  const GENERAL_TOGGLES = [
-    { key: 'autoStart',    title: 'Auto Start on Login',   note: 'Launch Relay automatically when you log in to your computer.', soon: true },
-    { key: 'minimizeTray', title: 'Minimize to System Tray', note: 'Minimize the application to the system tray instead of the taskbar.', soon: true },
-    // 'Confirm Before Going Live' and 'Auto Save' USED TO BE HERE, both defaulting
-    // to ON, and neither was read by anything. The first was the worse of the two by
-    // a distance: it promised a confirmation step between the operator and the
-    // congregation's screen, and there has never been one. A switch that claims a
-    // safety guard the product does not have is the exact control this app refuses
-    // everywhere else. Removed rather than marked "Soon" — "soon" is a promise too,
-    // and neither is on any roadmap.
-  ];
+  // This block used to hold `relay.prefs.v1` — a localStorage object, a loader, a
+  // saver, a setter, and a `GENERAL_TOGGLES` table that rendered the last two
+  // survivors as switch rows: **Auto Start on Login** and **Minimize to System
+  // Tray**. Both were `disabled` with a "Soon" chip beside them, which was offered
+  // as the honest middle ground between shipping a lie and shipping nothing.
+  //
+  // It is not a middle ground. §69's defect is a control that saves a preference
+  // nothing reads, and these saved a preference nothing reads while ALSO looking
+  // like the live switch two rows above them — same 38×21 body, same steel-blue
+  // track, greyed rather than absent. An operator scanning this page reads a
+  // column of switches; the two at the bottom are furniture. "Soon" is a promise
+  // as well, and neither of these is on any roadmap: autostart needs a Tauri
+  // plugin Relay does not bundle and a tray icon needs a tray Relay does not have.
+  //
+  // Removed rather than deferred, which takes the tally on this page to ELEVEN.
+  // With them went the whole preference store: `DEFAULT_PREFS` held only these
+  // two, so the object, the key and its three functions had no other reader. The
+  // settings that MATTER — language, service length, safe mode, thresholds,
+  // translation, model, rooms, crash reporting, channel templates — live in the
+  // database or in the engine and never went through this file's localStorage at
+  // all. `settingssections.test.js` holds the absence from both ends: nothing in
+  // `src/` opens that key, and this file declares no preference object.
+  //
+  // THEME WAS REMOVED HERE TOO, and it was the eighth to go. It was a three-way
+  // segmented control (Light · Dark · System) that wrote `prefs.theme` and stamped
+  // `data-theme` on the document element. **Nothing in this application reads
+  // either** — no rule in `app.css`, no component — so picking Light saved a
+  // preference, changed a dataset attribute no stylesheet consults, and repainted
+  // nothing. Its own comment admitted as much. It is not "Soon" either:
+  // docs/REBRAND.md §1 is explicit — **dark only**, "the booth is dark and the
+  // wall is black" — so a light sheet is not a deferred feature, it is a decision
+  // against, and a picker offering two choices the product has decided not to have
+  // is worse than no picker.
+  //
+  // 'Confirm Before Going Live' and 'Auto Save' were on this list as well, both
+  // defaulting to ON and neither read by anything. The first was the worse by a
+  // distance: it promised a confirmation step between the operator and the
+  // congregation's screen, and there has never been one. It must not come back
+  // because the prototype's General section shows one — a prototype cannot promise
+  // a guard the engine does not have.
+  // ─────────────────────────────────────────────────────────────────────────
 
   // ─────────────────────────────────────────────────────────────────────────
   // Crash reporting — OFF by default. The only thing in Relay that can send
@@ -629,7 +611,6 @@
 
   onMount(loadServiceTarget);
   onMount(async () => {
-    loadPrefs();
     // Session uptime — a real, honest number (this run of the app).
     bootAt = performance.now();
     uptime = fmtUptime(0);
@@ -682,16 +663,36 @@
     }
   }
 
-  // Keyboard shortcuts shown in the Shortcuts section — the panic + transport
-  // keys the app actually binds (lib/shortcuts.js), plus Help points to more.
-  const SHORTCUTS = [
-    { keys: ['Space'], label: 'Advance — step the plan / walk the passage' },
-    { keys: ['→'], label: 'Next (mode-aware: plan slide or verse)' },
-    { keys: ['←'], label: 'Previous' },
-    { keys: ['Esc'], label: 'Clear all output screens' },
-    { keys: ['B'], label: 'Blackout every output' },
-    { keys: ['?'], label: 'Open Help & full shortcut list' },
-  ];
+  // THE SHORTCUT TABLE IS NOT WRITTEN HERE. It is imported, at the top of this
+  // file, from `lib/shortcuts.js` — the same array the one global keydown handler
+  // switches on, the cheatsheet overlay renders, `views/Help.svelte` renders and
+  // `sectionkeys.js::RESERVED` subtracts from before it hands a letter to a song
+  // section.
+  //
+  // This section used to carry a SECOND, hand-maintained copy of six rows, and it
+  // had already drifted from the bindings it claimed to describe:
+  //
+  //   · `A` (accept the top AI suggestion) and `D` (dismiss it) were MISSING —
+  //     the two keys that put a machine's guess in front of a congregation or
+  //     throw it away, absent from the page an operator opens to learn the keys.
+  //     They are also two of the letters `RESERVED` withholds from song sections,
+  //     so this page could not explain why `a` does not fire verse A either.
+  //   · `/` (jump to the manual reference box) was missing.
+  //   · `PgDn` / `PgUp` were missing.
+  //   · `?` was described as "Open Help & full shortcut list"; it opens the
+  //     cheatsheet overlay.
+  //
+  // That is the repository's own named failure — a guarantee kept on one door and
+  // skipped on its twin — applied to a help screen, which is the worst place for
+  // it: it teaches an operator something false, under pressure. `shortcuts.js`'s
+  // own comment says a help screen listing a key that does nothing is worse than
+  // no help screen; the inverse, a help screen omitting a key that DOES something,
+  // is the same defect with the sign flipped.
+  //
+  // The keys are rendered from `SHORTCUTS` (every binding, always), not from
+  // `liveShortcuts` (only those the mounted surface registered) — Settings is not
+  // the run surface, so "what does this key do on Live" is the question being
+  // asked here, and filtering by what Settings itself registers would empty it.
 </script>
 
 <!-- Settings is laid out in the shared workspace grammar (`WorkspaceFrame.svelte`,
@@ -712,18 +713,24 @@
      private to this file is the handful of things only Settings has (a level
      meter, the threshold sliders, the translation list, the language table).
 
-     The page title is "Settings" and never changes; the STANDFIRST is the
-     section's own sentence, so the two roles say different things instead of
-     the title being repeated a size smaller directly beneath itself. No section
-     repeats its standfirst at the top of its own panel either — that was
-     `.s-lead`, and it was role two happening twice on one screen.
+     THE PAGE TITLE IS THE SECTION, and it used to be the word "Settings" — which
+     never changed, while the rail beside it highlighted the section, the pane
+     header above the rows repeated the section, and the standfirst described the
+     section. Three of those four said the same thing and the fourth said nothing:
+     the one role that is meant to name what you are looking at was the only one
+     that could not. So the title is `activeSection.label`, the standfirst stays
+     its sentence, and the panel's own pane header is gone rather than printing the
+     title again eight pixels smaller. That is the prototype's arrangement too.
 
      ELEVEN SECTIONS, merged from eighteen. The reasoning, and the two sections
-     deleted rather than merged, are in the SECTIONS array above. -->
+     deleted rather than merged, are in the SECTIONS array above.
+
+     TWO COLUMNS, NOT THREE (§11): a rail plus one reading column, centred and
+     capped at 880px. The third column's own tombstone is below the panel. -->
 <WorkspaceFrame
-  title="Settings"
+  title={activeSection.label}
   standfirst={activeSection.desc}
-  columns="212px minmax(0,1fr) 288px">
+  columns="212px minmax(0,1fr)">
     <!-- ════ SECTION RAIL ════ -->
     <aside class="rw-pane">
       <div class="rw-panehead">
@@ -747,8 +754,7 @@
     </aside>
 
     <!-- ════ ACTIVE PANEL ════ -->
-    <main class="rw-pane">
-      <div class="rw-panehead"><h2 class="rw-panettl">{activeSection.label}</h2></div>
+    <main class="rw-pane s-read">
       <div class="rw-panebody s-panel">
 
       {#if section === 'general'}
@@ -800,37 +806,37 @@
           </div>
         </div>
 
-        <!-- Toggles -->
-        {#each GENERAL_TOGGLES as tg}
-          <div class="rw-nv">
-            <div class="s-nvtext">
-              <div class="rw-nvk">{tg.title}{#if tg.soon}<span class="s-soon">Soon</span>{/if}</div>
-              <p class="rw-nvnote">{tg.note} {#if tg.soon}<span class="s-dim">Not available yet.</span>{/if}</p>
-            </div>
-            <button
-              class="s-toggle rw-nvctl"
-              class:on={prefs[tg.key] && !tg.soon}
-              role="switch"
-              aria-checked={prefs[tg.key] && !tg.soon}
-              aria-label={tg.title}
-              disabled={tg.soon}
-              on:click={() => setPref(tg.key, !prefs[tg.key])}
-            ><span class="s-knob"></span></button>
+        <!-- SCREENS AT LAUNCH. A statement of what Relay already does, in the
+             place an operator asks the question — NOT a switch.
+             `App.svelte` calls `autoOpenOutputs()` on mount unless safe mode is
+             on, so every screen that was open when Relay last closed comes back
+             by itself. The prototype's General section offers this as a toggle;
+             building one would mean a persisted preference and a reader for it,
+             and there is no reader — which is DECISIONS §69's defect exactly.
+             So the behaviour is stated instead, and it is stated from the LIVE
+             value of the one thing that changes it, which is the row above. -->
+        <div class="rw-nv">
+          <div class="s-nvtext">
+            <div class="rw-nvk">Screens at launch</div>
+            <p class="rw-nvnote">Every screen that was open when Relay last closed is reopened automatically. Safe mode is the only thing that stops it.</p>
           </div>
-        {/each}
+          <span class="rw-nvv" class:s-armed={$safeMode}>{$safeMode ? 'held back by safe mode' : 'reopened automatically'}</span>
+        </div>
 
         <div class="s-prose">
           <!-- The absence is stated, and the list of names is not: an operator
                needs to know that a switch they remember never did anything, not to
-               read a changelog on the page they came here to use. The nine names
+               read a changelog on the page they came here to use. The eleven names
                and the reason each one went live in DECISIONS §69 and in the
                comments beside the code that used to render them. -->
           <p class="rw-foot">
-            <b>Nine preference controls used to be on this page and are not any
+            <b>Eleven preference controls used to be on this page and are not any
             more</b>, each because it saved a setting nothing in Relay ever read.
             One of them was on by default and promised a confirmation step between
-            you and the congregation's screen — there has never been one. Nothing
-            was lost, because nothing they did ever happened.
+            you and the congregation's screen — there has never been one. The last
+            two, <i>Auto Start on Login</i> and <i>Minimize to System Tray</i>, were
+            greyed out with a “Soon” tag beside them, which is a promise as well.
+            Nothing was lost, because nothing they did ever happened.
           </p>
         </div>
 
@@ -1327,15 +1333,42 @@
         </div>
 
       {:else if section === 'shortcuts'}
-        {#each SHORTCUTS as sc}
-          <div class="s-scrow">
-            <span class="s-sckeys">{#each sc.keys as k}<kbd class="s-kbd">{k}</kbd>{/each}</span>
-            <span class="s-scnote">{sc.label}</span>
+        <!-- ALWAYS ON, wherever you are — the panic keys and the cheatsheet.
+             Split out because the distinction is the whole point of `always` in
+             the table: these three fire from a global handler that survives a
+             crashed view, and the rest only work where the surface offers the
+             action (rule 15, DECISIONS §20). A list that ran them together would
+             be telling an operator that `A` is as reliable as `Esc`. -->
+        <div class="rw-group">Always active</div>
+        {#each SHORTCUTS.filter((s) => s.always) as sc}
+          <div class="rw-nv">
+            <span class="rw-nvk">{sc.label}</span>
+            <span class="s-sckeys rw-nvctl">{#each sc.keys as k}<kbd class="s-kbd">{k}</kbd>{/each}</span>
           </div>
         {/each}
+
+        <div class="rw-group">On the run surface</div>
+        {#each SHORTCUTS.filter((s) => !s.always) as sc}
+          <div class="rw-nv">
+            <span class="rw-nvk">{sc.label}</span>
+            <span class="s-sckeys rw-nvctl">{#each sc.keys as k}<kbd class="s-kbd">{k}</kbd>{/each}</span>
+          </div>
+        {/each}
+
         <div class="s-prose">
+          <p class="rw-foot" style="margin-top:0; padding-top:0; border-top:0;">
+            The second group works on a surface that offers the action — Live offers
+            all of them; the Planner registers only next and previous, so <kbd class="s-kbd">A</kbd>,
+            <kbd class="s-kbd">D</kbd> and <kbd class="s-kbd">/</kbd> do nothing there and the
+            cheatsheet does not claim otherwise. <kbd class="s-kbd">→</kbd> is mode-aware: it
+            steps a plan slide when plan content is on air and walks the passage when a verse
+            is. The transport bar on Live always prints which.
+            <br /><br />
+            A surface showing a song's sections also takes single letters
+            (<kbd class="s-kbd">v</kbd> <kbd class="s-kbd">c</kbd> <kbd class="s-kbd">b</kbd> …)
+            — never one this page lists, and never while a field has focus.
+          </p>
           <button class="r-btn ghost sm" on:click={() => setSession({ activeTab: 'help' })}>Open Help &amp; Shortcuts</button>
-          <p class="rw-foot">These bindings are always active. The full list lives in Help.</p>
         </div>
 
       {:else if section === 'updates'}
@@ -1557,6 +1590,16 @@
           <span class="rw-nvk">Diagnostic file</span>
           <span class="s-nvp">Only written when you press the button in Diagnostics, and only where you can read it first.</span>
         </div>
+        <!-- LICENCE. The one row of the deleted Overview rail that had no other
+             home. It belongs on the report, not in an inspector: "what is this
+             and what may I do with it" is the same question as the four rows
+             above it, and the footnote under this list already gives the long
+             answer. Still a read-only row — this section carries no handler
+             above the ADVANCED marker (`privacy.test.js` slices there). -->
+        <div class="rw-nv">
+          <span class="rw-nvk">Licence</span>
+          <span class="s-nvp">MIT — free and open source. Nothing to sign in to, nothing to pay, and no licence key that can expire on a Sunday morning.</span>
+        </div>
         <div class="s-prose">
           <p class="rw-foot">
             The full account, including what would make the network tradeoff change, is
@@ -1589,61 +1632,28 @@
       </div>
     </main>
 
-    <!-- ════ OVERVIEW RAIL ════ the facts that are true whatever section is open,
-         so they belong in the inspector column rather than being repeated inside
-         each section that happens to care about one of them. The Account section
-         was three rows of exactly this and is gone. -->
-    <aside class="rw-pane rw-insp">
-      <div class="rw-panehead"><h2 class="rw-panettl">Overview</h2></div>
-      <div class="rw-panebody s-overbody">
-      <div class="s-ocard">
-        <div class="rw-group">System overview</div>
-        <div class="rw-nv"><span class="rw-nvk">Version</span><span class="rw-nvv">{settingValue(appVersion, {
-              loading: versionState === 'loading',
-              missing: 'could not be read',
-            })}</span></div>
-        <!-- `emerald` used to be here, on both badges, and there is no
-             `.r-badge.emerald` — the class in `app.css` is `.r-badge.green`. So a
-             Production environment and the MIT licence have been rendering as an
-             unstyled badge, colourless, for as long as this rail has existed.
-             Found by the `class:` scan in `settingssections.test.js`, which is
-             the same defect as the update-preflight rows below: a class nothing
-             defines is silent in every tool this project had. -->
-        <div class="rw-nv"><span class="rw-nvk">Environment</span><span class="r-badge" class:green={environment === 'Production'} class:grey={environment !== 'Production'}>{environment}</span></div>
-        <div class="rw-nv"><span class="rw-nvk">Licence</span><span class="r-badge green">MIT</span></div>
-        <div class="rw-nv"><span class="rw-nvk">Uptime</span><span class="rw-nvv">{uptime}</span></div>
-      </div>
+    <!-- THE OVERVIEW RAIL USED TO BE HERE, and it was a THIRD column.
+         docs/REBRAND.md §11 is a rail plus ONE reading column; the prototype
+         centres that column at 880px and has no inspector on this workspace,
+         because a settings page has no "thing in hand" for an inspector to be
+         about. What the rail actually carried was four rows and four links, and
+         every one of them already had a home:
 
-      <div class="s-ocard">
-        <div class="rw-group">Quick links</div>
-        <button class="s-qlink" on:click={() => (section = 'shortcuts')}>
-          <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M6 14h12"/></svg>
-          <span class="s-qtext"><b>Keyboard shortcuts</b><em>View the full shortcut reference</em></span>
-          <svg class="s-qarr" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18l6-6-6-6"/></svg>
-        </button>
-        <button class="s-qlink" on:click={() => (section = 'updates')}>
-          <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
-          <!-- THE SAME DOOR, SECOND COPY. The Updates section itself was fixed
-               (RG-92) to report the CHANNEL's state rather than the absence of
-               news; this card kept saying "You're on the latest version" while the
-               update manifest was 404 and while no check had ever run. One
-               describer, both surfaces. -->
-          <span class="s-qtext"><b>Check for updates</b><em>{$updateAvailable ? 'An update is waiting' : describeChannel($updateChannel)}</em></span>
-          <svg class="s-qarr" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18l6-6-6-6"/></svg>
-        </button>
-        <button class="s-qlink" on:click={() => (section = 'history')}>
-          <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
-          <span class="s-qtext"><b>Service history</b><em>Review past services</em></span>
-          <svg class="s-qarr" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18l6-6-6-6"/></svg>
-        </button>
-        <button class="s-qlink" on:click={() => setSession({ activeTab: 'help' })}>
-          <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 0 1 5 .3c0 1.7-2.5 2-2.5 3.7M12 17h.01"/></svg>
-          <span class="s-qtext"><b>Support &amp; guide</b><em>Get help and documentation</em></span>
-          <svg class="s-qarr" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18l6-6-6-6"/></svg>
-        </button>
-      </div>
-      </div>
-    </aside>
+           · Version and Environment — the first two rows of Updates, verbatim.
+           · Uptime — "Uptime (this run)" in Diagnostics, the same `uptime`.
+           · Licence — now a row on Privacy & Advanced, which is the section
+             that answers "what is this and what can it do with my data".
+           · Keyboard shortcuts / Service history / Check for updates — three
+             links to three rail entries six inches to their left.
+           · Support & guide — the Help tab, which is on the tab bar, and which
+             the Shortcuts section already offers a button to.
+
+         So the column was a second copy of the page beside the page, and it was
+         not a harmless one: its "Check for updates" card had to call
+         `describeChannel` itself (RG-92), which is a second surface that can
+         drift from the Updates row about whether a check ever succeeded. One
+         door, once. Rule 35 gets easier the fewer places say the same thing.
+    -->
 </WorkspaceFrame>
 
 <style>
@@ -1696,8 +1706,28 @@
   .s-railic{ flex:0 0 auto; }
   .s-raillbl{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 
+  /* ── THE READING COLUMN ──────────────────────────────────────────────────
+     §11 is a rail plus ONE column, and the prototype caps it at 880px and
+     centres it. The cap is not decoration: a settings row is a name, a sentence
+     of explanation and a control, and on a 1920px booth monitor an uncapped
+     column puts 700px of nothing between the sentence and the switch that
+     belongs to it. The prototype's own note records the first attempt — 760px
+     LEFT-aligned — being wrong for the opposite reason: it left a third of every
+     card empty on the right, which reads as an unfinished section rather than as
+     a measured line. Centred at 880px is what it settled on. */
+  .s-read{ width:100%; max-width:880px; justify-self:center; }
+
   /* ── ACTIVE PANEL ── */
   .s-panel{ min-width:0; display:flex; flex-direction:column; gap:0; }
+  /* ROW HEIGHT (§11: `min-height:46px`). The frame's `.rw-nv` is padding-only, so
+     a row whose name has no note under it collapsed to about 35px and a column
+     mixing the two stepped in and out down the page. A floor, not a fixed height:
+     a row with a note, a wrapped value or a two-line control still grows.
+     Deliberately scoped to this panel rather than pushed into `WorkspaceFrame`,
+     which four other workspaces share and which is not this agent's file —
+     recorded in the wave note so the integrator can promote it if Planner,
+     Outputs, Templates and Library want the same floor. */
+  .s-panel :global(.rw-nv){ min-height:46px; }
   /* Anything that is not a row: a paragraph, a picker, a button, a table. It
      keeps the gutter the rows deliberately do not. */
   .s-prose{ padding:12px; min-width:0; }
@@ -1743,28 +1773,14 @@
     font-size:var(--v-fs-cap); letter-spacing:.08em; text-transform:uppercase;
     color:var(--v-emerald); border:1px solid color-mix(in srgb, var(--v-emerald) 40%, transparent); }
 
-  /* Toggle switch. `--v-r-round` is one of the two shapes the rebrand allows to
-     stay round (a slider thumb and a switch) — everything else is 3px. */
-  .s-toggle{ position:relative; flex:0 0 auto; width:38px; height:21px; border-radius:var(--v-r-round);
-    cursor:pointer; border:1px solid var(--v-500); background:var(--v-surf3); padding:0;
-    transition:background var(--v-dur) var(--v-ease), border-color var(--v-dur) var(--v-ease); }
-  .s-toggle:hover:not(:disabled){ border-color:var(--v-sel); }
-  .s-toggle.on{ background:var(--v-sel); border-color:transparent; }
-  .s-knob{ position:absolute; top:2px; left:2px; width:15px; height:15px; border-radius:50%;
-    background:var(--v-dim); transition:transform 190ms var(--v-ease), background var(--v-dur) var(--v-ease);
-    box-shadow:0 1px 2px rgba(0,0,0,.5); }
-  .s-toggle.on .s-knob{ transform:translateX(17px); background:var(--v-sel-ink); }
-  .s-toggle:disabled{ opacity:.4; cursor:not-allowed; }
-
-  /* "Soon" — a control shown for shape but not yet wired, marked so it can't lie.
-     Sits on --v-surf2, not --v-surf3: muted text on surf3 is 3.76:1, below WCAG AA,
-     and this was the only rule in the app that did it (RG-74). Surf2 is 4.50:1.
-     Not a pill any more: §1 is explicit that a pill in a control room reads as a
-     toy, and this one marks something that does not work yet. */
-  .s-soon{ display:inline-block; margin-left:8px; padding:1px 6px; border-radius:var(--v-r-sm);
-    background:var(--v-surf2); border:1px solid var(--v-line2); color:var(--v-faint);
-    font-family:var(--f-mono); font-size:var(--v-fs-cap); letter-spacing:.04em; vertical-align:middle; }
-  .s-dim{ color:var(--v-faint); }
+  /* `.s-toggle` / `.s-knob` / `.s-soon` / `.s-dim` USED TO BE HERE — a private
+     38×21 switch, pixel for pixel the same shape as `.r-switch` in `app.css`,
+     plus the "Soon" chip that sat beside it. §12 asks for ONE instrument
+     everywhere, and a second switch defined in a view file is how that stops
+     being true quietly. Their only two users were the dead Auto-start and Tray
+     rows; both are gone (DECISIONS §69), so the rules went with them rather than
+     waiting to be copied. A switch Settings needs in future comes from
+     `app.css`'s `.r-switch`, which is the one every other surface uses.
 
   /* A VALUE THAT IS BAD NEWS, and one that is worth a look. Rose and amethyst,
      matching `.b-check.warn` in the boot ladder; never amber, which means ON AIR
@@ -1779,14 +1795,14 @@
   .s-addrow{ display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
   .s-addrow .r-input{ flex:1 1 200px; width:auto; min-width:0; }
 
-  /* Shortcuts */
-  .s-scrow{ display:flex; align-items:center; gap:14px; padding:8px 12px;
-    background:transparent; border:0; border-bottom:1px solid var(--v-line); }
-  .s-scrow:last-child{ border-bottom:0; }
-  .s-sckeys{ flex:0 0 118px; display:flex; gap:5px; }
+  /* Shortcuts. `.s-scrow`/`.s-scnote` were a THIRD row grammar in this file
+     (8px padding against the frame's 9px, its own key colour, its own seam); the
+     rows are `.rw-nv` now and only the key caps are local. The caps sit in the
+     control column, so they share the single right edge every other value on the
+     page is aligned to. */
+  .s-sckeys{ display:flex; gap:5px; flex-wrap:wrap; justify-content:flex-end; }
   .s-kbd{ font-family:var(--f-mono); font-size:var(--v-fs-mono); color:var(--v-txt); background:var(--v-void);
     border:1px solid var(--v-line2); border-bottom-width:2px; border-radius:var(--v-r-sm); padding:1px 6px; }
-  .s-scnote{ font-size:var(--v-fs-b2); color:var(--v-dim); }
 
   /* level meter */
   .s-meterwrap{ min-width:0; }
@@ -1849,25 +1865,6 @@
   /* An absence is dim, not red: nobody has failed here — the work has not been
      done, and saying so is the whole point of the column. */
   .s-langgap{ color:var(--v-faint); font-style:italic; }
-
-  /* ── OVERVIEW RAIL ── groups in one pane, seamed, rather than cards floating
-     in a column with gutters between them. The Account SECTION used to repeat
-     the first group's three rows in the main panel; it is gone. */
-  .s-overbody{ display:flex; flex-direction:column; }
-  .s-ocard{ display:flex; flex-direction:column; border-bottom:1px solid var(--v-line); }
-  .s-ocard:last-child{ border-bottom:0; }
-
-  .s-qlink{ display:flex; align-items:center; gap:10px; width:100%; text-align:left; cursor:pointer;
-    padding:8px 12px; border:0; border-bottom:1px solid var(--v-line); background:transparent;
-    color:var(--v-dim); transition:background var(--v-dur) var(--v-ease), color var(--v-dur) var(--v-ease); }
-  .s-qlink:last-child{ border-bottom:0; }
-  .s-qlink:hover{ background:var(--v-surf2); color:var(--v-accent2); }
-  .s-qtext{ display:flex; flex-direction:column; gap:1px; min-width:0; flex:1; }
-  .s-qtext b{ font-size:var(--v-fs-b2); line-height:var(--v-lh-b2); font-weight:600; color:var(--v-txt); }
-  .s-qtext em{ font-style:normal; font-size:var(--v-fs-cap); color:var(--v-faint);
-    overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .s-qarr{ flex:0 0 auto; color:var(--v-faint); }
-  .s-qlink:hover .s-qarr{ color:var(--v-accent2); }
 
   /* ── responsive ── */
   /* The frame hides the inspector column below 1240px and stacks below 900px;

@@ -40,6 +40,40 @@
   export let only = null;
   export let queue = [];
   export let onQueueChange = () => {};
+  /** Hand the selected item up for the inspector (REBRAND §10). */
+  export let onSelect = () => {};
+
+  /**
+   * ONE PRESS SELECTS — see the note on `VerseDeck`'s `press` prop.
+   *
+   * THE SLIDE IS THE PICTURE (REBRAND §10). The inspector is handed the media
+   * URL rather than a template and a caption, so the preview is the frame the
+   * room will see; the filename is the operator's name for it and never goes to
+   * a screen. A DOCUMENT has no frame at all, which is why `fire_media` refuses
+   * one, so it is selectable and carries no `reference` for `Cue in Live`.
+   */
+  let selectedRef = '';
+  function selectItem(m) {
+    selectedRef = m.reference;
+    onSelect({
+      kind: 'media',
+      title: m.label,
+      titleLabel: 'Name',
+      words: m.icon ? `${m.icon} — this cannot be put on a screen.` : m.label,
+      slide: { reference: null, text: m.label },
+      media: m.media,
+      mediaKind: m.mediaKind,
+      reference: m.media ? m.reference : null,
+      mediaId: m.id,
+      plan: m.media
+        ? {
+            cueType: 'media',
+            label: m.reference,
+            payload: { media_id: m.id, kind: m.mediaKind, filename: m.reference },
+          }
+        : null,
+    });
+  }
 
   let rows = [];
   let host = 'localhost';
@@ -238,6 +272,9 @@
             busyRef={firing ? deck.find((d) => d.id === firing)?.reference ?? '' : ''}
             {layout}
             showStar={false}
+            press="select"
+            {selectedRef}
+            onSelect={selectItem}
             can={{ queue: true, favourite: false, edit: false, duplicate: false, add: false, select: false }}
             onFire={fireCard}
             onQueue={toggleQueue}

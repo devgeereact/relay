@@ -9,6 +9,7 @@
   import { createEventDispatcher, onMount } from 'svelte';
   import TemplateRender from '../../TemplateRender.svelte';
   import WorkspaceFrame from '../WorkspaceFrame.svelte';
+  import DeskStrip from '../templates/DeskStrip.svelte';
   import EmptyState from '../../ui/EmptyState.svelte';
   import {
     BUILTIN_THEMES,
@@ -133,6 +134,10 @@
   standfirst="The style layer beneath templates. A template overrides a theme key by key, so a theme sets the defaults and never the last word."
   columns="206px minmax(0,1fr) 312px">
   <svelte:fragment slot="head">
+    <!-- THE SAME STRIP the Templates desk renders, from the one component — so
+         the two desks cannot offer different sets of desks, and the way back is
+         where the way here was. -->
+    <DeskStrip desk="themes" on:desk />
     <input type="file" accept=".json,application/json" bind:this={fileInput} on:change={onImportFile} style="display:none" />
     <button class="r-btn ghost sm" on:click={() => fileInput.click()}>Import</button>
     <button class="r-btn primary sm" on:click={newTheme}>＋ New theme</button>

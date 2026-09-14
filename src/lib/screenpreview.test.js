@@ -67,7 +67,15 @@ describe('the inspector and the output page resolve the same way', () => {
       outputs,
       'the inspector must pass the screen`s template as it is — `?? {}` is the defect',
     ).not.toMatch(/templateOf\(sel\)\s*\?\?\s*\{\}/);
-    expect(outputs).toMatch(/resolveOutputTemplate\(\s*sel \? templateOf\(sel\) : null,/);
+    // `sel ? <the screen's own template, or null> : null`. It was written
+    // `templateOf(sel)`, which reads `$templates` INSIDE a function body — so the
+    // panel was right when a screen was selected and never repainted when that
+    // template was edited, while the cards beside it did. Naming the store in the
+    // reactive statement is what makes the two agree; the test below holds that.
+    expect(outputs).toMatch(/resolveOutputTemplate\(\s*sel \? selOwn : null,/);
+    expect(outputs, 'the inspector must NAME $templates, not reach it through a helper').toMatch(
+      /\$: selOwn =[\s\S]{0,120}\$templates\.find/,
+    );
     expect(page).toMatch(/resolveOutputTemplate\(t, override, !!content\?\.template_pinned\)/);
     // And the component is actually handed that answer, not a second one built
     // inline — a preview resolved twice is a preview that can disagree with itself.

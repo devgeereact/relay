@@ -59,8 +59,14 @@
   export let verseCount = 0;
   /** The Library's one search box. */
   export let query = '';
-  /** Only verses already in Favourites (the filter-bar toggle). */
+  /** Only verses already in Favourites. Bound: the control is in this pane's
+      head now, but the state belongs to the shell so it survives a look at the
+      songs and back. */
   export let favouritesOnly = false;
+  /** The translations pick, hoisted out of the shell's deleted filter bar. */
+  export let activeTranslation = null;
+  export let onTranslation = () => {};
+  /** Hand the selected verse up for the inspector. */
   export let onSelect = () => {};
   /** The queue lives in the shell, beside the rail that renders it. */
   export let queue = [];
@@ -72,10 +78,21 @@
   let template = null;
   let checked = new Set();
   let sort = 'verse';
-  // LIST by default — plain text, like the Lyrics pane, so a chapter opens
-  // instantly. The grid view (a live TemplateRender thumbnail per verse) is
-  // gorgeous but renders a dozen fit loops at once; it stays one click away.
-  let layout = 'list';
+  // ── GRID BY DEFAULT (REBRAND §10) ─────────────────────────────────────────
+  //
+  // "Slides in the big grid." A card is the verse drawn through the SAME
+  // `TemplateRender` that paints the projector, so what an operator picks is
+  // what the room will see; a numbered text row is a description of a slide and
+  // an operator reading one still has to imagine the wall.
+  //
+  // This said `list` and gave a reason — "the grid renders a dozen fit loops at
+  // once". That cost was real when it was written and is not any more: the
+  // font-refit guard added for rule 42 bounded the retry to two, and the fit
+  // loop no longer runs again on every card when a webfont lands. The deck
+  // itself records that ("the font-refit guard already removed the real
+  // per-grid cost"), so the default and the note beside it had disagreed for a
+  // while. `list` is still one click away for a long chapter.
+  let layout = 'grid';
   let perPage = 12;
 // { id?, ref, label, text, verse }
   let passage = null;
@@ -254,6 +271,50 @@
     if (await clearScreens()) msg = 'Screens cleared.';
   }
 
+  /**
+   * ONE PRESS SELECTS. The Library is a build surface (REBRAND §2/§10): a single
+   * click fills the inspector and reaches no output, and `Cue in Live` there is
+   * the deliberate press that stages it. `VerseDeck`'s `press` prop is what says
+   * so, and its default is still the old fire-on-press for everything else.
+   *
+   * SCRIPTURE IS THE CONTENT, so the reference rides to the inspector's preview:
+   * a verse on a wall carries its reference and a lyric does not (DECISIONS §73).
+   */
+  function selectVerse(v) {
+    selected = v;
+    onSelect({
+      kind: 'scripture',
+      title: v.reference ?? refOf(v),
+      titleLabel: 'Reference',
+      translation: v.translation ?? null,
+      words: v.text ?? '',
+      slide: { reference: v.reference ?? refOf(v), text: v.text ?? '', translation: v.translation ?? null },
+      reference: v.reference ?? refOf(v),
+      plan: {
+        cueType: 'scripture',
+        label: v.reference ?? refOf(v),
+        payload: {
+          book: v.book,
+          chapter: v.chapter,
+          verse: v.verse,
+          reference: v.reference ?? refOf(v),
+          text: v.text,
+          translation: v.translation,
+        },
+      },
+    });
+  }
+
+  /** The double press. Scripture is not editable (see the note at the top of
+      this pane), so "open" means: put the whole chapter in front of me. */
+  function openVerse(v) {
+    if (v.book && v.chapter) {
+      book = v.book;
+      chapter = v.chapter;
+    }
+    jumpTo(v.verse);
+  }
+
   const refOf = (v) => `${v.book} ${v.chapter}:${v.verse}`;
   const shape = (v) => ({
     key: refOf(v),
@@ -267,6 +328,7 @@
   const words = (t) => (t ? t.trim().split(/\s+/).length : 0);
   const isSaved = (v, list) => list.some((s) => s.reference === refOf(v));
 
+  $: chapterCount = books.find((b) => b.book === book)?.chapters ?? 0;
   $: searchMode = !!query?.trim();
   $: base = passage ? inRange(verses, passage) : searchMode ? results : verses;
   $: source = favouritesOnly ? base.filter((v) => isSaved(v, savedList)) : base;
@@ -345,16 +407,22 @@
             </button>
           {/each}
         </div>
+        <!-- The footer held a "Browse All Books" button that set `book` to the
+             FIRST book. Its label named the control directly above it ("All
+             Books", which really does clear the filter) and its behaviour was a
+             different thing entirely, so whichever one an operator believed, one
+             of them was lying. Removed rather than relabelled: the rail is the
+             book picker, and it needed no third way to pick one. -->
         <div class="br-panelfoot">
-          <button class="r-btn ghost sm" on:click={() => (book = books[0].book)}>
-            Browse All Books
-            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 4h6v6M20 4l-8 8M18 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4" /></svg>
-          </button>
+          <span class="r-mono br-count">{books.length} books</span>
         </div>
       </nav>
 
       <!-- THE CHAPTER. -->
       <section class="br-panel br-main">
+        <!-- THE DOCK HEAD (REBRAND §10). What is in the grid, how many of them,
+             and what a press on one does — said where the press happens, because
+             a legend an operator has to remember is a legend they will not. -->
         <header class="br-mainhead">
           <div class="br-where">
             <b>{heading}</b>
@@ -362,19 +430,61 @@
           </div>
 
           {#if checked.size}
+            <!-- The bulk actions REPLACE THE LEGEND, not the navigation. They
+                 used to replace the Sort control, and when the translation,
+                 chapter and verse pickers moved onto this row that same `{:else}`
+                 would have taken the Bible's navigation away from an operator who
+                 had ticked a verse — reachable again only by clearing a selection
+                 they might want to keep. The legend is the one thing here that is
+                 furniture. -->
             <button class="r-btn primary sm" on:click={queueChecked}>
               Queue {checked.size} selected
             </button>
             <button class="r-btn ghost sm" on:click={() => (checked = new Set())}>Clear</button>
           {:else}
-            <label class="br-ctl">
-              <span class="r-lbl">Sort</span>
-              <select class="r-select sm" bind:value={sort} aria-label="Sort">
-                <option value="verse">Verse order</option>
-                <option value="length">Shortest first</option>
-              </select>
-            </label>
+            <span class="br-legend r-mono">
+              {numbered.length} item{numbered.length === 1 ? '' : 's'} · single click cues ·
+              double click opens
+            </span>
           {/if}
+
+          <!-- Moved off the shell's deleted filter bar: a translation, a
+               chapter, a verse and Favourites are all facts about SCRIPTURE,
+               and only this pane has any. -->
+          <select
+            class="r-select sm br-sel"
+            aria-label="Translation"
+            disabled={translations.length < 2}
+            value={activeTranslation}
+            on:change={(e) => onTranslation(Number(e.currentTarget.value))}>
+            {#each translations as t}
+              <option value={t.id}>{t.abbreviation || t.name}</option>
+            {/each}
+            {#if !translations.length}<option>KJV</option>{/if}
+          </select>
+          <select class="r-select sm br-sel" aria-label="Chapter" bind:value={chapter}>
+            {#each Array(chapterCount) as _, i}
+              <option value={i + 1}>Chapter {i + 1}</option>
+            {/each}
+          </select>
+          <select class="r-select sm br-sel" aria-label="Verse" bind:value={verse} disabled={!verseCount}>
+            <option value={null}>All verses</option>
+            {#each Array(verseCount) as _, i}
+              <option value={i + 1}>Verse {i + 1}</option>
+            {/each}
+          </select>
+          <button
+            class="r-btn ghost sm br-fav"
+            class:on={favouritesOnly}
+            aria-pressed={favouritesOnly}
+            on:click={() => (favouritesOnly = !favouritesOnly)}>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill={favouritesOnly ? 'currentColor' : 'none'} stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h12v18l-6-4.5L6 21z" /></svg>
+            Favourites
+          </button>
+          <select class="r-select sm br-sel" bind:value={sort} aria-label="Sort">
+            <option value="verse">Verse order</option>
+            <option value="length">Shortest first</option>
+          </select>
 
           <div class="r-seg" role="group" aria-label="Layout">
             <button class:on={layout === 'grid'} aria-label="Grid" on:click={() => (layout = 'grid')}>
@@ -415,6 +525,9 @@
               {queuedRefs}
               busyRef={firing}
               {layout}
+              press="select"
+              onSelect={selectVerse}
+              onOpen={openVerse}
               onCheck={toggleCheck}
               onFire={fire}
               onQueue={toggleQueue}
@@ -477,20 +590,28 @@
   .br-all:hover { border-color: var(--v-line2); }
   .br-all.on { border-color: var(--v-accent-line); background: var(--v-accent-soft); }
   .br-all .ct { font-size: 10.5px; color: var(--v-faint); }
-  .br-ctl { display: flex; align-items: center; gap: 7px; flex: 0 0 auto; }
-  .br-ctl .r-lbl { margin: 0; }
-  .br-ctl .r-select { width: auto; height: 30px; padding: 0 30px 0 10px; font-size: 12px;
-    background-position: calc(100% - 14px) 13px, calc(100% - 9px) 13px; }
+  .br-sel { width: auto; max-width: 132px; height: 24px; padding: 0 26px 0 8px; font-size: 11px;
+    flex: 0 0 auto;
+    background-position: calc(100% - 13px) 10px, calc(100% - 8px) 10px; }
+  .br-fav { flex: 0 0 auto; }
+  .br-fav.on { border-color: var(--v-accent-line); color: var(--v-accent2); background: var(--v-accent-soft); }
   .br-pager { flex-wrap: wrap; }
   .br-panelfoot { padding: 10px; border-top: 1px solid var(--v-line); }
-  .br-panelfoot .r-btn { width: 100%; }
 
   /* ── The chapter ───────────────────────────────────────────────────────── */
   .br-mainhead {
-    display: flex; align-items: center; gap: 12px; padding: 11px 14px;
+    display: flex; align-items: center; gap: 8px; padding: 9px 12px; flex-wrap: wrap;
     border-bottom: 1px solid var(--v-line);
   }
-  .br-where { flex: 1; min-width: 0; }
+  .br-where { flex: 1 1 160px; min-width: 0; }
+  /* The legend is furniture, not a heading: mono, faint, and it gives way before
+     any control does when the head has to wrap. */
+  .br-legend {
+    flex: 0 1 auto; min-width: 0; font-size: var(--v-fs-cap); color: var(--v-faint);
+    text-transform: uppercase; letter-spacing: .08em;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  @media (max-width: 1240px) { .br-legend { display: none; } }
   .br-where b { display: block; font-size: 15px; font-weight: 600; color: var(--v-txt); }
   .br-where span { font-size: var(--v-fs-cap); color: var(--v-faint); }
   .br-body {
@@ -508,8 +629,6 @@
   /* ── Pager ─────────────────────────────────────────────────────────────── */
   .br-pager { display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-top: 1px solid var(--v-line); }
   .br-count { font-size: var(--v-fs-cap); color: var(--v-faint); }
-
-  .br-sheet header .r-lbl { margin: 0; }
 
   .br-msg, .br-err { margin: 0; font-size: var(--v-fs-b2); line-height: 1.6; }
   .br-msg { color: var(--v-emerald); }

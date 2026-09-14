@@ -68,12 +68,43 @@ describe('what the scanner counts as a name', () => {
     controls.find((c) => c.file.endsWith(file) && String(c.handler ?? '').includes(fragment));
 
   it('a BOUND aria-label counts', () => {
-    // `aria-label={tg.title}` on the Settings toggles. A regex cannot evaluate the
-    // expression, and reporting the attribute as absent because it is bound is a
-    // false finding about markup that is already correct.
-    const toggle = at('Settings.svelte', 'setPref');
-    expect(toggle, 'the Settings toggle should be in the inventory').toBeTruthy();
-    expect(toggle.label).toBeTruthy();
+    // A regex cannot evaluate the expression, and reporting the attribute as
+    // absent because it is bound is a false finding about markup that is already
+    // correct.
+    //
+    // This used to be pinned to `aria-label={tg.title}` on the two Settings
+    // toggles, and it broke when those toggles were deleted (DECISIONS §69 — they
+    // saved a preference nothing read). A capability of the SCANNER should not be
+    // asserted through one view's markup: the next author to remove a control gets
+    // a failure that says nothing about the thing under test. So the claim is made
+    // over every rendered control instead — every `aria-label={…}` in the tree must
+    // come back named, whichever file it is in and however many there are.
+    // The assertion is that the name came FROM the bound attribute, not merely
+    // that the control ended up with some name: most of these also have text
+    // inside them, so "is it labelled" passes even with the bound branch deleted.
+    // Each one's reported label must be the attribute's own expression.
+    // The fixture must be a control whose ONLY possible name is the bound
+    // attribute — otherwise the scanner falls through to the inner text and the
+    // test passes with the bound branch deleted, which is a test that cannot
+    // fail. `VerseDeck`'s favourites star holds an `<svg>` and nothing else, so
+    // there is no text to fall back to; if the bound branch goes, its label goes
+    // from an expression to `null` and this fails.
+    //
+    // It used to be pinned to `aria-label={tg.title}` on the two Settings
+    // toggles, which broke when those were deleted (DECISIONS §69 — they saved a
+    // preference nothing read). The star is chosen because it is a control this
+    // file already depends on twice, not because it is unlikely to change.
+    const star = controls.find(
+      (c) => c.file.endsWith('VerseDeck.svelte') && /savedRefs\.has/.test(String(c.label ?? '')),
+    );
+    expect(star, 'the bound-aria-label fixture has gone from VerseDeck').toBeTruthy();
+    const tag = fs
+      .readFileSync(path.join(ROOT, star.file), 'utf8')
+      .split('\n')
+      .slice(star.line - 1, star.line + 4)
+      .join('\n');
+    expect(tag, 'the fixture is no longer named by a BOUND aria-label').toMatch(/aria-label=\{/);
+    expect(star.label).toBeTruthy();
   });
 
   it('a wrapping <label> counts', () => {

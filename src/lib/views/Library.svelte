@@ -26,10 +26,10 @@
   import Browse from './library/Browse.svelte';
   import LyricsPane from './library/LyricsPane.svelte';
   import LiveOutputRail from './library/LiveOutputRail.svelte';
+  import Inspector from './library/Inspector.svelte';
   import {
     listActiveTemplates,
     loadTemplates,
-    templates,
     manualFire,
     fireMedia,
     listBooks,
@@ -74,6 +74,7 @@
   function goCollection(key) {
     const c = COLLECTIONS.find((x) => x.key === key);
     if (!c) return;
+    selected = null;
     active = lastView[key] ?? c.views[0].key;
   }
 
@@ -183,17 +184,29 @@
   // in both directions: it offers the verses the open chapter actually has.
   let verse = null;
   let verseCount = 0;
-  /** The reference's "Filters" control. Favourites is the one real filter the
-      Bible pane has — every other axis in the mockup (type, book, chapter) is
-      already a control on this bar. */
+  /** Favourites is the one real filter the Bible pane has. The control moved
+      into that pane's own head; the state stays here so it survives a look at
+      another collection and back. */
   let favouritesOnly = false;
   let showMore = false;
+
+  // ── WHAT IS SELECTED, FOR THE INSPECTOR ───────────────────────────────────
+  //
+  // One normalised shape, produced by whichever pane owns the item (see
+  // `Inspector.svelte` for the fields). The panes keep their own data — a shell
+  // that re-derived a song from a pane's list would be a second source of truth
+  // about what a song is — and hand up only what the inspector renders.
+  //
+  // It is cleared when the COLLECTION changes, because a verse still drawn in
+  // the inspector while the Songs grid is open is the inspector describing
+  // something that is no longer in front of the operator.
+  let selected = null;
+  const pick = (it) => (selected = it);
   // THE QUEUE lives here, beside the rail that renders it, so it survives a
   // sub-tab change — an operator queueing verses does not expect them dropped
   // because they looked at the songs.
   let queue = [];
 
-  $: chapterCount = books.find((b) => b.book === book)?.chapters ?? 0;
   // A verse number means nothing once the chapter under it changed.
   let lastPlace = '';
   $: if (`${book}|${chapter}` !== lastPlace) {
@@ -252,6 +265,7 @@
 
   function goTab(t) {
     active = t;
+    selected = null;
     reload += 1;
     // An import that added songs or media just changed a number on the rail.
     loadCounts();
@@ -578,17 +592,48 @@
 {#if reviewing}
   <ImportReview songs={reviewSongs} on:done={onReviewDone} on:cancel={() => (reviewing = false)} />
 {:else}
-  <!-- ROW 1 — the collections, and the two things you can do to the library as
-       a whole. Constant across every pane. -->
+  <!-- ── ONE ROW OF CHROME, NOT FOUR (REBRAND §10) ────────────────────────────
+       This stack used to be: collection chips · a Bible/Saved row · a filter bar
+       of five controls · the pane head. Four bands across the window before the
+       operator could see a single item, against the prototype's two.
+
+       Where everything went, so nothing is merely missing:
+         · the view row (Bible / Saved)  → onto this line, after the chips
+         · the ONE search box            → onto this line, before the actions
+         · translation ▾                 → the Bible pane's own head; it is a
+                                           scripture fact and only scripture has one
+         · book ▾                        → DELETED. The Books rail beside the grid
+                                           is the book picker, and the select was a
+                                           second control over the same state
+         · chapter ▾ · verse ▾ · ★ Favourites · Sort → the Bible pane's head
+         · Import · New Item · ⋯         → unchanged, here, because they act on
+                                           the whole library rather than on the
+                                           pane, and five copies of a create path
+                                           is how two of them start disagreeing -->
   <div class="lib-topline">
     <Collections
       collection={openCollection.key}
       view={active}
       {counts}
       onCollection={goCollection}
-      onView={(v) => (active = v)} />
+      onView={(v) => { selected = null; active = v; }} />
 
     <span class="lib-spring"></span>
+
+    <div class="lib-search">
+      <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"
+        stroke-width="2" stroke-linecap="round" aria-hidden="true">
+        <circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" />
+      </svg>
+      <input
+        class="r-input"
+        type="search"
+        bind:this={searchEl}
+        bind:value={query}
+        on:input={onSearch}
+        {placeholder}
+        aria-label={placeholder} />
+    </div>
 
     <div class="lib-topactions">
       <button class="r-btn ghost sm" on:click={() => fileInput.click()} disabled={!$capture.available || importing}>
@@ -627,74 +672,14 @@
     </div>
   </div>
 
-  <!-- ROW 2 — where you are (translation · book · chapter) and what you are
-       looking for. One search box for the whole library. -->
-  <div class="lib-filters">
-    {#if active === 'browse' || active === 'scripture'}
-      <select
-        class="r-select lib-tr"
-        aria-label="Translation"
-        disabled={translations.length < 2}
-        value={activeTranslation}
-        on:change={(e) => pickTranslation(Number(e.currentTarget.value))}>
-        {#each translations as t}
-          <option value={t.id}>{t.abbreviation || t.name}</option>
-        {/each}
-        {#if !translations.length}<option>KJV</option>{/if}
-      </select>
-    {/if}
-
-    <!-- The "Content type" select that used to sit here is gone: it was a second
-         copy of the row above it, and the collection rail now says which kind of
-         content you are in AND how much of it there is. -->
-    <div class="lib-search">
-      <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"
-        stroke-width="2" stroke-linecap="round" aria-hidden="true">
-        <circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" />
-      </svg>
-      <input
-        class="r-input"
-        type="search"
-        bind:this={searchEl}
-        bind:value={query}
-        on:input={onSearch}
-        {placeholder}
-        aria-label={placeholder} />
-    </div>
-
-    {#if active === 'browse'}
-      <select class="r-select lib-f" aria-label="Book" bind:value={book}>
-        {#each books as b}<option value={b.book}>{b.book}</option>{/each}
-      </select>
-      <select class="r-select lib-f" aria-label="Chapter" bind:value={chapter}>
-        {#each Array(chapterCount) as _, i}
-          <option value={i + 1}>Chapter {i + 1}</option>
-        {/each}
-      </select>
-      <select class="r-select lib-v" aria-label="Verse" bind:value={verse} disabled={!verseCount}>
-        <option value={null}>All verses</option>
-        {#each Array(verseCount) as _, i}
-          <option value={i + 1}>Verse {i + 1}</option>
-        {/each}
-      </select>
-      <!-- The mockup's "Filters" control. It toggles a filter that exists
-           rather than opening a panel of options that do not. -->
-      <button class="r-btn ghost lib-filter" class:on={favouritesOnly}
-        aria-pressed={favouritesOnly}
-        on:click={() => (favouritesOnly = !favouritesOnly)}>
-        <svg width="14" height="14" viewBox="0 0 24 24" fill={favouritesOnly ? 'currentColor' : 'none'} stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h12v18l-6-4.5L6 21z" /></svg>
-        Favourites
-      </button>
-    {/if}
-  </div>
-
   {#if errMsg}<div class="lib-importerr r-mono" role="alert">{errMsg}</div>{/if}
   {#if importMsg}<div class="lib-importmsg r-mono">{importMsg}</div>{/if}
 
 
 
-  <!-- The BIBLE pane owns its own right column (the reference's verse
-       inspector); every other content type gets the shared live column. -->
+  <!-- THE THREE COLUMNS (REBRAND §2 · §10): the rail and the slide grid are the
+       pane's own, and the right column is the INSPECTOR for whatever is selected,
+       with the queue beneath it. -->
   <div class="lib-body">
     <div class="lib-pane">
       {#key active + '-' + reload}
@@ -703,26 +688,30 @@
             query={debounced}
             {books}
             {translations}
+            {activeTranslation}
+            onTranslation={pickTranslation}
             bind:book
             bind:chapter
             bind:verse
             bind:verseCount
-            {favouritesOnly}
+            bind:favouritesOnly
             {queue}
+            onSelect={pick}
             onQueueChange={(q) => (queue = q)}
             />
         {:else if active === 'scripture'}
-          <Scripture query={debounced} {queue} onQueueChange={(q) => (queue = q)} />
+          <Scripture query={debounced} {queue} onSelect={pick} onQueueChange={(q) => (queue = q)} />
         {:else if active === 'lyrics'}
-          <LyricsPane query={debounced} {queue} onQueueChange={(q) => (queue = q)} />
+          <LyricsPane query={debounced} {queue} onSelect={pick} onQueueChange={(q) => (queue = q)} />
         {:else if active === 'media' || active === 'graphics'}
           <MediaLibrary
             query={debounced}
             only={active === 'graphics' ? 'image' : 'moving'}
             {queue}
+            onSelect={pick}
             onQueueChange={(q) => (queue = q)} />
         {:else if active === 'announcements'}
-          <Announcements query={debounced} startDraft={announceAction} {queue} onQueueChange={(q) => (queue = q)} />
+          <Announcements query={debounced} startDraft={announceAction} {queue} onSelect={pick} onQueueChange={(q) => (queue = q)} />
         {:else}
           <!-- Announcements used to be the `{:else}`, which meant an unknown view
                key rendered the announcement pane and looked entirely normal. Every
@@ -736,12 +725,14 @@
       {/key}
     </div>
 
-    <LiveOutputRail
-      template={liveTemplate}
-      {queue}
-      onQueueChange={(q) => (queue = q)}
-      onFireQueued={fireQueued}
-      allTemplates={$templates} />
+    <div class="lib-right">
+      <Inspector
+        item={selected}
+        template={liveTemplate}
+        {queue}
+        onQueueChange={(q) => (queue = q)} />
+      <LiveOutputRail {queue} onQueueChange={(q) => (queue = q)} onFireQueued={fireQueued} />
+    </div>
   </div>
 {/if}
 </div>
@@ -776,46 +767,44 @@
     .lib-mshot{ width:100% }
   }
   .lib-spring{ flex:1 }
-  /* ONE layout for every content type: the catalogue, and the live column. */
-  .lib-body{ display:grid; grid-template-columns:minmax(0,1fr) 400px; gap:12px; min-height:0;
-    height:clamp(420px, calc(100vh - 296px), 900px); }
+  /* ONE layout for every content type: the catalogue, and the inspector column. */
+  .lib-body{ display:grid; grid-template-columns:minmax(0,1fr) 300px; gap:12px; min-height:0;
+    height:clamp(420px, calc(100vh - 226px), 900px); }
   .lib-pane{ display:flex; flex-direction:column; min-height:0; }
-  @media (max-width:1360px){ .lib-body{ grid-template-columns:minmax(0,1fr) 344px; } }
-  @media (max-width:1140px){ .lib-body{ grid-template-columns:minmax(0,1fr) 300px; } }
+  /* The inspector takes the height it needs for a 16:9 frame and its facts; the
+     queue takes the rest. Two panes, one column, one seam between them. */
+  .lib-right{ display:grid; grid-template-rows:minmax(0,3fr) minmax(140px,2fr); gap:12px;
+    min-height:0; min-width:0; }
+  @media (max-width:1360px){ .lib-body{ grid-template-columns:minmax(0,1fr) 276px; } }
   /* STACKED — one column. Two rules learned the hard way here:
-     1. The DECK stays first. Putting the live rail on top read well in theory
-        ("what is on the wall matters most"), but the rail leads with a 16:9
-        monitor: at full width that is a 400px-tall slide, so the entire window
-        became one enormous verse and the deck sat 1300px below the fold. The
-        operator saw a screen with no library on it and no way to know why.
-     2. The rail is WIDTH-capped, not height-capped. Capping the height of a
+     1. The DECK stays first. Putting the right column on top read well in theory
+        ("what is on the wall matters most"), but it leads with a 16:9 frame:
+        at full width that is a 400px-tall slide, so the entire window became
+        one enormous verse and the deck sat 1300px below the fold. The operator
+        saw a screen with no library on it and no way to know why.
+     2. The frame is WIDTH-capped, not height-capped. Capping the height of a
         box with `aspect-ratio` shrinks its WIDTH instead and leaves a dead
         strip beside it — that bug is in this log twice already. */
-  @media (max-width:860px){
+  @media (max-width:1140px){
     .lib-body{ grid-template-columns:1fr; height:auto; }
     .lib-pane{ min-height:60vh; }
+    .lib-right{ grid-template-rows:none; max-width:460px; }
   }
-  /* The collection rail can be one row or two (a collection with more than one
-     view carries them beneath it), so the actions align to the TOP and hold the
-     collection chips' own height — otherwise they jump half a row the moment an
-     operator opens Scripture. */
-  .lib-topline{ display:flex; align-items:flex-start; gap:16px; flex-wrap:wrap; }
-  .lib-spring{ flex:1; }
+  /* THE ONE CHROME ROW. Everything on it is 34px or shorter and centred on one
+     baseline, so the row reads as a single band rather than as a stack that
+     happens to be short. It wraps rather than scrolls: a collection chip that
+     has gone off the right edge is a collection an operator cannot reach. */
+  .lib-topline{ display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+  .lib-spring{ flex:1 1 0; min-width:0; }
   .lib-topactions{ display:flex; gap:8px; flex-shrink:0; align-items:center; height:34px; }
   .lib-importmsg{ font-size:11.5px; color:var(--v-emerald); margin-top:-4px; }
   /* Failures are rose — never the emerald success line above them. */
   .lib-importerr{ font-size:11.5px; color:var(--v-red); margin-top:-4px; }
   .lib-nopane{ margin:0; padding:18px 4px; font-size:var(--v-fs-b2); color:var(--v-red); }
 
-  /* The filter bar. Every control is 40px so the row has one baseline. */
-  .lib-filters{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
-  .lib-tr{ width:120px; flex:0 0 auto; }
-  .lib-f{ width:150px; flex:0 0 auto; }
-  .lib-v{ width:126px; flex:0 0 auto; }
-  .lib-filter{ height:40px; flex:0 0 auto; }
-  .lib-filter.on{ border-color:var(--v-accent-line); color:var(--v-accent2); background:var(--v-accent-soft); }
-  .lib-more{ width:40px; height:40px; }
-  .lib-search{ position:relative; display:flex; align-items:center; flex:1 1 280px; min-width:220px; max-width:420px; }
+  .lib-more{ width:30px; height:30px; }
+  .lib-search{ position:relative; display:flex; align-items:center; flex:1 1 240px;
+    min-width:200px; max-width:360px; }
   .lib-search svg{ position:absolute; left:13px; color:var(--v-faint); pointer-events:none; }
   .lib-search input{ padding-left:36px; }
 

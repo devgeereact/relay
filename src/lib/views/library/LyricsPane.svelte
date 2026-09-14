@@ -260,6 +260,31 @@
   $: songIsLive = !!song && liveRef.startsWith(`${song.title} ·`);
   $: queuedRefs = new Set(queue.map((q) => q.reference));
 
+  /**
+   * ONE PRESS SELECTS (REBRAND §2/§10) — see the note on `VerseDeck`'s `press`.
+   *
+   * A LYRIC SLIDE PROJECTS THE LYRIC. `hideReference` is already true on every
+   * slide of this deck, and the inspector's preview honours it the same way, so
+   * the section label reaches the grid, the card and this pane and stops there
+   * (DECISIONS §73). Scripture is the opposite and `Browse` does the opposite.
+   */
+  let selectedRef = '';
+  function selectSlide(item) {
+    selectedRef = item.reference;
+    onSelect({
+      kind: 'song',
+      title: item.label,
+      titleLabel: 'Name',
+      hotkey: item.hotkey ?? null,
+      words: item.text ?? '',
+      // The reference is the operator's bookkeeping, never the room's.
+      slide: { reference: null, text: item.text ?? '' },
+      reference: item.reference,
+      songId: song?.id ?? null,
+      plan: song ? { cueType: 'song', label: song.title, payload: {} } : null,
+    });
+  }
+
   function toggleQueue(item) {
     if (queue.some((q) => q.reference === item.reference)) {
       onQueueChange(queue.filter((q) => q.reference !== item.reference));
@@ -364,6 +389,11 @@
         </div>
 
         {#if song}
+          <!-- THE DOCK HEAD (REBRAND §10): how many, and what a press does. -->
+          <span class="ly-legend r-mono">
+            {slides.length} item{slides.length === 1 ? '' : 's'} · single click cues ·
+            double click opens
+          </span>
           <div class="r-seg" role="group" aria-label="Layout">
             <button class:on={layout === 'grid'} aria-label="Grid" on:click={() => (layout = 'grid')}>
               <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><rect x="3" y="3" width="7" height="7" rx="1.4" /><rect x="14" y="3" width="7" height="7" rx="1.4" /><rect x="3" y="14" width="7" height="7" rx="1.4" /><rect x="14" y="14" width="7" height="7" rx="1.4" /></svg>
@@ -476,6 +506,10 @@
               busyRef={firing}
               {layout}
               showStar={false}
+              press="select"
+              {selectedRef}
+              onSelect={selectSlide}
+              onOpen={editSlide}
               can={{ queue: true, favourite: false, edit: true, duplicate: true, add: true, move: true, select: false }}
               onFire={fire}
               onQueue={toggleQueue}
@@ -588,6 +622,19 @@
     flex: 1;
     min-width: 140px;
   }
+  /* Furniture, not a heading — and the first thing to go when the head wraps. */
+  .ly-legend {
+    flex: 0 1 auto;
+    min-width: 0;
+    font-size: var(--v-fs-cap);
+    color: var(--v-faint);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  @media (max-width: 1240px) { .ly-legend { display: none; } }
   .ly-where b {
     display: block;
     font-size: 15px;
