@@ -121,6 +121,10 @@ pub const PROTECTED: &[(&str, &str)] = &[
     ("delete_media", "deleting a media file"),
     ("delete_voice_profile", "deleting a voice profile"),
     ("delete_service", "erasing a recorded service"),
+    // Removing the demo set deletes plans, songs, notices, saved verses and a
+    // media file in one press — the most irreversible thing on this list per click,
+    // and two clicks from the transport.
+    ("remove_demo_content", "removing Relay's demo content"),
     // ── Takes the engine away mid-sermon ────────────────────────────────────
     ("download_model", "downloading a speech model"),
     ("select_stt_model", "changing the speech model"),
@@ -132,6 +136,11 @@ pub const PROTECTED: &[(&str, &str)] = &[
     ("set_active_translation", "changing the Bible translation"),
     ("import_media", "importing media"),
     ("save_reviewed_songs", "saving an import"),
+    // Not the speech engine — the CONTENT the operator is running from. Loading the
+    // demo set drops a service plan, three songs, three notices, five saved verses
+    // and a background into the Library and the Planner mid-sermon. Same class as
+    // `save_reviewed_songs` above, and the same answer.
+    ("load_demo_content", "loading Relay's demo content"),
 ];
 
 /// The phrase for a protected command, or `None` if it is not protected.

@@ -668,6 +668,48 @@ export async function exportDiagnostics() {
 }
 
 /**
+ * DEMO CONTENT — the sample service a church can load to try Relay, and remove.
+ *
+ * Three wrappers, in two different groups on purpose.
+ *
+ * `demoStatus` is a read and swallows: a panel that cannot say what is loaded is a
+ * cosmetic loss, and the safe default (`loaded: false`) makes the surface offer
+ * *Load* rather than *Remove* — the direction that cannot destroy anything.
+ *
+ * `loadDemoContent` and `removeDemoContent` are GROUP 1 — THROWS. Neither changes
+ * what a congregation sees, so they are here for the reason `exportDiagnostics` is:
+ * a bulk write or a bulk delete that failed in silence leaves an operator pressing
+ * a button and watching nothing happen, with no reason given. `removeDemoContent`
+ * also RETURNS counts the caller has to render — `{ removed, kept }` — because a
+ * demo item they had edited is kept rather than deleted, and finding that out for
+ * themselves later is exactly the kind of surprise this feature must not create.
+ *
+ * Both are refused outright while a service is recording (`servicelock.rs`); the
+ * typed `Refused` error carries the sentence that says how to proceed, and
+ * `errors.js` is what turns it into words.
+ */
+export async function demoStatus() {
+  return guardedRead('demoStatus', (call) => call('demo_status'), {
+    loaded: false,
+    total: 0,
+    edited: 0,
+    groups: [],
+  });
+}
+
+/** Load the demo dataset. GROUP 1 — THROWS. Returns the new status. */
+export async function loadDemoContent(date) {
+  const call = await invoke();
+  return call('load_demo_content', { date: date ?? new Date().toISOString().slice(0, 10) });
+}
+
+/** Remove it again. GROUP 1 — THROWS. Returns `{ removed, kept, files }`. */
+export async function removeDemoContent() {
+  const call = await invoke();
+  return call('remove_demo_content');
+}
+
+/**
  * The state of Relay's African-language support, measured from the shipped data.
  *
  * Read-only, so it swallows: a language report that could take Settings down would

@@ -326,3 +326,34 @@ CREATE TABLE voice_profiles (
     bias_terms  TEXT NOT NULL DEFAULT '',              -- extra decoder-bias vocab (church name, phrases)
     is_active   INTEGER NOT NULL DEFAULT 0             -- exactly one row is active at a time
 );
+
+-- ===== Demo content, and the ledger that lets it be taken back (db/demo.rs) =====
+--
+-- A church evaluating Relay has an empty database and nothing to press. This is
+-- the sample service they can load, and — the part that matters — remove again.
+--
+-- **NOTHING LOADS THIS.** Not `init_fresh`, not a migration, not an empty
+-- database. It is written only by the `load_demo_content` command, which an
+-- operator presses in Settings → History & Backup. A fresh install has this table
+-- and no rows in it, which is what `the_bare_fixture_is_a_first_launch_and_nothing_more`
+-- and `a_fresh_install_carries_no_demo_content` both hold.
+--
+-- The ledger is the MARKER. A name prefix is not: the demo plan is called
+-- "Demo · Sunday Morning Service" so an operator can tell it from their own at a
+-- glance, but they may rename it, and a removal keyed on a title would then
+-- either miss it or take one of theirs. `(table_name, row_id)` cannot be renamed.
+--
+-- `fingerprint` is the row's content as it was SEEDED (a sha-256 over the fields
+-- an operator can edit, cues and sections included). On removal a row whose
+-- fingerprint still matches is deleted; one that has changed is KEPT and released
+-- from the ledger, because it now contains work somebody did and this product has
+-- no undo. The removal report says how many of each.
+CREATE TABLE demo_content (
+    id          INTEGER PRIMARY KEY,
+    table_name  TEXT NOT NULL,           -- 'service_plans' | 'songs' | 'announcements'
+                                         -- | 'saved_scripture' | 'media_assets'
+    row_id      INTEGER NOT NULL,
+    fingerprint TEXT NOT NULL,           -- sha-256 of the row as seeded
+    loaded_at   TEXT NOT NULL DEFAULT '',
+    UNIQUE (table_name, row_id)
+);

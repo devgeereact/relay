@@ -10,6 +10,10 @@
 //! lives in — the split is for the people reading it, not for the call sites.
 
 mod channels;
+/// The demo dataset an operator can load and remove. **Nothing here calls it** —
+/// see `demo.rs`. Exposed as a module rather than glob-reexported because `load`,
+/// `remove` and `status` are names that would collide with half of `db::`.
+pub mod demo;
 mod environments;
 mod library;
 mod plans;
@@ -357,6 +361,9 @@ fn ensure_tables(conn: &Connection) -> rusqlite::Result<()> {
     ensure_service_events(conn)?; // the service timeline + latency snapshots
     ensure_environment_profiles(conn)?; // a room, remembered
     ensure_history_indexes(conn)?; // the foreign keys every history query walks
+                                   // The demo ledger. The TABLE is created for every install; nothing puts a row
+                                   // in it but the `load_demo_content` command (db/demo.rs).
+    demo::ensure_demo_ledger(conn)?;
     Ok(())
 }
 
@@ -633,6 +640,8 @@ pub fn init_fresh(conn: &Connection) -> rusqlite::Result<()> {
     seed(conn)?;
     // Guarantee an active voice profile exists even on a bare in-memory DB.
     ensure_tables(conn)?;
+    // NOTHING SEEDS DEMO CONTENT HERE, and nothing ever may. `db::demo::load` has
+    // exactly one caller, the `load_demo_content` command an operator presses.
     // Stamp it, so a brand-new DB is never mistaken for a v0 one and put through
     // the legacy sniff-based forward-fills it has no need of.
     set_user_version(conn, SCHEMA_VERSION)?;

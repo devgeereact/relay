@@ -60,6 +60,32 @@ If the bar does not move, Relay cannot hear, and nothing else on this page will 
 
 > **Use the sound desk feed if you can**, not the laptop's built-in mic. The laptop mic mostly hears the room; the desk feed hears the preacher.
 
+### 5. Something to press, if you want it
+
+**Settings → History & Backup → Demo content → Load demo content.**
+
+A brand-new Relay is empty, which makes it hard to tell a working install from a broken one. This
+adds one sample Sunday so every workspace has something real in it: a service plan with four
+sections (Gathering · The Word · Response · Sending), a countdown, two notices, three hymns, two
+scripture cues — one of them a passage, so Next and Back have somewhere to walk — and a background
+image. The songs, notices and saved verses behind it land in the Library too.
+
+Three things to know:
+
+- **It is all named `Demo · …`**, so you can tell it from your own at a glance. The saved verses are
+  the exception: their names are real Bible references and they stay real ones.
+- **It never loads itself.** A fresh install, an update and a repaired database all arrive with none
+  of it. It appears when you press the button and at no other time.
+- **It adds no service history.** Nothing it writes will ever appear as a service that happened.
+  Your first entry under Past services will be your first real one.
+
+**Removing it** is the same panel. Relay deletes exactly what it added — and **anything you have
+since edited, it keeps**, because that is your work now and Relay has no undo. It tells you how many
+of each. A kept item is an ordinary Library entry from then on; delete it yourself if you do not
+want it.
+
+Both actions are held back while a service is recording, like every other deletion and bulk import.
+
 ---
 
 ## The Sunday morning path
