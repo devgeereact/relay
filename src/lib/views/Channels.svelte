@@ -568,6 +568,7 @@
             {#each cards as k (k.c.id)}
               <div class="ch-card" class:sel={k.c.id === selId} class:down={k.d.kind === 'down'}
                 role="button" tabindex="0" aria-label="{k.c.name} — {k.d.label}"
+                aria-pressed={k.c.id === selId}
                 on:click={() => (selId = selId === k.c.id ? null : k.c.id)}
                 on:keydown={(e) => {
                   // Only the card itself. Without this, Space inside the template
