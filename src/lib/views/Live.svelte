@@ -1850,9 +1850,16 @@
   /* The view controls sit UNDER the rail, not in a band of their own. They change
      how the console looks and never what reaches a screen, so they get the
      quietest corner of the desk rather than a row across it. */
-  .rail-col .view-ctl{flex:0 0 auto; margin-bottom:0; justify-content:stretch}
-  .rail-col .seg{flex:1}
+  /* Three controls do not fit across a 206px rail: measured in the browser, the
+     row wanted 135px inside 114px and `Compact` was clipped to `Compa` — a
+     control cut mid-word, which is the defect the 2026-09-10 pass found as
+     `Stream` / `ing`. The row wraps instead, and the full-screen button takes
+     the second line whole rather than being sliced by the rail's edge. */
+  .rail-col .view-ctl{flex:0 0 auto; margin-bottom:0; justify-content:stretch;
+    flex-wrap:wrap; row-gap:6px}
+  .rail-col .seg{flex:1 1 100%}
   .rail-col .seg button{flex:1; text-align:center}
+  .rail-col .view-fs{flex:1 1 100%}
 
   .pane{display:flex; flex-direction:column; min-height:0; overflow:hidden;
     background:var(--v-surf); border:1px solid var(--v-line); border-radius:var(--v-r-lg);
