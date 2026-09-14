@@ -170,6 +170,82 @@ describe('§10 · the DEFAULT is unchanged, so no other surface moved', () => {
   });
 });
 
+describe('the bulk tick box is deliberate, not a ghost', () => {
+  // DECISIONS §76 removed three selection tick boxes that led nowhere. This one
+  // does not: it feeds "Queue N selected" in the head of both scripture panes.
+  // But a permanent grey square in the corner of every card is indistinguishable
+  // from one of those at a glance — and now that a single press SELECTS into the
+  // inspector, a second differently-shaped "select" on the same card is two
+  // meanings for one word. So it is quiet until it is wanted.
+  const read = () =>
+    readFileSync(join(process.cwd(), 'src/lib/views/library/VerseDeck.svelte'), 'utf8');
+
+  it('stays in the DOM, so it keeps its tab order and its accessible name', async () => {
+    const VerseDeck = (await import('./views/library/VerseDeck.svelte')).default;
+    const { host, done } = mount(VerseDeck, { items: [VERSE], layout: 'grid', press: 'select' });
+    await tick();
+    const box = host.querySelector('.vd-check input');
+    expect(box).toBeTruthy();
+    expect(box.getAttribute('aria-label')).toMatch(/John 3:16/);
+    // `opacity`, never `display:none` — a control removed from the a11y tree to
+    // tidy a grid is a control a keyboard operator cannot reach.
+    expect(read()).not.toMatch(/\.vd-check\s*\{[^}]*display:\s*none/);
+    done();
+  });
+
+  it('is revealed by hover, by focus, and by a selection already under way', () => {
+    const css = read();
+    expect(css).toMatch(/\.vd-check\s*\{[^}]*opacity:\s*0/);
+    for (const trigger of [
+      /\.vd-card:hover \.vd-check/,
+      /\.vd-check:focus-within/,
+      /\.vd-check\.armed/,
+      /\.vd-check:has\(input:checked\)/,
+    ]) {
+      expect(css, `no rule reveals it for ${trigger}`).toMatch(trigger);
+    }
+  });
+
+  it('and once ONE is ticked, every card shows its box — a mode looks like one', async () => {
+    const VerseDeck = (await import('./views/library/VerseDeck.svelte')).default;
+    const { host, app, done } = mount(VerseDeck, {
+      items: [VERSE, { ...VERSE, reference: 'John 3:17', label: 'John 3:17', slideNo: 2 }],
+      layout: 'grid',
+      press: 'select',
+      checked: new Set(),
+    });
+    await tick();
+    expect([...host.querySelectorAll('.vd-check.armed')]).toHaveLength(0);
+
+    app.$set({ checked: new Set(['John 3:16']) });
+    await tick();
+    // BOTH, not just the ticked one: counting a selection means seeing the boxes
+    // that are not filled as well as the ones that are.
+    expect([...host.querySelectorAll('.vd-check.armed')]).toHaveLength(2);
+    done();
+  });
+
+  it('the panes that show it have a bulk action behind it, and the rest turn it off', () => {
+    const owns = (p) =>
+      readFileSync(join(process.cwd(), p), 'utf8');
+    // Scripture and Browse offer "Queue N selected".
+    for (const p of [
+      'src/lib/views/library/Browse.svelte',
+      'src/lib/views/library/Scripture.svelte',
+    ]) {
+      expect(owns(p), `${p} shows a tick box with nothing behind it`).toMatch(/queueChecked/);
+    }
+    // The other three pass `select: false` — DECISIONS §76's three dead boxes.
+    for (const p of [
+      'src/lib/views/library/LyricsPane.svelte',
+      'src/lib/views/library/MediaLibrary.svelte',
+      'src/lib/views/library/Announcements.svelte',
+    ]) {
+      expect(owns(p), `${p} shows a tick box with no bulk action`).toMatch(/select: false/);
+    }
+  });
+});
+
 describe('§10 · every Library pane opts in, and the deck says which', () => {
   // A SOURCE assertion, because the failure it guards against is a sixth pane
   // added next year that renders this deck and forgets the prop. That pane would

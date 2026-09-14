@@ -55,8 +55,6 @@
   /** Bound to the shell's filter bar — one piece of state, two controls. */
   export let book = null;
   export let chapter = 1;
-  export let verse = null;
-  export let verseCount = 0;
   /** The Library's one search box. */
   export let query = '';
   /** Only verses already in Favourites. Bound: the control is in this pane's
@@ -136,9 +134,6 @@
     lastPlace = `${book}|${chapter}`;
     open(book, chapter);
   }
-  // The verse picker scrolls; it does not fire. Where to look and what a
-  // congregation sees are different decisions.
-  $: if (verse) jumpTo(verse);
 
   async function runSearch(q) {
     if (!q?.trim()) {
@@ -332,7 +327,6 @@
   $: searchMode = !!query?.trim();
   $: base = passage ? inRange(verses, passage) : searchMode ? results : verses;
   $: source = favouritesOnly ? base.filter((v) => isSaved(v, savedList)) : base;
-  $: verseCount = verses.length;
   $: sorted =
     sort === 'length'
       ? [...source].sort((a, b) => a.text.length - b.text.length)
@@ -413,8 +407,32 @@
              different thing entirely, so whichever one an operator believed, one
              of them was lying. Removed rather than relabelled: the rail is the
              book picker, and it needed no third way to pick one. -->
+        <!-- THE TRANSLATION LIVES WITH THE BOOKS. It is a fact about the corpus
+             on the rail above it — which Bible these books ARE — not a filter on
+             the chapter in the grid, and putting it here is what let the pane
+             head become one row instead of two. The count that used to sit here
+             was a third copy of "Books (13)", six pixels above it. -->
         <div class="br-panelfoot">
-          <span class="r-mono br-count">{books.length} books</span>
+          <label class="br-tr">
+            <span class="r-lbl">Translation</span>
+            {#if translations.length}
+              <select
+                class="r-select sm"
+                aria-label="Translation"
+                disabled={translations.length < 2}
+                value={activeTranslation}
+                on:change={(e) => onTranslation(Number(e.currentTarget.value))}>
+                {#each translations as t}
+                  <option value={t.id}>{t.abbreviation || t.name}</option>
+                {/each}
+              </select>
+            {:else}
+              <!-- An EMPTY SELECT is not a translation picker; it is a blank box
+                   that reads as broken. Until the corpus answers, say what is
+                   bundled and offer no choice, because there is not one yet. -->
+              <span class="r-mono br-tronly">KJV</span>
+            {/if}
+          </label>
         </div>
       </nav>
 
@@ -424,62 +442,59 @@
              and what a press on one does — said where the press happens, because
              a legend an operator has to remember is a legend they will not. -->
         <header class="br-mainhead">
-          <div class="br-where">
-            <b>{heading}</b>
-            <span>{subheading}</span>
-          </div>
+          <!-- ONE LINE. The heading used to carry a second line saying "4
+               verses" while the legend beside it said "4 ITEMS" and the footer
+               below said "4 verses" — one count, three places, and the stack of
+               them is what made this head two rows deep. The count now lives in
+               the legend, where §10 puts it, and the heading is the place. -->
+          <b class="br-where">{heading}</b>
 
           {#if checked.size}
             <!-- The bulk actions REPLACE THE LEGEND, not the navigation. They
                  used to replace the Sort control, and when the translation,
-                 chapter and verse pickers moved onto this row that same `{:else}`
-                 would have taken the Bible's navigation away from an operator who
-                 had ticked a verse — reachable again only by clearing a selection
-                 they might want to keep. The legend is the one thing here that is
-                 furniture. -->
+                 chapter picker moved onto this row that same `{:else}` would have
+                 taken the Bible's navigation away from an operator who had ticked
+                 a verse — reachable again only by clearing a selection they might
+                 want to keep. The legend is the one thing here that is furniture. -->
             <button class="r-btn primary sm" on:click={queueChecked}>
               Queue {checked.size} selected
             </button>
             <button class="r-btn ghost sm" on:click={() => (checked = new Set())}>Clear</button>
           {:else}
+            <!-- THE DOCK HEAD'S CAPTION (§10): how many, and what a press does.
+                 It is the flexible element on this row and ellipsises before any
+                 control is pushed off it, because it is the one thing here an
+                 operator reads once and then knows. -->
             <span class="br-legend r-mono">
-              {numbered.length} item{numbered.length === 1 ? '' : 's'} · single click cues ·
-              double click opens
+              {subheading} · single click cues · double click opens
             </span>
           {/if}
 
-          <!-- Moved off the shell's deleted filter bar: a translation, a
-               chapter, a verse and Favourites are all facts about SCRIPTURE,
-               and only this pane has any. -->
-          <select
-            class="r-select sm br-sel"
-            aria-label="Translation"
-            disabled={translations.length < 2}
-            value={activeTranslation}
-            on:change={(e) => onTranslation(Number(e.currentTarget.value))}>
-            {#each translations as t}
-              <option value={t.id}>{t.abbreviation || t.name}</option>
-            {/each}
-            {#if !translations.length}<option>KJV</option>{/if}
-          </select>
+          <!-- Moved off the shell's deleted filter bar. The translation went one
+               step further, to the rail footer, because it describes the corpus
+               rather than the chapter — see the note there. The VERSE picker is
+               gone: it scrolled to a verse and fired nothing, and the Library's
+               one search box already does that better ("Genesis 1:3" jumps
+               there, and a range filters the grid). Two controls for one job,
+               and one of them was the box the operator is already looking at —
+               the same argument that deleted the book select. -->
           <select class="r-select sm br-sel" aria-label="Chapter" bind:value={chapter}>
             {#each Array(chapterCount) as _, i}
               <option value={i + 1}>Chapter {i + 1}</option>
             {/each}
           </select>
-          <select class="r-select sm br-sel" aria-label="Verse" bind:value={verse} disabled={!verseCount}>
-            <option value={null}>All verses</option>
-            {#each Array(verseCount) as _, i}
-              <option value={i + 1}>Verse {i + 1}</option>
-            {/each}
-          </select>
+          <!-- Icon-only, and named twice over: a toggle whose STATE is the whole
+               message does not need to spell its name beside it on a row that
+               has no room. `aria-pressed` and the label carry it for anyone who
+               cannot see the fill. -->
           <button
-            class="r-btn ghost sm br-fav"
+            class="r-iconbtn br-fav"
             class:on={favouritesOnly}
             aria-pressed={favouritesOnly}
+            aria-label="Favourites only"
+            title={favouritesOnly ? 'Showing favourites only' : 'Show favourites only'}
             on:click={() => (favouritesOnly = !favouritesOnly)}>
-            <svg width="13" height="13" viewBox="0 0 24 24" fill={favouritesOnly ? 'currentColor' : 'none'} stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h12v18l-6-4.5L6 21z" /></svg>
-            Favourites
+            <svg width="14" height="14" viewBox="0 0 24 24" fill={favouritesOnly ? 'currentColor' : 'none'} stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h12v18l-6-4.5L6 21z" /></svg>
           </button>
           <select class="r-select sm br-sel" bind:value={sort} aria-label="Sort">
             <option value="verse">Verse order</option>
@@ -590,30 +605,41 @@
   .br-all:hover { border-color: var(--v-line2); }
   .br-all.on { border-color: var(--v-accent-line); background: var(--v-accent-soft); }
   .br-all .ct { font-size: 10.5px; color: var(--v-faint); }
-  .br-sel { width: auto; max-width: 132px; height: 24px; padding: 0 26px 0 8px; font-size: 11px;
+  .br-sel { width: auto; max-width: 122px; height: 24px; padding: 0 24px 0 8px; font-size: 11px;
     flex: 0 0 auto;
-    background-position: calc(100% - 13px) 10px, calc(100% - 8px) 10px; }
-  .br-fav { flex: 0 0 auto; }
+    background-position: calc(100% - 12px) 10px, calc(100% - 7px) 10px; }
+  .br-fav { flex: 0 0 auto; width: 24px; height: 24px; }
   .br-fav.on { border-color: var(--v-accent-line); color: var(--v-accent2); background: var(--v-accent-soft); }
+  /* The translation, in the rail footer with the books it describes. */
+  .br-tr { display: flex; align-items: center; gap: 8px; }
+  .br-tr .r-lbl { margin: 0; flex: 1; min-width: 0; }
+  .br-tr .r-select { width: auto; max-width: 96px; height: 24px; padding: 0 24px 0 8px;
+    font-size: 11px; flex: 0 0 auto;
+    background-position: calc(100% - 12px) 10px, calc(100% - 7px) 10px; }
+  .br-tronly { font-size: 11px; color: var(--v-dim); }
   .br-pager { flex-wrap: wrap; }
   .br-panelfoot { padding: 10px; border-top: 1px solid var(--v-line); }
 
   /* ── The chapter ───────────────────────────────────────────────────────── */
+  /* ONE ROW, and `nowrap` is the assertion. This head wrapped, and what it
+     wrapped INTO was a second band of chrome above the first slide — the thing
+     §10 is about. Nothing here may wrap: the two flexible items shrink and
+     ellipsise instead, and every control keeps its own width. */
   .br-mainhead {
-    display: flex; align-items: center; gap: 8px; padding: 9px 12px; flex-wrap: wrap;
+    display: flex; align-items: center; gap: 8px; padding: 8px 12px; flex-wrap: nowrap;
     border-bottom: 1px solid var(--v-line);
   }
-  .br-where { flex: 1 1 160px; min-width: 0; }
-  /* The legend is furniture, not a heading: mono, faint, and it gives way before
-     any control does when the head has to wrap. */
+  .br-where {
+    flex: 0 1 auto; min-width: 0; font-size: 14px; font-weight: 600; color: var(--v-txt);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  /* The legend is furniture, not a heading: mono, faint, and it is the FIRST
+     thing to give up width, before any control loses its label or its place. */
   .br-legend {
-    flex: 0 1 auto; min-width: 0; font-size: var(--v-fs-cap); color: var(--v-faint);
+    flex: 1 1 auto; min-width: 0; font-size: var(--v-fs-cap); color: var(--v-faint);
     text-transform: uppercase; letter-spacing: .08em;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
-  @media (max-width: 1240px) { .br-legend { display: none; } }
-  .br-where b { display: block; font-size: 15px; font-weight: 600; color: var(--v-txt); }
-  .br-where span { font-size: var(--v-fs-cap); color: var(--v-faint); }
   .br-body {
     flex: 1; min-height: 0; overflow-y: auto; padding: 12px;
     display: flex; flex-direction: column; gap: 8px;

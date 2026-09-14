@@ -70,13 +70,24 @@ describe('the shell carries ONE chrome row', () => {
 describe('every control the row carried still exists, on a surface that owns it', () => {
   const bible = markup(BIBLE);
 
-  it('translation, chapter, verse, Favourites and Sort are in the Bible pane', () => {
-    for (const label of ['Translation', 'Chapter', 'Verse', 'Sort']) {
+  it('chapter, Favourites and Sort are in the Bible pane head', () => {
+    for (const label of ['Chapter', 'Sort']) {
       expect(bible, `${label} left the shell and did not arrive`).toMatch(
         new RegExp(`aria-label="${label}"`),
       );
     }
     expect(bible).toMatch(/aria-pressed=\{favouritesOnly\}/);
+    // Icon-only, so it is named for anyone who cannot see the fill.
+    expect(bible).toMatch(/aria-label="Favourites only"/);
+  });
+
+  it('and the translation is in the rail footer, with the books it describes', () => {
+    // It went one step further than the others: it says which Bible these books
+    // ARE, which is a fact about the corpus on the rail rather than a filter on
+    // the chapter in the grid — and moving it is what let the pane head become
+    // one row instead of two.
+    const rail = bible.slice(bible.indexOf('br-panelfoot'), bible.indexOf('br-mainhead'));
+    expect(rail).toMatch(/aria-label="Translation"/);
   });
 
   it('and they are reachable while a bulk selection is active', () => {
@@ -87,11 +98,22 @@ describe('every control the row carried still exists, on a surface that owns it'
     const guard = head.indexOf('{#if checked.size}');
     const close = head.indexOf('{/if}', guard);
     const inside = head.slice(guard, close);
-    for (const label of ['Translation', 'Chapter', 'Verse', 'Sort']) {
+    for (const label of ['Chapter', 'Sort']) {
       expect(inside, `${label} is hidden while verses are ticked`).not.toContain(
         `aria-label="${label}"`,
       );
     }
+  });
+
+  it('the pane head may not WRAP, because what it wraps into is a second row', () => {
+    // The whole of §10 for this workspace is "not four bands of chrome above the
+    // first slide". A head that wraps puts one of them back, and it does it
+    // silently at whatever width the operator happens to have.
+    expect(bible).toMatch(/\.br-mainhead\s*\{[^}]*flex-wrap:\s*nowrap/);
+    // Two flexible items absorb the shortfall instead, and the legend — the one
+    // thing here that is furniture — is the one that gives way first.
+    expect(bible).toMatch(/\.br-legend\s*\{[^}]*flex:\s*1 1 auto[^}]*min-width:\s*0/);
+    expect(bible).toMatch(/\.br-legend\s*\{[^}]*text-overflow:\s*ellipsis/);
   });
 
   it('Import and New Item stay in the shell, where they act on the whole library', () => {
@@ -133,10 +155,15 @@ describe('the book select was deleted, not moved', () => {
 });
 
 describe('the slide grid says how many, and what a press does', () => {
-  it('the Bible pane prints the item count and the press legend together', () => {
-    expect(markup(BIBLE)).toMatch(/single click cues/);
-    expect(markup(BIBLE)).toMatch(/double click opens/);
-    expect(markup(BIBLE)).toMatch(/item\{numbered\.length === 1 \? '' : 's'\}/);
+  it('the Bible pane prints the count and the press legend as ONE caption', () => {
+    const bible = markup(BIBLE);
+    expect(bible).toMatch(/\{subheading\} · single click cues · double click opens/);
+    // And the count is said ONCE. It used to be the heading's second line, the
+    // legend's "N ITEMS" and the footer's "N verses" — one fact, three places,
+    // stacked, which is what made this head two rows deep.
+    expect(bible, 'the heading still carries a second line').not.toMatch(
+      /<span>\{subheading\}<\/span>/,
+    );
   });
 
   it('and the Bible opens in the GRID, like the other four panes', () => {

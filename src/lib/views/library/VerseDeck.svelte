@@ -89,6 +89,9 @@
   export let onSelect = () => {};
 
   $: selects = press === 'select';
+  /** Is a bulk selection under way? If so every card shows its box, not just
+      the one under the pointer — a mode should look like one. */
+  $: anyChecked = checked?.size > 0;
   /** What the primary press on a card does, said the same way in every label. */
   const verb = (v, sel) =>
     sel ? `Select ${v.label ?? v.reference}` : `Put ${v.reference} on the screens`;
@@ -279,8 +282,23 @@
              "checkbox, unchecked" against every row in the deck, with nothing to say
              which row. The `title` on the label is not an accessible name for the
              input inside it. -->
+        <!-- THE BULK TICK BOX IS NOT ALWAYS DRAWN, AND THAT IS THE POINT.
+             It drives a real action — "Queue N selected", in the head of both
+             scripture panes — so it is not one of the dead selection boxes
+             DECISIONS §76 removed. But a permanent grey square in the corner of
+             every card is indistinguishable from one of those at a glance, and
+             since a single press on a Library card now SELECTS into the
+             inspector, a second differently-shaped thing called "select" on the
+             same card is two meanings for one word.
+
+             So it is quiet until it is wanted: revealed on hover, on
+             `:focus-within` (a keyboard operator must be able to find it), and
+             on every card at once the moment one is ticked — because a bulk
+             selection is a mode, and a mode should look like one. It stays in
+             the DOM throughout rather than being conditionally rendered, so it
+             keeps its place in the tab order and its accessible name. -->
         {#if can.select !== false}
-          <label class="vd-check" title="Select for a bulk action">
+          <label class="vd-check" class:armed={anyChecked} title="Select for a bulk action">
             <input
               type="checkbox"
               aria-label={`Select ${v.label ?? v.reference} for a bulk action`}
@@ -535,6 +553,23 @@
     width: 20px;
     height: 20px;
     cursor: pointer;
+    /* Quiet until wanted. `opacity`, never `display`, so the input keeps its
+       place in the tab order and its accessible name the whole time. */
+    opacity: 0;
+    transition: opacity 0.14s;
+  }
+  .vd-card:hover .vd-check,
+  .vd-check:focus-within,
+  .vd-check.armed {
+    opacity: 1;
+  }
+  /* A ticked card shows its tick whatever the pointer is doing — an invisible
+     checked box is a selection an operator cannot count. */
+  .vd-check:has(input:checked) {
+    opacity: 1;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .vd-check { transition: none; }
   }
   .vd-check input {
     position: absolute;
