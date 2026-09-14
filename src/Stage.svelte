@@ -304,6 +304,39 @@
       ws.onopen = () => {
         connected = true;
         attempts = 0;
+        // ── RULE 43, ON THE ONE SCREEN THAT IS CARRIED AROUND ─────────────────
+        //
+        // `KioskHub` retains the last `content` / `clear` / `black` frame and
+        // replays it to a screen that joins mid-service — and it replays it in
+        // exactly ONE place, inside `run_kiosk_server`'s `hello` handler. A
+        // client that never says hello is never sent what it missed.
+        //
+        // This page did not say hello. It opened the socket and waited, so the
+        // preacher's phone locking its screen, dropping off the wifi for a
+        // moment, or simply being reloaded came back BLANK and stayed blank
+        // until the next fire — in the middle of the reading it exists to
+        // carry. That is RG-129's failure on the screen whose reader cannot
+        // glance at the console to find out what happened, and it is the
+        // "guarantee kept on one door" shape again: the rule, the retained
+        // frame and the hub test were all real, and all of them were about a
+        // client that says hello.
+        //
+        // NO `template_id`, deliberately. The stage monitor is not a render
+        // target of a congregation template — it draws its own zones — so it
+        // has no template to be registered or counted against, and the hub's
+        // registration branch is keyed on that id. The themes, the transition
+        // and the retained frame are sent regardless, because they are about
+        // what is ON THE SCREENS rather than which look this screen wears.
+        //
+        // Nothing private replays: `stage_alert` and `stage_next` are NOT
+        // retained frames (`channels::tests::FRAME_VERDICTS` holds both at
+        // `false`), so a word meant for the preacher cannot arrive again later,
+        // and a rehearsal publishes nothing to this hub at all.
+        try {
+          ws.send(JSON.stringify({ kind: 'hello' }));
+        } catch {
+          /* onclose retries; a failed hello must never take the page down */
+        }
       };
       ws.onmessage = (e) => {
         try { apply(JSON.parse(e.data)); } catch { /* ignore */ }
