@@ -1443,15 +1443,6 @@ await call('delete_announcement', { id });
  *
  *  Distinct from `saveAnnouncement`, which is Library CONTENT planned in advance.
  *  This one does not touch the library and is not part of any plan. */
-export async function pushAnnouncement(message) {
-const call = await invoke();
-await call('push_announcement', { message });
-// No `keepPlan`: the emergency announcement is never a plan cue, and it covers
-// every screen. If the plan rail stayed amber under it, the one indicator that
-// says what a congregation is looking at would be naming a cue nobody can see.
-leavePlan();
-}
-
 /** How many times this verse already went out in the CURRENT service.
  *
  *  GROUP 2 (swallows, returns 0). A "shown earlier" badge is an affordance, not a

@@ -99,10 +99,9 @@ describe('R2-D · who takes the plan off air', () => {
       await cap.startCountdown(5);
       expect(onAir()).toBe(false);
     });
-    it('pushAnnouncement — the EMERGENCY announcement, over every screen', async () => {
-      await cap.pushAnnouncement('Fire alarm — leave by the side door');
-      expect(onAir()).toBe(false);
-    });
+    // `pushAnnouncement` was here — the emergency announcement over every screen.
+    // Removed with its control on 2026-09-14 (operator's instruction); the command
+    // and the wrapper were deleted rather than left unreachable.
     it('navVerse — the transport step the backend performs', async () => {
       invoke.mockResolvedValue({ kind: 'fired', reference: 'John 3:17' });
       await cap.navVerse('next');

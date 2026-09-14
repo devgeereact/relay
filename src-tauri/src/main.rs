@@ -423,7 +423,6 @@ fn main() {
             clear_screens,
             blackout,
             set_stage_next,
-            push_announcement,
             set_detection_enabled,
             get_detection_enabled,
             nav,
@@ -5758,28 +5757,6 @@ fn set_stage_next<R: tauri::Runtime>(
     text: Option<String>,
 ) {
     channels::stage_next(&app, label, text);
-}
-
-/// D5: push an emergency announcement over whatever is currently shown, on every
-/// output channel. Reuses the shared content broadcast (no per-channel special-
-/// casing) so it renders through the same template engine as any slide.
-#[tauri::command]
-fn push_announcement(app: tauri::AppHandle, message: String) -> error::Result<()> {
-    let message = message.trim().to_string();
-    if message.is_empty() {
-        return Err(error::Error::refused("empty announcement"));
-    }
-    broadcast_with_clock(
-        &app,
-        OutputContent {
-            reference: "Announcement".into(),
-            text: Some(message.clone()),
-            translation: None,
-            ..Default::default()
-        },
-    )?;
-    persist_cue(&app, "announcement", Some(&message));
-    Ok(())
 }
 
 /// Manual next/previous verse (console buttons, and the `→`/`←` transport keys) —
