@@ -364,7 +364,15 @@ describe('L2 · the countdown is one block', () => {
   // a congregation is looking at something (rule 18), and this is a READOUT of a
   // countdown rather than the countdown.
   it('the block spends none of the colour law', () => {
-    const css = src.slice(src.indexOf('  .tmr {'), src.indexOf('  .cdstate {'));
+    // The boundary was `  .cdstate {`, the row wrapper C2 deleted when the state
+    // line moved into the head. A slice to a marker that is not there is
+    // `slice(a, -1)` — the whole rest of the file, which is a scan that passes
+    // for the wrong reason. Asserted, so the next removal cannot do it silently.
+    const from = src.indexOf('  .tmr {');
+    const to = src.indexOf('  .cdstatev {');
+    expect(from, 'the countdown CSS region no longer starts at .tmr').toBeGreaterThan(-1);
+    expect(to, 'the countdown CSS region no longer ends at .cdstatev').toBeGreaterThan(from);
+    const css = src.slice(from, to);
     expect(css).not.toMatch(/--v-amber|--v-amethyst|--v-cyan/);
   });
 
@@ -450,6 +458,74 @@ describe('L3 · the three tools are one card, three times', () => {
     }
     expect(heads.map((h) => h.querySelector('.r-lbl').textContent.trim()))
       .toEqual(['Countdown', 'Name band', 'Word to the preacher']);
+  });
+
+  // ── C2 · THE COUNTDOWN BLOCK, CLEANED (operator instruction 2026-09-14) ──
+  //
+  //   "Fix this quick action properly and cleanly."
+  //
+  // Three defects, all of them layout and all of them visible only at a real
+  // width — which is why the arithmetic is written into the assertions rather
+  // than left to a screenshot nobody can take on this machine:
+  //
+  //   1. `repeat(auto-fit, minmax(50px, 1fr))` lays as many tracks as FIT, so
+  //      the number of buttons per row is a function of the CARD's width. Quick
+  //      tools is `1.1fr` of `1.25+1.5+1.1+1fr`; at a 1600px desk that is ~323px
+  //      inside the block, which is five tracks — five buttons and an orphan.
+  //   2. the state line was a row of its own between the fields and the
+  //      transport, a caption for neither.
+  //   3. the field row ended in a `.qspring`, so it was the one row in the three
+  //      blocks that did not run to the card's edge.
+  //
+  // Each assertion was watched to fail with its own defect put back.
+  describe('C2 · the countdown block', () => {
+    it('every button in a row is the same width, whatever the card is', () => {
+      // `auto-fit` is the defect itself, not a detail of it: any rule that sizes
+      // tracks by available width can produce a ragged last row. What is allowed
+      // is a fixed count — `grid-auto-flow: column` (one track per button) or an
+      // explicit `repeat(<n>, …)`.
+      for (const sel of ['.qbtns', '.cdtrans']) {
+        const r = rule(sel);
+        expect(r, `${sel} has no rule`).not.toBe('');
+        expect(r, `${sel} still sizes its tracks by the card's width`).not.toMatch(/auto-fit|auto-fill/);
+      }
+      expect(rule('.qbtns'), 'the two-button rows are not one even row')
+        .toMatch(/grid-auto-flow: column[\s\S]*grid-auto-columns: minmax\(0, 1fr\)/);
+      // Six buttons cannot be six across in a ~323px card without clipping
+      // `Resume`, so the transport is three and three — still every cell equal.
+      expect(rule('.cdtrans')).toMatch(/grid-template-columns: repeat\(3, minmax\(0, 1fr\)\)/);
+      expect(rule('.cdtrans'), 'the transport inherits the column flow and runs one row of six')
+        .toMatch(/grid-auto-flow: row/);
+    });
+
+    it('the state line labels the figure, and is not a row between the fields and the buttons', async () => {
+      mount();
+      await settle();
+      const head = host.querySelector('.qblock.tmr .qhead');
+      expect(head.querySelector('.cdstatev'), 'the state word is not with the figure it labels')
+        .not.toBeNull();
+      // The figure and the word are ONE thing in the head's right-hand slot.
+      const fig = host.querySelector('.qblock.tmr .cdfig');
+      expect(fig, 'no figure stack').not.toBeNull();
+      expect(fig.querySelector('.tfig')).not.toBeNull();
+      expect(fig.querySelector('.cdstatev')).not.toBeNull();
+      // …and the orphaned row is gone from the markup and from the stylesheet.
+      expect(host.querySelector('.qrow.cdstate'), 'the orphan row is still rendered').toBeNull();
+      expect(rule('.cdstate'), '.cdstate still has a rule of its own').toBe('');
+    });
+
+    it('the field row runs to the card edge, like every other row in the three blocks', async () => {
+      // The format select takes the rest of the line — the prototype's
+      // `.tset .pick.sm { flex: 1 }` — instead of sizing to `auto` with a spring
+      // after it. Read off the rendered row, not off the source: the defect was
+      // a spring element, and an assertion on the CSS alone would miss its twin.
+      expect(rule('.cdfmt')).toMatch(/flex: 1 1 auto/);
+      mount();
+      await settle();
+      const row = host.querySelector('.qblock.tmr .qrow');
+      expect(row.querySelector('.qspring'), 'the field row still ends in a spring').toBeNull();
+      expect(row.lastElementChild.classList.contains('cdfmt')).toBe(true);
+    });
   });
 
   it('every button row is the same grid, and none of them is a wrapping flex', () => {

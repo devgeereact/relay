@@ -481,10 +481,10 @@
   // the device name as an argument, so changing it mid-capture would change a
   // label and nothing else. Disabled while live, exactly as Settings has it.
   //
-  // COLOUR: the switch is `--v-sel` (steel — the thing you are working on) and
-  // the voice chip is emerald, both already in this card. AMBER IS ON AIR and is
-  // not spent on a microphone (rule 18); a live mic is not a congregation
-  // looking at something.
+  // COLOUR: the toggle is emerald when open and the card's steel when closed,
+  // both already in this card (the voice chip is the same emerald). AMBER IS ON
+  // AIR and is not spent on a microphone (rule 18); a live mic is not a
+  // congregation looking at something.
   //
   // It cannot claim a success it did not have: `startCapture`/`stopCapture` both
   // THROW (contract group 1), `run()` puts the failure in this card's error
@@ -790,16 +790,32 @@
           <option value="">System default</option>
           {#each $capture.devices as d (d.name)}<option value={d.name}>{d.name}</option>{/each}
         </select>
-        <!-- Steel, not amber. Amber is ON AIR and a live microphone is not a
+        <!-- AN ICON TOGGLE, NOT A PILL (C2, operator instruction 2026-09-14).
+             What it DRAWS is the state: a struck-through microphone is closed, a
+             plain one is open. The word beside it and the `title` say the same
+             thing in Relay's own voice, so the control is still readable with no
+             colour at all — which a bare tinted square would not be.
+             Emerald, never amber. Amber is ON AIR and a live microphone is not a
              congregation looking at something (rule 18). -->
         <button
-          class="r-switch"
+          class="r-iconbtn audtog"
           class:on={$capture.capturing}
           role="switch"
           aria-checked={$capture.capturing}
           aria-label="Microphone"
+          title={$capture.capturing
+            ? 'Microphone open — Relay is listening. Press to stop.'
+            : 'Microphone closed — Relay is not listening. Press to start.'}
           disabled={busy || !$capture.available}
-          on:click={toggleMic}></button>
+          on:click={toggleMic}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="9" y="2" width="6" height="11" rx="3" />
+            <path d="M5 11a7 7 0 0 0 14 0" />
+            <path d="M12 18v3" />
+            {#if !$capture.capturing}<path d="M4 3.5l16 17" />{/if}
+          </svg>
+        </button>
         <span class="dcap detl">{$capture.capturing ? 'live' : 'off'}</span>
       </div>
       <div class="audrow">
@@ -822,14 +838,28 @@
              returned, fallback included: inventing a distinct "unknown" value
              would put a reading on screen that is nobody's setting. -->
         <span class="sensv r-mono">{sensitivity}</span>
+        <!-- THE SAME INSTRUMENT, ONE ROW DOWN. A struck-through target is a
+             detector that is not looking; an open one is armed. Emerald and
+             steel, the two colours already in this card — amber is ON AIR and
+             arming detection is not a claim about a screen (rule 18). -->
         <button
-          class="r-switch"
+          class="r-iconbtn audtog"
           class:on={$detectionOn}
           role="switch"
           aria-checked={$detectionOn}
           aria-label="Detection"
+          title={$detectionOn
+            ? 'Detection armed — Relay is matching what it hears against scripture. Press to turn it off.'
+            : 'Detection off — nothing is being matched against scripture. Press to arm it.'}
           disabled={busy || !$capture.available}
-          on:click={() => run(() => setDetection(!$detectionOn))}></button>
+          on:click={() => run(() => setDetection(!$detectionOn))}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="8.5" />
+            <circle cx="12" cy="12" r="2.5" />
+            {#if !$detectionOn}<path d="M4 3.5l16 17" />{/if}
+          </svg>
+        </button>
         <span class="dcap detl">{$detectionOn ? 'armed' : 'off'}</span>
       </div>
     </div>
@@ -903,14 +933,29 @@
           <!-- WHAT IS LOADED, while the figure beside it shows what is LEFT. -->
           {#if cdLive}<span class="cdset r-mono">· {cdSetLabel}</span>{/if}
           <span class="qspring"></span>
-          <span
-            class="tfig r-mono"
-            class:live={cdLive}
-            class:warn={cdWarn}
-            role="status"
-            aria-live="off"
-            title={cdLive ? 'What the screens are counting, right now.' : 'What Start would put on the screens. Nothing is counting.'}
-          >{cdText}</span>
+          <!-- THE FIGURE AND THE WORD THAT SAYS WHICH FIGURE IT IS, TOGETHER
+               (C2, operator instruction 2026-09-14). The state line used to be a
+               row of its own BETWEEN the fields and the transport, where it read
+               as a caption for neither: an orphaned `NOT COUNTING` under a set of
+               number boxes it says nothing about. It is a label for the figure,
+               so it lives under the figure. -->
+          <span class="cdfig">
+            <span
+              class="tfig r-mono"
+              class:live={cdLive}
+              class:warn={cdWarn}
+              role="status"
+              aria-live="off"
+              title={cdLive ? 'What the screens are counting, right now.' : 'What Start would put on the screens. Nothing is counting.'}
+            >{cdText}</span>
+            <!-- WHICH of the two facts the figure is. One word, beside it, because a
+                 big number with no label is the half of a status line that lies.
+                 THREE states, not two. A held countdown IS on the screens — it simply
+                 is not moving — and reading "on the screens" over a stopped figure is
+                 the half of a status line that lies (rule 35). -->
+            <span class="cdstatev" class:live={cdLive} class:held={cdPaused}
+              >{!cdLive ? 'not counting' : cdPaused ? 'on the screens · held' : 'on the screens'}</span>
+          </span>
         </div>
         <div class="qrow">
           <span class="cdfields">
@@ -941,16 +986,6 @@
             <option value="ms">m:ss</option>
             <option value="hms">h:mm:ss</option>
           </select>
-          <span class="qspring"></span>
-        </div>
-        <!-- WHICH of the two facts the figure is. One word, beside it, because a
-             big number with no label is the half of a status line that lies.
-             THREE states, not two. A held countdown IS on the screens — it simply
-             is not moving — and reading "on the screens" over a stopped figure is
-             the half of a status line that lies (rule 35). -->
-        <div class="qrow cdstate">
-          <span class="cdstatev" class:live={cdLive} class:held={cdPaused}
-            >{!cdLive ? 'not counting' : cdPaused ? 'on the screens · held' : 'on the screens'}</span>
         </div>
         <!-- Clear is NOT Clear screens. It returns this tool to its default length
              and touches nothing a congregation can see; the red control one panel
@@ -1248,6 +1283,38 @@
      shared control's, which is the whole point of the four-row column here:
      select · slider · switch all land on one line. */
   .micpick { flex: 1 1 auto; min-width: 0; }
+  /* ── THE ICON TOGGLE (C2, operator instruction 2026-09-14) ────────────────
+     "I will prefer to have an icon toggle button rather than having this big
+     switch on the audio section." The 38x21 pill is a good instrument in a
+     Settings column, where a stack of them lines up on one right edge; on a
+     dock row beside a device picker it is the widest thing on the line, and it
+     spends that width saying in a sliding knob what the word next to it already
+     says in Relay's own voice.
+
+     THE SHAPE IS THE SHARED ICON BUTTON, NOT A NEW ONE. `.r-iconbtn` is the
+     26px square `app.css` already publishes, already in its focus-ring list,
+     and already worn by the Library's Favourites toggle for exactly this job —
+     an icon-only control whose STATE is the whole message. What is declared
+     here is position and paint. No height, no radius, no border shorthand, no
+     font: the shared control owns its box (B1).
+
+     WHY IT IS A TOGGLE AND NOT A BUTTON THAT DOES A THING. `role="switch"` +
+     `aria-checked` is what a screen reader needs to hear "microphone, switch,
+     on" rather than "microphone, button" — the pill had that and losing it
+     would be a silent accessibility regression for a visual preference.
+
+     EMERALD, NEVER AMBER (rule 18). Neither a live microphone nor an armed
+     detector is a congregation looking at something. Emerald is this card's own
+     "the signal is real" colour four rows up, and the same green `.r-cbtn.golive`
+     uses for ready-but-not-yet-live. */
+  .audtog { flex: 0 0 auto; }
+  .audtog.on {
+    background: var(--v-emerald-soft); border-color: var(--v-emerald-line); color: var(--v-emerald);
+  }
+  /* The hover of the shared control tints toward the accent, which would move an
+     ARMED toggle off emerald under the pointer and read as a state change. */
+  .audtog.on:hover { color: var(--v-emerald); border-color: var(--v-emerald-line); }
+  .audtog:disabled { opacity: .45; cursor: not-allowed; }
   /* `SENS`, `ARMED`, `COUNTDOWN` (L2). This class already carried the tracking a
      line of capitals needs and then set the words in lower case, which is the one
      combination that reads as neither: the prototype's equivalent (`.cap`) is
@@ -1319,13 +1386,22 @@
   }
   .qhead { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; row-gap: 4px; }
   .qspring { flex: 1 1 auto; min-width: 0; }
-  /* ONE BUTTON ROW. `auto-fit` collapses the tracks it does not need, so two
-     buttons fill the card in halves and the countdown's six wrap into equal
-     cells — one rule, three tools, and no row that lays out differently from the
-     one above it. Never a wrapping flex of fixed-width controls: at 1024 that
-     ran the countdown figure and `Take down` 37px and 56px past this card's
-     right edge, over the Controls card beside it. A grid cannot do that. */
-  .qbtns { display: grid; grid-template-columns: repeat(auto-fit, minmax(62px, 1fr)); gap: 5px; }
+  /* ONE EVEN BUTTON ROW (C2, operator instruction 2026-09-14). Every button in
+     a row is the same width, at every width of the card, by construction:
+     `grid-auto-flow:column` gives each child its own implicit track and
+     `grid-auto-columns:minmax(0,1fr)` makes every track an equal share.
+
+     IT WAS `repeat(auto-fit, minmax(62px, 1fr))`, AND THAT IS WHY IT WAS
+     RAGGED. `auto-fit` lays as many tracks as FIT, which is a function of the
+     card's width and not of the number of buttons — so the countdown's six ran
+     five-and-one at the desk width and four-and-two on a 1280 booth laptop, a
+     full-width row above an orphan. Two buttons happened to look right because
+     two is the one count `auto-fit` cannot get wrong.
+
+     Never a wrapping flex of fixed-width controls, which is what came before
+     that: at 1024 it ran the countdown figure and `Take down` 37px and 56px past
+     this card's right edge, over the Controls card beside it. */
+  .qbtns { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 5px; }
   .qbtns > :global(button) { min-width: 0; padding: 0 6px; }
   /* A row inside a block: fields and the one-word states. Same 5px rhythm. */
   .qrow { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; row-gap: 4px;
@@ -1388,17 +1464,28 @@
   /* What Start would load, beside the name — small, and never the size of the
      figure it sits next to, which is the number that is actually on a screen. */
   .cdset { flex: 0 0 auto; font-size: var(--v-fs-cap); color: var(--v-faint); }
-  /* auto / m:ss / h:mm:ss. Sized to its content so it cannot push the fields into
-     a second line on a 1024px booth laptop, where this row already wraps.
+  /* auto / m:ss / h:mm:ss.
      WIDTH AND PADDING ONLY — the height is the shared control's (§1's reference
      table): a mixed column of a select, three fields and six buttons is exactly
      the column that table exists to keep on one line. It used to be 22px here
-     and 26px everywhere else in the same card. */
-  .cdfmt { width: auto; min-width: 0; flex: 0 0 auto; padding: 0 20px 0 6px;
+     and 26px everywhere else in the same card.
+
+     FIELDS THAT LINE UP (C2). It was `flex: 0 0 auto` with a `.qspring` after
+     it, so the field row stopped somewhere in the middle of a card whose head,
+     button row and neighbouring tools all run to the edge — the one row in the
+     three blocks that did not. It now takes the rest of the line, exactly as
+     the prototype's `.tset .pick.sm { flex: 1 }` does, and the spring is gone
+     because there is nothing left to push. */
+  .cdfmt { width: auto; flex: 1 1 auto; min-width: 0; padding: 0 20px 0 6px;
     font-size: var(--v-fs-lbl); background-position: calc(100% - 7px) center; }
-  .cdstate { margin-top: -2px; }
+  /* The figure and the word under it, right-aligned as one thing in the head's
+     right-hand slot — where the name band puts its picker and the alert puts its
+     badge. `min-width:0` so a long state word ellipses rather than wrapping the
+     head and changing the card's height. */
+  .cdfig { display: flex; flex-direction: column; align-items: flex-end; gap: 1px;
+    flex: 0 1 auto; min-width: 0; }
   .cdstatev {
-    min-width: 0 !important;
+    max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     font-family: var(--f-mono); font-size: var(--v-fs-cap);
     letter-spacing: var(--v-tr-caps); text-transform: uppercase; color: var(--v-faint);
   }
@@ -1414,10 +1501,19 @@
     .tfig.warn { animation: cdwarn 2s steps(1) infinite; }
   }
   @keyframes cdwarn { 50% { opacity: .38; } }
-  /* The transport is six buttons where the other two rows have two, so it gets a
-     narrower cell floor — width only; `.qbtns` owns the grid, the gap and the
-     rhythm. */
-  .cdtrans { grid-template-columns: repeat(auto-fit, minmax(50px, 1fr)); }
+  /* THE TRANSPORT IS THE ONE ROW THAT CANNOT BE SIX ACROSS, so it is three and
+     three — still every cell the same width, still no orphan, and the split
+     falls where the meaning does: run it, then re-aim it.
+
+     THE ARITHMETIC, because "one row" was the instruction and this is not it.
+     Quick tools is `1.1fr` of the dock's `1.25 + 1.5 + 1.1 + 1fr`, so at a
+     1600px desk the card is ~363px and this row has ~323px after the body's 9px
+     and the block's 7px. Six cells at 5px gaps is 49.7px each, and `.r-btn.sm`
+     spends 12px of that on padding: `Resume` does not fit in 37px of type at
+     1600 and has 25px at 1280. A row that clips its own labels is not clean, so
+     the honest shape is two rows that are each even. `grid-auto-flow` goes back
+     to `row` because `.qbtns` sets it to `column` for the two-button rows. */
+  .cdtrans { grid-auto-flow: row; grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .tin { width: 62px; flex: 0 0 auto; }
   .tin.wide { flex: 1 1 auto; width: auto; min-width: 0; }
   .derr { margin: 0; font-size: var(--v-fs-cap); color: var(--v-red); }

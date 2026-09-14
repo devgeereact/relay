@@ -934,51 +934,16 @@
   // held a second, differently-worded path to the same three commands; two
   // surfaces answering "which screen is the wall" is how they come to disagree.
 
-  // ── mic quality ──────────────────────────────────────────────────────────
-  // Plain-language copy for the dsp.rs warnings. The operator is a volunteer, not
-  // an audio engineer — "snr_db below 6.0" helps nobody, so every warning names
-  // the problem and the physical thing to go and do about it.
-  const QUALITY = {
-    clipping: {
-      title: 'The microphone is too loud — it’s distorting.',
-      fix: 'Turn the input gain down on the mixer. Detection accuracy drops badly on clipped audio.',
-    },
-    too_quiet: {
-      title: 'Almost no sound is reaching Relay.',
-      fix: 'The mic is probably muted, switched off, or too far away. Check the mixer channel and the mute switch.',
-    },
-    noisy: {
-      title: 'The room is drowning out the speech.',
-      fix: 'Detection will struggle. Move the mic closer to the preacher, or cut background noise.',
-    },
-  };
-  // Looked up defensively: an unguarded QUALITY[kind].title on an unknown warning
-  // kind would throw, and an exception here takes down the console mid-service
-  // over a mic warning.
-  $: qualityWarning = (() => {
-    const kind = $capture.quality?.warning;
-    if (!kind) return null;
-    return (
-      QUALITY[kind] ?? {
-        title: 'There is a problem with the microphone input.',
-        fix: 'Detection accuracy may suffer. Check the mixer channel and the mic.',
-      }
-    );
-  })();
-
-  // ── recognition language is not settling ─────────────────────────────────
-  // Same shape as the mic warnings above, and the same reasoning: name the
-  // problem and the physical thing to go and do. This one is worth saying
-  // because it is INVISIBLE — a wandering language label degrades the transcript
-  // and reads to the operator as "the AI is bad", while the fix is one dropdown.
-  $: langWarning = (() => {
-    const langs = $capture.langUnstable;
-    if (!langs?.length || $capture.stt?.language) return null; // already pinned
-    return {
-      title: 'Relay keeps changing its mind about the language.',
-      fix: `It has heard ${langs.join(', ')} in the last few minutes. Pick the language in Settings → Scripture & Languages → Recognition language — auto-detect struggles with a strong accent, and a wrong guess garbles the transcript.`,
-    };
-  })();
+  // ── THE MIC-QUALITY AND LANGUAGE COPY WENT WITH THE BANNERS ──────────────
+  // C2, operator instruction 2026-09-14. `QUALITY` (clipping · too_quiet ·
+  // noisy) and `langWarning` composed the sentences for two amber boxes at the
+  // foot of this surface; the boxes are gone, so the sentences are gone with
+  // them rather than left as a string table nothing renders. The reasoning and
+  // what an operator loses by it are at the removal site in the markup below.
+  //
+  // The EVENTS are untouched: `audio://quality` and `stt://language_unstable`
+  // still cross the bridge and `capture.js` still stores both, so nothing in
+  // `ipc.test.js`'s contract moves and a future surface has the facts to hand.
 
   $: selCue = items.find((i) => i.id === selId) || null;
   $: selSlides = slidesOf(selCue);
@@ -2116,15 +2081,25 @@
        tune out. -->
   <p class="sr-only" aria-live="polite">{downAnnounce}</p>
 
-  <!-- Only while listening, and only when something is genuinely wrong. A warning
-       that is always on screen is wallpaper. -->
-  {#if $capture.capturing && qualityWarning}
-    <div class="sttwarn"><b>{qualityWarning.title}</b>{qualityWarning.fix}</div>
-  {/if}
+  <!-- ── THE MICROPHONE-QUALITY AND LANGUAGE BANNERS ARE GONE ────────────────
+       C2, operator instruction 2026-09-14: "take out this notification section
+       completely… and nothing should go there." Two amber boxes rendered here —
+       the `dsp.rs` mic warnings (clipping · too quiet · noisy) and the
+       language-instability note — and this is deliberately an EMPTY space now,
+       not a space with something quieter in it.
 
-  {#if $capture.capturing && langWarning}
-    <div class="sttwarn"><b>{langWarning.title}</b>{langWarning.fix}</div>
-  {/if}
+       WHAT WENT WITH THEM, so nobody has to find this out on a Sunday: the
+       `too_quiet` warning was the ONLY place in the console that named a muted
+       microphone as a muted microphone. `audio://quality` still arrives and
+       `$capture.quality` is still read (App.svelte for the denoise lamp,
+       Settings for a room's observed note), but nothing on a run surface turns
+       it into words any more. The Live audio card in the dock shows the LEVEL —
+       `−∞ dB`, a `quiet` chip and a flat trace — which is the same picture a
+       silent prayer draws, and its red `no signal` fires on readings that stop
+       ARRIVING, not on readings that arrive at zero. So a muted channel is
+       visible as a level and is not announced as a fault. That is the
+       operator's call, made with the consequence stated; it is written up in
+       C2's review note rather than softened into a quieter banner here. -->
 
   <!-- §5 INSPECTOR. Mounted at the console root so it overlays the whole surface
        rather than being clipped inside a panel. It is a dialog, so shortcuts.js's
@@ -2693,12 +2668,10 @@
   .audioerr{flex:0 0 auto; background:var(--v-red-soft); color:var(--v-red);
     border:1px solid var(--v-red-line); border-radius:var(--v-r-md);
     padding:9px 12px; font-size:var(--v-fs-lbl)}
-  /* Degraded, not broken: amber (a warning), never red (an error) — the app is still
-     fully usable by hand, and the banner should read that way. */
-  .sttwarn{flex:0 0 auto; background:var(--v-amber-soft); color:var(--v-txt);
-    border:1px solid var(--v-amber-line); border-radius:var(--v-r-md);
-    padding:10px 12px; font-size:var(--v-fs-lbl); line-height:1.6}
-  .sttwarn b{display:block; margin-bottom:2px; color:var(--v-amber2)}
+  /* `.sttwarn` IS GONE, NOT QUIETENED (C2). It dressed the two microphone /
+     language banners this surface no longer renders. A rule left behind for a
+     markup that no longer exists is how the next person "restores" a thing
+     nobody asked for; the removal is documented at the markup site. */
 
   /* ── accessibility ─────────────────────────────────────────────────────── */
   .take:focus-visible,.rk:focus-visible,.slide:focus-visible,

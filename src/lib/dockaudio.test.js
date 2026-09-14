@@ -364,7 +364,88 @@ describe('the microphone is chosen and opened from the card that shows its level
     mount();
     await settle();
     const sw = host.querySelector('[aria-label="Microphone"]');
-    expect([...sw.classList]).toEqual(['r-switch', 'on']);
+    // Svelte stamps a scoping class on every element it styles, so the list is
+    // filtered to the ones this file put there rather than compared whole — the
+    // hash changes whenever the stylesheet does, and a test that breaks on a
+    // comment edit is one somebody deletes.
+    expect([...sw.classList].filter((c) => !c.startsWith('svelte-')))
+      .toEqual(['r-iconbtn', 'audtog', 'on']);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// C2 · THE ICON TOGGLE (operator instruction 2026-09-14)
+//
+//   "I will prefer to have an icon toggle button rather than having this big
+//    switch on the audio section."
+//
+// The 38x21 `.r-switch` is gone from this card and the 26px shared icon button
+// is in its place. The point of these assertions is that the SEMANTICS did not
+// go with it: a visual preference is not a licence to downgrade a control that
+// a screen reader currently announces as "microphone, switch, on".
+//
+// Each one was watched to fail with the pill put back.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('C2 · the audio card wears icon toggles, with the switch semantics intact', () => {
+  const TOGGLES = ['Microphone', 'Detection'];
+
+  it('neither toggle is the sliding pill any more', async () => {
+    mount();
+    await settle();
+    for (const label of TOGGLES) {
+      const b = host.querySelector(`[aria-label="${label}"]`);
+      expect(b, `no control labelled ${label}`).not.toBeNull();
+      expect([...b.classList], `${label} is still a pill`).not.toContain('r-switch');
+      // The SHARED square, never a shape this file drew for itself. `.audtog`
+      // beside it may paint and position; `app.css` owns the box.
+      expect([...b.classList], `${label} is not the shared icon button`).toContain('r-iconbtn');
+    }
+    // …and the card defines no switch of its own to replace it with.
+    expect(src.slice(src.indexOf('<style>'))).not.toMatch(/\.audtog[^{]*\{[^}]*height:/);
+  });
+
+  it('it still announces as a switch, with its state and a name', async () => {
+    mount();
+    await settle();
+    for (const label of TOGGLES) {
+      const b = host.querySelector(`[aria-label="${label}"]`);
+      expect(b.getAttribute('role'), `${label} is not announced as a switch`).toBe('switch');
+      expect(b.getAttribute('aria-checked'), `${label} does not say its state`).toBeTruthy();
+      // The state in words, so a hover answers the question too.
+      expect(b.getAttribute('title'), `${label} has no title`).toBeTruthy();
+    }
+  });
+
+  it('what it DRAWS is the state, not only what it is tinted', async () => {
+    // A square that only changes colour is a square somebody has to learn. The
+    // off state carries a strike through the glyph, so the control reads with no
+    // colour at all — which is the whole difference between an icon toggle and a
+    // coloured box.
+    cap.capture.update((s) => ({ ...s, capturing: false, detectionOn: false }));
+    mount();
+    await settle();
+    const strokes = (label) =>
+      host.querySelector(`[aria-label="${label}"] svg`).querySelectorAll('path, circle, rect').length;
+    const off = TOGGLES.map(strokes);
+    cap.capture.update((s) => ({ ...s, capturing: true, detectionOn: true }));
+    await settle();
+    const on = TOGGLES.map(strokes);
+    for (let i = 0; i < TOGGLES.length; i++) {
+      expect(on[i], `${TOGGLES[i]} draws the same thing on as off`).toBeLessThan(off[i]);
+    }
+  });
+
+  it('and spends no amber on either of them', () => {
+    // Rule 18, on the row the switch used to be on. Comments stripped: the
+    // reason this is not amber is written beside it, and a scanner that reads
+    // the prose instead of the rule passes everything.
+    const markup = src.replace(/<!--[\s\S]*?-->/g, '');
+    const rows = markup.slice(markup.indexOf('<div class="audrow">'), markup.indexOf('</div>\n    </div>'));
+    expect(rows).not.toMatch(/amber/);
+    const style = src.slice(src.indexOf('<style>')).replace(/\/\*[\s\S]*?\*\//g, '');
+    const rule = style.slice(style.indexOf('\n  .audtog {'), style.indexOf('\n  .dcap {'));
+    expect(rule).not.toMatch(/--v-amber|--v-amethyst|--v-cyan/);
+    expect(rule, 'the on state paints nothing at all').toMatch(/--v-emerald/);
   });
 });
 
