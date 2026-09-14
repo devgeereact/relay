@@ -114,8 +114,13 @@ describe('nothing unmeasured is rendered as a number', () => {
 
 describe('it is reachable', () => {
   it('has its own Settings section', () => {
-    expect(settings).toMatch(/key: 'languages'/);
-    expect(settings).toMatch(/section === 'languages'/);
+    // The Languages screen no longer has a rail entry of its own: it is a group
+    // inside Scripture & Languages (docs/REBRAND.md §11's eleven-section merge),
+    // beside the Recognition Language picker it exists to inform. Reachability is
+    // still what is asserted — the section key, and the heading that names it.
+    expect(settings).toMatch(/key: 'scripture'/);
+    expect(settings).toMatch(/section === 'scripture'/);
+    expect(settings).toMatch(/<div class="rw-group">Language coverage<\/div>/);
   });
 
   it('shows console-text coverage from the catalogues, not from a claim', () => {

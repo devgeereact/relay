@@ -1,12 +1,17 @@
 <script>
   import { onMount, onDestroy } from 'svelte';
+  import { rangeFill } from '../rangefill.js';
   import { get } from 'svelte/store';
   import ModelSetup from '../ModelSetup.svelte';
+  // The shared workspace grammar (docs/REBRAND.md §2 · §11) — the same columns,
+  // panes, type roles and name/value row the Planner and Outputs desks use.
+  import WorkspaceFrame from './WorkspaceFrame.svelte';
   import History from './library/History.svelte';
   import Dashboard from './Dashboard.svelte';
   import { locale, setLocale, LOCALES, t } from '../i18n.js';
   import { restartSetup, setSession } from '../session.js';
   import { humanError } from '../errors.js';
+  import { settingValue, CHECKING } from '../settingvalue.js';
   import { safeMode, setSafeMode } from '../boot/boot.js';
   import { checkForUpdate, updateAvailable, updateChannel, describeChannel } from '../updater.js';
   import {
@@ -46,34 +51,45 @@
   import { diagnose, drift } from '../latency.js';
 
   // ─────────────────────────────────────────────────────────────────────────
-  // SECTION NAV. The screen is one big config surface split into ref-matched
-  // sections; the rail on the left picks which one is shown.
+  // SECTION NAV — ELEVEN SECTIONS, MERGED FROM EIGHTEEN (docs/REBRAND.md §11).
+  //
+  // The rail used to carry eighteen entries, seven of which were one screen cut
+  // in half: Network and Integrations, Scripture and Languages, Privacy and
+  // Advanced, History and Backup, Audio and Voice Profiles. A section that is
+  // three rows on a full-height page teaches an operator that the rail is long
+  // and mostly empty, and that is how a control gets lost.
+  //
+  // Two sections were not merged but DELETED, because everything on them was a
+  // second copy of something else:
+  //   · `dashboard` — the readiness surface itself is untouched (it is the boot
+  //     ladder's own probes, re-run on demand); it now opens Diagnostics, which
+  //     is the section an operator reaches for when they ask "is this machine
+  //     going to work?". One question, one section.
+  //   · `account` — its Licence, Version and Environment rows are already in the
+  //     Overview rail on every section, and its "there are no accounts" sentence
+  //     is already a row on the Privacy report. Three rows, all duplicates.
+  //
+  // The `desc` is role two of §11's three: the STANDFIRST, one sentence about
+  // what the section is for. It is rendered once, by the frame, and no section
+  // repeats it a size smaller at the top of its own panel.
   // ─────────────────────────────────────────────────────────────────────────
   const SECTIONS = [
-    { key: 'dashboard', label: 'Dashboard',         desc: 'Service overview and quick actions', icon: 'grid' },
-    { key: 'general',   label: 'General',           desc: 'Basic application preferences and behaviour', icon: 'gear' },
-    { key: 'outputs',   label: 'Outputs',           desc: 'Per-content-type templates and output routing', icon: 'monitor' },
-    { key: 'audio',     label: 'Audio',             desc: 'Microphone input, live level and video sound output', icon: 'mic' },
-    { key: 'voice',     label: 'Voice Profiles',    desc: 'Per-preacher language, bias vocabulary and gate calibration', icon: 'user' },
-    { key: 'scripture', label: 'Scripture & Bible', desc: 'Recognition language and Bible translations', icon: 'book' },
-    { key: 'languages', label: 'Languages',        desc: 'How much of each language Relay actually knows', icon: 'book' },
-    { key: 'ai',        label: 'AI & Detection',    desc: 'Detection thresholds and the run engine', icon: 'sparkle' },
-    { key: 'shortcuts', label: 'Shortcuts',         desc: 'Keyboard controls for the live desk', icon: 'keyboard' },
-    { key: 'network',   label: 'Network',           desc: 'Kiosk, output and stage distribution', icon: 'nodes' },
-    { key: 'integrations', label: 'Integrations',   desc: 'OBS, vMix, NDI and SDI switchers', icon: 'nodes' },
-    { key: 'history',   label: 'Service History',   desc: 'Past services recorded locally', icon: 'clock' },
-    { key: 'backup',    label: 'Backup & Recovery', desc: 'Setup walk-through and safe mode', icon: 'shield' },
-    { key: 'updates',   label: 'Updates',           desc: 'App version and update channel', icon: 'refresh' },
-    { key: 'diagnostics', label: 'Diagnostics',     desc: 'Live status for a support request', icon: 'terminal' },
-    { key: 'privacy',   label: 'Privacy',           desc: 'What is on this machine, and what can leave it', icon: 'shield' },
-    { key: 'advanced',  label: 'Advanced',          desc: 'Crash reporting and privacy', icon: 'terminal' },
-    { key: 'account',   label: 'Account',           desc: 'Licence and machine details', icon: 'user' },
+    { key: 'general',     label: 'General',                desc: 'How this copy of Relay behaves, and whether it is armed at all.', icon: 'gear' },
+    { key: 'screens',     label: 'Screens & looks',        desc: 'Which template each kind of content wears, and which screens follow it.', icon: 'monitor' },
+    { key: 'audio',       label: 'Audio',                  desc: 'Microphone, live level, video sound output, and the rooms you run in.', icon: 'mic' },
+    { key: 'ai',          label: 'AI & Detection',         desc: 'What the gate lets through, and the calibration it keeps per preacher.', icon: 'sparkle' },
+    { key: 'scripture',   label: 'Scripture & Languages',  desc: 'Recognition language, Bible translations, and what Relay really knows.', icon: 'book' },
+    { key: 'network',     label: 'Network & Integrations', desc: 'How screens, OBS and the speech model reach this machine.', icon: 'nodes' },
+    { key: 'history',     label: 'History & Backup',       desc: 'Past services, the setup walk-through, and what is held back during one.', icon: 'clock' },
+    { key: 'shortcuts',   label: 'Shortcuts',              desc: 'The keys the live desk is driven from.', icon: 'keyboard' },
+    { key: 'updates',     label: 'Updates',                desc: 'This build, the update channel, and what an update would do to your history.', icon: 'refresh' },
+    { key: 'diagnostics', label: 'Diagnostics',            desc: 'Is this machine going to work — and the facts a support request needs.', icon: 'terminal' },
+    { key: 'privacy',     label: 'Privacy & Advanced',     desc: 'What is on this machine, what can leave it, and the one thing that does.', icon: 'shield' },
   ];
   let section = 'general';
   $: activeSection = SECTIONS.find((s) => s.key === section) ?? SECTIONS[0];
 
   const ICONS = {
-    grid: '<rect x="3" y="3" width="7.5" height="8.5" rx="1.6"/><rect x="13.5" y="3" width="7.5" height="5.5" rx="1.6"/><rect x="3" y="14.5" width="7.5" height="6.5" rx="1.6"/><rect x="13.5" y="11.5" width="7.5" height="9.5" rx="1.6"/>',
     gear: '<circle cx="12" cy="12" r="3.2"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M19.1 4.9L17 7M7 17l-2.1 2.1"/>',
     monitor: '<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/>',
     mic: '<path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10v1a7 7 0 0 1-14 0v-1"/><line x1="12" y1="18" x2="12" y2="22"/>',
@@ -85,7 +101,6 @@
     shield: '<path d="M12 3l7 3v6c0 4-3 7-7 9-4-2-7-5-7-9V6l7-3Z"/>',
     refresh: '<path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>',
     terminal: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l3 3-3 3M13 15h4"/>',
-    user: '<circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/>',
   };
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -97,7 +112,6 @@
   // ─────────────────────────────────────────────────────────────────────────
   const PREFS_KEY = 'relay.prefs.v1';
   const DEFAULT_PREFS = {
-    theme: 'dark',
     autoStart: false,
     minimizeTray: true,
   };
@@ -119,18 +133,23 @@
   function setPref(key, value) {
     prefs = { ...prefs, [key]: value };
     savePrefs();
-    if (key === 'theme') applyTheme(value);
   }
-  // Only Dark is fully styled today (the whole console is a dark surface). The
-  // control persists the choice and stamps data-theme so a future light sheet
-  // can key off it; picking Light/System does not yet repaint. See design log.
-  function applyTheme(v) {
-    try {
-      document.documentElement.dataset.theme = v;
-    } catch {
-      /* no DOM (test env) */
-    }
-  }
+  // THEME WAS REMOVED HERE, and it is the eighth control to go for the reason in
+  // DECISIONS §69. It was a three-way segmented control (Light · Dark · System)
+  // that wrote `prefs.theme` to localStorage and stamped `data-theme` on the
+  // document element. **Nothing in this application reads either.** There is no
+  // rule anywhere in `app.css` or in any component that keys off that attribute,
+  // and no other module
+  // opens `relay.prefs.v1` — so picking Light saved a preference, changed a
+  // dataset attribute no stylesheet consults, and repainted nothing. Its own comment
+  // admitted as much ("picking Light/System does not yet repaint"), which is the
+  // same shape as Confirm Before Going Live: a control that documents its own
+  // lie rather than not existing.
+  //
+  // It is not "Soon" either. docs/REBRAND.md §1 is explicit — **dark only**, "the
+  // booth is dark and the wall is black" — so a light sheet is not a deferred
+  // feature, it is a decision against. A picker offering two choices the product
+  // has decided not to have is worse than no picker.
 
   // The four toggles rendered as a data-driven list, matching the reference's
   // stacked switch rows.
@@ -187,6 +206,37 @@
     ctMap[kind] = id;
     await setContentTemplate(kind, id);
   }
+
+  // WHICH SCREENS ACTUALLY FOLLOW THE MAP ABOVE. A read-only row per screen, and
+  // the reason it is here is DECISIONS §70: a screen's OWN template wins over a
+  // content look (§29), so a screen that has one ignores every choice on this
+  // page. For most of this product's life every screen always had one, and the
+  // content-look map could be filled in, saved, and change nothing in the
+  // building — with no way to tell from this screen.
+  //
+  // Nothing here is editable; the screens are configured in the Outputs tab. It
+  // is the answer to "will what I just set do anything?", which the map alone
+  // cannot give.
+  let screens = [];
+  let screensState = 'loading';
+  async function loadScreens() {
+    try {
+      screens = await listOutputChannels();
+      screensState = 'ok';
+    } catch {
+      screens = [];
+      screensState = 'failed';
+    }
+  }
+  onMount(loadScreens);
+  // Reactive on purpose: the names come from `$templates`, which loads after this
+  // list does. A plain function would resolve once and keep printing
+  // "template #3" for the rest of the session.
+  /** The look a screen is wearing: its own template, or the content look. */
+  $: screenLook = (ch) =>
+    ch.template_id == null
+      ? 'follows the content look'
+      : ($templates.find((t) => t.id === ch.template_id)?.name ?? `template #${ch.template_id}`);
 
   // Threshold sliders push to the router; keep the invariant auto_fire ≥ suggest.
   function onAuto(v) {
@@ -474,6 +524,11 @@
   let activeTranslation = null;
   let dataLoaded = false; // async settings data has resolved at least once
   let lanIp = '';
+  // WHICH KIND OF NOTHING. An empty `lanIp` used to render as an em dash, and an
+  // em dash is the same glyph for "not fetched yet", "the fetch failed" and "this
+  // machine is not on a network" — three things an operator needs to tell apart
+  // (rule 35, and RG-83 in another costume).
+  let lanState = 'loading';
 
   // ── LIVE LATENCY ────────────────────────────────────────────────────────────
   //
@@ -515,9 +570,12 @@
 
   // ─── System overview (right rail) ───────────────────────────────────────
   let appVersion = '';
+  let versionState = 'loading';
   const environment = import.meta.env?.DEV ? 'Development' : 'Production';
   let bootAt = 0;
-  let uptime = '—';
+  // Never a dash, not even for the instant before the first tick: a row that
+  // says nothing is a row an operator has to guess about.
+  let uptime = CHECKING;
   let uptimeTimer = null;
   function fmtUptime(ms) {
     const s = Math.floor(ms / 1000);
@@ -553,31 +611,25 @@
     checking = false;
   }
 
-  // Two-step arm/confirm, NOT confirm(): the Tauri webview does not implement the
-  // native confirm() dialog (see Channels.svelte), so it may never return true and
-  // the button would be silently dead — or behave differently across platforms.
-  // First click arms for 3s (the button asks for confirmation), second click does
-  // it. Same pattern as deleting a channel.
-  let resetArmed = false;
-  let resetArmT;
-  function resetAllSettings() {
-    if (!resetArmed) {
-      resetArmed = true;
-      clearTimeout(resetArmT);
-      resetArmT = setTimeout(() => (resetArmed = false), 3000);
-      return;
-    }
-    clearTimeout(resetArmT);
-    resetArmed = false;
-    prefs = { ...DEFAULT_PREFS };
-    savePrefs();
-    applyTheme(prefs.theme);
-  }
+  // RESET ALL SETTINGS WAS REMOVED, and it was two controls, not one: the same
+  // `resetAllSettings` hung off the rail's footer button AND off the Danger Zone
+  // card in the Overview rail, so the page offered the identical destructive
+  // action twice, six inches apart, with two different labels.
+  //
+  // Both are gone, because with `theme` deleted above there is nothing left for
+  // it to restore. `DEFAULT_PREFS` now holds only `autoStart` and `minimizeTray`,
+  // and both of those switches are permanently disabled — they cannot be moved,
+  // so they can never differ from their defaults, so resetting them to their
+  // defaults is a no-op with a red button and a two-step confirmation on it.
+  // Every setting that MATTERS (language, thresholds, translation, model, rooms,
+  // crash reporting, channel templates) lives in the database and was never
+  // touched by this control: an operator pressing it was being told they had
+  // restored their settings while their settings sat exactly where they were.
+  // DECISIONS §69, and CLAUDE.md rule 15 in its quietest form.
 
   onMount(loadServiceTarget);
   onMount(async () => {
     loadPrefs();
-    applyTheme(prefs.theme);
     // Session uptime — a real, honest number (this run of the app).
     bootAt = performance.now();
     uptime = fmtUptime(0);
@@ -585,8 +637,10 @@
     try {
       const { getVersion } = await import('@tauri-apps/api/app');
       appVersion = await getVersion();
+      versionState = 'ok';
     } catch {
       appVersion = '';
+      versionState = 'failed';
     }
     // Guarded as a block: an unguarded reject on any one of these aborts the rest
     // of mount, so crash state, content-type templates and the LAN IP would all
@@ -604,8 +658,10 @@
     }
     try {
       lanIp = await localIp();
+      lanState = 'ok';
     } catch {
       lanIp = '';
+      lanState = 'failed';
     }
   });
   onDestroy(() => {
@@ -638,18 +694,44 @@
   ];
 </script>
 
-<div class="s-page">
-  <header class="s-pagehead">
-    <div>
-      <h1 class="s-title">Settings</h1>
-      <p class="s-sub">Configure Relay to match your environment and workflow.</p>
-    </div>
-  </header>
+<!-- Settings is laid out in the shared workspace grammar (`WorkspaceFrame.svelte`,
+     docs/REBRAND.md §2 · §11) — the same columns, panes and type roles the
+     Planner and Outputs desks use.
 
-  <div class="s-layout">
+     ── ONE TYPE SCALE, THREE ROLES ──────────────────────────────────────────
+     §11's roles are page title / standfirst / row, with a footnote behind a
+     hairline, and they are the FRAME'S: `.rw-h1`, `.rw-lead`, `.rw-nv` /
+     `.rw-nvk` / `.rw-nvv` / `.rw-nvnote`, `.rw-group` and `.rw-foot`. This file
+     used to define its own copies of all six — `.s-lead`, `.s-row` with
+     `.s-rowtitle`/`.s-rownote`, a SECOND row grammar in `.s-netrow`/`.s-netk`/
+     `.s-netv`, `.s-grouphead`, and two footnotes (`.s-note` and `.s-tr-note`,
+     one of them without the hairline). The frame's own comment says why that
+     cannot stand: a type scale defined three times is three type scales, and
+     the two row grammars had already drifted to different paddings and a
+     different key colour. Everything below uses the frame's roles; what is left
+     private to this file is the handful of things only Settings has (a level
+     meter, the threshold sliders, the translation list, the language table).
+
+     The page title is "Settings" and never changes; the STANDFIRST is the
+     section's own sentence, so the two roles say different things instead of
+     the title being repeated a size smaller directly beneath itself. No section
+     repeats its standfirst at the top of its own panel either — that was
+     `.s-lead`, and it was role two happening twice on one screen.
+
+     ELEVEN SECTIONS, merged from eighteen. The reasoning, and the two sections
+     deleted rather than merged, are in the SECTIONS array above. -->
+<WorkspaceFrame
+  title="Settings"
+  standfirst={activeSection.desc}
+  columns="212px minmax(0,1fr) 288px">
     <!-- ════ SECTION RAIL ════ -->
-    <aside class="s-rail">
-      <nav class="s-railnav">
+    <aside class="rw-pane">
+      <div class="rw-panehead">
+        <h2 class="rw-panettl">Sections</h2>
+        <span class="rw-spring"></span>
+        <span class="rw-itemn">{SECTIONS.length}</span>
+      </div>
+      <nav class="rw-panebody s-railnav">
         {#each SECTIONS as s}
           <button
             class="s-railbtn r-focus"
@@ -662,35 +744,20 @@
           </button>
         {/each}
       </nav>
-      <button class="r-btn ghost sm s-reset" class:arm={resetArmed} on:click={resetAllSettings}>
-        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
-        {resetArmed ? 'Click again to reset' : 'Reset to Defaults'}
-      </button>
     </aside>
 
     <!-- ════ ACTIVE PANEL ════ -->
-    <main class="s-panel">
-      {#if section !== 'dashboard'}
-        <div class="s-panelhead">
-          <h2 class="s-paneltitle">{activeSection.label}</h2>
-          <p class="s-paneldesc">{activeSection.desc}</p>
-        </div>
-      {/if}
+    <main class="rw-pane">
+      <div class="rw-panehead"><h2 class="rw-panettl">{activeSection.label}</h2></div>
+      <div class="rw-panebody s-panel">
 
-      {#if section === 'dashboard'}
-        <!-- Dashboard moved into Settings — a records/overview surface, not a run
-             tab. Rendered full-bleed so its own layout is not squeezed by the
-             settings panel padding. -->
-        <div class="s-dash"><Dashboard /></div>
-
-      {:else if section === 'general'}
-        <!-- Application language -->
-        <div class="s-row">
-          <div class="s-rowtext">
-            <div class="s-rowtitle">Application Language</div>
-            <div class="s-rownote">Choose the language for the operator console. Missing words stay in English.</div>
+      {#if section === 'general'}
+        <div class="rw-nv">
+          <div class="s-nvtext">
+            <div class="rw-nvk">Application language</div>
+            <p class="rw-nvnote">The language the operator console is written in. Missing words stay in English.</p>
           </div>
-          <select class="r-select s-rowctl" value={$locale} on:change={(e) => setLocale(e.target.value)}>
+          <select class="r-select rw-nvctl s-sel" value={$locale} on:change={(e) => setLocale(e.target.value)} aria-label="Application language">
             {#each LOCALES as l}
               {@const pct = coverage(l.code)}
               <option value={l.code}>{l.label}{pct === 100 ? '' : ` · ${pct}%`}</option>
@@ -698,35 +765,15 @@
           </select>
         </div>
 
-        <!-- Theme -->
-        <div class="s-row">
-          <div class="s-rowtext">
-            <div class="s-rowtitle">Theme</div>
-            <div class="s-rownote">Select your preferred colour theme. Only Dark is styled today.</div>
-          </div>
-          <div class="s-seg" role="group" aria-label="Theme">
-            {#each [['light','Light','sun'],['dark','Dark','moon'],['system','System','monitor']] as [val, lbl, ic]}
-              <button class="s-segbtn" class:on={prefs.theme === val} aria-pressed={prefs.theme === val} on:click={() => setPref('theme', val)}>
-                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                  {#if ic === 'sun'}<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4 12H2M22 12h-2M5 5l1.5 1.5M17.5 17.5L19 19M19 5l-1.5 1.5M6.5 17.5L5 19"/>
-                  {:else if ic === 'moon'}<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/>
-                  {:else}<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/>{/if}
-                </svg>
-                {lbl}
-              </button>
-            {/each}
-          </div>
-        </div>
-
         <!-- Service length — drives the REMAINING timer on a stage/confidence
              monitor. 0 = no target (the remaining line stays blank). Read by the
              backend when the next service starts. -->
-        <div class="s-row">
-          <div class="s-rowtext">
-            <div class="s-rowtitle">Service Length</div>
-            <div class="s-rownote">Planned length in minutes. Shows a “time remaining” timer on stage/confidence monitors. 0 = no target. Applies to the next service you start.</div>
+        <div class="rw-nv">
+          <div class="s-nvtext">
+            <div class="rw-nvk">Service length</div>
+            <p class="rw-nvnote">Planned length in minutes. Shows a “time remaining” timer on stage and confidence monitors. 0 = no target. Applies to the next service you start.</p>
           </div>
-          <div class="s-rowctl s-lenctl">
+          <div class="rw-nvctl s-lenctl">
             <input class="r-input s-leninput" type="number" min="0" max="600" step="5"
               value={$serviceTargetMinutes}
               on:change={(e) => setServiceTarget(e.target.value)}
@@ -735,15 +782,33 @@
           </div>
         </div>
 
+        <!-- SAFE MODE. Moved here from Backup & Recovery, which is where it was
+             least likely to be looked for: safe mode is not a backup and not a
+             recovery, it is whether this copy of Relay is ARMED — the one switch
+             that decides whether anything Relay does can reach a screen at all.
+             `degraded.js` names the new home in the sentence it prints. -->
+        <div class="rw-nv">
+          <div class="s-nvtext">
+            <div class="rw-nvk">Safe mode</div>
+            <p class="rw-nvnote">Outputs will not open and detection is disarmed — nothing Relay does can reach a screen. A way to open the console with no risk of putting something on a wall.</p>
+          </div>
+          <div class="rw-nvctl s-nvpair">
+            <span class="rw-nvv" class:s-armed={$safeMode}>{$safeMode ? 'on' : 'off'}</span>
+            <button class="r-btn ghost sm" on:click={() => setSafeMode(!$safeMode)}>
+              {$safeMode ? 'Turn off' : 'Turn on'}
+            </button>
+          </div>
+        </div>
+
         <!-- Toggles -->
         {#each GENERAL_TOGGLES as tg}
-          <div class="s-row">
-            <div class="s-rowtext">
-              <div class="s-rowtitle">{tg.title}{#if tg.soon}<span class="s-soon">Soon</span>{/if}</div>
-              <div class="s-rownote">{tg.note} {#if tg.soon}<span class="s-dim">Not available yet.</span>{/if}</div>
+          <div class="rw-nv">
+            <div class="s-nvtext">
+              <div class="rw-nvk">{tg.title}{#if tg.soon}<span class="s-soon">Soon</span>{/if}</div>
+              <p class="rw-nvnote">{tg.note} {#if tg.soon}<span class="s-dim">Not available yet.</span>{/if}</p>
             </div>
             <button
-              class="s-toggle"
+              class="s-toggle rw-nvctl"
               class:on={prefs[tg.key] && !tg.soon}
               role="switch"
               aria-checked={prefs[tg.key] && !tg.soon}
@@ -754,264 +819,345 @@
           </div>
         {/each}
 
-        <!-- REMOVED, not hidden: Default Content Type, Time Format, Date Format,
-             Restore Previous Session and Default Startup Screen. Five controls that
-             wrote a key to localStorage that NOTHING in the application ever read —
-             the clock is not formatted by Time Format, Relay always opens on Live,
-             and no "new item" anywhere consults a default content type. Same
-             precedent as the `StageDisplays` subtree (DECISIONS §25): a control that
-             persists an intent nobody honours is a lie with a saved value, and it
-             cost the most-visited settings page five rows of noise. Wiring them is a
-             product decision, not a repair. -->
-
-      {:else if section === 'outputs'}
-        <p class="s-lead">Each content type can use its own template automatically — lyrics in a lower-third, scripture full-screen. “Channel default” leaves the look to each output's own template.</p>
-        <div class="s-cardbox">
-          {#each contentTypes as ct}
-            <div class="s-netrow">
-              <span class="s-netk">{ct.label}</span>
-              <select class="r-select s-ctsel" value={ctMap[ct.key] ?? ''} on:change={(e) => pickCt(ct.key, e.target.value)}>
-                <option value="">Channel default</option>
-                {#each $templates as tpl}<option value={tpl.id}>{tpl.name}</option>{/each}
-              </select>
-            </div>
-          {/each}
+        <div class="s-prose">
+          <!-- The absence is stated, and the list of names is not: an operator
+               needs to know that a switch they remember never did anything, not to
+               read a changelog on the page they came here to use. The nine names
+               and the reason each one went live in DECISIONS §69 and in the
+               comments beside the code that used to render them. -->
+          <p class="rw-foot">
+            <b>Nine preference controls used to be on this page and are not any
+            more</b>, each because it saved a setting nothing in Relay ever read.
+            One of them was on by default and promised a confirmation step between
+            you and the congregation's screen — there has never been one. Nothing
+            was lost, because nothing they did ever happened.
+          </p>
         </div>
-        <p class="s-note">Add and manage network outputs (OBS · kiosk · stage remote) with copy-links and QR codes in the <b>Channels</b> tab.</p>
+
+      {:else if section === 'screens'}
+        <div class="rw-group">Content looks</div>
+        {#each contentTypes as ct}
+          <div class="rw-nv">
+            <span class="rw-nvk">{ct.label}</span>
+            <select class="r-select rw-nvctl s-sel" value={ctMap[ct.key] ?? ''} on:change={(e) => pickCt(ct.key, e.target.value)} aria-label="{ct.label} content look">
+              <option value="">Channel default</option>
+              {#each $templates as tpl}<option value={tpl.id}>{tpl.name}</option>{/each}
+            </select>
+          </div>
+        {/each}
+
+        <!-- WILL ANY OF THAT DO ANYTHING? Read-only, and the reason it is here is
+             DECISIONS §70: a screen's OWN template wins over a content look (§29),
+             so this map only reaches screens that have no template of their own.
+             For most of this product's life every screen always had one and the
+             map could be filled in, saved, and change nothing in the building —
+             with nothing on this page able to say so. -->
+        <div class="rw-group">Screens</div>
+        {#if screensState === 'loading'}
+          <div class="rw-nv"><span class="rw-nvk">Screens</span><span class="rw-nvv">{settingValue(null, { loading: true })}</span></div>
+        {:else if screensState === 'failed'}
+          <div class="rw-nv"><span class="rw-nvk">Screens</span><span class="rw-nvv">{settingValue(null, { missing: 'could not be read' })}</span></div>
+        {:else}
+          {#each screens as ch (ch.id)}
+            <div class="rw-nv">
+              <span class="rw-nvk">{ch.name}</span>
+              <span class="rw-nvv">{screenLook(ch)}</span>
+            </div>
+          {:else}
+            <div class="rw-nv"><span class="rw-nvk">Screens</span><span class="rw-nvv">{settingValue(null, { missing: 'none configured yet' })}</span></div>
+          {/each}
+        {/if}
+
+        <div class="s-prose">
+          <p class="rw-foot">
+            A screen's own template <b>wins</b> over a content look (DECISIONS §29),
+            so the settings above reach only the screens that say <i>follows the
+            content look</i>. “Channel default” leaves the look to each output's own
+            template. Screens are added, given a look and given their copy-links and
+            QR codes in the <b>Outputs</b> tab — nothing on this page changes a
+            screen.
+          </p>
+        </div>
 
       {:else if section === 'audio'}
-        <div class="s-inline">
-          {#if $capture.available}
-            <span class="s-count">{$capture.devices.length} device{$capture.devices.length === 1 ? '' : 's'}</span>
-          {:else}
-            <span class="s-count">backend not attached</span>
-          {/if}
-        </div>
-        <select class="r-select" value={$capture.inputDevice} on:change={(e) => setInputDevice(e.target.value)} disabled={!$capture.available || $capture.capturing}>
-          <option value="">Default input</option>
-          {#each $capture.devices as d}
-            <option value={d.name}>{d.name}{d.is_default ? ' — default' : ''}</option>
-          {/each}
-        </select>
-
-        <div class="s-meterwrap">
-          <div class="s-meter"><i style="width:{levelPct}%;"></i></div>
-          <div class="s-meter-scale"><span>-60dB</span><span>-18dB</span><span>0dB</span></div>
-        </div>
-
-        <div class="s-listen">
-          <button class="r-btn primary" on:click={toggleCapture} disabled={!$capture.available}>
-            {#if $capture.capturing}
-              <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
-              Stop listening
+        <div class="rw-group">Microphone</div>
+        <div class="s-prose">
+          <div class="s-inline">
+            {#if $capture.available}
+              <span class="s-count">{$capture.devices.length} device{$capture.devices.length === 1 ? '' : 's'}</span>
             {:else}
-              <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor" aria-hidden="true"><path d="M7 5.5v13l11-6.5-11-6.5z"/></svg>
-              Start Listening
+              <span class="s-count">backend not attached</span>
             {/if}
-          </button>
-          {#if $capture.capturing}
-            <span class="s-rms" class:voice={$meter.isVoice}>
-              <span class="s-dot" class:on={$meter.isVoice}></span>
-              {$meter.isVoice ? 'voice' : 'silence'} · {$meter.level.toFixed(3)} rms
-            </span>
-          {/if}
-        </div>
-        {#if micErr}
-          <p class="s-note s-err" role="alert">{micErr}</p>
-        {/if}
-
-        <!-- AUDIO OUTPUT (speakers for video sound). Sits under the mic on the
-             same panel: input and output are one operator question. -->
-        <div class="s-grouphead">Audio Output</div>
-        <div class="s-inline">
-          {#if !sinkOk}
-            <span class="s-count">system default only</span>
-          {:else if outLocked}
-            <span class="s-count">system default</span>
-          {:else}
-            <span class="s-count">{outDevices.length + 1} device{outDevices.length === 0 ? '' : 's'}</span>
-          {/if}
-        </div>
-        <!-- Never disabled: "System default" is always a real, working choice — it is
-             where video sound already plays. A greyed-out picker would read as "no
-             speakers found", which is never true. -->
-        <select class="r-select" value={outDevice} on:change={(e) => pickOutput(e.target.value)}>
-          <option value="">System default — computer speakers</option>
-          {#each outDevices as d}
-            <option value={d.id}>{d.label || 'Speaker'}{d.is_default ? ' — default' : ''}</option>
-          {/each}
-        </select>
-
-        {#if !sinkOk}
-          <p class="s-note">
-            This webview can't switch speakers, so video sound plays on whatever macOS
-            has selected. Change it in <b>System Settings → Sound → Output</b>.
-          </p>
-        {:else if outLocked}
-          <div class="s-listen">
-            <button class="r-btn" on:click={detectSpeakers} disabled={outBusy}>
-              {outBusy ? 'Detecting…' : 'Detect speakers'}
-            </button>
-            <span class="s-rms">names need mic permission once</span>
           </div>
-          <p class="s-note">
-            Sound plays on your <b>system default</b> speakers right now. macOS hides
-            the list of other outputs until this app has been granted the microphone
-            once — <b>Detect speakers</b> asks for it, then releases the mic straight
-            away (capture still runs through the audio engine, not the browser).
-          </p>
-        {:else}
-          <p class="s-note">
-            Where video sound plays on the <b>fullscreen output window</b>. OBS/kiosk
-            browser sources are left muted — OBS mixes their audio itself.
-          </p>
-        {/if}
+          <select class="r-select" value={$capture.inputDevice} on:change={(e) => setInputDevice(e.target.value)} disabled={!$capture.available || $capture.capturing} aria-label="Microphone input device">
+            <option value="">Default input</option>
+            {#each $capture.devices as d}
+              <option value={d.name}>{d.name}{d.is_default ? ' — default' : ''}</option>
+            {/each}
+          </select>
 
-        <hr class="s-rule" />
-        <div class="r-lbl">Rooms</div>
-        <p class="s-note">
-          Save this space — microphone, recognition language, planned length, voice
-          profile and which display each screen goes to — and put it all back with one
-          press next time. <b>The audio levels are not saved.</b> Relay learns those
-          fresh every time on purpose: a level measured three weeks ago, in a room
-          that now has the heating on and forty more people in it, is a guess, and
-          guessing is what once made Relay deaf to a quiet preacher.
-        </p>
-        <div class="s-row s-mt">
-          <input class="r-input" placeholder="Main hall" bind:value={roomName} aria-label="Room name" />
-          <button class="r-btn ghost sm" on:click={doSaveRoom} disabled={roomBusy}>Save this room</button>
+          <div class="s-meterwrap">
+            <div class="s-meter"><i style="width:{levelPct}%;"></i></div>
+            <div class="s-meter-scale"><span>-60dB</span><span>-18dB</span><span>0dB</span></div>
+          </div>
+
+          <div class="s-listen">
+            <button class="r-btn primary" on:click={toggleCapture} disabled={!$capture.available}>
+              {#if $capture.capturing}
+                <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+                Stop listening
+              {:else}
+                <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor" aria-hidden="true"><path d="M7 5.5v13l11-6.5-11-6.5z"/></svg>
+                Start Listening
+              {/if}
+            </button>
+            {#if $capture.capturing}
+              <span class="s-rms" class:voice={$meter.isVoice}>
+                <span class="s-dot" class:on={$meter.isVoice}></span>
+                {$meter.isVoice ? 'voice' : 'silence'} · {$meter.level.toFixed(3)} rms
+              </span>
+            {/if}
+          </div>
+          {#if micErr}
+            <p class="s-alert" role="alert">{micErr}</p>
+          {/if}
+        </div>
+
+        <!-- AUDIO OUTPUT (speakers for video sound). Same section as the mic on
+             purpose: input and output are one operator question. -->
+        <div class="rw-group">Audio output</div>
+        <div class="s-prose">
+          <div class="s-inline">
+            {#if !sinkOk}
+              <span class="s-count">system default only</span>
+            {:else if outLocked}
+              <span class="s-count">system default</span>
+            {:else}
+              <span class="s-count">{outDevices.length + 1} device{outDevices.length === 0 ? '' : 's'}</span>
+            {/if}
+          </div>
+          <!-- Never disabled: "System default" is always a real, working choice — it is
+               where video sound already plays. A greyed-out picker would read as "no
+               speakers found", which is never true. -->
+          <select class="r-select" value={outDevice} on:change={(e) => pickOutput(e.target.value)} aria-label="Speakers for video sound">
+            <option value="">System default — computer speakers</option>
+            {#each outDevices as d}
+              <option value={d.id}>{d.label || 'Speaker'}{d.is_default ? ' — default' : ''}</option>
+            {/each}
+          </select>
+
+          {#if !sinkOk}
+            <p class="rw-foot">
+              This webview can't switch speakers, so video sound plays on whatever macOS
+              has selected. Change it in <b>System Settings → Sound → Output</b>.
+            </p>
+          {:else if outLocked}
+            <div class="s-listen">
+              <button class="r-btn" on:click={detectSpeakers} disabled={outBusy}>
+                {outBusy ? 'Detecting…' : 'Detect speakers'}
+              </button>
+              <span class="s-rms">names need mic permission once</span>
+            </div>
+            <p class="rw-foot">
+              Sound plays on your <b>system default</b> speakers right now. macOS hides
+              the list of other outputs until this app has been granted the microphone
+              once — <b>Detect speakers</b> asks for it, then releases the mic straight
+              away (capture still runs through the audio engine, not the browser).
+            </p>
+          {:else}
+            <p class="rw-foot">
+              Where video sound plays on the <b>fullscreen output window</b>. OBS/kiosk
+              browser sources are left muted — OBS mixes their audio itself.
+            </p>
+          {/if}
+        </div>
+
+        <div class="rw-group">Rooms</div>
+        <div class="s-prose">
+          <p class="rw-foot" style="margin-top:0; padding-top:0; border-top:0;">
+            Save this space — microphone, recognition language, planned length, voice
+            profile and which display each screen goes to — and put it all back with one
+            press next time. <b>The audio levels are not saved.</b> Relay learns those
+            fresh every time on purpose: a level measured three weeks ago, in a room
+            that now has the heating on and forty more people in it, is a guess, and
+            guessing is what once made Relay deaf to a quiet preacher.
+          </p>
+          <div class="s-addrow">
+            <input class="r-input" placeholder="Main hall" bind:value={roomName} aria-label="Room name" />
+            <button class="r-btn ghost sm" on:click={doSaveRoom} disabled={roomBusy}>Save this room</button>
+          </div>
+          {#if roomMsg}<p class="rw-foot" role="status">{roomMsg}</p>{/if}
         </div>
         {#each $rooms as r (r.id)}
-          <div class="s-row s-roomrow">
-            <span class="s-roomname">
-              <b>{r.name}</b>
-              {#if r.notes}<span class="s-roomnote">{r.notes}</span>{/if}
-            </span>
-            <button class="r-btn ghost sm" on:click={() => doUseRoom(r)} disabled={roomBusy}>Use</button>
-            <button class="r-btn ghost sm" on:click={() => doDeleteRoom(r)} disabled={roomBusy}>Remove</button>
+          <div class="rw-nv">
+            <div class="s-nvtext">
+              <div class="rw-nvk">{r.name}</div>
+              {#if r.notes}<p class="rw-nvnote">{r.notes}</p>{/if}
+            </div>
+            <div class="rw-nvctl s-nvpair">
+              <button class="r-btn ghost sm" on:click={() => doUseRoom(r)} disabled={roomBusy}>Use</button>
+              <button class="r-btn ghost sm" on:click={() => doDeleteRoom(r)} disabled={roomBusy}>Remove</button>
+            </div>
           </div>
         {:else}
-          <p class="s-note">No rooms saved yet.</p>
+          <div class="rw-nv"><span class="rw-nvk">Saved rooms</span><span class="rw-nvv">{settingValue(null, { missing: 'none yet' })}</span></div>
         {/each}
-        {#if roomMsg}<p class="s-note" role="status">{roomMsg}</p>{/if}
 
-      {:else if section === 'voice'}
-        <p class="s-lead">
-          One profile per preacher. Each remembers the language they preach in, the
-          names and places Relay should expect to hear, and how cautious the gate
-          should be for that voice — so calibration is not relearned from scratch
-          every Sunday.
-        </p>
-
-        {#if profileErr}
-          <p class="s-note s-err" role="alert">{profileErr}</p>
-        {/if}
-
-        <div class="s-cardbox">
-          {#each profiles as p (p.id)}
-            <div class="s-row">
-              <div class="s-rowtext">
-                <div class="s-rowtitle">
-                  {p.name}
-                  {#if p.is_active}<span class="s-vpactive r-mono">active</span>{/if}
-                </div>
-                <div class="s-rownote">
-                  {p.language ? p.language.toUpperCase() : 'Auto-detect (code-switching)'}
-                  · sensitivity {p.sensitivity}
-                  · gate {Math.round(p.auto_fire * 100)}% / {Math.round(p.suggest * 100)}%
-                </div>
-              </div>
-              <div class="s-rowctl s-vpbtns">
-                {#if !p.is_active}
-                  <button class="r-btn ghost sm" disabled={profileBusy} on:click={() => useProfile(p.id)}>Use</button>
-                {/if}
-                <button class="r-btn ghost sm" disabled={profileBusy} on:click={() => openEditor(p)}>Edit</button>
-                <!-- Deleting the profile in use would leave the gate calibrated by
-                     nothing, so the backend refuses it and says why. -->
-                <button class="r-btn ghost sm" disabled={profileBusy} on:click={() => removeProfile(p.id)}>Delete</button>
-              </div>
+      {:else if section === 'ai'}
+        <div class="rw-group">Detection thresholds</div>
+        <div class="s-prose">
+          <div class="s-inline"><span class="s-count">self-calibrating</span></div>
+          <div class="s-slider">
+            <div class="s-slider-top">
+              <span class="r-lbl s-slider-name">Auto-fire above</span>
+              <span class="s-slider-val">{Math.round($capture.thresholds.auto_fire * 100)}%</span>
             </div>
-          {:else}
-            <p class="s-note">No profiles yet. The first one you add becomes the active calibration.</p>
-          {/each}
+            <input class="r-range" type="range" min="0.5" max="0.99" step="0.01"
+              value={$capture.thresholds.auto_fire}
+              on:input={(e) => onAuto(+e.target.value)} disabled={!$capture.available} use:rangeFill={$capture.thresholds.auto_fire} aria-label="Auto-fire above" />
+            <div class="s-slider-ends"><span>LAX (50%)</span><span>STRICT (100%)</span></div>
+          </div>
+          <div class="s-slider">
+            <div class="s-slider-top">
+              <span class="r-lbl s-slider-name">Suggest above</span>
+              <span class="s-slider-val">{Math.round($capture.thresholds.suggest * 100)}%</span>
+            </div>
+            <input class="r-range" type="range" min="0.3" max="0.9" step="0.01"
+              value={$capture.thresholds.suggest}
+              on:input={(e) => onSuggest(+e.target.value)} disabled={!$capture.available} use:rangeFill={$capture.thresholds.suggest} aria-label="Suggest above" />
+            <div class="s-slider-ends"><span>PASSIVE</span><span>HYPER-AWARE</span></div>
+          </div>
+          <p class="rw-foot">Only a direct, high-confidence quotation can ever auto-fire. A paraphrase is always a suggestion — a cosine is not a probability.</p>
         </div>
 
-        <div class="s-grouphead">Add a profile</div>
-        <div class="s-vpadd">
-          <input
-            class="r-input"
-            placeholder="Preacher's name"
-            bind:value={newName}
-            on:keydown={(e) => e.key === 'Enter' && addProfile()} />
-          <button class="r-btn" disabled={profileBusy || !newName.trim()} on:click={addProfile}>Add</button>
+        <!-- VOICE PROFILES. Merged into this section rather than carrying their own:
+             a profile IS a calibration of the gate above it, and splitting the dial
+             from the thing it calibrates across two rail entries is how an operator
+             comes to believe they are unrelated. -->
+        <div class="rw-group">Voice profiles</div>
+        <div class="s-prose">
+          <p class="rw-foot" style="margin-top:0; padding-top:0; border-top:0;">
+            One profile per preacher. Each remembers the language they preach in, the
+            names and places Relay should expect to hear, and how cautious the gate
+            should be for that voice — so calibration is not relearned from scratch
+            every Sunday.
+          </p>
+          {#if profileErr}
+            <p class="s-alert" role="alert">{profileErr}</p>
+          {/if}
+        </div>
+
+        {#each profiles as p (p.id)}
+          <div class="rw-nv">
+            <div class="s-nvtext">
+              <div class="rw-nvk">
+                {p.name}
+                {#if p.is_active}<span class="s-vpactive r-mono">active</span>{/if}
+              </div>
+              <p class="rw-nvnote">
+                {p.language ? p.language.toUpperCase() : 'Auto-detect (code-switching)'}
+                · sensitivity {p.sensitivity}
+                · gate {Math.round(p.auto_fire * 100)}% / {Math.round(p.suggest * 100)}%
+              </p>
+            </div>
+            <div class="rw-nvctl s-nvpair">
+              {#if !p.is_active}
+                <button class="r-btn ghost sm" disabled={profileBusy} on:click={() => useProfile(p.id)}>Use</button>
+              {/if}
+              <button class="r-btn ghost sm" disabled={profileBusy} on:click={() => openEditor(p)}>Edit</button>
+              <!-- Deleting the profile in use would leave the gate calibrated by
+                   nothing, so the backend refuses it and says why. -->
+              <button class="r-btn ghost sm" disabled={profileBusy} on:click={() => removeProfile(p.id)}>Delete</button>
+            </div>
+          </div>
+        {:else}
+          <div class="rw-nv"><span class="rw-nvk">Profiles</span><span class="rw-nvv">{settingValue(null, { missing: 'none yet' })}</span></div>
+        {/each}
+
+        <div class="s-prose">
+          <div class="s-addrow">
+            <input
+              class="r-input"
+              placeholder="Preacher's name"
+              aria-label="New voice profile name"
+              bind:value={newName}
+              on:keydown={(e) => e.key === 'Enter' && addProfile()} />
+            <button class="r-btn" disabled={profileBusy || !newName.trim()} on:click={addProfile}>Add</button>
+          </div>
+          {#if !profiles.length}
+            <p class="rw-foot">The first profile you add becomes the active calibration.</p>
+          {/if}
         </div>
 
         {#if editing}
-          <div class="s-grouphead">Editing “{editing.name}”</div>
+          <div class="rw-group">Editing “{editing.name}”</div>
+          <div class="s-prose">
+            <label class="r-lbl" for="vp-name">Name</label>
+            <input id="vp-name" class="r-input" bind:value={editing.name} />
 
-          <label class="r-lbl" for="vp-name">Name</label>
-          <input id="vp-name" class="r-input" bind:value={editing.name} />
+            <label class="r-lbl" for="vp-lang">Language</label>
+            <select id="vp-lang" class="r-select" bind:value={editing.language}>
+              <option value={null}>Auto-detect (code-switching)</option>
+              <option value="en">English</option>
+              <option value="yo">Yoruba</option>
+              <option value="sw">Swahili</option>
+              <option value="ha">Hausa</option>
+            </select>
 
-          <label class="r-lbl" for="vp-lang">Language</label>
-          <select id="vp-lang" class="r-select" bind:value={editing.language}>
-            <option value={null}>Auto-detect (code-switching)</option>
+            <label class="r-lbl" for="vp-bias">Expected names and places</label>
+            <input
+              id="vp-bias"
+              class="r-input"
+              placeholder="Habakkuk, Ekiti, Oyelaran…"
+              bind:value={editing.bias_terms} />
+            <p class="rw-foot">
+              Comma-separated. These are fed to the decoder as a hint, which is how an
+              unusual name stops being transcribed as something else. It biases
+              recognition — it does not force it.
+            </p>
+
+            <div class="s-slider">
+              <div class="s-slider-top">
+                <span class="r-lbl s-slider-name">Sensitivity</span>
+                <span class="s-slider-val">{editing.sensitivity}</span>
+              </div>
+              <input class="r-range" type="range" min="0" max="100" step="1" bind:value={editing.sensitivity} use:rangeFill={editing.sensitivity} aria-label="Sensitivity" />
+              <div class="s-slider-ends"><span>CAUTIOUS</span><span>EAGER</span></div>
+            </div>
+            <!-- THE ONE THING THIS FORM MUST NOT GET WRONG. The learned pair is shown,
+                 never edited: it is what the router worked out from this operator's
+                 confirmations. Moving the dial above is the operator deliberately
+                 re-baselining, and only then does the backend re-derive these. A
+                 rename must never cost them their calibration. -->
+            <p class="rw-foot">
+              Learned gate for this voice: <b>auto-fire {Math.round(editing.auto_fire * 100)}%</b>,
+              <b>suggest {Math.round(editing.suggest * 100)}%</b> — set by Relay from what you
+              have confirmed, not by hand. Renaming or changing the language keeps them.
+              <b>Moving the sensitivity dial resets them</b>, because that is you saying the
+              gate is wrong.
+            </p>
+
+            <div class="s-addrow">
+              <button class="r-btn primary" disabled={profileBusy} on:click={saveProfile}>Save profile</button>
+              <button class="r-btn ghost" disabled={profileBusy} on:click={() => (editing = null)}>Cancel</button>
+            </div>
+          </div>
+        {/if}
+
+      {:else if section === 'scripture'}
+        <div class="rw-group">Recognition language</div>
+        <div class="s-prose">
+          <select class="r-select" value={$capture.stt.language ?? ''} on:change={(e) => setSttLanguage(e.target.value || null)} disabled={!$capture.stt.loaded} aria-label="Recognition language">
+            <option value="">Auto-detect (code-switching)</option>
             <option value="en">English</option>
             <option value="yo">Yoruba</option>
             <option value="sw">Swahili</option>
             <option value="ha">Hausa</option>
           </select>
+          <p class="rw-foot">Auto-detect handles English mixed with a local language mid-sentence — the normal case. Tier-1: Yoruba · Swahili · Hausa.</p>
+        </div>
 
-          <label class="r-lbl" for="vp-bias">Expected names and places</label>
-          <input
-            id="vp-bias"
-            class="r-input"
-            placeholder="Habakkuk, Ekiti, Oyelaran…"
-            bind:value={editing.bias_terms} />
-          <p class="s-note">
-            Comma-separated. These are fed to the decoder as a hint, which is how an
-            unusual name stops being transcribed as something else. It biases
-            recognition — it does not force it.
-          </p>
-
-          <div class="s-slider">
-            <div class="s-slider-top">
-              <span class="r-lbl s-slider-name">Sensitivity</span>
-              <span class="s-slider-val">{editing.sensitivity}</span>
-            </div>
-            <input class="r-range" type="range" min="0" max="100" step="1" bind:value={editing.sensitivity} />
-            <div class="s-slider-ends"><span>CAUTIOUS</span><span>EAGER</span></div>
-          </div>
-          <!-- THE ONE THING THIS FORM MUST NOT GET WRONG. The learned pair is shown,
-               never edited: it is what the router worked out from this operator's
-               confirmations. Moving the dial above is the operator deliberately
-               re-baselining, and only then does the backend re-derive these. A
-               rename must never cost them their calibration. -->
-          <p class="s-note">
-            Learned gate for this voice: <b>auto-fire {Math.round(editing.auto_fire * 100)}%</b>,
-            <b>suggest {Math.round(editing.suggest * 100)}%</b> — set by Relay from what you
-            have confirmed, not by hand. Renaming or changing the language keeps them.
-            <b>Moving the sensitivity dial resets them</b>, because that is you saying the
-            gate is wrong.
-          </p>
-
-          <div class="s-vpadd">
-            <button class="r-btn primary" disabled={profileBusy} on:click={saveProfile}>Save profile</button>
-            <button class="r-btn ghost" disabled={profileBusy} on:click={() => (editing = null)}>Cancel</button>
-          </div>
-        {/if}
-
-      {:else if section === 'scripture'}
-        <div class="s-grouphead first">Recognition Language</div>
-        <select class="r-select" value={$capture.stt.language ?? ''} on:change={(e) => setSttLanguage(e.target.value || null)} disabled={!$capture.stt.loaded}>
-          <option value="">Auto-detect (code-switching)</option>
-          <option value="en">English</option>
-          <option value="yo">Yoruba</option>
-          <option value="sw">Swahili</option>
-          <option value="ha">Hausa</option>
-        </select>
-        <p class="s-note">Auto-detect handles English mixed with a local language mid-sentence — the normal case. Tier-1: Yoruba · Swahili · Hausa.</p>
-
-        <div class="s-grouphead">Bible Translations</div>
+        <div class="rw-group">Bible translations</div>
         <div class="s-checklist">
           {#if translations.length}
             {#each translations as tr}
@@ -1023,323 +1169,330 @@
               </button>
             {/each}
           {:else if !dataLoaded}
-            <div class="r-empty" style="font-size:12.5px;">Loading translations…</div>
+            <div class="r-empty" style="font-size:var(--v-fs-b1);">Loading translations…</div>
           {:else}
-            <div class="r-empty" style="font-size:12.5px;">No translations loaded.</div>
+            <div class="r-empty" style="font-size:var(--v-fs-b1);">No translations loaded.</div>
           {/if}
         </div>
-        <div class="s-tr-note r-mono">Only public-domain <b>KJV</b> is bundled. Additional versions need their verse data added to the corpus.</div>
+        <div class="s-prose">
+          <p class="rw-foot">Only public-domain <b>KJV</b> is bundled. Additional versions need their verse data added to the corpus.</p>
+        </div>
 
-      {:else if section === 'languages'}
-        <p class="s-lead">
-          What Relay actually knows about each language, counted from the data it
-          ships with. Nothing here is a claim — improving a number means improving
-          the table the detector uses, which is a one-line change anyone who speaks
-          the language can make.
-        </p>
-        {#if langs.length}
-          <table class="s-lang">
-            <thead>
-              <tr><th>Language</th><th>Books</th><th>Ways to say them</th><th>Numbers in-language</th><th>Console text</th><th>Checked by a speaker</th><th>Accuracy</th></tr>
-            </thead>
-            <tbody>
-              {#each langs as l (l.code)}
-                <tr>
-                  <td><b>{l.name}</b> <span class="r-mono s-langcode">{l.code}</span></td>
-                  <td class="r-mono">{l.books} / {l.books_total}</td>
-                  <td class="r-mono">{l.aliases}</td>
-                  <!-- Three states, not two, and the middle one is the point of
-                       this column. Yorùbá numerals PARSE (they are vigesimal and
-                       subtractive — 16 is ẹrìndínlógún) but no native speaker has
-                       checked the table, so they are capped at suggest and can
-                       never reach a wall unattended. Printing a bare "yes" beside
-                       Kiswahili would claim the two behave the same. -->
-                  <td
-                    class="r-mono"
-                    class:s-langgap={!l.numerals || !l.numerals_auto_fire}
-                    title={l.numerals && !l.numerals_auto_fire
-                      ? 'Parsed, but no native speaker has reviewed these numbers — a reference resolved through them is offered to you and never fired on its own.'
-                      : null}
-                  >{!l.numerals ? 'no' : l.numerals_auto_fire ? 'yes' : 'suggest only'}</td>
-                  <td class="r-mono" class:s-langgap={coverage(l.code) === 0}>{coverage(l.code)}%</td>
-                  <!-- ABSENCES, not scores. Nothing observes a native speaker's
-                       judgement, and none has looked at these tables. -->
-                  <td class="r-mono s-langgap">not yet</td>
-                  <td class="r-mono s-langgap">not measured</td>
-                </tr>
-              {/each}
-            </tbody>
-          </table>
-          <p class="s-note">
-            <b>“Accuracy” is empty because it has never been measured</b> — in any
-            language, including English. Measuring it needs about thirty minutes of
-            real preaching on tape and somebody who speaks the language to write down
-            what was actually said. Until that exists, any figure here would be a
-            guess wearing a percentage sign.
+        <!-- LANGUAGES. Merged into this section from its own rail entry: the
+             recognition language above is chosen FROM this table, and the honest
+             answer to "should I pick Yoruba?" is two rows down from the picker
+             rather than two clicks away. -->
+        <div class="rw-group">Language coverage</div>
+        <div class="s-prose">
+          <p class="rw-foot" style="margin-top:0; padding-top:0; border-top:0;">
+            Counted from the data Relay ships with. Nothing here is a claim —
+            improving a number means improving the table the detector uses, which is
+            a one-line change anyone who speaks the language can make.
           </p>
-          <p class="s-note">
-            Every book name came from a published translation, and <b>none has been
-            checked by somebody who speaks the language.</b> That is the gap that
-            matters most: a wrong alias does not fail safely — it puts the wrong
-            scripture on a wall. Fixing one is a one-line change to
-            <span class="r-mono">data/book_aliases.json</span>, no code required.
-          </p>
-        {:else if !langsAsked}
-          <Loading what="the language tables" />
-        {:else if $readErrors.languageReport}
-          <ErrorState error={$readErrors.languageReport} />
-        {:else}
-          <p class="s-note">The language tables could not be read.</p>
-        {/if}
-
-      {:else if section === 'ai'}
-        <div class="s-inline"><span class="s-count">self-calibrating</span></div>
-        <div class="s-slider">
-          <div class="s-slider-top">
-            <span class="r-lbl s-slider-name">Auto-fire above</span>
-            <span class="s-slider-val">{Math.round($capture.thresholds.auto_fire * 100)}%</span>
-          </div>
-          <input class="r-range" type="range" min="0.5" max="0.99" step="0.01"
-            value={$capture.thresholds.auto_fire}
-            on:input={(e) => onAuto(+e.target.value)} disabled={!$capture.available} />
-          <div class="s-slider-ends"><span>LAX (50%)</span><span>STRICT (100%)</span></div>
+          {#if langs.length}
+            <table class="s-lang">
+              <thead>
+                <tr><th>Language</th><th>Books</th><th>Ways to say them</th><th>Numbers in-language</th><th>Console text</th><th>Checked by a speaker</th><th>Accuracy</th></tr>
+              </thead>
+              <tbody>
+                {#each langs as l (l.code)}
+                  <tr>
+                    <td><b>{l.name}</b> <span class="r-mono s-langcode">{l.code}</span></td>
+                    <td class="r-mono">{l.books} / {l.books_total}</td>
+                    <td class="r-mono">{l.aliases}</td>
+                    <!-- Three states, not two, and the middle one is the point of
+                         this column. Yorùbá numerals PARSE (they are vigesimal and
+                         subtractive — 16 is ẹrìndínlógún) but no native speaker has
+                         checked the table, so they are capped at suggest and can
+                         never reach a wall unattended. Printing a bare "yes" beside
+                         Kiswahili would claim the two behave the same. -->
+                    <td
+                      class="r-mono"
+                      class:s-langgap={!l.numerals || !l.numerals_auto_fire}
+                      title={l.numerals && !l.numerals_auto_fire
+                        ? 'Parsed, but no native speaker has reviewed these numbers — a reference resolved through them is offered to you and never fired on its own.'
+                        : null}
+                    >{!l.numerals ? 'no' : l.numerals_auto_fire ? 'yes' : 'suggest only'}</td>
+                    <td class="r-mono" class:s-langgap={coverage(l.code) === 0}>{coverage(l.code)}%</td>
+                    <!-- ABSENCES, not scores. Nothing observes a native speaker's
+                         judgement, and none has looked at these tables. -->
+                    <td class="r-mono s-langgap">not yet</td>
+                    <td class="r-mono s-langgap">not measured</td>
+                  </tr>
+                {/each}
+              </tbody>
+            </table>
+            <p class="rw-foot">
+              <b>“Accuracy” is empty because it has never been measured</b> — in any
+              language, including English. Measuring it needs about thirty minutes of
+              real preaching on tape and somebody who speaks the language to write down
+              what was actually said. Until that exists, any figure here would be a
+              guess wearing a percentage sign.
+            </p>
+            <p class="rw-foot">
+              Every book name came from a published translation, and <b>none has been
+              checked by somebody who speaks the language.</b> That is the gap that
+              matters most: a wrong alias does not fail safely — it puts the wrong
+              scripture on a wall. Fixing one is a one-line change to
+              <span class="r-mono">data/book_aliases.json</span>, no code required.
+            </p>
+          {:else if !langsAsked}
+            <Loading what="the language tables" />
+          {:else if $readErrors.languageReport}
+            <ErrorState error={$readErrors.languageReport} />
+          {:else}
+            <p class="rw-foot">The language tables could not be read.</p>
+          {/if}
         </div>
-        <div class="s-slider">
-          <div class="s-slider-top">
-            <span class="r-lbl s-slider-name">Suggest above</span>
-            <span class="s-slider-val">{Math.round($capture.thresholds.suggest * 100)}%</span>
-          </div>
-          <input class="r-range" type="range" min="0.3" max="0.9" step="0.01"
-            value={$capture.thresholds.suggest}
-            on:input={(e) => onSuggest(+e.target.value)} disabled={!$capture.available} />
-          <div class="s-slider-ends"><span>PASSIVE</span><span>HYPER-AWARE</span></div>
-        </div>
-        <p class="s-note">Only a direct, high-confidence quotation can ever auto-fire. A paraphrase is always a suggestion — a cosine is not a probability.</p>
-
-      {:else if section === 'shortcuts'}
-        <p class="s-lead">The live desk is driven from the keyboard. These bindings are always active; the full list lives in Help.</p>
-        <div class="s-cardbox">
-          {#each SHORTCUTS as sc}
-            <div class="s-scrow">
-              <span class="s-sckeys">{#each sc.keys as k}<kbd class="s-kbd">{k}</kbd>{/each}</span>
-              <span class="s-scnote">{sc.label}</span>
-            </div>
-          {/each}
-        </div>
-        <button class="r-btn ghost sm" on:click={() => setSession({ activeTab: 'help' })}>Open Help &amp; Shortcuts</button>
 
       {:else if section === 'network'}
-        <div class="s-cardbox">
-          <div class="s-netrow"><span class="s-netk">This machine</span><span class="s-netv r-mono">{lanIp || '—'}</span></div>
-          <div class="s-netrow"><span class="s-netk">Output / stage pages</span><span class="s-netv r-mono">:8032 · http</span></div>
-          <div class="s-netrow"><span class="s-netk">Live update channel</span><span class="s-netv r-mono">:8031 · websocket</span></div>
-        </div>
-        <p class="s-note">Connected devices (OBS · kiosk · stage remote) pull the live output from this machine on the same Wi-Fi. Manage them in the <b>Outputs</b> tab.</p>
+        <div class="rw-group">This machine</div>
+        <div class="rw-nv"><span class="rw-nvk">Found on this computer</span><span class="rw-nvv">{settingValue(lanIp, {
+            loading: lanState === 'loading',
+            missing: lanState === 'failed' ? 'could not be read' : 'not on a network',
+          })}</span></div>
+        <div class="rw-nv"><span class="rw-nvk">Output / stage pages</span><span class="rw-nvv">:8032 · http</span></div>
+        <div class="rw-nv"><span class="rw-nvk">Live update channel</span><span class="rw-nvv">:8031 · websocket</span></div>
 
-        <div class="s-grouphead">Offline speech model</div>
-        {#if $capture.stt.loaded}
-          <div class="s-status ok s-model"><span class="s-sdot"></span>loaded</div>
-          <div class="s-modelpath">{$capture.stt.model}</div>
-        {/if}
-        <!-- ALWAYS rendered, not only when nothing is loaded. This used to be the
-             `{:else}` branch, which was right when there was one model and wrong the
-             moment there were several: the operator could install a more accurate
-             model and then had no way to see which one was running, let alone choose.
-             ModelSetup shows the picker once something is installed and the
-             download prompt when nothing is. -->
-        <ModelSetup />
-
-      {:else if section === 'integrations'}
-        <p class="s-lead">Relay sends its output to other software over your local network — no plugins to install. Add a <b>Browser Source</b> pointing at Relay; the exact per-channel URL is in <b>Outputs → Sharing</b>.</p>
-        <div class="s-cardbox">
-          <!-- The URL is CHANNEL-keyed (DECISIONS §29). Changing a screen's template
-               broadcasts a channel_template message the output applies by matching its
-               OWN `channel` — so a template swap is live with no re-copying of the URL.
-               This row used to show a `?template_id=<n>`-only shape, which parses to
-               channel 0 ("no channel"): it renders, so it looks right, and then it is
-               the one browser source in the building that never follows a template
-               change. Copy URL in Outputs → Sharing is still the only thing that fills
-               in the real ids. -->
-          <div class="s-netrow"><span class="s-netk">OBS / vMix (browser source)</span><span class="s-netv r-mono">http://{lanIp || 'this-pc'}:8032/output.html?channel=&lt;screen&gt;&amp;template_id=&lt;n&gt;</span></div>
-          <div class="s-netrow"><span class="s-netk">Kiosk screen / stage tablet</span><span class="s-netv r-mono">:8032 · http</span></div>
-          <div class="s-netrow"><span class="s-netk">NDI</span><span class="s-netv r-mono">not available</span></div>
-          <div class="s-netrow"><span class="s-netk">ATEM / SDI switcher</span><span class="s-netv r-mono">via HDMI</span></div>
+        <div class="rw-group">Offline speech model</div>
+        <div class="s-prose">
+          {#if $capture.stt.loaded}
+            <div class="s-status ok s-model"><span class="s-sdot"></span>loaded</div>
+            <div class="s-modelpath">{$capture.stt.model}</div>
+          {/if}
+          <!-- ALWAYS rendered, not only when nothing is loaded. This used to be the
+               `{:else}` branch, which was right when there was one model and wrong the
+               moment there were several: the operator could install a more accurate
+               model and then had no way to see which one was running, let alone choose.
+               ModelSetup shows the picker once something is installed and the
+               download prompt when nothing is. -->
+          <ModelSetup />
         </div>
-        <p class="s-note"><b>NDI is parked</b> — it needs a proprietary SDK Relay does not bundle, so there is no NDI source to select. For an <b>ATEM or other SDI switcher</b>, open a Relay output window on an HDMI screen and feed that HDMI into the switcher — Relay does not speak SDI directly (and won't; that is served by the hardware you already own).</p>
+
+        <!-- INTEGRATIONS. Merged in from their own rail entry: every row on it was
+             an address on this machine's network, which is what the three rows at
+             the top of this section already are. -->
+        <div class="rw-group">Other software</div>
+        <!-- The URL is CHANNEL-keyed (DECISIONS §29). Changing a screen's template
+             broadcasts a channel_template message the output applies by matching its
+             OWN `channel` — so a template swap is live with no re-copying of the URL.
+             This row used to show a `?template_id=<n>`-only shape, which parses to
+             channel 0 ("no channel"): it renders, so it looks right, and then it is
+             the one browser source in the building that never follows a template
+             change. Copy URL in Outputs → Sharing is still the only thing that fills
+             in the real ids. -->
+        <div class="rw-nv"><span class="rw-nvk">OBS / vMix (browser source)</span><span class="rw-nvv">http://{lanIp || 'this-pc'}:8032/output.html?channel=&lt;screen&gt;&amp;template_id=&lt;n&gt;</span></div>
+        <div class="rw-nv"><span class="rw-nvk">Kiosk screen / stage tablet</span><span class="rw-nvv">:8032 · http</span></div>
+        <div class="rw-nv"><span class="rw-nvk">NDI</span><span class="rw-nvv">not available</span></div>
+        <div class="rw-nv"><span class="rw-nvk">ATEM / SDI switcher</span><span class="rw-nvv">via HDMI</span></div>
+        <div class="s-prose">
+          <p class="rw-foot">Relay sends its output to other software over your local network — no plugins to install. Add a <b>Browser Source</b> pointing at Relay; the exact per-channel URL is in <b>Outputs → Sharing</b>. Connected devices (OBS · kiosk · stage remote) pull the live output from this machine on the same Wi-Fi.</p>
+          <p class="rw-foot"><b>NDI is parked</b> — it needs a proprietary SDK Relay does not bundle, so there is no NDI source to select. For an <b>ATEM or other SDI switcher</b>, open a Relay output window on an HDMI screen and feed that HDMI into the switcher — Relay does not speak SDI directly (and won't; that is served by the hardware you already own).</p>
+        </div>
 
       {:else if section === 'history'}
         <!-- History moved into Settings. The view is self-contained (its own list,
              detail, search, export) and reads from the same local SQLite store. -->
         <div class="s-history"><History /></div>
 
-      {:else if section === 'backup'}
-        <p class="s-lead">Relay stores everything locally. Use the walk-through to re-check your projector and microphone, and safe mode to disarm every output.</p>
-        <div class="s-note" style="margin-top:0">
-          <b>New here?</b> The setup walk-through picks your projector, checks the microphone is actually hearing something, and ends by putting a real verse on your real screen — so you have <i>seen</i> it work before Sunday.
+        <div class="rw-group">Setup</div>
+        <div class="s-prose">
+          <p class="rw-foot" style="margin-top:0; padding-top:0; border-top:0;">
+            <b>New here?</b> The setup walk-through picks your projector, checks the microphone is actually hearing something, and ends by putting a real verse on your real screen — so you have <i>seen</i> it work before Sunday.
+          </p>
+          <button class="r-btn ghost sm" on:click={restartSetup}>Run the setup walk-through</button>
         </div>
-        <button class="r-btn ghost sm s-mt" on:click={restartSetup}>Run the setup walk-through</button>
 
-        <hr class="s-rule" />
         <!-- SERVICE LOCK. Reachable from the sentence the refusal itself prints,
              which is the whole reason it lives here and not somewhere tidier. -->
-        {#if $serviceLock.engaged}
-          <p class="s-note">
-            <b style="color:var(--v-amber);">A service is being recorded.</b>
-            Relay is holding back a few things that cannot be undone, or that would take
-            the speech engine away mid-sermon: {$serviceLock.held_back.join(', ')}.
-            Firing, the transport, clearing and blacking out are unaffected.
-          </p>
-          <button class="r-btn ghost sm s-mt" on:click={unlockService}>Unlock for this service</button>
-          {#if lockErr}<p class="s-note" role="alert" style="color:var(--v-rose)">{lockErr}</p>{/if}
-        {:else}
-          <p class="s-note">
-            While a service is being recorded, Relay holds back deletions, speech-model
-            changes and imports — an accident at 10:31 has no undo. It arms itself when you
-            start listening and lifts when the service ends. Nothing on the live path is
-            ever held back.
-          </p>
-        {/if}
-
-        {#if $safeMode}
-          <hr class="s-rule" />
-          <p class="s-note">
-            <b style="color:var(--v-amethyst);">Safe mode is on.</b> Outputs will not open and detection is disarmed — nothing Relay does can reach a screen. Turn it off before you run a service.
-          </p>
-          <button class="r-btn ghost sm s-mt" on:click={() => setSafeMode(false)}>Turn off safe mode</button>
-        {:else}
-          <hr class="s-rule" />
-          <p class="s-note">Safe mode disarms every output and detection — a way to open the console without any risk of putting something on a wall.</p>
-          <button class="r-btn ghost sm s-mt" on:click={() => setSafeMode(true)}>Turn on safe mode</button>
-        {/if}
-
-      {:else if section === 'updates'}
-        <div class="s-cardbox">
-          <div class="s-netrow"><span class="s-netk">Installed version</span><span class="s-netv r-mono">{appVersion || '—'}</span></div>
-          <div class="s-netrow"><span class="s-netk">Environment</span><span class="s-netv r-mono">{environment}</span></div>
-          <!-- The status of the CHANNEL, not the absence of news. This row used to
-               read "up to date" whenever nothing was waiting — which was also what
-               it said when the check had never run, when the laptop was offline,
-               and when the update manifest had been returning 404 since the day
-               Relay was installed. A badge that cannot detect its own failure
-               (CLAUDE.md rule 35), on the one path by which a fix reaches a church
-               that already has Relay. -->
-          <div class="s-netrow"><span class="s-netk">Update status</span><span class="s-netv r-mono" class:s-netbad={$updateChannel.state === 'failed'}>{describeChannel($updateChannel)}</span></div>
-          {#if $updateChannel.state === 'failed'}
-            <div class="s-netrow"><span class="s-netk">Last attempt</span><span class="s-netv r-mono">{$updateChannel.detail || 'no reason given'}</span></div>
+        <div class="rw-group">Service lock</div>
+        <div class="s-prose">
+          {#if $serviceLock.engaged}
+            <p class="rw-foot" style="margin-top:0; padding-top:0; border-top:0;">
+              <b style="color:var(--v-amber);">A service is being recorded.</b>
+              Relay is holding back a few things that cannot be undone, or that would take
+              the speech engine away mid-sermon: {$serviceLock.held_back.join(', ')}.
+              Firing, the transport, clearing and blacking out are unaffected.
+            </p>
+            <button class="r-btn ghost sm" on:click={unlockService}>Unlock for this service</button>
+            {#if lockErr}<p class="s-alert" role="alert">{lockErr}</p>{/if}
+          {:else}
+            <p class="rw-foot" style="margin-top:0; padding-top:0; border-top:0;">
+              While a service is being recorded, Relay holds back deletions, speech-model
+              changes and imports — an accident at 10:31 has no undo. It arms itself when you
+              start listening and lifts when the service ends. Nothing on the live path is
+              ever held back.
+            </p>
           {/if}
         </div>
-        <button class="r-btn primary sm s-mt" on:click={doCheckUpdates} disabled={checking}>
-          {checking ? 'Checking…' : 'Check for Updates'}
-        </button>
-        {#if updateMsg}<div class="s-note" style="margin-top:10px">{updateMsg}</div>{/if}
+
+      {:else if section === 'shortcuts'}
+        {#each SHORTCUTS as sc}
+          <div class="s-scrow">
+            <span class="s-sckeys">{#each sc.keys as k}<kbd class="s-kbd">{k}</kbd>{/each}</span>
+            <span class="s-scnote">{sc.label}</span>
+          </div>
+        {/each}
+        <div class="s-prose">
+          <button class="r-btn ghost sm" on:click={() => setSession({ activeTab: 'help' })}>Open Help &amp; Shortcuts</button>
+          <p class="rw-foot">These bindings are always active. The full list lives in Help.</p>
+        </div>
+
+      {:else if section === 'updates'}
+        <div class="rw-nv"><span class="rw-nvk">Installed version</span><span class="rw-nvv">{settingValue(appVersion, {
+            loading: versionState === 'loading',
+            missing: 'could not be read',
+          })}</span></div>
+        <div class="rw-nv"><span class="rw-nvk">Environment</span><span class="rw-nvv">{environment}</span></div>
+        <!-- The status of the CHANNEL, not the absence of news. This row used to
+             read "up to date" whenever nothing was waiting — which was also what
+             it said when the check had never run, when the laptop was offline,
+             and when the update manifest had been returning 404 since the day
+             Relay was installed. A badge that cannot detect its own failure
+             (CLAUDE.md rule 35), on the one path by which a fix reaches a church
+             that already has Relay. `describeChannel` is the ONE place a check
+             outcome becomes words, and both surfaces that talk about it — this
+             row and the Overview rail's quick link — call it. -->
+        <div class="rw-nv"><span class="rw-nvk">Update status</span><span class="rw-nvv" class:s-netbad={$updateChannel.state === 'failed'}>{describeChannel($updateChannel)}</span></div>
+        {#if $updateChannel.state === 'failed'}
+          <div class="rw-nv"><span class="rw-nvk">Last attempt</span><span class="rw-nvv">{$updateChannel.detail || 'no reason given'}</span></div>
+        {/if}
+        <div class="s-prose">
+          <button class="r-btn primary sm" on:click={doCheckUpdates} disabled={checking}>
+            {checking ? 'Checking…' : 'Check for Updates'}
+          </button>
+          {#if updateMsg}<p class="rw-foot">{updateMsg}</p>{/if}
+        </div>
 
         <!-- WHAT AN UPDATE WOULD DO TO YOUR HISTORY.
              Shown before the operator presses anything, because the question they
              actually have — "is this safe right now?" — was previously answerable
              only by trying it. Nothing here refuses on its own; `update_begin`
              re-runs the same checks at the moment of truth. -->
-        <hr class="s-rule" />
-        <div class="r-lbl">Before an update</div>
-        <p class="s-note">
-          Relay copies your entire history — services, plans, songs, saved verses and
-          templates — before it installs anything, and keeps the last
-          {KEEP_SNAPSHOTS} copies. The app itself can always be reinstalled from a
-          release page; your history cannot.
-        </p>
-        {#if updReady}
-          {#if updReady.during_service}
-            <p class="s-note"><b>A service is being recorded.</b> Relay will not update until it ends — an update restarts the app.</p>
+        <div class="rw-group">Before an update</div>
+        <div class="s-prose">
+          <p class="rw-foot" style="margin-top:0; padding-top:0; border-top:0;">
+            Relay copies your entire history — services, plans, songs, saved verses and
+            templates — before it installs anything, and keeps the last
+            {KEEP_SNAPSHOTS} copies. The app itself can always be reinstalled from a
+            release page; your history cannot.
+          </p>
+          {#if updReady?.during_service}
+            <p class="rw-foot"><b>A service is being recorded.</b> Relay will not update until it ends — an update restarts the app.</p>
           {/if}
-          <div class="s-cardbox s-mt">
-            {#each updReady.checks as c (c.id)}
-              <div class="s-netrow">
-                <span class="s-netk">{c.label}</span>
-                <span class="s-netv r-mono" class:bad={c.state === 'fail'} class:warn={c.state === 'warn'}>
-                  {c.note}
-                </span>
-              </div>
-            {/each}
-          </div>
-        {/if}
-        {#if $snapshotPath}
-          <p class="s-note s-mt">Your history was copied to <span class="r-mono">{$snapshotPath}</span>.</p>
+          {#if $snapshotPath}
+            <p class="rw-foot">Your history was copied to <span class="r-mono">{$snapshotPath}</span>.</p>
+          {/if}
+        </div>
+        {#if updReady}
+          {#each updReady.checks as c (c.id)}
+            <div class="rw-nv">
+              <span class="rw-nvk">{c.label}</span>
+              <!-- `class:bad` / `class:warn` used to be here, and neither class was
+                   ever defined in this file or in `app.css` — so a pre-update check
+                   that FAILED was painted in exactly the same grey as one that
+                   passed, on the screen whose entire job is to say whether an update
+                   is safe right now. Rule 35, in a class attribute. Rose for a
+                   failure and amethyst for "worth a look", matching `.b-check.warn`
+                   in the boot ladder; never amber, which means ON AIR. -->
+              <span class="rw-nvv" class:s-netbad={c.state === 'fail'} class:s-netwarn={c.state === 'warn'}>
+                {c.note}
+              </span>
+            </div>
+          {/each}
         {/if}
 
       {:else if section === 'diagnostics'}
-        <p class="s-lead">The facts a support request needs, in one place. Nothing here leaves this machine unless you send it.</p>
+        <!-- READINESS FIRST. The Dashboard is the boot ladder's own probes, re-run
+             on demand — the same `freshChecks()` through the same `makeProbes()`,
+             never a second health panel. It used to be its own rail entry called
+             "Dashboard", which is a name for a shape rather than for a question;
+             the question it answers is "is this machine going to work?", and that
+             is what an operator opens Diagnostics to ask. -->
+        <div class="s-dash"><Dashboard /></div>
+
+        <div class="rw-group">Support facts</div>
         <!-- A FILE, NOT A SCREEN. This table has shown the right facts for a while
              and been useless for the job it exists for: nobody can email a screen.
              What actually happens is somebody photographs it, losing half the table
              and all of the latency history. -->
-        <button class="r-btn ghost sm" on:click={doExportDiagnostics} disabled={diagBusy}>
-          {diagBusy ? 'Writing…' : 'Save a diagnostic file'}
-        </button>
-        {#if diagMsg}<p class="s-note" role="status">{diagMsg}</p>{/if}
-        <div class="s-cardbox">
-          <div class="s-netrow"><span class="s-netk">Backend</span><span class="s-netv r-mono">{$capture.available ? 'connected' : 'not connected'}</span></div>
-          <div class="s-netrow"><span class="s-netk">Speech model</span><span class="s-netv r-mono">{$capture.stt.loaded ? ($capture.stt.model || 'loaded') : 'not loaded'}</span></div>
-          <div class="s-netrow"><span class="s-netk">Recognition language</span><span class="s-netv r-mono">{$capture.stt.language || '—'}</span></div>
-          <div class="s-netrow"><span class="s-netk">Microphone</span><span class="s-netv r-mono">{$capture.inputDevice || 'system default'}</span></div>
-          <div class="s-netrow"><span class="s-netk">Detection</span><span class="s-netv r-mono">{$capture.detectionOn ? 'armed' : 'off'}</span></div>
-          <div class="s-netrow"><span class="s-netk">This machine (LAN)</span><span class="s-netv r-mono">{lanIp || '—'}</span></div>
-          <div class="s-netrow"><span class="s-netk">Ports</span><span class="s-netv r-mono">5032 console · 8031 ws · 8032 http</span></div>
-          <div class="s-netrow"><span class="s-netk">Version</span><span class="s-netv r-mono">{appVersion || '—'} · {environment}</span></div>
-          <div class="s-netrow"><span class="s-netk">Uptime (this run)</span><span class="s-netv r-mono">{uptime}</span></div>
+        <div class="s-prose">
+          <button class="r-btn ghost sm" on:click={doExportDiagnostics} disabled={diagBusy}>
+            {diagBusy ? 'Writing…' : 'Save a diagnostic file'}
+          </button>
+          {#if diagMsg}<p class="rw-foot" role="status">{diagMsg}</p>{/if}
         </div>
+        <div class="rw-nv"><span class="rw-nvk">Backend</span><span class="rw-nvv">{$capture.available ? 'connected' : 'not connected'}</span></div>
+        <div class="rw-nv"><span class="rw-nvk">Speech model</span><span class="rw-nvv">{$capture.stt.loaded ? ($capture.stt.model || 'loaded') : 'not loaded'}</span></div>
+        <div class="rw-nv"><span class="rw-nvk">Recognition language</span><span class="rw-nvv">{settingValue($capture.stt.language, { missing: 'not set yet' })}</span></div>
+        <div class="rw-nv"><span class="rw-nvk">Microphone</span><span class="rw-nvv">{$capture.inputDevice || 'system default'}</span></div>
+        <div class="rw-nv"><span class="rw-nvk">Detection</span><span class="rw-nvv">{$capture.detectionOn ? 'armed' : 'off'}</span></div>
+        <div class="rw-nv"><span class="rw-nvk">This machine (LAN)</span><span class="rw-nvv">{settingValue(lanIp, {
+            loading: lanState === 'loading',
+            missing: lanState === 'failed' ? 'could not be read' : 'not on a network',
+          })}</span></div>
+        <div class="rw-nv"><span class="rw-nvk">Ports</span><span class="rw-nvv">5032 console · 8031 ws · 8032 http</span></div>
+        <div class="rw-nv"><span class="rw-nvk">Version</span><span class="rw-nvv">{settingValue(appVersion, {
+            loading: versionState === 'loading',
+            missing: 'could not be read',
+          })} · {environment}</span></div>
+        <div class="rw-nv"><span class="rw-nvk">Uptime (this run)</span><span class="rw-nvv">{uptime}</span></div>
 
-        <div class="s-grouphead">Live latency</div>
-        <p class="s-tr-note">
-          How long it takes a spoken word to reach the operator's screen, and a spoken reference to reach the wall — measured on <b>this</b> machine, in <b>this</b> room, on the model you are actually running. Milliseconds. Nothing here leaves the computer.
-          <br /><br />
-          The clock starts when audio reaches the speech engine. Assembling it from the microphone adds a further {lat?.capture_front_end_ms ?? 400}ms at most (about half that on average), and the end-to-end row already includes it.
-        </p>
+        <div class="rw-group">Live latency</div>
+        <div class="s-prose">
+          <p class="rw-foot" style="margin-top:0; padding-top:0; border-top:0;">
+            How long it takes a spoken word to reach the operator's screen, and a spoken reference to reach the wall — measured on <b>this</b> machine, in <b>this</b> room, on the model you are actually running. Milliseconds. Nothing here leaves the computer.
+            <br /><br />
+            The clock starts when audio reaches the speech engine. Assembling it from the microphone adds a further {lat?.capture_front_end_ms ?? 400}ms at most (about half that on average), and the end-to-end row already includes it.
+          </p>
+        </div>
         {#if latVerdict}
-          <div class="s-netrow"><span class="s-netk">Verdict</span><span class="s-netv">{latVerdict.verdict}</span></div>
-          <p class="s-note">{latVerdict.detail}</p>
+          <div class="rw-nv"><span class="rw-nvk">Verdict</span><span class="rw-nvv">{latVerdict.verdict}</span></div>
+          <div class="s-prose"><p class="rw-foot" style="margin-top:0; padding-top:0; border-top:0;">{latVerdict.detail}</p></div>
         {/if}
         {#if latRows.length}
-          <div class="s-cardbox">
-            <div class="s-netrow"><span class="s-netk">measurement</span><span class="s-netv r-mono">n · median · P95 · P99 · worst</span></div>
-            {#each latRows as m}
-              <div class="s-netrow">
-                <span class="s-netk">{m.metric.replace(/_/g, ' ')}</span>
-                <!-- `?? 0` used to be here, and it rendered a stage that was never
-                     reached as `0ms` — the fastest thing on the screen. That is the
-                     absence-is-not-a-zero rule (DECISIONS §38, §44) failing at the
-                     last hop, on the one screen a field tester reads. -->
-                <span class="s-netv r-mono">{m.samples} · {msOrDash(m.p50_ms)} · {msOrDash(m.p95_ms)} · {msOrDash(m.p99_ms)} · {msOrDash(m.worst_ms)}</span>
-              </div>
-            {/each}
-            <div class="s-netrow"><span class="s-netk">transcript updates / second</span><span class="s-netv r-mono">{(lat?.transcript_updates_per_s ?? 0).toFixed(2)}</span></div>
-            <div class="s-netrow"><span class="s-netk">partials dropped (queue full)</span><span class="s-netv r-mono">{lat?.dropped_partials ?? 0}</span></div>
-            <!-- RG-84. A shed PARTIAL is re-decoded a moment later; shed AUDIO is a
-                 piece of the sermon Relay never heard. Both queues in front of the
-                 decoder were unbounded — a stall became memory and a transcript
-                 minutes behind, rather than a number. Non-zero here is worse news
-                 than the row above it, so it is coloured and the row above is not. -->
-            <div class="s-netrow"><span class="s-netk">audio dropped (never heard)</span><span class="s-netv r-mono" class:s-netbad={(lat?.dropped_audio ?? 0) > 0}>{lat?.dropped_audio ?? 0}</span></div>
-          </div>
+          <div class="rw-nv"><span class="rw-nvk">measurement</span><span class="rw-nvv">n · median · P95 · P99 · worst</span></div>
+          {#each latRows as m}
+            <div class="rw-nv">
+              <span class="rw-nvk">{m.metric.replace(/_/g, ' ')}</span>
+              <!-- `?? 0` used to be here, and it rendered a stage that was never
+                   reached as `0ms` — the fastest thing on the screen. That is the
+                   absence-is-not-a-zero rule (DECISIONS §38, §44) failing at the
+                   last hop, on the one screen a field tester reads. -->
+              <span class="rw-nvv">{m.samples} · {msOrDash(m.p50_ms)} · {msOrDash(m.p95_ms)} · {msOrDash(m.p99_ms)} · {msOrDash(m.worst_ms)}</span>
+            </div>
+          {/each}
+          <div class="rw-nv"><span class="rw-nvk">transcript updates / second</span><span class="rw-nvv">{(lat?.transcript_updates_per_s ?? 0).toFixed(2)}</span></div>
+          <div class="rw-nv"><span class="rw-nvk">partials dropped (queue full)</span><span class="rw-nvv">{lat?.dropped_partials ?? 0}</span></div>
+          <!-- RG-84. A shed PARTIAL is re-decoded a moment later; shed AUDIO is a
+               piece of the sermon Relay never heard. Both queues in front of the
+               decoder were unbounded — a stall became memory and a transcript
+               minutes behind, rather than a number. Non-zero here is worse news
+               than the row above it, so it is coloured and the row above is not. -->
+          <div class="rw-nv"><span class="rw-nvk">audio dropped (never heard)</span><span class="rw-nvv" class:s-netbad={(lat?.dropped_audio ?? 0) > 0}>{lat?.dropped_audio ?? 0}</span></div>
         {:else}
-          <p class="s-note">Nothing measured yet. Start listening and speak for a few seconds.</p>
+          <div class="rw-nv"><span class="rw-nvk">Measured so far</span><span class="rw-nvv">{settingValue(null, { missing: 'nothing yet' })}</span></div>
         {/if}
-        {#if latDrift}
-          <p class="s-note">
-            {#if latDrift.growing}
-              <b>Latency is growing.</b> It averaged {Math.round(latDrift.early)}ms early in this session and {Math.round(latDrift.late)}ms recently — the pipeline is falling further behind the longer it runs.
-            {:else}
-              Steady: {Math.round(latDrift.early)}ms early in this session, {Math.round(latDrift.late)}ms recently.
-            {/if}
-          </p>
-        {/if}
-        <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;">
-          <button class="r-btn" on:click={resetLatency} disabled={!$capture.available}>Start a fresh measurement</button>
-          <button
-            class="r-btn"
-            on:click={() => toggleLatency(!(lat?.enabled ?? true))}
-            disabled={!$capture.available}
-          >{(lat?.enabled ?? true) ? 'Stop measuring' : 'Start measuring'}</button>
+        <div class="s-prose">
+          {#if latDrift}
+            <p class="rw-foot" style="margin-top:0; padding-top:0; border-top:0;">
+              {#if latDrift.growing}
+                <b>Latency is growing.</b> It averaged {Math.round(latDrift.early)}ms early in this session and {Math.round(latDrift.late)}ms recently — the pipeline is falling further behind the longer it runs.
+              {:else}
+                Steady: {Math.round(latDrift.early)}ms early in this session, {Math.round(latDrift.late)}ms recently.
+              {/if}
+            </p>
+          {/if}
+          <div class="s-addrow">
+            <button class="r-btn" on:click={resetLatency} disabled={!$capture.available}>Start a fresh measurement</button>
+            <button
+              class="r-btn"
+              on:click={() => toggleLatency(!(lat?.enabled ?? true))}
+              disabled={!$capture.available}
+            >{(lat?.enabled ?? true) ? 'Stop measuring' : 'Start measuring'}</button>
+          </div>
+          <p class="rw-foot">Start listening and speak for a few seconds to fill the table. Measuring is on by default and costs a handful of timestamps per decode; turning it off is here so a field test can prove the instrument is not the delay.</p>
         </div>
-        <p class="s-note">Measuring is on by default and costs a handful of timestamps per decode. Turning it off is here so a field test can prove the instrument is not the delay.</p>
 
       {:else if section === 'privacy'}
         <!-- WHAT IS LEAVING THIS MACHINE, ANSWERED FROM THE LIVE SETTINGS.
@@ -1348,103 +1501,124 @@
              row below is read from the actual state, never hardcoded: a screen that
              says "off" because somebody typed "off" is worth less than no screen.
              It also states the LAN exposure plainly, because a privacy page that
-             lists only the reassuring half is an advert. -->
-        <p class="s-lead">
-          Read from this machine right now — not from a promise. Nothing here is a
-          setting you change; it is a report on the settings you have.
-        </p>
-        <div class="s-cardbox">
-          <div class="s-netrow">
-            <span class="s-netk">What you say</span>
-            <span class="s-netv">Never leaves this computer. Audio is processed in memory and is not written to disk.</span>
-          </div>
-          <div class="s-netrow">
-            <span class="s-netk">Transcripts &amp; history</span>
-            <span class="s-netv">Stored on this computer only, in Relay's own database.</span>
-          </div>
-          <div class="s-netrow">
-            <span class="s-netk">Speech recognition</span>
-            <span class="s-netv">
-              {$capture.stt.loaded
-                ? 'Runs entirely on this machine. No audio is sent anywhere.'
-                : 'No model loaded — nothing is being transcribed.'}
-            </span>
-          </div>
-          <div class="s-netrow">
-            <span class="s-netk">Crash reporting</span>
-            <!-- The live value. This is the ONE thing Relay can send, and the one
-                 row somebody opens this page to check. -->
-            <span class="s-netv" class:on={crashOn}>
-              {crashOn
-                ? 'ON — a crash sends the error and where it happened. Never a transcript, verse, lyric or announcement.'
-                : 'OFF — nothing is sent when Relay crashes.'}
-            </span>
-          </div>
-          <div class="s-netrow">
-            <span class="s-netk">Accounts &amp; cloud</span>
-            <span class="s-netv">There are none. Relay has no account, no server, and works with the network unplugged.</span>
-          </div>
-          <div class="s-netrow">
-            <span class="s-netk">Your church network</span>
-            <!-- The unflattering half, in the same size type. -->
-            <span class="s-netv">
-              Relay serves your screens at <span class="r-mono">{lanIp || 'this computer'}:8032</span>.
-              Anyone already on the same WiFi can see what is on the projector — <b>and can
-              change it</b>: the preacher's remote has no password, by design. They cannot
-              reach your transcripts, plans or history.
-            </span>
-          </div>
-          <div class="s-netrow">
-            <span class="s-netk">Diagnostic file</span>
-            <span class="s-netv">Only written when you press the button in Diagnostics, and only where you can read it first.</span>
-          </div>
-        </div>
-        <p class="s-note">
-          The full account, including what would make the network tradeoff change, is
-          in <span class="r-mono">PRIVACY.md</span> and <span class="r-mono">docs/DECISIONS.md</span> §35.
-        </p>
+             lists only the reassuring half is an advert.
 
-      {:else if section === 'advanced'}
-        <div class="s-grouphead first">Crash Reporting</div>
-        <p class="s-tr-note">
-          Relay is offline software: nothing you do here leaves this computer. Crash reporting is the one exception, and it is <b>off unless you turn it on</b>.
-          <br /><br />
-          If you turn it on, Relay sends only the technical details of a crash — the error, where in the code it happened, and your operating system. <b>Sermon transcripts, verse text, song lyrics, announcements and service names are never sent</b>, and are stripped from every report before it leaves. Reports are queued and sent later, so a bad network can never slow down a live service.
-        </p>
-        <label class="r-lbl s-mt" for="crash-dsn">Sentry DSN (your own project)</label>
-        <input id="crash-dsn" class="r-input" type="text" placeholder="https://…@…ingest.sentry.io/…" bind:value={crash.dsn} disabled={!$capture.available} />
-        <button class="r-btn" class:danger={crash.enabled} style="margin-top:10px;" on:click={() => toggleCrash(!crash.enabled)} disabled={!$capture.available}>
-          {crash.enabled ? 'Turn crash reporting off' : 'Turn crash reporting on'}
-        </button>
-        {#if crashMsg}<div class="s-tr-note" style="margin-top:8px;">{crashMsg}</div>{/if}
-
-      {:else if section === 'account'}
-        <div class="s-cardbox">
-          <div class="s-netrow"><span class="s-netk">Licence</span><span class="s-netv r-mono">MIT · open source</span></div>
-          <div class="s-netrow"><span class="s-netk">Environment</span><span class="s-netv r-mono">{environment}</span></div>
-          <div class="s-netrow"><span class="s-netk">Version</span><span class="s-netv r-mono">{appVersion || '—'}</span></div>
+             It is a REPORT: there is not one handler between here and the ADVANCED
+             marker below, and `privacy.test.js` slices the file on exactly those two
+             strings to hold it that way. The control that changes the one row that
+             can change lives under the marker, once. -->
+        <div class="s-prose">
+          <p class="rw-foot" style="margin-top:0; padding-top:0; border-top:0;">
+            Read from this machine right now — not from a promise. Nothing above the
+            rule is a setting you change; it is a report on the settings you have.
+          </p>
         </div>
-        <p class="s-note">Relay is free and open source. There is no account to sign in to and nothing to pay — every feature works offline, on this machine.</p>
-        <div class="s-grouphead">Operators</div>
-        <p class="s-note" style="margin-top:0">Relay is a <b>single-operator, on-device</b> app — there are no user accounts, roles or logins, by design. The one control that matters mid-service (operator override) is always reachable, and the preacher's stage remote is a separate, LAN-only surface (set up in <b>Outputs → Sharing</b>). Nothing about who is at the desk is recorded.</p>
+        <div class="rw-nv">
+          <span class="rw-nvk">What you say</span>
+          <span class="s-nvp">Never leaves this computer. Audio is processed in memory and is not written to disk.</span>
+        </div>
+        <div class="rw-nv">
+          <span class="rw-nvk">Transcripts &amp; history</span>
+          <span class="s-nvp">Stored on this computer only, in Relay's own database.</span>
+        </div>
+        <div class="rw-nv">
+          <span class="rw-nvk">Speech recognition</span>
+          <span class="s-nvp">
+            {$capture.stt.loaded
+              ? 'Runs entirely on this machine. No audio is sent anywhere.'
+              : 'No model loaded — nothing is being transcribed.'}
+          </span>
+        </div>
+        <div class="rw-nv">
+          <span class="rw-nvk">Crash reporting</span>
+          <!-- The live value. This is the ONE thing Relay can send, and the one
+               row somebody opens this page to check. -->
+          <span class="s-nvp" class:on={crashOn}>
+            {crashOn
+              ? 'ON — a crash sends the error and where it happened. Never a transcript, verse, lyric or announcement.'
+              : 'OFF — nothing is sent when Relay crashes.'}
+          </span>
+        </div>
+        <div class="rw-nv">
+          <span class="rw-nvk">Accounts &amp; cloud</span>
+          <span class="s-nvp">There are none. Relay has no account, no server, and works with the network unplugged. It is a single-operator, on-device app — no user accounts, roles or logins, by design.</span>
+        </div>
+        <div class="rw-nv">
+          <span class="rw-nvk">Your church network</span>
+          <!-- The unflattering half, in the same size type. -->
+          <span class="s-nvp">
+            Relay serves your screens at <span class="r-mono">{lanIp || 'this computer'}:8032</span>.
+            Anyone already on the same WiFi can see what is on the projector — <b>and can
+            change it</b>: the preacher's remote has no password, by design. They cannot
+            reach your transcripts, plans or history.
+          </span>
+        </div>
+        <div class="rw-nv">
+          <span class="rw-nvk">Diagnostic file</span>
+          <span class="s-nvp">Only written when you press the button in Diagnostics, and only where you can read it first.</span>
+        </div>
+        <div class="s-prose">
+          <p class="rw-foot">
+            The full account, including what would make the network tradeoff change, is
+            in <span class="r-mono">PRIVACY.md</span> and <span class="r-mono">docs/DECISIONS.md</span> §35.
+            Relay is free and open source, MIT licensed — there is nothing to sign in
+            to and nothing to pay.
+          </p>
+        </div>
+
+        <!-- ADVANCED · crash reporting. The one control on this section, and the
+             boundary `privacy.test.js` slices on: everything above it is a report
+             and must contain no handler at all. -->
+        <div class="rw-group">Crash reporting</div>
+        <div class="s-prose">
+          <p class="rw-foot" style="margin-top:0; padding-top:0; border-top:0;">
+            Relay is offline software: nothing you do here leaves this computer. Crash reporting is the one exception, and it is <b>off unless you turn it on</b>.
+            <br /><br />
+            If you turn it on, Relay sends only the technical details of a crash — the error, where in the code it happened, and your operating system. <b>Sermon transcripts, verse text, song lyrics, announcements and service names are never sent</b>, and are stripped from every report before it leaves. Reports are queued and sent later, so a bad network can never slow down a live service.
+          </p>
+          <label class="r-lbl" for="crash-dsn">Sentry DSN (your own project)</label>
+          <input id="crash-dsn" class="r-input" type="text" placeholder="https://…@…ingest.sentry.io/…" bind:value={crash.dsn} disabled={!$capture.available} />
+          <div class="s-addrow">
+            <button class="r-btn" class:danger={crash.enabled} on:click={() => toggleCrash(!crash.enabled)} disabled={!$capture.available}>
+              {crash.enabled ? 'Turn crash reporting off' : 'Turn crash reporting on'}
+            </button>
+          </div>
+          {#if crashMsg}<p class="rw-foot">{crashMsg}</p>{/if}
+        </div>
       {/if}
+      </div>
     </main>
 
-    <!-- ════ OVERVIEW RAIL ════ -->
-    <aside class="s-over">
+    <!-- ════ OVERVIEW RAIL ════ the facts that are true whatever section is open,
+         so they belong in the inspector column rather than being repeated inside
+         each section that happens to care about one of them. The Account section
+         was three rows of exactly this and is gone. -->
+    <aside class="rw-pane rw-insp">
+      <div class="rw-panehead"><h2 class="rw-panettl">Overview</h2></div>
+      <div class="rw-panebody s-overbody">
       <div class="s-ocard">
-        <div class="s-ohead">System Overview</div>
-        <div class="s-orow"><span class="s-ok">Version</span><span class="s-ov r-mono">{appVersion || '—'}</span></div>
-        <div class="s-orow"><span class="s-ok">Environment</span><span class="r-badge" class:emerald={environment === 'Production'} class:grey={environment !== 'Production'}>{environment}</span></div>
-        <div class="s-orow"><span class="s-ok">Licence</span><span class="r-badge emerald">MIT</span></div>
-        <div class="s-orow"><span class="s-ok">Uptime</span><span class="s-ov r-mono">{uptime}</span></div>
+        <div class="rw-group">System overview</div>
+        <div class="rw-nv"><span class="rw-nvk">Version</span><span class="rw-nvv">{settingValue(appVersion, {
+              loading: versionState === 'loading',
+              missing: 'could not be read',
+            })}</span></div>
+        <!-- `emerald` used to be here, on both badges, and there is no
+             `.r-badge.emerald` — the class in `app.css` is `.r-badge.green`. So a
+             Production environment and the MIT licence have been rendering as an
+             unstyled badge, colourless, for as long as this rail has existed.
+             Found by the `class:` scan in `settingssections.test.js`, which is
+             the same defect as the update-preflight rows below: a class nothing
+             defines is silent in every tool this project had. -->
+        <div class="rw-nv"><span class="rw-nvk">Environment</span><span class="r-badge" class:green={environment === 'Production'} class:grey={environment !== 'Production'}>{environment}</span></div>
+        <div class="rw-nv"><span class="rw-nvk">Licence</span><span class="r-badge green">MIT</span></div>
+        <div class="rw-nv"><span class="rw-nvk">Uptime</span><span class="rw-nvv">{uptime}</span></div>
       </div>
 
       <div class="s-ocard">
-        <div class="s-ohead">Quick Links</div>
+        <div class="rw-group">Quick links</div>
         <button class="s-qlink" on:click={() => (section = 'shortcuts')}>
           <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M6 14h12"/></svg>
-          <span class="s-qtext"><b>Keyboard Shortcuts</b><em>View the full shortcut reference</em></span>
+          <span class="s-qtext"><b>Keyboard shortcuts</b><em>View the full shortcut reference</em></span>
           <svg class="s-qarr" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18l6-6-6-6"/></svg>
         </button>
         <button class="s-qlink" on:click={() => (section = 'updates')}>
@@ -1454,257 +1628,257 @@
                news; this card kept saying "You're on the latest version" while the
                update manifest was 404 and while no check had ever run. One
                describer, both surfaces. -->
-          <span class="s-qtext"><b>Check for Updates</b><em>{$updateAvailable ? 'An update is waiting' : describeChannel($updateChannel)}</em></span>
+          <span class="s-qtext"><b>Check for updates</b><em>{$updateAvailable ? 'An update is waiting' : describeChannel($updateChannel)}</em></span>
           <svg class="s-qarr" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18l6-6-6-6"/></svg>
         </button>
         <button class="s-qlink" on:click={() => (section = 'history')}>
           <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
-          <span class="s-qtext"><b>Service History</b><em>Review past services</em></span>
+          <span class="s-qtext"><b>Service history</b><em>Review past services</em></span>
           <svg class="s-qarr" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18l6-6-6-6"/></svg>
         </button>
         <button class="s-qlink" on:click={() => setSession({ activeTab: 'help' })}>
           <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 0 1 5 .3c0 1.7-2.5 2-2.5 3.7M12 17h.01"/></svg>
-          <span class="s-qtext"><b>Support &amp; Guide</b><em>Get help and documentation</em></span>
+          <span class="s-qtext"><b>Support &amp; guide</b><em>Get help and documentation</em></span>
           <svg class="s-qarr" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18l6-6-6-6"/></svg>
         </button>
       </div>
-
-      <div class="s-ocard danger">
-        <div class="s-ohead danger">Danger Zone</div>
-        <div class="s-drow">
-          <span class="s-qtext"><b>Reset All Settings</b><em>{resetArmed ? 'Click the button again to confirm' : 'Restore local preferences to default'}</em></span>
-          <button class="s-dbtn" class:arm={resetArmed} on:click={resetAllSettings} aria-label={resetArmed ? 'Confirm reset all settings' : 'Reset all settings'}>
-            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
-          </button>
-        </div>
       </div>
     </aside>
-  </div>
-</div>
+</WorkspaceFrame>
 
 <style>
-  .s-page{ display:flex; flex-direction:column; gap:22px; }
-  .s-pagehead{ display:flex; align-items:flex-start; justify-content:space-between; gap:24px; }
-  .s-title{ margin:0; font-family:var(--f-head); font-size:var(--v-fs-h1); line-height:var(--v-lh-h1);
-    font-weight:700; letter-spacing:var(--v-tr-tight); color:var(--v-txt); }
-  .s-sub{ margin:6px 0 0; font-size:13.5px; color:var(--v-dim); }
+  /* SETTINGS — the workspace grammar (`WorkspaceFrame.svelte`, docs/REBRAND.md
+     §2 · §11): section rail · panel · overview rail, as three panes.
 
-  /* 3-column layout: section rail · panel · overview rail */
-  .s-layout{ display:grid; grid-template-columns:212px minmax(0,1fr) 288px; gap:20px; align-items:start; }
+     ── ONE TYPE SCALE, THREE ROLES, AND THEY ARE THE FRAME'S ────────────────
+     §11's roles are page title / standfirst / row, with a footnote behind a
+     hairline. This file used to own private copies of all of them, and the copies
+     had already multiplied: `.s-lead` was a second standfirst under the frame's,
+     `.s-row`/`.s-rowtitle`/`.s-rownote`/`.s-rowctl` was one row grammar and
+     `.s-netrow`/`.s-netk`/`.s-netv` was a SECOND, with different padding
+     (10px vs 8px), a different key colour (`--v-txt` vs `--v-dim`) and a
+     different bleed; `.s-grouphead` duplicated `.rw-group` line for line; and
+     there were two footnotes, `.s-note` behind the hairline §11 asks for and
+     `.s-tr-note` without one. That is not one scale with three roles. It is five
+     roles and two of them are the same role rendered two ways, which is exactly
+     the failure the frame's own comment names: a type scale defined three times
+     is three type scales.
+
+     So every role below comes from the frame — `.rw-nv`, `.rw-nvk`, `.rw-nvv`,
+     `.rw-nvnote`, `.rw-nvctl`, `.rw-group`, `.rw-foot` — and what is left here is
+     only what Settings alone has: a level meter, the threshold sliders, the
+     translation list, the language table, the shortcut rows and the overview
+     rail. Every size is a `--v-fs-*` token (it used to be eleven hand-picked
+     pixel values; a scale with eleven steps is not a scale).
+
+     ── SEAMS, NOT GUTTERS ───────────────────────────────────────────────────
+     A settings section was a column of bordered cards with 12px trenches between
+     them. On a booth laptop that trench is about a third of the screen spent
+     saying "these two settings are not related", which is false — they are the
+     same section. Rows bleed to the pane's edges with a hairline between them,
+     which is how the running order and the screens list read, and gives the width
+     back to the words. The panel itself now carries NO padding: rows reach the
+     seam by default and only prose (`.s-prose`) takes a gutter, which is the same
+     arrangement every other pane on the desk uses and one negative margin fewer
+     than the old `margin:0 -14px` trick. */
 
   /* ── SECTION RAIL ── */
-  .s-rail{ position:sticky; top:0; display:flex; flex-direction:column; gap:14px; }
-  .s-railnav{ display:flex; flex-direction:column; gap:3px; }
-  .s-railbtn{ display:flex; align-items:center; gap:11px; width:100%; text-align:left; cursor:pointer;
-    padding:9px 12px; border-radius:var(--v-r-md); border:1px solid transparent; background:transparent;
-    color:var(--v-dim); font-family:var(--f-body); font-size:13.5px; font-weight:500;
-    transition:background .13s, color .13s, border-color .13s; }
-  .s-railbtn:hover{ background:var(--v-surf); color:var(--v-txt); }
-  .s-railbtn.on{ background:var(--v-accent-soft); border-color:var(--v-accent-line); color:var(--v-accent2); font-weight:600; }
+  .s-railnav{ display:flex; flex-direction:column; }
+  .s-railbtn{ display:flex; align-items:center; gap:10px; width:100%; text-align:left; cursor:pointer;
+    min-height:32px; padding:6px 12px; border:0; border-bottom:1px solid var(--v-line); background:transparent;
+    color:var(--v-dim); font-family:var(--f-body); font-size:var(--v-fs-b2); line-height:var(--v-lh-b2);
+    font-weight:500; transition:background var(--v-dur) var(--v-ease), color var(--v-dur) var(--v-ease); }
+  .s-railbtn:last-child{ border-bottom:0; }
+  .s-railbtn:hover:not(.on){ background:var(--v-surf2); color:var(--v-txt); }
+  /* Steel blue = the thing you are working on (docs/REBRAND.md §1). */
+  .s-railbtn.on{ background:var(--v-sel-soft); color:var(--v-txt); font-weight:600;
+    box-shadow:inset 2px 0 0 var(--v-sel); }
   .s-railic{ flex:0 0 auto; }
   .s-raillbl{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .s-reset{ justify-content:center; width:100%; margin-top:2px; }
 
-  /* ── ACTIVE PANEL ── the cards float on the page, no outer box (matches ref) */
-  .s-panel{ min-width:0; display:flex; flex-direction:column; gap:12px; }
-  /* Dashboard embed — let it fill and scroll within the settings panel. */
-  .s-dash{ flex:1; min-height:0; overflow:auto; }
-  .s-panelhead{ margin-bottom:6px; }
-  .s-paneltitle{ margin:0; font-family:var(--f-head); font-size:var(--v-fs-h2); line-height:var(--v-lh-h2);
-    font-weight:600; letter-spacing:var(--v-tr-h2); color:var(--v-txt); }
-  .s-paneldesc{ margin:5px 0 0; font-size:13px; color:var(--v-dim); }
+  /* ── ACTIVE PANEL ── */
+  .s-panel{ min-width:0; display:flex; flex-direction:column; gap:0; }
+  /* Anything that is not a row: a paragraph, a picker, a button, a table. It
+     keeps the gutter the rows deliberately do not. */
+  .s-prose{ padding:12px; min-width:0; }
+  .s-prose > *{ margin-top:10px; }
+  .s-prose > :first-child{ margin-top:0; }
+  /* The footnote keeps its hairline and its own top padding; the margin is the
+     block's job, so the two do not add up to a double gap. */
+  .s-prose :global(.rw-foot){ margin-top:12px; max-width:80ch; }
+  /* Dashboard and History bring their own layout and their own card padding. */
+  .s-dash{ padding:12px; min-width:0; }
+  .s-history{ padding:12px; min-width:0; }
 
-  .s-lead{ margin:0 0 4px; font-size:13px; line-height:1.6; color:var(--v-dim); }
   .s-inline{ display:flex; justify-content:flex-end; }
 
-  /* Setting rows (General) — each its own bordered card */
-  .s-row{ display:flex; align-items:center; justify-content:space-between; gap:20px;
-    padding:16px 20px; border:1px solid var(--v-line); border-radius:var(--v-r-lg);
-    background:var(--v-surf); }
-  .s-rowtext{ min-width:0; }
-  .s-rowtitle{ font-size:14px; font-weight:600; color:var(--v-txt); }
-  .s-rownote{ margin-top:3px; font-size:12px; line-height:1.5; color:var(--v-faint); }
-  .s-rowctl{ flex:0 0 auto; min-width:170px; max-width:220px; }
+  /* ── ROLE 3 · the halves of a row this file adds to the frame's ──
+     A name cell that carries an explanatory line under it, a value that is a
+     SENTENCE rather than a figure, and a control pair on the right. */
+  .s-nvtext{ min-width:0; }
+  .s-nvpair{ display:flex; align-items:center; gap:6px; justify-content:flex-end; flex-wrap:wrap; }
+  /* `.rw-nvv` is mono, right-aligned and tabular because a value is usually a
+     figure. The Privacy report's values are prose, and mono prose right-aligned
+     against a ragged left edge is unreadable — so a sentence-shaped value says
+     so. Same row, same seam, same scale. */
+  .s-nvp{ min-width:0; max-width:46ch; justify-self:end; text-align:left;
+    font-size:var(--v-fs-cap); line-height:var(--v-lh-cap); color:var(--v-dim); }
+  .s-nvp b{ color:var(--v-txt); font-weight:600; }
+  /* The one row on the Privacy report that can say something is leaving. Emerald
+     is "confirmed/connected" in the design system; here it marks the state that
+     is ACTIVE, not the state that is good — the copy carries the judgement. */
+  .s-nvp.on{ color:var(--v-emerald); }
+  .s-sel{ width:190px; max-width:100%; }
   .s-lenctl{ display:flex; align-items:center; gap:8px; justify-content:flex-end; }
   .s-leninput{ width:90px; text-align:right; }
   .s-lenunit{ color:var(--v-faint); font-size:var(--v-fs-cap); }
-
-  .s-grouphead{ margin:14px 0 2px; font-family:var(--f-mono); font-size:11px; font-weight:600;
-    letter-spacing:.14em; text-transform:uppercase; color:var(--v-faint); }
-  .s-grouphead.first{ margin-top:0; }
+  /* Safe mode ON is not a normal state: it is the whole application disarmed.
+     Rose, never amber — amber means ON AIR and is never spent on anything else. */
+  .s-armed{ color:var(--v-rose); }
 
   /* Voice profiles. `s-vpactive` marks the profile the gate is calibrated by —
      EMERALD, never amber: amber is spent only on air (CLAUDE.md / DECISIONS §22),
      and a selected profile is configuration, not something on a screen. */
   .s-vpactive{ margin-left:8px; padding:1px 6px; border-radius:var(--v-r-sm);
-    font-size:10px; letter-spacing:.08em; text-transform:uppercase;
+    font-size:var(--v-fs-cap); letter-spacing:.08em; text-transform:uppercase;
     color:var(--v-emerald); border:1px solid color-mix(in srgb, var(--v-emerald) 40%, transparent); }
-  .s-vpbtns{ display:flex; gap:6px; justify-content:flex-end; }
-  .s-vpadd{ display:flex; gap:8px; align-items:center; margin-top:8px; }
-  .s-vpadd .r-input{ flex:1 1 auto; min-width:0; }
-  .s-err{ color:var(--v-red); }
 
-  /* Segmented control (theme, time format) */
-  .s-seg{ display:inline-flex; gap:4px; padding:4px; border-radius:var(--v-r-md);
-    background:var(--v-void); border:1px solid var(--v-line); flex:0 0 auto; }
-  .s-segbtn{ display:inline-flex; align-items:center; gap:6px; padding:7px 14px; border:0; cursor:pointer;
-    border-radius:6px; background:transparent; color:var(--v-dim); font-family:var(--f-body);
-    font-size:12.5px; font-weight:500; transition:background .13s, color .13s; }
-  .s-segbtn:hover{ color:var(--v-txt); }
-  .s-segbtn.on{ background:var(--v-accent-fill); color:var(--v-accent-ink); box-shadow:var(--v-shadow-sm); }
-
-  /* Toggle switch */
-  .s-toggle{ position:relative; flex:0 0 auto; width:44px; height:24px; border-radius:99px; cursor:pointer;
-    border:1px solid var(--v-line2); background:var(--v-surf3); padding:0; transition:background .16s, border-color .16s; }
-  .s-toggle.on{ background:var(--v-accent-fill); border-color:var(--v-accent-fill); }
-  .s-knob{ position:absolute; top:2px; left:2px; width:18px; height:18px; border-radius:50%;
-    background:#fff; transition:transform .16s; box-shadow:0 1px 2px rgba(0,0,0,.4); }
-  .s-toggle.on .s-knob{ transform:translateX(20px); }
+  /* Toggle switch. `--v-r-round` is one of the two shapes the rebrand allows to
+     stay round (a slider thumb and a switch) — everything else is 3px. */
+  .s-toggle{ position:relative; flex:0 0 auto; width:38px; height:21px; border-radius:var(--v-r-round);
+    cursor:pointer; border:1px solid var(--v-500); background:var(--v-surf3); padding:0;
+    transition:background var(--v-dur) var(--v-ease), border-color var(--v-dur) var(--v-ease); }
+  .s-toggle:hover:not(:disabled){ border-color:var(--v-sel); }
+  .s-toggle.on{ background:var(--v-sel); border-color:transparent; }
+  .s-knob{ position:absolute; top:2px; left:2px; width:15px; height:15px; border-radius:50%;
+    background:var(--v-dim); transition:transform 190ms var(--v-ease), background var(--v-dur) var(--v-ease);
+    box-shadow:0 1px 2px rgba(0,0,0,.5); }
+  .s-toggle.on .s-knob{ transform:translateX(17px); background:var(--v-sel-ink); }
   .s-toggle:disabled{ opacity:.4; cursor:not-allowed; }
 
   /* "Soon" — a control shown for shape but not yet wired, marked so it can't lie.
      Sits on --v-surf2, not --v-surf3: muted text on surf3 is 3.76:1, below WCAG AA,
-     and this was the only rule in the app that did it (RG-74). Surf2 is 4.50:1 and
-     the pill still reads as the lightest chrome on the page. */
-  .s-soon{ display:inline-block; margin-left:8px; padding:1px 7px; border-radius:99px;
+     and this was the only rule in the app that did it (RG-74). Surf2 is 4.50:1.
+     Not a pill any more: §1 is explicit that a pill in a control room reads as a
+     toy, and this one marks something that does not work yet. */
+  .s-soon{ display:inline-block; margin-left:8px; padding:1px 6px; border-radius:var(--v-r-sm);
     background:var(--v-surf2); border:1px solid var(--v-line2); color:var(--v-faint);
     font-family:var(--f-mono); font-size:var(--v-fs-cap); letter-spacing:.04em; vertical-align:middle; }
   .s-dim{ color:var(--v-faint); }
 
-  /* Boxed rows (outputs, network, updates, account, shortcuts) */
-  .s-cardbox{ display:flex; flex-direction:column; gap:8px; }
-  .s-netrow{ display:flex; align-items:center; justify-content:space-between; gap:12px;
-    padding:12px 14px; border-radius:var(--v-r-md); background:var(--v-surf2); border:1px solid var(--v-line); }
-  .s-netk{ font-size:13px; color:var(--v-dim); }
-  .s-netv{ font-size:11px; color:var(--v-txt); }
-  /* Rose, not amber: amber means ON AIR and is never spent on anything else. */
+  /* A VALUE THAT IS BAD NEWS, and one that is worth a look. Rose and amethyst,
+     matching `.b-check.warn` in the boot ladder; never amber, which means ON AIR
+     and nothing else. */
   .s-netbad{ color:var(--v-rose); }
+  .s-netwarn{ color:var(--v-amethyst2); }
+  /* An error the operator must read now, rather than a footnote. */
+  .s-alert{ margin-top:10px; font-size:var(--v-fs-cap); line-height:var(--v-lh-cap); color:var(--v-red); }
 
-  .s-note{ margin:14px 0 0; font-size:12px; line-height:1.6; color:var(--v-dim); }
-  .s-note b{ color:var(--v-accent); }
-  .s-mt{ margin-top:14px; }
-  .s-rule{ border:0; border-top:1px solid var(--v-line); margin:18px 0 0; }
+  /* A row of controls that belong together — a field and the button that commits
+     it, or two buttons that are one decision. */
+  .s-addrow{ display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .s-addrow .r-input{ flex:1 1 200px; width:auto; min-width:0; }
 
   /* Shortcuts */
-  .s-scrow{ display:flex; align-items:center; gap:14px; padding:11px 14px; border-radius:var(--v-r-md);
-    background:var(--v-surf2); border:1px solid var(--v-line); }
+  .s-scrow{ display:flex; align-items:center; gap:14px; padding:8px 12px;
+    background:transparent; border:0; border-bottom:1px solid var(--v-line); }
+  .s-scrow:last-child{ border-bottom:0; }
   .s-sckeys{ flex:0 0 118px; display:flex; gap:5px; }
-  .s-kbd{ font-family:var(--f-mono); font-size:11px; color:var(--v-txt); background:var(--v-void);
-    border:1px solid var(--v-line2); border-bottom-width:2px; border-radius:5px; padding:2px 7px; }
-  .s-scnote{ font-size:12.5px; color:var(--v-dim); }
+  .s-kbd{ font-family:var(--f-mono); font-size:var(--v-fs-mono); color:var(--v-txt); background:var(--v-void);
+    border:1px solid var(--v-line2); border-bottom-width:2px; border-radius:var(--v-r-sm); padding:1px 6px; }
+  .s-scnote{ font-size:var(--v-fs-b2); color:var(--v-dim); }
 
   /* level meter */
-  .s-meterwrap{ margin-top:16px; }
-  .s-meter{ height:7px; border-radius:99px; background:var(--v-surf3); overflow:hidden; }
-  .s-meter i{ display:block; height:100%; border-radius:99px;
+  .s-meterwrap{ min-width:0; }
+  .s-meter{ height:6px; border-radius:var(--v-r-round); background:var(--v-surf3); overflow:hidden; }
+  .s-meter i{ display:block; height:100%; border-radius:var(--v-r-round);
     background:linear-gradient(90deg,var(--v-accent),var(--v-accent2)); }
   .s-meter-scale{ display:flex; justify-content:space-between; margin-top:7px;
-    font-family:var(--f-mono); font-size:9.5px; letter-spacing:.05em; color:var(--v-faint); }
-  .s-listen{ display:flex; align-items:center; gap:14px; margin-top:18px; flex-wrap:wrap; }
-  .s-rms{ font-family:var(--f-mono); font-size:11px; letter-spacing:.03em; color:var(--v-faint);
+    font-family:var(--f-mono); font-size:var(--v-fs-cap); letter-spacing:.05em; color:var(--v-faint); }
+  .s-listen{ display:flex; align-items:center; gap:14px; flex-wrap:wrap; }
+  .s-rms{ font-family:var(--f-mono); font-size:var(--v-fs-mono); letter-spacing:.03em; color:var(--v-faint);
     display:inline-flex; align-items:center; gap:7px; }
   .s-rms.voice{ color:var(--v-emerald); }
   .s-dot{ width:7px; height:7px; border-radius:50%; background:var(--v-faint); }
   .s-dot.on{ background:var(--v-emerald); box-shadow:0 0 7px var(--v-emerald); }
-  .s-count{ font-family:var(--f-mono); font-size:10px; letter-spacing:.05em; color:var(--v-faint); }
+  .s-count{ font-family:var(--f-mono); font-size:var(--v-fs-cap); letter-spacing:.05em; color:var(--v-faint); }
 
   /* sliders */
-  .s-slider{ margin-top:22px; }
-  .s-slider:first-of-type{ margin-top:4px; }
-  .s-slider-top{ display:flex; align-items:baseline; justify-content:space-between; margin-bottom:12px; }
-  .s-slider-name{ color:var(--v-dim); }
-  .s-slider-val{ font-family:var(--f-mono); font-size:18px; font-weight:500; color:var(--v-accent);
+  .s-slider{ width:100%; }
+  .s-slider-top{ display:flex; align-items:baseline; justify-content:space-between; margin-bottom:10px; }
+  .s-slider-name{ color:var(--v-dim); font-size:var(--v-fs-b2); }
+  .s-slider-val{ font-family:var(--f-mono); font-size:var(--v-fs-h1); font-weight:500; color:var(--v-accent);
     font-variant-numeric:tabular-nums; }
-  .s-slider-ends{ display:flex; justify-content:space-between; margin-top:9px;
-    font-family:var(--f-mono); font-size:9.5px; letter-spacing:.06em; text-transform:uppercase; color:var(--v-faint); }
+  .s-slider-ends{ display:flex; justify-content:space-between; margin-top:8px;
+    font-family:var(--f-mono); font-size:var(--v-fs-cap); letter-spacing:.06em; text-transform:uppercase;
+    color:var(--v-faint); }
 
   /* bible translations */
-  .s-checklist{ display:flex; flex-direction:column; gap:6px; }
-  .s-check-code{ font-family:var(--f-mono); font-size:11px; font-weight:600; letter-spacing:.05em; color:var(--v-txt); }
+  .s-checklist{ display:flex; flex-direction:column; gap:0; }
+  .s-check-code{ font-family:var(--f-mono); font-size:var(--v-fs-mono); font-weight:600; letter-spacing:.05em;
+    color:var(--v-txt); }
   .s-tr{ display:flex; align-items:center; gap:11px; width:100%; text-align:left; cursor:pointer;
-    background:var(--v-surf2); border:1px solid var(--v-line); border-radius:9px; padding:10px 12px;
-    color:var(--v-txt); font-family:var(--f-body); font-size:13px; transition:border-color .14s, background .14s; }
-  .s-tr:hover{ border-color:var(--v-line2); }
-  .s-tr.on{ border-color:var(--v-accent-line); background:var(--v-accent-soft); }
-  .s-tr-dot{ width:14px; height:14px; border-radius:50%; flex:0 0 auto; border:2px solid var(--v-faint); }
+    background:transparent; border:0; border-bottom:1px solid var(--v-line); padding:8px 12px;
+    color:var(--v-txt); font-family:var(--f-body); font-size:var(--v-fs-b2);
+    transition:background var(--v-dur) var(--v-ease); }
+  .s-tr:last-child{ border-bottom:0; }
+  .s-tr:hover:not(.on){ background:var(--v-surf2); }
+  .s-tr.on{ background:var(--v-sel-soft); box-shadow:inset 2px 0 0 var(--v-sel); }
+  .s-tr-dot{ width:13px; height:13px; border-radius:50%; flex:0 0 auto; border:2px solid var(--v-faint); }
   .s-tr-dot.on{ border-color:var(--v-accent); background:radial-gradient(circle,var(--v-accent) 40%,transparent 45%); }
   .s-tr-name{ color:var(--v-dim); flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .s-tr-active{ font-size:9px; letter-spacing:.1em; text-transform:uppercase; color:var(--v-accent); }
-  .s-tr-note{ font-size:10.5px; color:var(--v-faint); margin-top:12px; line-height:1.6; }
-  .s-tr-note b{ color:var(--v-dim); }
+  .s-tr-active{ font-family:var(--f-mono); font-size:var(--v-fs-cap); letter-spacing:.1em;
+    text-transform:uppercase; color:var(--v-accent); }
 
   /* network / model */
-  .s-status{ display:inline-flex; align-items:center; gap:7px; margin-top:2px;
-    font-family:var(--f-mono); font-size:11px; letter-spacing:.04em; }
+  .s-status{ display:inline-flex; align-items:center; gap:7px;
+    font-family:var(--f-mono); font-size:var(--v-fs-mono); letter-spacing:.04em; }
   .s-status.ok{ color:var(--v-emerald); }
   .s-sdot{ width:7px; height:7px; border-radius:50%; background:currentColor; }
   .s-status.ok .s-sdot{ box-shadow:0 0 7px var(--v-emerald); }
-  .s-modelpath{ margin-top:6px; font-family:var(--f-mono); font-size:10px; line-height:1.5;
+  .s-modelpath{ font-family:var(--f-mono); font-size:var(--v-fs-cap); line-height:1.5;
     color:var(--v-faint); word-break:break-all; }
 
-  /* embedded History */
-  .s-history{ margin:-4px -4px 0; }
-
-  /* ── OVERVIEW RAIL ── */
-  .s-over{ position:sticky; top:0; display:flex; flex-direction:column; gap:16px; }
-  .s-ocard{ background:var(--v-surf); border:1px solid var(--v-line); border-radius:var(--v-r-lg); padding:16px 18px; }
-  .s-ocard.danger{ border-color:var(--v-red-soft); background:linear-gradient(180deg,rgba(239,68,68,.05),var(--v-surf)); }
-  .s-ohead{ font-family:var(--f-head); font-size:14px; font-weight:600; color:var(--v-txt); margin-bottom:14px; }
-  .s-ohead.danger{ color:var(--v-red); }
-  .s-orow{ display:flex; align-items:center; justify-content:space-between; gap:12px; padding:7px 0; }
-  .s-ok{ font-size:12.5px; color:var(--v-dim); }
-  .s-ov{ font-size:12px; color:var(--v-txt); }
-
-  .s-qlink{ display:flex; align-items:center; gap:12px; width:100%; text-align:left; cursor:pointer;
-    padding:11px 4px; border:0; border-top:1px solid var(--v-line); background:transparent; color:var(--v-dim);
-    transition:color .13s; }
-  .s-qlink:first-of-type{ border-top:0; padding-top:2px; }
-  .s-qlink:hover{ color:var(--v-accent2); }
-  .s-qtext{ display:flex; flex-direction:column; gap:1px; min-width:0; flex:1; }
-  .s-qtext b{ font-size:13px; font-weight:600; color:var(--v-txt); }
-  .s-qtext em{ font-style:normal; font-size:11px; color:var(--v-faint); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .s-qarr{ flex:0 0 auto; color:var(--v-faint); }
-  .s-qlink:hover .s-qarr{ color:var(--v-accent2); }
-
-  .s-drow{ display:flex; align-items:center; justify-content:space-between; gap:12px; }
-  .s-dbtn{ flex:0 0 auto; width:34px; height:34px; display:grid; place-items:center; cursor:pointer;
-    border-radius:var(--v-r-md); background:var(--v-red-soft); border:1px solid var(--v-red-soft); color:var(--v-red);
-    transition:background .13s; }
-  .s-dbtn:hover{ background:rgba(239,68,68,.2); }
-  /* Armed: the destructive action is one click from happening — make it read red. */
-  .s-dbtn.arm{ background:var(--v-red); border-color:var(--v-red); color:#fff; }
-  .s-reset.arm{ border-color:var(--v-red); color:var(--v-red); }
-
-  /* ── responsive ── */
-  @media (max-width:1180px){
-    .s-layout{ grid-template-columns:200px minmax(0,1fr); }
-    .s-over{ grid-column:1 / -1; flex-direction:row; flex-wrap:wrap; position:static; }
-    .s-over .s-ocard{ flex:1 1 260px; }
-  }
-  @media (max-width:820px){
-    .s-layout{ grid-template-columns:1fr; }
-    .s-rail{ position:static; }
-    .s-railnav{ flex-direction:row; flex-wrap:wrap; }
-    .s-railbtn{ width:auto; }
-    .s-row{ flex-direction:column; align-items:stretch; gap:10px; }
-    .s-rowctl{ max-width:none; }
-  }
-  .s-roomrow{ align-items:flex-start; }
-  .s-lang{ width:100%; border-collapse:collapse; font-size:var(--v-fs-b2); margin-top:10px; }
-  .s-lang th{ text-align:left; font-weight:500; font-size:9px; letter-spacing:.06em;
+  /* languages */
+  .s-lang{ width:100%; border-collapse:collapse; font-size:var(--v-fs-b2); }
+  .s-lang th{ text-align:left; font-weight:500; font-size:var(--v-fs-cap); letter-spacing:.06em;
     text-transform:uppercase; color:var(--v-faint); padding:6px 8px;
     border-bottom:1px solid var(--v-line); }
   .s-lang td{ padding:7px 8px; border-bottom:1px solid var(--v-line2); color:var(--v-dim); }
-  .s-langcode{ color:var(--v-faint); font-size:10px; }
+  .s-langcode{ color:var(--v-faint); font-size:var(--v-fs-cap); }
   /* An absence is dim, not red: nobody has failed here — the work has not been
      done, and saying so is the whole point of the column. */
   .s-langgap{ color:var(--v-faint); font-style:italic; }
-  /* The one row on the Privacy page that can say something is leaving. Emerald is
-     "confirmed/connected" in the design system; here it marks the state that is
-     ACTIVE, not the state that is good — the copy carries the judgement. */
-  .s-netv.on{ color:var(--v-emerald); }
-  .s-roomname{ flex:1; min-width:0; display:flex; flex-direction:column; gap:2px; }
-  .s-roomnote{ font-size:var(--v-fs-cap); color:var(--v-faint); }
-  @media (min-width:1px){
+
+  /* ── OVERVIEW RAIL ── groups in one pane, seamed, rather than cards floating
+     in a column with gutters between them. The Account SECTION used to repeat
+     the first group's three rows in the main panel; it is gone. */
+  .s-overbody{ display:flex; flex-direction:column; }
+  .s-ocard{ display:flex; flex-direction:column; border-bottom:1px solid var(--v-line); }
+  .s-ocard:last-child{ border-bottom:0; }
+
+  .s-qlink{ display:flex; align-items:center; gap:10px; width:100%; text-align:left; cursor:pointer;
+    padding:8px 12px; border:0; border-bottom:1px solid var(--v-line); background:transparent;
+    color:var(--v-dim); transition:background var(--v-dur) var(--v-ease), color var(--v-dur) var(--v-ease); }
+  .s-qlink:last-child{ border-bottom:0; }
+  .s-qlink:hover{ background:var(--v-surf2); color:var(--v-accent2); }
+  .s-qtext{ display:flex; flex-direction:column; gap:1px; min-width:0; flex:1; }
+  .s-qtext b{ font-size:var(--v-fs-b2); line-height:var(--v-lh-b2); font-weight:600; color:var(--v-txt); }
+  .s-qtext em{ font-style:normal; font-size:var(--v-fs-cap); color:var(--v-faint);
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .s-qarr{ flex:0 0 auto; color:var(--v-faint); }
+  .s-qlink:hover .s-qarr{ color:var(--v-accent2); }
+
+  /* ── responsive ── */
+  /* The frame hides the inspector column below 1240px and stacks below 900px;
+     these are the rules that are this workspace's own. A setting row that cannot
+     hold its control beside its name puts the control underneath rather than
+     crushing the sentence that explains what it does. */
+  @media (max-width:820px){
+    .s-panel :global(.rw-nv){ grid-template-columns:minmax(0,1fr); }
+    .s-panel :global(.rw-nvctl){ justify-self:stretch; }
+    .s-panel .s-nvp{ justify-self:stretch; max-width:none; }
+    .s-panel .s-sel{ width:100%; }
+    .s-panel .s-nvpair{ justify-content:flex-start; }
   }
 </style>

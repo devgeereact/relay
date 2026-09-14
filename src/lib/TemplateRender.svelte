@@ -33,7 +33,7 @@
   // template scales identically whether the container is a full screen or a
   // small preview box.
   import { afterUpdate, onMount, onDestroy } from 'svelte';
-  import { isLayered, boundValue, templateShows, formatElapsed, formatRemaining } from './layers.js';
+  import { isLayered, boundValue, templateShows, formatElapsed, formatRemaining, formatCountdown, countdownWarning, topLevelLayers, drawBoxes } from './layers.js';
   import { applySink, getAudioOutput, onAudioOutputChange } from './audioOutput.js';
 
   export let template = {};
@@ -46,10 +46,21 @@
   // regression on every existing call site.
   export let theme = null;
   import { applyTheme, themeById, templateThemeRef, BUILTIN_THEMES } from './themes.js';
+  import { resolveStyle, slideBG, faceOf, fitScale, keepShrinking, FIT_STEP } from './templatemodel.js';
+  import { transitionCss, transitionDuration, DEFAULT_TRANSITION } from './transitions.js';
+  import { builtinById } from './templates.js';
   // Sound is OPT-IN per surface. This same renderer draws the Templates editor
   // preview, and editing a template must not blast video audio across the room —
   // so only a real output surface passes audio={true}.
   export let audio = false;
+  /**
+   * How deep this render is inside a composite. 0 is the screen itself.
+   *
+   * A REGION LAYER ONLY RENDERS AT DEPTH 0 — "a composite may not be another
+   * composite's fill" (docs/REBRAND.md §6). Without it a template that names
+   * itself would recurse until the webview died, on a wall, mid-service.
+   */
+  export let depth = 0;
 
   // The theme to apply. An EXPLICIT `theme` prop always wins (the Themes editor
   // previewing an unsaved draft, or an output page that resolved a CUSTOM theme
@@ -64,7 +75,12 @@
   // fallbacks (a literal template hits applyTheme's fast path and is unchanged).
   $: resolved = applyTheme(template, effectiveTheme);
   $: layout = resolved?.layout ?? {};
-  $: style = resolved?.style ?? {};
+  // THE MODEL, not a bag of keys. `resolveStyle` migrates the legacy
+  // whole-template properties onto their elements and fills every default in one
+  // place, so the editor's preview and the wall cannot disagree about what an
+  // unset property looks like (docs/REBRAND.md §3.1). It deliberately does NOT
+  // answer for `background` or alignment — see the transparency law below.
+  $: style = resolveStyle(resolved?.style ?? {});
 
   // ── LAYER MODE ─────────────────────────────────────────────────────────────
   // When a template carries `layout.layers`, render the free-form layer stack;
@@ -107,6 +123,26 @@
     const n = h.length === 3 ? h.split('').map((c) => c + c).join('') : h;
     return `rgba(${parseInt(n.slice(0, 2), 16) || 0}, ${parseInt(n.slice(2, 4), 16) || 0}, ${parseInt(n.slice(4, 6), 16) || 0}, ${Math.max(0, Math.min(1, Number(a) ?? 1))})`;
   };
+  /**
+   * A SHAPE'S PAINT, WHICH IS NOT ALWAYS A HEX.
+   *
+   * `hexA` parses two characters at a time and falls back to 0 per component, so
+   * a gradient, a CSS var or a theme token that resolves to one came out BLACK at
+   * the requested alpha — silently, and rendering perfectly. The layer most likely
+   * to carry a gradient is a lower-third band, and that is the layer keyed over a
+   * live camera.
+   *
+   * A hex still gets its alpha folded into the colour (so the shape can be
+   * translucent without making its own children translucent). Anything else is
+   * painted as written, with the alpha on the element instead.
+   */
+  const isHex = (v) => /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(String(v || '').trim());
+  const shapePaint = (L) => {
+    const a = L.opacity == null ? 1 : L.opacity;
+    return isHex(L.fill)
+      ? `background:${hexA(L.fill, a)};`
+      : `background:${L.fill || 'transparent'}; opacity:${Math.max(0, Math.min(1, Number(a) ?? 1))};`;
+  };
   // The box style for a positioned layer (percent geometry of the 16:9 stage).
   const boxStyle = (L) =>
     `left:${L.x}%; top:${L.y}%; width:${L.w}%; height:${L.h}%;`;
@@ -145,8 +181,8 @@
     layout.refFirst || (layout.regions?.[0] === 'reference' && !layout.lowerThird);
 
   // Base type sizes (cqw). Real fit is measured, not guessed — see fitText().
-  $: verseSize = parseFloat(style.verseSize) || 6;
-  $: refSize = parseFloat(style.refSize) || 2.6;
+  $: verseSize = style.verseSize;
+  $: refSize = style.refSize;
 
   // Auto-fit: after every render (and on container resize), shrink the verse +
   // reference until the content box no longer overflows, so scripture is NEVER
@@ -181,16 +217,16 @@
   /** Called with `{ scale, legible }` when a fit has been forced below the floor. */
   export let onFit = null;
 
-  function fitOne(box) {
+  function fitOne(box, container) {
     const verse = box.querySelector('.verse');
     const ref = box.querySelector('.reference');
     // The countdown renders at 2× the verse size — fit from THAT base, not the
     // plain verse size, or it would be shrunk to half on every tick.
     const vBase = verse && verse.classList.contains('countdown') ? verseSize * 2 : verseSize;
-    if (verse) verse.style.fontSize = `${vBase}cqw`;
-    if (ref) ref.style.fontSize = `${refSize}cqw`;
-    let scale = 1;
-    let guard = 0;
+    const apply = (k) => {
+      if (verse) verse.style.fontSize = `${vBase * k}cqw`;
+      if (ref) ref.style.fontSize = `${refSize * k}cqw`;
+    };
     // BOTH DIMENSIONS. It only ever checked height, which is fine for a verse —
     // prose wraps, so too much text gets taller. A COUNTDOWN does not wrap: it
     // is one wide line of tabular digits, so `2:00` at 12cqw overflows sideways
@@ -198,10 +234,67 @@
     // loop never noticed. Same for a long unbroken word.
     const overflows = () =>
       box.scrollHeight > box.clientHeight + 1 || box.scrollWidth > box.clientWidth + 1;
-    while (overflows() && guard < 40) {
-      scale *= 0.95;
-      if (verse) verse.style.fontSize = `${vBase * scale}cqw`;
-      if (ref) ref.style.fontSize = `${refSize * scale}cqw`;
+
+    // WHERE THE LOOP IS LIKELY TO LAND. Each measured step forces a synchronous
+    // reflow, so starting at 1 and shrinking costs one layout per 5% for a long
+    // passage — on the page that is on the wall. The estimate uses the same 0.95
+    // curve and the face's own advance, so it is a seed rather than an answer:
+    // the measurement below still decides.
+    //
+    // THE BOX IS DESCRIBED IN THE UNITS THE SIZES ARE IN. `vBase` is cqw — a
+    // share of the CONTAINER's width (`.stage`, which carries `container-type`),
+    // not of this box. `.slide` pads by 6%/7% and `.content` caps at 90%/92% of
+    // that, so the box is roughly three quarters of the container and the two
+    // are never the same rectangle. Handing `fitScale` the box's own aspect with
+    // the shares left at 100 described a container the size of the box, which
+    // over-stated the room by that ratio and made the seed uniformly optimistic.
+    // The container's aspect plus the box's real share of it in each dimension is
+    // the same rectangle expressed in the same units as the size.
+    let scale = 1;
+    if (!(verse && verse.classList.contains('countdown'))) {
+      const w = box.clientWidth || 0;
+      const h = box.clientHeight || 0;
+      const cw = container?.clientWidth || 0;
+      const ch = container?.clientHeight || 0;
+      if (w > 0 && h > 0 && cw > 0 && ch > 0) {
+        scale = fitScale({
+          text: verse ? verse.textContent || '' : '',
+          size: vBase,
+          face: faceOf(verseFontFamily),
+          aspect: cw / ch,
+          widthPct: (100 * w) / cw,
+          heightPct: (100 * h) / ch,
+          lineHeight: verseLineHeight,
+        });
+      }
+    }
+    apply(scale);
+
+    // BOUNDED BY A SIZE, NOT BY A COUNT. This was `guard < 40`, and 0.95^40 is
+    // 0.1285 — so a box needing less than that got the loop's last guess and kept
+    // it, still overflowing, inside `overflow: hidden`. That is rule 42's sliced
+    // verse arriving by a different road, and it does not take a long passage:
+    // one short line at a large designed size in a shallow box needs a scale
+    // below the old floor. `keepShrinking` stops on the answer instead
+    // (templatemodel.js), so the curve is unchanged and only the cases that never
+    // fitted move.
+    let guard = 0;
+    while (keepShrinking({ overflowing: overflows(), scale })) {
+      scale *= FIT_STEP;
+      apply(scale);
+    }
+    // The estimate can be pessimistic — a verse of short words wraps sooner in
+    // arithmetic than it does in a real line-breaker. Grow back while it still
+    // genuinely fits, so a seeded fit lands exactly where the plain loop would
+    // have. Never above 1: the template's own size is the ceiling.
+    while (scale < 1 && guard < 40) {
+      const bigger = Math.min(1, scale / FIT_STEP);
+      apply(bigger);
+      if (overflows()) {
+        apply(scale);
+        break;
+      }
+      scale = bigger;
       guard++;
     }
     return scale;
@@ -211,8 +304,10 @@
     // During a crossfade the outgoing and incoming slides coexist — fit both so
     // whichever is on top is already sized correctly.
     let worst = 1;
+    // `stageEl` IS the container `cqw` resolves against (`container-type: size`),
+    // so it is what the box's share is measured against.
     stageEl.querySelectorAll('.slide .content').forEach((box) => {
-      worst = Math.min(worst, fitOne(box));
+      worst = Math.min(worst, fitOne(box, stageEl));
     });
     // Report the WORST of the slides on screen, and never throw: this runs inside
     // a requestAnimationFrame on the page that is on the wall, and a listener that
@@ -491,10 +586,10 @@
     return v.startsWith('var(') ? v : `${v}, system-ui, sans-serif`;
   };
 
-  $: bgOpacity = style.bgOpacity == null || style.bgOpacity === '' ? 1 : clamp01(style.bgOpacity);
+  $: bgOpacity = clamp01(style.bgOpacity);
   // DIM SCRIM — a black overlay over the background (behind the text) to knock
   // down a bright image/background so text stays readable. 0 = none.
-  $: bgDim = clamp01(style.bgDim || 0);
+  $: bgDim = clamp01(style.bgDim);
 
   // TEXT CONTRAST PANEL (a "shape" behind the words). On a bright background a
   // coloured plate behind the text is what keeps it legible. Colour + opacity +
@@ -512,7 +607,7 @@
   $: panelBg = panelOn
     ? hexToRgba(style.panelColor || '#000000', style.panelOpacity == null ? 0.45 : style.panelOpacity)
     : 'transparent';
-  $: panelRadius = style.panelRadius == null ? 1.4 : Number(style.panelRadius);
+  $: panelRadius = style.panelRadius;
 
   // Heights. `bandHeight` (cqh) sizes the lower-third bar; `bgHeight` (%) lets the
   // background cover less than the full frame (anchored to the bottom, e.g. a
@@ -520,19 +615,22 @@
   $: bandHeight = Number(style.bandHeight) > 0 ? Number(style.bandHeight) : null;
   $: bgHeight = style.bgHeight == null || style.bgHeight === '' ? 100 : Number(style.bgHeight);
 
-  $: verseTransform = style.verseTransform || 'none'; // capitalization
-  $: refTransform = style.refTransform || 'none';
-  $: verseLineHeight = Number(style.verseLineHeight) > 0 ? Number(style.verseLineHeight) : 1.32;
+  $: verseTransform = style.verseTransform; // capitalization; resolved in the model
+  $: refTransform = style.refTransform;
+  $: verseLineHeight = style.verseLineHeight > 0 ? style.verseLineHeight : 1.32;
   $: verseLetter = style.verseLetterSpacing ? `${Number(style.verseLetterSpacing)}em` : 'normal';
   $: refLetter = style.refLetterSpacing ? `${Number(style.refLetterSpacing)}em` : 'normal';
   // Gap between the verse and its reference (cqw, so it scales with the output).
-  $: refGap = style.refGap == null ? 1.4 : Number(style.refGap);
-  // Per-region font. Each layer picks its own; `style.font` is the shared default.
-  $: verseFontFamily = fontFam(style.verseFont || style.font);
-  $: refFontFamily = fontFam(style.refFont || style.font);
-  // Per-region shadow (each falls back to the shared `textShadow`).
-  $: verseShadowCss = shadowCssOf(clamp01(style.verseShadow ?? style.textShadow ?? 0));
-  $: refShadowCss = shadowCssOf(clamp01(style.refShadow ?? style.textShadow ?? 0));
+  $: refGap = style.refGap;
+  // Per-element font and shadow. There is no whole-template fallback any more:
+  // `migrateStyle` writes the old `style.font` / `style.textShadow` onto both
+  // elements and deletes them, so reading them here would be reading a key that
+  // no longer exists — and a fallback chain is a second home wearing a helpful
+  // name (docs/REBRAND.md §3.1).
+  $: verseFontFamily = fontFam(style.verseFont);
+  $: refFontFamily = fontFam(style.refFont);
+  $: verseShadowCss = shadowCssOf(clamp01(style.verseShadow));
+  $: refShadowCss = shadowCssOf(clamp01(style.refShadow));
   // Announcement/ticker scroll: renders as a bottom FOOTER band (a ProPresenter
   // ticker), not centred text. Off unless the template asks for it.
   $: scroll = !!style.scroll;
@@ -591,7 +689,9 @@
     ? 'transparent'
     : style.bgImage
       ? `url("${style.bgImage}") center / cover no-repeat`
-      : style.background || 'transparent';
+      // `slideBG` returns null when the template names no background, which is
+      // what keeps an unset template transparent rather than black.
+      : slideBG(style) || 'transparent';
 
   // Alignment is configured per template (defaults centre). Lyrics inherit it —
   // the default lower-third template is centred, matching ProPresenter.
@@ -602,18 +702,34 @@
   // computer's default rather than something arbitrary. A CSS var already carries
   // its own generic; a bare family name ("Didot") does not, so append one.
   $: fontFamily = (() => {
-    const f = style.font || 'var(--f-serif)';
+    const f = style.verseFont || 'var(--f-serif)';
     if (f.startsWith('var(')) return f; // the var supplies its own fallback
     return `${f}, system-ui, sans-serif`;
   })();
 
-  // NO SLIDE TRANSITION — the wall CUTS instantly to each verse (operator
-  // request: "quick as light, remove every animation"). A crossfade also made the
-  // auto-fit measure `scrollHeight` while the incoming slide still carried a
-  // transform, so a long verse was sized wrong and overflowed the frame. Cutting
-  // means the fit always measures a settled slide. `{#key slideKey}` still swaps
-  // content — it just does so with no animation. `style.transition`/`transitionMs`
-  // are now ignored; the theme editor's transition control is a no-op by design.
+  // THE SLIDE TRANSITION (docs/REBRAND.md §8). A CUT unless the template or its
+  // theme asks for something else, because that is what an operator asked for
+  // ("quick as light, remove every animation") and what a wall should do when
+  // nobody has said otherwise.
+  //
+  // Transitions were removed from this renderer once, for a real reason: a
+  // crossfade made the auto-fit measure a slide that still carried a transform.
+  // `transitions.js` animates ONLY opacity, transform and filter, and none of the
+  // three moves `scrollHeight` or `clientHeight` — so the fitter measures the same
+  // box whether or not a transition is running. A mode that animated width,
+  // padding or font-size would bring the old bug straight back.
+  //
+  // Reduced motion is a CUT, not a faster animation: the viewer asked for none.
+  $: transitionMode = style.transition || DEFAULT_TRANSITION;
+  $: transitionMs = transitionDuration(transitionMode, style.transitionMs, reduceMotion);
+  const reduceMotion =
+    typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+      ? window.matchMedia('(prefers-reduced-motion: reduce)').matches
+      : false;
+  /** Svelte's transition contract, driven by the one pure function. */
+  function slideIn(node, { mode, duration }) {
+    return { duration, css: (t) => transitionCss(mode, t) };
+  }
 
   // Countdown: tick a local clock only while a target is set. The number updates
   // in place via its own reactive (`now`), which slideKey excludes — so ticks
@@ -638,11 +754,21 @@
   onDestroy(stopClock);
   $: remainingMs = countdownTo ? Math.max(0, countdownTo - now) : null;
   $: countdownDone = remainingMs === 0;
-  $: countdownText = (() => {
-    if (remainingMs == null) return '';
-    const s = Math.round(remainingMs / 1000);
-    return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
-  })();
+  // ONE FORMATTER (docs/REBRAND.md §7). This used to be its own copy of the
+  // arithmetic, as did the stage page — and both stopped at minutes, so a
+  // 90-minute pre-service countdown read `90:00`.
+  $: countdownText = remainingMs == null ? '' : formatCountdown(remainingMs);
+  // The last minute, or the last tenth of a short countdown. `countdown_from`
+  // rides with the content when the fire path knows it; without it the rule falls
+  // back to the last minute, which is the honest answer for a countdown whose
+  // length nobody told us.
+  // The warning colour is applied INLINE as well as by class: the countdown's own
+  // colour is an inline style, and an inline style beats a stylesheet rule, so a
+  // `.warn` class alone would have changed nothing on the wall.
+  const CD_WARN = '#f4515b';
+  $: countdownWarn =
+    remainingMs != null &&
+    countdownWarning(remainingMs, content?.countdown_from ? countdownTo - content.countdown_from : null);
 
   // Re-key on the actual content so a new slide crossfades but identical content
   // (a re-broadcast of the same verse) does not re-animate. Countdown ticks are
@@ -703,7 +829,26 @@
     void clockText;
     void elapsedText;
     void remainingText;
-    return layers.map((L) => ({ L, text: layerText(L) }));
+    // A BAND DECIDES WHERE ITS WORDS GO; it does not draw them (docs/REBRAND.md
+    // §4, `bandLayout`). Members are emitted into this same list with a derived
+    // box, so every text layer on a wall — inside a band or not — goes through
+    // ONE path below: one fit, one shadow rule, one transform, one `{#key}`.
+    // They are skipped where they sit in the stack, because their band draws
+    // them in the order it names them.
+    const boxes = drawBoxes(layers, layerText);
+    const out = [];
+    for (const L of topLevelLayers(layers)) {
+      out.push({ L, text: layerText(L), box: boxes.get(L.id) });
+      if (L.type !== 'band') continue;
+      // The band's words, in the order the band names them, each at the box the
+      // band just computed for it — and then through the SAME text branch below
+      // as every other text layer.
+      for (const id of Array.isArray(L.members) ? L.members : []) {
+        const m = layers.find((x) => x && x.id === id);
+        if (m) out.push({ L: m, text: layerText(m), box: boxes.get(m.id) });
+      }
+    }
+    return out;
   })();
 
   // Per-text-layer auto-fit. Each layer's text is sized to BEST FIT its own box —
@@ -760,7 +905,7 @@
          so each screen opts into (or out of) media and controls what sits over or
          under it. A lower third with no media layer never shows the picture; a
          full-screen template with a media layer on top lets the picture fill it. -->
-    {#each layerViews as { L, text } (L.id)}
+    {#each layerViews as { L, text, box } (L.id)}
       {#if L.visible !== false}
         {#if L.type === 'background'}
           <div class="lbg" style="{boxStyle(L)} background:{bgPaint(L)}; opacity:{L.opacity == null ? 1 : L.opacity};"></div>
@@ -780,12 +925,38 @@
             </div>
           {/if}
         {:else if L.type === 'shape'}
-          <div class="lshape" style="{boxStyle(L)} background:{hexA(L.fill, L.opacity == null ? 1 : L.opacity)}; border-radius:{L.radius || 0}cqw;"></div>
+          <div class="lshape" style="{boxStyle(L)} {shapePaint(L)} border-radius:{L.radius || 0}cqw;"></div>
+        {:else if L.type === 'band'}
+          <!-- THE BAND (docs/REBRAND.md §4): a real element running from its own
+               `top` to the bottom edge, inset by the side safe area. Its words are
+               NOT its children — they are emitted beside it with boxes this band
+               computed, so they take the one text path below. Its alpha is applied
+               exactly (`shapePaint`); it has never been scaled by 0.9 here. -->
+          <div class="lband" style="{boxStyle(box || L)} {shapePaint(L)} border-radius:{L.radius || 0}cqw;"></div>
+        {:else if L.type === 'region'}
+          <!-- A REAL RENDERED SLIDE, inside its own container (docs/REBRAND.md §6).
+               `container-type: inline-size` is the feature: cqw inside this box is
+               a share of the BOX's width, so the template scales to the region
+               exactly as it would to a screen of that width.
+
+               Only at depth 0 — a composite may not be another composite's fill. -->
+          {#if depth === 0}
+            <div
+              class="lregion"
+              style="{boxStyle(L)} border-radius:{L.radius || 0}cqw; opacity:{L.opacity == null ? 1 : L.opacity}; {L.outline ? `outline:${L.outline}cqw solid ${L.outlineColor || 'var(--accent)'}; outline-offset:-${L.outline}cqw;` : ''} {L.plate ? `background:${L.plate};` : ''}">
+              <svelte:self
+                template={builtinById(L.templateRef)}
+                {content}
+                {theme}
+                depth={depth + 1}
+              />
+            </div>
+          {/if}
         {:else if !(showDefaultCountdown && (L.bind === 'verse' || L.bind === 'reference' || L.bind === 'translation'))}
           <!-- Verse/reference/translation layers are hidden during a default
                countdown (they carry no content then); a static or clock layer
                still shows. -->
-          <div class="ltext" style="{boxStyle(L)} align-items:{vAlign(L.valign)};">
+          <div class="ltext" style="{boxStyle(box || L)} align-items:{vAlign(L.valign)};">
             {#key text}
               <div
                 class="lfit"
@@ -826,7 +997,7 @@
         {#if content.reference && !countdownDone}
           <div class="reference" style="font-size:{refSize}cqw; {refStyle}">{content.reference}</div>
         {/if}
-        <div class="verse countdown" style="font-size:{verseSize * 2}cqw; margin-top:{refGap}cqw; color:{verseColor}; text-align:center; text-shadow:{verseShadowCss};">
+        <div class="verse countdown" class:warn={countdownWarn} style="font-size:{verseSize * 2}cqw; margin-top:{refGap}cqw; color:{countdownWarn ? CD_WARN : verseColor}; text-align:center; text-shadow:{verseShadowCss};">
           {countdownDone ? (content.countdown_done || '0:00') : countdownText}
         </div>
       </div>
@@ -857,7 +1028,8 @@
       <div
         class="slide"
         class:lower-third={bandMode}
-        class:bandless={bandMode && !bandHasWords}>
+        class:bandless={bandMode && !bandHasWords}
+        in:slideIn={{ mode: transitionMode, duration: transitionMs }}>
         {#if scroll && show('verse_text') && content.text && !countdownTo}
           <!-- FOOTER TICKER (ProPresenter-style). A band pinned to the very
                bottom of the screen: an optional fixed label on the left, then the
@@ -889,7 +1061,7 @@
               {#if content.reference && !countdownDone}
                 <div class="reference" style="font-size:{refSize}cqw; {refStyle}">{content.reference}</div>
               {/if}
-              <div class="verse countdown" style="font-size:{verseSize * 2}cqw; color:{verseColor}; text-align:{verseAlign}; text-shadow:{verseShadowCss};">
+              <div class="verse countdown" class:warn={countdownWarn} style="font-size:{verseSize * 2}cqw; color:{countdownWarn ? CD_WARN : verseColor}; text-align:{verseAlign}; text-shadow:{verseShadowCss};">
                 {countdownDone ? (content.countdown_done || '0:00') : countdownText}
               </div>
             {:else if refFirst}
@@ -943,10 +1115,19 @@
      geometry), drawn in DOM order (back-to-front). */
   .lbg,
   .lshape,
+  .lband,
   .ltext,
+  .lregion,
   .lmediabox {
     position: absolute;
     box-sizing: border-box;
+  }
+  /* THE REGION IS ITS OWN CONTAINER — the whole point of a composite. `cqw`
+     inside this box is a share of the BOX's width, so the template rendered in
+     it scales to the region exactly as it would to a screen of that width. */
+  .lregion {
+    overflow: hidden;
+    container-type: inline-size;
   }
   /* A media layer: the picture/video fills the layer's box (cover/contain set
      inline per layer), clipped to its rounded corners. */
@@ -1023,6 +1204,22 @@
     padding: 0 0 6% 0;
   }
   /* Full-bleed media layer behind the text (image/video background). */
+  /* THE LAST MINUTE (docs/REBRAND.md §7). Red, and moving — a still colour
+     change on a screen somebody glances at is easy to miss. Reduced motion gets
+     the glow without the pulse: the information is the colour, the pulse only
+     makes it findable. */
+  .countdown.warn { color: #f4515b; }
+  @media (prefers-reduced-motion: no-preference) {
+    .countdown.warn { animation: cdwarn 2s ease-in-out infinite; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .countdown.warn { text-shadow: 0 0 0.25em rgba(244, 81, 91, 0.85); }
+  }
+  @keyframes cdwarn {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.55; }
+  }
+
   .media {
     position: absolute;
     inset: 0;

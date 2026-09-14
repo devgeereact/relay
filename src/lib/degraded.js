@@ -84,7 +84,7 @@ export function degradations(s = {}) {
       level: 'blocked',
       title: 'Safe mode is on',
       what: 'Outputs will not open and detection is disarmed — nothing Relay does can reach a screen.',
-      fix: 'Settings → Backup & Recovery → Turn off safe mode.',
+      fix: 'Settings → General → Turn off safe mode.',
     });
   }
 
@@ -97,7 +97,7 @@ export function degradations(s = {}) {
       level: 'blocked',
       title: 'No speech model — Relay is not listening for verses',
       what: 'Nothing will be transcribed or detected. Firing verses by hand works exactly as normal.',
-      fix: 'Settings → Network → download a speech model.',
+      fix: 'Settings → Network & Integrations → download a speech model.',
     });
   }
 

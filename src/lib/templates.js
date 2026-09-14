@@ -3,6 +3,8 @@
 // fetches the (editable) DB row instead. Sizes are in cqw (container-query
 // width %) so the same template scales identically at any output size.
 
+import { migrateStyle } from './templatemodel.js';
+
 export const BUILTINS = [
   {
     id: 1,
@@ -218,7 +220,10 @@ export function parseImportedTemplate(text) {
   return {
     name: String(parsed.name ?? 'Imported template'),
     layout: sanitiseLayout(parsed.layout),
-    style: sanitiseStyleValues(style),
+    // SANITISE FIRST, THEN MIGRATE. The migration copies values onto new keys;
+    // running it before the sanitiser would carry a hostile value past the check
+    // that exists to strip it, under a name the check had already cleared.
+    style: migrateStyle(sanitiseStyleValues(style)),
   };
 }
 

@@ -199,9 +199,18 @@ describe('where it lives', () => {
   const settings = read('src/lib/views/Settings.svelte');
 
   it('sits with the audio setup, where a room is configured', () => {
-    expect(settings).toMatch(/<div class="r-lbl">Rooms<\/div>/);
-    expect(settings).toMatch(/doSaveRoom/);
-    expect(settings).toMatch(/doUseRoom/);
+    // It is a GROUP inside the Audio section, headed by the frame's `.rw-group`
+    // (docs/REBRAND.md §11's one type scale). It used to be a `.r-lbl` under a
+    // heading that said the same word, which is what this line matched.
+    // What is asserted is unchanged: the rooms panel is in Settings, in Audio.
+    expect(settings).toMatch(/<div class="rw-group">Rooms<\/div>/);
+    const audio = settings.slice(
+      settings.indexOf("section === 'audio'"),
+      settings.indexOf("section === 'ai'"),
+    );
+    expect(audio).toMatch(/<div class="rw-group">Rooms<\/div>/);
+    expect(audio).toMatch(/doSaveRoom/);
+    expect(audio).toMatch(/doUseRoom/);
   });
 
   it('tells the operator, in the UI, that levels are NOT saved and why', () => {
