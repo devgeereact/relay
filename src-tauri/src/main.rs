@@ -215,6 +215,7 @@ fn main() {
             let kiosk_clients = kiosk.clients_handle();
             let kiosk_themes = kiosk.themes_handle();
             let kiosk_last = kiosk.last_screen_handle();
+            let kiosk_last_x = kiosk.last_transition_handle();
             // Warm the custom-themes blob so a kiosk connecting before any theme is
             // saved this session still gets the operator's themes on `hello`.
             {
@@ -250,6 +251,7 @@ fn main() {
                 kiosk_clients,
                 kiosk_themes,
                 kiosk_last,
+                kiosk_last_x,
                 app.state::<channels::OutputHealth>().inner().clone(),
                 8031,
             ));
@@ -354,6 +356,8 @@ fn main() {
             get_setting,
             set_setting,
             sync_kiosk_themes,
+            set_live_transition,
+            live_transition,
             data_health,
             list_books,
             chapter_verses,
@@ -2945,6 +2949,40 @@ fn set_setting(db: tauri::State<'_, Db>, key: String, value: String) -> error::R
 #[tauri::command]
 fn sync_kiosk_themes(kiosk: tauri::State<'_, channels::KioskHub>, themes_json: String) {
     kiosk.set_themes(&themes_json);
+}
+
+/// THE OPERATOR'S TRANSITION OVERRIDE — how the next thing appears, on every
+/// screen (docs/REBRAND.md §8, DECISIONS §83).
+///
+/// `mode: None` clears it and every screen goes back to following its own
+/// template, which is §71 untouched.
+///
+/// It is a plain `()` rather than a `Result` on purpose: there is nothing here
+/// that can fail and nothing a congregation can be misled about. It reaches the
+/// native windows through a Tauri emit and the kiosk/OBS sources through the hub,
+/// and it changes no screen until the NEXT thing is put on one.
+/// GENERIC OVER `tauri::Runtime`, like every other command that reaches a screen
+/// (rule 24). A concrete `AppHandle` here would weld this control to the desktop
+/// runtime, and the e2e test below — the one that checks a panic control is not
+/// delayed by a transition — could not be written at all.
+#[tauri::command]
+fn set_live_transition<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    mode: Option<String>,
+    ms: Option<u32>,
+) {
+    channels::transition(&app, mode, ms);
+}
+
+/// What override is in force right now, for the console to read back on mount.
+///
+/// The console can reload mid-service (a crash recovery, a devtools refresh) and
+/// the override lives in the backend. Without this read the picker would come back
+/// saying "Follow template" while every screen in the building was crossfading —
+/// a control that reads the same when it is in force as when it is not (rule 35).
+#[tauri::command]
+fn live_transition(kiosk: tauri::State<'_, channels::KioskHub>) -> channels::TransitionOverride {
+    kiosk.current_transition()
 }
 
 /// Books available to browse, in canonical order — Library (§7).

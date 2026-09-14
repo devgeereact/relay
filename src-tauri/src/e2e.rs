@@ -865,6 +865,86 @@ fn clear_blanks_the_screens_and_reports_that_it_did() {
     assert!(wall.blacked(), "the screens never blacked out");
 }
 
+/// THE TRANSITION CONTROL REACHES BOTH DOORS, AND GATES NEITHER PANIC CONTROL.
+///
+/// Two claims, driven through the real `set_live_transition` command against the
+/// real hub, because they are the two ways this feature could hurt a congregation.
+///
+/// **Both doors.** The wall is two kinds of screen: a native output window, which
+/// has the Tauri bridge and no socket, and a kiosk/OBS browser source, which has
+/// the socket and no backend at all. A control wired to one of them is the
+/// "guarantee kept on one door" mistake this repository has now made four times —
+/// and on these two doors it would be a projector on HDMI and an OBS source in the
+/// same room transitioning differently. `Wall` watches one; `Kiosk` watches the
+/// other, which is the only reason the second claim is testable at all.
+///
+/// **No panic control waits for it.** An 800 ms fade-through-black is in force and
+/// `clear_screens` and `blackout` still report success and still reach the wall —
+/// nothing on their path reads the override (rule 15, DECISIONS §20).
+///
+/// Watched to fail: dropping the `app.emit` in `channels::transition` (the native
+/// window never learns), and dropping the `hub.set_transition` (every browser
+/// source keeps cutting) — one assertion each, which is the point of watching both.
+#[test]
+fn the_transition_control_reaches_both_doors_and_delays_no_panic_control() {
+    let app = app();
+    let h = app.handle().clone();
+    let wall = Wall::watch(&h);
+    let mut kiosk = qa::Kiosk::attach(&h);
+
+    // The native output window's door. `output://transition` has no home on `Wall`
+    // (it is not content, a clear or a black), so it is listened for here directly —
+    // which is also the honest thing: a bespoke listener says out loud that this is
+    // a fourth kind of message and not a fifth kind of content.
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let s = seen.clone();
+    use tauri::Listener as _;
+    h.listen("output://transition", move |e| {
+        s.lock().expect("seen").push(e.payload().to_string());
+    });
+
+    set_live_transition(h.clone(), Some("fadeblack".into()), Some(800));
+    settle();
+
+    let native = seen.lock().expect("seen").join("|");
+    assert!(
+        native.contains("fadeblack") && native.contains("800"),
+        "the native output window never learned the operator's choice: {native}"
+    );
+
+    let mut hub_frames = Vec::new();
+    while let Some(m) = kiosk.next() {
+        hub_frames.push(m);
+    }
+    assert!(
+        hub_frames
+            .iter()
+            .any(|m| m.contains(r#""kind":"transition""#) && m.contains("fadeblack")),
+        "every OBS/kiosk browser source kept cutting: {hub_frames:?}"
+    );
+
+    // AND THE PANIC CONTROLS ARE EXACTLY AS UNCONDITIONAL AS THEY WERE.
+    manual_fire(h.clone(), h.state::<Db>(), "John 3:16".into(), None, None).unwrap();
+    settle();
+    assert!(wall.last().is_some(), "the verse never reached the wall");
+
+    clear_screens(h.clone()).expect("clear must work with a transition in force");
+    settle();
+    assert!(wall.cleared(), "an 800 ms transition swallowed a clear");
+
+    blackout(h.clone()).expect("blackout must work with a transition in force");
+    settle();
+    assert!(wall.blacked(), "an 800 ms transition swallowed a blackout");
+
+    // And the override is still in force afterwards: a panic control takes the
+    // screens down, it does not quietly re-arm every template's own transition.
+    assert_eq!(
+        live_transition(h.state::<channels::KioskHub>()),
+        Some(("fadeblack".to_string(), Some(800))),
+        "a panic control threw the operator's transition away"
+    );
+}
+
 /// A verse that parses but does not exist must NEVER be broadcast — it would render
 /// with no text and blank the projector mid-service. Garbled speech readily produces
 /// these ("Psalms 23:99").

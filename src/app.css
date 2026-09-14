@@ -1029,3 +1029,43 @@ input[type="checkbox"]{ accent-color:var(--v-accent); }
 @keyframes view-spin{ to{ transform:rotate(360deg); } }
 .view-loaderr{ display:flex; flex-direction:column; align-items:center; gap:14px;
   padding:56px 24px; color:var(--v-dim); text-align:center; }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   X1 · THE TRANSITION CONTROL (docs/REBRAND.md §8 · DECISIONS §83)
+   One block at the end of the file, per the wave-3 preamble, so a collision
+   with another agent's block resolves by moving these lines whole.
+
+   IT GIVES WAY AND NOTHING ELSE DOES. This control shares the right end of a
+   34px bar with the screen lamps and Emergency Stop. `flex:0 0 auto` plus a
+   capped select width means it cannot grow into either, and below 1180px it is
+   removed entirely — a panic control lives at a fixed corner an operator hits
+   without reading (rule 15, DECISIONS §20), so the negotiable control is the
+   one that disappears. Same breakpoint the wordmark tag uses, deliberately:
+   one narrow-console rule, not two that can disagree.
+   ══════════════════════════════════════════════════════════════════════════ */
+.xfade{ display:inline-flex; align-items:center; gap:6px; flex:0 0 auto; }
+/* The label is quiet: it names a control, it does not report a state, and the
+   one thing in this bar allowed to be loud is the amber that says a
+   congregation is looking at something. */
+.xcap{ font-size:9px; letter-spacing:.09em; text-transform:uppercase;
+  color:var(--v-faint); white-space:nowrap; }
+.xfade .xpick{ height:22px; padding:0 20px 0 7px; font-size:10.5px;
+  background-position:calc(100% - 11px) 10px,calc(100% - 8px) 10px;
+  max-width:132px; }
+.xfade .xdur{ max-width:76px; }
+/* AN OVERRIDE IS IN FORCE, AND THAT IS VISIBLE WITHOUT READING THE DROPDOWN.
+   Deliberately NOT amber (on air), amethyst (rehearsal) or cyan (a guess) — the
+   colour law is fixed and this is none of those three. A brighter border and a
+   brighter text colour say "somebody chose this" without claiming a state. */
+.xfade.on .xpick{ border-color:var(--v-accent-line); color:var(--v-txt); }
+.xerr{ font-size:9px; letter-spacing:.06em; text-transform:uppercase;
+  color:var(--v-rose); border:1px solid var(--v-rose); border-radius:var(--v-r-sm);
+  padding:1px 5px; white-space:nowrap; }
+/* A LADDER, NOT A SWITCH. Between 1180 and 1400 the caption goes and the two
+   selects stay: the mode select's own text says what it is ("Fade through
+   black"), and both carry the caption verbatim in `title` and `aria-label`, so
+   nothing is lost that a hover or a screen reader cannot recover. Below 1180 the
+   whole control goes, because at that width the only things left in this bar
+   should be the ON AIR ladder, the lamps and the panic control. */
+@media (max-width:1400px){ .xcap{ display:none; } }
+@media (max-width:1180px){ .xfade{ display:none; } }

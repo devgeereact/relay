@@ -3844,3 +3844,110 @@ as blacking out a keyed channel, which `isKeyedTemplate` exists to prevent.
 `cameraplate.test.js` holds the boundary from the other side: `Output.svelte`, `Stage.svelte`,
 `TemplateRender.svelte` and `TemplatePreviewOverlay.svelte` must render no plate, watched to fail by
 putting one in `Output.svelte`.
+
+## 83. A transition has two authorities, and the operator's outranks the template's (2026-09-14)
+
+### What was open
+
+§71 gave a transition one home: the template. Seven modes in one register, a cut by default, an
+unknown mode a cut, reduced motion a cut. All of that stands.
+
+What it did not give anybody was a way to change it during a service. `docs/REBRAND.md` §8 asks the
+chrome bar for `TRANSITION [picker] [duration]` and says *"choosing one replays it on the programme
+at once"* — and the wave-3 shell agent declined to build the picker, correctly, because there was
+nowhere for it to reach. The one application point is `TemplateRender.svelte`, reading
+`style.transition` off the resolved template, and a congregation screen is a separate document:
+on a kiosk/OBS browser source it has no backend at all and gets its template over the WebSocket hub.
+A picker wired only as far as the chrome would have moved the console preview and left every screen
+cutting — a control that reads identically when it is working and when it is not (rule 35), on the
+one surface a congregation is looking at.
+
+### Why it is worth a second authority at all
+
+A template's transition is a decision somebody made on a Tuesday. The decision an operator has to
+make at 10:42 on a Sunday is a different one: the preacher has gone off-plan, four templates are in
+rotation, the room is not what the designer imagined, and *"make everything cut, now"* is not an
+instruction anybody can carry out by editing four templates while a service runs.
+
+But two homes for one property is exactly the defect §3.1 of the rebrand spec exists to prevent, and
+this repository has the scars: §69's seven Settings controls that saved a preference nothing read,
+and §71's own theme picker that saved a transition the renderer ignored. A second authority is only
+safe when the order is stated and an operator can see which one is answering.
+
+### The decision — the order, stated the way §29 states it for templates
+
+1. **The operator's live override wins**, at any value, `cut` included. A deliberate act now
+   outranks a saved default, and the one thing an operator must always be able to do is take the
+   motion away.
+2. **Otherwise the template's own choice** (§71), resolved through its theme first, exactly as before.
+3. **Otherwise a cut.**
+
+`transitions.js::resolveTransition` is the only place those are ranked, and it returns `source`
+(`operator` or `template`) so a surface can SAY which one it is showing rather than leaving an
+operator to guess.
+
+**What an operator sees when the two disagree.** The picker's first option is **Follow template**,
+it is the default, and it is what a fresh Relay does. Choosing any of the seven is therefore a
+visible act with a visible state — an accent-lined control, not a silent preference sitting on top
+of a saved one. The duration picker is DISABLED while the template is being followed, because there
+is nothing for it to be the duration of; a number an operator can set that changes nothing is §69
+again, and is what the old theme editor's duration slider was for the whole of its life.
+
+**An override naming a mode nothing knows is not an override.** It falls through to the template
+rather than becoming a cut. Flattening to a cut would let a frame from a newer version silently
+unstyle a wall that was working.
+
+**Deliberately not persisted.** It is a live control like the blackout. A Relay that has restarted
+has no opinion about how last Sunday was cutting, and a remembered one would be an unattended change
+to every screen at boot. It does survive a console reload *within* a run — the value lives in the
+backend and `live_transition` reads it back on mount, because a picker saying "Follow template" over
+screens that are crossfading is rule 35 with a dropdown.
+
+### How it reaches the screens
+
+`channels::transition` publishes on **both doors** — a Tauri `output://transition` emit for the
+native output window, which has the bridge and no socket, and a `{"kind":"transition"}` frame on the
+kiosk hub for every browser source, which has the socket and no backend. A control wired to one of
+the two would be the guarantee-kept-on-one-door mistake this repository has now made four times, and
+here it would be a projector on HDMI and an OBS source in the same room transitioning differently.
+
+**Retained, in its own slot** (rule 43). A screen that joins mid-service must not be the only one
+still cutting while the rest crossfade, so the hub keeps the override and replays it on `hello`,
+after the template and the themes and BEFORE the retained screen frame. It is kept in
+`last_transition` and never in `last_screen`, and that separation is the whole of the care here:
+`last_screen` holds ONE frame and the newest wins, so a shared slot would have meant an operator
+changing the transition ERASED the retained verse — the next screen to join mid-reading would have
+been sent a preference and a blank wall, which is §68's own failure delivered by §68's mechanism.
+`is_screen_frame` therefore returns false for a transition, `FRAME_VERDICTS` records that with the
+reason, and the enumeration test fails if anyone changes their mind quietly.
+
+**Not rehearsal-gated**, and that is a deliberate difference from every content publisher beside it.
+It carries configuration and paints nothing — exactly like `set_template` and `set_themes`, neither
+of which is gated either. There is nothing of a rehearsal to leak; gating it would instead leave
+every screen still armed with the transition from before the rehearsal once the operator went live.
+
+**A congregation screen applies an override WITH content, never on its own.** `Output.svelte` holds
+`pendingTransition` and moves it to `appliedTransition` only when content arrives. The console
+replays at once because that is the point of the picker (§8, and the prototype repaints its program
+frame for exactly that reason); a wall must not, or an operator adjusting a dropdown makes a verse
+that is already up re-animate, mid-reading, in front of people. This is also what makes the frame
+safe to publish during a rehearsal.
+
+**No panic control waits for it or is undone by it.** `clear` and `black` never read the override,
+`TemplateRender` has no `out:` transition at all (§27), and the override outlives a clear — a panic
+control takes the screens down; it does not quietly re-arm every template's own transition behind
+the operator's back, to be discovered on the next fire. Held by
+`e2e::the_transition_control_reaches_both_doors_and_delays_no_panic_control` and
+`channels::tests::a_panic_control_is_neither_delayed_nor_undone_by_a_transition`.
+
+**The seven are not copied into Rust.** An unknown mode is already a cut in `transitions.js`, and a
+second register drifts from the first. What the Rust end owes is frame integrity: the value is
+serialised through `serde_json`, so nothing can break out of the JSON, and an implausibly long mode
+is dropped rather than retained and replayed to every screen that joins for the next hour.
+
+### Not done
+
+The console's programme pane does not replay yet. `views/Live.svelte` renders `TemplateRender` and
+needs no new prop — it follows the `liveTransition` store the moment it is rendered by a build that
+has this — but that file was owned by another agent in the same wave and was left alone. Verified
+only that the mechanism is there, not that the pane moves. **NOT TESTED in a browser.**

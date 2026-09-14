@@ -92,3 +92,77 @@ export function transitionDuration(mode, ms, reducedMotion = false) {
   // machine, mid-service.
   return Math.min(1000, n);
 }
+
+// ── THE OPERATOR'S LIVE OVERRIDE (docs/DECISIONS.md §83) ───────────────────────
+//
+// §71 made a transition a TEMPLATE's choice. That is the right home for a decision
+// somebody made on a Tuesday, and the wrong home for the one an operator has to
+// make at 10:42 on a Sunday: the preacher has gone off-plan, four templates are in
+// rotation, and "make everything cut, now" is not an instruction you can carry out
+// by editing four templates.
+//
+// So there are now two authorities over ONE property, which is exactly the defect
+// §3.1 of the rebrand spec exists to prevent — unless the order is stated and the
+// operator can see which one is in force. Both halves are here: `resolveTransition`
+// is the one place the two are ranked, and the picker's first option is
+// **Follow template**, so an override is something an operator turned on and can
+// see is on, rather than a silent second home for the same property.
+
+import { writable } from 'svelte/store';
+
+/**
+ * The override in force right now — `{ mode, ms }`, or `null` to follow the template.
+ *
+ * It lives HERE rather than in `stores/capture.js` for one concrete reason:
+ * `TemplateRender` reads it, and `TemplateRender` also renders `output.html`, which
+ * is served to an OBS/kiosk browser source with NO backend at all. Importing the
+ * Tauri bridge module into that bundle to read one field would put the whole
+ * command surface on a congregation screen. `capture.js` still owns the COMMAND
+ * (`setLiveTransition`) — the bridge rule is unchanged, and this is the same split
+ * `session.js`, `updater.js` and `countdown.js` already use.
+ *
+ * DELIBERATELY NOT PERSISTED. It is a live control like the blackout: a Relay that
+ * has restarted has no opinion about how last Sunday was cutting, and a remembered
+ * one would be an unattended change to every screen at boot.
+ */
+export const liveTransition = writable(null);
+
+/** Has this override any effect, or is it an absent value in a box? */
+export const isOverride = (o) => !!o && isTransition(o.mode);
+
+/**
+ * WHICH TRANSITION IS IN FORCE, and on whose authority (DECISIONS §83).
+ *
+ * The order, stated the way §29 states it for templates:
+ *
+ *   1. THE OPERATOR'S LIVE OVERRIDE, at any value — `cut` included, which is the
+ *      whole point. A deliberate act now outranks a saved default, and the one
+ *      thing an operator must always be able to do is take the motion away.
+ *   2. Otherwise THE TEMPLATE'S OWN CHOICE (§71), already resolved through its
+ *      theme by the caller before it reaches here.
+ *   3. Otherwise a CUT.
+ *
+ * An override naming a mode nothing knows is NOT an override: it falls through to
+ * the template rather than becoming a cut, because a frame from a newer version
+ * must not be able to silently unstyle a wall that was working.
+ *
+ * `source` comes back so a surface can SAY which of the two it is showing. A picker
+ * that cannot tell an operator whether they are reading their own choice or the
+ * template's is the second-home defect with a control bolted onto it.
+ */
+export function resolveTransition(style, override) {
+  if (isOverride(override)) {
+    return { mode: override.mode, ms: override.ms, source: 'operator' };
+  }
+  return {
+    mode: (style && style.transition) || DEFAULT_TRANSITION,
+    ms: style ? style.transitionMs : undefined,
+    source: 'template',
+  };
+}
+
+/** The durations the chrome picker offers, in ms. 0 is a cut however it is dressed. */
+export const TRANSITION_MS = Object.freeze([0, 200, 320, 500, 800]);
+
+/** What a newly-chosen override starts at — the prototype's default. */
+export const DEFAULT_TRANSITION_MS = 320;
