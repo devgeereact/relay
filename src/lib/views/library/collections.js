@@ -101,3 +101,36 @@ export function countMark(n) {
   if (n < 0) return '!';
   return String(n);
 }
+
+/**
+ * WHAT A MEDIA CARD'S SECOND LINE SAYS.
+ *
+ * `REBRAND` §10 asks for a CAPTION stored apart from the item's name. There is no
+ * caption column and this is not one: `media_assets.filename` is ALREADY the
+ * operator's own words — the add sheet writes what they typed into it and keeps
+ * the real file name only as a hint on screen — so a caption would be a second
+ * operator-authored string beside the one that exists, and §10's own sentence for
+ * media is "the slide *is* the picture", which means none of it reaches a
+ * congregation. The reason is written down in `MediaLibrary.svelte`'s header.
+ *
+ * What this is instead: the two facts about a media item that the card could not
+ * already say. The thumbnail is the picture and the footer is the name, so
+ * neither says what KIND of file it is or when it arrived — and "which of these
+ * two near-identical title cards did I add last week" is the question an operator
+ * actually asks of this grid.
+ *
+ * THE DATE IS PRINTED EXACTLY AS STORED (`YYYY-MM-DD`, written by
+ * `capture.js::importMedia`). Never through `toLocaleDateString`: an ISO date with
+ * no time is parsed as UTC midnight and rendered in local time, so west of
+ * Greenwich every item in the library would be dated the day before it was added.
+ *
+ * An older row's `created_at` defaults to `''`, and then the line is the kind
+ * alone — never the word "added" with nothing after it.
+ */
+const MEDIA_KIND_WORD = { image: 'Image', video: 'Video', document: 'Document' };
+
+export function mediaSub(asset) {
+  const kind = MEDIA_KIND_WORD[asset?.kind] ?? 'File';
+  const date = typeof asset?.created_at === 'string' ? asset.created_at.trim() : '';
+  return date ? `${kind} \u00b7 added ${date}` : kind;
+}

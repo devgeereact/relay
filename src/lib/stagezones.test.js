@@ -242,3 +242,59 @@ describe('a word to the preacher', () => {
     expect(alert.textContent).toContain('Wrap up — 5 minutes');
   });
 });
+
+
+// AMBER MEANS ON AIR, AND A CLOCK IS NOT ON AIR.
+//
+// Found by driving the real backend: `http://127.0.0.1:8032/stage.html` rendered
+// "— standby —" with the clock beside it in `--v-amber` — the ON AIR colour, at
+// the largest type on the page, over a page with nothing on air. It was not a
+// template's saved default and no operator chose it: this page renders no
+// template at all (it imports three pure formatters from `layers.js` and paints
+// its own chrome), so the colour was a stylesheet literal.
+//
+// The prototype's stage rail is `--stg-mc: #4CC9F0`, which is `--v-cyan` — and
+// cyan on this console promises A GUESS (rule 18, DECISIONS §21). Swapping one
+// promise for another is the same defect in a different hue, so the figures take
+// the page's own ink instead. `--v-red` stays on the countdown's warning state,
+// which is the one figure here that is a warning.
+//
+// HOW THIS WAS CHECKED: watched to go RED by restoring `color: var(--v-amber)`
+// on `.railrow` — the test names the rule and the promise it broke.
+describe('the colour law reaches the stage monitor', () => {
+  const style = SRC.slice(SRC.indexOf('<style>'));
+  const rule = (sel) => {
+    const i = style.indexOf(`${sel} {`);
+    expect(i, `no rule for ${sel}`).toBeGreaterThan(-1);
+    return style.slice(i, style.indexOf('}', i));
+  };
+
+  /** Every token that carries a promise, and what it promises. Same law as
+      `colourlaw.test.js`, applied to the one page that file cannot see. */
+  const PROMISE = {
+    '--v-amber': 'ON AIR',
+    '--v-cyan': 'a guess',
+    '--v-amethyst': 'rehearsal',
+  };
+
+  it('a figure — clock, elapsed or countdown — wears no promise colour', () => {
+    for (const sel of ['.railrow', '.fig .figv']) {
+      const r = rule(sel);
+      for (const [token, means] of Object.entries(PROMISE)) {
+        expect(r, `${sel} may not be ${token} — that means ${means}`).not.toContain(token);
+      }
+      expect(r, `${sel} takes the page's own ink`).toContain('color: var(--v-txt)');
+    }
+  });
+
+  it('and the guard can still see a promise colour when there is one', () => {
+    // Guards the guard: a scanner that matched nothing would pass vacuously,
+    // which is how two scanners in this repo were wrong while looking exhaustive.
+    expect(rule('.ref'), 'the reference on screen IS on air, and says so').toContain('--v-amber');
+  });
+
+  it('the warning state is still red, because that one IS a warning', () => {
+    expect(rule('.railrow.warn')).toContain('var(--v-red)');
+    expect(rule('.fig.warn .figv')).toContain('var(--v-red)');
+  });
+});

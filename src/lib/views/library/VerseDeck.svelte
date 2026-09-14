@@ -136,6 +136,32 @@
     };
   }
 
+  /**
+   * THE CARD'S SECOND LINE (REBRAND §10, the prototype's `.cell .sub2`).
+   *
+   * The prototype stacks a title and a quieter line beneath it, and without the
+   * second one a grid of scripture is a wall of references — twelve cards that
+   * differ only in a verse number. The thumbnail above carries the words, but it
+   * carries them at whatever size, colour and crop the operator's own template
+   * chose, and a picture or a document carries no words at all. The second line
+   * is the one place on every card that reads the same way, which is what makes a
+   * column of cards scannable rather than a set of pictures to study one by one.
+   *
+   * It is the item's FIRST line only. An announcement body is a paragraph with
+   * newlines in it, and a CSS ellipsis on a `white-space: nowrap` box renders a
+   * newline as a space — so a three-line notice became one run-on sentence that
+   * read as a different notice. Take line one and say so with the ellipsis.
+   *
+   * The card supplies nothing of its own here: a pane that has nothing to add
+   * beyond the title passes no `sub`, and no line is drawn. An empty second line
+   * is a row of blank space under every card claiming there is more to know.
+   */
+  function subLine(s) {
+    if (typeof s !== 'string') return '';
+    const first = s.split('\n').find((l) => l.trim()) ?? '';
+    return first.replace(/\s+/g, ' ').trim();
+  }
+
   /** Escape closes the kebab menu and goes NO FURTHER — never to the panic key. */
   function menuEsc(e) {
     if (e.key === 'Escape') {
@@ -176,7 +202,15 @@
         {/if}
         <span class="vd-rbody">
           <b>{v.label ?? v.reference}</b>
-          {#if v.text}<span class="vd-rtext">{v.text}</span>{/if}
+          <!-- The row already carried the item's words, so it needs no second
+               line of its own — EXCEPT where there are no words. A media row has
+               `text: ''` (a picture is its own content), so in list layout it was
+               a filename and a blank half-row. `sub` fills exactly that case and
+               changes nothing anywhere else: for scripture and lyrics the two are
+               the same string, and for an announcement `text` is the fuller of
+               the two and still wins. -->
+          {#if v.text}<span class="vd-rtext">{v.text}</span>
+          {:else if subLine(v.sub)}<span class="vd-rtext">{subLine(v.sub)}</span>{/if}
         </span>
         <span class="vd-racts">
           {#if air}
@@ -205,6 +239,7 @@
   <div class="vd" class:big={layout === 'large'}>
     {#each items as v (v.reference)}
       {@const air = liveRef === v.reference}
+      {@const sub = subLine(v.sub)}
       <article
         class="vd-card"
         class:air
@@ -349,7 +384,10 @@
           {#if v.hotkey}
             <kbd class="vd-key r-mono" title="Press {v.hotkey} to put this section on the screens">{v.hotkey}</kbd>
           {/if}
-          <span class="vd-ref">{v.reference}</span>
+          <span class="vd-where">
+            <span class="vd-ref">{v.reference}</span>
+            {#if sub}<span class="vd-sub">{sub}</span>{/if}
+          </span>
           <div class="vd-menuwrap">
             <button
               class="vd-kebab r-focus"
@@ -666,11 +704,32 @@
     text-transform: uppercase;
     flex: 0 0 auto;
   }
-  .vd-ref {
+  /* The title and the line under it are ONE column, so the second line ellipses
+     against the same edge the reference does rather than against the kebab. */
+  .vd-where {
     flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+  }
+
+  .vd-ref {
     min-width: 0;
     font-size: 12.5px;
     color: var(--v-dim);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* Quieter than the reference and smaller, per the prototype: it is context for
+     the title, and a second line at the title's weight is two titles. */
+  .vd-sub {
+    min-width: 0;
+    font-size: 10px;
+    line-height: 1.3;
+    color: var(--v-faint);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
