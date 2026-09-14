@@ -24,6 +24,38 @@
     if (tries >= max) return false;
     return !fontReady || !!overflowing;
   }
+
+  // ── THE THREE NUMBERS THE LAYER FIT IS BOUNDED BY ──────────────────────────
+  //
+  // Exported so the reasoning is checkable without a browser, and so nobody has
+  // to guess what a magic 16 meant.
+  //
+  // The smallest size the search will settle on. Below this the words are gone
+  // rather than small, and rule 37 says a verse that cannot fit is SHRUNK and
+  // REPORTED, never blanked — so this is a floor on the answer, not a refusal.
+  export const FIT_FLOOR_CQW = 0.4;
+  // How close the bracket has to get before the search stops asking. Sizes here
+  // are cqw — a share of the output's WIDTH — so this is resolution-independent:
+  // 0.02cqw is 0.38px of font-size on a 1920-wide wall, 0.77px on a 4K one, and
+  // 0.05px on a slide-grid thumbnail. The old loop ran a flat sixteen rounds,
+  // which resolves a 21.6cqw bracket to 0.0003cqw — four decimal places of a
+  // quantity that is not visible at two, bought with five forced layouts.
+  export const FIT_EPS_CQW = 0.02;
+  // The hard bound, unchanged. A bisection halves its bracket every round, so
+  // sixteen rounds is far more than `FIT_EPS_CQW` ever needs; it stays as the
+  // thing that guarantees termination whatever the bracket.
+  export const FIT_MAX_ROUNDS = 16;
+
+  /**
+   * How many rounds a bracket of this width needs to reach `FIT_EPS_CQW`.
+   *
+   * Pure, and exported, because "is eleven enough?" is arithmetic and should not
+   * need a rendered page to answer.
+   */
+  export function fitRoundsFor(span, eps = FIT_EPS_CQW, max = FIT_MAX_ROUNDS) {
+    if (!(span > 0) || !(eps > 0)) return 0;
+    return Math.min(max, Math.ceil(Math.log2(span / eps)));
+  }
 </script>
 
 <script>
@@ -1131,6 +1163,28 @@
     // "scale" always means how far this had to shrink and never how far a short
     // word was allowed to grow.
     let worst = 1;
+    // ── ONE FLUSH PER ROUND, NOT ONE PER LAYER ───────────────────────────────
+    //
+    // What this search costs is not the arithmetic and not the reads — it is the
+    // FLUSH. Every probe writes a `font-size` and then reads `scrollHeight` back,
+    // and a read taken while a write is outstanding forces the browser to lay the
+    // page out synchronously before it can answer. The reads after it are free,
+    // because layout is clean again until the next write.
+    //
+    // So the cost of this function is the number of write→read TRANSITIONS, and
+    // searching each layer to completion before starting the next one makes that
+    // number `rounds × layers`. Measured on the shipped `High Visibility`
+    // template (two text layers): 32 forced layouts per render, and Live mounts
+    // one render per slide-grid cell — 1281 forced layouts to open a forty-slide
+    // plan, in a single frame, before the operator has touched anything.
+    //
+    // Collecting every layer's next candidate, writing them ALL, then reading
+    // them ALL makes one flush serve the whole render: `rounds`, whatever the
+    // layer count. Each layer still walks its own bracket, with its own `lo` /
+    // `top` / `best`, and lands on the same size it always did — only the
+    // interleaving changes. A template with four text layers now costs what a
+    // template with one costs.
+    const jobs = [];
     stageEl.querySelectorAll('.ltext').forEach((box) => {
       const el = box.querySelector('.lfit');
       if (!el) return;
@@ -1140,32 +1194,65 @@
         el.style.fontSize = `${base}cqw`;
         return;
       }
-      const fits = (px) => {
-        el.style.fontSize = `${px}cqw`;
-        return box.scrollHeight <= box.clientHeight + 1 && box.scrollWidth <= box.clientWidth + 1;
-      };
       // 'shrink' caps growth at the configured size; 'both' allows growing to a
       // generous ceiling so a single short word fills the box.
       const hi = mode === 'shrink' ? base : Math.max(base, 22);
-      let lo = 0.4;
-      let top = hi;
-      let best = lo;
-      for (let i = 0; i < 16; i++) {
-        const mid = (lo + top) / 2;
-        if (fits(mid)) { best = mid; lo = mid; } else { top = mid; }
+      jobs.push({ box, el, base, hi, lo: FIT_FLOOR_CQW, top: hi, best: FIT_FLOOR_CQW, probe: 0, done: false });
+    });
+    const write = (j, px) => {
+      j.probe = px;
+      j.el.style.fontSize = `${px}cqw`;
+    };
+    const fits = (j) =>
+      j.box.scrollHeight <= j.box.clientHeight + 1 && j.box.scrollWidth <= j.box.clientWidth + 1;
+    // ROUND ONE — THE CEILING IS AN ANSWER, not merely the top of a bracket.
+    // When the words already fit at the largest size this layer is allowed, the
+    // bisection can only ever creep back up towards it and stop one
+    // ten-thousandth short. Asking the ceiling directly is the same answer
+    // (fractionally the better one — it is the true supremum of the bracket) for
+    // one flush instead of the whole ladder, and a short label in a wide box —
+    // a reference line, a stage note, a name band — is the common case.
+    for (const j of jobs) write(j, j.hi);
+    for (const j of jobs) {
+      if (fits(j)) {
+        j.best = j.hi;
+        j.done = true;
       }
-      el.style.fontSize = `${best}cqw`;
+    }
+    // …then bisect whatever is left, in lockstep, until the bracket is narrower
+    // than a difference anyone could see. `FIT_EPS_CQW` is a share of the
+    // OUTPUT'S WIDTH, like every other size here, so the guarantee holds at any
+    // resolution: 0.02cqw is 0.4px of font-size on a 1080p wall and 0.8px on a
+    // 4K one. `best` is only ever assigned a size that MEASURED AS FITTING, so
+    // stopping early can only leave the text very slightly smaller — never
+    // overflowing. The hard bound is unchanged, so rule 37's genuinely
+    // unfittable passage still terminates and is still reported.
+    for (let i = 0; i < FIT_MAX_ROUNDS; i++) {
+      const live = jobs.filter((j) => !j.done && j.top - j.lo > FIT_EPS_CQW);
+      if (!live.length) break;
+      for (const j of live) write(j, (j.lo + j.top) / 2);
+      for (const j of live) {
+        if (fits(j)) {
+          j.best = j.probe;
+          j.lo = j.probe;
+        } else {
+          j.top = j.probe;
+        }
+      }
+    }
+    for (const j of jobs) {
+      j.el.style.fontSize = `${j.best}cqw`;
       // THIS SIZE OUTLIVES THIS ELEMENT. `{#key text}` will throw the element
       // away on the next tick or the next verse; the answer stays on the `.ltext`,
       // which is keyed by the layer's own id and survives. `reapplyFitted` hands
       // it to whatever element takes its place.
-      el.dataset.sized = '1';
-      box.dataset.fitted = String(best);
+      j.el.dataset.sized = '1';
+      j.box.dataset.fitted = String(j.best);
       // A box with nothing in it was not shrunk, it is EMPTY — a reference layer
       // on a lyric fire, a `next` line with no next. Reporting its ratio would
       // make Live shout "38% of the designed size" on an ordinary song.
-      if ((el.textContent || '').trim()) worst = Math.min(worst, best / base);
-    });
+      if ((j.el.textContent || '').trim()) worst = Math.min(worst, j.best / j.base);
+    }
     // Handed on, not reported — see `fitText` and `report()`.
     lastFitScale = worst;
   }
