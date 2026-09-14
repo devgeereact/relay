@@ -342,7 +342,6 @@ body{ overflow:hidden; text-rendering:optimizeLegibility; -moz-osx-font-smoothin
 .chrome-brand{ display:flex; align-items:center; gap:7px; flex:0 0 auto; }
 .chrome-brand b{ font-family:var(--f-head); font-size:var(--v-fs-h3); font-weight:700;
   letter-spacing:.13em; color:var(--v-txt); }
-.chrome-sep{ width:1px; height:16px; background:var(--v-rule); flex:0 0 auto; }
 /* THE WORKSPACES. Across the top, where a desk puts them. They WRAP rather than
    scroll: a workspace hidden behind a scrollbar is a workspace nobody knows is
    there — the same rule as the object tabs in the template inspector. */
@@ -355,39 +354,31 @@ body{ overflow:hidden; text-rendering:optimizeLegibility; -moz-osx-font-smoothin
 .ws-tab:hover:not(.on){ background:var(--v-surf3); color:var(--v-txt); }
 /* The selected workspace is marked by an underline in the SELECTION colour, not
    by a filled chip: a permanently filled control in the chrome reads as a state,
-   and the only states that belong in this bar are the ones about the screens. */
+   and since 2026-09-14 no state belongs in this bar at all — it is navigation,
+   and every fact about the room is the status bar's. */
 .ws-tab.on{ background:var(--v-surf3); color:var(--v-txt); box-shadow:inset 0 -2px 0 var(--v-sel); }
-.topbar-spring{ flex:1; }
-/* ── THE SCREEN LAMPS, and the one lamp the status bar uses ───────────────────
-   A lamp is a 7px dot with a name beside it. Its COLOUR is the colour law and
-   nothing else: amber = on air, amethyst = rehearsal, red = not responding,
-   grey = idle. There is deliberately no fifth class — a screen Relay has not
-   heard from and a screen that is simply not showing anything are both grey,
-   because the difference is in the words (`describeScreen` puts it in the title),
-   not in a colour an operator has to learn. */
+/* ── THE ONE LAMP THE STATUS BAR USES ─────────────────────────────────────────
+   A lamp is a 7px dot, and its COLOUR is the colour law and nothing else: amber
+   = on air, amethyst = rehearsal (and safe mode, which outranks it), grey =
+   everything else. Grey covers more than one situation on purpose — the
+   difference is in the WORDS beside it (`wallState` composes them), not in a
+   colour an operator has to learn.
+
+   The chrome's per-screen lamps were removed on 2026-09-14 and `.siglamps`,
+   `.siglamps .sig` and `.siglamps .signm` went with their markup — a rule whose
+   class nothing renders is the dead CSS §6 warns about. What is left is exactly
+   what the status bar's room cell can wear: the base dot and the three tones
+   `wallState` can actually return. */
 .lamp{ width:7px; height:7px; border-radius:var(--v-r-round); flex:0 0 auto;
   display:inline-block; background:var(--v-faint); }
 .lamp.grey{ background:var(--v-faint); }
 .lamp.amber{ background:var(--v-amber); box-shadow:0 0 6px var(--v-amber); }
 .lamp.amethyst{ background:var(--v-amethyst); box-shadow:0 0 6px var(--v-amethyst); }
-/* Red blinks in STEPS, not a fade: a screen that has stopped answering is the one
-   thing in this bar that has to catch an eye that is not looking at it. */
-.lamp.red{ background:var(--v-red); animation:lampbad 1.1s steps(1) infinite; }
-@keyframes lampbad{ 50%{ opacity:.28; } }
-.siglamps{ display:flex; align-items:center; gap:11px; min-width:0; overflow:hidden; }
-/* Names TRUNCATE, they never wrap. The chrome is 34px and a second row of lamps
-   would push the desk — and the slide grid, which is the job — down by a row. */
-.siglamps .sig{ display:inline-flex; align-items:center; gap:5px; flex:0 1 auto; min-width:0;
-  font-family:var(--f-mono); font-size:var(--v-fs-cap); letter-spacing:.05em; color:var(--v-faint);
-  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:11ch; }
-/* The NAME needs its own block box. `text-overflow` is a property of a block
-   container and the lamp row is an inline-flex, so the text child sat in an
-   anonymous flex item and was HARD-CLIPPED rather than ellipsed — seen at
-   1440px, `Streaming` lost its last letter with nothing to say it had been cut.
-   A clipped name reads as a different screen; an ellipsis reads as a long one,
-   and that is the whole difference. */
-.siglamps .signm{ display:block; min-width:0; overflow:hidden;
-  text-overflow:ellipsis; white-space:nowrap; }
+/* (`.lamp.red` and its `lampbad` keyframe went with the chrome lamps on
+   2026-09-14. Red was the "not responding" colour and only a PER-SCREEN lamp
+   could ever wear it — `wallState` has no such tone, because the room is not a
+   screen. A screen that has stopped answering is still reported, in words and by
+   name, in the status bar's `Reduced` cell.) */
 .mainscroll{ flex:1; min-height:0; overflow-y:auto; padding:14px; }
 /* THE STATUS BAR. 26px of facts, each a key and a VALUE — never a dash standing
    in for one (§11, and `settingValue` for the rows that can be absent). */
@@ -864,27 +855,13 @@ input[type="checkbox"]{ accent-color:var(--v-accent); }
 .panicbar span{ color:var(--v-txt); font-size:var(--v-fs-h3); line-height:1.55; }
 .panicbar .panic-t{ display:flex; flex-direction:column; gap:2px; flex:1; min-width:0; }
 
-/* What is ACTUALLY on the congregation's screen — the reference, named, next to
-   the On Air badge. The operator should never have to hunt a 10px monospace
-   footer inside a monitor tile to answer "what are they looking at?". */
-.topbar-live{ font-size:var(--v-fs-b1); color:var(--v-txt); background:var(--v-surf2);
-  border:1px solid var(--v-line2); border-radius:var(--v-r-sm); padding:3px 8px;
-  max-width:280px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-/* The microphone is a SEPARATE fact from what's on screen, and quieter. */
-.topbar-mic{ display:inline-flex; align-items:center; gap:6px; font-size:var(--v-fs-lbl);
-  letter-spacing:.05em; text-transform:uppercase; color:var(--v-dim); }
-.mic-dot{ width:6px; height:6px; border-radius:50%; background:var(--v-emerald);
-  box-shadow:0 0 6px var(--v-emerald); }
-/* SERVICE LOCK. Grey and quiet on purpose: it reports that the console is being
-   careful, not that anything is wrong, and it must never compete with the amber
-   that says a congregation is looking at something. */
-.lockchip{ display:inline-flex; align-items:center; font-size:var(--v-fs-fig); letter-spacing:.09em;
-  color:var(--v-dim); border:1px solid var(--v-line2); border-radius:var(--v-r-sm);
-  padding:2px 7px; background:var(--v-surf2); flex:0 0 auto; }
-@media (prefers-reduced-motion: no-preference){
-  .mic-dot{ animation:micpulse 1.8s ease-in-out infinite; }
-  @keyframes micpulse{ 0%,100%{opacity:1} 50%{opacity:.45} }
-}
+/* The chrome bar's own readouts lived here and are gone (2026-09-14, C1): the
+   ON AIR reference (`.topbar-live`), the LISTENING chip (`.topbar-mic`,
+   `.mic-dot` and its `micpulse` keyframes) and the service-lock chip
+   (`.lockchip`). The bar is navigation now — the wordmark and the six
+   workspaces — and the wall's state is the status bar's, through `wallState`.
+   The rules went out with the markup rather than waiting for the classes to
+   come back. */
 
 /* ══════════════════════════════════════════════════════════════════════════
    LAUNCH & STARTUP (.b-*) — the shared chrome for section 1 of
@@ -1207,39 +1184,11 @@ button, [role="button"]{ font-family:var(--f-body); font-size:var(--v-fs-b2); }
 
 
 /* ══════════════════════════════════════════════════════════════════════════
-   L4 · THE KEYS LEGEND (the run surface brief, item 5)
-   One block at the end of the file, per the wave-3 preamble, so a collision
-   with another agent's block resolves by moving these lines whole.
-
-   The short form of the cheatsheet, always on the screen, in the chrome slot
-   the transition picker vacated. `App.svelte` renders it from `liveShortcuts`,
-   so it can only ever show a key that is bound AND registered on the surface
-   the operator is looking at — these rules decide nothing about WHICH keys
-   appear, only how much of the strip survives a narrow console.
+   C1 · THE KEYS LEGEND IS GONE (2026-09-14)
+   A `.keyleg` strip briefly sat in the chrome, rendered from `liveShortcuts`.
+   The operator asked for the bar to be cleared back to the wordmark and the six
+   workspaces, so the markup went and these rules went with it — including the
+   two narrow-console rungs, which existed only to keep the strip from pushing a
+   panic control that is itself no longer in this bar. `?` remains the one place
+   the keys are documented.
    ══════════════════════════════════════════════════════════════════════════ */
-.keyleg{ display:inline-flex; align-items:center; gap:9px; flex:0 1 auto;
-  min-width:0; overflow:hidden; }
-.keyleg .kl{ display:inline-flex; align-items:center; gap:3px; flex:0 0 auto;
-  white-space:nowrap; }
-/* THE CHROME'S OWN KEYCAP. Deliberately not `.cheat kbd`: that one is 10.5px on
-   a dialog with room to breathe, and this bar is 34px. Same shape, one step
-   down — and the step is the TOKEN, not the number it happens to equal, which
-   is what wave 4's sweep is for (`workspacegrammar.test.js`). */
-.keyleg kbd{ display:inline-block; font-family:var(--f-mono); font-size:var(--v-fs-cap);
-  line-height:1; padding:3px 5px; border-radius:var(--v-r-sm);
-  background:var(--v-surf2); border:1px solid var(--v-line2);
-  border-bottom-width:2px; color:var(--v-dim); }
-/* The gloss is quieter than the cap. A legend is a reference, not a state: the
-   colour law's four tokens are spoken for elsewhere and none of them is spent
-   here, so nothing in this strip can be mistaken for a claim about a wall. */
-.keyleg .klw{ font-size:var(--v-fs-fig); letter-spacing:.07em;
-  text-transform:uppercase; color:var(--v-faint); }
-/* A LADDER, AND THE PANIC CONTROL IS NEVER ON IT. Emergency Stop sits at a fixed
-   corner an operator hits without reading (rule 15, DECISIONS §20), so the
-   legend is what gives way — first the context keys (A · D · → · ← · /, which
-   belong to whichever surface is mounted), then the always-on three. The same
-   two widths the transition picker used, deliberately: one narrow-console rule,
-   not two that can disagree. Nothing is lost that `?` cannot recover, which is
-   why this may shrink at all. */
-@media (max-width:1400px){ .keyleg .kl.ctx{ display:none; } }
-@media (max-width:1180px){ .keyleg{ display:none; } }

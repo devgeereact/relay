@@ -3,7 +3,7 @@
   import { get } from 'svelte/store';
   import { trapFocus } from './lib/focus.js';
   import { t } from './lib/i18n.js';
-  import { capture, capturing, live, screenBlack, rehearsing, initAudio, autoOpenOutputs, setDetection, clearScreens, blackScreen, panicError, dismissPanicError, serviceLock, loadServiceLock, channelHealth, channelWaiting, startChannelHealth, latencyReport, ping, onOperatorAction, noteOperatorAction, loadLiveTransition } from './lib/stores/capture.js';
+  import { capture, capturing, live, screenBlack, rehearsing, initAudio, autoOpenOutputs, setDetection, clearScreens, blackScreen, panicError, dismissPanicError, loadServiceLock, channelHealth, channelWaiting, startChannelHealth, latencyReport, ping, onOperatorAction, noteOperatorAction, loadLiveTransition } from './lib/stores/capture.js';
   import * as training from './lib/training.js';
   import { practice, stopPractice } from './lib/practice.js';
   import { degradations, worstLevel, summarise } from './lib/degraded.js';
@@ -309,14 +309,19 @@
   // screens that are already crossfading (rule 35) — including on a workspace
   // that draws no picker at all.
 
-  // ── THE SCREEN LAMPS (docs/REBRAND.md §2) ──────────────────────────────────
+  // ── WHAT EVERY SCREEN IS DOING ─────────────────────────────────────────────
   //
-  // One lamp per screen in the chrome, coloured by that screen's REAL state, from
-  // the same `describeScreen` verdict Live's Output Status pane and the Outputs
-  // table read. Never a second opinion about a screen (rule 35; RG-01 is the
-  // instance that rule was written from) — and the `SCREENS n of m` count in the
-  // status bar is derived from these same rows, so the lamps and the tally cannot
-  // disagree either.
+  // One row per screen, each carrying that screen's REAL state from the same
+  // `describeScreen` verdict Live's Output Status pane and the Outputs table
+  // read. Never a second opinion about a screen (rule 35; RG-01 is the instance
+  // that rule was written from).
+  //
+  // The chrome used to draw a LAMP per row. It does not any more (see the header
+  // below), and these rows stayed, because two things downstream are made of
+  // them: the status bar's `SCREENS n of m` tally, and — through `screensDown`
+  // at the top of this file — the `Reduced` cell that names a screen which has
+  // stopped answering. Both are still single-sourced from here, so they cannot
+  // disagree with each other any more than they could with the lamps.
   //
   // The grace window is the real one (`$channelWaiting`), matching Live: a screen
   // that has only just been opened reads "Waiting…" on both surfaces rather than
@@ -331,13 +336,12 @@
     ),
   }));
   $: screens = screenTally(screenLamps);
-  /** Colour law: amber = on air, amethyst = rehearsal, red = not responding,
-   *  grey = everything else. Four words, and none of them invents a fifth state. */
-  const LAMP_TONE = { onair: 'amber', rehearsal: 'amethyst', down: 'red' };
-  // A screen name is one word wide in a 34px bar, so the lamp carries the FIRST
-  // word and the title carries all of it plus what the lamp means. Truncated,
-  // never wrapped: a chrome bar that grows a second row moves the whole desk down.
-  const lampWord = (n) => String(n).split(/\s+/)[0];
+  // (`LAMP_TONE` and `lampWord` lived here, and drew the chrome lamps alone. A
+  //  map nothing reads is the same dead weight as a stylesheet rule nothing
+  //  renders, so they went out with the markup rather than staying behind as a
+  //  colour law with no colours on it. The law itself is unmoved: the status
+  //  bar's one lamp reads `wall.tone`, `describeScreen` is still the only thing
+  //  that decides a screen's state, and no fifth state was invented on the way.)
 
   // ── THE STATUS BAR'S FIGURES ───────────────────────────────────────────────
   //
@@ -592,120 +596,57 @@
           >{$t(tab.label)}</button>
         {/each}
       </nav>
-      <span class="chrome-sep" aria-hidden="true"></span>
-      <!-- ON AIR must mean "the congregation is looking at something" — NOT "the
-           microphone is on". It used to key off $capturing, so Relay would sit
-           there pulsing ON AIR at an operator whose screens were completely blank.
-           The loudest indicator in the product was answering the wrong question.
+      <!-- ── AND NOTHING ELSE (2026-09-14, on the operator's instruction) ──────
+           This bar is NAVIGATION. Six things used to share it with the six
+           workspaces — the ON AIR ladder, the LISTENING chip, the PROTECTED
+           chip, one lamp per screen, the keys legend and an Emergency Stop
+           button — and the operator's instruction was to clear all of it out.
 
-           Now: what is on the wall, right now, named. The microphone gets its own
-           quieter indicator, because it is a different fact. -->
-      <!-- Rehearsal outranks everything else here. Nothing is reaching the
-           congregation, so the app must not say "On Air" — on ANY tab, not just
-           Live. The one indicator the operator glances at cannot be tab-specific. -->
-      <!-- Safe mode OUTRANKS every other state here, including rehearsal. Both
-           mean "not reaching the screens", but safe mode also means the operator
-           cannot change that without restarting — so it must be the thing they
-           read, or they will spend the service wondering why nothing fires. -->
-      {#if $safeMode}
-        <span class="r-badge amethyst"><span class="bd" style="box-shadow:none;"></span>Safe mode</span>
-        <span class="topbar-live r-mono">outputs disabled — turn off Safe mode in Settings › Backup</span>
-      {:else if $rehearsing}
-        <span class="r-badge amethyst pulse"><span class="bd"></span>Rehearsal</span>
-        <span class="topbar-live r-mono">nothing is reaching the screens</span>
-      {:else if $screenBlack}
-        <span class="r-badge" style="border-color:var(--v-line2);color:var(--v-dim);">
-          <span class="bd" style="background:var(--v-faint);box-shadow:none;"></span>Blackout
-        </span>
-      {:else if $live}
-        <!-- AMBER. The design system's MODE INDICATORS and CLAUDE.md say the same
-             thing: amber IS on air. This badge was rose — the system's Error/Panic
-             colour — which put the loudest indicator in the product on the wrong
-             side of the one colour law the whole app is built around. -->
-        <span class="r-badge amber pulse"><span class="bd"></span>On Air</span>
-        <span class="topbar-live r-mono">{liveLabel($live)}</span>
-      {:else}
-        <!-- Nothing is on the wall. That is a NEUTRAL state, so it gets the grey
-             chip — not amber, which now means, and only means, on air. -->
-        <span class="r-badge grey"><span class="bd" style="box-shadow:none;"></span>Screens clear</span>
-      {/if}
-      {#if $capturing}
-        <span class="topbar-mic" title="Microphone is live">
-          <span class="mic-dot"></span>Listening
-        </span>
-      {/if}
-      <!-- SERVICE LOCK. A quiet chip, deliberately AFTER the state ladder and never
-           part of it: it says something about the console, not about the wall, and
-           it must never displace or dilute the one indicator that says whether a
-           congregation is looking at something. Grey, because nothing is wrong. -->
-      {#if $serviceLock.engaged}
-        <span class="lockchip r-mono" title="Deletions, model changes and imports are held back while a service is recording. Nothing on the live path is affected. Lift it in Settings → History &amp; Backup.">
-          PROTECTED
-        </span>
-      {/if}
-      <span class="topbar-spring"></span>
-      <!-- THE SCREEN LAMPS (docs/REBRAND.md §2). One per screen, at the top where
-           the eye starts, each coloured by that screen\'s OWN state through
-           `describeScreen` — the same verdict Live\'s Output Status pane and the
-           Outputs table read. Never a second opinion about a screen (rule 35).
+           TWO OF THEM CARRIED GUARANTEES, so how they left matters more than
+           that they left.
 
-           Two decorative icons used to sit here: a "Signal" glyph that was wired
-           to nothing at all, and a clock face beside a clock. A picture of a
-           signal, next to a real on-air badge, in a room where the whole point is
-           that indicators mean something — that is the defect this rule is about,
-           drawn rather than written. The clock is in the status bar, once.
+           EMERGENCY STOP was a panic control (rule 15, DECISIONS §20), and
+           removing it is only safe because the two paths it duplicated are both
+           still here and were both re-read before it went:
+             · `Esc` clears from every tab, even mid-typing — `installShortcuts`
+               is mounted ONCE in this file's `onMount` and binds `Escape`
+               straight to `clearScreens`, never through a view's context, so it
+               survives a crashed workspace (`shortcuts.js`; `panic.test.js`);
+             · `Clear screens` is the full-width control along the bottom edge of
+               the Controls card in the dock, which is in the SHELL and on every
+               workspace, whose body is `overflow:hidden` so it can never scroll
+               a panic control out of reach, and which is ordered FIRST when the
+               dock stacks to one column (`Dock.svelte`; `panic.test.js`).
+           Neither the button nor the dock was reachable inside full-screen Live
+           in the first place: `.chromeless` hides this whole header and the
+           shell withholds the dock, so on that one surface `Esc` was already the
+           only way and nothing about it changed today.
 
-           The name is TRUNCATED to its first word and never wrapped: this bar is
-           34px and a second row would push the whole desk down. The title carries
-           the full name and what the lamp means. -->
-      {#if screenLamps.length}
-        <span class="siglamps" aria-label="Screens">
-          {#each screenLamps as sc (sc.id)}
-            <span class="sig" title="{sc.name} — {sc.label}{sc.note ? ` (${sc.note})` : ''}">
-              <i class="lamp {LAMP_TONE[sc.kind] ?? 'grey'}"></i><span class="signm">{lampWord(sc.name)}</span>
-            </span>
-          {/each}
-        </span>
-      {/if}
-      <!-- THE KEYS LEGEND (L4). The short form of the cheatsheet, always on the
-           screen, in the slot the transition picker used to occupy — an operator
-           mid-service is not going to stop and press `?`.
+           THE ON AIR LADDER AND THE LAMPS were the chrome's two true statements
+           about what a congregation can see, and after this the STATUS BAR is
+           the only surface that makes them. It does still make them, which is
+           why this was allowed: `wallState` is the SAME ladder this badge read
+           (safe ▸ rehearsal ▸ blackout ▸ on air ▸ clear) and it carries the
+           label too, so "Service begins in" is still named; `screenTally` counts
+           the same `screenLamps` rows the lamps were drawn from; and a screen
+           that has stopped answering is named, by name, in the `Reduced` cell
+           (`degraded.js`, fed by `screensDown` above). What is genuinely lost is
+           the per-screen colour at a glance — the tally says two of three, the
+           Reduced cell says which one, and no cell says the same thing whether
+           the wall is live or dark (rule 35).
 
-           IT IS NOT A SECOND SOURCE OF TRUTH, and that is the whole design. It is
-           rendered from `liveShortcuts`, the same derived store the cheatsheet
-           reads, which is `SHORTCUTS` filtered by what the mounted view has
-           actually registered. So a key that is not bound cannot appear here, and
-           a key that stops being bound disappears from both surfaces at once. The
-           gloss is the entry's own `short` field, beside the binding, for the same
-           reason.
+           THE LISTENING CHIP is restated by the dock's Live audio card (its
+           switch reads `live`/`off`) and its transcript card (`listening…` /
+           `not listening`), on every workspace.
 
-           WHICH IS WHY IT SAYS `Space step on` AND NOT `Space take`. Space means
-           ADVANCE app-wide and nothing else (rule 11); TAKE is a button on the run
-           surface. And `R` rehearse and `1–6` workspace are not drawn at all,
-           because nothing binds them — a legend that advertised a dead key would
-           teach an operator something false under pressure, which is the defect
-           `activeActions` in `shortcuts.js` exists to prevent.
+           THE PROTECTED CHIP is NOT restated on every workspace. Service lock
+           can be lifted while a service is still recording, so the dock's
+           `End service` state is not the same fact; it is stated in Settings →
+           History & Backup and on the Dashboard, and nowhere else. Recorded in
+           the review note rather than quietly compensated for here.
 
-           IT GIVES WAY, ALWAYS, and in two rungs: the context keys go first and
-           then the whole strip, at the same widths the picker used. Emergency Stop
-           is at a fixed corner an operator hits without reading (rule 15,
-           DECISIONS §20) and a reference strip may never be the reason that corner
-           moved. Nothing is lost that `?` cannot recover. -->
-      {#if $liveShortcuts.length}
-        <span class="keyleg" aria-label="Keyboard shortcuts">
-          {#each $liveShortcuts as s (s.keys[0])}
-            <span class="kl" class:ctx={!s.always} title={s.label}>
-              {#each s.keys as k}<kbd>{k}</kbd>{/each}<span class="klw">{s.short}</span>
-            </span>
-          {/each}
-        </span>
-      {/if}
-      <!-- EMERGENCY STOP stays at the far right of the chrome, and this is where
-           the prototype puts its transition picker. A panic control lives at a
-           fixed screen corner an operator can hit without reading (rule 15,
-           DECISIONS §20) — that corner is the one thing in this bar that may never
-           move, so the picker above gives way rather than this. -->
-      <button class="r-btn danger sm" on:click={clearScreens} title="Blank every output screen">Emergency Stop</button>
+           THE KEYS LEGEND is gone and `?` remains the one place the keys are
+           documented. Its `short` glosses went with it, out of `SHORTCUTS`. -->
     </header>
 
     <div class="mainscroll r-scroll">

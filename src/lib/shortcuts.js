@@ -71,47 +71,39 @@ export const cheatsheet = writable(false);
  * The canonical shortcut table — also what the cheatsheet renders, so the help
  * can never drift out of sync with the actual bindings.
  *
- * ── `short`, and why it is HERE and not in the shell (L4) ──────────────────
+ * ── THE `short` GLOSS IS GONE (2026-09-14) ─────────────────────────────────
  *
- * The chrome bar carries an always-visible keys legend: the short form of this
- * table, for an operator who is not going to stop and open `?` mid-service. It
- * needs a two-or-three-word gloss rather than the cheatsheet's sentence, and the
- * one place that gloss may NOT live is the shell — a list of keys written out in
- * `App.svelte` is a second source of truth about the bindings, and the one that
- * would eventually disagree is the one nobody tests. So the short form is a
- * FIELD on the entry, beside the binding it describes: one table, two lengths.
- * `shortcuts.test.js` requires every entry to carry one.
+ * Every entry briefly carried a two-or-three-word `short` field, for a keys
+ * legend across the chrome bar. The operator asked for the chrome to be cleared
+ * back to the wordmark and the six workspaces, so the legend went — and the
+ * field went with it rather than staying behind as a column nothing renders.
+ * The cheatsheet `?` opens is once again the ONE place the keys are documented,
+ * which is what it was before and is the arrangement this table was built for.
  *
- * WHAT IS DELIBERATELY ABSENT. The operator's sketch of the legend listed
- * `R` rehearse and `1–6` workspace. Neither is bound — `installShortcuts` below
- * has no branch for either, and `R` could not safely acquire one while the
- * section keys (REBRAND §10) hand out every unclaimed letter. A legend that
- * advertised them would teach an operator a key that does nothing, under
- * pressure, which is the exact defect `activeActions` above exists to prevent.
- * They are absent until something binds them, and then this table is where it
- * goes and both surfaces pick it up for free.
- *
- * `Space` is in the legend, but as ADVANCE and never as "take": rule 11 gives
- * Space exactly one meaning app-wide, and TAKE on the run surface is a button.
+ * WHAT IS DELIBERATELY ABSENT, and still is. `R` rehearse and `1–6` workspace.
+ * Neither is bound — `installShortcuts` below has no branch for either, and `R`
+ * could not safely acquire one while the section keys (REBRAND §10) hand out
+ * every unclaimed letter. Listing them anywhere would teach an operator a key
+ * that does nothing, under pressure, which is the exact defect `activeActions`
+ * above exists to prevent. They are absent until something binds them, and then
+ * this table is where it goes and the cheatsheet picks it up for free.
  */
 export const SHORTCUTS = [
-  { keys: ['Esc'], label: 'Clear all screens', short: 'clear', always: true },
-  { keys: ['B'], label: 'Blackout — kill every output', short: 'black', always: true },
-  { keys: ['?'], label: 'Show this cheatsheet', short: 'keys', always: true },
+  { keys: ['Esc'], label: 'Clear all screens', always: true },
+  { keys: ['B'], label: 'Blackout — kill every output', always: true },
+  { keys: ['?'], label: 'Show this cheatsheet', always: true },
   // `needs` names the context action a key depends on. If the current surface has
   // not registered that action, the key does nothing — and the cheatsheet does not
   // claim otherwise.
-  { keys: ['A'], label: 'Accept the top AI suggestion', short: 'accept', needs: 'accept' },
-  { keys: ['D'], label: 'Dismiss the top AI suggestion', short: 'dismiss', needs: 'dismiss' },
+  { keys: ['A'], label: 'Accept the top AI suggestion', needs: 'accept' },
+  { keys: ['D'], label: 'Dismiss the top AI suggestion', needs: 'dismiss' },
   // Advance/back are MODE-DEPENDENT — they step the service plan when a plan cue
   // is live, and walk the passage when a detected or manually-fired verse is. The
   // Live transport bar always says which, because the same key doing two things
   // silently is how an operator puts the wrong thing in front of a congregation.
-  // The short form says `step on` rather than `next slide`, because on this
-  // surface it is the mode badge that answers which of the two walks it is.
-  { keys: ['→', 'PgDn', 'Space'], label: 'Next slide / next verse', short: 'step on', needs: 'next' },
-  { keys: ['←', 'PgUp'], label: 'Previous slide / previous verse', short: 'step back', needs: 'prev' },
-  { keys: ['/'], label: 'Jump to the manual reference box', short: 'find', needs: 'search' },
+  { keys: ['→', 'PgDn', 'Space'], label: 'Next slide / next verse', needs: 'next' },
+  { keys: ['←', 'PgUp'], label: 'Previous slide / previous verse', needs: 'prev' },
+  { keys: ['/'], label: 'Jump to the manual reference box', needs: 'search' },
 ];
 
 /** The shortcuts that actually work on the surface the operator is looking at. */

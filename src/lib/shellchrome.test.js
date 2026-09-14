@@ -28,6 +28,21 @@ const read = (f) => readFileSync(resolve(process.cwd(), f), 'utf8');
 const APP = read('src/App.svelte');
 const DOCK = read('src/lib/Dock.svelte');
 
+/**
+ * The shell with every comment removed.
+ *
+ * Any assertion of the form "X must not come back" has to read this and not
+ * `APP`. `transitionoverride.test.js` learned it the expensive way in the other
+ * direction — an assertion that a call was still PRESENT matched the paragraph
+ * describing the call, and passed over a shell that had commented it out. The
+ * mirror of that failure is a `not.toContain` that fails because the comment
+ * explaining WHY something was removed names the thing it removed, which is
+ * every honest comment about a deletion. Only the code is the claim.
+ */
+const CODE = APP.replace(/<!--[\s\S]*?-->/g, '')
+  .replace(/\/\*[\s\S]*?\*\//g, '')
+  .replace(/^\s*\/\/.*$/gm, '');
+
 // ── §2 · SIX WORKSPACES, IN THE PROTOTYPE'S ORDER ───────────────────────────
 //
 // The strip carried eight. Themes is the style layer beneath templates and never
@@ -91,21 +106,27 @@ describe('§2 · the strip is the six workspaces, in order', () => {
   });
 });
 
-// ── §2 · THE SCREEN LAMPS ───────────────────────────────────────────────────
+// ── THE CHROME'S LAMPS ARE GONE, AND THE ROWS THEY WERE DRAWN FROM ARE NOT ──
 //
-// Rule 35, and RG-01 is the instance it was written from: Live's Output Status
-// pane derived every badge from GLOBAL state, so a kiosk source that had gone
-// away still read On Air on the one surface an operator watches. A second set of
-// lamps in the chrome deriving its own verdict would be that bug, again, one
-// strip higher — and this time on every tab.
-describe('§2 · the chrome lamps are never a second opinion about a screen', () => {
+// On 2026-09-14 the operator cleared the chrome bar back to the wordmark and the
+// six workspaces. The per-screen lamps went with the rest of it.
+//
+// Rule 35 is what makes that a change worth testing rather than a deletion. The
+// lamps were one of the chrome's two true statements about what a congregation
+// can see, and RG-01 — a kiosk source that had gone away still reading On Air —
+// is the instance the rule was written from. So the claim is no longer "the
+// chrome does not invent a second verdict"; it is that the ROWS still exist, are
+// still one `describeScreen` verdict each, and still feed BOTH surfaces that now
+// carry the answer: the status bar's tally, and the `Reduced` cell that names a
+// screen which has stopped answering.
+describe('the screen rows survive the lamps, and stay one verdict per screen', () => {
   const lampBlock = () => APP.slice(APP.indexOf('$: screenLamps'), APP.indexOf('$: screens ='));
 
-  it('every lamp is a describeScreen verdict', () => {
+  it('every row is a describeScreen verdict', () => {
     expect(lampBlock()).toContain('describeScreen(');
   });
 
-  it('and no lamp is derived from global state', () => {
+  it('and no row is derived from global state', () => {
     // The RG-01 shape, literally: `$live && !$rehearsing && !$screenBlack`
     // deciding a per-screen badge. The wall IS passed to `describeScreen` — that
     // is correct, it is one of its two arguments — but the verdict must come back
@@ -117,41 +138,48 @@ describe('§2 · the chrome lamps are never a second opinion about a screen', ()
 
   it('the SCREENS tally is counted from those same rows', () => {
     // If the count came from `$channelHealth` again it could disagree with the
-    // lamps it sits beside, which is the same failure in arithmetic.
+    // Reduced cell it sits beside, which is the same failure in arithmetic.
     expect(APP).toMatch(/\$: screens = screenTally\(screenLamps\)/);
     expect(APP).toMatch(/\{screens\.live\} of \{screens\.total\}/);
   });
 
-  it('a lamp wears only the colour law', () => {
-    // amber = on air, amethyst = rehearsal, red = not responding, grey = idle.
-    // No fifth colour, and in particular no green "ok": green is not in the law.
-    const map = APP.slice(APP.indexOf('const LAMP_TONE'), APP.indexOf('const lampWord'));
-    expect(map).toContain("onair: 'amber'");
-    expect(map).toContain("rehearsal: 'amethyst'");
-    expect(map).toContain("down: 'red'");
-    expect(map).not.toMatch(/green|emerald/i);
+  it('a screen that has stopped answering is still NAMED, not merely counted', () => {
+    // The lamps said WHICH screen was red, by name, on every workspace. The tally
+    // that replaced them says "2 of 3" and cannot. What carries the name now is
+    // the Reduced cell, fed by `screensDown` — which reads the SAME
+    // `describeScreen` verdict, so the two cannot disagree about a screen.
+    expect(APP).toMatch(/\$: screensDown = Object\.values\(\$channelHealth\)/);
+    expect(APP).toContain("describeScreen(st, {}, Number.MAX_SAFE_INTEGER).kind === 'down'");
+    expect(APP).toMatch(/screensDown,/);
+    const bar = APP.slice(APP.indexOf('<footer class="footer-v"'), APP.indexOf('</footer>'));
+    expect(bar).toContain('summarise(degraded)');
   });
 
-  it('a long screen name is ELLIPSED, not hard-clipped', () => {
-    // Measured at 1440×960: `Streaming` lost its last letter with nothing to say
-    // it had been cut, because `text-overflow` is a property of a block container
-    // and the lamp row is an inline-flex — the text child sat in an anonymous
-    // flex item and the declaration did nothing. A clipped name reads as a
-    // different screen; an ellipsis reads as a long one.
-    expect(APP).toMatch(/<span class="signm">\{lampWord\(sc\.name\)\}<\/span>/);
+  it('the chrome keeps no lamp, and the stylesheet keeps no rule for one', () => {
+    // A class nothing renders is the dead CSS the design system warns about, and
+    // this repository has cleaned that up twice. Both halves, or neither.
+    const chrome = CODE.slice(CODE.indexOf('<header class="topbar-v">'), CODE.indexOf('</header>'));
+    expect(chrome).not.toContain('class="siglamps"');
+    expect(chrome).not.toContain('class="signm"');
+    expect(CODE).not.toContain('LAMP_TONE');
+    expect(CODE).not.toContain('lampWord');
     const css = read('src/app.css');
-    const rule = css.slice(css.indexOf('.siglamps .signm{'), css.indexOf('}', css.indexOf('.siglamps .signm{')));
-    expect(rule).toContain('display:block');
-    expect(rule).toContain('text-overflow:ellipsis');
+    for (const sel of ['.siglamps{', '.siglamps .sig{', '.siglamps .signm{']) {
+      expect(css, `${sel} renders nothing now`).not.toContain(sel);
+    }
   });
 
-  it('a long screen name truncates rather than wrapping the chrome', () => {
-    // The bar is 34px. A second row of lamps pushes the whole desk — and the
-    // slide grid, which is the job — down by a row.
-    const css = read('src/app.css');
-    const rule = css.slice(css.indexOf('.siglamps .sig{'), css.indexOf('}', css.indexOf('.siglamps .sig{')));
-    expect(rule).toContain('white-space:nowrap');
-    expect(rule).toContain('text-overflow:ellipsis');
+  it("the status bar's one lamp still wears only the colour law", () => {
+    // amber = on air, amethyst = rehearsal (and safe mode, which outranks it),
+    // grey = everything else. No fifth colour, and in particular no green "ok":
+    // green is not in the law.
+    const bar = APP.slice(APP.indexOf('<footer class="footer-v"'), APP.indexOf('</footer>'));
+    const at = bar.indexOf('<span class="lamp');
+    const lamp = bar.slice(at, bar.indexOf('</span>', at));
+    expect(lamp).toContain("'amber'");
+    expect(lamp).toContain("'amethyst'");
+    expect(lamp).toContain("'grey'");
+    expect(lamp).not.toMatch(/green|emerald/i);
   });
 });
 
@@ -206,27 +234,84 @@ describe('§2 · every figure in the status bar comes from a real fact', () => {
   });
 });
 
-// ── THE CHROME'S RIGHT-HAND END ─────────────────────────────────────────────
-describe('the chrome carries facts and a panic control, and no decoration', () => {
-  it('Emergency Stop is still there and still reaches clear_screens', () => {
-    // A panic control lives at a fixed screen corner an operator can hit without
-    // reading (rule 15, DECISIONS §20). It is the one thing in this bar that may
-    // never move to make room for something else.
-    expect(APP).toMatch(/<button class="r-btn danger sm" on:click=\{clearScreens\}[^>]*>Emergency Stop<\/button>/);
+// ── THE CHROME IS NAVIGATION, AND NOTHING ELSE ──────────────────────────────
+//
+// 2026-09-14, on the operator's instruction. Six things left this bar: the ON AIR
+// ladder, the LISTENING chip, the PROTECTED chip, the screen lamps, the keys
+// legend, and an Emergency Stop button.
+//
+// The last of those was a PANIC CONTROL (rule 15, DECISIONS §20), so this
+// describe does not merely assert that it is gone. It asserts that the two paths
+// it duplicated are both still there — because removing it is safe only for
+// exactly as long as they are, and a later edit that quietly took one of them
+// away would otherwise leave the operator with nothing.
+describe('the chrome is the wordmark and the six workspaces', () => {
+  // Comments stripped: this describe is all "must not come back", and the
+  // comment in the shell that records WHY each of the six went names all six.
+  const chrome = () => CODE.slice(CODE.indexOf('<header class="topbar-v">'), CODE.indexOf('</header>'));
+
+  it('carries the lockup and the workspace strip', () => {
+    const c = chrome();
+    expect(c).toContain('<span class="chrome-brand">');
+    expect(c).toContain('<nav class="ws-menu" aria-label="Workspaces">');
   });
 
-  it('and it is the LAST thing in the bar', () => {
-    const chrome = APP.slice(APP.indexOf('<header class="topbar-v">'), APP.indexOf('</header>'));
-    expect(chrome.indexOf('Emergency Stop')).toBeGreaterThan(chrome.indexOf('siglamps'));
+  it('and renders no state, no lamp, no legend and no button at all', () => {
+    const c = chrome();
+    // Every one of the six, by the markup that drew it rather than by the words
+    // in the comment that records why it went.
+    for (const gone of [
+      'class="r-badge',      // the On Air / Rehearsal / Blackout / Screens clear ladder
+      'class="topbar-live"', // …and the name of what is on the wall
+      'class="topbar-mic"',  // LISTENING
+      'class="lockchip',     // PROTECTED
+      'class="siglamps"',    // one lamp per screen
+      'class="keyleg"',      // the keys legend
+    ]) {
+      expect(c, `${gone} must not be back in the chrome`).not.toContain(gone);
+    }
+    // No control of any kind after the nav. The workspace tabs are the only
+    // buttons in this bar, and they are inside it.
+    expect(c.slice(c.indexOf('</nav>'))).not.toContain('<button');
   });
 
-  it('the two decorative icons are gone', () => {
+  it('Emergency Stop is gone, and nothing in the shell took its place', () => {
+    expect(CODE).not.toContain('Emergency Stop');
+    // The shell's ONLY remaining uses of `clearScreens` are the import and the
+    // keyboard install. A button added back here later would be a panic control
+    // on a surface that is now navigation, which is what this line prevents.
+    expect([...CODE.matchAll(/clearScreens/g)]).toHaveLength(2);
+  });
+
+  it('…because Esc still clears from every tab, mounted once in the shell', () => {
+    // rule 15 / rule 11. `installShortcuts` binds Escape straight to
+    // `clearScreens` — never through a view's context — so it survives a crashed
+    // workspace. `panic.test.js` and `shortcuts.test.js` drive the key itself;
+    // this is the half only the shell can answer: that it is installed here, once.
+    expect(APP).toMatch(/teardownKeys = installShortcuts\(\{ clearScreens, blackScreen \}\)/);
+    expect([...APP.matchAll(/installShortcuts\(/g)]).toHaveLength(1);
+    const SC = read('src/lib/shortcuts.js');
+    expect(SC.slice(SC.indexOf("if (e.key === 'Escape')"))).toContain('clearScreens();');
+  });
+
+  it('…and because Clear screens is in the dock, on every workspace', () => {
+    // The dock is rendered by the SHELL, not by Live, so the second path is there
+    // while an operator is editing a template. Full-screen Live hides both the
+    // dock and this header — and it always did, so the key was already the only
+    // path there and nothing about that case changed.
+    expect(APP).toContain('<Dock />');
+    expect(DOCK).toContain('<button class="r-cbtn danger wide" on:click={doClear}');
+    // Full width along the bottom edge of a card that never scrolls.
+    const ctlbody = DOCK.slice(DOCK.indexOf('.ctlbody {'));
+    expect(ctlbody.slice(0, ctlbody.indexOf('}'))).toMatch(/overflow:\s*hidden/);
+  });
+
+  it('the two decorative icons are still gone', () => {
     // A drawn "Signal" glyph wired to nothing, and a clock face beside a clock.
     // In a room whose whole premise is that an indicator means something, a
     // picture of an indicator is the defect drawn rather than written.
-    const chrome = APP.slice(APP.indexOf('<header class="topbar-v">'), APP.indexOf('</header>'));
-    expect(chrome).not.toContain('title="Signal"');
-    expect(chrome).not.toContain('class="topbar-icons"');
+    expect(chrome()).not.toContain('title="Signal"');
+    expect(chrome()).not.toContain('class="topbar-icons"');
   });
 });
 

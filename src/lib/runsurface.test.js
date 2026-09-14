@@ -7,7 +7,9 @@
 //   2. the take column must read as ONE block, not five stacked fragments;
 //   3. the transition picker belongs beside the transport, not in the chrome;
 //   4. the detection column may not carry a second copy of the dock's ARM switch;
-//   5. the keys legend is always on the screen, and states only what is bound.
+//   5. a keys legend across the chrome — REVERSED on 2026-09-14, see the last
+//      describe in this file. The chrome is navigation now, and `?` is once
+//      again the one place the keys are documented.
 //
 // `App.svelte` is not unit-testable (it mounts the console, opens the bridge and
 // starts three timers), so the shell's half is asserted against its source, which
@@ -143,69 +145,75 @@ describe('L4 · the take column reads as one block, in three bands', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 5 · THE KEYS LEGEND
+// 5 · THE KEYS LEGEND — BUILT, THEN REVERSED (2026-09-14)
 //
-// The cheatsheet already exists behind `?`. This is the short form, always on
-// the screen — and the one thing it may never become is a second list of what
-// the keys do. `transitionoverride.test.js` holds item 3 and `livedesk.test.js`
-// holds item 4; both moved with the thing they are about.
+// A `.keyleg` strip briefly sat in the chrome, rendered from `liveShortcuts`, on
+// the argument that an operator mid-service will not stop and press `?`. The
+// operator's instruction a day later was to clear the chrome back to the
+// wordmark and the six workspaces, and the legend went with the rest of it.
+//
+// WHAT THESE TESTS NOW HOLD is the reversal, not the absence: a strip that was
+// removed from the markup while its `short` glosses stayed on `SHORTCUTS`, or
+// its media rules stayed in `app.css`, would be the dead-weight defect this
+// repository has cleaned up twice — so both halves are asserted. The claims the
+// legend itself carried (nothing unbound may be advertised; `Space` advances and
+// never takes) belong to the TABLE and to the cheatsheet, so they survive the
+// legend and are still checked below.
 // ─────────────────────────────────────────────────────────────────────────────
-describe('L4 · the keys legend states what is bound, and nothing else', () => {
-  it('every entry in the ONE table carries its own short form', () => {
-    // The gloss lives beside the binding. A list of short labels written out in
-    // the shell would be a second source of truth about the keys, and the one
-    // that would eventually disagree is the one nobody tests.
+describe('L4 · the keys legend was removed, and left nothing behind', () => {
+  it('the chrome renders no legend and no keycap', () => {
+    expect(CHROME).not.toContain('class="keyleg"');
+    expect(CHROME).not.toContain('<kbd>');
+    expect(CHROME).not.toContain('$liveShortcuts');
+  });
+
+  it('and the ONE table carries no `short` gloss that nothing reads', () => {
+    // The field existed for the legend and for nothing else. Left behind it
+    // would be a column on every entry that no surface renders — the same dead
+    // weight as a stylesheet rule whose class is gone.
     for (const s of SHORTCUTS) {
-      expect(typeof s.short, `${s.keys.join('/')} has no short form`).toBe('string');
-      expect(s.short.length).toBeGreaterThan(0);
+      expect(s, `${s.keys.join('/')} still carries a short form`).not.toHaveProperty('short');
     }
+    expect(read('src/lib/shortcuts.js')).not.toMatch(/short:\s*'/);
+    expect(read('src/App.svelte')).not.toContain('s.short');
   });
 
-  it('the chrome renders it from `liveShortcuts` and writes no key of its own', () => {
-    const leg = CHROME.slice(CHROME.indexOf('<span class="keyleg"'), CHROME.indexOf('>Emergency Stop<'));
-    expect(leg).toMatch(/\{#each \$liveShortcuts as s/);
-    expect(leg).toMatch(/\{s\.short\}/);
-    // No literal keycap anywhere in the strip's markup. If a key is not in the
-    // table, the legend cannot mention it.
-    expect(leg).not.toMatch(/<kbd>[A-Za-z0-9]/);
-  });
-
-  it('sits after the screen lamps and BEFORE the panic control, which is still last', () => {
-    // A reference strip may never be the reason Emergency Stop moved (rule 15,
-    // DECISIONS §20).
-    // The BUTTON, not the word — it is named in the comment above the legend
-    // precisely because it is the thing the legend must never displace, and an
-    // index that matched the prose would pass while the markup was wrong.
-    const stop = CHROME.indexOf('>Emergency Stop<');
-    const leg = CHROME.indexOf('<span class="keyleg"');
-    expect(CHROME.indexOf('siglamps')).toBeLessThan(leg);
-    expect(leg).toBeLessThan(stop);
-    // And nothing at all comes after it.
-    expect(CHROME.slice(stop + '>Emergency Stop<'.length)).toMatch(/^\/button>\s*$/);
-  });
-
-  it('gives way in two rungs, and the panic control is on neither', () => {
+  it('and the stylesheet keeps no rule for it, including its two rungs', () => {
     const css = read('src/app.css');
-    const block = css.slice(css.indexOf('L4 · THE KEYS LEGEND'));
-    expect(block).toMatch(/@media \(max-width:1400px\)\{ \.keyleg \.kl\.ctx\{ display:none; \} \}/);
-    expect(block).toMatch(/@media \(max-width:1180px\)\{ \.keyleg\{ display:none; \} \}/);
+    for (const sel of ['.keyleg{', '.keyleg .kl{', '.keyleg kbd{', '.keyleg .klw{']) {
+      expect(css, `${sel} renders nothing now`).not.toContain(sel);
+    }
+    expect(css).not.toContain('.keyleg .kl.ctx{ display:none; }');
   });
 
-  it('says Space ADVANCES, and never that Space takes', () => {
-    // The operator's sketch read `Space take`. Rule 11 gives Space exactly one
-    // meaning app-wide and TAKE is a button; a legend that taught otherwise would
-    // be teaching a false fact about a key that puts scripture in front of people.
+  it('`?` is once again the one place the keys are documented', () => {
+    // The cheatsheet reads the same `liveShortcuts` the legend did, so nothing
+    // an operator could learn from the strip has become unavailable — it is one
+    // keystroke away instead of on the screen, which is the trade the operator
+    // asked for and is recorded here rather than assumed.
+    expect(APP).toContain('{#if $cheatsheet}');
+    const cheat = APP.slice(APP.indexOf('{#if $cheatsheet}'));
+    expect(cheat).toMatch(/\{#each \$liveShortcuts as s\}/);
+    expect(cheat).toMatch(/\{#each s\.keys as k\}<kbd>\{k\}<\/kbd>\{\/each\}/);
+    expect(cheat).toContain('{s.label}');
+  });
+
+  it('Space still ADVANCES, and the table still never says it takes', () => {
+    // The gloss that could have said otherwise is gone, so this is now a claim
+    // about the cheatsheet's sentence. Rule 11 gives Space exactly one meaning
+    // app-wide and TAKE is a button on the run surface; help that taught
+    // otherwise would be teaching a false fact about a key that puts scripture
+    // in front of people.
     const next = SHORTCUTS.find((s) => s.needs === 'next');
     expect(next.keys).toContain('Space');
-    expect(next.short).not.toMatch(/take/i);
-    expect(SHORTCUTS.some((s) => /take/i.test(s.short))).toBe(false);
+    expect(SHORTCUTS.some((s) => /\btake\b/i.test(s.label))).toBe(false);
   });
 
-  it('does not advertise the two keys the operator asked for and nothing binds', () => {
+  it('nothing advertises the two keys the operator asked for and nothing binds', () => {
     // `R` rehearse and `1`–`6` workspace. They are in the prototype's page
-    // preamble and in no keydown handler Relay has; a legend that listed them
-    // would hand an operator a key that does nothing, under pressure. (`R` is
-    // already held from the binding side by `shortcuts.test.js`.)
+    // preamble and in no keydown handler Relay has; listing them anywhere would
+    // hand an operator a key that does nothing, under pressure. (`R` is already
+    // held from the binding side by `shortcuts.test.js`.)
     const advertised = SHORTCUTS.flatMap((s) => s.keys).map((k) => k.toLowerCase());
     for (const k of ['r', '1', '2', '3', '4', '5', '6']) {
       expect(advertised, `${k} is advertised but nothing binds it`).not.toContain(k);
