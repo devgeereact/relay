@@ -523,6 +523,18 @@
   $: latVerdict = lat ? diagnose(lat) : null;
   $: latDrift = lat ? drift(lat) : null;
   $: latRows = (lat?.metrics ?? []).filter((m) => m.samples > 0);
+  /**
+   * Is the pipeline measuring itself — TRUE, FALSE, or NULL for "nobody has
+   * asked yet".
+   *
+   * The control this replaced read `lat?.enabled ?? true`, which printed
+   * *measuring* over a backend that had never answered: the same words a
+   * healthy, measuring pipeline shows, which is rule 35's defect exactly. The
+   * report's own `enabled` is a boolean when it has been read and the report is
+   * `null` until then, so the three cases are already distinct at the source —
+   * they were being collapsed on the way to the screen, not at it.
+   */
+  $: latMeasuring = lat ? !!lat.enabled : null;
   async function refreshLatency() {
     lat = await latencyReport(0);
   }
@@ -798,11 +810,29 @@
             <div class="rw-nvk">Safe mode</div>
             <p class="rw-nvnote">Outputs will not open and detection is disarmed — nothing Relay does can reach a screen. A way to open the console with no risk of putting something on a wall.</p>
           </div>
+          <!-- §12 · ONE INSTRUMENT. This was a `Turn on` / `Turn off` text
+               button, which is a sentence where every other binary setting in
+               the product shows a switch — and a sentence whose width changes
+               with its own state, so the right edge of the control column moved
+               by about fourteen pixels depending on whether safe mode was on.
+               The switch is `app.css`'s `.r-switch`, the same 38x21 body as a
+               colour well and as the Detection switch on the dock; Settings
+               defines none of its own (§12, and `settingssections.test.js`).
+
+               The WORD stays beside it. A switch says which way it is thrown;
+               `on` / `off` in the value column says what that means, and it is
+               read from `$safeMode` — the derived store, never a local mirror —
+               so the control cannot show a state the boot record does not hold
+               (rule 35). -->
           <div class="rw-nvctl s-nvpair">
             <span class="rw-nvv" class:s-armed={$safeMode}>{$safeMode ? 'on' : 'off'}</span>
-            <button class="r-btn ghost sm" on:click={() => setSafeMode(!$safeMode)}>
-              {$safeMode ? 'Turn off' : 'Turn on'}
-            </button>
+            <button
+              class="r-switch"
+              class:on={$safeMode}
+              role="switch"
+              aria-checked={$safeMode}
+              aria-label="Safe mode"
+              on:click={() => setSafeMode(!$safeMode)}></button>
           </div>
         </div>
 
@@ -1518,13 +1548,41 @@
           {/if}
           <div class="s-addrow">
             <button class="r-btn" on:click={resetLatency} disabled={!$capture.available}>Start a fresh measurement</button>
-            <button
-              class="r-btn"
-              on:click={() => toggleLatency(!(lat?.enabled ?? true))}
-              disabled={!$capture.available}
-            >{(lat?.enabled ?? true) ? 'Stop measuring' : 'Start measuring'}</button>
           </div>
-          <p class="rw-foot">Start listening and speak for a few seconds to fill the table. Measuring is on by default and costs a handful of timestamps per decode; turning it off is here so a field test can prove the instrument is not the delay.</p>
+          <p class="rw-foot">Start listening and speak for a few seconds to fill the table.</p>
+        </div>
+
+        <!-- §12 · ONE INSTRUMENT, and rule 35 on the same row.
+             This was a second `r-btn` sitting beside *Start a fresh
+             measurement* and reading `Stop measuring` — a text button whose
+             label was the OPPOSITE of the state it described, next to one whose
+             label was the action it performed. Two buttons, two grammars, one
+             row. Resetting is an ACTION and stays a button; measuring is a
+             SETTING and is now the switch every other binary setting in the
+             product wears.
+
+             THE WORD IS NOT `lat?.enabled ?? true`. That fallback is what the
+             button had, and it printed *measuring* over a backend that had never
+             answered — the same reading as a healthy pipeline, which is exactly
+             what rule 35 forbids. `latMeasuring` is a tri-state: true, false, or
+             null for "not read", and the value column says which. -->
+        <div class="rw-nv">
+          <div class="s-nvtext">
+            <div class="rw-nvk">Measuring</div>
+            <p class="rw-nvnote">On by default. It costs a handful of timestamps per decode; turning it off is here so a field test can prove the instrument is not the delay.</p>
+          </div>
+          <div class="rw-nvctl s-nvpair">
+            <span class="rw-nvv">{latMeasuring === null ? settingValue(null, { missing: 'not read yet' }) : latMeasuring ? 'on' : 'off'}</span>
+            {#if latMeasuring !== null}
+              <button
+                class="r-switch"
+                class:on={latMeasuring}
+                role="switch"
+                aria-checked={latMeasuring}
+                aria-label="Measuring latency"
+                on:click={() => toggleLatency(!latMeasuring)}></button>
+            {/if}
+          </div>
         </div>
 
       {:else if section === 'privacy'}
@@ -1621,13 +1679,45 @@
           </p>
           <label class="r-lbl" for="crash-dsn">Sentry DSN (your own project)</label>
           <input id="crash-dsn" class="r-input" type="text" placeholder="https://…@…ingest.sentry.io/…" bind:value={crash.dsn} disabled={!$capture.available} />
-          <div class="s-addrow">
-            <button class="r-btn" class:danger={crash.enabled} on:click={() => toggleCrash(!crash.enabled)} disabled={!$capture.available}>
-              {crash.enabled ? 'Turn crash reporting off' : 'Turn crash reporting on'}
-            </button>
-          </div>
-          {#if crashMsg}<p class="rw-foot">{crashMsg}</p>{/if}
         </div>
+
+        <!-- §12 · ONE INSTRUMENT. This was a full-width `r-btn` reading *Turn
+             crash reporting on* — a text button carrying a sentence, in a
+             product where the same question is a switch everywhere else, and one
+             that showed the ACTION rather than the STATE: the only way to read
+             whether Relay was reporting was to read the label and invert it.
+
+             The switch is thrown from `crashOn`, which is derived from the value
+             the BACKEND returned (`$: crashOn = !!crash.enabled`), never from
+             what was asked for. So a request the engine refuses — no DSN, a
+             poisoned lock — leaves the switch where it was and puts the reason
+             in `crashMsg` underneath, rather than showing a state that is not in
+             force (rule 15, rule 35). The rose word beside it carries the
+             judgement the switch cannot. -->
+        <div class="rw-nv">
+          <div class="s-nvtext">
+            <div class="rw-nvk">Send crash reports</div>
+            <p class="rw-nvnote">Off unless you turn it on, and it needs a DSN of your own above. The only thing in Relay that can send anything off this computer.</p>
+          </div>
+          <div class="rw-nvctl s-nvpair">
+            <span class="rw-nvv" class:s-armed={crashOn}>{crashOn ? 'on' : 'off'}</span>
+            <button
+              class="r-switch"
+              class:on={crashOn}
+              role="switch"
+              aria-checked={crashOn}
+              aria-label="Send crash reports"
+              disabled={!$capture.available}
+              on:click={() => toggleCrash(!crashOn)}></button>
+          </div>
+        </div>
+        <!-- The `{#if}` is OUTSIDE the block, not inside it: `.s-prose` carries a
+             12px gutter, so an always-rendered wrapper around an empty message
+             leaves a phantom band under the row whenever there is nothing to
+             say. -->
+        {#if crashMsg}
+          <div class="s-prose"><p class="rw-foot" style="margin-top:0;">{crashMsg}</p></div>
+        {/if}
       {/if}
       </div>
     </main>
@@ -1762,8 +1852,17 @@
   .s-lenctl{ display:flex; align-items:center; gap:8px; justify-content:flex-end; }
   .s-leninput{ width:90px; text-align:right; }
   .s-lenunit{ color:var(--v-faint); font-size:var(--v-fs-cap); }
-  /* Safe mode ON is not a normal state: it is the whole application disarmed.
-     Rose, never amber — amber means ON AIR and is never spent on anything else. */
+  /* THE WORD BESIDE A SWITCH, when the ON state is the one worth noticing.
+     Safe mode ON is not a normal state: it is the whole application disarmed.
+     Crash reporting ON is the one thing in Relay that can send anything off this
+     computer. Neither is a fault and neither is a warning — the colour marks the
+     state that is ACTIVE, and the sentence above it carries the judgement (the
+     same reasoning as `.s-nvp.on`, one colour along).
+     Rose, never amber — amber means ON AIR and is never spent on anything else.
+
+     It is the WORD that is coloured and never the switch: `.r-switch.on` is
+     steel blue everywhere in the product, and a switch that changed colour by
+     section would be a second instrument wearing the first one's shape (§12). */
   .s-armed{ color:var(--v-rose); }
 
   /* Voice profiles. `s-vpactive` marks the profile the gate is calibrated by —
