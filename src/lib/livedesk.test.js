@@ -15,6 +15,8 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { tick } from 'svelte';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 const invoke = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...a) => invoke(...a) }));
@@ -330,35 +332,78 @@ describe('the inspector column', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 4 · THE DIAL DOES NOT INVENT A POSITION
+// 4 · ONE DIAL, IN ONE PLACE
 //
-// `getSensitivity` is a GROUP 2 wrapper: with no backend it answers 50 and says
-// nothing. 50 is also a real setting — it is `Thresholds::default()` — so the
-// dial could not tell "the gate is at 50" from "nobody answered", which is rule
-// 35 on a control instead of on a badge. Found by W-shell while building the
-// dock's copy of the same dial.
+// Live carried a second copy of the sensitivity dial. The dock's copy is on
+// EVERY workspace (docs/REBRAND.md §2 puts it beside the signal it is about),
+// which is the whole argument: an operator who has stopped trusting the AI is
+// as likely to be in Templates as on Live. Two controls for one gate is two
+// places to disagree about it — the same shape as the two status badges rule 35
+// was written for. Agreed with the shell agent, who verified the dock's copy is
+// on the combined branch before either of us deleted anything.
 // ─────────────────────────────────────────────────────────────────────────────
 describe('the sensitivity dial', () => {
-  it('reads the real position when there is an engine to ask', async () => {
-    invoke.mockImplementation((cmd) => {
-      if (cmd === 'get_sensitivity') return Promise.resolve(31);
-      if (cmd === 'list_output_channels') return Promise.resolve([CHANNEL]);
-      if (cmd === 'list_books' || cmd === 'list_templates' || cmd === 'list_plans')
-        return Promise.resolve([]);
-      return Promise.resolve(null);
-    });
+  it('Live does not draw one — the dock does, on every workspace', async () => {
     new Live({ target: host, props: {} });
     await settle();
-    expect(host.querySelector('.sens-val').textContent.trim()).toBe('31');
+    expect(host.querySelectorAll('input[type="range"]')).toHaveLength(0);
+    expect(host.querySelector('[aria-label="Detection sensitivity"]')).toBeNull();
   });
 
-  it('SHOWS NO NUMBER when nothing answered — 50 is a real setting', async () => {
-    cap.capture.update((s) => ({ ...s, available: false }));
+  // Arm/disarm is a different question from HOW READILY, and it belongs on the
+  // panel it is about. Only the dial moved.
+  it('but the gate can still be armed and disarmed from the claim panel', async () => {
+    cap.capture.update((s) => ({ ...s, detectionOn: true }));
     new Live({ target: host, props: {} });
     await settle();
-    expect(host.querySelector('.sens-val').textContent.trim()).toBe('—');
-    expect(host.querySelector('.sens input[type="range"]').disabled).toBe(true);
-    cap.capture.update((s) => ({ ...s, available: true }));
+    const chip = host.querySelector('.det-ctl .btnchip');
+    expect(chip).not.toBeNull();
+    expect(chip.textContent).toContain('Armed');
+    cap.capture.update((s) => ({ ...s, detectionOn: false }));
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 4b · NOTHING ON THIS COLUMN IS CUT IN HALF
+//
+// Both found by rendering at 1440×960, neither visible to any source-reading
+// test. A screen's name broken mid-word reads as a different screen, and a
+// panel that scrolls with no scrollbar reads as a panel that is broken.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('the 286px column does not clip', () => {
+  it('a screen NAME gets its own row and one line — "Streaming" is not "Stream"/"ing"', async () => {
+    const live = readFileSync(resolve(__dirname, 'views/Live.svelte'), 'utf8');
+    const rule = live.slice(live.indexOf('  .out-nm{'), live.indexOf('  .out-meta{'));
+    // `text-overflow` does nothing without a block-level box, which is how the
+    // chrome lamps hit the same wall.
+    expect(rule).toMatch(/display:block/);
+    expect(rule).toMatch(/white-space:nowrap/);
+    expect(rule).toMatch(/text-overflow:ellipsis/);
+    // The wrap rule that broke it mid-word is gone from the NAME.
+    expect(rule).not.toMatch(/overflow-wrap:anywhere/);
+    expect(rule).not.toMatch(/line-clamp/);
+
+    // And in the DOM the name is alone on its grid row, with the badge below.
+    cap.channelHealth.set({ 1: { id: 1, name: 'Main screen', supported: true, online: false } });
+    new Live({ target: host, props: {} });
+    await settle();
+    const row = host.querySelector('.out');
+    expect(row.querySelector('.out-nm').nextElementSibling.className).toContain('out-meta');
+    // The whole name is still reachable, whatever the width does to it.
+    expect(row.querySelector('.out-nm').getAttribute('title')).toBe('Main screen');
+  });
+
+  it('the plan panel SAYS it has more below it', async () => {
+    const live = readFileSync(resolve(__dirname, 'views/Live.svelte'), 'utf8');
+    const rule = live.slice(live.indexOf('  .plan{'), live.indexOf('  .rail{'));
+    // The same `background-attachment: local` recipe `.outs` uses: the shadow at
+    // an edge appears only while there is content past it.
+    expect(rule).toMatch(/no-repeat local/);
+    expect(rule).toMatch(/no-repeat scroll/);
+    // And the body it sits in is a real scroller, not an overflow.
+    const body = live.slice(live.indexOf('  .pane-body{'), live.indexOf('  .pane-body::'));
+    expect(body).toMatch(/min-height:0/);
+    expect(body).toMatch(/overflow-y:auto/);
   });
 });
 

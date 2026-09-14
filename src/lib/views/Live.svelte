@@ -27,7 +27,6 @@
   // BUILDING a plan is not this screen's job. That is the Planner: a different
   // task, done on a Tuesday, not with a congregation waiting.
   import { onMount, onDestroy } from 'svelte';
-  import { rangeFill } from '../rangefill.js';
   import { describeScreen, SCREEN_BADGE, screenSwitch, screenKind } from '../outputHealth.js';
   import TemplateRender from '../TemplateRender.svelte';
   import { resolveOutputTemplate } from '../layers.js';
@@ -89,8 +88,6 @@
     rehearsing,
     loadRehearsal,
     setRehearsal,
-    getSensitivity,
-    setSensitivity,
     pushAnnouncement,
     verseRepeatCount,
     chapterVerses,
@@ -369,17 +366,6 @@
 
     await loadRehearsal();
     if (dead) return;
-    // ONLY WHEN THERE IS AN ENGINE TO ASK. `getSensitivity` is a GROUP 2 wrapper:
-    // with no backend it answers 50 and says nothing — and 50 is a real setting,
-    // so the dial cannot tell "the gate is at 50" from "nobody answered". That is
-    // rule 35 on a control rather than on a badge. The dial shows `—` until a
-    // real answer lands, and `sensKnown` is what the value column reads.
-    if ($capture.available)
-      getSensitivity().then((v) => {
-        if (dead) return;
-        sensitivity = v;
-        sensKnown = true;
-      });
     // Populate the reactive `$templates` store so the preview/program panes
     // resolve (and stay live to edits) from it, not just a one-shot snapshot.
     await loadTemplates().catch(() => {});
@@ -659,32 +645,6 @@
       await setDetection(!$capture.detectionOn);
     } catch (e) {
       flash(humanError(e));
-    }
-  }
-
-  // The operator's single sensitivity dial, on the run surface (Decision §26).
-  // It writes the SAME thresholds the Settings sliders do (one baseline) — the
-  // whole point is dialling out false fires mid-service without leaving Live.
-  let sensitivity = 50;
-  /** Has a real backend answer landed? See the note at the read in `onMount`. */
-  let sensKnown = false;
-  async function onSensitivity(v) {
-    // Optimistic, then CORRECTED — never assumed. The slider used to be written
-    // from the request and the result thrown away, so a refused change left the
-    // dial showing a position the gate had never reached.
-    sensitivity = v;
-    sensKnown = true;
-    try {
-      const landed = await setSensitivity(v);
-      // The backend owns the curve and its inverse; trust its number, not ours.
-      if (Number.isFinite(landed)) sensitivity = landed;
-    } catch (e) {
-      // Put the dial back where the GATE actually is, read from the backend rather
-      // than remembered here, and say so. A slider that silently disagrees with the
-      // thing it controls is the whole finding.
-      sensitivity = await getSensitivity();
-      sensKnown = true;
-      flash(`Sensitivity stayed at ${sensitivity} — ${humanError(e)}`);
     }
   }
 
@@ -1625,13 +1585,14 @@
         </header>
 
         <div class="det-ctl">
-          <label class="sens" title="How readily the AI fires. Lower = fewer, surer catches; higher = more, noisier. Same dial as Settings.">
-            <span class="sens-lbl r-mono">SENS</span>
-            <input type="range" min="0" max="100" step="1" value={sensitivity}
-              on:input={(e) => onSensitivity(+e.target.value)} disabled={!$capture.available}
-              aria-label="Detection sensitivity" use:rangeFill={sensitivity} />
-            <span class="sens-val r-mono">{sensKnown ? sensitivity : '—'}</span>
-          </label>
+          <!-- NO SENSITIVITY DIAL HERE. It lives in the dock, one row below, on
+               EVERY workspace (docs/REBRAND.md §2 puts it beside the signal it is
+               about). This surface carried a second copy of it, and two controls
+               for one dial is two places to disagree about the same gate — the
+               same shape as the two status badges rule 35 was written for. The
+               dock's is the one that survives because it is reachable from
+               Templates and Settings too, which is where an operator who has
+               stopped trusting the AI actually is. -->
           <span class="spring"></span>
           <button class="chip btnchip" class:ok={$capture.detectionOn} on:click={toggleDetection}
             disabled={!$capture.available} title="Arm or disarm automatic detection">
@@ -1782,27 +1743,40 @@
             <span class="out-ic" aria-hidden="true">
               <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
             </span>
+            <!-- THE NAME GETS ITS OWN ROW, and one line of it. Sharing a row with
+                 the badge inside the 286px column left ~90px for the name against a
+                 110px "Not responding", and the wrap rule broke it mid-word:
+                 "Streaming" rendered as `Stream` / `ing`, and a name cut in half
+                 reads as a DIFFERENT SCREEN — on the one pane whose whole job is
+                 telling an operator which screen has died. The full name is on the
+                 title attribute, and `screencards`/the chrome lamps ellipsise the
+                 same way. -->
             <b class="out-nm" title={o.c.name}>{o.c.name}</b>
-            <span class="r-badge {SCREEN_BADGE[o.s.kind]} sm-badge"><span class="bd"></span>{o.s.label}</span>
-            <!-- The screen's OWN last word, not ours. When it disagrees with the
-                 badge, that disagreement is the finding. With nothing to report
-                 yet it names the KIND of screen in words — it used to print the
-                 raw database value (`native_window`) at a volunteer mid-service. -->
-            <span class="out-note r-mono">{o.s.note || screenKind(o.c.render_target)}</span>
-            <!-- ONLY WHEN THERE IS SOMETHING TO PRESS. The inert half of this pair
-                 ("Browser source", "No window") was a label that never did anything,
-                 sitting where the eye looks for a control and taking ~85px from the
-                 screen's name and the badge on a ~230px rail. The Outputs tab states
-                 the type in full, in a column made for it. -->
-            {#if o.w.action}
-              <button
-                class="out-sw"
-                title={o.w.why}
-                disabled={!$capture.available || switching === o.c.id}
-                on:click={() => toggleScreen(o.c, o.w.action)}>
-                {switching === o.c.id ? '…' : o.w.label}
-              </button>
-            {/if}
+            <!-- Badge, the screen's own word, and the repair, on one row beneath.
+                 They are all short; the name is the one that is not. -->
+            <div class="out-meta">
+              <span class="r-badge {SCREEN_BADGE[o.s.kind]} sm-badge"><span class="bd"></span>{o.s.label}</span>
+              <!-- The screen's OWN last word, not ours. When it disagrees with the
+                   badge, that disagreement is the finding. With nothing to report
+                   yet it names the KIND of screen in words — it used to print the
+                   raw database value (`native_window`) at a volunteer mid-service. -->
+              <span class="out-note r-mono" title={o.s.note || screenKind(o.c.render_target)}>
+                {o.s.note || screenKind(o.c.render_target)}
+              </span>
+              <!-- ONLY WHEN THERE IS SOMETHING TO PRESS. The inert half of this pair
+                   ("Browser source", "No window") was a label that never did anything,
+                   sitting where the eye looks for a control. The Outputs tab states
+                   the type in full, in a column made for it. -->
+              {#if o.w.action}
+                <button
+                  class="out-sw"
+                  title={o.w.why}
+                  disabled={!$capture.available || switching === o.c.id}
+                  on:click={() => toggleScreen(o.c, o.w.action)}>
+                  {switching === o.c.id ? '…' : o.w.label}
+                </button>
+              {/if}
+            </div>
           </div>
         {:else}
           {#if $readErrors.listOutputChannels}
@@ -1985,7 +1959,11 @@
   /* The grid gets the full width under the monitors, and the larger share of
      what is left: it is the surface an operator picks from, and a cell too small
      to read is a cell they have to click to identify. */
-  .con-grid{flex:1.35 1 0; min-height:0; display:flex}
+  /* 1.15, not 1.35. The grid still takes the larger share — it is what an
+     operator picks from — but at 1.35 the plan panel was left with ~78px of
+     body, which is one cue row and a sliced second. A panel that cannot show a
+     whole row of the thing it lists is a panel an operator scrolls to press. */
+  .con-grid{flex:1.15 1 0; min-height:0; display:flex}
   .con-grid :global(.pane){flex:1; min-width:0}
 
   /* The view controls sit UNDER the rail, not in a band of their own. They change
@@ -2007,9 +1985,9 @@
   /* WRAPS. A panel header is a heading plus its controls, and on one unwrapped
      line the controls always won: at 1366×768 — the commonest church laptop —
      "AI Detection — Current Claim" was rendered 5px wide and "Live Transcript"
-     74px, because the sensitivity dial and the Armed chip are sized to content and
-     the heading was the only thing allowed to shrink. Now the controls drop to a
-     second line instead of crushing the name of the panel they belong to. */
+     74px, because the gate's own controls are sized to content and the heading
+     was the only thing allowed to shrink. Now the controls drop to a second line
+     instead of crushing the name of the panel they belong to. */
   .pane-head{flex:0 0 auto; display:flex; align-items:center; gap:var(--v-sp-sm);
     flex-wrap:wrap; row-gap:6px;
     padding:10px 12px; border-bottom:1px solid var(--v-line)}
@@ -2126,42 +2104,43 @@
       radial-gradient(farthest-side at 50% 0, rgba(0,0,0,.4), transparent) top / 100% 7px no-repeat scroll,
       radial-gradient(farthest-side at 50% 100%, rgba(0,0,0,.4), transparent) bottom / 100% 7px no-repeat scroll;
   }
-  .out{display:grid; grid-template-columns:28px minmax(0,1fr) auto;
-    grid-template-areas:"ic nm badge" "ic note act";
-    column-gap:10px; row-gap:2px; align-items:center; padding:9px 10px;
+  .out{display:grid; grid-template-columns:28px minmax(0,1fr);
+    grid-template-areas:"ic nm" "ic meta";
+    column-gap:10px; row-gap:4px; align-items:center; padding:9px 10px;
     border-radius:var(--v-r-md);
     background:var(--v-surf2); border:1px solid var(--v-line)}
   .out-ic{grid-area:ic; width:28px; height:28px; border-radius:var(--v-r-sm); display:grid;
     place-items:center; background:var(--v-surf3); color:var(--v-dim)}
-  .out-nm{grid-area:nm; min-width:0}
-  .out-note{grid-area:note; min-width:0}
-  .out .sm-badge{grid-area:badge; justify-self:end}
-  .out-sw{grid-area:act; justify-self:end}
+  /* ONE LINE, ELLIPSISED. The old rule wrapped to two lines with
+     `overflow-wrap:anywhere` — written for a ~230px rail where a second line cost
+     12px and an ellipsis cost the screen's identity. Inside the 286px inspector
+     the name shared its row with a 110px badge, so ~90px was left and the rule
+     broke "Streaming" mid-word into `Stream` / `ing`. A name cut in half does not
+     cost the identity of the screen; it substitutes a different one. The name now
+     owns its row, the title attribute carries the whole of it, and
+     `text-overflow` needs `display:block` to do anything at all. */
+  .out-nm{grid-area:nm; display:block; min-width:0;
+    font-size:var(--v-fs-b2); font-weight:600; color:var(--v-txt);
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+  .out-meta{grid-area:meta; display:flex; align-items:center; gap:8px; min-width:0}
+  /* Wraps, but never past two lines: the note is the screen's own word and it is
+     worth reading, and it is not worth 120px of a pane an operator scans. */
+  .out-note{flex:1 1 auto; min-width:0;
+    font-size:9px; letter-spacing:.05em; color:var(--v-faint);
+    display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2;
+    overflow:hidden; overflow-wrap:anywhere}
   /* Deliberately quiet. This is a repair for one screen, not a panic control —
      Clear and Blackout are the loud pair and nothing else may look like them. */
-  .out-sw{font:inherit; font-size:10px; letter-spacing:.04em;
+  .out-sw{flex:0 0 auto; font:inherit; font-size:10px; letter-spacing:.04em;
     padding:3px 8px; border-radius:var(--v-r-sm); cursor:pointer;
     background:transparent; color:var(--v-faint); border:1px solid var(--v-line)}
   /* `--v-txt-dim` was never defined. `border-color` is not inherited, so it fell
      back to currentColor — which this rule sets to --v-txt on the same line, and
      that made the loudest border in the pane out of the control the comment above
-     calls deliberately quiet. --v-line2 is the app's hover-border step (.r-row,
-     .te-swrow, .r-input all use it). */
+     calls deliberately quiet. --v-line2 is the app's hover-border step. */
   .out-sw:hover:not(:disabled){color:var(--v-txt); border-color:var(--v-line2)}
   .out-sw:disabled{opacity:.45; cursor:not-allowed}
 
-  /* WRAPS RATHER THAN TRUNCATES. On a ~230px rail (1366-wide laptop) the status
-     badge is 60–115px wide and "Lobby screen" does not fit beside "NO WINDOW".
-     A second line costs 12px; an ellipsis costs the operator the identity of the
-     screen that has just failed, which is the one thing this pane is for. */
-  .out-nm{font-size:var(--v-fs-b2); font-weight:600; color:var(--v-txt);
-    display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2;
-    overflow:hidden; overflow-wrap:anywhere}
-  /* Wraps, but never past two lines: the note is the screen's own word and it is
-     worth reading, and it is not worth 120px of a pane an operator scans. */
-  .out-note{font-size:9px; letter-spacing:.05em; color:var(--v-faint);
-    display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2;
-    overflow:hidden}
   /* A screen that is not answering is a FAILURE, and the row says so without
      spending amber (which means on air, DECISIONS §22) or reading as decoration.
      The border is the signal; the badge carries the word. */
@@ -2270,10 +2249,9 @@
   .btnchip:disabled{opacity:.5; cursor:not-allowed}
 
   /* The gate's own controls get their own row under the heading. On one line in
-     a 286px column the dial, the Armed chip and the microphone button are sized
-     to content and the panel's NAME is the only thing allowed to shrink — the
-     same failure `.pane-head`'s wrap comment records at 1366px, one column
-     narrower. */
+     a 286px column the Armed chip and the microphone button are sized to content
+     and the panel's NAME is the only thing allowed to shrink — the same failure
+     `.pane-head`'s wrap comment records at 1366px, one column narrower. */
   .det-ctl{flex:0 0 auto; display:flex; align-items:center; gap:8px;
     padding:8px 12px; border-bottom:1px solid var(--v-line)}
   /* WHAT THE GATE IS DOING — and it reads differently when it is broken. Grey
@@ -2283,22 +2261,6 @@
   .det-meta{flex:0 0 auto; font-size:9px; letter-spacing:.08em; text-transform:uppercase;
     color:var(--v-faint)}
   .det-meta.on{color:var(--v-emerald)}
-
-  /* Sensitivity dial — compact, on the run surface. Reaches the same thresholds
-     as Settings, and is now the SAME INSTRUMENT: the track, the thumb and the
-     filled share all come from app.css, so the dial an operator learns in
-     Settings is the dial they use during a service. Width is the only thing
-     that is genuinely local — this one lives in a crowded transport bar. */
-  .sens{display:inline-flex; align-items:center; gap:7px; flex:0 0 auto;}
-  .sens-lbl{font-size:var(--v-fs-cap); letter-spacing:var(--v-tr-caps); color:var(--v-faint);}
-  .sens-val{font-size:var(--v-fs-cap); color:var(--v-dim); min-width:20px; text-align:right;}
-  /* Width ONLY. THE BAR IS 3px AND THE CONTROL IS NOT — an input styled as the
-     track is a 4px pointer target, and a near-miss on a live console lands on
-     whatever is underneath. That box (18px) and the track that draws the bar
-     inside it are app.css's `input[type=range]` block, which this dial shares
-     with every other slider in the app; overriding them here is what made the
-     dial a different instrument from the one in Settings. */
-  .sens input[type="range"]{width:88px;}
 
   /* ── A CLAIM CARD ─────────────────────────────────────────────────────────
      One card per claim, in a column, because a decode window can name several
@@ -2404,7 +2366,20 @@
     border-color:transparent; color:var(--v-amber-ink)}
 
   /* ── 4 · plan ──────────────────────────────────────────────────────────── */
-  .plan{gap:6px}
+  /* A SCROLLER THAT SAYS SO — the same two `background-attachment: local`
+     gradients `.outs` uses, for the same reason and in the same file. Rendered
+     at 1440x960 the panel showed `Sunday Morning` with its `Run` button sliced
+     through the middle and nothing at all to say there was more below it: macOS
+     overlay scrollbars are invisible at rest, so a pane that is scrolling looks
+     exactly like a pane that is broken. The shadow at an edge appears only while
+     there is content past it. No script, no state, nothing to keep in step. */
+  .plan{gap:6px;
+    background:
+      linear-gradient(var(--v-surf) 30%, transparent) top / 100% 14px no-repeat local,
+      linear-gradient(transparent, var(--v-surf) 70%) bottom / 100% 14px no-repeat local,
+      radial-gradient(farthest-side at 50% 0, rgba(0,0,0,.4), transparent) top / 100% 7px no-repeat scroll,
+      radial-gradient(farthest-side at 50% 100%, rgba(0,0,0,.4), transparent) bottom / 100% 7px no-repeat scroll;
+  }
   .rail{display:flex; align-items:stretch; gap:10px}
   .rail-dot{flex:0 0 auto; align-self:center; width:9px; height:9px; border-radius:50%;
     background:var(--v-surf3); border:1px solid var(--v-line2)}
