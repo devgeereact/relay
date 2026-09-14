@@ -68,8 +68,9 @@ export const capture = writable({
   // Whisper re-elects a language every window from ~99 candidates, and on accented
   // speech it wanders (one real service: en·yo·pt·sw·sv·ms). The label IS the decode,
   // so a wandering label degrades the transcript — and that looks exactly like the AI
-  // being bad. The operator has the control that fixes it (Settings → Recognition
-  // Language) and no reason to suspect they should touch it. See stt.rs.
+  // being bad. The operator has the control that fixes it (Settings → Scripture
+  // & Languages → Recognition language) and no reason to suspect they should
+  // touch it. See stt.rs.
   langUnstable: null,
   detectionOn: true, // is automatic detection armed?
   audioError: null, // last audio device error (surfaced, not fatal)
@@ -1325,7 +1326,7 @@ return guardedRead('verseRepeatCount', async (call) => {
 }, 0);
 }
 
-// ── Voice profiles (Settings → Voice Profiles) ───────────────────────────────
+// ── Voice profiles (Settings → AI & Detection) ───────────────────────────────
 //
 // Per-preacher accent + gate calibration: the STT language hint, the decoder-bias
 // vocabulary, the operator's sensitivity dial, and the thresholds the router has

@@ -72,7 +72,6 @@
   let firing = '';
   let armedDelete = false;
   let armedT;
-  let checked = new Set();
   let layout = 'grid';
 
   // THE PROJECTION RULE. It decides what a congregation reads, so it survives a
@@ -267,11 +266,6 @@
     } else {
       onQueueChange([...queue, { reference: item.reference, text: item.text }]);
     }
-  }
-  function toggleCheck(item) {
-    const next = new Set(checked);
-    next.has(item.reference) ? next.delete(item.reference) : next.add(item.reference);
-    checked = next;
   }
 
   // ── Deck edits are REAL edits here ────────────────────────────────────────
@@ -478,13 +472,11 @@
               {template}
               liveRef={$live?.reference ?? null}
               rehearsing={$rehearsing}
-              {checked}
               {queuedRefs}
               busyRef={firing}
               {layout}
               showStar={false}
               can={{ queue: true, favourite: false, edit: true, duplicate: true, add: true, move: true, select: false }}
-              onCheck={toggleCheck}
               onFire={fire}
               onQueue={toggleQueue}
               onEdit={editSlide}

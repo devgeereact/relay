@@ -40,7 +40,7 @@
   import { heard, methodKey, inLibrary } from '../detect.js';
   import DetectionInspector from '../DetectionInspector.svelte';
   import { humanError as humanErrorBase } from '../errors.js';
-  import { TYPE, payloadOf, slidesOf, slideAccent, cueSub, nextOf, stepFrom } from '../plan.js';
+  import { typeOf, payloadOf, slidesOf, slideAccent, cueSub, nextOf, stepFrom } from '../plan.js';
   import { gridSource, pressArbiter } from '../slidegrid.js';
   import LiveRail from '../LiveRail.svelte';
   import { parsePassage } from '../passage.js';
@@ -1590,7 +1590,7 @@
       <div class="pane-body plan">
         {#if openPlan}
           {#each items as c, i (c.id)}
-            {@const ty = TYPE[c.cue_type] || TYPE.unknown}
+            {@const ty = typeOf(c.cue_type)}
             <div class="rail">
               <span class="rail-dot" class:on={planOnAir && c.id === liveCueId} class:cued={!planOnAir && c.id === liveCueId}></span>
               <button

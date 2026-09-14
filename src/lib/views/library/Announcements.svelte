@@ -39,7 +39,6 @@
   let edit = null;
 
   let template = null;
-  let checked = new Set();
   let layout = 'grid';
 
   onMount(async () => {
@@ -61,11 +60,6 @@
     } else {
       onQueueChange([...queue, { reference: item.reference, text: item.text }]);
     }
-  }
-  function toggleCheck(item) {
-    const next = new Set(checked);
-    next.has(item.reference) ? next.delete(item.reference) : next.add(item.reference);
-    checked = next;
   }
   /** Duplicating a notice is a REAL new row, not a session overlay — an
       announcement is the operator's own text, so there is nothing to protect. */
@@ -241,13 +235,11 @@
           {template}
           liveRef={liveRef}
           rehearsing={$rehearsing}
-          {checked}
           {queuedRefs}
           busyRef={firing}
           {layout}
           showStar={false}
           can={{ queue: true, favourite: false, edit: true, duplicate: true, add: false, move: false, select: false }}
-          onCheck={toggleCheck}
           onFire={send}
           onQueue={toggleQueue}
           onEdit={(d) => open(items.find((x) => x.id === d.id))}

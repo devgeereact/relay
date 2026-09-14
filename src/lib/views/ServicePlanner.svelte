@@ -564,12 +564,17 @@
         </div>
         <button class="r-btn ghost sm" disabled={!items.length} on:click={addSection}>＋ Add Section</button>
       {/if}
-      <!-- OUTSIDE the `{#if}`: this is a standing safety caveat about the whole
-           workspace, not about the open plan, and it must be readable when no
-           plan is open at all. Shortened so it FITS — it was being ellipsised to
-           "Build only — never reaches …" at 1440px, which is half a caveat:
-           "never reaches" what? The full sentence is on the title. -->
-      <span class="r-lbl sp-toolnote" title="Building a plan here never reaches an output. Run it in Live.">Build only — never goes live</span>
+      <!-- The standing safety caveat used to be repeated here, abbreviated to
+           "Build only — never goes live". It is gone, and the caveat is NOT:
+           `WorkspaceFrame`'s standfirst says it in full, two rows above, and
+           `.rw-lead` carries no media query and no `display:none`, so unlike the
+           toolbar note this replaced it cannot vanish on a narrow screen. That
+           was the whole reason the sentence moved to the standfirst.
+           One guarantee, one place — the abbreviated copy had already had to be
+           shortened once because it was being ellipsised to "never reaches …",
+           and half a caveat beside the whole one is weaker than the whole one
+           alone. It also cost a pane-head row at ≤1440. Do not restore it:
+           check the standfirst instead. -->
     </div>
 
     {#if loading}
@@ -947,10 +952,6 @@
     font-size:var(--v-fs-h3); line-height:var(--v-lh-h3); max-width:46ch; }
   .sp-hm{ display:inline-flex; align-items:center; gap:5px; flex:0 0 auto;
     font-size:var(--v-fs-cap); color:var(--v-dim); }
-  /* The standing caveat sits at the far end of the head. It may WRAP to a second
-     line (`.sp-panehead` wraps) rather than be ellipsised — half a safety
-     sentence is worse than a second row of chrome. */
-  .sp-toolnote{ margin-left:auto; flex:0 0 auto; color:var(--v-faint); }
   /* Nothing open yet: the sentence sits in the middle of the space it is talking
      about, the way the Outputs inspector and the Cue Details panel already do.
      Top-left in a 600×750 void read as a stray line of text rather than an
