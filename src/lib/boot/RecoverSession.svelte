@@ -57,7 +57,7 @@
       <span class="b-spring"></span>
     </div>
 
-    <p style="margin:16px 0 0;font-size:12px;color:var(--v-faint);">
+    <p style="margin:16px 0 0;font-size:var(--v-fs-b1);color:var(--v-faint);">
       Starting fresh forgets the position. It does not delete the service, the plan, or
       anything in your library.
     </p>

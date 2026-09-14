@@ -404,7 +404,7 @@
   .pane-body{padding:14px;display:flex;flex-direction:column;gap:10px}
 
   .chip{display:inline-flex;align-items:center;gap:7px;flex:0 0 auto;padding:4px 10px;
-    border-radius:99px;font-size:var(--v-fs-cap);background:var(--v-surf2);
+    border-radius:var(--v-r-sm);font-size:var(--v-fs-cap);background:var(--v-surf2);
     border:1px solid var(--v-line2);color:var(--v-faint)}
   .chip.ok{color:var(--v-emerald);border-color:var(--v-emerald-line);background:var(--v-emerald-soft)}
   .chip .bd{width:6px;height:6px;border-radius:50%;background:currentColor;

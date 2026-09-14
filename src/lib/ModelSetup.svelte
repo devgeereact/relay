@@ -256,12 +256,12 @@
   .ms-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
   .ms-head b { color: var(--v-accent2); font-size: 13.5px; }
   .ms-head b.ok { color: var(--v-emerald); }
-  .ms-pct { font-size: 12px; color: var(--v-txt); }
+  .ms-pct { font-size:var(--v-fs-b1); color: var(--v-txt); }
   /* --v-dim, not --v-faint: faint is ~3.4:1 and fails WCAG AA, and this is the
      text a brand-new operator most needs to be able to read. */
-  .ms-sub { margin: 6px 0 0; font-size: 12.5px; color: var(--v-dim); line-height: 1.6; }
+  .ms-sub { margin: 6px 0 0; font-size:var(--v-fs-h3); color: var(--v-dim); line-height: 1.6; }
   .ms-bar {
-    height: 7px; border-radius: 99px; background: var(--v-surf3);
+    height: 7px; border-radius: var(--v-r-sm); background: var(--v-surf3);
     overflow: hidden; margin: 9px 0 6px;
   }
   /* scaleX, not width: animating width thrashes layout on every progress tick. */
@@ -283,28 +283,28 @@
   }
   .ms-opt-t { display: flex; align-items: baseline; gap: 8px; }
   .ms-opt-t b { font-size: 13px; color: var(--v-txt); }
-  .ms-size { font-size: 11px; color: var(--v-dim); }
-  .ms-opt-d { font-size: 12px; color: var(--v-dim); line-height: 1.55; margin: 3px 0 8px; }
+  .ms-size { font-size:var(--v-fs-lbl); color: var(--v-dim); }
+  .ms-opt-d { font-size:var(--v-fs-b1); color: var(--v-dim); line-height: 1.55; margin: 3px 0 8px; }
   /* Amber, not red: nothing is broken, and the operator may still have a good
      reason to choose it. Red here would read as a failure and be clicked past. */
   .ms-caution {
-    font-size: 12px; line-height: 1.55; margin: 0 0 8px;
+    font-size:var(--v-fs-b1); line-height: 1.55; margin: 0 0 8px;
     padding: 7px 9px; border-radius: 7px;
-    background: rgba(245, 158, 11, 0.14);
-    border: 1px solid rgba(245, 158, 11, 0.3);
-    color: var(--v-amber, #f59e0b);
+    background: var(--v-amber-soft);
+    border: 1px solid var(--v-amber-line);
+    color: var(--v-amber);
   }
   .ms-live {
     font-size: 10.5px; letter-spacing: 0.04em; text-transform: uppercase;
-    padding: 2px 6px; border-radius: 99px;
-    background: rgba(16, 185, 129, 0.16);
-    border: 1px solid rgba(16, 185, 129, 0.32);
+    padding: 2px 6px; border-radius: var(--v-r-sm);
+    background: var(--v-emerald-soft);
+    border: 1px solid var(--v-emerald-line);
     color: var(--v-emerald);
   }
   .ms-err {
     margin-top: 10px; padding: 8px 10px; border-radius: 8px;
     background: var(--v-red-soft); border: 1px solid var(--v-red-line);
-    color: var(--v-red); font-size: 12px; line-height: 1.55;
+    color: var(--v-red); font-size:var(--v-fs-b1); line-height: 1.55;
     display: flex; align-items: center; gap: 10px;
   }
   .ms-err span { flex: 1; min-width: 0; }

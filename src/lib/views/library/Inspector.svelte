@@ -266,7 +266,7 @@
     background: var(--v-void); border-bottom: 1px solid var(--v-line);
   }
   .li-frame img, .li-frame video { width: 100%; height: 100%; object-fit: contain; }
-  .li-plain { padding: 10px; font-size: 12px; line-height: 1.5; color: var(--v-dim); text-align: center; }
+  .li-plain { padding: 10px; font-size:var(--v-fs-b1); line-height: 1.5; color: var(--v-dim); text-align: center; }
   .li-plain b { display: block; color: var(--v-txt); }
 
   .li-grp { display: flex; flex-direction: column; border-bottom: 1px solid var(--v-line); }

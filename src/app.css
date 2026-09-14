@@ -52,7 +52,15 @@
      is aliased to it rather than deleted — templates.js and a couple of views still
      name it, and a font that is only in the bundle for one preset is dead weight. */
   --f-display:'Inter',system-ui,sans-serif; --f-body:'Inter',sans-serif;
-  --f-serif:'Fraunces',serif; --f-mono:'JetBrains Mono',monospace;
+  --f-serif:'Fraunces',serif;
+  /* `--f-mono` is NOT declared here. It used to be, as 'JetBrains Mono', and it
+     was dead the whole time: the design-system :root below is later in the same
+     file at the same specificity, so its 'IBM Plex Mono' won. A reader looking
+     up the console's figure face found this line first and read the wrong
+     answer, and a reorder of the two blocks would have silently changed every
+     clock, confidence and latency in the app. It is declared ONCE now, below.
+     JetBrains Mono stays in the bundle because TEMPLATES offer it by name
+     (`TemplateEditor.svelte`) — an operator's saved choice, not chrome. */
 }
 *{box-sizing:border-box;}
 /* 12px, not 14px. A control room is read at a glance from a metre away, and

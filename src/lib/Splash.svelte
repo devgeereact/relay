@@ -137,9 +137,9 @@
     position: absolute;
     inset: 0;
     background:
-      radial-gradient(70% 45% at 50% 42%, rgba(139, 92, 246, 0.09), transparent 70%),
-      radial-gradient(40% 60% at 3% 60%, rgba(139, 92, 246, 0.06), transparent 70%),
-      radial-gradient(40% 60% at 97% 45%, rgba(139, 92, 246, 0.06), transparent 70%);
+      radial-gradient(70% 45% at 50% 42%, rgba(169, 107, 245, 0.09), transparent 70%),
+      radial-gradient(40% 60% at 3% 60%, rgba(169, 107, 245, 0.06), transparent 70%),
+      radial-gradient(40% 60% at 97% 45%, rgba(169, 107, 245, 0.06), transparent 70%);
     pointer-events: none;
   }
   .waves {
@@ -179,7 +179,7 @@
     color: var(--v-txt);
   }
   .ver {
-    font-size: 12px;
+    font-size:var(--v-fs-b1);
     color: var(--v-faint);
   }
 
@@ -233,12 +233,12 @@
     background: linear-gradient(
       90deg,
       transparent,
-      rgba(139, 92, 246, 0.28) 22%,
+      rgba(169, 107, 245, 0.28) 22%,
       var(--v-amethyst2) 50%,
-      rgba(139, 92, 246, 0.28) 78%,
+      rgba(169, 107, 245, 0.28) 78%,
       transparent
     );
-    box-shadow: 0 0 12px 0 rgba(139, 92, 246, 0.3);
+    box-shadow: 0 0 12px 0 rgba(169, 107, 245, 0.3);
   }
   /* The reference lights the divider from a hotspot at its centre — a soft
      violet bloom that reads as a glow, not a second rule. */
@@ -253,7 +253,7 @@
     background: radial-gradient(
       50% 50% at 50% 50%,
       rgba(196, 176, 255, 0.5),
-      rgba(139, 92, 246, 0.18) 38%,
+      rgba(169, 107, 245, 0.18) 38%,
       transparent 72%
     );
     pointer-events: none;

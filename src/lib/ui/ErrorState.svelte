@@ -50,11 +50,11 @@
     background: var(--v-red-soft);
     border: 1px solid var(--v-red-line);
     color: var(--v-red);
-    font-size: 12.5px;
+    font-size:var(--v-fs-h3);
     line-height: 1.55;
   }
   .es.compact {
-    font-size: 11.5px;
+    font-size:var(--v-fs-b2);
     padding: 6px 9px;
   }
   .es-msg {

@@ -357,7 +357,7 @@
     flex: 1;
   }
   .ml-kind .ct {
-    font-size: 11px;
+    font-size:var(--v-fs-lbl);
     color: var(--v-faint);
   }
   .ml-kind:hover:not(.on) {

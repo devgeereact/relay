@@ -286,8 +286,8 @@
   }
   .ar-empty,
   .ar-why {
-    color: var(--r-dim, #8b8f98);
-    font-size: 12px;
+    color: var(--v-faint);
+    font-size:var(--v-fs-b1);
     margin: 0;
   }
   .ar-name {
@@ -308,15 +308,15 @@
     align-items: center;
     gap: 6px;
     padding: 4px 6px;
-    border: 1px solid var(--r-line, #2a2d34);
-    border-radius: 6px;
+    border: 1px solid var(--v-line2);
+    border-radius:var(--v-r-2xl);
   }
   .ar-step.missing {
-    border-color: var(--r-rose, #e0526a);
+    border-color: var(--v-rose);
   }
   .ar-stepno {
-    color: var(--r-dim, #8b8f98);
-    font-size: 11px;
+    color: var(--v-faint);
+    font-size:var(--v-fs-lbl);
     min-width: 1.4em;
   }
   .ar-steptag {
@@ -335,16 +335,16 @@
   }
   .ar-chip {
     padding: 4px 10px;
-    border: 1px solid var(--r-line, #2a2d34);
-    border-radius: 999px;
+    border: 1px solid var(--v-line2);
+    border-radius: var(--v-r-sm);
     background: transparent;
     color: inherit;
     font: inherit;
-    font-size: 12px;
+    font-size:var(--v-fs-b1);
     cursor: pointer;
   }
   .ar-chip:hover {
-    border-color: var(--r-accent, #6aa9ff);
+    border-color: var(--v-accent);
   }
 
   /* The list */
@@ -353,14 +353,14 @@
     align-items: center;
     gap: 8px;
     padding: 6px;
-    border: 1px solid var(--r-line, #2a2d34);
-    border-radius: 6px;
+    border: 1px solid var(--v-line2);
+    border-radius:var(--v-r-2xl);
   }
   /* Amber is ON AIR and is never allowed to mean anything else (DECISIONS §22),
      so a stale arrangement is rose — a thing that is wrong, not a thing that is
      live. */
   .ar-row.stale {
-    border-color: var(--r-rose, #e0526a);
+    border-color: var(--v-rose);
   }
   .ar-rowmain {
     flex: 1;
@@ -370,8 +370,8 @@
     gap: 2px;
   }
   .ar-rowseq {
-    font-size: 11px;
-    color: var(--r-dim, #8b8f98);
+    font-size:var(--v-fs-lbl);
+    color: var(--v-faint);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -380,7 +380,7 @@
     align-self: flex-start;
     font-size: 10px;
     letter-spacing: 0.08em;
-    color: var(--r-rose, #e0526a);
+    color: var(--v-rose);
     border: 1px solid currentColor;
     border-radius: 4px;
     padding: 0 4px;
@@ -388,8 +388,8 @@
 
   .ar-stale {
     margin: 0;
-    font-size: 12px;
-    color: var(--r-rose, #e0526a);
+    font-size:var(--v-fs-b1);
+    color: var(--v-rose);
   }
   .ar-acts {
     display: flex;
@@ -401,7 +401,7 @@
   }
   .ar-err {
     margin: 0;
-    color: var(--r-rose, #e0526a);
-    font-size: 12px;
+    color: var(--v-rose);
+    font-size:var(--v-fs-b1);
   }
 </style>

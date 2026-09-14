@@ -205,9 +205,19 @@ describe('RG-22 · an order whose sections moved', () => {
   });
 
   it('is rose, never amber — amber means ON AIR and is never allowed to lie', () => {
+    // This asked for `--r-rose` until wave 4's token sweep, and `--r-rose` was
+    // never defined in `src/app.css` — the whole `--r-*` family this file fell
+    // back through is undefined, so `var(--r-rose, #e0526a)` was not a fallback
+    // at all. It was the live paint, a literal from the pre-rebrand palette,
+    // and this assertion was passing on the name of a token that does not
+    // exist. The CLAIM is unchanged and is the half that matters: a stale
+    // arrangement is rose, and amber is never spent on anything but ON AIR.
+    // What changed is that it now names a token the stylesheet publishes.
     const f = read('src/lib/views/library/Arrangements.svelte');
-    expect(f).toMatch(/--r-rose/);
-    expect(f).not.toMatch(/--r-amber|#f5a524/i);
+    expect(f).toMatch(/var\(--v-rose\)/);
+    expect(f).not.toMatch(/--r-amber|--v-amber|#f5a524/i);
+    // …and the retired family may not come back on this surface.
+    expect(f).not.toMatch(/--r-(rose|dim|line|accent)/);
   });
 });
 

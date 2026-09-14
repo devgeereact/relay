@@ -1261,11 +1261,11 @@
   .te-layer:hover{ border-color:var(--v-line2); }
   .te-layer.sel{ border-color:var(--v-accent-line); background:var(--v-accent-soft); }
   .te-layer.off{ opacity:.5; }
-  .te-ltype{ width:16px; text-align:center; color:var(--v-faint); font-family:var(--f-mono); font-size:11px; flex:0 0 auto; }
+  .te-ltype{ width:16px; text-align:center; color:var(--v-faint); font-family:var(--f-mono); font-size:var(--v-fs-mono); flex:0 0 auto; }
   .te-lname{ flex:1; min-width:0; font-size:var(--v-fs-b2); color:var(--v-txt); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .te-lbtns{ display:flex; gap:1px; flex:0 0 auto; opacity:0; transition:opacity .12s; }
   .te-layer:hover .te-lbtns, .te-layer.sel .te-lbtns{ opacity:1; }
-  .te-lmini{ width:20px; height:20px; display:grid; place-items:center; border:0; background:none; color:var(--v-faint); cursor:pointer; border-radius:var(--v-r-sm); font-size:11px; }
+  .te-lmini{ width:20px; height:20px; display:grid; place-items:center; border:0; background:none; color:var(--v-faint); cursor:pointer; border-radius:var(--v-r-sm); font-size:var(--v-fs-lbl); }
   .te-lmini:hover{ color:var(--v-txt); background:var(--v-surf3); }
   .te-lmini.danger:hover{ color:var(--v-rose); }
   /* A locked layer's button stays lit even at rest, so the lock state reads at a
@@ -1320,7 +1320,7 @@
   /* A locked box is inert AND click-through, so it never moves and never blocks a
      layer beneath it (select that one and drag it right under the locked one). */
   .te-hbox.locked{ pointer-events:none; border-style:dotted; border-color:rgba(255,196,0,.5); cursor:default; }
-  .te-htag{ position:absolute; top:-16px; left:0; font-family:var(--f-mono); font-size:8px; letter-spacing:.04em; color:#fff; background:var(--v-accent-fill); padding:1px 5px; border-radius:3px; white-space:nowrap; }
+  .te-htag{ position:absolute; top:-16px; left:0; font-family:var(--f-mono); font-size:8px; letter-spacing:.04em; color:#fff; background:var(--v-accent-fill); padding:1px 5px; border-radius:var(--v-r-sm); white-space:nowrap; }
   /* Eight resize handles — one on every corner and edge. */
   .te-hh{ position:absolute; width:10px; height:10px; background:var(--v-accent); border:2px solid #fff; border-radius:2px; box-sizing:border-box; }
   .te-hh-nw{ left:-5px; top:-5px; cursor:nwse-resize; }

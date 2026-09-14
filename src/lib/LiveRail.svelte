@@ -373,7 +373,7 @@
     scrollbar-width: thin; scrollbar-color: var(--v-surf3) transparent;
   }
   .lr-body::-webkit-scrollbar { width: 6px; }
-  .lr-body::-webkit-scrollbar-thumb { background: var(--v-surf3); border-radius: 99px; }
+  .lr-body::-webkit-scrollbar-thumb { background: var(--v-surf3); border-radius: var(--v-r-round); }
 
   .lr-cap {
     margin: 0; padding: 4px 6px 2px;

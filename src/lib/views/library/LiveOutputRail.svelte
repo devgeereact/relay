@@ -132,7 +132,7 @@
     background: transparent;
     color: var(--v-accent2);
     font-family: var(--f-body);
-    font-size: 11.5px;
+    font-size:var(--v-fs-b2);
     cursor: pointer;
   }
 
@@ -181,7 +181,7 @@
     border-radius: var(--v-r-sm);
     background: var(--v-surf2);
     color: var(--v-dim);
-    font-size: 12px;
+    font-size:var(--v-fs-b1);
     cursor: pointer;
   }
   .lo-ic:hover:not(:disabled) { color: var(--v-txt); border-color: var(--v-sel-line); }

@@ -841,7 +841,7 @@
   .wavewrap {
     position: relative; flex: 1 1 auto; min-height: 44px;
     border: 1px solid var(--v-rule); border-radius: var(--v-r-sm);
-    background: linear-gradient(180deg, #0F1116, #0A0B0E); overflow: hidden;
+    background: linear-gradient(180deg, var(--v-void), var(--v-rule)); overflow: hidden;
   }
   .wave { display: block; width: 100%; height: 100%; }
   .wavescale {
@@ -906,7 +906,7 @@
   .tfig {
     flex: 0 0 auto; min-width: 0 !important;
     font-variant-numeric: tabular-nums;
-    font-size: 21px; line-height: 1; font-weight: 600;
+    font-size:var(--v-fs-d2); line-height: 1; font-weight: 600;
     letter-spacing: .01em;
     /* Dim until it is genuinely on a wall: this is the SET duration then, and a
        setting rendered as brightly as a live figure is the same number telling

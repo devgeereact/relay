@@ -752,14 +752,14 @@
   .lib-head .c-verses, .lib-head .c-over{ text-align:center; }
   .c-open{ display:flex; justify-content:flex-end; }
 
-  .c-date{ color:var(--v-dim); font-size:12px; }
+  .c-date{ color:var(--v-dim); font-size:var(--v-fs-b1); }
   .c-date.is-latest{ color:var(--v-accent); }
-  .lib-svctitle{ font-weight:600; color:var(--v-txt); font-size:14px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .c-dur{ color:var(--v-dim); font-size:12px; }
-  .c-over{ color:var(--v-dim); font-size:12px; }
+  .lib-svctitle{ font-weight:600; color:var(--v-txt); font-size:var(--v-fs-h2); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .c-dur{ color:var(--v-dim); font-size:var(--v-fs-b1); }
+  .c-over{ color:var(--v-dim); font-size:var(--v-fs-b1); }
   .lib-pill{
-    display:inline-block; min-width:30px; text-align:center; padding:3px 9px; border-radius:99px;
-    background:var(--v-cyan-soft); border:1px solid var(--v-cyan-line); color:var(--v-cyan); font-size:11px;
+    display:inline-block; min-width:30px; text-align:center; padding:3px 9px; border-radius:var(--v-r-sm);
+    background:var(--v-cyan-soft); border:1px solid var(--v-cyan-line); color:var(--v-cyan); font-size:var(--v-fs-lbl);
   }
   .lib-openbtn svg{ transition:transform .15s; }
   .lib-row:hover .lib-openbtn{ color:var(--v-accent); border-color:var(--v-line2); }
@@ -770,14 +770,14 @@
   .lib-detail-head{ display:flex; align-items:baseline; gap:12px; min-width:0; flex:1; }
   .lib-detail-title{ font-family:var(--f-head); font-size:22px; font-weight:700; color:var(--v-txt); line-height:1.1;
     overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .lib-detail-date{ font-size:12px; color:var(--v-faint); flex-shrink:0; }
+  .lib-detail-date{ font-size:var(--v-fs-b1); color:var(--v-faint); flex-shrink:0; }
   .lib-detail-actions{ display:flex; align-items:center; gap:12px; flex-shrink:0; }
-  .lib-detail-count{ font-size:11px; color:var(--v-dim); }
+  .lib-detail-count{ font-size:var(--v-fs-lbl); color:var(--v-dim); }
 
-  .lib-exportmsg{ font-size:11px; color:var(--v-emerald); word-break:break-word; margin-top:-8px; }
+  .lib-exportmsg{ font-size:var(--v-fs-lbl); color:var(--v-emerald); word-break:break-word; margin-top:-8px; }
   /* Rose, not amber: nothing on this screen is on air, and amber is never spent
      on anything that is not. Armed reads as a warning, not as a live state. */
-  .lib-delmsg{ font-size:11px; color:var(--v-rose); word-break:break-word; margin-top:-8px; }
+  .lib-delmsg{ font-size:var(--v-fs-lbl); color:var(--v-rose); word-break:break-word; margin-top:-8px; }
   .lib-del{ color:var(--v-rose); }
   /* `--v-ink` was never defined, so this resolved to `unset` — and `color` is
      inherited, so the ARMED half of a two-step delete drew --v-txt (#e8eaee) on
@@ -786,7 +786,7 @@
   .lib-del.arm{ background:var(--v-rose); color:var(--v-inverse); }
   /* `r-mono` is gone: it now carries a humanised sentence, and monospace is what
      made the old raw-error dumps read like a crash to a volunteer. */
-  .lib-detailerr{ font-size:12px; color:var(--v-rose); }
+  .lib-detailerr{ font-size:var(--v-fs-b1); color:var(--v-rose); }
 
   .lib-detail-grid{ display:grid; grid-template-columns:1fr 340px; gap:16px; align-items:start; }
   .lib-collabel{ margin-bottom:10px; }
@@ -796,9 +796,9 @@
   .lib-collabel-row{ display:flex; align-items:baseline; gap:8px; }
   .lib-collabel-row .spring{ flex:1; }
   .lib-hits{ font-size:10px; color:var(--v-faint); }
-  .lib-tsearch{ margin:8px 0 10px; height:34px; font-size:12.5px; }
+  .lib-tsearch{ margin:8px 0 10px; height:34px; font-size:var(--v-fs-h3); }
   .lib-ttext :global(mark){ background:var(--v-accent-soft); color:var(--v-accent2);
-    border-radius:3px; padding:0 2px; }
+    border-radius:var(--v-r-sm); padding:0 2px; }
   .lib-detect-conf.muted{ color:var(--v-faint); }
 
   .lib-tline{ margin-bottom:12px; }
@@ -824,7 +824,7 @@
   .lib-pager{ display:flex; align-items:center; justify-content:space-between; gap:14px; padding:4px 6px; }
   .lib-pager .r-mono{ font-size:10.5px; color:var(--v-faint); }
   .pg{ display:flex; align-items:center; gap:8px; }
-  .pgnum{ font-size:11px; color:var(--v-dim); }
+  .pgnum{ font-size:var(--v-fs-lbl); color:var(--v-dim); }
   .pgbtn{ width:32px; height:32px; display:grid; place-items:center; border-radius:8px; cursor:pointer;
     background:var(--v-surf2); border:1px solid var(--v-line); color:var(--v-dim); }
   .pgbtn:hover:not(:disabled){ color:var(--v-accent); border-color:var(--v-line2); }

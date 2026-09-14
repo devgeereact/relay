@@ -1392,10 +1392,10 @@
   .sp-arropt:hover{ border-color:var(--v-accent); background:var(--v-accent-soft); }
   /* Rose, never amber: this is a thing that is wrong, not a thing that is live
      (DECISIONS §22). */
-  .sp-arropt.stale{ border-color:var(--v-rose,#e0526a); opacity:.75; cursor:not-allowed; }
-  .sp-arropt.stale:hover{ border-color:var(--v-rose,#e0526a); background:transparent; }
-  .sp-arrstale{ font-size:var(--v-fs-lbl); color:var(--v-rose,#e0526a); }
-  .sp-chip.stale{ color:var(--v-rose,#e0526a); border-color:currentColor; }
+  .sp-arropt.stale{ border-color:var(--v-rose); opacity:.75; cursor:not-allowed; }
+  .sp-arropt.stale:hover{ border-color:var(--v-rose); background:transparent; }
+  .sp-arrstale{ font-size:var(--v-fs-lbl); color:var(--v-rose); }
+  .sp-chip.stale{ color:var(--v-rose); border-color:currentColor; }
   .sp-arroptname{ font-weight:600; font-size:var(--v-fs-b1); }
   .sp-arroptseq{ font-size:var(--v-fs-cap); letter-spacing:.03em; color:var(--v-faint);
     white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
