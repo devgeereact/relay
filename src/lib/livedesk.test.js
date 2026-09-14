@@ -658,19 +658,58 @@ describe('L2 · the slides head says what it is and what a press does', () => {
   // ITEM 9. The view controls were the loudest thing in a browsing rail whose
   // whole job is finding a verse, and the prototype's rail carries nothing of the
   // kind. They moved to the head of the pane they actually reclaim space for.
-  // NOTHING WAS DELETED — that is the distinction `qa-inventory` exists to
-  // police, so this asserts the names as well as the place.
-  it('the density and full-screen controls left the rail and are still reachable', async () => {
+  //
+  // T2: the pair became ONE. `Normal | Compact` was removed on the operator's
+  // instruction, and this test's real subject is the PLACE, so it keeps that and
+  // narrows its claim rather than being deleted with the control.
+  it('the full-screen control left the rail and is still reachable', async () => {
     new Live({ target: host, props: {} });
     await settle();
     // Gone from the rail column.
     expect(host.querySelector('.rail-col .view-ctl')).toBeNull();
-    // Present on the slides head, all three, with their names intact.
+    // Present on the slides head, with its name intact.
     const ctl = host.querySelector('.sg-head .view-ctl');
     expect(ctl).not.toBeNull();
     expect([...ctl.querySelectorAll('button')].map((b) => b.textContent.trim()))
-      .toEqual(['Normal', 'Compact', 'Full screen']);
-    expect(ctl.querySelector('.seg').getAttribute('aria-label')).toBe('Console density');
+      .toEqual(['Full screen']);
+  });
+
+  // ── THE DENSITY CONTROL IS DELETED, NOT HIDDEN (T2) ──────────────────────
+  //
+  // A removal pass is exactly where a control goes missing instead of going
+  // away: the segment stops rendering, the handler and the CSS stay, and the
+  // next reader finds half a feature and cannot tell which half was intended.
+  // So this asserts the absence on all four surfaces at once — the markup, the
+  // script, the stylesheet, and the persisted session key that fed it.
+  it('nothing of the density control is left behind', async () => {
+    new Live({ target: host, props: {} });
+    await settle();
+    // No segment on the slides head, and no density group anywhere.
+    //
+    // NOT a bare `.seg` query, and the reason is worth writing down: `LiveRail`
+    // renders `class="seg lr-seg"`, a vestigial token that matches no rule in
+    // the app — Svelte scopes styles per component, so Live's `.seg` never
+    // reached the rail, which is why the rail has its own `.lr-seg` rules. A
+    // bare query here would fail on the rail's collection switch and say
+    // nothing about the control this test is actually about.
+    expect(host.querySelector('.sg-head .seg')).toBeNull();
+    expect(host.querySelector('[aria-label="Console density"]')).toBeNull();
+    const labels = [...host.querySelectorAll('button')].map((b) => b.textContent.trim());
+    expect(labels).not.toContain('Compact');
+    expect(labels).not.toContain('Normal');
+    // …and the root no longer carries the class those rules hung off.
+    expect(host.querySelector('.con.compact')).toBeNull();
+
+    // The source, because a dead rule renders as nothing and asserting on the
+    // DOM alone cannot tell "removed" from "never matched".
+    const src = readFileSync(resolve(__dirname, 'views/Live.svelte'), 'utf8');
+    expect(src).not.toMatch(/\$session\.liveDensity/);
+    expect(src).not.toMatch(/setDensity/);
+    // Both names survive in PROSE about their removal — that is the point of
+    // the prose — so these look for a RULE: the name at the start of a line,
+    // which is the only place a selector can begin in this stylesheet.
+    expect(src).not.toMatch(/^\s*\.con\.compact[\s{:]/m);
+    expect(src).not.toMatch(/^\s*\.seg[\s{:]/m);
   });
 });
 

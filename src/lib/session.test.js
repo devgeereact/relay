@@ -212,3 +212,70 @@ describe('a tab that moved sends the operator where it went', () => {
     expect(migrateSession(chosen)).toEqual(chosen);
   });
 });
+
+
+// ── A SETTING THAT WAS DELETED, NOT MOVED (T2) ──────────────────────────────
+//
+// `liveDensity` backed Live's `Normal | Compact` segment, removed on the
+// operator's instruction. A key with no reader is not inert here: the store's
+// subscriber writes the whole object back to localStorage on every change, so
+// an un-dropped key is re-persisted for the life of the install and reads, to
+// the next person, as a setting somebody forgot to wire up. `migrateSession`
+// drops it — the same door `MOVED_TABS` uses, because it is already applied to
+// every load and already cannot be skipped on the corrupt-payload path.
+describe('a density that no longer exists is dropped, not carried', () => {
+  beforeEach(() => localStorage.clear());
+
+  const read = (store) => {
+    let v;
+    store.subscribe((s) => (v = s))();
+    return v;
+  };
+
+  it('drops a density a saved session still carries', async () => {
+    const { migrateSession } = await import('./session.js?dens1');
+    const out = migrateSession({
+      activeTab: 'live',
+      templatesDesk: 'templates',
+      liveDensity: 'compact',
+    });
+    expect('liveDensity' in out).toBe(false);
+    // Everything else about that session is untouched — this is a deletion, not
+    // a reset, and an operator mid-service keeps their place.
+    expect(out).toEqual({ activeTab: 'live', templatesDesk: 'templates' });
+  });
+
+  it('drops it on the moved-tab path too, which is the SECOND return', async () => {
+    // Two returns, and fixing one while leaving the other is the exact shape of
+    // "a guarantee is only kept on the doors you checked".
+    const { migrateSession } = await import('./session.js?dens2');
+    const out = migrateSession({ activeTab: 'themes', liveDensity: 'compact' });
+    expect('liveDensity' in out).toBe(false);
+    expect(out.templatesDesk).toBe('themes');
+  });
+
+  it('a stored density does not survive a real load', async () => {
+    // The end-to-end claim: what the app is handed, through the same
+    // localStorage a running install reads.
+    localStorage.setItem(
+      'relay.session.v1',
+      JSON.stringify({ activeTab: 'live', liveCueId: 'c7', liveDensity: 'compact' }),
+    );
+    const { session } = await import('./session.js?dens3');
+    const s = read(session);
+    expect('liveDensity' in s).toBe(false);
+    // The resume point itself is NOT collateral damage.
+    expect(s.liveCueId).toBe('c7');
+    // …and the subscriber has already written the cleaned object back, so the
+    // key does not come round again on the next boot.
+    expect(JSON.parse(localStorage.getItem('relay.session.v1')))
+      .not.toHaveProperty('liveDensity');
+  });
+
+  it('EMPTY does not reintroduce it', async () => {
+    // `load()` merges over EMPTY, so a key left in EMPTY would be re-added to
+    // every session by the merge and the drop would be undone one line later.
+    const { session } = await import('./session.js?dens4');
+    expect('liveDensity' in read(session)).toBe(false);
+  });
+});

@@ -1360,18 +1360,23 @@
   let channels = [];
 
   // ── §4 presentation modes ────────────────────────────────────────────────
-  // COMPACT is a density change, not a different screen: the same panels, the
-  // same controls, tighter. It exists because the reference console assumes a
-  // wide desk monitor and a great many church booths are a 13" laptop, where the
-  // bottom row scrolls out of sight — and the bottom row is where the transport
-  // and the panic controls live.
+  // FULL SCREEN is the one that is left. A `Normal | Compact` density switch sat
+  // beside it and was removed on the operator's instruction: it changed spacing
+  // and type only, never which controls existed, so it was a preference about
+  // padding sitting on the surface a service is run from. Full screen earns its
+  // place there because it reclaims the whole chrome, which is a different
+  // amount of room entirely.
   //
-  // Nothing is REMOVED in compact. A run surface that hides a control at small
-  // sizes hides it at exactly the moment the operator is most cramped and most
-  // rushed; this only tightens spacing and type.
-  $: compact = $session.liveDensity === 'compact';
+  // WHAT WENT WITH IT, stated rather than glossed: compact shrank `.con-top`'s
+  // clamp, and at a 1366x768 booth laptop that gave the slides grid 298px where
+  // it now gets 226px. Nothing became unreachable — `.pane-body` scrolls, the
+  // panic controls are in the dock, and the take rack is `align-self:start`, so
+  // it sizes to its own content either way — but a booth on a small screen now
+  // scrolls the grid a little sooner. The clamp was deliberately NOT retuned to
+  // compensate: that would shrink Preview and Program for every operator to pay
+  // for a setting one of them used to choose, and it is a design change nobody
+  // asked for. Measured in the T2 review note.
   $: fullscreen = !!$session.liveFullscreen;
-  const setDensity = (d) => setSession({ liveDensity: d });
   const setFullscreen = (v) => setSession({ liveFullscreen: v });
 
   // §5 INSPECTOR. The claim panel has room for the verdict; the reasoning needs
@@ -1408,7 +1413,7 @@
      audio scrub, a monitor bus), it is NOT drawn: a dead button in a live console
      is the exact failure this codebase keeps fixing. (The transition rack has
      since come off that list for a different reason — see the rack itself.) -->
-<div class="con" class:compact class:fullscreen>
+<div class="con" class:fullscreen>
   <!-- ══ REHEARSAL ══
        Unmissable, or it is worse than useless. Both ways of being wrong about this
        are bad, in opposite directions: rehearsing when you think you are live means
@@ -1730,18 +1735,20 @@
         {#if openPlan}
           <button class="mini ghost" on:click={leave} title="Stop running {openPlan.title}">Close plan</button>
         {/if}
-        <!-- THE VIEW CONTROLS LIVE HERE NOW (L2), not in the browsing rail.
-             They change how the console LOOKS and never what reaches a screen,
-             and in the rail they were the loudest thing in a column whose whole
-             job is finding a verse — the prototype's rail carries nothing of the
-             kind. This head is where they belong: the grid is the surface both
-             of them actually reclaim space for. Nothing was removed and no
-             accessible name changed, so `qa-inventory` still finds all three. -->
+        <!-- THE VIEW CONTROL LIVES HERE NOW (L2), not in the browsing rail.
+             It changes how the console LOOKS and never what reaches a screen,
+             and in the rail it was among the loudest things in a column whose
+             whole job is finding a verse — the prototype's rail carries nothing
+             of the kind. This head is where it belongs: the grid is the surface
+             it actually reclaims space for.
+             THERE WAS A SECOND ONE HERE, a `Normal | Compact` density segment,
+             removed on the operator's instruction (T2). The wrapper stays: it
+             is the named slot for the view controls, and `Full screen` is one.
+             This is a DELETION, not a hidden control — the handler, the session
+             key and every `.con.compact` rule went with it, so there is nothing
+             left for `qa-inventory` to find and nothing for a future reader to
+             mistake for a preference somebody forgot to wire up. -->
         <div class="view-ctl">
-          <div class="seg" role="group" aria-label="Console density">
-            <button class:on={!compact} on:click={() => setDensity('normal')}>Normal</button>
-            <button class:on={compact} on:click={() => setDensity('compact')}>Compact</button>
-          </div>
           <button class="view-fs" on:click={() => setFullscreen(!fullscreen)}>
             {fullscreen ? 'Show tabs' : 'Full screen'}
           </button>
@@ -2123,38 +2130,21 @@
     text-decoration:underline; }
   .inspect-link:hover{ filter:brightness(1.15); }
 
-  /* ── §4 view controls + compact density ──
-     Sized DOWN when they moved into the slides head (L2): in the rail they were
-     the column's largest controls, and on a pane head they have to sit beside a
-     caption without out-shouting it. Same three controls, same names. */
+  /* ── §4 the view control ──
+     Sized DOWN when it moved into the slides head (L2): in the rail it was among
+     the column's largest controls, and on a pane head it has to sit beside a
+     caption without out-shouting it.
+
+     A `.seg` segmented control sat beside it and is GONE with the compact
+     density it drove (T2). Its rules went too rather than being left as dead
+     weight — `.seg` was declared here and matched nothing else: `LiveRail`'s
+     collection switch is `.lr-seg`, its own class with its own rules, because
+     Svelte scopes a component's styles and this `.seg` never reached it. */
   .view-ctl{ flex:0 0 auto; display:flex; align-items:center; gap:5px; }
-  .seg{ display:flex; border:1px solid var(--v-line2); border-radius:var(--v-r-sm); overflow:hidden; }
-  .seg button{ padding:3px 8px; background:var(--v-surf); border:0; cursor:pointer;
-    font-family:var(--f-body); font-size:10px; font-weight:600; color:var(--v-faint); }
-  .seg button.on{ background:var(--v-accent-soft); color:var(--v-accent2); }
-  .seg button:not(.on):hover{ color:var(--v-dim); }
   .view-fs{ height:22px; padding:0 8px; border-radius:var(--v-r-sm); cursor:pointer;
     background:var(--v-surf); border:1px solid var(--v-line2); color:var(--v-faint);
     font-family:var(--f-body); font-size:10px; font-weight:600; }
   .view-fs:hover{ color:var(--v-txt); border-color:var(--v-accent-line); }
-
-  /* COMPACT — spacing and type only. Nothing is hidden: see the note in the
-     script block. Panels keep every control they have at normal density. */
-  .con.compact{ gap:9px; }
-  /* The actual density win: give the BOTTOM row its space back. The top row is a
-     fixed clamp, so on a 13" booth laptop it eats a third of the window and the
-     bottom row — transcript, detections, plan, and the transport — is squeezed
-     into whatever is left. Panels scroll internally (.pane-body), so nothing was
-     ever unreachable; compact just stops making the operator scroll for the
-     controls they use most. */
-  .con.compact :global(.con-top){ height:clamp(196px,24vh,268px); }
-  .con.compact :global(.desk){ gap:6px; }
-  /* Full screen has already reclaimed the chrome, so the exit affordance sits
-     where the view controls would be. Keep clear of it rather than under it. */
-  .con.compact :global(.pane){ border-radius:10px; }
-  .con.compact :global(.pane-head){ padding:8px 11px; }
-  .con.compact :global(.pane-head h2){ font-size:var(--v-fs-lbl); }
-  .con.compact :global(.pane-body){ padding:10px 11px; }
 
   .con{
     height:100%; min-height:0; display:flex; flex-direction:column;
@@ -2195,6 +2185,14 @@
      both below the size at which a rendered slide is recognisable. The screens
      now live in the workspace's own inspector column (`.insp-col`), beneath the
      AI's claims — the whole column is 286px, as measured in the prototype. */
+  /* THIS CLAMP IS NOW THE ONLY ONE. A compact density used to override it to
+     clamp(196px,24vh,268px); with that control deleted (T2) every operator gets
+     the figures below, which at 1366x768 is 268px here and 226px for the grid
+     under it. Nothing is unreachable at that size — `.pane-body` scrolls, the
+     panic controls are in the dock, and `.rack` is `align-self:start` so it
+     sizes to its own content — but a small booth screen reaches the grid's
+     scrollbar sooner than it used to. Retuning this to compensate would shrink
+     Preview and Program for everybody, so it was left alone deliberately. */
   .con-top{flex:0 0 auto; height:clamp(268px,33vh,364px);
     display:grid; grid-template-columns:1fr 118px 1fr; gap:var(--v-sp-sm); min-height:0}
 
@@ -2225,9 +2223,9 @@
      full-screen button forced to a second one — all of which existed because
      three controls do not fit across a browsing rail. On a pane head they do,
      so the rules went with them rather than being carried as dead weight. The
-     measurement they recorded is kept in the review note: the row wanted 135px
-     inside 114px and `Compact` was clipped to `Compa`, which is why they may
-     never go back into a column that narrow. */
+     measurement they recorded is kept here because it is the reason nothing of
+     this kind goes back into a column that narrow: the row wanted 135px inside
+     114px and the (since-deleted) `Compact` button was clipped to `Compa`. */
 
   .pane{display:flex; flex-direction:column; min-height:0; overflow:hidden;
     background:var(--v-surf); border:1px solid var(--v-line); border-radius:var(--v-r-lg);
