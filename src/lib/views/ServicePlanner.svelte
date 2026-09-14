@@ -747,7 +747,7 @@
                  evening building. -->
             <ErrorState error={$readErrors.planItems} onRetry={loadItems} />
           {:else}
-            <div class="sp-drop r-mono">Empty plan — use ＋ Add Cue.</div>
+            <div class="sp-drop r-mono">Empty plan — use ＋ Add cue.</div>
           {/if}
         </div>
       {:else}
