@@ -1,4 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest';
+import { tick } from 'svelte';
 import TemplateRender from './TemplateRender.svelte';
 
 // WHAT THE FIT LOOP CANNOT SEE, IT CANNOT SHRINK — AND CANNOT REPORT.
@@ -191,22 +192,32 @@ describe('ticker mode is measured', () => {
   });
 
   it('shrinks the label and reports the real scale, instead of the untouched 1', async () => {
-    // jsdom lays out nothing, so `.ticker`'s `clientWidth` and the label's
-    // `scrollWidth` both read 0 by default — `fitTicker` bails out at
-    // `budget <= 0` before ever touching the label, same as the unfixed code,
-    // and this case alone would prove nothing. Force real geometry instead, the
-    // same way `cardfit.test.js`'s `clipBoxes` forces an overflow onto `.ltext`:
-    // a 200px band caps the label's budget at 90px (45%), and a label stubbed to
-    // 500px is well past it.
+    // jsdom lays out nothing, so the label's `clientWidth` and `scrollWidth`
+    // both read 0 by default — `fitTicker` bails out at `budget <= 0` before
+    // ever touching the label, same as the unfixed code, and this case alone
+    // would prove nothing. Force real geometry instead, the same way
+    // `cardfit.test.js`'s `clipBoxes` forces an overflow onto `.ltext`.
+    //
+    // RULING 2 covered: `fitTicker` now reads the budget straight off the
+    // label's OWN `clientWidth` (the box `.ticker-label { max-width: 45% }`
+    // genuinely constrains in a real browser), not a JS-recomputed
+    // `band.clientWidth * 0.45` — so the stub sits directly on the element
+    // whose box the stylesheet actually caps.
+    //
+    // RULING 1 also touches this case: the base is now `refSize / 100 *
+    // stageEl.clientWidth` (the template's declared size), not a computed
+    // style read-back, so `.stage`'s own `clientWidth` needs a real value too
+    // or the base is 0 and `fitTicker` never gets past its own `!base` guard.
     let seen = null;
     const container = mount({
       template: noticeTemplate,
       content: { kind: 'announce', reference: 'THIS SUNDAY', text: 'Church picnic after the second service.' },
       onFit: (info) => (seen = info),
     });
-    const band = container.querySelector('.ticker');
+    const stage = container.querySelector('.stage');
     const label = container.querySelector('.ticker-label');
-    Object.defineProperty(band, 'clientWidth', { value: 200, configurable: true });
+    Object.defineProperty(stage, 'clientWidth', { value: 1000, configurable: true });
+    Object.defineProperty(label, 'clientWidth', { value: 90, configurable: true });
     Object.defineProperty(label, 'scrollWidth', { value: 500, configurable: true });
     // A label that never satisfies `overflowing` keeps re-fitting up to
     // `MAX_REFIT` (font-readiness retries included), each retry adding its own
@@ -218,8 +229,76 @@ describe('ticker mode is measured', () => {
     ).toBe(true);
     expect(
       seen?.scale,
-      'a label overflowing its 45% budget must pull the reported scale down from the untouched 1'
+      'a label overflowing its CSS-capped budget must pull the reported scale down from the untouched 1'
     ).toBeLessThan(1);
+  });
+
+  it('regrows toward the declared size on a later, wider pass instead of ratcheting down from its own last write', async () => {
+    // RULING 1's reproduction. `fitSig()` folds the stage's rounded w×h into
+    // every region-mode signature (`:469` in the brief's line numbering), and
+    // the label is NOT rebuilt for a geometry-only change — `{#key slideKey}`
+    // keys on content, not size — so an ordinary window RESIZE with the same
+    // announcement on screen still calls `fitText()` → `fitTicker()` again for
+    // the very same `<span>`.
+    //
+    // A STATIC `scrollWidth` stub (as used above) cannot distinguish a
+    // growback fix from a ratchet: it never changes when the applied
+    // font-size does, so a second pass has nothing real to react to either
+    // way. This one uses a GETTER that recomputes from the label's OWN
+    // current inline font-size — real text does exactly this — so each pass
+    // is a genuine shrink-to-fit convergence, and only the source of "the
+    // declared size" (the template's `refSize`, vs. the DOM's last write)
+    // can tell the two implementations apart.
+    const CHARS_WIDTH_PER_PX = 40; // an arbitrary but consistent glyphs-per-px stand-in
+    let seen = null;
+    const content = { kind: 'announce', reference: 'THIS SUNDAY', text: 'Church picnic after the second service.' };
+    const container = mount({
+      template: noticeTemplate,
+      content,
+      onFit: (info) => (seen = info),
+    });
+    const stage = container.querySelector('.stage');
+    const label = container.querySelector('.ticker-label');
+    Object.defineProperty(label, 'scrollWidth', {
+      configurable: true,
+      get() {
+        return CHARS_WIDTH_PER_PX * (parseFloat(label.style.fontSize) || 0);
+      },
+    });
+
+    // PASS 1 — a narrow stage. `noticeTemplate`'s `refSize` is `'2'`, so the
+    // declared base is 2px there; the label's CSS-capped budget (45% of a
+    // narrow band) is stubbed to 45px, well under the label's natural 80px
+    // (`40 × 2`) at that base, so a real shrink is forced.
+    Object.defineProperty(stage, 'clientWidth', { value: 100, configurable: true });
+    Object.defineProperty(stage, 'clientHeight', { value: 60, configurable: true });
+    Object.defineProperty(label, 'clientWidth', { value: 45, configurable: true });
+    await settle(600);
+    const firstPx = parseFloat(label.style.fontSize);
+    expect(seen?.scale, 'the first, narrow pass must have shrunk the label').toBeLessThan(1);
+    expect(
+      firstPx,
+      'a real shrink-to-fit convergence must land at or under the 45px budget'
+    ).toBeLessThanOrEqual(45);
+
+    // PASS 2 — the SAME announcement, a much wider stage (an operator
+    // widening an OBS source back out mid-service). Re-setting `content` to a
+    // NEW object carrying the SAME field values changes nothing `slideKey`
+    // reads — the `<span>` stubbed above is not rebuilt, which is the whole
+    // point — but it does trigger Svelte's own update cycle, which is what
+    // schedules the next `runFit`. The stage's new, much larger w×h is what
+    // actually moves `fitSig()` and forces that next fit to happen at all.
+    Object.defineProperty(stage, 'clientWidth', { value: 1000, configurable: true });
+    Object.defineProperty(stage, 'clientHeight', { value: 600, configurable: true });
+    Object.defineProperty(label, 'clientWidth', { value: 450, configurable: true });
+    app.$set({ content: { ...content } });
+    await tick();
+    await settle(600);
+    const secondPx = parseFloat(label.style.fontSize);
+    expect(
+      secondPx,
+      'a widened band must grow the label back toward its declared size, not stay pinned to its previous px write'
+    ).toBeGreaterThan(firstPx * 2);
   });
 
   it('queries the ticker label as a fit box', () => {
@@ -231,13 +310,23 @@ describe('ticker mode is measured', () => {
     expect(container.querySelector('.slide .content'), 'ticker renders instead of .content').toBeFalsy();
   });
 
-  it('adds the label to fitBoxes(), so overflowing() can see it even when fitTicker itself is a no-op', async () => {
-    // `fitTicker` bails out at `budget <= 0` when the band has no measurable
-    // width (jsdom's default) and never touches the label at all — that path
-    // alone would prove nothing about `fitBoxes()`. Isolate the OTHER half of
-    // Step 3: `overflowing()` (which drives `verifyFit`'s `clipped` verdict and
-    // the late re-look) reads `fitBoxes()`, so a label stubbed to overflow its
-    // OWN box can only be seen if `fitBoxes()` actually queries `.ticker-label`.
+  it('adds the label to fitBoxes(), so overflowing() can see a genuinely CSS-capped label even when fitTicker itself never touches it', async () => {
+    // RULING 2 covered, the `fitBoxes()` half specifically. `fitTicker`'s own
+    // budget check is `label.clientWidth` (Ruling 2), and jsdom leaves that at
+    // its default 0 with nothing stubbed — so `budget <= 0` bails before
+    // `fitTicker` ever writes to the label, isolating the OTHER half of
+    // Step 3 cleanly: `overflowing()` (which `verifyFit` reads to decide the
+    // `clipped` verdict) is built from `fitBoxes()`, so a label whose own box
+    // overflows can only be SEEN there if `fitBoxes()` actually queries
+    // `.slide .ticker-label`.
+    //
+    // The stubbed `scrollWidth` against an unstubbed (0) `clientWidth` is
+    // exactly the shape `.ticker-label`'s own `max-width: 45%; overflow:
+    // hidden` (Ruling 2's CSS) makes a real browser produce for a label wider
+    // than its cap — not a state the CSS cannot reach, the way an uncapped
+    // `flex: 0 0 auto` label (where `clientWidth` always equals `scrollWidth`)
+    // used to make this unreachable in production, which was this test's
+    // original defect.
     let seen = null;
     const container = mount({
       template: noticeTemplate,
@@ -246,7 +335,6 @@ describe('ticker mode is measured', () => {
     });
     const label = container.querySelector('.ticker-label');
     Object.defineProperty(label, 'scrollWidth', { value: 500, configurable: true });
-    Object.defineProperty(label, 'clientWidth', { value: 50, configurable: true });
     await settle(600);
     expect(
       seen?.clipped,

@@ -360,21 +360,44 @@
    * 1, which is the "fit loop with no notion of failure" of rule 37 with the
    * loop removed entirely.
    *
-   * The label is what is worth measuring: it is `nowrap`, so it never wraps and
-   * never clips, it simply takes the width. Cap it at 45% of the band and shrink
-   * it on the same 0.95 curve every other box uses, so one long label cannot
-   * leave the body with nothing to scroll through. The body itself is
-   * deliberately NOT shrunk: it scrolls, so its length is time, not overflow.
+   * THE BUDGET IS A CSS FACT. `.ticker-label`'s own `max-width: 45%` and
+   * `overflow: hidden` are the one source for the label's share of the band
+   * (see the stylesheet) — `label.clientWidth` is therefore already the real,
+   * constrained box a browser paints, so it is what gets measured, not a
+   * second JS computation (`band.clientWidth * 0.45`) that could drift from
+   * the rule that actually clips.
+   *
+   * THE BASE IS THE TEMPLATE'S DECLARED SIZE, READ FRESH EVERY PASS — never
+   * the DOM's last write. `refSize` is cqw, 1% of `stageEl`'s inline size
+   * (`container-type: size` — the same fact `fitOne`'s own comment relies on
+   * for the box share above), so converting it to the px this loop measures
+   * in is `refSize / 100 * stageEl.clientWidth`. An earlier version of this
+   * function read `getComputedStyle(label).fontSize` instead, which reads
+   * back fitTicker's OWN previous px write on any later pass: `fitSig()`
+   * folds the stage's rounded w×h into every region-mode signature, so an
+   * ordinary window RESIZE with no content change — the label is not
+   * rebuilt; `{#key slideKey}` keys on content, not geometry — still calls
+   * `fitText` → `fitTicker` again for the very same `<span>`. A label shrunk
+   * once during a narrow moment stayed shrunk for the rest of that
+   * announcement even after the window widened back out, because what it
+   * thought was "the declared size" was actually its own last answer.
+   * Recomputing from `refSize` every pass is what lets a widened band grow
+   * the label back — the same ceiling `fitOne` holds via its prop-derived
+   * `vBase`, reached a different way: this loop always starts its search AT
+   * that ceiling rather than seeding a guess and growing up to it.
+   *
+   * The label is what is worth measuring: it is `nowrap`, so it never wraps,
+   * it simply takes the width its cap allows. The body is deliberately NOT
+   * shrunk: it scrolls, so its length is time, not overflow.
    */
-  const TICKER_LABEL_SHARE = 0.45;
   function fitTicker() {
     if (!stageEl) return 1;
     const band = stageEl.querySelector('.ticker');
     const label = stageEl.querySelector('.ticker-label');
     if (!band || !label) return 1;
-    const budget = (band.clientWidth || 0) * TICKER_LABEL_SHARE;
+    const budget = label.clientWidth || 0;
     if (budget <= 0) return 1;
-    const base = parseFloat(getComputedStyle(label).fontSize) || 0;
+    const base = (refSize / 100) * stageEl.clientWidth;
     if (!base) return 1;
     let scale = 1;
     label.style.fontSize = `${base}px`;
@@ -1862,7 +1885,18 @@
     overflow: hidden;
   }
   .ticker-label {
+    /* THE SHARE LIVES HERE, ONLY HERE. A `flex: 0 0 auto; white-space: nowrap`
+       item sizes its own box to its content and clips nothing on its own —
+       only the parent `.ticker`'s `overflow: hidden` did, which clips the
+       whole band, not the label. Without a cap of its own, `clientWidth`
+       always equals `scrollWidth` and `fitTicker`'s shrink loop is measuring
+       a box that can never report itself as overflowing. `max-width: 45%`
+       (against the flex container, i.e. the band) makes the budget a fact a
+       real browser enforces; `fitTicker` reads `clientWidth` off THIS rule
+       rather than recomputing the share in JS, so the two cannot drift apart. */
     flex: 0 0 auto;
+    max-width: 45%;
+    overflow: hidden;
     font-weight: 700;
     white-space: nowrap;
   }
