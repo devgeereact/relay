@@ -20,6 +20,42 @@ every edit: `.claude/hooks/relay-fast-gate.mjs`, path-filtered and report-only (
 
 ## 0. Current inventory
 
+Re-measured **2026-09-15**, on `feat/wave7-timers-templates-stage` (`main` at `7851a79` plus
+Wave 0's Task 1 to Task 4 commits: `ee16b2e`, `d4d67cf`, `02967fd`, `11dbaed`, `5fc7a72`,
+`d42f20a`). `npm run build` ran first, per RG-127: two `channels` tests serve the real `dist/`,
+which is gitignored.
+
+| Count | Value | Command |
+|---|---|---|
+| Rust tests | **752 passed / 0 failed / 16 ignored** | `cd src-tauri && cargo test` |
+| Frontend tests | **2187 passing, 141 files** | `npx vitest run` |
+
+`cargo fmt --all` and `clippy --all-targets -- -D warnings` both clean on the same tree.
+
+Against the row below (748 / 2179): Rust gained 4, not the 2 that Wave 0's own diff (`main` at
+`7851a79` through `d42f20a`) adds by `#[test]` attribute: `channels::tests::every_publisher_in_this_module_has_an_explicit_rehearsal_verdict`
+(Task 1), `e2e::r0_a_picture_reaches_the_wall_and_disarms_the_passage` (Task 2). Task 3 added
+assertions to existing tests, not new ones, so it contributes 0 either way. One more test,
+`db::tests::ensure_tables_calls_the_lower_third_forward_fill`, landed on `main` between the
+previous measurement point (`5387bb3`) and Wave 0's fork point (`7851a79`): outside Wave 0 and
+outside the previous block's own chain below. That accounts for 3 of the 4. The fourth does not
+show up in a `#[test]`-attribute diff of the same range and is recorded here as unreconciled
+rather than explained away: given this file's own record of corrected counts (see the chain
+below), the previous 748 is at least as likely to have been measured wrong as a fourth test is to
+exist unseen by the diff.
+
+Frontend gained 8. Only one new `it(...)` is visible in the same diff: `transport.test.js`'s
+check that every `SCREEN_COMMANDS` name is a command Rust actually registers. Task 3's other
+frontend changes (`crossrefs.test.js`, `hardrules.test.js`) add assertions to existing tests and
+remove a dead list entry (`push_announcement`), not new cases. The remaining 7 are likewise
+recorded as unreconciled rather than explained away.
+
+Neither suite failed and no production code changed in this task. The counts above are what each
+runner's own summary line reported; the two paragraphs above are the reconciliation attempt,
+kept so the next person does not have to redo it from nothing.
+
+---
+
 Re-measured **2026-09-15**, on `rebrand/wave3` **after #75, #76 and #77 merged** — the
 assembled tree, which is the only tree these figures mean anything on. The previous revision of
 this block quoted an agent branch that stopped being the assembled tree the moment those merged,
