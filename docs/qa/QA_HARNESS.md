@@ -20,7 +20,26 @@ every edit: `.claude/hooks/relay-fast-gate.mjs`, path-filtered and report-only (
 
 ## 0. Current inventory
 
-Re-measured **2026-09-14, after the seven-workspace rebrand wave**, on `rebrand/all` with every
+Re-measured **2026-09-15, after the twelve-agent audit wave**, on
+`rebrand/wave5-approved-decisions` — the assembled tree the gates were run on, not any one
+agent's branch. Twelve agents brainstormed read-only and wrote no code; the fixes that followed
+were the lead's, and these are the gates on the result:
+
+| Count | Value | Command |
+|---|---|---|
+| Rust tests | **739 passed / 0 failed / 16 ignored** | `cd src-tauri && cargo test` |
+| Frontend tests | **2152 across 139 files** | `npx vitest run` |
+| `e2e.rs` tests | **62** | `cargo test e2e::` |
+| Registered commands | **139** | `grep -c '#\[tauri::command\]' src-tauri/src/main.rs` |
+| qa-inventory | 139/139 addressed, 0 handlerless, 0 unnamed | `node scripts/qa-inventory.mjs` |
+
+`npm run build`, `cargo fmt --all` and `clippy --all-targets -- -D warnings` all clean on the
+same tree. **The previous measurement is kept below for the chain, and it was stale by 30 Rust
+tests and 548 frontend tests when this replaced it** — which is the register's own point.
+
+---
+
+Measured **2026-09-14, after the seven-workspace rebrand wave**, on `rebrand/all` with every
 workspace branch merged — the tree the integrator ran the gates on, not any one agent's branch.
 Seven agents each quoted a suite total measured on their own worktree (1386 · 1389 · 1395 · 1398 ·
 1400 · 1405 · 1549); **not one of those figures survived the merge**, and the row that matters is
