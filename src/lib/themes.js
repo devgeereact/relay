@@ -478,11 +478,78 @@ export function parseImportedTheme(text) {
 /** A near-empty scripture template used as the CANVAS for theme previews: it
  *  sets only layout, so whatever a preview shows comes from the THEME, not a
  *  competing template style. This is why a theme card looks like the theme. */
+/**
+ * THE PREVIEW IS A LAYER TEMPLATE, BECAUSE THE SHELF IS.
+ *
+ * It was a REGION template, and a region template honours all fourteen keys a
+ * theme sets while `applyTheme` moves only three on a layered one — colour, fill
+ * and typeface, and then only where the layer opted in with a `theme:` token.
+ *
+ * So dragging "Verse size" visibly enlarged this preview and changed nothing on
+ * any template an operator owns. The desk demonstrated a power it does not have,
+ * on the one surface a person uses to judge the theme they are building, and the
+ * rail then listed the setting back to them as a fact about the theme.
+ *
+ * Built from the same primitives the shelf uses, so the preview now shows exactly
+ * what a theme can and cannot move. That is the diagnosis RENDERED rather than
+ * written down: a control that does nothing to a real template now does nothing
+ * here either, which is what makes it findable.
+ *
+ * The five seeded built-ins are still region templates and still honour all
+ * fourteen — those keys are not dead, they are model-specific, and `THEME_KEYS`
+ * below says which is which so the editor can stop implying otherwise.
+ */
 export const THEME_PREVIEW_TEMPLATE = {
   name: 'Theme preview',
-  layout: { regions: ['verse_text', 'reference'], align: 'center', lowerThird: false, refFirst: false },
+  layout: {
+    layers: [
+      { id: 'tp-bg', type: 'background', fill: 'theme:background' },
+      {
+        id: 'tp-verse',
+        type: 'text',
+        bind: 'verse',
+        color: 'theme:verse',
+        font: 'theme:font',
+        size: 5.5,
+        x: 8,
+        y: 24,
+        w: 84,
+        h: 44,
+        align: 'center',
+      },
+      {
+        id: 'tp-ref',
+        type: 'text',
+        bind: 'reference',
+        color: 'theme:reference',
+        font: 'theme:font',
+        size: 2.6,
+        x: 8,
+        y: 72,
+        w: 84,
+        h: 8,
+        align: 'center',
+        fit: 'shrink',
+      },
+    ],
+  },
   style: {},
 };
+
+/**
+ * Which theme keys reach a LAYER template, and which only reach a classic one.
+ *
+ * Nine of the fourteen controls move nothing on the shelf — `applyTheme` resolves
+ * `theme:` tokens on a layer's `color`, `fill` and `font` and has no path for a
+ * size, a line height, an italic, a background treatment or a gap. They are not
+ * dead: the five seeded built-ins are region templates and honour all fourteen.
+ * They are MODEL-SPECIFIC, and the editor said nothing about that.
+ *
+ * DECISIONS §69's rule is that a control saving an intent nobody honours is
+ * removed, not relabelled — but that is not this case. The intent IS honoured, on
+ * some templates. The defect was silence about which, so the answer is to say it.
+ */
+export const LAYER_THEME_KEYS = new Set(['font', 'accent', 'verseColor', 'refColor', 'background']);
 
 /** The sample scripture every theme card/preview renders, matching the template
  *  gallery's sample so the two galleries read as one system. */

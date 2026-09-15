@@ -22,6 +22,7 @@
     THEME_PREVIEW_TEMPLATE,
     THEME_SAMPLE_CONTENT,
     THEME_FONTS,
+    LAYER_THEME_KEYS,
   } from '../../themes.js';
   import { customThemes, loadThemes, saveTheme } from '../../stores/capture.js';
 
@@ -122,6 +123,18 @@
   // two homes is a property you can edit in one place while it is written in
   // another, and the only defence is being able to see which keys are set.
   $: pinned = draft ? KEYS.filter((k) => draft.style[k.key] !== undefined && draft.style[k.key] !== '') : [];
+  /* WHICH TEMPLATES THIS SETTING ACTUALLY REACHES.
+     `applyTheme` resolves `theme:` tokens on a layer's `color`, `fill` and `font`
+     and has no path for a size, a line height, an italic, a background treatment
+     or a gap — so nine of the fourteen move nothing on the shelf. They are not
+     dead controls: the five seeded built-ins are region templates and honour all
+     fourteen. They are MODEL-SPECIFIC, and this rail listed every one of them back
+     as a flat fact about the theme, which is how an operator came to believe they
+     had restyled a shelf they had not touched. DECISIONS §69 removes a control
+     that saves an intent NOBODY honours; this intent is honoured, on some
+     templates, so the fix is to say which. */
+  const reachesLayers = (key) => LAYER_THEME_KEYS.has(key);
+  $: classicOnly = pinned.filter((k) => !reachesLayers(k.key)).length;
 </script>
 
 <!-- THE THEME EDITOR, in the shared workspace grammar (`WorkspaceFrame.svelte`,
@@ -161,6 +174,9 @@
           <div class="te-prow">
             <button class="rw-item r-focus te-pjump" on:click={() => (tab = k.tab)} title="Show {k.label} in the inspector">
               <span class="rw-itemname">{k.label}</span>
+              {#if !reachesLayers(k.key)}
+                <span class="te-classic" title="Relay applies this to classic templates. The looks on the shelf are built from layers, and a theme sets only their ink and typeface.">classic only</span>
+              {/if}
               <span class="te-pv r-mono">{keyValue(k.key, draft.style[k.key])}</span>
             </button>
             {#if !readonly}
@@ -318,6 +334,11 @@
   .te-prow{ display:flex; align-items:stretch; border-bottom:1px solid var(--v-line); }
   .te-pjump{ flex:1; min-width:0; border-bottom:0; padding-right:4px; }
   .te-pjump .rw-itemname{ flex:0 0 auto; }
+  /* Not a warning — the setting works, on classic templates. Neutral, because a
+     law colour here would claim something it does not mean. */
+  .te-classic{ flex:0 0 auto; font-family:var(--f-mono); font-size:var(--v-fs-kind);
+    letter-spacing:.09em; text-transform:uppercase; color:var(--v-faint);
+    border:1px solid var(--v-line2); border-radius:var(--v-r-sm); padding:1px 5px; }
   .te-pv{ flex:1; min-width:0; text-align:right; font-size:var(--v-fs-cap); color:var(--v-faint);
     overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   /* A ROW AFFORDANCE, not a button — B2. The ✕ that clears one theme key, 24px,

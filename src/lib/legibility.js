@@ -232,6 +232,79 @@ export function previewScale(distanceM, referenceM = PREVIEW_DISTANCES_M[0]) {
 export const CAVEAT =
   'These are reference figures — WCAG contrast, and the broadcast rule of thumb for character height. Neither has been checked against a projector in a real church, so treat a warning as worth looking at rather than as a verdict.';
 
+/**
+ * THE LAYER MODEL, AS THE FLAT STYLE THESE CHECKS WERE WRITTEN FOR.
+ *
+ * `checkContrast` and `checkDistance` read `style.verseColor`, `style.refColor`,
+ * `style.background` and `style.verseSize`. In the layer model those live on
+ * layers, and every shipped template leaves `style` EMPTY — all eight shelf
+ * entries carry `style: {}`.
+ *
+ * So the one tool in the product that answers "can the back row read this"
+ * returned `unknown` for ELEVEN OF THIRTEEN shipped templates, including all
+ * three lower thirds and both composites. Worse than inert: `unknown` renders in
+ * the panel's reassuring branch, so a template with a real contrast failure sat
+ * in the same state as one nobody had checked.
+ *
+ * This derives the five values from the layers, by `bind` and `type`, so `review`
+ * can answer. It is deliberately NOT a second set of rules — the thresholds, the
+ * wording and the three-state answer are untouched; only where the numbers come
+ * from has changed.
+ *
+ * Two shapes worth naming:
+ *   · a BAND template (a lower third) has no background layer, because the rest of
+ *     the frame is a camera Relay does not control. The band's own fill IS the
+ *     ground its words sit on, which is exactly what a caption bar is for.
+ *   · the reference resolves the way `TemplateRender` resolves it — its own
+ *     colour, then the band's verse colour on a keyed template, then the accent.
+ *     Reading `style.refColor` alone is why the reference was `unknown` on all
+ *     thirteen, including the two the panel could otherwise answer for.
+ *
+ * A region/composite template is left alone: its words are a real inner template
+ * at a different width, so answering from the outer one would be a guess with a
+ * number on it.
+ */
+export function styleOfTemplate(template = {}) {
+  const layout = template.layout ?? {};
+  const layers = Array.isArray(layout.layers) ? layers_(layout.layers) : null;
+  if (!layers) return template.style ?? {};
+
+  const byBind = (b) => layers.find((L) => L.bind === b && L.type === 'text');
+  const byType = (t) => layers.find((L) => L.type === t);
+
+  const verse = byBind('verse');
+  const ref = byBind('reference');
+  const band = byType('band');
+  const bg = byType('background');
+
+  // A composite's words belong to an inner template; refuse rather than guess.
+  if (byType('region')) return template.style ?? {};
+
+  const ground = band?.fill ?? bg?.fill ?? (template.style ?? {}).background;
+
+  return {
+    ...(template.style ?? {}),
+    verseColor: verse?.color ?? (template.style ?? {}).verseColor,
+    refColor: ref?.color ?? verse?.color ?? (template.style ?? {}).refColor,
+    background: ground,
+    verseSize: verse?.size ?? (template.style ?? {}).verseSize,
+    refSize: ref?.size ?? (template.style ?? {}).refSize,
+  };
+}
+
+/** Visible layers only — a hidden layer is not what a congregation sees. */
+const layers_ = (ls) => ls.filter((L) => L && L.visible !== false);
+
+/**
+ * `review`, for a whole template rather than a flat style blob.
+ *
+ * The one call a surface should make. It adapts the layer model first, so a
+ * caller cannot forget to and quietly get three `unknown`s.
+ */
+export function reviewTemplate(template = {}, content = null, room = {}) {
+  return review(styleOfTemplate(template), content, room);
+}
+
 export function review(style = {}, content = null, room = {}) {
   const verse = checkContrast(style, content, 'verse');
   const reference = checkContrast(style, content, 'ref');
