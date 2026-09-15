@@ -98,7 +98,7 @@ describe('the update channel reports on itself', () => {
     expect(describeChannel(get(updateChannel))).toBe('no update channel in this build');
   });
 
-  it('never checks during a service, and does not overwrite what it last knew', async () => {
+  it('never checks the server during a service — the plugin is never asked again', async () => {
     check.mockResolvedValue(null);
     await checkForUpdate();
     expect(get(updateChannel).state).toBe('ok');
@@ -107,7 +107,33 @@ describe('the update channel reports on itself', () => {
     check.mockRejectedValue(new Error('should never be called'));
     expect(await checkForUpdate()).toBeNull();
     expect(check).toHaveBeenCalledTimes(1);
+  });
+
+  it('a check refused because a service is recording is its own outcome, not a stale success', async () => {
+    // RULE 35. Before this, the refusal returned null WITHOUT recording anything,
+    // so the caller fell back to whatever the last successful check had said —
+    // "up to date" survived unchanged into a button press that never asked the
+    // server anything. One reassuring sentence over two different situations, on
+    // the one path by which a fix reaches a church that already has Relay.
+    check.mockResolvedValue(null);
+    await checkForUpdate();
     expect(get(updateChannel).state).toBe('ok');
+
+    serviceLock.set({ engaged: true });
+    check.mockRejectedValue(new Error('should never be called'));
+    expect(await checkForUpdate()).toBeNull();
+    expect(get(updateChannel).state).toBe('skipped');
+    expect(describeChannel(get(updateChannel))).not.toMatch(/up to date|latest version/i);
+    expect(describeChannel(get(updateChannel))).toMatch(/service/i);
+  });
+
+  it('a check refused because the microphone is live names that reason instead', async () => {
+    capture.update((s) => ({ ...s, capturing: true }));
+    check.mockRejectedValue(new Error('should never be called'));
+    expect(await checkForUpdate()).toBeNull();
+    expect(get(updateChannel).state).toBe('skipped');
+    expect(describeChannel(get(updateChannel))).toMatch(/listening/i);
+    expect(describeChannel(get(updateChannel))).not.toMatch(/service/i);
   });
 });
 

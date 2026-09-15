@@ -667,17 +667,12 @@
     updateMsg = '';
     try {
       const v = await checkForUpdate();
-      // The check can complete without having reached anything. Saying "you're on
-      // the latest version" after a failed check is the same lie the status row
-      // used to tell, moved into a button.
-      const ch = get(updateChannel);
-      updateMsg = v
-        ? `Relay ${v} is available.`
-        : ch.state === 'failed'
-          ? "Relay could not reach the update server, so it does not know whether there is a newer version. This is normal offline — if you are online, the update channel may be broken."
-          : ch.state === 'unavailable'
-            ? 'This build has no update channel.'
-            : "You're on the latest version.";
+      // The button used to compose its own sentence from ch.state here — the
+      // exact second surface rule 35 warns about, and the one that kept printing
+      // "You're on the latest version." about a refusal (mid-service) that never
+      // asked the server anything. `describeChannel` is the ONE place a channel
+      // state becomes words; the button goes through it too, same as the row.
+      updateMsg = v ? `Relay ${v} is available.` : describeChannel(get(updateChannel));
     } catch (e) {
       updateMsg = humanError(e);
     }

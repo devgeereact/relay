@@ -104,12 +104,16 @@ function idle() {
  *
  * `{ state, at, detail }` where `state` is one of:
  *
- *   `unchecked`   — no check has completed this session (or a service was running).
+ *   `unchecked`   — no check has ever completed this session.
  *   `ok`          — the update server answered. `detail` is the version, or ''.
  *   `unavailable` — there is no updater here at all: a browser, a dev build, an
  *                   unsigned build. NOT a fault, and not worth a word to anyone.
  *   `failed`      — a check ran and could not get an answer. Offline is the common
  *                   and harmless reason; a manifest that does not exist is not.
+ *   `skipped`     — a check was ASKED FOR and refused, because the mic is live or
+ *                   a service is recording. `detail` is `'service'` or `'listening'`.
+ *                   A refusal is its own outcome: it must never be read back as
+ *                   whatever the last successful check happened to say.
  *
  * ── Why this store had to exist ──────────────────────────────────────────────
  *
@@ -142,7 +146,16 @@ const noteChannel = (state, detail = '') =>
  * outcome is RECORDED (`updateChannel`) rather than raised.
  */
 export async function checkForUpdate() {
-  if (!idle()) return null;
+  if (!idle()) {
+    // A REFUSAL IS A THIRD OUTCOME, NOT AN ABSENCE. Returning a bare `null` here
+    // let the caller fall back to whatever the LAST successful check had said, so
+    // a button pressed mid-service printed "You're on the latest version." about
+    // a check that never ran — rule 35: if the line reads the same when the thing
+    // behind it did not happen, it is not a status line. The reason names the
+    // same two facts `installUpdate` already distinguishes below.
+    noteChannel('skipped', get(serviceLock).engaged ? 'service' : 'listening');
+    return null;
+  }
   let check;
   try {
     ({ check } = await import('@tauri-apps/plugin-updater'));
@@ -180,6 +193,10 @@ export function describeChannel(ch) {
       return 'could not reach the update server';
     case 'unavailable':
       return 'no update channel in this build';
+    case 'skipped':
+      return ch.detail === 'service'
+        ? 'not checked — a service is being recorded'
+        : 'not checked — Relay is listening';
     default:
       return 'not checked yet';
   }
