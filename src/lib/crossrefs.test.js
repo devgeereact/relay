@@ -147,6 +147,14 @@ describe('RG-67 · every cross-reference resolves', () => {
     const HISTORICAL = /\bdelete[ds]?\b|superseded|supersedes|no longer|not in this repo|is gone|are gone/i;
     const dangling = [];
     for (const [file, text] of FILES) {
+      // `docs/superpowers/` holds specs and plans, not shipped documentation — a
+      // plan's whole job is to describe work that does not exist yet, and a
+      // forward reference to a file a later task will create is not a defect,
+      // it is the plan working as intended. Scoped to THIS check only: a plan
+      // citing a `DECISIONS §N` or an `RG-` id that does not exist is still a
+      // real defect, so those two checks stay global and keep reading this
+      // directory.
+      if (file.startsWith('docs/superpowers/')) continue;
       const lines = text.split('\n');
       const frozen = file.includes('docs/qa/audits/');
       lines.forEach((line, i) => {
