@@ -145,16 +145,25 @@ describe('RG-67 · every cross-reference resolves', () => {
     // reads as "the reasoning is written down over there" and sends the next
     // person looking for it.
     const HISTORICAL = /\bdelete[ds]?\b|superseded|supersedes|no longer|not in this repo|is gone|are gone/i;
+    // The same escape hatch, pointing the other way in time. A plan's whole job is
+    // to describe work that does not exist yet, so a forward reference to a file a
+    // later task creates is the plan working as intended — but it has to SAY so,
+    // exactly as a historical reference does. A blanket skip for
+    // `docs/superpowers/` was the first fix, and it bought accommodation for four
+    // citations of one file while permanently exempting a directory whose header
+    // reads "For agentic workers: REQUIRED SUB-SKILL: implement this plan
+    // task-by-task". That is an instruction file read by something that ACTS on
+    // it, which is the reason `.claude/agents` and `.claude/commands` were brought
+    // INTO this check after RG-68: a dead path there is worse than one in prose,
+    // not better. A genuinely mistyped path in a plan still fails.
+    //
+    // The blanket skip was also narrower than its own rationale said: the RG-87
+    // Markdown-link check below has always been global over `docs/superpowers/`,
+    // so a plan's `[text](path.md)` links already had to resolve while its prose
+    // citations did not. Two checks, one directory, opposite answers.
+    const FORWARD = /\b(a later (task|wave)|this task creates|does not exist yet|will create)\b/i;
     const dangling = [];
     for (const [file, text] of FILES) {
-      // `docs/superpowers/` holds specs and plans, not shipped documentation — a
-      // plan's whole job is to describe work that does not exist yet, and a
-      // forward reference to a file a later task will create is not a defect,
-      // it is the plan working as intended. Scoped to THIS check only: a plan
-      // citing a `DECISIONS §N` or an `RG-` id that does not exist is still a
-      // real defect, so those two checks stay global and keep reading this
-      // directory.
-      if (file.startsWith('docs/superpowers/')) continue;
       const lines = text.split('\n');
       const frozen = file.includes('docs/qa/audits/');
       lines.forEach((line, i) => {
@@ -169,6 +178,7 @@ describe('RG-67 · every cross-reference resolves', () => {
           // register records deletions on purpose, and losing that would be worse.
           const window = lines.slice(Math.max(0, i - 2), i + 3).join(' ');
           if (HISTORICAL.test(window)) continue;
+          if (FORWARD.test(window)) continue;
           dangling.push(`${file}:${i + 1} → ${m[0]}`);
         }
       });

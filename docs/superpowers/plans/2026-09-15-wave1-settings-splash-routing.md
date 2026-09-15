@@ -792,7 +792,7 @@ EOF
 **Why this exists:** Relay already has both realistic routing paths and no document says so, so the question "how do I get this onto the ATEM" has no answer in the repository. The research behind this task is in the spec; this task writes it down where a church can find it.
 
 **Files:**
-- Create: `docs/OUTPUT_ROUTING.md`
+- Create: `docs/OUTPUT_ROUTING.md` — this task creates it; it does not exist yet.
 - Modify: `docs/README.md` — the index
 - Modify: `docs/SPEC.md:25`
 - Modify: `src/lib/views/Channels.svelte` — one helper
@@ -801,7 +801,7 @@ EOF
 - Consumes: `outputurl.js:29` (the one URL builder), `screenKind`/`screenTransport` (`outputHealth.js:473`).
 - Produces: nothing later tasks depend on.
 
-- [ ] **Step 1: Write `docs/OUTPUT_ROUTING.md`**
+- [ ] **Step 1: Write `docs/OUTPUT_ROUTING.md`** — this task creates it.
 
 Four sections, one per case a church actually has, each stating what Relay emits and what the church supplies:
 
@@ -814,7 +814,7 @@ Close with what Relay does **not** do and why: NDI is parked (`open_ndi_output` 
 
 - [ ] **Step 2: Fix the SPEC overstatement**
 
-`docs/SPEC.md:25` claims Relay "talks to OBS, ATEM, and ProPresenter over NDI, HDMI, and the local network." NDI is parked and `open_ndi_output` returns an error. `SPEC.md:151`, `:169`, `:171` and `Settings.svelte:1421` all state it correctly; line 25 does not. Correct it and point at `docs/OUTPUT_ROUTING.md`.
+`docs/SPEC.md:25` claims Relay "talks to OBS, ATEM, and ProPresenter over NDI, HDMI, and the local network." NDI is parked and `open_ndi_output` returns an error. `SPEC.md:151`, `:169`, `:171` and `Settings.svelte:1421` all state it correctly; line 25 does not. Correct it and point at `docs/OUTPUT_ROUTING.md`, which this task creates in Step 1.
 
 - [ ] **Step 3: Add the helper in Outputs**
 
@@ -835,6 +835,7 @@ Expected: PASS.
 
 ```bash
 cd /Users/mrgee/WebstormProjects/relay
+# docs/OUTPUT_ROUTING.md does not exist yet — this task creates it in Step 1.
 git add docs/OUTPUT_ROUTING.md docs/README.md docs/SPEC.md src/lib/views/Channels.svelte
 git commit -F - <<'EOF'
 docs: write down how Relay reaches a projector, an ATEM, OBS and a fourth screen
