@@ -52,14 +52,22 @@
       installMsg = `Installed ${f.label}.`;
     } catch (e) {
       // THROUGH THE ONE HUMANISER, like its six siblings on this surface. This
-      // read `e?.message ?? String(e)`, which renders a Rust error verbatim. The
-      // defect is latent rather than live — `install_from_file`'s own refusals
-      // are already written for a volunteer ("check you copied the whole file")
-      // — but nothing constrains the next one: the command returns
-      // `Result<String, String>`, not the typed `{ kind, message }`, so any
-      // string it ever grows arrives here unfiltered. `humanError` passes an
-      // unrecognised sentence through with a lead-in, so the good copy survives
-      // and the bad copy stops being possible.
+      // read `e?.message ?? String(e)`, which renders a Rust error verbatim.
+      //
+      // AND THE VOLUNTEER COPY SURVIVES, for a reason worth writing down because
+      // it is not obvious and it could be undone by accident. `install_from_file`
+      // itself returns `Result<String, String>`, but the COMMAND wraps it:
+      // `main.rs::install_model_file` ends `.map_err(error::Error::refused)`, so
+      // what crosses the bridge is `{ kind: 'refused', message }`, and
+      // `humanError` returns a refusal's message untouched. That matters more
+      // than it looks. Two of this function's failures interpolate an OS error —
+      // "Could not copy the model: No such file or directory (os error 2)" — and
+      // if the typed wrapper were ever dropped, that bare string matches
+      // `errors.js`'s `/no such file/` pattern and would be REPLACED with "The
+      // speech model is not on this machine yet. Download it from Settings.":
+      // advice to download, in the flow a church uses precisely because it
+      // cannot. `Permission denied` would likewise become firewall guidance.
+      // Pinned by `errors.test.js` — "the offline model install".
       installMsg = humanError(e);
     }
     await refresh();

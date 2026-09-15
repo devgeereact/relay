@@ -186,13 +186,23 @@
   $: crashOn = !!crash.enabled;
   /** Take whatever the backend LANDED on, never what was asked for (rule 15). */
   function acceptCrash(landed) {
-    crash = landed;
+    // Guarded on both halves. `$: crashOn = !!crash.enabled` runs on every
+    // assignment, so a null here takes the whole section down rather than showing
+    // a wrong word.
+    crash = landed ?? { enabled: false, dsn: '' };
     savedDsn = landed?.dsn ?? '';
   }
   async function toggleCrash(enabled) {
     crashMsg = '';
     try {
-      acceptCrash(await setCrashReporting(enabled, crash.dsn));
+      // `savedDsn`, NOT `crash.dsn`. The switch is the operator saying yes to
+      // WHETHER, and it is not their yes to WHERE. Sending the bound field here
+      // let a half-typed address that the page was calling "not saved yet" become
+      // the live destination the moment the switch was flipped — `set_crash_reporting`
+      // persists the string and calls `telemetry::enable` on it in the same breath,
+      // and reports already sent cannot be recalled. Changing the address is
+      // `saveDsn`'s job and has its own button.
+      acceptCrash(await setCrashReporting(enabled, savedDsn));
       crashMsg = crash.enabled
         ? 'Crash reporting on.'
         : enabled
@@ -570,8 +580,11 @@
         outMsgBad = true;
         // The way back is the point. A refusal that only says "refused" leaves an
         // operator with a dead button and no next action.
+        // BOTH PLATFORMS. Relay ships Windows from day one, and this is new copy
+        // whose entire job is telling the operator where to go — a macOS-only
+        // path sends half of them to a menu that does not exist.
         outMsg =
-          'Microphone access was refused, so macOS is still hiding the speaker names. Turn Relay back on in System Settings → Privacy & Security → Microphone, then press Detect speakers again.';
+          'Microphone access was refused, so the speaker names stay hidden. Turn Relay back on — on macOS in System Settings → Privacy & Security → Microphone, on Windows in Settings → Privacy & security → Microphone — then press Detect speakers again.';
       } else if (access.reason === 'no-input') {
         outMsg =
           'This computer has no microphone to ask about, so the speaker names stay hidden. Plug an input in, or leave video sound on the system default.';
@@ -1687,7 +1700,13 @@
              `.s-nvp` at equal specificity, so a failure is still rose. -->
         <div class="rw-nv"><span class="rw-nvk">Update status</span><span class="s-nvp" class:s-netbad={$updateChannel.state === 'failed'}>{describeChannel($updateChannel)}</span></div>
         {#if $updateChannel.state === 'failed'}
-          <div class="rw-nv"><span class="rw-nvk">Last attempt</span><span class="rw-nvv">{$updateChannel.detail || 'no reason given'}</span></div>
+          <!-- The same cell type as the row above, for the same reason: this is an
+               arbitrary backend string, and the measured page had it reading
+               "Cannot read properties of undefined (reading 'invoke')". It renders
+               only when the channel has failed, directly beneath the sentence that
+               was taking the name's width — so both halves of one moment were
+               squeezing their own labels. -->
+          <div class="rw-nv"><span class="rw-nvk">Last attempt</span><span class="s-nvp">{$updateChannel.detail || 'no reason given'}</span></div>
         {/if}
         <div class="s-prose">
           <button class="r-btn primary sm" on:click={doCheckUpdates} disabled={checking}>

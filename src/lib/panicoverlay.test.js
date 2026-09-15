@@ -15,8 +15,10 @@
 //   · `FirstRun.svelte` — same two failures, same measurement, and at the time it
 //     was reachable in one UNGUARDED click from Settings ("Run the setup
 //     walk-through"), over a recorded service. That click is guarded now: the
-//     button is disabled while the microphone is live or a service is recording,
-//     and says why. THAT CHANGES NOTHING THIS FILE HOLDS. The guard narrows when
+//     button is disabled while the microphone is live or the SERVICE LOCK IS
+//     ENGAGED, and says why. (Engaged, not recording: `main.rs` documents at
+//     length that the two are deliberately different — an operator who lifts the
+//     lock has `engaged: false` over a service that is still open.) THAT CHANGES NOTHING THIS FILE HOLDS. The guard narrows when
 //     the wizard can be opened; it does not give the operator back the key or the
 //     button once it is open, and every other route to it — first launch, and safe
 //     mode — is untouched. A door that is harder to open still owes an outcome for

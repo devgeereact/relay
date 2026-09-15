@@ -259,3 +259,122 @@ describe('Settings → Bible translations', () => {
     expect(get(readErrors).listTranslations).toBeTruthy();
   });
 });
+
+// ── SETTINGS → THE SENTRY DSN ───────────────────────────────────────────────
+//
+// The one control in Relay that decides WHERE data leaves the machine, driven
+// rather than scanned. `settingssections.test.js` holds the structure — that a
+// second commit path exists, that the field has no `on:blur`, that `savedDsn` is
+// written from what the backend returned. What it cannot hold is the sequence:
+// type, don't save, read a banner promising the old address is still in force,
+// and have that remain true whatever else is pressed.
+//
+// A Save button was chosen over commit-on-blur because a half-typed address must
+// not become the live destination without a moment where the operator said so.
+// `set_crash_reporting` persists the string AND calls `telemetry::enable` on it
+// in the same breath, and reports already sent cannot be recalled — so every
+// path that reaches that command with something other than the saved address is
+// the same defect wearing a different button.
+describe('Settings → the Sentry DSN', () => {
+  const OLD = 'https://old@o1.ingest.sentry.io/1';
+  const NEW = 'https://new@o2.ingest.sentry.io/2';
+
+  /** Mount Settings with crash reporting ON and an address already in force. */
+  const privacy = async (onSet) => {
+    invoke.mockImplementation((cmd, args) => {
+      if (cmd === 'get_crash_reporting') return Promise.resolve({ enabled: true, dsn: OLD });
+      if (cmd === 'set_crash_reporting') return onSet(args);
+      return Promise.resolve([]);
+    });
+    const el = await mount('./views/Settings.svelte');
+    await press(el, 'Privacy & Advanced');
+    return el;
+  };
+
+  const field = (el) => el.querySelector('#crash-dsn');
+  const type = async (el, value) => {
+    const input = field(el);
+    input.value = value;
+    input.dispatchEvent(new Event('input'));
+    await settle(2);
+  };
+  const setCalls = () =>
+    invoke.mock.calls.filter(([c]) => c === 'set_crash_reporting').map(([, a]) => a);
+
+  it('an edit that has not been saved says so, and commits nothing', async () => {
+    const el = await privacy(() => Promise.resolve({ enabled: true, dsn: OLD }));
+    expect(field(el).value).toBe(OLD);
+
+    await type(el, NEW);
+    expect(text(el)).toMatch(/Not saved yet/);
+    expect(text(el)).toMatch(/still go to the address Relay already has/);
+    expect(setCalls(), 'typing reached the backend').toEqual([]);
+  });
+
+  it('flipping the switch does NOT smuggle the unsaved address through', async () => {
+    // The switch is the operator saying yes to WHETHER, not to WHERE. Sending the
+    // bound field here made the "Not saved yet" banner a lie: the half-typed
+    // address became the live crash-report destination one click later.
+    const el = await privacy((a) => Promise.resolve({ enabled: !a.enabled, dsn: a.dsn }));
+    await type(el, NEW);
+
+    el.querySelector('[role="switch"]').click();
+    await settle();
+
+    expect(setCalls().length).toBe(1);
+    expect(
+      setCalls()[0].dsn,
+      'the switch sent the UNSAVED address. Turning reporting on is not consent ' +
+        'to change where the reports go.',
+    ).toBe(OLD);
+  });
+
+  it('Save address commits it, and the unsaved line goes away', async () => {
+    const el = await privacy((a) => Promise.resolve({ enabled: true, dsn: a.dsn }));
+    await type(el, NEW);
+
+    const save = [...el.querySelectorAll('button')].find((b) => b.textContent.includes('Save address'));
+    expect(save, 'no Save address button').toBeTruthy();
+    save.click();
+    await settle();
+
+    expect(setCalls()).toEqual([{ enabled: true, dsn: NEW }]);
+    expect(text(el)).not.toMatch(/Not saved yet/);
+    expect(text(el)).toMatch(/Saved\./);
+  });
+
+  it('a backend answer with no shape at all does not take the section down', async () => {
+    // `acceptCrash` guards `savedDsn` and used to assign `crash` unguarded, and
+    // `$: crashOn = !!crash.enabled` runs on every assignment — so a null answer
+    // threw inside the reactive statement rather than showing a wrong word. Half
+    // a guard is the kind of thing that only ever fires on the day it matters.
+    const el = await privacy(() => Promise.resolve(null));
+    [...el.querySelectorAll('button')].find((b) => b.textContent.includes('Save address')) ??
+      el.querySelector('[role="switch"]').click();
+    await type(el, NEW);
+    [...el.querySelectorAll('button')].find((b) => b.textContent.includes('Save address')).click();
+    await settle();
+
+    expect(text(el)).toMatch(/Crash reporting/);
+    expect(
+      field(el).value,
+      'the section did not repaint from the backend answer — `crash = landed` on a ' +
+        'null throws inside `$: crashOn = !!crash.enabled`.',
+    ).toBe('');
+  });
+
+  it('a save the backend does not honour leaves the field showing what is in force', async () => {
+    // Rule 15, on the smallest control on the page. If the local copy were taken
+    // from what was ASKED for, the field would show the new address, the banner
+    // would clear, and the engine would go on reporting somewhere else — a
+    // control claiming a success it did not achieve.
+    const el = await privacy(() => Promise.resolve({ enabled: true, dsn: OLD }));
+    await type(el, NEW);
+
+    [...el.querySelectorAll('button')].find((b) => b.textContent.includes('Save address')).click();
+    await settle();
+
+    expect(field(el).value).toBe(OLD);
+    expect(text(el)).not.toMatch(/Not saved yet/);
+  });
+});

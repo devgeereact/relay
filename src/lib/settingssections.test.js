@@ -23,6 +23,10 @@
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
+// A real import, not `require`. This package is `"type": "module"` and CI runs
+// this suite on Node 20, 22 and 24 precisely because runtime differences have
+// bitten here before.
+import { CONTENT_KINDS } from './layers.js';
 
 const ROOT = path.resolve(__dirname, '../..');
 const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
@@ -751,14 +755,19 @@ describe('the update BUTTON goes through describeChannel too — not only the ro
 // ── THE FIVE SMALLER FINDINGS (2026-09-15) ──────────────────────────────────
 //
 // Five controls on this page that did not say what had happened, plus a private
-// copy of a map that has a store. A source scan is the right instrument for four
-// of the six — they are claims about which class, which handler and which region
-// the markup carries — and it is an APPROXIMATION for the DSN one, which is a
-// claim about behaviour over time. That is stated here rather than hidden: what
-// the scan proves is that a second commit path exists and that `savedDsn` is only
-// ever written from what the BACKEND returned. Whether a real edit survives a
-// real re-read is NOT TESTED at this level; nothing in this repository mounts
-// Settings, and a fixture that did would be a fixture of everything.
+// copy of a map that has a store. A source scan is the right instrument for the
+// structural claims below — which class, which handler, which region the markup
+// carries — and it is an APPROXIMATION for the DSN ones, which are claims about
+// behaviour over time.
+//
+// The first version of this paragraph said "nothing in this repository mounts
+// Settings, and a fixture that did would be a fixture of everything". THAT WAS
+// FALSE. `readstates.test.js` mounts `views/Settings.svelte`, presses through to
+// a section and asserts on rendered text, in about four lines — and a false
+// statement in a test file about what can be tested is the exact mechanism that
+// kept the `stopCapture` comment alive. The behavioural half of F-8 lives there,
+// under "Settings → the Sentry DSN": typing without saving, saving, and a save
+// the backend does not honour.
 describe('a Settings control says which of its outcomes happened', () => {
   it('F-3 · Detect speakers reads WHICH failure it was, not a bare false', () => {
     const fn = SCRIPT_ONLY.slice(
@@ -827,6 +836,22 @@ describe('a Settings control says which of its outcomes happened', () => {
     expect(MARKUP_ONLY).toMatch(/on:click=\{saveDsn\}/);
   });
 
+  it('F-8 · the switch commits the SAVED address, never the bound field', () => {
+    // Turning reporting on is the operator's yes to WHETHER, not to WHERE. With
+    // `crash.dsn` here, a half-typed address the page was calling "not saved yet"
+    // became the live destination one click later — and `set_crash_reporting`
+    // calls `telemetry::enable` on it in the same breath. The behavioural half is
+    // in `readstates.test.js`; this is the one-line version that a reader of
+    // `toggleCrash` will see.
+    const fn = SCRIPT_ONLY.slice(
+      SCRIPT_ONLY.indexOf('async function toggleCrash'),
+      SCRIPT_ONLY.indexOf('async function saveDsn'),
+    );
+    expect(fn, 'toggleCrash was not found').toBeTruthy();
+    expect(fn).toMatch(/setCrashReporting\(enabled, savedDsn\)/);
+    expect(fn).not.toMatch(/crash\.dsn/);
+  });
+
   it('F-8 · and does not commit on blur or on every keystroke', () => {
     // The failure mode of the option NOT taken: blur fires on any focus change,
     // so a half-typed or mis-pasted address would become the live destination
@@ -873,7 +898,6 @@ describe('Settings keeps no private copy of a thing that has a store', () => {
   });
 
   it('and Settings, the gallery and the editor all agree about every kind', () => {
-    const { CONTENT_KINDS } = require('./layers.js');
     const gallery = read('src/lib/views/templates/TemplateGallery.svelte');
     const editor = read('src/lib/views/templates/TemplateEditor.svelte');
     expect(CONTENT_KINDS.map((k) => k.key)).toContain('countdown');
@@ -939,6 +963,20 @@ describe('the Update status row does not let its own sentence eat the name', () 
     expect(row).not.toMatch(/rw-nvv/);
     // And the failure is still rose.
     expect(row).toMatch(/class:s-netbad=/);
+  });
+
+  it('and so does the Last attempt row directly beneath it', () => {
+    // The same defect at the same moment on the same screen: an arbitrary backend
+    // string in the figure cell, rendered only when the channel has failed. The
+    // measured page had it reading "Cannot read properties of undefined (reading
+    // 'invoke')" — 51 characters of diagnostic squeezing a two-word name.
+    const row = MARKUP_ONLY.slice(
+      MARKUP_ONLY.indexOf('<span class="rw-nvk">Last attempt</span>'),
+      MARKUP_ONLY.indexOf('</div>', MARKUP_ONLY.indexOf('<span class="rw-nvk">Last attempt</span>')),
+    );
+    expect(row, 'the Last attempt row was not found').toBeTruthy();
+    expect(row).toMatch(/class="s-nvp"/);
+    expect(row).not.toMatch(/rw-nvv/);
   });
 
   it('.s-netbad is declared after .s-nvp, so a failure still wins the colour', () => {

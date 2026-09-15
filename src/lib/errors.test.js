@@ -112,3 +112,42 @@ describe('no engine behind the page', () => {
     expect(msg).toMatch(/engine is not running/i);
   });
 });
+
+// ── THE OFFLINE MODEL INSTALL ───────────────────────────────────────────────
+//
+// `ModelSetup.svelte::installFound` routes through `humanError`, and the copy
+// `install_from_file` writes for a volunteer has to survive that. It does —
+// because `main.rs::install_model_file` ends `.map_err(error::Error::refused)`,
+// so the failure crosses the bridge typed and a refusal's message is returned
+// untouched.
+//
+// This file exists to hold that, because the difference is invisible at the call
+// site and the cost of losing it is wrong advice at the worst moment. Two of the
+// install's failures interpolate an OS error, and the bare-string form of one of
+// them is rewritten into an instruction to download — in the flow a church is
+// using precisely because downloading is what does not work for them.
+describe('the offline model install', () => {
+  const COPY_FAILED = 'Could not copy the model: No such file or directory (os error 2)';
+  const DENIED = 'Could not copy the model: Permission denied (os error 13)';
+
+  it('passes a typed refusal through word for word', () => {
+    expect(humanError({ kind: 'refused', message: COPY_FAILED })).toBe(COPY_FAILED);
+    expect(humanError({ kind: 'refused', message: DENIED })).toBe(DENIED);
+  });
+
+  it('and the volunteer copy the install writes reaches the operator unchanged', () => {
+    const written =
+      'That file is not one of the speech models Relay knows. Check you copied the whole file — ' +
+      'an interrupted copy will not match — and that it is one of the models listed on this screen.';
+    expect(humanError({ kind: 'refused', message: written })).toBe(written);
+  });
+
+  it('which is what the typed wrapper buys — the same text bare is rewritten', () => {
+    // NOT a defect in the pattern table: `/no such file/` is right for the case
+    // it was written for. It is the reason `install_model_file` must keep
+    // returning `error::Result`, and the reason that is worth a test.
+    expect(humanError(COPY_FAILED)).toMatch(/Download it from Settings/);
+    expect(humanError(COPY_FAILED)).not.toContain('Could not copy');
+    expect(humanError(DENIED)).toMatch(/firewall/i);
+  });
+});
