@@ -20,14 +20,18 @@ every edit: `.claude/hooks/relay-fast-gate.mjs`, path-filtered and report-only (
 
 ## 0. Current inventory
 
-Re-measured **2026-09-15**, on `feat/wave7-timers-templates-stage` (`main` at `7851a79` plus
-Wave 0's Task 1 to Task 5 commits). `npm run build` ran first, per RG-127: two `channels` tests
-serve the real `dist/`, which is gitignored.
+Re-measured **2026-09-15**, on `feat/wave7-timers-templates-stage` after Wave 1 (Task 1 to
+Task 8: safe mode enforced at a choke point with a shell banner, the shell's flex direction
+corrected, the walk-through guard, the refused update check, five Settings repairs, `endService`
+moved to the throwing group, the recognition language persisted on the voice profile, the
+`docs/OUTPUT_ROUTING.md` write-up, the ATEM/NDI documentation sweep, and the splash redesign — 23
+commits over the previous row, `0302d84..HEAD`). `npm run build` ran first, per RG-127: two
+`channels` tests serve the real `dist/`, which is gitignored.
 
 | Count | Value | Command |
 |---|---|---|
-| Rust tests | **752 passed / 0 failed / 16 ignored** | `cd src-tauri && cargo test` |
-| Frontend tests | **2189 passed, 141 files** | `npx vitest run` |
+| Rust tests | **754 passed / 0 failed / 16 ignored** | `cd src-tauri && cargo test` |
+| Frontend tests | **2250 passed, 144 files** | `npx vitest run` |
 | `e2e.rs` tests | **66 passed / 0 ignored** | `cd src-tauri && cargo test e2e::` |
 | Registered commands | **139** | `grep -c '#\[tauri::command\]' src-tauri/src/main.rs` |
 | qa-inventory | 139/139 addressed, 0 handlerless, 0 unnamed | `node scripts/qa-inventory.mjs` |
@@ -35,12 +39,18 @@ serve the real `dist/`, which is gitignored.
 `cargo fmt --all`, `clippy --all-targets -- -D warnings` and `npm run build` all clean on the
 same tree.
 
-**This block REPLACED a same-day `rebrand/wave3` row (748 / 2179) rather than being stacked above
-it.** §0 is described everywhere else in this repository as THE register of counts, and a
-register that carries two "Current inventory" blocks with different numbers for the same day is
-not one — the reader has no way to tell which row is current, which is the failure this section
-exists to prevent. The older chain below is kept, because a chain of superseded measurements is
-the evidence that the numbers were ever taken.
+**The rise from the previous row (752 / 2189) to this one (754 / 2250) is Wave 1's own diff, not
+drift.** `e2e.rs`, registered commands and qa-inventory are unchanged — Wave 1 added no new
+command and deleted none — and the +2 Rust / +61 frontend / +3 file delta over the previous row is
+what those 23 commits' own tests account for. Neither suite failed.
+
+**This block REPLACES the previous same-day row (752 / 2189) rather than being stacked above
+it**, and that row in turn REPLACED a same-day `rebrand/wave3` row (748 / 2179). §0 is described
+everywhere else in this repository as THE register of counts, and a register that carries two
+"Current inventory" blocks with different numbers for the same day is not one — the reader has no
+way to tell which row is current, which is the failure this section exists to prevent. The older
+chain below is kept, because a chain of superseded measurements is the evidence that the numbers
+were ever taken.
 
 **The 748 / 2179 row was never true of this branch's tree, and that was established by
 measurement rather than by arithmetic.** Building a worktree at the fork point itself
