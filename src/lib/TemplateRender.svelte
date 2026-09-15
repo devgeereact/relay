@@ -1833,7 +1833,14 @@
   .content.panel {
     padding: 3.5cqw 4.5cqw;
     max-width: 82%;
-    overflow: visible;
+    /* IT CLIPS, LIKE `.content` DOES. `overflow` here used to be `visible`,
+       which took away the clip the unpanelled box has — and with it the only
+       signal `overflowing()` reads. The panel is the mode an operator picks for
+       a bright background, which is where legibility is already hardest, so it
+       was the worst box in the component to have left unmeasured. The padding
+       still gives the plate room; what it no longer does is let the words leave
+       the plate. */
+    overflow: hidden;
   }
   .slide.lower-third .content {
     max-width: 100%;

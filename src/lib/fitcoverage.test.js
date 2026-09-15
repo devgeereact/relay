@@ -342,3 +342,24 @@ describe('ticker mode is measured', () => {
     ).toBe(true);
   });
 });
+
+// THE PLATE IS A BOX, NOT A SUGGESTION.
+//
+// `.content` clips at `max-height: 92%`; `.content.panel` set `overflow:
+// visible` and took the clip away. `overflowing()` reads `scrollHeight >
+// clientHeight`, which an unclipped box does not report — so the one mode
+// chosen for a hard-to-read background was also the one mode whose overflow the
+// fitter could not detect. Asserted on the stylesheet the component ships,
+// because jsdom does not lay out.
+describe('the contrast panel clips', () => {
+  it('does not set overflow: visible', async () => {
+    const src = await import('node:fs').then((fs) =>
+      fs.readFileSync('src/lib/TemplateRender.svelte', 'utf8'),
+    );
+    const block = src.slice(src.indexOf('.content.panel {'));
+    const rule = block.slice(0, block.indexOf('}'));
+    expect(rule, '.content.panel must not remove the clip .content provides').not.toMatch(
+      /overflow:\s*visible/,
+    );
+  });
+});
