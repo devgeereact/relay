@@ -1675,7 +1675,17 @@
              that already has Relay. `describeChannel` is the ONE place a check
              outcome becomes words, and both surfaces that talk about it — this
              row and the Overview rail's quick link — call it. -->
-        <div class="rw-nv"><span class="rw-nvk">Update status</span><span class="rw-nvv" class:s-netbad={$updateChannel.state === 'failed'}>{describeChannel($updateChannel)}</span></div>
+        <!-- `.s-nvp` because every answer `describeChannel` gives is a SENTENCE,
+             never a figure — and one of them is now 112 characters. `.rw-nvv` is
+             mono and sits in the `auto` half of a `minmax(0,1fr) auto` grid, so a
+             long value takes the width from the name beside it: measured in a
+             browser at an 878px row, "Update status" went from 772px with "up to
+             date" to 98.8px with the failure sentence. `.s-nvp` caps the value at
+             46ch and hands the name back 562.3px. It REPLACES `.rw-nvv` rather
+             than joining it, which is how the Privacy report already uses it —
+             keeping both left the sentence in mono. `.s-netbad` is declared after
+             `.s-nvp` at equal specificity, so a failure is still rose. -->
+        <div class="rw-nv"><span class="rw-nvk">Update status</span><span class="s-nvp" class:s-netbad={$updateChannel.state === 'failed'}>{describeChannel($updateChannel)}</span></div>
         {#if $updateChannel.state === 'failed'}
           <div class="rw-nv"><span class="rw-nvk">Last attempt</span><span class="rw-nvv">{$updateChannel.detail || 'no reason given'}</span></div>
         {/if}

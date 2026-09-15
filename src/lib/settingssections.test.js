@@ -910,3 +910,40 @@ describe('the offline model install goes through the one humaniser', () => {
     expect(fn).not.toMatch(/e\?\.message \?\? String\(e\)/);
   });
 });
+
+// ── THE UPDATE STATUS VALUE IS PROSE, AND PROSE IN A FIGURE COLUMN EATS THE ──
+//    NAME BESIDE IT.
+//
+// Task 3 grew `describeChannel`'s `failed` answer from 33 characters to 112, to
+// carry the guidance the button used to hold on its own. That is the right
+// sentence in the wrong cell: `.rw-nvv` is mono, right-aligned and sits in the
+// `auto` half of `minmax(0,1fr) auto` (`views/WorkspaceFrame.svelte`), so the
+// value takes its max-content width and the name is squeezed into whatever is
+// left. MEASURED in a browser at an 878px row: "Update status" occupied 772px
+// beside "up to date" and 98.8px beside the failure sentence. Through `.s-nvp` —
+// the class this file already defines for exactly this case, and already uses on
+// the Privacy report — the name gets 562.3px back and the value is capped at
+// 46ch. A failure is still rose, because `.s-netbad` is declared after `.s-nvp`
+// at equal specificity.
+describe('the Update status row does not let its own sentence eat the name', () => {
+  it('the value is a sentence cell, not a figure cell', () => {
+    const row = MARKUP_ONLY.slice(
+      MARKUP_ONLY.indexOf('<span class="rw-nvk">Update status</span>'),
+      MARKUP_ONLY.indexOf('</div>', MARKUP_ONLY.indexOf('<span class="rw-nvk">Update status</span>')),
+    );
+    expect(row, 'the Update status row was not found').toBeTruthy();
+    expect(row).toMatch(/class="s-nvp"/);
+    // `.s-nvp` REPLACES `.rw-nvv` rather than joining it — keeping both leaves
+    // the sentence in mono, which is the half of the defect that is about
+    // reading rather than about width.
+    expect(row).not.toMatch(/rw-nvv/);
+    // And the failure is still rose.
+    expect(row).toMatch(/class:s-netbad=/);
+  });
+
+  it('.s-netbad is declared after .s-nvp, so a failure still wins the colour', () => {
+    // Equal specificity, same stylesheet: source order decides. Reordering them
+    // would paint a failed update channel in the dim body colour.
+    expect(STYLE.indexOf('.s-netbad{')).toBeGreaterThan(STYLE.indexOf('.s-nvp{'));
+  });
+});
