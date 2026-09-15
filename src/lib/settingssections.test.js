@@ -634,3 +634,51 @@ describe('the Shortcuts section reads the canonical table', () => {
       expect(flat, `${k} is missing from the canonical table`).toContain(k);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THE SETUP WALK-THROUGH IS GUARDED DURING A RECORDED SERVICE.
+//
+// One click on this button sets `session.setupDone = false`, which mounts
+// FirstRun full-screen over a live console. From inside it, `stopMicTest()` and
+// `chooseDevice()` each stop the LIVE microphone, and "Try it" fires John 3:16
+// to the congregation's screens — under a label that says none of that. The
+// service lock could not reach it on its own: `restartSetup` is a session
+// write, so `servicelock::guard` is never consulted, which is why the guard has
+// to be on the button itself, reading the same live fact the "Unlock for this
+// service" control six rows below it already reads. CLAUDE.md rule 44 names
+// this exact sentence — its Escape half is fixed and pinned; this is the other
+// half.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('the setup walk-through is held back while a service is recording', () => {
+  it('the button is disabled by the same live fact the unlock control below it reads', () => {
+    const history = MARKUP_ONLY.slice(
+      MARKUP_ONLY.indexOf("section === 'history'"),
+      MARKUP_ONLY.indexOf("section === 'shortcuts'"),
+    );
+    const btn = history.match(
+      /<button\b[^<]*?on:click=\{restartSetup\}[^<]*?>Run the setup walk-through<\/button>/,
+    )?.[0];
+    expect(btn, 'no button calling restartSetup was found').toBeTruthy();
+    // A bare/literal disable is furniture, same rule as the switches above.
+    expect(btn).not.toMatch(/disabled(?![-\w=])|disabled=\{(true|false)\}|disabled="/);
+    const cond = btn.match(/disabled=\{([^}]*)\}/)?.[1];
+    expect(cond, 'the button must be conditionally disabled').toBeTruthy();
+    // The same field "Unlock for this service" is gated on, not a different or
+    // narrower one — a guard that disagrees with the unlock beside it is worse
+    // than no guard.
+    expect(cond).toBe('$serviceLock.engaged');
+  });
+
+  it('a disabled control carries its reason, in amethyst — never amber', () => {
+    const history = MARKUP_ONLY.slice(
+      MARKUP_ONLY.indexOf("section === 'history'"),
+      MARKUP_ONLY.indexOf("section === 'shortcuts'"),
+    );
+    const btnAt = history.indexOf('Run the setup walk-through');
+    const after = history.slice(btnAt, btnAt + 700);
+    expect(after).toMatch(/\{#if \$serviceLock\.engaged\}/);
+    expect(after).toMatch(/class="rw-foot s-netwarn"/);
+    expect(after).toMatch(/service is being recorded|while a service/i);
+    expect(after).not.toMatch(/var\(--v-amber\)/);
+  });
+});

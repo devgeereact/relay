@@ -1444,7 +1444,13 @@
           <p class="rw-foot" style="margin-top:0; padding-top:0; border-top:0;">
             <b>New here?</b> The setup walk-through picks your projector, checks the microphone is actually hearing something, and ends by putting a real verse on your real screen — so you have <i>seen</i> it work before Sunday.
           </p>
-          <button class="r-btn ghost sm" on:click={restartSetup}>Run the setup walk-through</button>
+          <button
+            class="r-btn ghost sm"
+            on:click={restartSetup}
+            disabled={$serviceLock.engaged}>Run the setup walk-through</button>
+          {#if $serviceLock.engaged}
+            <p class="rw-foot s-netwarn">Not while a service is being recorded — the walk-through stops the microphone and puts a verse on your screens. End the service first, or unlock it below.</p>
+          {/if}
         </div>
 
         <!-- DEMO CONTENT. See the block in the script for why it lives on this
