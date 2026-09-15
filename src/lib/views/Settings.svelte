@@ -683,8 +683,26 @@
     langBusy = true;
     langErr = '';
     try {
-      await setSttLanguage(code);
+      const landed = await setSttLanguage(code);
       await refreshProfiles();
+      // AND THE OPEN EDITOR FOLLOWS THE FACT — the comment above claims this and
+      // `refreshProfiles()` alone does not deliver it.
+      //
+      // The sections of this page are `{#if}` branches of ONE component, so
+      // `editing` — a working copy taken by `openEditor` — survives a walk to
+      // Scripture & Languages and back. An operator who opened the editor to nudge
+      // sensitivity, came here, pinned Yoruba, went back and pressed Save
+      // calibration sent the STALE language: `update_voice_profile` wrote it and
+      // called `apply_profile`, so the database AND the live engine silently
+      // reverted, and nothing said a word. Pinning the language by hand is the
+      // RG-116 mitigation; a save that quietly undoes it is rule 35.
+      //
+      // Only the LANGUAGE, and only on the profile the backend says it wrote to.
+      // Re-reading the whole row would throw away the unsaved edits the operator
+      // came back for, which is the opposite mistake.
+      const wrote = landed?.id ?? profiles.find((p) => p.is_active)?.id ?? null;
+      if (editing && wrote !== null && editing.id === wrote)
+        editing = { ...editing, language: code ?? null };
     } catch (e) {
       // GROUP 1 — it throws, and this is the surface that has to say so. Without
       // this the select would sit on a language nothing was told about.
@@ -1601,12 +1619,24 @@
           <p class="rw-foot" style="margin-top:0; padding-top:0; border-top:0;">
             <b>New here?</b> The setup walk-through picks your projector, checks the microphone is actually hearing something, and ends by putting a real verse on your real screen — so you have <i>seen</i> it work before Sunday.
           </p>
+          <!-- THREE facts, and the third is the one the copy was already claiming.
+               `engaged` and `recording` are deliberately different (main.rs's own
+               note on `servicelock`): lifting the lock is a first-class operator
+               override and it does NOT end the service. So mid-service, an operator
+               who unlocked to delete something and stopped the microphone between
+               readings — exactly the gap `updater.js::idle` was widened for — had
+               both of the old terms false, and one click mounted `FirstRun` over a
+               recorded service: an opaque `.fr-scrim` at z-index 950 over the
+               dock's Clear screens, leaving only Esc, whose first press dismisses
+               the wizard and not the wall (rule 44). It then stops the microphone
+               and fires a verse. `recording` is in the same store and the dock
+               already reads it. -->
           <button
             class="r-btn ghost sm"
             on:click={restartSetup}
-            disabled={$serviceLock.engaged || $capture.capturing}>Run the setup walk-through</button>
-          {#if $serviceLock.engaged || $capture.capturing}
-            <p class="rw-foot s-netwarn">Not while the microphone is live or a service is being recorded — the walk-through stops the microphone and puts a verse on your screens. Stop listening or end the service first, or unlock it below.</p>
+            disabled={$serviceLock.engaged || $serviceLock.recording || $capture.capturing}>Run the setup walk-through</button>
+          {#if $serviceLock.engaged || $serviceLock.recording || $capture.capturing}
+            <p class="rw-foot s-netwarn">Not while the microphone is live, or while a service is being recorded — including one you have unlocked, because unlocking does not end it. The walk-through stops the microphone and puts a verse on your screens. Stop listening and end the service first.</p>
           {/if}
         </div>
 

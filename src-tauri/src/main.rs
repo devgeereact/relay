@@ -5073,6 +5073,12 @@ fn update_voice_profile(
     if is_active {
         apply_profile(&stt, &routing, &profile)?;
     }
+    // `is_active` comes back from the DATABASE, so say so in what is returned. The
+    // field arrived on the payload as whatever the frontend happened to be holding,
+    // and the console now decides from this answer whether the recognition language
+    // it shows on another tab has just changed underneath it (RG-138). Echoing the
+    // caller's own guess back at it would be a second register for one fact.
+    profile.is_active = is_active;
     Ok(profile)
 }
 

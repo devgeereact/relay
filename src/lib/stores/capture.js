@@ -1586,14 +1586,39 @@ const call = await invoke();
 return await call('create_voice_profile', { name, language });
 }
 
+// ── ONE FACT, ONE STORE (RG-138) ─────────────────────────────────────────────
+//
+// `voice_profiles.language` is the ONLY place the recognition language lives, and
+// `capture.stt.language` is the console's copy of it — what Settings → Scripture &
+// Languages renders, and what the Privacy overview reads. `setSttLanguage` keeps
+// them in step; these two did not, and both of them change that column and apply
+// it to the live engine:
+//
+//   - `update_voice_profile` writes the row and calls `apply_profile` when the
+//     profile is the active one, so saving the profile editor with a different
+//     Language moved the database and the engine and left the other tab's select
+//     displaying the language it had just moved away from.
+//   - `select_voice_profile` applies the newly-active profile by construction,
+//     which is the same disagreement reached by a different door — and it is the
+//     door `rooms.js::applyRoom` goes through.
+//
+// `is_active` is the BACKEND'S answer, not the caller's copy of it: `main.rs`
+// stamps it from the database after the write, because the payload's own field is
+// whatever the frontend happened to be holding.
+function noteProfileLanguage(landed) {
+if (landed?.is_active)
+  capture.update((s) => ({ ...s, stt: { ...s.stt, language: landed.language ?? null } }));
+return landed;
+}
+
 export async function updateVoiceProfile(profile) {
 const call = await invoke();
-return await call('update_voice_profile', { profile });
+return noteProfileLanguage(await call('update_voice_profile', { profile }));
 }
 
 export async function selectVoiceProfile(id) {
 const call = await invoke();
-return await call('select_voice_profile', { id });
+return noteProfileLanguage(await call('select_voice_profile', { id }));
 }
 
 export async function deleteVoiceProfile(id) {

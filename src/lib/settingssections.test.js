@@ -703,8 +703,22 @@ describe('the setup walk-through is held back while a service is recording', () 
     // Scoped to the {#if}…{/if} block itself, not a fixed character window —
     // a window wide enough to catch the warning text is also wide enough to
     // catch an unrelated control's amber a few hundred characters later.
-    const ifAt = history.indexOf('{#if $serviceLock.engaged || $capture.capturing}');
-    expect(ifAt, 'could not find the guard block').toBeGreaterThanOrEqual(0);
+    //
+    // The block is found through the BUTTON'S OWN condition, not a remembered
+    // literal. This line held the guard's exact three-term string and broke the
+    // moment a third fact was added to it — the test above already makes the point
+    // that a hard-coded copy of a condition drifts from the condition, and this one
+    // was the copy. The reason that MATTERS is that a guard whose explanation sits
+    // under a different condition can be disabled with nothing said.
+    const guardCond = history
+      .match(/<button\b[^<]*?on:click=\{restartSetup\}[^<]*?>/)?.[0]
+      ?.match(/disabled=\{([^}]*)\}/)?.[1];
+    expect(guardCond, 'no disabled condition on the walk-through button').toBeTruthy();
+    const ifAt = history.indexOf(`{#if ${guardCond}}`);
+    expect(
+      ifAt,
+      `the explanation does not sit under the button's own condition (${guardCond})`,
+    ).toBeGreaterThanOrEqual(0);
     const closeAt = history.indexOf('{/if}', ifAt);
     const block = history.slice(ifAt, closeAt + '{/if}'.length);
     expect(block).toMatch(/class="rw-foot s-netwarn"/);
