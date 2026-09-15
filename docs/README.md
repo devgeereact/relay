@@ -44,8 +44,9 @@ These do not move without a human explicitly reopening them. Full reasoning in
   in rendering logic — that is a template-configuration problem, not a code problem.
 - **Local-first data.** Transcripts, verse text, templates, and history live in local SQLite.
   Nothing leaves the device without an explicit, visible reason.
-- **No native SDI hardware, ever** (unless reopened). NDI + HDMI only; bridge to SDI with gear
-  the church already owns.
+- **No native SDI hardware, ever** (unless reopened). HDMI only; NDI if it is ever unparked.
+  SDI is bridged with a converter, which a church may already own or can buy for about the
+  price of a microphone cable.
 
 ---
 

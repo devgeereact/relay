@@ -161,8 +161,10 @@ To keep scope honest, these were considered and rejected as roadmap items outrig
 linked reasoning, and do not reopen without a human decision recorded in
 [DECISIONS.md](DECISIONS.md):
 
-- **Native SDI hardware output** — high SDK cost, narrow reach; bridged by hardware churches
-  already own (DECISIONS).
+- **Native SDI hardware output** — high SDK cost, narrow reach; bridged by a converter, which
+  a church may already own or can buy for about the price of a microphone cable (DECISIONS).
+  Not "hardware churches already own": a rack-mount ATEM needs one you go and buy, which is the
+  assumption that made the original ATEM claim false (OUTPUT_ROUTING.md §2).
 - **Rewriting the stack** — Rust + Tauri + Svelte + SQLite is correct for this product and would
   be chosen again (PRODUCT_AUDIT §10.9).
 - **Replacing OBS** — not a recording / scene-compositing tool. Relay sits *above* the AV chain.

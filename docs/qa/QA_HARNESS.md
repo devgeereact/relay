@@ -24,14 +24,16 @@ Re-measured **2026-09-15**, on `feat/wave7-timers-templates-stage` after Wave 1 
 Task 8: safe mode enforced at a choke point with a shell banner, the shell's flex direction
 corrected, the walk-through guard, the refused update check, five Settings repairs, `endService`
 moved to the throwing group, the recognition language persisted on the voice profile, the
-`docs/OUTPUT_ROUTING.md` write-up, the ATEM/NDI documentation sweep, and the splash redesign — 23
-commits over the previous row, `0302d84..HEAD`). `npm run build` ran first, per RG-127: two
-`channels` tests serve the real `dist/`, which is gitignored.
+`docs/OUTPUT_ROUTING.md` write-up, the ATEM/NDI documentation sweep, and the splash redesign) and
+after the Wave 1 review fixes (the room apply order, the dock's Detection switch under safe mode,
+the profile editor's stale language, the walk-through's third term, the crash-reporting read, and
+the documentation corrections). `npm run build` ran first, per RG-127: two `channels` tests serve
+the real `dist/`, which is gitignored.
 
 | Count | Value | Command |
 |---|---|---|
 | Rust tests | **754 passed / 0 failed / 16 ignored** | `cd src-tauri && cargo test` |
-| Frontend tests | **2250 passed, 144 files** | `npx vitest run` |
+| Frontend tests | **2258 passed, 144 files** | `npx vitest run` |
 | `e2e.rs` tests | **66 passed / 0 ignored** | `cd src-tauri && cargo test e2e::` |
 | Registered commands | **139** | `grep -c '#\[tauri::command\]' src-tauri/src/main.rs` |
 | qa-inventory | 139/139 addressed, 0 handlerless, 0 unnamed | `node scripts/qa-inventory.mjs` |
@@ -39,13 +41,23 @@ commits over the previous row, `0302d84..HEAD`). `npm run build` ran first, per 
 `cargo fmt --all`, `clippy --all-targets -- -D warnings` and `npm run build` all clean on the
 same tree.
 
-**The rise from the previous row (752 / 2189) to this one (754 / 2250) is Wave 1's own diff, not
-drift.** `e2e.rs`, registered commands and qa-inventory are unchanged — Wave 1 added no new
-command and deleted none — and the +2 Rust / +61 frontend / +3 file delta over the previous row is
-what those 23 commits' own tests account for. Neither suite failed.
+**The delta is taken from the one baseline in this file that was MEASURED and can still be
+re-measured.** That is the worktree pinned to the fork commit, three paragraphs down: **750
+passed / 0 failed / 16 ignored** (Rust) and **2186 passing, 141 files** (frontend) at `7851a79`.
+So Wave 1 and its review fixes together account for **+4 Rust, +72 frontend, +3 files**, and
+`e2e.rs`, the registered commands and qa-inventory are unchanged — no command was added or
+deleted. Neither suite failed.
 
-**This block REPLACES the previous same-day row (752 / 2189) rather than being stacked above
-it**, and that row in turn REPLACED a same-day `rebrand/wave3` row (748 / 2179). §0 is described
+**Why the delta is not taken from the row this block replaced.** That row was deleted when it was
+superseded, and the block which replaced it cited it twice as *752 / 2189* while the row itself
+had said *2187 passing, 141 files*. One of those two numbers was wrong, the row is gone, and so
+nobody can now say which — which is §0's own failure mode, inside §0. The rule this settles on:
+**a delta is derived from a baseline that is still reproducible, or it is not derived at all.** A
+superseded row is kept in the chain below precisely so that stays possible.
+
+**This block REPLACES the previous same-day row — the one whose frontend figure is disputed
+above — rather than being stacked above it**, and that row in turn REPLACED a same-day
+`rebrand/wave3` row (748 / 2179). §0 is described
 everywhere else in this repository as THE register of counts, and a register that carries two
 "Current inventory" blocks with different numbers for the same day is not one — the reader has no
 way to tell which row is current, which is the failure this section exists to prevent. The older
@@ -489,7 +501,8 @@ merge the two into "works".
 Read `docs/DECISIONS.md` before filing anything architectural. These in particular are
 deliberate, and reporting them as bugs wastes the human's attention:
 
-- **No native SDI.** NDI + HDMI only; bridging hardware covers the rest.
+- **No native SDI.** HDMI only; NDI if it is ever unparked. SDI is bridged with a converter,
+  which a church may already own or can buy for about the price of a microphone cable.
 - **NDI is parked** — needs a proprietary SDK. `open_ndi_output` returns a clear error on
   purpose. That is BLOCKED-BY-DESIGN, not broken.
 - **The paraphrase embedder is TF-IDF**, the `verses.embedding` column exists and has never

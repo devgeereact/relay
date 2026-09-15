@@ -249,8 +249,12 @@ what churches ask about. See [KNOWN_ISSUES.md](KNOWN_ISSUES.md) §2.
 
 **SDI is out of scope permanently**, unless a human explicitly reopens it. Real
 SDI input and output needs dedicated hardware and a C++ SDK: high cost, narrow
-reach, and a church with SDI gear already owns a converter or a switcher that
-solves it for $75. Section 2 is the whole answer.
+reach, and the gap is closed by a converter, which a church may already own or
+can buy for about the price of a microphone cable. This sentence used to say the
+church "already owns" one, which is the assumption that made the original ATEM
+claim false and cannot be true and cost $75 in the same breath — §2 of this file
+says plainly that a rack-mount ATEM needs one you go and buy. Section 2 is the
+whole answer.
 
 **Relay does not measure your video path.** It knows whether a screen is
 answering and what it says it last painted. It does not time a delivery, count a
