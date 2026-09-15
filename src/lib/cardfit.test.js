@@ -227,11 +227,13 @@ describe('the card is not too small — the diagnosis, computed', () => {
     expect(at()).toBe(at());
     // And the renderer has exactly one text path per mode, so there is no second
     // place for a surface to declare a size of its own. Task 5 added two more
-    // literal `class="lfit"` sites — the default countdown's label and digits —
-    // but both are the SAME contract (`.ltext` > `.lfit` with `data-base`/
-    // `data-fit`), read by the same `fitLayers`, not a second mechanism.
+    // `lfit` sites — the default countdown's label and digits — but both are the
+    // SAME contract (`.ltext` > `.lfit` with `data-base`/`data-fit`), read by the
+    // same `fitLayers`, not a second mechanism; they carry `reference`/`countdown`
+    // alongside `lfit` to keep their own type styling (weight, tabular-nums, the
+    // warn pulse), so the match is on the CLASS TOKEN, not the literal attribute.
     const src = readFileSync(resolve(__dirname, './TemplateRender.svelte'), 'utf8');
-    expect([...src.matchAll(/class="lfit"/g)]).toHaveLength(3);
+    expect([...src.matchAll(/class="[^"]*\blfit\b[^"]*"/g)]).toHaveLength(3);
   });
 
   it('while the app’s UI body size does not, which is what was being painted', () => {

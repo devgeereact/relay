@@ -1486,7 +1486,10 @@
       <div class="cd-default">
         {#if content.reference && !countdownDone}
           <div class="ltext cd-line cd-ref" style="align-items:center;">
-            <div class="lfit" data-base={refSize} data-fit="shrink" style="font-size:{refSize}cqw; {refStyle} text-align:center;">{content.reference}</div>
+            <!-- `.reference` is kept alongside `.lfit` (not dropped): it is what
+                 carries font-weight:600 on this label, and `.lfit`'s own CSS does
+                 not restate it. -->
+            <div class="lfit reference" data-base={refSize} data-fit="shrink" style="font-size:{refSize}cqw; {refStyle} text-align:center;">{content.reference}</div>
           </div>
         {/if}
         <div class="ltext cd-line cd-digits" style="align-items:center;">
@@ -1497,7 +1500,12 @@
                caps growth at that size: a countdown must never grow to fill a
                box, because the digits change width every second and a growing
                clock jitters. -->
-          <div class="lfit" data-base={verseSize * 2} data-fit="shrink" class:warn={countdownWarn}
+          <!-- `.countdown` is kept alongside `.lfit` (not dropped): it is what
+               carries tabular-nums, weight, tight leading and single-line
+               `white-space: nowrap` for the ticking digits, and what
+               `.countdown.warn` needs to paint the last-minute red pulse
+               (`:1791`-`:1748` below). None of that is restated inline. -->
+          <div class="lfit countdown" data-base={verseSize * 2} data-fit="shrink" class:warn={countdownWarn}
             style="font-size:{verseSize * 2}cqw; margin-top:{refGap}cqw; color:{countdownWarn ? CD_WARN : verseColor}; text-align:center; text-shadow:{verseShadowCss};">
             {countdownDone ? (content.countdown_done || '0:00') : countdownText}
           </div>
