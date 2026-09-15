@@ -249,25 +249,58 @@ Expected: PASS, clippy clean.
 
 - [ ] **Step 6: Widen the retention scanner to match**
 
-`every_kind_this_module_publishes_has_an_explicit_verdict` reads `include_str!("channels.rs")` only, so `channel_template` — published from `main.rs:5691` and `:5706` — has no retention verdict. Change the source line to read both files and add the row.
+`every_kind_this_module_publishes_has_an_explicit_verdict` reads `include_str!("channels.rs")` only, so `channel_template` — published from `main.rs:5691` and `:5706` — has no retention verdict.
 
-In `src-tauri/src/channels.rs`, replace the `let src = include_str!("channels.rs");` line inside `every_kind_this_module_publishes_has_an_explicit_verdict` with:
+**Do not concatenate the two files and keep the existing split.** The test does `src.split("mod tests").next()`, which on concatenated text cuts at *channels.rs's own* first `mod tests` and discards main.rs entirely — a scanner that reads less than before while looking wider, which is the failure this test exists to prevent. And main.rs carries `#[cfg(test)]` from line 16, so no test-stripping split works on it at all.
+
+Scan main.rs **whole**, skipping comment lines. Verified: main.rs holds exactly one distinct frame literal, `"kind":"channel_template"`, twice, and no others anywhere in the file including its tests. A frame literal added inside a main.rs test would demand a verdict row, which is stricter than the channels.rs half and correct.
+
+Extract the per-line matching already in the test into a helper, and call it twice:
 
 ```rust
-        // `channel_template` is published from main.rs, so a scanner reading this
-        // file alone has no verdict for it — the exact blind spot this test
-        // exists to close, one file over.
-        let src = concat!(include_str!("channels.rs"), include_str!("main.rs"));
+        /// Every `"kind":"…"` literal in `src`, in order, without duplicates.
+        /// Comment lines talk ABOUT frames without publishing any.
+        fn kinds_in(src: &str, out: &mut Vec<String>) {
+            for line in src.lines() {
+                if line.trim_start().starts_with("//") {
+                    continue;
+                }
+                let mut rest = line;
+                while let Some(i) = rest.find("\"kind\"") {
+                    rest = &rest[i + "\"kind\"".len()..];
+                    let Some(after) = rest.trim_start().strip_prefix(':') else {
+                        continue;
+                    };
+                    let Some(after) = after.trim_start().strip_prefix('"') else {
+                        continue;
+                    };
+                    let Some(end) = after.find('"') else { continue };
+                    let kind = after[..end].to_string();
+                    if !out.contains(&kind) {
+                        out.push(kind);
+                    }
+                }
+            }
+        }
+
+        let chan = include_str!("channels.rs");
+        let mut found: Vec<String> = Vec::new();
+        // channels.rs strips its own tests: its `mod tests` is full of example
+        // frames that are not published by the module.
+        kinds_in(chan.split("mod tests").next().unwrap_or(chan), &mut found);
+        // main.rs is scanned WHOLE. It carries `#[cfg(test)]` from line 16, so no
+        // split can separate its tests, and it holds exactly one frame literal.
+        kinds_in(include_str!("main.rs"), &mut found);
 ```
 
-and add to `FRAME_VERDICTS`:
+Then replace the two loops below it to compare `&str` against `String` (`k == kind.as_str()`, `found.iter().any(|f| f == kind)`), and add to `FRAME_VERDICTS`:
 
 ```rust
-        // A screen's own look, pushed when the operator reassigns it. Not retained
-        // HERE: `last_screen` holds one frame and the newest wins, so retaining a
-        // template would replace the verse and the next screen to join would be
-        // sent a look and a blank wall. The hub keeps templates in their own
-        // per-id cache and replays them on hello from there.
+        // A screen's own look, pushed from main.rs when the operator reassigns it.
+        // Not retained HERE: `last_screen` holds one frame and the newest wins, so
+        // retaining a template would replace the verse and the next screen to join
+        // would be sent a look and a blank wall. The hub keeps templates in their
+        // own per-id cache (`cache_template`) and replays them on hello from there.
         ("channel_template", false),
 ```
 
