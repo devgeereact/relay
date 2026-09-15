@@ -65,7 +65,6 @@ const TAKES_A_SCREEN = [
   'fire_media',
   'nav',
   'confirm_detection',
-  'push_announcement',
   'start_countdown',
   'set_stage_next',
   'send_stage_alert',
@@ -73,19 +72,26 @@ const TAKES_A_SCREEN = [
   'blackout',
 ];
 
-/** The store wrappers that reach those commands, by exported name. */
+/**
+ * The store wrappers that reach those commands, BY THE NAME capture.js EXPORTS.
+ *
+ * Not by the command's name: a wrapper is the identifier a view would write in an
+ * import, and three of these were the command's name instead — `nav` for
+ * `navVerse`, `blackout` for `blackScreen`, and `pushAnnouncement` for a wrapper
+ * that had been deleted. All three were invisible because the assertion this list
+ * feeds is a negative one.
+ */
 const FIRE_WRAPPERS = [
   'manualFire',
   'fireContent',
   'fireMedia',
-  'nav',
+  'navVerse',
   'confirmDetection',
-  'pushAnnouncement',
   'startCountdown',
   'setStageNext',
   'sendStageAlert',
   'clearScreens',
-  'blackout',
+  'blackScreen',
 ];
 
 const PLANNER = resolve(__dirname, 'ServicePlanner.svelte');
@@ -176,6 +182,44 @@ async function until(predicate, what, tries = 50) {
 }
 
 describe('§2 · the Planner builds, and cannot take a screen', () => {
+  // A NAME IN A HAND-WRITTEN LIST IS NOT A COMMAND, AND NOT A WRAPPER.
+  //
+  // Both lists above feed NEGATIVE assertions — the Planner must not import this,
+  // must not name that — and a name that does not exist is trivially not imported
+  // and never named. A dead entry therefore passes for ever while reading as
+  // coverage. This is the third list in this repository to hold
+  // `push_announcement` after the command was deleted; the other two are
+  // `servicelock.rs`'s LIVE_PATH and `transport.test.js`'s SCREEN_COMMANDS, and
+  // both now carry the same pair of checks. Two of the three were judged safe by
+  // a reviewer before somebody checked every other name in them.
+  it('every name in TAKES_A_SCREEN is a command Rust actually registers', () => {
+    // `resolve` from the repo root, matching `ipc.test.js` — `new URL(…,
+    // import.meta.url)` is not a `file:` URL under vite-node.
+    const main = readFileSync(resolve(process.cwd(), 'src-tauri/src/main.rs'), 'utf8');
+    const handler = main.split('generate_handler!')[1]?.split(']')[0] ?? '';
+    expect(handler).not.toBe('');
+    // Whole tokens, not substrings. `handler.contains('nav')` stays true after
+    // `nav` is deleted as long as some `navigate_…` survives, so a substring
+    // check has the same blind spot as the dead entry it is meant to catch.
+    const registered = handler.trimStart().replace(/^\[/, '').split(',').map((s) => s.trim());
+    const dead = TAKES_A_SCREEN.filter((n) => !registered.includes(n));
+    expect(dead, `named here as commands that take a screen, and not registered: ${dead.join(', ')}`).toEqual([]);
+  });
+
+  it('every name in FIRE_WRAPPERS is a wrapper capture.js actually exports', () => {
+    // Without this, FIRE_WRAPPERS rots exactly the way TAKES_A_SCREEN did: the
+    // import assertion below is satisfied by a wrapper nobody can import.
+    const store = readFileSync(resolve(process.cwd(), 'src/lib/stores/capture.js'), 'utf8');
+    const exported = new Set(
+      [...store.matchAll(/export\s+(?:async\s+)?function\s+([A-Za-z0-9_]+)\s*\(/g)].map(
+        (m) => m[1],
+      ),
+    );
+    expect(exported.size).toBeGreaterThan(20);
+    const dead = FIRE_WRAPPERS.filter((n) => !exported.has(n));
+    expect(dead, `named here as fire wrappers, and not exported by capture.js: ${dead.join(', ')}`).toEqual([]);
+  });
+
   it('does not import a single command that changes what is on a screen', () => {
     const imported = storeImports(src);
     expect(imported.length).toBeGreaterThan(5); // the scanner still sees the list

@@ -169,8 +169,16 @@ describe('every path that takes the wall has an answer for the plan rail', () =>
     const main = readFileSync(resolve(process.cwd(), 'src-tauri/src/main.rs'), 'utf8');
     const handler = main.split('generate_handler!')[1]?.split(']')[0] ?? '';
     expect(handler).not.toBe('');
+    // Whole tokens, not substrings. `toContain('nav')` would stay true after `nav`
+    // was deleted for as long as any `navigate_…` survived — a check with the same
+    // blind spot as the dead name it exists to catch.
+    const registered = handler
+      .trimStart()
+      .replace(/^\[/, '')
+      .split(',')
+      .map((t) => t.trim());
     for (const name of SCREEN_COMMANDS) {
-      expect(handler, `${name} is in SCREEN_COMMANDS and not registered`).toContain(name);
+      expect(registered, `${name} is in SCREEN_COMMANDS and not registered`).toContain(name);
     }
   });
 

@@ -251,9 +251,26 @@ mod tests {
             .nth(1)
             .and_then(|s| s.split(']').next())
             .expect("generate_handler! block");
+        assert!(
+            !handler.is_empty(),
+            "the generate_handler! block read as empty — the split found the macro \
+             and nothing inside it, and every assertion below would then be about \
+             nothing"
+        );
+        // Split on `,` and compare whole tokens. A substring match passes on a
+        // PREFIX: delete `nav` while `navigate_history` survives and
+        // `handler.contains("nav")` is still true, so the dead entry goes on
+        // looking like coverage — the same defect as the dead name itself, one
+        // level down.
+        let registered: Vec<&str> = handler
+            .trim_start()
+            .trim_start_matches('[')
+            .split(',')
+            .map(str::trim)
+            .collect();
         for name in LIVE_PATH {
             assert!(
-                handler.contains(name),
+                registered.contains(name),
                 "`{name}` is named here as a command the lock may never reach, and \
                  it is not registered in generate_handler! — a guarantee about \
                  nothing"
