@@ -394,10 +394,18 @@
         </div>
 
         {#if song}
-          <!-- THE DOCK HEAD (REBRAND §10): how many, and what a press does. -->
+          <!-- THE DOCK HEAD (REBRAND §10): how many, and what a press does.
+               THE THIRD CLAUSE IS THE POINT (2026-09-15, on the operator's
+               decision). DECISIONS §81 settled that a press on a BROWSING surface
+               cues and does not fire, and this pane's section keys deliberately do
+               fire — REBRAND §10 asks for exactly that, and a key that only cues is
+               a key nobody uses. So one surface genuinely has two rules, and the
+               dangerous one was on the quieter input while this legend said only
+               "single click cues" six lines above cards printing those very keys.
+               The grammar stays as it is; the legend stops hiding half of it. -->
           <span class="ly-legend r-mono">
             {slides.length} item{slides.length === 1 ? '' : 's'} · single click cues ·
-            double click opens
+            double click opens · a section key goes to air
           </span>
           <div class="r-seg" role="group" aria-label="Layout">
             <button class:on={layout === 'grid'} aria-label="Grid" on:click={() => (layout = 'grid')}>
