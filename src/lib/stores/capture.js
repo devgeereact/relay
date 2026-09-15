@@ -471,7 +471,10 @@ export async function initAudio() {
       // A clear that failed on a path with nobody to return an error to — the
       // spoken "clear the screen", and the exit from rehearsal (which hands the
       // wall back to the congregation). Same banner as a failed key or button.
-      await listen('output://panic_failed', (e) => panicError.set(String(e.payload)));
+      // Humanised, for the same reason the wrapper above is: two of the four
+      // emitters send raw Rust text, so a poisoned lock used to read
+      // "internal lock error: poisoned lock: …" inside an assertive live region.
+      await listen('output://panic_failed', (e) => panicError.set(humanError(e.payload)));
       await listen('rehearsal://changed', (e) => rehearsing.set(e.payload === true));
       // A device failure (permission denied, unplugged) is non-fatal: surface
       // it and reflect that capture stopped, but never freeze.
@@ -2112,7 +2115,17 @@ export async function refreshChannelHealth() {
 }
 
 async function pollChannelHealth() {
-  const rows = await channelStatus();
+  // `channelStatus()` swallows a missing backend and returns `[]`, but it cannot
+  // vouch for the SHAPE of an answer that did arrive — and this ran bare on a
+  // 2000 ms timer (below), so a `channel_status` payload that was not an array
+  // threw `TypeError: rows is not iterable` as an unhandled rejection, which
+  // `crash.js` turned into the full-screen crash panel. Every two seconds. For the
+  // rest of the service. Reproduced in a browser against a running console.
+  //
+  // Degrade toward "not answering", never toward "all is well" — the guarantee
+  // `refreshChannelHealth` states twenty lines up and this door did not keep.
+  const answer = await channelStatus();
+  const rows = Array.isArray(answer) ? answer : [];
   const next = {};
   for (const r of rows) next[r.id] = r;
   const now = Date.now();
@@ -2135,8 +2148,12 @@ async function pollChannelHealth() {
  */
 export function startChannelHealth() {
   if (healthPoll) return;
-  pollChannelHealth();
-  healthPoll = setInterval(pollChannelHealth, 2000);
+  // Through the wrapped door, both times. `pollChannelHealth` is guarded from the
+  // inside now, but a health poll must not be the one caller that can raise an
+  // unhandled rejection at the shell — there is exactly one door out of this
+  // module and this is it (rule 36's reasoning, applied to a timer).
+  refreshChannelHealth();
+  healthPoll = setInterval(refreshChannelHealth, 2000);
 }
 
 export function stopChannelHealth() {
@@ -2298,9 +2315,15 @@ try {
   // In a plain browser there is no backend AND no output screen, so there is
   // nothing to warn about — don't cry wolf in a dev tab.
   if (get(capture).available) {
+    // `humanError`, not `String(e)`. Every Tauri command on this path returns the
+    // typed bridge error (`error.rs`, `{ kind, message }`), and `String({…})` is
+    // "[object Object]" — so the most serious sentence in the product ended
+    // "…clear it there. ([object Object])". Six other files already document this
+    // trap; the panic path was the one door nobody checked, which is rule 15 and
+    // "a guarantee is only kept on the doors you checked" arriving together.
     panicError.set(
       `${label} FAILED — the congregation may still be seeing the last thing you put up. ` +
-        `Check the output screen and clear it there. (${String(e).replace(/^Error:\s*/, '')})`,
+        `Check the output screen and clear it there. (${humanError(e)})`,
     );
   }
   return false;
