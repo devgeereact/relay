@@ -13,7 +13,16 @@
   import Loading from '../../ui/Loading.svelte';
   import ErrorState from '../../ui/ErrorState.svelte';
   import { templateKind, kindsPresent, KIND_META, KIND_ORDER } from '../../templateKind.js';
-  import { STARTERS, isLayered, regionsToLayers, CONTENT_KINDS, layerLabel, isKeyedTemplate } from '../../layers.js';
+  import {
+    STARTERS,
+    isLayered,
+    regionsToLayers,
+    CONTENT_KINDS,
+    layerLabel,
+    isKeyedTemplate,
+    resolveOutputTemplate,
+  } from '../../layers.js';
+  import { DEFAULT_TEMPLATE } from '../../templates.js';
   // THE ONE CAMERA PLATE, shared with Outputs (`ui/CameraPlate.svelte`). A KEYED
   // template — a lower third — paints a band and leaves the rest transparent,
   // because the rest is a camera the switcher supplies. Previewed against
@@ -256,6 +265,14 @@
     $defaultTemplateId,
   );
   $: sel = $templates.find((t) => t.id === selId) || null;
+
+  // WHAT A SCREEN WOULD ACTUALLY PAINT. The preview used to render the selected
+  // row unconditionally, which is right for "what does this template look like"
+  // and wrong for the question an operator is asking in the inspector — "what
+  // happens when this fires". The chain is the wall's own (DECISIONS §29 / §70).
+  $: previewTpl =
+    resolveOutputTemplate(sel, null, false, $templates.find((t) => t.id === $defaultTemplateId) || null) ||
+    DEFAULT_TEMPLATE;
 
   function sortList(list, mode, defaultId) {
     const a = [...list];
@@ -728,8 +745,8 @@
 
       <div class="rw-panebody pad">
         <div class="tg-preview">
-          {#if isKeyedTemplate(sel)}<CameraPlate />{/if}
-          <TemplateRender template={sel} content={SAMPLE} />
+          {#if isKeyedTemplate(previewTpl)}<CameraPlate />{/if}
+          <TemplateRender template={previewTpl} content={SAMPLE} />
         </div>
         <div class="tg-selname">{sel.name}</div>
 

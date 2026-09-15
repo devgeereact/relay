@@ -3071,8 +3071,51 @@ fn cue_or_content_tpl(
     // MEGABYTES — one was 13 MB — so every verse took seconds to serialize, send
     // and re-parse on each screen. Reading only the id (a settings lookup) makes a
     // fire instant regardless of how heavy the default template is.
-    let id = db::content_template_id(conn, kind).ok().flatten();
+    let id = db::content_template_id(conn, kind)
+        .ok()
+        .flatten()
+        .or_else(|| {
+            // NOTHING BOUND THIS KIND, so the screens following the content look
+            // wear the configured default. The id travels so the console readout
+            // names what the wall will actually paint; the JSON still does not.
+            db::get_setting(conn, "default_template_id")
+                .ok()
+                .flatten()
+                .and_then(|s| s.parse::<i64>().ok())
+        });
     (id, None, false)
+}
+
+#[cfg(test)]
+mod cue_or_content_tpl_tests {
+    use super::*;
+
+    #[test]
+    fn a_kind_with_no_content_look_answers_with_the_configured_default() {
+        // The console readout names the template a fire will wear. With no content
+        // look set for this kind it said "none" — while the wall, since the default
+        // now reaches it, wears the operator's default. Two surfaces, one fire, two
+        // answers. The ID travels; the JSON deliberately does not (a default
+        // carrying an embedded image has been 13 MB, and it used to be serialized
+        // and broadcast on every single fire).
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        db::migrate(&conn, true).unwrap();
+        db::set_setting(&conn, "default_template_id", "3").unwrap();
+        let (id, json, pinned) = cue_or_content_tpl(&conn, None, "scripture");
+        assert_eq!(id, Some(3));
+        assert!(json.is_none(), "the default must never ship its JSON");
+        assert!(!pinned, "a default is not a deliberate per-cue choice");
+    }
+
+    #[test]
+    fn a_content_look_still_beats_the_configured_default() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        db::migrate(&conn, true).unwrap();
+        db::set_setting(&conn, "default_template_id", "3").unwrap();
+        db::set_content_template(&conn, "scripture", Some(5)).unwrap();
+        let (id, _, _) = cue_or_content_tpl(&conn, None, "scripture");
+        assert_eq!(id, Some(5));
+    }
 }
 
 /// The default template ids mapped to each content type.
