@@ -321,10 +321,11 @@ describe('the inspector column', () => {
     // here: no rendered control anywhere reaches `push_announcement`.
     //
     // This is a real consequence and it is asserted rather than left implicit —
-    // `capture.js::pushAnnouncement` and the Rust command both still exist, so
-    // `ipc.test.js` and `qa-inventory`'s command count are BOTH still green over
-    // a command nothing renders. Deleting the pair is the lead's call; until
-    // then this test is what says so out loud.
+    // `capture.js::pushAnnouncement` and the Rust command were both DELETED
+    // rather than left registered with nothing rendering them, following the
+    // same precedent as the five commands deleted on 2026-08-30 (a command
+    // nothing calls is attack surface nobody is watching). This test is what
+    // says so out loud now that the pair is gone.
     for (const f of ['LiveRail.svelte', 'Dock.svelte', 'views/Live.svelte']) {
       const s = readFileSync(resolve(__dirname, f), 'utf8');
       expect(s, `${f} still renders an announcement control`)

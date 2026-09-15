@@ -667,18 +667,16 @@
   // scripture on every screen at once.
   //
   // WHAT THAT LEAVES, said plainly rather than left to be discovered: the
-  // `push_announcement` command is still registered in Rust and
-  // `capture.js::pushAnnouncement` still wraps it, so `ipc.test.js` is satisfied
-  // and `scripts/qa-inventory.mjs` still counts it addressed — but NOTHING
-  // RENDERED REACHES IT any more. By this repository's own standard that is
-  // attack surface nobody is watching, and the precedent for the five commands
-  // deleted on 2026-08-30 is to delete it rather than to hide it. That is a
-  // change to `src-tauri/` and to another agent's file, so it is recorded for
-  // the lead to decide rather than taken here.
+  // `push_announcement` command and `capture.js::pushAnnouncement` were both
+  // DELETED — not left registered with nothing rendering them, which by this
+  // repository's own standard would have been attack surface nobody is
+  // watching. That follows the precedent for the five commands deleted on
+  // 2026-08-30: delete it rather than hide it. It was a change to
+  // `src-tauri/` and to another agent's file, and it has since been made.
   //
-  // `announce.test.js`, `r2livepath.test.js` and `qa-r5-groups.test.js` still
-  // hold the WRAPPER's throw contract, which is correct: the contract is about
-  // the wrapper, not about this card.
+  // `announce.test.js`, `r2livepath.test.js` and `qa-r5-groups.test.js` record
+  // WHY the wrapper had to throw while it existed. None of them still holds
+  // that contract — there is no wrapper left to hold it.
 
   // ── QUICK TOOLS · LOAD WHOLE PLAN (docs/REBRAND.md §2) ─────────────────────
   //

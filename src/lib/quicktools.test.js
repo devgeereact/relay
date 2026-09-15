@@ -212,9 +212,13 @@ describe('the word to the preacher', () => {
 // that it is REMOVED rather than hidden — a `hidden` attribute or a `{#if false}`
 // would have passed every one of the three tests it replaced.
 //
-// The wrapper's own contract (`pushAnnouncement` THROWS) is still held, by
-// `announce.test.js` and `qa-r5-groups.test.js`. That is correct and unchanged:
-// the contract is about the wrapper, not about this card.
+// The wrapper's own contract (`pushAnnouncement` THROWS) is no longer held
+// anywhere — the wrapper and the Rust command it called were both DELETED,
+// the same precedent as the five commands deleted on 2026-08-30 (a command
+// nothing calls is attack surface nobody is watching). `announce.test.js`
+// keeps the reasoning in words for a wrapper that no longer exists;
+// `qa-r5-groups.test.js` records the deletion itself as a decision. Neither
+// still asserts against the wrapper, because there is nothing left to.
 describe('the emergency announcement is not in Quick tools', () => {
   it('no control renders it, and nothing in this card can reach the command', async () => {
     mount();
