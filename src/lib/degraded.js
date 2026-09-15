@@ -120,7 +120,12 @@ export function degradations(s = {}) {
       fix: notEnforced
         ? 'Press Esc to clear the screens, then check each one by hand. Settings → General says what failed.'
         : rearmed
-          ? 'Turn detection off in the Live audio card, or turn safe mode off in Settings → General.'
+          ? // NOT "turn detection off in the Live audio card": that switch is
+            // disabled under safe mode, deliberately, and telling an operator to
+            // press a control that cannot be pressed is the shape of thing this
+            // register exists to remove. Turning safe mode off is what actually
+            // works, and it hands the detection switch back in the same movement.
+            'Settings → General → Turn off safe mode, which gives you the detection switch back — then turn detection off if that is what you wanted.'
           : 'Settings → General → Turn off safe mode.',
     });
   }

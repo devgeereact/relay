@@ -108,7 +108,11 @@ describe('what counts as blocked, and what counts as reduced', () => {
     expect(d.what).not.toMatch(/nothing Relay does can reach a screen/);
     expect(d.what).toMatch(/detection is armed/);
     expect(d.title).toMatch(/armed again/);
-    expect(d.fix).toMatch(/Turn detection off/);
+    // AND THE NEXT ACTION HAS TO BE ONE THAT WORKS. This said "turn detection off
+    // in the Live audio card", which is the switch disabled under safe mode — a
+    // sentence telling an operator to press a control that cannot be pressed.
+    expect(d.fix).not.toMatch(/Live audio card/);
+    expect(d.fix).toMatch(/Turn off safe mode/);
   });
 
   it('says nothing new when the caller does not know whether detection is armed', () => {
