@@ -26,7 +26,11 @@
   $: index = STAGES.indexOf(stage);
 </script>
 
-<section class="b-shell" role="status" aria-live="polite" aria-busy="true">
+<!-- No `aria-busy`. It withholds announcements until it goes false, and this
+     region never clears it — so a screen-reader operator heard nothing from the
+     launch sequence at all, including the checks as they resolved. Splash.svelte
+     carried the same defect and lost it in the same change. -->
+<section class="b-shell" role="status" aria-live="polite">
   <header class="b-bar">
     <BrandMark size="16px" />
     <b>RELAY</b>

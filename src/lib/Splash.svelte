@@ -1,6 +1,14 @@
 <script>
   // The boot screen — the first thing a church ever sees.
   //
+  // ORIGINAL REFERENCE: docs/design/relay-splash-screen.png. This screen now
+  // DELIBERATELY DIVERGES from it — the 2026-09-15 design pass took out a
+  // false status badge, three feature bullets, a glowing divider and a pulse
+  // glyph that the reference draws. Per CLAUDE.md, the references are not a
+  // spec: where a reference and the stylesheet disagree, the stylesheet is
+  // what shipped. The reasons are below, so the PNG can still be read as the
+  // starting point rather than as a thing this file has drifted away from.
+  //
   // It is DECORATION OVER A FACT, never a fact of its own. It covers the shell
   // only while the engine is being attached, and App.svelte drops it on a hard
   // timeout as well as on success — a splash that outlives its boot is an app
@@ -19,11 +27,15 @@
   // dressed as readouts.
   //
   // Two of those claims were removed in the 2026-09-15 design pass:
-  //   · "SAFE MODE · Outputs disabled" was hard-coded. Safe mode is decided by
-  //     the gate one screen later (BootSequence sets it), so this badge read
-  //     the same whether or not safe mode was on — CLAUDE.md rule 35's defect
-  //     exactly, on the only screen where nobody could check. BootShell has a
-  //     real `safe` prop and says it truthfully; this screen now says nothing.
+  //   · "SAFE MODE · Outputs disabled" was hard-coded markup, so it read the
+  //     same whether or not safe mode was on — CLAUDE.md rule 35's defect
+  //     exactly, on the only screen where nobody could check. It is NOT that
+  //     the fact is unavailable here: `boot/boot.js` derives `safeMode` from
+  //     the boot record and `App.svelte` already reads it while `booting` is
+  //     still true. The fact is PARTIAL — the crash-streak path can still turn
+  //     safe mode on at the gate a moment later — so this screen chooses to
+  //     say nothing rather than to say a half of it, and BootShell says the
+  //     settled answer through a real `safe` prop one screen on.
   //   · "No Internet · Privacy First · Local Processing" were three feature
   //     bullets restating the offline line beside them, and they were already
   //     hidden below 860px — chrome that vanishes on a small booth laptop was
@@ -44,7 +56,11 @@
   export let stage = 'Starting Relay';
 </script>
 
-<div class="splash" role="status" aria-live="polite" aria-busy="true">
+<!-- No `aria-busy`. It tells assistive technology to withhold announcements
+     until it goes false, and this region only ever unmounts — so the screen's
+     one line of information was silent to a screen-reader operator for the
+     whole boot. Nothing here updates in place, so there is nothing to suppress. -->
+<div class="splash" role="status" aria-live="polite">
   <!-- Edge line-art. Pure decoration, so it is hidden from assistive tech. -->
   <svg class="waves" viewBox="0 0 1536 1024" preserveAspectRatio="none" aria-hidden="true">
     <g fill="none" stroke="currentColor" stroke-width="1">
@@ -89,9 +105,13 @@
     </p>
   </div>
 
-  <!-- The only standing claim left on this screen, and it is true on every
-       boot. It sits on the RIGHT because that is where BootShell's footer says
-       the same words: the one line that survives the handover does not move. -->
+  <!-- The one standing claim left on this screen. It is a statement about how
+       Relay PROCESSES — nothing a church says leaves the device — rather than a
+       claim that no socket is open: `App.svelte` runs `checkForUpdate()` in the
+       same onMount, so an update check may well be in flight behind it. The
+       wording is verbatim from BootShell's footer and must stay that way. It
+       sits on the RIGHT because that is where BootShell puts the same words:
+       the one line that survives the handover does not move. -->
   <footer class="foot">
     <span>Offline · all processing local</span>
   </footer>
@@ -169,6 +189,14 @@
   .ver {
     font-size: var(--v-fs-lbl);
     color: var(--v-faint);
+  }
+  /* `app.css` narrows `.b-bar` to 16px below 640. The brand row is the one
+     element that survives the handover, so it narrows at the same width or it
+     jumps there. */
+  @media (max-width: 640px) {
+    .bar {
+      padding: 0 16px;
+    }
   }
 
   /* ── Centre stack ──
@@ -250,13 +278,24 @@
     margin-left: -8%;
     border-radius: var(--v-r-round);
     background: var(--v-amethyst2);
-    transform-origin: 50% 333%;
+    /* The pivot is the ring's centre: half the ring's height expressed in the
+       DOT's own height, so (0.5 / 0.16) = 312.5%. Recompute it whenever the
+       dot size changes — 333% was a carry-over and sat the ring 0.8px high. */
+    transform-origin: 50% 312.5%;
     transform: rotate(calc(var(--i) * 45deg));
-    /* Motion is OPT-IN (DESIGN_SYSTEM §5): the resting state is the one an
-       operator who asked for no animation gets, and the animation is added
-       inside `no-preference`. The old shape animated by default and switched
-       off under `reduce`, which is the same result by the riskier route. */
-    opacity: 0.35;
+    /* Motion is OPT-IN (DESIGN_SYSTEM §5): this IS the state an operator who
+       asked for no animation gets, and the animation is added inside
+       `no-preference`. The old shape animated by default and switched off
+       under `reduce` — the same result by the riskier route, since a query
+       cannot unset a declaration made outside it.
+       0.55 IS NOT A ROUND NUMBER AND MUST NOT BE LOWERED. It is what the old
+       `reduce` block rested at, and it is the side of the line that clears
+       WCAG's 3:1 non-text floor: composited over --v-void, --v-amethyst2
+       measures 3.32:1 at 0.55 and 2.06:1 at 0.35 (sRGB relative luminance,
+       computed in the live DOM). These are ~3px dots in a dark booth, read by
+       the one user this branch exists to serve. The animation writes opacity
+       every frame, so this value reaches nobody else. */
+    opacity: 0.55;
   }
   @media (prefers-reduced-motion: no-preference) {
     .spin span {
