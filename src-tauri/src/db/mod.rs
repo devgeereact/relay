@@ -43,7 +43,8 @@ use channels::seed_channels;
 #[cfg(test)]
 use serde_json::Value;
 use templates::{
-    ensure_lyrics_template, ensure_preset_templates, reset_builtin_templates, seed_templates,
+    ensure_lower_third_band_is_not_a_law_colour, ensure_lyrics_template, ensure_preset_templates,
+    reset_builtin_templates, seed_templates,
 };
 #[cfg(test)]
 use verses::clean_verse;
@@ -353,6 +354,10 @@ fn ensure_tables(conn: &Connection) -> rusqlite::Result<()> {
     ensure_template_active(conn)?; // console-active templates (max 4)
     ensure_lyrics_template(conn)?; // the song template — see templates.rs
     ensure_preset_templates(conn)?; // ready-to-use preset designs (additive, by name)
+                                    // …and correct the one seeded value that additive-by-name cannot reach: see
+                                    // the function's own note. The band only became visible this wave, and on an
+                                    // existing install it would have become visible in the REHEARSAL colour.
+    ensure_lower_third_band_is_not_a_law_colour(conn)?;
     ensure_service_plans(conn)?; // Planner
     ensure_songs(conn)?; // Lyrics
     ensure_saved_scripture(conn)?; // Library
@@ -2039,6 +2044,38 @@ mod tests {
              adds them to a database created before they were: {orphans:?} — give \
              each one an `ALTER TABLE … ADD COLUMN` behind a pragma sniff (rule 25). \
              Editing schema-baseline.sql instead would be editing the past."
+        );
+    }
+
+    /// THE FORWARD-FILL IS REACHED BY THE FUNCTION EVERY OPEN RUNS.
+    ///
+    /// `templates.rs` owns the behavioural test — it proves the fill corrects a row
+    /// carrying the old accent, leaves a church's own colour alone, and is
+    /// idempotent. What that cannot prove is that opening a database CALLS it,
+    /// which is the distinction this repository keeps relearning: a guarantee is
+    /// only kept on the doors you checked.
+    ///
+    /// A source scan rather than a fixture, deliberately. Driving `migrate` here
+    /// means rebuilding the whole schema in a test fixture — `verses`,
+    /// `transcripts` and the rest — which tests SQLite rather than the wiring.
+    /// `servicelock.rs::every_protected_command_actually_guards_itself` reads the
+    /// source for exactly this kind of claim, for exactly this reason.
+    ///
+    /// The behaviour was also verified by hand against a real 39-template install:
+    /// id 3 went `#b080e0` to `#101319` with its type moved with it, a second run
+    /// was byte-identical, and 1 of 39 rows changed.
+    #[test]
+    fn ensure_tables_calls_the_lower_third_forward_fill() {
+        const MOD: &str = include_str!("mod.rs");
+        let from = MOD
+            .find("fn ensure_tables(")
+            .expect("ensure_tables must exist");
+        let body = &MOD[from..];
+        let body = &body[..body.find("\n}").expect("unterminated fn")];
+        assert!(
+            body.contains("ensure_lower_third_band_is_not_a_law_colour(conn)?"),
+            "ensure_tables must run the forward-fill, or an existing install keeps the \
+             rehearsal colour on a band that now paints"
         );
     }
 

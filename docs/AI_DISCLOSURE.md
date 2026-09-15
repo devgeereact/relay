@@ -76,7 +76,7 @@ with a transcript.
 
 - **Escape** clears every screen, from any tab, even mid-typing.
 - **B** blacks out every screen.
-- **Emergency Stop** is in the top bar of every screen.
+- **Esc** clears the screens from anywhere, including mid-typing, and the red **Clear screens** runs along the bottom of the Controls card in the dock, on every workspace.
 - **Detection can be switched off entirely** — Relay still works as a fast manual
   tool, and every other feature is unaffected.
 - **Sensitivity is yours to set.** Relay also learns from every time you accept or
