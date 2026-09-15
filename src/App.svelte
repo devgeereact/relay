@@ -580,6 +580,66 @@
      up, and it was sitting on top of that exact readout. -->
 <div class="shell" class:has-panic={$panicError} class:chromeless={liveFullscreen} style="--panic-h:{panicH}px">
 
+  <!-- THE TWO IN-FLOW BANNERS COME FIRST, ABOVE THE DESK.
+       `.shell` is a flex COLUMN (`app.css`), so these stack across the top under
+       the fixed panic bar — which is what `.audiobar`'s own comment has always
+       said they do, and what a full-width bar with a `border-bottom` is drawn to
+       be. They were below `.main-v` in the markup and beside it on the screen;
+       see the measurement in `app.css`'s `.shell` note. -->
+  <!-- THE MICROPHONE DIED (RG-117, PR #56). In the SHELL, for the reason the panic
+       bar is: a volunteer may well be in Settings or Templates when the desk feed
+       is knocked out, and a message on a tab they are not looking at is not a
+       message. `role="alert"`, because it interrupts the service; it does not
+       auto-dismiss, because "the microphone stopped" stays true until somebody
+       does something about it.
+
+       IT IS NOT A DUPLICATE OF `degraded.js`'s `audio` row, and the two cannot
+       disagree because both read this one store field. They do different jobs:
+       this INTERRUPTS, and the register INVENTORIES — the status bar's Reduced
+       cell and the Dashboard's readiness rollup both walk `degradations()`, so a
+       dead microphone that appeared only as a banner would be missing from the
+       one list that answers "what is wrong right now". Severity earns the banner;
+       completeness earns the row. -->
+  {#if $capture.audioError}
+    <div class="audiobar" role="alert" aria-live="assertive">
+      <div class="panic-t">
+        <b>Relay has stopped hearing the microphone.</b>
+        <span>{$capture.audioError}</span>
+      </div>
+      <button class="r-btn ghost sm" on:click={dismissAudioError}>Dismiss</button>
+    </div>
+  {/if}
+
+  <!-- SAFE MODE COULD NOT KEEP ITS PROMISE (DECISIONS §86). In the SHELL, for the
+       reason the other two rose bars are: the switch is in Settings, the failure
+       is about the OUTPUT SCREENS, and an operator who flips safe mode and then
+       walks to Live to see what is still lit must not be told there that outputs
+       are disabled. The rose line on the Settings row is the only other place
+       this exists, and it is on the one page they have just left.
+
+       `.audiobar`, not `.panicbar`: in flow, paints over nothing, and takes no
+       part in the `--panic-h` offset that a second fixed bar would have to
+       share. Rule 44 — an overlay may never cover `Clear screens`, and the
+       cheapest way to keep that true is not to overlay anything.
+
+       AFTER the microphone bar on purpose: `audioerror.test.js` slices the shell
+       from the FIRST `class="audiobar"` to find that banner, so a second one
+       above it shadows the assertion. A dead microphone is also the more urgent
+       of the two — this one is about screens nobody is firing to.
+
+       Rose, never amber. It does not auto-dismiss: "a screen may still be live"
+       stays true until somebody has looked at the screen. -->
+  {#if $safeModeError}
+    <div class="audiobar" role="alert" aria-live="assertive">
+      <div class="panic-t">
+        <b>Safe mode is NOT enforced.</b>
+        <span>{$safeModeError}</span>
+      </div>
+      <button class="r-btn ghost sm" on:click={dismissSafeModeError}>Dismiss</button>
+    </div>
+  {/if}
+
+
   <!-- Main -->
   <div class="main-v">
     <header class="topbar-v">
@@ -793,58 +853,6 @@
     </div>
   {/if}
 
-  <!-- THE MICROPHONE DIED (RG-117, PR #56). In the SHELL, for the reason the panic
-       bar is: a volunteer may well be in Settings or Templates when the desk feed
-       is knocked out, and a message on a tab they are not looking at is not a
-       message. `role="alert"`, because it interrupts the service; it does not
-       auto-dismiss, because "the microphone stopped" stays true until somebody
-       does something about it.
-
-       IT IS NOT A DUPLICATE OF `degraded.js`'s `audio` row, and the two cannot
-       disagree because both read this one store field. They do different jobs:
-       this INTERRUPTS, and the register INVENTORIES — the status bar's Reduced
-       cell and the Dashboard's readiness rollup both walk `degradations()`, so a
-       dead microphone that appeared only as a banner would be missing from the
-       one list that answers "what is wrong right now". Severity earns the banner;
-       completeness earns the row. -->
-  {#if $capture.audioError}
-    <div class="audiobar" role="alert" aria-live="assertive">
-      <div class="panic-t">
-        <b>Relay has stopped hearing the microphone.</b>
-        <span>{$capture.audioError}</span>
-      </div>
-      <button class="r-btn ghost sm" on:click={dismissAudioError}>Dismiss</button>
-    </div>
-  {/if}
-
-  <!-- SAFE MODE COULD NOT KEEP ITS PROMISE (DECISIONS §86). In the SHELL, for the
-       reason the other two rose bars are: the switch is in Settings, the failure
-       is about the OUTPUT SCREENS, and an operator who flips safe mode and then
-       walks to Live to see what is still lit must not be told there that outputs
-       are disabled. The rose line on the Settings row is the only other place
-       this exists, and it is on the one page they have just left.
-
-       `.audiobar`, not `.panicbar`: in flow, paints over nothing, and takes no
-       part in the `--panic-h` offset that a second fixed bar would have to
-       share. Rule 44 — an overlay may never cover `Clear screens`, and the
-       cheapest way to keep that true is not to overlay anything.
-
-       AFTER the microphone bar on purpose: `audioerror.test.js` slices the shell
-       from the FIRST `class="audiobar"` to find that banner, so a second one
-       above it shadows the assertion. A dead microphone is also the more urgent
-       of the two — this one is about screens nobody is firing to.
-
-       Rose, never amber. It does not auto-dismiss: "a screen may still be live"
-       stays true until somebody has looked at the screen. -->
-  {#if $safeModeError}
-    <div class="audiobar" role="alert" aria-live="assertive">
-      <div class="panic-t">
-        <b>Safe mode is NOT enforced.</b>
-        <span>{$safeModeError}</span>
-      </div>
-      <button class="r-btn ghost sm" on:click={dismissSafeModeError}>Dismiss</button>
-    </div>
-  {/if}
 
   <!-- PRACTICE. Above the degraded strip: while a volunteer is being taught, the
        instruction is the most important thing on the screen. Amethyst, because it

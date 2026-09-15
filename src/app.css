@@ -339,7 +339,26 @@ body{ overflow:hidden; text-rendering:optimizeLegibility; -moz-osx-font-smoothin
 .mainscroll::-webkit-scrollbar-thumb:hover, .r-scroll::-webkit-scrollbar-thumb:hover{ background:#33333a; background-clip:content-box; }
 
 /* ── Shell ─────────────────────────────────────────────────────────────── */
-.shell{ display:flex; height:100dvh; background:var(--v-void); color:var(--v-txt);
+/* A COLUMN. `display:flex` with no direction is a ROW, and the shell's two in-flow
+   rose banners (`.audiobar`) are direct children of it — so a banner designed as a
+   full-width bar with a `border-bottom` was laid out BESIDE the desk as a narrow
+   vertical strip, and the desk was squeezed to make room for it. Measured in a
+   browser against the real stylesheet at 1200px: with the microphone banner
+   present, `.main-v` went from 1200px wide to 730px and the banner took 470px of
+   full-height column down the right-hand side. With two banners up, `.main-v`
+   measured **0px** — `flex:1` is `flex-basis:0`, so once the banners' content had
+   taken the row there was nothing left, and the whole console vanished.
+
+   This has shipped since RG-117 put the first one here. Every static instrument in
+   the repository was blind to it; it is exactly the class the 2026-09-10 rendered
+   pass exists for. `.panicbar` and `.prac` escaped it only by being `position:fixed`.
+
+   The banners are ordered BEFORE `.main-v` in `App.svelte` so they stack at the top,
+   under the fixed panic bar, which is what `.audiobar`'s own comment always said
+   they did. `.main-v` is already `flex:1` and `flex-direction:column` internally, so
+   it takes the remaining height; it gains `min-height:0` because in a column that is
+   the axis a flex item must be allowed to shrink on. */
+.shell{ display:flex; flex-direction:column; height:100dvh; background:var(--v-void); color:var(--v-txt);
   font-family:var(--f-body); overflow:hidden; }
 /* The panic bar is `position:fixed` at the top, so it USED TO COVER the first
    ~56px of the app: the sidebar brand, and part of the top bar — including the
@@ -357,7 +376,7 @@ body{ overflow:hidden; text-rendering:optimizeLegibility; -moz-osx-font-smoothin
    menu and its foot is the status bar. Its rules went with its markup: a rule
    whose class nothing renders is the dead CSS §6 warns about, and leaving these
    would have left 238px of layout waiting for a class name to come back. */
-.main-v{ flex:1; min-width:0; display:flex; flex-direction:column; overflow:hidden; background:var(--v-void); }
+.main-v{ flex:1; min-width:0; min-height:0; display:flex; flex-direction:column; overflow:hidden; background:var(--v-void); }
 /* THE CHROME BAR (docs/REBRAND.md §2). 34px: a control room's title bar, not a
    web page's masthead. The 62px header and the 42px footer it replaces took 66
    pixels of desk between them — on a 1366x768 booth laptop that is a row of the

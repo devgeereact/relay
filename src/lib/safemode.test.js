@@ -203,6 +203,72 @@ describe('safe mode keeps its own promise', () => {
     expect(app).not.toMatch(/\{#if \$safeModeError\}[\s\S]{0,200}amber/);
   });
 
+  it('the shell stacks its banners as BARS — every in-flow child expects a column', async () => {
+    // A BANNER LAID OUT AS A COLUMN IS A BANNER NOBODY READS.
+    //
+    // `.shell` was `display:flex` with no direction, which is a ROW, and the two
+    // in-flow rose banners are direct children of it. So `.audiobar` — a full-width
+    // bar with a `border-bottom`, whose own comment says it stacks under the panic
+    // bar — was laid out BESIDE the desk as a narrow full-height strip. Measured in
+    // a real browser against this stylesheet at 1200px: with the microphone banner
+    // up, `.main-v` went 1200 → 730 and the banner took 470px down the right-hand
+    // side; with two banners up `.main-v` measured ZERO and the console vanished,
+    // because `flex:1` is `flex-basis:0` and the banners had taken the row.
+    //
+    // That has shipped since RG-117 added the first banner. `.panicbar` and `.prac`
+    // escaped it only by being `position:fixed`.
+    //
+    // THIS TEST CANNOT MEASURE. jsdom does not lay out, so `getBoundingClientRect`
+    // is all zeros here and a geometric assertion would be theatre. What it holds
+    // instead is the two source facts the geometry follows from, which is the whole
+    // of the bug: the direction, and that every direct child of `.shell` is either
+    // the desk, a bar meant to stack, or out of flow entirely. The measurement is
+    // in the report and in `app.css`'s `.shell` note.
+    const { readFileSync } = await import('node:fs');
+    const { resolve } = await import('node:path');
+    const css = readFileSync(resolve(process.cwd(), 'src/app.css'), 'utf8');
+    const app = readFileSync(resolve(process.cwd(), 'src/App.svelte'), 'utf8');
+
+    const shellRule = css.slice(css.indexOf('.shell{'), css.indexOf('}', css.indexOf('.shell{')));
+    expect(shellRule, 'a shell with no flex-direction is a ROW').toMatch(/flex-direction:\s*column/);
+
+    // Every direct child of `.shell`, by markup indentation: an element at two
+    // spaces, or one at four directly under a two-space `{#if}` / `{:else if}`.
+    const body = app.slice(app.indexOf('<div class="shell"'));
+    const lines = body.split('\n');
+    const kids = [];
+    let underBlock = false;
+    for (const ln of lines) {
+      if (/^  \{[#:]/.test(ln)) { underBlock = true; continue; }
+      if (/^  \{\/|^  <!--/.test(ln)) { underBlock = false; continue; }
+      const two = ln.match(/^  <\w+ class="([^"{]+)"/);
+      if (two) { kids.push(two[1]); underBlock = false; continue; }
+      if (underBlock) {
+        const four = ln.match(/^    <\w+ class="([^"{]+)"/);
+        if (four) { kids.push(four[1]); underBlock = false; }
+      }
+    }
+    // The scanner must see a tree. One that quietly found nothing would pass for ever.
+    expect(kids.length, `direct children of .shell: ${kids.join(' | ')}`).toBeGreaterThan(5);
+    expect(kids).toContain('main-v');
+    expect(kids.filter((k) => k === 'audiobar')).toHaveLength(2);
+
+    // `main-v` is the desk. `audiobar` is the sanctioned in-flow bar. Everything
+    // else must take itself out of the flow, or it will sit beside the desk again —
+    // and in a column it would eat the desk's HEIGHT instead of its width, which is
+    // the same bug wearing the other axis.
+    for (const cls of kids) {
+      if (cls === 'main-v' || cls === 'audiobar') continue;
+      const first = cls.split(/\s+/)[0];
+      const rule = css.slice(css.indexOf(`.${first}{`), css.indexOf('}', css.indexOf(`.${first}{`)));
+      expect(
+        /position:\s*fixed|display:\s*none/.test(rule),
+        `.${first} is a direct child of .shell and is neither out of flow nor a bar ` +
+          `meant to stack. Its base rule: ${rule || '(no rule found)'}`,
+      ).toBe(true);
+    }
+  });
+
   it('setSafeMode has exactly one caller, and it is applySafeMode', async () => {
     // THE CHOKE POINT IS WHERE THE CHECK GOES, NOT THE CALL SITES (rule 36).
     // The record write must not be reachable without the enforcement beside it,
