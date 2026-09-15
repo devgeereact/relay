@@ -126,7 +126,6 @@ describe('every path that takes the wall has an answer for the plan rail', () =>
     'fire_content',
     'fire_media',
     'start_countdown',
-    'push_announcement',
     'nav',
     'clear_screens',
     'blackout',
@@ -157,6 +156,22 @@ describe('every path that takes the wall has an answer for the plan rail', () =>
         'nobody is looking at. Amber means live and is never allowed to lie. Either call ' +
         'leavePlan(), or take a `keepPlan` flag if this is the plan\'s own take path.',
     ).toEqual([]);
+  });
+
+  it('every name in SCREEN_COMMANDS is a command Rust actually registers', () => {
+    // A name in a hand-written list is not a command. This list held
+    // `push_announcement` after the command was deleted, and the assertion it
+    // feeds — every wrapper that fires decides about liveCue.onAir — passed
+    // anyway, because a wrapper that does not exist trivially has no wrapper
+    // bug. A dead entry looks exactly like coverage.
+    // `resolve` from the repo root, matching `src` above and `ipc.test.js` —
+    // `new URL(…, import.meta.url)` is not a `file:` URL under vite-node.
+    const main = readFileSync(resolve(process.cwd(), 'src-tauri/src/main.rs'), 'utf8');
+    const handler = main.split('generate_handler!')[1]?.split(']')[0] ?? '';
+    expect(handler).not.toBe('');
+    for (const name of SCREEN_COMMANDS) {
+      expect(handler, `${name} is in SCREEN_COMMANDS and not registered`).toContain(name);
+    }
   });
 
   it('and the listeners cover the clears this console did not initiate', () => {

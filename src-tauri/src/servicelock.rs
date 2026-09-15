@@ -201,42 +201,63 @@ mod tests {
     /// and one that can refuse `manual_fire` takes the override away at the exact
     /// moment the AI has got something wrong. Over-blocking is the more dangerous
     /// failure of the two this file can commit.
+    const LIVE_PATH: &[&str] = &[
+        "manual_fire",
+        "nav",
+        "clear_screens",
+        "blackout",
+        "set_rehearsal",
+        "confirm_detection",
+        "dismiss_detection",
+        "set_stage_next",
+        "fire_content",
+        "fire_media",
+        "start_countdown",
+        "adjust_countdown",
+        "set_detection_enabled",
+        "set_sensitivity",
+        "set_thresholds",
+        "open_channel_output",
+        "close_channel_output",
+        "set_channel_template",
+        "save_template",
+        "start_capture",
+        "stop_capture",
+        "end_service",
+        "output_beat",
+    ];
+
     #[test]
     fn the_lock_can_never_reach_the_live_path() {
-        let live = [
-            "manual_fire",
-            "nav",
-            "clear_screens",
-            "blackout",
-            "set_rehearsal",
-            "confirm_detection",
-            "dismiss_detection",
-            "set_stage_next",
-            "fire_content",
-            "fire_media",
-            "push_announcement",
-            "start_countdown",
-            "adjust_countdown",
-            "set_detection_enabled",
-            "set_sensitivity",
-            "set_thresholds",
-            "open_channel_output",
-            "close_channel_output",
-            "set_channel_template",
-            "save_template",
-            "start_capture",
-            "stop_capture",
-            "end_service",
-            "output_beat",
-        ];
         let lock = ServiceLock::default();
         lock.arm();
-        for cmd in live {
+        for cmd in LIVE_PATH {
             assert!(
                 lock.guard(cmd).is_ok(),
                 "{cmd} is a live control and must never be held back by the service lock"
             );
             assert!(describe(cmd).is_none());
+        }
+
+        // A NAME IN A HAND-WRITTEN LIST IS NOT A COMMAND.
+        //
+        // This list held `push_announcement` for as long as it took somebody to
+        // grep for it: the assertion checks that each name is NOT protected, and
+        // a name that is not a command is trivially not protected, so a dead
+        // entry passes for ever while looking like coverage.
+        let main = include_str!("main.rs");
+        let handler = main
+            .split("generate_handler!")
+            .nth(1)
+            .and_then(|s| s.split(']').next())
+            .expect("generate_handler! block");
+        for name in LIVE_PATH {
+            assert!(
+                handler.contains(name),
+                "`{name}` is named here as a command the lock may never reach, and \
+                 it is not registered in generate_handler! — a guarantee about \
+                 nothing"
+            );
         }
     }
 
