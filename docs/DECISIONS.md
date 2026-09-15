@@ -4054,3 +4054,78 @@ both sides: it asserts that `main.rs` calls `lock.guard("remove_plan_item")` **a
 still registered in `generate_handler!`, so a rename cannot leave the list quietly pointing at nothing.
 `the_guard_is_the_first_thing_the_command_does` holds the placement, because a guard after the work has
 started refuses the operator without preventing anything.
+
+## 86. Safe mode is enforced at one door in the frontend, and not in Rust (2026-09-15)
+
+### The state it was in
+
+Settings offers a switch whose own row reads *"Outputs will not open and detection is disarmed —
+nothing Relay does can reach a screen. A way to open the console with no risk of putting something on
+a wall."*
+
+`setSafeMode` wrote `safeMode` into the boot record and did nothing else. `App.svelte` read `$safeMode`
+inside `onMount` only, with no reactive statement re-applying it; `Live.svelte` referenced safe mode
+zero times, so the run surface's fire path was not gated at all; and `grep -rn safe_mode src-tauri/src/`
+returned nothing.
+
+So flipping the switch mid-session changed a label. Projector windows that were already open stayed
+open, the detector stayed armed, and `aria-checked` said otherwise until the next launch. A volunteer
+who turned safe mode on to poke at a broken install during a service had been told nothing could reach
+a screen, over a machine where everything still could.
+
+That is rule 15 and §20 in a different costume — a control reporting a success it did not achieve —
+and this control makes a larger promise than a panic key does.
+
+### The decision
+
+**The enforcement lives at one door, `capture.js::applySafeMode`, and `setSafeMode` has exactly one
+caller.**
+
+The door writes the record, disarms detection, closes every screen that is open, and returns whether
+the promise was kept while also setting `safeModeError` — both, for the same reason `panicError` does
+both: the surface that flips safe mode can be a view that has already crashed, and a view that cannot
+`catch` cannot report.
+
+The obvious alternative was a `$safeMode` check at each fire site. CLAUDE.md records four separate
+bugs whose single root cause is a rule enforced on one surface and skipped on its twin; a check per
+caller would have been the fifth, and the switch now has three callers already (Settings, the boot
+sequence's crash gate, and `App.svelte`'s mount) which is exactly how the first four started.
+
+**Every screen is attempted, even after one refuses to close.** Stopping at the first failure would
+hand the operator one screen's name to fix by hand while the ones behind it were still lit and nothing
+had ever asked them to go dark. The message names each screen that would not close, so what is left to
+do by hand is the whole of it.
+
+**Turning safe mode OFF arms nothing.** It restores the operator's freedom to arm things. A detector
+that switched itself back on would be a different surprise from the one this control exists to prevent.
+
+### The open question, and its answer: no Rust flag in this wave
+
+The spec asked whether safe mode should also exist in Rust, so the engine could not be armed while the
+record says disarmed.
+
+**It should not, here.** The promise on the switch is about what Relay *does* — it opens no screens and
+arms no detector — and today both of those are initiated from the frontend. A `safe_mode` flag in Rust
+would be a second register for one fact, and duplicate registers are a failure mode this repository has
+already paid for twice (the counts in `QA_HARNESS.md` §0 exist because four documents came to disagree;
+`Thresholds::default()` is one baseline *by construction* for the same reason). The frontend choke
+point is sufficient for the sentence as written, and it is the smallest change that makes the sentence
+true.
+
+**The cost, stated plainly:** a future path that armed the engine from Rust alone — a spoken command
+handled entirely in the backend, an autostart, a scheduled service — would bypass safe mode entirely,
+and nothing in the Rust tree would stop it. Nothing does that today. If something is built that does,
+this decision is the one to reopen, and the answer then is a Rust-side gate at `pipeline::Fire` rather
+than a second copy of the boolean.
+
+`docs/SECURITY.md`'s threat register is not engaged by this: safe mode is a guard against Relay's own
+behaviour, not against an actor.
+
+### Instrument
+
+`src/lib/safemode.test.js`. Four of its six cases drive the door (detection disarmed and every screen
+closed; a failure reported rather than swallowed; every screen attempted rather than the first;
+a list that could not even be read). One holds that coming out of safe mode arms nothing. The sixth
+walks every `.js` and `.svelte` file under `src/` and holds `setSafeMode` to its single caller, so the
+next surface to offer safe mode cannot reproduce the original defect by writing the record on its own;
+it asserts its own walk found a tree, because a scanner that quietly narrows passes everything.

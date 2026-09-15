@@ -3,7 +3,7 @@
   import { get } from 'svelte/store';
   import { trapFocus } from './lib/focus.js';
   import { t } from './lib/i18n.js';
-  import { capture, capturing, live, screenBlack, rehearsing, initAudio, autoOpenOutputs, setDetection, clearScreens, blackScreen, panicError, dismissPanicError, dismissAudioError, loadServiceLock, channelHealth, channelWaiting, startChannelHealth, latencyReport, ping, onOperatorAction, noteOperatorAction, loadLiveTransition } from './lib/stores/capture.js';
+  import { capture, capturing, live, screenBlack, rehearsing, initAudio, autoOpenOutputs, applySafeMode, clearScreens, blackScreen, panicError, dismissPanicError, dismissAudioError, loadServiceLock, channelHealth, channelWaiting, startChannelHealth, latencyReport, ping, onOperatorAction, noteOperatorAction, loadLiveTransition } from './lib/stores/capture.js';
   import * as training from './lib/training.js';
   import { practice, stopPractice } from './lib/practice.js';
   import { degradations, worstLevel, summarise } from './lib/degraded.js';
@@ -490,12 +490,12 @@
     // engine is attached — before any view has had a chance to arm anything. A
     // screen that says "outputs disabled" over a live detector is worse than no
     // safe mode at all.
+    // One door, so a console reopened in safe mode and a switch flipped in
+    // Settings enforce exactly the same thing. `applySafeMode` disarms detection
+    // AND closes any screen that is already open, and reports rather than throws
+    // — there is nothing here in a position to catch. DECISIONS §86.
     if ($safeMode) {
-      try {
-        await setDetection(false);
-      } catch {
-        /* no backend — nothing was armed in the first place */
-      }
+      await applySafeMode(true);
     }
     clearTimeout(capTimer);
     holdTimer = setTimeout(

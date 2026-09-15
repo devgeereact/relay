@@ -107,8 +107,14 @@ export function clearCrash() {
 // ── Safe mode ──────────────────────────────────────────────────────────────
 // Safe mode is NOT cosmetic. It is a promise that nothing this app does can
 // reach a congregation, so a volunteer can poke at a broken install during a
-// service without putting anything on the wall. Whatever consumes it must
-// honour it (App.svelte disarms detection and refuses to open outputs).
+// service without putting anything on the wall.
+//
+// `setSafeMode` writes the RECORD and nothing else, and for months that was the
+// whole of it — App.svelte honoured the record inside `onMount` only, so the
+// switch disarmed nothing until the next launch. The enforcement now lives at
+// one door, `capture.js::applySafeMode`, which is this function's ONLY caller
+// (held there by `safemode.test.js`). Flip safe mode through that door; this is
+// the record it writes. DECISIONS §86.
 
 export const safeMode = derived(bootRecord, ($r) => !!$r.safeMode);
 

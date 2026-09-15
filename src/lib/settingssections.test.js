@@ -270,7 +270,10 @@ describe('acceptance 1 · no setting writes a preference nothing reads', () => {
   describe('§12 · every binary setting wears the one switch', () => {
     /** The three real on/off settings on this page, and where each one lives. */
     const BINARY = [
-      { label: 'Safe mode', section: 'general', handler: 'setSafeMode' },
+      // `applySafeMode`, not `setSafeMode`: the switch goes through the one door
+      // that actually disarms detection and closes the screens, and the record
+      // writer has exactly one caller (DECISIONS §86, `safemode.test.js`).
+      { label: 'Safe mode', section: 'general', handler: 'applySafeMode' },
       { label: 'Measuring latency', section: 'diagnostics', handler: 'toggleLatency' },
       { label: 'Send crash reports', section: 'privacy', handler: 'toggleCrash' },
     ];

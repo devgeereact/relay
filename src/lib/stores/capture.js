@@ -35,6 +35,9 @@
 //   button that must survive a crashed view, and NEITHER CAN CATCH. A throw there is
 //   an unhandled rejection — silence with extra steps. They return a boolean and set
 //   `panicError`, so a failure surfaces however the control was triggered.
+//   `applySafeMode` is in this group for the same reason and sets `safeModeError`:
+//   it makes a LARGER promise than a panic key — "nothing Relay does can reach a
+//   screen" — and the surface that flips it may be one that has already crashed.
 //
 // If you add a wrapper, put it in a group deliberately. "It seemed fine" is how a
 // panic key came to do nothing.
@@ -52,6 +55,10 @@ import { countdownRemainingMs, countdownIsPaused } from '../countdown.js';
 // X1 · the transition override's store lives beside its register — see the block
 // further down for why it is not declared in this file.
 import { liveTransition } from '../transitions.js';
+// Safe mode's record lives in the boot record, and this file is the only thing
+// allowed to write it — see `applySafeMode` below. `boot.js` imports only
+// `svelte/store` and `../errors.js`, so there is no cycle here.
+import { setSafeMode } from '../boot/boot.js';
 
 /**
  * The audio meter — RMS level + voice-activity, arriving 10–50 times a second.
@@ -2320,6 +2327,80 @@ return panicRun('blackout', 'Blackout');
  * an unhandled rejection in the console — which is to say, silence.
  */
 export const panicError = writable(null);
+
+/**
+ * The reason safe mode could not keep its promise, humanised — or null.
+ *
+ * Module scope, and set by `applySafeMode` itself rather than returned to the
+ * caller, for the same reason `panicError` is: the control that flips safe mode
+ * can be a view that has crashed, and a view that cannot `catch` cannot report.
+ */
+export const safeModeError = writable(null);
+
+/**
+ * TURN SAFE MODE ON OR OFF, AND MAKE THE PROMISE TRUE. (GROUP 3.)
+ *
+ * Safe mode's row says "outputs will not open and detection is disarmed —
+ * nothing Relay does can reach a screen". `setSafeMode` writes that into the
+ * boot record; for as long as it was the only thing that happened, the sentence
+ * was false until the next launch — App.svelte honoured it inside onMount only,
+ * Live.svelte never mentioned it, and Rust has no notion of it.
+ *
+ * So the enforcement lives HERE, at the one door, and not as a `$safeMode` check
+ * at each fire site. This repository has had four separate bugs whose single
+ * root cause is a rule enforced on one surface and skipped on its twin; a check
+ * per caller would be the fifth. DECISIONS §86.
+ *
+ * Returns whether the promise was kept, AND sets `safeModeError`. Turning safe
+ * mode OFF restores the operator's freedom to arm things and deliberately arms
+ * nothing for them: a detector that switches itself back on is a different
+ * surprise from the one this control prevents.
+ *
+ * EVERY screen is attempted, even after one refuses to close. Stopping at the
+ * first failure would leave the operator reading one screen's name while the
+ * ones behind it are still lit and nothing ever asked them to go dark; the
+ * message names each one that would not, so what is left to do by hand is the
+ * whole of it.
+ */
+export async function applySafeMode(on) {
+  safeModeError.set(null);
+  setSafeMode(on);
+  if (!on) return true;
+
+  const failures = [];
+
+  try {
+    await setDetection(false);
+  } catch (e) {
+    failures.push(humanError(e));
+  }
+
+  // `listOutputChannels` is GROUP 2: it swallows and returns `[]`, so a `catch`
+  // around it can never fire and a door that trusted the empty list would report
+  // "every screen closed" having never been told about one. The swallowed reason
+  // is in `readErrors`, which is exactly what that store exists for.
+  const chans = await listOutputChannels();
+  const listFailed = get(readErrors).listOutputChannels;
+  if (listFailed) {
+    failures.push(`the list of screens could not be read (${humanError(listFailed)})`);
+  }
+  for (const c of chans ?? []) {
+    try {
+      await closeChannelOutput(c.id);
+    } catch (e) {
+      failures.push(`${c.name ?? `screen ${c.id}`}: ${humanError(e)}`);
+    }
+  }
+
+  if (failures.length) {
+    safeModeError.set(
+      `Safe mode is recorded, and it could not be enforced: ${failures.join('; ')}. ` +
+        'Something may still be able to reach a screen.',
+    );
+    return false;
+  }
+  return true;
+}
 
 /**
  * WHY A LIST WAS EMPTY — failure, or genuinely nothing.

@@ -15,9 +15,11 @@
   import { SHORTCUTS } from '../shortcuts.js';
   import { humanError } from '../errors.js';
   import { settingValue, CHECKING } from '../settingvalue.js';
-  import { safeMode, setSafeMode } from '../boot/boot.js';
+  import { safeMode } from '../boot/boot.js';
   import { checkForUpdate, updateAvailable, updateChannel, describeChannel } from '../updater.js';
   import {
+    applySafeMode,
+    safeModeError,
     listVoiceProfiles,
     createVoiceProfile,
     updateVoiceProfile,
@@ -917,9 +919,16 @@
               role="switch"
               aria-checked={$safeMode}
               aria-label="Safe mode"
-              on:click={() => setSafeMode(!$safeMode)}></button>
+              on:click={() => applySafeMode(!$safeMode)}></button>
           </div>
         </div>
+        <!-- SAFE MODE COULD NOT KEEP ITS PROMISE. Rose, never amber — amber is
+             ON AIR and this page never is. The switch throws from the boot
+             record, which the door writes first, so the record can read `on`
+             while a screen is still open; this line is the only thing that says
+             so, and it is the same contract as a panic control (rule 15,
+             DECISIONS §20 · §86). -->
+        {#if $safeModeError}<p class="rw-foot s-netbad" role="alert">{$safeModeError}</p>{/if}
 
         <!-- SCREENS AT LAUNCH. A statement of what Relay already does, in the
              place an operator asks the question — NOT a switch.
