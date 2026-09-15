@@ -1396,7 +1396,16 @@ impl KioskHub {
     pub fn current_transition(&self) -> TransitionOverride {
         self.last_transition.lock().ok().and_then(|t| t.clone())
     }
-    pub fn sender(&self) -> broadcast::Sender<String> {
+    /// The raw broadcast sender — for the WebSocket server task to subscribe to,
+    /// and for tests to listen on.
+    ///
+    /// `pub(crate)`, deliberately. It is a door out of this module that bypasses
+    /// `publish`: `hub.sender().send(json)` reaches every connected kiosk client
+    /// and contains neither `publish_kiosk(` nor `.publish(`, so the rehearsal
+    /// enumeration cannot see it. Keeping it inside the crate keeps that door
+    /// somewhere `every_publisher_in_this_module_has_an_explicit_rehearsal_verdict`
+    /// can reach, and that test forbids its use anywhere in this module.
+    pub(crate) fn sender(&self) -> broadcast::Sender<String> {
         self.tx.clone()
     }
     /// Shared handle to the template cache, for the WS server task.
@@ -3297,6 +3306,17 @@ mod tests {
         assert!(!is_screen_frame(
             r#"{"kind":"template","id":1,"template":{}}"#
         ));
+        // Configuration and a look. Both are retained, each in its own slot and
+        // replayed on hello from there; neither may be retained as THE screen
+        // frame, because that slot holds one message and the newest wins — a
+        // preference or a template would replace the verse and the next screen to
+        // join would be sent it over a blank wall. Both were in FRAME_VERDICTS
+        // and neither was asserted here, which is the half of the pair that
+        // checks the matcher rather than the list.
+        assert!(!is_screen_frame(r#"{"kind":"transition","mode":"cut"}"#));
+        assert!(!is_screen_frame(
+            r#"{"kind":"channel_template","channel_id":1,"template":{}}"#
+        ));
     }
 
     /// Every `kind` this module publishes, and whether it decides what a screen
@@ -3340,6 +3360,11 @@ mod tests {
     fn every_kind_this_module_publishes_has_an_explicit_verdict() {
         /// Every `"kind":"…"` literal in `src`, in order, without duplicates.
         /// Comment lines talk ABOUT frames without publishing any.
+        ///
+        /// It finds SOURCE LITERALS only. A frame built from a type carrying
+        /// `#[serde(tag = "kind")]` produces no `"kind"` literal anywhere in this
+        /// file, so it would need no verdict and none of this would notice — the
+        /// scanner would stay green while the enumeration stopped being one.
         fn kinds_in(src: &str, out: &mut Vec<String>) {
             for line in src.lines() {
                 if line.trim_start().starts_with("//") {
@@ -3400,8 +3425,8 @@ mod tests {
         }
     }
 
-    /// Every function in this module that can put something on a LAN device, and
-    /// whether a rehearsal must stop it.
+    /// Every function that can put something on a LAN device, and whether a
+    /// rehearsal must stop it.
     ///
     /// `true` means the function checks `rehearsing(app)` and returns early.
     /// `false` means it deliberately does not, and the third column is why — the
@@ -3445,6 +3470,15 @@ mod tests {
              design (DECISIONS §29), and suppressing it would leave a kiosk \
              rendering a template the operator has already replaced",
         ),
+        (
+            "set_channel_template",
+            false,
+            "main.rs's own publisher, and the same verdict as `set_template` for \
+             the same reason: the operator has reassigned a screen's look, that is \
+             live by design (DECISIONS §29), and a look is not something a person \
+             reads. It used to be answered for in this doc comment, in prose, \
+             which is the mechanism this test exists to replace",
+        ),
     ];
 
     /// THE ENUMERATION MUST GROW WITH THE MODULE, OR IT IS NOT AN ENUMERATION.
@@ -3455,112 +3489,262 @@ mod tests {
     /// what failed to catch it. A sixth publisher added to this module with no
     /// `rehearsing()` check currently fails nothing.
     ///
-    /// This reads the module's own source, finds every function that reaches a LAN
-    /// device, and requires a verdict for each. For a function whose verdict is
-    /// `true` it goes further and requires the gate to actually be IN the
-    /// function body — an enumeration that only counted names would pass on a
-    /// publisher whose check had been deleted.
+    /// This reads the source, finds every function that reaches a LAN device, and
+    /// requires a verdict for each. For a function whose verdict is `true` it goes
+    /// further and requires the gate to actually be IN the function body — an
+    /// enumeration that only counted names would pass on a publisher whose check
+    /// had been deleted.
+    ///
+    /// **It reads `channels.rs` AND `main.rs`, the same two files the retention
+    /// scanner reads.** For a while it read only `channels.rs`, and `main.rs`'s
+    /// `set_channel_template` — a real publisher, holding a real `kiosk.publish(`
+    /// — was answered for in prose in this doc comment instead. That is the
+    /// mechanism this test replaces, so it cannot be the mechanism this test
+    /// leans on. `main.rs` is scanned WHOLE: it carries `#[cfg(test)]` from line
+    /// 16, so no split can separate its tests, exactly as the retention scanner
+    /// already records.
     #[test]
     fn every_publisher_in_this_module_has_an_explicit_rehearsal_verdict() {
-        let src = include_str!("channels.rs");
-        let body = src.split("mod tests").next().unwrap_or(src);
-
-        // (function name, its body) for every fn in the module, in source order.
-        let mut fns: Vec<(&str, String)> = Vec::new();
-        let mut current: Option<&str> = None;
-        let mut buf = String::new();
-        for line in body.lines() {
-            let t = line.trim_start();
-            let decl = t
-                .strip_prefix("pub fn ")
-                .or_else(|| t.strip_prefix("fn "))
-                .or_else(|| t.strip_prefix("pub async fn "))
-                .or_else(|| t.strip_prefix("async fn "));
-            if let Some(rest) = decl {
-                if let Some(name) = rest.split(['(', '<', ' ']).next() {
-                    if !name.is_empty() {
-                        if let Some(prev) = current.take() {
-                            fns.push((prev, std::mem::take(&mut buf)));
-                        }
-                        current = Some(name);
-                        buf.clear();
-                    }
+        /// The name the `fn` declaration on this line declares, whatever it is
+        /// qualified with — `pub`, `pub(crate)`, `pub(super)`, `pub(in path)`,
+        /// `async`, `const`, `unsafe`, `extern "C"`, in any order.
+        ///
+        /// The first version recognised four spellings (`fn`, `pub fn`,
+        /// `async fn`, `pub async fn`) and this module already held three
+        /// `pub(crate) fn` declarations. **An unrecognised declaration is not
+        /// skipped**: a body runs until the NEXT declaration the scanner
+        /// recognises, so the missed function's lines are appended to the
+        /// PREVIOUS function's buffer and its `.publish(` call is credited to
+        /// whichever publisher came before it. An ungated `pub(crate) fn`
+        /// placed immediately after `stage_alert` — which is exactly where a
+        /// timer publisher would land — passed green, with no new name found and
+        /// no panic. The publish tripwire below is the other half of the fix: it
+        /// is what notices the loss when a spelling gets past this function.
+        fn declared_fn_name(line: &str) -> Option<&str> {
+            let mut rest = line.trim_start();
+            loop {
+                if let Some(after) = rest.strip_prefix("fn ") {
+                    let name = after.trim_start().split(['(', '<', ' ', ':']).next()?;
+                    return if name.is_empty() { None } else { Some(name) };
                 }
-            }
-            // Comment lines talk ABOUT a gate or a publish call without being
-            // one — `kinds_in` above already knows this, and this scanner has
-            // to know it too, or a doc comment that merely mentions
-            // `rehearsing(` or `.publish(` reads as the real thing.
-            if current.is_some() && !t.starts_with("//") {
-                buf.push_str(line);
-                buf.push('\n');
+                // One qualifier at a time, in whatever order they were written.
+                let next = if let Some(a) = rest.strip_prefix("pub(") {
+                    &a[a.find(')')? + 1..]
+                } else if let Some(a) = rest.strip_prefix("pub ") {
+                    a
+                } else if let Some(a) = rest.strip_prefix("async ") {
+                    a
+                } else if let Some(a) = rest.strip_prefix("const ") {
+                    a
+                } else if let Some(a) = rest.strip_prefix("unsafe ") {
+                    a
+                } else {
+                    let a = rest.strip_prefix("extern ")?.trim_start();
+                    match a.strip_prefix('"') {
+                        Some(q) => &q[q.find('"')? + 1..],
+                        None => a,
+                    }
+                };
+                rest = next.trim_start();
             }
         }
-        if let Some(prev) = current.take() {
-            fns.push((prev, buf));
+
+        /// A function reaches a LAN device if it hands the hub a message. Matched
+        /// generically on `.publish(` — any receiver, not a hardcoded list of
+        /// variable names — because a publisher can be written against any local
+        /// (`kiosk.publish(...)`, as `main.rs` already does). `publish_kiosk(` is
+        /// matched separately because it is a free function call, not a method
+        /// call on a receiver, so it never contains `.publish(`.
+        fn publishes_in(text: &str) -> usize {
+            text.matches(".publish(").count() + text.matches("publish_kiosk(").count()
+        }
+
+        /// Deliberately broader than `declared_fn_name`: `fn` as a word, followed
+        /// by an identifier, with nothing before it on the line but characters a
+        /// qualifier could be made of. It accepts spellings `declared_fn_name`
+        /// does not — including ones nobody has written yet — which is the whole
+        /// point. The two must agree exactly on every buffer, and where they stop
+        /// agreeing the narrow one has gone blind.
+        fn looks_like_a_declaration(line: &str) -> bool {
+            let t = line.trim_start();
+            let Some(i) = t.find("fn ") else { return false };
+            if !t[..i]
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || "(): \"\t".contains(c))
+            {
+                return false;
+            }
+            t[i + 3..]
+                .trim_start()
+                .starts_with(|c: char| c.is_ascii_alphabetic() || c == '_')
+        }
+
+        let chan = include_str!("channels.rs");
+        // channels.rs strips its own tests: its `mod tests` is full of example
+        // publishers that the module does not ship.
+        let chan_body = chan.split("mod tests").next().unwrap_or(chan);
+        let main_rs = include_str!("main.rs");
+
+        // (file, function name, its body) for every fn in both sources, in order.
+        //
+        // Keyed on POSITION, never on name: `set` and `transition` are each
+        // declared twice in this module, so `find(|(n, _)| n == name)` answers
+        // about the first one and can be answering about the wrong function
+        // entirely.
+        let mut fns: Vec<(&str, &str, String)> = Vec::new();
+        let mut scanned_publishes = 0usize;
+        for (file, body) in [("channels.rs", chan_body), ("main.rs", main_rs)] {
+            let mut current: Option<&str> = None;
+            let mut buf = String::new();
+            for line in body.lines() {
+                let t = line.trim_start();
+                // Comment lines talk ABOUT a gate or a publish call without being
+                // one — `kinds_in` above already knows this, and this scanner has
+                // to know it too, or a doc comment that merely mentions
+                // `rehearsing(` or `.publish(` reads as the real thing. Skipped
+                // before the count as well as before the buffer, so the tripwire
+                // compares like with like.
+                if t.starts_with("//") {
+                    continue;
+                }
+                if let Some(name) = declared_fn_name(t) {
+                    if let Some(prev) = current.take() {
+                        fns.push((file, prev, std::mem::take(&mut buf)));
+                    }
+                    current = Some(name);
+                }
+                scanned_publishes += publishes_in(line);
+                if current.is_some() {
+                    buf.push_str(line);
+                    buf.push('\n');
+                }
+            }
+            if let Some(prev) = current.take() {
+                fns.push((file, prev, buf));
+            }
         }
 
         assert!(
             fns.len() > 20,
-            "the scanner found only {} functions in this module — it has stopped \
-             reading it, and a scanner that quietly narrows passes everything",
+            "the scanner found only {} functions — it has stopped reading these \
+             sources, and a scanner that quietly narrows passes everything",
             fns.len()
         );
 
-        // A function reaches a LAN device if it hands the hub a message. Matched
-        // generically on `.publish(` — any receiver, not a hardcoded list of
-        // variable names — because a publisher can be written against any local
-        // (`kiosk.publish(...)`, as `main.rs` already does). `publish_kiosk(` is
-        // matched separately because it is a free function call, not a method
-        // call on a receiver, so it never contains `.publish(`.
-        let publishes = |b: &str| b.contains("publish_kiosk(") || b.contains(".publish(");
+        // THE TRIPWIRE, IN TWO HALVES, BECAUSE THE FAILURE HAS TWO SHAPES.
+        //
+        // First: every publish call in the sources is attributed to some function.
+        // A call counted in the source and absent from every buffer fell outside
+        // all of them — it is gone from this test entirely.
+        let attributed: usize = fns.iter().map(|(_, _, b)| publishes_in(b)).sum();
+        assert_eq!(
+            attributed, scanned_publishes,
+            "{attributed} publish calls were attributed to functions and the \
+             sources contain {scanned_publishes}. Some call fell outside every \
+             function this scanner can see."
+        );
 
-        let mut found: Vec<&str> = Vec::new();
-        for (name, b) in &fns {
+        // Second, and this is the half that catches what actually happened: a
+        // function this scanner cannot read is not SKIPPED, it is ABSORBED. A body
+        // runs until the next declaration `declared_fn_name` recognises, so an
+        // unreadable declaration and everything under it are appended to the
+        // PREVIOUS function's buffer — its publish call credited to whichever
+        // publisher came before it, its gate assertion satisfied by that
+        // neighbour's gate. The totals do not move, so the first half sees
+        // nothing. An ungated `pub(crate) fn push_timer` placed immediately after
+        // `stage_alert` passed green that way, which is where a timer publisher
+        // would naturally land.
+        //
+        // So: every buffer must hold exactly ONE thing that looks like a
+        // declaration — its own. A second one means a function was absorbed.
+        for (file, name, b) in &fns {
+            let decls = b.lines().filter(|l| looks_like_a_declaration(l)).count();
+            assert_eq!(
+                decls, 1,
+                "the body this scanner attributed to `{name}` ({file}) contains \
+                 {decls} function declarations. A declaration `declared_fn_name` \
+                 cannot read has been absorbed into it, along with whatever that \
+                 function publishes — which is then credited to `{name}` and \
+                 covered by `{name}`'s gate. Teach `declared_fn_name` the spelling."
+            );
+        }
+
+        let publishes = |b: &str| publishes_in(b) > 0;
+
+        let mut found: Vec<(&str, &str, &String)> = Vec::new();
+        for (file, name, b) in &fns {
             // `publish_kiosk` and `publish` are the plumbing, not publishers.
             if *name == "publish_kiosk" || *name == "publish" {
                 continue;
             }
-            if publishes(b) && !found.contains(name) {
-                found.push(name);
+            if publishes(b) {
+                found.push((file, name, b));
             }
         }
 
         assert!(
             !found.is_empty(),
-            "the scanner found no publisher at all — it has stopped reading this \
-             module, and a scanner that quietly narrows passes everything"
+            "the scanner found no publisher at all — it has stopped reading these \
+             sources, and a scanner that quietly narrows passes everything"
         );
 
-        for name in &found {
+        for (file, name, b) in &found {
             let Some((_, gated, _)) = REHEARSAL_VERDICTS.iter().find(|(n, _, _)| n == name) else {
                 panic!(
-                    "`{name}` publishes to the kiosk hub and no one has said whether \
-                     a rehearsal must stop it. Add it to REHEARSAL_VERDICTS with a \
-                     reason, and if it is gated, add an e2e case that watches \
+                    "`{name}` ({file}) publishes to the kiosk hub and no one has said \
+                     whether a rehearsal must stop it. Add it to REHEARSAL_VERDICTS \
+                     with a reason, and if it is gated, add an e2e case that watches \
                      `qa::Kiosk` rather than `qa::Wall`."
                 );
             };
             if *gated {
-                let b = &fns.iter().find(|(n, _)| n == name).expect("found above").1;
+                // This entry's OWN body, not a lookup by name.
                 assert!(
                     b.contains("rehearsing("),
-                    "REHEARSAL_VERDICTS says `{name}` is gated, and its body does \
-                     not call `rehearsing(`. A verdict is not a gate."
+                    "REHEARSAL_VERDICTS says `{name}` ({file}) is gated, and its body \
+                     does not call `rehearsing(`. A verdict is not a gate."
                 );
             }
         }
 
         for (name, _, reason) in REHEARSAL_VERDICTS {
             assert!(
-                found.contains(name),
-                "REHEARSAL_VERDICTS names `{name}`, which this module no longer \
-                 publishes — a verdict about nothing"
+                found.iter().any(|(_, n, _)| n == name),
+                "REHEARSAL_VERDICTS names `{name}`, which nothing here publishes any \
+                 more — a verdict about nothing"
             );
             assert!(
                 !reason.is_empty(),
                 "`{name}` has a verdict and no reason. The reason is the half a \
                  future reader needs."
+            );
+        }
+
+        // THE ACCESSOR IS A DOOR TOO.
+        //
+        // `KioskHub::sender()` hands out the raw `broadcast::Sender`, so
+        // `hub.sender().send(json)` reaches every connected kiosk client while
+        // containing neither `publish_kiosk(` nor `.publish(` — a publisher every
+        // assertion above is blind to. It is `pub(crate)`, not `pub`, so nothing
+        // outside this crate can take that route at all; the in-crate callers that
+        // remain take a sender to SUBSCRIBE (`qa.rs`'s Kiosk door, this module's
+        // tests) or to hand to the WebSocket server task (`main.rs`), never to
+        // publish. Inside this module nothing but the accessor itself may touch it.
+        //
+        // Residual, stated rather than hidden: `let tx = hub.sender();` followed by
+        // `tx.send(…)` on a later line is still invisible here. The `pub(crate)`
+        // is what keeps that inside a crate where this test can be extended.
+        for (file, name, b) in &fns {
+            if *file != "channels.rs" || *name == "sender" {
+                continue;
+            }
+            assert!(
+                !b.contains(".sender()"),
+                "`{name}` reaches `KioskHub::sender()`, which hands out the raw \
+                 broadcast sender. `hub.sender().send(json)` publishes to every \
+                 connected kiosk and matches neither `publish_kiosk(` nor \
+                 `.publish(`, so no verdict would ever be required of it. Publish \
+                 through `KioskHub::publish` or `publish_kiosk`."
             );
         }
     }
