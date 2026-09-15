@@ -3342,6 +3342,68 @@ mod tests {
         assert!(got, "the client never received the custom themes");
     }
 
+    /// The sibling of the themes test above, for the hub frame this task adds.
+    /// `hello`'s reply sends several frames in sequence (template if cached,
+    /// themes, the configured default, the transition override, the retained
+    /// screen frame); a bug in the new block's key, its position relative to the
+    /// `.await` above it, or a forgotten `write.send` would leave every OTHER
+    /// frame still arriving while this one silently never does — exactly the
+    /// class of bug the cache/validate/classify unit tests below cannot see,
+    /// because none of them opens a socket.
+    #[tokio::test]
+    async fn a_kiosk_client_receives_the_configured_default_on_hello() {
+        let port = free_port();
+        let hub = KioskHub::default();
+        hub.cache_default_template(r#"{"id":7,"name":"House Look"}"#);
+        tokio::spawn(run_kiosk_server(
+            log_only(),
+            hub.sender(),
+            hub.templates_handle(),
+            hub.clients_handle(),
+            hub.themes_handle(),
+            hub.default_template_handle(),
+            hub.last_screen_handle(),
+            hub.last_transition_handle(),
+            OutputHealth::default(),
+            port,
+        ));
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+
+        let (ws, _) = tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{port}"))
+            .await
+            .expect("connect");
+        let (mut write, mut read) = ws.split();
+        write
+            .send(tokio_tungstenite::tungstenite::Message::Text(
+                r#"{"kind":"hello","template_id":7}"#.to_string(),
+            ))
+            .await
+            .expect("send hello");
+
+        // Read frames until the default_template frame arrives (no template is
+        // cached under id 7 and no themes are set, so it is effectively first;
+        // the loop bound is generous rather than exact, matching the themes test
+        // above).
+        let mut got = false;
+        for _ in 0..4 {
+            let Ok(Some(Ok(msg))) =
+                tokio::time::timeout(std::time::Duration::from_secs(2), read.next()).await
+            else {
+                break;
+            };
+            let text = msg.into_text().unwrap();
+            if text.contains(r#""kind":"default_template""#) {
+                assert!(text.contains("House Look"), "got {text}");
+                got = true;
+                break;
+            }
+        }
+        assert!(
+            got,
+            "the client never received the configured default template"
+        );
+    }
+
     #[test]
     fn the_configured_default_is_sent_to_a_screen_that_joins_later() {
         // A BROWSER SOURCE HAS NO DATABASE. The configured default template is a
