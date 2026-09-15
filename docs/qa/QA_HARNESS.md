@@ -32,27 +32,21 @@ which is gitignored.
 
 `cargo fmt --all` and `clippy --all-targets -- -D warnings` both clean on the same tree.
 
-Against the row below (748 / 2179): Rust gained 4, not the 2 that Wave 0's own diff (`main` at
-`7851a79` through `d42f20a`) adds by `#[test]` attribute: `channels::tests::every_publisher_in_this_module_has_an_explicit_rehearsal_verdict`
-(Task 1), `e2e::r0_a_picture_reaches_the_wall_and_disarms_the_passage` (Task 2). Task 3 added
-assertions to existing tests, not new ones, so it contributes 0 either way. One more test,
-`db::tests::ensure_tables_calls_the_lower_third_forward_fill`, landed on `main` between the
-previous measurement point (`5387bb3`) and Wave 0's fork point (`7851a79`): outside Wave 0 and
-outside the previous block's own chain below. That accounts for 3 of the 4. The fourth does not
-show up in a `#[test]`-attribute diff of the same range and is recorded here as unreconciled
-rather than explained away: given this file's own record of corrected counts (see the chain
-below), the previous 748 is at least as likely to have been measured wrong as a fourth test is to
-exist unseen by the diff.
-
-Frontend gained 8. Only one new `it(...)` is visible in the same diff: `transport.test.js`'s
-check that every `SCREEN_COMMANDS` name is a command Rust actually registers. Task 3's other
-frontend changes (`crossrefs.test.js`, `hardrules.test.js`) add assertions to existing tests and
-remove a dead list entry (`push_announcement`), not new cases. The remaining 7 are likewise
-recorded as unreconciled rather than explained away.
+Against the row below (748 / 2179): the row below was never true of this branch's tree. Measured
+directly by building a worktree at the fork point itself (`git worktree add … 7851a79`, then
+`npm ci && npx vitest run` and `npm run build && cd src-tauri && cargo test`), the fork point
+reads **750 passed / 0 failed / 16 ignored** (Rust) and **2186 passing, 141 files** (frontend) —
+not 748 / 2179. That is exactly Wave 0's current numbers (752 / 2187) minus what Wave 0's own
+diff demonstrably adds (2 Rust tests, Task 1 and Task 2; 1 frontend test, Task 3). Wave 0 added
+what the brief says it added and nothing more; the 748 / 2179 baseline was simply stale by the
+time this branch forked at `7851a79` — three commits landed on `main` after the row below was
+last measured (at `5387bb3`) and before the fork (`c6525f3`, `4d9fb5a`, `7851a79` itself), and at
+least one of them added a test the row below never saw. This is the failure this file already
+names: a count that was true on one tree and is quoted after something else merged.
 
 Neither suite failed and no production code changed in this task. The counts above are what each
-runner's own summary line reported; the two paragraphs above are the reconciliation attempt,
-kept so the next person does not have to redo it from nothing.
+runner's own summary line reported, on this branch and, separately, on a worktree pinned to the
+exact fork commit.
 
 ---
 
