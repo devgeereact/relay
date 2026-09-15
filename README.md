@@ -110,7 +110,9 @@ One shared template engine renders to three target types (docs/SPEC.md §5):
 > only `?template_id=` parses as channel 0 — it renders, so it looks correct, and
 > it is then the one source in the building that silently never follows a template
 > change.
-- **NDI encode** — into OBS/vMix/ATEM/ProPresenter. **Not yet available:**
+- **NDI encode** — into OBS/vMix/ProPresenter. **Not an ATEM:** no ATEM model
+  ingests NDI at any tier, and a switcher is fed over HDMI instead
+  (docs/OUTPUT_ROUTING.md §2). **Not yet available:**
   requires the proprietary NDI SDK (native lib + FFI). The command returns a
   clear error; integration path is documented in `src-tauri/src/main.rs`
   (`open_ndi_output`) and docs/SPEC.md §9.

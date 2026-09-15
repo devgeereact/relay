@@ -1522,10 +1522,15 @@
         <div class="rw-nv"><span class="rw-nvk">OBS / vMix (browser source)</span><span class="rw-nvv">http://{lanIp || 'this-pc'}:8032/output.html?channel=&lt;screen&gt;&amp;template_id=&lt;n&gt;</span></div>
         <div class="rw-nv"><span class="rw-nvk">Kiosk screen / stage tablet</span><span class="rw-nvv">:8032 · http</span></div>
         <div class="rw-nv"><span class="rw-nvk">NDI</span><span class="rw-nvv">not available</span></div>
-        <div class="rw-nv"><span class="rw-nvk">ATEM / SDI switcher</span><span class="rw-nvv">via HDMI</span></div>
+        <!-- "via HDMI" alone was an instruction a church cannot follow on half the
+             range: an ATEM Mini has HDMI inputs, a rack-mount ATEM has SDI inputs
+             and no HDMI in (the Television Studio HD8's single HDMI connector is an
+             OUTPUT). The converter is the mechanism, not the switcher.
+             docs/OUTPUT_ROUTING.md §2. -->
+        <div class="rw-nv"><span class="rw-nvk">ATEM / SDI switcher</span><span class="rw-nvv">via HDMI, plus a converter on SDI-only models</span></div>
         <div class="s-prose">
           <p class="rw-foot">Relay sends its output to other software over your local network — no plugins to install. Add a <b>Browser Source</b> pointing at Relay; the exact per-channel URL is in <b>Outputs → Sharing</b>. Connected devices (OBS · kiosk · stage remote) pull the live output from this machine on the same Wi-Fi.</p>
-          <p class="rw-foot"><b>NDI is parked</b> — it needs a proprietary SDK Relay does not bundle, so there is no NDI source to select. For an <b>ATEM or other SDI switcher</b>, open a Relay output window on an HDMI screen and feed that HDMI into the switcher — Relay does not speak SDI directly (and won't; that is served by the hardware you already own).</p>
+          <p class="rw-foot"><b>NDI is parked</b> — it needs a proprietary SDK Relay does not bundle, so there is no NDI source to select. For a switcher, open a Relay output window on a display and feed that HDMI in. An <b>ATEM Mini</b> takes it directly. A <b>rack-mount ATEM</b> has SDI inputs only, so it needs a small HDMI-to-SDI converter first, costing about as much as a microphone cable. Relay does not speak SDI directly and will not; that is what the converter is for.</p>
         </div>
 
       {:else if section === 'history'}

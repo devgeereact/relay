@@ -307,7 +307,7 @@ These were learned the hard way (hours-long freezes/crashes). Do not regress the
 
 Not faked — clearly bounded. The full deferral + technical-debt register is [KNOWN_ISSUES.md](KNOWN_ISSUES.md); the highlights:
 
-- **NDI output** — needs the proprietary SDK; `open_ndi_output` returns a clear error. NDI + HDMI only; **no native SDI** (served by existing ATEM/converter hardware).
+- **NDI output** — needs the proprietary SDK; `open_ndi_output` returns a clear error. HDMI only today; **no native SDI**, served by a **converter** rather than by a switcher. This line used to read "existing ATEM/converter hardware": no ATEM ingests NDI, and a rack-mount ATEM takes SDI inputs only, so a small HDMI-to-SDI box is the bridge ([OUTPUT_ROUTING.md](OUTPUT_ROUTING.md) §2).
 - **Neural paraphrase embedder** — TF-IDF is the current seam behind `SemanticIndex::top_k`.
 - **African-language STT fine-tunes** — base multilingual model is weak on Yoruba/Hausa; fine-tunes pending.
 - **Document (PDF/PPTX) rendering** — stored as media pointers; slide extraction/presentation is a later phase.
