@@ -129,6 +129,26 @@ describe('applying a room, one piece at a time', () => {
     expect(r.applied).toHaveLength(5);
   });
 
+  it('selects the voice profile BEFORE it sets the language', async () => {
+    // Not a tidiness assertion — the order is the whole fix.
+    //
+    // `set_stt_language` writes `voice_profiles.language` on whichever profile is
+    // ACTIVE. With the language first, a room captured while "Guest" (en) was
+    // active and applied on a Sunday when "Pastor Ade" (yo) is active overwrote
+    // Pastor Ade's Yoruba pin with English, THEN switched to Guest — so the pin
+    // was destroyed and the language never reached the profile the room named,
+    // while `applied` reported "recognition language" as restored. Pinning the
+    // language by hand is the RG-116 mitigation; a control that undoes it and says
+    // it worked is rule 35.
+    const d = deps();
+    await applyRoom({ language: 'en', voiceProfileId: 7 }, d);
+    expect(d.selectVoiceProfile).toHaveBeenCalledWith(7);
+    expect(d.setSttLanguage).toHaveBeenCalledWith('en');
+    expect(d.selectVoiceProfile.mock.invocationCallOrder[0]).toBeLessThan(
+      d.setSttLanguage.mock.invocationCallOrder[0],
+    );
+  });
+
   it('leaves a setting alone when the room does not remember it', async () => {
     const d = deps();
     await applyRoom({ language: 'en' }, d);

@@ -91,9 +91,25 @@ export async function applyRoom(settings, deps = {}) {
   };
 
   await step('inputDevice', 'microphone', (v) => deps.setInputDevice?.(v));
-  await step('language', 'recognition language', (v) => deps.setSttLanguage?.(v));
   await step('targetMinutes', 'service length', (v) => deps.setServiceTarget?.(v));
+  // ── THE ORDER OF THESE TWO IS LOAD-BEARING. Do not reorder them. ────────────
+  //
+  // `set_stt_language` is not a field on the live engine any more: it is a
+  // DATABASE WRITE to whichever voice profile is ACTIVE at the moment it runs
+  // (`voice_profiles.language`; Settings' own comment says so — RG-138). So with
+  // the language first, a room captured while "Guest" (en) was active, applied on
+  // a Sunday when "Pastor Ade" (yo) is active, wrote **en onto Pastor Ade** and
+  // then switched away to Guest. Two lies in one apply: the profile's Yoruba pin
+  // was destroyed, and the language this step claimed to restore never reached the
+  // engine, because the profile it was written to was not the one left selected.
+  // `applied` then said "recognition language" came back.
+  //
+  // Pinning the model and the language by hand IS the mitigation RG-116 names, and
+  // a control that silently undoes it while reporting success is rule 35 with a
+  // congregation on the other end. Select the profile FIRST, so the language lands
+  // on the profile the room actually meant.
   await step('voiceProfileId', 'voice profile', (v) => deps.selectVoiceProfile?.(v));
+  await step('language', 'recognition language', (v) => deps.setSttLanguage?.(v));
 
   if (Array.isArray(s.displays) && deps.setChannelDisplay) {
     const byName = new Map((deps.channels ?? []).map((c) => [c.name, c]));
