@@ -25,17 +25,23 @@ do **not** work and are worth knowing before you buy anything.
 This is the ordinary case and it needs no extra kit.
 
 Plug the projector or TV into your laptop as a second display. In **Outputs →
-Screens**, add a screen with the type **Native window**, then set its **Display**
-to the one the projector is on. Relay opens a borderless window inside that
-display's bounds and fullscreens it, so the OS puts it on the monitor you chose
-rather than on whichever one it feels like.
+Screens**, add a screen with the type **Native window**, set its **Display** to the
+one the projector is on, and **press Open**. That third step is the one that puts
+the picture up: Relay opens a borderless window inside that display's bounds and
+fullscreens it, so the OS puts it on the monitor you chose rather than on
+whichever one it feels like.
+
+You press **Open** once. After that it restores itself at every launch, so on a
+normal Sunday there is nothing to press at all (see below).
 
 Three things follow from how this is built, and they are worth knowing:
 
-- **It comes back by itself.** The display assignment lives in Relay's local
-  database, so after a restart, an update or a crash, the screen reopens on the
-  same projector with no clicks. On a one-monitor desk nothing auto-opens; plug
-  the projector in and its screen restores itself.
+- **It comes back by itself, from the next launch onwards.** The display
+  assignment lives in Relay's local database, so after a restart, an update or a
+  crash, the screen reopens on the same projector with no clicks. The restore runs
+  at launch and only at launch, which is why the very first time you set a screen
+  up you have to press **Open** yourself. On a one-monitor desk nothing auto-opens;
+  plug the projector in and its screen restores itself.
 - **It will never cover your console.** Relay refuses to auto-open an output onto
   the primary display. Covering the operator's own screen mid-service is worse
   than showing nothing.
@@ -132,6 +138,11 @@ the page repaints itself, with nobody re-copying anything. A hand-built address
 carrying only `template_id` will render once and then never change again
 ([DECISIONS.md](DECISIONS.md) §29).
 
+The same address and the same rule are in [USER_GUIDE.md](USER_GUIDE.md)'s
+troubleshooting table, which is where an operator looks when a screen is blank.
+**Change one and change the other**: this exact fact has drifted here before, when
+both documents said `:5032` for months.
+
 Two more things that matter on a Sunday:
 
 - **The page is transparent.** In an OBS browser source it keys out, so a
@@ -168,12 +179,25 @@ Where it matters, the hardware limits are these.
 support DisplayPort MST extended desktop on **any** chip, so a multi-display hub
 will mirror rather than extend.
 
-| Chip | External displays |
-|---|---|
-| M1, M2 (base) | one |
-| M3, M4 (base) | two |
-| Pro tiers | two or more, varies by model |
-| Max tiers | up to four |
+**Read the "lid" column before you buy anything.** On a base M3 the second
+external display only works with the laptop closed, so it is two screens in
+total, not three. A church that buys an M3 Air expecting its own screen plus a
+projector plus a foyer TV gets a choice of two of the three. That is the purchase
+this section exists to prevent.
+
+| Chip | External displays | Lid |
+|---|---|---|
+| M1, M2 (base) | one | either |
+| M3 (base) | two | **closed only.** Open the lid and the second external display goes dark |
+| M4 (base) | two | either. Closing it adds nothing |
+| Pro tiers | two or more, varies by model | check the model |
+| Max tiers | up to four | check the model |
+
+The M3 and M4 rows were checked against Apple's own support pages in September
+2026 ([HT117373](https://support.apple.com/en-us/117373) for the M3 lid-closed
+procedure, [HT122212](https://support.apple.com/en-us/122212) for the M4). The
+Pro and Max rows are not qualified here because they vary by model and year;
+check the specific machine.
 
 **DisplayLink is the only real workaround, and it has a cost worth knowing.**
 A DisplayLink dock adds displays in software rather than through the GPU's
@@ -224,14 +248,24 @@ figure it did not measure.
 Everything in this document about **Relay** was read out of this repository's own
 source and is checked by its tests.
 
-Everything about **other people's hardware** was not. The ATEM model lists, the
-Media Player's upload speed and slot count, the $75 converter price and the Apple
-Silicon display counts were taken from the vendors' own tech-spec pages in
-**September 2026**. They are a snapshot of what those vendors published then, not
-a standing truth: a price moves, a model list grows, and Apple ships a new chip
-every year. The **shapes** are the durable part and are what this document is
-really claiming, because they follow from how the products are built rather than
-from a spec sheet:
+Everything about **other people's hardware** was not, and it is worth being exact
+about where it came from.
+
+The ATEM model lists, the Media Player's upload speed and slot count, and the $75
+converter price were read out of
+[superpowers/specs/2026-09-15-timers-templates-stage-design.md](superpowers/specs/2026-09-15-timers-templates-stage-design.md)
+§1.4, which records them as confirmed against Blackmagic's own tech-spec pages in
+**September 2026**. They were not re-checked against those pages while this
+document was written. Blackmagic's product pages are the place to check them:
+[ATEM switchers](https://www.blackmagicdesign.com/products/atem) and
+[Micro Converters](https://www.blackmagicdesign.com/products/microconverters).
+The two Apple Silicon rows in §4 were checked directly, and cite the support
+pages they came from.
+
+All of it is a snapshot, not a standing truth: a price moves, a model list grows,
+and Apple ships a new chip every year. The **shapes** are the durable part and are
+what this document is really claiming, because they follow from how the products
+are built rather than from a spec sheet:
 
 - HDMI on the small ATEMs, SDI on the rack-mount ones, and an HDMI-to-SDI
   converter bridging between them for the price of a microphone cable.

@@ -200,15 +200,19 @@
    * - A link would either go nowhere (no docs ship with the binary) or navigate the
    *   operator's console away from a live service inside the webview.
    *
-   * So the sentence carries the answer itself and names the document for whoever
-   * set the room up, rather than promising navigation that does not exist.
+   * So the sentence carries the whole answer itself, and names no document.
+   * `docs/OUTPUT_ROUTING.md` is the full map for whoever reads this file, but
+   * `tauri.conf.json` has no `resources` key, so `docs/` is not bundled: a
+   * shipped copy of Relay does not contain that file, and printing a path to it
+   * on an operator's screen would send them looking for something they do not
+   * have. Same failure as a dead cross-reference, one layer out.
    */
   const reachOf = (c) => {
     if (c.render_target === 'native_window')
-      return 'Plug the display into this computer and choose it under Display above; Relay paints a fullscreen picture on it. An ATEM Mini takes that HDMI straight in. A rack-mount ATEM is SDI only and needs a small HDMI-to-SDI converter. Full map: docs/OUTPUT_ROUTING.md, sections 1 and 2.';
+      return 'Plug the display into this computer, choose it under Display above, then press Open. Relay paints a fullscreen picture on it, and restores it by itself at every later launch. An ATEM Mini takes that HDMI straight in; a rack-mount ATEM is SDI only and needs a small HDMI-to-SDI converter first.';
     if (c.render_target === 'ndi_encode')
-      return 'NDI is parked, so nothing can reach this screen. Add a Native window for a projector or a switcher, or a Network client for OBS and kiosk screens. Full map: docs/OUTPUT_ROUTING.md.';
-    return 'Press Copy URL and paste it into an OBS or vMix browser source, or open it in a browser on the other machine. It uses no video port on this computer. Full map: docs/OUTPUT_ROUTING.md, section 3.';
+      return 'NDI is parked, so nothing can reach this screen. Add a Native window for a projector or a switcher, or a Network client for OBS and kiosk screens.';
+    return 'Press Copy URL and paste it into an OBS or vMix browser source, or open it in a browser on the other machine. It uses no video port on this computer, which is the answer when the ports run out.';
   };
 
   $: counts = {
