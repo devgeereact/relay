@@ -634,13 +634,21 @@
     }
   }
 
-  // THE EMERGENCY ANNOUNCEMENT moved to Quick tools (docs/REBRAND.md §2 — the
-  // things that change during a service), which is in the dock row and therefore
-  // one reach away on EVERY workspace rather than on this one. It paints over
-  // live scripture on every screen at once; a control like that being reachable
-  // only from the tab you happen to be on was the argument for moving it, not
-  // against. Its two-step arm, and the `pushAnnouncement` contract that makes a
-  // failure loud, moved with it unchanged.
+  // THE EMERGENCY ANNOUNCEMENT IS GONE. It left this surface for Quick tools
+  // (docs/REBRAND.md §2 — the things that change during a service), which is in
+  // the dock row and therefore one reach away on EVERY workspace rather than on
+  // this one; a control that paints over live scripture on every screen at once
+  // being reachable only from the tab you happen to be on was the argument for
+  // moving it. It was then removed altogether on 2026-09-14 on the operator's
+  // instruction, and `push_announcement` and `pushAnnouncement` were DELETED
+  // rather than left registered with nothing rendering them — this repository's
+  // own precedent, the five commands deleted on 2026-08-30: a command nothing
+  // calls is attack surface nobody is watching.
+  //
+  // What it proved is worth keeping in words even though the code is not. A
+  // control of that shape needs a two-step arm, and its wrapper must THROW rather
+  // than swallow, because an operator told the room has been warned will stop
+  // warning it themselves. `announce.test.js` carries the same register.
 
   // ── AI suggestions ───────────────────────────────────────────────────────
   $: dets = $detections;

@@ -21,52 +21,40 @@ every edit: `.claude/hooks/relay-fast-gate.mjs`, path-filtered and report-only (
 ## 0. Current inventory
 
 Re-measured **2026-09-15**, on `feat/wave7-timers-templates-stage` (`main` at `7851a79` plus
-Wave 0's Task 1 to Task 4 commits: `ee16b2e`, `d4d67cf`, `02967fd`, `11dbaed`, `5fc7a72`,
-`d42f20a`). `npm run build` ran first, per RG-127: two `channels` tests serve the real `dist/`,
-which is gitignored.
+Wave 0's Task 1 to Task 5 commits). `npm run build` ran first, per RG-127: two `channels` tests
+serve the real `dist/`, which is gitignored.
 
 | Count | Value | Command |
 |---|---|---|
 | Rust tests | **752 passed / 0 failed / 16 ignored** | `cd src-tauri && cargo test` |
-| Frontend tests | **2187 passing, 141 files** | `npx vitest run` |
-
-`cargo fmt --all` and `clippy --all-targets -- -D warnings` both clean on the same tree.
-
-Against the row below (748 / 2179): the row below was never true of this branch's tree. Measured
-directly by building a worktree at the fork point itself (`git worktree add … 7851a79`, then
-`npm ci && npx vitest run` and `npm run build && cd src-tauri && cargo test`), the fork point
-reads **750 passed / 0 failed / 16 ignored** (Rust) and **2186 passing, 141 files** (frontend) —
-not 748 / 2179. That is exactly Wave 0's current numbers (752 / 2187) minus what Wave 0's own
-diff demonstrably adds (2 Rust tests, Task 1 and Task 2; 1 frontend test, Task 3). Wave 0 added
-what the brief says it added and nothing more; the 748 / 2179 baseline was simply stale by the
-time this branch forked at `7851a79` — three commits landed on `main` after the row below was
-last measured (at `5387bb3`) and before the fork (`c6525f3`, `4d9fb5a`, `7851a79` itself), and at
-least one of them added a test the row below never saw. This is the failure this file already
-names: a count that was true on one tree and is quoted after something else merged.
-
-Neither suite failed and no production code changed in this task. The counts above are what each
-runner's own summary line reported, on this branch and, separately, on a worktree pinned to the
-exact fork commit.
-
----
-
-Re-measured **2026-09-15**, on `rebrand/wave3` **after #75, #76 and #77 merged** — the
-assembled tree, which is the only tree these figures mean anything on. The previous revision of
-this block quoted an agent branch that stopped being the assembled tree the moment those merged,
-which is the exact failure the table below exists to prevent. Twelve agents brainstormed read-only and wrote no code; the fixes that followed
-were the lead's, and these are the gates on the result:
-
-| Count | Value | Command |
-|---|---|---|
-| Rust tests | **748 passed / 0 failed / 16 ignored** | `cd src-tauri && cargo test` |
-| Frontend tests | **2179 across 141 files** | `npx vitest run` |
-| `e2e.rs` tests | **65** | `cargo test e2e::` |
+| Frontend tests | **2189 passed, 141 files** | `npx vitest run` |
+| `e2e.rs` tests | **66 passed / 0 ignored** | `cd src-tauri && cargo test e2e::` |
 | Registered commands | **139** | `grep -c '#\[tauri::command\]' src-tauri/src/main.rs` |
 | qa-inventory | 139/139 addressed, 0 handlerless, 0 unnamed | `node scripts/qa-inventory.mjs` |
 
-`npm run build`, `cargo fmt --all` and `clippy --all-targets -- -D warnings` all clean on the
-same tree. **The previous measurement is kept below for the chain, and it was stale by 30 Rust
-tests and 548 frontend tests when this replaced it** — which is the register's own point.
+`cargo fmt --all`, `clippy --all-targets -- -D warnings` and `npm run build` all clean on the
+same tree.
+
+**This block REPLACED a same-day `rebrand/wave3` row (748 / 2179) rather than being stacked above
+it.** §0 is described everywhere else in this repository as THE register of counts, and a
+register that carries two "Current inventory" blocks with different numbers for the same day is
+not one — the reader has no way to tell which row is current, which is the failure this section
+exists to prevent. The older chain below is kept, because a chain of superseded measurements is
+the evidence that the numbers were ever taken.
+
+**The 748 / 2179 row was never true of this branch's tree, and that was established by
+measurement rather than by arithmetic.** Building a worktree at the fork point itself
+(`git worktree add … 7851a79`, then `npm ci && npx vitest run` and `npm run build && cd src-tauri
+&& cargo test`) reads **750 passed / 0 failed / 16 ignored** (Rust) and **2186 passing, 141
+files** (frontend) — not 748 / 2179. Wave 0's diff adds exactly what the gap requires and nothing
+more. The 748 / 2179 baseline was simply stale by the time this branch forked: three commits
+landed on `main` after it was last measured (at `5387bb3`) and before the fork (`c6525f3`,
+`4d9fb5a`, `7851a79` itself), and at least one of them added a test it never saw. This is the
+failure this file already names: a count that was true on one tree and is quoted after something
+else merged.
+
+Neither suite failed. The counts above are what each runner's own summary line reported, on this
+branch and, separately, on a worktree pinned to the exact fork commit.
 
 ---
 
