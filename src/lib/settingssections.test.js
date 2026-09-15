@@ -395,6 +395,14 @@ describe('acceptance 2 · the update line still reports the CHANNEL', () => {
     expect(MARKUP_ONLY).toMatch(/class:s-netbad=\{\$updateChannel\.state === 'failed'\}/);
     expect(STYLE).toMatch(/\.s-netbad\{[^}]*--v-rose/);
   });
+
+  // The mirror of the assertion above: `.s-netbad` → rose is pinned, but
+  // nothing pinned `.s-netwarn` → amethyst, so recolouring it to amber (rule
+  // 18's colour reserved for ON AIR, on a page that is never on air) would
+  // leave every other test green.
+  it('the caution class is amethyst, not the colour reserved for ON AIR', () => {
+    expect(STYLE).toMatch(/\.s-netwarn\{[^}]*--v-amethyst/);
+  });
 });
 
 describe('acceptance 3 · no duplicated control, and no class that styles nothing', () => {
@@ -650,11 +658,12 @@ describe('the Shortcuts section reads the canonical table', () => {
 // half.
 // ─────────────────────────────────────────────────────────────────────────────
 describe('the setup walk-through is held back while a service is recording', () => {
-  it('the button is disabled by the same live fact the unlock control below it reads', () => {
-    const history = MARKUP_ONLY.slice(
-      MARKUP_ONLY.indexOf("section === 'history'"),
-      MARKUP_ONLY.indexOf("section === 'shortcuts'"),
-    );
+  const history = MARKUP_ONLY.slice(
+    MARKUP_ONLY.indexOf("section === 'history'"),
+    MARKUP_ONLY.indexOf("section === 'shortcuts'"),
+  );
+
+  it('the button is disabled by a live fact that AGREES with the unlock control below it', () => {
     const btn = history.match(
       /<button\b[^<]*?on:click=\{restartSetup\}[^<]*?>Run the setup walk-through<\/button>/,
     )?.[0];
@@ -663,22 +672,78 @@ describe('the setup walk-through is held back while a service is recording', () 
     expect(btn).not.toMatch(/disabled(?![-\w=])|disabled=\{(true|false)\}|disabled="/);
     const cond = btn.match(/disabled=\{([^}]*)\}/)?.[1];
     expect(cond, 'the button must be conditionally disabled').toBeTruthy();
-    // The same field "Unlock for this service" is gated on, not a different or
-    // narrower one — a guard that disagrees with the unlock beside it is worse
-    // than no guard.
-    expect(cond).toBe('$serviceLock.engaged');
+    const terms = cond.split('||').map((s) => s.trim());
+
+    // AGREEMENT, not a remembered literal: the "Service lock" block below reads
+    // its own `{#if …}` condition to decide whether to show "Unlock for this
+    // service" at all. A guard that names a different or narrower fact than
+    // that control is worse than no guard, so this asks the source for the
+    // real condition rather than hard-coding a string that could drift from it.
+    const serviceLockBlock = MARKUP_ONLY.slice(
+      MARKUP_ONLY.indexOf('<div class="rw-group">Service lock</div>'),
+      MARKUP_ONLY.indexOf('Unlock for this service'),
+    );
+    const lockCond = serviceLockBlock.match(/\{#if ([^}]*)\}/)?.[1]?.trim();
+    expect(lockCond, 'could not find the Service lock block\'s own condition').toBeTruthy();
+    expect(terms, 'disagrees with the unlock control it sits above').toContain(lockCond);
+
+    // idle() (updater.js) deliberately reads TWO facts, not one: a service can
+    // be recording with the mic momentarily stopped, and a rehearsal can have
+    // the mic live with no service lock armed at all — either one stopping the
+    // walk-through's own microphone out from under an operator. The button must
+    // cover both.
+    expect(terms).toContain('$capture.capturing');
   });
 
   it('a disabled control carries its reason, in amethyst — never amber', () => {
-    const history = MARKUP_ONLY.slice(
-      MARKUP_ONLY.indexOf("section === 'history'"),
-      MARKUP_ONLY.indexOf("section === 'shortcuts'"),
+    // Scoped to the {#if}…{/if} block itself, not a fixed character window —
+    // a window wide enough to catch the warning text is also wide enough to
+    // catch an unrelated control's amber a few hundred characters later.
+    const ifAt = history.indexOf('{#if $serviceLock.engaged || $capture.capturing}');
+    expect(ifAt, 'could not find the guard block').toBeGreaterThanOrEqual(0);
+    const closeAt = history.indexOf('{/if}', ifAt);
+    const block = history.slice(ifAt, closeAt + '{/if}'.length);
+    expect(block).toMatch(/class="rw-foot s-netwarn"/);
+    expect(block).toMatch(/microphone is live|service is being recorded/i);
+    expect(block).not.toMatch(/var\(--v-amber\)/);
+    expect(block).not.toMatch(/class="[^"]*\bs-netbad\b/);
+  });
+
+  it('the Service lock label six rows below states the same fact in the same colour', () => {
+    // One condition — a service is recording — said twice on this page, and it
+    // used to be two different colours: amethyst here, amber (ON AIR — reserved,
+    // and this page is never on air) at "Service lock". Both must read the same.
+    const serviceLockBlock = MARKUP_ONLY.slice(
+      MARKUP_ONLY.indexOf('<div class="rw-group">Service lock</div>'),
+      MARKUP_ONLY.indexOf('Unlock for this service'),
     );
-    const btnAt = history.indexOf('Run the setup walk-through');
-    const after = history.slice(btnAt, btnAt + 700);
-    expect(after).toMatch(/\{#if \$serviceLock\.engaged\}/);
-    expect(after).toMatch(/class="rw-foot s-netwarn"/);
-    expect(after).toMatch(/service is being recorded|while a service/i);
-    expect(after).not.toMatch(/var\(--v-amber\)/);
+    expect(serviceLockBlock).toMatch(/A service is being recorded\./);
+    expect(serviceLockBlock).not.toMatch(/var\(--v-amber\)/);
+    expect(serviceLockBlock).toMatch(/class="s-netwarn"/);
+  });
+});
+
+// The gap Important 1 (fix round 1) closed: every guard above reads MARKUP_ONLY,
+// which is correct for the row (RG-133 records that exemption deliberately) but
+// left the SCRIPT half of the same bug uncovered. `doCheckUpdates` composing its
+// own "You're on the latest version." ternary instead of calling `describeChannel`
+// is the Task 3 defect verbatim, and it lives entirely inside `<script>` — so a
+// scanner that only ever reads MARKUP_ONLY would watch it come back and stay green.
+describe('the update BUTTON goes through describeChannel too — not only the row', () => {
+  it('doCheckUpdates calls describeChannel rather than composing its own sentence', () => {
+    const fn = SCRIPT_ONLY.slice(
+      SCRIPT_ONLY.indexOf('async function doCheckUpdates'),
+      SCRIPT_ONLY.indexOf('checking = false;', SCRIPT_ONLY.indexOf('async function doCheckUpdates')),
+    );
+    expect(fn, 'doCheckUpdates was not found').toBeTruthy();
+    expect(fn).toMatch(/describeChannel\(get\(updateChannel\)\)/);
+  });
+
+  it('and the script never re-invents the sentence describeChannel already owns', () => {
+    // Comments are stripped by `strip()`, so this is the live code only — the
+    // explanatory comment beside the fix is allowed to use these words; a
+    // literal fallback string in the handler is not.
+    expect(SCRIPT_ONLY).not.toMatch(/latest version/i);
+    expect(SCRIPT_ONLY).not.toMatch(/up to date/i);
   });
 });
