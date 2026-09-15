@@ -37,7 +37,11 @@
       body: [
         ['Press <kbd>Esc</kbd>.', 'It clears every screen instantly. It works from any tab in Relay, and it works even while you are typing in a box.'],
         ['Press <kbd>B</kbd> to black out.', 'This goes further: it turns every output screen completely black. Use it if you need the screens gone, not just empty.'],
-        ['Or click <b>Emergency Stop</b>', 'It is in the top-right of every screen, always. You never have to go looking for it.'],
+        // The control this named was removed on 2026-09-14 when the chrome bar was
+        // cleared down to navigation. The sentence stayed, on the one topic a
+        // volunteer opens in the four seconds after the wrong verse appears, and
+        // it sent them hunting the top-right corner of an empty bar.
+        ['Or click <b>Clear screens</b>', 'The red button along the bottom of the <b>Controls</b> card, bottom-right of the window. It is on every workspace and it never scrolls out of reach.'],
       ],
     },
     {
@@ -56,7 +60,7 @@
       title: 'The AI is not detecting verses',
       body: [
         ['Is the speech model installed?', 'If Relay says it cannot hear the sermon, there is a <b>Download</b> button. It is a one-time download and takes a few minutes.'],
-        ['Is Relay listening?', 'Press <b>Start listening</b> on the <b>Live</b> tab. The transcript should start filling up as the preacher speaks.'],
+        ['Is Relay listening?', 'Press <b>Listen</b> in the <b>Live audio</b> card, along the bottom of the window. The transcript should start filling up as the preacher speaks.'],
         ['Can it actually hear?', 'Go to <b>Settings</b> and watch the microphone meter while someone speaks. If the bar does not move, Relay is listening to the wrong microphone — usually it should be the feed from the sound desk, not the laptop’s own mic.'],
         ['It hears, but finds no verses.', 'It only detects a verse when the preacher <i>says the reference</i> — “John chapter three verse sixteen”. If they only quote the words, Relay will <i>offer</i> it as a suggestion, and wait for you. It will never put a guess on the screen by itself.'],
       ],

@@ -816,7 +816,14 @@
             {#if !$capture.capturing}<path d="M4 3.5l16 17" />{/if}
           </svg>
         </button>
-        <span class="dcap detl">{$capture.capturing ? 'live' : 'off'}</span>
+        <!-- THE WORDS THE INSTRUCTIONS NAME. The guide, the Help screen, the
+             latency panel and the empty History pane all say "press Start
+             listening", and the only control whose VISIBLE text said it lives
+             inside Settings — on Live it was an unlabelled glyph whose caption
+             read `off`, which reads as a status, not a button. This is the first
+             action of every service. `Listen` / `Listening` is the same two
+             states in the words the volunteer was told to look for. -->
+        <span class="dcap detl">{$capture.capturing ? 'Listening' : 'Listen'}</span>
       </div>
       <div class="audrow">
         <span class="dcap">Sens</span>

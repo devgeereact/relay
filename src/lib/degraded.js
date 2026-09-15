@@ -101,6 +101,26 @@ export function degradations(s = {}) {
     });
   }
 
+  // THE MICROPHONE STOPPED. The commonest Sunday failure in a church booth is a
+  // cable, and this register had no entry for it at all — so a dead capture
+  // reached the shell's degraded strip nowhere, and was visible only as a raw
+  // cpal device string at the foot of ONE workspace. An operator fixing a template
+  // when the lead unplugs the interface had no signal whatsoever; the transcript
+  // simply stopped and the obvious conclusion is that the AI has failed.
+  //
+  // `blocked`, not `reduced`: with no audio there is nothing for detection to be
+  // degraded ABOUT. It outranks the detection row below, which is why it is above
+  // it — `summarise` takes the blocked ones first.
+  if (s.audioError) {
+    out.push({
+      id: 'audio',
+      level: 'blocked',
+      title: 'The microphone stopped — Relay is not hearing anything',
+      what: 'Nothing will be transcribed or detected until it is listening again. Firing verses by hand works exactly as normal.',
+      fix: 'Check the cable and the input device, then press the microphone in the Live audio card.',
+    });
+  }
+
   // Only worth saying while the microphone is actually live: detection being off
   // with nothing playing into it is not a degradation, it is Tuesday.
   if (s.detectionOn === false && s.capturing && s.sttLoaded !== false) {
