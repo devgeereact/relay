@@ -351,6 +351,39 @@
     }
     return scale;
   }
+  /**
+   * THE CRAWL HAS A BUDGET, AND THE LABEL SPENDS IT FIRST.
+   *
+   * A ticker is a band: a fixed label on the left, then the body scrolling
+   * through whatever room is left. Neither element is `.content`, so the region
+   * fitter never saw either — the loop found zero boxes and reported a scale of
+   * 1, which is the "fit loop with no notion of failure" of rule 37 with the
+   * loop removed entirely.
+   *
+   * The label is what is worth measuring: it is `nowrap`, so it never wraps and
+   * never clips, it simply takes the width. Cap it at 45% of the band and shrink
+   * it on the same 0.95 curve every other box uses, so one long label cannot
+   * leave the body with nothing to scroll through. The body itself is
+   * deliberately NOT shrunk: it scrolls, so its length is time, not overflow.
+   */
+  const TICKER_LABEL_SHARE = 0.45;
+  function fitTicker() {
+    if (!stageEl) return 1;
+    const band = stageEl.querySelector('.ticker');
+    const label = stageEl.querySelector('.ticker-label');
+    if (!band || !label) return 1;
+    const budget = (band.clientWidth || 0) * TICKER_LABEL_SHARE;
+    if (budget <= 0) return 1;
+    const base = parseFloat(getComputedStyle(label).fontSize) || 0;
+    if (!base) return 1;
+    let scale = 1;
+    label.style.fontSize = `${base}px`;
+    while (keepShrinking({ overflowing: label.scrollWidth > budget, scale })) {
+      scale *= FIT_STEP;
+      label.style.fontSize = `${base * scale}px`;
+    }
+    return scale;
+  }
   function fitText() {
     if (!stageEl) return;
     // During a crossfade the outgoing and incoming slides coexist — fit both so
@@ -361,6 +394,9 @@
     stageEl.querySelectorAll('.slide .content').forEach((box) => {
       worst = Math.min(worst, fitOne(box, stageEl));
     });
+    // Ticker mode renders instead of `.content`, so the query above finds
+    // nothing at all. Its own pass is the only measurement this mode gets.
+    worst = Math.min(worst, fitTicker());
     // The WORST of the slides on screen. It is HANDED ON rather than reported
     // here: how far this had to shrink is only half the verdict, and the other
     // half — whether it actually fits — cannot be read until a later frame. One
@@ -581,7 +617,7 @@
     return [
       ...(layered
         ? stageEl.querySelectorAll('.ltext')
-        : stageEl.querySelectorAll('.slide .content')),
+        : stageEl.querySelectorAll('.slide .content, .slide .ticker-label')),
     ];
   }
   function overflowing() {

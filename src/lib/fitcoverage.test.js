@@ -140,3 +140,117 @@ describe('the retained classes the self-review restored are pinned, not just rem
     expect(calmDigits.classList.contains('warn')).toBe(false);
   });
 });
+
+// A TICKER IS NOT EXEMPT FROM BEING MEASURED.
+//
+// The crawl renders INSTEAD OF `.content`, and the region fitter queries
+// `.slide .content`. So an announcement in ticker mode found zero boxes, the
+// loop ran zero times, and `lastFitScale` stayed at 1 — a template reporting a
+// perfect fit with its fixed label shoving the body clean off the band. The
+// label is `white-space: nowrap` at raw `refSize`, so it never wraps and never
+// clips; it just takes the room.
+//
+// This file has no `@testing-library/svelte` dependency (see the note at the
+// top), so `render(...)` is `mount(...)` here, and `onFit`'s report is async
+// (`scheduleFit` → `requestAnimationFrame` → `verifyFit`'s own `nextFrame`), so
+// the first case awaits a real settle rather than reading `scales` synchronously.
+//
+// THE BRIEF'S FIRST CASE DOES NOT ACTUALLY CATCH THE DEFECT IT NAMES, AND THE
+// SECOND TEST BELOW IS WHAT DOES. `verifyFit` runs unconditionally after
+// `fitText` — it is not gated on how many boxes were found — so with ZERO
+// `.content` boxes, `overflowing()` over an empty `fitBoxes()` array is `false`
+// (`Array.prototype.some` on `[]`), `fittedWithTheRealFont()` returns `true`
+// when `fitBoxes()[0]` is `undefined`, and `needsRefit` then answers `false`.
+// `report()` still runs and `onFit` still fires — with the untouched
+// `lastFitScale: 1`, `legible: true`. So "reports a fit" already PASSED before
+// this task's fix, on the code exactly as the previous commit left it: the
+// silence the brief describes is really a false "perfect fit", not an absent
+// report, and a test asserting only that some report arrived cannot tell those
+// apart. Verified directly: reverting just the `fitTicker()` line inside
+// `fitText` (Step 5) leaves this first case green. Kept anyway, because "the
+// ticker reports through the same reporter" is still a real and worthwhile
+// contract — it is just not, on its own, proof of the fix.
+const noticeTemplate = {
+  id: 2,
+  name: 'Notice',
+  layout: { regions: ['verse_text', 'reference'], align: 'center' },
+  style: { scroll: true, refSize: '2', verseSize: '3' },
+};
+const settle = (ms = 200) => new Promise((r) => setTimeout(r, ms));
+
+describe('ticker mode is measured', () => {
+  it('reports a fit for the ticker, not the silence of an empty query', async () => {
+    const scales = [];
+    mount({
+      template: noticeTemplate,
+      content: { kind: 'announce', reference: 'THIS SUNDAY', text: 'Church picnic after the second service.' },
+      onFit: (info) => scales.push(info),
+    });
+    await settle();
+    expect(scales.length, 'ticker mode must report through the same reporter as every other mode').toBeGreaterThan(0);
+  });
+
+  it('shrinks the label and reports the real scale, instead of the untouched 1', async () => {
+    // jsdom lays out nothing, so `.ticker`'s `clientWidth` and the label's
+    // `scrollWidth` both read 0 by default — `fitTicker` bails out at
+    // `budget <= 0` before ever touching the label, same as the unfixed code,
+    // and this case alone would prove nothing. Force real geometry instead, the
+    // same way `cardfit.test.js`'s `clipBoxes` forces an overflow onto `.ltext`:
+    // a 200px band caps the label's budget at 90px (45%), and a label stubbed to
+    // 500px is well past it.
+    let seen = null;
+    const container = mount({
+      template: noticeTemplate,
+      content: { kind: 'announce', reference: 'THIS SUNDAY', text: 'Church picnic after the second service.' },
+      onFit: (info) => (seen = info),
+    });
+    const band = container.querySelector('.ticker');
+    const label = container.querySelector('.ticker-label');
+    Object.defineProperty(band, 'clientWidth', { value: 200, configurable: true });
+    Object.defineProperty(label, 'scrollWidth', { value: 500, configurable: true });
+    // A label that never satisfies `overflowing` keeps re-fitting up to
+    // `MAX_REFIT` (font-readiness retries included), each retry adding its own
+    // `setTimeout`, so this needs more than the default settle.
+    await settle(600);
+    expect(
+      label.style.fontSize.endsWith('px'),
+      'the label must have been measured and resized in px, not left at its declared cqw'
+    ).toBe(true);
+    expect(
+      seen?.scale,
+      'a label overflowing its 45% budget must pull the reported scale down from the untouched 1'
+    ).toBeLessThan(1);
+  });
+
+  it('queries the ticker label as a fit box', () => {
+    const container = mount({
+      template: noticeTemplate,
+      content: { kind: 'announce', reference: 'THIS SUNDAY', text: 'Church picnic.' },
+    });
+    expect(container.querySelector('.ticker-label')).toBeTruthy();
+    expect(container.querySelector('.slide .content'), 'ticker renders instead of .content').toBeFalsy();
+  });
+
+  it('adds the label to fitBoxes(), so overflowing() can see it even when fitTicker itself is a no-op', async () => {
+    // `fitTicker` bails out at `budget <= 0` when the band has no measurable
+    // width (jsdom's default) and never touches the label at all — that path
+    // alone would prove nothing about `fitBoxes()`. Isolate the OTHER half of
+    // Step 3: `overflowing()` (which drives `verifyFit`'s `clipped` verdict and
+    // the late re-look) reads `fitBoxes()`, so a label stubbed to overflow its
+    // OWN box can only be seen if `fitBoxes()` actually queries `.ticker-label`.
+    let seen = null;
+    const container = mount({
+      template: noticeTemplate,
+      content: { kind: 'announce', reference: 'THIS SUNDAY', text: 'Church picnic after the second service.' },
+      onFit: (info) => (seen = info),
+    });
+    const label = container.querySelector('.ticker-label');
+    Object.defineProperty(label, 'scrollWidth', { value: 500, configurable: true });
+    Object.defineProperty(label, 'clientWidth', { value: 50, configurable: true });
+    await settle(600);
+    expect(
+      seen?.clipped,
+      'the ticker label must be queried by fitBoxes(), or overflowing() cannot see it'
+    ).toBe(true);
+  });
+});
