@@ -185,7 +185,10 @@ total, not three. A church that buys an M3 Air expecting its own screen plus a
 projector plus a foyer TV gets a choice of two of the three. That is the purchase
 this section exists to prevent.
 
-| Chip | External displays | Lid |
+**These are LAPTOP figures**, because the operator's machine is usually a laptop
+and the lid is the whole catch. A desktop Mac is a different table; see below.
+
+| Laptop chip | External displays | Lid |
 |---|---|---|
 | M1, M2 (base) | one | either |
 | M3 (base) | two | **closed only.** Open the lid and the second external display goes dark |
@@ -193,11 +196,24 @@ this section exists to prevent.
 | Pro tiers | two or more, varies by model | check the model |
 | Max tiers | up to four | check the model |
 
-The M3 and M4 rows were checked against Apple's own support pages in September
-2026 ([HT117373](https://support.apple.com/en-us/117373) for the M3 lid-closed
-procedure, [HT122212](https://support.apple.com/en-us/122212) for the M4). The
-Pro and Max rows are not qualified here because they vary by model and year;
-check the specific machine.
+**A Mac mini is not the same machine, and it is often the better console.** A
+church buying a dedicated box rather than using somebody's laptop gets more
+outputs, not fewer, and there is no lid to argue with:
+
+| Mac mini | External displays |
+|---|---|
+| M2 (2023) | two |
+| M4 (2024) | three |
+| M1 and other older models | Apple's page does not state it; check that model's tech specs |
+
+Checked against Apple's own support pages in September 2026:
+[Use dual monitors with M3 MacBook Air and MacBook Pro](https://support.apple.com/en-us/117373)
+for the M3 lid-closed procedure,
+[How many displays can be connected to MacBook Air](https://support.apple.com/en-us/122212)
+for the M4, and
+[How many displays can be connected to Mac mini](https://support.apple.com/en-us/102194)
+for the two mini rows. The Pro and Max laptop rows are not qualified here because
+they vary by model and year; check the specific machine.
 
 **DisplayLink is the only real workaround, and it has a cost worth knowing.**
 A DisplayLink dock adds displays in software rather than through the GPU's

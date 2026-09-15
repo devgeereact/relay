@@ -2,7 +2,7 @@
 
 How the application is built and how the pieces fit together, end to end. For the *why* behind decisions see [DECISIONS.md](DECISIONS.md); for the entities, invariants, and event catalog see [DATA_MODEL.md](DATA_MODEL.md); for the visual/interaction system see [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md); for operating the app see [USER_GUIDE.md](USER_GUIDE.md); for the original brief see [SPEC.md](SPEC.md); for what is deferred see [KNOWN_ISSUES.md](KNOWN_ISSUES.md). The whole doc hierarchy is indexed in [README.md](README.md).
 
-Relay is **AI-assisted live presentation software for churches**. It listens to a live sermon, detects scripture references (direct quotes *and* paraphrases), and routes the right content to multiple independently-styled output screens in real time — built to sit **above** the AV chain (OBS, ATEM, ProPresenter) over NDI/HDMI/network, not replace it. Everything core runs **fully offline**.
+Relay is **AI-assisted live presentation software for churches**. It listens to a live sermon, detects scripture references (direct quotes *and* paraphrases), and routes the right content to multiple independently-styled output screens in real time — built to sit **above** the AV chain (OBS, ATEM, ProPresenter), not replace it. OBS, vMix and kiosk screens are reached over the local network; a projector or a switcher over HDMI, plus a converter on the SDI-only rack-mount ATEMs. NDI is parked, and no ATEM accepts NDI in any case ([OUTPUT_ROUTING.md](OUTPUT_ROUTING.md) §2). Everything core runs **fully offline**.
 
 ---
 

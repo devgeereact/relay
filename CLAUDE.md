@@ -6,7 +6,7 @@ Read this before touching code. It reflects real decisions made in real sessions
 
 ## What this is
 
-Relay is AI-assisted live presentation software for churches. It listens to a live sermon, detects scripture references (direct quotes and paraphrases), and routes the right content to multiple independently-styled output screens in real time. It is built to interoperate with OBS, ATEM, and ProPresenter over NDI/HDMI/network — not to replace them.
+Relay is AI-assisted live presentation software for churches. It listens to a live sermon, detects scripture references (direct quotes and paraphrases), and routes the right content to multiple independently-styled output screens in real time. It is built to interoperate with OBS, ATEM and ProPresenter rather than replace them: OBS, vMix and kiosk screens over the local network, a projector or a switcher over HDMI. **NDI is parked and no ATEM accepts NDI in any case**, so HDMI, plus a converter on the SDI-only rack-mount ATEMs, is the whole switcher path (`docs/OUTPUT_ROUTING.md` §2).
 
 Full context: `docs/SPEC.md` (canonical spec), `docs/DECISIONS.md` (why, not just what), `docs/RELAY_V1_AUDIT.md` (current health, the scorecards and the blocker list), `docs/qa/RELAY_GAP.md` (what a product-expansion brief asked for vs what actually exists, with the gap register and the two reversal proposals).
 

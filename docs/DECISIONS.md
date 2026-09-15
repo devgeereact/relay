@@ -566,7 +566,9 @@ Built on top of the above, all tested and gate-green:
 - **Template version history**: bounded (20), deduped-by-shape restore points per template,
   persisted in the settings KV (`tplver.<id>`) — deliberately NOT a schema migration (rule
   25). Snapshotted on an EXPLICIT Save only, never on the editor's live autosave.
-- **Settings sections**: Integrations (honest OBS/vMix-via-URL, NDI parked, ATEM-via-HDMI),
+- **Settings sections**: Integrations (honest OBS/vMix-via-URL, NDI parked, ATEM over HDMI on a
+  Mini and over a converter on the SDI-only rack models — the surface said plain "via HDMI" and
+  half the range has no HDMI input),
   Diagnostics (one-glance support facts), and an honest Users note (Relay is single-operator
   on-device, by design — no accounts).
 - **Transitions**: fade / slide / zoom as ONE custom `in:`-only transition (never a

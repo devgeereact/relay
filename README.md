@@ -1,6 +1,6 @@
 # Relay
 
-> AI-assisted live presentation software for churches — real-time scripture detection routed to independently-styled output screens, built to interoperate with OBS, ATEM, and ProPresenter rather than replace them.
+> AI-assisted live presentation software for churches — real-time scripture detection routed to independently-styled output screens, built to interoperate with OBS, ATEM and ProPresenter rather than replace them. OBS, vMix and kiosk screens over the local network; a projector or a switcher over HDMI, plus a converter on the SDI-only rack-mount ATEMs. NDI is parked, and no ATEM accepts NDI in any case (docs/OUTPUT_ROUTING.md).
 
 **Status:** builds and runs, full pipeline end to end. Operator console, SQLite data layer, audio capture + VAD, local STT (multilingual + code-switching), direct + semantic + context-memory detection, confidence-gating router with first-class manual override, and output channels (native fullscreen + kiosk/OBS WebSocket + preacher stage remote; NDI parked on the external SDK).
 
@@ -111,7 +111,8 @@ One shared template engine renders to three target types (docs/SPEC.md §5):
 > it is then the one source in the building that silently never follows a template
 > change.
 - **NDI encode** — into OBS/vMix/ProPresenter. **Not an ATEM:** no ATEM model
-  ingests NDI at any tier, and a switcher is fed over HDMI instead
+  ingests NDI at any tier. A switcher is fed over HDMI instead, which an ATEM Mini
+  takes directly and an SDI-only rack-mount ATEM takes through a small converter
   (docs/OUTPUT_ROUTING.md §2). **Not yet available:**
   requires the proprietary NDI SDK (native lib + FFI). The command returns a
   clear error; integration path is documented in `src-tauri/src/main.rs`
