@@ -238,7 +238,7 @@
       onQueueChange(queue.filter((q) => q.reference !== ref));
       msg = `Removed ${ref} from the queue`;
     } else {
-      onQueueChange([...queue, { reference: ref, text: v.text }]);
+      onQueueChange([...queue, { reference: ref, text: v.text, kind: 'scripture' }]);
       msg = `Queued ${ref}`;
     }
   }

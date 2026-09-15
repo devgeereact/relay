@@ -236,3 +236,56 @@ describe('Outputs → Add Screen cannot be pressed twice', () => {
     expect(add.disabled).toBe(true);
   });
 });
+
+// ── 3 · A QUEUED ROW IS FIRED AS THE KIND IT IS ──────────────────────────────
+//
+// `fireQueued` used to be `mediaId ? fireMedia : manualFire(item.reference)`, and
+// `manual_fire` runs that string through `detection::detect_direct`, which finds a
+// reference INSIDE surrounding words (`detection.rs` asserts two matches in one
+// ordinary sentence). But the queue's `reference` is whatever the pane called the
+// row: a song slide is "Amazing Grace · Verse 1"; a notice is its title.
+//
+// So a hymn called "Psalm 23" put the KJV CHAPTER on the congregation's screens
+// while the amber Go Live button beside it named the song. Church song titles and
+// notice headings routinely contain scripture, so this is the ordinary case.
+//
+// Checked by reverting `fireQueued` to the two-branch version: the first test
+// goes RED with `manual_fire` called for a song, which IS the defect.
+describe('a queued row is fired as the kind it is', () => {
+  const src = readFileSync(join(process.cwd(), 'src/lib/views/Library.svelte'), 'utf8');
+  const fn = src.slice(
+    src.indexOf('async function fireQueued'),
+    src.indexOf('\n  }', src.indexOf('async function fireQueued')),
+  );
+
+  it('a song title that reads like a reference never reaches manual_fire', () => {
+    // The scripture branch must be reached by KIND, never by "it parsed".
+    expect(fn).toMatch(/item\.kind === 'scripture'[\s\S]*?manualFire\(item\.reference\)/);
+    // And song/notice go through the content door the two panes already use.
+    expect(fn).toMatch(/item\.kind === 'song' \|\| item\.kind === 'announce'/);
+    expect(fn).toMatch(/fireContent\(item\.reference, item\.text, item\.kind\)/);
+  });
+
+  it('an untagged row refuses rather than falling through to a scripture parse', () => {
+    // The hole re-opens the moment a new pane forgets the tag, so the default is
+    // a refusal and not a guess.
+    expect(fn).toMatch(/else \{[\s\S]*throw new Error/);
+    expect(fn).not.toMatch(/else await manualFire/);
+  });
+
+  it('every pane that queues tags what it queued', () => {
+    // The guarantee is only kept on the doors you checked, and there are five.
+    const panes = {
+      'Announcements.svelte': 'announce',
+      'MediaLibrary.svelte': 'media',
+      'Browse.svelte': 'scripture',
+      'LyricsPane.svelte': 'song',
+      'Scripture.svelte': 'scripture',
+    };
+    for (const [file, kind] of Object.entries(panes)) {
+      const pane = readFileSync(join(process.cwd(), 'src/lib/views/library', file), 'utf8');
+      const add = pane.slice(pane.indexOf('onQueueChange([...queue'));
+      expect(add.slice(0, 220), `${file} must tag its queued row`).toContain(`kind: '${kind}'`);
+    }
+  });
+});
