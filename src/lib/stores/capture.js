@@ -20,8 +20,13 @@
 //   GROUP 1 — THROWS. Anything that changes what is on the screens, what the AI is
 //   allowed to do, or whether the microphone is live. `manualFire`, `confirmDetection`,
 //   `setDetection`, `setRehearsal`, `navVerse`, `startCapture`, `stopCapture`,
-//   `fireContent`, `startCountdown`, `adjustCountdown`, `endService`. The caller MUST
-//   handle it and tell the operator.
+//   `fireContent`, `startCountdown`, `adjustCountdown`, `endService`, `setSttLanguage`.
+//   The caller MUST handle it and tell the operator.
+//   `setSttLanguage` joined this group with RG-138, when it stopped being a setting on
+//   a live engine and became a WRITE to the active voice profile. It changes what the
+//   AI hears, and it is the control RG-116 names as the mitigation for a service lost
+//   to whisper electing the wrong language — a pin that silently did not happen is
+//   exactly the failure it exists to prevent.
 //   `endService` is the quiet member: it puts nothing on a wall, but it releases the
 //   service lock, so a swallowed failure leaves Relay refusing deletions, imports and
 //   model changes with nothing on screen saying why.
@@ -2584,15 +2589,26 @@ const call = await invoke();
 await call('set_stage_next', { label: label ?? null, text: text ?? null });
 }
 
-/** Set STT language: a code ("yo"/"sw"/"ha"/"en") or null for auto-detect. */
+/** Set the recognition language: a code ("yo"/"sw"/"ha"/"en") or null for
+ *  auto-detect. Returns the voice profile it was written to.
+ *
+ *  GROUP 1 — THROWS, and it was in GROUP 2 until RG-138. It changes what the AI
+ *  hears, which is the same class as `setDetection`, and it is now also a WRITE:
+ *  the language is stored on the active voice profile, which is what makes the
+ *  choice survive a relaunch. A swallowed failure here leaves the select showing
+ *  a language nothing was told about — on the one control RG-116 names as the
+ *  mitigation for a service lost to whisper's language election wandering.
+ *
+ *  `rooms.js` already depended on this throwing: its per-step report exists to say
+ *  which pieces of a room did not come back, and a wrapper that cannot fail
+ *  reported "recognition language" as applied every time, unconditionally. */
 export async function setSttLanguage(language) {
-try {
-  const call = await invoke();
-  await call('set_stt_language', { language: language ?? null });
-  capture.update((s) => ({ ...s, stt: { ...s.stt, language: language ?? null } }));
-} catch {
-  /* backend absent */
-}
+const call = await invoke();
+const profile = await call('set_stt_language', { language: language ?? null });
+// Only after the backend agreed. An optimistic update is the same lie one step
+// earlier: the select would move and nothing would have been stored.
+capture.update((s) => ({ ...s, stt: { ...s.stt, language: language ?? null } }));
+return profile ?? null;
 }
 
 /** Manual threshold override (Settings sliders). */

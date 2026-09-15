@@ -1720,6 +1720,106 @@ mod cold_start {
         assert!((p.auto_fire - baseline.auto_fire as f64).abs() < 1e-6);
         assert!((p.suggest - baseline.suggest as f64).abs() < 1e-6);
     }
+
+    /// ONE CONVENIENCE, AND IT IS THE FRESH-INSTALL CASE RATHER THAN A SHORTCUT.
+    ///
+    /// `bare_app` does not manage `Stt` because the harness has no whisper in it.
+    /// `Stt(Mutex::new(None))` is precisely what `build_stt` returns on a machine
+    /// where no model has been downloaded yet — which is every church, on the day
+    /// the installer runs. The two tests below are about what happens BEFORE the
+    /// first download, so that is the honest state to put the fixture in.
+    fn app_with_no_speech_model() -> tauri::App<tauri::test::MockRuntime> {
+        let app = bare_app();
+        app.handle().manage(Stt(Mutex::new(None)));
+        app
+    }
+
+    /// THE RECOGNITION LANGUAGE AN OPERATOR PICKS SURVIVES THE LAUNCH THEY PICKED
+    /// IT IN (RG-138).
+    ///
+    /// `set_stt_language` used to take no `Db` at all: it set a field on the live
+    /// engine and nothing else, and `stt_status` read that field back, so the
+    /// choice looked sticky for the rest of the run and was gone at the next
+    /// launch. RG-116 names this control as the mitigation for a real field
+    /// failure, so the register named a fix that did not survive a relaunch.
+    ///
+    /// The assertion is on the DATABASE rather than on the engine on purpose:
+    /// `main.rs`'s setup hook applies `db::active_voice_profile` to whisper before the first
+    /// word, so the profile row IS what the next launch will recognise in.
+    #[test]
+    fn the_recognition_language_is_written_to_the_active_voice_profile() {
+        let app = app_with_no_speech_model();
+        let h = app.handle().clone();
+
+        // A fresh install: the seeded `Default` is active and set to auto-detect.
+        let db = h.state::<Db>();
+        {
+            let conn = db.0.lock().unwrap();
+            let p = db::active_voice_profile(&conn).unwrap().unwrap();
+            assert_eq!(p.name, "Default");
+            assert!(p.language.is_none());
+        }
+
+        let saved = set_stt_language(h.state::<Stt>(), h.state::<Db>(), Some("en".into()))
+            .expect("a fresh install must be able to pin the recognition language");
+        assert_eq!(saved.language.as_deref(), Some("en"));
+        assert_eq!(
+            saved.name, "Default",
+            "the control writes to whichever profile is ACTIVE, and on a fresh \
+             install that is the seeded one"
+        );
+
+        {
+            let conn = db.0.lock().unwrap();
+            assert_eq!(
+                db::active_voice_profile(&conn)
+                    .unwrap()
+                    .unwrap()
+                    .language
+                    .as_deref(),
+                Some("en"),
+                "the language is not on the profile, so the next launch will \
+                 recognise in whatever whisper elects — which is the defect this \
+                 test exists for"
+            );
+        }
+
+        // Auto-detect is a choice too, and it has to be able to come back.
+        set_stt_language(h.state::<Stt>(), h.state::<Db>(), None).unwrap();
+        let conn = db.0.lock().unwrap();
+        assert!(db::active_voice_profile(&conn)
+            .unwrap()
+            .unwrap()
+            .language
+            .is_none());
+    }
+
+    /// NO ENGINE IS NOT "NO LANGUAGE" (rule 35).
+    ///
+    /// Before a model is downloaded there is no engine to ask, and the recognition
+    /// language is still a real stored fact. Reporting `None` here would print
+    /// "Auto-detect" on the Settings select over a profile that says English — a
+    /// status line that reads the same when the setting is missing as when it is
+    /// set.
+    #[test]
+    fn the_stored_language_is_reported_when_no_speech_model_is_loaded() {
+        let app = app_with_no_speech_model();
+        let h = app.handle().clone();
+
+        let fresh = stt_status(h.state::<Stt>(), h.state::<Db>()).unwrap();
+        assert!(!fresh.loaded);
+        assert_eq!(fresh.language, None, "a fresh install is on auto-detect");
+
+        set_stt_language(h.state::<Stt>(), h.state::<Db>(), Some("yo".into())).unwrap();
+        let after = stt_status(h.state::<Stt>(), h.state::<Db>()).unwrap();
+        assert!(!after.loaded, "still no model — nothing downloaded one");
+        assert_eq!(
+            after.language.as_deref(),
+            Some("yo"),
+            "the pin is stored and will be applied the moment an engine exists, so \
+             the control must not read back as Auto-detect"
+        );
+    }
 }
 
 #[cfg(test)]

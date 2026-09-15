@@ -664,6 +664,36 @@
   // and on this form an unsaved "change" reads as a calibration that is live.
   const openEditor = (p) => (editing = { ...p });
 
+  // ── Recognition language (RG-138) ───────────────────────────────────────────
+  //
+  // TWO TABS, ONE FACT. This control lives in Scripture & Languages; the voice
+  // profile editor above lives in AI & Detection, and its Language select is the
+  // same column. There is exactly one store — `voice_profiles.language` — and
+  // `set_stt_language` writes to whichever profile is ACTIVE, which is why the
+  // line under the select names it rather than leaving the operator to find out.
+  //
+  // `refreshProfiles()` afterwards is not cosmetic: `profiles` is what the editor
+  // opens a copy FROM, so a stale copy saved later would quietly put the old
+  // language back.
+  let langErr = '';
+  let langBusy = false;
+  $: activeProfile = profiles.find((p) => p.is_active) ?? null;
+
+  async function pickLanguage(code) {
+    langBusy = true;
+    langErr = '';
+    try {
+      await setSttLanguage(code);
+      await refreshProfiles();
+    } catch (e) {
+      // GROUP 1 — it throws, and this is the surface that has to say so. Without
+      // this the select would sit on a language nothing was told about.
+      langErr = humanError(e);
+    } finally {
+      langBusy = false;
+    }
+  }
+
   // RMS on speech sits well below 1.0; scale so normal talking fills the meter.
   $: levelPct = Math.min(100, Math.round($meter.level * 320));
 
@@ -1333,6 +1363,10 @@
               <option value="sw">Swahili</option>
               <option value="ha">Hausa</option>
             </select>
+            <p class="rw-foot">
+              The same setting as <b>Scripture &amp; Languages → Recognition language</b>, which
+              writes to whichever profile is active. There is one store for it, not two.
+            </p>
 
             <label class="r-lbl" for="vp-bias">Expected names and places</label>
             <input
@@ -1377,14 +1411,38 @@
       {:else if section === 'scripture'}
         <div class="rw-group">Recognition language</div>
         <div class="s-prose">
-          <select class="r-select" value={$capture.stt.language ?? ''} on:change={(e) => setSttLanguage(e.target.value || null)} disabled={!$capture.stt.loaded} aria-label="Recognition language">
+          <!-- NOT disabled when no model is loaded. The language is a stored
+               preference now, not a setting on a live engine: a church that has
+               just installed Relay has no model yet, and pinning the language
+               before the first service is exactly what RG-116 asks a pilot to do.
+               `stt_status` reports the stored value while there is no engine, so
+               the select cannot read "Auto-detect" over a profile that says
+               English. -->
+          <select class="r-select" value={$capture.stt.language ?? ''} on:change={(e) => pickLanguage(e.target.value || null)} disabled={langBusy} aria-label="Recognition language">
             <option value="">Auto-detect (code-switching)</option>
             <option value="en">English</option>
             <option value="yo">Yoruba</option>
             <option value="sw">Swahili</option>
             <option value="ha">Hausa</option>
           </select>
+          {#if langErr}
+            <p class="s-alert" role="alert">{langErr}</p>
+          {/if}
           <p class="rw-foot">Auto-detect handles English mixed with a local language mid-sentence — the normal case. Tier-1: Yoruba · Swahili · Hausa.</p>
+          <!-- WHOSE SETTING THIS IS. One fact, one store: this writes to the
+               ACTIVE voice profile, the same field the profile editor on AI &
+               Detection edits. Saying so is the difference between a setting that
+               persists and a setting that silently rewrites a profile the operator
+               is not looking at. -->
+          <p class="rw-foot">
+            Saved to the active voice profile{activeProfile ? ` — “${activeProfile.name}”` : ''}, and
+            applied before the first word of the next service. The same setting is on
+            <b>AI &amp; Detection → Voice profiles</b>; one preacher, one language.
+            {#if !$capture.stt.loaded}
+              No speech model is loaded yet, so nothing is listening — the choice is stored
+              now and applied the moment one is.
+            {/if}
+          </p>
         </div>
 
         <div class="rw-group">Bible translations</div>

@@ -3908,19 +3908,35 @@ async fn stop_capture(app: tauri::AppHandle, audio: tauri::State<'_, Audio>) -> 
 /// banner up. It used to fail silently, which on Windows (where the model lookup
 /// was broken outright) meant the operator had no idea the AI was never running.
 #[tauri::command]
-fn stt_status(stt: tauri::State<'_, Stt>) -> error::Result<StatusStt> {
-    let slot = stt.0.lock()?;
-    Ok(match slot.as_ref() {
-        Some(e) => StatusStt {
+fn stt_status(stt: tauri::State<'_, Stt>, db: tauri::State<'_, Db>) -> error::Result<StatusStt> {
+    // Read the engine under its own lock and DROP it before touching the database.
+    // Every other path here takes the database first (`set_stt_language`,
+    // `load_stt_model`), so holding the engine lock across a database lock is the
+    // one ordering that could meet them head-on.
+    let loaded = {
+        let slot = stt.0.lock()?;
+        slot.as_ref()
+            .map(|e| (e.model_path().display().to_string(), e.language()))
+    };
+    Ok(match loaded {
+        Some((model, language)) => StatusStt {
             loaded: true,
-            model: Some(e.model_path().display().to_string()),
-            language: e.language(),
+            model: Some(model),
+            language,
             install_dir: None,
         },
+        // NO ENGINE IS NOT "NO LANGUAGE". Before a model is downloaded there is
+        // nothing to ask, and the recognition language is still a real stored fact
+        // — it lives on the active voice profile and is applied the moment an
+        // engine exists. Reporting `None` here printed "Auto-detect" over a profile
+        // that said English, on a fresh install, which is the whole shape of rule 35.
         None => StatusStt {
             loaded: false,
             model: None,
-            language: None,
+            language: {
+                let conn = db.0.lock()?;
+                db::active_voice_profile(&conn)?.and_then(|p| p.language)
+            },
             install_dir: Some(stt::model_install_dir().display().to_string()),
         },
     })
@@ -3960,13 +3976,51 @@ fn set_active_translation(
 
 /// Set the STT language: a code ("yo"/"sw"/"ha"/"en"/…) or null for auto-detect
 /// (code-switching). Tier-1 targets: Yoruba, Swahili, Hausa (CLAUDE.md).
+///
+/// IT WRITES TO THE ACTIVE VOICE PROFILE, and that is the whole point (RG-138).
+/// For as long as this command existed it took no `Db` at all: it set a field on
+/// the live engine and nothing else, so an operator who chose English lost it at
+/// the next launch, silently — while `stt_status` read the engine back and made it
+/// look sticky for the rest of the run. `docs/qa/RELAY_GAP.md` RG-116 names this
+/// control as the mitigation for a real field failure (whisper's language election
+/// wandered off English and cost a service on `ggml-small`), so the register named
+/// a fix that did not survive a relaunch.
+///
+/// The language is already stored durably, once, on `voice_profiles.language` —
+/// applied in `setup`, on a profile switch, and after a model reload. So this
+/// writes there rather than adding a second key: two stores for one fact would
+/// race at startup, and nothing would say which won.
+///
+/// NOT on `servicelock::PROTECTED`, deliberately. Its two nearest neighbours are —
+/// `select_stt_model` unloads whisper and takes the ears away mid-sermon, and
+/// `set_active_translation` changes the words on the wall. This does neither: it
+/// sets a hint that the next decode window picks up, unloads nothing, and is undone
+/// by choosing again. More to the point it is the REMEDY for a live failure rather
+/// than the hazard — when auto-detect wanders mid-sermon (one real service went
+/// en·yo·pt·sw·sv·ms; `stt.rs`) pinning the language is the operator's only lever,
+/// and holding it back behind an unlock would be withholding the fix at the exact
+/// moment it is needed.
 #[tauri::command]
-fn set_stt_language(stt: tauri::State<'_, Stt>, language: Option<String>) -> error::Result<()> {
-    let slot = stt.0.lock()?;
-    if let Some(e) = slot.as_ref() {
-        e.set_language(language);
+fn set_stt_language(
+    stt: tauri::State<'_, Stt>,
+    db: tauri::State<'_, Db>,
+    language: Option<String>,
+) -> error::Result<db::VoiceProfile> {
+    // Persist first, then apply. A write that fails must not leave the engine
+    // decoding in a language nothing remembers.
+    let profile = {
+        let conn = db.0.lock()?;
+        db::set_active_profile_language(&conn, language.as_deref())?
+            .ok_or_else(|| "no voice profile to store the recognition language on".to_string())?
+    };
+    // The FULL profile, not just the language: `apply_profile_to_stt` re-derives the
+    // decoder-bias prompt for the language now chosen. Setting the language alone
+    // would leave English book names biasing a Yorùbá sermon, which is the exact
+    // thing that function's comment says pushes whisper away from the words we need.
+    if let Some(e) = stt.0.lock()?.as_ref() {
+        apply_profile_to_stt(e, &profile);
     }
-    Ok(())
+    Ok(profile)
 }
 
 #[derive(Clone, Serialize)]

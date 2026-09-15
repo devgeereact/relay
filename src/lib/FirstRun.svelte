@@ -211,7 +211,15 @@
 
   async function pickLang(code) {
     lang = code;
-    await setSttLanguage(code);
+    // GROUP 1 — it throws (RG-138): the language is written to the active voice
+    // profile, and a wizard that shows a language it failed to store is the
+    // wizard's own promise broken on the step that makes it.
+    try {
+      await setSttLanguage(code);
+      error = '';
+    } catch (e) {
+      error = humanError(e);
+    }
   }
 
   // Prove it. Not "setup complete" — an actual verse, on the actual screen.
