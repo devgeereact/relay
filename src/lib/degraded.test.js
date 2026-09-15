@@ -75,6 +75,25 @@ describe('what counts as blocked, and what counts as reduced', () => {
     expect(d.fix).toMatch(/Settings → General/);
   });
 
+  it('and STOPS asserting the promise when safe mode could not be enforced', () => {
+    // The record is written before the enforcement runs (DECISIONS §86), so this
+    // row printed "nothing Relay does can reach a screen" over a screen that had
+    // refused to close. One sentence over two situations is rule 35, and this is
+    // the register an operator reads on every workspace.
+    const [d] = degradations({
+      ...OK,
+      safeMode: true,
+      safeModeError: 'Lobby: that screen is not connected any more.',
+    });
+    expect(d.id).toBe('safemode');
+    expect(d.level).toBe('blocked');
+    expect(d.what).not.toMatch(/nothing Relay does can reach a screen/);
+    expect(d.what).toMatch(/something may still be able to reach a screen/i);
+    // And the next action is about the screens, not about the switch.
+    expect(d.fix).toMatch(/Esc/);
+    expect(d.title).toMatch(/could not be enforced/);
+  });
+
   it('detection being off only counts while the microphone is live', () => {
     // Detection disarmed with nothing playing into it is not a degradation, it is
     // Tuesday. Reporting it would put a permanent caveat on an idle console.

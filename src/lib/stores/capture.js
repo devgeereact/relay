@@ -58,7 +58,7 @@ import { liveTransition } from '../transitions.js';
 // Safe mode's record lives in the boot record, and this file is the only thing
 // allowed to write it — see `applySafeMode` below. `boot.js` imports only
 // `svelte/store` and `../errors.js`, so there is no cycle here.
-import { setSafeMode } from '../boot/boot.js';
+import { setSafeMode, safeMode } from '../boot/boot.js';
 
 /**
  * The audio meter — RMS level + voice-activity, arriving 10–50 times a second.
@@ -2094,8 +2094,29 @@ const call = await invoke();
 await call('set_active_translation', { id });
 }
 
-/** Open a channel's output on its assigned display (HDMI). Returns the label. */
+/**
+ * Open a channel's output on its assigned display (HDMI). Returns the label.
+ *
+ * REFUSES IN SAFE MODE, here rather than at the four call sites (Channels'
+ * Open button, the first-run wizard, the Dashboard's Open main screen, and
+ * whatever is written next). Safe mode's row says "outputs will not open", and
+ * that clause is an ONGOING promise, not a one-off transition — `applySafeMode`
+ * closes what is already open, and this is what keeps it closed. Channels.svelte
+ * did not import `safeMode` at all, so the Outputs workspace opened a projector
+ * window with safe mode on, which is the capability `degraded.js` reports as
+ * blocked. DECISIONS §86.
+ *
+ * It REFUSES rather than quietly doing nothing: a button that silently no-ops is
+ * the defect this whole area was fixed for. All four callers already humanise
+ * what they catch, so the sentence reaches the operator wherever they pressed.
+ */
 export async function openChannelOutput(channelId) {
+if (get(safeMode)) {
+  const msg =
+    'Safe mode is on, so Relay will not open an output screen. ' +
+    'Turn it off in Settings → General if you want screens back.';
+  throw Object.assign(new Error(msg), { kind: 'refused', message: msg });
+}
 const call = await invoke(); // throws in browser
 return call('open_channel_output', { channelId });
 }
@@ -2105,6 +2126,12 @@ return call('open_channel_output', { channelId });
  *  onto connected, non-primary displays, so it never covers the operator's
  *  console. Best-effort — a plain browser (no backend) just no-ops. */
 export async function autoOpenOutputs() {
+// The OTHER way a screen opens, and it is a different backend command, so the
+// refusal in `openChannelOutput` does not cover it. No refusal here: nobody
+// pressed anything, this runs from the launch sequence, and not restoring the
+// screens IS what safe mode means. `App.svelte` states the same thing at the
+// call site; this is the half that a new caller inherits. DECISIONS §86.
+if (get(safeMode)) return null;
 try {
   const call = await invoke();
   return await call('auto_open_outputs');
@@ -2375,6 +2402,21 @@ export async function applySafeMode(on) {
     failures.push(humanError(e));
   }
 
+  // TAKE THE SCREENS DOWN FIRST, and not only the ones with a window.
+  // `close_channel_output` closes a native webview; a channel with no window is
+  // a silent no-op there, so an OBS browser source or a lobby TV on the kiosk hub
+  // would keep its RETAINED frame (rule 43) and go on showing the last verse
+  // while this function returned true. `clear_screens` reaches every render
+  // target and its `clear` becomes the retained frame in its turn, so a screen
+  // that reconnects afterwards comes back blank rather than to the verse.
+  //
+  // Deliberate, and worth being deliberate about: safe mode takes a congregation's
+  // screen down. It is an explicit operator action asking for exactly that, not
+  // something Relay decides on its own — which is the line §20 draws.
+  if (!(await clearScreens())) {
+    failures.push('the screens could not be cleared');
+  }
+
   // `listOutputChannels` is GROUP 2: it swallows and returns `[]`, so a `catch`
   // around it can never fire and a door that trusted the empty list would report
   // "every screen closed" having never been told about one. The swallowed reason
@@ -2476,6 +2518,17 @@ try {
   }
   return false;
 }
+}
+
+/**
+ * Operator has read the safe-mode warning.
+ *
+ * Says "I have looked", never "it is fixed" — same contract as
+ * `dismissPanicError`. It clears again on the next `applySafeMode`, which is the
+ * only thing that can honestly say the promise is being kept.
+ */
+export function dismissSafeModeError() {
+safeModeError.set(null);
 }
 
 /** Operator has read the panic warning (or a later panic control succeeded). */

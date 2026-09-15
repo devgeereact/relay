@@ -4091,6 +4091,66 @@ bugs whose single root cause is a rule enforced on one surface and skipped on it
 caller would have been the fifth, and the switch now has three callers already (Settings, the boot
 sequence's crash gate, and `App.svelte`'s mount) which is exactly how the first four started.
 
+### What the door covers, and what it deliberately does not
+
+The sentence "the enforcement lives at one door" is about the TRANSITION — the moment safe mode is
+turned on. The row also makes an ONGOING promise ("outputs will not open"), and that is a second thing.
+Stating the reach precisely, because a decision that overstates its own is worse than one that admits a
+limit:
+
+**Covered.**
+
+- The transition: `applySafeMode` disarms detection, clears the screens, and closes every native output
+  window, reporting each failure by name.
+- Opening a screen afterwards. `openChannelOutput` REFUSES while safe mode is on, and it refuses at the
+  door in `capture.js` rather than at its four callers — the Outputs workspace's Open button, the
+  first-run wizard, the Dashboard's *Open main screen*, and whatever is written next. `Channels.svelte`
+  did not import `safeMode` at all, so that button opened a projector window with safe mode on: the
+  exact capability this register reports as blocked. `autoOpenOutputs` is a different backend command
+  and is gated in the same file, with no refusal, because nobody pressed anything.
+
+**Not covered, deliberately: a manual fire.**
+
+`Live.svelte` has five `manualFire` call sites and none of them ask about safe mode. That is the
+decision, not an omission. Safe mode's sentence is about what *Relay* does — it opens no screens and
+arms no detector. A manual fire is the **operator's own action**, taken with their hand on the control,
+and safe mode is not a lock. Gating it would also mean teaching `pipeline::preflight` a second reason to
+refuse a broadcast, and that validator may never grow a reason to refuse a panic control (§20, rule 36).
+
+The honest reading of the row is therefore: *nothing Relay does on its own initiative can reach a
+screen.* If a future reader wants the stricter promise, the change is a lock, with its own control and
+its own name, not a broader safe mode.
+
+### Safe mode takes the screens down
+
+`applySafeMode` calls `clearScreens()` before it closes any window, and a failed clear is collected as a
+failure like any other.
+
+`close_channel_output` closes a native webview and is a silent no-op for a channel that has none — so an
+OBS browser source, a kiosk page or a lobby TV on the hub would have kept its retained frame (rule 43)
+and gone on showing the last verse while this function returned `true`. `clear_screens` reaches every
+render target, and its `clear` becomes the retained frame in its turn, so a screen that reconnects
+afterwards comes back blank rather than to the verse.
+
+This blanks a congregation's screen, which is worth being deliberate about. It is allowed because it is
+an explicit operator action asking for exactly that — not something Relay decided on its own, which is
+the line §20 draws.
+
+### A promise that was not kept may not be printed as one
+
+The record is written FIRST and unconditionally, and both of the shell's always-visible surfaces read
+the record:
+
+- `statusbar.js::wallState` returns *"Safe mode — outputs disabled"*, and it is the first branch of the
+  ladder, outranking `live`.
+- `degraded.js::degradations` printed the row's promise word for word.
+
+So a screen that refused to close and was still painting a verse was described, on every workspace, as
+*outputs disabled* — which is the defect this section exists to fix, displaced one step, and rule 35
+exactly. Both now take the failure as an input and say something different when there is one, and
+`safeModeError` is rendered in the shell beside `panicError` rather than only on the Settings row the
+operator has just walked away from.
+
 **Every screen is attempted, even after one refuses to close.** Stopping at the first failure would
 hand the operator one screen's name to fix by hand while the ones behind it were still lit and nothing
 had ever asked them to go dark. The message names each screen that would not close, so what is left to
@@ -4123,9 +4183,16 @@ behaviour, not against an actor.
 
 ### Instrument
 
-`src/lib/safemode.test.js`. Four of its six cases drive the door (detection disarmed and every screen
+`src/lib/safemode.test.js`, plus one case each in `degraded.test.js` and `statusbar.test.js` holding
+that the two shell surfaces stop asserting the promise when it was not kept. Four of its cases drive the
+door (detection disarmed and every screen
 closed; a failure reported rather than swallowed; every screen attempted rather than the first;
 a list that could not even be read). One holds that coming out of safe mode arms nothing. The sixth
 walks every `.js` and `.svelte` file under `src/` and holds `setSafeMode` to its single caller, so the
 next surface to offer safe mode cannot reproduce the original defect by writing the record on its own;
-it asserts its own walk found a tree, because a scanner that quietly narrows passes everything.
+it asserts its own walk found a tree, because a scanner that quietly narrows passes everything, and it
+matches the import specifier as well as the call so an aliased import cannot slip past it. Four further
+cases hold the screens being taken down rather than only the windows, a failed clear counting as a
+failure, `openChannelOutput` refusing under safe mode while still opening when it is off, and the shell
+rendering the failure at all — that last one a SOURCE assertion, named as such, because the shell is not
+mounted in this file.

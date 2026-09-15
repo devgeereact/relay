@@ -37,6 +37,22 @@ describe('the state line is one ladder, worst first', () => {
     expect(wallState({ black: true, live: true }).tone).toBe('blackout');
   });
 
+  it('and does not say “outputs disabled” when safe mode was not enforced', () => {
+    // The FIRST branch of the ladder, outranking `live`, on the one strip an
+    // operator reads all service. Safe mode's record is written before it is
+    // enforced (DECISIONS §86), so a screen that refused to close and is still
+    // painting a verse was described here as outputs disabled.
+    const w = wallState({ safeMode: true, safeModeFailed: true, live: true, label: 'Romans 8:28' });
+    expect(w.words).not.toMatch(/outputs disabled/i);
+    expect(w.words).toMatch(/not enforced/i);
+    // Still the safe tone: amber means ON AIR and nothing else (rule 18), and
+    // this cell does not know whether a screen is painting — only that the
+    // promise behind the word was not kept.
+    expect(w.tone).toBe('safe');
+    // Unchanged when it WAS enforced.
+    expect(wallState({ safeMode: true }).words).toBe('Safe mode — outputs disabled');
+  });
+
   it('on air is named, never bare', () => {
     // "On air" with nothing after it is the state without the fact. The label is
     // what an operator checks against the wall behind them.

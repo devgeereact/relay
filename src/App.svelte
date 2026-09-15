@@ -3,7 +3,7 @@
   import { get } from 'svelte/store';
   import { trapFocus } from './lib/focus.js';
   import { t } from './lib/i18n.js';
-  import { capture, capturing, live, screenBlack, rehearsing, initAudio, autoOpenOutputs, applySafeMode, clearScreens, blackScreen, panicError, dismissPanicError, dismissAudioError, loadServiceLock, channelHealth, channelWaiting, startChannelHealth, latencyReport, ping, onOperatorAction, noteOperatorAction, loadLiveTransition } from './lib/stores/capture.js';
+  import { capture, capturing, live, screenBlack, rehearsing, initAudio, autoOpenOutputs, applySafeMode, safeModeError, dismissSafeModeError, clearScreens, blackScreen, panicError, dismissPanicError, dismissAudioError, loadServiceLock, channelHealth, channelWaiting, startChannelHealth, latencyReport, ping, onOperatorAction, noteOperatorAction, loadLiveTransition } from './lib/stores/capture.js';
   import * as training from './lib/training.js';
   import { practice, stopPractice } from './lib/practice.js';
   import { degradations, worstLevel, summarise } from './lib/degraded.js';
@@ -63,6 +63,9 @@
     detectionOn: $capture.detectionOn,
     capturing: $capturing,
     safeMode: $safeMode,
+    // …and whether it actually took. The record is written before the enforcement
+    // runs, so this row asserted the promise over a screen that refused to close.
+    safeModeError: $safeModeError,
     // `undefined` until the first quality frame — no row until Relay has looked.
     denoise: $capture.quality?.denoise,
     gpuBackends,
@@ -357,6 +360,7 @@
   let perf = null;
   $: wall = wallState({
     safeMode: $safeMode,
+    safeModeFailed: !!$safeModeError,
     rehearsing: $rehearsing,
     black: $screenBlack,
     live: !!$live,
@@ -810,6 +814,35 @@
         <span>{$capture.audioError}</span>
       </div>
       <button class="r-btn ghost sm" on:click={dismissAudioError}>Dismiss</button>
+    </div>
+  {/if}
+
+  <!-- SAFE MODE COULD NOT KEEP ITS PROMISE (DECISIONS §86). In the SHELL, for the
+       reason the other two rose bars are: the switch is in Settings, the failure
+       is about the OUTPUT SCREENS, and an operator who flips safe mode and then
+       walks to Live to see what is still lit must not be told there that outputs
+       are disabled. The rose line on the Settings row is the only other place
+       this exists, and it is on the one page they have just left.
+
+       `.audiobar`, not `.panicbar`: in flow, paints over nothing, and takes no
+       part in the `--panic-h` offset that a second fixed bar would have to
+       share. Rule 44 — an overlay may never cover `Clear screens`, and the
+       cheapest way to keep that true is not to overlay anything.
+
+       AFTER the microphone bar on purpose: `audioerror.test.js` slices the shell
+       from the FIRST `class="audiobar"` to find that banner, so a second one
+       above it shadows the assertion. A dead microphone is also the more urgent
+       of the two — this one is about screens nobody is firing to.
+
+       Rose, never amber. It does not auto-dismiss: "a screen may still be live"
+       stays true until somebody has looked at the screen. -->
+  {#if $safeModeError}
+    <div class="audiobar" role="alert" aria-live="assertive">
+      <div class="panic-t">
+        <b>Safe mode is NOT enforced.</b>
+        <span>{$safeModeError}</span>
+      </div>
+      <button class="r-btn ghost sm" on:click={dismissSafeModeError}>Dismiss</button>
     </div>
   {/if}
 
