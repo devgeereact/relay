@@ -2969,8 +2969,8 @@ fn fire_content<R: tauri::Runtime>(
 /// `http://<lan-ip>:8032/media/<id>` so native windows AND kiosk/OBS clients
 /// load the same URL. Documents (pdf/pptx) aren't renderable as output yet.
 #[tauri::command]
-fn fire_media(
-    app: tauri::AppHandle,
+fn fire_media<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     db: tauri::State<'_, Db>,
     id: i64,
     template_id: Option<i64>,

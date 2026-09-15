@@ -3416,3 +3416,50 @@ fn r7_a_screen_that_joins_while_the_countdown_is_held_is_shown_a_held_countdown(
         "the retained frame dropped the aimed-from instant: {v}"
     );
 }
+
+/// A PICTURE IS A FIRE PATH, AND IT HAD NO TEST.
+///
+/// `fire_media` puts an image on a congregation's wall through the same
+/// `broadcast_with_clock` door as a verse, so the pre-air validator, the passage
+/// disarm (rule 38) and the rehearsal gate all apply to it. None of that was ever
+/// driven, because the function took a concrete `AppHandle` and `e2e.rs` runs on a
+/// mock runtime — rule 24's own failure mode, in the one place rule 24's four-name
+/// enforcement could not look.
+///
+/// `qa::bare_app()` (via this file's `app()`) seeds no media asset, on purpose — a
+/// fresh install has none, and a second fixture is how two suites start
+/// disagreeing about what a fresh install contains. So one is inserted here,
+/// directly through `db::insert_media`, the way the media library command itself
+/// would.
+#[test]
+fn r0_a_picture_reaches_the_wall_and_disarms_the_passage() {
+    let app = app();
+    let h = app.handle().clone();
+    let wall = Wall::watch(&h);
+
+    // Sermon scripture, on screen a moment ago — a passage is armed.
+    manual_fire(h.clone(), h.state::<Db>(), "John 3:16".into(), None, None).unwrap();
+
+    let media_id = {
+        let db = h.state::<Db>();
+        let conn = db.0.lock().expect("db");
+        db::insert_media(&conn, "image", "slide.png", "2026-09-15").expect("seed a media row")
+    };
+
+    fire_media(h.clone(), h.state::<Db>(), media_id, None).expect("fire the picture");
+    settle();
+
+    assert_eq!(
+        wall.last().expect("the wall")["kind"],
+        "media",
+        "the picture reached the wall"
+    );
+
+    // Rule 38: anything that is not scripture disarms the passage.
+    let r = nav(h.clone(), "next".into()).expect("nav answers");
+    assert!(
+        matches!(r, NavResult::NoPassage),
+        "a picture replaced the reading, so `next` must not walk it: {}",
+        r.kind()
+    );
+}

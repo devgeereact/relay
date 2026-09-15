@@ -115,7 +115,13 @@ describe('RG-76 · the mechanically checkable hard-way rules', () => {
     // This is what makes `e2e.rs` possible. Welded to the concrete desktop runtime,
     // the one path that puts scripture on a wall cannot be driven without a window,
     // and so was never tested. A concrete `AppHandle` quietly re-welds it.
-    const missing = ['fire_manual', 'handle_nav', 'clear_or_report', 'persist_cue'].filter(
+    const missing = [
+      'fire_manual',
+      'handle_nav',
+      'clear_or_report',
+      'persist_cue',
+      'fire_media',
+    ].filter(
       (fn) => !new RegExp(`fn ${fn}<R: tauri::Runtime>`).test(mainRs),
     );
     expect(
