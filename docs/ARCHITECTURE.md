@@ -219,6 +219,8 @@ service lock · update safety · diagnostics · models.
 | `detection://match` | A candidate, with `matched_text` and `method` — so the operator can see *which kind* of claim is being made ([DECISIONS.md](DECISIONS.md) §21) |
 | `output://content` · `output://clear` · `output://black` | The three things a screen can be told |
 | `output://panic_failed` | A panic control that did **not** achieve what it claimed ([DECISIONS.md](DECISIONS.md) §20) |
+| `output://error` | A LAN server could not bind, so every networked output is dead at once: OBS browser sources, kiosk screens, the preacher's stage monitor. It used to be an `eprintln!` nobody saw, and the operator's only clue was that last week's screens never came up |
+| `output://transition` | Which transition a screen should use for its NEXT change. Configuration rather than content, so it paints nothing on its own and is deliberately not rehearsal-gated: gating it would leave every screen still wearing the transition from before the rehearsal once the operator went live |
 | `nav://blocked` | A nav that could not move, and which of the four reasons it was |
 | `template://updated` | A template changed; every surface re-renders from one engine |
 | `model://progress` · `done` · `error` · `cancelled` | The in-app STT model download. **`done` has no listener on purpose** — `download_model` resolves when the file is installed and verified, so the command's own return *is* the completion signal; a listener as well would handle it twice |
