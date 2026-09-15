@@ -2200,7 +2200,7 @@ The 2026-09-10 pass found two congregation-facing defects — a first verse pain
 ### Task 15: Drive it and record what it does (P1)
 
 **Files:**
-- Create: `docs/qa/audits/DESIGN-2026-09-15-WAVE2.md` — frozen evidence, findings only
+- Create: `docs/qa/audits/DESIGN-2026-09-15-WAVE2.md` — frozen evidence, findings only. This task creates it; it does not exist yet.
 - Modify: `docs/qa/RELAY_GAP.md` — any new `RG-` ids, filed there and nowhere else
 
 - [ ] **Step 1: Bring the real backend up**
