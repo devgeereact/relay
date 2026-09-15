@@ -69,7 +69,7 @@
    *  One line on the band, truncated, with the whole sentence in its `title`. */
   export let standfirst = '';
   /** The body's column track. Rail · main · inspector, in that order. */
-  export let columns = '206px minmax(0,1fr) 286px';
+  export let columns = 'var(--v-rail) minmax(0,1fr) var(--v-insp)';
 </script>
 
 <div class="rw" style="--rw-cols:{columns}">

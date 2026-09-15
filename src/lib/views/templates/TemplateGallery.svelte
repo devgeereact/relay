@@ -480,7 +480,7 @@
 <WorkspaceFrame
   title="Templates"
   standfirst="Editing a template repaints every screen already wearing it."
-  columns="206px minmax(0,1fr) 312px">
+  columns="var(--v-rail) minmax(0,1fr) var(--v-insp)">
   <svelte:fragment slot="head">
     <!-- THE DESK STRIP. Themes moved INTO this workspace (docs/REBRAND.md §2);
          the shell's strip carries workspaces, and Themes is a desk within

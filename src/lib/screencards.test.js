@@ -221,7 +221,22 @@ describe('§2 · the desk starts where the prototype starts, and fits three card
   it('three cards fit across the main column at 1280, by the real numbers', () => {
     const [, cols] = outputs.match(/columns="([^"]+)"/);
     const [rail, , inspector] = cols.trim().split(/\s+(?![^(]*\))/);
-    const px = (s) => parseInt(s, 10);
+    // THE TRACKS ARE TOKENS NOW, so resolve them out of `app.css` rather than
+    // parsing a literal. Both rules of the desk used to be typed per view —
+    // rails of 180/206/206/206/212 and inspectors of 250/276/312/320/330 — so
+    // both seams moved on every tab press. Reading the token here means this
+    // arithmetic checks the width that actually ships, which a literal could
+    // only ever agree with by coincidence.
+    const sheet = read('app.css');
+    const token = (name) => {
+      const m = sheet.match(new RegExp(`--${name}\\s*:\\s*(\\d+)px`));
+      if (!m) throw new Error(`no --${name} in app.css — the desk's track tokens moved`);
+      return parseInt(m[1], 10);
+    };
+    const px = (v) => {
+      const t = String(v).match(/var\(\s*--([a-z0-9-]+)\s*\)/i);
+      return t ? token(t[1]) : parseInt(v, 10);
+    };
 
     const [, minTrack] = outputs.match(/\.ch-cards\{[^}]*minmax\((\d+)px/);
     const [, gridGap] = outputs.match(/\.ch-cards\{[^}]*gap:(\d+)px/);

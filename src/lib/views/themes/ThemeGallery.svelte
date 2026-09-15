@@ -133,7 +133,7 @@
 <WorkspaceFrame
   title="Themes"
   standfirst="The style layer beneath templates. A template overrides it key by key."
-  columns="206px minmax(0,1fr) 312px">
+  columns="var(--v-rail) minmax(0,1fr) var(--v-insp)">
   <svelte:fragment slot="head">
     <!-- THE SAME STRIP the Templates desk renders, from the one component — so
          the two desks cannot offer different sets of desks, and the way back is

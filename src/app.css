@@ -288,6 +288,14 @@ body{ margin:0; background:var(--bg); color:var(--text); font-family:var(--f-bod
   --v-fs-b1:12px;  --v-lh-b1:17px;   /* Body — the default                   */
   --v-fs-b2:11.5px;--v-lh-b2:16px;   /* Body, secondary                      */
   --v-fs-lbl:11px; --v-lh-lbl:15px;  /* Label                                */
+  /* THE TWO VERTICAL RULES OF THE DESK.
+     Measured at 1280 before these existed: left rails of 180/206/206/206/212 and
+     inspectors of 250/276/312/320/330, so BOTH seams moved on every tab press —
+     Live to Planner shifted the left one 26px and the right one 80px.
+     `WorkspaceFrame`'s own comment says an operator moving between the run
+     surface and a desk "should not be able to tell that two people built them".
+     One token each, referenced by the frame and by Live's hand-built desk. */
+  --v-rail:206px; --v-insp:300px;
   --v-fs-b3:10px;  --v-lh-b3:14px;   /* Sub-label — the quieter line UNDER a
                                         label. Added wave 5 (2026-09-15) after
                                         the grammar scan was widened from six

@@ -131,7 +131,7 @@
 <WorkspaceFrame
   title="Theme editor"
   standfirst="What this theme does not pin falls through to the renderer."
-  columns="206px minmax(0,1fr) 312px">
+  columns="var(--v-rail) minmax(0,1fr) var(--v-insp)">
   <svelte:fragment slot="head">
     {#if draft}
       <button class="r-btn ghost sm" on:click={() => dispatch('back')}>‹ Themes</button>

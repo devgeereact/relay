@@ -819,7 +819,7 @@
 <WorkspaceFrame
   title={activeSection.label}
   standfirst={activeSection.desc}
-  columns="212px minmax(0,1fr)">
+  columns="var(--v-rail) minmax(0,1fr)">
     <!-- ════ SECTION RAIL ════ -->
     <aside class="rw-pane">
       <div class="rw-panehead">

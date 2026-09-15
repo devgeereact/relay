@@ -2236,8 +2236,14 @@
     display:grid; grid-template-columns:1fr 118px 1fr; gap:var(--v-sp-sm); min-height:0}
 
   /* ── the desk: rail, stage, inspector ──────────────────────────────────── */
+  /* THE SAME TWO TOKENS EVERY OTHER DESK USES. Live builds its own grid rather
+     than going through `WorkspaceFrame`, so its tracks were a second copy of the
+     numbers and had already drifted on the inspector (286 against the desks'
+     286/312/320/330). One token each means the run surface and the desks cannot
+     put their vertical rules in different places — which is what `WorkspaceFrame`
+     says it is for. The narrow step below is the one declared exception. */
   .desk{flex:1; min-height:0; display:grid;
-    grid-template-columns:206px minmax(0,1fr) 286px; gap:var(--v-sp-sm)}
+    grid-template-columns:var(--v-rail) minmax(0,1fr) var(--v-insp); gap:var(--v-sp-sm)}
   .rail-col{display:flex; flex-direction:column; gap:var(--v-sp-sm); min-height:0; min-width:0}
   .rail-col :global(.lrail){flex:1 1 auto; min-height:0}
   .stage{display:flex; flex-direction:column; gap:var(--v-sp-sm); min-height:0; min-width:0}
@@ -2276,9 +2282,17 @@
      74px, because the gate's own controls are sized to content and the heading
      was the only thing allowed to shrink. Now the controls drop to a second line
      instead of crushing the name of the panel they belong to. */
+  /* THE SAME 34px THE SHARED FRAME USES. Live builds its own panes rather than
+     going through `WorkspaceFrame`, so it had no min-height at all and its heads
+     took whatever their contents gave them: measured at 1280x800, PREVIEW 38.8,
+     PROGRAM 40.8 and AI DETECTION 47 (that one holds a 26px icon button), so
+     content began at three different heights on one row. Three title bars along
+     the top edge that do not share a bottom edge is the clearest "assembled"
+     signal on the desk, and it is the first thing the eye sweeps. A 26px control
+     sits inside 34px rather than setting it. */
   .pane-head{flex:0 0 auto; display:flex; align-items:center; gap:var(--v-sp-sm);
-    flex-wrap:wrap; row-gap:6px;
-    padding:10px 12px; border-bottom:1px solid var(--v-line)}
+    flex-wrap:wrap; row-gap:6px; min-height:34px;
+    padding:0 12px; border-bottom:1px solid var(--v-line)}
   /* The reference console has no sidebar, so its panels are ~25% wider than they can
      be here. The heading is therefore set a touch tighter than the design sheet's
      Label spec so the full panel name still fits rather than truncating. */
@@ -2751,6 +2765,10 @@
   /* ── responsive ────────────────────────────────────────────────────────── */
   @media (max-width:1400px){
     .con-top{grid-template-columns:1fr 104px 1fr}
+    /* DELIBERATE, and the one place a desk may depart from the tokens: below
+       1400px the run surface gives its middle column the room, because the
+       programme monitor is what an operator is actually looking at. Declared
+       here rather than inherited, so it reads as a decision. */
     .desk{grid-template-columns:180px minmax(0,1fr) 250px}
     /* A LADDER, NOT A SWITCH — the same shape as `app.css`'s `.xcap`, and for the
        same reason. The slides head carries five things: the pane's name, the

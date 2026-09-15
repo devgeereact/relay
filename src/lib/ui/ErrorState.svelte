@@ -43,8 +43,17 @@
     display: flex;
     align-items: center;
     gap: 10px;
+    /* WRAP RATHER THAN SQUEEZE. This is a horizontal flex row, so in a narrow
+       rail the message and the retry button compete for the same line and the text
+       collapses to one or two words per line: measured 170 x 317px in Live's
+       180px search rail — twenty lines — with the button floating at the
+       vertical middle. This is the component whose entire purpose is to be
+       readable when something has gone wrong, and the handbook already records a
+       run surface that "rendered a failing screen's name seven pixels wide" as a
+       defect worth fixing. Below about 240px the button drops to its own line. */
+    flex-wrap: wrap;
     padding: 9px 11px;
-    border-radius: 8px;
+    border-radius: var(--v-r-lg);
     /* Rose, not amber. Amber is the tally light and means ON AIR — an error that
        borrows it is a tally light that lies (docs/DECISIONS.md §18). */
     background: var(--v-red-soft);
@@ -58,7 +67,11 @@
     padding: 6px 9px;
   }
   .es-msg {
-    flex: 1;
+    flex: 1 1 100%;
     min-width: 0;
+  }
+  /* …and the control goes to the end of whatever line it lands on. */
+  .es :global(button) {
+    margin-left: auto;
   }
 </style>
