@@ -32,6 +32,30 @@ function isTyping(e) {
 }
 
 /**
+ * Does this element activate on Space by itself?
+ *
+ * Only `Space` consults this, and only to STAND DOWN — see the `' '` case below.
+ * A focused `<button>` (or an element that has taken a button's role, or a link)
+ * is activated by Space on every platform, so claiming the key there makes the
+ * focused control do something other than what it says.
+ *
+ * Deliberately narrow. A disabled button activates nothing, so the transport
+ * keeps the key; and this asks about the ELEMENT, never about which view is
+ * mounted, so it cannot drift as surfaces are added.
+ */
+function isActivatable(el) {
+  if (!el || typeof el.tagName !== 'string') return false;
+  if (el.disabled) return false;
+  const role = el.getAttribute?.('role');
+  return (
+    el.tagName === 'BUTTON' ||
+    role === 'button' ||
+    role === 'switch' ||
+    (el.tagName === 'A' && el.hasAttribute?.('href'))
+  );
+}
+
+/**
  * Context handlers registered by whichever view is mounted. A view supplies only
  * the actions that make sense for it; the always-on keys (Escape, B) live in the
  * global table below and are NEVER delegated to a view, so they cannot go missing.
@@ -227,6 +251,23 @@ export function installShortcuts({ clearScreens, blackScreen }) {
         // Space means ADVANCE, everywhere, and nothing else. It used to also
         // mean "push the AI's guess live" on the Console — same key, two
         // meanings, one of them irreversible in front of an audience.
+        //
+        // ONE EXCEPTION, and it is not a second meaning: a FOCUSED BUTTON.
+        //
+        // Space is the platform's activation key for a focused `<button>`, and
+        // `isTyping` only excluded text fields — so a keyboard operator who
+        // tabbed to `Rehearse`, `Blackout` or `Clear screens` and pressed Space
+        // advanced the programme instead of pressing the control under their
+        // finger, and `preventDefault` suppressed the button's own click. On
+        // Live that is a key silently doing something other than what the
+        // focused control says it does, which is the shape rule 11 exists to
+        // stop rather than an application of it.
+        //
+        // The arrows and PageDown are deliberately NOT narrowed: they keep
+        // working from anywhere, focused button or not, so the transport is
+        // never lost. Yielding Space to the thing that has focus costs the
+        // operator nothing, because `→` is beside it and does the same job.
+        if (e.key === ' ' && isActivatable(e.target)) break;
         if (ctx.next) {
           e.preventDefault();
           ctx.next();

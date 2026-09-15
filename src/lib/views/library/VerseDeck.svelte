@@ -126,20 +126,26 @@
   let menuFor = '';
 
   /**
-   * ENTER fires a list row. SPACE DOES NOT — Space is the transport, app-wide.
+   * ENTER acts on a list row. SPACE DOES NOTHING, on either layout.
    *
-   * CLAUDE.md rule 11: *"`Space` means advance, app-wide, and nothing else."* The
-   * GRID card is a native `<button>`, and `shortcuts.js` calls `preventDefault` on
-   * Space globally, which suppresses the button's own activation — so in the grid,
-   * Space advances the service and nothing else. This row is a `role="button"` div
-   * with its own handler, which ran FIRST and answered Space by putting scripture
-   * in front of a congregation. Same deck, same content, two layouts, one key, two
-   * meanings — and the extra meaning was the dangerous one. Six views render this.
+   * The original defect: this row is a `role="button"` div whose own handler ran
+   * FIRST and answered Space by putting scripture in front of a congregation,
+   * while the GRID card — a native `<button>` — was silently protected because
+   * `shortcuts.js` called `preventDefault` on Space globally. Same deck, same
+   * content, two layouts, one key, two meanings, and the extra meaning was the
+   * dangerous one. Six views render this.
+   *
+   * UPDATED 2026-09-15. Rule 11 gained one exception — a focused button keeps its
+   * own activation, so Space presses `Rehearse` or `Clear screens` at the dock
+   * rather than advancing the programme — and that removed the accidental shield
+   * the grid card had been relying on. `primary` FIRES by default, so the deck had
+   * to stop depending on a global and hold the line itself: `cardKey` and `rowKey`
+   * both swallow Space now. Both layouts agree, and neither can reach a screen
+   * from this key.
    *
    * Note what the repair is NOT: adding `stopPropagation` so the row fires and the
    * transport does not. That closes the double-action and leaves the two layouts
-   * still disagreeing, which is the actual finding. Space now falls through here
-   * exactly as it does on the grid card.
+   * still disagreeing, which is the actual finding.
    *
    * The ARIA authoring practices say a `role="button"` should answer both keys.
    * This app deliberately overrides Space everywhere, native buttons included, and
@@ -147,8 +153,47 @@
    * live surface. Enter remains the activation key, which is what a keyboard
    * operator reaches for to act on the row they are focused on.
    */
+  /**
+   * SPACE DOES NOTHING ON A DECK CARD — see the long note in `rowKey`.
+   *
+   * This is the GRID half of the same guarantee. The card is a native `<button>`,
+   * so the platform activates it on Space; until rule 11 was narrowed
+   * (2026-09-15) `shortcuts.js` suppressed that with a blanket `preventDefault`,
+   * and narrowing the rule removed the shield. `primary` fires by default, so
+   * without this a focused card would put scripture on a wall from a browsing
+   * surface. Enter still activates, on both layouts.
+   */
+  function cardKey(e) {
+    if (e.key !== ' ') return;
+    e.preventDefault();
+    e.stopPropagation();
+  }
+
   function rowKey(v) {
     return (e) => {
+      // SPACE DOES NOTHING ON A DECK CARD, AND THAT IS LOAD-BEARING.
+      //
+      // Until 2026-09-15, rule 11's blanket claim on Space was what protected this
+      // deck: `shortcuts.js` called `preventDefault` on every Space, which
+      // suppressed the grid card's native activation. Narrowing the rule so a
+      // focused button keeps its own activation — which an operator needs at the
+      // dock, where Space must press `Rehearse` or `Clear screens` rather than
+      // advance the programme — removes that accidental shield.
+      //
+      // And `primary` is not a safe default: with no `press` prop it FIRES. Every
+      // shipped pane passes `press="select"`, but the component's own default
+      // reaches a congregation, so a deck that answered Space would put scripture
+      // on the wall from a browsing surface — R3-03's original P1, returning
+      // through the door that was holding it shut.
+      //
+      // So the guarantee moves onto the door that can reach a screen: BOTH layouts
+      // swallow Space and act on neither. Enter is the key that acts, on both, and
+      // that is the whole of R3-03's invariant — one deck, one meaning per key.
+      if (e.key === ' ') {
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
       if (e.key !== 'Enter') return;
       e.preventDefault();
       e.stopPropagation();
@@ -299,6 +344,7 @@
               ? `Sending ${v.reference} to the screens`
               : verb(v, selects)}
           on:click={() => primary(v)}
+          on:keydown={cardKey}
           on:dblclick={() => selects && onOpen(v)}>
           {#if v.media}
             <!-- A picture or a video is its own thumbnail. Drawing it through a

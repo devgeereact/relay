@@ -111,6 +111,85 @@ describe('context actions', () => {
     expect(accept).not.toHaveBeenCalled();
   });
 
+  // RULE 11'S ONE EXCEPTION, on the operator's decision (2026-09-15).
+  //
+  // Space is the platform's activation key for a focused button, and `isTyping`
+  // only excluded text fields — so a keyboard operator who tabbed to `Rehearse`,
+  // `Blackout` or `Clear screens` and pressed Space advanced the programme
+  // instead of pressing the control under their finger, and `preventDefault`
+  // suppressed the button's own click. On the run surface that is a key doing
+  // something other than what the focused control says, which is the shape rule
+  // 11 exists to stop rather than an application of it.
+  //
+  // The arrows are deliberately NOT narrowed, so the transport is never lost.
+  // Each of these was watched to fail against the un-narrowed branch.
+  describe('Space yields to a control that has focus', () => {
+    it('a focused button keeps its own activation', () => {
+      const next = vi.fn();
+      unregister = registerContext({ next });
+      const btn = document.createElement('button');
+      document.body.appendChild(btn);
+
+      press(' ', btn);
+
+      expect(next, 'the programme must not advance from a focused button').not.toHaveBeenCalled();
+      btn.remove();
+    });
+
+    it('…and so does anything wearing a button or switch role', () => {
+      const next = vi.fn();
+      unregister = registerContext({ next });
+      for (const role of ['button', 'switch']) {
+        const el = document.createElement('div');
+        el.setAttribute('role', role);
+        document.body.appendChild(el);
+        press(' ', el);
+        el.remove();
+      }
+      expect(next).not.toHaveBeenCalled();
+    });
+
+    it('but a DISABLED button activates nothing, so the transport keeps the key', () => {
+      const next = vi.fn();
+      unregister = registerContext({ next });
+      const btn = document.createElement('button');
+      btn.disabled = true;
+      document.body.appendChild(btn);
+
+      press(' ', btn);
+
+      expect(next).toHaveBeenCalledOnce();
+      btn.remove();
+    });
+
+    it('the ARROWS are not narrowed — the transport works from a focused button', () => {
+      const next = vi.fn();
+      const prev = vi.fn();
+      unregister = registerContext({ next, prev });
+      const btn = document.createElement('button');
+      document.body.appendChild(btn);
+
+      press('ArrowRight', btn);
+      press('ArrowLeft', btn);
+
+      expect(next, 'ArrowRight must still advance from anywhere').toHaveBeenCalledOnce();
+      expect(prev, 'ArrowLeft must still step back from anywhere').toHaveBeenCalledOnce();
+      btn.remove();
+    });
+
+    it('and Escape still clears the screens from a focused button', () => {
+      // The narrowing must not touch a panic path. Rule 15 outranks all of this.
+      unregister = registerContext({ next: vi.fn() });
+      const btn = document.createElement('button');
+      document.body.appendChild(btn);
+
+      press('Escape', btn);
+
+      expect(noop.clearScreens).toHaveBeenCalledOnce();
+      btn.remove();
+    });
+  });
+
   it('accepting a suggestion has its own dedicated key', () => {
     const accept = vi.fn();
     const dismiss = vi.fn();

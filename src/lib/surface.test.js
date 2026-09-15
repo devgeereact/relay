@@ -361,10 +361,12 @@ describe('R3-03 · Space means advance — except on a VerseDeck list row', () =
   it('LIST layout — Space advances and does NOT fire, exactly like the grid', async () => {
     const VerseDeck = (await import('./views/library/VerseDeck.svelte')).default;
     const onFire = vi.fn();
+    const onSelect = vi.fn();
     const el = mountInto(VerseDeck, {
       items: [{ reference: 'John 3:16', text: 'For God so loved…', slideNo: 1 }],
       layout: 'list',
       onFire,
+      onSelect,
     });
     await tick();
 
@@ -373,10 +375,38 @@ describe('R3-03 · Space means advance — except on a VerseDeck list row', () =
     // FIXED 2026-08-14 (P1-5). Space put scripture on the wall from here — and,
     // because the row neither preventDefaulted nor stopPropagated, ALSO stepped the
     // transport: two live actions from one press. The repair is not merely to stop
-    // the double-action; it is that Space must mean the same thing in both layouts
-    // of the same deck. It now falls through to the transport, as on the grid card.
-    expect(onFire).not.toHaveBeenCalled();
-    expect(next).toHaveBeenCalledOnce();
+    // the double-action; it is that **Space must mean the same thing in both
+    // layouts of the same deck**, and that is still what this test is about.
+    //
+    // WHAT IT MEANS CHANGED ON 2026-09-15, on the operator's decision, and the
+    // invariant is kept rather than weakened. Rule 11 gained one exception: a
+    // FOCUSED BUTTON keeps its own activation, because a keyboard operator who
+    // tabs to `Rehearse` or `Clear screens` and presses Space must press the
+    // control under their finger, not advance the programme.
+    //
+    // That exception reaches this deck. The grid card is a native `<button>` and
+    // now activates on Space from the platform; this list row is a
+    // `role="button"` and `rowKey` now answers Space the same way. So both
+    // layouts agree again — Space SELECTS — where before the repair could only
+    // make them agree by handing the key to the transport.
+    //
+    // AND THE NARROWING NEARLY REOPENED THE ORIGINAL P1, which is why the answer
+    // is "nothing" rather than "select". `primary` FIRES by default — every
+    // shipped pane passes `press="select"`, but the component's own default
+    // reaches a congregation — so the moment `shortcuts.js` stopped swallowing
+    // Space, a focused grid card would have been activated by the platform and
+    // put scripture on a wall from a browsing surface. Rule 11's blanket claim had
+    // been the shield, silently, and narrowing it removed the shield.
+    //
+    // So the guarantee moved onto the door that can reach a screen: `cardKey` and
+    // `rowKey` both swallow Space. Both layouts agree, `onFire` is unreachable
+    // from this key, and the transport step is gone — which was always the odd
+    // outcome here, since a Library row is a browsing surface (DECISIONS §81) and
+    // stepping a programme the operator is not looking at was the least expected
+    // of the three things Space could do.
+    expect(onFire, 'Space must never put scripture on a wall from a deck').not.toHaveBeenCalled();
+    expect(next, 'and must not step a transport the operator is not looking at').not.toHaveBeenCalled();
+    expect(onSelect, 'Space acts on neither layout — Enter is the key that acts').not.toHaveBeenCalled();
   });
 
   it('LIST layout — ENTER is the key that acts on the focused row', async () => {
