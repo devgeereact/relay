@@ -856,9 +856,34 @@
     return `rgba(${r}, ${g}, ${b}, ${clamp01(a)})`;
   };
   $: panelOn = !!style.textPanel && !layout.lowerThird;
-  $: panelBg = panelOn
-    ? hexToRgba(style.panelColor || '#000000', style.panelOpacity == null ? 0.45 : style.panelOpacity)
-    : 'transparent';
+  // THE BAND IS THE ONE BACKGROUND THAT MAY NOT FALL THROUGH TO `transparent`.
+  //
+  // `panelOn` is false for a lower third BY CONSTRUCTION (`&& !layout.lowerThird`),
+  // so this expression resolved to the string `transparent` for every keyed
+  // template — and it is written as an INLINE style on `.content`, which always
+  // beats the `.slide.lower-third .content { background: var(--accent) }` rule
+  // that is supposed to paint the band. Measured on a rendered
+  // `output.html?template_id=3`: computed background `rgba(0, 0, 0, 0)` with
+  // `--accent` resolved to a real colour and ignored.
+  //
+  // So every lower third — the template family whose entire purpose is to be
+  // readable over a picture Relay does not control — shipped with nothing behind
+  // the words, over a live camera, on the stream and the ATEM where nobody at the
+  // desk is watching. Three of the six seeded ones are dark type on a light band
+  // and were effectively invisible.
+  //
+  // It was silent to every instrument: `legibility.js` answers `unknown` for a
+  // transparent ground rather than failing it, and the fit reports a healthy
+  // scale because the type fits its box perfectly well.
+  //
+  // The band answers for itself here rather than relying on a stylesheet rule an
+  // inline style outranks — one home for the value, which is what `tickerBg`
+  // twenty lines below already does for the same reason.
+  $: panelBg = bandMode
+    ? style.accent || 'rgba(0,0,0,0.82)'
+    : panelOn
+      ? hexToRgba(style.panelColor || '#000000', style.panelOpacity == null ? 0.45 : style.panelOpacity)
+      : 'transparent';
   $: panelRadius = style.panelRadius;
 
   // Heights. `bandHeight` (cqh) sizes the lower-third bar; `bgHeight` (%) lets the
@@ -912,6 +937,32 @@
   // Scripture" templates. So lyrics on a lower-third template render IN the band
   // (bottom, centered by the template's alignment), never floating mid-screen.
   $: hasRef = !!content?.reference;
+  /**
+   * WHAT A LAYER'S FIT DEFAULTS TO WHEN ITS TEMPLATE DOES NOT SAY.
+   *
+   * It was `'both'` for everything, and `'both'` GROWS a short string until it
+   * fills its box. So every declared `size` in the shipped shelf was advisory and
+   * the shortest string in the template always won the most room — which on a
+   * scripture slide is always the citation.
+   *
+   * Measured at 1920x1080 before this: `High Visibility` put the verse at 108.3px
+   * against a designed 161.3px, and `Romans 8:28` at 126.5px against a designed
+   * 88.3px. The reference rendered 17% LARGER than the scripture, in the same
+   * white, on the template the shelf file itself describes as "the answer to a lit
+   * room". Five of the eight shelf templates inverted the hierarchy this way, and
+   * it directly contradicts REBRAND §4's "reference beneath, right-aligned,
+   * tracked, small".
+   *
+   * A LABEL NEVER GROWS. A reference, a translation and a static caption are
+   * subordinate by definition, so they shrink to fit and no further. The verse and
+   * the lyric still take the room they can — that part was right.
+   *
+   * Fixed here rather than by writing `"fit":"shrink"` into eight JSON entries and
+   * five starters, so a template authored next year inherits it.
+   */
+  const LABEL_BINDS = new Set(['reference', 'translation']);
+  const defaultFit = (L) => (LABEL_BINDS.has(L?.bind) || L?.type === 'static' ? 'shrink' : 'both');
+
   $: bandMode = !!layout.lowerThird;
   // THE BAND ONLY EXISTS WHERE THERE ARE WORDS. Drawn unconditionally it painted
   // a coloured strip across the bottom of a full-frame photo that had nothing
@@ -1400,7 +1451,7 @@
                 class="lfit"
                 class:lscroll={L.scroll}
                 data-base={baseSize(L)}
-                data-fit={L.fit || 'both'}
+                data-fit={L.fit || defaultFit(L)}
                 style="font-size:{baseSize(L)}cqw; color:{L.color}; font-family:{fontFamOf(L.font)}; font-weight:{L.weight || 400}; text-align:{L.align}; text-transform:{L.transform || 'none'}; line-height:{L.lineHeight || 1.3}; letter-spacing:{(L.letterSpacing || 0)}em; text-shadow:{shadowOf(L.shadow)}; font-style:{L.italic ? 'italic' : 'normal'};">
                 {#if L.scroll}
                   <span class="lrun" style="--tickdur:{Math.min(60, Math.max(10, (text?.length || 0) * 0.42))}s">{text}</span>

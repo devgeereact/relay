@@ -417,9 +417,27 @@ export function bandFit({ band, members = [], aspect = 16 / 9, grow } = {}) {
 
   // A band may not climb past a third of the frame, and may not climb past the
   // points it was allowed. Both are floors on `top`, so the tighter one wins.
+  //
+  // THE SHARE CAP BOUNDS GROWTH, NOT THE BAND'S DESIGNED SIZE. Taking it as a flat
+  // floor made this rule unreachable on both bands Relay actually ships: both are
+  // designed taller than a third of the frame (38% and 36%), so `byShare` (66.67)
+  // already sat above `box.top`, the loop's `top - 1 >= limit` was false on the
+  // first iteration, and the band never moved. The type shrank instead — measured
+  // at 0.630 of the designer's size against a 0.78 floor.
+  //
+  // So DECISIONS §75 and REBRAND §4 promised that the band gives ground before the
+  // words do, the mechanism was built, tested and documented, and it could not
+  // fire on either template that declares it. The observable result was the exact
+  // opposite of the promise.
+  //
+  // A band already DESIGNED past the share keeps what its designer chose and may
+  // still climb its own `grow` points, so the share imposes nothing on it. A band
+  // designed under the share is still capped there. (`top` is the band's upper
+  // edge in percent, so a SMALLER `top` is a TALLER band.)
   const byGrow = box.top - climb;
   const byShare = 100 - 100 * BAND_MAX_SHARE;
-  const limit = Math.max(byGrow, byShare, 0);
+  const shareFloor = box.top < byShare ? 0 : byShare;
+  const limit = Math.max(byGrow, shareFloor, 0);
 
   let top = box.top;
   // A short name fits at full size, so this is already true and the band stays
