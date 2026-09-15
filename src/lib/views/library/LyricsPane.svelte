@@ -294,7 +294,7 @@
     if (queue.some((q) => q.reference === item.reference)) {
       onQueueChange(queue.filter((q) => q.reference !== item.reference));
     } else {
-      onQueueChange([...queue, { reference: item.reference, text: item.text }]);
+      onQueueChange([...queue, { reference: item.reference, text: item.text, kind: 'song' }]);
     }
   }
 

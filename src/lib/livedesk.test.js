@@ -1033,3 +1033,66 @@ describe('L2/2 · the slides head at a booth laptop’s width', () => {
     sess.setSession({ planId: null });
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// N · THE INSPECTOR ACTS ON THE CLAIM IT OPENED
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// `DetectionInspector`'s own doc comment states the contract: "Interrogate ONE
+// claim — the card that was pressed, not `dets[0]`." Opening kept it. Acting did
+// not: the footer's two buttons called `acceptTop`/`dismissTop`, which are
+// `dets[0]` — correct for the `A` and `D` keys, wrong for a button inside a panel
+// about a different verse.
+//
+// So an operator who opened "why this match?" on the SECOND card and pressed the
+// amber "Accept & fire" put the FIRST card's verse on the congregation's screens.
+// This is the surface people open because they are being careful.
+//
+// Both tests below were watched to fail against `await acceptTop()` /
+// `await dismissTop()`, which is the whole point of writing them.
+describe('the detection inspector acts on the claim that was opened', () => {
+  const twoClaims = [
+    claim({ reference: 'Romans 8:28' }),
+    claim({ reference: 'Psalms 23:1', matched_text: 'psalm twenty three' }),
+  ];
+
+  async function openSecondClaim() {
+    cap.detections.set(twoClaims);
+    new Live({ target: host, props: {} });
+    await settle();
+    const links = [...host.querySelectorAll('.inspect-link')];
+    expect(links.length).toBeGreaterThanOrEqual(2);
+    links[1].click(); // the SECOND card — not dets[0]
+    await settle();
+    return host.querySelector('[role="dialog"]');
+  }
+
+  it('Accept & fire sends the inspected verse, not the top card', async () => {
+    const dlg = await openSecondClaim();
+    expect(dlg).not.toBeNull();
+    expect(dlg.textContent).toContain('Psalms 23:1');
+
+    invoke.mockClear();
+    [...dlg.querySelectorAll('button')]
+      .find((b) => /accept/i.test(b.textContent))
+      .click();
+    await settle();
+
+    const fired = invoke.mock.calls.filter(([c]) => c === 'confirm_detection');
+    expect(fired.length).toBe(1);
+    expect(fired[0][1].reference).toBe('Psalms 23:1');
+  });
+
+  it('Dismiss drops the inspected claim, not the top card', async () => {
+    const dlg = await openSecondClaim();
+    invoke.mockClear();
+    [...dlg.querySelectorAll('button')]
+      .find((b) => /dismiss/i.test(b.textContent))
+      .click();
+    await settle();
+
+    const dropped = invoke.mock.calls.filter(([c]) => c === 'dismiss_detection');
+    expect(dropped.length).toBe(1);
+    expect(dropped[0][1].reference).toBe('Psalms 23:1');
+  });
+});

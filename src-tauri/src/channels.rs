@@ -383,14 +383,28 @@ pub fn open_channel_ids(app: &tauri::AppHandle) -> Vec<i64> {
 /// Build the output view URL for a channel: the shared output.html plus the
 /// template id (looked up from the DB by the window) and a display name.
 /// Pure — unit-tested.
-pub fn output_url(channel_id: i64, template_id: i64, name: &str) -> String {
+pub fn output_url(channel_id: i64, template_id: Option<i64>, name: &str) -> String {
     // `channel` lets the output live-swap its template when the screen is
     // reassigned (it filters a channel-retemplate broadcast by this id); `template_id`
     // is the first render before any push. `channel=0` = a channel-less preview.
+    //
+    // A screen with NO template of its own says so BY SAYING NOTHING (DECISIONS
+    // §70). `outputurl.js` was taught that and this was not, so the two doors into
+    // the same page disagreed: `Copy URL` omitted the parameter for a follower
+    // while both native paths wrote `template_id=1` through an `unwrap_or(1)`.
+    // The projector on HDMI and the OBS source in the same room were configured
+    // identically and behaved differently — the projector wore built-in 1 for the
+    // whole service and nothing corrected it, because `channel://retemplate` only
+    // fires when the assignment CHANGES. Taking the Option here is what makes the
+    // two callers unable to re-introduce it one at a time.
+    let tpl = match template_id {
+        Some(id) => format!("&template_id={id}"),
+        None => String::new(),
+    };
     format!(
-        "output.html?channel={}&template_id={}&name={}",
+        "output.html?channel={}{}&name={}",
         channel_id,
-        template_id,
+        tpl,
         urlencode(name)
     )
 }
@@ -405,7 +419,7 @@ pub fn output_url(channel_id: i64, template_id: i64, name: &str) -> String {
 pub fn open_native_window(
     app: &tauri::AppHandle,
     label: &str,
-    template_id: i64,
+    template_id: Option<i64>,
     name: &str,
     monitor_index: Option<usize>,
 ) -> Result<(), String> {
@@ -2550,14 +2564,38 @@ mod tests {
     #[test]
     fn output_url_carries_channel_template_and_name() {
         assert_eq!(
-            output_url(3, 1, "Main screen"),
+            output_url(3, Some(1), "Main screen"),
             "output.html?channel=3&template_id=1&name=Main%20screen"
+        );
+    }
+
+    /// DECISIONS §70: a screen with no look of its own says so BY SAYING NOTHING.
+    ///
+    /// `outputurl.js` was taught this and the native path was not, so `Copy URL`
+    /// omitted the parameter for a follower while `open_output_window` and
+    /// `auto_open_outputs` both wrote `template_id=1` through an `unwrap_or(1)`.
+    /// The projector on HDMI and the OBS browser source in the same room were
+    /// configured identically and behaved differently: the projector wore built-in
+    /// 1 for the whole service, and nothing corrected it, because
+    /// `channel://retemplate` only fires when the assignment CHANGES.
+    ///
+    /// Watched to fail by restoring `unwrap_or(1)` at either call site.
+    #[test]
+    fn a_screen_that_follows_carries_no_template_id() {
+        let u = output_url(3, None, "Stream");
+        assert!(
+            !u.contains("template_id"),
+            "a follower must not pin a look: {u}"
+        );
+        assert!(
+            u.contains("channel=3"),
+            "but it is still channel-keyed: {u}"
         );
     }
 
     #[test]
     fn output_url_escapes_specials() {
-        let u = output_url(0, 2, "Stage/2");
+        let u = output_url(0, Some(2), "Stage/2");
         assert!(u.contains("name=Stage%2F2"), "got {u}");
     }
 

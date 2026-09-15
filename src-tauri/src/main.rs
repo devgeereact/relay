@@ -4590,7 +4590,30 @@ fn handle_transcript(
     update: stt::TranscriptUpdate,
 ) {
     if update.is_final {
-        println!("stt[{}]: {}", update.language, update.text);
+        // CONTENT-FREE. `stt.rs` states the rule a hundred lines away in this same
+        // pipeline — "The transcript is sermon data and must never be logged" — and
+        // this line printed the sermon, in full, once per final window. Every field
+        // service so far was run from a terminal, so in each of them a real
+        // congregation's preaching went to a console verbatim.
+        //
+        // The length is kept because it is the diagnostic anyone actually wanted
+        // here (is the decoder returning anything?) and it says nothing about what
+        // was said. The words go behind `RELAY_STT_TIMING`, the existing debug
+        // switch `stt.rs` uses for exactly this purpose, so a developer chasing a
+        // transcript bug can still have them by asking.
+        //
+        // This also protects the boot heartbeat: `greet` prints one line per launch
+        // and its whole value is that the line is countable (rule 26). A stream
+        // flooded with the sermon is one nobody can count.
+        if std::env::var_os("RELAY_STT_TIMING").is_some() {
+            println!("stt[{}]: {}", update.language, update.text);
+        } else {
+            println!(
+                "stt[{}]: {} chars (set RELAY_STT_TIMING=1 for the text)",
+                update.language,
+                update.text.chars().count()
+            );
+        }
         // Compute under the lock, release, THEN emit — CLAUDE.md rule #2.
         let unstable = lang_stability
             .lock()
@@ -5077,7 +5100,8 @@ fn open_channel_output(
             .find(|c| c.id == channel_id)
             .ok_or_else(|| format!("channel {channel_id} not found"))?
     };
-    let template_id = channel.template_id.unwrap_or(1);
+    // The screen's own answer, Option and all — see `channels::output_url`.
+    let template_id = channel.template_id;
     let monitor_index = channel.display_target.as_deref().and_then(parse_display);
     // Deterministic, so the window can be traced back to this channel — that is
     // what makes the channel's "online" light real. It also makes
@@ -5126,7 +5150,7 @@ fn auto_open_outputs(
         if m.primary {
             continue; // never cover the operator's console
         }
-        let tid = c.template_id.unwrap_or(1);
+        let tid = c.template_id;
         let label = channels::channel_label(c.id);
         if channels::open_native_window(&app, &label, tid, &c.name, Some(idx)).is_ok() {
             opened.push(label);

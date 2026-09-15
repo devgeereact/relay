@@ -249,8 +249,35 @@
     stopMicTest();
   });
 
+  // RULE 44 · this wizard takes the operator's panic key, so it owes them an outcome.
+  //
+  // It is `role="dialog"`, so `shortcuts.js` stands down (rule 16, correctly), and
+  // its scrim is `position:fixed; inset:0; z-index:950` while neither `App.svelte`
+  // nor `Dock.svelte` sets a z-index at all — so the dock's `Clear screens` stacks
+  // at `auto` underneath it. Driven in a real browser: with the wizard mounted,
+  // `elementFromPoint` over `Clear screens` returned `DIV.fr-scrim`, and Escape
+  // fired neither `clear_screens` nor `blackout`. Both panic paths, gone together.
+  //
+  // That is not hypothetical here: `Settings → Run the setup walk-through` calls
+  // `restartSetup()` with no service-lock guard, so this can be mounted over a
+  // recorded service in one click.
+  //
+  // Escape leaves the wizard by the same door `Skip setup` uses — `done()`, which
+  // stops the microphone this wizard opened and re-arms detection. It must never
+  // be a bare unmount: leaving the wizard's capture running behind it is the bug
+  // `firstrunmic.test.js` exists for. One press to get the shell back; the second
+  // press is the operator's, and by then the global handler has the key again.
+  function onKey(e) {
+    if (e.key !== 'Escape') return;
+    e.preventDefault();
+    e.stopPropagation();
+    done();
+  }
+
   const gb = (b) => `${(b / 1e9).toFixed(1)} GB`;
 </script>
+
+<svelte:window on:keydown={onKey} />
 
 <div class="fr-scrim">
   <div class="fr" role="dialog" aria-modal="true" aria-labelledby="fr-title" use:trapFocus>

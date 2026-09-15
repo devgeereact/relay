@@ -217,7 +217,7 @@
     } else {
       // A queued picture carries its id, so firing it later is still fire_media
       // and not a text cue that happens to be named after a file.
-      onQueueChange([...queue, { reference: item.reference, text: '', mediaId: item.id }]);
+      onQueueChange([...queue, { reference: item.reference, text: '', mediaId: item.id, kind: 'media' }]);
     }
   }
   const fireCard = (d) => fire(rows.find((r) => r.id === d.id) ?? {});

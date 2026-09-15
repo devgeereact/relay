@@ -76,7 +76,32 @@
   $: heardLine = $transcript?.finals?.length
     ? $transcript.finals[$transcript.finals.length - 1]
     : ($transcript?.partial ?? '');
+
+  // RULE 44 · this panel takes the operator's panic key, so it owes them an outcome.
+  //
+  // `role="dialog"` makes `shortcuts.js` stand down (rule 16, correctly), and this
+  // panel bound nothing — so Escape was withheld from the shell and delivered to
+  // nobody. Of the overlays that had this defect, this is the one that opens
+  // DURING a service: it is reached from a claim card on the run surface, by an
+  // operator who is unsure about a verse, which is precisely when they are most
+  // likely to reach for Escape.
+  //
+  // It closes the panel and nothing else. `onClose` is the same door the scrim and
+  // the header's close button use, so there is one way out rather than three.
+  // The second press is the operator's, and the global handler has the key back.
+  //
+  // Guarded on `detection`, because the component is always mounted and renders
+  // nothing when there is no claim — an unguarded handler here would swallow
+  // Escape for the whole service. That is the shape of the bug, not the fix.
+  function onKey(e) {
+    if (e.key !== 'Escape' || !detection) return;
+    e.preventDefault();
+    e.stopPropagation();
+    onClose();
+  }
 </script>
+
+<svelte:window on:keydown={onKey} />
 
 {#if detection}
   <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-noninteractive-element-interactions -->

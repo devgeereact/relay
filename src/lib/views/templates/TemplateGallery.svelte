@@ -351,14 +351,50 @@
   // Inline rename in the inspector.
   let renaming = false;
   let renameDraft = '';
-  function startRename() { renameDraft = sel.name; renaming = true; }
+  // Escape reaches this field as a BLUR — `shortcuts.js` deliberately blurs a
+  // focused input before it clears the screens, so the universal cancel key was
+  // committing the half-typed name it was cancelling, live, with no undo. The flag
+  // is read and reset by `commitRename`, so the blur that Escape causes saves
+  // nothing. The panic half of that keystroke is untouched and must stay so.
+  let renameCancelled = false;
+  function startRename() { renameDraft = sel.name; renaming = true; renameCancelled = false; }
   async function commitRename() {
     renaming = false;
+    const cancelled = renameCancelled;
+    renameCancelled = false;
+    if (cancelled) return;
     if (!sel || !renameDraft.trim() || renameDraft === sel.name) return;
     try { await saveTemplate({ ...sel, name: renameDraft.trim() }); }
     catch (e) { err = humanError(e); }
   }
+
+  // RULE 44 · a mounted [role="menu"] makes `shortcuts.js` stand down, so while one
+  // of these is open the panic key belongs to it. Both menus here bound nothing,
+  // under a comment claiming Escape was "handled globally". It was not —
+  // `shortcuts.js` RETURNS for a mounted menu and hands the key to nobody.
+  //
+  // The comment's reason for binding nothing was that a handler "would have to
+  // stopPropagation, which would swallow Space". It does not follow: this returns
+  // for every key that is not Escape, so Space still means advance (rule 11).
+  // Closing the menu is all it does — the second press reaches the screens.
+  function onKey(e) {
+    if (e.key !== 'Escape') return;
+    if (renaming) {
+      // Cancel the edit, then let the key carry on to the shell: an operator who
+      // pressed Escape over a live wall still gets the wall cleared.
+      renameCancelled = true;
+      renaming = false;
+      return;
+    }
+    if (!menuFor && !newOpen) return;
+    e.preventDefault();
+    e.stopPropagation();
+    menuFor = null;
+    newOpen = false;
+  }
 </script>
+
+<svelte:window on:keydown={onKey} />
 
 <!-- THE TEMPLATES WORKSPACE, laid out in the shared workspace grammar
      (`WorkspaceFrame.svelte`, docs/REBRAND.md §2 and §11): a left RAIL of what
@@ -406,10 +442,11 @@
         <!-- The click handler is not an interaction: it stops the document-level
              outside-click closer from seeing a click on the menu itself. Every real
              control inside is a <button>, so the keyboard already reaches all of them,
-             and Escape is handled globally — `shortcuts.js` gives Escape to any mounted
-             [role="menu"] rather than clearing the screens. A keydown handler here would
-             have to stopPropagation too, which would swallow Space (rule 11: Space means
-             advance, app-wide) for as long as a menu is open. -->
+             and Escape is consumed by this component's own `onKey` (rule 44). It used to say
+             Escape was "handled globally"; `shortcuts.js` stands DOWN for a mounted
+             [role="menu"] and hands it to nobody, so the key did nothing at all. `onKey`
+             returns for every key that is not Escape, so Space still means advance
+             (rule 11) for as long as a menu is open. -->
         <!-- svelte-ignore a11y-click-events-have-key-events -->
         <div class="tg-newmenu" on:click|stopPropagation role="menu" tabindex="-1">
           <div class="tg-newsec r-lbl">Start from</div>
@@ -791,10 +828,11 @@
   <!-- The click handler is not an interaction: it stops the document-level
        outside-click closer from seeing a click on the menu itself. Every real
        control inside is a <button>, so the keyboard already reaches all of them,
-       and Escape is handled globally — `shortcuts.js` gives Escape to any mounted
-       [role="menu"] rather than clearing the screens. A keydown handler here would
-       have to stopPropagation too, which would swallow Space (rule 11: Space means
-       advance, app-wide) for as long as a menu is open. -->
+       and Escape is consumed by this component's own `onKey` (rule 44). It used to say
+       Escape was "handled globally"; `shortcuts.js` stands DOWN for a mounted
+       [role="menu"] and hands it to nobody, so the key did nothing at all. `onKey`
+       returns for every key that is not Escape, so Space still means advance
+       (rule 11) for as long as a menu is open. -->
   <!-- svelte-ignore a11y-click-events-have-key-events -->
   <div class="tg-menu" style="left:{menuPos.x}px; top:{menuPos.y}px" on:click|stopPropagation role="menu" tabindex="-1">
     <button class="tg-mi" on:click={() => { menuFor = null; dispatch('edit', { id: menuTpl.id }); }}>Edit</button>

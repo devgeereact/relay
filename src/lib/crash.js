@@ -140,9 +140,40 @@ function render(message) {
   document.body.appendChild(el);
 
   const recover = card.querySelector('#relay-crash-recover');
+  const dismiss = () => {
+    el.remove();
+    window.removeEventListener('keydown', onKey, true);
+  };
   recover.addEventListener('click', () => window.location.reload());
-  card.querySelector('#relay-crash-dismiss').addEventListener('click', () => el.remove());
+  card.querySelector('#relay-crash-dismiss').addEventListener('click', dismiss);
   recover.focus();
+
+  // RULE 44 · this panel takes the operator's panic key, so it owes them an outcome.
+  //
+  // It is `role="alertdialog"`, which is exactly what `shortcuts.js` stands down
+  // for — correctly, per rule 16: Escape belongs to the thing on top. But this
+  // panel handled nothing, so the key was withheld from the shell and delivered to
+  // nobody. Driven in a real browser: with the panel up, Escape fired neither
+  // `clear_screens` nor `blackout`, and `elementFromPoint` over the dock's
+  // `Clear screens` returned this panel — it is `inset:0`, opaque and z-index
+  // 99999. Both panic paths, gone at once, under a message whose largest words
+  // read "Your output screens are still live."
+  //
+  // One press dismisses. It does NOT also clear the wall: an operator who pressed
+  // Escape to put a message away did not ask for a blank screen, and that
+  // conflation is the bug `shortcuts.js:138` records against the cheatsheet. The
+  // SECOND press is theirs, and by then the global handler has the key back.
+  //
+  // Capture phase, on `window`: the panel is plain DOM outside the Svelte tree and
+  // must work even when the app that would normally be listening is the thing that
+  // just died.
+  function onKey(e) {
+    if (e.key !== 'Escape') return;
+    e.preventDefault();
+    e.stopPropagation();
+    dismiss();
+  }
+  window.addEventListener('keydown', onKey, true);
 }
 
 function describe(err) {

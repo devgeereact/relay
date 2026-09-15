@@ -31,6 +31,7 @@
     listActiveTemplates,
     loadTemplates,
     manualFire,
+    fireContent,
     fireMedia,
     listBooks,
     listTranslations,
@@ -157,10 +158,45 @@
    * on its own footer, next to the button that was pressed, so there is nothing for
    * `errMsg` to add here.
    */
+  /**
+   * Fire a queued item AS THE KIND IT IS.
+   *
+   * This used to be `mediaId ? fireMedia : manualFire(item.reference)`, and
+   * `manual_fire` runs the queued string through `detection::detect_direct`,
+   * which is built to find a reference INSIDE surrounding words. The queue's
+   * `reference` is whatever the pane called the row: a song slide is
+   * "Amazing Grace · Verse 1", a notice is its title.
+   *
+   * So a hymn named "Psalm 23", or a notice headed "Romans Road · Tuesdays",
+   * parsed, resolved in the KJV, and put the BIBLE CHAPTER on the congregation's
+   * screens while the amber button beside it named the song. Nothing in the path
+   * was wrong about its own work; every stage did its job on a string that was
+   * never a reference. Church song titles and notice headings routinely contain
+   * scripture, so this is the ordinary case, not an exotic one.
+   *
+   * The milder half of the same bug: a song or notice whose title did NOT parse
+   * could never be fired at all — Go Live always errored, on a control the
+   * Inspector enables for every kind that has a reference.
+   *
+   * Each pane now tags what it queued, and this routes on that. An item with no
+   * kind REFUSES rather than falling through to `manualFire`, or the next pane
+   * somebody adds re-opens the hole silently. `fireContent` is the call the song
+   * and notice panes already make for their own direct fire, so this is the
+   * choke point those two were reaching and the queue was not (DECISIONS §73).
+   */
   async function fireQueued(item) {
     errMsg = '';
-    if (item.mediaId) await fireMedia(item.mediaId);
-    else await manualFire(item.reference);
+    if (item.mediaId || item.kind === 'media') {
+      await fireMedia(item.mediaId);
+    } else if (item.kind === 'scripture') {
+      await manualFire(item.reference);
+    } else if (item.kind === 'song' || item.kind === 'announce') {
+      await fireContent(item.reference, item.text, item.kind);
+    } else {
+      throw new Error(
+        `This item was queued without a content kind, so Relay will not guess what it is. Remove it from Up Next and add it again.`,
+      );
+    }
   }
 
   // ONE search box for the whole Library. Each pane decides what the words mean

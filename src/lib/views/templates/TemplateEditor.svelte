@@ -890,6 +890,28 @@
   }
   function onKey(e) {
     if (!edit) return;
+
+    // RULE 44 · a mounted [role="menu"] makes `shortcuts.js` stand down, so while
+    // one of these is open the operator's panic key belongs to it. Both menus here
+    // used to bind nothing, under a comment claiming "Escape is handled globally —
+    // shortcuts.js gives Escape to any mounted [role=menu]". It does not: it
+    // RETURNS. The key was withheld from the shell and delivered to nobody, and
+    // pressing it did neither thing the operator might have wanted.
+    //
+    // The comment's stated reason for binding nothing was that a handler "would
+    // have to stopPropagation too, which would swallow Space". That does not
+    // follow. This branch returns for every key that is not Escape, so Space, the
+    // arrows and everything else reach the global handler exactly as before — only
+    // the key that was already being withheld is consumed. Closing the menu is all
+    // it does; the second press reaches the screens through `shortcuts.js`.
+    if (e.key === 'Escape' && (histOpen || addOpen)) {
+      e.preventDefault();
+      e.stopPropagation();
+      histOpen = false;
+      addOpen = false;
+      return;
+    }
+
     const tgt = e.target;
     // Let text fields keep their own native undo.
     if (tgt && (tgt.tagName === 'INPUT' || tgt.tagName === 'TEXTAREA' || tgt.isContentEditable)) return;
@@ -970,10 +992,11 @@
         <!-- The click handler is not an interaction: it stops the document-level
              outside-click closer from seeing a click on the menu itself. Every real
              control inside is a <button>, so the keyboard already reaches all of them,
-             and Escape is handled globally — `shortcuts.js` gives Escape to any mounted
-             [role="menu"] rather than clearing the screens. A keydown handler here would
-             have to stopPropagation too, which would swallow Space (rule 11: Space means
-             advance, app-wide) for as long as a menu is open. -->
+             and Escape is consumed by this component's own `onKey` (rule 44). It used to say
+             Escape was "handled globally"; `shortcuts.js` stands DOWN for a mounted
+             [role="menu"] and hands it to nobody, so the key did nothing at all. `onKey`
+             returns for every key that is not Escape, so Space still means advance
+             (rule 11) for as long as a menu is open. -->
         <!-- svelte-ignore a11y-click-events-have-key-events -->
         <div class="te-histmenu" on:click|stopPropagation role="menu" tabindex="-1">
           <div class="te-histhead r-lbl">Saved versions</div>
@@ -1019,10 +1042,11 @@
               <!-- The click handler is not an interaction: it stops the document-level
                    outside-click closer from seeing a click on the menu itself. Every real
                    control inside is a <button>, so the keyboard already reaches all of them,
-                   and Escape is handled globally — `shortcuts.js` gives Escape to any mounted
-                   [role="menu"] rather than clearing the screens. A keydown handler here would
-                   have to stopPropagation too, which would swallow Space (rule 11: Space means
-                   advance, app-wide) for as long as a menu is open. -->
+                   and Escape is consumed by this component's own `onKey` (rule 44). It used to say
+                   Escape was "handled globally"; `shortcuts.js` stands DOWN for a mounted
+                   [role="menu"] and hands it to nobody, so the key did nothing at all. `onKey`
+                   returns for every key that is not Escape, so Space still means advance
+                   (rule 11) for as long as a menu is open. -->
               <!-- svelte-ignore a11y-click-events-have-key-events -->
               <div class="te-addmenu" on:click|stopPropagation role="menu" tabindex="-1">
                 <div class="te-addsec r-lbl">Add layer</div>
