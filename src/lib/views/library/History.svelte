@@ -155,7 +155,15 @@
   // `asked` is the third fact the array cannot carry. `readErrors.listServices` is
   // the reason, kept by `guardedRead` instead of discarded.
   let asked = false;
+  // Declared beside `refresh` because `refresh` clears the first of them — see
+  // `stopRecording`, further down, for what they are for.
+  let endErr = '';
+  let ending = false;
   async function refresh() {
+    // A failure line belongs to the press that caused it. Nothing else cleared
+    // `endErr`, so a refusal could sit under the buttons after the service had
+    // been ended from the dock — a stale accusation on a screen that is now right.
+    endErr = '';
     services = await listServices();
     asked = true;
     page = 0;
@@ -248,8 +256,6 @@
   // a claim of success as a screen can get without words. A failure now says so
   // beside the button that caused it, and the list is NOT repainted — an
   // unchanged surface is the disguise, not the report.
-  let endErr = '';
-  let ending = false;
   async function stopRecording() {
     ending = true;
     endErr = '';

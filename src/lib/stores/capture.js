@@ -611,9 +611,8 @@ export async function startService(title, date) {
   return id;
 }
 
-/** Stop recording the current service (history kept). */
 /**
- * Close the open service record.
+ * Close the open service record — the history is kept.
  *
  * THROWS (contract group 1). It does not change what is on a screen, but it
  * releases the SERVICE LOCK — the list of things Relay is currently refusing to
