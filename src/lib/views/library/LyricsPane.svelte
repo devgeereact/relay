@@ -621,7 +621,7 @@
     border-top: 1px solid var(--v-line);
   }
   .ly-count {
-    font-size: 10px;
+    font-size: var(--v-fs-b3);
     color: var(--v-faint);
   }
 

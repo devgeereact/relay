@@ -628,7 +628,7 @@
     background: var(--v-surf2);
   }
   .vd-doc b {
-    font-size: 10px;
+    font-size: var(--v-fs-b3);
     letter-spacing: 0.12em;
   }
   .vd-mi.danger {
@@ -783,7 +783,7 @@
     border-radius: var(--v-r-sm);
     background: var(--v-surf2);
     color: var(--v-dim);
-    font-size: 10px;
+    font-size: var(--v-fs-b3);
     text-transform: uppercase;
     flex: 0 0 auto;
   }
@@ -810,7 +810,7 @@
      the title, and a second line at the title's weight is two titles. */
   .vd-sub {
     min-width: 0;
-    font-size: 10px;
+    font-size: var(--v-fs-b3);
     line-height: 1.3;
     color: var(--v-faint);
     overflow: hidden;

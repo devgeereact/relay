@@ -392,7 +392,7 @@
   .sv-bn { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   /* --v-dim, not --v-faint: --v-faint on --v-surf3 is below WCAG AA and
      `tokencontrast.test.js` fails the build for it. */
-  .sv-bk { flex: 0 0 auto; font-size: 10px; color: var(--v-dim); }
+  .sv-bk { flex: 0 0 auto; font-size: var(--v-fs-b3); color: var(--v-dim); }
 
   .sv-panel { display: flex; flex-direction: column; min-height: 0; flex: 1;
     background: var(--v-bg); border: 1px solid var(--v-line); border-radius: var(--v-r-lg); }

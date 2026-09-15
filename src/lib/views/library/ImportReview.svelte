@@ -152,7 +152,7 @@
   .ir-titleinput{ flex:1; min-width:0; height:34px; padding:0 11px; border-radius:8px; background:var(--v-bg);
     border:1px solid var(--v-line2); color:var(--v-txt); font-family:var(--f-head); font-weight:600; font-size:var(--v-fs-ttl); outline:none; }
   .ir-titleinput:focus{ border-color:var(--v-accent-line); }
-  .ir-slidecount{ font-size:10px; color:var(--v-faint); flex:0 0 auto; }
+  .ir-slidecount{ font-size:var(--v-fs-b3); color:var(--v-faint); flex:0 0 auto; }
   /* A TOGGLE CHIP, not a button — B2. It STATES whether this song will be
      imported ("Skip" / "Skipped") rather than doing something when pressed, and
      it shares its row with a title input rather than with other buttons. */
