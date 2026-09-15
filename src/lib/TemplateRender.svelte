@@ -1503,8 +1503,8 @@
           <!-- `.countdown` is kept alongside `.lfit` (not dropped): it is what
                carries tabular-nums, weight, tight leading and single-line
                `white-space: nowrap` for the ticking digits, and what
-               `.countdown.warn` needs to paint the last-minute red pulse
-               (`:1791`-`:1748` below). None of that is restated inline. -->
+               `.countdown.warn` needs below to paint the last-minute red pulse.
+               None of that is restated inline. -->
           <div class="lfit countdown" data-base={verseSize * 2} data-fit="shrink" class:warn={countdownWarn}
             style="font-size:{verseSize * 2}cqw; margin-top:{refGap}cqw; color:{countdownWarn ? CD_WARN : verseColor}; text-align:center; text-shadow:{verseShadowCss};">
             {countdownDone ? (content.countdown_done || '0:00') : countdownText}
