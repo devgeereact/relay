@@ -256,9 +256,13 @@ describe('COUNTDOWN on a layered template', () => {
     ] }, style: {} };
     const el = mount(scriptureLayered, cd());
     await tick();
-    // `.countdown` was dropped from the digits element (task 5): it existed to
-    // carry type styling the `.lfit` element now carries via `data-base`/`data-fit`,
-    // and the region-mode `.countdown` class check in `fitOne` doesn't apply here.
+    // The digits element joined the fit loop (task 5): it is now an `.lfit`
+    // carrying `data-base`/`data-fit`, inside a `.ltext` box `fitLayers` queries.
+    // It still keeps the `.countdown` class alongside `.lfit` — tabular-nums, the
+    // warn pulse and the tight leading are real CSS on `.countdown`/`.countdown.warn`
+    // and are not restated inline, so dropping the class would lose them silently.
+    // `fitcoverage.test.js` asserts the class is present; this test only needs the
+    // rendered box and its text.
     const digits = el.querySelector('.cd-default .cd-digits .lfit');
     expect(digits).toBeTruthy();
     expect(digits.textContent.trim()).toMatch(/^\d+:\d{2}$/); // e.g. 5:00
