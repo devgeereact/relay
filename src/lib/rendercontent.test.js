@@ -256,7 +256,10 @@ describe('COUNTDOWN on a layered template', () => {
     ] }, style: {} };
     const el = mount(scriptureLayered, cd());
     await tick();
-    const digits = el.querySelector('.cd-default .countdown');
+    // `.countdown` was dropped from the digits element (task 5): it existed to
+    // carry type styling the `.lfit` element now carries via `data-base`/`data-fit`,
+    // and the region-mode `.countdown` class check in `fitOne` doesn't apply here.
+    const digits = el.querySelector('.cd-default .cd-digits .lfit');
     expect(digits).toBeTruthy();
     expect(digits.textContent.trim()).toMatch(/^\d+:\d{2}$/); // e.g. 5:00
     // the label shows once (from the default block), not duplicated by the ref layer

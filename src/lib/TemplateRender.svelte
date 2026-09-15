@@ -1485,10 +1485,22 @@
            the template to place it instead. -->
       <div class="cd-default">
         {#if content.reference && !countdownDone}
-          <div class="reference" style="font-size:{refSize}cqw; {refStyle}">{content.reference}</div>
+          <div class="ltext cd-line cd-ref" style="align-items:center;">
+            <div class="lfit" data-base={refSize} data-fit="shrink" style="font-size:{refSize}cqw; {refStyle} text-align:center;">{content.reference}</div>
+          </div>
         {/if}
-        <div class="verse countdown" class:warn={countdownWarn} style="font-size:{verseSize * 2}cqw; margin-top:{refGap}cqw; color:{countdownWarn ? CD_WARN : verseColor}; text-align:center; text-shadow:{verseShadowCss};">
-          {countdownDone ? (content.countdown_done || '0:00') : countdownText}
+        <div class="ltext cd-line cd-digits" style="align-items:center;">
+          <!-- THE SIZE IS DECLARED AND THE BOX IS MEASURABLE. `data-base` is the
+               designed size in cqw, so a countdown that has not been fitted yet
+               paints at the size the template asked for rather than at the app's
+               UI type (the same reasoning as the layer text path above). `shrink`
+               caps growth at that size: a countdown must never grow to fill a
+               box, because the digits change width every second and a growing
+               clock jitters. -->
+          <div class="lfit" data-base={verseSize * 2} data-fit="shrink" class:warn={countdownWarn}
+            style="font-size:{verseSize * 2}cqw; margin-top:{refGap}cqw; color:{countdownWarn ? CD_WARN : verseColor}; text-align:center; text-shadow:{verseShadowCss};">
+            {countdownDone ? (content.countdown_done || '0:00') : countdownText}
+          </div>
         </div>
       </div>
     {/if}
@@ -1657,6 +1669,31 @@
     text-align: center;
     padding: 6% 7%;
     box-sizing: border-box;
+    /* IT CLIPS. This set no `overflow` at all, so a countdown too big for its
+       box did not slice — it painted straight over the template's own layers and
+       off the edge of the screen. Clipping is what makes the fitter's verdict
+       honest: `overflowing()` reads `scrollHeight > clientHeight`, which an
+       unclipped box never reports. */
+    overflow: hidden;
+  }
+  /* The two fit boxes inside it are flex children, not absolutely-positioned
+     layers, so they override `.ltext`'s `position: absolute`. `min-height: 0`
+     is what lets a flex child actually be shorter than its content — without it
+     the box reports that everything fits, at any size. */
+  .cd-default .cd-line {
+    position: relative;
+    display: flex;
+    width: 100%;
+    min-height: 0;
+    overflow: hidden;
+    justify-content: center;
+  }
+  .cd-default .cd-digits {
+    flex: 1 1 auto;
+  }
+  .cd-default .cd-ref {
+    flex: 0 0 auto;
+    max-height: 25%;
   }
   /* A scrolling text layer runs on one line inside its (clipped) box. */
   .lfit.lscroll {
