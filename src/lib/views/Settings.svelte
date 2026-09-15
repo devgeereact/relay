@@ -1689,6 +1689,22 @@
                minutes behind, rather than a number. Non-zero here is worse news
                than the row above it, so it is coloured and the row above is not. -->
           <div class="rw-nv"><span class="rw-nvk">audio dropped (never heard)</span><span class="rw-nvv" class:s-netbad={(lat?.dropped_audio ?? 0) > 0}>{lat?.dropped_audio ?? 0}</span></div>
+          <!-- RG-120 (PR #58). `end_to_end_speech_to_scripture` stamped 0 samples
+               against three auto-fires in one service and 7 against nine in
+               another, and the report could not say why. An absence there is
+               honest (rule 31: a stage never reached is an absence, not a zero)
+               but it was UNATTRIBUTABLE — "the AI never fired" and "nothing was
+               attached to paint it" looked identical, and they are completely
+               different situations. The first service ran its three fires before
+               any output window existed, so nothing could have painted them and
+               zero was the correct answer.
+
+               These two counters are what make that readable. The first is a fact
+               about the church's setup; the second is a fact about this
+               instrument, because a trace the recorder dropped first is not the
+               same as a screen that never answered. Both were silent. -->
+          <div class="rw-nv"><span class="rw-nvk">verses no screen reported painting</span><span class="rw-nvv" class:s-netbad={(lat?.fires_never_painted ?? 0) > 0}>{lat?.fires_never_painted ?? 0}</span></div>
+          <div class="rw-nv"><span class="rw-nvk">render reports that arrived too late</span><span class="rw-nvv">{lat?.marks_after_close ?? 0}</span></div>
         {:else}
           <div class="rw-nv"><span class="rw-nvk">Measured so far</span><span class="rw-nvv">{settingValue(null, { missing: 'nothing yet' })}</span></div>
         {/if}

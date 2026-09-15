@@ -20,7 +20,7 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use serde::Serialize;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
 /// A voiced, time-stamped chunk of mono audio handed upstream to STT.
@@ -61,6 +61,52 @@ pub const HOP_MS: u32 = 200; // 50% overlap
 /// It was previously the speech threshold itself, and it silently deleted most of a
 /// quiet preacher's sermon — see the doc comment on `Vad`.
 const VAD_RMS_THRESHOLD: f32 = 0.0015;
+
+/// WHICH MICROPHONE A SERVICE ACTUALLY USED (RG-122).
+///
+/// Every audit before this one had to take the operator's word for it. All the
+/// startup log said was `audio: capture @ 48000 Hz · denoise on (RNNoise)`, and on
+/// 2026-09-06 both candidate inputs — a laptop microphone and a Blackmagic desk
+/// feed — run at 48 kHz, so no instrument in the run could tell them apart. That
+/// invalidates the most important caveat a field audit carries: comparing detection
+/// accuracy between two services is comparing two unknown microphones.
+///
+/// `was_default` is the second half and it is not decoration. RG-121 is that the
+/// selected device was never persisted, so a launch could silently fall back to the
+/// system default; "which device" and "was that the one anybody chose" are
+/// different questions and a record needs both.
+///
+/// Hardware, never content: a device name is not anything a preacher said, so this
+/// is safe for the log and for the diagnostic bundle.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Input {
+    pub name: String,
+    pub was_default: bool,
+}
+
+/// The last input capture actually opened, or `None` before the first capture of
+/// this run. An ABSENCE, not a guess at the default: a report that named a device
+/// Relay had never opened would be exactly the false confidence this exists to end.
+static LAST_INPUT: Mutex<Option<Input>> = Mutex::new(None);
+
+/// What capture last opened. `None` until it has opened something.
+pub fn last_input() -> Option<Input> {
+    LAST_INPUT.lock().ok()?.clone()
+}
+
+/// One phrase for a log line or a diagnostic bundle. Separated from the print so a
+/// test can hold the wording without a microphone.
+pub fn describe_input(input: &Input) -> String {
+    format!(
+        "\"{}\" ({})",
+        input.name,
+        if input.was_default {
+            "system default"
+        } else {
+            "chosen"
+        }
+    )
+}
 
 /// Enumerate input devices on the default host. Safe to call anytime; returns
 /// an empty list rather than erroring if the host has no inputs.
@@ -380,6 +426,78 @@ impl Drop for AudioEngine {
     }
 }
 
+/// WHAT A RUNTIME STREAM ERROR IS ALLOWED TO DO (RG-117).
+///
+/// cpal reports a device that has died after capture started through the stream's
+/// error callback, and that callback was the single line
+/// `eprintln!("audio stream error: {e}")`. It set no flag, emitted no event and
+/// reached no operator, so three things happened at once and none of them were
+/// visible:
+///
+/// 1. The capture loop is `while !stop` around a 100 ms `recv_timeout`, and the
+///    stream object stays alive, so the channel never disconnects. It spun on
+///    `Timeout => continue` for ever. The transcript simply stopped mid-sermon,
+///    indistinguishable from a preacher who had gone quiet.
+/// 2. `RELAY_RECORD_WAV` writes AFTER the loop exits, so a loop that never exits
+///    never writes. The instrument for the one measurement this project most needs
+///    is destroyed by the failure it would most want to have captured. On
+///    2026-09-06 the desk feed was unplugged and 26 minutes of a service sat
+///    buffered in RAM while the app looked alive.
+/// 3. CLAUDE.md rule 5 says device errors come back via `audio://error`. That was
+///    true of START errors and false of runtime ones, so the handbook overstated
+///    the coverage.
+///
+/// The message is stored BEFORE the flag is set, so the loop cannot exit and look
+/// for a reason that has not been written yet. The FIRST error wins: cpal can fire
+/// this repeatedly while a device tears down, and the first one is the cause while
+/// the rest are consequences.
+///
+/// **It never blocks.** This can be called on the device's own real-time thread,
+/// where blocking is what kills a capture stream outright, so a contended lock
+/// loses the message rather than waiting for it — and the stop flag is still set,
+/// because stopping is the half that saves the recording.
+fn note_stream_error(stop: &AtomicBool, sink: &Mutex<Option<String>>, message: String) {
+    eprintln!("audio stream error: {message}");
+    if let Ok(mut slot) = sink.try_lock() {
+        slot.get_or_insert(message);
+    }
+    stop.store(true, Ordering::Relaxed);
+}
+
+/// Where a debug recording may actually be written.
+///
+/// **Never over an existing file.** `RELAY_RECORD_WAV` names one path and the
+/// capture thread used to truncate it on every Stop, so a second Start/Stop cycle
+/// silently destroyed the first: on 2026-09-06 that turned 1837.8 s of a real
+/// service into a valid-looking 170.0 s file, and the audio was gone. It is worse
+/// than losing the recording outright, because it looks exactly like it worked.
+///
+/// So an existing name is never reused; the next free `-2`, `-3` … is taken and
+/// the write line prints where the audio actually went.
+fn free_recording_path(requested: &std::path::Path) -> std::path::PathBuf {
+    if !requested.exists() {
+        return requested.to_path_buf();
+    }
+    let stem = requested
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| "recording".into());
+    let ext = requested
+        .extension()
+        .map(|e| format!(".{}", e.to_string_lossy()))
+        .unwrap_or_default();
+    let dir = requested.parent().unwrap_or(std::path::Path::new("."));
+    // Bounded: a loop that cannot fail is a loop that hangs on a full disk or a
+    // read-only directory. After this many the answer is not a better filename.
+    for n in 2..1000 {
+        let candidate = dir.join(format!("{stem}-{n}{ext}"));
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+    requested.to_path_buf()
+}
+
 /// Resolve the device, build the cpal stream, then run the chunk/VAD loop until
 /// stopped. Everything touching the non-Send `Device`/`Stream` stays on this
 /// one thread.
@@ -394,6 +512,10 @@ where
     Q: Fn(&dsp::AudioQuality) + Send + 'static,
 {
     let host = cpal::default_host();
+    // Answered before the match consumes the name (RG-122): "was this the system
+    // default" is a question about what the CALLER asked for, not about what cpal
+    // handed back, and the two differ the moment a stored device has vanished.
+    let asked_for_default = device_name.is_none();
     let device = match device_name {
         Some(name) => host
             .input_devices()
@@ -412,17 +534,31 @@ where
     // aggregate/virtual devices, or unusual channel layouts — fall back to the
     // device's own default config so audio STILL flows (denoise self-disables).
     // Without this, selecting a non-default device silently produced no audio.
-    let (stream, used) = match build_stream(&device, &preferred, &tx) {
+    // Where a runtime stream failure leaves its reason. Set by the stream's error
+    // callback, read once the loop has exited and the recording is safely written.
+    let runtime_err: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+    let (stream, used) = match build_stream(&device, &preferred, &tx, &stop, &runtime_err) {
         Ok(s) => (s, preferred),
         Err(e1) => {
             eprintln!("audio: preferred 48 kHz config failed ({e1}); using device default");
             let def = device.default_input_config().map_err(|e| e.to_string())?;
-            let s = build_stream(&device, &def, &tx)?;
+            let s = build_stream(&device, &def, &tx, &stop, &runtime_err)?;
             (s, def)
         }
     };
     let sample_rate = used.sample_rate().0;
     stream.play().map_err(|e| e.to_string())?;
+
+    // Record WHICH input this is, now that one is definitely open (RG-122). After
+    // `play()` on purpose: a device that resolved and then would not start is not
+    // the microphone this service used, and writing it here would name it as one.
+    let opened = Input {
+        name: device.name().unwrap_or_else(|_| "unknown device".into()),
+        was_default: asked_for_default,
+    };
+    if let Ok(mut last) = LAST_INPUT.lock() {
+        *last = Some(opened.clone());
+    }
 
     // ── DEBUG RECORDER ──
     //
@@ -439,7 +575,13 @@ where
     // the operator names explicitly, is never uploaded, and is never enabled by any UI —
     // it exists for someone diagnosing their own installation. See PRIVACY.md.
     let mut rec = std::env::var_os("RELAY_RECORD_WAV").map(|p| {
-        println!("audio: RECORDING cleaned input to {}", p.to_string_lossy());
+        // The name is where it will TRY to write. An existing file is never
+        // overwritten (`free_recording_path`), and the write line at the end of
+        // capture prints where the audio actually went.
+        println!(
+            "audio: RECORDING cleaned input to {} (existing files are never overwritten)",
+            p.to_string_lossy()
+        );
         (std::path::PathBuf::from(p), Vec::<f32>::new())
     });
 
@@ -456,12 +598,13 @@ where
     // at other rates (see dsp.rs).
     let mut frontend = dsp::FrontEnd::new(sample_rate);
     eprintln!(
-        "audio: capture @ {sample_rate} Hz · denoise {}",
+        "audio: capture @ {sample_rate} Hz · denoise {} · input {}",
         if frontend.denoise_active() {
             "on (RNNoise)"
         } else {
             "off (device not 48 kHz — auto-gain only)"
-        }
+        },
+        describe_input(&opened)
     );
 
     while !stop.load(Ordering::Relaxed) {
@@ -523,6 +666,9 @@ where
     }
     drop(stream);
     if let Some((path, buf)) = rec {
+        // Resolved HERE and not at Start: the previous segment's file exists by
+        // now, and this is what stops a second Stop from writing over it.
+        let path = free_recording_path(&path);
         match write_wav_f32(&path, &buf, sample_rate) {
             Ok(()) => println!(
                 "audio: wrote {:.1}s to {}",
@@ -531,6 +677,13 @@ where
             ),
             Err(e) => eprintln!("audio: could not write recording: {e}"),
         }
+    }
+    // The recording is on disk before the error is reported, deliberately. This
+    // returns through `AudioEngine::start`'s `on_error`, which emits
+    // `audio://error` — so by the time an operator is told the microphone died,
+    // the audio that proves what happened has already been saved.
+    if let Some(msg) = runtime_err.lock().ok().and_then(|mut m| m.take()) {
+        return Err(msg);
     }
     Ok(())
 }
@@ -585,11 +738,19 @@ fn build_stream(
     device: &cpal::Device,
     supported: &cpal::SupportedStreamConfig,
     tx: &mpsc::SyncSender<Vec<f32>>,
+    stop: &Arc<AtomicBool>,
+    runtime_err: &Arc<Mutex<Option<String>>>,
 ) -> Result<cpal::Stream, String> {
     let sample_format = supported.sample_format();
     let config: cpal::StreamConfig = supported.clone().into();
     let channels = config.channels as usize;
-    let err_fn = |e| eprintln!("audio stream error: {e}");
+    // A DEAD DEVICE MUST STOP THE LOOP (RG-117). See `note_stream_error`: this
+    // used to be an `eprintln!` and nothing else, so capture spun for ever on a
+    // device that had been unplugged, the operator was told nothing, and the debug
+    // recording — which is written after the loop exits — was never written at all.
+    let (stop_on_err, err_sink) = (stop.clone(), runtime_err.clone());
+    let err_fn =
+        move |e: cpal::StreamError| note_stream_error(&stop_on_err, &err_sink, e.to_string());
     let stream = match sample_format {
         cpal::SampleFormat::F32 => {
             let tx = tx.clone();
@@ -714,6 +875,116 @@ fn downmix_u16(data: &[u16], channels: usize) -> Vec<f32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A DEAD DEVICE MUST STOP THE LOOP, AND SAY WHY (RG-117).
+    ///
+    /// The old error callback was `|e| eprintln!("audio stream error: {e}")` and
+    /// nothing else. The loop is `while !stop` around a 100 ms `recv_timeout` and
+    /// the stream stays alive, so the channel never disconnects and capture spun
+    /// on a device that had been unplugged: no banner, no event, and — because
+    /// the debug recorder writes after the loop exits — no recording either.
+    #[test]
+    fn a_stream_error_stops_capture_and_keeps_its_reason() {
+        let stop = AtomicBool::new(false);
+        let sink = Mutex::new(None);
+        note_stream_error(
+            &stop,
+            &sink,
+            "The requested device is no longer available.".into(),
+        );
+        assert!(
+            stop.load(Ordering::Relaxed),
+            "the loop must be able to exit"
+        );
+        assert_eq!(
+            sink.lock().unwrap().as_deref(),
+            Some("The requested device is no longer available."),
+            "and the operator must be able to be told what happened"
+        );
+    }
+
+    /// THE FIRST ERROR IS THE CAUSE; THE REST ARE CONSEQUENCES.
+    ///
+    /// cpal can fire the error callback repeatedly while a device tears down, and
+    /// the last message in that burst is usually the least informative. Reporting
+    /// it would replace "the device was unplugged" with something generic.
+    #[test]
+    fn the_first_reason_is_the_one_kept() {
+        let stop = AtomicBool::new(false);
+        let sink = Mutex::new(None);
+        note_stream_error(&stop, &sink, "device unplugged".into());
+        note_stream_error(&stop, &sink, "backend error".into());
+        assert_eq!(sink.lock().unwrap().as_deref(), Some("device unplugged"));
+    }
+
+    /// A SECOND RECORDING MAY NEVER OVERWRITE THE FIRST.
+    ///
+    /// `RELAY_RECORD_WAV` names one path and the capture thread truncated it on
+    /// every Stop, so a second Start/Stop cycle destroyed the first segment. On
+    /// 2026-09-06 that turned 1837.8 s of a real service into a valid-looking
+    /// 170.0 s file — worse than losing it outright, because it looks like it
+    /// worked.
+    #[test]
+    fn a_recording_never_lands_on_a_file_that_already_exists() {
+        let dir = std::env::temp_dir().join(format!("relay-rec-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let asked = dir.join("service.wav");
+
+        // Nothing there yet: the operator gets the name they asked for.
+        assert_eq!(free_recording_path(&asked), asked);
+
+        std::fs::write(&asked, b"first segment").expect("write");
+        let second = free_recording_path(&asked);
+        assert_ne!(second, asked, "the first segment must survive");
+        assert_eq!(second.file_name().unwrap(), "service-2.wav");
+
+        std::fs::write(&second, b"second segment").expect("write");
+        assert_eq!(
+            free_recording_path(&asked).file_name().unwrap(),
+            "service-3.wav"
+        );
+
+        // The first segment is still exactly what it was.
+        assert_eq!(std::fs::read(&asked).expect("read"), b"first segment");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A LOG LINE THAT NAMES THE INPUT, AND SAYS WHETHER ANYBODY CHOSE IT.
+    ///
+    /// RG-122. `audio: capture @ 48000 Hz · denoise on (RNNoise)` was the whole
+    /// startup record, and both candidate inputs on 2026-09-06 ran at 48 kHz, so
+    /// `FIELD-2026-09-06.md` had to state its input on the operator's word alone.
+    /// The default-ness is the half RG-121 needs: a launch that silently fell back
+    /// to the system default reads identically to one an operator set up, and only
+    /// this phrase distinguishes them.
+    #[test]
+    fn the_log_says_which_input_and_whether_it_was_chosen() {
+        assert_eq!(
+            describe_input(&Input {
+                name: "Blackmagic Web Presenter 4K".into(),
+                was_default: false
+            }),
+            "\"Blackmagic Web Presenter 4K\" (chosen)"
+        );
+        assert_eq!(
+            describe_input(&Input {
+                name: "MacBook Pro Microphone".into(),
+                was_default: true
+            }),
+            "\"MacBook Pro Microphone\" (system default)"
+        );
+    }
+
+    /// AN INPUT NOBODY OPENED IS AN ABSENCE, NOT THE DEFAULT.
+    ///
+    /// `latency.rs` learned this distinction the hard way and it is the same one:
+    /// a diagnostic bundle that named a device Relay had never opened would be the
+    /// exact false confidence this record exists to remove. Nothing in this test
+    /// binary starts capture, so the global must still be empty.
+    #[test]
+    fn nothing_is_claimed_about_an_input_before_capture_opens_one() {
+        assert_eq!(last_input(), None);
+    }
 
     #[test]
     fn rms_of_silence_is_zero() {

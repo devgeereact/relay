@@ -1,19 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import {
-  BUILTIN_THEMES,
-  THEME_STYLE_KEYS,
-  THEME_TOKENS,
-  isThemeToken,
-  themeById,
-  applyTheme,
-  templateThemeRef,
-  resolveThemed,
-  parseThemes,
-  serializeTheme,
-  parseImportedTheme,
-  THEME_FILE_MARKER,
-  applyThemeToTemplate,
-} from './themes.js';
+import { BUILTIN_THEMES, THEME_STYLE_KEYS, THEME_TOKENS, isThemeToken, themeById, applyTheme, templateThemeRef, resolveThemed, parseThemes, serializeTheme, parseImportedTheme, THEME_FILE_MARKER, applyThemeToTemplate, THEME_PREVIEW_TEMPLATE, LAYER_THEME_KEYS } from './themes.js';
 
 describe('themeById', () => {
   it('resolves a builtin by id', () => {
@@ -228,5 +214,57 @@ describe('parseThemes — corrupt blob falls back to []', () => {
     expect(parseThemes('null')).toEqual([]);
     expect(parseThemes('')).toEqual([]);
     expect(parseThemes(null)).toEqual([]);
+  });
+});
+
+// ── A THEME DESK THAT DEMONSTRATES A POWER IT DOES NOT HAVE ─────────────────
+//
+// `THEME_PREVIEW_TEMPLATE` was a REGION template. A region template honours all
+// fourteen keys a theme sets, while `applyTheme` moves only three on a LAYERED one
+// — colour, fill and typeface, and then only where the layer opted in with a
+// `theme:` token. Every template on the shelf is layered.
+//
+// So dragging "Verse size" visibly enlarged the preview and changed nothing on any
+// template an operator owns, and the rail then listed the setting back as a flat
+// fact about the theme. That is how somebody comes to believe they have restyled a
+// shelf they have not touched.
+//
+// The nine are NOT dead controls — the five seeded built-ins are region templates
+// and honour all fourteen. They are model-specific, and the desk said nothing
+// about which. DECISIONS §69 removes a control saving an intent NOBODY honours;
+// this intent is honoured, so the fix is to say where.
+describe('the themes desk shows what a theme can actually move', () => {
+  it('the preview is built the way the shelf is', () => {
+    const layers = THEME_PREVIEW_TEMPLATE.layout?.layers;
+    expect(Array.isArray(layers), 'a region preview over a layered shelf misleads').toBe(true);
+    expect(THEME_PREVIEW_TEMPLATE.layout.regions).toBeUndefined();
+  });
+
+  it('…and it opts in with the same tokens a real template would', () => {
+    const layers = THEME_PREVIEW_TEMPLATE.layout.layers;
+    const tokens = layers.flatMap((L) => [L.color, L.fill, L.font]).filter(Boolean);
+    expect(tokens.some((v) => String(v).startsWith('theme:'))).toBe(true);
+  });
+
+  it('the register names exactly the keys applyTheme resolves on a layer', () => {
+    // If `applyTheme` ever learns a fourth field, this is what fails — rather than
+    // the desk quietly going back to over-promising.
+    for (const k of ['font', 'accent', 'verseColor', 'refColor', 'background']) {
+      expect(LAYER_THEME_KEYS.has(k), `${k} must reach a layered template`).toBe(true);
+    }
+    for (const k of ['verseSize', 'refSize', 'verseLineHeight', 'italicRef', 'bgStyle', 'refGap']) {
+      expect(LAYER_THEME_KEYS.has(k), `${k} does not reach a layer and must not claim to`).toBe(false);
+    }
+  });
+
+  it('a theme still moves a layered template it has tokens for', () => {
+    // The other half: honesty about the nine must not cost the five.
+    const themed = applyTheme(THEME_PREVIEW_TEMPLATE, {
+      style: { verseColor: '#ff0000', background: '#001122', accent: '#00ff00' },
+    });
+    const verse = themed.layout.layers.find((L) => L.bind === 'verse');
+    const bg = themed.layout.layers.find((L) => L.type === 'background');
+    expect(verse.color).toBe('#ff0000');
+    expect(bg.fill).toBe('#001122');
   });
 });

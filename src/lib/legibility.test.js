@@ -7,18 +7,7 @@
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
-import {
-  parseColor,
-  contrastRatio,
-  effectiveBackground,
-  checkContrast,
-  checkDistance,
-  textHeightMetres,
-  previewScale,
-  review,
-  CONTRAST_FLOOR,
-  PREVIEW_DISTANCES_M,
-} from './legibility.js';
+import { parseColor, contrastRatio, effectiveBackground, checkContrast, checkDistance, textHeightMetres, previewScale, review, CONTRAST_FLOOR, PREVIEW_DISTANCES_M, reviewTemplate, styleOfTemplate } from './legibility.js';
 import { BUILTIN_THEMES } from './themes.js';
 
 const ROOT = path.resolve(__dirname, '../..');
@@ -184,5 +173,67 @@ describe('High Visibility is a THEME, not a mode', () => {
   it('is larger than the default theme', () => {
     const modern = BUILTIN_THEMES.find((t) => t.name === 'Modern Dark');
     expect(Number(hv.style.verseSize)).toBeGreaterThan(Number(modern.style.verseSize));
+  });
+});
+
+// ── THE LAYER MODEL IS THE MODEL. ────────────────────────────────────────────
+//
+// `checkContrast` and `checkDistance` read `style.verseColor`, `style.refColor`,
+// `style.background` and `style.verseSize`. In the layer model those live on
+// layers, and every shipped template leaves `style` EMPTY — all eight shelf
+// entries carry `style: {}`.
+//
+// So the one tool in the product that answers "can the back row read this"
+// returned `unknown` for ELEVEN OF THIRTEEN shipped templates, including all three
+// lower thirds and both composites. Worse than inert: `unknown` renders in the
+// panel's reassuring branch, so a template with a real contrast failure sat in the
+// same state as one nobody had checked.
+//
+// The first three below were watched to fail by calling `review(t.style ?? {}, …)`
+// instead of `reviewTemplate(t, …)` — which is exactly what the editor used to do.
+// The last three pass either way, deliberately: they hold the REFUSALS, so the
+// adapter cannot be "improved" later into guessing at a composite or a gradient.
+describe('review answers for a layered template', () => {
+  const ROOM = { screenWidthM: 4, backRowM: 18 };
+  const shelf = JSON.parse(
+    fs.readFileSync(path.resolve(process.cwd(), 'src-tauri/data/shelf_templates.json'), 'utf8'),
+  );
+  const list = Array.isArray(shelf) ? shelf : (shelf.templates ?? []);
+  const byName = (n) => list.find((t) => t.name === n);
+
+  it('a background + text template is fully answered', () => {
+    const r = reviewTemplate(byName('High Visibility'), null, ROOM);
+    expect(r.unknowns, 'every value is derivable from its layers').toBe(0);
+    expect(r.verse.state).toBe('ok');
+    expect(r.reference.state).toBe('ok');
+  });
+
+  it('a BAND template reads its ground off the band, which is what a caption bar is', () => {
+    // A lower third has no background layer on purpose — the rest of the frame is
+    // a camera Relay does not control. Before this, that meant `unknown`.
+    const r = reviewTemplate(byName('Lower Third · Scripture'), null, ROOM);
+    expect(r.verse.state).not.toBe('unknown');
+    expect(r.reference.state).not.toBe('unknown');
+  });
+
+  it('…and the shelf is no longer mostly unanswerable', () => {
+    const answered = list.filter((t) => reviewTemplate(t, null, ROOM).unknowns === 0);
+    expect(answered.length, 'most of the shelf must now be checkable').toBeGreaterThanOrEqual(4);
+  });
+
+  it('a composite is REFUSED rather than guessed at', () => {
+    // Its words are a real inner template at a different width, so answering from
+    // the outer one would be a guess with a number on it.
+    expect(reviewTemplate(byName('SuperSource · Word right'), null, ROOM).verse.state).toBe('unknown');
+  });
+
+  it('and a gradient is still honestly unknown, not quietly passed', () => {
+    // The file's own stance, and the half that must not be lost to the adapter.
+    expect(reviewTemplate(byName('Notice Board'), null, ROOM).verse.state).toBe('unknown');
+  });
+
+  it('a flat-style template is untouched', () => {
+    const flat = { style: { verseColor: '#ffffff', background: '#000000', verseSize: '5.5' } };
+    expect(styleOfTemplate(flat)).toEqual(flat.style);
   });
 });

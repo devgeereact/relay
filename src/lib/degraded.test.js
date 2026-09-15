@@ -223,3 +223,21 @@ describe('one poller, one answer', () => {
     expect(fn.slice(0, 200)).toMatch(/if \(healthPoll\) return;/);
   });
 });
+
+describe('the microphone this room uses (RG-121)', () => {
+  it('says so when the remembered device is not attached today', () => {
+    const [d] = degradations({ micMissing: 'Blackmagic Web Presenter 4K' });
+    expect(d.id).toBe('mic');
+    // Reduced, not blocked: Relay is still listening, on the wrong thing. That is
+    // the whole danger — nothing errors, and a laptop microphone at the back of a
+    // booth still produces a transcript.
+    expect(d.level).toBe('reduced');
+    expect(d.title).toContain('Blackmagic Web Presenter 4K');
+    expect(d.fix).toMatch(/Settings/);
+  });
+
+  it('says nothing when the microphone is where it was left', () => {
+    expect(degradations({ micMissing: null }).some((d) => d.id === 'mic')).toBe(false);
+    expect(degradations({}).some((d) => d.id === 'mic')).toBe(false);
+  });
+});

@@ -3342,6 +3342,19 @@ fn export_diagnostics(app: tauri::AppHandle) -> error::Result<String> {
                 ));
             }
         }
+        // WHICH MICROPHONE (RG-122). A bundle arrives with a sentence like "it did
+        // not hear the preacher", and the first question is which input it was
+        // listening to. Both candidates in the field on 2026-09-06 ran at 48 kHz,
+        // so the rate line could not answer it and neither could anything else in
+        // the bundle. Absent until capture has actually opened something, because
+        // naming the default Relay never opened would be a confident lie.
+        relay.push(Fact::new(
+            "Microphone",
+            match audio::last_input() {
+                Some(input) => audio::describe_input(&input),
+                None => "not opened yet this run".into(),
+            },
+        ));
         // Whether the display was being held awake. A church reporting "the
         // projector went black in the middle of the sermon" needs this line: it
         // separates a screen Relay let sleep from a screen that failed for some
@@ -3454,6 +3467,18 @@ fn export_diagnostics(app: tauri::AppHandle) -> error::Result<String> {
         Fact::new(
             "Transcript updates skipped",
             report.dropped_partials.to_string(),
+        ),
+        // RG-120. Without these two, an end-to-end stage with no samples is
+        // unreadable in a bundle: nothing distinguishes "the AI never fired" from
+        // "nothing was attached to paint what it fired". A real service reported
+        // zero samples against three auto-fires for the second reason.
+        Fact::new(
+            "Verses no screen reported painting",
+            report.fires_never_painted.to_string(),
+        ),
+        Fact::new(
+            "Render reports that arrived too late",
+            report.marks_after_close.to_string(),
         ),
     ];
     for m in &report.metrics {

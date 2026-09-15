@@ -21,7 +21,7 @@
   import { BUILTINS } from '../../templates.js';
   import { contentTemplates, setContentTemplate, loadContentTemplates } from '../../stores/capture.js';
   import TemplateRender from '../../TemplateRender.svelte';
-  import { review, PREVIEW_DISTANCES_M, previewScale } from '../../legibility.js';
+  import { reviewTemplate, PREVIEW_DISTANCES_M, previewScale } from '../../legibility.js';
   import TemplatePreviewOverlay from '../../TemplatePreviewOverlay.svelte';
   import { testTemplateOnOutputs } from '../../templateTest.js';
   import { humanError } from '../../errors.js';
@@ -119,7 +119,21 @@
   let screenWidthM = '';
   let backRowM = '';
   $: room = { screenWidthM: Number(screenWidthM), backRowM: Number(backRowM) };
-  $: legible = themedEdit ? review(themedEdit.style ?? {}, previewContent, room) : null;
+  /* THE WHOLE TEMPLATE, not `style`. `review` reads `style.verseColor`,
+     `style.refColor`, `style.background` and `style.verseSize`; in the layer model
+     those live on layers, and every shipped template leaves `style` EMPTY — all
+     eight shelf entries carry `style: {}`.
+
+     So this panel — the only tool in the product that answers "can the back row
+     read this" — returned `unknown` for eleven of thirteen shipped templates,
+     including all three lower thirds and both composites. Worse than inert:
+     `unknown` renders in the reassuring branch, so a template with a real
+     contrast failure sat in the same state as one nobody had checked.
+
+     `reviewTemplate` adapts the layers first and is the one call a surface should
+     make, so a caller cannot forget to and quietly get three `unknown`s. Nothing
+     about the thresholds or the wording moved. */
+  $: legible = themedEdit ? reviewTemplate(themedEdit, previewContent, room) : null;
   let showDistances = false;
 
   // ── AND IT IS FOLDED AWAY UNTIL IT IS ASKED FOR ────────────────────────────

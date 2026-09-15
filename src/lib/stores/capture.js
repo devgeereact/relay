@@ -69,6 +69,10 @@ export const capture = writable({
   capturing: false,
   devices: [], // [{ name, is_default }]
   inputDevice: '', // operator-selected input device name ('' = default). Shared so Console + Settings agree.
+  // The remembered microphone that is NOT attached today, or null. RG-121: Relay
+  // falls back to the system default, and this is how it says so rather than
+  // moving a church onto a laptop microphone in silence.
+  inputDeviceMissing: null,
   stt: { loaded: false, model: null, language: null }, // local STT model status (language null = auto)
   detectedLang: null, // language of the latest transcript window (code-switching)
   // Auto-detect is not settling on a language — [codes] once per session, else null.
@@ -432,13 +436,26 @@ export async function initAudio() {
     return;
   }
   // Backend is attached. Load status pieces independently.
-  const [devices, stt, thresholds, detectionOn] = await Promise.all([
+  const [devices, stt, thresholds, detectionOn, storedDevice] = await Promise.all([
     call('list_audio_devices').catch(() => []),
     call('stt_status').catch(() => ({ loaded: false, model: null, language: null })),
     call('get_thresholds').catch(() => ({ auto_fire: 0.5, suggest: 0.35 })),
     call('get_detection_enabled').catch(() => true),
+    // RG-121. Every launch used to start on the system default, whatever was
+    // selected last time, and nothing said so.
+    call('get_setting', { key: INPUT_DEVICE_KEY }).catch(() => null),
   ]);
-  capture.update((s) => ({ ...s, available: true, devices, stt, thresholds, detectionOn }));
+  const chosen = chooseInputDevice({ stored: storedDevice, devices });
+  capture.update((s) => ({
+    ...s,
+    available: true,
+    devices,
+    stt,
+    thresholds,
+    detectionOn,
+    inputDevice: chosen.device,
+    inputDeviceMissing: chosen.missing,
+  }));
 
   // Seed the shared content-look map ONCE at boot so every surface (the Outputs
   // hub matrix, the gallery "Default for" badges, the live preview) reads one
@@ -819,9 +836,59 @@ const call = await invoke();
 return call('export_service', { id });
 }
 
-/** Set the shared input device (name, or '' for default). Used by Console + Settings. */
+/**
+ * The setting that remembers the microphone between launches (RG-121).
+ *
+ * `''` is a real stored value and means "the system default", which is a different
+ * fact from never having chosen.
+ */
+export const INPUT_DEVICE_KEY = 'audio.input_device';
+
+/**
+ * Which device to select at launch, and whether to say something about it.
+ *
+ * Pure, and separated from the store for that reason: this is the whole of RG-121's
+ * rule and it has to be testable without a backend or a microphone.
+ *
+ * The rule is that a remembered device which is NOT here today must not be selected
+ * silently. Relay would then capture from whatever the OS calls default — on
+ * 2026-09-06 that was a laptop microphone at the back of a booth while a Blackmagic
+ * desk feed sat plugged in and selected in the previous session — and rule 12's
+ * learned gate would do its best with it, which is exactly the failure that is
+ * invisible until someone listens back to the service.
+ *
+ * So a missing device falls back to the default AND is reported. Falling back
+ * without reporting is the bug with an extra step.
+ */
+export function chooseInputDevice({ stored, devices } = {}) {
+  const names = (devices ?? []).map((d) => d?.name).filter(Boolean);
+  // Never chosen, or deliberately the default: nothing to restore, nothing to say.
+  if (stored === null || stored === undefined || stored === '') {
+    return { device: '', missing: null };
+  }
+  if (names.includes(stored)) return { device: stored, missing: null };
+  return { device: '', missing: stored };
+}
+
+/**
+ * Set the shared input device (name, or '' for default). Used by Console + Settings.
+ *
+ * Persists it, so the next launch starts on the microphone this room actually uses.
+ * GROUP 2: the write never throws at the caller. A setting that would not save must
+ * not stop an operator changing microphone thirty seconds before a service.
+ */
 export function setInputDevice(name) {
-capture.update((s) => ({ ...s, inputDevice: name || '' }));
+capture.update((s) => ({ ...s, inputDevice: name || '', inputDeviceMissing: null }));
+void persistInputDevice(name || '');
+}
+
+async function persistInputDevice(name) {
+try {
+  const call = await invoke();
+  await call('set_setting', { key: INPUT_DEVICE_KEY, value: name });
+} catch {
+  /* no backend, or the write failed. The choice still applies to this run. */
+}
 }
 
 /** Start capture from `device` (name string, or null for the default input). */
@@ -2333,6 +2400,17 @@ try {
 /** Operator has read the panic warning (or a later panic control succeeded). */
 export function dismissPanicError() {
 panicError.set(null);
+}
+
+/**
+ * Acknowledge an audio device failure (RG-117).
+ *
+ * Dismissing says "I have read this", never "it is fixed": capture is already
+ * stopped by the time this banner exists, and the way back is to plug the
+ * microphone in and press start. It clears again on the next successful start.
+ */
+export function dismissAudioError() {
+capture.update((s) => ({ ...s, audioError: null }));
 }
 
 /** Push the "up next" preview to the stage/confidence monitor (null clears).
