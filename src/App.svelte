@@ -73,6 +73,9 @@
     // the foot of Live. An operator editing a template when the lead unplugs the
     // interface had no signal at all before this.
     audioError: $capture.audioError,
+    // RG-121: the microphone this machine used last time is not here today, and
+    // Relay has quietly fallen back to the system default.
+    micMissing: $capture.inputDeviceMissing,
   });
   $: degLevel = worstLevel(degraded);
 

@@ -62,6 +62,52 @@ pub const HOP_MS: u32 = 200; // 50% overlap
 /// quiet preacher's sermon — see the doc comment on `Vad`.
 const VAD_RMS_THRESHOLD: f32 = 0.0015;
 
+/// WHICH MICROPHONE A SERVICE ACTUALLY USED (RG-122).
+///
+/// Every audit before this one had to take the operator's word for it. All the
+/// startup log said was `audio: capture @ 48000 Hz · denoise on (RNNoise)`, and on
+/// 2026-09-06 both candidate inputs — a laptop microphone and a Blackmagic desk
+/// feed — run at 48 kHz, so no instrument in the run could tell them apart. That
+/// invalidates the most important caveat a field audit carries: comparing detection
+/// accuracy between two services is comparing two unknown microphones.
+///
+/// `was_default` is the second half and it is not decoration. RG-121 is that the
+/// selected device was never persisted, so a launch could silently fall back to the
+/// system default; "which device" and "was that the one anybody chose" are
+/// different questions and a record needs both.
+///
+/// Hardware, never content: a device name is not anything a preacher said, so this
+/// is safe for the log and for the diagnostic bundle.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Input {
+    pub name: String,
+    pub was_default: bool,
+}
+
+/// The last input capture actually opened, or `None` before the first capture of
+/// this run. An ABSENCE, not a guess at the default: a report that named a device
+/// Relay had never opened would be exactly the false confidence this exists to end.
+static LAST_INPUT: Mutex<Option<Input>> = Mutex::new(None);
+
+/// What capture last opened. `None` until it has opened something.
+pub fn last_input() -> Option<Input> {
+    LAST_INPUT.lock().ok()?.clone()
+}
+
+/// One phrase for a log line or a diagnostic bundle. Separated from the print so a
+/// test can hold the wording without a microphone.
+pub fn describe_input(input: &Input) -> String {
+    format!(
+        "\"{}\" ({})",
+        input.name,
+        if input.was_default {
+            "system default"
+        } else {
+            "chosen"
+        }
+    )
+}
+
 /// Enumerate input devices on the default host. Safe to call anytime; returns
 /// an empty list rather than erroring if the host has no inputs.
 pub fn list_input_devices() -> Vec<DeviceInfo> {
@@ -466,6 +512,10 @@ where
     Q: Fn(&dsp::AudioQuality) + Send + 'static,
 {
     let host = cpal::default_host();
+    // Answered before the match consumes the name (RG-122): "was this the system
+    // default" is a question about what the CALLER asked for, not about what cpal
+    // handed back, and the two differ the moment a stored device has vanished.
+    let asked_for_default = device_name.is_none();
     let device = match device_name {
         Some(name) => host
             .input_devices()
@@ -498,6 +548,17 @@ where
     };
     let sample_rate = used.sample_rate().0;
     stream.play().map_err(|e| e.to_string())?;
+
+    // Record WHICH input this is, now that one is definitely open (RG-122). After
+    // `play()` on purpose: a device that resolved and then would not start is not
+    // the microphone this service used, and writing it here would name it as one.
+    let opened = Input {
+        name: device.name().unwrap_or_else(|_| "unknown device".into()),
+        was_default: asked_for_default,
+    };
+    if let Ok(mut last) = LAST_INPUT.lock() {
+        *last = Some(opened.clone());
+    }
 
     // ── DEBUG RECORDER ──
     //
@@ -537,12 +598,13 @@ where
     // at other rates (see dsp.rs).
     let mut frontend = dsp::FrontEnd::new(sample_rate);
     eprintln!(
-        "audio: capture @ {sample_rate} Hz · denoise {}",
+        "audio: capture @ {sample_rate} Hz · denoise {} · input {}",
         if frontend.denoise_active() {
             "on (RNNoise)"
         } else {
             "off (device not 48 kHz — auto-gain only)"
-        }
+        },
+        describe_input(&opened)
     );
 
     while !stop.load(Ordering::Relaxed) {
@@ -885,6 +947,43 @@ mod tests {
         // The first segment is still exactly what it was.
         assert_eq!(std::fs::read(&asked).expect("read"), b"first segment");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A LOG LINE THAT NAMES THE INPUT, AND SAYS WHETHER ANYBODY CHOSE IT.
+    ///
+    /// RG-122. `audio: capture @ 48000 Hz · denoise on (RNNoise)` was the whole
+    /// startup record, and both candidate inputs on 2026-09-06 ran at 48 kHz, so
+    /// `FIELD-2026-09-06.md` had to state its input on the operator's word alone.
+    /// The default-ness is the half RG-121 needs: a launch that silently fell back
+    /// to the system default reads identically to one an operator set up, and only
+    /// this phrase distinguishes them.
+    #[test]
+    fn the_log_says_which_input_and_whether_it_was_chosen() {
+        assert_eq!(
+            describe_input(&Input {
+                name: "Blackmagic Web Presenter 4K".into(),
+                was_default: false
+            }),
+            "\"Blackmagic Web Presenter 4K\" (chosen)"
+        );
+        assert_eq!(
+            describe_input(&Input {
+                name: "MacBook Pro Microphone".into(),
+                was_default: true
+            }),
+            "\"MacBook Pro Microphone\" (system default)"
+        );
+    }
+
+    /// AN INPUT NOBODY OPENED IS AN ABSENCE, NOT THE DEFAULT.
+    ///
+    /// `latency.rs` learned this distinction the hard way and it is the same one:
+    /// a diagnostic bundle that named a device Relay had never opened would be the
+    /// exact false confidence this record exists to remove. Nothing in this test
+    /// binary starts capture, so the global must still be empty.
+    #[test]
+    fn nothing_is_claimed_about_an_input_before_capture_opens_one() {
+        assert_eq!(last_input(), None);
     }
 
     #[test]
