@@ -34,6 +34,8 @@
     readErrors,
     saveTemplate,
     saveTemplateQuiet,
+    snapshotTemplateVersion,
+    serviceLock,
     deleteTemplate,
     listOutputChannels,
     exportTemplate,
@@ -102,20 +104,76 @@
   // One-time upgrade: convert every legacy region template to editable layers, in
   // place, faithfully (the conversion reproduces the region look as a layer stack
   // — see regionsToLayers). Idempotent: once converted a template is `isLayered`,
-  // so a later mount finds nothing to do. Saves quietly, then reloads once.
+  // so a later mount finds nothing to do.
+  //
+  // ── WHAT THIS USED TO DO SILENTLY, AND WHY THAT WAS THE LARGEST
+  //    IRREVERSIBLE ACTION IN THE PRODUCT ───────────────────────────────────
+  //
+  // Opening this tab rewrites roughly 31 templates on a fresh install. Each write
+  // goes through `save_template`, which is not merely a persist: `main.rs` pushes
+  // the fresh JSON into `KioskHub::set_template` and emits `template://updated` to
+  // every native output window. So one click on a tab republished the church's
+  // whole shelf to every screen in the building.
+  //
+  // Three things were wrong with how it did that, and all three are fixed here:
+  //
+  //   1 · NO WAY BACK. `saveNow` in the editor banks a version before it writes;
+  //       this did not, so the version History menu offered nothing to restore.
+  //       Every template is now snapshotted BEFORE its conversion is written.
+  //   2 · A SWALLOWED CATCH. `.catch(() => {})` per template meant a refusal on
+  //       template 7 of 31 was invisible: the loop carried on and the operator saw
+  //       a half-converted shelf with no message. The outcome is now counted and
+  //       reported on the pane, and a failure is reported in the error colour.
+  //   3 · MID-SERVICE. `save_template` is not on `servicelock::PROTECTED`, so this
+  //       ran while a church was recording. It now declines while the lock is
+  //       engaged and says so — the shelf is not urgent, and a service is.
+  //
+  // NOT CHANGED, DELIBERATELY: it still runs on mount rather than lazily. Ten
+  // files reason about the conversion having already happened — `templateKind.js`
+  // reads `layout.lowerThird` off the CONVERTED shape to keep six of the
+  // operator's eight lower thirds in the Quick tools picker, and `nameband.test.js`
+  // records the real database ids that depend on it. Deferring the conversion to
+  // the editor's own "Convert to layers" button would falsify all of that, so that
+  // half is a separate change with its own evidence, not a line in this one.
   let upgrading = false;
+  let upgradeNote = '';
+  let upgradeBad = false;
   async function upgradeLegacyToLayers() {
     if (upgrading) return;
     const legacy = $templates.filter((t) => !isLayered(t) && Array.isArray(t.layout?.regions));
     if (!legacy.length) return;
+
+    // A service outranks the shelf. `$serviceLock.engaged` is the same fact the
+    // Planner and Settings read, so all three agree about what is held back.
+    if ($serviceLock?.engaged) {
+      upgradeBad = false;
+      upgradeNote = `${legacy.length} classic template${legacy.length === 1 ? '' : 's'} will be converted after the service.`;
+      return;
+    }
+
     upgrading = true;
+    let done = 0;
+    const failed = [];
     try {
       for (const t of legacy) {
-        await saveTemplateQuiet({ ...t, layout: regionsToLayers(t) }).catch(() => {});
+        try {
+          // BANK IT FIRST. If the conversion is wrong for a template nobody has
+          // looked at in a year, History is the way back — and it has to be
+          // written before the thing it protects against.
+          await snapshotTemplateVersion(t);
+          await saveTemplateQuiet({ ...t, layout: regionsToLayers(t) });
+          done += 1;
+        } catch {
+          failed.push(t.name || `#${t.id}`);
+        }
       }
       await loadTemplates();
     } finally {
       upgrading = false;
+      upgradeBad = failed.length > 0;
+      upgradeNote = failed.length
+        ? `Converted ${done} of ${legacy.length} classic templates. ${failed.join(', ')} could not be converted — ${failed.length === 1 ? 'it is' : 'they are'} unchanged and still usable.`
+        : `Converted ${done} classic template${done === 1 ? '' : 's'} to layers. Earlier versions are in each template's History.`;
     }
   }
 
@@ -646,6 +704,14 @@
     </div>
 
     {#if err}<div class="rw-panefoot tg-err" role="alert">{err}</div>{/if}
+    <!-- THE CONVERSION SAYS WHAT IT DID. It rewrites the whole shelf and
+         republishes it to every screen; doing that without a word was the
+         defect. `role="status"`, not `alert`: on the ordinary path this is
+         good news and must not interrupt. A failure is carried in the error
+         colour by `.bad`, so the two outcomes never read alike. -->
+    {#if upgradeNote}
+      <div class="rw-panefoot tg-upgnote" class:bad={upgradeBad} role="status">{upgradeNote}</div>
+    {/if}
   </section>
 
   <!-- ══ INSPECTOR ══ -->
@@ -1010,6 +1076,8 @@
   /* The error sits in the pane's own foot, behind the same hairline every other
      footnote uses, rather than floating as a bordered card of its own. */
   .tg-err{ color:var(--v-rose); font-size:var(--v-fs-cap); line-height:1.45; }
+  .tg-upgnote{ color:var(--v-dim); font-size:var(--v-fs-lbl); }
+  .tg-upgnote.bad{ color:var(--v-red); }
 
   /* ── inspector ────────────────────────────────────────────────────────── */
   .tg-preview{ position:relative; aspect-ratio:16/9; border-radius:var(--v-r-md); border:1px solid var(--v-line2);
