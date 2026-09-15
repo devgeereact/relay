@@ -657,8 +657,13 @@ describe('L2 · the audio card is set as the capitals it is tracked for', () => 
     // The WORDS stay Relay's — a screen reader hears "Sens", not "S E N S".
     // FOUR now, not two: the microphone's own row joined this card in wave 3
     // (L3) so a volunteer can change the input without leaving the run surface.
+    // `Listen` / `Listening`, not `off` / `live`. Four instructions — the guide,
+    // the Help screen, the latency panel and the empty History pane — say "press
+    // Start listening", and this caption was the only thing near the control. It
+    // read as a status rather than a button, so the first action of every service
+    // was named by a word that appeared nowhere on the surface.
     expect([...host.querySelectorAll('.audrow .dcap')].map((e) => e.textContent.trim()))
-      .toEqual(['Mic', 'off', 'Sens', 'armed']);
+      .toEqual(['Mic', 'Listen', 'Sens', 'armed']);
   });
 
   // THE VOICE CHIP GOES ON TELLING THE TRUTH. The prototype's reads `VOICE`; ours

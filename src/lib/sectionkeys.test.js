@@ -16,6 +16,7 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { tick } from 'svelte';
 import * as svelteRuntime from 'svelte';
 
@@ -623,5 +624,41 @@ describe('a song joins a service through the plan', () => {
     const el = mountInto(LyricsPane);
     await openSong(el);
     expect(el.querySelectorAll('.vd-check').length).toBe(0);
+  });
+});
+
+// ── THE LEGEND MUST NAME THE KEY THAT GOES TO AIR ───────────────────────────
+//
+// DECISIONS §81 settled that a press on a BROWSING surface cues and does not
+// fire. The lyric pane's section keys deliberately DO fire — REBRAND §10 asks for
+// exactly that, and a key that only cues is a key nobody would use. So this one
+// surface genuinely carries two rules, and the dangerous one sits on the quieter
+// input: a volunteer who has learned that the Library is the safe workspace meets
+// a `c` that reaches the congregation with no confirmation.
+//
+// The operator's decision (2026-09-15) was to KEEP the key as a take and say so
+// where the keys are printed, rather than regrade it. That makes the grammar
+// honest rather than uniform — but it only works if the sentence is actually
+// there, which is what this holds.
+describe('§10 · the pane says what a section key does', () => {
+  const pane = readFileSync(
+    resolve(process.cwd(), 'src/lib/views/library/LyricsPane.svelte'),
+    'utf8',
+  );
+
+  it('the legend names all three presses, not just the safe two', () => {
+    const legend = pane.slice(pane.indexOf('class="ly-legend'), pane.indexOf('class="ly-legend') + 400);
+    expect(legend).toContain('single click cues');
+    expect(legend).toContain('double click opens');
+    expect(legend, 'the take must be printed beside the two that are not').toContain(
+      'a section key goes to air',
+    );
+  });
+
+  it('and the pane really does still fire on a key, so the legend is not a lie', () => {
+    // The other half. A legend that promised a take over a pane that had since
+    // been regraded to cue would be the cheatsheet-that-lies failure in reverse.
+    expect(pane).toMatch(/onSectionKey/);
+    expect(pane).toMatch(/fire\(/);
   });
 });

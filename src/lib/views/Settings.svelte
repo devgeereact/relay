@@ -819,7 +819,7 @@
 <WorkspaceFrame
   title={activeSection.label}
   standfirst={activeSection.desc}
-  columns="212px minmax(0,1fr)">
+  columns="var(--v-rail) minmax(0,1fr)">
     <!-- ════ SECTION RAIL ════ -->
     <aside class="rw-pane">
       <div class="rw-panehead">
@@ -1543,9 +1543,16 @@
             steps a plan slide when plan content is on air and walks the passage when a verse
             is. The transport bar on Live always prints which.
             <br /><br />
-            A surface showing a song's sections also takes single letters
-            (<kbd class="s-kbd">v</kbd> <kbd class="s-kbd">c</kbd> <kbd class="s-kbd">b</kbd> …)
-            — never one this page lists, and never while a field has focus.
+            <!-- `b` WAS IN THIS LIST, AND `b` IS BLACKOUT. `SHORTCUTS` carries
+                 'B', so `RESERVED` carries `b`, so `assignKeys` can never issue
+                 it — a Bridge is deliberately on `r` for exactly this reason
+                 (REBRAND §10). The sentence promised "never one this page lists"
+                 while printing one this page lists, and a volunteer who followed
+                 it would black out the congregation's screens. -->
+            A song's sections take single letters
+            (<kbd class="s-kbd">v</kbd> <kbd class="s-kbd">c</kbd> <kbd class="s-kbd">r</kbd> …)
+            — never one this page lists, and never while a field has focus. They
+            work on the Library's song pane; the run surface does not take them yet.
           </p>
           <button class="r-btn ghost sm" on:click={() => setSession({ activeTab: 'help' })}>Open Help &amp; Shortcuts</button>
         </div>

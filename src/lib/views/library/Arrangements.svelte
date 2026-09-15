@@ -388,7 +388,7 @@
   }
   .ar-badge {
     align-self: flex-start;
-    font-size: 10px;
+    font-size: var(--v-fs-b3);
     letter-spacing: 0.08em;
     color: var(--v-rose);
     border: 1px solid currentColor;

@@ -239,7 +239,7 @@
     gap: 2px;
   }
   .ms-foundname span {
-    font-size: 10px;
+    font-size: var(--v-fs-b3);
     color: var(--v-faint);
     overflow: hidden;
     text-overflow: ellipsis;

@@ -664,10 +664,26 @@ describe('a fit that still clips says so', () => {
     const after = [...el.querySelectorAll('.lfit')];
     expect(after.length).toBeGreaterThan(0);
     for (const n of after) {
-      expect(n.style.fontSize, 'the rebuilt element was left at its declared base').not.toBe(
-        `${n.dataset.base}cqw`
-      );
+      // THE PROBE IS "WAS IT SIZED", NOT "DID THE NUMBER MOVE".
+      //
+      // It used to assert the fitted size differed from the declared base, which
+      // worked only because every layer defaulted to `fit:'both'` and `'both'`
+      // GROWS — so a reference always changed. Labels now default to `'shrink'`
+      // (a reference that grows past the verse it labels was inverting the
+      // hierarchy on five of eight shelf templates), and for a `shrink` layer
+      // with nothing overflowing, the declared base IS the correct fitted size.
+      //
+      // So the old probe could no longer tell a fitted label from an unfitted
+      // one, which is the very distinction this test exists for. Being SET at all
+      // is the honest signal, and it holds for both modes.
+      expect(n.style.fontSize, 'the rebuilt element was never sized at all').toBeTruthy();
     }
+    // …and at least one of them really did move, so the loop is still running
+    // rather than merely assigning the base back.
+    expect(
+      after.some((n) => n.style.fontSize !== `${n.dataset.base}cqw`),
+      'no layer moved — the fit loop did not run',
+    ).toBe(true);
     expect(after.map((n) => n.style.fontSize)).toEqual(fittedFirst);
     expect(seen.length, 'a render that was never fitted was never measured either').toBeGreaterThan(
       before

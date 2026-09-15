@@ -66,3 +66,4 @@ backgrounds-originals/
 
 # Design-tool caches (local only)
 .impeccable/
+.gstack/

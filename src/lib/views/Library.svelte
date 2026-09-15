@@ -798,7 +798,7 @@
   .lib-mshot img, .lib-mshot video{ width:100%; height:100%; object-fit:contain }
   .lib-mdoc{ font-size:var(--v-fs-lbl); color:var(--v-dim) }
   .lib-mname{ flex:1; min-width:0; display:flex; flex-direction:column; gap:3px }
-  .lib-mfile{ font-size:10px; color:var(--v-faint); overflow:hidden; text-overflow:ellipsis;
+  .lib-mfile{ font-size:var(--v-fs-b3); color:var(--v-faint); overflow:hidden; text-overflow:ellipsis;
     white-space:nowrap }
   @media (max-width:640px){
     .lib-mrow{ flex-wrap:wrap }

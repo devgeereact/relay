@@ -175,7 +175,7 @@
   /* The NEXT item is steel — it is the thing you are working on, and it is not on
      a screen. Grey and amber both already mean something else here. */
   .lo-q.next { box-shadow: inset 2px 0 0 var(--v-sel); background: var(--v-sel-soft); }
-  .lo-qn { flex: 0 0 auto; font-size: 10px; color: var(--v-faint); padding-top: 2px; }
+  .lo-qn { flex: 0 0 auto; font-size: var(--v-fs-b3); color: var(--v-faint); padding-top: 2px; }
   .lo-qc { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
   .lo-qc b { font-size: var(--v-fs-b2); font-weight: 600; color: var(--v-txt); }
   .lo-qc span {

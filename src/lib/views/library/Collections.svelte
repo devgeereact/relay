@@ -135,7 +135,7 @@
      chip's own --v-surf2 ground: a badge around a number on a square chip is the
      pill §1 spent a paragraph removing. A count is a fact the operator reads,
      so it is --v-dim, not --v-faint. */
-  .cr-k { color: var(--v-dim); font-size: 10px; flex: 0 0 auto; }
+  .cr-k { color: var(--v-dim); font-size: var(--v-fs-b3); flex: 0 0 auto; }
 
   .cr-views { display: flex; gap: 4px; flex-wrap: wrap; }
   /* A SEGMENT, not a button — B2. One of the view choices under the collection

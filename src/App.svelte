@@ -69,6 +69,10 @@
     macos: typeof navigator !== 'undefined' && /Mac/i.test(navigator.platform || ''),
     droppedPartials,
     screensDown,
+    // A dead capture, so it reaches the strip on EVERY workspace rather than only
+    // the foot of Live. An operator editing a template when the lead unplugs the
+    // interface had no signal at all before this.
+    audioError: $capture.audioError,
   });
   $: degLevel = worstLevel(degraded);
 

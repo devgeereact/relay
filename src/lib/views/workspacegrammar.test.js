@@ -18,12 +18,27 @@
 // Written the way CLAUDE.md asks: each assertion fails if the defect it names is
 // reintroduced. Checked by reverting each rule and watching it go red.
 import { describe, it, expect } from 'vitest';
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { resolve, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const read = (f) => readFileSync(resolve(__dirname, '../../..', f), 'utf8');
+const ROOT = resolve(__dirname, '../../..');
+const read = (f) => readFileSync(resolve(ROOT, f), 'utf8');
+
+/**
+ * The file with its COMMENTS REMOVED, for the sweeps that forbid a literal.
+ *
+ * A comment that records a defect necessarily quotes it — the note explaining why
+ * a locked layer stopped being amber names the two hexes it stopped using — and a
+ * scanner reading raw source flags the explanation as the offence. `panic.test.js`
+ * records the same lesson in the same words: only the code is the claim.
+ */
+const code = (f) =>
+  read(f)
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^\s*\/\/.*$/gm, '');
 
 const FRAME = 'src/lib/views/WorkspaceFrame.svelte';
 // The workspaces this pass covers. Live is deliberately absent: it is the run
@@ -44,6 +59,41 @@ const DESKS = [
   'src/lib/views/themes/ThemeGallery.svelte',
   'src/lib/views/themes/ThemeEditor.svelte',
 ];
+
+/**
+ * THE STYLE SWEEPS COVER MORE THAN THE DESKS, because a scanner that quietly
+ * narrows passes everything.
+ *
+ * `DESKS` is the list for the three STRUCTURAL checks above — the shared frame,
+ * no private three-column body, a column track — and those genuinely only apply
+ * to a surface built out of `WorkspaceFrame`. The Library builds its own layout
+ * and the template editor is an editor, so neither belongs there.
+ *
+ * But the four checks BELOW are about type, radius and colour, and those apply to
+ * anything an operator looks at. Running them over `DESKS` alone meant the two
+ * largest surfaces in the app — the whole Library tree, and the 2,000-line
+ * template editor — were outside every sweep, while `docs/REBRAND.md` cited this
+ * file as the instrument that holds the type scale. The rule read as enforced
+ * over surfaces it had never inspected.
+ *
+ * This is the third time an instrument in this repository has been found scanning
+ * less than it claimed (`ipc.test.js` twice, both recorded in its own header), so
+ * the list is derived rather than typed: every `.svelte` under `views/` plus the
+ * shell components, minus the boot ladder, which must render without the
+ * stylesheet and is allowed its own literals.
+ */
+const STYLED = (() => {
+  const out = [];
+  const walk = (dir) => {
+    for (const name of readdirSync(join(ROOT, dir))) {
+      const rel = `${dir}/${name}`;
+      if (statSync(join(ROOT, rel)).isDirectory()) walk(rel);
+      else if (name.endsWith('.svelte')) out.push(rel);
+    }
+  };
+  walk('src/lib/views');
+  return out.filter((f) => !f.includes('/boot/'));
+})();
 
 describe('§2 · one workspace grammar, not three', () => {
   it('every desk lays itself out in the shared frame', () => {
@@ -155,19 +205,55 @@ describe('§11 · one type scale, three roles', () => {
     // The WHOLE file, not just its <style> block: two of the sizes this found
     // were inline `style="font-size:12.5px"` on an empty-state, which is exactly
     // where a hand-picked size hides from a stylesheet-only scan.
-    for (const f of [...DESKS, FRAME]) {
-      for (const m of read(f).matchAll(/font-size:\s*(\d+(?:\.\d+)?)px/g)) {
+    for (const f of [...STYLED, FRAME]) {
+      for (const m of code(f).matchAll(/font-size:\s*(\d+(?:\.\d+)?)px/g)) {
         offenders.push(`${f}: ${m[0]}`);
       }
     }
-    expect(offenders, 'use a --v-fs-* token — the scale is the point').toEqual([]);
+    // THE FROZEN BACKLOG, after 10px became a real step.
+    //
+    // Widening this sweep from six desks to every view (see `STYLED`) reported 39
+    // off-scale literals — and TWENTY-SEVEN of them were 10px, in one visual role,
+    // across fourteen files. That is a step the ladder had not published, not
+    // twenty-seven restyle decisions, so `--v-fs-b3` was added and all of them
+    // converted; the conversion is behaviour-preserving because every one already
+    // rendered at 10px.
+    //
+    // These twelve are the honest remainder: eight distinct sizes that happened to
+    // land near each other, each a decision about ONE control. Rounding one into a
+    // neighbouring step to quieten a scanner is the worst of the three available
+    // answers (docs/REBRAND.md, "Still owed"). The COUNT is asserted, so the list
+    // can only shrink and a new literal anywhere in `views/` now fails the build.
+    const KNOWN_PX = [
+      'src/lib/views/Help.svelte: font-size:16px',
+      'src/lib/views/Live.svelte: font-size:10.5px',
+      'src/lib/views/Live.svelte: font-size:8px',
+      'src/lib/views/library/Browse.svelte: font-size: 10.5px',
+      'src/lib/views/library/History.svelte: font-size:10.5px',
+      'src/lib/views/library/History.svelte: font-size:22px',
+      'src/lib/views/library/ImportReview.svelte: font-size:10.5px',
+      'src/lib/views/library/ImportReview.svelte: font-size:22px',
+      'src/lib/views/library/LyricsPane.svelte: font-size: 10.5px',
+      'src/lib/views/templates/TemplateEditor.svelte: font-size:7px',
+      'src/lib/views/templates/TemplateEditor.svelte: font-size:8px',
+    ];
+    expect(
+      offenders.filter((o) => !KNOWN_PX.includes(o)),
+      'use a --v-fs-* token — the scale is the point',
+    ).toEqual([]);
+    // Twelve occurrences across eleven distinct entries: `Live.svelte: 8px`
+    // appears twice. Lower this when you pay one off.
+    expect(
+      offenders.length,
+      'the frozen type backlog may only shrink',
+    ).toBeLessThanOrEqual(12);
   });
 });
 
 describe('§1 · the decisions that kept being re-litigated per file', () => {
   it('no pills — a pill in a control room reads as a toy', () => {
     const offenders = [];
-    for (const f of [...DESKS, FRAME]) {
+    for (const f of [...STYLED, FRAME]) {
       for (const m of read(f).matchAll(/border-radius:\s*99px/g)) offenders.push(`${f}: ${m[0]}`);
     }
     // `--v-r-round` survives for the two shapes that are genuinely round — a
@@ -180,8 +266,9 @@ describe('§1 · the decisions that kept being re-litigated per file', () => {
     // A selected row is the thing you are working on. Amber means a congregation
     // is looking at something, and it is never allowed to mean anything else —
     // which is exactly the sort of rule a restyle erodes one file at a time.
-    for (const f of DESKS) {
-      const style = read(f).slice(read(f).lastIndexOf('<style>'));
+    for (const f of STYLED) {
+      const c = code(f);
+      const style = c.slice(c.lastIndexOf('<style>'));
       for (const m of style.matchAll(/\.[\w-]*\.(?:sel|on)\{([^}]*)\}/g)) {
         expect(m[1], `${f}: a selected row is painted amber`).not.toMatch(/--v-amber/);
       }
@@ -190,13 +277,40 @@ describe('§1 · the decisions that kept being re-litigated per file', () => {
 
   it('a desk paints with tokens, never with a raw hex', () => {
     const offenders = [];
-    for (const f of [...DESKS, FRAME]) {
-      const style = read(f).slice(read(f).lastIndexOf('<style>'));
+    for (const f of [...STYLED, FRAME]) {
+      const c = code(f);
+      const style = c.slice(c.lastIndexOf('<style>'));
       for (const m of style.matchAll(/#[0-9a-fA-F]{3,8}\b/g)) offenders.push(`${f}: ${m[0]}`);
     }
     // `--v-rose,#e0526a` is a var() FALLBACK on the arrangement picker and #fff
     // is ink on a filled destructive button; both are pre-existing and named.
-    expect(offenders.filter((o) => !/#e0526a|#fff\b/.test(o))).toEqual([]);
+    //
+    // THE FROZEN BACKLOG. Widening this sweep from six desks to every view
+    // (see `STYLED`) uncovered eight literals on surfaces the scan had never
+    // reached. They are recorded here rather than deleted, because each is a
+    // restyle decision about one control and rounding them away to quieten a
+    // scanner is the worst of the three available answers (docs/REBRAND.md,
+    // "Still owed"). The COUNT is asserted, so the list can only shrink: a new
+    // literal on any view now fails, which is the whole point of widening it.
+    const KNOWN = [
+      'src/lib/views/Help.svelte: #c8302f',            // the stage alert red, pre-token
+      'src/lib/views/Library.svelte: #000',            // a projector ground
+      'src/lib/views/Live.svelte: #000',
+      'src/lib/views/Live.svelte: #cfd6e2',            // has a token; a restyle, not a sweep
+      'src/lib/views/library/VerseDeck.svelte: #000',
+      'src/lib/views/templates/TemplateEditor.svelte: #000',
+      'src/lib/views/templates/TemplateEditor.svelte: #1d1d21',
+      'src/lib/views/templates/TemplateEditor.svelte: #26262b',
+    ];
+    const real = offenders.filter((o) => !/#e0526a|#fff\b/.test(o));
+    expect(real.filter((o) => !KNOWN.includes(o))).toEqual([]);
+    // Ten occurrences across eight distinct literals — `#000` appears twice in
+    // `Live.svelte` and twice in `VerseDeck.svelte`. The cap is the occurrence
+    // count, not `KNOWN.length`, so paying off one of a pair still registers.
+    expect(
+      real.length,
+      'the frozen hex backlog may only shrink — lower this number when you pay one off',
+    ).toBeLessThanOrEqual(10);
   });
 });
 

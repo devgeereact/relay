@@ -675,11 +675,11 @@
   .lib-tl-list{ list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:2px; }
   .lib-tl-row{ display:flex; align-items:baseline; gap:10px; padding:5px 8px;
     border-radius:var(--v-r-sm); background:var(--v-surf2); font-size:var(--v-fs-b2); }
-  .lib-tl-at{ flex:0 0 52px; color:var(--v-faint); font-size:10px; }
+  .lib-tl-at{ flex:0 0 52px; color:var(--v-faint); font-size:var(--v-fs-b3); }
   .lib-tl-src{ flex:0 0 68px; color:var(--v-faint); font-size:var(--v-fs-fig); letter-spacing:.06em;
     text-transform:uppercase; }
   .lib-tl-what{ flex:1; min-width:0; color:var(--v-txt); }
-  .lib-tl-detail{ color:var(--v-dim); font-size:10px; overflow:hidden;
+  .lib-tl-detail{ color:var(--v-dim); font-size:var(--v-fs-b3); overflow:hidden;
     text-overflow:ellipsis; white-space:nowrap; max-width:40%; }
   .lib-tl-row.fault{ background:color-mix(in srgb, var(--v-rose) 8%, var(--v-surf2));
     border:1px solid color-mix(in srgb, var(--v-rose) 40%, transparent); }
@@ -716,10 +716,10 @@
     border-left:2px solid var(--v-line2); border-radius:var(--v-r-sm); }
   .lib-rp-lines{ margin:4px 0 12px; padding-left:0; list-style:none;
     display:flex; flex-direction:column; gap:3px; font-size:var(--v-fs-b2); }
-  .lib-rp-lines span{ color:var(--v-faint); margin-right:6px; font-size:10px; }
+  .lib-rp-lines span{ color:var(--v-faint); margin-right:6px; font-size:var(--v-fs-b3); }
   .lib-rp-dl{ margin-bottom:10px; }
-  .lib-rp-lat{ font-size:10px; color:var(--v-dim); }
-  .lib-perf{ width:100%; border-collapse:collapse; font-size:10px; color:var(--v-dim); }
+  .lib-rp-lat{ font-size:var(--v-fs-b3); color:var(--v-dim); }
+  .lib-perf{ width:100%; border-collapse:collapse; font-size:var(--v-fs-b3); color:var(--v-dim); }
   .lib-perf th{ text-align:left; font-weight:500; color:var(--v-faint); padding:4px 6px;
     border-bottom:1px solid var(--v-line); }
   .lib-perf td{ padding:3px 6px; border-bottom:1px solid var(--v-line2); }
@@ -802,7 +802,7 @@
   .lib-transcript{ padding:14px 16px; max-height:420px; overflow:auto; font-size:var(--v-fs-pr); line-height:1.6; }
   .lib-collabel-row{ display:flex; align-items:baseline; gap:8px; }
   .lib-collabel-row .spring{ flex:1; }
-  .lib-hits{ font-size:10px; color:var(--v-faint); }
+  .lib-hits{ font-size:var(--v-fs-b3); color:var(--v-faint); }
   .lib-tsearch{ margin:8px 0 10px; height:34px; font-size:var(--v-fs-h3); }
   .lib-ttext :global(mark){ background:var(--v-accent-soft); color:var(--v-accent2);
     border-radius:var(--v-r-sm); padding:0 2px; }
@@ -810,7 +810,7 @@
 
   .lib-tline{ margin-bottom:12px; }
   .lib-tline:last-child{ margin-bottom:0; }
-  .lib-tmeta{ display:block; font-size:10px; color:var(--v-faint); margin-bottom:3px; }
+  .lib-tmeta{ display:block; font-size:var(--v-fs-b3); color:var(--v-faint); margin-bottom:3px; }
   .lib-ttext{ color:var(--v-dim); }
 
   .lib-detect-list{ display:flex; flex-direction:column; gap:9px; }
@@ -818,7 +818,7 @@
   .lib-detect-top{ display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:8px; }
   .lib-detect-ref{ font-family:var(--f-head); font-weight:700; font-size:var(--v-fs-ttl); color:var(--v-txt); }
   .lib-detect-method{ text-transform:uppercase; }
-  .lib-detect-bottom{ display:flex; align-items:center; justify-content:space-between; font-size:10px; color:var(--v-faint); }
+  .lib-detect-bottom{ display:flex; align-items:center; justify-content:space-between; font-size:var(--v-fs-b3); color:var(--v-faint); }
   .lib-detect-conf{ color:var(--v-accent); }
   /* The evidence, quoted. Serif and italic like every other quotation of speech in
      this app, and quiet: it is context for the reference above it, not a headline. */

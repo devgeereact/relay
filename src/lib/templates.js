@@ -37,12 +37,26 @@ export const BUILTINS = [
   {
     id: 3,
     name: 'Lower Third',
-    layout: { regions: ['verse_text', 'reference'], align: 'left', lowerThird: true, refFirst: false },
+    // THE BAND FILL IS NEUTRAL, AND IT MATCHES THE RUST SEED EXACTLY.
+    //
+    // Two defects met here. The fill was `#8b5cf6` — amethyst, which rule 18
+    // reserves for REHEARSAL — so restoring the band (see `panelBg` in
+    // TemplateRender) would have put a lilac bar on every stream in a colour that
+    // already means something else. And the two seed lists disagreed about it:
+    // this file said `#8b5cf6`, `db/templates.rs` said `#b080e0`, and they also
+    // disagreed about `align`. A kiosk with no database resolves `template_id=3`
+    // against THIS list and a desktop resolves it against the DB row, so one
+    // screen wore a different purple from the next depending which door the
+    // content came in.
+    //
+    // Near-black at full strength with light type, matching `Lower Third Night`,
+    // which is the house answer for a caption bar over a camera.
+    layout: { regions: ['verse_text', 'reference'], align: 'center', lowerThird: true, refFirst: false },
     style: {
       font: 'var(--f-body)',
       background: 'transparent',
-      accent: '#8b5cf6',
-      verseColor: '#1c1224',
+      accent: '#101319',
+      verseColor: '#f2f4f8',
       verseSize: '2.6',
       refSize: '1.7',
       italicRef: false,

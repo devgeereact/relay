@@ -83,8 +83,9 @@ both expect it.
 | [qa/QA_HARNESS.md](qa/QA_HARNESS.md) | The QA apparatus, and **§0 is the register of counts for the whole repository** — every row beside the command that produces it |
 | [qa/RELAY_GAP.md](qa/RELAY_GAP.md) | The `RG-` gap register. Meant to be updated, unlike the audits |
 | [qa/LAUNCH_CHECKLIST.md](qa/LAUNCH_CHECKLIST.md) | One release gate list. Every box names its command or says it has never been checked |
+| [REBRAND.md](REBRAND.md) | The active build specification for Relay Studio — the brand, the workspace grammar, the template engine, and the twelve phases with their status. `AGENTS.md` step 2 sends readers here to find it |
 | [RELAY_V1_AUDIT.md](RELAY_V1_AUDIT.md) | The V1 production audit: the decision, three scorecards, the fix process, and every phase of both briefs dispositioned |
-| [qa/audits/](qa/audits/) | **Frozen.** Six dated audits, including the retired product audit. Closures go in a fix log at the top, never into the findings |
+| [qa/audits/](qa/audits/) | **Frozen.** Seven dated audits, including the retired product audit. Closures go in a fix log at the top, never into the findings |
 
 **On ADRs:** [DECISIONS.md](DECISIONS.md) *is* the architecture-decision record — a single
 narrative log with reasoning and explicit non-goals, 46 numbered decisions (§18–§63) deep,

@@ -10,6 +10,105 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 
 ## [Unreleased]
 
+### Lower thirds had nothing behind the words
+
+A lower third is the caption bar Relay puts over a live camera on the stream. All of
+them were painting the words with no bar behind them, so on a dark shot the caption
+was barely there and on three of the supplied designs — dark type on a light bar —
+it was effectively invisible. Nothing at the desk showed this, because the console
+preview and the projector are a different path from the stream.
+
+Fixed, and the bar is now a neutral near-black rather than the purple it used to be.
+Purple means *rehearsal* everywhere else in Relay, and two copies of the design
+disagreed about which purple, so the same template could look different depending on
+whether a screen was a browser source or the projector.
+
+### The reference was bigger than the verse
+
+On five of the supplied looks the citation — "Romans 8:28" — was rendering **larger**
+than the scripture it labels, because a short line was allowed to grow to fill its
+box and the citation is always the shortest line. On the High Visibility look, the
+one meant for a brightly lit room, the reference came out 17% larger than the verse.
+A label now shrinks to fit and never grows past the thing it labels.
+
+### A long reading squeezed the words instead of growing the bar
+
+The caption bar was meant to grow a little before the type gets smaller. It never
+did — the rule could not fire on either of the supplied bars — so a long verse
+shrank to about two thirds of its intended size instead. It grows now.
+
+### Help sent you to a button that does not exist
+
+The help topic for *something wrong is on the screen* told you to click **Emergency
+Stop**, "top-right of every screen, always". That control was removed when the top
+bar was cleared down to the six workspaces. It now names the red **Clear screens**
+button along the bottom of the Controls card, which is on every workspace.
+
+### The shortcuts page offered a key that blacks out the church
+
+It listed `b` as an example of a song-section key. `b` is **Blackout**. Pressing it
+on a song would have taken every screen to black. The examples are now keys that a
+song can actually be given, and the page says where section keys work.
+
+### A microphone that stops is now announced everywhere
+
+If the microphone failed — a cable pulled, an interface unplugged — the only sign was
+a line of technical text at the bottom of the Live tab. On any other workspace there
+was nothing at all, and the transcript simply stopped. It now appears in the status
+bar on every workspace, in plain words, with what to check.
+
+### The listening control says "Listen"
+
+Every instruction in Relay told you to press *Start listening*. No button said that:
+it was an unlabelled microphone icon captioned `off`. It now reads **Listen**, and
+**Listening** once it is.
+
+### Colours mean what they say again
+
+**TAKE** was amber. Amber means *on air* in Relay, so the brightest thing on the
+screen was lit even with the screens clear and even during a rehearsal, which made
+the one colour that should catch your eye useless. TAKE is now blue, and amber is
+back to meaning a congregation is looking at something.
+
+**Dismiss** was solid red while **Clear screens** — the control that takes the wall
+down — was a faint tint. That is the wrong way round, and red now belongs to the
+panic controls. The **Preview** badge and the **Rehearsal** tag were also hard to
+read; both were corrected and measured.
+
+### The desks line up
+
+Panel headings across a workspace were three different heights, so the lines under
+them did not match. The left and right columns were a different width on every
+workspace, so both edges of the screen moved whenever you changed tab. They are one
+measurement now. An error message in a narrow column used to wrap to one word a line;
+it wraps properly.
+
+### Escape now works inside every dialog
+
+Four places — the crash panel, the setup walk-through, the AI detection detail and
+the template menus — took the Escape key away without doing anything with it. In two
+of them the **Clear screens** button was also covered. So at those moments neither
+way of clearing the screens worked. One press now closes what is in front of you; a
+second clears the screens, as it always has everywhere else.
+
+### Other fixes
+
+- The **AI detection** card now says which kind of claim it is making. A misheard
+  *book* used to be labelled the same as a paraphrase, and the note underneath said
+  "not a spoken reference", which was untrue of it.
+- Opening **"why this match?"** on one suggestion and pressing *Accept & fire* sent a
+  different verse — the top one in the list. It sends the one you were looking at.
+- A song or notice in **Up Next** whose title contained a reference (a hymn called
+  "Psalm 23") put the Bible chapter on the screen instead of the song.
+- The panic warning could end in `[object Object]`.
+- The sermon text is no longer printed to the terminal.
+- A screen set to follow the content look no longer opens wearing the wrong one.
+- Converting old templates now keeps a restorable version first, says how many it
+  converted, and will not run while a service is being recorded.
+- Deleting a **cue** during a service is now held back like deleting a plan.
+- Pressing **Space** on a button you have tabbed to now presses that button, instead
+  of advancing the programme.
+
 ### The first verse of a service could go up cut in half
 
 On a screen that had just been opened — an OBS browser source, a kiosk page, the

@@ -607,7 +607,7 @@
     place-items: center;
     border: 1px solid var(--v-line2);
     font-family: var(--f-mono);
-    font-size: 10px;
+    font-size: var(--v-fs-b3);
     color: var(--v-faint);
   }
   /* The step you are ON. Chrome, not a tally light. */
@@ -781,7 +781,7 @@
     font-size: var(--v-fs-pr);
   }
   .fr-mon-d {
-    font-size: 10px;
+    font-size: var(--v-fs-b3);
     color: var(--v-faint);
   }
 

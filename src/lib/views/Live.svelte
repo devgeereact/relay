@@ -140,7 +140,7 @@
   import EmptyState from '../ui/EmptyState.svelte';
   import ErrorState from '../ui/ErrorState.svelte';
   import Loading from '../ui/Loading.svelte';
-  import { heard, methodKey, inLibrary } from '../detect.js';
+  import { heard, methodBadgeKey, methodNoteKey, inLibrary } from '../detect.js';
   import DetectionInspector from '../DetectionInspector.svelte';
   import { humanError as humanErrorBase } from '../errors.js';
   import { typeOf, payloadOf, slidesOf, slideAccent, cueSub, nextOf, stepFrom } from '../plan.js';
@@ -1994,7 +1994,16 @@
             <article class="clm" class:guess={!heard(d)} class:done={!!card.outcome}>
               <div class="clm-top">
                 <span class="clm-ref">{d.reference}</span>
-                <span class="cbadge" class:p={!heard(d)}>{heard(d) ? 'Heard' : 'Paraphrase'}</span>
+                <!-- THE CHIP NAMES THE METHOD, not merely heard-vs-guessed.
+                     This was `heard(d) ? 'Heard' : 'Paraphrase'`, so `semantic`,
+                     `ambiguous` and `uncertain_book` all wore one word — and
+                     `uncertain_book` is the method added after "hymn number three
+                     sixteen" put Numbers 3:16 on a wall, which rule 10 calls the
+                     claim an operator most needs to look at. `methodKey` was
+                     imported into this file and never called. Colour is unchanged:
+                     every non-direct method stays cyan and stays without a
+                     percentage (rule 18). -->
+                <span class="cbadge" class:p={!heard(d)}>{$t(methodBadgeKey(d))}</span>
               </div>
 
               {#if heard(d)}
@@ -2004,7 +2013,13 @@
                   <i style="width:{Math.round(d.confidence * 100)}%"></i>
                 </div>
               {:else}
-                <p class="guess-note">{$t('live.not_a_spoken_reference')}</p>
+                <!-- …and the note says what is actually true of THIS method.
+                     "not a spoken reference" is right for a paraphrase and wrong
+                     for the other two: an ambiguous reference WAS spoken, and for
+                     `uncertain_book` the chapter and verse were heard and only the
+                     book was repaired. One sentence for all three said the
+                     opposite of what happened on the two that matter most. -->
+                <p class="guess-note">{$t(methodNoteKey(d))}</p>
               {/if}
 
               {#if d.matched_text}
@@ -2076,7 +2091,14 @@
     </div>
   </div>
 
-  {#if $capture.audioError}<div class="audioerr">Audio: {$capture.audioError}</div>{/if}
+  <!-- Humanised, and it says what to DO. It was `Audio: {raw}` — the cpal device
+       string straight through, bypassing `errors.js`, which is the one humaniser
+       this codebase insists on. "input device not found: Scarlett 2i2" is a
+       sentence with no verb and no route back. The same fact now also reaches the
+       shell's degraded strip on every workspace (`degraded.js`, id `audio`). -->
+  {#if $capture.audioError}
+    <div class="audioerr" role="alert">The microphone stopped — {humanError($capture.audioError)} Check the cable, then press the microphone in Live audio.</div>
+  {/if}
   {#if $capture.outputError}<div class="audioerr">Output: {$capture.outputError}</div>{/if}
 
   <!-- ══ WHAT THE LAMPS CANNOT SAY ══
@@ -2160,7 +2182,7 @@
   .view-ctl{ flex:0 0 auto; display:flex; align-items:center; gap:5px; }
   .view-fs{ height:22px; padding:0 8px; border-radius:var(--v-r-sm); cursor:pointer;
     background:var(--v-surf); border:1px solid var(--v-line2); color:var(--v-faint);
-    font-family:var(--f-body); font-size:10px; font-weight:600; }
+    font-family:var(--f-body); font-size:var(--v-fs-b3); font-weight:600; }
   .view-fs:hover{ color:var(--v-txt); border-color:var(--v-accent-line); }
 
   .con{
@@ -2214,8 +2236,14 @@
     display:grid; grid-template-columns:1fr 118px 1fr; gap:var(--v-sp-sm); min-height:0}
 
   /* ── the desk: rail, stage, inspector ──────────────────────────────────── */
+  /* THE SAME TWO TOKENS EVERY OTHER DESK USES. Live builds its own grid rather
+     than going through `WorkspaceFrame`, so its tracks were a second copy of the
+     numbers and had already drifted on the inspector (286 against the desks'
+     286/312/320/330). One token each means the run surface and the desks cannot
+     put their vertical rules in different places — which is what `WorkspaceFrame`
+     says it is for. The narrow step below is the one declared exception. */
   .desk{flex:1; min-height:0; display:grid;
-    grid-template-columns:206px minmax(0,1fr) 286px; gap:var(--v-sp-sm)}
+    grid-template-columns:var(--v-rail) minmax(0,1fr) var(--v-insp); gap:var(--v-sp-sm)}
   .rail-col{display:flex; flex-direction:column; gap:var(--v-sp-sm); min-height:0; min-width:0}
   .rail-col :global(.lrail){flex:1 1 auto; min-height:0}
   .stage{display:flex; flex-direction:column; gap:var(--v-sp-sm); min-height:0; min-width:0}
@@ -2254,9 +2282,17 @@
      74px, because the gate's own controls are sized to content and the heading
      was the only thing allowed to shrink. Now the controls drop to a second line
      instead of crushing the name of the panel they belong to. */
+  /* THE SAME 34px THE SHARED FRAME USES. Live builds its own panes rather than
+     going through `WorkspaceFrame`, so it had no min-height at all and its heads
+     took whatever their contents gave them: measured at 1280x800, PREVIEW 38.8,
+     PROGRAM 40.8 and AI DETECTION 47 (that one holds a 26px icon button), so
+     content began at three different heights on one row. Three title bars along
+     the top edge that do not share a bottom edge is the clearest "assembled"
+     signal on the desk, and it is the first thing the eye sweeps. A 26px control
+     sits inside 34px rather than setting it. */
   .pane-head{flex:0 0 auto; display:flex; align-items:center; gap:var(--v-sp-sm);
-    flex-wrap:wrap; row-gap:6px;
-    padding:10px 12px; border-bottom:1px solid var(--v-line)}
+    flex-wrap:wrap; row-gap:6px; min-height:34px;
+    padding:0 12px; border-bottom:1px solid var(--v-line)}
   /* The reference console has no sidebar, so its panels are ~25% wider than they can
      be here. The heading is therefore set a touch tighter than the design sheet's
      Label spec so the full panel name still fits rather than truncating. */
@@ -2288,10 +2324,20 @@
      Amethyst is REHEARSAL and nothing else (rule 18, DECISIONS §22) — this chip
      wore it, so on the one morning both were true the operator read the wrong
      one. The grid's cued cell has always been steel blue; these two now agree. */
-  .tag.preview{background:var(--v-sel); color:var(--v-sel-ink)}
+  /* `--v-sel-fill`, NOT `--v-sel`. White on the lighter #5b9cf8 measures 2.78:1
+     and fails AA at 9.5px — and `app.css` names this exact mistake in its own
+     comment beside the token ("White on --v-sel-fill is 4.84:1 … on the lighter
+     #5b9cf8 it is not"). This badge is what tells Preview from Programme in a dark
+     booth at a glance. */
+  .tag.preview{background:var(--v-sel-fill); color:var(--v-sel-ink)}
   /* Amber, and only when the congregation is genuinely looking at it. */
   .tag.onair{background:var(--v-amber); color:var(--v-amber-ink)}
-  .tag.reh{background:var(--v-amethyst-soft); border:1px solid var(--v-amethyst-line); color:var(--v-amethyst)}
+  /* SOLID, like ON AIR. It was a 16% tint with a hairline while its two
+     neighbours were solid fills, so the state that most needs to be unmistakable
+     was drawn the most faintly of the four. Rehearsal is a claim about what the
+     congregation can see; it should carry the same weight as the claim it
+     replaces. */
+  .tag.reh{background:var(--v-amethyst); color:var(--v-void)}
   .tag.off{background:var(--v-grey-soft); border:1px solid var(--v-line2); color:var(--v-dim)}
   /* HARD RIGHT, MONO, UPPERCASE. The reference is the one figure on this head an
      operator reads from across a booth, and in the body face it sat at a
@@ -2318,7 +2364,7 @@
   /* Slate, not amber and not rose: a repeat is a fact, not an alarm. Amber means
      ON AIR and must never be spent on anything else (DECISIONS §22). */
   .mon-repeat{margin-right:8px; padding:1px 6px; border-radius:var(--v-r-sm);
-    font-size:10px; letter-spacing:.06em; color:var(--v-faint);
+    font-size:var(--v-fs-b3); letter-spacing:.06em; color:var(--v-faint);
     border:1px solid var(--v-line2)}
   .screen{flex:1; min-height:0; position:relative; overflow:hidden; background:#000;
     border-top:1px solid var(--v-line)}
@@ -2354,10 +2400,20 @@
     text-transform:uppercase; color:var(--v-faint); text-align:center}
   /* 64px, as measured in the prototype. The one control on this surface that is
      always the same press, in the same place, however tired the operator is. */
+  /* STEEL, NOT AMBER. Amber means ON AIR and nothing else (rule 18,
+     DESIGN_SYSTEM §1), and an operator's fastest read of the room is "is there
+     amber on this screen". A 64px amber button is lit when the screens are clear,
+     lit when nothing is staged, and lit inside a REHEARSAL — the one state whose
+     whole promise is that nothing can reach the congregation. It removed that read
+     entirely, and the design system states the rule it broke in its own words:
+     "a colour that is always lit cannot also be a warning."
+     TAKE is the primary action, so it wears the primary colour. Amber stays where
+     it is earned: the program ring, the ON AIR badge and the status cell — which
+     are genuinely the best thing on this surface and are what this protects. */
   .take{height:64px; border-radius:var(--v-r-md); border:0; cursor:pointer;
-    background:var(--v-amber); color:var(--v-amber-ink); font-family:var(--f-body);
+    background:var(--v-sel-fill); color:var(--v-sel-ink); font-family:var(--f-body);
     font-size:var(--v-fs-lbl); font-weight:700; letter-spacing:.1em;
-    box-shadow:0 6px 18px -6px var(--v-amber-glow);
+    box-shadow:0 6px 18px -6px var(--v-sel-glow);
     transition:transform 90ms var(--v-ease), filter .14s}
   .take:hover:not(:disabled){filter:brightness(1.06)}
   .take:disabled{opacity:.4; cursor:not-allowed; box-shadow:none}
@@ -2475,7 +2531,7 @@
      `planCells`) so the count under the grid agrees with the plan, and it is
      disabled rather than firing nothing. */
   .sg-void{position:absolute; inset:0; display:grid; place-items:center; padding:8px;
-    text-align:center; font-size:10px; letter-spacing:.05em; color:var(--v-faint)}
+    text-align:center; font-size:var(--v-fs-b3); letter-spacing:.05em; color:var(--v-faint)}
   .sg-cell:hover .sg-thumb{border-color:var(--v-sel-line)}
   /* Steel blue is SELECTION — the thing you are working on. It is what a preview
      is, and it is deliberately not grey: grey means CUED, a plan position. */
@@ -2509,7 +2565,7 @@
   .sg-air{background:var(--v-amber); color:var(--v-amber-ink)}
   .sg-prev{background:var(--v-sel); color:var(--v-sel-ink)}
   .sg-meta{display:flex; align-items:baseline; gap:6px; min-width:0; padding:0 2px}
-  .sg-n{flex:0 0 auto; font-size:10px; color:var(--v-dim)}
+  .sg-n{flex:0 0 auto; font-size:var(--v-fs-b3); color:var(--v-dim)}
   .sg-ttl{min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
     font-size:var(--v-fs-cap); color:var(--v-txt)}
   .sg-cell.islive .sg-ttl{color:var(--v-amber)}
@@ -2522,7 +2578,7 @@
      own face (L2). These used to be set in the body face beside an uppercase
      `SLIDES`, so the three parts of one title read as three different things. */
   .sg-cap{min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
-    font-family:var(--f-mono); font-size:10px; letter-spacing:.09em;
+    font-family:var(--f-mono); font-size:var(--v-fs-b3); letter-spacing:.09em;
     text-transform:uppercase; color:var(--v-dim)}
   /* WHAT A PRESS DOES, as ONE run (L2). `min-width:0` and the ellipsis matter:
      this is the first thing allowed to give way when the head runs out of room,
@@ -2530,7 +2586,7 @@
      survive a narrow window and this sentence is carried verbatim in `title`
      besides — and on every cell's own `title` under the pointer. */
   .sg-hint{flex:0 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis;
-    white-space:nowrap; font-size:10px; letter-spacing:.08em;
+    white-space:nowrap; font-size:var(--v-fs-b3); letter-spacing:.08em;
     text-transform:uppercase; color:var(--v-faint)}
   /* The count LEADS the line and is the one part of it that is a figure. It is
      also the part that never goes: a count is a FACT about the grid, and the
@@ -2627,9 +2683,18 @@
      be shown — it is the operator's evidence that a number was misheard — and
      the control that cannot take it says why rather than failing after a press. */
   .act:disabled{cursor:not-allowed; opacity:.45}
-  .act.go{background:var(--v-emerald); color:var(--v-void)}
-  .act.no{background:var(--v-red); color:#fff}
-  .khint{margin:0; text-align:center; font-size:10px; color:var(--v-faint)}
+  /* THE EMPHASIS WAS INVERTED, AND RED MEANT TWO THINGS ON ONE SCREEN.
+     `Dismiss` was full-strength `--v-red` while `Clear screens` — the panic
+     control, fifteen pixels away in the dock — is `--v-red-soft` with a hairline.
+     So the loudest red in the room was "no thanks" and the quietest was "take the
+     wall down". Full-strength red now belongs to panic alone, and Dismiss takes
+     the same tinted-outline treatment the dock already uses for a red action.
+     `Accept & fire` becomes the steel primary it is; emerald was not in the
+     palette table at all. White on --v-red is 3.40:1 and failed AA — the tint
+     puts red TEXT on a dark ground instead, which passes comfortably. */
+  .act.go{background:var(--v-sel-fill); color:var(--v-sel-ink)}
+  .act.no{background:var(--v-red-soft); border:1px solid var(--v-red-line); color:var(--v-red)}
+  .khint{margin:0; text-align:center; font-size:var(--v-fs-b3); color:var(--v-faint)}
   .khint kbd{font-family:var(--f-mono); font-size:var(--v-fs-fig); color:var(--v-dim);
     background:var(--v-surf3); border:1px solid var(--v-line2); border-radius:var(--v-r-sm); padding:2px 5px}
 
@@ -2642,7 +2707,7 @@
     background:var(--v-amber); color:var(--v-amber-ink)}
   .mini.ghost{background:transparent; border:1px solid var(--v-line2); color:var(--v-dim)}
   .mini:hover{filter:brightness(1.08)}
-  .rel-note{margin:0; font-size:10px; color:var(--v-faint)}
+  .rel-note{margin:0; font-size:var(--v-fs-b3); color:var(--v-faint)}
   .rel-chips{display:flex; flex-wrap:wrap; gap:6px}
   .rel-chip{font-family:var(--f-mono); font-size:var(--v-fs-cap); color:var(--v-dim);
     background:var(--v-surf2); border:1px solid var(--v-line2); border-radius:var(--v-r-sm);
@@ -2700,6 +2765,10 @@
   /* ── responsive ────────────────────────────────────────────────────────── */
   @media (max-width:1400px){
     .con-top{grid-template-columns:1fr 104px 1fr}
+    /* DELIBERATE, and the one place a desk may depart from the tokens: below
+       1400px the run surface gives its middle column the room, because the
+       programme monitor is what an operator is actually looking at. Declared
+       here rather than inherited, so it reads as a decision. */
     .desk{grid-template-columns:180px minmax(0,1fr) 250px}
     /* A LADDER, NOT A SWITCH — the same shape as `app.css`'s `.xcap`, and for the
        same reason. The slides head carries five things: the pane's name, the

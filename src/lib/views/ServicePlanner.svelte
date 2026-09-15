@@ -593,7 +593,7 @@
      screen; and it is rendered in every mode, with or without a plan open. Do not
      restore the standfirst as well — half a caveat beside the whole one is weaker
      than the whole one alone, which is why this sentence has now moved twice. -->
-<WorkspaceFrame title="Planner" columns="206px minmax(0,1fr) 330px">
+<WorkspaceFrame title="Planner" columns="var(--v-rail) minmax(0,1fr) var(--v-insp)">
   <svelte:fragment slot="head">
     {#if !$capture.available}
       <span class="r-badge rose"><span class="bd"></span>Backend not attached — plans need the desktop app</span>
@@ -634,14 +634,14 @@
           </button>
         {/each}
       {:else if plans.length}
-        <div class="sp-hint r-mono">No plan matches “{planQ}”.</div>
+        <div class="sp-hint">No plan matches “{planQ}”.</div>
       {:else if $readErrors.listPlans}
         <!-- RG-95. `listPlans` swallows to `[]`, so a database that did not answer
              read as "No plans yet" — and the answer to that sentence, on a Tuesday
              evening, is to build Sunday's service again from nothing. -->
         <ErrorState compact error={$readErrors.listPlans} onRetry={refresh} />
       {:else}
-        <div class="sp-hint r-mono">No plans yet.</div>
+        <div class="sp-hint">No plans yet.</div>
       {/if}
     </div>
 
@@ -812,7 +812,7 @@
           </div>
           <div class="sp-results">
             {#if addSearching}
-              <div class="sp-hint r-mono">Searching…</div>
+              <div class="sp-hint">Searching…</div>
             {:else if addVerses.length || addSongs.length || addMedia.length || addAnnounce.length}
               {#if addVerses.length}<div class="r-lbl sp-reslbl">Scripture</div>{/if}
               {#each addVerses as v}
@@ -849,7 +849,7 @@
             {:else if addQ.trim()}
               <div class="sp-hint">Nothing found — save scripture, import songs, or add media in the Library.</div>
             {:else}
-              <div class="sp-hint r-mono">Type to search scripture, songs and media.</div>
+              <div class="sp-hint">Type to search scripture, songs and media.</div>
             {/if}
           </div>
         </div>
@@ -1149,7 +1149,10 @@
   /* ── main ── */
   /* One head, not a header plus a toolbar: the plan's name, what it costs, and
      the two things you do to it, on the seam that already divides the pane. */
-  .sp-panehead{ min-height:38px; padding:5px 12px; gap:10px; flex-wrap:wrap; }
+  /* Same as Channels: no height override (REBRAND §1). Measured at 1280x800, the
+     Planner's three pane heads were 34 / 38 / 34, so the middle one's seam sat
+     four pixels low. */
+  .sp-panehead{ padding:0 12px; gap:10px; flex-wrap:wrap; }
   .sp-plantitle{ flex:0 0 auto; text-transform:none; letter-spacing:var(--v-tr-h2);
     font-size:var(--v-fs-h3); line-height:var(--v-lh-h3); max-width:46ch; }
   .sp-hm{ display:inline-flex; align-items:center; gap:5px; flex:0 0 auto;

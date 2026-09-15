@@ -583,7 +583,7 @@
 
      The sentence each section is FOR moved into the rail foot, where it costs
      the grid no height and is visible on all three sections. -->
-<WorkspaceFrame columns="206px minmax(0,1fr) 320px">
+<WorkspaceFrame columns="var(--v-rail) minmax(0,1fr) var(--v-insp)">
   <!-- ══ RAIL ══ One vocabulary, three sections. Every output concern lives
        behind exactly one of these words, and the rail keeps all three in view
        rather than making one of them a mode you have to remember you are in. -->
@@ -1168,7 +1168,13 @@
     overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 
   /* ── the screens pane head ── */
-  .ch-panehead{ min-height:40px; padding:5px 12px; gap:10px; flex-wrap:wrap; }
+  /* NO HEIGHT OVERRIDE (REBRAND §1: a component may override a shared control's
+     width and padding, never its height). This was 40px against the frame's 34,
+     so on the Screens section the middle column's bottom hairline sat six pixels
+     below the two either side of it, across the whole desk. `min-height:34px`
+     from `.rw-panehead` stands; wrapping still grows the box, because a
+     min-height is a minimum. */
+  .ch-panehead{ padding:0 12px; gap:10px; flex-wrap:wrap; }
   .ch-search{ display:flex; align-items:center; gap:8px; background:var(--v-bg);
     border:1px solid var(--v-line2); border-radius:var(--v-r-sm); padding:0 10px; height:26px;
     flex:0 1 240px; min-width:140px; }

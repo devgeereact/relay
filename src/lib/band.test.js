@@ -311,3 +311,39 @@ describe('a band survives the inspector', () => {
     expect(back.members).toEqual(band.members);
   });
 });
+
+// ── THE SHARE CAP BOUNDS GROWTH, NOT THE BAND'S DESIGNED SIZE ────────────────
+//
+// `limit = Math.max(byGrow, byShare, 0)` made this rule unreachable on both bands
+// Relay ships. Both are designed taller than a third of the frame (38% and 36%),
+// so `byShare` (66.67) already sat ABOVE `box.top`, `top - 1 >= limit` was false
+// on the first iteration, and the band never moved. The type shrank instead —
+// measured at 0.630 of the designer's size against a 0.78 floor.
+//
+// DECISIONS §75 and REBRAND §4 both promise the band gives ground before the words
+// do. The mechanism was built, tested and documented, and could not fire on either
+// template that declares it, so the observable behaviour was the promise inverted.
+//
+// Watched to fail by restoring `Math.max(byGrow, byShare, 0)`.
+describe('§75 · a band designed past the share can still give ground', () => {
+  // The shape of the two SHIPPED bands: top 62 (38% tall), 16 points of grow.
+  const shipped = (text) => ({
+    band: { top: 62, grow: 16 },
+    members: [{ text, size: 5.5, face: 'sans', w: 84, h: 20 }],
+    aspect: 16 / 9,
+  });
+
+  it('a long passage moves the band rather than only shrinking the type', () => {
+    const long = bandFit(shipped('a'.repeat(420)));
+    expect(long.top, 'the band must climb from its designed 62').toBeLessThan(62);
+    // …and not past its own grow allowance.
+    expect(long.top).toBeGreaterThanOrEqual(62 - 16);
+  });
+
+  it('and a short name at the same setting does not move it', () => {
+    // REBRAND §4 states this half explicitly, and it is what stops the rule
+    // becoming "the band is always as tall as it may be".
+    const short = bandFit(shipped('Ada Lovelace'));
+    expect(short.top).toBe(62);
+  });
+});

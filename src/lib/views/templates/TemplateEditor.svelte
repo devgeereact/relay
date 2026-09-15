@@ -138,6 +138,33 @@
   // here (a photograph behind the words — `review` counts those separately and
   // refuses to call them a pass), and a clean result.
   let legOpen = false;
+
+  /**
+   * WHAT THE RENDERER MEASURED, as opposed to what the stylesheet declared.
+   *
+   * Rule 37: a fit loop with no notion of failure always succeeds, so forty rounds
+   * of x0.95 squeeze any verse into any box and a template that has stopped
+   * working looks exactly like one that is working. `TemplateRender` reports the
+   * ratio it settled at and whether it still clipped; below 45% of the size the
+   * designer asked for, that is worth saying out loud.
+   *
+   * It belongs beside the Readability verdict rather than in a fourth panel — the
+   * question is the same one ("will the back row read this?") and an operator
+   * should not have to collate two answers.
+   */
+  let fitNote = '';
+  let fitBad = false;
+  function noteFit(f) {
+    if (!f) return;
+    if (f.clipped) {
+      fitBad = true;
+      fitNote = `words are being cut off at ${Math.round(f.scale * 100)}% of the designed size`;
+      return;
+    }
+    fitBad = !f.legible;
+    fitNote = f.legible ? '' : `shrunk to ${Math.round(f.scale * 100)}% to fit`;
+  }
+
   $: legSummary = !legible
     ? ''
     : legible.problems
@@ -1166,6 +1193,17 @@
                 <span>{c.note}</span>
               </li>
             {/each}
+            <!-- THE MEASURED ROW. The three above are computed from the template's
+                 declared colours and sizes; this one is what the renderer actually
+                 settled at on this artboard, which is the only one of the four that
+                 can catch rule 37's failure. Absent when there is nothing to say,
+                 like every other honest row in this product. -->
+            {#if fitNote}
+              <li class="te-legrow" class:bad={fitBad}>
+                <b>Measured</b>
+                <span>{fitNote}</span>
+              </li>
+            {/if}
           </ul>
           <div class="te-legroom">
             <label class="te-leglab" for="te-scr">Screen width (m)</label>
@@ -1243,7 +1281,17 @@
             {/if}
           <div class="te-artboard" bind:this={boardEl}>
             {#if !previewMode}<div class="te-checker"></div>{/if}
-            <TemplateRender template={themedEdit} content={previewContent} />
+            <!-- RULE 37's REPORT, ON THE SURFACE THE RULE NAMES.
+                 `TemplateRender`'s own comment says the fit "SAYS SO, once, to
+                 whoever is rendering it. The console and the Templates editor can
+                 then tell the operator while there is still time to pick a
+                 different look." `onFit` had exactly ONE caller in the whole tree
+                 and it was Live — the Sunday surface, where nobody is going to
+                 re-typeset a template at 10:29. This is the Tuesday one.
+                 The card thumbnails deliberately still pass nothing: they are
+                 194px wide, so their fit is not the wall's fit and a warning there
+                 would be noise. -->
+            <TemplateRender template={themedEdit} content={previewContent} onFit={noteFit} />
             {#if !previewMode}
               <!-- Selection / drag overlay: one handle box per positioned layer. -->
               <div class="te-overlay">
@@ -1713,7 +1761,7 @@
   .te-distbox{ width:190px; aspect-ratio:16/9; overflow:hidden; position:relative;
     background:#000; border:1px solid var(--v-line); border-radius:var(--v-r-sm); }
   .te-distinner{ position:absolute; inset:0; transform-origin:center; }
-  .te-dist figcaption{ font-size:10px; color:var(--v-faint); text-align:center;
+  .te-dist figcaption{ font-size:var(--v-fs-b3); color:var(--v-faint); text-align:center;
     margin-top:4px; }
 
   .te-shell{ display:flex; flex-direction:column; height:100%; min-height:0; gap:12px; }
@@ -1900,8 +1948,12 @@
      reads from the control as well as from the row's opacity. */
   .te-lmini.dim{ color:var(--v-faint); opacity:.6; }
   /* A locked layer's button stays lit even at rest, so the lock state reads at a
-     glance without hovering the row. */
-  .te-lmini.on{ color:var(--v-amber); opacity:1; }
+     glance without hovering the row.
+     NOT AMBER (rule 18, DECISIONS §21). Amber means ON AIR and nothing else, and a
+     locked layer is inert — the opposite of a claim about a congregation's screen.
+     Full-strength text against the `.dim` siblings is what makes it read as lit;
+     the contrast is the signal, and it does not spend a law colour to get it. */
+  .te-lmini.on{ color:var(--v-txt); opacity:1; }
   .te-hint{ padding:14px 8px; text-align:center; font-size:var(--v-fs-cap); color:var(--v-faint); }
   .te-panenote{ margin:0; padding:10px 12px; border-top:1px solid var(--v-line); flex:0 0 auto; font-size:var(--v-fs-cap); line-height:1.5; color:var(--v-faint); }
 
@@ -1960,7 +2012,10 @@
   .te-hbox.sel{ border:1px solid var(--v-accent); box-shadow:0 0 0 1px var(--v-accent); z-index:10; }
   /* A locked box is inert AND click-through, so it never moves and never blocks a
      layer beneath it (select that one and drag it right under the locked one). */
-  .te-hbox.locked{ pointer-events:none; border-style:dotted; border-color:rgba(255,196,0,.5); cursor:default; }
+  /* Same rule 18 correction, and this one was a THIRD amber: a raw rgba(255,196,0)
+     beside the token's #ffa31a and the #ffb000 elsewhere. A locked box is not
+     alarming, it is inert, so it takes a neutral rule rather than a law colour. */
+  .te-hbox.locked{ pointer-events:none; border-style:dotted; border-color:var(--v-line2); cursor:default; }
   .te-htag{ position:absolute; top:-16px; left:0; font-family:var(--f-mono); font-size:8px; letter-spacing:.04em; color:#fff; background:var(--v-accent-fill); padding:1px 5px; border-radius:var(--v-r-sm); white-space:nowrap; }
   /* Eight resize handles — one on every corner and edge. */
   .te-hh{ position:absolute; width:10px; height:10px; background:var(--v-accent); border:2px solid #fff; border-radius:2px; box-sizing:border-box; }

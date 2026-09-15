@@ -272,11 +272,13 @@ body{ margin:0; background:var(--bg); color:var(--text); font-family:var(--f-bod
      are — the ladder above ends at `h3` and these sit beside it, not under it.
 
      THE LADDER IS NOT A COMPLETE INVENTORY OF WHAT RENDERS, and saying so here
-     is cheaper than discovering it again: 10px, 10.5px, 8px, 16px, 18px, 22px
-     and 13.5px are still typed by hand in about forty-eight places. They are
-     not in the reference either. Converting one is a restyle decision about
-     that control, not a sweep, so they are left visible rather than rounded
-     into a neighbouring step to make a scanner quiet. */
+     is cheaper than discovering it again. 10px became a real step below
+     (`--v-fs-b3`) once the widened scan showed twenty-seven of them in one role;
+     10.5px, 8px, 7px, 16px, 18px and 22px are still typed by hand, and those are
+     genuinely one-control decisions rather than a missing step — eight distinct
+     judgements that happened to land near each other. Converting one is a
+     restyle decision about that control, not a sweep, so they are left visible
+     rather than rounded into a neighbouring step to make a scanner quiet. */
   --v-fs-ttl:15px; --v-lh-ttl:20px;  /* Object title — a settings page head, a
                                         claim's reference. 600, -.012em.     */
   --v-fs-h3:12.5px;--v-lh-h3:17px;   /* Row heading                          */
@@ -286,6 +288,29 @@ body{ margin:0; background:var(--bg); color:var(--text); font-family:var(--f-bod
   --v-fs-b1:12px;  --v-lh-b1:17px;   /* Body — the default                   */
   --v-fs-b2:11.5px;--v-lh-b2:16px;   /* Body, secondary                      */
   --v-fs-lbl:11px; --v-lh-lbl:15px;  /* Label                                */
+  /* THE TWO VERTICAL RULES OF THE DESK.
+     Measured at 1280 before these existed: left rails of 180/206/206/206/212 and
+     inspectors of 250/276/312/320/330, so BOTH seams moved on every tab press —
+     Live to Planner shifted the left one 26px and the right one 80px.
+     `WorkspaceFrame`'s own comment says an operator moving between the run
+     surface and a desk "should not be able to tell that two people built them".
+     One token each, referenced by the frame and by Live's hand-built desk. */
+  --v-rail:206px; --v-insp:300px;
+  --v-fs-b3:10px;  --v-lh-b3:14px;   /* Sub-label — the quieter line UNDER a
+                                        label. Added wave 5 (2026-09-15) after
+                                        the grammar scan was widened from six
+                                        desks to every view and reported 39
+                                        off-scale literals, of which TWENTY-SEVEN
+                                        were 10px, in one visual role, across
+                                        fourteen files. That is the definition of
+                                        a step the ladder did not publish — the
+                                        same finding that produced `ttl`, `pr`,
+                                        `fig` and `kind` above — and not
+                                        twenty-seven restyle decisions. The
+                                        reference uses 10px more than any other
+                                        size it omits from the nine-step table.
+                                        Converting is behaviour-preserving: every
+                                        one of them already rendered at 10px.   */
   --v-fs-cap:9.5px;--v-lh-cap:13px;  /* Caption / the uppercase key line     */
   --v-fs-mono:11px;--v-lh-mono:15px; /* Mono row                             */
   --v-fs-fig:9px;  --v-lh-fig:12px;  /* Figure — a count, a unit, a key cap.
@@ -726,7 +751,7 @@ input[type="checkbox"]{ accent-color:var(--v-accent); }
     background:var(--v-bg); border-top:1px solid var(--v-line2); padding:6px 6px calc(6px + env(safe-area-inset-bottom));
     justify-content:space-around; align-items:stretch; }
   .botnav .bn{ flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px;
-    background:none; border:0; color:var(--v-faint); font-size:10px; font-weight:600; cursor:pointer; border-radius:var(--v-r-sm); }
+    background:none; border:0; color:var(--v-faint); font-size:var(--v-fs-b3); font-weight:600; cursor:pointer; border-radius:var(--v-r-sm); }
   .botnav .bn.active{ color:var(--v-accent2); background:var(--v-accent-soft); }
 }
 
@@ -767,7 +792,7 @@ input[type="checkbox"]{ accent-color:var(--v-accent); }
   overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .cat-card .cat-add{ margin-top:11px; width:100%; }
 .cat-empty{ padding:34px 20px; text-align:center; border:1px dashed var(--v-line2); border-radius:var(--v-r-lg); }
-.cat-sketch{ font-family:var(--f-mono); font-size:10px; letter-spacing:.1em; text-transform:uppercase;
+.cat-sketch{ font-family:var(--f-mono); font-size:var(--v-fs-b3); letter-spacing:.1em; text-transform:uppercase;
   color:var(--v-faint); display:inline-flex; align-items:center; gap:7px; }
 .cat-sketch::before{ content:""; width:6px; height:6px; border-radius:50%; background:var(--v-accent); box-shadow:0 0 7px var(--v-accent); }
 
@@ -791,7 +816,7 @@ input[type="checkbox"]{ accent-color:var(--v-accent); }
   padding:5px 7px; margin-right:4px; border-radius:var(--v-r-sm); background:var(--v-surf3);
   border:1px solid var(--v-line2); color:var(--v-txt); }
 .cheat-foot{ margin:16px 0 0; font-size:var(--v-fs-b1); color:var(--v-dim); line-height:1.6; }
-.cheat-foot kbd{ display:inline-block; font-family:var(--f-mono); font-size:10px; padding:3px 5px;
+.cheat-foot kbd{ display:inline-block; font-family:var(--f-mono); font-size:var(--v-fs-b3); padding:3px 5px;
   border-radius:var(--v-r-sm); background:var(--v-surf3); border:1px solid var(--v-line2); color:var(--v-txt); }
 
 /* ===== Update banner =================================================
@@ -915,7 +940,7 @@ input[type="checkbox"]{ accent-color:var(--v-accent); }
    centred flex child in a scroll container has its overflowing TOP clipped
    unreachably. This centres a short stage and lets a long one scroll. */
 .b-inner{ width:100%; max-width:760px; margin:auto 0; }
-.b-eyebrow{ font-family:var(--f-mono); font-size:10px; font-weight:600; letter-spacing:.18em;
+.b-eyebrow{ font-family:var(--f-mono); font-size:var(--v-fs-b3); font-weight:600; letter-spacing:.18em;
   text-transform:uppercase; color:var(--v-amethyst2); margin-bottom:var(--v-sp-sm); }
 .b-h1{ margin:0; font-family:var(--f-head); font-size:var(--v-fs-h1); line-height:var(--v-lh-h1);
   letter-spacing:var(--v-tr-tight); font-weight:600; color:var(--v-txt); }
@@ -985,7 +1010,7 @@ input[type="checkbox"]{ accent-color:var(--v-accent); }
 .b-actions{ display:flex; align-items:center; gap:10px; margin-top:var(--v-sp-lg); flex-wrap:wrap; }
 .b-foot{ position:relative; flex:0 0 auto; display:flex; align-items:center; gap:var(--v-sp-md);
   padding:14px 28px; border-top:1px solid var(--v-line);
-  font-family:var(--f-mono); font-size:10px; letter-spacing:.06em; text-transform:uppercase; color:var(--v-faint); }
+  font-family:var(--f-mono); font-size:var(--v-fs-b3); letter-spacing:.06em; text-transform:uppercase; color:var(--v-faint); }
 .b-foot .b-spring{ flex:1; }
 .b-foot .dot{ width:7px; height:7px; border-radius:50%; background:var(--v-amethyst); flex:0 0 auto; }
 
@@ -998,7 +1023,7 @@ input[type="checkbox"]{ accent-color:var(--v-accent); }
 .b-card{ width:100%; max-width:600px; background:var(--v-surf); border:1px solid var(--v-line2);
   border-radius:var(--v-r-xl); padding:30px 32px; box-shadow:var(--v-shadow-lg); }
 .b-card .b-kicker{ display:flex; align-items:center; gap:9px; margin-bottom:16px;
-  font-family:var(--f-mono); font-size:10px; font-weight:600; letter-spacing:.14em; text-transform:uppercase; }
+  font-family:var(--f-mono); font-size:var(--v-fs-b3); font-weight:600; letter-spacing:.14em; text-transform:uppercase; }
 .b-card .b-kicker .d{ width:8px; height:8px; border-radius:50%; background:currentColor; flex:0 0 auto; }
 .b-card h2{ margin:0 0 12px; font-family:var(--f-head); font-size:24px; line-height:1.25;
   font-weight:600; letter-spacing:var(--v-tr-tight); color:var(--v-txt); }
@@ -1007,7 +1032,7 @@ input[type="checkbox"]{ accent-color:var(--v-accent); }
 .b-card .b-facts{ margin:0 0 20px; padding:14px 16px; border:1px solid var(--v-line);
   border-radius:var(--v-r-md); background:var(--v-bg); }
 .b-card .b-facts dl{ margin:0; display:grid; grid-template-columns:auto 1fr; gap:7px 16px; }
-.b-card .b-facts dt{ font-family:var(--f-mono); font-size:10px; letter-spacing:.1em;
+.b-card .b-facts dt{ font-family:var(--f-mono); font-size:var(--v-fs-b3); letter-spacing:.1em;
   text-transform:uppercase; color:var(--v-faint); }
 .b-card .b-facts dd{ margin:0; font-size:var(--v-fs-b2); color:var(--v-txt);
   overflow:hidden; text-overflow:ellipsis; }
