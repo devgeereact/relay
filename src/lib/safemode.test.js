@@ -237,19 +237,37 @@ describe('safe mode keeps its own promise', () => {
     const body = app.slice(app.indexOf('<div class="shell"'));
     const lines = body.split('\n');
     const kids = [];
+    // TWO SCANNERS THAT MUST AGREE — `channels.rs::looks_like_a_declaration`'s
+    // trick, and this file's own rule that a scanner which quietly narrows passes
+    // everything. `kids` reads the class off an opener whose `class="…"` comes
+    // first and holds no interpolation; `opens` counts the SAME direct children
+    // without caring how the tag is written. A child added as a Svelte component
+    // (`<Dock />`), with `class` after another attribute, or with an interpolated
+    // class was invisible to the first and is visible to the second — and the
+    // original `kids.length > 5` floor could not tell eleven children from six,
+    // so any of those three would have shipped a banner back beside the desk with
+    // this test green. When they disagree, widen `kids` — do not delete the count.
+    let opens = 0;
     let underBlock = false;
     for (const ln of lines) {
       if (/^  \{[#:]/.test(ln)) { underBlock = true; continue; }
       if (/^  \{\/|^  <!--/.test(ln)) { underBlock = false; continue; }
-      const two = ln.match(/^  <\w+ class="([^"{]+)"/);
-      if (two) { kids.push(two[1]); underBlock = false; continue; }
-      if (underBlock) {
-        const four = ln.match(/^    <\w+ class="([^"{]+)"/);
-        if (four) { kids.push(four[1]); underBlock = false; }
-      }
+      const isDirect = /^  <[A-Za-z]/.test(ln) || (underBlock && /^    <[A-Za-z]/.test(ln));
+      if (!isDirect) continue;
+      opens++;
+      underBlock = false;
+      const m = ln.match(/^ +<\w+ class="([^"{]+)"/);
+      if (m) kids.push(m[1]);
     }
     // The scanner must see a tree. One that quietly found nothing would pass for ever.
     expect(kids.length, `direct children of .shell: ${kids.join(' | ')}`).toBeGreaterThan(5);
+    expect(
+      kids.length,
+      `the class scanner saw ${kids.length} of .shell's ${opens} direct children — ` +
+        'one is written as a component, or with `class` after another attribute, or ' +
+        'with an interpolated class. Widen the match; every direct child has to be ' +
+        `checked below. Seen: ${kids.join(' | ')}`,
+    ).toBe(opens);
     expect(kids).toContain('main-v');
     expect(kids.filter((k) => k === 'audiobar')).toHaveLength(2);
 
@@ -267,6 +285,34 @@ describe('safe mode keeps its own promise', () => {
           `meant to stack. Its base rule: ${rule || '(no rule found)'}`,
       ).toBe(true);
     }
+  });
+
+  it('the dock cannot re-arm detection under safe mode', async () => {
+    // THE TRANSITION DISARMS DETECTION ONCE, AND THAT IS ALL A TRANSITION CAN DO.
+    //
+    // The dock is in the SHELL — every workspace, including the Settings page where
+    // safe mode itself lives, right beside the sensitivity dial a volunteer came to
+    // look at. Its Detection switch asked about `busy` and `$capture.available` and
+    // nothing else, so one press armed the detector while three surfaces went on
+    // saying it was disarmed: `statusbar.js::wallState`'s first branch,
+    // `degraded.js` and the Settings row. And it is not a label problem — an OBS
+    // source and a kiosk page keep their hub connection through safe mode, so the
+    // next AutoFire paints a verse on them. An auto-fire is Relay's own initiative,
+    // which is the half DECISIONS §86 says IS covered.
+    const { readFileSync } = await import('node:fs');
+    const { resolve } = await import('node:path');
+    const dock = readFileSync(resolve(process.cwd(), 'src/lib/Dock.svelte'), 'utf8');
+    expect(dock, 'the dock must read safe mode, not assume the transition held').toMatch(
+      /import \{ safeMode \} from '\.\/boot\/boot\.js'/,
+    );
+    const sw = dock.slice(dock.indexOf('aria-label="Detection"'));
+    const decl = sw.slice(0, sw.indexOf('>'));
+    expect(decl, 'the Detection switch is live under safe mode').toMatch(
+      /disabled=\{[^}]*\$safeMode/,
+    );
+    // …and it says why. A control that is simply dead reads as a broken desk.
+    expect(decl).toMatch(/title=\{\$safeMode/);
+    expect(decl).toMatch(/Safe mode is on/);
   });
 
   it('setSafeMode has exactly one caller, and it is applySafeMode', async () => {

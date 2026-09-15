@@ -94,6 +94,32 @@ describe('what counts as blocked, and what counts as reduced', () => {
     expect(d.title).toMatch(/could not be enforced/);
   });
 
+  it('and stops asserting "detection is disarmed" once something has re-armed it', () => {
+    // The other half of the same sentence, and the same defect. `applySafeMode`
+    // disarms detection ONCE, at the transition (DECISIONS §86); the dock's
+    // Detection switch is in the shell on every workspace and the first-run wizard
+    // puts back whatever it found. Either one leaves this row promising a disarmed
+    // detector over an armed one — and an OBS source or kiosk page keeps its
+    // connection through safe mode, so the next AutoFire paints on it.
+    const [d] = degradations({ ...OK, safeMode: true, detectionOn: true });
+    expect(d.id).toBe('safemode');
+    expect(d.level).toBe('blocked');
+    expect(d.what).not.toMatch(/detection is disarmed/);
+    expect(d.what).not.toMatch(/nothing Relay does can reach a screen/);
+    expect(d.what).toMatch(/detection is armed/);
+    expect(d.title).toMatch(/armed again/);
+    expect(d.fix).toMatch(/Turn detection off/);
+  });
+
+  it('says nothing new when the caller does not know whether detection is armed', () => {
+    // `undefined` is not `false`. A surface that cannot answer must get the plain
+    // sentence rather than an invented claim in either direction (rule 1 of this file).
+    const { detectionOn, ...noIdea } = OK;
+    const [d] = degradations({ ...noIdea, safeMode: true });
+    expect(d.title).toBe('Safe mode is on');
+    expect(d.what).toMatch(/detection is disarmed/);
+  });
+
   it('detection being off only counts while the microphone is live', () => {
     // Detection disarmed with nothing playing into it is not a degradation, it is
     // Tuesday. Reporting it would put a permanent caveat on an idle console.
@@ -169,7 +195,8 @@ describe('every row is actionable', () => {
     expect(summarise(every)).toMatch(/2 things are unavailable/);
     // One blocked thing is named rather than counted — a count of one is worse
     // than the sentence it replaces.
-    expect(summarise(degradations({ ...OK, safeMode: true }))).toBe('Safe mode is on');
+    expect(summarise(degradations({ ...OK, safeMode: true, detectionOn: false, capturing: false })))
+      .toBe('Safe mode is on');
   });
 
   it('a reduced-only machine never reads as unavailable', () => {

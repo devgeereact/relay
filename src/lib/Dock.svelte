@@ -166,6 +166,9 @@
     msFromFields,
     fieldsFromMs,
   } from './countdown.js';
+  // The dock lives in the SHELL, on every workspace, so its Detection switch was
+  // the one door out of safe mode that nothing asked about. See the switch itself.
+  import { safeMode } from './boot/boot.js';
 
   $: lvl = Math.max(0, Math.min(1, $meter.level ?? 0));
   $: dbLabel = lvl > 0.0001 ? `${Math.round(20 * Math.log10(lvl))} dB` : '−∞ dB';
@@ -848,17 +851,38 @@
         <!-- THE SAME INSTRUMENT, ONE ROW DOWN. A struck-through target is a
              detector that is not looking; an open one is armed. Emerald and
              steel, the two colours already in this card — amber is ON AIR and
-             arming detection is not a claim about a screen (rule 18). -->
+             arming detection is not a claim about a screen (rule 18).
+
+             DISABLED UNDER SAFE MODE, and this is the load-bearing half.
+             `applySafeMode` disarms detection ONCE, at the transition (DECISIONS
+             §86). This switch is in the SHELL — it is on every workspace,
+             including the Settings page where safe mode itself lives, right
+             beside the sensitivity dial a volunteer came to look at. Nothing here
+             asked about safe mode, so one press re-armed the detector while three
+             surfaces went on saying it was disarmed: the status bar's first
+             branch ("Safe mode — outputs disabled", outranking On air),
+             `degraded.js` ("nothing Relay does can reach a screen") and the
+             Settings row itself. And it is not a harmless label problem — the
+             kiosk hub and an OBS source keep their connection through safe mode,
+             so the next AutoFire paints a verse on them. An auto-fire is Relay's
+             own initiative, which is the half §86 says IS covered; the manual-fire
+             carve-out does not reach it.
+
+             The other eight library surfaces already do this
+             (`VerseDeck.svelte`, `Browse.svelte`, `LiveOutputRail.svelte`,
+             `Dashboard.svelte`), in the same words. -->
         <button
           class="r-iconbtn audtog"
           class:on={$detectionOn}
           role="switch"
           aria-checked={$detectionOn}
           aria-label="Detection"
-          title={$detectionOn
-            ? 'Detection armed — Relay is matching what it hears against scripture. Press to turn it off.'
-            : 'Detection off — nothing is being matched against scripture. Press to arm it.'}
-          disabled={busy || !$capture.available}
+          title={$safeMode
+            ? 'Safe mode is on — detection stays disarmed. Turn safe mode off in Settings → General first.'
+            : $detectionOn
+              ? 'Detection armed — Relay is matching what it hears against scripture. Press to turn it off.'
+              : 'Detection off — nothing is being matched against scripture. Press to arm it.'}
+          disabled={busy || !$capture.available || $safeMode}
           on:click={() => run(() => setDetection(!$detectionOn))}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
             stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">

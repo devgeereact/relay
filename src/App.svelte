@@ -639,7 +639,6 @@
     </div>
   {/if}
 
-
   <!-- Main -->
   <div class="main-v">
     <header class="topbar-v">
@@ -852,7 +851,6 @@
       <button class="r-btn ghost sm" on:click={dismissPanicError}>Dismiss</button>
     </div>
   {/if}
-
 
   <!-- PRACTICE. Above the degraded strip: while a volunteer is being taught, the
        instruction is the most important thing on the screen. Amethyst, because it

@@ -4110,6 +4110,20 @@ limit:
   did not import `safeMode` at all, so that button opened a projector window with safe mode on: the
   exact capability this register reports as blocked. `autoOpenOutputs` is a different backend command
   and is gated in the same file, with no refusal, because nobody pressed anything.
+- **Arming detection afterwards.** The transition disarms the detector once, and that is all a
+  transition can do. The dock's Detection switch is in the SHELL — it is on every workspace, beside the
+  sensitivity dial, including the Settings page where safe mode itself lives — and it asked about
+  `busy` and `$capture.available` and nothing else, so one press re-armed the detector under safe mode.
+  That is not a label problem: `applySafeMode` clears the screens and closes native windows, but an OBS
+  browser source and a kiosk page keep their hub connection, so the next `AutoFire` paints a verse on
+  them. An auto-fire is Relay's own initiative, which is precisely the half this section says IS
+  covered, and it is not reached by the manual-fire carve-out below. The switch is now disabled under
+  `$safeMode` with a title saying why, matching the eight library surfaces that already do it, and
+  `degraded.js` no longer asserts *"detection is disarmed"* from the transition: it reads
+  `s.detectionOn` and says something different when the detector is armed, the same correction the
+  enforcement half needed one paragraph down. `FirstRun.svelte` restores whatever detection state it
+  found on the way in, which is the second way in and the reason the register reads the fact rather
+  than trusting the door.
 
 **Not covered, deliberately: a manual fire.**
 

@@ -91,16 +91,37 @@ export function degradations(s = {}) {
     // written to fix. `what` is the consequence for the service, and when the
     // enforcement failed the consequence is the opposite of that sentence.
     const notEnforced = !!s.safeModeError;
+    // AND THE SAME AGAIN FOR THE OTHER HALF OF THE SENTENCE.
+    //
+    // "detection is disarmed" is a claim about right now, and `applySafeMode`
+    // disarms detection ONCE, at the transition. Anything that arms it afterwards
+    // — the dock's Detection switch before it asked about safe mode, the first-run
+    // wizard putting back whatever it found on the way in — left this row printing
+    // the promise over an armed detector. That matters here more than it reads: an
+    // OBS source and a kiosk page keep their hub connection through safe mode, so
+    // an AutoFire still paints on them, and an auto-fire is Relay's own initiative
+    // — the half §86 says IS covered. Asserted from the fact, never from the
+    // transition. `undefined` is not `false`: a caller that does not know says
+    // nothing new, and gets the plain sentence.
+    const rearmed = s.detectionOn === true;
     out.push({
       id: 'safemode',
       level: 'blocked',
-      title: notEnforced ? 'Safe mode is on, and it could not be enforced' : 'Safe mode is on',
+      title: notEnforced
+        ? 'Safe mode is on, and it could not be enforced'
+        : rearmed
+          ? 'Safe mode is on, but detection has been armed again'
+          : 'Safe mode is on',
       what: notEnforced
         ? 'Safe mode is recorded, and something may still be able to reach a screen. Do not rely on it until you have looked at the screens themselves.'
-        : 'Outputs will not open and detection is disarmed — nothing Relay does can reach a screen.',
+        : rearmed
+          ? 'Outputs will not open, but detection is armed — so Relay can still fire a verse to a screen that kept its connection, such as an OBS source or a kiosk page.'
+          : 'Outputs will not open and detection is disarmed — nothing Relay does can reach a screen.',
       fix: notEnforced
         ? 'Press Esc to clear the screens, then check each one by hand. Settings → General says what failed.'
-        : 'Settings → General → Turn off safe mode.',
+        : rearmed
+          ? 'Turn detection off in the Live audio card, or turn safe mode off in Settings → General.'
+          : 'Settings → General → Turn off safe mode.',
     });
   }
 
