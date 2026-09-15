@@ -192,8 +192,24 @@
     crash = landed ?? { enabled: false, dsn: '' };
     savedDsn = landed?.dsn ?? '';
   }
+  // A READ THAT FAILED IS NOT AN EMPTY ADDRESS.
+  //
+  // `getCrashReporting` is GROUP 2 and its safe default is `{ enabled:false, dsn:'' }`
+  // — so a failed read on mount put `savedDsn = ''` on this page, and flipping the
+  // switch would then send `('', true)`. `set_crash_reporting` writes the string
+  // unconditionally, so the stored DSN was DESTROYED by a control the operator
+  // pressed to turn reporting on. Nothing leaked (`telemetry::enable` returns early
+  // on an empty DSN), and losing the one address a church configured is bad enough.
+  // While the reason is recorded, both writing controls stand down and say why.
+  $: crashReadFailed = $readErrors.getCrashReporting ?? null;
   async function toggleCrash(enabled) {
     crashMsg = '';
+    // THE DRAFT IS THE OPERATOR'S, AND A SWITCH IS NOT A DISCARD.
+    // `acceptCrash` takes the whole landed object, `crash.dsn` included, so a flip
+    // silently replaced a half-typed address with the saved one — and took the
+    // "Not saved yet" mark with it, which is the instrument that exists so an edit
+    // that went nowhere is visible rather than discovered a week later.
+    const draft = crash.dsn ?? '';
     try {
       // `savedDsn`, NOT `crash.dsn`. The switch is the operator saying yes to
       // WHETHER, and it is not their yes to WHERE. Sending the bound field here
@@ -203,6 +219,9 @@
       // and reports already sent cannot be recalled. Changing the address is
       // `saveDsn`'s job and has its own button.
       acceptCrash(await setCrashReporting(enabled, savedDsn));
+      // Put the draft back where the operator left it. `savedDsn` is untouched, so
+      // `dsnDirty` re-marks it and Save address is still the only way to commit it.
+      if (draft.trim() !== savedDsn.trim()) crash = { ...crash, dsn: draft };
       crashMsg = crash.enabled
         ? 'Crash reporting on.'
         : enabled
@@ -2084,12 +2103,24 @@
                block in the script for why an address that decides where data
                leaves this machine does not become live by accident. -->
           <div class="s-addrow">
-            <input id="crash-dsn" class="r-input s-dsn" type="text" placeholder="https://…@…ingest.sentry.io/…" bind:value={crash.dsn} disabled={!$capture.available} />
-            <button class="r-btn ghost sm" on:click={saveDsn} disabled={!$capture.available || dsnBusy || !dsnDirty}>
+            <input id="crash-dsn" class="r-input s-dsn" type="text" placeholder="https://…@…ingest.sentry.io/…" bind:value={crash.dsn} disabled={!$capture.available || !!crashReadFailed} />
+            <button class="r-btn ghost sm" on:click={saveDsn} disabled={!$capture.available || dsnBusy || !dsnDirty || !!crashReadFailed}>
               {dsnBusy ? 'Saving…' : 'Save address'}
             </button>
           </div>
-          {#if dsnDirty}
+          {#if crashReadFailed}
+            <!-- ASKED AND FAILED, not "there is no address". The safe default this
+                 page was handed reads exactly like a church that never configured
+                 one — and saving over it would write the empty string. Rose, never
+                 amber: a control that has had to stand down is a failure, and
+                 Settings is never on air (rule 18). -->
+            <p class="s-alert" role="alert">
+              Relay could not read the crash-reporting setting, so it cannot say what
+              address is in force — {humanError(crashReadFailed)} The switch and
+              <b>Save address</b> are held back until it can, so nothing writes over
+              an address that may still be stored.
+            </p>
+          {:else if dsnDirty}
             <!-- Amethyst, never amber: this is a caution, and amber means on air.
                  An unsaved edit that says nothing is the same silence the Save
                  button was added to end, one step along. -->
@@ -2126,7 +2157,7 @@
               role="switch"
               aria-checked={crashOn}
               aria-label="Send crash reports"
-              disabled={!$capture.available}
+              disabled={!$capture.available || !!crashReadFailed}
               on:click={() => toggleCrash(!crashOn)}></button>
           </div>
         </div>

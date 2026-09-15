@@ -863,7 +863,19 @@ describe('a Settings control says which of its outcomes happened', () => {
     );
     expect(fn, 'toggleCrash was not found').toBeTruthy();
     expect(fn).toMatch(/setCrashReporting\(enabled, savedDsn\)/);
-    expect(fn).not.toMatch(/crash\.dsn/);
+    // SCOPED TO THE CALL. This read `not.toMatch(/crash\.dsn/)` over the whole
+    // function, which also forbade READING the bound field — and the function has
+    // to read it, to put the operator's half-typed draft back after `acceptCrash`
+    // has overwritten it with the saved address. What must never happen is
+    // `crash.dsn` reaching the command, so that is what is asserted; `savedDsn` is
+    // written in exactly one place (the test below), so it cannot be forged into
+    // carrying the draft either.
+    expect(fn).not.toMatch(/setCrashReporting\([^)]*crash\.dsn/);
+    // …and the draft is restored AFTER the call, never merged into it.
+    const call = fn.indexOf('setCrashReporting(');
+    const restore = fn.indexOf('crash = { ...crash, dsn: draft }');
+    expect(restore, 'the half-typed draft is discarded by a switch flip').toBeGreaterThan(-1);
+    expect(restore).toBeGreaterThan(call);
   });
 
   it('F-8 · and does not commit on blur or on every keystroke', () => {
@@ -883,7 +895,11 @@ describe('a Settings control says which of its outcomes happened', () => {
     // The Save button's own failure mode is an edit that is never saved. That one
     // can be made visible, which is why it was chosen over the silent one.
     expect(SCRIPT_ONLY).toMatch(/dsnDirty\s*=/);
-    expect(MARKUP_ONLY).toMatch(/\{#if dsnDirty\}/);
+    // `{#if}` or `{:else if}` — the unsaved line now sits behind the "could not
+    // read the setting" branch, because an address the page could not read is not
+    // an address with unsaved edits. Either spelling renders it; a literal `{#if}`
+    // here would have failed on a correct page.
+    expect(MARKUP_ONLY).toMatch(/\{(?:#if|:else if) dsnDirty\}/);
   });
 
   it('F-8 · savedDsn is only ever written from what the backend returned', () => {

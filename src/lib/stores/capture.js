@@ -2691,12 +2691,17 @@ return landed;
  * text before it is sent (see src-tauri/src/telemetry.rs).
  */
 export async function getCrashReporting() {
-try {
-  const call = await invoke();
-  return await call('get_crash_reporting');
-} catch {
-  return { enabled: false, dsn: '' };
-}
+// GROUP 2 THROUGH `guardedRead`, and the reason is not tidiness. This swallowed
+// into a bare `catch` and returned the safe default, which Settings takes as the
+// truth: `savedDsn` became `''`. Flipping the switch then sent `('', true)`, and
+// `set_crash_reporting` writes the string unconditionally — so a read that failed
+// on mount DESTROYED the stored DSN one click later, and the operator's only clue
+// was an address field that had gone empty. (Nothing leaked: `telemetry::enable`
+// returns early on an empty DSN.) The reason now lands in `readErrors`, which is
+// what Settings disables the switch and Save on.
+return guardedRead('getCrashReporting', async (call) => {
+    return await call('get_crash_reporting');
+}, { enabled: false, dsn: '' });
 }
 
 export async function setCrashReporting(enabled, dsn) {

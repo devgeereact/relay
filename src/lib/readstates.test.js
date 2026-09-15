@@ -363,6 +363,57 @@ describe('Settings → the Sentry DSN', () => {
     ).toBe('');
   });
 
+  it('a read that FAILED is not an empty address — and cannot be written over', async () => {
+    // `getCrashReporting` swallowed into a bare `catch` and returned the safe
+    // default, which this page takes as the truth: `savedDsn` became `''`. Flipping
+    // the switch then sent `('', true)`, and `set_crash_reporting` writes the string
+    // unconditionally — so a failed read DESTROYED the one address a church had
+    // configured, one click later, with an empty field as the only clue. Nothing
+    // leaked (`telemetry::enable` returns early on an empty DSN), and losing it is
+    // bad enough. The reason now lands in `readErrors` and both writing controls
+    // stand down. Watched to go red by restoring the bare `catch`.
+    invoke.mockImplementation((cmd) =>
+      cmd === 'get_crash_reporting'
+        ? Promise.reject('database is locked')
+        : Promise.resolve([]),
+    );
+    const el = await mount('./views/Settings.svelte');
+    await press(el, 'Privacy & Advanced');
+
+    expect(get(readErrors).getCrashReporting, 'the reason was thrown away').toBeTruthy();
+    // Humanised through errors.js (the ONE humaniser), and announced.
+    expect(alertText(el)).toMatch(/could not read the crash-reporting setting/i);
+    expect(alertText(el)).not.toMatch(/database is locked/);
+    expect(el.querySelector('[role="switch"][aria-label="Send crash reports"]').disabled).toBe(true);
+    const save = [...el.querySelectorAll('button')].find((b) =>
+      b.textContent.includes('Save address'),
+    );
+    expect(save.disabled).toBe(true);
+
+    // And the switch cannot be pressed into writing the empty string over it.
+    el.querySelector('[role="switch"][aria-label="Send crash reports"]').click();
+    await settle();
+    expect(setCalls()).toEqual([]);
+  });
+
+  it('flipping the switch does not throw away a half-typed address', async () => {
+    // `acceptCrash` takes the whole landed object, `crash.dsn` included, so a flip
+    // replaced the draft with the saved address and took the "Not saved yet" mark
+    // with it — the one instrument that makes an edit which went nowhere visible
+    // rather than discovered a week later. The draft is the operator's; a switch is
+    // not a discard. Watched to go red by removing the restore line.
+    const el = await privacy((a) => Promise.resolve({ enabled: !a.enabled, dsn: a.dsn }));
+    await type(el, NEW);
+
+    el.querySelector('[role="switch"][aria-label="Send crash reports"]').click();
+    await settle();
+
+    expect(field(el).value, 'the draft was discarded by a switch flip').toBe(NEW);
+    expect(text(el)).toMatch(/Not saved yet/);
+    // …and it still went nowhere: the switch committed the SAVED address.
+    expect(setCalls()[0].dsn).toBe(OLD);
+  });
+
   it('a save the backend does not honour leaves the field showing what is in force', async () => {
     // Rule 15, on the smallest control on the page. If the local copy were taken
     // from what was ASKED for, the field would show the new address, the banner
