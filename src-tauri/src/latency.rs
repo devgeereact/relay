@@ -433,6 +433,12 @@ struct Inner {
     /// speech the medians agreed and the worst case did not: 201 ms against
     /// 8604 ms, the latter being a pause between readings and nothing else.
     last_partial_was_final: bool,
+    /// How many voiced chunks the worker had counted when that previous transcript
+    /// was emitted. RG-118: the `was_final` guard above catches a pause AFTER an
+    /// utterance closes, and cannot see one INSIDE an utterance that has not
+    /// closed. This is what makes that case visible — if the count has not moved,
+    /// nobody spoke during the gap, whatever the window was doing.
+    last_partial_voiced: u64,
 }
 
 /// The recorder. One per process; `reset()` exists for tests.
@@ -452,6 +458,7 @@ fn recorder() -> &'static Recorder {
             drifts: (0..Metric::ALL.len()).map(|_| Drift::default()).collect(),
             last_partial_us: None,
             last_partial_was_final: false,
+            last_partial_voiced: 0,
         }),
         next_id: AtomicU64::new(1),
         // On by default. The whole point is that a field tester on a packaged
@@ -606,15 +613,48 @@ pub fn stamp_at(id: u64, stage: Stage, at_us: u64) {
 /// The transcript for this pass has been emitted. Records the decode cost and the
 /// cadence — the gap since the previous pass's transcript, which is the number an
 /// operator reads as "is it keeping up".
-pub fn transcript_emitted(id: u64, decode_us: u64, window_ms: u64, drained: usize, is_final: bool) {
+pub fn transcript_emitted(
+    id: u64,
+    decode_us: u64,
+    window_ms: u64,
+    drained: usize,
+    is_final: bool,
+    voiced_chunks: u64,
+) {
     let r = recorder();
     if !r.enabled.load(Ordering::Relaxed) {
         return;
     }
     let at = now_us();
     if let Ok(mut g) = r.inner.lock() {
-        // Only WITHIN an utterance. See `last_partial_was_final`.
-        if let (Some(prev), false) = (g.last_partial_us, g.last_partial_was_final) {
+        // ── A GAP WITH NO VOICED AUDIO IN IT IS SILENCE, NOT CADENCE (RG-118) ──
+        //
+        // The rule used to be "the gap after a CLOSED utterance is silence", and
+        // that half is correct and still here: `last_partial_was_final`. What it
+        // cannot see is a pause INSIDE an utterance that has not closed. Silent
+        // chunks are appended to a non-empty window on purpose (stt.rs: the pauses
+        // are part of the signal whisper needs), so they accumulate toward the next
+        // step and a decode fires having heard nobody. Service 15 on 2026-09-06
+        // recorded a 43480 ms cadence sample that way — `decode=3ms` on a `600ms`
+        // window with `voiced` unchanged across the whole gap — and `worst` and
+        // `p99` are the numbers Diagnostics shows a church and a week-on-week drift
+        // comparison uses.
+        //
+        // The voiced count is the worker's own, and it is the only thing here that
+        // can tell a stall from a pause: had it climbed across that gap, this would
+        // have been a 43-second pipeline stall and a far more serious finding.
+        //
+        // Deliberately conservative in the direction of counting: a gap that is
+        // mostly silence with a word at the end of it still counts, because the
+        // rule is "no voiced audio in it" and not "mostly silence". Overstating the
+        // tail is a great deal safer than an instrument that quietly discards the
+        // stalls it exists to find.
+        let spoke_during_gap = voiced_chunks > g.last_partial_voiced;
+        if let (Some(prev), false, true) = (
+            g.last_partial_us,
+            g.last_partial_was_final,
+            spoke_during_gap,
+        ) {
             let gap = at.saturating_sub(prev);
             let i = Metric::Cadence as usize;
             g.hists[i].add(gap);
@@ -622,6 +662,7 @@ pub fn transcript_emitted(id: u64, decode_us: u64, window_ms: u64, drained: usiz
         }
         g.last_partial_us = Some(at);
         g.last_partial_was_final = is_final;
+        g.last_partial_voiced = voiced_chunks;
         if let Some(t) = g.open.iter_mut().find(|t| t.id == id) {
             t.stamp(Stage::PartialTranscript, at);
             t.decode_us = decode_us;
@@ -990,9 +1031,11 @@ mod tests {
     #[test]
     fn cadence_is_the_gap_between_consecutive_transcripts() {
         let _l = guard();
-        for _ in 0..3 {
+        // The voiced count CLIMBS: somebody is speaking through all three passes,
+        // which is what makes the gaps between them cadence at all (RG-118).
+        for n in 1..=3 {
             let id = begin_pass(0, None);
-            transcript_emitted(id, 1_000, 8_000, 1, false);
+            transcript_emitted(id, 1_000, 8_000, 1, false, n);
             close(id);
             std::thread::sleep(std::time::Duration::from_millis(20));
         }
@@ -1014,10 +1057,12 @@ mod tests {
     #[test]
     fn the_pause_after_a_closed_utterance_is_not_counted_as_cadence() {
         let _l = guard();
-        // Two partials, then a final: one real gap between the partials.
-        for is_final in [false, false, true] {
+        // Two partials, then a final: one real gap between the partials. Speech
+        // throughout, so nothing here is excluded by the voiced rule and this test
+        // keeps testing the guard it was written for.
+        for (n, is_final) in [false, false, true].into_iter().enumerate() {
             let id = begin_pass(0, None);
-            transcript_emitted(id, 1_000, 8_000, 1, is_final);
+            transcript_emitted(id, 1_000, 8_000, 1, is_final, n as u64 + 1);
             close(id);
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
@@ -1027,7 +1072,7 @@ mod tests {
         // sits in the empty space between the two populations, not next to one.
         std::thread::sleep(std::time::Duration::from_millis(600));
         let id = begin_pass(0, None);
-        transcript_emitted(id, 1_000, 8_000, 1, false);
+        transcript_emitted(id, 1_000, 8_000, 1, false, 4);
         close(id);
 
         let r = report(8);
@@ -1093,11 +1138,75 @@ mod tests {
     /// A wall clock that steps BACKWARDS mid-service must not produce a stage that
     /// appears to have happened before the audio arrived. The arrival stamp is the
     /// backstop, and it is always on the right timeline.
+    /// A PAUSE INSIDE AN UNCLOSED UTTERANCE IS SILENCE TOO (RG-118).
+    ///
+    /// The half `the_pause_after_a_closed_utterance_is_not_counted_as_cadence`
+    /// could not see. Silent chunks are appended to a window that has not closed
+    /// (stt.rs: the pauses are part of the signal whisper needs), so they
+    /// accumulate toward the next step and a decode fires having heard nobody —
+    /// `is_final` is false the whole way through, and the old guard admitted it.
+    ///
+    /// Service 15 on 2026-09-06 recorded a **43480 ms** cadence sample exactly like
+    /// this, with `decode=3ms` on a `600ms` window and `voiced` unchanged across
+    /// the gap. At 12663 samples it could not move the median, and it set `worst`
+    /// and reached `p99` — the numbers Settings → Diagnostics shows a church, and
+    /// the ones a week-on-week drift comparison reads.
+    #[test]
+    fn a_pause_inside_an_unclosed_utterance_is_not_counted_as_cadence() {
+        let _l = guard();
+        // Speech, and a gap that is real cadence: the voiced count climbs.
+        for n in 1..=2u64 {
+            let id = begin_pass(0, None);
+            transcript_emitted(id, 1_000, 8_000, 1, false, n);
+            close(id);
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        // Now the room goes quiet WITHOUT the utterance closing, and a step fires
+        // anyway. An order of magnitude longer than the gaps above, so a loaded CI
+        // runner overrunning a 10 ms sleep can never be mistaken for the pause
+        // leaking in.
+        std::thread::sleep(std::time::Duration::from_millis(600));
+        let id = begin_pass(0, None);
+        transcript_emitted(id, 1_000, 8_000, 1, false, 2);
+        close(id);
+
+        let r = report(8);
+        let c = r
+            .metrics
+            .iter()
+            .find(|m| m.metric == "transcript_cadence")
+            .expect("metric");
+        assert_eq!(
+            c.samples, 1,
+            "a pause nobody spoke through was timed as if it were latency"
+        );
+        assert!(
+            c.worst_ms.unwrap_or(0.0) < 400.0,
+            "worst {:?} ms — the 600ms pause leaked into the tail",
+            c.worst_ms
+        );
+
+        // And speech resuming is cadence again: the rule excludes a gap with no
+        // voice in it, and nothing else. An instrument that stopped measuring after
+        // one pause would hide the stalls it exists to find.
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        let id = begin_pass(0, None);
+        transcript_emitted(id, 1_000, 8_000, 1, false, 3);
+        close(id);
+        let r = report(8);
+        let c = r
+            .metrics
+            .iter()
+            .find(|m| m.metric == "transcript_cadence")
+            .expect("metric");
+        assert_eq!(c.samples, 2, "the metric must resume when speech does");
+    }
+
     #[test]
     fn a_frontend_clock_from_the_future_falls_back_to_arrival() {
         let _l = guard();
         let id = begin_pass(0, None);
-        transcript_emitted(id, 1_000, 8_000, 1, false);
+        transcript_emitted(id, 1_000, 8_000, 1, false, 1);
         let (epoch0, _) = epoch_anchor();
         let year_from_now_ms = (epoch0 / 1_000) + 365 * 24 * 3_600 * 1_000;
         frontend_mark(id, Stage::TranscriptRendered, year_from_now_ms);
@@ -1115,9 +1224,9 @@ mod tests {
     #[test]
     fn open_traces_are_bounded_by_the_ring() {
         let _l = guard();
-        for _ in 0..(RING * 3) {
+        for n in 0..(RING * 3) {
             let id = begin_pass(0, None);
-            transcript_emitted(id, 1_000, 8_000, 1, false);
+            transcript_emitted(id, 1_000, 8_000, 1, false, n as u64 + 1);
             // deliberately never closed
         }
         let r = recorder();
@@ -1186,7 +1295,7 @@ mod tests {
         let a = begin_pass(0, None);
         let b = begin_pass(0, None);
         assert_ne!(a, b, "ids stay unique so callers never alias a trace");
-        transcript_emitted(a, 1_000, 8_000, 1, false);
+        transcript_emitted(a, 1_000, 8_000, 1, false, 1);
         close(a);
         let r = report(4);
         assert!(r.recent.is_empty());

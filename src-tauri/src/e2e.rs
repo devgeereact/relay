@@ -1903,7 +1903,7 @@ fn the_fire_half_of_the_chain_is_measured_on_its_own() {
     let _wall = Wall::watch(&h);
 
     let trace = crate::latency::begin_pass(crate::latency::now_us(), None);
-    crate::latency::transcript_emitted(trace, 1_000, 8_000, 1, true);
+    crate::latency::transcript_emitted(trace, 1_000, 8_000, 1, true, 1);
     super::emit_detections(
         &h,
         "turn with me to John chapter three verse sixteen",
