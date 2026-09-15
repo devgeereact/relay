@@ -216,3 +216,31 @@ solves it for $75. Section 2 is the whole answer.
 answering and what it says it last painted. It does not time a delivery, count a
 dropped frame, or record a connect time, and it will not show you a bandwidth
 figure it did not measure.
+
+---
+
+## Where the hardware figures came from, and when
+
+Everything in this document about **Relay** was read out of this repository's own
+source and is checked by its tests.
+
+Everything about **other people's hardware** was not. The ATEM model lists, the
+Media Player's upload speed and slot count, the $75 converter price and the Apple
+Silicon display counts were taken from the vendors' own tech-spec pages in
+**September 2026**. They are a snapshot of what those vendors published then, not
+a standing truth: a price moves, a model list grows, and Apple ships a new chip
+every year. The **shapes** are the durable part and are what this document is
+really claiming, because they follow from how the products are built rather than
+from a spec sheet:
+
+- HDMI on the small ATEMs, SDI on the rack-mount ones, and an HDMI-to-SDI
+  converter bridging between them for the price of a microphone cable.
+- No ATEM ingesting NDI, because Blackmagic's IP direction is a different
+  standard.
+- The Media Player being a pre-service stills pool rather than a live input.
+- A network screen costing no video port, which is why it is the answer whenever
+  ports run out.
+
+Before spending money on a specific model or a specific Mac, check that model's
+current page. If you find one of these facts has changed, correct it here rather
+than working around it somewhere else.

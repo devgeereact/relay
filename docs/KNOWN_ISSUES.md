@@ -56,7 +56,11 @@ not missing. Do not fake them; do not delete the seam.
 
 - **NDI output.** `render_target = 'ndi_encode'` is a valid channel type, but `open_ndi_output`
   returns a clear error — it needs a proprietary SDK (Blackmagic/NDI). Parked, and honest about
-  it. Bridge to NDI/SDI with gear the church already owns (ATEM, converters).
+  it. Bridge to an SDI chain with a converter the church already owns or can buy for the price
+  of a microphone cable; Relay emits a plain HDMI display signal into it. **This row used to say
+  "ATEM, converters", and the ATEM half was false**: no ATEM model ingests NDI, and a rack-mount
+  ATEM takes no HDMI either, so the converter is the mechanism rather than the switcher
+  ([OUTPUT_ROUTING.md](OUTPUT_ROUTING.md) §2).
 - **Neural paraphrase embedder.** Paraphrase detection is TF-IDF today. The seam is
   `SemanticIndex::top_k` (`detection.rs`), and the `verses.embedding` column exists and **has
   never been written to** ([DATA_MODEL.md](DATA_MODEL.md) §2). Swapping the interface is ~½
