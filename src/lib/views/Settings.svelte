@@ -1442,9 +1442,9 @@
           <button
             class="r-btn ghost sm"
             on:click={restartSetup}
-            disabled={$serviceLock.engaged}>Run the setup walk-through</button>
-          {#if $serviceLock.engaged}
-            <p class="rw-foot s-netwarn">Not while a service is being recorded — the walk-through stops the microphone and puts a verse on your screens. End the service first, or unlock it below.</p>
+            disabled={$serviceLock.engaged || $capture.capturing}>Run the setup walk-through</button>
+          {#if $serviceLock.engaged || $capture.capturing}
+            <p class="rw-foot s-netwarn">Not while the microphone is live or a service is being recorded — the walk-through stops the microphone and puts a verse on your screens. Stop listening or end the service first, or unlock it below.</p>
           {/if}
         </div>
 
@@ -1504,7 +1504,7 @@
         <div class="s-prose">
           {#if $serviceLock.engaged}
             <p class="rw-foot" style="margin-top:0; padding-top:0; border-top:0;">
-              <b style="color:var(--v-amber);">A service is being recorded.</b>
+              <b class="s-netwarn">A service is being recorded.</b>
               Relay is holding back a few things that cannot be undone, or that would take
               the speech engine away mid-sermon: {$serviceLock.held_back.join(', ')}.
               Firing, the transport, clearing and blacking out are unaffected.
