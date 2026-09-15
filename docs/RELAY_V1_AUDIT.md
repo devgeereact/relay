@@ -71,8 +71,8 @@ decision), [§6](#6-the-fix-process-start-to-finish) (what was actually changed)
 
 | | Command | Result |
 |---|---|---|
-| Frontend suite | `npx vitest run` | **965 passed**, 0 skipped, 71 files |
-| Rust suite | `cd src-tauri && cargo test` | **663 passed**, 0 failed, 17 ignored |
+| Frontend suite | `npx vitest run` | **1099 passed**, 0 skipped, 80 files |
+| Rust suite | `cd src-tauri && cargo test` | **674 passed**, 0 failed, 17 ignored |
 | End-to-end fire path | `cargo test e2e::` | **38 passed, 0 ignored** |
 | Format gate | `cargo fmt --all -- --check` | clean |
 | Lint gate (a CI gate on both platforms) | `cargo clippy --all-targets -- -D warnings` | clean |
@@ -94,8 +94,8 @@ or that changed their answer:
 
 | | Command | Result |
 |---|---|---|
-| Rust suite | `cd src-tauri && cargo test` | **663 passed**, 0 failed, 17 ignored |
-| Frontend suite | `npx vitest run` | **965 passed**, 71 files |
+| Rust suite | `cd src-tauri && cargo test` | **674 passed**, 0 failed, 17 ignored |
+| Frontend suite | `npx vitest run` | **1099 passed**, 80 files |
 | **Rust dependencies** | `cargo audit` | **0 vulnerabilities** (3 on the first run, 2026-09-04); 18 warnings, all unmaintained GTK3 **Linux** bindings |
 | **The kiosk hub's origin gate, on the packaged binary** | raw WebSocket handshakes with nine `Origin` values | `101` for none, `:8032` on two hosts, `:5032`, `tauri://localhost`; **`403`** for `evil.example.com`, `null`, a LAN host on `:3000`, an `https://` origin |
 
@@ -127,6 +127,33 @@ congregation. One new instrument defect was filed rather than fixed — **RG-127
 tests serve the real `dist/`, which is gitignored, so a fresh clone fails `cargo test` twice with
 a bare `404`. CI is green only because it runs `npm run build` first, at an ordering nothing
 states.
+
+**Re-run on 2026-09-14, on `rebrand/all` after the seven-workspace rebrand wave.** Not a pass of
+its own: seven agents rebuilt six workspaces and the shell against the settled prototype, and every
+count in this section moved because of it. These are the assembled tree's, measured after the last
+merge — **not one of the seven agents' own suite totals survived it** — and they are what
+[`qa/QA_HARNESS.md`](qa/QA_HARNESS.md) §0 now carries. **The verdict does not move, and nothing
+here is evidence about a service**: the wave changed what an operator sees and touches, not what
+the router may do, and it measured no word error rate in any language.
+
+| | Command | Result |
+|---|---|---|
+| Rust suite | `cd src-tauri && cargo test` | **709 passed**, 0 failed, 16 ignored |
+| Frontend suite | `npx vitest run` | **1604 passed**, 0 skipped, 114 files |
+| End-to-end fire path | `cargo test e2e::` | **53 passed, 0 ignored** |
+| Format and lint gates | `cargo fmt --all`, `cargo clippy --all-targets -- -D warnings` | clean |
+| Frontend build | `npm run build` | clean, no warnings |
+| Version agreement | `npm run version:check` | `0.2.0-2` consistent across all three files; 2 update endpoints |
+| Surface inventory | `node scripts/qa-inventory.mjs` | 54 components (53 reachable), 482 controls, 134 commands, **0 dead controls, 0 unreachable commands, 0 controls without an accessible name** |
+
+The previous run, on `rebrand/base` before the wave, read 692 / 1165 / 46 — kept here as the chain
+rather than overwritten, because a count with no history is a count nobody can check.
+
+**What this run could not reach**: the standing list, unchanged — a microphone, a projector, a
+certificate and a congregation. It also could not reach the packaged bundle: `npm run tauri build`
+and `./scripts/sign-local.sh` were **not** re-run on the merged tree, so rule 17's entitlement
+check and the CSP, both of which only exist in a packaged binary, are inherited claims here rather
+than measured ones.
 | **Ranged media, on the packaged binary** | `curl -H 'Range: bytes=500-599' …/media/12` | `206` + `Content-Range: bytes 500-599/1024`, and the 100 bytes match the file exactly; a range past the end → `416` |
 | **The console under the narrowed CSP** | packaged binary, isolated `RELAY_DB_PATH` | booted clean; **exactly one** `console: webview up (operator)` — the bundle still loads |
 | The migration, on a v2 database | `cargo test corpus` and the three new `db::tests` | the corpus repair reaches an existing install, keeps every past detection's reference, and is a no-op the second time |
@@ -261,7 +288,7 @@ A single native binary. No server, no account, no cloud dependency on the live p
 
 | Layer | What is actually there |
 |---|---|
-| Shell | Tauri v2, one webview window; `src-tauri/src/main.rs` (5,832 lines) registers **133** commands |
+| Shell | Tauri v2, one webview window; `src-tauri/src/main.rs` (5,984 lines) registers **134** commands |
 | Engine | Rust — capture, DSP, whisper, detection, routing, rendering, all in-process |
 | UI | Svelte 4 + Vite, **48** components (47 reachable), **463** controls, one store (`capture.js`, 2,215 lines) |
 | Data | SQLite via `rusqlite`, **21** tables, schema version 2, migrations as ordered retryable rungs |

@@ -37,7 +37,11 @@
       body: [
         ['Press <kbd>Esc</kbd>.', 'It clears every screen instantly. It works from any tab in Relay, and it works even while you are typing in a box.'],
         ['Press <kbd>B</kbd> to black out.', 'This goes further: it turns every output screen completely black. Use it if you need the screens gone, not just empty.'],
-        ['Or click <b>Emergency Stop</b>', 'It is in the top-right of every screen, always. You never have to go looking for it.'],
+        // The control this named was removed on 2026-09-14 when the chrome bar was
+        // cleared down to navigation. The sentence stayed, on the one topic a
+        // volunteer opens in the four seconds after the wrong verse appears, and
+        // it sent them hunting the top-right corner of an empty bar.
+        ['Or click <b>Clear screens</b>', 'The red button along the bottom of the <b>Controls</b> card, bottom-right of the window. It is on every workspace and it never scrolls out of reach.'],
       ],
     },
     {
@@ -56,7 +60,7 @@
       title: 'The AI is not detecting verses',
       body: [
         ['Is the speech model installed?', 'If Relay says it cannot hear the sermon, there is a <b>Download</b> button. It is a one-time download and takes a few minutes.'],
-        ['Is Relay listening?', 'Press <b>Start listening</b> on the <b>Live</b> tab. The transcript should start filling up as the preacher speaks.'],
+        ['Is Relay listening?', 'Press <b>Listen</b> in the <b>Live audio</b> card, along the bottom of the window. The transcript should start filling up as the preacher speaks.'],
         ['Can it actually hear?', 'Go to <b>Settings</b> and watch the microphone meter while someone speaks. If the bar does not move, Relay is listening to the wrong microphone — usually it should be the feed from the sound desk, not the laptop’s own mic.'],
         ['It hears, but finds no verses.', 'It only detects a verse when the preacher <i>says the reference</i> — “John chapter three verse sixteen”. If they only quote the words, Relay will <i>offer</i> it as a suggestion, and wait for you. It will never put a guess on the screen by itself.'],
       ],
@@ -69,7 +73,7 @@
         ['It can put a spoken reference straight up.', 'If the preacher clearly says “Romans 8:28”, Relay is confident and shows it.'],
         ['It will NEVER put a guess up.', 'If it only <i>thinks</i> a sentence sounds like a verse, it offers it to you as a suggestion. Press <kbd>A</kbd> to accept, <kbd>D</kbd> to dismiss. Nothing reaches the congregation without you.'],
         ['You always win.', 'Type any reference in the box and press Enter, and it goes up immediately — regardless of what the AI thinks.'],
-        ['It is too eager / too cautious', 'Settings → <b>AI Detection Thresholds</b>. Relay also learns from every suggestion you accept or reject.'],
+        ['It is too eager / too cautious', 'Settings → <b>AI &amp; Detection</b>. Relay also learns from every suggestion you accept or reject.'],
       ],
     },
     {
@@ -404,9 +408,9 @@
   .pane-body{padding:14px;display:flex;flex-direction:column;gap:10px}
 
   .chip{display:inline-flex;align-items:center;gap:7px;flex:0 0 auto;padding:4px 10px;
-    border-radius:99px;font-size:var(--v-fs-cap);background:var(--v-surf2);
+    border-radius:var(--v-r-sm);font-size:var(--v-fs-cap);background:var(--v-surf2);
     border:1px solid var(--v-line2);color:var(--v-faint)}
-  .chip.ok{color:var(--v-emerald);border-color:rgba(34,197,94,.32);background:var(--v-emerald-soft)}
+  .chip.ok{color:var(--v-emerald);border-color:var(--v-emerald-line);background:var(--v-emerald-soft)}
   .chip .bd{width:6px;height:6px;border-radius:50%;background:currentColor;
     box-shadow:0 0 6px currentColor}
 
@@ -423,9 +427,9 @@
 
   .callout{display:flex;align-items:flex-start;gap:12px;margin-top:4px;padding:13px 14px;
     border-radius:var(--v-r-lg);background:var(--v-amethyst-soft);
-    border:1px solid rgba(139,92,246,.32)}
+    border:1px solid var(--v-amethyst-line)}
   .callout-ic{flex:0 0 auto;width:32px;height:32px;display:grid;place-items:center;
-    border-radius:50%;background:rgba(139,92,246,.18);color:var(--v-amethyst)}
+    border-radius:50%;background:var(--v-amethyst-soft);color:var(--v-amethyst)}
   .callout p{margin:0;font-size:var(--v-fs-b2);line-height:1.55;color:var(--v-dim)}
   .panic-fine{margin:0;font-size:var(--v-fs-cap);line-height:1.7;color:var(--v-faint)}
   .panic-fine b{color:var(--v-dim)}
@@ -456,17 +460,23 @@
   kbd{display:inline-block;font-family:var(--f-mono);font-size:var(--v-fs-cap);line-height:1;
     padding:6px 9px;border-radius:var(--v-r-sm);background:var(--v-surf3);
     border:1px solid var(--v-line2);color:var(--v-txt)}
-  kbd.ok{background:var(--v-emerald-soft);border-color:rgba(34,197,94,.32);color:var(--v-emerald)}
+  kbd.ok{background:var(--v-emerald-soft);border-color:var(--v-emerald-line);color:var(--v-emerald)}
 
   /* ── troubleshooting (unchanged behaviour, tokenised) ── */
   .h-search{max-width:340px}
   .h-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:var(--v-sp-sm)}
   .h-card{padding:0;overflow:hidden}
+  /* A DISCLOSURE HEADER, not a button. It IS the top of the card it opens —
+     full bleed to both edges, with the chevron that says which way it is
+     facing — so the whole head is the target rather than a control parked in
+     one corner of it. `aria-expanded` carries the state; a `.r-btn` would
+     shrink a hit area the width of the card (`.h-grid` floors it at 320px) to
+     a 26px lozenge, and detach it from the panel it opens. */
   .h-head{display:flex;align-items:center;gap:11px;width:100%;padding:14px 16px;
     background:none;border:0;color:var(--v-txt);font:inherit;text-align:left;cursor:pointer}
   .h-head b{flex:1;font-size:var(--v-fs-b2)}
   .h-ic{font-size:16px;flex:none}
-  .h-chev{color:var(--v-dim);font-size:15px}
+  .h-chev{color:var(--v-dim);font-size:var(--v-fs-ttl)}
   .h-body{margin:0;padding:12px 16px 14px;border-top:1px solid var(--v-line)}
   .h-body dt{font-size:var(--v-fs-b2);font-weight:600;color:var(--v-txt);margin-top:11px}
   .h-body dt:first-child{margin-top:0}

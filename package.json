@@ -1,7 +1,7 @@
 {
   "name": "relay",
   "private": true,
-  "version": "0.2.0-2",
+  "version": "0.2.0-3",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -31,6 +31,7 @@
     "vitest": "^2.1.9"
   },
   "dependencies": {
+    "@fontsource/ibm-plex-mono": "^5.3.0",
     "@fontsource/playfair-display": "^5.2.8",
     "@tauri-apps/plugin-process": "^2.3.1",
     "@tauri-apps/plugin-updater": "^2.10.1",

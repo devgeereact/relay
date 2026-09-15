@@ -72,6 +72,7 @@ export const LEVELS = ['blocked', 'reduced'];
  * @param s.macos          is this macOS? (where a CPU-only build is a known trap)
  * @param s.droppedPartials how many decode passes have been shed
  * @param s.screensDown    names of screens that are attached but not answering
+ * @param s.micMissing     the remembered input device that is not attached today
  */
 export function degradations(s = {}) {
   const out = [];
@@ -84,7 +85,7 @@ export function degradations(s = {}) {
       level: 'blocked',
       title: 'Safe mode is on',
       what: 'Outputs will not open and detection is disarmed — nothing Relay does can reach a screen.',
-      fix: 'Settings → Backup & Recovery → Turn off safe mode.',
+      fix: 'Settings → General → Turn off safe mode.',
     });
   }
 
@@ -97,7 +98,27 @@ export function degradations(s = {}) {
       level: 'blocked',
       title: 'No speech model — Relay is not listening for verses',
       what: 'Nothing will be transcribed or detected. Firing verses by hand works exactly as normal.',
-      fix: 'Settings → Network → download a speech model.',
+      fix: 'Settings → Network & Integrations → download a speech model.',
+    });
+  }
+
+  // THE MICROPHONE STOPPED. The commonest Sunday failure in a church booth is a
+  // cable, and this register had no entry for it at all — so a dead capture
+  // reached the shell's degraded strip nowhere, and was visible only as a raw
+  // cpal device string at the foot of ONE workspace. An operator fixing a template
+  // when the lead unplugs the interface had no signal whatsoever; the transcript
+  // simply stopped and the obvious conclusion is that the AI has failed.
+  //
+  // `blocked`, not `reduced`: with no audio there is nothing for detection to be
+  // degraded ABOUT. It outranks the detection row below, which is why it is above
+  // it — `summarise` takes the blocked ones first.
+  if (s.audioError) {
+    out.push({
+      id: 'audio',
+      level: 'blocked',
+      title: 'The microphone stopped — Relay is not hearing anything',
+      what: 'Nothing will be transcribed or detected until it is listening again. Firing verses by hand works exactly as normal.',
+      fix: 'Check the cable and the input device, then press the microphone in the Live audio card.',
     });
   }
 
@@ -144,6 +165,20 @@ export function degradations(s = {}) {
       title: `${s.droppedPartials} transcript ${s.droppedPartials === 1 ? 'update' : 'updates'} skipped`,
       what: 'Relay fell behind and dropped some in-progress updates to catch up. Nothing final was lost, and no verse was missed because of it.',
       fix: 'If it keeps climbing, a smaller speech model will keep up better — Settings → Diagnostics shows the speed.',
+    });
+  }
+
+  // RG-121. The remembered microphone is not attached, so Relay is capturing from
+  // whatever the system calls default. It still works, which is precisely the
+  // problem: a desk feed and a laptop microphone at the back of a booth sound
+  // nothing alike and neither of them errors.
+  if (s.micMissing) {
+    out.push({
+      id: 'mic',
+      level: 'reduced',
+      title: `${s.micMissing} is not plugged in`,
+      what: 'That is the microphone this machine used last time. Relay is listening on the computer\u2019s default input instead, which in a hall is usually much further from the preacher.',
+      fix: 'Plug it back in, or pick the right input in Settings \u2192 Audio.',
     });
   }
 

@@ -22,7 +22,7 @@ Download the installer for your computer and run it. Open Relay. It will walk yo
 
 Relay listens to the sermon *on your computer* — it does not send audio anywhere, and it does not need the internet during a service. But to do that, it needs a **speech model**: a single file, about **148 MB**, downloaded once.
 
-Go to **Settings → Speech**, and press **Download**. It shows a progress bar. You can cancel it and it will pick up where it left off next time.
+Go to **Settings → Network & Integrations**, and press **Download**. It shows a progress bar. You can cancel it and it will pick up where it left off next time.
 
 Until you do this, Relay still works as a *manual* tool — you can type a verse and put it on the screen, run a service plan, everything except listening. It will tell you so, plainly, rather than pretending.
 
@@ -32,8 +32,8 @@ Do this **before** Sunday. It is 148 MB over the church wifi.
 
 The recommended model is the small one, because it runs on any laptop. If Relay is
 mishearing a lot — especially over a poor microphone, or in Yoruba, Swahili or
-Hausa — Settings → Speech lists larger models that hear more accurately. They are
-bigger downloads and they need a faster computer.
+Hausa — Settings → Network & Integrations lists larger models that hear more
+accurately. They are bigger downloads and they need a faster computer.
 
 Two things worth knowing before you switch:
 
@@ -60,6 +60,32 @@ If the bar does not move, Relay cannot hear, and nothing else on this page will 
 
 > **Use the sound desk feed if you can**, not the laptop's built-in mic. The laptop mic mostly hears the room; the desk feed hears the preacher.
 
+### 5. Something to press, if you want it
+
+**Settings → History & Backup → Demo content → Load demo content.**
+
+A brand-new Relay is empty, which makes it hard to tell a working install from a broken one. This
+adds one sample Sunday so every workspace has something real in it: a service plan with four
+sections (Gathering · The Word · Response · Sending), a countdown, two notices, three hymns, two
+scripture cues — one of them a passage, so Next and Back have somewhere to walk — and a background
+image. The songs, notices and saved verses behind it land in the Library too.
+
+Three things to know:
+
+- **It is all named `Demo · …`**, so you can tell it from your own at a glance. The saved verses are
+  the exception: their names are real Bible references and they stay real ones.
+- **It never loads itself.** A fresh install, an update and a repaired database all arrive with none
+  of it. It appears when you press the button and at no other time.
+- **It adds no service history.** Nothing it writes will ever appear as a service that happened.
+  Your first entry under Past services will be your first real one.
+
+**Removing it** is the same panel. Relay deletes exactly what it added — and **anything you have
+since edited, it keeps**, because that is your work now and Relay has no undo. It tells you how many
+of each. A kept item is an ordinary Library entry from then on; delete it yourself if you do not
+want it.
+
+Both actions are held back while a service is recording, like every other deletion and bulk import.
+
 ---
 
 ## The Sunday morning path
@@ -79,7 +105,7 @@ If the bar does not move, Relay cannot hear, and nothing else on this page will 
   verses — because the key you need under pressure is the one you should not be reading about at
   the time. It is not a simulated service: Relay cannot produce a sermon, and practising against
   a fake would teach you the shape of the fake.
-- **Run the path check.** **Settings → Dashboard → say one verse.** Relay watches the six stages
+- **Run the path check.** **Settings → Diagnostics → say one verse.** Relay watches the six stages
   between the microphone and the screen and tells you which of them were reached. The twenty-one
   launch checks can all pass on a machine where nothing works end to end — a microphone the
   operating system has muted, an output window on a display that is asleep. This is the thing
@@ -98,7 +124,7 @@ right in an empty hall is wrong once it fills with people.
 
 | What | How |
 |---|---|
-| **Start listening** | Press **Start listening**. Relay transcribes as the preacher speaks. |
+| **Start listening** | Press **Listen** — the microphone button in the **Live audio** card along the bottom of the window. Relay transcribes as the preacher speaks. |
 | **The preacher quotes a verse** | Relay hears it and offers it. Press **A** to put it on the screen, **D** to dismiss it. |
 | **Type a verse yourself** | The box at the bottom. `John 3:16`, `Ps 23`, `rom 8 1` — it understands all of those. Press Enter. |
 | **Read on** | `→` walks to the next verse. `←` goes back. |
@@ -129,10 +155,10 @@ Live software fails live. These are the things that actually happen.
 |---|---|---|
 | **The bar doesn't move when someone speaks** | Relay cannot hear. Nothing else will work. | Settings → Audio. Try a different input. Check the cable and that the desk is sending. |
 | **The transcript is nonsense** | Usually the mic is too quiet, not the AI being bad. | Get a stronger feed. Relay adapts to a quiet room, but it cannot invent a signal that is not there. |
-| **"Relay keeps changing its mind about the language"** | On a strong accent, leaving the language on **Auto** makes Relay re-guess every few seconds — and a wrong guess garbles the transcript, which is where most wrong verses come from. | **Settings → Scripture & Bible → Recognition Language.** Pick the language instead of Auto. This is the single biggest accuracy win for an accented preacher. |
+| **"Relay keeps changing its mind about the language"** | On a strong accent, leaving the language on **Auto** makes Relay re-guess every few seconds — and a wrong guess garbles the transcript, which is where most wrong verses come from. | **Settings → Scripture & Languages → Recognition language.** Pick the language instead of Auto. This is the single biggest accuracy win for an accented preacher. |
 | **A suggestion says "Not in your Bible"** | Relay parsed a real-looking reference out of garbled speech — "Psalms 23:99" — and that verse does not exist. It is telling you it misheard a **number**. | Nothing to do about that one; its Approve button is deliberately dead. If it keeps happening, the microphone is the cause, not the AI — see the two rows above. |
 | **Wrong verses keep appearing on the wall** | Relay heard a book name and a number in ordinary speech — *"Matthew, one of the twelve"*, *"number one… number two…"*. | Turn the **sensitivity dial down** on Live. If it is still noisy, press the **Armed** chip to disarm auto-fire — everything else keeps working and you fire by hand. And fix the language above first, because that is usually the real cause. |
-| **"No speech model loaded"** | Step 2 above never happened. | Settings → Speech → Download. Manual override still works meanwhile. |
+| **"No speech model loaded"** | Step 2 above never happened. | Settings → Network & Integrations → Download. Manual override still works meanwhile. |
 | **Nothing appears on the projector** | The output window is not open, or it is on the wrong display. | Outputs → Screens → pick the display → **Open**. |
 | **OBS / the kiosk screen is blank** | The browser source is pointed at the wrong address. | Use the **Copy URL** button in Outputs → Screens — it is the only thing that fills in the right numbers. The address looks like `http://<this-computer>:8032/output.html?channel=1&template_id=1`. **Not 5032**, and do not drop the `channel=` part: without it the screen still shows verses, and then quietly ignores you every time you change its template. |
 | **"The screens may still be live"** (red bar) | A clear or blackout **failed**. Relay is telling you rather than pretending. | **Look at the actual screen.** Clear it from the output window if you have to. |

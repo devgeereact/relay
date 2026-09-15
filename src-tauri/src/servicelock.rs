@@ -98,7 +98,7 @@ impl ServiceLock {
         };
         Err(error::Error::refused(format!(
             "A service is being recorded, so Relay is holding this back: {what}. \
-             It can wait until the service ends — or unlock in Settings → Backup & Recovery \
+             It can wait until the service ends — or unlock in Settings → History & Backup \
              if you need to do it now."
         )))
     }
@@ -114,6 +114,24 @@ pub const PROTECTED: &[(&str, &str)] = &[
     ("delete_template", "deleting a template"),
     ("delete_channel", "removing a screen"),
     ("delete_plan", "deleting a service plan"),
+    // A CUE, not just the plan that holds it (DECISIONS §85, 2026-09-15).
+    //
+    // The list protected the container and not its contents, so during a service
+    // Relay refused to let an operator delete a plan and allowed them to delete
+    // every cue in it, one at a time, at lower cost per click and far higher
+    // frequency. As far as the record shows that was never a decision — it was
+    // the container's decision never re-asked of the thing inside it.
+    //
+    // It passes this list's own test ("everything on it is something a volunteer
+    // might legitimately want"): a volunteer who wants a cue gone mid-service can
+    // simply SKIP it — the transport walks past it and nothing reaches a screen —
+    // whereas the deletion takes the cue's stage note, duration, section heading
+    // and pinned template with it, and there is no undo anywhere on this desk.
+    //
+    // The REORDER commands (`move_plan_item`, `reorder_plan`) deliberately stay
+    // off. They are recoverable by reordering back, and an operator reshuffling a
+    // running order mid-service is doing the ordinary thing this desk is for.
+    ("remove_plan_item", "deleting a cue from the running order"),
     ("delete_song", "deleting a song"),
     ("delete_arrangement", "deleting an arrangement"),
     ("delete_saved_scripture", "deleting saved scripture"),
@@ -121,6 +139,10 @@ pub const PROTECTED: &[(&str, &str)] = &[
     ("delete_media", "deleting a media file"),
     ("delete_voice_profile", "deleting a voice profile"),
     ("delete_service", "erasing a recorded service"),
+    // Removing the demo set deletes plans, songs, notices, saved verses and a
+    // media file in one press — the most irreversible thing on this list per click,
+    // and two clicks from the transport.
+    ("remove_demo_content", "removing Relay's demo content"),
     // ── Takes the engine away mid-sermon ────────────────────────────────────
     ("download_model", "downloading a speech model"),
     ("select_stt_model", "changing the speech model"),
@@ -132,6 +154,11 @@ pub const PROTECTED: &[(&str, &str)] = &[
     ("set_active_translation", "changing the Bible translation"),
     ("import_media", "importing media"),
     ("save_reviewed_songs", "saving an import"),
+    // Not the speech engine — the CONTENT the operator is running from. Loading the
+    // demo set drops a service plan, three songs, three notices, five saved verses
+    // and a background into the Library and the Planner mid-sermon. Same class as
+    // `save_reviewed_songs` above, and the same answer.
+    ("load_demo_content", "loading Relay's demo content"),
 ];
 
 /// The phrase for a protected command, or `None` if it is not protected.
@@ -189,6 +216,7 @@ mod tests {
             "fire_media",
             "push_announcement",
             "start_countdown",
+            "adjust_countdown",
             "set_detection_enabled",
             "set_sensitivity",
             "set_thresholds",

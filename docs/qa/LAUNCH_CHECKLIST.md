@@ -10,7 +10,7 @@ checklist claiming a macOS signing certificate that has never existed. Do not ti
 `✅` verified by a command that was run · `⚠️` partially verified, with the limit stated ·
 `⬜` **never checked** · `❌` checked and failing.
 
-Last run: **2026-09-05**, against `0.1.0-4`. Findings live in
+Last run: **2026-09-15**, against `0.2.0-3` on `rebrand/wave3`. Findings live in
 [RELAY_GAP.md](RELAY_GAP.md) §23; the reasoning is [RELAY_V1_AUDIT.md](../RELAY_V1_AUDIT.md).
 
 ---
@@ -30,7 +30,7 @@ Last run: **2026-09-05**, against `0.1.0-4`. Findings live in
 | ✅ | The packaged binary builds and launches | `npm run tauri build` → `.app` + `.dmg`, 0 warnings; launched 2026-09-03 with an isolated `RELAY_DB_PATH` and printed **exactly one** boot heartbeat. **CI's macOS job is still compile-only and says so** — this box is ticked by a human running the command |
 | ✅ | The hardened runtime does not kill the microphone | `./scripts/sign-local.sh` → `flags=0x10002(adhoc,runtime)`, mic entitlement present, usage string present. **Rule 17's trap reproduced without a certificate** |
 | ✅ | The LAN surface behaves in production, not just in tests | `curl` against the running bundle, re-run 2026-09-05 on a build carrying the ranged-media change: `output.html` 200 + kiosk CSP + `nosniff`; `GET /api/black` → **405, `Allow: POST`, no CORS wildcard**; traversal → 404; `/media/<id>` 200 + `Accept-Ranges`, `Range: bytes=500-599` → **206 + `Content-Range: bytes 500-599/1024`, byte-exact**, and a range past the end → **416** |
-| ⚠️ | The update channel resolves | **Built, and empty until the first publish.** The endpoint is one permanent address — `…/releases/download/updates/latest.json` — repointed by `update-channel-promote.yml` whenever a release is published (RG-83, RG-114). `npm run updater:check` reads 404 until that first publish, correctly. `npm run version:check` fails if an endpoint drifts back to `/latest/` **or** forward to a version tag, which is the shape that resolves without working |
+| ✅ | The update channel resolves | **Live.** `npm run updater:check` reports **2 update endpoints live**, serving `0.2.0-2`, seven platforms each (re-run 2026-09-15). This row read ⚠️ *"empty until the first publish"* for months after the publish actually happened, which is the register disagreeing with the tool that knows. The endpoint is one permanent address — `…/releases/download/updates/latest.json` — repointed by `update-channel-promote.yml` whenever a release is published (RG-83, RG-114). `npm run updater:check` reads 404 until that first publish, correctly. `npm run version:check` fails if an endpoint drifts back to `/latest/` **or** forward to a version tag, which is the shape that resolves without working |
 | ⬜ | A clean machine installs it | never done |
 
 ## 2. The live path

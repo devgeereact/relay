@@ -136,7 +136,13 @@ describe('where a session lands', () => {
 // Nothing could catch that, because App.svelte is not unit-testable and the map
 // was not a value. It is now both.
 describe('a tab that moved sends the operator where it went', () => {
-  const KNOWN = ['live', 'channels', 'templates', 'themes', 'library', 'planner', 'settings', 'help'];
+  // `KNOWN` is what App.svelte calls `routes`: the six workspaces in the strip,
+  // plus Help, which is reachable from inside Settings but is not a workspace.
+  // Handing the resolver the STRIP alone would bounce Settings' two "Open Help"
+  // buttons straight back to Live — a control that looks like it worked and did
+  // nothing — so the two lists are deliberately different and this is the one the
+  // resolver is given.
+  const KNOWN = ['live', 'library', 'planner', 'templates', 'channels', 'settings', 'help'];
 
   it('sends each relocated surface to the tab that absorbed it', async () => {
     const { resolveActiveTab } = await import('./session.js?tabs1');
@@ -145,6 +151,20 @@ describe('a tab that moved sends the operator where it went', () => {
     // Both became sections INSIDE Settings.
     expect(resolveActiveTab('dashboard', KNOWN)).toBe('settings');
     expect(resolveActiveTab('history', KNOWN)).toBe('settings');
+    // Themes became a DESK inside the Templates workspace (docs/REBRAND.md §2).
+    // Without the map entry an operator who was last on Themes lands on Live and
+    // has no reason to believe the surface still exists.
+    expect(resolveActiveTab('themes', KNOWN)).toBe('templates');
+  });
+
+  // HELP LEFT THE STRIP AND IS NOT A REDIRECT. It did not move anywhere, so it is
+  // deliberately absent from `MOVED_TABS`: an operator whose session remembers
+  // Help must land on Help. This is the assertion that makes "off the strip" and
+  // "unreachable" two different things.
+  it('keeps Help reachable even though it is not a workspace', async () => {
+    const { resolveActiveTab, MOVED_TABS } = await import('./session.js?tabs5');
+    expect(resolveActiveTab('help', KNOWN)).toBe('help');
+    expect(MOVED_TABS).not.toHaveProperty('help');
   });
 
   it('leaves a tab that still exists alone', async () => {
@@ -169,5 +189,93 @@ describe('a tab that moved sends the operator where it went', () => {
     for (const [from, to] of Object.entries(MOVED_TABS)) {
       expect(KNOWN, `${from} redirects to '${to}', which is not a tab`).toContain(to);
     }
+  });
+
+  // ── The desk, not just the workspace ──────────────────────────────────────
+  //
+  // `MOVED_TABS` gets somebody who was on the old Themes tab into the Templates
+  // WORKSPACE. That workspace has two desks, and landing on the wrong one reads
+  // exactly like the surface having been deleted — which is the failure the whole
+  // redirect exists to prevent, one level deeper. `migrateSession` is the half
+  // that answers "which desk", and it is pure so it can be asserted here.
+  it('somebody last on the Themes tab lands on the Themes desk', async () => {
+    const { migrateSession } = await import('./session.js?desk1');
+    expect(migrateSession({ activeTab: 'themes', templatesDesk: 'templates' }).templatesDesk).toBe('themes');
+  });
+
+  it('leaves a session that never saw the old tab alone', async () => {
+    const { migrateSession } = await import('./session.js?desk2');
+    // The whole point of a migration is that it is a no-op for everyone else.
+    const fresh = { activeTab: 'live', templatesDesk: 'templates' };
+    expect(migrateSession(fresh)).toEqual(fresh);
+    const chosen = { activeTab: 'templates', templatesDesk: 'themes' };
+    expect(migrateSession(chosen)).toEqual(chosen);
+  });
+});
+
+
+// ── A SETTING THAT WAS DELETED, NOT MOVED (T2) ──────────────────────────────
+//
+// `liveDensity` backed Live's `Normal | Compact` segment, removed on the
+// operator's instruction. A key with no reader is not inert here: the store's
+// subscriber writes the whole object back to localStorage on every change, so
+// an un-dropped key is re-persisted for the life of the install and reads, to
+// the next person, as a setting somebody forgot to wire up. `migrateSession`
+// drops it — the same door `MOVED_TABS` uses, because it is already applied to
+// every load and already cannot be skipped on the corrupt-payload path.
+describe('a density that no longer exists is dropped, not carried', () => {
+  beforeEach(() => localStorage.clear());
+
+  const read = (store) => {
+    let v;
+    store.subscribe((s) => (v = s))();
+    return v;
+  };
+
+  it('drops a density a saved session still carries', async () => {
+    const { migrateSession } = await import('./session.js?dens1');
+    const out = migrateSession({
+      activeTab: 'live',
+      templatesDesk: 'templates',
+      liveDensity: 'compact',
+    });
+    expect('liveDensity' in out).toBe(false);
+    // Everything else about that session is untouched — this is a deletion, not
+    // a reset, and an operator mid-service keeps their place.
+    expect(out).toEqual({ activeTab: 'live', templatesDesk: 'templates' });
+  });
+
+  it('drops it on the moved-tab path too, which is the SECOND return', async () => {
+    // Two returns, and fixing one while leaving the other is the exact shape of
+    // "a guarantee is only kept on the doors you checked".
+    const { migrateSession } = await import('./session.js?dens2');
+    const out = migrateSession({ activeTab: 'themes', liveDensity: 'compact' });
+    expect('liveDensity' in out).toBe(false);
+    expect(out.templatesDesk).toBe('themes');
+  });
+
+  it('a stored density does not survive a real load', async () => {
+    // The end-to-end claim: what the app is handed, through the same
+    // localStorage a running install reads.
+    localStorage.setItem(
+      'relay.session.v1',
+      JSON.stringify({ activeTab: 'live', liveCueId: 'c7', liveDensity: 'compact' }),
+    );
+    const { session } = await import('./session.js?dens3');
+    const s = read(session);
+    expect('liveDensity' in s).toBe(false);
+    // The resume point itself is NOT collateral damage.
+    expect(s.liveCueId).toBe('c7');
+    // …and the subscriber has already written the cleaned object back, so the
+    // key does not come round again on the next boot.
+    expect(JSON.parse(localStorage.getItem('relay.session.v1')))
+      .not.toHaveProperty('liveDensity');
+  });
+
+  it('EMPTY does not reintroduce it', async () => {
+    // `load()` merges over EMPTY, so a key left in EMPTY would be re-added to
+    // every session by the merge and the drop would be undone one line later.
+    const { session } = await import('./session.js?dens4');
+    expect('liveDensity' in read(session)).toBe(false);
   });
 });

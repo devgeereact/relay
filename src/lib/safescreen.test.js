@@ -40,15 +40,26 @@ describe('the fit loop has a floor', () => {
     // congregation, and refusing to render is not this component's call: Rust owns
     // refusals. The shrink loop must still run to completion.
     const fit = render.slice(render.indexOf('function fitOne'), render.indexOf('function fitText'));
-    expect(fit).toMatch(/while \(overflows\(\) && guard < 40\)/);
+    expect(fit).toMatch(/while \(keepShrinking\(\{ overflowing: overflows\(\), scale \}\)\)/);
     expect(fit).not.toMatch(/return;/);
     expect(fit).toMatch(/return scale;/);
+  });
+
+  it('is bounded by a SIZE, not by a round count', () => {
+    // `guard < 40` bounded the loop at 0.95^40 = 0.1285, and a box needing less
+    // than that got the last guess and kept it — still overflowing, inside an
+    // `overflow: hidden` box. That is rule 42's sliced verse by a different road,
+    // and it takes only one short line at a large designed size in a shallow box.
+    // A count cannot express "small enough"; a scale can.
+    const fit = render.slice(render.indexOf('function fitOne'), render.indexOf('function fitText'));
+    expect(fit).not.toMatch(/while \(overflows\(\) && guard < 40\)/);
+    expect(render).toMatch(/import \{[^}]*keepShrinking[^}]*\} from '\.\/templatemodel\.js'/);
   });
 
   it('reports the WORST slide on screen, not the last one fitted', () => {
     // During a crossfade two slides coexist. Reporting whichever happened to be
     // fitted last would call a shrunken verse legible half the time.
-    expect(render).toMatch(/Math\.min\(worst, fitOne\(box\)\)/);
+    expect(render).toMatch(/Math\.min\(worst, fitOne\(box, stageEl\)\)/);
   });
 
   it('a reporter that throws may not take the render down', () => {
@@ -63,8 +74,25 @@ describe('what Live tells the operator', () => {
   it('the program pane — which renders through the SAME component as the wall — listens', () => {
     // The measurement has to be the wall's, not a guess about it. The console
     // preview uses the identical renderer, which is what makes this honest.
-    const pane = live.slice(live.indexOf('resolveOutputTemplate(previewTpl'));
-    expect(pane.slice(0, 400)).toMatch(/onFit=\{noteFit\}/);
+    //
+    // Anchored on the MARKUP, not on the first mention of the resolver: the
+    // slide grid now renders every cell through that same resolver too, and a
+    // slice taken from the first textual hit silently moved to a thumbnail —
+    // which would still have passed had the thumbnails been the ones reporting.
+    const from = live.indexOf('<section class="pane mon prog"');
+    expect(from, 'the program pane is still identifiable in the markup').toBeGreaterThan(-1);
+    const pane = live.slice(from, live.indexOf('</section>', from));
+    // The resolution moved OUT of the markup into one reactive value, because the
+    // pane now branches on whether a template resolved at all (it used to draw an
+    // ON AIR frame over a black rectangle and say nothing). Two calls could
+    // disagree, so there is one — and the claim this test makes is unchanged:
+    // the programme renders through the SAME resolution the wall does.
+    expect(pane).toMatch(/template=\{progTpl\}/);
+    expect(live).toMatch(/\$: progTpl = resolveOutputTemplate\(previewTpl, \$liveTemplateOverride/);
+    expect(pane).toMatch(/onFit=\{noteFit\}/);
+    // And there is exactly ONE of it. Twenty thumbnails each reporting their own
+    // fit would bury the one report that is about a congregation's screen.
+    expect([...live.matchAll(/onFit=\{noteFit\}/g)]).toHaveLength(1);
   });
 
   it('says how small it went, and what to do about it', () => {
@@ -118,5 +146,37 @@ describe('the gate is at the one door, not at the callers', () => {
     const main = read('src-tauri/src/main.rs');
     const clear = main.slice(main.indexOf('fn clear_or_report'));
     expect(clear.slice(0, 400)).not.toMatch(/preflight/);
+  });
+});
+
+// ── A BLANK PROGRAMME SAYS WHY ──────────────────────────────────────────────
+//
+// Measured in a render on 2026-09-14: with no template resolved, the programme
+// pane drew an amber `Program · On Air` frame over a black rectangle and said
+// nothing — while the PREVIEW pane, in the identical situation one column left,
+// said `No active template — activate one in Templates`. One pane explained
+// itself and the other did not, and the silent one was the one claiming to be on
+// air. A blank frame and a blackout look the same and are not the same fact.
+describe('the programme pane never claims to be on air in silence', () => {
+  const live = fs.readFileSync(path.join(ROOT, 'src/lib/views/Live.svelte'), 'utf8');
+  const from = live.indexOf('<section class="pane mon prog"');
+  const pane = live.slice(from, live.indexOf('</section>', from));
+
+  it('renders only when a template actually resolved', () => {
+    expect(pane).toMatch(/\{#if \$live && progTpl\}/);
+  });
+
+  it('and says what is wrong when one did not, naming the way out', () => {
+    // The branch ONLY: the `{:else}` below it is the genuinely-clear case, whose
+    // words are different on purpose.
+    // The pane has TWO `{:else if $live}` — the header's ON AIR tag and this one.
+    // Anchor on the screen body, or the assertion reads the wrong branch.
+    const body = pane.slice(pane.indexOf('<div class="screen">'));
+    const start = body.indexOf('{:else if $live}');
+    const branch = body.slice(start, body.indexOf('{:else}', start));
+    expect(branch).toMatch(/is on air, but no template is active/);
+    expect(branch).toMatch(/activate one in Templates/);
+    // Not the blackout's words, and not the clear's: three different facts.
+    expect(branch).not.toMatch(/Screens clear/);
   });
 });

@@ -26,11 +26,12 @@
   import Browse from './library/Browse.svelte';
   import LyricsPane from './library/LyricsPane.svelte';
   import LiveOutputRail from './library/LiveOutputRail.svelte';
+  import Inspector from './library/Inspector.svelte';
   import {
     listActiveTemplates,
     loadTemplates,
-    templates,
     manualFire,
+    fireContent,
     fireMedia,
     listBooks,
     listTranslations,
@@ -40,30 +41,64 @@
   import MediaLibrary from './library/MediaLibrary.svelte';
   import Announcements from './library/Announcements.svelte';
   import ImportReview from './library/ImportReview.svelte';
+  import Collections from './library/Collections.svelte';
+  import { COLLECTIONS, collectionOf } from './library/collections.js';
   import {
     capture,
     parseImport,
     importMedia,
     fileToBase64,
+    listSavedScripture,
+    listSongs,
+    listAnnouncements,
+    listMedia,
   } from '../stores/capture.js';
 
-  const tabs = [
-    // BROWSE is first: the Library could search, and could list what had been
-    // saved, but could not open a Bible and read it — which is the thing the
-    // word "library" promises.
-    { key: 'browse', label: 'Bible' },
-    { key: 'scripture', label: 'Saved' },
-    { key: 'lyrics', label: 'Lyrics' },
-    { key: 'media', label: 'Media' },
-    { key: 'announcements', label: 'Announcements' },
-    // GRAPHICS is the reference's sixth pill. It is not a new store: it is the
-    // image half of Media. ProPresenter draws the same line — a still you put
-    // BEHIND words is a different job from a video you play, and mixing them
-    // means hunting past twenty MP4s for a logo. Both read the same table, so
-    // nothing is duplicated and nothing is invented.
-    { key: 'graphics', label: 'Graphics' },
-  ];
+  // ── THE COLLECTION RAIL (REBRAND §10) ─────────────────────────────────────
+  //
+  // The six pills became four collections, because four is what the content
+  // actually is: two of the pills were halves of one kind (a Bible you read and
+  // the verses you saved; the moving half of media and the still half). The
+  // register lives in `library/collections.js` so the bar and this shell cannot
+  // disagree about what a collection contains.
+  //
+  // `active` is still the VIEW key, and it is still the single source of truth
+  // for which pane renders — every existing prop, binding and test on the panes
+  // is untouched by the row above them.
   let active = 'browse';
+  $: openCollection = collectionOf(active) ?? COLLECTIONS[0];
+  // Which view each collection was last left on, so coming back to Scripture
+  // returns you to the Bible or to Saved — whichever you were reading.
+  const lastView = {};
+  $: lastView[openCollection.key] = active;
+
+  function goCollection(key) {
+    const c = COLLECTIONS.find((x) => x.key === key);
+    if (!c) return;
+    selected = null;
+    active = lastView[key] ?? c.views[0].key;
+  }
+
+  // Counts on the rail. `null` is NOT zero and `-1` is NOT zero: a count that
+  // has not loaded, and a count whose query failed, must not read the same as an
+  // empty collection (rule 35). `countWords`/`countMark` keep those three apart.
+  let counts = { scripture: null, songs: null, notices: null, media: null };
+  async function loadCounts() {
+    const one = async (fn) => {
+      try {
+        return (await fn()).length;
+      } catch {
+        return -1; // said out loud as "count unavailable", never drawn as 0
+      }
+    };
+    const [s, g, n, m] = await Promise.all([
+      one(listSavedScripture),
+      one(listSongs),
+      one(listAnnouncements),
+      one(listMedia),
+    ]);
+    counts = { scripture: s, songs: g, notices: n, media: m };
+  }
   // The template the OUTPUT actually uses, so the live strip is the real thing.
   let liveTemplate = null;
   // ── THE LIVE COLUMN ───────────────────────────────────────────────────────
@@ -104,16 +139,63 @@
   // A FAILURE surface, humanised and rose — kept separate from the green
   // importMsg so a broken fire or import can never be shown in success colour.
   let errMsg = '';
-  /** Fire something the operator queued. Same manual_fire as every other path.
-      This is a LIVE-FIRE path — a swallowed rejection is a Fire button that does
-      nothing to the wall and says nothing about why, so it must surface. */
+  /**
+   * Fire something the operator queued. Same manual_fire as every other path.
+   *
+   * THIS THROWS, DELIBERATELY — and it is the half of the contract that was
+   * missing. `LiveOutputRail` is built so that "a FIRE THAT FAILED leaves the item
+   * in the queue and says why" (`liveoutputrail.test.js`), and it can only do that
+   * if the rejection reaches it: `onQueueChange(rest)` runs after the await, so a
+   * handler that resolves on failure drops the verse out of Up Next as though it
+   * had reached a screen. The operator's next press then sends the SECOND item,
+   * which is exactly the outcome that test exists to prevent.
+   *
+   * The test passed the whole time, because the test supplies a rejecting prop and
+   * the app supplied this one. A guarantee is only kept on the doors you checked
+   * (CLAUDE.md, Detection notes) — this is the door.
+   *
+   * The rail humanises it through `errors.js` and announces it with `role="alert"`
+   * on its own footer, next to the button that was pressed, so there is nothing for
+   * `errMsg` to add here.
+   */
+  /**
+   * Fire a queued item AS THE KIND IT IS.
+   *
+   * This used to be `mediaId ? fireMedia : manualFire(item.reference)`, and
+   * `manual_fire` runs the queued string through `detection::detect_direct`,
+   * which is built to find a reference INSIDE surrounding words. The queue's
+   * `reference` is whatever the pane called the row: a song slide is
+   * "Amazing Grace · Verse 1", a notice is its title.
+   *
+   * So a hymn named "Psalm 23", or a notice headed "Romans Road · Tuesdays",
+   * parsed, resolved in the KJV, and put the BIBLE CHAPTER on the congregation's
+   * screens while the amber button beside it named the song. Nothing in the path
+   * was wrong about its own work; every stage did its job on a string that was
+   * never a reference. Church song titles and notice headings routinely contain
+   * scripture, so this is the ordinary case, not an exotic one.
+   *
+   * The milder half of the same bug: a song or notice whose title did NOT parse
+   * could never be fired at all — Go Live always errored, on a control the
+   * Inspector enables for every kind that has a reference.
+   *
+   * Each pane now tags what it queued, and this routes on that. An item with no
+   * kind REFUSES rather than falling through to `manualFire`, or the next pane
+   * somebody adds re-opens the hole silently. `fireContent` is the call the song
+   * and notice panes already make for their own direct fire, so this is the
+   * choke point those two were reaching and the queue was not (DECISIONS §73).
+   */
   async function fireQueued(item) {
     errMsg = '';
-    try {
-      if (item.mediaId) await fireMedia(item.mediaId);
-      else await manualFire(item.reference);
-    } catch (e) {
-      errMsg = humanError(e);
+    if (item.mediaId || item.kind === 'media') {
+      await fireMedia(item.mediaId);
+    } else if (item.kind === 'scripture') {
+      await manualFire(item.reference);
+    } else if (item.kind === 'song' || item.kind === 'announce') {
+      await fireContent(item.reference, item.text, item.kind);
+    } else {
+      throw new Error(
+        `This item was queued without a content kind, so Relay will not guess what it is. Remove it from Up Next and add it again.`,
+      );
     }
   }
 
@@ -146,27 +228,28 @@
   let activeTranslation = null;
   let book = null;
   let chapter = 1;
-  // The verse PICKER — where to look, not what to fire. Bound to the Bible pane
-  // in both directions: it offers the verses the open chapter actually has.
-  let verse = null;
-  let verseCount = 0;
-  /** The reference's "Filters" control. Favourites is the one real filter the
-      Bible pane has — every other axis in the mockup (type, book, chapter) is
-      already a control on this bar. */
+  /** Favourites is the one real filter the Bible pane has. The control moved
+      into that pane's own head; the state stays here so it survives a look at
+      another collection and back. */
   let favouritesOnly = false;
   let showMore = false;
+
+  // ── WHAT IS SELECTED, FOR THE INSPECTOR ───────────────────────────────────
+  //
+  // One normalised shape, produced by whichever pane owns the item (see
+  // `Inspector.svelte` for the fields). The panes keep their own data — a shell
+  // that re-derived a song from a pane's list would be a second source of truth
+  // about what a song is — and hand up only what the inspector renders.
+  //
+  // It is cleared when the COLLECTION changes, because a verse still drawn in
+  // the inspector while the Songs grid is open is the inspector describing
+  // something that is no longer in front of the operator.
+  let selected = null;
+  const pick = (it) => (selected = it);
   // THE QUEUE lives here, beside the rail that renders it, so it survives a
   // sub-tab change — an operator queueing verses does not expect them dropped
   // because they looked at the songs.
   let queue = [];
-
-  $: chapterCount = books.find((b) => b.book === book)?.chapters ?? 0;
-  // A verse number means nothing once the chapter under it changed.
-  let lastPlace = '';
-  $: if (`${book}|${chapter}` !== lastPlace) {
-    lastPlace = `${book}|${chapter}`;
-    verse = null;
-  }
 
   async function pickTranslation(id) {
     const prev = activeTranslation;
@@ -182,6 +265,7 @@
   }
 
   onMount(async () => {
+    loadCounts();
     liveTemplate = (await listActiveTemplates().catch(() => []))[0] ?? null;
     await loadTemplates().catch(() => {});
     // Guarded: an unguarded reject here aborts the rest of mount, leaving the
@@ -218,7 +302,10 @@
 
   function goTab(t) {
     active = t;
+    selected = null;
     reload += 1;
+    // An import that added songs or media just changed a number on the rail.
+    loadCounts();
   }
 
   // File-type routing — the heart of "import anything, sorted automatically".
@@ -233,28 +320,88 @@
   // impossible and nothing said why.
   const ACCEPT = [...PRO, ...TXT, ...IMG, ...VID, ...DOC].map((e) => `.${e}`).join(',');
 
+  // ── MEDIA GOES THROUGH A LOOK FIRST (REBRAND §10) ─────────────────────────
+  //
+  // "A real file, read locally into the item, previewed before it is added, with
+  // a caption; the slide IS the picture."
+  //
+  // It used to be added the instant the file dialog closed, which is how a
+  // church ends up with `IMG_20240714_113255.jpg` in the library and no idea
+  // which picture that is until they fire it. A lyric import has had a pre-save
+  // review since it was written; media had none, and media is the content type
+  // whose filename tells you the least.
+  //
+  // **The caption is the item's NAME, and that is deliberate.** `media_assets`
+  // is id · kind · filename · path · created_at, so a second line of text
+  // rendered over the picture would need a column and a template field neither
+  // of which exists — and "the slide IS the picture" says a congregation should
+  // not be reading a caption over it anyway. What the operator is naming is the
+  // thing they will search for and recognise at 9am on a Sunday.
+  //
+  // The preview is a `blob:` URL of the file the operator actually chose, never
+  // a stand-in icon; `img-src`/`media-src` in `tauri.conf.json` allow `blob:`.
+  // They are revoked when the sheet closes, because a service's worth of held
+  // object URLs is a leak in the one process that may not run out of memory.
+  let mediaReview = []; // [{ file, kind, name, ext, url }] while the sheet is open
+  let mediaBusy = false;
+
+  const EXT_OF = (name) => (name.split('.').pop() || '').toLowerCase();
+  const STEM_OF = (name) => name.replace(/\.[^.]*$/, '');
+
+  function closeMediaReview() {
+    for (const m of mediaReview) if (m.url) URL.revokeObjectURL(m.url);
+    mediaReview = [];
+  }
+
+  async function commitMedia() {
+    mediaBusy = true;
+    errMsg = '';
+    let added = 0;
+    try {
+      for (const m of mediaReview) {
+        const name = `${(m.name || STEM_OF(m.file.name)).trim() || STEM_OF(m.file.name)}.${m.ext}`;
+        await importMedia(m.kind, name, await fileToBase64(m.file));
+        added += 1;
+      }
+      closeMediaReview();
+      importMsg = `Added ${added} to Media.`;
+      goTab('media');
+    } catch (err) {
+      errMsg = humanError(err);
+    }
+    mediaBusy = false;
+  }
+
   async function onFiles(e) {
     const files = Array.from(e.target.files || []);
     if (!files.length) return;
     importing = true;
     importMsg = '';
     const parsed = []; // lyric songs → pre-save review
-    let media = 0;
+    const media = []; // pictures, video, documents → the look below
     try {
       for (const file of files) {
-        const ext = (file.name.split('.').pop() || '').toLowerCase();
+        const ext = EXT_OF(file.name);
+        const kind = IMG.includes(ext)
+          ? 'image'
+          : VID.includes(ext)
+            ? 'video'
+            : DOC.includes(ext)
+              ? 'document'
+              : null;
         if (PRO.includes(ext) || TXT.includes(ext)) {
           const got = await parseImport(file.name, await fileToBase64(file));
           parsed.push(...got);
-        } else if (IMG.includes(ext)) {
-          await importMedia('image', file.name, await fileToBase64(file));
-          media += 1;
-        } else if (VID.includes(ext)) {
-          await importMedia('video', file.name, await fileToBase64(file));
-          media += 1;
-        } else if (DOC.includes(ext)) {
-          await importMedia('document', file.name, await fileToBase64(file));
-          media += 1;
+        } else if (kind) {
+          media.push({
+            file,
+            kind,
+            ext,
+            name: STEM_OF(file.name),
+            // A document has no frame to show, so it gets no object URL rather
+            // than an <img> that will never paint.
+            url: kind === 'document' ? null : URL.createObjectURL(file),
+          });
         } else {
           importMsg = `Skipped .${ext} (unsupported)`;
         }
@@ -263,10 +410,8 @@
         // Lyrics go through the pre-save review (edit before committing).
         reviewSongs = parsed;
         reviewing = true;
-      } else if (media) {
-        importMsg = `Imported ${media} to Media.`;
-        goTab('media');
       }
+      if (media.length) mediaReview = media;
     } catch (err) {
       errMsg = humanError(err);
     }
@@ -370,7 +515,12 @@
      arrangement picker. `shortcuts.js` already refuses to clear the wall while any
      [role="dialog"] is mounted (rule 16), so this dismisses the sheet and nothing
      else — a modal dismissal is not a live action. -->
-<svelte:window on:keydown={(e) => pasting && e.key === 'Escape' && (pasting = null)} />
+<svelte:window
+  on:keydown={(e) => {
+    if (e.key !== 'Escape') return;
+    if (pasting) pasting = null;
+    else if (mediaReview.length && !mediaBusy) closeMediaReview();
+  }} />
 
 <div class="lib-shell">
   <!-- A screen-reader operator navigates by heading. This tab had none at all,
@@ -418,24 +568,109 @@
   </div>
 {/if}
 
+<!-- LOOK AT IT BEFORE IT IS ADDED. The picture the operator chose, at the size
+     they will recognise it by, and the name they will find it under. Same shape
+     as the paste sheet above, so a modal in this app looks like every other
+     modal in this app — and `role="dialog"` is load-bearing: `shortcuts.js`
+     reads the DOM to decide whether Escape belongs to an overlay or to the
+     panic key (rule 16). -->
+{#if mediaReview.length}
+  <div
+    class="lib-scrim"
+    role="presentation"
+    on:click={(e) => e.target === e.currentTarget && !mediaBusy && closeMediaReview()}>
+    <div class="lib-sheet" role="dialog" aria-modal="true" aria-label="Add to Media" use:trapFocus>
+      <h2 class="lib-sheeth">
+        Add {mediaReview.length} to Media
+      </h2>
+      <p class="lib-pastehelp">
+        Nothing is added until you say so. The name is what you will search for and
+        recognise on a Sunday — the congregation sees the picture, not the name.
+      </p>
+      <div class="lib-mgrid">
+        {#each mediaReview as m, i (m.file.name + i)}
+          <div class="lib-mrow">
+            <div class="lib-mshot">
+              {#if m.kind === 'image'}
+                <img src={m.url} alt="" />
+              {:else if m.kind === 'video'}
+                <!-- svelte-ignore a11y-media-has-caption -->
+                <video src={m.url} preload="metadata" muted playsinline></video>
+              {:else}
+                <span class="lib-mdoc r-mono">{m.ext.toUpperCase()}</span>
+              {/if}
+            </div>
+            <div class="lib-mname">
+              <label class="r-lbl" for="lib-mname-{i}">Name</label>
+              <input id="lib-mname-{i}" class="r-input" bind:value={m.name} />
+              <span class="lib-mfile r-mono">{m.file.name}</span>
+            </div>
+            <button
+              class="r-btn ghost sm"
+              disabled={mediaBusy}
+              on:click={() => {
+                if (m.url) URL.revokeObjectURL(m.url);
+                mediaReview = mediaReview.filter((_, n) => n !== i);
+              }}>Remove</button>
+          </div>
+        {/each}
+      </div>
+      <div class="lib-sheetacts">
+        <button class="r-btn ghost sm" disabled={mediaBusy} on:click={closeMediaReview}>Cancel</button>
+        <span class="lib-spring"></span>
+        <button class="r-btn primary sm" disabled={mediaBusy} on:click={commitMedia}>
+          {mediaBusy ? 'Adding…' : `Add ${mediaReview.length}`}
+        </button>
+      </div>
+    </div>
+  </div>
+{/if}
+
 {#if reviewing}
   <ImportReview songs={reviewSongs} on:done={onReviewDone} on:cancel={() => (reviewing = false)} />
 {:else}
-  <!-- ROW 1 — the content type, and the two things you can do to the library
-       as a whole. Constant across every pane. -->
+  <!-- ── ONE ROW OF CHROME, NOT FOUR (REBRAND §10) ────────────────────────────
+       This stack used to be: collection chips · a Bible/Saved row · a filter bar
+       of five controls · the pane head. Four bands across the window before the
+       operator could see a single item, against the prototype's two.
+
+       Where everything went, so nothing is merely missing:
+         · the view row (Bible / Saved)  → onto this line, after the chips
+         · the ONE search box            → onto this line, before the actions
+         · translation ▾                 → the Bible pane's own head; it is a
+                                           scripture fact and only scripture has one
+         · book ▾                        → DELETED. The Books rail beside the grid
+                                           is the book picker, and the select was a
+                                           second control over the same state
+         · chapter ▾ · verse ▾ · ★ Favourites · Sort → the Bible pane's head
+         · Import · New Item · ⋯         → unchanged, here, because they act on
+                                           the whole library rather than on the
+                                           pane, and five copies of a create path
+                                           is how two of them start disagreeing -->
   <div class="lib-topline">
-    <div class="subtabs" role="tablist" aria-label="Content type">
-      {#each tabs as t}
-        <button
-          class="r-pill r-focus"
-          role="tab"
-          aria-selected={active === t.key}
-          class:on={active === t.key}
-          on:click={() => (active = t.key)}>{t.label}</button>
-      {/each}
-    </div>
+    <Collections
+      collection={openCollection.key}
+      view={active}
+      {counts}
+      onCollection={goCollection}
+      onView={(v) => { selected = null; active = v; }} />
 
     <span class="lib-spring"></span>
+
+    <div class="lib-search">
+      <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"
+        stroke-width="2" stroke-linecap="round" aria-hidden="true">
+        <circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" />
+      </svg>
+      <input
+        class="r-input"
+        type="search"
+        bind:this={searchEl}
+        bind:value={query}
+        on:input={onSearch}
+        {placeholder}
+        aria-label={placeholder} />
+    </div>
 
     <div class="lib-topactions">
       <button class="r-btn ghost sm" on:click={() => fileInput.click()} disabled={!$capture.available || importing}>
@@ -474,75 +709,17 @@
     </div>
   </div>
 
-  <!-- ROW 2 — where you are (translation · book · chapter) and what you are
-       looking for. One search box for the whole library. -->
-  <div class="lib-filters">
-    {#if active === 'browse' || active === 'scripture'}
-      <select
-        class="r-select lib-tr"
-        aria-label="Translation"
-        disabled={translations.length < 2}
-        value={activeTranslation}
-        on:change={(e) => pickTranslation(Number(e.currentTarget.value))}>
-        {#each translations as t}
-          <option value={t.id}>{t.abbreviation || t.name}</option>
-        {/each}
-        {#if !translations.length}<option>KJV</option>{/if}
-      </select>
-    {/if}
-
-    <select class="r-select lib-f" aria-label="Content type" bind:value={active}>
-      {#each tabs as t}<option value={t.key}>{t.label}</option>{/each}
-    </select>
-
-    <div class="lib-search">
-      <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"
-        stroke-width="2" stroke-linecap="round" aria-hidden="true">
-        <circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" />
-      </svg>
-      <input
-        class="r-input"
-        type="search"
-        bind:this={searchEl}
-        bind:value={query}
-        on:input={onSearch}
-        {placeholder}
-        aria-label={placeholder} />
-    </div>
-
-    {#if active === 'browse'}
-      <select class="r-select lib-f" aria-label="Book" bind:value={book}>
-        {#each books as b}<option value={b.book}>{b.book}</option>{/each}
-      </select>
-      <select class="r-select lib-f" aria-label="Chapter" bind:value={chapter}>
-        {#each Array(chapterCount) as _, i}
-          <option value={i + 1}>Chapter {i + 1}</option>
-        {/each}
-      </select>
-      <select class="r-select lib-v" aria-label="Verse" bind:value={verse} disabled={!verseCount}>
-        <option value={null}>All verses</option>
-        {#each Array(verseCount) as _, i}
-          <option value={i + 1}>Verse {i + 1}</option>
-        {/each}
-      </select>
-      <!-- The mockup's "Filters" control. It toggles a filter that exists
-           rather than opening a panel of options that do not. -->
-      <button class="r-btn ghost lib-filter" class:on={favouritesOnly}
-        aria-pressed={favouritesOnly}
-        on:click={() => (favouritesOnly = !favouritesOnly)}>
-        <svg width="14" height="14" viewBox="0 0 24 24" fill={favouritesOnly ? 'currentColor' : 'none'} stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h12v18l-6-4.5L6 21z" /></svg>
-        Favourites
-      </button>
-    {/if}
-  </div>
-
-  {#if errMsg}<div class="lib-importerr r-mono" role="alert">{errMsg}</div>{/if}
+  <!-- Humanised words, so they are not set in the monospace face a crash dump
+       wears. `errors.js` already turned the backend error into a sentence; the
+       face was the only thing still saying "stack trace". -->
+  {#if errMsg}<div class="lib-importerr" role="alert">{errMsg}</div>{/if}
   {#if importMsg}<div class="lib-importmsg r-mono">{importMsg}</div>{/if}
 
 
 
-  <!-- The BIBLE pane owns its own right column (the reference's verse
-       inspector); every other content type gets the shared live column. -->
+  <!-- THE THREE COLUMNS (REBRAND §2 · §10): the rail and the slide grid are the
+       pane's own, and the right column is the INSPECTOR for whatever is selected,
+       with the queue beneath it. -->
   <div class="lib-body">
     <div class="lib-pane">
       {#key active + '-' + reload}
@@ -551,36 +728,49 @@
             query={debounced}
             {books}
             {translations}
+            {activeTranslation}
+            onTranslation={pickTranslation}
             bind:book
             bind:chapter
-            bind:verse
-            bind:verseCount
-            {favouritesOnly}
+            bind:favouritesOnly
             {queue}
+            onSelect={pick}
             onQueueChange={(q) => (queue = q)}
             />
         {:else if active === 'scripture'}
-          <Scripture query={debounced} {queue} onQueueChange={(q) => (queue = q)} />
+          <Scripture query={debounced} {queue} onSelect={pick} onQueueChange={(q) => (queue = q)} />
         {:else if active === 'lyrics'}
-          <LyricsPane query={debounced} {queue} onQueueChange={(q) => (queue = q)} />
+          <LyricsPane query={debounced} {queue} onSelect={pick} onQueueChange={(q) => (queue = q)} />
         {:else if active === 'media' || active === 'graphics'}
           <MediaLibrary
             query={debounced}
             only={active === 'graphics' ? 'image' : 'moving'}
             {queue}
+            onSelect={pick}
             onQueueChange={(q) => (queue = q)} />
+        {:else if active === 'announcements'}
+          <Announcements query={debounced} startDraft={announceAction} {queue} onSelect={pick} onQueueChange={(q) => (queue = q)} />
         {:else}
-          <Announcements query={debounced} startDraft={announceAction} {queue} onQueueChange={(q) => (queue = q)} />
+          <!-- Announcements used to be the `{:else}`, which meant an unknown view
+               key rendered the announcement pane and looked entirely normal. Every
+               key comes from the collection register, so this branch is reachable
+               only by a register and a shell that have drifted apart — and it says
+               so rather than showing the wrong content under the right heading. -->
+          <p class="lib-nopane" role="alert">
+            The Library has no pane for “{active}”. Pick a collection above.
+          </p>
         {/if}
       {/key}
     </div>
 
-    <LiveOutputRail
-      template={liveTemplate}
-      {queue}
-      onQueueChange={(q) => (queue = q)}
-      onFireQueued={fireQueued}
-      allTemplates={$templates} />
+    <div class="lib-right">
+      <Inspector
+        item={selected}
+        template={liveTemplate}
+        {queue}
+        onQueueChange={(q) => (queue = q)} />
+      <LiveOutputRail {queue} onQueueChange={(q) => (queue = q)} onFireQueued={fireQueued} />
+    </div>
   </div>
 {/if}
 </div>
@@ -596,55 +786,82 @@
     border:1px solid var(--v-line); background:var(--v-bg) }
   .lib-sheeth{ margin:0 0 4px; font-size:var(--v-fs-h3); font-weight:600 }
   .lib-pastebox{ min-height:220px; resize:vertical; font-family:var(--f-mono,monospace);
-    font-size:12px; line-height:1.55 }
-  .lib-pastehelp{ margin:0; font-size:11px; color:var(--v-faint) }
+    font-size:var(--v-fs-b1); line-height:1.55 }
+  .lib-pastehelp{ margin:0; font-size:var(--v-fs-lbl); color:var(--v-faint) }
   .lib-sheetacts{ display:flex; align-items:center; gap:8px; margin-top:6px }
+  /* The media look. One row per file: what it is, what it will be called. */
+  .lib-mgrid{ display:flex; flex-direction:column; gap:10px; margin:4px 0 2px }
+  .lib-mrow{ display:flex; align-items:center; gap:12px }
+  .lib-mshot{ flex:0 0 auto; width:132px; aspect-ratio:16/9; display:grid; place-items:center;
+    overflow:hidden; border-radius:var(--v-r-md); border:1px solid var(--v-line2);
+    background:var(--v-void) }
+  .lib-mshot img, .lib-mshot video{ width:100%; height:100%; object-fit:contain }
+  .lib-mdoc{ font-size:var(--v-fs-lbl); color:var(--v-dim) }
+  .lib-mname{ flex:1; min-width:0; display:flex; flex-direction:column; gap:3px }
+  .lib-mfile{ font-size:var(--v-fs-b3); color:var(--v-faint); overflow:hidden; text-overflow:ellipsis;
+    white-space:nowrap }
+  @media (max-width:640px){
+    .lib-mrow{ flex-wrap:wrap }
+    .lib-mshot{ width:100% }
+  }
   .lib-spring{ flex:1 }
-  /* ONE layout for every content type: the catalogue, and the live column. */
-  .lib-body{ display:grid; grid-template-columns:minmax(0,1fr) 400px; gap:12px; min-height:0;
-    height:clamp(420px, calc(100vh - 296px), 900px); }
+  /* ONE layout for every content type: the catalogue, and the inspector column. */
+  .lib-body{ display:grid; grid-template-columns:minmax(0,1fr) 300px; gap:12px; min-height:0;
+    height:clamp(420px, calc(100vh - 226px), 900px); }
   .lib-pane{ display:flex; flex-direction:column; min-height:0; }
-  @media (max-width:1360px){ .lib-body{ grid-template-columns:minmax(0,1fr) 344px; } }
-  @media (max-width:1140px){ .lib-body{ grid-template-columns:minmax(0,1fr) 300px; } }
+  /* The inspector takes the height it needs for a 16:9 frame and its facts; the
+     queue takes the rest. Two panes, one column, one seam between them. */
+  .lib-right{ display:grid; grid-template-rows:minmax(0,3fr) minmax(140px,2fr); gap:12px;
+    min-height:0; min-width:0; }
+  @media (max-width:1360px){ .lib-body{ grid-template-columns:minmax(0,1fr) 276px; } }
   /* STACKED — one column. Two rules learned the hard way here:
-     1. The DECK stays first. Putting the live rail on top read well in theory
-        ("what is on the wall matters most"), but the rail leads with a 16:9
-        monitor: at full width that is a 400px-tall slide, so the entire window
-        became one enormous verse and the deck sat 1300px below the fold. The
-        operator saw a screen with no library on it and no way to know why.
-     2. The rail is WIDTH-capped, not height-capped. Capping the height of a
+     1. The DECK stays first. Putting the right column on top read well in theory
+        ("what is on the wall matters most"), but it leads with a 16:9 frame:
+        at full width that is a 400px-tall slide, so the entire window became
+        one enormous verse and the deck sat 1300px below the fold. The operator
+        saw a screen with no library on it and no way to know why.
+     2. The frame is WIDTH-capped, not height-capped. Capping the height of a
         box with `aspect-ratio` shrinks its WIDTH instead and leaves a dead
         strip beside it — that bug is in this log twice already. */
-  @media (max-width:860px){
+  @media (max-width:1140px){
     .lib-body{ grid-template-columns:1fr; height:auto; }
     .lib-pane{ min-height:60vh; }
+    .lib-right{ grid-template-rows:none; max-width:460px; }
   }
-  .lib-topline{ display:flex; align-items:center; gap:16px; flex-wrap:wrap; }
-  .lib-spring{ flex:1; }
-  .subtabs{ display:flex; gap:8px; flex-wrap:wrap; }
-  .lib-topactions{ display:flex; gap:8px; flex-shrink:0; align-items:center; }
-  .lib-importmsg{ font-size:11.5px; color:var(--v-emerald); margin-top:-4px; }
+  /* THE ONE CHROME ROW. Everything on it is 34px or shorter and centred on one
+     baseline, so the row reads as a single band rather than as a stack that
+     happens to be short. It wraps rather than scrolls: a collection chip that
+     has gone off the right edge is a collection an operator cannot reach. */
+  .lib-topline{ display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+  .lib-spring{ flex:1 1 0; min-width:0; }
+  .lib-topactions{ display:flex; gap:8px; flex-shrink:0; align-items:center; height:34px; }
+  .lib-importmsg{ font-size:var(--v-fs-b2); color:var(--v-emerald); margin-top:-4px; }
   /* Failures are rose — never the emerald success line above them. */
-  .lib-importerr{ font-size:11.5px; color:var(--v-red); margin-top:-4px; }
+  .lib-importerr{ font-size:var(--v-fs-b2); color:var(--v-red); margin-top:-4px; }
+  .lib-nopane{ margin:0; padding:18px 4px; font-size:var(--v-fs-b2); color:var(--v-red); }
 
-  /* The filter bar. Every control is 40px so the row has one baseline. */
-  .lib-filters{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
-  .lib-tr{ width:120px; flex:0 0 auto; }
-  .lib-f{ width:150px; flex:0 0 auto; }
-  .lib-v{ width:126px; flex:0 0 auto; }
-  .lib-filter{ height:40px; flex:0 0 auto; }
-  .lib-filter.on{ border-color:var(--v-accent-line); color:var(--v-accent2); background:var(--v-accent-soft); }
-  .lib-more{ width:40px; height:40px; }
-  .lib-search{ position:relative; display:flex; align-items:center; flex:1 1 280px; min-width:220px; max-width:420px; }
+  /* NO SIZE — B2. It rendered `.r-iconbtn lib-more` and then overrode the
+     shared 26px to 30px, in a head bar whose other controls are `.r-btn ghost
+     sm` and `.r-btn primary sm`. A third icon-button size (Browse had 24, this
+     30, app.css 26) is exactly the drift nobody can see while reading any one
+     of the three rules. The override is gone; the rule is kept as the record. */
+  .lib-search{ position:relative; display:flex; align-items:center; flex:1 1 240px;
+    min-width:200px; max-width:360px; }
   .lib-search svg{ position:absolute; left:13px; color:var(--v-faint); pointer-events:none; }
   .lib-search input{ padding-left:36px; }
 
   .lib-newwrap{ position:relative; }
+  /* AN INVISIBLE CLICK-CATCHER, not a button — B2. A transparent full-viewport
+     button element behind an open menu so a press anywhere closes it, keyboard
+     included. Two of them, one per menu. It has no shape by design. */
   .lib-newscrim{ position:fixed; inset:0; z-index:40; background:transparent; border:0; cursor:default; }
   .lib-newmenu{ position:absolute; right:0; top:calc(100% + 6px); z-index:50; min-width:180px; padding:6px;
     background:var(--v-surf2); border:1px solid var(--v-line2); border-radius:11px; box-shadow:0 18px 44px -18px #000;
     display:flex; flex-direction:column; gap:2px; }
+  /* A MENU ROW, not a button — B2. Five of them across the New and ⋮ menus:
+     full-bleed, left-aligned, no edge, because the floating menu is the
+     surface they sit on. */
   .lib-newitem{ text-align:left; padding:9px 11px; border-radius:8px; border:0; background:transparent; color:var(--v-txt);
-    font-family:var(--f-body); font-size:13px; cursor:pointer; }
+    font-family:var(--f-body); font-size:var(--v-fs-pr); cursor:pointer; }
   .lib-newitem:hover{ background:var(--v-surf3); color:var(--v-accent); }
 </style>

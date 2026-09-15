@@ -10,6 +10,10 @@
 //! lives in — the split is for the people reading it, not for the call sites.
 
 mod channels;
+/// The demo dataset an operator can load and remove. **Nothing here calls it** —
+/// see `demo.rs`. Exposed as a module rather than glob-reexported because `load`,
+/// `remove` and `status` are names that would collide with half of `db::`.
+pub mod demo;
 mod environments;
 mod library;
 mod plans;
@@ -39,7 +43,8 @@ use channels::seed_channels;
 #[cfg(test)]
 use serde_json::Value;
 use templates::{
-    ensure_lyrics_template, ensure_preset_templates, reset_builtin_templates, seed_templates,
+    ensure_lower_third_band_is_not_a_law_colour, ensure_lyrics_template, ensure_preset_templates,
+    reset_builtin_templates, seed_templates,
 };
 #[cfg(test)]
 use verses::clean_verse;
@@ -349,6 +354,10 @@ fn ensure_tables(conn: &Connection) -> rusqlite::Result<()> {
     ensure_template_active(conn)?; // console-active templates (max 4)
     ensure_lyrics_template(conn)?; // the song template — see templates.rs
     ensure_preset_templates(conn)?; // ready-to-use preset designs (additive, by name)
+                                    // …and correct the one seeded value that additive-by-name cannot reach: see
+                                    // the function's own note. The band only became visible this wave, and on an
+                                    // existing install it would have become visible in the REHEARSAL colour.
+    ensure_lower_third_band_is_not_a_law_colour(conn)?;
     ensure_service_plans(conn)?; // Planner
     ensure_songs(conn)?; // Lyrics
     ensure_saved_scripture(conn)?; // Library
@@ -357,6 +366,9 @@ fn ensure_tables(conn: &Connection) -> rusqlite::Result<()> {
     ensure_service_events(conn)?; // the service timeline + latency snapshots
     ensure_environment_profiles(conn)?; // a room, remembered
     ensure_history_indexes(conn)?; // the foreign keys every history query walks
+                                   // The demo ledger. The TABLE is created for every install; nothing puts a row
+                                   // in it but the `load_demo_content` command (db/demo.rs).
+    demo::ensure_demo_ledger(conn)?;
     Ok(())
 }
 
@@ -633,6 +645,8 @@ pub fn init_fresh(conn: &Connection) -> rusqlite::Result<()> {
     seed(conn)?;
     // Guarantee an active voice profile exists even on a bare in-memory DB.
     ensure_tables(conn)?;
+    // NOTHING SEEDS DEMO CONTENT HERE, and nothing ever may. `db::demo::load` has
+    // exactly one caller, the `load_demo_content` command an operator presses.
     // Stamp it, so a brand-new DB is never mistaken for a v0 one and put through
     // the legacy sniff-based forward-fills it has no need of.
     set_user_version(conn, SCHEMA_VERSION)?;
@@ -1582,6 +1596,71 @@ mod tests {
         assert!(!list_arrangements(&conn, id).unwrap()[0].stale);
     }
 
+    /// W2 · GIVING A SECTION ITS OWN KEY IS A STRUCTURAL EDIT, AND IS FLAGGED
+    ///
+    /// `docs/REBRAND.md` §10 lets an operator name a section's fire key in the
+    /// reflow editor — `[Bridge:g]` — and that key rides in `tag`, because `tag`
+    /// is the only per-section field `song_sections` has that survives a save.
+    ///
+    /// `built_shape` is `[[tag, label], …]`, so a key change moves the shape.
+    /// That is the RIGHT answer and this test exists to prove it is the one that
+    /// happens: rule 39 says Relay flags an arrangement whose ground moved rather
+    /// than guessing, and a new way to change a section had to be checked against
+    /// that rather than assumed to be covered by it. The words did not change, so
+    /// the arrangement still plays the right lyrics — but a person should look.
+    #[test]
+    fn giving_a_section_its_own_fire_key_flags_the_arrangement_rather_than_repointing_it() {
+        use crate::songs::ParsedSection;
+        let conn = fresh_db();
+        ensure_songs(&conn).unwrap();
+        let sec = |t: &str, l: &str, w: &str| ParsedSection {
+            tag: t.into(),
+            label: l.into(),
+            lyrics: w.into(),
+        };
+        let id = import_song(
+            &conn,
+            "Great Are You Lord",
+            "",
+            "",
+            "",
+            None,
+            "d",
+            &[
+                sec("V1", "Verse 1", "one"),
+                sec("B", "Bridge", "bridge"),
+                sec("C", "Chorus", "chorus"),
+            ],
+        )
+        .unwrap();
+        save_arrangement(&conn, id, None, "Live", &[0, 2, 1, 2]).unwrap();
+        assert!(!list_arrangements(&conn, id).unwrap()[0].stale);
+
+        // `[Bridge:g]` — the same label, the same words, a different key.
+        update_song(
+            &conn,
+            id,
+            "Great Are You Lord",
+            "",
+            "",
+            "",
+            None,
+            &[
+                sec("V1", "Verse 1", "one"),
+                sec("G", "Bridge", "bridge"),
+                sec("C", "Chorus", "chorus"),
+            ],
+        )
+        .unwrap();
+        let arr = &list_arrangements(&conn, id).unwrap()[0];
+        assert!(arr.stale, "the section list this was built against changed");
+        assert_eq!(
+            arr.sequence,
+            vec![0, 2, 1, 2],
+            "what the operator chose is kept — Relay flags it, it does not re-point it"
+        );
+    }
+
     /// An arrangement written before `built_shape` existed carries no record of
     /// what it was built against. Reporting it stale would be a claim from an
     /// absence — the same lie in the other direction.
@@ -1965,6 +2044,38 @@ mod tests {
              adds them to a database created before they were: {orphans:?} — give \
              each one an `ALTER TABLE … ADD COLUMN` behind a pragma sniff (rule 25). \
              Editing schema-baseline.sql instead would be editing the past."
+        );
+    }
+
+    /// THE FORWARD-FILL IS REACHED BY THE FUNCTION EVERY OPEN RUNS.
+    ///
+    /// `templates.rs` owns the behavioural test — it proves the fill corrects a row
+    /// carrying the old accent, leaves a church's own colour alone, and is
+    /// idempotent. What that cannot prove is that opening a database CALLS it,
+    /// which is the distinction this repository keeps relearning: a guarantee is
+    /// only kept on the doors you checked.
+    ///
+    /// A source scan rather than a fixture, deliberately. Driving `migrate` here
+    /// means rebuilding the whole schema in a test fixture — `verses`,
+    /// `transcripts` and the rest — which tests SQLite rather than the wiring.
+    /// `servicelock.rs::every_protected_command_actually_guards_itself` reads the
+    /// source for exactly this kind of claim, for exactly this reason.
+    ///
+    /// The behaviour was also verified by hand against a real 39-template install:
+    /// id 3 went `#b080e0` to `#101319` with its type moved with it, a second run
+    /// was byte-identical, and 1 of 39 rows changed.
+    #[test]
+    fn ensure_tables_calls_the_lower_third_forward_fill() {
+        const MOD: &str = include_str!("mod.rs");
+        let from = MOD
+            .find("fn ensure_tables(")
+            .expect("ensure_tables must exist");
+        let body = &MOD[from..];
+        let body = &body[..body.find("\n}").expect("unterminated fn")];
+        assert!(
+            body.contains("ensure_lower_third_band_is_not_a_law_colour(conn)?"),
+            "ensure_tables must run the forward-fill, or an existing install keeps the \
+             rehearsal colour on a band that now paints"
         );
     }
 

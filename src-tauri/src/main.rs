@@ -39,6 +39,7 @@ mod qa_r5;
 #[cfg(test)]
 mod r6;
 mod router;
+mod search;
 mod servicelock;
 mod songs;
 mod stt;
@@ -147,6 +148,7 @@ fn main() {
         .manage(Detecting(AtomicBool::new(true)))
         .manage(channels::Rehearsal::default())
         .manage(channels::WallState::default())
+        .manage(channels::CountdownState::default())
         .manage(channels::OutputHealth::default())
         .manage(servicelock::ServiceLock::default())
         .manage(Session::default())
@@ -214,6 +216,7 @@ fn main() {
             let kiosk_clients = kiosk.clients_handle();
             let kiosk_themes = kiosk.themes_handle();
             let kiosk_last = kiosk.last_screen_handle();
+            let kiosk_last_x = kiosk.last_transition_handle();
             // Warm the custom-themes blob so a kiosk connecting before any theme is
             // saved this session still gets the operator's themes on `hello`.
             {
@@ -249,6 +252,7 @@ fn main() {
                 kiosk_clients,
                 kiosk_themes,
                 kiosk_last,
+                kiosk_last_x,
                 app.state::<channels::OutputHealth>().inner().clone(),
                 8031,
             ));
@@ -332,6 +336,7 @@ fn main() {
             save_song,
             delete_song,
             start_countdown,
+            adjust_countdown,
             list_arrangements,
             save_arrangement,
             delete_arrangement,
@@ -346,6 +351,9 @@ fn main() {
             list_media,
             import_media,
             delete_media,
+            demo_status,
+            load_demo_content,
+            remove_demo_content,
             fire_content,
             fire_media,
             get_content_templates,
@@ -353,6 +361,8 @@ fn main() {
             get_setting,
             set_setting,
             sync_kiosk_themes,
+            set_live_transition,
+            live_transition,
             data_health,
             list_books,
             chapter_verses,
@@ -403,6 +413,7 @@ fn main() {
             service_lock,
             set_service_lock,
             set_channel_template,
+            send_stage_alert,
             list_monitors,
             open_channel_output,
             auto_open_outputs,
@@ -412,7 +423,6 @@ fn main() {
             clear_screens,
             blackout,
             set_stage_next,
-            push_announcement,
             set_detection_enabled,
             get_detection_enabled,
             nav,
@@ -1645,70 +1655,173 @@ fn latency_set_enabled(on: bool) -> bool {
     latency::is_enabled()
 }
 
-/// Scripture search for the Planner — resolve a query to verses to add as cues.
-/// First tries to parse explicit references ("john 3:16", "ps 23", "rom 8 1")
-/// via the same detector the live pipeline uses; if none parse, falls back to a
-/// full-text corpus search ("shepherd"). Offline, corpus-only.
+/// One search result: the verse, and WHY it is here.
+///
+/// The verse is `#[serde(flatten)]`ed, so every surface that already reads a
+/// `VerseRow` off this command — the Library, the Planner, the Live rail, the
+/// preacher's remote — keeps reading exactly the fields it read before, and the
+/// explanation is additive. That mattered: DECISIONS §72 deferred "why it
+/// matched" precisely because it changes the shape three surfaces read.
+///
+/// `method` and `why` are the same pairing as `DetectionEvent`'s `method` +
+/// `matched_text` (CLAUDE.md rule 18): the machine fact the surface colours by,
+/// and the human evidence it renders. There is **no percentage** on a
+/// paraphrase, here as there.
+#[derive(Debug, Clone, Serialize)]
+struct SearchHit {
+    #[serde(flatten)]
+    verse: db::VerseRow,
+    /// `reference` · `prefix` · `phrase` · `words` · `paraphrase`.
+    method: &'static str,
+    /// True when Relay guessed rather than read. Cyan on the rail, never amber.
+    guess: bool,
+    /// One line saying why this verse is in the list.
+    why: String,
+    /// The query words that landed. Empty for a reference.
+    matched: Vec<String>,
+}
+
+impl SearchHit {
+    fn new(verse: db::VerseRow, why: search::Why) -> Self {
+        SearchHit {
+            verse,
+            method: why.kind.wire(),
+            guess: why.kind.is_guess(),
+            why: why.sentence,
+            matched: why.matched,
+        }
+    }
+}
+
+/// Scripture search — the Planner's box, the Library, the Live rail and the
+/// preacher's remote all come here, so there is one answer to "what did they
+/// mean". Two questions in one box (`docs/REBRAND.md` §9): which verse is this
+/// REFERENCE, and which verse says these WORDS. Offline, corpus-only.
+///
+/// **Never a fire.** Every row this returns is an offer; only an operator
+/// choosing one reaches a screen (DECISIONS §72, and rule 10 — nothing on this
+/// path can reach `AutoFire` because nothing on it touches the router at all).
 #[tauri::command]
 fn search_scripture(
     db: tauri::State<'_, Db>,
     sem: tauri::State<'_, Semantic>,
     query: String,
-) -> error::Result<Vec<db::VerseRow>> {
+) -> error::Result<Vec<SearchHit>> {
     let conn = db.0.lock()?;
     Ok(search_verses(&conn, &sem.0, query.trim()))
 }
 
 /// The scripture search itself, over a connection + semantic index — shared by
 /// the `search_scripture` command and the preacher-remote HTTP endpoint.
-fn search_verses(
-    conn: &rusqlite::Connection,
-    sem: &SemanticIndex,
-    query: &str,
-) -> Vec<db::VerseRow> {
+///
+/// Five passes, in band order (`search::MatchKind::band`), first-wins per verse:
+///
+///   1. **Reference** — the query parsed, through the SAME parser the live
+///      pipeline uses. A second parser would be a second thing that could
+///      disagree with the router about what a reference is.
+///   2. **Book prefix** — the query parsed only after a ≥2-letter book prefix was
+///      expanded ("philipp 4 13"). Search-only, and deliberately absent from
+///      `detection.rs`; see the boundary note at the top of `search.rs`.
+///   3. **Phrase** — the whole query, verbatim.
+///   4. **Paraphrase** — the semantic index. Marked a guess, with no percentage.
+///   5. **Words** — FTS5, floored at `search::MIN_COVERAGE`.
+///
+/// Every hit carries its `Why`. Nothing here decides, routes or fires: the
+/// scores order a LIST and never cross the router (CLAUDE.md rule 10).
+fn search_verses(conn: &rusqlite::Connection, sem: &SemanticIndex, query: &str) -> Vec<SearchHit> {
+    use search::{MatchKind, Why};
+
     let q = query.trim();
     if q.is_empty() {
         return vec![];
     }
 
-    // Score candidates and rank: exact reference > exact phrase > semantic
-    // paraphrase > loose text. Semantic is what turns a paraphrase ("there is
-    // therefore no condemnation in christ") into the real verse (Romans 8:1)
-    // plus suggestions — the same engine that drives live detection.
-    let mut scored: Vec<(f32, db::VerseRow)> = Vec::new();
+    let mut scored: Vec<(f32, SearchHit)> = Vec::new();
     let mut seen: std::collections::HashSet<i64> = std::collections::HashSet::new();
-
-    // 1) Explicit references ("john 3:16", "ps 23").
-    for m in detection::detect_direct(q) {
-        let r = &m.reference;
-        if let Ok(Some(v)) = db::lookup_verse(conn, &r.book, r.chapter, r.verse) {
-            if seen.insert(v.id) {
-                scored.push((1.0, v));
-            }
+    fn take(
+        score: f32,
+        v: db::VerseRow,
+        why: search::Why,
+        seen: &mut std::collections::HashSet<i64>,
+        scored: &mut Vec<(f32, SearchHit)>,
+    ) {
+        if seen.insert(v.id) {
+            scored.push((score, SearchHit::new(v, why)));
         }
     }
-    // 2) Exact phrase (the whole query appears verbatim).
-    if q.split_whitespace().count() >= 2 {
-        if let Ok(hits) = db::search_verses_text(conn, q, 12) {
-            for v in hits {
-                if seen.insert(v.id) {
-                    scored.push((0.95, v));
+
+    // 1) Explicit references ("john 3:16", "ps 23", "ps23:1").
+    let refs = search::references_in(q);
+    let parsed_a_reference = !refs.is_empty();
+    for m in refs {
+        let r = &m.reference;
+        if let Ok(Some(v)) = db::lookup_verse(conn, &r.book, r.chapter, r.verse) {
+            take(
+                MatchKind::Reference.band(),
+                v,
+                Why::reference(q),
+                &mut seen,
+                &mut scored,
+            );
+        }
+    }
+
+    // 2) A book PREFIX, expanded and handed back to the same parser. Only when
+    //    nothing parsed as typed — an exact alias (`ps`, `mt`, `jn`, `php`)
+    //    already won above, and must never be second-guessed by a prefix.
+    if !parsed_a_reference {
+        for (prefix, book, rewritten) in search::prefix_expansions(q) {
+            for m in search::references_in(&rewritten) {
+                let r = &m.reference;
+                if let Ok(Some(v)) = db::lookup_verse(conn, &r.book, r.chapter, r.verse) {
+                    take(
+                        MatchKind::BookPrefix.band(),
+                        v,
+                        Why::book_prefix(&prefix, book),
+                        &mut seen,
+                        &mut scored,
+                    );
                 }
             }
         }
     }
-    // 3) Semantic paraphrase — top matches by meaning, highest first.
+
+    // 3) Exact phrase (the whole query appears verbatim).
+    if q.split_whitespace().count() >= 2 {
+        if let Ok(hits) = db::search_verses_text(conn, q, 12) {
+            for v in hits {
+                take(
+                    MatchKind::Phrase.band(),
+                    v,
+                    Why::phrase(),
+                    &mut seen,
+                    &mut scored,
+                );
+            }
+        }
+    }
+
+    // 4) Semantic paraphrase — top matches by meaning, highest first. NO
+    //    coverage floor here: a paraphrase is supposed to find a verse whose
+    //    words are different, so a word floor would break the feature it was
+    //    meant to protect (DECISIONS §72).
     for (r, score) in sem.top_k(q, 12) {
         if score < 0.08 {
             continue;
         }
         if let Ok(Some(v)) = db::lookup_verse(conn, &r.book, r.chapter, r.verse) {
-            if seen.insert(v.id) {
-                scored.push((0.5 + score * 0.4, v)); // 0.5..0.9 band
-            }
+            // 0.5..0.9, inside the Paraphrase band's own room.
+            take(
+                MatchKind::Paraphrase.band() + score * 0.4,
+                v,
+                Why::paraphrase(),
+                &mut seen,
+                &mut scored,
+            );
         }
     }
-    // 4) Full-text word/phrase recall (FTS5, bm25-ranked). Catches loose,
+
+    // 5) Full-text word/phrase recall (FTS5, bm25-ranked). Catches loose,
     //    non-contiguous word queries ("lord shepherd") a substring LIKE misses,
     //    and ranks the best-matching verse first.
     for (i, v) in db::search_verses_fts(conn, q, 15)
@@ -1716,17 +1829,38 @@ fn search_verses(
         .into_iter()
         .enumerate()
     {
-        if seen.insert(v.id) {
-            scored.push((0.45 - (i as f32) * 0.008, v)); // 0.45..~0.33 band
+        // COVERAGE, not just a hit. FTS returns a verse that matched ANY term, so
+        // "quantum shepherd tractor engine banana" came back with nineteen verses
+        // and Ezekiel 26:9 at the top. A confident wrong answer is worse than an
+        // empty list: the operator acts on it.
+        let (share, matched) = search::coverage(q, &v.text);
+        if share < search::MIN_COVERAGE {
+            continue;
         }
+        take(
+            MatchKind::Words.band() - (i as f32) * 0.008,
+            v,
+            Why::words(matched),
+            &mut seen,
+            &mut scored,
+        );
     }
-    // 4b) Last-ditch substring scan if FTS returned nothing (index still building).
+
+    // 5b) Last-ditch substring scan if FTS returned nothing (index still building).
     if scored.is_empty() {
         if let Ok(hits) = db::search_verses_text(conn, q, 15) {
             for v in hits {
-                if seen.insert(v.id) {
-                    scored.push((0.3, v));
+                let (share, matched) = search::coverage(q, &v.text);
+                if share < search::MIN_COVERAGE {
+                    continue;
                 }
+                take(
+                    MatchKind::Words.band() - 0.15,
+                    v,
+                    Why::words(matched),
+                    &mut seen,
+                    &mut scored,
+                );
             }
         }
     }
@@ -1826,14 +1960,24 @@ fn remote_api<R: tauri::Runtime>(
                     Err(_) => vec![],
                 }
             };
+            // `why` and `method` ride to the preacher's phone too. The rule they
+            // serve — the operator must see WHICH KIND of claim this is
+            // (CLAUDE.md rule 18) — does not stop at the console, and a surface
+            // that had to compose its own sentence would compose a different one.
             let items: Vec<String> = rows
                 .into_iter()
                 .take(20)
-                .map(|v| {
+                .map(|h| {
                     format!(
-                        "{{\"reference\":{},\"text\":{}}}",
-                        json_str(&format!("{} {}:{}", v.book, v.chapter, v.verse)),
-                        json_str(&v.text)
+                        "{{\"reference\":{},\"text\":{},\"method\":{},\"why\":{},\"guess\":{}}}",
+                        json_str(&format!(
+                            "{} {}:{}",
+                            h.verse.book, h.verse.chapter, h.verse.verse
+                        )),
+                        json_str(&h.verse.text),
+                        json_str(h.method),
+                        json_str(&h.why),
+                        h.guess
                     )
                 })
                 .collect();
@@ -2047,7 +2191,16 @@ fn add_plan_item(
 
 /// Planner: remove a cue.
 #[tauri::command]
-fn remove_plan_item(db: tauri::State<'_, Db>, id: i64) -> error::Result<()> {
+fn remove_plan_item(
+    db: tauri::State<'_, Db>,
+    lock: tauri::State<'_, servicelock::ServiceLock>,
+    id: i64,
+) -> error::Result<()> {
+    // DECISIONS §85. The lock protected the PLAN and not the cues inside it, so a
+    // running order could be emptied one row at a time during a service while
+    // deleting the whole plan was refused. Skipping a cue is the reversible way to
+    // do what a volunteer actually wants mid-service.
+    lock.guard("remove_plan_item")?;
     let conn = db.0.lock()?;
     db::remove_plan_item(&conn, id).map_err(Into::into)
 }
@@ -2430,6 +2583,68 @@ fn delete_media(
     Ok(())
 }
 
+/// Demo content: what is loaded right now.
+///
+/// A read. It guards nothing and changes nothing — a panel that cannot say what is
+/// loaded is worse than no panel, and a service lock on a read would be a refusal
+/// with nothing behind it.
+#[tauri::command]
+fn demo_status(db: tauri::State<'_, Db>) -> error::Result<db::demo::DemoStatus> {
+    let conn = db.0.lock()?;
+    db::demo::status(&conn).map_err(Into::into)
+}
+
+/// Demo content: load the sample service.
+///
+/// **This is the ONLY thing that ever writes demo content** — not a migration, not
+/// a first run, not an empty database (`db/demo.rs`). It refuses when a set is
+/// already loaded rather than doubling it: two copies of the same plan is exactly
+/// the mess an operator would then have to clear by hand.
+///
+/// Held back during a recorded service. It is a bulk write of the same class as
+/// `save_reviewed_songs`, and the Library and Planner it fills are one click from
+/// the transport at 10:31.
+#[tauri::command]
+fn load_demo_content(
+    db: tauri::State<'_, Db>,
+    lock: tauri::State<'_, servicelock::ServiceLock>,
+    date: String,
+) -> error::Result<db::demo::DemoStatus> {
+    lock.guard("load_demo_content")?;
+    let conn = db.0.lock()?;
+    if db::demo::is_loaded(&conn)? {
+        return Err(error::Error::refused(
+            "Relay's demo content is already loaded. Remove it first if you want a fresh copy.",
+        ));
+    }
+    db::demo::load(&conn, &date, &db::media_dir()).map_err(Into::into)
+}
+
+/// Demo content: take it back out.
+///
+/// Removes exactly the rows the ledger recorded and nothing else. A demo item the
+/// operator has since edited is KEPT and released from the ledger; the count comes
+/// back so the console can say so rather than leaving them to find out.
+///
+/// Held back during a recorded service for the plainest of the two reasons the lock
+/// exists: it deletes, and there is no undo.
+#[tauri::command]
+fn remove_demo_content(
+    db: tauri::State<'_, Db>,
+    lock: tauri::State<'_, servicelock::ServiceLock>,
+) -> error::Result<db::demo::DemoRemoval> {
+    lock.guard("remove_demo_content")?;
+    let gone = {
+        let conn = db.0.lock()?;
+        db::demo::remove(&conn)?
+    };
+    // Files last, outside the lock, best-effort — the same shape as `delete_media`.
+    for p in &gone.files {
+        let _ = std::fs::remove_file(p);
+    }
+    Ok(gone)
+}
+
 /// Lyrics: import songs from a ProPresenter file. The webview reads the picked
 /// file and hands us its bytes (base64) — a `.proplaylist` yields many songs,
 /// a single `.pro` yields one. Each slide becomes a section. Fully offline;
@@ -2567,9 +2782,16 @@ fn clean_note(note: Option<String>) -> Option<String> {
 /// Start a pre-service countdown on every output. Broadcasts the target epoch
 /// (now + `minutes`), then each output ticks the MM:SS locally — no per-second
 /// network traffic. `label` shows above the timer; `done_msg` replaces it at 0.
+///
+/// This is the one place a countdown is CREATED. Re-aiming and holding one is
+/// [`adjust_countdown`], which can never create one.
+// GENERIC OVER THE RUNTIME (rule 24). It puts content on a wall, so it is fire-path
+// code, and welded to the concrete desktop handle it could not be driven from
+// `e2e.rs` — which is why the countdown was the one fire path with no end-to-end
+// test while every other take had one.
 #[tauri::command]
-fn start_countdown(
-    app: tauri::AppHandle,
+fn start_countdown<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     db: tauri::State<'_, Db>,
     minutes: f64,
     label: String,
@@ -2596,6 +2818,14 @@ fn start_countdown(
             kind: Some("countdown".into()),
             reference: label.trim().to_string(),
             countdown_to: Some(target),
+            // The instant it is aimed FROM, so `to - from` is the length it was
+            // aimed for and the warning rule has a span to work from. This field
+            // had a reader and no writer, so §7's short-countdown rule had never
+            // fired in the product (see `OutputContent::countdown_from`).
+            countdown_from: Some(now_ms),
+            // A countdown that has just been STARTED is running, always. Pausing is
+            // `adjust_countdown`, which is about a countdown already on a screen.
+            countdown_paused_ms: None,
             countdown_done: clean_note(Some(done_msg)),
             template_id: tid,
             template_json: tjson,
@@ -2604,6 +2834,81 @@ fn start_countdown(
         },
     )?;
     persist_cue(&app, "countdown", None);
+    Ok(())
+}
+
+/// RE-AIM OR HOLD THE COUNTDOWN THAT IS ALREADY ON THE SCREENS — Reset, ±1, Pause,
+/// Resume. It can never create one.
+///
+/// `remaining_ms` is how long should be left; `paused` whether it should be held.
+/// `None` for either means "leave that alone", so `+1` moves the time without
+/// touching the hold, and Pause holds it without moving the time.
+///
+/// ## Why this exists rather than a second call to `start_countdown`
+///
+/// The console used to assemble a re-aim out of its mirror of the live content —
+/// label, done message and template read back off the event and handed to
+/// `start_countdown` again. It worked, and it only worked while every caller
+/// remembered every field. `countdown_paused_ms` is one more thing to forget, and
+/// forgetting THAT one restarts a held timer in front of a congregation: the operator
+/// presses `+1` on a paused countdown and it starts running. So the engine keeps the
+/// countdown (`channels::CountdownState`) and this changes one thing about it.
+///
+/// ## Two things it must not do
+///
+/// **It must not put content on a wall by itself.** With no countdown in front of the
+/// operator it refuses, in words, rather than starting one: Start is the control that
+/// puts a countdown in front of people and there must be exactly one of those.
+///
+/// **It must not re-skin the screens.** The content is carried over verbatim, which
+/// includes `template_pinned` — a countdown fired from the dock resolves through the
+/// content LOOK, which defers to each screen's own template (DECISIONS §29). Rebuilding
+/// the fire and handing the resolved id back as a cue template would take that
+/// deference away, and a press of `+1` would silently re-skin every screen in the
+/// building.
+#[tauri::command]
+fn adjust_countdown<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    remaining_ms: Option<i64>,
+    paused: Option<bool>,
+) -> error::Result<()> {
+    let Some(mut content) = channels::live_countdown(&app) else {
+        return Err(error::Error::refused("Nothing is counting down."));
+    };
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
+    // What is left RIGHT NOW: the held figure when it is held, otherwise the gap to
+    // the instant. One reader, so the two halves of the model cannot disagree — the
+    // same rule the frontend keeps in `countdown.js::countdownRemainingMs`.
+    let was_paused = content.countdown_paused_ms;
+    let current = was_paused
+        .unwrap_or_else(|| content.countdown_to.unwrap_or(now_ms) - now_ms)
+        .max(0);
+    let next = remaining_ms.unwrap_or(current);
+    // The backend substitutes five minutes for a non-positive length (see
+    // `start_countdown`), so a re-aim to zero would put 5:00 on the wall — the
+    // opposite of what was pressed. Refused here, where there is somebody to tell.
+    if next < 1000 {
+        return Err(error::Error::refused(
+            "A countdown needs a second or more left. Clear the screens to take it down.",
+        ));
+    }
+    let hold = paused.unwrap_or(was_paused.is_some());
+    // `countdown_to` stays set even while held: it is where the countdown would land
+    // if it were resumed now, and it is what keeps the content reading as a countdown
+    // to `preflight`, to the retained screen frame and to the slide key.
+    content.countdown_to = Some(now_ms + next);
+    content.countdown_paused_ms = hold.then_some(next);
+    // `countdown_from` is NOT re-stamped. It is the instant the countdown was first
+    // aimed from, so the warning span stays the countdown's own length rather than
+    // shrinking to whatever is left each time somebody presses a button.
+    //
+    // `trace_id` is cleared: an operator's press has no decode pass behind it, and
+    // inventing one would put a human action into the AI's latency percentile.
+    content.trace_id = None;
+    broadcast_with_clock(&app, content)?;
     Ok(())
 }
 
@@ -2811,6 +3116,40 @@ fn sync_kiosk_themes(kiosk: tauri::State<'_, channels::KioskHub>, themes_json: S
     kiosk.set_themes(&themes_json);
 }
 
+/// THE OPERATOR'S TRANSITION OVERRIDE — how the next thing appears, on every
+/// screen (docs/REBRAND.md §8, DECISIONS §84).
+///
+/// `mode: None` clears it and every screen goes back to following its own
+/// template, which is §71 untouched.
+///
+/// It is a plain `()` rather than a `Result` on purpose: there is nothing here
+/// that can fail and nothing a congregation can be misled about. It reaches the
+/// native windows through a Tauri emit and the kiosk/OBS sources through the hub,
+/// and it changes no screen until the NEXT thing is put on one.
+/// GENERIC OVER `tauri::Runtime`, like every other command that reaches a screen
+/// (rule 24). A concrete `AppHandle` here would weld this control to the desktop
+/// runtime, and the e2e test below — the one that checks a panic control is not
+/// delayed by a transition — could not be written at all.
+#[tauri::command]
+fn set_live_transition<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    mode: Option<String>,
+    ms: Option<u32>,
+) {
+    channels::transition(&app, mode, ms);
+}
+
+/// What override is in force right now, for the console to read back on mount.
+///
+/// The console can reload mid-service (a crash recovery, a devtools refresh) and
+/// the override lives in the backend. Without this read the picker would come back
+/// saying "Follow template" while every screen in the building was crossfading —
+/// a control that reads the same when it is in force as when it is not (rule 35).
+#[tauri::command]
+fn live_transition(kiosk: tauri::State<'_, channels::KioskHub>) -> channels::TransitionOverride {
+    kiosk.current_transition()
+}
+
 /// Books available to browse, in canonical order — Library (§7).
 #[tauri::command]
 fn list_books(db: tauri::State<'_, Db>) -> error::Result<Vec<db::BookSummary>> {
@@ -3003,6 +3342,19 @@ fn export_diagnostics(app: tauri::AppHandle) -> error::Result<String> {
                 ));
             }
         }
+        // WHICH MICROPHONE (RG-122). A bundle arrives with a sentence like "it did
+        // not hear the preacher", and the first question is which input it was
+        // listening to. Both candidates in the field on 2026-09-06 ran at 48 kHz,
+        // so the rate line could not answer it and neither could anything else in
+        // the bundle. Absent until capture has actually opened something, because
+        // naming the default Relay never opened would be a confident lie.
+        relay.push(Fact::new(
+            "Microphone",
+            match audio::last_input() {
+                Some(input) => audio::describe_input(&input),
+                None => "not opened yet this run".into(),
+            },
+        ));
         // Whether the display was being held awake. A church reporting "the
         // projector went black in the middle of the sermon" needs this line: it
         // separates a screen Relay let sleep from a screen that failed for some
@@ -3115,6 +3467,18 @@ fn export_diagnostics(app: tauri::AppHandle) -> error::Result<String> {
         Fact::new(
             "Transcript updates skipped",
             report.dropped_partials.to_string(),
+        ),
+        // RG-120. Without these two, an end-to-end stage with no samples is
+        // unreadable in a bundle: nothing distinguishes "the AI never fired" from
+        // "nothing was attached to paint what it fired". A real service reported
+        // zero samples against three auto-fires for the second reason.
+        Fact::new(
+            "Verses no screen reported painting",
+            report.fires_never_painted.to_string(),
+        ),
+        Fact::new(
+            "Render reports that arrived too late",
+            report.marks_after_close.to_string(),
         ),
     ];
     for m in &report.metrics {
@@ -4260,7 +4624,30 @@ fn handle_transcript(
     update: stt::TranscriptUpdate,
 ) {
     if update.is_final {
-        println!("stt[{}]: {}", update.language, update.text);
+        // CONTENT-FREE. `stt.rs` states the rule a hundred lines away in this same
+        // pipeline — "The transcript is sermon data and must never be logged" — and
+        // this line printed the sermon, in full, once per final window. Every field
+        // service so far was run from a terminal, so in each of them a real
+        // congregation's preaching went to a console verbatim.
+        //
+        // The length is kept because it is the diagnostic anyone actually wanted
+        // here (is the decoder returning anything?) and it says nothing about what
+        // was said. The words go behind `RELAY_STT_TIMING`, the existing debug
+        // switch `stt.rs` uses for exactly this purpose, so a developer chasing a
+        // transcript bug can still have them by asking.
+        //
+        // This also protects the boot heartbeat: `greet` prints one line per launch
+        // and its whole value is that the line is countable (rule 26). A stream
+        // flooded with the sermon is one nobody can count.
+        if std::env::var_os("RELAY_STT_TIMING").is_some() {
+            println!("stt[{}]: {}", update.language, update.text);
+        } else {
+            println!(
+                "stt[{}]: {} chars (set RELAY_STT_TIMING=1 for the text)",
+                update.language,
+                update.text.chars().count()
+            );
+        }
         // Compute under the lock, release, THEN emit — CLAUDE.md rule #2.
         let unstable = lang_stability
             .lock()
@@ -4747,7 +5134,8 @@ fn open_channel_output(
             .find(|c| c.id == channel_id)
             .ok_or_else(|| format!("channel {channel_id} not found"))?
     };
-    let template_id = channel.template_id.unwrap_or(1);
+    // The screen's own answer, Option and all — see `channels::output_url`.
+    let template_id = channel.template_id;
     let monitor_index = channel.display_target.as_deref().and_then(parse_display);
     // Deterministic, so the window can be traced back to this channel — that is
     // what makes the channel's "online" light real. It also makes
@@ -4796,7 +5184,7 @@ fn auto_open_outputs(
         if m.primary {
             continue; // never cover the operator's console
         }
-        let tid = c.template_id.unwrap_or(1);
+        let tid = c.template_id;
         let label = channels::channel_label(c.id);
         if channels::open_native_window(&app, &label, tid, &c.name, Some(idx)).is_ok() {
             opened.push(label);
@@ -5269,34 +5657,86 @@ fn list_output_channels(db: tauri::State<'_, Db>) -> error::Result<Vec<db::Outpu
 /// reload and no URL change. Native windows get a `channel://retemplate` event; kiosk
 /// / OBS clients get a `channel_template` WS message they filter by their own channel.
 #[tauri::command]
-fn set_channel_template(
-    app: tauri::AppHandle,
+fn set_channel_template<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     db: tauri::State<'_, Db>,
     kiosk: tauri::State<'_, channels::KioskHub>,
     id: i64,
-    template_id: i64,
+    template_id: Option<i64>,
 ) -> error::Result<()> {
+    // `None` means THIS SCREEN HAS NO LOOK OF ITS OWN and follows the content look
+    // (DECISIONS §70). Until this was possible every screen always had a template,
+    // and since a screen's own template wins over a content-type default (§29), the
+    // content-look map could be filled in, saved, and do nothing on every screen in
+    // the building.
+    //
     // DB write + resolve the new template JSON under one lock, then release before
     // emitting (never hold a lock across emit — CLAUDE.md rule #2).
     let tjson = {
         let conn = db.0.lock()?;
         db::set_channel_template(&conn, id, template_id)?;
-        db::get_template(&conn, template_id)?.and_then(|t| serde_json::to_string(&t).ok())
+        match template_id {
+            Some(tid) => db::get_template(&conn, tid)?.and_then(|t| serde_json::to_string(&t).ok()),
+            None => None,
+        }
     };
-    if let Some(j) = tjson {
-        if let Ok(tpl) = serde_json::from_str::<serde_json::Value>(&j) {
+    match (template_id, tjson) {
+        (Some(tid), Some(j)) => {
+            if let Ok(tpl) = serde_json::from_str::<serde_json::Value>(&j) {
+                let _ = app.emit(
+                    "channel://retemplate",
+                    serde_json::json!({ "channel": id, "template": tpl }),
+                );
+            }
+            kiosk.publish(format!(
+                r#"{{"kind":"channel_template","channel":{id},"template":{j}}}"#
+            ));
+            // Keep the hub's per-template cache current so a fresh kiosk connect on
+            // this template id renders the up-to-date template too.
+            kiosk.cache_template(tid, &j);
+        }
+        // CLEARING IS ALSO NEWS. A screen that is already open has to be told it is
+        // now following the content look; staying silent leaves it wearing the look
+        // it was given until something happens to reload it.
+        (None, _) => {
             let _ = app.emit(
                 "channel://retemplate",
-                serde_json::json!({ "channel": id, "template": tpl }),
+                serde_json::json!({ "channel": id, "template": serde_json::Value::Null }),
             );
+            kiosk.publish(format!(
+                r#"{{"kind":"channel_template","channel":{id},"template":null}}"#
+            ));
         }
-        kiosk.publish(format!(
-            r#"{{"kind":"channel_template","channel":{id},"template":{j}}}"#
-        ));
-        // Keep the hub's per-template cache current so a fresh kiosk connect on this
-        // template id renders the up-to-date template too.
-        kiosk.cache_template(template_id, &j);
+        // A template id that resolves to nothing: the row is written, and no screen
+        // is told to paint something that could not be read.
+        (Some(_), None) => {}
     }
+    Ok(())
+}
+
+/// A WORD TO THE PREACHER: take over the stage monitor with one line of text.
+///
+/// Whitespace is not a message — a blank send CLEARS, which is also what the
+/// Clear button does, so an operator who empties the box and presses Send gets
+/// the obvious result rather than a red screen with nothing on it.
+///
+/// The line is capped. A stage monitor renders this at 8.5cqw across the whole
+/// screen; a pasted paragraph is not a word to the preacher, it is a wall of type
+/// nobody can read from a platform.
+#[tauri::command]
+fn send_stage_alert<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    text: Option<String>,
+) -> error::Result<()> {
+    const MAX: usize = 140;
+    let line = text.unwrap_or_default();
+    let line = line.trim();
+    let msg = if line.is_empty() {
+        None
+    } else {
+        Some(line.chars().take(MAX).collect::<String>())
+    };
+    channels::stage_alert(&app, msg);
     Ok(())
 }
 
@@ -5375,28 +5815,6 @@ fn set_stage_next<R: tauri::Runtime>(
     text: Option<String>,
 ) {
     channels::stage_next(&app, label, text);
-}
-
-/// D5: push an emergency announcement over whatever is currently shown, on every
-/// output channel. Reuses the shared content broadcast (no per-channel special-
-/// casing) so it renders through the same template engine as any slide.
-#[tauri::command]
-fn push_announcement(app: tauri::AppHandle, message: String) -> error::Result<()> {
-    let message = message.trim().to_string();
-    if message.is_empty() {
-        return Err(error::Error::refused("empty announcement"));
-    }
-    broadcast_with_clock(
-        &app,
-        OutputContent {
-            reference: "Announcement".into(),
-            text: Some(message.clone()),
-            translation: None,
-            ..Default::default()
-        },
-    )?;
-    persist_cue(&app, "announcement", Some(&message));
-    Ok(())
 }
 
 /// Manual next/previous verse (console buttons, and the `→`/`←` transport keys) —
@@ -5501,16 +5919,40 @@ fn end_service<R: tauri::Runtime>(
 struct ServiceLockState {
     engaged: bool,
     held_back: Vec<&'static str>,
+    /// Is a service row OPEN right now — the fact `end_service` acts on.
+    ///
+    /// This is deliberately NOT `engaged`. The lock is armed by `start_service`
+    /// and released by `end_service`, so the two usually agree — but the operator
+    /// can lift the lock in one action (`set_service_lock`, "operator override is
+    /// a first-class control"), and after that `engaged` is false over a service
+    /// that is still recording. A control that ended a service off `engaged`
+    /// would read "nothing to end" at exactly that moment: a status control that
+    /// cannot detect its own failure (CLAUDE.md rule 35).
+    ///
+    /// It reads the session directly, which is the same state `end_service`
+    /// clears — so the button and the command can never disagree about whether
+    /// there is a service. `current_service` was deleted as a dead command and
+    /// this does NOT bring it back: no id, no title, no times cross the bridge,
+    /// only whether one is open.
+    recording: bool,
 }
 
 #[tauri::command]
-fn service_lock(lock: tauri::State<'_, servicelock::ServiceLock>) -> ServiceLockState {
+fn service_lock(
+    session: tauri::State<'_, Session>,
+    lock: tauri::State<'_, servicelock::ServiceLock>,
+) -> ServiceLockState {
     ServiceLockState {
         engaged: lock.engaged(),
         held_back: servicelock::PROTECTED
             .iter()
             .map(|(_, what)| *what)
             .collect(),
+        // A poisoned session lock is not a service. It is also not a reason to
+        // fail a status read the whole shell polls — `is_ok_and` answers false
+        // and the operator sees "no service" rather than a console that cannot
+        // draw its own dock.
+        recording: session.0.lock().is_ok_and(|s| s.is_some()),
     }
 }
 

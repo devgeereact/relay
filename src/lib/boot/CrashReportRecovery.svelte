@@ -65,9 +65,9 @@
     <!-- Opt-in, off by default, and it says what travels. -->
     <label style="display:flex;gap:11px;align-items:flex-start;cursor:pointer;margin-bottom:20px;">
       <input class="b-check-box" type="checkbox" bind:checked={send} style="margin-top:2px;" />
-      <span style="font-size:13px;line-height:1.55;color:var(--v-dim);">
+      <span style="font-size:var(--v-fs-pr);line-height:1.55;color:var(--v-dim);">
         Send this crash report to the Relay developers.
-        <span style="display:block;color:var(--v-faint);font-size:12px;margin-top:3px;">
+        <span style="display:block;color:var(--v-faint);font-size:var(--v-fs-b1);margin-top:3px;">
           The error text and the app version only. No transcript, no sermon audio, no verse
           text, no church name. Off unless you tick it, and you can change it later in Settings.
         </span>

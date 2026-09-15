@@ -55,12 +55,16 @@
   /** Bound to the shell's filter bar — one piece of state, two controls. */
   export let book = null;
   export let chapter = 1;
-  export let verse = null;
-  export let verseCount = 0;
   /** The Library's one search box. */
   export let query = '';
-  /** Only verses already in Favourites (the filter-bar toggle). */
+  /** Only verses already in Favourites. Bound: the control is in this pane's
+      head now, but the state belongs to the shell so it survives a look at the
+      songs and back. */
   export let favouritesOnly = false;
+  /** The translations pick, hoisted out of the shell's deleted filter bar. */
+  export let activeTranslation = null;
+  export let onTranslation = () => {};
+  /** Hand the selected verse up for the inspector. */
   export let onSelect = () => {};
   /** The queue lives in the shell, beside the rail that renders it. */
   export let queue = [];
@@ -72,10 +76,21 @@
   let template = null;
   let checked = new Set();
   let sort = 'verse';
-  // LIST by default — plain text, like the Lyrics pane, so a chapter opens
-  // instantly. The grid view (a live TemplateRender thumbnail per verse) is
-  // gorgeous but renders a dozen fit loops at once; it stays one click away.
-  let layout = 'list';
+  // ── GRID BY DEFAULT (REBRAND §10) ─────────────────────────────────────────
+  //
+  // "Slides in the big grid." A card is the verse drawn through the SAME
+  // `TemplateRender` that paints the projector, so what an operator picks is
+  // what the room will see; a numbered text row is a description of a slide and
+  // an operator reading one still has to imagine the wall.
+  //
+  // This said `list` and gave a reason — "the grid renders a dozen fit loops at
+  // once". That cost was real when it was written and is not any more: the
+  // font-refit guard added for rule 42 bounded the retry to two, and the fit
+  // loop no longer runs again on every card when a webfont lands. The deck
+  // itself records that ("the font-refit guard already removed the real
+  // per-grid cost"), so the default and the note beside it had disagreed for a
+  // while. `list` is still one click away for a long chapter.
+  let layout = 'grid';
   let perPage = 12;
 // { id?, ref, label, text, verse }
   let passage = null;
@@ -119,9 +134,6 @@
     lastPlace = `${book}|${chapter}`;
     open(book, chapter);
   }
-  // The verse picker scrolls; it does not fire. Where to look and what a
-  // congregation sees are different decisions.
-  $: if (verse) jumpTo(verse);
 
   async function runSearch(q) {
     if (!q?.trim()) {
@@ -226,7 +238,7 @@
       onQueueChange(queue.filter((q) => q.reference !== ref));
       msg = `Removed ${ref} from the queue`;
     } else {
-      onQueueChange([...queue, { reference: ref, text: v.text }]);
+      onQueueChange([...queue, { reference: ref, text: v.text, kind: 'scripture' }]);
       msg = `Queued ${ref}`;
     }
   }
@@ -254,11 +266,60 @@
     if (await clearScreens()) msg = 'Screens cleared.';
   }
 
+  /**
+   * ONE PRESS SELECTS. The Library is a build surface (REBRAND §2/§10): a single
+   * click fills the inspector and reaches no output, and `Cue in Live` there is
+   * the deliberate press that stages it. `VerseDeck`'s `press` prop is what says
+   * so, and its default is still the old fire-on-press for everything else.
+   *
+   * SCRIPTURE IS THE CONTENT, so the reference rides to the inspector's preview:
+   * a verse on a wall carries its reference and a lyric does not (DECISIONS §73).
+   */
+  function selectVerse(v) {
+    selected = v;
+    onSelect({
+      kind: 'scripture',
+      title: v.reference ?? refOf(v),
+      titleLabel: 'Reference',
+      translation: v.translation ?? null,
+      words: v.text ?? '',
+      slide: { reference: v.reference ?? refOf(v), text: v.text ?? '', translation: v.translation ?? null },
+      reference: v.reference ?? refOf(v),
+      plan: {
+        cueType: 'scripture',
+        label: v.reference ?? refOf(v),
+        payload: {
+          book: v.book,
+          chapter: v.chapter,
+          verse: v.verse,
+          reference: v.reference ?? refOf(v),
+          text: v.text,
+          translation: v.translation,
+        },
+      },
+    });
+  }
+
+  /** The double press. Scripture is not editable (see the note at the top of
+      this pane), so "open" means: put the whole chapter in front of me. */
+  function openVerse(v) {
+    if (v.book && v.chapter) {
+      book = v.book;
+      chapter = v.chapter;
+    }
+    jumpTo(v.verse);
+  }
+
   const refOf = (v) => `${v.book} ${v.chapter}:${v.verse}`;
   const shape = (v) => ({
     key: refOf(v),
     reference: refOf(v),
     text: v.text,
+    // The card's second line. The thumbnail renders this same verse, but through
+    // the operator's own template and fitted to a 268px box — a long verse shrinks
+    // to a grey smudge there (rule 37's floor is about exactly this). The sub line
+    // is the one legible copy of the words at card size.
+    sub: v.text,
     translation: v.abbreviation,
     book: v.book,
     chapter: v.chapter,
@@ -267,10 +328,10 @@
   const words = (t) => (t ? t.trim().split(/\s+/).length : 0);
   const isSaved = (v, list) => list.some((s) => s.reference === refOf(v));
 
+  $: chapterCount = books.find((b) => b.book === book)?.chapters ?? 0;
   $: searchMode = !!query?.trim();
   $: base = passage ? inRange(verses, passage) : searchMode ? results : verses;
   $: source = favouritesOnly ? base.filter((v) => isSaved(v, savedList)) : base;
-  $: verseCount = verses.length;
   $: sorted =
     sort === 'length'
       ? [...source].sort((a, b) => a.text.length - b.text.length)
@@ -315,11 +376,11 @@
   {#if !books.length && $readErrors.listBooks}
     <!-- RG-95. An empty book list is either a corpus that is not installed or a
          database that did not answer, and only one of those is fixed in Settings →
-         data health. Sending an operator to the wrong screen costs the minutes
+         Diagnostics. Sending an operator to the wrong screen costs the minutes
          before a service. -->
     <ErrorState error={$readErrors.listBooks} />
   {:else if !books.length}
-    <EmptyState message="No scripture is loaded. Check Settings → data health." />
+    <EmptyState message="No scripture is loaded. Check Settings → Diagnostics." />
   {:else}
     <div class="br-grid">
       <!-- BOOKS. Canonical order, from the backend — never alphabetical. A Bible
@@ -345,36 +406,105 @@
             </button>
           {/each}
         </div>
+        <!-- The footer held a "Browse All Books" button that set `book` to the
+             FIRST book. Its label named the control directly above it ("All
+             Books", which really does clear the filter) and its behaviour was a
+             different thing entirely, so whichever one an operator believed, one
+             of them was lying. Removed rather than relabelled: the rail is the
+             book picker, and it needed no third way to pick one. -->
+        <!-- THE TRANSLATION LIVES WITH THE BOOKS. It is a fact about the corpus
+             on the rail above it — which Bible these books ARE — not a filter on
+             the chapter in the grid, and putting it here is what let the pane
+             head become one row instead of two. The count that used to sit here
+             was a third copy of "Books (13)", six pixels above it. -->
         <div class="br-panelfoot">
-          <button class="r-btn ghost sm" on:click={() => (book = books[0].book)}>
-            Browse All Books
-            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 4h6v6M20 4l-8 8M18 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4" /></svg>
-          </button>
+          <label class="br-tr">
+            <span class="r-lbl">Translation</span>
+            {#if translations.length}
+              <select
+                class="r-select sm"
+                aria-label="Translation"
+                disabled={translations.length < 2}
+                value={activeTranslation}
+                on:change={(e) => onTranslation(Number(e.currentTarget.value))}>
+                {#each translations as t}
+                  <option value={t.id}>{t.abbreviation || t.name}</option>
+                {/each}
+              </select>
+            {:else}
+              <!-- An EMPTY SELECT is not a translation picker; it is a blank box
+                   that reads as broken. Until the corpus answers, say what is
+                   bundled and offer no choice, because there is not one yet. -->
+              <span class="r-mono br-tronly">KJV</span>
+            {/if}
+          </label>
         </div>
       </nav>
 
       <!-- THE CHAPTER. -->
       <section class="br-panel br-main">
+        <!-- THE DOCK HEAD (REBRAND §10). What is in the grid, how many of them,
+             and what a press on one does — said where the press happens, because
+             a legend an operator has to remember is a legend they will not. -->
         <header class="br-mainhead">
-          <div class="br-where">
-            <b>{heading}</b>
-            <span>{subheading}</span>
-          </div>
+          <!-- ONE LINE. The heading used to carry a second line saying "4
+               verses" while the legend beside it said "4 ITEMS" and the footer
+               below said "4 verses" — one count, three places, and the stack of
+               them is what made this head two rows deep. The count now lives in
+               the legend, where §10 puts it, and the heading is the place. -->
+          <b class="br-where">{heading}</b>
 
           {#if checked.size}
+            <!-- The bulk actions REPLACE THE LEGEND, not the navigation. They
+                 used to replace the Sort control, and when the translation,
+                 chapter picker moved onto this row that same `{:else}` would have
+                 taken the Bible's navigation away from an operator who had ticked
+                 a verse — reachable again only by clearing a selection they might
+                 want to keep. The legend is the one thing here that is furniture. -->
             <button class="r-btn primary sm" on:click={queueChecked}>
               Queue {checked.size} selected
             </button>
             <button class="r-btn ghost sm" on:click={() => (checked = new Set())}>Clear</button>
           {:else}
-            <label class="br-ctl">
-              <span class="r-lbl">Sort</span>
-              <select class="r-select sm" bind:value={sort} aria-label="Sort">
-                <option value="verse">Verse order</option>
-                <option value="length">Shortest first</option>
-              </select>
-            </label>
+            <!-- THE DOCK HEAD'S CAPTION (§10): how many, and what a press does.
+                 It is the flexible element on this row and ellipsises before any
+                 control is pushed off it, because it is the one thing here an
+                 operator reads once and then knows. -->
+            <span class="br-legend r-mono">
+              {subheading} · single click cues · double click opens
+            </span>
           {/if}
+
+          <!-- Moved off the shell's deleted filter bar. The translation went one
+               step further, to the rail footer, because it describes the corpus
+               rather than the chapter — see the note there. The VERSE picker is
+               gone: it scrolled to a verse and fired nothing, and the Library's
+               one search box already does that better ("Genesis 1:3" jumps
+               there, and a range filters the grid). Two controls for one job,
+               and one of them was the box the operator is already looking at —
+               the same argument that deleted the book select. -->
+          <select class="r-select sm br-sel" aria-label="Chapter" bind:value={chapter}>
+            {#each Array(chapterCount) as _, i}
+              <option value={i + 1}>Chapter {i + 1}</option>
+            {/each}
+          </select>
+          <!-- Icon-only, and named twice over: a toggle whose STATE is the whole
+               message does not need to spell its name beside it on a row that
+               has no room. `aria-pressed` and the label carry it for anyone who
+               cannot see the fill. -->
+          <button
+            class="r-iconbtn br-fav"
+            class:on={favouritesOnly}
+            aria-pressed={favouritesOnly}
+            aria-label="Favourites only"
+            title={favouritesOnly ? 'Showing favourites only' : 'Show favourites only'}
+            on:click={() => (favouritesOnly = !favouritesOnly)}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill={favouritesOnly ? 'currentColor' : 'none'} stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h12v18l-6-4.5L6 21z" /></svg>
+          </button>
+          <select class="r-select sm br-sel" bind:value={sort} aria-label="Sort">
+            <option value="verse">Verse order</option>
+            <option value="length">Shortest first</option>
+          </select>
 
           <div class="r-seg" role="group" aria-label="Layout">
             <button class:on={layout === 'grid'} aria-label="Grid" on:click={() => (layout = 'grid')}>
@@ -415,6 +545,9 @@
               {queuedRefs}
               busyRef={firing}
               {layout}
+              press="select"
+              onSelect={selectVerse}
+              onOpen={openVerse}
               onCheck={toggleCheck}
               onFire={fire}
               onQueue={toggleQueue}
@@ -457,42 +590,73 @@
   /* ── Books ─────────────────────────────────────────────────────────────── */
   .br-panelhead { margin: 0; padding: 13px 14px 9px; }
   .br-booklist { flex: 1; min-height: 0; overflow-y: auto; padding: 0 8px 8px; }
+  /* A LIST ROW, not a button — B2. One of sixty-six book rows in a scrolling
+     rail, a name and a count, selected rather than pressed. */
   .br-book {
     display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 10px;
     border-radius: var(--v-r-md); background: none; border: 0; color: var(--v-dim);
-    font-family: var(--f-body); font-size: 13px; text-align: left; cursor: pointer;
+    font-family: var(--f-body); font-size: var(--v-fs-pr); text-align: left; cursor: pointer;
   }
   .br-book .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .br-book .ct { font-size: 11px; color: var(--v-faint); }
+  .br-book .ct { font-size:var(--v-fs-lbl); color: var(--v-faint); }
   .br-book:hover:not(.on) { background: var(--v-surf2); color: var(--v-txt); }
   .br-book.on { background: var(--v-accent-fill); color: var(--v-accent-ink); font-weight: 600; }
   .br-book.on .ct { color: rgba(255, 255, 255, 0.75); }
+  /* A LIST ROW, not a button — B2. The "All books" row that heads the rail;
+     the same shape as `.br-book` with the seam above it instead of below. */
   .br-all {
     display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
     width: calc(100% - 16px); margin: 0 8px 8px; padding: 8px 10px;
     border-radius: var(--v-r-md); border: 1px solid var(--v-line);
     background: var(--v-surf); color: var(--v-txt); font-family: var(--f-body);
-    font-size: 13px; text-align: left; cursor: pointer;
+    font-size: var(--v-fs-pr); text-align: left; cursor: pointer;
   }
   .br-all:hover { border-color: var(--v-line2); }
   .br-all.on { border-color: var(--v-accent-line); background: var(--v-accent-soft); }
   .br-all .ct { font-size: 10.5px; color: var(--v-faint); }
-  .br-ctl { display: flex; align-items: center; gap: 7px; flex: 0 0 auto; }
-  .br-ctl .r-lbl { margin: 0; }
-  .br-ctl .r-select { width: auto; height: 30px; padding: 0 30px 0 10px; font-size: 12px;
-    background-position: calc(100% - 14px) 13px, calc(100% - 9px) 13px; }
+  .br-sel { width: auto; max-width: 122px; height: 24px; padding: 0 24px 0 8px; font-size:var(--v-fs-lbl);
+    flex: 0 0 auto;
+    background-position: calc(100% - 12px) 10px, calc(100% - 7px) 10px; }
+  /* NO SIZE — B2. It renders `.r-iconbtn br-fav` and then overrode the shared
+     26px to 24px; Library's `.lib-more` overrode the same control to 30px. Three
+     icon-button sizes in two workspaces, each internally consistent, which is
+     why none of them looked wrong from inside its own file. What is left here is
+     position and the pressed state, which is the shape a legitimate override
+     has. */
+  .br-fav { flex: 0 0 auto; }
+  .br-fav.on { border-color: var(--v-accent-line); color: var(--v-accent2); background: var(--v-accent-soft); }
+  /* The translation, in the rail footer with the books it describes. */
+  .br-tr { display: flex; align-items: center; gap: 8px; }
+  .br-tr .r-lbl { margin: 0; flex: 1; min-width: 0; }
+  /* Width and padding only: the HEIGHT is the shared control's, so this select
+     is the same 26px as every button beside it. It was 24px. */
+  .br-tr .r-select { width: auto; max-width: 96px; padding: 0 24px 0 8px;
+    font-size:var(--v-fs-lbl); flex: 0 0 auto;
+    background-position: calc(100% - 12px) 11px, calc(100% - 7px) 11px; }
+  .br-tronly { font-size:var(--v-fs-lbl); color: var(--v-dim); }
   .br-pager { flex-wrap: wrap; }
   .br-panelfoot { padding: 10px; border-top: 1px solid var(--v-line); }
-  .br-panelfoot .r-btn { width: 100%; }
 
   /* ── The chapter ───────────────────────────────────────────────────────── */
+  /* ONE ROW, and `nowrap` is the assertion. This head wrapped, and what it
+     wrapped INTO was a second band of chrome above the first slide — the thing
+     §10 is about. Nothing here may wrap: the two flexible items shrink and
+     ellipsise instead, and every control keeps its own width. */
   .br-mainhead {
-    display: flex; align-items: center; gap: 12px; padding: 11px 14px;
+    display: flex; align-items: center; gap: 8px; padding: 8px 12px; flex-wrap: nowrap;
     border-bottom: 1px solid var(--v-line);
   }
-  .br-where { flex: 1; min-width: 0; }
-  .br-where b { display: block; font-size: 15px; font-weight: 600; color: var(--v-txt); }
-  .br-where span { font-size: var(--v-fs-cap); color: var(--v-faint); }
+  .br-where {
+    flex: 0 1 auto; min-width: 0; font-size:var(--v-fs-h2); font-weight: 600; color: var(--v-txt);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  /* The legend is furniture, not a heading: mono, faint, and it is the FIRST
+     thing to give up width, before any control loses its label or its place. */
+  .br-legend {
+    flex: 1 1 auto; min-width: 0; font-size: var(--v-fs-cap); color: var(--v-faint);
+    text-transform: uppercase; letter-spacing: .08em;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
   .br-body {
     flex: 1; min-height: 0; overflow-y: auto; padding: 12px;
     display: flex; flex-direction: column; gap: 8px;
@@ -508,8 +672,6 @@
   /* ── Pager ─────────────────────────────────────────────────────────────── */
   .br-pager { display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-top: 1px solid var(--v-line); }
   .br-count { font-size: var(--v-fs-cap); color: var(--v-faint); }
-
-  .br-sheet header .r-lbl { margin: 0; }
 
   .br-msg, .br-err { margin: 0; font-size: var(--v-fs-b2); line-height: 1.6; }
   .br-msg { color: var(--v-emerald); }

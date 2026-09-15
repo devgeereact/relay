@@ -45,8 +45,11 @@
     stopCapture,
     setRehearsal,
     serviceLock,
+    readErrors,
   } from '../stores/capture.js';
   import * as walk from '../pathcheck.js';
+  import Loading from '../ui/Loading.svelte';
+  import ErrorState from '../ui/ErrorState.svelte';
 
   let health = freshChecks().diagnostics;
   let checking = true;
@@ -141,9 +144,23 @@
   }
 
   $: if (walking && walk.isComplete(w)) stopWalk();
+  // THREE FACTS, NOT ONE. Both lists below start empty and are filled by GROUP 2
+  // reads that swallow to `[]`, so "No plans yet. Build one in Planner" was also
+  // what this pane said for the few frames before the database answered, and what
+  // it said for the rest of the session when the read had FAILED. That is the
+  // sentence `Loading.svelte` was written for, verbatim, standing on a second
+  // surface — and it is the one message that makes an operator think they have
+  // lost their work. `asked` flips once the first answer (or failure) is in.
   let services = [];
   let plans = [];
   let channels = [];
+  let askedServices = false;
+  let askedPlans = false;
+  // Named, because the retry button has to re-ASK. A "Try again" wired to anything
+  // other than the original read is a button that cannot work (rule 35 again).
+  const loadServices = () =>
+    listServices().then((s) => ((services = s ?? []), (askedServices = true)));
+  const loadPlans = () => listPlans().then((p) => ((plans = p ?? []), (askedPlans = true)));
   let error = '';
   let busy = '';
 
@@ -181,8 +198,8 @@
   onMount(async () => {
     // Deliberately not awaited together with the checks: the lists are cheap and
     // should paint immediately, while the probes land one at a time.
-    listServices().then((s) => (services = s ?? []));
-    listPlans().then((p) => (plans = p ?? []));
+    loadServices();
+    loadPlans();
     listOutputChannels().then((c) => (channels = c ?? []));
     refresh();
   });
@@ -379,6 +396,10 @@
               </li>
             {/each}
           </ul>
+        {:else if !askedPlans}
+          <Loading what="plans" compact />
+        {:else if $readErrors.listPlans}
+          <ErrorState compact error={$readErrors.listPlans} onRetry={loadPlans} />
         {:else}
           <p class="d-empty">
             No plans yet. Build one in <button class="d-link" on:click={() => go('planner')}>Planner</button>
@@ -416,6 +437,10 @@
           {/each}
         </tbody>
       </table>
+    {:else if !askedServices}
+      <Loading what="services" compact />
+    {:else if $readErrors.listServices}
+      <ErrorState compact error={$readErrors.listServices} onRetry={loadServices} />
     {:else}
       <p class="d-empty">
         No services recorded yet. Relay writes one automatically the first time you start
@@ -428,6 +453,19 @@
 </div>
 
 <style>
+  /* ── ONE TYPE SCALE (docs/REBRAND.md §11 · §12) ────────────────────────────
+     This file had SIX literal font sizes: 13.5px, 13px, 12.5px, 11px, 10px and
+     9.5px, mixed in among the `--v-fs-*` tokens the rest of the readiness
+     surface uses. Three of them were a token's value typed out by hand (9.5 is
+     `cap`, 11 is `lbl`, 12.5 is `h3`), and three were steps the scale does not
+     have — so a Dashboard row heading was a pixel and a half larger than a
+     Settings row heading for no reason anybody chose, and a change to the scale
+     would have moved one and not the other.
+
+     §11's whole claim is *one* type scale with three roles. A view that types
+     its own numbers is not in that scale; it is beside it, agreeing by
+     coincidence until somebody edits the tokens. Every size here is now a
+     token, and `settingssections.test.js` holds both files to it. */
   .dash {
     display: flex;
     flex-direction: column;
@@ -454,7 +492,8 @@
     border-color: var(--v-accent-line);
   }
   .d-hero.bad {
-    border-color: rgba(239, 68, 68, 0.5);
+    /* The token, not the retired literal — one red across every failure edge. */
+    border-color: var(--v-red-line);
   }
   .d-hero-t {
     flex: 1;
@@ -587,7 +626,7 @@
   .d-walklist li.miss { color: var(--v-rose); }
   .d-walklist li.miss .d-walkdot { background: var(--v-rose); }
   .d-walklabel { flex: 1; min-width: 0; }
-  .d-walkat { font-size: 10px; color: var(--v-faint); }
+  .d-walkat { font-size: var(--v-fs-cap); line-height: var(--v-lh-cap); color: var(--v-faint); }
   .d-walkverdict {
     margin: 12px 0 0;
     font-size: var(--v-fs-b2);
@@ -601,6 +640,11 @@
     flex-direction: column;
     gap: 8px;
   }
+  /* AN ACTION TILE, not a button. Title over a sentence explaining what will
+     happen — "Opens the output window. It starts blank." — because these are
+     the four things a volunteer reaches for before a service and each one
+     needs saying out loud. A `.r-btn` is a 26px box with one label in it and
+     has nowhere to put the second line. */
   .d-act {
     display: block;
     width: 100%;
@@ -628,7 +672,8 @@
   }
   .d-act b {
     display: block;
-    font-size: 13.5px;
+    font-size: var(--v-fs-h3);
+    line-height: var(--v-lh-h3);
     font-weight: 600;
   }
   .d-act span {
@@ -647,6 +692,10 @@
     flex-direction: column;
     gap: 6px;
   }
+  /* A LIST ROW, not a button. One saved plan: its title at one end, its id at
+     the other, inside an `<li>`. Pressing it navigates to Planner — it does
+     not act on the plan — so it reads as the plan rather than as a control
+     about the plan. */
   .d-row {
     display: flex;
     width: 100%;
@@ -665,14 +714,16 @@
     border-color: var(--v-accent-line);
   }
   .d-row b {
-    font-size: 13px;
+    font-size: var(--v-fs-h3);
+    line-height: var(--v-lh-h3);
     font-weight: 500;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
   .d-row span {
-    font-size: 11px;
+    font-size: var(--v-fs-lbl);
+    line-height: var(--v-lh-lbl);
     color: var(--v-faint);
     flex: 0 0 auto;
   }
@@ -685,7 +736,8 @@
   .d-table th {
     text-align: left;
     font-family: var(--f-mono);
-    font-size: 9.5px;
+    font-size: var(--v-fs-cap);
+    line-height: var(--v-lh-cap);
     font-weight: 600;
     letter-spacing: 0.12em;
     text-transform: uppercase;
@@ -712,6 +764,16 @@
     line-height: 1.65;
     color: var(--v-faint);
   }
+  /* A TEXT LINK, not a button — and a button ELEMENT only because it navigates
+     inside the app rather than to a URL (there is nowhere for an anchor's href
+     to point). Spelled out rather than written as a tag, because
+     `qa-inventory.mjs` scans the whole file for an opening button tag and a
+     mention of one inside a comment is reported as a real control with no
+     handler and no accessible name. One of the two sits INSIDE a sentence —
+     "Build one in Planner — or run the service straight from…" — where a
+     26px lozenge with a fill and an edge would break the line it is part of.
+     The other names the same affordance beside a heading, and the two must
+     keep looking alike. */
   .d-link {
     background: none;
     border: 0;
@@ -727,9 +789,15 @@
     padding: 11px 13px;
     border-radius: var(--v-r-md);
     background: var(--v-red-soft);
-    border: 1px solid rgba(239, 68, 68, 0.3);
+    /* The token, not the literal. This drew `rgba(239,68,68,.3)` — the same
+       retired red B1 took out of `.r-btn.danger`, which is in no token in this
+       repository; `--v-red-line` is `rgba(244,81,91,.5)`. Two reds in one
+       product is how one of them stops meaning anything. `rgba()` is the one
+       thing the token sweep in `workspacegrammar.test.js` says out loud that
+       it does not scan, which is why this survived it. */
+    border: 1px solid var(--v-red-line);
     color: var(--v-txt);
-    font-size: 12.5px;
+    font-size: var(--v-fs-h3);
     line-height: 1.55;
   }
 

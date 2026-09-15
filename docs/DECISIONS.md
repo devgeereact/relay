@@ -3150,3 +3150,907 @@ precedent as the `StageDisplays` subtree in §25: a dead surface comes out.
 
 **Wiring any of them is a product decision, not a repair**, and this section is where it
 would be recorded if one is ever taken.
+
+## 70. A screen may have no look of its own (2026-09-13)
+
+**Numbered 70 deliberately.** §67–69 were taken on `audit/field-2026-09-13` (PR #60) while it
+was still unmerged; picking the next free number on `main` would have produced two §67s the day
+those branches met. They met on `rebrand/base`, and each section still owns one number.
+
+### What was wrong
+
+`set_channel_template` took `template_id: i64`. Not an `Option` — an id. So every output screen
+always had a template of its own, from the moment it was created.
+
+§29 says a screen's own template **wins** over a content-type default, and only a cue that pins
+its own template overrides the screen. Both halves are right and neither is changed here. But
+put them together with a column that could never be empty and the consequence is this:
+
+> **The content-look map could not apply to anything.**
+
+An operator could open Outputs, set "Scripture wears Nocturne", save it, and watch every screen
+in the building carry on wearing what it already had. Five settings, a matrix to edit them in, a
+store, a backend command, a `content_template_id` lookup on the fire path — and no screen that
+could ever read the answer. The one visible symptom was a sentence under the template picker
+that said the opposite of what the code did:
+
+> *"This screen's own look. A content look (Scripture, Lyrics…) overrides it for that content
+> type."*
+
+That sentence was true before §29 reversed the order and was never updated, so the feature did
+nothing and the interface explained why it should have worked.
+
+### The decision
+
+A screen may be assigned **no template**, which means: follow the content look. `template_id` is
+now `Option<i64>` across the command, the database helper and the picker, and the column has
+been nullable since the schema was written (`template_id INTEGER REFERENCES templates(id)`), so
+this is not a migration.
+
+- **Clearing is broadcast.** `channel://retemplate` and the kiosk `channel_template` message
+  both carry `template: null`. A screen that is already open has to be told it is now
+  following; staying silent leaves it wearing the look it was given until something reloads it.
+  Both readers used to test the template for truthiness, which drops a null silently.
+- **`resolveOutputTemplate` answers the empty case FIRST**, before the transparency law.
+  `isKeyedTemplate(null)` is true — a template with no background layer is keyed, and an absent
+  template has no layers at all — so a following screen would have "kept its keyed template",
+  which is nothing, and painted an empty frame.
+- **The output page falls back to `DEFAULT_TEMPLATE`** when a following screen has no content
+  look either. A screen painting nothing is worse than a screen painting the default look.
+- **"Used for" moved onto the template.** The map was editable only in the Outputs matrix, which
+  is the right place to see all five at once and the wrong place to answer "is this the one
+  scripture wears?" while designing a look. `setContentTemplate` remains the ONE writer (§25);
+  the editor is a second surface onto the same store, not a second copy of the state, and the
+  gallery tags each card with what it is used for.
+
+### What this does not change
+
+§29 stands: a screen that HAS a template keeps it, and only a pinned cue template overrides it.
+The transparency law stands: a keyed screen never goes opaque for an override. What changed is
+that "no template" is now a state an operator can choose, and therefore a content look is now a
+setting that can do something.
+
+### Addendum, 2026-09-13 — a follower has to follow in the STREAM too
+
+Found while re-reading this branch's own diff. `Copy URL` wrote
+`template_id=${c.template_id ?? 1}`, so a screen set to follow the content look handed OBS a URL
+naming built-in 1 — and the output page read a missing `template_id` as 1 as well. The operator's
+own window followed the content look correctly while the browser source wore something else, until
+a `channel_template` message happened to arrive. Nobody at the desk is watching the stream, which
+is what makes that divergence the dangerous kind.
+
+**A screen with no look of its own now says so by saying nothing**: no `template_id` in the URL,
+and an absent one means "follow" rather than "built-in 1".
+
+The URL was also being built TWICE in `Channels.svelte`, four lines apart, and only one copy had
+been corrected — so Copy URL and the inspector's readout disagreed about the same screen. There is
+one builder now (`src/lib/outputurl.js`), it is tested, and `ipc.test.js` fails if a view starts
+building its own again.
+
+## 71. A transition is a template's choice, and a cut is the default (2026-09-13)
+
+### What was wrong
+
+Two halves of the same feature disagreed, and each looked finished from where it sat.
+
+`THEME_STYLE_KEYS` carried `transition` and `transitionMs`. The theme editor offered a picker
+(fade / slide / zoom) and a duration slider. Both saved. `TemplateRender` ignored them, and said
+so in a comment: *"`style.transition`/`transitionMs` are now ignored; the theme editor's
+transition control is a no-op by design."*
+
+That is a control that changes nothing, documented instead of fixed — the same class as the seven
+Settings controls in §69 and the content-look map in §70. An operator picks "Slide up", saves it,
+watches the wall cut, and has no way to tell a preference that did not take from a feature that
+does not work.
+
+`layers.js` also carried `slideRevealCss` — three modes, its own test, and no caller anywhere. A
+helper with tests and nothing rendering it reads exactly like working code.
+
+### Why transitions were removed in the first place
+
+They were, and for a real reason: a crossfade made the measured auto-fit read `scrollHeight`
+while the incoming slide still carried a transform, so a long verse was sized against a shape it
+was not going to settle at. The operator request that followed — *"quick as light, remove every
+animation"* — is also right about what a wall should do by default.
+
+### The decision
+
+Transitions come back as an explicit choice, and the default is a **cut**.
+
+- **Seven, in one register** (`src/lib/transitions.js`): Cut · Crossfade · Dissolve · Fade
+  through black · Push left · Slide up · Materialise. One pure function turns a mode and a
+  progress into inline CSS, so the renderer and the test share a definition (§27's `in:`-only
+  rule is unchanged — never a bidirectional `transition:`, which is what froze the wall on a
+  rapid re-fire).
+- **Only `opacity`, `transform` and `filter` are animated**, and that is asserted rather than
+  intended. None of the three moves `scrollHeight` or `clientHeight`, so the fitter measures the
+  same box whether or not a transition is running. A mode that animated width, padding or
+  font-size would bring the 2026 fit bug straight back.
+- **Every mode ends settled.** A transition that finishes at opacity 0.98, or with a leftover
+  blur, leaves the verse slightly wrong for as long as it is on the wall and nobody can say why.
+  Held by a test over all seven.
+- **Reduced motion is a cut**, not a shorter animation: the viewer asked for none.
+- **An unknown mode is a cut.** An imported theme from a newer version must not be able to stop a
+  verse rendering.
+- **The three old names are migrated, not dropped.** `fade` → `crossfade`, `slide` → `slideup`,
+  `zoom` → `materialise`, in `migrateStyle` (§3.1's one home). Dropping them would have turned
+  every saved theme into a cut — losing a choice somebody made, silently, while looking like the
+  upgrade worked.
+
+`slideRevealCss` is deleted along with its test, superseded rather than weakened.
+
+## 72. A search result is an offer, and an empty list is an answer (2026-09-13)
+
+### What the tests found
+
+`search_verses` had no tests at all — the one function the Planner's box, the Library's search and
+the preacher's remote all go through, reading what a person typed and deciding which verse that
+is. It is the same class of code as `detection.rs`, and it was the only one of the two nobody had
+measured.
+
+Two defects, both found the moment a probe was pointed at it:
+
+- **`ps23:1` returned nothing.** Not a wrong verse — an empty list. The reference parser reads
+  tokens, and `ps23:1` is one token, so the fastest way to type a reference was the single way
+  that silently failed. `split_digit_runs` puts a space wherever letters meet digits, for the
+  reference pass only: a phrase search must keep the query a person actually typed.
+- **`quantum shepherd tractor engine banana` returned nineteen verses**, Ezekiel 26:9 first. The
+  full-text index returns anything matching any term, so one real word in five was enough to look
+  like an answer. This is the search-shaped version of the defect the whole product is built
+  around: a confident wrong answer is worse than no answer, because the operator acts on it.
+
+### The decision
+
+A literal hit has to cover the query. `phrase_coverage` counts how much of what was typed the
+verse actually contains — a word counts when it appears, when a verse word starts with it (`shep`
+→ `shepherd`), or when it is one edit away — and weights the words that carry no signal (`the`,
+`is`, `my`) at 0.3 of a real one. Below **55%**, the hit is dropped rather than ranked.
+
+- It applies to the **literal** branches (FTS and the substring fallback), not to the semantic
+  one. A paraphrase match is supposed to find a verse whose words are different — that is what it
+  is for — so a word-coverage floor there would break the feature it was meant to protect.
+- `one_edit_apart` is now shared with `detection.rs` rather than reimplemented, so "nearly the
+  same word" has one definition in the product.
+- **Nothing a search does may reach a screen**, and that is asserted on both doors (the Tauri
+  events and the kiosk hub) rather than inferred from the absence of a call. The absence of a
+  call is exactly what four separate bugs in this repository looked like.
+
+### Not done — CLOSED 2026-09-14
+
+*Each hit says why it matched* (the brief's §9) is built. It did change the shape of what
+`search_scripture` returns, and the way it changed it is the decision: the verse row is
+`#[serde(flatten)]`ed inside a `SearchHit`, so all four readers keep reading the fields they read
+before and the explanation is purely additive. `e2e::r9_a_hit_is_still_a_verse_row_on_the_wire`
+pins that — nest it and four surfaces render blanks with every other test still green.
+
+Three things came with it, and one of them is a new fuzzy surface:
+
+- **`src-tauri/src/search.rs`** is now the one home for what a query MEANS — five named match
+  kinds, their order (a reference always outranks a phrase), the coverage floor, and the sentence
+  each hit shows. Pure, DB-free, and composed once: a sentence written on four surfaces is four
+  sentences that will disagree. `method` + `why` are the same pairing as `DetectionEvent`'s
+  `method` + `matched_text` (rule 18), and a paraphrase still carries **no percentage**.
+- **A book prefix of two letters or more resolves** ("philipp 4 13", "thessal 4 16"), by expanding
+  the token and handing it back to the SAME parser — never a second one. It is marked a guess, and
+  it is **search-only, deliberately**: `detection.rs` must never learn it, because "am", "is", "so"
+  and "jo" are ordinary words a preacher says all morning and each is a legal prefix here. Held
+  from both sides by `search::tests::the_live_detector_does_not_know_about_prefixes` and
+  `e2e::r9_a_book_prefix_is_a_search_feature_and_never_a_detection`.
+- **One click does the whole job** on the Live rail (§9): the verse to the programme, its chapter
+  into the grid, that verse the active slide. It is not a new fire path — it is the same
+  `manualFire` a grid verse cell takes — and it goes through the grid's own `pressArbiter`, so a
+  double click opens the chapter and fires nothing.
+
+**Rule 10 is untouched and that is the whole safety argument.** Nothing on this path reaches the
+router at all; a search is an operator action from the first keystroke to the press.
+`e2e::r9_nothing_a_search_offers_can_reach_an_auto_fire` states it at the boundary by putting the
+widest thing a search can offer to `Router::decide`, and was watched to fail with
+`may_auto_fire` widened to `UncertainBook`.
+
+## 73. What a cue is CALLED and what a cue SHOWS are different facts (2026-09-13)
+
+### The rule, which already existed
+
+`fire_content` decides what reaches the glass. A song's label does not: *"Blessed Assurance ·
+Verse 1"* across the top of a wall is the operator's bookkeeping in front of a congregation, so
+for `kind == "song"` the projected reference is empty. Scripture is the opposite — a reference is
+part of what is being shown — and an announcement's heading is content too.
+
+`e2e::a_lyric_slide_projects_the_lyric_and_not_the_song_title` has held the first half of that
+sentence for months.
+
+### What was wrong
+
+The second half — *"the label still names the cue"* — was neither asserted nor true from the run
+surface. `Live.svelte` passed an EMPTY STRING as the label when firing a song cue from a plan,
+implementing the suppression a second time, one layer too early.
+
+Two costs, and the second is the one that matters:
+
+- the service record had nothing to say about which song had been on the screens, so a Sunday
+  report showed *"Manual override"* about nothing;
+- two surfaces disagreed about a rule only one of them should own. The Library's own fire passed
+  the label all along.
+
+This is CLAUDE.md rule 36 in miniature: the check belongs at the choke point, and a caller that
+re-implements it is a caller that will drift from it.
+
+### The decision
+
+**The caller says what it fired; `fire_content` decides what is shown.** Live passes the real
+label, the backend still suppresses it for songs, and both halves are now held:
+
+- `e2e::r10_a_suppressed_label_is_still_in_the_service_record` — fired, suppressed, and still
+  named in the timeline;
+- `r2livepath.test.js` R2-H — no view may blank a label at the call site. A source assertion on
+  purpose: what it guards is a boundary, and the way a boundary breaks is a caller being helpful.
+
+**Announcements say where each field goes.** The heading and the notice both reach the room, and
+nothing on the form used to say so — an operator typing a heading had no way to know whether it
+was a name for their own list (as a song's section label is) or something a congregation would
+read. Two content kinds with opposite rules, one form, no signposts.
+
+## 74. A composite is a region that is its own container (2026-09-13)
+
+### What a composite is here
+
+A camera region and a real rendered slide, side by side — the brief's SuperSource (§6). The word
+region is **its own container** (`container-type: inline-size`), and that is the entire feature:
+`cqw` means *a share of the container's width*, so a template rendered inside a region sizes
+itself to the region exactly as it would to a screen of that width. No second scaling rule, no
+per-composite arithmetic, and the same renderer doing the drawing.
+
+Without it, `cqw` inside the region resolves against the whole frame and every word in the
+composite is about twice the size it should be — in a stream, where nobody at the desk is
+watching.
+
+### The camera half is transparency, and that is honest
+
+Relay does not take a camera feed. NDI is parked, and a camera reaches the building through OBS or
+an ATEM. So a composite here is a **keyed layout**: the half that is not painted is where the
+switcher puts the picture. A grey rectangle captioned "camera" would be a picture of a feature
+rather than the feature.
+
+### Two rules, held by construction rather than by care
+
+- **A composite may not be another composite's fill.** `depth` is passed down and a region at
+  depth > 0 renders nothing. It is a depth cap rather than a cycle check, because the failure is
+  the same whether a template names itself or names a different composite: a webview recursing
+  until it dies, mid-service, on a wall. Pinned by `composite.test.js`, watched to fail with the
+  guard removed.
+- **The inner template must resolve on EVERY client.** A kiosk or OBS page has no database and
+  resolves ids against the bundled built-ins, so a region names a built-in and the inspector
+  offers nothing else. A region pointing at a custom template would render one thing on the
+  operator's wall and another in the stream — the one failure a composite must not have.
+  `builtinById` also answers with the default rather than an empty box, so an id from a newer
+  version still shows the verse.
+
+### What was NOT added
+
+Arrangement, camera share and gap are not controls. A region is a layer, and a layer already has
+x / y / width / height as real numbers in the inspector (phase 3's Position group):
+camera-left and camera-right are the same template with the region's `x` moved, and the gap is the
+space between two boxes. Three more controls writing the same four numbers would be three more
+ways for a template to disagree with itself.
+
+## 75. A band names the words inside it, and gives them ground before they shrink (2026-09-14)
+
+**Context.** `docs/REBRAND.md` §4 asks for a lower-third band that is a real element and that
+"gives ground before the words do": it grows upward, by up to 16 points and never past a third of
+the frame, before the type is allowed to shrink below 78% of the size its designer asked for.
+
+Phase 5 shipped the three lower thirds and refused to build the growth, for a good reason. A
+template here is a flat list of independently placed objects. There is no parent, no child and no
+"these two belong together", so the only cheap way to know which words a band should grow for is
+to look at the objects near it — or to fire the rule when a shape happens to be **named** `Band`.
+That is a coupling with nothing in the data behind it: true of some templates and not others,
+invisible to anyone reading the file, and gone the moment somebody renames an object.
+
+**Decision.** Build the relationship instead of guessing it. A `band` is a layer TYPE, and it
+carries `members` — the ids of the objects that live inside it.
+
+- Membership is **declared**. It is in the saved template, it survives a rename, an object in no
+  band is in no band, and a template that never opted in is untouched by any of this.
+- The band is a real element: from `top` to the **bottom edge**, inset by `side` on both edges,
+  `pad` as the inner gutter, `lift` as the baseline lift, and its words centred in what is left.
+- `bandFit` decides the climb and `bandLayout` turns it into boxes. Both live in
+  `templatemodel.js`, beside `fitScale`, and use its curve — an estimate that shrank on a
+  different curve from the measurement would disagree with it on exactly the passages that matter.
+  The estimate seeds the DOM; `TemplateRender` still MEASURES. Rules 37 and 42 are untouched.
+- How far a band may climb is read off **the band**, never defaulted by a caller. It began as a
+  parameter with a constant default, which is a second home for a property — the defect this whole
+  model exists to prevent.
+
+**A member is not drawn inside the band.** The band computes the boxes; the words are drawn by the
+same text path as every other text layer. Nesting them would mean a second text path — one for a
+positioned layer and one for a flowed one — and two text paths is how a shadow, a transform or a
+fit fix lands on one kind of layer and not the other. Four bugs in this repository have that
+shape. `drawBoxes` is the one home for the derived geometry, so the editor's canvas cannot put a
+selection handle where the words are not.
+
+**What this cost, and what caught it.** `members` is the first layer property that is an array,
+which makes `duplicateLayer`'s deep copy load-bearing for the first time — and `structuredClone`
+alone is exactly *wrong* for it. It copies the ids faithfully, so the duplicate points at the
+ORIGINAL's words: both bands lay out the same objects, and editing either moves the other's type.
+Duplicating a band now copies its words too. Deleting a word tells its band, or the band keeps a
+dead id in its saved JSON for ever while rendering perfectly. Resetting a band's LOOK keeps its
+place and its words, for the same reason a reset keeps `bind`.
+
+**Not decided here.** Zones (§5) and a composite's regions (§6) want the same missing concept and
+can use this one; nothing in it assumes a lower third. Neither is built.
+
+## 76. A section key is derived from the section's own name, and a panic key is never one of them (2026-09-14)
+
+**Context.** `docs/REBRAND.md` §10 asks for section keys: press one letter and that part of the
+song goes to the programme. It names the alphabet outright, `v c b t i o`, for Verse, Chorus,
+Bridge, Tag, Intro and Outro.
+
+On this console `B` is BLACKOUT. It is a panic control, it fires from the one global keydown
+listener, and CLAUDE.md rule 15 with DECISIONS §20 both say a panic key is never shadowed. **The
+spec and CLAUDE.md disagree here and CLAUDE.md wins.** This is the only place in the rebrand where
+the two actually collided.
+
+**Decision.** `b` is reserved, a Bridge does not get it, and it takes the next free letter of its
+own name instead: `bridge`, `b` is taken, so `r`. The letter is printed on the slide it fires and
+the surface says how it was reached.
+
+Two other answers were available and both are worse.
+
+- **Hand the Bridge `b` anyway** and let `shortcuts.js` win the race. The operator then reads a key
+  printed on a slide that blacks the wall out rather than firing it: a cheatsheet that lies, on the
+  one surface where a lie costs a congregation.
+- **Give the Bridge no key.** Honest, and useless.
+
+Deriving the fallback from the section's own word is what keeps the third answer from being a
+fourth invention. Nobody has to remember that a Bridge is on `r`; it is the next letter of the word
+they are already reading.
+
+**`RESERVED` is read out of `shortcuts.js`'s own `SHORTCUTS` table, never restated.** A global key
+bound next year is unassignable the moment it is bound, with no edit to `sectionkeys.js`. The
+failure this guards against is the one CLAUDE.md names: a guarantee is only kept on the doors you
+checked, and a second copy of the reserved list is a door nobody will check.
+
+**The guarantee is kept on both doors on purpose.** `RESERVED` means a panic letter is never handed
+out in the first place; and `shortcuts.js` puts the section-key branch in the `default:` of its
+existing context switch, which is below the always-on block (so `Escape` and `b` are already gone),
+below `if (typing) return` (so a letter typed into the reference box or the lyric editor fires
+nothing), and below `a`, `d` and `/` (so a surface offering both keeps the older meaning of those
+three). With nothing registered the branch is a no-op and does not `preventDefault`, because a dead
+branch must not eat a keystroke the browser had a use for.
+
+**Two sections may not share a key.** Two that merely share a KIND are numbered apart, one verse is
+`v` and two are `v1` and `v2`, which is not sharing. Two that both ASK for a letter are a conflict:
+the first keeps it, the rest get none and say why. Guessing which one the operator meant is rule
+39 in miniature, and an arrangement that silently plays the wrong section is the same class of harm
+as an index that moved.
+
+**Not decided here.** A key that fires from the **Live** tab's own slide grid is not built. It is
+design rather than wiring: `assignKeys` assigns within ONE song and treats two sections wanting the
+same letter as a conflict, while Live's grid is a flat list across every cue in a plan, so two songs
+in one plan both want `c`. Which song owns the namespace is a real question with no answer in the
+code, and it is left to a person.
+
+## 77. Eleven Settings sections, and two of the eighteen were deleted rather than merged (2026-09-14)
+
+**Context.** `docs/REBRAND.md` §11 asks Settings to become eleven sections. This repository had
+eighteen. Seven of them were one screen cut in half: Network and Integrations, Scripture and
+Languages, Privacy and Advanced, History and Backup, Audio and Voice Profiles.
+
+A section that is three rows on a full-height page teaches an operator that the rail is long and
+mostly empty, and that is how a control comes to be lost. This is the same surface where seven
+controls were found saving a preference nothing read (§69).
+
+**Decision.** Eleven sections. Nine merged in pairs. **Two were deleted rather than merged**,
+because every row on them was a second copy of something else.
+
+- **`account`** carried Licence, Version and Environment, all three already in the Overview rail
+  that renders on every section, plus a sentence saying there are no accounts, already a row on the
+  Privacy report. Three rows, three duplicates.
+- **`dashboard`** was a name for a shape rather than a question. **The readiness surface itself is
+  untouched**: it is still the boot ladder's own 23 probes re-run through the same `freshChecks()`
+  and `makeProbes()`, and CLAUDE.md's instruction to extend it and never fork it stands. It now
+  lives in **Diagnostics**, which is the section an operator reaches for when they ask "is this
+  machine going to work?". One question, one section.
+
+**Voice profiles merged into AI & Detection, not into Audio.** A profile is a calibration of the
+gate above it. Splitting the dial from the thing it calibrates across two rail entries is how an
+operator comes to believe they are unrelated.
+
+**Safe mode moved to General.** It is not a backup and it is not a recovery. It is whether this copy
+of Relay is armed at all.
+
+**The three type roles now come from the frame.** Settings had five, and two of them were one role
+rendered twice with different padding and a different key colour. All five private copies are
+deleted and `WorkspaceFrame` owns the page head, the row and the footnote. The standfirst in
+particular is now rendered once, by the frame, and no section repeats it a size smaller at the top
+of its own panel.
+
+**What rendering found that reading did not.** Three `class:` directives named classes no stylesheet
+defines. Two of them, `class:bad` and `class:warn`, were on the update-preflight rows, so a check
+that FAILED painted the same grey as one that passed, on the screen whose entire job is to say
+whether an update is safe. That is rule 35 again: a status line that says the same thing when the
+thing behind it is broken. `settingssections.test.js` now scans every `class:` directive in the file
+against both stylesheets, because a class nobody defines is silent in every other instrument this
+project has.
+
+**The cost is real and was predicted.** A comment in the file refused this merge once, on the
+grounds that it moves every control an operator has learned where to find, and that it is worth
+doing with somebody watching the screens. That is still true. The pilot churches have learned the
+old rail.
+
+**A rename is only done when the references move with it.** Fourteen operator-facing and
+developer-facing cross-references named a section by a label that no longer exists, including one in
+`latency.js` pointing at "Settings → Speech", a section this repository has never had. A refusal
+that sends an operator to a section that does not exist is worse than the rename itself. Each was
+re-pointed by finding the control's line inside the new section blocks, not by guessing. The dated
+record was left alone: nothing under `docs/qa/audits/`, and nothing in RELAY_V1_AUDIT, RELAY_GAP or
+the earlier sections of this file, all of which say what was true when they were written.
+
+---
+
+## 78. A role is derived from what a template renders, and only a role with a renderer is offered (2026-09-14)
+
+**Context.** `docs/REBRAND.md` §3.3 asks for ten roles in one register (`LOOKS`): scripture,
+lyrics, announcement, preservice, media, stage, `lower.name`, `lower.lyric`, `lower.bible`,
+supersource — assigned from the template's own inspector and shown as a tag on its card. The Status
+table recorded that only five existed, because the others named kinds nothing rendered. Phases 5, 6
+and 12 have since landed (the `band` layer, stage zones, the `region` composite), so the register
+had to be reconciled against what actually renders today.
+
+**What was found first, and it was not the register.** `templateKind` — the one function every
+Templates-rail row, every card tag and the inspector's "Content type" row reads — was written for
+the legacy REGION model (`layout.regions`) and was never taught the LAYER model that phases 2, 5, 6
+and 12 are entirely made of. **Every one of the twelve starters classified as `custom`**, the three
+lower thirds and the SuperSource composite included. The rail could hold a row for a role it had a
+renderer for and never show it; a lower third's inspector said *Content type · Custom*. The five
+seeded built-ins are region templates, which is the only reason the rail ever showed a role at all —
+so the defect was invisible on a fresh install and total for anything an operator created. This is
+the repository's own recurring shape: a rule kept on one surface and skipped on its twin.
+
+**The decision.** A role stays **derived from what the template renders, never stored**. There is no
+`role` column, nothing to back-fill and nothing for a row to claim that the template is not. Both
+models are read by the one function; `templateKind.test.js` names the role every starter lands on,
+so a starter added without a rule is named by a failing test rather than quietly becoming Custom.
+
+**Which of the ten are offered, and which are refused.**
+
+| Spec role | Verdict | Why |
+|---|---|---|
+| scripture | **offered** | verse + reference, in either model |
+| lyrics | **offered** | verse alone — a congregation is not singing the title |
+| announcement | **offered** | a text layer that SCROLLS. The ticker binds a verse and a reference, so without the scroll rule it would read as scripture |
+| media | **offered** | a `media` layer with no words of its own |
+| stage | **offered** | a MONITOR-ONLY binding (`next`, `next_reference`, `note`, `elapsed`, `remaining`). CLAUDE.md already says those fields ride to output and no congregation template renders them, so they are a real structural fact rather than a naming convention |
+| supersource | **offered** | a `region` layer — a template rendered inside a template |
+| `lower.name` · `lower.lyric` · `lower.bible` | **collapsed to one `lower-third`** | a `band` layer is a lower third. But `lower.name` and `lower.bible` are the SAME shape — a band with a verse line and a reference line — and the only thing separating "Ade Ogunlana / GUEST SPEAKER" from a verse and its citation is which words the operator points at them. Telling them apart by alignment would be a guess about a style choice an operator may change at any time |
+| preservice | **refused** | nothing in a template's shape identifies one. "Lobby Warm" is a verse and a citation on a warm gradient, which is what every other scripture template is. A row for it would claim templates it cannot tell apart — which is precisely the defect phase 4 closed |
+
+One role is offered that the spec's list omits: **timer**. Relay fires a countdown, `CONTENT_KINDS`
+has carried `countdown` for as long as the look register has existed, and the timer starter renders
+it. A role this product has and the spec forgot is still a role.
+
+**A rule the reconciliation produced, and the defect it found.** The rail offers one row per role
+that occurs, and the New menu offers one starter per kind — so **a role you can filter to but not
+create is the same defect as one you can create but not filter to**, in the other direction.
+`Songs` was exactly that: `Worship Lyrics` ships as a seeded built-in, `templateKind` has always had
+a rule for a verse with no reference, and **no starter made one**. An operator could select the
+Songs row and never add to it. A `lyrics` starter now exists, carrying the built-in's own values in
+the layer model, and `every role but Custom can be CREATED from a starter` holds the two lists
+together.
+
+**One thing the tripwire caught that reading would not have.** The countdown rule was first written
+as "a `timer` layer", which is what `LAYER_TYPES` calls it and what `makeLayer('timer')` is spelled
+as. There is no such layer at runtime: `makeLayer` normalises it to a TEXT layer bound to
+`countdown`. The rule read perfectly and matched nothing, and only the starter roster test said so.
+
+**What this does NOT change.** The look register an operator BINDS — `CONTENT_KINDS`, the five kinds
+the fire path, the database and the Outputs matrix all speak — is untouched, and so is DECISIONS
+§29's resolution order. A derived role says what a template is FOR; it binds nothing, changes
+nothing on any screen, and is deliberately neutral in colour, because every colour that carries a
+promise is already spoken for (CLAUDE.md rule 18).
+
+---
+
+## 79. Themes is a desk inside Templates, not a workspace beside it (2026-09-14)
+
+**Context.** `docs/REBRAND.md` §2 names the workspaces the shell's strip carries, and Themes is not
+one of them. A theme is the style layer BENEATH templates (DECISIONS §27): it sets default `style`
+keys, a template overrides them key by key, and it never reaches a wall on its own. The only way to
+see a theme is through a template.
+
+**The decision.** The Templates workspace holds two desks — Templates and Themes — behind one
+segmented strip in the workspace head. `ThemeGallery` and `ThemeEditor` did not move and were not
+forked; `Templates.svelte` mounts the same two components. Switching desk always lands on that
+desk's gallery: returning to a half-finished editor an operator navigated away from restores a
+surface they did not ask for, and the editor's own Back is the way out of it. Nothing on either desk
+can reach an output, so a desk change costs a live service nothing.
+
+**One component, two desks.** Both desks render the same `DeskStrip`, rather than each hand-rolling
+a segmented control. A strip built twice can offer a desk on one side and not the other, and can
+lose a desk from one copy while the other keeps it — which is the `Copy URL` defect this branch
+already records, where one component built the same URL twice four lines apart and only one copy was
+corrected.
+
+**Nothing became unreachable.** Every control the Themes tab carried is still rendered, one press
+away, and `node scripts/qa-inventory.mjs` reports the same single orphan it reported before
+(`__r6probe.svelte`, a test probe). `src/lib/views/Themes.svelte` survives as a one-line way in from
+the old tab while the shell's strip is reshaped in the same wave — the two changes land separately,
+and a tab that opens a dead screen in between is worse than either. **It is to be deleted when the
+shell drops the `themes` entry**, and it says so in its own first paragraph: left behind, it is a
+component nothing renders, and an orphan is how a surface stops being covered while its tests stay
+green.
+
+**Which desk you were on lives in the SESSION, not in a local `let`.** The shell mounts a workspace
+with no props, so a desk held in the component is a desk forgotten on every reload — and the
+`themes → templates` tab redirect would then have nowhere to land an operator whose saved
+`activeTab` still names the old tab. Landing them on the Templates desk reads exactly like the
+Themes surface having been deleted, which is the failure the redirect exists to prevent, one level
+deeper. `session.templatesDesk` sits beside `activeTab` and `liveDensity` for the reason those do:
+a booth's habits do not change between Sundays. The desk is DERIVED from the store and a press
+writes the store — assigning a local copy as well would give the choice two homes, and the local one
+would win until the next reload told the operator otherwise, which is §3.1's defect in a different
+room. An unknown saved value falls through to Templates rather than rendering nothing, for the same
+reason `resolveActiveTab` exists: a persisted key outlives the layout it was written under.
+
+---
+
+## 80. The inspector names the objects; the property groups stayed in the editor (2026-09-14)
+
+**Context.** `docs/REBRAND.md` §3.2 asks for an inspector that is objects rather than a ladder: a
+wrapping tab strip of the objects on this slide, then that object's properties grouped Text /
+Position / Effects, and Reset this object. The rebrand's Status table records phase 3 as **done**,
+and it is — inside `TemplateEditor`, a separate screen. What the **gallery's** inspector showed was
+a preview, three buttons, a Details|Usage switch and five read-only rows.
+
+**Two facts in that panel could be read and not changed from the surface they were read on.** One of
+them mattered: the Usage tab printed *"Content looks are set in Outputs → Content looks — the one
+place a content type is bound to a template"*, which is a signpost standing exactly where a control
+belongs. The other was the whole object model — a template's objects were not named at all on the
+surface an operator browses from.
+
+**What was built.** The gallery inspector now carries **Used for**, writing through
+`setContentTemplate` — the SAME single writer the Outputs matrix and the editor's own Used for call
+(DECISIONS §25), reading the same store, so a third surface cannot start disagreeing about what is
+bound — and the **object strip**, naming the template's real objects through the same `layerLabel`
+the editor's strip uses. A press opens the editor **on that object** (`TemplateEditor` gained a
+`layerId` prop, ignored when the id is not on the template rather than selecting the wrong object),
+so "change the reference on Nocturne" is one action from looking at it.
+
+**What was NOT built, and why.** The per-object **property groups** stayed in the editor. Moving
+them means extracting roughly three hundred lines of markup that read and write `sel` directly, plus
+`set` / `num` / `geom` / `bindToken` / `center` / `resetObject` / `duplicate` / `removeLayer`, the
+font-detection session state, the band-membership writer and the undo stack — into a component both
+screens drive. That is a real refactor of the surface that paints a congregation's screen, and it
+sits under `band.test.js` (24), `templatestyle.test.js` (29), `layerops.test.js` (14),
+`composite.test.js` (9) and `templateinspector.test.js`. It is worth doing. It is not worth doing in
+the tail of another pass, by somebody who cannot see the screens — which is the same reason phase 11
+left the Settings reorganisation alone.
+
+**So this is a partial closure and is recorded as one.** §3.2 is satisfied in the editor and
+**half** satisfied in the gallery: the objects are named and one press away, the properties are not
+edited in place. A reviewer should read the claim as exactly that, and the honest next step is the
+extraction above rather than a second copy of the property markup — a second copy is how a shadow, a
+transform or a fit fix lands on one panel and not the other, which is the reason the band's members
+are drawn by the one text path and not by the band.
+
+**One thing not attempted at all.** The prototype outlines the SELECTED object on the preview
+(`.frame.sel-v`). `TemplateRender` is the ONE renderer and it renders what a wall shows; a selection
+outline is booth furniture, and the editor draws it on its own canvas overlay rather than inside the
+renderer. Putting it inside `TemplateRender` to serve a browse surface would put an editor concern
+into the component the congregation sees. Not done, on purpose.
+
+## 81. A single click cues on a browsing surface and takes on a run surface (2026-09-14)
+
+### What it used to do
+
+`VerseDeck.svelte` is the card deck that five Library panes render — the Bible, saved verses,
+song sections, media and announcements. Clicking a card put its content on the congregation's
+screens. The component said so, deliberately and in those words: *"CLICKING A CARD FIRES IT. The
+card is not a thumbnail to enlarge — it is already the slide at a readable size, and the
+operator's next action after finding it is always the same one."*
+
+That reasoning is sound on a **run** surface. It is the reasoning behind the product's one
+sentence, the least possible effort from the operator, and it is why the AI path stayed at one
+press.
+
+### What was wrong
+
+The Library is not a run surface. It is where an operator browses a songbook on a Tuesday and
+scrolls a chapter looking for the verse they half-remember, and on that surface the press that
+means *"let me look at this"* was the same press that means *"put it in front of four hundred
+people"*. There is no undo on the second one.
+
+`docs/REBRAND.md` draws the line explicitly and in two places — §2 for Live (*"single click
+sends to Program"*) and §10 for the Library (*"single click cues · double click opens"*) — and
+Relay already draws the same line at the top of the Planner, which says out loud that nothing on
+it can reach an output. The Library sits on the Planner's side of it.
+
+The forcing move was the dock head. §10 asks for the legend `single click cues · double click
+opens` printed above the grid. Printing that over a surface that fires is rule 35 in miniature:
+a line that reads the same whether or not the thing behind it is what it says. The alternative —
+keep the behaviour and write a truthful legend — fixes the sentence by keeping the more
+dangerous half.
+
+### The decision
+
+**One press means "show me" where you are building, and "show them" where you are running.**
+
+- `VerseDeck` takes a `press` prop. `'select'` fills the inspector and reaches no output; a
+  double press opens the item for editing. `'fire'` is unchanged and is the **default**, so this
+  is a Library change rather than a fire-path change. Nothing about `manualFire`, `fireMedia` or
+  any wrapper's throw-vs-swallow group moved.
+- The take stays **one action** from a selected item, which is what makes this a relocation
+  rather than a cost: the inspector's `Cue in Live` stages it, `Go Live` fires the queue, and
+  the card's own kebab still offers *Take to screen* directly.
+- The hover legend changes with the prop. `Go live →` over a press that selects is the same lie
+  the dock head would have been.
+- Enter on a list row obeys the prop too. A keyboard operator who has learned that clicking a
+  Library card selects it must not find that Enter on the same card fires it — that asymmetry
+  is exactly the defect P1-5 closed for Space.
+
+The comment quoted above was **rewritten rather than deleted**. It records a real decision, and
+a file that contradicts its own comment teaches the next person to distrust every other comment
+in it. It now says both behaviours, which surface gets which, and why.
+
+### What holds it
+
+`librarypress.test.js`, in both directions and with the third direction that actually rots: a
+Library press reaches no fire path (card, list row and Enter); a deck given no prop still fires;
+and a **source scan** naming any of the five Library panes that stops passing `press="select"` —
+because the failure to expect is a sixth pane added next year that renders the deck, forgets the
+prop, looks identical, and fires. Each was watched to go red against its own reverted defect,
+and the scanner proves it can still match what it is looking for.
+
+### What this does NOT change
+
+The AI path. A suggestion on `Live.svelte` is still accepted in one press, for the reason
+recorded in `Library.svelte`: the preacher has moved on, and an extra press costs the product's
+one sentence exactly when it matters. This decision is about a press on a *catalogue*, not a
+press on a claim the AI has just made.
+
+---
+
+## 82. A keyed template previewed against nothing needs a camera plate, and only a preview may have one (2026-09-14)
+
+**Context.** The `Lower Third` built-in rendered as an empty dark rectangle on its Templates gallery
+card and in its inspector preview. Not a renderer fault: `background: transparent` with
+`verseColor: #1c1224` is a band of near-black type over a camera the switcher supplies, and Relay
+never takes that feed (NDI is parked; a camera reaches the building through OBS or an ATEM). Legible
+over a camera, invisible over nothing. Four of the five seeded built-ins previewed correctly and the
+keyed one could not.
+
+**The decision.** Any surface that PREVIEWS a template against nothing paints a labelled camera
+plate behind it when the resolved template is keyed. The test is `isKeyedTemplate` — the helper
+Outputs and the fire path already share, which asks the only question that matters (*does anything
+paint the whole frame?*) rather than reading a `lowerThird` flag a layer-model lower third does not
+have.
+
+**One component, not a third copy.** Outputs had already solved this, with the markup and its CSS
+written out **twice inside `Channels.svelte`, four hundred lines apart**. The Templates gallery
+needed it in two more places. Rather than a third and fourth copy it is
+`src/lib/ui/CameraPlate.svelte`, rendered by all four. The DECISION stays with each caller, because
+the caller is the one that knows which template it resolved; only the picture needed a home. Same
+reasoning as `DeskStrip`, and as the `Copy URL` builder this branch already records — one of two
+copies corrected, the other not.
+
+**It is labelled, always.** An unlabelled picture on these surfaces could be mistaken for something
+Relay is sending, and **Relay sends no video**. The word is what keeps the plate from being a claim.
+It is `aria-hidden`, because a screen-reader operator should not be told about a camera nobody sent.
+
+**It may never reach a real output, and that is the half carrying a guarantee.** The output page is
+transparent precisely so a keyed template keys out for OBS/ATEM; that transparency is the feature. A
+plate behind a real output would paint over the camera the band exists to caption — the same failure
+as blacking out a keyed channel, which `isKeyedTemplate` exists to prevent.
+`cameraplate.test.js` holds the boundary from the other side: `Output.svelte`, `Stage.svelte`,
+`TemplateRender.svelte` and `TemplatePreviewOverlay.svelte` must render no plate, watched to fail by
+putting one in `Output.svelte`.
+
+---
+
+## 83. The name is the card's identity, so it is the last thing allowed to shrink (2026-09-14)
+
+**Context.** Rendered at 1600x1000 against the prototype, a Templates gallery card's name came out
+as `Cla…`, `Wo…` and `L.` — three characters of "Classic Serif". Four things shared the caption row:
+the name, a mono role tag, a `Scripture · 16:9` sub-line, and a pill naming the content look the
+template is bound to. The thumbnail already carried a `16:9` badge, so the aspect was stated twice
+and the kind was stated twice, in a row 194px wide.
+
+**It is arithmetic, not taste.** At the narrowest column the grid admits (`minmax(210px, 1fr)`, less
+16px of padding) the row had 194px. `.tg-role` claimed `max-width:42%`, `.tg-usedfor` claimed
+`max-width:40%`, the star and the ⋮ menu 45px, three gaps 21px — **225px of claims inside 194px**.
+Every one of them was `flex:0 0 auto`. The name was the only flexible item, so the name paid the
+entire shortfall: **−31.1px**, which is a name rendered as an ellipsis. `templatecard.test.js`
+reproduces that exact figure with the rule reverted.
+
+**The decision, and it is an ordering rather than a size.** The name holds a floor
+(`min-width:96px`, wider than "Worship Lyrics", the longest name a fresh install ships) and the role
+tag beside it becomes `flex:0 1 auto; min-width:0` so the KIND ellipses first. An operator can read
+the role in full in the rail, in the inspector and in that element's own tooltip; there is nowhere
+else on the surface that a template's name is stated. The `Scripture · 16:9` sub-line is deleted
+rather than moved — both of its facts were already on the card.
+
+**Two registers, separated by words rather than colour.** The derived ROLE (§78) and the bound
+content LOOK are different questions, and rendered as two identical neutral uppercase pills side by
+side they read as one fact printed twice — which is what the render showed. The look moves to its
+own line beneath the row, the prototype's `.roletag`, and says **Used for** in words. Colour could
+not have separated them: every colour that carries a promise is already spoken for (CLAUDE.md rule
+18), steel blue included.
+
+**Why no existing instrument saw it.** `qa-inventory` reported 0 handlerless buttons and 0 unnamed
+controls, and was right. The mount tests read `.tg-name`'s `textContent`, which is the full name
+whatever the box does to it on screen — a caption that clips is invisible to a test that reads text.
+So the new test prices the row from the stylesheet's own declarations instead: an item that can
+yield (`flex-shrink` other than 0 with `min-width:0`) claims nothing against the floor, because
+flexbox takes the space out of it; an item that cannot claims its declared max-width, or its own
+longest string. **The first version of that test passed over the original defect** — it priced a
+single card, and that card happened to be the one with no content look bound, so the extra pill it
+was written to catch was on a different card. It prices every card now and asserts the worst.
+
+**What this does NOT change.** The role register (§78), the look register `CONTENT_KINDS`, the one
+writer `setContentTemplate` (§25), and the object strip and Used for the gallery inspector gained in
+§80 are all untouched. Nothing here reaches an output.
+
+---
+
+## 84. A transition has two authorities, and the operator's outranks the template's (2026-09-14)
+
+### What was open
+
+§71 gave a transition one home: the template. Seven modes in one register, a cut by default, an
+unknown mode a cut, reduced motion a cut. All of that stands.
+
+What it did not give anybody was a way to change it during a service. `docs/REBRAND.md` §8 asks the
+chrome bar for `TRANSITION [picker] [duration]` and says *"choosing one replays it on the programme
+at once"* — and the wave-3 shell agent declined to build the picker, correctly, because there was
+nowhere for it to reach. The one application point is `TemplateRender.svelte`, reading
+`style.transition` off the resolved template, and a congregation screen is a separate document:
+on a kiosk/OBS browser source it has no backend at all and gets its template over the WebSocket hub.
+A picker wired only as far as the chrome would have moved the console preview and left every screen
+cutting — a control that reads identically when it is working and when it is not (rule 35), on the
+one surface a congregation is looking at.
+
+### Why it is worth a second authority at all
+
+A template's transition is a decision somebody made on a Tuesday. The decision an operator has to
+make at 10:42 on a Sunday is a different one: the preacher has gone off-plan, four templates are in
+rotation, the room is not what the designer imagined, and *"make everything cut, now"* is not an
+instruction anybody can carry out by editing four templates while a service runs.
+
+But two homes for one property is exactly the defect §3.1 of the rebrand spec exists to prevent, and
+this repository has the scars: §69's seven Settings controls that saved a preference nothing read,
+and §71's own theme picker that saved a transition the renderer ignored. A second authority is only
+safe when the order is stated and an operator can see which one is answering.
+
+### The decision — the order, stated the way §29 states it for templates
+
+1. **The operator's live override wins**, at any value, `cut` included. A deliberate act now
+   outranks a saved default, and the one thing an operator must always be able to do is take the
+   motion away.
+2. **Otherwise the template's own choice** (§71), resolved through its theme first, exactly as before.
+3. **Otherwise a cut.**
+
+`transitions.js::resolveTransition` is the only place those are ranked, and it returns `source`
+(`operator` or `template`) so a surface can SAY which one it is showing rather than leaving an
+operator to guess.
+
+**What an operator sees when the two disagree.** The picker's first option is **Follow template**,
+it is the default, and it is what a fresh Relay does. Choosing any of the seven is therefore a
+visible act with a visible state — an accent-lined control, not a silent preference sitting on top
+of a saved one. The duration picker is DISABLED while the template is being followed, because there
+is nothing for it to be the duration of; a number an operator can set that changes nothing is §69
+again, and is what the old theme editor's duration slider was for the whole of its life.
+
+**An override naming a mode nothing knows is not an override.** It falls through to the template
+rather than becoming a cut. Flattening to a cut would let a frame from a newer version silently
+unstyle a wall that was working.
+
+**Deliberately not persisted.** It is a live control like the blackout. A Relay that has restarted
+has no opinion about how last Sunday was cutting, and a remembered one would be an unattended change
+to every screen at boot. It does survive a console reload *within* a run — the value lives in the
+backend and `live_transition` reads it back on mount, because a picker saying "Follow template" over
+screens that are crossfading is rule 35 with a dropdown.
+
+### How it reaches the screens
+
+`channels::transition` publishes on **both doors** — a Tauri `output://transition` emit for the
+native output window, which has the bridge and no socket, and a `{"kind":"transition"}` frame on the
+kiosk hub for every browser source, which has the socket and no backend. A control wired to one of
+the two would be the guarantee-kept-on-one-door mistake this repository has now made four times, and
+here it would be a projector on HDMI and an OBS source in the same room transitioning differently.
+
+**Retained, in its own slot** (rule 43). A screen that joins mid-service must not be the only one
+still cutting while the rest crossfade, so the hub keeps the override and replays it on `hello`,
+after the template and the themes and BEFORE the retained screen frame. It is kept in
+`last_transition` and never in `last_screen`, and that separation is the whole of the care here:
+`last_screen` holds ONE frame and the newest wins, so a shared slot would have meant an operator
+changing the transition ERASED the retained verse — the next screen to join mid-reading would have
+been sent a preference and a blank wall, which is §68's own failure delivered by §68's mechanism.
+`is_screen_frame` therefore returns false for a transition, `FRAME_VERDICTS` records that with the
+reason, and the enumeration test fails if anyone changes their mind quietly.
+
+**Not rehearsal-gated**, and that is a deliberate difference from every content publisher beside it.
+It carries configuration and paints nothing — exactly like `set_template` and `set_themes`, neither
+of which is gated either. There is nothing of a rehearsal to leak; gating it would instead leave
+every screen still armed with the transition from before the rehearsal once the operator went live.
+
+**A congregation screen applies an override WITH content, never on its own.** `Output.svelte` holds
+`pendingTransition` and moves it to `appliedTransition` only when content arrives. The console
+replays at once because that is the point of the picker (§8, and the prototype repaints its program
+frame for exactly that reason); a wall must not, or an operator adjusting a dropdown makes a verse
+that is already up re-animate, mid-reading, in front of people. This is also what makes the frame
+safe to publish during a rehearsal.
+
+**No panic control waits for it or is undone by it.** `clear` and `black` never read the override,
+`TemplateRender` has no `out:` transition at all (§27), and the override outlives a clear — a panic
+control takes the screens down; it does not quietly re-arm every template's own transition behind
+the operator's back, to be discovered on the next fire. Held by
+`e2e::the_transition_control_reaches_both_doors_and_delays_no_panic_control` and
+`channels::tests::a_panic_control_is_neither_delayed_nor_undone_by_a_transition`.
+
+**The seven are not copied into Rust.** An unknown mode is already a cut in `transitions.js`, and a
+second register drifts from the first. What the Rust end owes is frame integrity: the value is
+serialised through `serde_json`, so nothing can break out of the JSON, and an implausibly long mode
+is dropped rather than retained and replayed to every screen that joins for the next hour.
+
+### Not done
+
+The console's programme pane does not replay yet. `views/Live.svelte` renders `TemplateRender` and
+needs no new prop — it follows the `liveTransition` store the moment it is rendered by a build that
+has this — but that file was owned by another agent in the same wave and was left alone. Verified
+only that the mechanism is there, not that the pane moves. **NOT TESTED in a browser.**
+
+---
+
+## 85. Service Lock protects a cue, not only the plan that holds it (2026-09-15)
+
+### The state it was in
+
+`servicelock::PROTECTED` carried `delete_plan` and nothing about the cues inside a plan. So during a
+recorded service Relay **refused to let an operator delete a service plan, and allowed them to delete
+every cue in it, one row at a time** — at lower cost per click, from a button that sits beside
+`Move down` in the cue inspector, and far more often than anyone deletes a whole plan.
+
+`remove_plan_item`, `move_plan_item` and `reorder_plan` all ran unguarded. Live holds the playhead as
+`liveCue = { cueId, slide, onAir }`, keyed by cue id, so deleting the cue the transport is standing on
+changes where `→` goes next with nothing in the transport noticing.
+
+### Why this was not already decided
+
+The list is enumerated on purpose, and its own comment says why: *"A predicate over names
+(`starts_with("delete_")`) would silently capture a future command nobody weighed, and this list has to
+stay short: everything on it is something a volunteer might legitimately want."* That reasoning is
+right and is why the fix is one named entry rather than a pattern.
+
+But as far as the record shows, the question was asked about the **container** and never re-asked of the
+thing inside it. That is the same shape as the four one-door-of-two defects CLAUDE.md already names: a
+guarantee established on the object everyone was looking at, and not on its parts.
+
+### The decision
+
+**`remove_plan_item` joins `PROTECTED`. The two reorder commands deliberately do not.**
+
+It passes the list's own test — *is this something a volunteer might legitimately want mid-service?*
+— and the answer is that they want the **outcome**, not this action. A volunteer who wants a cue gone
+during a service can **skip it**: the transport walks past, nothing reaches a screen, and the running
+order is intact on Monday. Deleting it takes the cue's stage note, its duration, its section heading
+and its pinned template with it, and there is no undo anywhere on that desk.
+
+The reorder commands stay off the list for the opposite reason. Reordering is **recoverable by
+reordering back**, an operator reshuffling a running order mid-service is doing the ordinary thing the
+Planner exists for, and refusing it would refuse the cheap fix for a service that has gone off script —
+which is the entire product.
+
+### What this does not do
+
+It does not make the Planner unable to reach a service. The lock is liftable in one press by design
+(`servicelock.rs`), and this changes none of that — a lock that cannot be lifted is a lock that becomes
+the emergency. It is not a validator in front of a panic control (§20 and rule 36 both forbid that);
+`remove_plan_item` reaches no screen in either direction.
+
+### Instrument
+
+`servicelock::tests::every_protected_command_actually_guards_itself` already covers the new entry from
+both sides: it asserts that `main.rs` calls `lock.guard("remove_plan_item")` **and** that the command is
+still registered in `generate_handler!`, so a rename cannot leave the list quietly pointing at nothing.
+`the_guard_is_the_first_thing_the_command_does` holds the placement, because a guard after the work has
+started refuses the operator without preventing anything.

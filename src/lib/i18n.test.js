@@ -119,9 +119,19 @@ describe('the English catalogue', () => {
       for (const m of src.matchAll(/(?:\$t|\btNow)\(\s*'([a-z0-9_.]+)'/g)) used.add(m[1]);
       // tab labels are keys held in a config object, not literal $t('…') calls
       for (const m of src.matchAll(/label:\s*'(tab\.[a-z]+)'/g)) used.add(m[1]);
+      // …and so are the DETECTION-METHOD registers. `Live.svelte` renders
+      // `$t(methodBadgeKey(d))`, so the key is chosen at runtime and a literal-only
+      // scan goes blind to it — which is precisely how the claim card came to
+      // render two hard-coded English words for four methods. The register's
+      // returns are collected here so a typo in one is still caught.
+      for (const m of src.matchAll(/return '(live\.[a-z0-9_]+)';/g)) used.add(m[1]);
     }
 
-    expect(used.size).toBeGreaterThan(20); // the regex still finds things
+    // The sentinel: the scan must still be FINDING things. It dropped from 21 to
+    // 20 the moment two literal call sites moved behind a register (2026-09-15),
+    // which is the scan going blind by one — exactly what this line is for. The
+    // register sweep above restores them, so the floor rises rather than falls.
+    expect(used.size).toBeGreaterThan(24); // the regex still finds things
     for (const key of used) {
       expect(Object.keys(en), `no such key in en.json: ${key}`).toContain(key);
     }

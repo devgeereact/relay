@@ -92,6 +92,33 @@ pub struct OutputContent {
     /// the output renders a live MM:SS (ticked locally, so no per-second network
     /// traffic) styled by the template; `reference` is the label above it.
     pub countdown_to: Option<i64>,
+    /// Epoch (ms) this countdown was aimed FROM, so `countdown_to - countdown_from`
+    /// is the length it was aimed for. That span is the ONLY input the warning rule
+    /// has (`layers.js::countdownWarning`: the last minute, or the last tenth of a
+    /// countdown shorter than ten minutes) — without it the rule falls back to a
+    /// flat last minute, which on a two-minute countdown is a colour lit for half
+    /// its life.
+    ///
+    /// It was read by `TemplateRender` and written by NOBODY for as long as it
+    /// existed, so the short-countdown half of §7's rule had never once fired in the
+    /// product. A reader with no writer and a control with no reader are the same
+    /// defect facing opposite ways (DECISIONS §69). Written by `start_countdown` and
+    /// carried, unchanged, by every re-aim.
+    pub countdown_from: Option<i64>,
+    /// **A PAUSED COUNTDOWN IS NOT AN INSTANT, WHICH IS WHY THIS FIELD EXISTS.**
+    ///
+    /// `countdown_to` is an absolute instant: every output ticks against its own
+    /// clock, which is what keeps a per-second timer off the network. Nudging one is
+    /// just re-aiming it (`+1` moves the instant), but HOLDING one cannot be said in
+    /// that language at all — there is no instant that means "not moving".
+    ///
+    /// So when this is `Some(n)`, the countdown is HELD with `n` ms left and every
+    /// reader shows `n` instead of ticking. `countdown_to` is still set — it is where
+    /// the countdown would land if it were resumed at the moment it was held, kept so
+    /// the content still reads as a countdown to `pipeline::preflight`, to the retained
+    /// screen frame and to the slide key. Nothing may compute a remaining time from
+    /// it while this is `Some`.
+    pub countdown_paused_ms: Option<i64>,
     /// Message shown in place of the timer when the countdown reaches zero.
     pub countdown_done: Option<String>,
     /// The decode pass that produced this content (`latency::Trace`), when it came
@@ -356,14 +383,28 @@ pub fn open_channel_ids(app: &tauri::AppHandle) -> Vec<i64> {
 /// Build the output view URL for a channel: the shared output.html plus the
 /// template id (looked up from the DB by the window) and a display name.
 /// Pure — unit-tested.
-pub fn output_url(channel_id: i64, template_id: i64, name: &str) -> String {
+pub fn output_url(channel_id: i64, template_id: Option<i64>, name: &str) -> String {
     // `channel` lets the output live-swap its template when the screen is
     // reassigned (it filters a channel-retemplate broadcast by this id); `template_id`
     // is the first render before any push. `channel=0` = a channel-less preview.
+    //
+    // A screen with NO template of its own says so BY SAYING NOTHING (DECISIONS
+    // §70). `outputurl.js` was taught that and this was not, so the two doors into
+    // the same page disagreed: `Copy URL` omitted the parameter for a follower
+    // while both native paths wrote `template_id=1` through an `unwrap_or(1)`.
+    // The projector on HDMI and the OBS source in the same room were configured
+    // identically and behaved differently — the projector wore built-in 1 for the
+    // whole service and nothing corrected it, because `channel://retemplate` only
+    // fires when the assignment CHANGES. Taking the Option here is what makes the
+    // two callers unable to re-introduce it one at a time.
+    let tpl = match template_id {
+        Some(id) => format!("&template_id={id}"),
+        None => String::new(),
+    };
     format!(
-        "output.html?channel={}&template_id={}&name={}",
+        "output.html?channel={}{}&name={}",
         channel_id,
-        template_id,
+        tpl,
         urlencode(name)
     )
 }
@@ -378,7 +419,7 @@ pub fn output_url(channel_id: i64, template_id: i64, name: &str) -> String {
 pub fn open_native_window(
     app: &tauri::AppHandle,
     label: &str,
-    template_id: i64,
+    template_id: Option<i64>,
     name: &str,
     monitor_index: Option<usize>,
 ) -> Result<(), String> {
@@ -869,6 +910,13 @@ fn kiosk_content_json(content: &OutputContent) -> String {
         "service_started_at": content.service_started_at,
         "service_target_ms": content.service_target_ms,
         "countdown_to": content.countdown_to,
+        // BOTH halves of the countdown model, or a kiosk screen is the one surface
+        // that disagrees with the wall — the exact bug `next_reference` caused here.
+        // `countdown_from` is what makes the warning rule's short-countdown case
+        // answerable; `countdown_paused_ms` is the difference between a held timer
+        // and one that carries on counting on a browser source nobody is watching.
+        "countdown_from": content.countdown_from,
+        "countdown_paused_ms": content.countdown_paused_ms,
         "countdown_done": content.countdown_done,
         // Rides to every kiosk client purely so it can report back when it painted
         // — the last leg of the latency chain, over the real church network. See
@@ -943,8 +991,58 @@ fn note_wall<R: tauri::Runtime>(app: &tauri::AppHandle<R>, on_air: bool, black: 
     }
 }
 
+/// THE COUNTDOWN THAT IS IN FRONT OF THE OPERATOR, so the transport can re-aim or
+/// HOLD it without rebuilding it from a mirror.
+///
+/// Reset and ±1 used to be assembled in the console out of `$live` — the label, the
+/// done message and the template all read back off the event and handed to
+/// `start_countdown` again. That works exactly as long as every caller remembers
+/// every field, and a paused countdown adds one more thing to forget: a `+1` that
+/// dropped `countdown_paused_ms` would quietly restart a held timer in front of a
+/// congregation. The engine owns the countdown instead, and the transport asks it to
+/// change one thing about it.
+///
+/// Maintained at the SAME three doors as [`WallState`] — `broadcast_content`, `clear`
+/// and `black` — so it cannot drift (rule 36), with one deliberate difference: it is
+/// noted BEFORE the rehearsal branch, not after. `WallState` answers "what can a
+/// congregation see", so a rehearsal must not touch it. This answers "what countdown
+/// is the operator looking at", and in a rehearsal that is the console's own copy —
+/// which the console already mirrors, and on which ±1 works today. Noting it after
+/// the branch would take the transport away in rehearsal, which is the one place an
+/// operator is meant to be practising with it.
+///
+/// **Lock discipline:** innermost, and never held across an emit (rule 2). Every
+/// reader clones and releases before it broadcasts.
+#[derive(Default)]
+pub struct CountdownState(pub std::sync::Mutex<Option<OutputContent>>);
+
+/// The countdown currently in front of the operator, or None when there is not one.
+/// A clone, taken under the lock and returned with the lock released.
+pub fn live_countdown<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Option<OutputContent> {
+    app.try_state::<CountdownState>()
+        .and_then(|s| s.0.lock().ok().and_then(|g| g.clone()))
+}
+
+/// Remember (or forget) the countdown at one of the three doors. Anything that is
+/// not a countdown forgets it, which is the whole point: a verse, a song or a notice
+/// replaced the countdown, so there is no longer one to re-aim.
+fn note_countdown<R: tauri::Runtime>(app: &tauri::AppHandle<R>, content: Option<&OutputContent>) {
+    let Some(state) = app.try_state::<CountdownState>() else {
+        return;
+    };
+    let next = content
+        .filter(|c| c.countdown_to.is_some() && c.kind.as_deref() == Some("countdown"))
+        .cloned();
+    if let Ok(mut g) = state.0.lock() {
+        *g = next;
+    };
+}
+
 pub fn broadcast_content<R: tauri::Runtime>(app: &tauri::AppHandle<R>, content: OutputContent) {
     let json = kiosk_content_json(&content);
+    // BEFORE the rehearsal branch, deliberately — see `CountdownState`. The lock is
+    // taken and released here, never held across the emit below (rule 2).
+    note_countdown(app, Some(&content));
     if rehearsing(app) {
         // Content-free by design: the reference is congregation/sermon data and this
         // log is written to disk. What matters operationally is only that the
@@ -971,6 +1069,9 @@ pub fn broadcast_content<R: tauri::Runtime>(app: &tauri::AppHandle<R>, content: 
 /// panic control that reports a success it did not achieve is worse than one that
 /// is missing: the operator stops looking at the screen and trusts the toast.
 pub fn clear<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<(), String> {
+    // The countdown left the operator's screen either way, rehearsal or not — so it
+    // is forgotten on both paths here, exactly as it is remembered on both above.
+    note_countdown(app, None);
     if rehearsing(app) {
         return app
             .emit_to(CONSOLE, "output://clear", ())
@@ -987,6 +1088,7 @@ pub fn clear<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<(), String>
 ///
 /// Returns Err for the same reason `clear` does — see above.
 pub fn black<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<(), String> {
+    note_countdown(app, None);
     if rehearsing(app) {
         return app
             .emit_to(CONSOLE, "output://black", ())
@@ -1030,6 +1132,76 @@ pub fn stage_next<R: tauri::Runtime>(
     let json =
         serde_json::json!({ "kind": "stage_next", "label": label, "text": text }).to_string();
     publish_kiosk(app, json);
+}
+
+/// A WORD TO THE PREACHER — the whole stage screen, and no other screen at all.
+///
+/// `text: None` clears it. Deliberately NOT retained by the hub: rule 43 retains
+/// the frames that decide what a screen is SHOWING (`content`, `clear`, `black`),
+/// and an alert is an instruction to a person rather than a state of the wall. A
+/// tablet reconnecting ten minutes later must not be handed a message meant for a
+/// moment that has passed.
+///
+/// Suppressed in a rehearsal, like every other publisher here — see `stage_next`
+/// for what that cost the one time it was missed.
+pub fn stage_alert<R: tauri::Runtime>(app: &tauri::AppHandle<R>, text: Option<String>) {
+    if rehearsing(app) {
+        println!("rehearsal: stage_alert SUPPRESSED — nothing left the machine");
+        return;
+    }
+    let json = serde_json::json!({ "kind": "stage_alert", "text": text }).to_string();
+    publish_kiosk(app, json);
+}
+
+/// WHAT AN OVERRIDE IS, once: a mode and an optional duration, or nothing at all.
+///
+/// Named rather than spelled out at six signatures — clippy asks for this, and it
+/// is also the honest shape: `None` here means "follow the template", which is a
+/// third state and not an empty string.
+pub type TransitionOverride = Option<(String, Option<u32>)>;
+/// The hub's retained slot for it, shared with the WS task that answers `hello`.
+pub type TransitionSlot = Arc<Mutex<TransitionOverride>>;
+
+/// The wire form of the operator's transition override. `None` means "follow the
+/// template" and is sent as an explicit null rather than omitted, so a screen can
+/// tell a cleared override from a message it did not understand.
+fn transition_json(t: Option<&(String, Option<u32>)>) -> String {
+    let (mode, ms) = match t {
+        Some((m, ms)) => (Some(m.as_str()), *ms),
+        None => (None, None),
+    };
+    serde_json::json!({ "kind": "transition", "mode": mode, "ms": ms }).to_string()
+}
+
+/// HOW THE NEXT THING APPEARS — every screen, at once (docs/REBRAND.md §8,
+/// DECISIONS §84).
+///
+/// Both doors, because the wall is two kinds of screen: a native output window
+/// (Tauri event) and a kiosk/OBS browser source (the WS hub, which has no backend
+/// at all). A control wired to one of the two is the "guarantee kept on one door"
+/// mistake this repository has now made four times.
+///
+/// NOT REHEARSAL-GATED, and that is a deliberate difference from every publisher
+/// above it. Those carry CONTENT; this carries configuration and paints nothing —
+/// exactly like `set_template` and `set_themes`, which are not gated either. A
+/// screen that receives this looks identical afterwards; it only changes how the
+/// NEXT change to it is drawn. So there is nothing of a rehearsal to leak, and
+/// gating it would instead leave every screen still armed with the transition from
+/// before the rehearsal once the operator went live.
+///
+/// It touches neither `WallState` nor `last_screen`, so it can neither report nor
+/// alter what is on the screens — and the panic controls do not consult it at all.
+pub fn transition<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    mode: Option<String>,
+    ms: Option<u32>,
+) {
+    let mode = mode.filter(|m| !m.is_empty() && m.len() <= 32);
+    let payload = serde_json::json!({ "mode": mode.clone(), "ms": ms });
+    let _ = app.emit("output://transition", payload);
+    if let Some(hub) = app.try_state::<KioskHub>() {
+        hub.set_transition(mode, ms);
+    }
 }
 
 fn publish_kiosk<R: tauri::Runtime>(app: &tauri::AppHandle<R>, msg: String) {
@@ -1093,6 +1265,20 @@ pub struct KioskHub {
     /// rehearsal publishes nothing to this hub at all (the gate is at the
     /// publishers), so nothing a rehearsal did can be replayed either.
     last_screen: Arc<Mutex<Option<String>>>,
+    /// THE OPERATOR'S LIVE TRANSITION OVERRIDE — `(mode, ms)`, or `None` to follow
+    /// each template's own choice (DECISIONS §84).
+    ///
+    /// ITS OWN SLOT, NOT `last_screen`. Putting it there would have been the bug
+    /// rule 43 exists to fix, wearing the fix's clothes: one slot means the newest
+    /// frame wins, so an operator changing the transition would have REPLACED the
+    /// retained verse, and the next screen to join would have been sent a
+    /// preference and no content.
+    ///
+    /// Retained because a screen that joins mid-service must not be the one screen
+    /// still cutting while the rest crossfade — the same argument as the template
+    /// and the themes, which are cached and replayed here for the same reason. It
+    /// is configuration, never content: it paints nothing on its own.
+    last_transition: TransitionSlot,
 }
 
 impl Default for KioskHub {
@@ -1104,6 +1290,7 @@ impl Default for KioskHub {
             clients: Arc::new(Mutex::new(HashMap::new())),
             themes: Arc::new(Mutex::new("[]".to_string())),
             last_screen: Arc::new(Mutex::new(None)),
+            last_transition: Arc::new(Mutex::new(None)),
         }
     }
 }
@@ -1174,6 +1361,39 @@ impl KioskHub {
     /// Shared handle to the retained screen frame, for the WS task to send on hello.
     pub fn last_screen_handle(&self) -> Arc<Mutex<Option<String>>> {
         self.last_screen.clone()
+    }
+    /// Shared handle to the retained transition override, for the WS task's hello.
+    pub fn last_transition_handle(&self) -> TransitionSlot {
+        self.last_transition.clone()
+    }
+    /// Remember the operator's override and push it to every connected client.
+    ///
+    /// `mode: None` clears it — every screen goes back to following its template.
+    ///
+    /// The mode is NOT validated against a list of the seven here, on purpose.
+    /// `src/lib/transitions.js` is the one register of what a transition is
+    /// (DECISIONS §71), an unknown mode there is already a cut, and a second copy
+    /// of the seven names in Rust is a second register that can drift from the
+    /// first. What this DOES enforce is frame integrity: the value is serialised
+    /// through `serde_json`, so no string an operator or a bad caller could supply
+    /// can break out of the JSON, and anything implausibly long is dropped rather
+    /// than retained and replayed to every screen that joins for the rest of the
+    /// service.
+    pub fn set_transition(&self, mode: Option<String>, ms: Option<u32>) {
+        let mode = mode.filter(|m| !m.is_empty() && m.len() <= 32);
+        let next = mode.map(|m| (m, ms));
+        if let Ok(mut t) = self.last_transition.lock() {
+            *t = next.clone();
+        }
+        self.publish(transition_json(next.as_ref()));
+    }
+    /// What is in force right now, for the console to read back on mount.
+    ///
+    /// Without this the console could reload mid-service, show "Follow template",
+    /// and be wrong about every screen in the building — a control reading the same
+    /// when it is in force as when it is not, which is rule 35.
+    pub fn current_transition(&self) -> TransitionOverride {
+        self.last_transition.lock().ok().and_then(|t| t.clone())
     }
     pub fn sender(&self) -> broadcast::Sender<String> {
         self.tx.clone()
@@ -1315,6 +1535,7 @@ pub async fn run_kiosk_server(
     clients: ClientRegistry,
     themes: Arc<Mutex<String>>,
     last_screen: Arc<Mutex<Option<String>>>,
+    last_transition: TransitionSlot,
     health: OutputHealth,
     port: u16,
 ) {
@@ -1349,6 +1570,7 @@ pub async fn run_kiosk_server(
         let clients = clients.clone();
         let themes = themes.clone();
         let last_screen = last_screen.clone();
+        let last_transition = last_transition.clone();
         let health = health.clone();
         tokio::spawn(async move {
             let _permit = permit;
@@ -1459,6 +1681,33 @@ pub async fn run_kiosk_server(
                                     }
                                 }
                                 if v.get("kind").and_then(|k| k.as_str()) == Some("hello") {
+                                    // THE WHOLE REPLY USED TO SIT INSIDE
+                                    // `if let Some(id) = template_id`, AND THAT IS
+                                    // RULE 43 WITH A HOLE IN IT.
+                                    //
+                                    // `Output.svelte` sends `template_id: null`
+                                    // whenever the URL is CHANNEL-keyed — which is
+                                    // the URL `Copy URL` produces and the one
+                                    // CLAUDE.md tells operators to use, because a
+                                    // channel-keyed source follows a template swap
+                                    // and a `template_id`-keyed one does not. So
+                                    // the recommended URL was the one shape that
+                                    // got no themes and, worse, NO RETAINED FRAME:
+                                    // an OBS source restarting mid-reading came
+                                    // back black and stayed black until the next
+                                    // fire, which is the exact failure rule 43 and
+                                    // DECISIONS §68 exist to prevent. Measured on a
+                                    // running build: `?channel=1` joined blank,
+                                    // `?channel=1&template_id=1` joined with the
+                                    // verse.
+                                    //
+                                    // Registration and the template reply still
+                                    // need an id — a client with no template id has
+                                    // no template to be counted against, and the
+                                    // liveness count is per template id. The themes
+                                    // and the retained frame need nothing: they are
+                                    // about what is ON THE SCREENS, not about which
+                                    // look this screen wears.
                                     if let Some(id) = v.get("template_id").and_then(|i| i.as_i64()) {
                                         // Replace, don't add: a client that says
                                         // hello twice (a kiosk page reloading onto
@@ -1475,34 +1724,42 @@ pub async fn run_kiosk_server(
                                                 .send(tokio_tungstenite::tungstenite::Message::Text(out))
                                                 .await;
                                         }
-                                        // Send the custom themes too, so this client
-                                        // can resolve a template pinning a custom
-                                        // theme (builtins it already knows). Always
-                                        // a valid JSON array (see set_themes).
-                                        let blob = themes.lock().map(|t| t.clone()).unwrap_or_else(|_| "[]".into());
+                                    }
+                                    // Send the custom themes, so this client can
+                                    // resolve a template pinning a custom theme
+                                    // (builtins it already knows). Always a valid
+                                    // JSON array (see set_themes).
+                                    let blob = themes.lock().map(|t| t.clone()).unwrap_or_else(|_| "[]".into());
+                                    let _ = write
+                                        .send(tokio_tungstenite::tungstenite::Message::Text(
+                                            format!(r#"{{"kind":"themes","themes":{blob}}}"#),
+                                        ))
+                                        .await;
+                                    // The operator's transition override, if one is
+                                    // in force (DECISIONS §84). Sent BEFORE the
+                                    // retained frame, so a screen that joins late
+                                    // is not the only one in the building still
+                                    // cutting while the rest crossfade. Like the
+                                    // template and the themes above it, this is
+                                    // configuration: on its own it paints nothing.
+                                    let x = last_transition.lock().ok().and_then(|t| t.clone());
+                                    if x.is_some() {
                                         let _ = write
                                             .send(tokio_tungstenite::tungstenite::Message::Text(
-                                                format!(r#"{{"kind":"themes","themes":{blob}}}"#),
+                                                transition_json(x.as_ref()),
                                             ))
                                             .await;
-                                        // AND WHAT IS ON THE SCREENS RIGHT NOW.
-                                        // A client that joins mid-service used to
-                                        // be told its template and its themes and
-                                        // then left blank until the next fire — so
-                                        // an OBS source restarting, or this page
-                                        // reloading, put a black rectangle in front
-                                        // of a congregation for as long as the
-                                        // reading lasted. Sent LAST so the template
-                                        // it needs to render with has already
-                                        // arrived. `clear` and `black` are retained
-                                        // the same way, so this can never undo a
-                                        // panic control.
-                                        let retained = last_screen.lock().ok().and_then(|l| l.clone());
-                                        if let Some(frame) = retained {
-                                            let _ = write
-                                                .send(tokio_tungstenite::tungstenite::Message::Text(frame))
-                                                .await;
-                                        }
+                                    }
+                                    // AND WHAT IS ON THE SCREENS RIGHT NOW.
+                                    // Sent LAST so the template it needs to render
+                                    // with has already arrived. `clear` and `black`
+                                    // are retained the same way, so this can never
+                                    // undo a panic control.
+                                    let retained = last_screen.lock().ok().and_then(|l| l.clone());
+                                    if let Some(frame) = retained {
+                                        let _ = write
+                                            .send(tokio_tungstenite::tungstenite::Message::Text(frame))
+                                            .await;
                                     }
                                 }
                             }
@@ -2307,16 +2564,50 @@ mod tests {
     #[test]
     fn output_url_carries_channel_template_and_name() {
         assert_eq!(
-            output_url(3, 1, "Main screen"),
+            output_url(3, Some(1), "Main screen"),
             "output.html?channel=3&template_id=1&name=Main%20screen"
+        );
+    }
+
+    /// DECISIONS §70: a screen with no look of its own says so BY SAYING NOTHING.
+    ///
+    /// `outputurl.js` was taught this and the native path was not, so `Copy URL`
+    /// omitted the parameter for a follower while `open_output_window` and
+    /// `auto_open_outputs` both wrote `template_id=1` through an `unwrap_or(1)`.
+    /// The projector on HDMI and the OBS browser source in the same room were
+    /// configured identically and behaved differently: the projector wore built-in
+    /// 1 for the whole service, and nothing corrected it, because
+    /// `channel://retemplate` only fires when the assignment CHANGES.
+    ///
+    /// Watched to fail by restoring `unwrap_or(1)` at either call site.
+    #[test]
+    fn a_screen_that_follows_carries_no_template_id() {
+        let u = output_url(3, None, "Stream");
+        assert!(
+            !u.contains("template_id"),
+            "a follower must not pin a look: {u}"
+        );
+        assert!(
+            u.contains("channel=3"),
+            "but it is still channel-keyed: {u}"
         );
     }
 
     #[test]
     fn output_url_escapes_specials() {
-        let u = output_url(0, 2, "Stage/2");
+        let u = output_url(0, Some(2), "Stage/2");
         assert!(u.contains("name=Stage%2F2"), "got {u}");
     }
+
+    /// RG-127. These two tests serve the real `dist/`, which is gitignored, so on a
+    /// fresh clone they fail with `got HTTP/1.1 404 Not Found` — a message that says
+    /// nothing about the frontend never having been built, and costs whoever reads
+    /// it an hour in the HTTP server. The fix is the sentence, not the test: the
+    /// pages genuinely are the built frontend and mocking that away would delete the
+    /// thing being asserted.
+    const NO_DIST: &str = "the page was not served. If this is a fresh clone or a \
+        new worktree, `dist/` is gitignored and these two tests serve the REAL \
+        built frontend: run `npm install && npm run build` first (RG-127).";
 
     /// The embedded LAN server serves the output/stage pages (200 + html) and
     /// 404s the unknown — this is what makes a packaged app reachable by OBS/
@@ -2340,7 +2631,7 @@ mod tests {
         let resp = String::from_utf8_lossy(&buf[..n]);
         assert!(
             resp.starts_with("HTTP/1.1 200"),
-            "got {}",
+            "{NO_DIST} — got {}",
             &resp[..resp.len().min(60)]
         );
         assert!(resp.contains("text/html"));
@@ -2593,7 +2884,7 @@ mod tests {
             .unwrap();
         assert!(
             String::from_utf8_lossy(&buf[..n]).starts_with("HTTP/1.1 200"),
-            "a request split across packets must still be served"
+            "a request split across packets must still be served — {NO_DIST}"
         );
     }
 
@@ -2749,6 +3040,7 @@ mod tests {
             hub.clients_handle(),
             hub.themes_handle(),
             hub.last_screen_handle(),
+            hub.last_transition_handle(),
             OutputHealth::default(),
             port,
         ));
@@ -2808,6 +3100,7 @@ mod tests {
             hub.clients_handle(),
             hub.themes_handle(),
             hub.last_screen_handle(),
+            hub.last_transition_handle(),
             OutputHealth::default(),
             port,
         ));
@@ -2890,6 +3183,7 @@ mod tests {
             hub.clients_handle(),
             hub.themes_handle(),
             hub.last_screen_handle(),
+            hub.last_transition_handle(),
             OutputHealth::default(),
             port,
         ));
@@ -2933,6 +3227,7 @@ mod tests {
             hub.clients_handle(),
             hub.themes_handle(),
             hub.last_screen_handle(),
+            hub.last_transition_handle(),
             OutputHealth::default(),
             port,
         ));
@@ -2991,10 +3286,103 @@ mod tests {
         assert!(!is_screen_frame(
             r#"{"kind":"stage_next","label":"John 3:17"}"#
         ));
+        // An instruction to a person, about a moment. A tablet that rejoins ten
+        // minutes later must not be handed it — and it must not stand in for the
+        // content the screen is actually showing either.
+        assert!(!is_screen_frame(
+            r#"{"kind":"stage_alert","text":"two minutes"}"#
+        ));
         assert!(!is_screen_frame(r#"{"kind":"themes","themes":[]}"#));
         assert!(!is_screen_frame(
             r#"{"kind":"template","id":1,"template":{}}"#
         ));
+    }
+
+    /// Every `kind` this module publishes, and whether it decides what a screen
+    /// is SHOWING. `true` here means the hub retains it and replays it to a
+    /// client that joins late (rule 43).
+    const FRAME_VERDICTS: &[(&str, bool)] = &[
+        ("content", true),
+        ("clear", true),
+        ("black", true),
+        ("stage_next", false),
+        ("stage_alert", false),
+        ("themes", false),
+        ("template", false),
+        // Configuration, not content. It is retained — in its OWN slot, and
+        // replayed on hello from there — because a screen that joins late must not
+        // be the only one still cutting. It must never be retained HERE: one slot
+        // means the newest frame wins, so a transition would replace the verse and
+        // the next screen to join would be sent a preference and a blank wall.
+        ("transition", false),
+    ];
+
+    /// THE ENUMERATION MUST GROW WITH THE MODULE, OR IT IS NOT AN ENUMERATION.
+    ///
+    /// The test above lists the kinds it knows about, and a list of examples
+    /// cannot notice a kind nobody added to it. This one reads the module's own
+    /// source and fails on any published `kind` with no verdict — which is the
+    /// case that actually arose: `stage_alert` was added on `new_look_refresh`
+    /// while `is_screen_frame` was being written on `audit/field-2026-09-13`, and
+    /// the two met for the first time in a merge. The matcher happened to be
+    /// right about it; nothing was checking.
+    ///
+    /// Same shape as `r6-contracts.test.js` on the client side: a new hub message
+    /// that nobody has answered for is the finding.
+    #[test]
+    fn every_kind_this_module_publishes_has_an_explicit_verdict() {
+        let src = include_str!("channels.rs");
+        let body = src.split("mod tests").next().unwrap_or(src);
+
+        let mut found: Vec<&str> = Vec::new();
+        for line in body.lines() {
+            // Comments talk ABOUT frames without publishing any.
+            if line.trim_start().starts_with("//") {
+                continue;
+            }
+            let mut rest = line;
+            while let Some(i) = rest.find("\"kind\"") {
+                rest = &rest[i + "\"kind\"".len()..];
+                let Some(after) = rest.trim_start().strip_prefix(':') else {
+                    continue;
+                };
+                let Some(after) = after.trim_start().strip_prefix('"') else {
+                    continue;
+                };
+                let Some(end) = after.find('"') else { continue };
+                let kind = &after[..end];
+                if !found.contains(&kind) {
+                    found.push(kind);
+                }
+            }
+        }
+
+        assert!(
+            !found.is_empty(),
+            "the scanner found no published kind at all — it has stopped reading \
+             this module, and a scanner that quietly narrows passes everything"
+        );
+        for kind in &found {
+            assert!(
+                FRAME_VERDICTS.iter().any(|(k, _)| k == kind),
+                "`{kind}` is published to the kiosk hub and no one has said whether \
+                 a screen that joins late should be shown it. Add it to \
+                 FRAME_VERDICTS with a reason, and assert it in the matcher test."
+            );
+        }
+        for (kind, retained) in FRAME_VERDICTS {
+            assert!(
+                found.contains(kind),
+                "FRAME_VERDICTS names `{kind}`, which this module no longer \
+                 publishes — a verdict about nothing"
+            );
+            let frame = format!(r#"{{"kind":"{kind}","x":1}}"#);
+            assert_eq!(
+                is_screen_frame(&frame),
+                *retained,
+                "the matcher disagrees with the verdict for `{kind}`"
+            );
+        }
     }
 
     /// A SCREEN THAT JOINS LATE IS SHOWN WHAT IS ON THE SCREENS.
@@ -3017,6 +3405,7 @@ mod tests {
             hub.clients_handle(),
             hub.themes_handle(),
             hub.last_screen_handle(),
+            hub.last_transition_handle(),
             OutputHealth::default(),
             port,
         ));
@@ -3057,6 +3446,244 @@ mod tests {
         );
     }
 
+    /// A TRANSITION MAY NEVER STAND IN FOR WHAT IS ON THE SCREENS.
+    ///
+    /// This is rule 43's own trap, one slot along. `last_screen` holds ONE frame
+    /// and the newest wins, so the obvious place to put a retained transition — in
+    /// there, beside `content`, `clear` and `black` — would mean an operator
+    /// changing the transition ERASED the retained verse. The next screen to join
+    /// mid-reading would then have been sent a preference and a blank wall: the
+    /// exact failure DECISIONS §68 exists to prevent, delivered by the mechanism
+    /// that prevents it.
+    ///
+    /// Watched to fail by adding `transition` to `is_screen_frame`.
+    #[tokio::test]
+    async fn a_transition_never_becomes_the_frame_a_late_screen_is_shown() {
+        let port = free_port();
+        let hub = KioskHub::default();
+        tokio::spawn(run_kiosk_server(
+            log_only(),
+            hub.sender(),
+            hub.templates_handle(),
+            hub.clients_handle(),
+            hub.themes_handle(),
+            hub.last_screen_handle(),
+            hub.last_transition_handle(),
+            OutputHealth::default(),
+            port,
+        ));
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+
+        // The verse went up, and THEN the operator changed the transition.
+        hub.publish(
+            r#"{"kind":"content","reference":"Romans 8:28","text":"And we know"}"#.to_string(),
+        );
+        hub.set_transition(Some("crossfade".into()), Some(320));
+
+        let (ws, _) = tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{port}"))
+            .await
+            .expect("connect");
+        let (mut write, mut read) = ws.split();
+        write
+            .send(tokio_tungstenite::tungstenite::Message::Text(
+                r#"{"kind":"hello","template_id":7}"#.to_string(),
+            ))
+            .await
+            .expect("send hello");
+
+        // BOTH, and the content must still arrive — that is the whole assertion.
+        let mut saw_content = false;
+        let mut saw_transition = false;
+        for _ in 0..6 {
+            let Ok(Some(Ok(msg))) =
+                tokio::time::timeout(std::time::Duration::from_secs(2), read.next()).await
+            else {
+                break;
+            };
+            let text = msg.into_text().unwrap_or_default();
+            if text.contains(r#""kind":"content""#) && text.contains("Romans 8:28") {
+                saw_content = true;
+            }
+            if text.contains(r#""kind":"transition""#) && text.contains("crossfade") {
+                saw_transition = true;
+            }
+            if saw_content && saw_transition {
+                break;
+            }
+        }
+        assert!(
+            saw_content,
+            "changing the transition erased the verse a late screen is shown — \
+             rule 43's failure delivered by rule 43's own mechanism"
+        );
+        assert!(
+            saw_transition,
+            "a screen that joined mid-service was left cutting while every other \
+             screen in the building crossfaded"
+        );
+    }
+
+    /// A TRANSITION MAY NOT DELAY, GATE OR SURVIVE A PANIC CONTROL.
+    ///
+    /// Three separate claims, and all three are the same rule (rule 15,
+    /// DECISIONS §20): a panic control does what it says, at once, unconditionally.
+    ///
+    ///   · `clear` publishes its frame with an override in force, unchanged and
+    ///     with nothing consulted — it does not read `last_transition` at all.
+    ///   · The cleared wall is what a late screen is shown, not the verse.
+    ///   · The override OUTLIVES the clear, which is correct and is the reason it
+    ///     is kept in its own slot: it is configuration, so clearing the screens
+    ///     must not quietly re-arm every template's own transition behind the
+    ///     operator's back.
+    #[test]
+    fn a_panic_control_is_neither_delayed_nor_undone_by_a_transition() {
+        let hub = KioskHub::default();
+        hub.publish(r#"{"kind":"content","reference":"Psalms 23:1"}"#.to_string());
+        // THE ORDER IS THE OPERATOR'S REAL ONE: hit Clear screens, then reach for
+        // the picker. With one shared slot the second act would erase the first,
+        // and a screen joining a moment later would still be showing the verse the
+        // operator had just taken down.
+        hub.publish(r#"{"kind":"clear"}"#.to_string());
+        hub.set_transition(Some("fadeblack".into()), Some(800));
+
+        let retained = hub
+            .last_screen
+            .lock()
+            .ok()
+            .and_then(|l| l.clone())
+            .unwrap_or_default();
+        assert_eq!(
+            retained, r#"{"kind":"clear"}"#,
+            "a wall the operator cleared was not what a late screen would be shown"
+        );
+
+        // …AND THE OTHER ORDER. A panic control pressed while an override is in
+        // force takes the screens down and leaves the override alone: it is
+        // configuration, so a blackout must not quietly re-arm every template's own
+        // transition behind the operator's back, to be discovered on the next fire.
+        hub.publish(r#"{"kind":"black"}"#.to_string());
+        let retained = hub
+            .last_screen
+            .lock()
+            .ok()
+            .and_then(|l| l.clone())
+            .unwrap_or_default();
+        assert_eq!(
+            retained, r#"{"kind":"black"}"#,
+            "a blacked-out wall was not what a late screen would be shown"
+        );
+        assert_eq!(
+            hub.current_transition(),
+            Some(("fadeblack".to_string(), Some(800))),
+            "a panic control silently threw away the operator's transition"
+        );
+    }
+
+    /// AN IMPLAUSIBLE MODE IS NOT RETAINED AND REPLAYED FOR THE REST OF A SERVICE.
+    ///
+    /// The seven live in `src/lib/transitions.js` and are deliberately NOT copied
+    /// here — a second register drifts from the first, and an unknown mode is
+    /// already a cut over there (§71). What this end owes is frame integrity: the
+    /// value is serialised by `serde_json`, so nothing can break out of the JSON,
+    /// and a wildly long string is dropped rather than kept in the hub and sent to
+    /// every screen that joins for the next hour.
+    #[test]
+    fn the_transition_frame_cannot_be_broken_out_of_or_stuffed() {
+        let hub = KioskHub::default();
+        hub.set_transition(Some("\",\"kind\":\"content\",\"text\":\"x".into()), None);
+        // Long enough to be nonsense, short enough that the cap is what stops it.
+        hub.set_transition(Some("c".repeat(64)), None);
+        assert_eq!(
+            hub.current_transition(),
+            None,
+            "a 64-character mode was kept"
+        );
+
+        hub.set_transition(Some("crossfade".into()), Some(320));
+        let frame = transition_json(hub.current_transition().as_ref());
+        let v: serde_json::Value = serde_json::from_str(&frame).expect("valid JSON");
+        assert_eq!(v["kind"], "transition");
+        assert_eq!(v["mode"], "crossfade");
+        assert!(
+            !is_screen_frame(&frame),
+            "the real frame this module publishes matched the screen-frame matcher"
+        );
+
+        hub.set_transition(None, None);
+        assert_eq!(hub.current_transition(), None);
+        let cleared = transition_json(None);
+        assert!(
+            cleared.contains(r#""mode":null"#),
+            "a cleared override must be an explicit null, not an absent key: {cleared}"
+        );
+    }
+
+    /// …AND A CHANNEL-KEYED SCREEN IS ONE OF THEM.
+    ///
+    /// The test above says hello with a `template_id`, and for a long time that was
+    /// the only hello the hub answered at all — the whole reply sat inside
+    /// `if let Some(id) = template_id`. `Output.svelte` sends `template_id: null`
+    /// whenever the URL is CHANNEL-keyed, which is what `Copy URL` writes and what
+    /// CLAUDE.md tells operators to use, because only a channel-keyed source follows
+    /// a template swap. So the recommended URL was the one shape that joined blank:
+    /// measured on a running build, `output.html?channel=1` came back with nothing
+    /// after a fire while `?channel=1&template_id=1` came back with the verse.
+    ///
+    /// That is rule 43's own failure — an OBS source restarting mid-reading showing
+    /// a congregation black — reached through the door the documentation points at.
+    #[tokio::test]
+    async fn a_screen_that_joins_without_a_template_id_is_still_sent_what_is_on_the_screens() {
+        let port = free_port();
+        let hub = KioskHub::default();
+        tokio::spawn(run_kiosk_server(
+            log_only(),
+            hub.sender(),
+            hub.templates_handle(),
+            hub.clients_handle(),
+            hub.themes_handle(),
+            hub.last_screen_handle(),
+            hub.last_transition_handle(),
+            OutputHealth::default(),
+            port,
+        ));
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+
+        hub.publish(
+            r#"{"kind":"content","reference":"Psalms 23:1","text":"The LORD is my shepherd"}"#
+                .to_string(),
+        );
+
+        let (ws, _) = tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{port}"))
+            .await
+            .expect("connect");
+        let (mut write, mut read) = ws.split();
+        // EXACTLY what a channel-keyed output page sends.
+        write
+            .send(tokio_tungstenite::tungstenite::Message::Text(
+                r#"{"kind":"hello","template_id":null}"#.to_string(),
+            ))
+            .await
+            .expect("send hello");
+
+        let mut got = None;
+        for _ in 0..4 {
+            let Ok(Some(Ok(msg))) =
+                tokio::time::timeout(std::time::Duration::from_secs(2), read.next()).await
+            else {
+                break;
+            };
+            let text = msg.into_text().unwrap();
+            if text.contains(r#""kind":"content""#) {
+                got = Some(text);
+                break;
+            }
+        }
+        assert!(
+            got.as_deref().unwrap_or("").contains("Psalms 23:1"),
+            "a channel-keyed screen that joined mid-reading was left blank: {got:?}"
+        );
+    }
+
     /// …AND IT CAN NEVER UNDO A PANIC CONTROL.
     ///
     /// The retained frame is whatever was published LAST, and `clear` and `black`
@@ -3075,6 +3702,7 @@ mod tests {
             hub.clients_handle(),
             hub.themes_handle(),
             hub.last_screen_handle(),
+            hub.last_transition_handle(),
             OutputHealth::default(),
             port,
         ));
@@ -3116,6 +3744,78 @@ mod tests {
         );
     }
 
+    /// A WORD TO THE PREACHER MUST NOT STAND IN FOR THE READING — at the SERVER.
+    ///
+    /// `is_screen_frame` says an alert is not retained and `FRAME_VERDICTS` agrees,
+    /// but both are statements about a matcher. This drives the real hello path:
+    /// verse, then alert, then a client connects. Two ways it could go wrong and
+    /// only one of them is a matcher bug —
+    ///
+    ///   - the alert becomes the retained frame, and the screen that rejoined
+    ///     mid-reading is handed a message meant for a moment that has passed
+    ///     instead of the verse it should be painting (rule 43's own failure, with
+    ///     the alert in the role of `stage_next`);
+    ///   - the alert is retained ALONGSIDE the verse and replayed on hello, which
+    ///     would put a red full-screen instruction on a congregation output ten
+    ///     minutes after the operator sent it, on a page whose only defence is that
+    ///     the message never arrives.
+    ///
+    /// The second is the congregation-facing one and no matcher test can see it:
+    /// it is a property of what `hello` sends.
+    #[tokio::test]
+    async fn a_word_to_the_preacher_is_not_replayed_to_a_screen_that_joins_after_it() {
+        let port = free_port();
+        let hub = KioskHub::default();
+        tokio::spawn(run_kiosk_server(
+            log_only(),
+            hub.sender(),
+            hub.templates_handle(),
+            hub.clients_handle(),
+            hub.themes_handle(),
+            hub.last_screen_handle(),
+            hub.last_transition_handle(),
+            OutputHealth::default(),
+            port,
+        ));
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+
+        hub.publish(
+            r#"{"kind":"content","reference":"Romans 8:28","text":"And we know"}"#.to_string(),
+        );
+        hub.publish(r#"{"kind":"stage_alert","text":"Wrap up — 5 minutes"}"#.to_string());
+
+        let (ws, _) = tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{port}"))
+            .await
+            .expect("connect");
+        let (mut write, mut read) = ws.split();
+        write
+            .send(tokio_tungstenite::tungstenite::Message::Text(
+                r#"{"kind":"hello","template_id":7}"#.to_string(),
+            ))
+            .await
+            .expect("send hello");
+
+        let mut frames = Vec::new();
+        for _ in 0..4 {
+            let Ok(Some(Ok(msg))) =
+                tokio::time::timeout(std::time::Duration::from_millis(900), read.next()).await
+            else {
+                break;
+            };
+            frames.push(msg.into_text().unwrap());
+        }
+        assert!(
+            frames.iter().any(|f| f.contains("Romans 8:28")),
+            "the alert stood in for the reading and the joining screen was left \
+             without it: {frames:?}"
+        );
+        assert!(
+            !frames.iter().any(|f| f.contains("stage_alert")),
+            "a word to the preacher was replayed to a screen that joined later — on \
+             a congregation output that is a red screen nobody sent: {frames:?}"
+        );
+    }
+
     /// End-to-end kiosk path (what OBS/vMix uses): a WS client connects, a fire
     /// is published, and the client receives it.
     #[tokio::test]
@@ -3130,6 +3830,7 @@ mod tests {
             hub.clients_handle(),
             hub.themes_handle(),
             hub.last_screen_handle(),
+            hub.last_transition_handle(),
             OutputHealth::default(),
             port,
         ));
@@ -3285,6 +3986,27 @@ mod tests {
         assert_eq!(v["next_text"], "For God sent not...");
         assert_eq!(v["service_started_at"], 1_700_000_000_000_i64);
         assert_eq!(v["service_target_ms"], 1_800_000);
+
+        // BOTH HALVES OF THE COUNTDOWN, for the same reason `next_*` are above: a
+        // kiosk/OBS screen that gets only the instant goes on counting down through a
+        // countdown the operator has HELD, and a projector counting against a console
+        // that says 4:00 is worse than a blank one — nothing about it looks wrong.
+        // `countdown_from` rides too, or a kiosk screen turns the figure red at a
+        // different moment from the native window beside it.
+        let held = OutputContent {
+            kind: Some("countdown".into()),
+            reference: "Service begins in".into(),
+            countdown_to: Some(1_700_000_300_000),
+            countdown_from: Some(1_700_000_000_000),
+            countdown_paused_ms: Some(240_000),
+            countdown_done: Some("Welcome".into()),
+            ..Default::default()
+        };
+        let v: serde_json::Value = serde_json::from_str(&kiosk_content_json(&held)).unwrap();
+        assert_eq!(v["countdown_to"], 1_700_000_300_000_i64);
+        assert_eq!(v["countdown_from"], 1_700_000_000_000_i64);
+        assert_eq!(v["countdown_paused_ms"], 240_000);
+        assert_eq!(v["countdown_done"], "Welcome");
     }
 
     #[test]
@@ -3329,6 +4051,7 @@ mod tests {
             hub.clients_handle(),
             hub.themes_handle(),
             hub.last_screen_handle(),
+            hub.last_transition_handle(),
             OutputHealth::default(),
             port,
         ));
@@ -3382,6 +4105,7 @@ mod tests {
             hub.clients_handle(),
             hub.themes_handle(),
             hub.last_screen_handle(),
+            hub.last_transition_handle(),
             health.clone(),
             port,
         ));

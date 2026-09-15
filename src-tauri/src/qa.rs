@@ -76,6 +76,11 @@ pub(crate) fn bare_app() -> tauri::App<tauri::test::MockRuntime> {
         // What the congregation can actually see. `/api/live` reads it, so a test
         // that drives the remote needs it managed or the remote answers "clear".
         .manage(channels::WallState::default())
+        // The countdown in front of the operator, for the transport that re-aims or
+        // HOLDS it. Managed by the real app at startup for the same reason the two
+        // below are: without it `adjust_countdown` would answer "nothing is counting
+        // down" on a fixture where one demonstrably is.
+        .manage(channels::CountdownState::default())
         .manage(Session::default())
         // Whether the screens are answering, and whether a recorded service is
         // being protected. Both are managed by the real app at startup, so a
@@ -232,6 +237,38 @@ mod tests {
                 None,
                 "a fresh install has no content-look chosen for {kind} — \
                  something added a convenience to the bare fixture"
+            );
+        }
+
+        // AND IT HAS NO CONTENT IN IT.
+        //
+        // Added when the demo dataset was built, because this test DID NOT CATCH
+        // IT. Wiring `db::demo::load` into `init_fresh` — the exact failure this
+        // tripwire exists to prevent, a fresh install arriving with a service plan,
+        // three songs, three notices and five saved verses already in it — was
+        // watched to leave this test green. Everything above asserts what a first
+        // launch CONTAINS; nothing asserted what it must not, so a seed that only
+        // added rows was invisible. That is now closed from both ends: this, and
+        // `db::demo::a_fresh_install_carries_no_demo_content`.
+        //
+        // The ledger is the right probe rather than a row count per table: it is
+        // the one fact that means "something seeded content it intends to own", and
+        // it stays true if the dataset grows a table this list has never heard of.
+        assert!(
+            !db::demo::is_loaded(&conn).unwrap(),
+            "a fresh install has no demo content — something taught Relay to seed itself"
+        );
+        for (what, sql) in [
+            ("a service plan", "SELECT COUNT(*) FROM service_plans"),
+            ("a song", "SELECT COUNT(*) FROM songs"),
+            ("an announcement", "SELECT COUNT(*) FROM announcements"),
+            ("a saved verse", "SELECT COUNT(*) FROM saved_scripture"),
+            ("a media asset", "SELECT COUNT(*) FROM media_assets"),
+        ] {
+            let n: i64 = conn.query_row(sql, [], |r| r.get(0)).unwrap();
+            assert_eq!(
+                n, 0,
+                "a fresh install ships with no content of its own, and this one has {what}"
             );
         }
     }
@@ -1612,7 +1649,12 @@ mod cold_start {
         assert!(names.len() >= 5, "the built-in templates are missing");
         // 31 at the time of the cold-start audit: 4 original built-ins +
         // "Worship Lyrics" + 26 presets (9 solid looks, 5 lyric/lower-third/stage
-        // variants, and 3 themed families of 4).
+        // variants, and 3 themed families of 4). 39 since REBRAND wave 4 added
+        // the eight-look SHELF — the prototype's lower thirds, its two SuperSource
+        // composites, its stage look, its media frame, High Visibility and Notice
+        // Board (`data/shelf_templates.json`). The figure is prose, not an
+        // assertion, for the reason stated above; the real count is asserted in
+        // `db::mod::seeds_the_builtin_templates` against the code's own total.
         for want in ["Classic Serif", "Worship Lyrics"] {
             assert!(names.iter().any(|n| n == want), "the seed lost {want:?}");
         }

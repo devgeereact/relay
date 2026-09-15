@@ -47,11 +47,53 @@ const EMPTY = {
   liveOnAir: false,
   serviceId: null,
   // How the run surface is presented. Persisted because a booth's screen does not
-  // change between Sundays: an operator on a 13" laptop who chose compact should
-  // not have to choose it again every week.
-  liveDensity: 'normal', // 'normal' | 'compact'
+  // change between Sundays.
+  //
+  // `liveDensity` ('normal' | 'compact') used to sit here and is GONE — the
+  // control it backed was removed on the operator's instruction (T2). See
+  // `migrateSession`: a saved session that still carries the key has it DROPPED,
+  // rather than left to be re-persisted for ever by the subscriber below.
   liveFullscreen: false, // hide the shell chrome around Live
+  // Which DESK the Templates workspace is showing (docs/REBRAND.md §2). Themes
+  // stopped being a tab of its own and became the second desk here; this is which
+  // one you were last on. Persisted for the same reason `liveFullscreen` is — a
+  // volunteer who spent Tuesday evening on themes should come back to themes.
+  templatesDesk: 'templates', // 'templates' | 'themes'
 };
+
+/**
+ * Fold a saved session forward onto the layout the app actually has.
+ *
+ * TWO cases, and they are different KINDS of change, which is why they are both
+ * here rather than one being left to look after itself.
+ *
+ * 1. A surface that MOVED. Somebody last on the old Themes TAB has
+ *    `activeTab: 'themes'` in localStorage. `MOVED_TABS` sends them to the
+ *    Templates workspace, which is where Themes went — but the workspace has two
+ *    desks, and without this they would land on the wrong one and conclude the
+ *    Themes surface had been deleted.
+ *
+ * 2. A setting that was DELETED. `liveDensity` backed Live's `Normal | Compact`
+ *    segment, removed on the operator's instruction (T2). It is DROPPED, not
+ *    migrated — there is nothing left to migrate it to, and it only ever changed
+ *    spacing and type, so no operator loses a position, a plan or a playhead.
+ *
+ *    Dropping it matters because of the subscriber below: the session is written
+ *    back to localStorage on every change, so a key nobody reads is not inert —
+ *    it is re-persisted for the life of the install, and the next person to read
+ *    this file finds a stored `liveDensity: 'compact'` and has to work out
+ *    whether it is a setting somebody forgot to wire up. Removing the reader
+ *    without removing the key is how that fossil gets made.
+ *
+ * Pure, and applied to every load, so it is testable and so it cannot be skipped
+ * on the corrupt-payload path.
+ */
+export function migrateSession(s) {
+  // eslint-disable-next-line no-unused-vars
+  const { liveDensity, ...kept } = s;
+  if (kept.activeTab === 'themes') return { ...kept, templatesDesk: 'themes' };
+  return kept;
+}
 
 function load() {
   const raw = (() => {
@@ -69,7 +111,7 @@ function load() {
   try {
     const parsed = JSON.parse(raw);
     // Merge over EMPTY so an older/partial payload can't leave holes.
-    return { ...EMPTY, ...parsed };
+    return migrateSession({ ...EMPTY, ...parsed });
   } catch {
     // A CORRUPT payload is NOT a fresh install, and the difference matters. There
     // was a session here — it may have been mid-service thirty seconds ago — we
@@ -164,14 +206,25 @@ export function restartSetup() {
 //                              a run surface).
 //   history       → Settings — same: a record of past services is config, not a
 //                              tab an operator runs a service from.
+//   themes        → Templates — the style layer beneath templates became a DESK
+//                              inside the Templates workspace (docs/REBRAND.md
+//                              §2). One pipeline, one workspace: a theme never
+//                              reaches a wall on its own, so it was never one of
+//                              the six things an operator runs a service from.
 //
 // Add an entry here whenever a tab is folded into another surface. A key that is
 // genuinely gone (not moved) belongs nowhere in this map — it should fall through
 // to the run surface.
+//
+// `help` is deliberately NOT here. It left the tab STRIP, but it is still a real
+// route (App.svelte's `routes`), reached from Settings → Support & guide and from
+// the cheatsheet: an operator whose session remembers Help should land on Help,
+// not be redirected somewhere it went to, because it did not go anywhere.
 export const MOVED_TABS = {
   stagedisplays: 'channels',
   dashboard: 'settings',
   history: 'settings',
+  themes: 'templates',
 };
 
 /**

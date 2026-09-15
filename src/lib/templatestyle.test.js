@@ -173,3 +173,126 @@ describe('font fallback', () => {
     expect(ff).toMatch(/--f-serif/);
   });
 });
+
+// ── A SHAPE'S FILL IS NOT ALWAYS A HEX ─────────────────────────────────────
+//
+// `hexA` parses the fill two characters at a time and falls back to 0 for each
+// component, so ANY fill that is not a hex — a gradient an operator pasted, a
+// CSS var, a theme token that resolves to one — silently became BLACK at the
+// requested alpha. A lower-third band is the layer most likely to carry a
+// gradient, and it is the layer keyed over a live camera: a black bar where a
+// translucent one was designed is a congregation-facing failure that renders
+// perfectly and reports nothing.
+import { makeLayer } from './layers.js';
+
+const shaped = (fill, opacity) => ({
+  id: 3,
+  name: 'Band',
+  layout: {
+    layers: [
+      makeLayer('shape', { name: 'Band', x: 0, y: 70, w: 100, h: 20, fill, opacity }),
+      makeLayer('text', { name: 'Verse', bind: 'verse', x: 4, y: 72, w: 92, h: 16 }),
+    ],
+  },
+  style: {},
+});
+
+describe("a shape layer's fill and opacity", () => {
+  it('applies alpha to a hex fill', () => {
+    const el = mount(shaped('#101319', 0.5), CONTENT);
+    expect(getComputedStyle(el.querySelector('.lshape')).background).toContain('rgba(16, 19, 25, 0.5)');
+  });
+
+  it('keeps a gradient fill instead of painting it black', () => {
+    const el = mount(shaped('linear-gradient(90deg,#123456,#654321)', 1), CONTENT);
+    const bg = getComputedStyle(el.querySelector('.lshape')).background;
+    expect(bg).toContain('gradient');
+    // The colours the designer chose, not the black `hexA` used to fall back to.
+    expect(bg).toContain('rgb(18, 52, 86)');
+  });
+
+  it('still honours opacity on a fill it cannot parse', () => {
+    const el = mount(shaped('linear-gradient(90deg,#123456,#654321)', 0.4), CONTENT);
+    const box = el.querySelector('.lshape');
+    expect(getComputedStyle(box).background).toContain('gradient');
+    expect(getComputedStyle(box).opacity).toBe('0.4');
+  });
+});
+
+// ── THE COUNTDOWN WARNS, AND THE WARNING HAS TO WIN ────────────────────────
+//
+// The countdown's colour is written as an INLINE style, and an inline style beats
+// a stylesheet rule — so a `.warn` class in the CSS alone changed nothing at all
+// on the wall. It looked right in the markup and was invisible on the screen,
+// which is the failure worth a test.
+describe('the countdown warning', () => {
+  const timer = () => ({
+    id: 5,
+    name: 'Timer',
+    layout: { regions: ['verse_text'], align: 'center' },
+    style: { verseColor: '#ffffff', background: '#101010' },
+  });
+  const fire = (msFromNow) => ({ reference: '', text: '', countdown_to: Date.now() + msFromNow });
+
+  it('is the template colour with time still to go', () => {
+    const el = mount(timer(), fire(10 * 60_000));
+    const cd = el.querySelector('.countdown');
+    expect(cd).toBeTruthy();
+    expect(cd.className).not.toMatch(/warn/);
+    expect(cd.style.color).toBe('rgb(255, 255, 255)');
+  });
+
+  it('turns red in the last minute, inline, so nothing can override it back', () => {
+    const el = mount(timer(), fire(30_000));
+    const cd = el.querySelector('.countdown');
+    expect(cd.className).toMatch(/warn/);
+    expect(cd.style.color).toBe('rgb(244, 81, 91)');
+  });
+});
+
+// ── THE TRANSITION IS WIRED (docs/REBRAND.md §8) ───────────────────────────
+//
+// `transitions.test.js` holds what each mode looks like. This holds the thing a
+// pure test cannot: that the renderer actually hands Svelte a valid transition.
+// A wrong signature there throws at RENDER TIME — on a wall, on the first fire
+// of the service — and no amount of testing the CSS function would catch it.
+//
+// jsdom runs no animation frames the way a browser does, so this deliberately
+// does not assert on intermediate opacity: what is being checked is that a
+// template asking for a transition still renders its verse.
+describe('a template that asks for a transition', () => {
+  const withTransition = (transition, transitionMs) => ({
+    id: 8,
+    name: 'T',
+    layout: { regions: ['verse_text', 'reference'], align: 'center' },
+    style: { verseColor: '#ffffff', accent: '#ffb000', background: '#101010', transition, transitionMs },
+  });
+
+  it('renders the verse on a cut', () => {
+    const el = mount(withTransition('cut', 0), CONTENT);
+    expect(el.querySelector('.verse').textContent).toContain('For God so loved');
+  });
+
+  it('renders the verse on every animated mode', () => {
+    for (const mode of ['crossfade', 'dissolve', 'fadeblack', 'pushleft', 'slideup', 'materialise']) {
+      const el = mount(withTransition(mode, 250), CONTENT);
+      expect(el.querySelector('.verse'), mode).toBeTruthy();
+      app?.$destroy();
+      host?.remove();
+    }
+  });
+
+  it('renders the verse when a theme asks for a mode nothing knows', () => {
+    // An imported theme, or one from a newer version. It must cut, not crash.
+    const el = mount(withTransition('sparkle', 250), CONTENT);
+    expect(el.querySelector('.verse')).toBeTruthy();
+  });
+});
+
+// PROBE — what a fired song slide puts in the reference region today.
+describe('PROBE song label', () => {
+  it('shows what reaches the glass', () => {
+    const el = mount(scripture(), { reference: 'Amazing Grace · Chorus 2', text: 'Amazing grace, how sweet the sound', kind: 'song' });
+    console.log('PROBE ref region:', JSON.stringify(el.querySelector('.reference')?.textContent));
+  });
+});

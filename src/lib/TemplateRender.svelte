@@ -24,6 +24,38 @@
     if (tries >= max) return false;
     return !fontReady || !!overflowing;
   }
+
+  // ── THE THREE NUMBERS THE LAYER FIT IS BOUNDED BY ──────────────────────────
+  //
+  // Exported so the reasoning is checkable without a browser, and so nobody has
+  // to guess what a magic 16 meant.
+  //
+  // The smallest size the search will settle on. Below this the words are gone
+  // rather than small, and rule 37 says a verse that cannot fit is SHRUNK and
+  // REPORTED, never blanked — so this is a floor on the answer, not a refusal.
+  export const FIT_FLOOR_CQW = 0.4;
+  // How close the bracket has to get before the search stops asking. Sizes here
+  // are cqw — a share of the output's WIDTH — so this is resolution-independent:
+  // 0.02cqw is 0.38px of font-size on a 1920-wide wall, 0.77px on a 4K one, and
+  // 0.05px on a slide-grid thumbnail. The old loop ran a flat sixteen rounds,
+  // which resolves a 21.6cqw bracket to 0.0003cqw — four decimal places of a
+  // quantity that is not visible at two, bought with five forced layouts.
+  export const FIT_EPS_CQW = 0.02;
+  // The hard bound, unchanged. A bisection halves its bracket every round, so
+  // sixteen rounds is far more than `FIT_EPS_CQW` ever needs; it stays as the
+  // thing that guarantees termination whatever the bracket.
+  export const FIT_MAX_ROUNDS = 16;
+
+  /**
+   * How many rounds a bracket of this width needs to reach `FIT_EPS_CQW`.
+   *
+   * Pure, and exported, because "is eleven enough?" is arithmetic and should not
+   * need a rendered page to answer.
+   */
+  export function fitRoundsFor(span, eps = FIT_EPS_CQW, max = FIT_MAX_ROUNDS) {
+    if (!(span > 0) || !(eps > 0)) return 0;
+    return Math.min(max, Math.ceil(Math.log2(span / eps)));
+  }
 </script>
 
 <script>
@@ -33,7 +65,11 @@
   // template scales identically whether the container is a full screen or a
   // small preview box.
   import { afterUpdate, onMount, onDestroy } from 'svelte';
-  import { isLayered, boundValue, templateShows, formatElapsed, formatRemaining } from './layers.js';
+  import { isLayered, boundValue, templateShows, formatElapsed, formatRemaining, formatCountdown, countdownWarning, topLevelLayers, drawBoxes } from './layers.js';
+  // ONE timer, ONE formatter (docs/REBRAND.md §7). `layers.js` owns the formatter;
+  // `countdown.js` owns the arithmetic in front of it — including the one exception,
+  // a countdown that is being HELD.
+  import { countdownRemainingMs, countdownIsPaused, countdownTotalMs } from './countdown.js';
   import { applySink, getAudioOutput, onAudioOutputChange } from './audioOutput.js';
 
   export let template = {};
@@ -46,10 +82,21 @@
   // regression on every existing call site.
   export let theme = null;
   import { applyTheme, themeById, templateThemeRef, BUILTIN_THEMES } from './themes.js';
+  import { resolveStyle, slideBG, faceOf, fitScale, keepShrinking, FIT_STEP } from './templatemodel.js';
+  import { transitionCss, transitionDuration, resolveTransition, isOverride, liveTransition } from './transitions.js';
+  import { builtinById } from './templates.js';
   // Sound is OPT-IN per surface. This same renderer draws the Templates editor
   // preview, and editing a template must not blast video audio across the room —
   // so only a real output surface passes audio={true}.
   export let audio = false;
+  /**
+   * How deep this render is inside a composite. 0 is the screen itself.
+   *
+   * A REGION LAYER ONLY RENDERS AT DEPTH 0 — "a composite may not be another
+   * composite's fill" (docs/REBRAND.md §6). Without it a template that names
+   * itself would recurse until the webview died, on a wall, mid-service.
+   */
+  export let depth = 0;
 
   // The theme to apply. An EXPLICIT `theme` prop always wins (the Themes editor
   // previewing an unsaved draft, or an output page that resolved a CUSTOM theme
@@ -64,7 +111,12 @@
   // fallbacks (a literal template hits applyTheme's fast path and is unchanged).
   $: resolved = applyTheme(template, effectiveTheme);
   $: layout = resolved?.layout ?? {};
-  $: style = resolved?.style ?? {};
+  // THE MODEL, not a bag of keys. `resolveStyle` migrates the legacy
+  // whole-template properties onto their elements and fills every default in one
+  // place, so the editor's preview and the wall cannot disagree about what an
+  // unset property looks like (docs/REBRAND.md §3.1). It deliberately does NOT
+  // answer for `background` or alignment — see the transparency law below.
+  $: style = resolveStyle(resolved?.style ?? {});
 
   // ── LAYER MODE ─────────────────────────────────────────────────────────────
   // When a template carries `layout.layers`, render the free-form layer stack;
@@ -107,6 +159,26 @@
     const n = h.length === 3 ? h.split('').map((c) => c + c).join('') : h;
     return `rgba(${parseInt(n.slice(0, 2), 16) || 0}, ${parseInt(n.slice(2, 4), 16) || 0}, ${parseInt(n.slice(4, 6), 16) || 0}, ${Math.max(0, Math.min(1, Number(a) ?? 1))})`;
   };
+  /**
+   * A SHAPE'S PAINT, WHICH IS NOT ALWAYS A HEX.
+   *
+   * `hexA` parses two characters at a time and falls back to 0 per component, so
+   * a gradient, a CSS var or a theme token that resolves to one came out BLACK at
+   * the requested alpha — silently, and rendering perfectly. The layer most likely
+   * to carry a gradient is a lower-third band, and that is the layer keyed over a
+   * live camera.
+   *
+   * A hex still gets its alpha folded into the colour (so the shape can be
+   * translucent without making its own children translucent). Anything else is
+   * painted as written, with the alpha on the element instead.
+   */
+  const isHex = (v) => /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(String(v || '').trim());
+  const shapePaint = (L) => {
+    const a = L.opacity == null ? 1 : L.opacity;
+    return isHex(L.fill)
+      ? `background:${hexA(L.fill, a)};`
+      : `background:${L.fill || 'transparent'}; opacity:${Math.max(0, Math.min(1, Number(a) ?? 1))};`;
+  };
   // The box style for a positioned layer (percent geometry of the 16:9 stage).
   const boxStyle = (L) =>
     `left:${L.x}%; top:${L.y}%; width:${L.w}%; height:${L.h}%;`;
@@ -141,12 +213,28 @@
   }
   // vertical alignment → flex
   const vAlign = (v) => (v === 'top' ? 'flex-start' : v === 'bottom' ? 'flex-end' : 'center');
+  /** Does this layer's text change on a CLOCK rather than on content? The four
+   *  binds `layerText` reads from a ticking source — the ones whose words move
+   *  several times a second and whose size deliberately must not be re-measured
+   *  when they do. */
+  const TICKING = ['countdown', 'clock', 'elapsed', 'remaining'];
+  const isTicking = (L) => TICKING.includes(L?.bind);
+  /**
+   * THE SIZE A TEXT LAYER ASKS FOR, in cqw — the one home for it.
+   *
+   * It is read twice and the two readers must not be able to disagree: the
+   * markup DECLARES it (see `.lfit` below, and the comment there for why that is
+   * load-bearing) and `fitLayers` measures FROM it. The `5` is the same fallback
+   * the fitter used to keep to itself; a layer with no size is a layer nobody
+   * designed, and a silent 0 would fit any box by vanishing.
+   */
+  const baseSize = (L) => (Number(L?.size) > 0 ? Number(L.size) : 5);
   $: refFirst =
     layout.refFirst || (layout.regions?.[0] === 'reference' && !layout.lowerThird);
 
   // Base type sizes (cqw). Real fit is measured, not guessed — see fitText().
-  $: verseSize = parseFloat(style.verseSize) || 6;
-  $: refSize = parseFloat(style.refSize) || 2.6;
+  $: verseSize = style.verseSize;
+  $: refSize = style.refSize;
 
   // Auto-fit: after every render (and on container resize), shrink the verse +
   // reference until the content box no longer overflows, so scripture is NEVER
@@ -181,16 +269,16 @@
   /** Called with `{ scale, legible }` when a fit has been forced below the floor. */
   export let onFit = null;
 
-  function fitOne(box) {
+  function fitOne(box, container) {
     const verse = box.querySelector('.verse');
     const ref = box.querySelector('.reference');
     // The countdown renders at 2× the verse size — fit from THAT base, not the
     // plain verse size, or it would be shrunk to half on every tick.
     const vBase = verse && verse.classList.contains('countdown') ? verseSize * 2 : verseSize;
-    if (verse) verse.style.fontSize = `${vBase}cqw`;
-    if (ref) ref.style.fontSize = `${refSize}cqw`;
-    let scale = 1;
-    let guard = 0;
+    const apply = (k) => {
+      if (verse) verse.style.fontSize = `${vBase * k}cqw`;
+      if (ref) ref.style.fontSize = `${refSize * k}cqw`;
+    };
     // BOTH DIMENSIONS. It only ever checked height, which is fine for a verse —
     // prose wraps, so too much text gets taller. A COUNTDOWN does not wrap: it
     // is one wide line of tabular digits, so `2:00` at 12cqw overflows sideways
@@ -198,10 +286,67 @@
     // loop never noticed. Same for a long unbroken word.
     const overflows = () =>
       box.scrollHeight > box.clientHeight + 1 || box.scrollWidth > box.clientWidth + 1;
-    while (overflows() && guard < 40) {
-      scale *= 0.95;
-      if (verse) verse.style.fontSize = `${vBase * scale}cqw`;
-      if (ref) ref.style.fontSize = `${refSize * scale}cqw`;
+
+    // WHERE THE LOOP IS LIKELY TO LAND. Each measured step forces a synchronous
+    // reflow, so starting at 1 and shrinking costs one layout per 5% for a long
+    // passage — on the page that is on the wall. The estimate uses the same 0.95
+    // curve and the face's own advance, so it is a seed rather than an answer:
+    // the measurement below still decides.
+    //
+    // THE BOX IS DESCRIBED IN THE UNITS THE SIZES ARE IN. `vBase` is cqw — a
+    // share of the CONTAINER's width (`.stage`, which carries `container-type`),
+    // not of this box. `.slide` pads by 6%/7% and `.content` caps at 90%/92% of
+    // that, so the box is roughly three quarters of the container and the two
+    // are never the same rectangle. Handing `fitScale` the box's own aspect with
+    // the shares left at 100 described a container the size of the box, which
+    // over-stated the room by that ratio and made the seed uniformly optimistic.
+    // The container's aspect plus the box's real share of it in each dimension is
+    // the same rectangle expressed in the same units as the size.
+    let scale = 1;
+    if (!(verse && verse.classList.contains('countdown'))) {
+      const w = box.clientWidth || 0;
+      const h = box.clientHeight || 0;
+      const cw = container?.clientWidth || 0;
+      const ch = container?.clientHeight || 0;
+      if (w > 0 && h > 0 && cw > 0 && ch > 0) {
+        scale = fitScale({
+          text: verse ? verse.textContent || '' : '',
+          size: vBase,
+          face: faceOf(verseFontFamily),
+          aspect: cw / ch,
+          widthPct: (100 * w) / cw,
+          heightPct: (100 * h) / ch,
+          lineHeight: verseLineHeight,
+        });
+      }
+    }
+    apply(scale);
+
+    // BOUNDED BY A SIZE, NOT BY A COUNT. This was `guard < 40`, and 0.95^40 is
+    // 0.1285 — so a box needing less than that got the loop's last guess and kept
+    // it, still overflowing, inside `overflow: hidden`. That is rule 42's sliced
+    // verse arriving by a different road, and it does not take a long passage:
+    // one short line at a large designed size in a shallow box needs a scale
+    // below the old floor. `keepShrinking` stops on the answer instead
+    // (templatemodel.js), so the curve is unchanged and only the cases that never
+    // fitted move.
+    let guard = 0;
+    while (keepShrinking({ overflowing: overflows(), scale })) {
+      scale *= FIT_STEP;
+      apply(scale);
+    }
+    // The estimate can be pessimistic — a verse of short words wraps sooner in
+    // arithmetic than it does in a real line-breaker. Grow back while it still
+    // genuinely fits, so a seeded fit lands exactly where the plain loop would
+    // have. Never above 1: the template's own size is the ceiling.
+    while (scale < 1 && guard < 40) {
+      const bigger = Math.min(1, scale / FIT_STEP);
+      apply(bigger);
+      if (overflows()) {
+        apply(scale);
+        break;
+      }
+      scale = bigger;
       guard++;
     }
     return scale;
@@ -211,19 +356,16 @@
     // During a crossfade the outgoing and incoming slides coexist — fit both so
     // whichever is on top is already sized correctly.
     let worst = 1;
+    // `stageEl` IS the container `cqw` resolves against (`container-type: size`),
+    // so it is what the box's share is measured against.
     stageEl.querySelectorAll('.slide .content').forEach((box) => {
-      worst = Math.min(worst, fitOne(box));
+      worst = Math.min(worst, fitOne(box, stageEl));
     });
-    // Report the WORST of the slides on screen, and never throw: this runs inside
-    // a requestAnimationFrame on the page that is on the wall, and a listener that
-    // breaks must not take the render with it.
-    if (onFit) {
-      try {
-        onFit({ scale: worst, legible: worst >= MIN_LEGIBLE_SCALE });
-      } catch {
-        /* a report about legibility may not cost legibility */
-      }
-    }
+    // The WORST of the slides on screen. It is HANDED ON rather than reported
+    // here: how far this had to shrink is only half the verdict, and the other
+    // half — whether it actually fits — cannot be read until a later frame. One
+    // reporter, at the point where the answer is complete (`verifyFit`).
+    lastFitScale = worst;
   }
 
   // ── Fit scheduling (perf) ──────────────────────────────────────────────────
@@ -266,18 +408,108 @@
       for (const L of layers) {
         if (L.visible === false) continue;
         if (L.type === 'text' || L.type === 'timer') {
-          s += `|${L.w},${L.h},${L.size},${(layerText(L) || '').length}`;
+          // THE WORDS, NOT THEIR LENGTH — because `{#key text}` rebuilds this
+          // layer's `.lfit` on ANY text change, and a rebuilt element carries the
+          // declared base and no fitted size. A length was close enough to look
+          // right and let two passages of equal length share a signature: the fit
+          // was skipped, the new element kept the base, it clipped, and
+          // `verifyFit` never ran so nothing was reported either. Measured on the
+          // console after a fire — `.lfit` at 5.2cqw, the untouched default verse
+          // size, 207px of content in a 174px box, no warning, corrected only by a
+          // window resize (which moves `clientWidth`, which IS in the signature).
+          //
+          // A TICKING layer is the exception it has always been, and it is why
+          // this cannot simply be the text everywhere: a countdown or clock
+          // changes its text four times a second, so its length is what is folded
+          // in, exactly as before, and the reflow storm that gating exists to
+          // prevent stays prevented. Its rebuilt element keeps its size through
+          // `reapplyFitted` instead — the digits hold width as they count.
+          const t = layerText(L) || '';
+          s += `|${L.w},${L.h},${L.size},${isTicking(L) ? t.length : t}`;
         }
       }
       return s;
     }
     return `R${w}x${h}|${verseSize}|${refSize}|${content?.reference ?? ''}|${(content?.text ?? '').length}|${bandMode ? 1 : 0}|${countdownTo ? 1 : 0}`;
   }
+  /**
+   * Hand a rebuilt element the size its layer was already fitted at.
+   *
+   * `{#key text}` destroys and rebuilds a layer's `.lfit` whenever its words
+   * change, and the new one carries only the DECLARED base. When the words
+   * changed for a real reason the signature moves and a fresh fit runs; when they
+   * changed because a clock ticked, it must not — so the answer is re-applied
+   * instead of re-measured. Pure style writes: no `scrollHeight`, no reflow.
+   */
+  function reapplyFitted() {
+    if (!stageEl || !layered) return;
+    stageEl.querySelectorAll('.ltext').forEach((box) => {
+      const px = box.dataset.fitted;
+      if (!px) return;
+      const el = box.querySelector('.lfit');
+      if (!el || el.dataset.sized) return;
+      el.style.fontSize = `${px}cqw`;
+      el.dataset.sized = '1';
+    });
+  }
+  /**
+   * IS ANYTHING ON SCREEN WEARING ONLY ITS DECLARED BASE?
+   *
+   * An element the fitter has never sized is a fit that has NOT HAPPENED — not
+   * one that succeeded. That is rule 37's shape ("a fit loop with no notion of
+   * failure always succeeds") one level above the loop, and it is the hole every
+   * round of this audit has fallen through in a different costume.
+   *
+   * The instance that found it: `fitSig` is VALUE-based — each layer's `w,h,size`
+   * and its words — while the DOM is IDENTITY-keyed (`{#each layerViews as …
+   * (L.id)}`). A template arriving with the same geometry and the same words but
+   * different layer ids therefore rebuilds every `.ltext` and `.lfit`, leaving
+   * them at the declared base with nothing remembered to re-apply, while the
+   * signature does not move a character. Measured on the console: 5.2cqw
+   * untouched, 207px of content in a 174px box, no warning, still wrong at six
+   * seconds — and the next content change fitted fine, because that moves the
+   * signature. That is what `loadTemplates()` resolving after the first render
+   * hands over, and what an operator swapping a screen's template mid-service does.
+   *
+   * Asked as a question about the DOM rather than about the trigger, because the
+   * trigger has been something different every round. Attribute reads only: no
+   * `scrollHeight`, no reflow, so this is free on the frames where it says no.
+   */
+  function anythingUnfitted() {
+    if (!stageEl || !layered) return false;
+    for (const el of stageEl.querySelectorAll('.lfit')) {
+      if (!el.dataset.sized) return true;
+    }
+    return false;
+  }
   function runFit() {
     fitRaf = 0;
     if (!stageEl || !visible) return; // don't reflow an offscreen render
     const sig = fitSig();
-    if (sig === lastFitSig) return;
+    if (sig === lastFitSig) {
+      // A ticking layer's element was just rebuilt and is wearing the declared
+      // base. Give it back the size this layer was fitted at — a style write, no
+      // layout read, so it stays free at 4 Hz.
+      reapplyFitted();
+      // ANYTHING STILL WEARING ITS BASE HAS NOT BEEN FITTED, so fall through and
+      // fit it for real — which also produces a verdict, and therefore a report.
+      // The signature describes the SHAPE and the DOM is keyed on IDENTITY, so
+      // the two can disagree; asking the DOM is what makes this independent of
+      // whichever trigger caused the disagreement.
+      if (!anythingUnfitted()) {
+        // The FIT is still the right fit. The VERDICT may not be: something told
+        // us the geometry moved, and the verdict is about the geometry. Re-take
+        // it with a fresh budget — a resize is a new situation, not a
+        // continuation of the last one's retries.
+        if (recheck) {
+          recheck = false;
+          refitSig = '';
+          verifyFit(sig);
+        }
+        return;
+      }
+    }
+    recheck = false;
     lastFitSig = sig;
     if (layered) fitLayers();
     else fitText();
@@ -310,6 +542,40 @@
   let refitSig = '';
   let refitTries = 0;
   const MAX_REFIT = 2;
+  /** How far the last fit had to shrink, 0–1. Half of the verdict; `verifyFit`
+   *  adds the other half (does it actually fit) and reports both, once. */
+  let lastFitScale = 1;
+  // ── A VERDICT IS ONLY AS GOOD AS THE MOMENT IT WAS TAKEN ───────────────────
+  //
+  // `verifyFit` — and therefore `report` — is reachable ONLY from `runFit`, and
+  // `runFit` early-returns whenever `fitSig()` is unchanged. So the question "is
+  // what I painted actually fitting?" was gated behind the same signature that
+  // decides whether to re-FIT, and that signature cannot see this defect: it is
+  // built from the stage's integer clientWidth/clientHeight and each layer's
+  // stored `w,h,size` plus its text length, and not one of those moves when the
+  // painted content outgrows its box.
+  //
+  // So a render that fitted cleanly while its pane was still settling reported
+  // `clipped: false`, the box then went over, and nothing ever looked again. That
+  // is the console the lead measured at 2000x1175 with `Romans 8:28` on air: 207px
+  // of content in a 174px box inside `.mon.prog`, the first line sliced through
+  // the middle, and neither warning anywhere in `document.body.innerText`. The
+  // instrument was not computing the wrong answer — it had stopped being asked.
+  //
+  // Two triggers re-take a settled verdict, and neither costs anything per frame:
+  //   · a RESIZE, which is the event that says the geometry moved underneath it.
+  //     It already called `scheduleFit`, and `runFit` already threw it away when
+  //     the rounded signature had not changed — which is exactly a pane settling
+  //     by less than a pixel;
+  //   · ONE late re-look after a verdict settles, for a layout that resolves a
+  //     beat after the frame `verifyFit` samples. One per signature, never a
+  //     loop: polling would mean a forced reflow every frame, which is the
+  //     regression the fit gating exists to prevent (a countdown at 4 Hz, a
+  //     Library grid of a dozen renders).
+  const LATE_CHECK_MS = 250;
+  let recheck = false;
+  let lateDoneFor = '';
+  let lateTimer = 0;
   function fitBoxes() {
     if (!stageEl) return [];
     return [
@@ -344,29 +610,103 @@
       return true; // an unparseable family is not a reason to keep re-fitting
     }
   }
+  /**
+   * THE ONE REPORT, at the point where the verdict is complete.
+   *
+   * `scale` is how far the fit had to shrink; `clipped` is whether the words
+   * actually fit afterwards. They are different failures and only the first was
+   * ever reported — `legible` answered "did we shrink past 45%?" and nothing
+   * answered "does it fit". `Nocturne · Lyrics` settled at 8.5 of a designed 8.5
+   * — `scale: 1.0`, `legible: true` — over a 104px box holding 174px of words.
+   * The most reassuring possible report over the worst possible outcome, which
+   * is rule 35 in the place rule 37 was supposed to be watching.
+   */
+  function report(clipped) {
+    // Never throw: this runs on the page that is ON THE WALL, and a listener that
+    // breaks must not take the render with it.
+    if (onFit) {
+      try {
+        onFit({ scale: lastFitScale, legible: lastFitScale >= MIN_LEGIBLE_SCALE, clipped });
+      } catch {
+        /* a report about legibility may not cost legibility */
+      }
+    }
+  }
+  /** A frame for the browser to lay out, then one to look at what it did. */
+  function nextFrame(fn) {
+    if (typeof requestAnimationFrame === 'undefined') return void setTimeout(fn, 32);
+    requestAnimationFrame(() => requestAnimationFrame(fn));
+  }
+  /**
+   * DID THE FIT ACTUALLY FIT? — and the check has to be taken where it can tell.
+   *
+   * `overflowing()` used to be sampled in the SAME synchronous frame as the
+   * binary search, which is the one moment it cannot see a discrepancy that
+   * materialises a frame later. Rule 42's comment above says exactly this about
+   * the font case; the blindness is general, and the font half is INERT in the
+   * shipped product anyway — Relay bundles no webfont at all (`app.css` line 11:
+   * zero network, so no `fonts.googleapis` links; there is no `@font-face` and no
+   * `.woff` in `src/`), and an empty FontFaceSet makes `document.fonts.check()`
+   * answer true for every family. So `overflowing()` is the only real signal
+   * there is, and it was being read too early to be one.
+   *
+   * Measured by the lead in the Templates gallery: `Nocturne · Lyrics` at
+   * `data-base="8.5"` computing to exactly 8.5cqw — a size the search genuinely
+   * reached and genuinely measured as fitting (from `lo=0.4, hi=22` the mids are
+   * 11.2, 5.8, then exactly 8.5) — painting 174px inside a 104px `overflow:hidden`
+   * box, and staying there. The measurement and the paint disagreed, and nothing
+   * looked again. Under `container-type: size` a fit writes `font-size` in `cqw`
+   * and reads `scrollHeight` back inside one loop; a container still settling, a
+   * container-query length resolved in a later pass and a system-font
+   * substitution all leave that same signature. This component cannot tell them
+   * apart and does not need to: every one of them is invisible to a same-frame
+   * sample and visible to a next-frame one.
+   *
+   * The bound is UNCHANGED (`MAX_REFIT`), so rule 37's genuinely-unfittable
+   * passage is still shrunk, still shown, and now actually reported.
+   */
   function verifyFit(sig) {
     if (sig !== refitSig) {
       refitSig = sig;
       refitTries = 0;
     }
-    const stale = !fittedWithTheRealFont();
-    if (!needsRefit({ fontReady: !stale, overflowing: overflowing(), tries: refitTries, max: MAX_REFIT }))
-      return;
-    refitTries += 1;
-    const again = () => {
-      lastFitSig = '';
-      scheduleFit();
-    };
-    const fonts = typeof document !== 'undefined' ? document.fonts : null;
-    const box = fitBoxes()[0];
-    if (stale && fonts && fonts.load && box) {
-      const family = getComputedStyle(box.querySelector('.lfit') || box).fontFamily;
-      Promise.resolve(fonts.load(`1em ${family}`))
-        .catch(() => {})
-        .then(() => setTimeout(again, 32));
-    } else {
-      setTimeout(again, 60);
-    }
+    nextFrame(() => {
+      // Something has re-fitted since; that pass owns the verdict, not this one.
+      if (sig !== lastFitSig) return;
+      const stale = !fittedWithTheRealFont();
+      const over = overflowing();
+      if (!needsRefit({ fontReady: !stale, overflowing: over, tries: refitTries, max: MAX_REFIT })) {
+        report(over);
+        // One late re-look per settled verdict, for a layout that resolves a beat
+        // after this frame. The guard is what stops it becoming a poll: the
+        // second time this signature settles, `lateDoneFor` already names it and
+        // nothing more is scheduled.
+        if (lateDoneFor !== sig) {
+          lateDoneFor = sig;
+          clearTimeout(lateTimer);
+          lateTimer = setTimeout(() => {
+            refitSig = '';
+            verifyFit(sig);
+          }, LATE_CHECK_MS);
+        }
+        return;
+      }
+      refitTries += 1;
+      const again = () => {
+        lastFitSig = '';
+        scheduleFit();
+      };
+      const fonts = typeof document !== 'undefined' ? document.fonts : null;
+      const box = fitBoxes()[0];
+      if (stale && fonts && fonts.load && box) {
+        const family = getComputedStyle(box.querySelector('.lfit') || box).fontFamily;
+        Promise.resolve(fonts.load(`1em ${family}`))
+          .catch(() => {})
+          .then(() => setTimeout(again, 32));
+      } else {
+        setTimeout(again, 60);
+      }
+    });
   }
   function scheduleFit() {
     if (fitRaf) return;
@@ -379,7 +719,13 @@
   onMount(() => {
     if (typeof ResizeObserver !== 'undefined' && stageEl) {
       // A resize genuinely changes the fit — always re-fit (coalesced to a frame).
-      ro = new ResizeObserver(scheduleFit);
+      // A resize genuinely changes the fit — and when it does NOT change the
+      // (integer, rounded) signature, it still changes the verdict, so it also
+      // asks for that to be re-taken. See `recheck`.
+      ro = new ResizeObserver(() => {
+        recheck = true;
+        scheduleFit();
+      });
       ro.observe(stageEl);
     }
     // Defer the (reflow-heavy) fit until this render is actually on screen. The
@@ -425,6 +771,7 @@
   onDestroy(() => {
     ro?.disconnect();
     io?.disconnect();
+    clearTimeout(lateTimer);
     if (fitRaf && typeof cancelAnimationFrame !== 'undefined') cancelAnimationFrame(fitRaf);
   });
 
@@ -491,10 +838,10 @@
     return v.startsWith('var(') ? v : `${v}, system-ui, sans-serif`;
   };
 
-  $: bgOpacity = style.bgOpacity == null || style.bgOpacity === '' ? 1 : clamp01(style.bgOpacity);
+  $: bgOpacity = clamp01(style.bgOpacity);
   // DIM SCRIM — a black overlay over the background (behind the text) to knock
   // down a bright image/background so text stays readable. 0 = none.
-  $: bgDim = clamp01(style.bgDim || 0);
+  $: bgDim = clamp01(style.bgDim);
 
   // TEXT CONTRAST PANEL (a "shape" behind the words). On a bright background a
   // coloured plate behind the text is what keeps it legible. Colour + opacity +
@@ -509,10 +856,35 @@
     return `rgba(${r}, ${g}, ${b}, ${clamp01(a)})`;
   };
   $: panelOn = !!style.textPanel && !layout.lowerThird;
-  $: panelBg = panelOn
-    ? hexToRgba(style.panelColor || '#000000', style.panelOpacity == null ? 0.45 : style.panelOpacity)
-    : 'transparent';
-  $: panelRadius = style.panelRadius == null ? 1.4 : Number(style.panelRadius);
+  // THE BAND IS THE ONE BACKGROUND THAT MAY NOT FALL THROUGH TO `transparent`.
+  //
+  // `panelOn` is false for a lower third BY CONSTRUCTION (`&& !layout.lowerThird`),
+  // so this expression resolved to the string `transparent` for every keyed
+  // template — and it is written as an INLINE style on `.content`, which always
+  // beats the `.slide.lower-third .content { background: var(--accent) }` rule
+  // that is supposed to paint the band. Measured on a rendered
+  // `output.html?template_id=3`: computed background `rgba(0, 0, 0, 0)` with
+  // `--accent` resolved to a real colour and ignored.
+  //
+  // So every lower third — the template family whose entire purpose is to be
+  // readable over a picture Relay does not control — shipped with nothing behind
+  // the words, over a live camera, on the stream and the ATEM where nobody at the
+  // desk is watching. Three of the six seeded ones are dark type on a light band
+  // and were effectively invisible.
+  //
+  // It was silent to every instrument: `legibility.js` answers `unknown` for a
+  // transparent ground rather than failing it, and the fit reports a healthy
+  // scale because the type fits its box perfectly well.
+  //
+  // The band answers for itself here rather than relying on a stylesheet rule an
+  // inline style outranks — one home for the value, which is what `tickerBg`
+  // twenty lines below already does for the same reason.
+  $: panelBg = bandMode
+    ? style.accent || 'rgba(0,0,0,0.82)'
+    : panelOn
+      ? hexToRgba(style.panelColor || '#000000', style.panelOpacity == null ? 0.45 : style.panelOpacity)
+      : 'transparent';
+  $: panelRadius = style.panelRadius;
 
   // Heights. `bandHeight` (cqh) sizes the lower-third bar; `bgHeight` (%) lets the
   // background cover less than the full frame (anchored to the bottom, e.g. a
@@ -520,19 +892,22 @@
   $: bandHeight = Number(style.bandHeight) > 0 ? Number(style.bandHeight) : null;
   $: bgHeight = style.bgHeight == null || style.bgHeight === '' ? 100 : Number(style.bgHeight);
 
-  $: verseTransform = style.verseTransform || 'none'; // capitalization
-  $: refTransform = style.refTransform || 'none';
-  $: verseLineHeight = Number(style.verseLineHeight) > 0 ? Number(style.verseLineHeight) : 1.32;
+  $: verseTransform = style.verseTransform; // capitalization; resolved in the model
+  $: refTransform = style.refTransform;
+  $: verseLineHeight = style.verseLineHeight > 0 ? style.verseLineHeight : 1.32;
   $: verseLetter = style.verseLetterSpacing ? `${Number(style.verseLetterSpacing)}em` : 'normal';
   $: refLetter = style.refLetterSpacing ? `${Number(style.refLetterSpacing)}em` : 'normal';
   // Gap between the verse and its reference (cqw, so it scales with the output).
-  $: refGap = style.refGap == null ? 1.4 : Number(style.refGap);
-  // Per-region font. Each layer picks its own; `style.font` is the shared default.
-  $: verseFontFamily = fontFam(style.verseFont || style.font);
-  $: refFontFamily = fontFam(style.refFont || style.font);
-  // Per-region shadow (each falls back to the shared `textShadow`).
-  $: verseShadowCss = shadowCssOf(clamp01(style.verseShadow ?? style.textShadow ?? 0));
-  $: refShadowCss = shadowCssOf(clamp01(style.refShadow ?? style.textShadow ?? 0));
+  $: refGap = style.refGap;
+  // Per-element font and shadow. There is no whole-template fallback any more:
+  // `migrateStyle` writes the old `style.font` / `style.textShadow` onto both
+  // elements and deletes them, so reading them here would be reading a key that
+  // no longer exists — and a fallback chain is a second home wearing a helpful
+  // name (docs/REBRAND.md §3.1).
+  $: verseFontFamily = fontFam(style.verseFont);
+  $: refFontFamily = fontFam(style.refFont);
+  $: verseShadowCss = shadowCssOf(clamp01(style.verseShadow));
+  $: refShadowCss = shadowCssOf(clamp01(style.refShadow));
   // Announcement/ticker scroll: renders as a bottom FOOTER band (a ProPresenter
   // ticker), not centred text. Off unless the template asks for it.
   $: scroll = !!style.scroll;
@@ -562,6 +937,32 @@
   // Scripture" templates. So lyrics on a lower-third template render IN the band
   // (bottom, centered by the template's alignment), never floating mid-screen.
   $: hasRef = !!content?.reference;
+  /**
+   * WHAT A LAYER'S FIT DEFAULTS TO WHEN ITS TEMPLATE DOES NOT SAY.
+   *
+   * It was `'both'` for everything, and `'both'` GROWS a short string until it
+   * fills its box. So every declared `size` in the shipped shelf was advisory and
+   * the shortest string in the template always won the most room — which on a
+   * scripture slide is always the citation.
+   *
+   * Measured at 1920x1080 before this: `High Visibility` put the verse at 108.3px
+   * against a designed 161.3px, and `Romans 8:28` at 126.5px against a designed
+   * 88.3px. The reference rendered 17% LARGER than the scripture, in the same
+   * white, on the template the shelf file itself describes as "the answer to a lit
+   * room". Five of the eight shelf templates inverted the hierarchy this way, and
+   * it directly contradicts REBRAND §4's "reference beneath, right-aligned,
+   * tracked, small".
+   *
+   * A LABEL NEVER GROWS. A reference, a translation and a static caption are
+   * subordinate by definition, so they shrink to fit and no further. The verse and
+   * the lyric still take the room they can — that part was right.
+   *
+   * Fixed here rather than by writing `"fit":"shrink"` into eight JSON entries and
+   * five starters, so a template authored next year inherits it.
+   */
+  const LABEL_BINDS = new Set(['reference', 'translation']);
+  const defaultFit = (L) => (LABEL_BINDS.has(L?.bind) || L?.type === 'static' ? 'shrink' : 'both');
+
   $: bandMode = !!layout.lowerThird;
   // THE BAND ONLY EXISTS WHERE THERE ARE WORDS. Drawn unconditionally it painted
   // a coloured strip across the bottom of a full-frame photo that had nothing
@@ -591,7 +992,9 @@
     ? 'transparent'
     : style.bgImage
       ? `url("${style.bgImage}") center / cover no-repeat`
-      : style.background || 'transparent';
+      // `slideBG` returns null when the template names no background, which is
+      // what keeps an unset template transparent rather than black.
+      : slideBG(style) || 'transparent';
 
   // Alignment is configured per template (defaults centre). Lyrics inherit it —
   // the default lower-third template is centred, matching ProPresenter.
@@ -602,27 +1005,62 @@
   // computer's default rather than something arbitrary. A CSS var already carries
   // its own generic; a bare family name ("Didot") does not, so append one.
   $: fontFamily = (() => {
-    const f = style.font || 'var(--f-serif)';
+    const f = style.verseFont || 'var(--f-serif)';
     if (f.startsWith('var(')) return f; // the var supplies its own fallback
     return `${f}, system-ui, sans-serif`;
   })();
 
-  // NO SLIDE TRANSITION — the wall CUTS instantly to each verse (operator
-  // request: "quick as light, remove every animation"). A crossfade also made the
-  // auto-fit measure `scrollHeight` while the incoming slide still carried a
-  // transform, so a long verse was sized wrong and overflowed the frame. Cutting
-  // means the fit always measures a settled slide. `{#key slideKey}` still swaps
-  // content — it just does so with no animation. `style.transition`/`transitionMs`
-  // are now ignored; the theme editor's transition control is a no-op by design.
+  // THE SLIDE TRANSITION (docs/REBRAND.md §8). A CUT unless the template or its
+  // theme asks for something else, because that is what an operator asked for
+  // ("quick as light, remove every animation") and what a wall should do when
+  // nobody has said otherwise.
+  //
+  // Transitions were removed from this renderer once, for a real reason: a
+  // crossfade made the auto-fit measure a slide that still carried a transform.
+  // `transitions.js` animates ONLY opacity, transform and filter, and none of the
+  // three moves `scrollHeight` or `clientHeight` — so the fitter measures the same
+  // box whether or not a transition is running. A mode that animated width,
+  // padding or font-size would bring the old bug straight back.
+  //
+  // Reduced motion is a CUT, not a faster animation: the viewer asked for none.
+  //
+  // TWO AUTHORITIES, ONE RANKING (DECISIONS §84). The operator's live override
+  // outranks the template; `resolveTransition` is the only place that is decided,
+  // so the console preview and the wall cannot disagree about it.
+  //
+  // The override is read from the store by DEFAULT, which is what gives every
+  // console surface the picker with no per-surface wiring — the same arrangement
+  // themes use. `Output.svelte` passes the prop explicitly instead, because a
+  // congregation screen must apply an override only when CONTENT arrives: see the
+  // snapshot comment there.
+  export let transitionOverride = undefined;
+  $: activeOverride = transitionOverride === undefined ? $liveTransition : transitionOverride;
+  $: resolvedTransition = resolveTransition(style, activeOverride);
+  $: transitionMode = resolvedTransition.mode;
+  $: transitionMs = transitionDuration(resolvedTransition.mode, resolvedTransition.ms, reduceMotion);
+  const reduceMotion =
+    typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+      ? window.matchMedia('(prefers-reduced-motion: reduce)').matches
+      : false;
+  /** Svelte's transition contract, driven by the one pure function. */
+  function slideIn(node, { mode, duration }) {
+    return { duration, css: (t) => transitionCss(mode, t) };
+  }
 
   // Countdown: tick a local clock only while a target is set. The number updates
   // in place via its own reactive (`now`), which slideKey excludes — so ticks
   // never re-key the slide (no per-second crossfade). setInterval (not Svelte's
   // tick()) keeps this clear of the reactive-loop freeze (CLAUDE.md rule #1).
   $: countdownTo = content?.countdown_to ?? null;
+  // A HELD countdown is not counting, so nothing here ticks for it — the figure is
+  // whatever it was held at. The interval is stopped as well as ignored: a timer
+  // firing four times a second to recompute a number that cannot change is the
+  // cheapest thing on this page and still the wrong thing on an output machine that
+  // is also decoding speech.
+  $: countdownHeld = countdownIsPaused(content);
   let now = 0;
   let cdTimer = null;
-  $: if (countdownTo) startClock();
+  $: if (countdownTo && !countdownHeld) startClock();
   else stopClock();
   function startClock() {
     if (cdTimer) return;
@@ -636,18 +1074,47 @@
     }
   }
   onDestroy(stopClock);
-  $: remainingMs = countdownTo ? Math.max(0, countdownTo - now) : null;
-  $: countdownDone = remainingMs === 0;
-  $: countdownText = (() => {
-    if (remainingMs == null) return '';
-    const s = Math.round(remainingMs / 1000);
-    return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
-  })();
+  // ONE READER (docs/REBRAND.md §7). This used to be its own subtraction, as did the
+  // stage page and the console — survivable while the answer was one subtraction, and
+  // not survivable now that it has an exception: a copy that has never heard of
+  // `countdown_paused_ms` goes on counting down while the other two hold, and this
+  // copy is the congregation's.
+  $: remainingMs = countdownRemainingMs(content, now);
+  // Only ever true when it genuinely ran out. A countdown held at 0:00 cannot exist
+  // (`adjust_countdown` refuses a target under a second), but saying so here keeps
+  // the done message off a screen that is merely paused.
+  $: countdownDone = remainingMs === 0 && !countdownHeld;
+  // ONE FORMATTER (docs/REBRAND.md §7). This used to be its own copy of the
+  // arithmetic, as did the stage page — and both stopped at minutes, so a
+  // 90-minute pre-service countdown read `90:00`.
+  $: countdownText = remainingMs == null ? '' : formatCountdown(remainingMs);
+  // The last minute, or the last tenth of a short countdown. The span comes from
+  // `countdown_from`, which `start_countdown` now WRITES — for as long as this
+  // rule has existed, that field was read here and written nowhere, so the
+  // short-countdown half of it had never once fired in the product. Without a span
+  // the rule still falls back to the last minute, which is the honest answer for a
+  // countdown whose length nobody told us.
+  // The warning colour is applied INLINE as well as by class: the countdown's own
+  // colour is an inline style, and an inline style beats a stylesheet rule, so a
+  // `.warn` class alone would have changed nothing on the wall.
+  const CD_WARN = '#f4515b';
+  $: countdownWarn = remainingMs != null && countdownWarning(remainingMs, countdownTotalMs(content));
 
   // Re-key on the actual content so a new slide crossfades but identical content
   // (a re-broadcast of the same verse) does not re-animate. Countdown ticks are
   // deliberately excluded — only a NEW countdown target re-keys.
-  $: slideKey = `${content?.reference ?? ''}|${content?.text ?? ''}|${content?.media_url ?? ''}|${countdownTo ?? ''}`;
+  //
+  // THE OVERRIDE IS PART OF THE KEY, and the template's own transition is NOT.
+  // "Choosing one replays it on the programme at once" (docs/REBRAND.md §8) is the
+  // half of this control that stops it reading as dead — the prototype repaints its
+  // program frame on every pick for exactly that reason. Keying on the override
+  // gives that for free on any surface that follows the store.
+  //
+  // The RESOLVED mode is deliberately not in the key: a live template edit pushes a
+  // new `template` frame to every screen, and keying on it would make every such
+  // edit re-animate a verse that is already up on the wall.
+  $: overrideKey = isOverride(activeOverride) ? `${activeOverride.mode}|${activeOverride.ms ?? ''}` : '';
+  $: slideKey = `${content?.reference ?? ''}|${content?.text ?? ''}|${content?.media_url ?? ''}|${countdownTo ?? ''}|${overrideKey}`;
 
   // A wall clock for clock-bound layers — ticks once a second only when needed.
   let clockNow = 0;
@@ -703,7 +1170,26 @@
     void clockText;
     void elapsedText;
     void remainingText;
-    return layers.map((L) => ({ L, text: layerText(L) }));
+    // A BAND DECIDES WHERE ITS WORDS GO; it does not draw them (docs/REBRAND.md
+    // §4, `bandLayout`). Members are emitted into this same list with a derived
+    // box, so every text layer on a wall — inside a band or not — goes through
+    // ONE path below: one fit, one shadow rule, one transform, one `{#key}`.
+    // They are skipped where they sit in the stack, because their band draws
+    // them in the order it names them.
+    const boxes = drawBoxes(layers, layerText);
+    const out = [];
+    for (const L of topLevelLayers(layers)) {
+      out.push({ L, text: layerText(L), box: boxes.get(L.id) });
+      if (L.type !== 'band') continue;
+      // The band's words, in the order the band names them, each at the box the
+      // band just computed for it — and then through the SAME text branch below
+      // as every other text layer.
+      for (const id of Array.isArray(L.members) ? L.members : []) {
+        const m = layers.find((x) => x && x.id === id);
+        if (m) out.push({ L: m, text: layerText(m), box: boxes.get(m.id) });
+      }
+    }
+    return out;
   })();
 
   // Per-text-layer auto-fit. Each layer's text is sized to BEST FIT its own box —
@@ -713,8 +1199,43 @@
   // and long text wraps and shrinks — the ProPresenter "scale text up or down"
   // behaviour. `fit` modes: 'both' (default, up+down), 'shrink' (cap at the set
   // size, only shrink), 'none' (use the set size verbatim).
+  //
+  // AND IT REPORTS, like the region fit always has (rule 37). `fitText` called
+  // `onFit` and this did not — so once `TemplateGallery.upgradeLegacyToLayers`
+  // converted the shelf, which it does on mount, rule 37's instrument covered
+  // nothing a church actually renders. Live passes `onFit` to its programme pane
+  // and its "may not be readable from the back" line simply could not fire for a
+  // layered look: the same sentence over a template that was working and one that
+  // had stopped, which is rule 35.
   function fitLayers() {
     if (!stageEl || !layered) return;
+    // The WORST layer on the screen, on the same terms as `fitText`'s worst
+    // slide: a ratio against the size the designer asked for, never above 1, so
+    // "scale" always means how far this had to shrink and never how far a short
+    // word was allowed to grow.
+    let worst = 1;
+    // ── ONE FLUSH PER ROUND, NOT ONE PER LAYER ───────────────────────────────
+    //
+    // What this search costs is not the arithmetic and not the reads — it is the
+    // FLUSH. Every probe writes a `font-size` and then reads `scrollHeight` back,
+    // and a read taken while a write is outstanding forces the browser to lay the
+    // page out synchronously before it can answer. The reads after it are free,
+    // because layout is clean again until the next write.
+    //
+    // So the cost of this function is the number of write→read TRANSITIONS, and
+    // searching each layer to completion before starting the next one makes that
+    // number `rounds × layers`. Measured on the shipped `High Visibility`
+    // template (two text layers): 32 forced layouts per render, and Live mounts
+    // one render per slide-grid cell — 1281 forced layouts to open a forty-slide
+    // plan, in a single frame, before the operator has touched anything.
+    //
+    // Collecting every layer's next candidate, writing them ALL, then reading
+    // them ALL makes one flush serve the whole render: `rounds`, whatever the
+    // layer count. Each layer still walks its own bracket, with its own `lo` /
+    // `top` / `best`, and lands on the same size it always did — only the
+    // interleaving changes. A template with four text layers now costs what a
+    // template with one costs.
+    const jobs = [];
     stageEl.querySelectorAll('.ltext').forEach((box) => {
       const el = box.querySelector('.lfit');
       if (!el) return;
@@ -724,22 +1245,67 @@
         el.style.fontSize = `${base}cqw`;
         return;
       }
-      const fits = (px) => {
-        el.style.fontSize = `${px}cqw`;
-        return box.scrollHeight <= box.clientHeight + 1 && box.scrollWidth <= box.clientWidth + 1;
-      };
       // 'shrink' caps growth at the configured size; 'both' allows growing to a
       // generous ceiling so a single short word fills the box.
       const hi = mode === 'shrink' ? base : Math.max(base, 22);
-      let lo = 0.4;
-      let top = hi;
-      let best = lo;
-      for (let i = 0; i < 16; i++) {
-        const mid = (lo + top) / 2;
-        if (fits(mid)) { best = mid; lo = mid; } else { top = mid; }
-      }
-      el.style.fontSize = `${best}cqw`;
+      jobs.push({ box, el, base, hi, lo: FIT_FLOOR_CQW, top: hi, best: FIT_FLOOR_CQW, probe: 0, done: false });
     });
+    const write = (j, px) => {
+      j.probe = px;
+      j.el.style.fontSize = `${px}cqw`;
+    };
+    const fits = (j) =>
+      j.box.scrollHeight <= j.box.clientHeight + 1 && j.box.scrollWidth <= j.box.clientWidth + 1;
+    // ROUND ONE — THE CEILING IS AN ANSWER, not merely the top of a bracket.
+    // When the words already fit at the largest size this layer is allowed, the
+    // bisection can only ever creep back up towards it and stop one
+    // ten-thousandth short. Asking the ceiling directly is the same answer
+    // (fractionally the better one — it is the true supremum of the bracket) for
+    // one flush instead of the whole ladder, and a short label in a wide box —
+    // a reference line, a stage note, a name band — is the common case.
+    for (const j of jobs) write(j, j.hi);
+    for (const j of jobs) {
+      if (fits(j)) {
+        j.best = j.hi;
+        j.done = true;
+      }
+    }
+    // …then bisect whatever is left, in lockstep, until the bracket is narrower
+    // than a difference anyone could see. `FIT_EPS_CQW` is a share of the
+    // OUTPUT'S WIDTH, like every other size here, so the guarantee holds at any
+    // resolution: 0.02cqw is 0.4px of font-size on a 1080p wall and 0.8px on a
+    // 4K one. `best` is only ever assigned a size that MEASURED AS FITTING, so
+    // stopping early can only leave the text very slightly smaller — never
+    // overflowing. The hard bound is unchanged, so rule 37's genuinely
+    // unfittable passage still terminates and is still reported.
+    for (let i = 0; i < FIT_MAX_ROUNDS; i++) {
+      const live = jobs.filter((j) => !j.done && j.top - j.lo > FIT_EPS_CQW);
+      if (!live.length) break;
+      for (const j of live) write(j, (j.lo + j.top) / 2);
+      for (const j of live) {
+        if (fits(j)) {
+          j.best = j.probe;
+          j.lo = j.probe;
+        } else {
+          j.top = j.probe;
+        }
+      }
+    }
+    for (const j of jobs) {
+      j.el.style.fontSize = `${j.best}cqw`;
+      // THIS SIZE OUTLIVES THIS ELEMENT. `{#key text}` will throw the element
+      // away on the next tick or the next verse; the answer stays on the `.ltext`,
+      // which is keyed by the layer's own id and survives. `reapplyFitted` hands
+      // it to whatever element takes its place.
+      j.el.dataset.sized = '1';
+      j.box.dataset.fitted = String(j.best);
+      // A box with nothing in it was not shrunk, it is EMPTY — a reference layer
+      // on a lyric fire, a `next` line with no next. Reporting its ratio would
+      // make Live shout "38% of the designed size" on an ordinary song.
+      if ((j.el.textContent || '').trim()) worst = Math.min(worst, j.best / j.base);
+    }
+    // Handed on, not reported — see `fitText` and `report()`.
+    lastFitScale = worst;
   }
   // Fit is driven by the unified scheduler above (runFit → fitLayers/fitText),
   // gated to prop-change + resize so countdown/clock ticks don't force reflow.
@@ -760,7 +1326,44 @@
          so each screen opts into (or out of) media and controls what sits over or
          under it. A lower third with no media layer never shows the picture; a
          full-screen template with a media layer on top lets the picture fill it. -->
-    {#each layerViews as { L, text } (L.id)}
+    <!-- ── THE SLIDE TRANSITION, ON THIS PATH TOO ─────────────────────────────
+         `{#key slideKey}` + `in:slideIn` lived in the REGION branch only, so every
+         layered template cut regardless of what its style, its theme or the
+         operator's live override said — and layered is what everything new is.
+         Same key, same `slideIn`, and the same already-resolved `transitionMode` /
+         `transitionMs` pair the region branch reads — so the ranking of override
+         over template (DECISIONS §84) is still done in exactly one place, above.
+         ONE mechanism, not a second one for the other half of the renderer, which
+         is how the console preview and the wall stay agreed.
+
+         WHAT IS INSIDE THE KEY, and why it is not simply the whole stack. The
+         region path keeps `bglayer` and the full-frame media element OUTSIDE its
+         key and animates only `.slide` — the words and the band they sit in. This
+         is that same division:
+
+           · `background` and `media` are FURNITURE and stay out. A wrapper around
+             the whole `{#each}` would rebuild them on every fire, and rebuilding a
+             `media` layer tears down its <video> and restarts the loop, mid-fire,
+             on a congregation screen.
+           · `region` stays out because it does not need help: the composite is a
+             nested `<svelte:self>` with the same content and its own style, so it
+             resolves and runs its own transition. Keying it here would remount a
+             whole renderer per fire to duplicate an animation it already does.
+           · `shape`, `band` and `text` are the slide, and they animate.
+
+         A TICKING LAYER MUST NOT RE-ANIMATE. `slideKey` excludes `now` and
+         `clockNow` deliberately, so a countdown redrawing four times a second sits
+         still inside this key. The transition is hung here and NOT on the `{#key
+         text}` below, which a clock rebuilds every second — that would fade the
+         figure once a quarter second for the whole pre-service countdown.
+
+         The panic controls do not pass through any of this. A clear drops `content`
+         to null and the `{#if content}` above takes the whole stack away; a blackout
+         is decided by the output page, not here. There is no `out:` transition
+         anywhere in this file — `transitionoverride.test.js` asserts exactly that —
+         so a clear and a blackout are instant at every duration the picker offers
+         (rule 15, DECISIONS §20). An intro cannot delay a removal. -->
+    {#each layerViews as { L, text, box } (L.id)}
       {#if L.visible !== false}
         {#if L.type === 'background'}
           <div class="lbg" style="{boxStyle(L)} background:{bgPaint(L)}; opacity:{L.opacity == null ? 1 : L.opacity};"></div>
@@ -780,19 +1383,76 @@
             </div>
           {/if}
         {:else if L.type === 'shape'}
-          <div class="lshape" style="{boxStyle(L)} background:{hexA(L.fill, L.opacity == null ? 1 : L.opacity)}; border-radius:{L.radius || 0}cqw;"></div>
+          {#key slideKey}
+            <div class="lshape" style="{boxStyle(L)} {shapePaint(L)} border-radius:{L.radius || 0}cqw;"
+              in:slideIn={{ mode: transitionMode, duration: transitionMs }}></div>
+          {/key}
+        {:else if L.type === 'band'}
+          <!-- THE BAND (docs/REBRAND.md §4): a real element running from its own
+               `top` to the bottom edge, inset by the side safe area. Its words are
+               NOT its children — they are emitted beside it with boxes this band
+               computed, so they take the one text path below. Its alpha is applied
+               exactly (`shapePaint`); it has never been scaled by 0.9 here. -->
+          {#key slideKey}
+            <div class="lband" style="{boxStyle(box || L)} {shapePaint(L)} border-radius:{L.radius || 0}cqw;"
+              in:slideIn={{ mode: transitionMode, duration: transitionMs }}></div>
+          {/key}
+        {:else if L.type === 'region'}
+          <!-- A REAL RENDERED SLIDE, inside its own container (docs/REBRAND.md §6).
+               `container-type: inline-size` is the feature: cqw inside this box is
+               a share of the BOX's width, so the template scales to the region
+               exactly as it would to a screen of that width.
+
+               Only at depth 0 — a composite may not be another composite's fill. -->
+          {#if depth === 0}
+            <div
+              class="lregion"
+              style="{boxStyle(L)} border-radius:{L.radius || 0}cqw; opacity:{L.opacity == null ? 1 : L.opacity}; {L.outline ? `outline:${L.outline}cqw solid ${L.outlineColor || 'var(--accent)'}; outline-offset:-${L.outline}cqw;` : ''} {L.plate ? `background:${L.plate};` : ''}">
+              <svelte:self
+                template={builtinById(L.templateRef)}
+                {content}
+                {theme}
+                depth={depth + 1}
+              />
+            </div>
+          {/if}
         {:else if !(showDefaultCountdown && (L.bind === 'verse' || L.bind === 'reference' || L.bind === 'translation'))}
           <!-- Verse/reference/translation layers are hidden during a default
                countdown (they carry no content then); a static or clock layer
                still shows. -->
-          <div class="ltext" style="{boxStyle(L)} align-items:{vAlign(L.valign)};">
+          {#key slideKey}
+          <div class="ltext" style="{boxStyle(box || L)} align-items:{vAlign(L.valign)};"
+            in:slideIn={{ mode: transitionMode, duration: transitionMs }}>
             {#key text}
+              <!-- THE SIZE IS DECLARED, NOT ONLY FITTED (rule 37 · rule 42).
+                   `font-size` used to be the ONE type property this element did
+                   not emit — colour, family, weight, alignment, transform,
+                   line-height, tracking, shadow and style were all here, and the
+                   one that decides whether the words fit the box was set only by
+                   `fitLayers`, imperatively, inside a requestAnimationFrame that
+                   is deliberately deferred while a render is off screen. Until it
+                   landed, a layered template painted in whatever `body` says —
+                   `--v-fs-b1`, 12px of UI text — and 12px at line-height 1.32 is
+                   15.8px for ONE line inside a band box that is 14.8px tall on a
+                   gallery card. Four cards in the Templates gallery were rendered
+                   with 39px of content inside a 15px `overflow:hidden` box: the
+                   words sliced, on the surface an operator judges a look from.
+                   The region branch below never had this, because it emits
+                   `font-size:{verseSize}cqw` — two text paths, one of them
+                   missing the base size, which is the shape `bandLayout`'s own
+                   doc comment warns about.
+                   Declaring it makes the un-fitted state the DESIGNED state,
+                   which fits; `fitLayers` then overwrites this same inline
+                   property to refine it, exactly as before. It also means every
+                   moment that wipes the imperative value — a `{#key text}`
+                   rebuild, a style attribute Svelte re-renders — lands on the
+                   template's own size instead of on the app's. `cardfit.test.js`. -->
               <div
                 class="lfit"
                 class:lscroll={L.scroll}
-                data-base={L.size}
-                data-fit={L.fit || 'both'}
-                style="color:{L.color}; font-family:{fontFamOf(L.font)}; font-weight:{L.weight || 400}; text-align:{L.align}; text-transform:{L.transform || 'none'}; line-height:{L.lineHeight || 1.3}; letter-spacing:{(L.letterSpacing || 0)}em; text-shadow:{shadowOf(L.shadow)}; font-style:{L.italic ? 'italic' : 'normal'};">
+                data-base={baseSize(L)}
+                data-fit={L.fit || defaultFit(L)}
+                style="font-size:{baseSize(L)}cqw; color:{L.color}; font-family:{fontFamOf(L.font)}; font-weight:{L.weight || 400}; text-align:{L.align}; text-transform:{L.transform || 'none'}; line-height:{L.lineHeight || 1.3}; letter-spacing:{(L.letterSpacing || 0)}em; text-shadow:{shadowOf(L.shadow)}; font-style:{L.italic ? 'italic' : 'normal'};">
                 {#if L.scroll}
                   <span class="lrun" style="--tickdur:{Math.min(60, Math.max(10, (text?.length || 0) * 0.42))}s">{text}</span>
                 {:else}
@@ -804,6 +1464,7 @@
               </div>
             {/key}
           </div>
+          {/key}
         {/if}
       {/if}
     {/each}
@@ -826,7 +1487,7 @@
         {#if content.reference && !countdownDone}
           <div class="reference" style="font-size:{refSize}cqw; {refStyle}">{content.reference}</div>
         {/if}
-        <div class="verse countdown" style="font-size:{verseSize * 2}cqw; margin-top:{refGap}cqw; color:{verseColor}; text-align:center; text-shadow:{verseShadowCss};">
+        <div class="verse countdown" class:warn={countdownWarn} style="font-size:{verseSize * 2}cqw; margin-top:{refGap}cqw; color:{countdownWarn ? CD_WARN : verseColor}; text-align:center; text-shadow:{verseShadowCss};">
           {countdownDone ? (content.countdown_done || '0:00') : countdownText}
         </div>
       </div>
@@ -857,7 +1518,8 @@
       <div
         class="slide"
         class:lower-third={bandMode}
-        class:bandless={bandMode && !bandHasWords}>
+        class:bandless={bandMode && !bandHasWords}
+        in:slideIn={{ mode: transitionMode, duration: transitionMs }}>
         {#if scroll && show('verse_text') && content.text && !countdownTo}
           <!-- FOOTER TICKER (ProPresenter-style). A band pinned to the very
                bottom of the screen: an optional fixed label on the left, then the
@@ -889,7 +1551,7 @@
               {#if content.reference && !countdownDone}
                 <div class="reference" style="font-size:{refSize}cqw; {refStyle}">{content.reference}</div>
               {/if}
-              <div class="verse countdown" style="font-size:{verseSize * 2}cqw; color:{verseColor}; text-align:{verseAlign}; text-shadow:{verseShadowCss};">
+              <div class="verse countdown" class:warn={countdownWarn} style="font-size:{verseSize * 2}cqw; color:{countdownWarn ? CD_WARN : verseColor}; text-align:{verseAlign}; text-shadow:{verseShadowCss};">
                 {countdownDone ? (content.countdown_done || '0:00') : countdownText}
               </div>
             {:else if refFirst}
@@ -943,10 +1605,19 @@
      geometry), drawn in DOM order (back-to-front). */
   .lbg,
   .lshape,
+  .lband,
   .ltext,
+  .lregion,
   .lmediabox {
     position: absolute;
     box-sizing: border-box;
+  }
+  /* THE REGION IS ITS OWN CONTAINER — the whole point of a composite. `cqw`
+     inside this box is a share of the BOX's width, so the template rendered in
+     it scales to the region exactly as it would to a screen of that width. */
+  .lregion {
+    overflow: hidden;
+    container-type: inline-size;
   }
   /* A media layer: the picture/video fills the layer's box (cover/contain set
      inline per layer), clipped to its rounded corners. */
@@ -1023,6 +1694,22 @@
     padding: 0 0 6% 0;
   }
   /* Full-bleed media layer behind the text (image/video background). */
+  /* THE LAST MINUTE (docs/REBRAND.md §7). Red, and moving — a still colour
+     change on a screen somebody glances at is easy to miss. Reduced motion gets
+     the glow without the pulse: the information is the colour, the pulse only
+     makes it findable. */
+  .countdown.warn { color: #f4515b; }
+  @media (prefers-reduced-motion: no-preference) {
+    .countdown.warn { animation: cdwarn 2s ease-in-out infinite; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .countdown.warn { text-shadow: 0 0 0.25em rgba(244, 81, 91, 0.85); }
+  }
+  @keyframes cdwarn {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.55; }
+  }
+
   .media {
     position: absolute;
     inset: 0;

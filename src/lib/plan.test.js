@@ -1,14 +1,24 @@
 import { describe, it, expect } from 'vitest';
+import { readFileSync, readdirSync } from 'node:fs';
+import { resolve, join } from 'node:path';
 import {
+  TYPE,
+  typeOf,
   payloadOf,
   slidesOf,
   nextOf,
   stepFrom,
+  chipOf,
   cueSub,
   sectionsOf,
   planRuntime,
   fmtDuration,
   parseDuration,
+  planDateLabel,
+  cueCountLabel,
+  dropIndex,
+  reorderTo,
+  previewState,
 } from './plan.js';
 
 const song = (id, ...labels) => ({
@@ -115,6 +125,77 @@ describe('cueSub', () => {
   });
 });
 
+// ── TYPE has ONE door, and it never answers "scripture" from an absence ──────
+//
+// The fix that added `TYPE.unknown` was applied at three call sites and missed
+// the fourth. `cueSub` kept `|| TYPE.scripture`, and it is rendered on BOTH the
+// Planner's cue inspector and the Live run surface — so a cue of a kind this
+// build does not recognise was badged UNKNOWN / MANUAL with "SCRIPTURE ·
+// AUTO-DETECT" printed two lines beneath it. Reproduced in a browser against the
+// real component before this was written: the inspector read
+// {type: 'UNKNOWN', trig: 'MANUAL', sub: 'SCRIPTURE · AUTO-DETECT'}.
+//
+// Scripture is the one kind the AI may fire by itself, so saying it about a row
+// nobody can identify is a claim made from an absence. `cue_type` is plain TEXT
+// with no CHECK constraint, and `docs/data/schema.sql` documents the notice type
+// under a spelling the frontend has never used ('announcement' vs 'announce'),
+// which is exactly how such a row arrives.
+const foreign = (cue_type) => ({
+  id: 9,
+  cue_type,
+  label: 'Legacy notice row',
+  payload_json: JSON.stringify({ body: 'Imported from an older schema.' }),
+});
+
+describe('typeOf — the one door onto TYPE', () => {
+  it('answers UNKNOWN for a cue_type this build does not recognise', () => {
+    for (const t of ['announcement', 'sermon', '', null, undefined, 'SCRIPTURE']) {
+      expect(typeOf(t)).toBe(TYPE.unknown);
+    }
+  });
+
+  it('answers the real row for every kind this build does know', () => {
+    for (const k of ['scripture', 'song', 'media', 'announce', 'countdown']) {
+      expect(typeOf(k)).toBe(TYPE[k]);
+    }
+  });
+
+  it('never lets an unrecognised cue claim the trigger only scripture has', () => {
+    // The fourth door. Fails against `TYPE[item.cue_type] || TYPE.scripture`.
+    expect(cueSub(foreign('announcement'))).toBe('UNKNOWN · MANUAL');
+    expect(cueSub(foreign('announcement'))).not.toContain('AUTO-DETECT');
+    expect(cueSub(foreign('announcement'))).not.toContain('SCRIPTURE');
+  });
+
+  it('has no fifth door — nothing in src/ falls back to TYPE.scripture', () => {
+    // A scanner rather than a list, because the defect this replaces was a call
+    // site nobody thought to enumerate. It covers Live.svelte too, which is not
+    // this branch's file: the point is that reintroducing the fallback anywhere
+    // fails here, wherever "anywhere" turns out to be next time.
+    const root = resolve(__dirname, '..');
+    const hits = [];
+    const walk = (d) => {
+      for (const e of readdirSync(d, { withFileTypes: true })) {
+        const p = join(d, e.name);
+        if (e.isDirectory()) walk(p);
+        else if (/\.(js|svelte)$/.test(e.name) && !e.name.endsWith('.test.js')) {
+          const src = readFileSync(p, 'utf8');
+          // Strip comments: three files DESCRIBE this defect in prose, and a
+          // scanner that greps a comment is how one entitlement test passed on
+          // a broken file.
+          const code = src
+            .replace(/<!--[\s\S]*?-->/g, '')
+            .replace(/\/\*[\s\S]*?\*\//g, '')
+            .replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+          if (/(\|\||\?\?)\s*TYPE\.scripture\b/.test(code)) hits.push(p.slice(root.length + 1));
+        }
+      }
+    };
+    walk(root);
+    expect(hits).toEqual([]);
+  });
+});
+
 // A cue with a section_title begins a section; grouping is derived from the
 // order, never stored, so it cannot disagree with what the transport walks.
 const cue = (id, section_title = '', duration_sec = 0) => ({
@@ -155,6 +236,45 @@ describe('sectionsOf', () => {
     expect(secs[0].timed).toBe(false); // cue 3 is untimed
   });
 
+  it('opens a section where the section CHANGES, not on every titled cue', () => {
+    // The defect, rendered: a plan whose every cue records the section it is IN
+    // — which is how a plan looks after an import, after a duplicate, and after
+    // an operator types the same heading into two consecutive cues — became one
+    // group per cue, and the running order drew EIGHT headings over eight cues
+    // for a service with four sections. Fails against
+    // `if (title || out.length === 0)`.
+    const every = [
+      cue(1, 'Gathering'),
+      cue(2, 'Gathering'),
+      cue(3, 'Word'),
+      cue(4, 'Word'),
+      cue(5, 'Sending'),
+    ];
+    const out = sectionsOf(every);
+    expect(out.map((s) => s.title)).toEqual(['Gathering', 'Word', 'Sending']);
+    expect(out.map((s) => s.items.length)).toEqual([2, 2, 1]);
+  });
+
+  it('reads a plan that only titles the FIRST cue of each section the same way', () => {
+    // The other convention, the one `db/plans.rs` documents. Both have to land on
+    // the same groups or the Planner draws a different plan depending on which
+    // path wrote it.
+    const first = [cue(1, 'Gathering'), cue(2, ''), cue(3, 'Word'), cue(4, ''), cue(5, 'Sending')];
+    const out = sectionsOf(first);
+    expect(out.map((s) => s.title)).toEqual(['Gathering', 'Word', 'Sending']);
+    expect(out.map((s) => s.items.length)).toEqual([2, 2, 1]);
+  });
+
+  it('does not re-open a section across an untitled cue inside it', () => {
+    // An empty title means "still in the section above", so a titled cue after
+    // one of them is a continuation, not a second heading of the same name.
+    // Comparing against the previous ROW rather than the open GROUP gets this
+    // wrong — which is what the prototype's `c.sec !== lastSec` does.
+    const out = sectionsOf([cue(1, 'Gathering'), cue(2, ''), cue(3, 'Gathering')]);
+    expect(out.map((s) => s.title)).toEqual(['Gathering']);
+    expect(out[0].items.length).toBe(3);
+  });
+
   it('is empty for an empty plan', () => {
     expect(sectionsOf([])).toEqual([]);
     expect(sectionsOf(undefined)).toEqual([]);
@@ -189,5 +309,174 @@ describe('fmtDuration', () => {
     expect(fmtDuration(0)).toBe('—');
     expect(fmtDuration(null)).toBe('—');
     expect(fmtDuration(-5)).toBe('—');
+  });
+});
+
+describe('chipOf — the kind, in a word, in the running order', () => {
+  it('names every kind this build has', () => {
+    expect(chipOf('scripture')).toBe('WORD');
+    expect(chipOf('song')).toBe('SONG');
+    expect(chipOf('announce')).toBe('NOTE');
+    expect(chipOf('media')).toBe('MEDIA');
+    expect(chipOf('countdown')).toBe('TIMER');
+  });
+
+  it('never truncates a kind it does not know', () => {
+    // The prototype fell back to `kind.slice(0,4)` and the first kind added after
+    // that read "LOWE" in every running order. A truncation is a name nobody
+    // chose; quoting the row is not a guess.
+    expect(chipOf('lower_third')).toBe('LOWER_THIRD');
+    expect(chipOf('announcement')).toBe('ANNOUNCEMENT');
+    for (const kind of ['lower_third', 'announcement', 'sermon']) {
+      expect(chipOf(kind)).not.toBe(kind.slice(0, 4).toUpperCase());
+    }
+  });
+
+  it('says UNKNOWN only when there is nothing to quote', () => {
+    for (const empty of ['', '   ', null, undefined, 7, {}]) {
+      expect(chipOf(empty)).toBe('UNKNOWN');
+    }
+  });
+});
+
+describe('planDateLabel — an absence, in words', () => {
+  it('keeps a real date exactly as the backend sent it', () => {
+    expect(planDateLabel('2026-09-14')).toBe('2026-09-14');
+  });
+
+  it('never renders the word undefined, and never an em dash', () => {
+    // `{p.plan_date}` printed the literal `undefined` in the plan rail against a
+    // summary that did not carry the field. An em dash would be no better: this
+    // repository already spends it on "untimed cue" (`fmtDuration`), so a
+    // dateless plan would read as a cue length.
+    for (const absent of [undefined, null, '', '   ', 42, {}]) {
+      expect(planDateLabel(absent)).toBe('No date');
+    }
+    expect(planDateLabel(undefined)).not.toContain('undefined');
+    expect(planDateLabel(undefined)).not.toBe(fmtDuration(0));
+  });
+});
+
+describe('cueCountLabel — a count, or an admission', () => {
+  it('counts, and gets the plural right', () => {
+    expect(cueCountLabel(0)).toBe('0 cues');
+    expect(cueCountLabel(1)).toBe('1 cue');
+    expect(cueCountLabel(8)).toBe('8 cues');
+  });
+
+  it('never renders "undefined cues"', () => {
+    // The defect verbatim: `{p.cue_count} cue{s}` over a summary whose shape and
+    // the frontend's had come apart.
+    for (const absent of [undefined, null, NaN, '8', {}]) {
+      expect(cueCountLabel(absent)).toBe('Cue count unknown');
+      expect(cueCountLabel(absent)).not.toContain('undefined');
+    }
+  });
+
+  it('says it does not know rather than saying zero', () => {
+    // A zero is a claim about a plan that may be full. The two must not be the
+    // same sentence — rule 35's family.
+    expect(cueCountLabel(undefined)).not.toBe(cueCountLabel(0));
+  });
+});
+
+describe('dropIndex — where a dragged cue lands', () => {
+  const H = 34;
+
+  it('lands on the row the drag actually covered', () => {
+    expect(dropIndex(0, 0, H, 5)).toBe(0);
+    expect(dropIndex(0, H, H, 5)).toBe(1);
+    expect(dropIndex(3, -2 * H, H, 5)).toBe(1);
+  });
+
+  it('stops hard at both ends — a cue cannot be dragged out of the plan', () => {
+    expect(dropIndex(0, -900, H, 5)).toBe(0);
+    expect(dropIndex(4, 900, H, 5)).toBe(4);
+  });
+
+  it('moves nothing when the rows have no measurable height', () => {
+    // `offsetHeight` is 0 in an unlaid-out list (and always in jsdom). Dividing
+    // by it yields Infinity and then NaN, and `Math.max(0, Math.min(n, NaN))` is
+    // NaN — an index that would splice the cue away entirely.
+    expect(dropIndex(2, 120, 0, 5)).toBe(2);
+    expect(Number.isNaN(dropIndex(2, 120, 0, 5))).toBe(false);
+  });
+
+  it('moves nothing in an empty plan', () => {
+    expect(dropIndex(0, 120, H, 0)).toBe(0);
+  });
+});
+
+describe('reorderTo', () => {
+  it('moves an item without mutating the list it was given', () => {
+    const items = [{ id: 1 }, { id: 2 }, { id: 3 }];
+    const out = reorderTo(items, 0, 2);
+    expect(out.map((i) => i.id)).toEqual([2, 3, 1]);
+    expect(items.map((i) => i.id)).toEqual([1, 2, 3]);
+  });
+
+  it('is a copy, not a no-op, when the move goes nowhere', () => {
+    const items = [{ id: 1 }, { id: 2 }];
+    for (const [from, to] of [[0, 0], [-1, 1], [0, 9]]) {
+      expect(reorderTo(items, from, to).map((i) => i.id)).toEqual([1, 2]);
+    }
+  });
+});
+
+describe('previewState — rule 35, on the cue inspector', () => {
+  // ONE sentence, "No text to preview", stood for four different situations, and
+  // three of them are not the same news. The whole value of this function is that
+  // the four answers differ, so that is what is asserted: not the wording, but
+  // that a cue which would put NOTHING in front of a congregation cannot be
+  // mistaken for one behaving correctly.
+  const c = (cue_type) => ({ cue_type });
+
+  it('a cue with words renders, over the plate', () => {
+    expect(previewState(c('scripture'), true)).toMatchObject({ state: 'render', plate: true });
+    expect(previewState(c('media'), true)).toMatchObject({ state: 'render', plate: true });
+  });
+
+  it('media and countdown draw their own content, and get no plate', () => {
+    for (const kind of ['media', 'countdown']) {
+      const v = previewState(c(kind), false);
+      expect(v.state, kind).toBe('self');
+      expect(v.plate, kind).toBe(false);
+      expect(v.message, kind).toBeTruthy();
+    }
+  });
+
+  it('a scripture, song or notice cue with no words is a DEFECT, not a kind', () => {
+    for (const kind of ['scripture', 'song', 'announce']) {
+      const v = previewState(c(kind), false);
+      expect(v.state, kind).toBe('empty');
+      expect(v.message, kind).toMatch(/no words saved/);
+      expect(v.message, kind).toMatch(/nothing on the screen/);
+    }
+  });
+
+  it('an unrecognised cue_type claims nothing about what it renders', () => {
+    // Same discipline as `typeOf` answering UNKNOWN rather than falling back to
+    // scripture: this build cannot say, so it says it cannot say.
+    const v = previewState(c('lower_third'), false);
+    expect(v.state).toBe('unknown');
+    expect(v.message).toMatch(/does not recognise/);
+    expect(v.message).not.toMatch(/no words saved/);
+  });
+
+  it('the four verdicts are four different sentences', () => {
+    // The defect was that they were one. A future edit that collapses two of them
+    // back together fails here even if every branch above still returns its own
+    // `state`.
+    const said = [
+      previewState(c('media'), false).message,
+      previewState(c('countdown'), false).message,
+      previewState(c('scripture'), false).message,
+      previewState(c('lower_third'), false).message,
+    ];
+    expect(new Set(said).size).toBe(4);
+  });
+
+  it('no cue at all is not an empty cue', () => {
+    expect(previewState(null, false)).toMatchObject({ state: 'none', plate: false, message: '' });
   });
 });

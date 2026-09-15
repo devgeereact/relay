@@ -14,7 +14,11 @@
   // with a transparent background (e.g. the lower third) lets an OBS/ATEM camera
   // source show through.
   const params = new URLSearchParams(location.search);
-  const templateId = parseInt(params.get('template_id') || '1', 10);
+  // NO `template_id` MEANS THE SCREEN HAS NO LOOK OF ITS OWN and follows the
+  // content look (DECISIONS §70). Defaulting to 1 here made a follower's browser
+  // source wear built-in 1 until a `channel_template` message arrived.
+  const templateIdParam = params.get('template_id');
+  const templateId = templateIdParam == null ? null : parseInt(templateIdParam, 10) || null;
   // The CHANNEL this output belongs to (0 = a raw template preview with no
   // channel). When the operator changes this screen's template, a channel-retemplate
   // broadcast arrives; this output swaps to the new template if the channel matches
@@ -25,6 +29,32 @@
   let content = null;
   let visible = false;
   let black = false; // opaque blackout overlay
+
+  // ── THE OPERATOR'S TRANSITION OVERRIDE, SNAPSHOTTED (DECISIONS §84) ──────────
+  //
+  // Two variables, and the difference between them is the whole rule.
+  //
+  // `pendingTransition` is what the operator has chosen. It arrives on its own
+  // frame, at a moment of the operator's choosing — which on a console is the
+  // point (§8: "choosing one replays it on the programme at once"), and on a
+  // CONGREGATION SCREEN would be a repaint nobody asked for. `TemplateRender`
+  // keys its slide on the override, so passing it straight through would make a
+  // verse that is already up re-animate the instant a preference changed,
+  // mid-reading, on the wall.
+  //
+  // `appliedTransition` is therefore only moved forward when CONTENT arrives, so
+  // the re-key happens exactly once, together with the thing it is transitioning.
+  // A preference change alone paints nothing here, which is also what makes the
+  // frame safe to publish during a rehearsal.
+  //
+  // `undefined` would mean "follow the store" inside TemplateRender; this page
+  // passes an explicit value (null = follow the template) so a console store can
+  // never be what a wall reads.
+  let pendingTransition = null;
+  let appliedTransition = null;
+  const noteTransition = (mode, ms) => {
+    pendingTransition = mode ? { mode, ms } : null;
+  };
 
   // Per-content-type template: when the fired content carries a template override
   // (its content type's default / a cue's choice), render THAT; else the channel's
@@ -40,7 +70,11 @@
   // `template_pinned` marks an override the operator DELIBERATELY chose for this
   // cue (a Planner item's own template) — it overrides the screen. A content-type
   // DEFAULT is not pinned and defers to the screen's own template.
-  $: activeTemplate = resolveOutputTemplate(t, override, !!content?.template_pinned);
+  // DEFAULT_TEMPLATE is the floor: a screen that follows the content look, when
+  // no content look is set either, still has to paint something legible rather
+  // than nothing at all.
+  $: activeTemplate =
+    resolveOutputTemplate(t, override, !!content?.template_pinned) || DEFAULT_TEMPLATE;
   // THE THEME LAYER. If the resolved template pins a theme (style.themeRef), fill
   // its unset style keys from that theme — the same merge the editor previews, so
   // the wall matches the editor. Custom themes are fetched on desktop (below);
@@ -80,8 +114,14 @@
   }
   async function loadTemplate() {
     const call = await invoke();
+    // A screen with NO template of its own follows the content look, so `null`
+    // here is an answer rather than a missing one (DECISIONS §70).
+    if (templateId == null) {
+      t = null;
+      return;
+    }
     const tpl = await call('get_template', { id: templateId });
-    if (tpl) t = tpl;
+    t = tpl ?? null;
   }
   // Desktop only — the operator's custom themes, so a template pinning one wears
   // it on the real wall. Guarded: a missing command / corrupt blob leaves the
@@ -92,6 +132,21 @@
       customThemes = parseThemes(await call('get_setting', { key: 'themes.custom' }));
     } catch {
       customThemes = [];
+    }
+  }
+  // Desktop only — the override already in force when this window opened. The
+  // kiosk hub replays it on `hello`; a native output window has no socket, so
+  // without this read a projector opened mid-service is the one screen still
+  // cutting. Guarded the same way `loadCustomThemes` is: a missing command leaves
+  // the screen following its template, never throwing on a live output page.
+  async function loadLiveTransition() {
+    try {
+      const call = await invoke();
+      const cur = await call('live_transition');
+      // Rust hands back `[mode, ms]` or null.
+      noteTransition(Array.isArray(cur) ? cur[0] : null, Array.isArray(cur) ? cur[1] : null);
+    } catch {
+      noteTransition(null, null);
     }
   }
   async function fetchTemplate(id) {
@@ -123,7 +178,10 @@
       // picture just fired), ignore it and hold what's already up — the online
       // wall shows the picture, this screen keeps the passage.
       if (m.content_kind && !templateShows(t, m.content_kind)) return;
-      content = { kind: m.content_kind, reference: m.reference, text: m.text, translation: m.translation, media_url: m.media_url, media_kind: m.media_kind, template_json: m.template_json, template_pinned: m.template_pinned, countdown_to: m.countdown_to, countdown_done: m.countdown_done, stage_note: m.stage_note, next_reference: m.next_reference, next_text: m.next_text, service_started_at: m.service_started_at, service_target_ms: m.service_target_ms };
+      // The override takes effect WITH the content, never before it — see the
+      // snapshot comment at the top of this file.
+      appliedTransition = pendingTransition;
+      content = { kind: m.content_kind, reference: m.reference, text: m.text, translation: m.translation, media_url: m.media_url, media_kind: m.media_kind, template_json: m.template_json, template_pinned: m.template_pinned, countdown_to: m.countdown_to, countdown_from: m.countdown_from, countdown_paused_ms: m.countdown_paused_ms, countdown_done: m.countdown_done, stage_note: m.stage_note, next_reference: m.next_reference, next_text: m.next_text, service_started_at: m.service_started_at, service_target_ms: m.service_target_ms };
       visible = true;
       black = false;
       // Report the paint back over the SAME socket the content came in on. This is
@@ -136,7 +194,16 @@
       // theme is saved. Lets THIS browser source resolve a template that pins a
       // custom theme; builtins it already knows (bundled). Safe-parsed.
       customThemes = parseThemes(JSON.stringify(m.themes ?? []));
+    } else if (m.kind === 'transition') {
+      // HOW the next thing appears. Deliberately NOT applied here: it arms the
+      // next content and repaints nothing. `mode: null` clears the override and
+      // this screen goes back to following its template (DECISIONS §71 unchanged).
+      noteTransition(m.mode, m.ms);
     } else if (m.kind === 'clear') {
+      // A PANIC CONTROL NEVER TRANSITIONS. `clear` and `black` do not touch
+      // `appliedTransition`, and `TemplateRender` has no `out:` transition at all
+      // (DECISIONS §27), so a clear is instant at every duration the picker
+      // offers. A blackout that could fade is a blackout that can be late.
       visible = false;
       black = false;
     } else if (m.kind === 'black') {
@@ -147,7 +214,10 @@
     } else if (m.kind === 'channel_template') {
       // This screen's assigned template was changed. Filter by our channel (the
       // hub broadcasts to all; each client applies only its own) — live, no re-copy.
-      if (channelId && m.channel === channelId && m.template) t = m.template;
+      // `template: null` is the operator setting this screen to follow the content
+      // look. Ignoring a null (which `if (m.template)` did) leaves an open screen
+      // wearing the look it was given until something reloads it.
+      if (channelId && m.channel === channelId && 'template' in m) t = m.template ?? null;
     } else if (m.kind === 'template' && m.template) {
       // The REAL saved template (with the operator's edits) — this is what makes
       // OBS/kiosk match the console preview exactly, and updates live on save.
@@ -191,7 +261,9 @@
     }
   }
   function startKiosk() {
-    t = builtinById(templateId);
+    // A kiosk client has no database, so it resolves its id against the bundled
+    // built-ins — and a follower resolves to nothing, deliberately.
+    t = templateId == null ? null : builtinById(templateId);
     connectKiosk(location.hostname || 'localhost');
   }
 
@@ -199,17 +271,25 @@
     try {
       await loadTemplate();
       await loadCustomThemes();
+      await loadLiveTransition();
       const { listen } = await import('@tauri-apps/api/event');
       unlisten.push(await listen('output://content', (e) => {
         // Per-screen visibility (see applyMessage) — hold what's up if this screen
         // doesn't show the fired kind.
         if (e.payload?.kind && !templateShows(t, e.payload.kind)) return;
+        appliedTransition = pendingTransition;
         content = e.payload;
         visible = true;
         black = false;
         // The native output window has the bridge, not the kiosk socket.
         markOutput(e.payload?.trace_id);
       }));
+      // A NATIVE OUTPUT WINDOW IS NOT ON THE KIOSK HUB. It has the Tauri bridge
+      // and no socket, so the override has to arrive on both doors or the
+      // projector on HDMI and the browser source in OBS would transition
+      // differently — the "guarantee kept on one door" mistake, on the two screens
+      // that are most often in the same room.
+      unlisten.push(await listen('output://transition', (e) => noteTransition(e.payload?.mode, e.payload?.ms)));
       unlisten.push(await listen('output://clear', () => { visible = false; black = false; }));
       unlisten.push(
         await listen('output://black', () => {
@@ -227,8 +307,11 @@
         await listen('channel://retemplate', (e) => {
           // This screen's assigned template was CHANGED (not edited). Swap to the
           // new one live if it is our channel — no reload, no URL change.
-          if (channelId && e.payload?.channel === channelId && e.payload?.template) {
-            t = e.payload.template;
+          // `template: null` means the operator set this screen to FOLLOW the
+          // content look, which is news the screen has to act on — testing the
+          // template for truthiness would drop it silently (DECISIONS §70).
+          if (channelId && e.payload?.channel === channelId && 'template' in (e.payload ?? {})) {
+            t = e.payload.template ?? null;
           }
         }),
       );
@@ -263,7 +346,11 @@
   });
 </script>
 
-<TemplateRender template={themedTemplate} content={visible ? content : null} audio={isDesktop} />
+<TemplateRender
+  template={themedTemplate}
+  content={visible ? content : null}
+  audio={isDesktop}
+  transitionOverride={appliedTransition} />
 <!-- BLACKOUT NEVER BLACKS OUT A LOWER THIRD. On a keyed channel "black" would
      paint an opaque rectangle over the live camera — the opposite of what the
      operator pressed it for. On that channel the panic control removes the

@@ -249,8 +249,35 @@
     stopMicTest();
   });
 
+  // RULE 44 · this wizard takes the operator's panic key, so it owes them an outcome.
+  //
+  // It is `role="dialog"`, so `shortcuts.js` stands down (rule 16, correctly), and
+  // its scrim is `position:fixed; inset:0; z-index:950` while neither `App.svelte`
+  // nor `Dock.svelte` sets a z-index at all — so the dock's `Clear screens` stacks
+  // at `auto` underneath it. Driven in a real browser: with the wizard mounted,
+  // `elementFromPoint` over `Clear screens` returned `DIV.fr-scrim`, and Escape
+  // fired neither `clear_screens` nor `blackout`. Both panic paths, gone together.
+  //
+  // That is not hypothetical here: `Settings → Run the setup walk-through` calls
+  // `restartSetup()` with no service-lock guard, so this can be mounted over a
+  // recorded service in one click.
+  //
+  // Escape leaves the wizard by the same door `Skip setup` uses — `done()`, which
+  // stops the microphone this wizard opened and re-arms detection. It must never
+  // be a bare unmount: leaving the wizard's capture running behind it is the bug
+  // `firstrunmic.test.js` exists for. One press to get the shell back; the second
+  // press is the operator's, and by then the global handler has the key again.
+  function onKey(e) {
+    if (e.key !== 'Escape') return;
+    e.preventDefault();
+    e.stopPropagation();
+    done();
+  }
+
   const gb = (b) => `${(b / 1e9).toFixed(1)} GB`;
 </script>
+
+<svelte:window on:keydown={onKey} />
 
 <div class="fr-scrim">
   <div class="fr" role="dialog" aria-modal="true" aria-labelledby="fr-title" use:trapFocus>
@@ -474,7 +501,7 @@
               </li>
               <li>
                 <span class="w">Check the whole chain</span>
-                <span><b>Settings → Dashboard</b>: say one verse out loud and Relay
+                <span><b>Settings → Diagnostics</b>: say one verse out loud and Relay
                 shows which of the six stages between the microphone and the screen were
                 reached. Everything you just set up can pass while the chain still does
                 not work end to end.</span>
@@ -549,7 +576,7 @@
     padding: 0 6px;
   }
   .fr-brand span {
-    font-size: 13px;
+    font-size: var(--v-fs-pr);
     font-weight: 700;
     letter-spacing: 0.16em;
     color: var(--v-txt);
@@ -568,7 +595,7 @@
     gap: 11px;
     padding: 10px 10px;
     border-radius: 9px;
-    font-size: 13px;
+    font-size: var(--v-fs-pr);
     color: var(--v-dim);
   }
   .fr-rail li .n {
@@ -580,7 +607,7 @@
     place-items: center;
     border: 1px solid var(--v-line2);
     font-family: var(--f-mono);
-    font-size: 10px;
+    font-size: var(--v-fs-b3);
     color: var(--v-faint);
   }
   /* The step you are ON. Chrome, not a tally light. */
@@ -598,6 +625,12 @@
     border-color: rgba(34, 197, 94, 0.5);
     color: var(--v-emerald);
   }
+  /* A WAY OUT, not a button. It is deliberately the quietest thing in the
+     wizard: it sits at the FOOT of the step rail, under everything, drawn as
+     underlined text in `--v-faint`, because the whole surface exists to get a
+     volunteer through setup, and a Skip drawn like the Continue in the step's
+     own foot would be pressed by mistake. `.r-btn.quiet` is the shared shape for a
+     link-weight action and this is deliberately quieter still. */
   .fr-skip {
     margin-top: auto;
     background: none;
@@ -605,7 +638,7 @@
     padding: 6px;
     text-align: left;
     font: inherit;
-    font-size: 12px;
+    font-size:var(--v-fs-b1);
     color: var(--v-faint);
     cursor: pointer;
     text-decoration: underline;
@@ -715,6 +748,11 @@
     flex-wrap: wrap;
     margin-bottom: 16px;
   }
+  /* A PICKER TILE, not a button. Each one draws the monitor it names — a box
+     at that display's real aspect ratio, over its name and its resolution — so
+     an operator picks the screen by recognising its SHAPE, which is the only
+     way to tell two 1920×1080 displays apart. Choosing one is a selection, not
+     an act: nothing is put on it. */
   .fr-mon {
     flex: 1 1 150px;
     background: var(--v-surf2);
@@ -735,15 +773,15 @@
     display: block;
     width: 100%;
     background: var(--v-surf3);
-    border-radius: 5px;
+    border-radius:var(--v-r-lg);
     margin-bottom: 9px;
   }
   .fr-mon b {
     display: block;
-    font-size: 13px;
+    font-size: var(--v-fs-pr);
   }
   .fr-mon-d {
-    font-size: 10px;
+    font-size: var(--v-fs-b3);
     color: var(--v-faint);
   }
 
@@ -781,6 +819,11 @@
     gap: 7px;
     max-width: 420px;
   }
+  /* A RADIO, not a button — and it says so: `role="radio"` inside a
+     `role="radiogroup"`, with `aria-checked` and its own dot. Exactly one
+     language is chosen, and a row of `.r-btn`s would offer several things to
+     do where there is one choice to make. Same shape and same reasoning as
+     Settings' translation list. */
   .fr-lang {
     display: flex;
     align-items: center;
@@ -818,7 +861,7 @@
   }
   .fr-lang .t span {
     display: block;
-    font-size: 11.5px;
+    font-size:var(--v-fs-b2);
     color: var(--v-faint);
     margin-top: 2px;
   }
@@ -837,7 +880,7 @@
     display: block;
     margin-bottom: 4px;
     color: var(--v-emerald);
-    font-size: 14px;
+    font-size:var(--v-fs-h2);
   }
   .fr-ok kbd,
   .fr-facts li kbd {
@@ -867,9 +910,11 @@
     padding: 11px 13px;
     border-radius: var(--v-r-md);
     background: var(--v-red-soft);
-    border: 1px solid rgba(239, 68, 68, 0.3);
+    /* The token, not the retired literal: `rgba(239,68,68,…)` is in no token in
+       this repository and drew a different red from every other failure edge. */
+    border: 1px solid var(--v-red-line);
     color: var(--v-txt);
-    font-size: 12.5px;
+    font-size:var(--v-fs-h3);
     line-height: 1.55;
   }
 

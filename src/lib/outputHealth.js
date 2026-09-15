@@ -256,9 +256,10 @@ export function screenFault(st) {
  * Returns `{ kind, label, note }`. `kind` chooses the colour, and it obeys the
  * colour law (DECISIONS §22): **amber is spent only on a screen that is both
  * genuinely on air and answering.** A screen that is not answering can never be
- * amber — that is the entire point of this function existing, because "Relay
- * believes it sent content" and "the projector is showing it" are different
- * claims and only the first was ever checked.
+ * amber, and neither can one that IS answering and says it is showing nothing —
+ * that is the entire point of this function existing, because "Relay believes it
+ * sent content" and "the projector is showing it" are different claims and only
+ * the first was ever checked.
  *
  * @param st       the channel's `ChannelLiveness` row, or null before the first poll
  * @param wall     `{ rehearsing, live, black }` — what Relay believes it is sending
@@ -286,11 +287,75 @@ export function describeScreen(st, wall, waitedMs = 0) {
     };
   }
 
-  const seen = st.paint_state ? `screen: ${st.paint_state}` : '';
+  // ── THE LAST PIECE OF THE SAME BUG ──────────────────────────────────────────
+  //
+  // Everything above this line asks the screen whether it is ANSWERING. That was
+  // the whole of RG-01, and it left one half of the badge still derived from what
+  // Relay believes it sent: a screen that answers punctually and says **clear**
+  // read `On Air`, in amber, because `wall.live` was true. That is the shape of
+  // RG-129 — an output page that reconnected mid-service and came back blank
+  // while every instrument said On Air — and of a blackout that did not land, and
+  // of a `clear_screens` that returned `Ok` over a screen still showing the
+  // previous verse. In each of them the screen was saying so, on the beat, and
+  // nothing read the answer.
+  //
+  // So the screen's own last word decides the badge, and Relay's belief is only
+  // what that word is checked AGAINST:
+  //
+  //   they agree      → say it: On Air · Blackout · Ready
+  //   they disagree   → say THAT, and print both claims
+  //
+  // **Amber is now spent only on a screen that has itself said it is painting
+  // content** (rule 18: amber is never allowed to lie).
+  //
+  // ── What this costs, stated rather than hidden ──────────────────────────────
+  //
+  // A beat is `BEAT_INTERVAL_MS` apart and the console polls on its own 2s timer,
+  // so for a few seconds after every fire the freshest word a screen has said is
+  // still the one from before it. During that window this reports `Not confirmed`
+  // rather than `On Air` — grey, calm, and TRUE: Relay genuinely cannot yet
+  // confirm. It resolves to amber on the next beat. The alternative is to keep
+  // claiming amber from Relay's own belief, which is the defect, and the honest
+  // direction to lag in is the cautious one. It is deliberately NOT rose: an
+  // alarm that fires on every fire is an alarm an operator learns to ignore, and
+  // a screen that is genuinely blank is then the one card that STAYS grey while
+  // the others go amber.
+  //
+  // `null` when the row carries no `paint_state` is treated as "has not said" for
+  // the same reason. Rust reads the state and the age from one beat, so a
+  // `painting` row always carries one; a row without it is a caller's fixture,
+  // and a fixture must not be able to earn amber that a screen would not.
+  const says = PAINT_STATES.includes(st.paint_state) ? st.paint_state : null;
+  const seen = says ? `screen: ${says}` : '';
   if (wall?.rehearsing) return { kind: 'rehearsal', label: 'Rehearsal', note: seen };
-  if (wall?.live && !wall?.black) return { kind: 'onair', label: 'On Air', note: seen };
-  return { kind: 'ready', label: wall?.black ? 'Blackout' : 'Ready', note: seen };
+
+  // What Relay believes it is sending this screen, in the screen's own vocabulary.
+  const sending = wall?.live && !wall?.black ? 'content' : wall?.black ? 'black' : 'clear';
+  // `clear` and `black` both mean "nothing of ours is on that screen", which is
+  // the claim a Blackout or a Ready badge makes. Only `content` vs not-content is
+  // a difference a congregation can see, so only that is checked.
+  const agrees = says !== null && (sending === 'content' ? says === 'content' : says !== 'content');
+
+  if (!agrees) {
+    return {
+      kind: 'ready',
+      label: 'Not confirmed',
+      note:
+        says === null
+          ? 'the screen has not said what it is showing'
+          : `${RELAY_CLAIM[sending]} · the screen says ${says}`,
+    };
+  }
+  if (sending === 'content') return { kind: 'onair', label: 'On Air', note: seen };
+  return { kind: 'ready', label: sending === 'black' ? 'Blackout' : 'Ready', note: seen };
 }
+
+/** Relay's half of the note, in words — one per thing Relay can be sending. */
+const RELAY_CLAIM = {
+  content: 'Relay is sending content',
+  black: 'Relay has blacked this screen out',
+  clear: 'nothing is on the programme',
+};
 
 /**
  * Can the operator switch this screen on or off from here, and what does the
@@ -358,6 +423,44 @@ export const FAULT_WORD = {
   silent: 'NOT RESPONDING',
   ok: 'LIVE',
 };
+
+/**
+ * REPORTING — does this screen still answer for itself, and when did it last?
+ *
+ * The Outputs inspector's own row (docs/REBRAND.md §5: `Type · Transport · Output
+ * · URL · Reporting`). It lives HERE, beside `screenFault` and `describeScreen`,
+ * for the reason rule 35 keeps giving: a word about a screen's health composed
+ * inside a component is a word no other surface can be held to, and the inspector
+ * already carried two of them written out by hand — a ternary chain for the
+ * header badge and a second one for "Screen says", neither of which any test
+ * could reach without mounting the view.
+ *
+ * `word` answers "is it reporting?" and `note` is the evidence — Relay's own
+ * claim and the screen's own claim side by side, because when the two disagree
+ * that disagreement IS the finding.
+ *
+ * `never` is not `no`. One is "attached, and has never once said it was
+ * painting"; the other is "nothing is attached to ask". They want different
+ * repairs, and collapsing them into one reassuring word is rule 35 exactly.
+ *
+ * @param st the channel's `ChannelLiveness` row, or null before the first poll
+ */
+export function screenReporting(st) {
+  const fault = screenFault(st);
+  if (fault === 'unknown') return { word: '—', note: '' };
+  if (fault === 'unsupported') return { word: '—', note: st.detail ?? '' };
+  if (fault === 'offline') return { word: 'no', note: st.detail ?? 'nothing is attached' };
+  if (fault === 'never')
+    return { word: 'never', note: 'attached, and has never reported painting' };
+  if (fault === 'silent')
+    return { word: 'stopped', note: `last answered ${Math.round(st.last_beat_ms / 1000)}s ago` };
+  return {
+    word: 'yes',
+    note: st.paint_state
+      ? `screen: ${st.paint_state} · ${Math.round((st.last_beat_ms ?? 0) / 1000)}s ago`
+      : '',
+  };
+}
 
 /**
  * The plain-language word for a screen's render target.

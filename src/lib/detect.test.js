@@ -9,7 +9,9 @@
 // whole time; Live.svelte rendered both kinds as "AI suggestion — 92% match". The
 // human in the loop was shown nothing to be a human in the loop WITH.
 import { describe, it, expect } from 'vitest';
-import { heard, methodKey, showsConfidence, inLibrary } from './detect.js';
+import { heard, methodKey, methodBadgeKey, methodNoteKey, showsConfidence, inLibrary } from './detect.js';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 const direct = { method: 'direct', confidence: 0.92 };
 const semantic = { method: 'semantic', confidence: 0.61 };
@@ -129,5 +131,75 @@ describe('a suggestion whose verse does not exist', () => {
     const heardButAbsent = { method: 'direct', confidence: 0.94, in_library: false };
     expect(heard(heardButAbsent)).toBe(true);
     expect(inLibrary(heardButAbsent)).toBe(false);
+  });
+});
+
+// ── THE CARD NAMES THE METHOD, AND AN IMPORT THAT IS NEVER CALLED FAILS ──────
+//
+// `methodKey` was imported into `Live.svelte` and called nowhere. The claim card
+// rendered `heard(d) ? 'Heard' : 'Paraphrase'`, so `semantic`, `ambiguous` and
+// `uncertain_book` all wore one word — and `uncertain_book` is the method added
+// after "please turn to hymn number three sixteen" put Numbers 3:16 in front of a
+// congregation, which CLAUDE.md rule 10 calls the claim an operator most needs to
+// look at. On the surface they read, it was a paraphrase.
+//
+// The note beneath was worse: "not a spoken reference" is TRUE of a paraphrase and
+// FALSE of the other two. An ambiguous reference WAS spoken; for `uncertain_book`
+// the chapter and the verse were both heard and only the book was repaired. One
+// sentence for three methods told the operator the opposite of what happened on
+// the two where it mattered.
+describe('a claim card says which KIND of claim it is', () => {
+  const liveRaw = readFileSync(resolve(process.cwd(), 'src/lib/views/Live.svelte'), 'utf8');
+  // Comments stripped for the `not.toMatch` below. The fix's own comment QUOTES the
+  // defect it replaced, and an assertion over the prose would fail on an honest
+  // note about a deletion — the lesson `panic.test.js` records in the same words.
+  const live = liveRaw
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^\s*\/\/.*$/gm, '');
+
+  it('every method gets its own chip', () => {
+    const seen = new Set(
+      ['direct', 'semantic', 'ambiguous', 'uncertain_book'].map((m) => methodBadgeKey({ method: m })),
+    );
+    expect(seen.size, 'four methods must not share a chip').toBe(4);
+  });
+
+  it('and only a paraphrase is called "not a spoken reference"', () => {
+    expect(methodNoteKey({ method: 'semantic' })).toBe('live.not_a_spoken_reference');
+    expect(methodNoteKey({ method: 'ambiguous' })).not.toBe('live.not_a_spoken_reference');
+    expect(methodNoteKey({ method: 'uncertain_book' })).not.toBe('live.not_a_spoken_reference');
+    // A heard reference shows a bar instead, so it has no note at all.
+    expect(methodNoteKey({ method: 'direct' })).toBeNull();
+  });
+
+  it('the run surface renders them rather than a hard-coded pair of words', () => {
+    expect(live, 'the chip must come from the register').toContain('$t(methodBadgeKey(d))');
+    expect(live, 'and so must the note').toContain('$t(methodNoteKey(d))');
+    // The defect, in its original form. Watched to fail by restoring it.
+    expect(live).not.toMatch(/heard\(d\)\s*\?\s*'Heard'\s*:\s*'Paraphrase'/);
+  });
+
+  // THE PATTERN, not just this instance. Three instruments in this repository were
+  // built well and never wired: `methodKey` imported and never called, rule 37's
+  // `onFit` reaching one surface out of six, and `legibility.review` reading a
+  // model no shipped template uses. The first is the cheapest to make impossible.
+  it('nothing is imported from detect.js and then never used', () => {
+    for (const file of ['src/lib/views/Live.svelte', 'src/lib/DetectionInspector.svelte']) {
+      const src = readFileSync(resolve(process.cwd(), file), 'utf8');
+      const m = src.match(/import \{([^}]+)\} from ['"][^'"]*detect\.js['"]/);
+      if (!m) continue;
+      const body = src
+        .replace(/<!--[\s\S]*?-->/g, '')
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .replace(/^\s*\/\/.*$/gm, '')
+        .replace(m[0], '');
+      for (const name of m[1].split(',').map((x) => x.trim()).filter(Boolean)) {
+        expect(
+          new RegExp(`\\b${name}\\b`).test(body),
+          `${file} imports \`${name}\` from detect.js and never calls it — that is how the claim card came to render two hard-coded words for four methods`,
+        ).toBe(true);
+      }
+    }
   });
 });

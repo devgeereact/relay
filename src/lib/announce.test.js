@@ -28,7 +28,6 @@ const invoke = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...a) => invoke(...a) }));
 
 const {
-  pushAnnouncement,
   verseRepeatCount,
   listVoiceProfiles,
   activeVoiceProfile,
@@ -44,24 +43,16 @@ beforeEach(() => {
   invoke.mockReset();
 });
 
-describe('the emergency announcement is never silent about failing', () => {
-  it('reaches the backend with the message', async () => {
-    invoke.mockResolvedValue(undefined);
-    await pushAnnouncement('Fire alarm — please leave by the side doors');
-    expect(invoke).toHaveBeenCalledWith('push_announcement', {
-      message: 'Fire alarm — please leave by the side doors',
-    });
-  });
-
-  // THE POINT OF THE WHOLE FILE. Swallow this and the operator is told the
-  // congregation has been warned when it has not been.
-  it('THROWS when the backend refuses — it must never look like it worked', async () => {
-    invoke.mockRejectedValue(new Error('no output channels are open'));
-    await expect(pushAnnouncement('Doctor needed at the back')).rejects.toThrow(
-      'no output channels are open',
-    );
-  });
-});
+// THE EMERGENCY ANNOUNCEMENT IS GONE, and its two tests with it. The control was
+// removed from Quick tools on 2026-09-14 on the operator's instruction, and
+// `push_announcement` and `pushAnnouncement` were deleted rather than left
+// registered with nothing rendering them — CLAUDE.md's own precedent, the five
+// commands deleted on 2026-08-30: "a command nothing calls is attack surface
+// nobody is watching".
+//
+// What it proved is worth keeping in words even though the code is gone: a wrapper
+// that paints over live scripture on every screen at once must THROW, because an
+// operator told the room has been warned will stop warning it themselves.
 
 describe('the repeat badge costs nothing when it fails', () => {
   it('passes the reference through as the backend parses it', async () => {

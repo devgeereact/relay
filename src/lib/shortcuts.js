@@ -32,6 +32,30 @@ function isTyping(e) {
 }
 
 /**
+ * Does this element activate on Space by itself?
+ *
+ * Only `Space` consults this, and only to STAND DOWN — see the `' '` case below.
+ * A focused `<button>` (or an element that has taken a button's role, or a link)
+ * is activated by Space on every platform, so claiming the key there makes the
+ * focused control do something other than what it says.
+ *
+ * Deliberately narrow. A disabled button activates nothing, so the transport
+ * keeps the key; and this asks about the ELEMENT, never about which view is
+ * mounted, so it cannot drift as surfaces are added.
+ */
+function isActivatable(el) {
+  if (!el || typeof el.tagName !== 'string') return false;
+  if (el.disabled) return false;
+  const role = el.getAttribute?.('role');
+  return (
+    el.tagName === 'BUTTON' ||
+    role === 'button' ||
+    role === 'switch' ||
+    (el.tagName === 'A' && el.hasAttribute?.('href'))
+  );
+}
+
+/**
  * Context handlers registered by whichever view is mounted. A view supplies only
  * the actions that make sense for it; the always-on keys (Escape, B) live in the
  * global table below and are NEVER delegated to a view, so they cannot go missing.
@@ -70,6 +94,23 @@ export const cheatsheet = writable(false);
 /**
  * The canonical shortcut table — also what the cheatsheet renders, so the help
  * can never drift out of sync with the actual bindings.
+ *
+ * ── THE `short` GLOSS IS GONE (2026-09-14) ─────────────────────────────────
+ *
+ * Every entry briefly carried a two-or-three-word `short` field, for a keys
+ * legend across the chrome bar. The operator asked for the chrome to be cleared
+ * back to the wordmark and the six workspaces, so the legend went — and the
+ * field went with it rather than staying behind as a column nothing renders.
+ * The cheatsheet `?` opens is once again the ONE place the keys are documented,
+ * which is what it was before and is the arrangement this table was built for.
+ *
+ * WHAT IS DELIBERATELY ABSENT, and still is. `R` rehearse and `1–6` workspace.
+ * Neither is bound — `installShortcuts` below has no branch for either, and `R`
+ * could not safely acquire one while the section keys (REBRAND §10) hand out
+ * every unclaimed letter. Listing them anywhere would teach an operator a key
+ * that does nothing, under pressure, which is the exact defect `activeActions`
+ * above exists to prevent. They are absent until something binds them, and then
+ * this table is where it goes and the cheatsheet picks it up for free.
  */
 export const SHORTCUTS = [
   { keys: ['Esc'], label: 'Clear all screens', always: true },
@@ -210,6 +251,23 @@ export function installShortcuts({ clearScreens, blackScreen }) {
         // Space means ADVANCE, everywhere, and nothing else. It used to also
         // mean "push the AI's guess live" on the Console — same key, two
         // meanings, one of them irreversible in front of an audience.
+        //
+        // ONE EXCEPTION, and it is not a second meaning: a FOCUSED BUTTON.
+        //
+        // Space is the platform's activation key for a focused `<button>`, and
+        // `isTyping` only excluded text fields — so a keyboard operator who
+        // tabbed to `Rehearse`, `Blackout` or `Clear screens` and pressed Space
+        // advanced the programme instead of pressing the control under their
+        // finger, and `preventDefault` suppressed the button's own click. On
+        // Live that is a key silently doing something other than what the
+        // focused control says it does, which is the shape rule 11 exists to
+        // stop rather than an application of it.
+        //
+        // The arrows and PageDown are deliberately NOT narrowed: they keep
+        // working from anywhere, focused button or not, so the transport is
+        // never lost. Yielding Space to the thing that has focus costs the
+        // operator nothing, because `→` is beside it and does the same job.
+        if (e.key === ' ' && isActivatable(e.target)) break;
         if (ctx.next) {
           e.preventDefault();
           ctx.next();
@@ -226,6 +284,28 @@ export function installShortcuts({ clearScreens, blackScreen }) {
         if (ctx.search) {
           e.preventDefault();
           ctx.search();
+        }
+        break;
+      default:
+        // ---- SECTION KEYS (REBRAND §10). A surface showing a song's sections
+        // registers `sectionKey` and gets the letters nothing above has claimed.
+        //
+        // Its POSITION is the whole guarantee, and it is three guarantees deep:
+        //   · it is below the always-on block, so `Escape` and `b` are already
+        //     gone — a panic key can never be shadowed by a section;
+        //   · it is below `if (typing) return`, so a letter typed into the
+        //     reference box or the lyric editor fires nothing;
+        //   · it is below `a`, `d` and `/`, so a surface offering both keeps the
+        //     older meaning of those three.
+        // `sectionkeys.js::RESERVED` reads this file's own SHORTCUTS table and
+        // refuses to hand out any of those letters in the first place, so the
+        // rule is kept on both doors rather than only on this one.
+        //
+        // With nothing registered it is a no-op and does NOT preventDefault —
+        // a dead branch must not eat a keystroke the browser had a use for.
+        if (ctx.sectionKey && /^[a-z0-9]$/.test(e.key)) {
+          e.preventDefault();
+          ctx.sectionKey(e.key);
         }
         break;
     }

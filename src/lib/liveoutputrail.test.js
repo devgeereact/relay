@@ -1,47 +1,58 @@
-// THE RUN COLUMN'S MONITOR TELLS THE TRUTH ABOUT THE WALL.
+// THE LIBRARY'S OUTPUT RAIL — the queue, and the one press that fires it.
 //
-// `LiveOutputRail.svelte` is the run column: the monitor that answers the only
-// question that matters mid-service — *what are they looking at right now* — plus
-// the panic tiles. It is the most dangerous component in the app and, until this
-// file, no test referenced it.
-//
-// ── How this file found its subject, twice ───────────────────────────────────
+// ── How this file found its subject, THREE times ─────────────────────────────
 //
 // It was first written against `PreviewProgram.svelte`, which reads like the
 // switcher this product's safety model describes: two panes, LEFT what is coming,
 // RIGHT what they can see. Fourteen tests passed. `scripts/qa-inventory.mjs` then
 // reported that nothing imported that component, and it was deleted.
 //
-// So the tests moved here — and grew a second set about a `preview` prop and a
-// "Take to screen" button. The audit then found that `stage()` in `Library.svelte`
-// had zero callers, so `preview` was permanently null and that half could not
-// render either. Seventeen green tests over a state the app could not reach, in a
-// file whose opening comment was about exactly that mistake.
+// So the tests moved to `LiveOutputRail.svelte` — and grew a second set about a
+// `preview` prop and a "Take to screen" button. The audit then found that
+// `stage()` in `Library.svelte` had zero callers, so `preview` was permanently
+// null and that half could not render either. Seventeen green tests over a state
+// the app could not reach, in a file whose opening comment was about exactly that
+// mistake. The preview half went (audit P1-2, 2026-08-15).
 //
-// The preview half is now GONE (audit P1-2, 2026-08-15). Going live from the
-// Library fires the top of the QUEUE — a staging area that holds N items instead of
-// one, and that actually exists. `Live.svelte` owns Preview ≠ Programme for the
-// plan path, where it is implemented and reachable.
+// THE THIRD TIME is this rewrite, 2026-09-14, and it is a different shape of the
+// same lesson: eleven green tests over panels that should not have been in this
+// workspace at all. `docs/REBRAND.md` §10 asks the Library's right column to be an
+// INSPECTOR for the selected item; what stood there was a second run surface —
+// a programme monitor, a HEARD panel, a transcript and five run controls — every
+// one of which already had an owner on `Live.svelte` or in the dock row. Tests do
+// not make a duplicate correct; they make it harder to remove.
 //
-// What remains here is the law that was always true of this component:
+// WHERE THE OLD CLAIMS WENT, so none of them is merely dropped:
 //
-//   AMBER MEANS LIVE. It appears when, and only when, a congregation is genuinely
-//   looking. Not while blacked out. Not in rehearsal — that is amethyst.
+//   the monitor's amber/amethyst/blackout law → `Live.svelte` owns the programme
+//       pane, pinned by `r2livepath.test.js` and `e2e.rs`; the law itself is
+//       `colourlaw.test.js` and DECISIONS §22.
+//   the panic tiles' "never report a success you did not achieve" → `Dock.svelte`
+//       owns Clear and Blackout app-wide, pinned by `panic.test.js` (which is
+//       where CLAUDE.md rule 15 names the instrument).
+//   RG-63, a suggestion whose verse does not exist → `Live.svelte`'s primary card
+//       and its also-pending rows, pinned by `detect.test.js`. The Library no
+//       longer renders an Approve at all, which is one fewer door to keep that
+//       guarantee on — and the last test below holds it AS AN ABSENCE, so the
+//       duplicate cannot come back unnoticed.
 //
-//   CLAUDE.md (frontend shape, §15, §18) · DECISIONS §22
+// What is left here is the thing this pane uniquely owns and nothing else in
+// Relay renders: UP NEXT, and Go Live.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { tick } from 'svelte';
-import { get } from 'svelte/store';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 const invoke = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...a) => invoke(...a) }));
 
 const LiveOutputRail = (await import('./views/library/LiveOutputRail.svelte')).default;
-const { live, screenBlack, rehearsing, panicError, capture, detections } = await import('./stores/capture.js');
+const { capture } = await import('./stores/capture.js');
 const { setSafeMode } = await import('./boot/boot.js');
 
-const ON_WALL = { reference: 'John 3:16', text: 'For God so loved the world' };
+const A = { reference: 'John 3:16', text: 'For God so loved the world' };
+const B = { reference: 'Romans 8:28', text: 'And we know that all things work together' };
 
 let host;
 let app;
@@ -53,11 +64,9 @@ function mount(props = {}) {
   return host;
 }
 
-const monitor = () => host.querySelector('.lo-top');
-const badge = () => host.querySelector('.r-badge');
-const headline = () => host.querySelector('.lo-top .r-lbl').textContent.replace(/\s+/g, ' ').trim();
-const tileNamed = (text) =>
-  [...host.querySelectorAll('.lo-tile')].find((b) => b.textContent.includes(text));
+const btn = (text) =>
+  [...host.querySelectorAll('button')].find((b) => b.textContent.includes(text));
+const rows = () => [...host.querySelectorAll('.lo-q')];
 
 /**
  * Let a clicked handler finish.
@@ -73,12 +82,7 @@ async function settle() {
 
 beforeEach(() => {
   invoke.mockReset();
-  // `onMount` polls `list_output_channels`; an array keeps the monitor picker quiet.
   invoke.mockResolvedValue([]);
-  live.set(null);
-  screenBlack.set(false);
-  rehearsing.set(false);
-  panicError.set(null);
   setSafeMode(false);
   capture.update((s) => ({ ...s, available: true }));
 });
@@ -89,164 +93,138 @@ afterEach(() => {
   app = host = null;
 });
 
-describe('the monitor says what is actually on the wall', () => {
-  it('says so in words when the screens are clear', () => {
+describe('up next is the queue, and nothing else renders it', () => {
+  it('an empty queue says what fills it rather than reading as broken', () => {
     mount();
-    expect(monitor().textContent).toMatch(/Nothing is on the screens/i);
-    // A blank monitor reads as "the feed died"; a sentence reads as "nothing is up".
-    expect(badge().textContent.trim()).toBe('Clear');
-    expect(badge().className).toMatch(/grey/);
+    expect(host.textContent).toMatch(/Nothing queued/i);
+    expect(host.textContent).toMatch(/Cue in Live/i);
+    expect(rows()).toHaveLength(0);
   });
 
-  it('shows the live verse, in amber, when a congregation is looking', async () => {
-    mount();
-    live.set(ON_WALL);
-    await tick();
-
-    expect(monitor().textContent).toMatch(/God so loved/);
-    expect(badge().textContent.trim()).toBe('Live');
-    expect(badge().className).toMatch(/amber/);
-    expect(headline()).toMatch(/Program$/);
+  it('lists the queue in order and names the next item on the button', () => {
+    mount({ queue: [A, B] });
+    expect(rows().map((r) => r.querySelector('b').textContent)).toEqual([
+      'John 3:16',
+      'Romans 8:28',
+    ]);
+    expect(btn('Go Live').textContent).toContain('John 3:16');
+    // The NEXT item is marked, and it is marked in steel — it is the thing you
+    // are working on, not the thing a congregation is looking at. Amber may only
+    // ever mean the latter (CLAUDE.md rule 18).
+    expect(rows()[0].className).toContain('next');
+    expect(rows()[0].className).not.toContain('air');
   });
 
-  it('goes amethyst in rehearsal, never amber', async () => {
-    // Amethyst is the whole point: same content, same controls, and a colour that
-    // says out loud that nobody is looking.
-    mount();
-    rehearsing.set(true);
-    live.set(ON_WALL);
+  it('reordering and removing go through the pure queue helpers', async () => {
+    let queue = [A, B];
+    mount({ queue, onQueueChange: (q) => (queue = q) });
+    rows()[1].querySelector('[aria-label="Move up"]').click();
+    expect(queue.map((q) => q.reference)).toEqual(['Romans 8:28', 'John 3:16']);
+
+    app.$set({ queue });
     await tick();
-
-    expect(badge().textContent.trim()).toBe('Rehearsal');
-    expect(badge().className).toMatch(/amethyst/);
-    expect(badge().className).not.toMatch(/amber/);
-    expect(headline()).toMatch(/Rehearsal$/);
-  });
-
-  it('drops the amber during a blackout, though the content is still armed', async () => {
-    // `live` survives a blackout — the content is loaded, the screens are just
-    // dark. Amber must follow the CONGREGATION, not the state variable.
-    mount();
-    live.set(ON_WALL);
-    screenBlack.set(true);
-    await tick();
-
-    expect(monitor().textContent).toMatch(/Blacked out/i);
-    expect(badge().className).not.toMatch(/amber/);
-    expect(badge().textContent.trim()).toBe('Clear');
+    rows()[0].querySelector('[aria-label="Remove"]').click();
+    expect(queue.map((q) => q.reference)).toEqual(['John 3:16']);
   });
 });
 
-
-describe('the panic tiles tell the truth', () => {
-  it('Clear Screens reports success only when it succeeded', async () => {
-    mount();
-    live.set(ON_WALL);
-    await tick();
-
-    tileNamed('Clear Screens').click();
+describe('go live is the one control here that can reach a screen', () => {
+  it('fires the top of the queue and drops it, in that order', async () => {
+    const fired = [];
+    let queue = [A, B];
+    mount({
+      queue,
+      onQueueChange: (q) => (queue = q),
+      onFireQueued: (item) => {
+        fired.push(item.reference);
+        return Promise.resolve();
+      },
+    });
+    btn('Go Live').click();
     await settle();
-
-    expect(invoke).toHaveBeenCalledWith('clear_screens');
-    expect(host.querySelector('.lo-msg')?.textContent).toMatch(/Screens cleared/i);
-    expect(get(panicError)).toBe(null);
+    expect(fired).toEqual(['John 3:16']);
+    expect(queue.map((q) => q.reference)).toEqual(['Romans 8:28']);
   });
 
-  it('a Clear that FAILS says nothing reassuring, and raises the banner', async () => {
-    // The bug this pins, verbatim from the repo's history: the toast fired
-    // unconditionally, so the operator was told the wall was clean while the verse
-    // was still in front of the congregation — and then stopped looking at it.
-    mount();
-    live.set(ON_WALL);
-    await tick();
-    invoke.mockRejectedValue('emit failed');
-
-    tileNamed('Clear Screens').click();
+  it('a FIRE THAT FAILED leaves the item in the queue and says why', async () => {
+    // The half that matters: a take that did not reach a screen must not look
+    // like one that did. If the item were dropped anyway the operator would
+    // press Go Live again and send the SECOND verse.
+    let queue = [A, B];
+    mount({
+      queue,
+      onQueueChange: (q) => (queue = q),
+      onFireQueued: () => Promise.reject('no output channel'),
+    });
+    btn('Go Live').click();
     await settle();
-
+    await settle();
+    expect(queue.map((q) => q.reference)).toEqual(['John 3:16', 'Romans 8:28']);
+    const err = host.querySelector('.lo-err');
+    expect(err).toBeTruthy();
+    expect(err.getAttribute('role')).toBe('alert');
     expect(host.querySelector('.lo-msg')).toBe(null);
-    expect(get(panicError)).toBeTruthy();
   });
 
-  it('Blank Screen carries the identical contract — it is a panic control too', async () => {
-    mount();
-    live.set(ON_WALL);
+  it('is disabled in safe mode, and disabled with nothing queued', async () => {
+    mount({ queue: [A] });
+    expect(btn('Go Live').disabled).toBe(false);
+    setSafeMode(true);
     await tick();
-    invoke.mockRejectedValue('emit failed');
-
-    tileNamed('Blank Screen').click();
-    await settle();
-
-    expect(host.querySelector('.lo-msg')).toBe(null);
-    expect(get(panicError)).toBeTruthy();
+    expect(btn('Go Live').disabled).toBe(true);
+    setSafeMode(false);
+    app.$set({ queue: [] });
+    await tick();
+    expect(btn('Go Live').disabled).toBe(true);
   });
 });
 
+describe('the duplicated run surface is gone, and stays gone', () => {
+  // Resolved from the working directory, the way `surface.test.js` does it: this
+  // file mounts a component, so `import.meta.url` is the jsdom document's URL and
+  // not a `file:` one.
+  const code = () =>
+    readFileSync(join(process.cwd(), 'src/lib/views/library/LiveOutputRail.svelte'), 'utf8')
+      .replace(/<!--[\s\S]*?-->/g, ' ')
+      .replace(/(^|\s)\/\/[^\n]*/g, ' ');
 
-// ── RG-63 · a suggestion with no verse behind it must not offer an Approve ────
-//
-// `emit_detections` deliberately keeps a reference that parsed cleanly but resolves
-// to nothing — "Psalms 23:99" out of garbled speech — and marks it
-// `in_library: false`. Keeping it is right: it is the operator's evidence that
-// Relay is mishearing numbers, and dropping it would be silence.
-//
-// What was wrong is that NO frontend file read the flag. The card rendered with the
-// same amber Approve beside it, and the click failed afterwards with a backend
-// error. `main.rs` carried a comment saying exactly this, unfixed.
-//
-// Mounted rather than asserted on source, because the claim is about what an
-// operator SEES — and this is the component that ships (the one this file exists to
-// prove, after fourteen tests were written against a component nothing rendered).
-describe('RG-63 · a reference whose verse does not exist', () => {
-  const absent = { reference: 'Psalms 23:99', method: 'direct', confidence: 0.94, in_library: false };
-  const real = { reference: 'John 3:16', method: 'direct', confidence: 0.94, in_library: true };
-
-  const approve = () =>
-    [...host.querySelectorAll('.lo-sugacts .r-btn')].find((b) => /Approve|Nothing to send/.test(b.textContent));
-
-  it('says so, in the failure colour, before anything is clicked', async () => {
-    mount();
-    detections.set([absent]);
-    await tick();
-    const note = host.querySelector('.lo-absent');
-    expect(note, 'nothing told the operator the verse does not exist').toBeTruthy();
-    expect(note.textContent).toMatch(/misheard a number/i);
+  it('renders no programme monitor, no HEARD panel and no transcript', () => {
+    mount({ queue: [A] });
+    const text = host.textContent;
+    for (const gone of ['Live Output', 'Heard', 'Transcript', 'Program']) {
+      expect(text, `${gone} belongs to Live and the dock row, not to the Library`).not.toMatch(
+        new RegExp(gone, 'i'),
+      );
+    }
   });
 
-  it('disables Approve, and the button itself says why', async () => {
-    // A disabled control that does not say why is its own finding in this repo.
-    mount();
-    detections.set([absent]);
-    await tick();
-    const b = approve();
-    expect(b.disabled).toBe(true);
-    expect(b.textContent.trim()).toBe('Nothing to send');
+  it('imports none of the run-surface wrappers it used to own', () => {
+    const src = code();
+    // A SOURCE assertion on purpose. What this guards is a boundary, and the way
+    // a boundary breaks is somebody re-adding one helpful control: every name
+    // below now has exactly one owner, and a second copy is how the two come to
+    // disagree. `confirmDetection` is the sharpest — this rail carried its own
+    // RG-63 absent-verse guard beside Live's.
+    for (const wrapper of [
+      'confirmDetection',
+      'dismissDetection',
+      'setRehearsal',
+      'clearScreens',
+      'blackScreen',
+      'startCountdown',
+      'startCapture',
+      'stopCapture',
+      'listOutputChannels',
+    ]) {
+      expect(src, `${wrapper} has an owner outside the Library`).not.toMatch(
+        new RegExp(`\\b${wrapper}\\b`),
+      );
+    }
   });
 
-  it('does not reach the backend even if the handler is called anyway', async () => {
-    // The markup guard is one door. `accept()` is the other, because a guard that
-    // exists only in markup is a guard the next caller walks past.
-    mount();
-    detections.set([absent]);
-    await tick();
-    invoke.mockClear();
-    approve().click();
-    await settle();
-    expect(
-      invoke.mock.calls.some((c) => c[0] === 'confirm_detection'),
-      'a verse that does not exist must never be sent for confirmation',
-    ).toBe(false);
-  });
-
-  it('leaves a real suggestion completely alone', async () => {
-    // The warning may only ever be ADDED on evidence. A regression that greyed out
-    // working suggestions would be far worse than the defect it replaced.
-    mount();
-    detections.set([real]);
-    await tick();
-    expect(host.querySelector('.lo-absent')).toBeNull();
-    const b = approve();
-    expect(b.disabled).toBe(false);
-    expect(b.textContent.trim()).toBe('Approve');
+  it('offers no Approve — so RG-63 has one fewer door to be kept on', () => {
+    mount({ queue: [A] });
+    expect(btn('Approve')).toBeUndefined();
+    expect(btn('Nothing to send')).toBeUndefined();
   });
 });

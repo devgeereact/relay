@@ -9,6 +9,15 @@
   // file size and no generated thumbnail anywhere in the codebase. So this pane
   // does not print any of them.
   //
+  // AND THERE IS NO CAPTION COLUMN. REBRAND §10 asks for "a caption stored apart
+  // from the item's name"; `filename` is ALREADY the operator's own words — the
+  // add sheet writes what they typed into it and keeps the real file name only as
+  // a hint on screen — so a caption would be a SECOND operator-authored string
+  // beside the one that exists, and §10's own sentence for media is "the slide
+  // *is* the picture", which means none of it reaches a congregation. Not built,
+  // deliberately; the card's second line comes from `collections.js::mediaSub`,
+  // rather than a second name.
+  //
   // The thumbnail is therefore the FILE ITSELF, fetched from the app's own HTTP
   // server on :8032 — an <img> for a picture, a <video preload="metadata"> for a
   // video (the browser paints its first frame). Not a stand-in icon that might
@@ -28,6 +37,10 @@
   import { live, screenBlack, rehearsing } from '../../stores/capture.js';
   import { listMedia, deleteMedia, fireMedia, localIp, readErrors } from '../../stores/capture.js';
   import VerseDeck from './VerseDeck.svelte';
+  // The card's second line, and the reason there is no caption column, both
+  // live in the register beside `countWords` — pure, so they can be asserted
+  // without mounting a pane that needs a backend to list anything.
+  import { mediaSub } from './collections.js';
 
   export let query = '';
   /**
@@ -40,6 +53,40 @@
   export let only = null;
   export let queue = [];
   export let onQueueChange = () => {};
+  /** Hand the selected item up for the inspector (REBRAND §10). */
+  export let onSelect = () => {};
+
+  /**
+   * ONE PRESS SELECTS — see the note on `VerseDeck`'s `press` prop.
+   *
+   * THE SLIDE IS THE PICTURE (REBRAND §10). The inspector is handed the media
+   * URL rather than a template and a caption, so the preview is the frame the
+   * room will see; the filename is the operator's name for it and never goes to
+   * a screen. A DOCUMENT has no frame at all, which is why `fire_media` refuses
+   * one, so it is selectable and carries no `reference` for `Cue in Live`.
+   */
+  let selectedRef = '';
+  function selectItem(m) {
+    selectedRef = m.reference;
+    onSelect({
+      kind: 'media',
+      title: m.label,
+      titleLabel: 'Name',
+      words: m.icon ? `${m.icon} — this cannot be put on a screen.` : m.label,
+      slide: { reference: null, text: m.label },
+      media: m.media,
+      mediaKind: m.mediaKind,
+      reference: m.media ? m.reference : null,
+      mediaId: m.id,
+      plan: m.media
+        ? {
+            cueType: 'media',
+            label: m.reference,
+            payload: { media_id: m.id, kind: m.mediaKind, filename: m.reference },
+          }
+        : null,
+    });
+  }
 
   let rows = [];
   let host = 'localhost';
@@ -59,7 +106,6 @@
    * instead, and firing it is refused: a missing file cannot reach a screen.
    */
   let missing = {};
-  let checked = new Set();
   let layout = 'grid';
   const lost = (m) => (missing = { ...missing, [m.id]: true });
 
@@ -160,6 +206,7 @@
     media: m.kind !== 'document' && !missing[m.id] ? url(m) : null,
     mediaKind: m.kind,
     icon: missing[m.id] ? 'MISSING' : m.kind === 'document' ? ext(m) : null,
+    sub: mediaSub(m),
   }));
   $: queuedRefs = new Set(queue.map((q) => q.reference));
   $: liveDeckRef = deck.find((d) => isLive({ id: d.id }, liveUrl))?.reference ?? null;
@@ -170,13 +217,8 @@
     } else {
       // A queued picture carries its id, so firing it later is still fire_media
       // and not a text cue that happens to be named after a file.
-      onQueueChange([...queue, { reference: item.reference, text: '', mediaId: item.id }]);
+      onQueueChange([...queue, { reference: item.reference, text: '', mediaId: item.id, kind: 'media' }]);
     }
-  }
-  function toggleCheck(item) {
-    const next = new Set(checked);
-    next.has(item.reference) ? next.delete(item.reference) : next.add(item.reference);
-    checked = next;
   }
   const fireCard = (d) => fire(rows.find((r) => r.id === d.id) ?? {});
   const removeCard = (d) => remove(rows.find((r) => r.id === d.id) ?? {});
@@ -209,9 +251,6 @@
           <b>{counts.find((k) => k.key === filter)?.label ?? 'All'}</b>
           <span>{shown.length} file{shown.length === 1 ? '' : 's'}</span>
         </div>
-        {#if checked.size}
-          <span class="r-chip amethyst">{checked.size} selected</span>
-        {/if}
         <div class="r-seg" role="group" aria-label="Layout">
           <button class:on={layout === 'grid'} aria-label="Grid" on:click={() => (layout = 'grid')}>
             <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><rect x="3" y="3" width="7" height="7" rx="1.4" /><rect x="14" y="3" width="7" height="7" rx="1.4" /><rect x="3" y="14" width="7" height="7" rx="1.4" /><rect x="14" y="14" width="7" height="7" rx="1.4" /></svg>
@@ -243,13 +282,14 @@
             items={deck}
             liveRef={liveDeckRef}
             rehearsing={$rehearsing}
-            {checked}
             {queuedRefs}
             busyRef={firing ? deck.find((d) => d.id === firing)?.reference ?? '' : ''}
             {layout}
             showStar={false}
-            can={{ queue: true, favourite: false, edit: false, duplicate: false, add: false }}
-            onCheck={toggleCheck}
+            press="select"
+            {selectedRef}
+            onSelect={selectItem}
+            can={{ queue: true, favourite: false, edit: false, duplicate: false, add: false, select: false }}
             onFire={fireCard}
             onQueue={toggleQueue}
             onDelete={removeCard} />
@@ -298,6 +338,8 @@
     overflow-y: auto;
     padding: 0 8px 8px;
   }
+  /* A LIST ROW, not a button — B2. One media kind per row in the rail, a name
+     and a count, filtering the grid beside it. Selected, not pressed. */
   .ml-kind {
     display: flex;
     align-items: center;
@@ -309,7 +351,7 @@
     border: 0;
     color: var(--v-dim);
     font-family: var(--f-body);
-    font-size: 13px;
+    font-size: var(--v-fs-pr);
     text-align: left;
     cursor: pointer;
   }
@@ -317,7 +359,7 @@
     flex: 1;
   }
   .ml-kind .ct {
-    font-size: 11px;
+    font-size:var(--v-fs-lbl);
     color: var(--v-faint);
   }
   .ml-kind:hover:not(.on) {
@@ -352,7 +394,7 @@
   }
   .ml-where b {
     display: block;
-    font-size: 15px;
+    font-size: var(--v-fs-ttl);
     font-weight: 600;
     color: var(--v-txt);
   }

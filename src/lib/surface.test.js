@@ -182,30 +182,41 @@ describe('R3-01 · Escape belongs to the popup menu, not to the panic key', () =
   });
   afterEach(() => teardown?.());
 
-  it('LiveOutputRail — the Countdown menu, on the run surface mid-service', async () => {
-    const LiveOutputRail = (await import('./views/library/LiveOutputRail.svelte')).default;
-    const el = mountInto(LiveOutputRail, { queue: [] });
+  // REPOINTED 2026-09-14. This case drove `LiveOutputRail`'s Countdown menu. That
+  // menu is gone: REBRAND §10 took the four duplicated run controls out of the
+  // Library (the dock row owns Countdown, Clear, Blackout and Rehearse app-wide),
+  // and the Dock's countdown is a spinner with no popup at all.
+  //
+  // The CLAIM is unchanged and the Library still has a popup that has to keep it:
+  // the New Item menu in the shell, open while a service is running, with its own
+  // Escape handler. It had no test. The VerseDeck kebab case below is the second
+  // instance and is untouched.
+  it('Library — the New Item menu, open mid-service', async () => {
+    const Library = (await import('./views/Library.svelte')).default;
+    invoke.mockResolvedValue([]);
+    const el = mountInto(Library, {});
     await settle();
 
-    const countdown = [...el.querySelectorAll('.lo-tile')].find((b) =>
-      b.textContent.includes('Countdown'),
+    const openIt = [...el.querySelectorAll('button')].find((b) =>
+      b.textContent.includes('New Item'),
     );
-    countdown.click();
+    expect(openIt, 'the New Item trigger').toBeTruthy();
+    openIt.click();
     await tick();
 
-    // The menu is open, and it now declares itself so `shortcuts.js` can see it.
-    const menu = el.querySelector('.lo-menu');
+    // The menu is open, and it declares itself so `shortcuts.js` can see it.
+    const menu = el.querySelector('.lib-newmenu');
     expect(menu).toBeTruthy();
     expect(menu.getAttribute('role')).toBe('menu');
 
-    press('Escape', menu.querySelector('.lo-mi'));
+    press('Escape', menu.querySelector('.lib-newitem'));
     await tick();
 
-    // FIXED 2026-08-14 (P1-3). Both halves: the wall is untouched, and the menu
-    // actually closed. Before, the operator got the one outcome they did not ask
-    // for and none of the one they did — mid-service, on the run rail.
+    // Both halves, as in the original 2026-08-14 fix (P1-3): the wall is
+    // untouched, and the menu actually closed. Dismissing an overlay is not a
+    // live action, and the operator must get the outcome they asked for.
     expect(clearScreens).not.toHaveBeenCalled();
-    expect(el.querySelector('.lo-menu')).toBe(null);
+    expect(el.querySelector('.lib-newmenu')).toBe(null);
   });
 
   it('VerseDeck — the per-slide kebab menu, reachable from every Library tab', async () => {
@@ -350,10 +361,12 @@ describe('R3-03 · Space means advance — except on a VerseDeck list row', () =
   it('LIST layout — Space advances and does NOT fire, exactly like the grid', async () => {
     const VerseDeck = (await import('./views/library/VerseDeck.svelte')).default;
     const onFire = vi.fn();
+    const onSelect = vi.fn();
     const el = mountInto(VerseDeck, {
       items: [{ reference: 'John 3:16', text: 'For God so loved…', slideNo: 1 }],
       layout: 'list',
       onFire,
+      onSelect,
     });
     await tick();
 
@@ -362,10 +375,38 @@ describe('R3-03 · Space means advance — except on a VerseDeck list row', () =
     // FIXED 2026-08-14 (P1-5). Space put scripture on the wall from here — and,
     // because the row neither preventDefaulted nor stopPropagated, ALSO stepped the
     // transport: two live actions from one press. The repair is not merely to stop
-    // the double-action; it is that Space must mean the same thing in both layouts
-    // of the same deck. It now falls through to the transport, as on the grid card.
-    expect(onFire).not.toHaveBeenCalled();
-    expect(next).toHaveBeenCalledOnce();
+    // the double-action; it is that **Space must mean the same thing in both
+    // layouts of the same deck**, and that is still what this test is about.
+    //
+    // WHAT IT MEANS CHANGED ON 2026-09-15, on the operator's decision, and the
+    // invariant is kept rather than weakened. Rule 11 gained one exception: a
+    // FOCUSED BUTTON keeps its own activation, because a keyboard operator who
+    // tabs to `Rehearse` or `Clear screens` and presses Space must press the
+    // control under their finger, not advance the programme.
+    //
+    // That exception reaches this deck. The grid card is a native `<button>` and
+    // now activates on Space from the platform; this list row is a
+    // `role="button"` and `rowKey` now answers Space the same way. So both
+    // layouts agree again — Space SELECTS — where before the repair could only
+    // make them agree by handing the key to the transport.
+    //
+    // AND THE NARROWING NEARLY REOPENED THE ORIGINAL P1, which is why the answer
+    // is "nothing" rather than "select". `primary` FIRES by default — every
+    // shipped pane passes `press="select"`, but the component's own default
+    // reaches a congregation — so the moment `shortcuts.js` stopped swallowing
+    // Space, a focused grid card would have been activated by the platform and
+    // put scripture on a wall from a browsing surface. Rule 11's blanket claim had
+    // been the shield, silently, and narrowing it removed the shield.
+    //
+    // So the guarantee moved onto the door that can reach a screen: `cardKey` and
+    // `rowKey` both swallow Space. Both layouts agree, `onFire` is unreachable
+    // from this key, and the transport step is gone — which was always the odd
+    // outcome here, since a Library row is a browsing surface (DECISIONS §81) and
+    // stepping a programme the operator is not looking at was the least expected
+    // of the three things Space could do.
+    expect(onFire, 'Space must never put scripture on a wall from a deck').not.toHaveBeenCalled();
+    expect(next, 'and must not step a transport the operator is not looking at').not.toHaveBeenCalled();
+    expect(onSelect, 'Space acts on neither layout — Enter is the key that acts').not.toHaveBeenCalled();
   });
 
   it('LIST layout — ENTER is the key that acts on the focused row', async () => {
@@ -587,16 +628,23 @@ describe('RG-95 · a list that failed to load never says the library is empty', 
     expect(el.textContent).not.toMatch(/Empty plan/);
   });
 
-  it('the RUN surface does the same, on all three of its lists', () => {
+  it('the RUN surface does the same, on both of its lists', () => {
     // Live is not mounted anywhere in this suite — it needs the whole store — so
     // this reads the source, the way `safescreen.test.js` and `r2livepath.test.js`
     // already do for it. What matters is that each empty sentence is now behind an
     // error branch keyed to the read that produces it.
+    //
+    // TWO LISTS, NOT THREE, and the change is where they are rather than what
+    // they do. The plan CHOOSER and the Output Status pane both left Live
+    // (docs/REBRAND.md §2): plans are chosen in the Planner, and a screen's state
+    // is one lamp in the chrome and a full row in Outputs. What is left on this
+    // surface is the SLIDE GRID, and it is the only thing that can now tell an
+    // operator why it has nothing to show — so RG-95's rule lands on it. Both
+    // sources it draws from are covered: the plan's cues, and a chapter's verses.
     const f = src('src/lib/views/Live.svelte');
     for (const [key, sentence] of [
-      ['planItems', "live.plan_no_cues"],
-      ['listPlans', 'live.no_plans'],
-      ['listOutputChannels', 'No screens yet'],
+      ['planItems', 'live.plan_no_cues'],
+      ['chapterVerses', 'live.nothing_staged'],
     ]) {
       expect(f, `the ${key} list has no error branch`).toMatch(
         new RegExp(`readErrors\\.${key}`),
@@ -749,25 +797,28 @@ describe('R3-06 · every surface goes through the ONE humaniser', () => {
 // `library/` share the same markup shape.
 // ─────────────────────────────────────────────────────────────────────────────
 describe('R3-07 · the run rail says a Take failed, out loud', () => {
-  it('.lo-err carries no live-region role', async () => {
+  it('.lo-err carries a live-region role', async () => {
+    // The failure is driven through GO LIVE now rather than through the Countdown
+    // menu — REBRAND §10 moved Countdown to the dock row, and Go Live is the one
+    // control left in the Library that can reach a screen, which makes it exactly
+    // the subject this case was written for.
     const LiveOutputRail = (await import('./views/library/LiveOutputRail.svelte')).default;
-    invoke.mockImplementation((cmd) =>
-      cmd === 'start_countdown' ? Promise.reject('no output channel') : Promise.resolve([]),
-    );
-    const el = mountInto(LiveOutputRail, { queue: [] });
+    invoke.mockResolvedValue([]);
+    const el = mountInto(LiveOutputRail, {
+      queue: [{ reference: 'John 3:16', text: 'For God so loved the world' }],
+      onFireQueued: () => Promise.reject('no output channel'),
+    });
     await settle();
 
-    [...el.querySelectorAll('.lo-tile')].find((b) => b.textContent.includes('Countdown'))?.click();
-    await tick();
-    el.querySelector('.lo-mi')?.click();
+    [...el.querySelectorAll('button')].find((b) => b.textContent.includes('Go Live'))?.click();
     await settle();
     await settle();
 
     const err = el.querySelector('.lo-err');
     expect(err).toBeTruthy();
-    // FIXED 2026-08-14 (R3-08). This was the worst of the seven: the run rail is
-    // the most dangerous surface in the app, and the line saying a Take or a
-    // Countdown FAILED was silent to a screen-reader operator.
+    // FIXED 2026-08-14 (R3-08). This was the worst of the seven: the Library's
+    // output rail is the most dangerous surface in the workspace, and the line
+    // saying a Take FAILED was silent to a screen-reader operator.
     expect(err.getAttribute('role')).toBe('alert');
   });
 });
@@ -1254,18 +1305,25 @@ describe('R3-12 · CLOSED — every view a screen reader lands on has a heading'
     });
   }
 
-  // `Themes.svelte` and `Templates.svelte` are ROUTERS — three lines that pick a
-  // child. They were on the original list, and putting a heading in them would
-  // have produced two headings for one screen, which is worse than none: a reader
-  // jumping by heading would land twice on the same view.
+  // `Templates.svelte` is a ROUTER — it picks a desk and then a child. It was on
+  // the original list, and putting a heading in it would have produced two
+  // headings for one screen, which is worse than none: a reader jumping by
+  // heading would land twice on the same view.
   //
-  // The requirement belongs to the children, and both children are asserted above.
+  // The requirement belongs to the children, and all four are asserted above.
   // Recorded rather than silently dropped from the list.
-  for (const f of ['src/lib/views/Themes.svelte', 'src/lib/views/Templates.svelte']) {
+  //
+  // `Themes.svelte` used to be the second entry here and no longer exists: Themes
+  // became a DESK inside the Templates workspace (docs/REBRAND.md §2, DECISIONS
+  // §79), so one router now picks between four children instead of two routers
+  // picking between two each. Its children are unchanged and still asserted above.
+  for (const f of ['src/lib/views/Templates.svelte']) {
     it(`${f.split('/').pop()} is a router and correctly has none`, () => {
       const t = src(f);
       expect(t).not.toMatch(/<h[1-6][\s>]/);
-      expect(t).toMatch(/mode === 'editor'/); // it really is just the switch
+      // It really is just the switch: a desk, then a mode within it.
+      expect(t).toMatch(/mode === 'editor'/);
+      expect(t).toMatch(/desk === 'themes'/);
     });
   }
 });
@@ -1342,5 +1400,36 @@ describe('R3-04 · a failed read is distinguishable from an empty one', () => {
     // The empty sentence survives — for the case it is actually true, a filter that
     // matches nothing.
     expect(t).toMatch(/No template matches this filter/);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// R3-13 · A LIST ROW IS A NAME AND A VALUE, NEVER A DASH STANDING IN FOR ONE
+//
+// Settings printed `—` for the LAN address, the installed version and the
+// recognition language whenever the value was empty — and an empty value has
+// three different causes an operator needs to tell apart: not fetched yet, the
+// fetch failed, and genuinely nothing there (no network, nothing configured).
+//
+// One glyph over three situations is rule 35's defect: a status that reads the
+// same when broken as when fine is not a status. It is the same shape as RG-83,
+// where "up to date" was printed over an update channel that had been returning
+// 404 since the day Relay was installed.
+//
+// `settingValue` makes the call site say which one it is. This stops the dash
+// coming back, in the one file where it kept appearing.
+describe('R3-13 · settings rows say which kind of nothing', () => {
+  it('no row falls back to an em dash', () => {
+    const text = src('src/lib/views/Settings.svelte');
+    const offenders = [...text.matchAll(/\|\|\s*'—'/g)].map((m) => m[0]);
+    expect(
+      offenders,
+      "use settingValue(value, { loading, missing }) — the call site knows what an empty " +
+        'answer MEANS there, and an em dash does not say it',
+    ).toEqual([]);
+  });
+
+  it('and the helper it uses is the shared one', () => {
+    expect(src('src/lib/views/Settings.svelte')).toMatch(/from '\.\.\/settingvalue\.js'/);
   });
 });

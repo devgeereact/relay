@@ -99,10 +99,9 @@ describe('R2-D · who takes the plan off air', () => {
       await cap.startCountdown(5);
       expect(onAir()).toBe(false);
     });
-    it('pushAnnouncement — the EMERGENCY announcement, over every screen', async () => {
-      await cap.pushAnnouncement('Fire alarm — leave by the side door');
-      expect(onAir()).toBe(false);
-    });
+    // `pushAnnouncement` was here — the emergency announcement over every screen.
+    // Removed with its control on 2026-09-14 (operator's instruction); the command
+    // and the wrapper were deleted rather than left unreachable.
     it('navVerse — the transport step the backend performs', async () => {
       invoke.mockResolvedValue({ kind: 'fired', reference: 'John 3:17' });
       await cap.navVerse('next');
@@ -184,7 +183,12 @@ describe('R2-E · the Library run column has no preview half at all', () => {
 
   it('and Go Live fires the queue, which is reachable', () => {
     expect(rail).toMatch(/const \{ item, rest \} = take\(queue\)/);
-    expect(rail).toMatch(/disabled=\{\$safeMode \|\| !queue\.length\}/);
+    // Safe mode disarms it and an empty queue leaves nothing to send. `|| taking`
+    // joined those two in 2026-09-14 — a take already in flight must not answer a
+    // second press (`golive.test.js`) — so this asserts the two REASONS rather than
+    // the whole expression, which would otherwise have to be edited by anyone who
+    // adds a third and would tempt them to delete it instead.
+    expect(rail).toMatch(/disabled=\{\$safeMode \|\| !queue\.length/);
   });
 });
 
@@ -314,17 +318,25 @@ describe('R2-G · the component-test apparatus is real', () => {
     expect(String(afterUpdate)).not.toBe('function afterUpdate() {}');
   });
 
-  it('…and it shows: mounting the run column really does reach the backend', async () => {
-    const LiveOutputRail = (await import('./views/library/LiveOutputRail.svelte')).default;
+  it('…and it shows: mounting a Library pane really does reach the backend', async () => {
+    // REPOINTED 2026-09-14. This mounted `LiveOutputRail` and asserted
+    // `list_output_channels`, because the Library's right column used to carry a
+    // programme monitor that polled the channel list. REBRAND §10 replaced that
+    // column with the item inspector (the monitor already had an owner in
+    // `Live.svelte`), so the old subject no longer makes that call — and the
+    // guard is about the RUNTIME, not about that one command.
+    //
+    // The claim is unchanged and so is its value: mount a real Library component
+    // and watch `onMount` actually reach the bridge. Under the SSR stubs Svelte 4
+    // hands out without `conditions: ['browser']`, this is zero calls, and the
+    // whole frontend suite passes by doing nothing.
+    const Inspector = (await import('./views/library/Inspector.svelte')).default;
     invoke.mockResolvedValue([]);
     const host = document.createElement('div');
     document.body.appendChild(host);
-    const app = new LiveOutputRail({ target: host, props: { queue: [] } });
+    const app = new Inspector({ target: host, props: { item: null } });
     await new Promise((r) => setTimeout(r, 20));
-    // Its onMount awaits `listOutputChannels()`. This used to be zero calls — so
-    // `channels` stayed `[]` in every test, and `monitorTemplate`, which decides
-    // WHICH screen the run column is showing you, was never exercised once.
-    expect(invoke.mock.calls.map((c) => c[0])).toContain('list_output_channels');
+    expect(invoke.mock.calls.map((c) => c[0])).toContain('list_plans');
     app.$destroy();
     host.remove();
   });
@@ -515,5 +527,37 @@ describe('R2-J · the shell renders outside the boot guards', () => {
     const finish = boot.slice(boot.indexOf('function finish()'), boot.indexOf('function resume()'));
     expect(finish).toContain('setSession({ liveOnAir: false })');
     expect(finish).not.toContain('liveCue');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// R2-H · A CALLER MAY NOT SUPPRESS A LABEL THAT THE BACKEND ALREADY SUPPRESSES
+//
+// `fire_content` is the one place that decides a song's label does not reach the
+// glass (CLAUDE.md rule 36, and `a_lyric_slide_projects_the_lyric_and_not_the_
+// song_title` holds it). Live implemented the same rule a second time by passing
+// an EMPTY STRING as the label for a song cue — so the wall was right, and the
+// service record had nothing to say about which song had been on screen. The
+// Library's own fire passed the label all along, which is the tell: two surfaces
+// disagreeing about a rule only one of them should own.
+//
+// This is a source assertion on purpose. What it holds is not a behaviour of one
+// component but a boundary — "the caller says what it fired; the backend decides
+// what is shown" — and the way that boundary breaks is a caller helpfully
+// blanking an argument.
+describe('R2-H · the label goes to the record, not to the glass', () => {
+  it('no view fires content with a deliberately empty label', () => {
+    const offenders = [];
+    for (const f of ['./views/Live.svelte', './views/library/LyricsPane.svelte', './views/library/Announcements.svelte']) {
+      const src = read(f);
+      // `fireContent('' , …)` or `fireContent("", …)` — a label blanked at the
+      // call site is the rule being implemented twice.
+      if (/fireContent\(\s*['"]{2}\s*,/.test(src)) offenders.push(f);
+    }
+    expect(
+      offenders,
+      'these suppress the label themselves; `fire_content` already does, and doing it here ' +
+        'costs the service record the name of what was fired',
+    ).toEqual([]);
   });
 });

@@ -24,6 +24,34 @@
   export let query = '';
   export let queue = [];
   export let onQueueChange = () => {};
+  /** Hand the selected notice up for the inspector (REBRAND §10). */
+  export let onSelect = () => {};
+
+  /**
+   * ONE PRESS SELECTS — see the note on `VerseDeck`'s `press` prop.
+   *
+   * AN ANNOUNCEMENT'S HEADING IS CONTENT (DECISIONS §73): both the title and the
+   * body reach the room, which is the opposite of a song's section label and the
+   * reason this pane's form says which field goes where. So the preview carries
+   * the reference, exactly as scripture does.
+   */
+  let selectedRef = '';
+  function selectNotice(a) {
+    selectedRef = a.reference;
+    onSelect({
+      kind: 'notice',
+      title: a.label,
+      titleLabel: 'Heading',
+      words: a.text ?? '',
+      slide: { reference: a.label, text: a.text ?? '' },
+      reference: a.reference,
+      plan: {
+        cueType: 'announce',
+        label: a.label,
+        payload: { announce_id: a.id, title: a.label, body: a.text },
+      },
+    });
+  }
 
   let items = [];
   let msg = '';
@@ -39,7 +67,6 @@
   let edit = null;
 
   let template = null;
-  let checked = new Set();
   let layout = 'grid';
 
   onMount(async () => {
@@ -59,13 +86,8 @@
     if (queue.some((q) => q.reference === item.reference)) {
       onQueueChange(queue.filter((q) => q.reference !== item.reference));
     } else {
-      onQueueChange([...queue, { reference: item.reference, text: item.text }]);
+      onQueueChange([...queue, { reference: item.reference, text: item.text, kind: 'announce' }]);
     }
-  }
-  function toggleCheck(item) {
-    const next = new Set(checked);
-    next.has(item.reference) ? next.delete(item.reference) : next.add(item.reference);
-    checked = next;
   }
   /** Duplicating a notice is a REAL new row, not a session overlay — an
       announcement is the operator's own text, so there is nothing to protect. */
@@ -161,6 +183,10 @@
       reference: a.title || 'Untitled',
       label: a.title || 'Untitled',
       text: a.body,
+      // A notice is a title and a body, and the title is all the card footer had.
+      // `subLine` takes the first line, so a three-paragraph notice does not become
+      // one run-on sentence.
+      sub: a.body,
       slideNo: i + 1,
     }));
 
@@ -218,14 +244,20 @@
             <button class="r-btn ghost sm" on:click={() => (edit = null)}>Cancel</button>
             <button class="r-btn primary sm" on:click={save}>Save</button>
           </div>
+          <!-- BOTH OF THESE REACH THE ROOM, and the fields now say so. A song's
+               section label is suppressed on the way to the glass and an
+               announcement's heading is not — two content kinds with opposite
+               rules, and nothing here told an operator which one they were
+               typing into. -->
           <label class="an-field">
-            <span class="r-lbl">Title</span>
+            <span class="r-lbl">Heading <em class="an-where">on screen</em></span>
             <input class="r-input" bind:value={edit.title} placeholder="e.g. Midweek service — Wednesday 7pm" />
           </label>
           <label class="an-field">
-            <span class="r-lbl">Body</span>
-            <textarea class="r-input an-text" bind:value={edit.body} placeholder="The notice text shown on screen…"></textarea>
+            <span class="r-lbl">Notice <em class="an-where">on screen</em></span>
+            <textarea class="r-input an-text" bind:value={edit.body} placeholder="The words the congregation reads…"></textarea>
           </label>
+          <p class="an-note">Both lines go to the screens — the heading sits above the notice.</p>
         </div>
       {/if}
 
@@ -235,13 +267,15 @@
           {template}
           liveRef={liveRef}
           rehearsing={$rehearsing}
-          {checked}
           {queuedRefs}
           busyRef={firing}
           {layout}
           showStar={false}
-          can={{ queue: true, favourite: false, edit: true, duplicate: true, add: false, move: false }}
-          onCheck={toggleCheck}
+          press="select"
+          {selectedRef}
+          onSelect={selectNotice}
+          onOpen={(d) => open(items.find((x) => x.id === d.id))}
+          can={{ queue: true, favourite: false, edit: true, duplicate: true, add: false, move: false, select: false }}
           onFire={send}
           onQueue={toggleQueue}
           onEdit={(d) => open(items.find((x) => x.id === d.id))}
@@ -274,7 +308,7 @@
   .an-head { display: flex; align-items: center; gap: 12px; padding: 11px 14px;
     border-bottom: 1px solid var(--v-line); }
   .an-where { flex: 1; min-width: 0; }
-  .an-where b { display: block; font-size: 15px; font-weight: 600; color: var(--v-txt); }
+  .an-where b { display: block; font-size: var(--v-fs-ttl); font-weight: 600; color: var(--v-txt); }
   .an-where span { font-size: var(--v-fs-cap); color: var(--v-faint); }
   .an-body { flex: 1; min-height: 0; overflow-y: auto; padding: 12px;
     display: flex; flex-direction: column; gap: 12px; }
@@ -283,6 +317,8 @@
   .an-ehead { display: flex; align-items: center; gap: 8px; }
   .an-spring { flex: 1; }
   .an-field { display: flex; flex-direction: column; gap: 5px; }
+  .an-where { font-style: normal; color: var(--v-faint); letter-spacing: 0; text-transform: none; }
+  .an-note { margin: 0; font-size: var(--v-fs-cap); color: var(--v-faint); }
   .an-text { min-height: 110px; padding: 10px 13px; line-height: 1.5; resize: vertical;
     font-family: var(--f-body); }
   .an-msg { margin: 0; font-size: var(--v-fs-b2); color: var(--v-emerald); }

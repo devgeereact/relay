@@ -39,27 +39,113 @@
   export let onDelete = null;
   export let onMove = null;
   /** Which kebab actions this content type can honestly offer. */
-  export let can = { queue: true, favourite: true, edit: true, duplicate: true, add: true, move: false };
+  /**
+   * `select` — does this pane have a BULK ACTION to select for?
+   *
+   * The tick box says "Select for a bulk action", and in three of the six panes
+   * that render this deck there was no bulk action: ticking a song's chorus tinted
+   * the card and led nowhere. A control that does nothing teaches an operator that
+   * the desk is unreliable, and this one taught it on the surface where they are
+   * choosing what a congregation reads next.
+   *
+   * Scripture and Browse DO have one — "Queue N selected", which stages verses on
+   * the rail and fires none of them — so it defaults to `true` and the panes with
+   * nothing behind it turn it off. Songs deliberately gain no such action:
+   * REBRAND §10, "no add all to Live — a song joins a service through the plan".
+   */
+  export let can = { queue: true, favourite: true, edit: true, duplicate: true, add: true, move: false, select: true };
   /** Favourite stars only make sense where something can be favourited. */
   export let showStar = true;
+
+  /**
+   * WHAT ONE PRESS ON A CARD MEANS — and it is not the same answer everywhere.
+   *
+   * `'fire'` (the default, and what every caller did before this prop existed):
+   * the press puts the slide on the screens. That is right on a RUN surface,
+   * where the operator has already decided and the next action after finding a
+   * thing is always the same one.
+   *
+   * `'select'`: the press selects the card into the inspector and reaches no
+   * output at all; a DOUBLE press opens it (`onOpen`). That is right on a BUILD
+   * surface. `docs/REBRAND.md` §2 and §10 draw the line exactly there — single
+   * click goes to air on **Live**, and cues on the **Library** — and Relay
+   * already draws the same line at the top of the Planner, which says out loud
+   * that nothing on it can reach an output. The Library sits on the Planner's
+   * side of that line: browsing a songbook is not a decision about what a
+   * congregation reads next, and it should not cost the same press as one.
+   *
+   * The take is still ONE action from a selected item — the inspector's
+   * `Cue in Live`, and the kebab's `Take to screen`, both unchanged.
+   *
+   * No press timer. `slidegrid.js::pressArbiter` exists because on Live a single
+   * press is a take and a double must never fire one on its way past; here the
+   * single press is a selection, which costs nothing and is in fact what an
+   * operator wants before they open a card, so the two may both run.
+   */
+  export let press = 'fire';
+  /** The double press, in `select` mode. Open this item for editing. */
+  export let onOpen = () => {};
+  /** The single press, in `select` mode. */
+  export let onSelect = () => {};
+
+  $: selects = press === 'select';
+  /** Is a bulk selection under way? If so every card shows its box, not just
+      the one under the pointer — a mode should look like one. */
+  $: anyChecked = checked?.size > 0;
+  /** What the primary press on a card does, said the same way in every label. */
+  const verb = (v, sel) =>
+    sel ? `Select ${v.label ?? v.reference}` : `Put ${v.reference} on the screens`;
+
+  /**
+   * IS THIS CARD ALREADY ON ITS WAY TO A SCREEN?
+   *
+   * Every pane that renders this deck sets `busyRef` before it awaits the fire and
+   * clears it afterwards — Announcements, Scripture, Browse, LyricsPane and
+   * MediaLibrary, five surfaces, one prop. The grid card already WORE that fact as
+   * a "Sending…" badge, and none of the three press paths (the grid button, the
+   * list row's `role="button"` div, the kebab's "Take to screen") consulted it. A
+   * deck that knows a fire is in flight and still answers the second press sends
+   * the same verse twice: two broadcasts, and two `manual_fire` rows for a router
+   * that calibrates itself from that column (rule 14).
+   *
+   * The guard goes HERE rather than on the three call sites, for the reason rule 36
+   * gives: a check added at three doors is a check that will be missing from the
+   * fourth. `disabled` on the two real buttons is the visible half; this is the half
+   * that also covers the list row, which is a div and cannot be disabled at all.
+   */
+  $: sending = (v) => !!busyRef && busyRef === v.reference;
+  function fire(v) {
+    if (sending(v)) return;
+    onFire(v);
+  }
+  function primary(v) {
+    if (selects) onSelect(v);
+    else fire(v);
+  }
 
   let menuFor = '';
 
   /**
-   * ENTER fires a list row. SPACE DOES NOT — Space is the transport, app-wide.
+   * ENTER acts on a list row. SPACE DOES NOTHING, on either layout.
    *
-   * CLAUDE.md rule 11: *"`Space` means advance, app-wide, and nothing else."* The
-   * GRID card is a native `<button>`, and `shortcuts.js` calls `preventDefault` on
-   * Space globally, which suppresses the button's own activation — so in the grid,
-   * Space advances the service and nothing else. This row is a `role="button"` div
-   * with its own handler, which ran FIRST and answered Space by putting scripture
-   * in front of a congregation. Same deck, same content, two layouts, one key, two
-   * meanings — and the extra meaning was the dangerous one. Six views render this.
+   * The original defect: this row is a `role="button"` div whose own handler ran
+   * FIRST and answered Space by putting scripture in front of a congregation,
+   * while the GRID card — a native `<button>` — was silently protected because
+   * `shortcuts.js` called `preventDefault` on Space globally. Same deck, same
+   * content, two layouts, one key, two meanings, and the extra meaning was the
+   * dangerous one. Six views render this.
+   *
+   * UPDATED 2026-09-15. Rule 11 gained one exception — a focused button keeps its
+   * own activation, so Space presses `Rehearse` or `Clear screens` at the dock
+   * rather than advancing the programme — and that removed the accidental shield
+   * the grid card had been relying on. `primary` FIRES by default, so the deck had
+   * to stop depending on a global and hold the line itself: `cardKey` and `rowKey`
+   * both swallow Space now. Both layouts agree, and neither can reach a screen
+   * from this key.
    *
    * Note what the repair is NOT: adding `stopPropagation` so the row fires and the
    * transport does not. That closes the double-action and leaves the two layouts
-   * still disagreeing, which is the actual finding. Space now falls through here
-   * exactly as it does on the grid card.
+   * still disagreeing, which is the actual finding.
    *
    * The ARIA authoring practices say a `role="button"` should answer both keys.
    * This app deliberately overrides Space everywhere, native buttons included, and
@@ -67,13 +153,81 @@
    * live surface. Enter remains the activation key, which is what a keyboard
    * operator reaches for to act on the row they are focused on.
    */
+  /**
+   * SPACE DOES NOTHING ON A DECK CARD — see the long note in `rowKey`.
+   *
+   * This is the GRID half of the same guarantee. The card is a native `<button>`,
+   * so the platform activates it on Space; until rule 11 was narrowed
+   * (2026-09-15) `shortcuts.js` suppressed that with a blanket `preventDefault`,
+   * and narrowing the rule removed the shield. `primary` fires by default, so
+   * without this a focused card would put scripture on a wall from a browsing
+   * surface. Enter still activates, on both layouts.
+   */
+  function cardKey(e) {
+    if (e.key !== ' ') return;
+    e.preventDefault();
+    e.stopPropagation();
+  }
+
   function rowKey(v) {
     return (e) => {
+      // SPACE DOES NOTHING ON A DECK CARD, AND THAT IS LOAD-BEARING.
+      //
+      // Until 2026-09-15, rule 11's blanket claim on Space was what protected this
+      // deck: `shortcuts.js` called `preventDefault` on every Space, which
+      // suppressed the grid card's native activation. Narrowing the rule so a
+      // focused button keeps its own activation — which an operator needs at the
+      // dock, where Space must press `Rehearse` or `Clear screens` rather than
+      // advance the programme — removes that accidental shield.
+      //
+      // And `primary` is not a safe default: with no `press` prop it FIRES. Every
+      // shipped pane passes `press="select"`, but the component's own default
+      // reaches a congregation, so a deck that answered Space would put scripture
+      // on the wall from a browsing surface — R3-03's original P1, returning
+      // through the door that was holding it shut.
+      //
+      // So the guarantee moves onto the door that can reach a screen: BOTH layouts
+      // swallow Space and act on neither. Enter is the key that acts, on both, and
+      // that is the whole of R3-03's invariant — one deck, one meaning per key.
+      if (e.key === ' ') {
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
       if (e.key !== 'Enter') return;
       e.preventDefault();
       e.stopPropagation();
-      onFire(v);
+      // Enter does what the PRESS does on this surface, not what it does on the
+      // other one. A keyboard operator who has learned that clicking a Library
+      // card selects it must not find that Enter on the same card fires it.
+      primary(v);
     };
+  }
+
+  /**
+   * THE CARD'S SECOND LINE (REBRAND §10, the prototype's `.cell .sub2`).
+   *
+   * The prototype stacks a title and a quieter line beneath it, and without the
+   * second one a grid of scripture is a wall of references — twelve cards that
+   * differ only in a verse number. The thumbnail above carries the words, but it
+   * carries them at whatever size, colour and crop the operator's own template
+   * chose, and a picture or a document carries no words at all. The second line
+   * is the one place on every card that reads the same way, which is what makes a
+   * column of cards scannable rather than a set of pictures to study one by one.
+   *
+   * It is the item's FIRST line only. An announcement body is a paragraph with
+   * newlines in it, and a CSS ellipsis on a `white-space: nowrap` box renders a
+   * newline as a space — so a three-line notice became one run-on sentence that
+   * read as a different notice. Take line one and say so with the ellipsis.
+   *
+   * The card supplies nothing of its own here: a pane that has nothing to add
+   * beyond the title passes no `sub`, and no line is drawn. An empty second line
+   * is a row of blank space under every card claiming there is more to know.
+   */
+  function subLine(s) {
+    if (typeof s !== 'string') return '';
+    const first = s.split('\n').find((l) => l.trim()) ?? '';
+    return first.replace(/\s+/g, ' ').trim();
   }
 
   /** Escape closes the kebab menu and goes NO FURTHER — never to the panic key. */
@@ -97,10 +251,11 @@
         role="button"
         tabindex="0"
         data-verse={v.verse}
-        aria-label={$safeMode
+        aria-label={$safeMode && !selects
           ? `Safe mode — ${v.reference} cannot reach a screen`
-          : `Put ${v.reference} on the screens`}
-        on:click={() => onFire(v)}
+          : verb(v, selects)}
+        on:click={() => primary(v)}
+        on:dblclick={() => selects && onOpen(v)}
         on:keydown={rowKey(v)}>
         <span class="vd-n r-mono">{v.slideNo}</span>
         {#if v.media}
@@ -115,7 +270,15 @@
         {/if}
         <span class="vd-rbody">
           <b>{v.label ?? v.reference}</b>
-          {#if v.text}<span class="vd-rtext">{v.text}</span>{/if}
+          <!-- The row already carried the item's words, so it needs no second
+               line of its own — EXCEPT where there are no words. A media row has
+               `text: ''` (a picture is its own content), so in list layout it was
+               a filename and a blank half-row. `sub` fills exactly that case and
+               changes nothing anywhere else: for scripture and lyrics the two are
+               the same string, and for an announcement `text` is the fuller of
+               the two and still wins. -->
+          {#if v.text}<span class="vd-rtext">{v.text}</span>
+          {:else if subLine(v.sub)}<span class="vd-rtext">{subLine(v.sub)}</span>{/if}
         </span>
         <span class="vd-racts">
           {#if air}
@@ -132,10 +295,12 @@
             class="vd-ic r-focus"
             aria-label={$safeMode
               ? `Safe mode — ${v.reference} cannot reach a screen`
-              : `Put ${v.reference} on the screens`}
+              : sending(v)
+                ? `Sending ${v.reference} to the screens`
+                : `Put ${v.reference} on the screens`}
             title={$safeMode ? 'Safe mode is on — outputs are disarmed' : null}
-            disabled={$safeMode}
-            on:click|stopPropagation={() => onFire(v)}>→</button>
+            disabled={$safeMode || sending(v)}
+            on:click|stopPropagation={() => fire(v)}>→</button>
         </span>
       </div>
     {/each}
@@ -144,22 +309,43 @@
   <div class="vd" class:big={layout === 'large'}>
     {#each items as v (v.reference)}
       {@const air = liveRef === v.reference}
+      {@const sub = subLine(v.sub)}
       <article
         class="vd-card"
         class:air
         class:reh={air && rehearsing}
         class:on={selectedRef === v.reference}
         class:checked={checked.has(v.reference)}>
-        <!-- CLICKING A CARD FIRES IT. The card is not a thumbnail to enlarge —
-             it is already the slide at a readable size, and the operator's next
-             action after finding it is always the same one. -->
+        <!-- WHAT CLICKING A CARD DOES DEPENDS ON WHICH SURFACE IT IS ON, and
+             both halves of that are deliberate.
+
+             `press="fire"` — the default, and what this deck did everywhere
+             until the Library was rebuilt. The card is not a thumbnail to
+             enlarge: it is already the slide at a readable size, and on a run
+             surface the operator's next action after finding it is always the
+             same one.
+
+             `press="select"` — the LIBRARY. One press selects the card into the
+             inspector and reaches no output; a double press opens it. The
+             Library is a build surface (REBRAND §2/§10: single click goes to
+             air on Live and cues on Library), and a congregation-facing act
+             should cost a deliberate press rather than the same press as
+             browsing. The take is still one action away — the inspector's
+             `Cue in Live`, and this card's own kebab.
+
+             Neither is "the right one". They are two surfaces with two jobs,
+             and the prop is what stops the next person having to guess which. -->
         <button
           class="vd-shot r-focus"
-          disabled={$safeMode}
-          aria-label={$safeMode
+          disabled={($safeMode && !selects) || (!selects && sending(v))}
+          aria-label={$safeMode && !selects
             ? `Safe mode — ${v.reference} cannot reach a screen`
-            : `Put ${v.reference} on the screens`}
-          on:click={() => onFire(v)}>
+            : !selects && sending(v)
+              ? `Sending ${v.reference} to the screens`
+              : verb(v, selects)}
+          on:click={() => primary(v)}
+          on:keydown={cardKey}
+          on:dblclick={() => selects && onOpen(v)}>
           {#if v.media}
             <!-- A picture or a video is its own thumbnail. Drawing it through a
                  text template would show an empty frame with a filename under it. -->
@@ -193,7 +379,10 @@
               {v.text}
             </span>
           {/if}
-          <span class="vd-go">Go live →</span>
+          <!-- The hover legend says what the press WILL do. It read "Go live →"
+               over a press that selects, which is the one sentence this deck may
+               not get wrong. -->
+          <span class="vd-go">{selects ? 'Open ⤢' : 'Go live →'}</span>
         </button>
 
         <!-- The label wrapping this box is EMPTY (it only carries the drawn tick),
@@ -201,14 +390,31 @@
              "checkbox, unchecked" against every row in the deck, with nothing to say
              which row. The `title` on the label is not an accessible name for the
              input inside it. -->
-        <label class="vd-check" title="Select for a bulk action">
-          <input
-            type="checkbox"
-            aria-label={`Select ${v.label ?? v.reference} for a bulk action`}
-            checked={checked.has(v.reference)}
-            on:change={() => onCheck(v)} />
-          <span></span>
-        </label>
+        <!-- THE BULK TICK BOX IS NOT ALWAYS DRAWN, AND THAT IS THE POINT.
+             It drives a real action — "Queue N selected", in the head of both
+             scripture panes — so it is not one of the dead selection boxes
+             DECISIONS §76 removed. But a permanent grey square in the corner of
+             every card is indistinguishable from one of those at a glance, and
+             since a single press on a Library card now SELECTS into the
+             inspector, a second differently-shaped thing called "select" on the
+             same card is two meanings for one word.
+
+             So it is quiet until it is wanted: revealed on hover, on
+             `:focus-within` (a keyboard operator must be able to find it), and
+             on every card at once the moment one is ticked — because a bulk
+             selection is a mode, and a mode should look like one. It stays in
+             the DOM throughout rather than being conditionally rendered, so it
+             keeps its place in the tab order and its accessible name. -->
+        {#if can.select !== false}
+          <label class="vd-check" class:armed={anyChecked} title="Select for a bulk action">
+            <input
+              type="checkbox"
+              aria-label={`Select ${v.label ?? v.reference} for a bulk action`}
+              checked={checked.has(v.reference)}
+              on:change={() => onCheck(v)} />
+            <span></span>
+          </label>
+        {/if}
 
         {#if showStar}
         <button
@@ -242,7 +448,19 @@
 
         <footer class="vd-foot">
           <span class="vd-n r-mono">{v.slideNo}</span>
-          <span class="vd-ref">{v.reference}</span>
+          <!-- THE SECTION KEY (REBRAND §10). Printed on the slide it fires, and
+               only on the slide it fires: a section that reflowed into three
+               slides shows the key once, on the first, because that is what the
+               key actually does. Grey — it is a fact about the keyboard, not a
+               claim about the wall, and every other colour on this desk already
+               means something (DECISIONS §22). -->
+          {#if v.hotkey}
+            <kbd class="vd-key r-mono" title="Press {v.hotkey} to put this section on the screens">{v.hotkey}</kbd>
+          {/if}
+          <span class="vd-where">
+            <span class="vd-ref">{v.reference}</span>
+            {#if sub}<span class="vd-sub">{sub}</span>{/if}
+          </span>
           <div class="vd-menuwrap">
             <button
               class="vd-kebab r-focus"
@@ -258,10 +476,10 @@
               <div class="vd-menu" role="menu" tabindex="-1" on:keydown={menuEsc}>
                 <button
                   class="vd-mi air"
-                  disabled={$safeMode}
+                  disabled={$safeMode || sending(v)}
                   title={$safeMode ? 'Safe mode is on — outputs are disarmed' : null}
-                  on:click={() => { menuFor = ''; onFire(v); }}>
-                  {$safeMode ? 'Take to screen — safe mode is on' : 'Take to screen'}
+                  on:click={() => { menuFor = ''; fire(v); }}>
+                  {$safeMode ? 'Take to screen — safe mode is on' : sending(v) ? 'Sending…' : 'Take to screen'}
                 </button>
                 {#if can.queue}
                   <button class="vd-mi" on:click={() => { menuFor = ''; onQueue(v); }}>
@@ -350,6 +568,13 @@
     box-shadow: 0 0 0 1px var(--v-amethyst);
   }
 
+  /* A CARD THAT IS A BUTTON ELEMENT, not a button — B2. It is the slide
+     itself at a readable size; it is a native button only so Enter, focus and
+     the disabled state come from the platform rather than from a `role="button"`
+     div (see the JSDoc on the row handler for what that cost once). It must
+     never wear `.r-btn`: a 26px fill would paint chrome over the one thing on
+     this card the operator is actually reading. The black ground is the WALL,
+     not a surface token — a slide preview shows what a projector would show. */
   .vd-shot {
     position: relative;
     display: block;
@@ -372,7 +597,7 @@
     justify-content: center;
     text-align: center;
     font-family: var(--f-serif);
-    font-size: 12px;
+    font-size:var(--v-fs-b1);
     line-height: 1.5;
     color: var(--v-dim);
   }
@@ -403,7 +628,7 @@
     background: var(--v-surf2);
   }
   .vd-doc b {
-    font-size: 10px;
+    font-size: var(--v-fs-b3);
     letter-spacing: 0.12em;
   }
   .vd-mi.danger {
@@ -414,7 +639,7 @@
     color: var(--v-rose);
   }
   .vd-plain b {
-    font-size: 15px;
+    font-size: var(--v-fs-ttl);
     color: var(--v-amber2);
   }
   /* The card fires, so it says so before it is clicked. */
@@ -423,7 +648,7 @@
     right: 8px;
     bottom: 8px;
     font-family: var(--f-mono);
-    font-size: 9px;
+    font-size: var(--v-fs-fig);
     font-weight: 700;
     letter-spacing: 0.1em;
     text-transform: uppercase;
@@ -446,6 +671,23 @@
     width: 20px;
     height: 20px;
     cursor: pointer;
+    /* Quiet until wanted. `opacity`, never `display`, so the input keeps its
+       place in the tab order and its accessible name the whole time. */
+    opacity: 0;
+    transition: opacity 0.14s;
+  }
+  .vd-card:hover .vd-check,
+  .vd-check:focus-within,
+  .vd-check.armed {
+    opacity: 1;
+  }
+  /* A ticked card shows its tick whatever the pointer is doing — an invisible
+     checked box is a selection an operator cannot count. */
+  .vd-check:has(input:checked) {
+    opacity: 1;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .vd-check { transition: none; }
   }
   .vd-check input {
     position: absolute;
@@ -483,6 +725,9 @@
     outline-offset: 2px;
   }
 
+  /* AN ICON-ONLY TOGGLE ON A CARD, not a button — B2. It floats over the slide
+     preview at its top right and its state is the star being filled or hollow.
+     A fill and an edge would be a chrome box sitting on the artwork. */
   .vd-star {
     position: absolute;
     top: 8px;
@@ -523,14 +768,51 @@
     background: var(--v-surf);
   }
   .vd-n {
-    font-size: 11px;
+    font-size:var(--v-fs-lbl);
     color: var(--v-faint);
   }
-  .vd-ref {
+  /* The key cap. Grey on --v-surf2, so --v-dim rather than --v-faint —
+     `tokencontrast.test.js` fails the build for the fainter one. */
+  .vd-key {
+    min-width: 17px;
+    height: 17px;
+    padding: 0 4px;
+    display: inline-grid;
+    place-items: center;
+    border: 1px solid var(--v-line2);
+    border-radius: var(--v-r-sm);
+    background: var(--v-surf2);
+    color: var(--v-dim);
+    font-size: var(--v-fs-b3);
+    text-transform: uppercase;
+    flex: 0 0 auto;
+  }
+  /* The title and the line under it are ONE column, so the second line ellipses
+     against the same edge the reference does rather than against the kebab. */
+  .vd-where {
     flex: 1;
     min-width: 0;
-    font-size: 12.5px;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+  }
+
+  .vd-ref {
+    min-width: 0;
+    font-size:var(--v-fs-h3);
     color: var(--v-dim);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* Quieter than the reference and smaller, per the prototype: it is context for
+     the title, and a second line at the title's weight is two titles. */
+  .vd-sub {
+    min-width: 0;
+    font-size: var(--v-fs-b3);
+    line-height: 1.3;
+    color: var(--v-faint);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -539,6 +821,9 @@
     position: relative;
     z-index: 5;
   }
+  /* AN ICON-ONLY KEBAB, not a button — B2. 22px in the card's footer beside the
+     reference. It opens the row menu and has no label, so there is nothing for
+     the shared control's padding and type to carry. */
   .vd-kebab {
     width: 22px;
     height: 22px;
@@ -554,6 +839,10 @@
     background: var(--v-surf3);
     color: var(--v-txt);
   }
+  /* AN INVISIBLE CLICK-CATCHER, not a button — B2. A transparent full-viewport
+     button element behind the open menu so a press anywhere closes it, keyboard
+     included. It is deliberately unpaintable: give it any shape at all and it
+     becomes a sheet of colour over the whole workspace. */
   .vd-scrim {
     position: fixed;
     inset: 0;
@@ -582,6 +871,10 @@
     flex-direction: column;
     gap: 2px;
   }
+  /* A MENU ROW, not a button — B2. Nine of them inside the card's `role="menu"`
+     popup: full-bleed, left-aligned, no edge, because the menu is the surface.
+     `.vd-mi.air` is the one that reaches a screen and `.vd-mi.danger` deletes;
+     both are states of the row, not button variants. */
   .vd-mi {
     text-align: left;
     padding: 8px 10px;
@@ -590,7 +883,7 @@
     background: transparent;
     color: var(--v-txt);
     font-family: var(--f-body);
-    font-size: 12.5px;
+    font-size:var(--v-fs-h3);
     cursor: pointer;
     white-space: nowrap;
   }
@@ -656,7 +949,7 @@
   }
   .vd-rbody b {
     display: block;
-    font-size: 13px;
+    font-size: var(--v-fs-pr);
     font-weight: 600;
     color: var(--v-txt);
     overflow: hidden;
@@ -666,7 +959,7 @@
   .vd-rtext {
     display: -webkit-box;
     margin-top: 2px;
-    font-size: 12.5px;
+    font-size:var(--v-fs-h3);
     line-height: 1.45;
     color: var(--v-dim);
     overflow: hidden;
@@ -693,6 +986,11 @@
     align-items: center;
     gap: 4px;
   }
+  /* A ROW AFFORDANCE, not a button — B2. Favourite · queue · take, at the right
+     end of a LIST-layout row. Three shared buttons inside a list row would be a
+     toolbar per row; these are 24px glyphs that let the row stay a row. Their
+     accessible names are the long ones the markup composes — that is where the
+     promise lives, and it is the half that must never be shortened. */
   .vd-ic {
     width: 24px;
     height: 24px;
@@ -702,7 +1000,7 @@
     border-radius: var(--v-r-sm);
     background: transparent;
     color: var(--v-faint);
-    font-size: 13px;
+    font-size: var(--v-fs-pr);
     cursor: pointer;
   }
   .vd-ic:hover:not(:disabled) {

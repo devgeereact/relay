@@ -20,7 +20,8 @@
 //   GROUP 1 — THROWS. Anything that changes what is on the screens, what the AI is
 //   allowed to do, or whether the microphone is live. `manualFire`, `confirmDetection`,
 //   `setDetection`, `setRehearsal`, `navVerse`, `startCapture`, `stopCapture`,
-//   `fireContent`, `startCountdown`. The caller MUST handle it and tell the operator.
+//   `fireContent`, `startCountdown`, `adjustCountdown`. The caller MUST handle it and
+//   tell the operator.
 //   A silent failure here is a lie told to someone standing in front of a congregation.
 //
 //   GROUP 2 — SWALLOWS, and returns a safe default. Reads: `listPlans`, `listSongs`,
@@ -40,9 +41,17 @@
 
 import { writable, derived, get } from 'svelte/store';
 import { parseTemplateOverride } from '../templates.js';
+import { migrateTemplate } from '../templatemodel.js';
 import { tNow } from '../i18n.js';
 import { humanError } from '../errors.js';
 import { markTranscript } from '../latency.js';
+// The ONE reader of how long a countdown has left, and of whether it is being held
+// (docs/REBRAND.md §7). The console reads it through the same function the wall and
+// the stage page do, so a held countdown cannot go on ticking on one of the three.
+import { countdownRemainingMs, countdownIsPaused } from '../countdown.js';
+// X1 · the transition override's store lives beside its register — see the block
+// further down for why it is not declared in this file.
+import { liveTransition } from '../transitions.js';
 
 /**
  * The audio meter — RMS level + voice-activity, arriving 10–50 times a second.
@@ -60,14 +69,19 @@ export const capture = writable({
   capturing: false,
   devices: [], // [{ name, is_default }]
   inputDevice: '', // operator-selected input device name ('' = default). Shared so Console + Settings agree.
+  // The remembered microphone that is NOT attached today, or null. RG-121: Relay
+  // falls back to the system default, and this is how it says so rather than
+  // moving a church onto a laptop microphone in silence.
+  inputDeviceMissing: null,
   stt: { loaded: false, model: null, language: null }, // local STT model status (language null = auto)
   detectedLang: null, // language of the latest transcript window (code-switching)
   // Auto-detect is not settling on a language — [codes] once per session, else null.
   // Whisper re-elects a language every window from ~99 candidates, and on accented
   // speech it wanders (one real service: en·yo·pt·sw·sv·ms). The label IS the decode,
   // so a wandering label degrades the transcript — and that looks exactly like the AI
-  // being bad. The operator has the control that fixes it (Settings → Recognition
-  // Language) and no reason to suspect they should touch it. See stt.rs.
+  // being bad. The operator has the control that fixes it (Settings → Scripture
+  // & Languages → Recognition language) and no reason to suspect they should
+  // touch it. See stt.rs.
   langUnstable: null,
   detectionOn: true, // is automatic detection armed?
   audioError: null, // last audio device error (surfaced, not fatal)
@@ -162,6 +176,50 @@ export function applyTranscript(t, { text, is_final }, at) {
 // straight to the screens (see `live`). Keeps the console focused on what needs
 // a decision, not a history of recents.
 export const detections = writable([]);
+
+/**
+ * CLAIMS THAT HAVE BEEN DECIDED — the receipt, not a second claim list.
+ *
+ * `detections` above holds only what is still awaiting an operator, which is
+ * right and must stay that way. But it leaves one hole, and it is the one the
+ * whole product turns on: **an auto-fire never enters it at all.** A `Direct`
+ * hit above the bar goes straight to the screens and the pending suggestion is
+ * REMOVED, so the only thing an operator sees is a verse appearing on the
+ * programme with nothing anywhere saying the AI put it there or what kind of
+ * claim it was. Rule 18 says the operator must see which kind of claim the AI is
+ * making; on the one path where the AI acts alone, they could not.
+ *
+ * So this is a bounded, newest-first log of what HAPPENED to a claim, and every
+ * entry names who acted:
+ *
+ *   'auto'      the AI fired it unprompted. Only ever `status === 'auto'` from
+ *               the backend — a manual fire emits the same event with
+ *               `status: 'manual'` and must never be written up as the AI's.
+ *   'accepted'  the operator pressed Accept AND the fire resolved. Recorded
+ *               after the await, never before: a card reading "put on the
+ *               screens" over a fire that failed is rule 15 in another coat.
+ *   'dismissed' the operator dismissed it.
+ *
+ * It is a RECEIPT, so it is not a trap under the `A` key the way a stale
+ * suggestion is — nothing here is actionable. It is capped rather than pruned by
+ * age for the same reason: the operator asking "what just went out, and did a
+ * person decide it" is asking about the last few seconds either way.
+ */
+export const resolvedDetections = writable([]);
+
+/** How many receipts are kept. Small: this is the last few, not a history. */
+export const MAX_RESOLVED = 4;
+
+/** Write one receipt. Never called with anything but a claim that really ended. */
+function noteResolved(d, outcome) {
+  if (!d?.reference) return;
+  resolvedDetections.update((list) =>
+    [{ ...d, outcome, resolvedAt: Date.now() }, ...list.filter((x) => x.reference !== d.reference)].slice(
+      0,
+      MAX_RESOLVED,
+    ),
+  );
+}
 
 // Output templates (Phase 8), loaded from the DB.
 export const templates = writable([]);
@@ -288,6 +346,12 @@ export const liveContent = derived(live, ($l) =>
         media_url: $l.media_url,
         media_kind: $l.media_kind,
         countdown_to: $l.countdown_to,
+        // Both halves of the countdown model reach the console preview, or the
+        // preview is the one surface that disagrees with the wall — it would go on
+        // ticking a countdown the operator has held, and the preview exists to be
+        // the thing they can trust.
+        countdown_from: $l.countdown_from,
+        countdown_paused_ms: $l.countdown_paused_ms,
         countdown_done: $l.countdown_done,
       }
     : null,
@@ -372,13 +436,26 @@ export async function initAudio() {
     return;
   }
   // Backend is attached. Load status pieces independently.
-  const [devices, stt, thresholds, detectionOn] = await Promise.all([
+  const [devices, stt, thresholds, detectionOn, storedDevice] = await Promise.all([
     call('list_audio_devices').catch(() => []),
     call('stt_status').catch(() => ({ loaded: false, model: null, language: null })),
     call('get_thresholds').catch(() => ({ auto_fire: 0.5, suggest: 0.35 })),
     call('get_detection_enabled').catch(() => true),
+    // RG-121. Every launch used to start on the system default, whatever was
+    // selected last time, and nothing said so.
+    call('get_setting', { key: INPUT_DEVICE_KEY }).catch(() => null),
   ]);
-  capture.update((s) => ({ ...s, available: true, devices, stt, thresholds, detectionOn }));
+  const chosen = chooseInputDevice({ stored: storedDevice, devices });
+  capture.update((s) => ({
+    ...s,
+    available: true,
+    devices,
+    stt,
+    thresholds,
+    detectionOn,
+    inputDevice: chosen.device,
+    inputDeviceMissing: chosen.missing,
+  }));
 
   // Seed the shared content-look map ONCE at boot so every surface (the Outputs
   // hub matrix, the gallery "Default for" badges, the live preview) reads one
@@ -411,7 +488,10 @@ export async function initAudio() {
       // A clear that failed on a path with nobody to return an error to — the
       // spoken "clear the screen", and the exit from rehearsal (which hands the
       // wall back to the congregation). Same banner as a failed key or button.
-      await listen('output://panic_failed', (e) => panicError.set(String(e.payload)));
+      // Humanised, for the same reason the wrapper above is: two of the four
+      // emitters send raw Rust text, so a poisoned lock used to read
+      // "internal lock error: poisoned lock: …" inside an assertive live region.
+      await listen('output://panic_failed', (e) => panicError.set(humanError(e.payload)));
       await listen('rehearsal://changed', (e) => rehearsing.set(e.payload === true));
       // A device failure (permission denied, unplugged) is non-fatal: surface
       // it and reflect that capture stopped, but never freeze.
@@ -608,6 +688,48 @@ export async function exportDiagnostics() {
 }
 
 /**
+ * DEMO CONTENT — the sample service a church can load to try Relay, and remove.
+ *
+ * Three wrappers, in two different groups on purpose.
+ *
+ * `demoStatus` is a read and swallows: a panel that cannot say what is loaded is a
+ * cosmetic loss, and the safe default (`loaded: false`) makes the surface offer
+ * *Load* rather than *Remove* — the direction that cannot destroy anything.
+ *
+ * `loadDemoContent` and `removeDemoContent` are GROUP 1 — THROWS. Neither changes
+ * what a congregation sees, so they are here for the reason `exportDiagnostics` is:
+ * a bulk write or a bulk delete that failed in silence leaves an operator pressing
+ * a button and watching nothing happen, with no reason given. `removeDemoContent`
+ * also RETURNS counts the caller has to render — `{ removed, kept }` — because a
+ * demo item they had edited is kept rather than deleted, and finding that out for
+ * themselves later is exactly the kind of surprise this feature must not create.
+ *
+ * Both are refused outright while a service is recording (`servicelock.rs`); the
+ * typed `Refused` error carries the sentence that says how to proceed, and
+ * `errors.js` is what turns it into words.
+ */
+export async function demoStatus() {
+  return guardedRead('demoStatus', (call) => call('demo_status'), {
+    loaded: false,
+    total: 0,
+    edited: 0,
+    groups: [],
+  });
+}
+
+/** Load the demo dataset. GROUP 1 — THROWS. Returns the new status. */
+export async function loadDemoContent(date) {
+  const call = await invoke();
+  return call('load_demo_content', { date: date ?? new Date().toISOString().slice(0, 10) });
+}
+
+/** Remove it again. GROUP 1 — THROWS. Returns `{ removed, kept, files }`. */
+export async function removeDemoContent() {
+  const call = await invoke();
+  return call('remove_demo_content');
+}
+
+/**
  * The state of Relay's African-language support, measured from the shipped data.
  *
  * Read-only, so it swallows: a language report that could take Settings down would
@@ -714,9 +836,59 @@ const call = await invoke();
 return call('export_service', { id });
 }
 
-/** Set the shared input device (name, or '' for default). Used by Console + Settings. */
+/**
+ * The setting that remembers the microphone between launches (RG-121).
+ *
+ * `''` is a real stored value and means "the system default", which is a different
+ * fact from never having chosen.
+ */
+export const INPUT_DEVICE_KEY = 'audio.input_device';
+
+/**
+ * Which device to select at launch, and whether to say something about it.
+ *
+ * Pure, and separated from the store for that reason: this is the whole of RG-121's
+ * rule and it has to be testable without a backend or a microphone.
+ *
+ * The rule is that a remembered device which is NOT here today must not be selected
+ * silently. Relay would then capture from whatever the OS calls default — on
+ * 2026-09-06 that was a laptop microphone at the back of a booth while a Blackmagic
+ * desk feed sat plugged in and selected in the previous session — and rule 12's
+ * learned gate would do its best with it, which is exactly the failure that is
+ * invisible until someone listens back to the service.
+ *
+ * So a missing device falls back to the default AND is reported. Falling back
+ * without reporting is the bug with an extra step.
+ */
+export function chooseInputDevice({ stored, devices } = {}) {
+  const names = (devices ?? []).map((d) => d?.name).filter(Boolean);
+  // Never chosen, or deliberately the default: nothing to restore, nothing to say.
+  if (stored === null || stored === undefined || stored === '') {
+    return { device: '', missing: null };
+  }
+  if (names.includes(stored)) return { device: stored, missing: null };
+  return { device: '', missing: stored };
+}
+
+/**
+ * Set the shared input device (name, or '' for default). Used by Console + Settings.
+ *
+ * Persists it, so the next launch starts on the microphone this room actually uses.
+ * GROUP 2: the write never throws at the caller. A setting that would not save must
+ * not stop an operator changing microphone thirty seconds before a service.
+ */
 export function setInputDevice(name) {
-capture.update((s) => ({ ...s, inputDevice: name || '' }));
+capture.update((s) => ({ ...s, inputDevice: name || '', inputDeviceMissing: null }));
+void persistInputDevice(name || '');
+}
+
+async function persistInputDevice(name) {
+try {
+  const call = await invoke();
+  await call('set_setting', { key: INPUT_DEVICE_KEY, value: name });
+} catch {
+  /* no backend, or the write failed. The choice still applies to this run. */
+}
 }
 
 /** Start capture from `device` (name string, or null for the default input). */
@@ -768,6 +940,12 @@ unlistenStt = await listen('stt://transcript', (e) => {
 capture.update((s) => ({ ...s, audioError: null }));
 unlistenDetect = await listen('detection://match', (e) => {
   const d = e.payload;
+  // THE AI ACTED BY ITSELF. This is the only moment that fact exists on the
+  // frontend — the suggestion is about to be removed and nothing else records
+  // it. Strictly `'auto'`: a manual fire emits this same event with
+  // `status: 'manual'`, and writing that up as the AI's decision would be the
+  // `persist_fire` bug (rule 14) reproduced in the UI.
+  if (d?.status === 'auto') noteResolved(d, 'auto');
   detections.update((list) => {
     const now = Date.now();
     // Sweep the stale ones out on the way past. A new suggestion is the moment
@@ -852,16 +1030,25 @@ transcript.update((t) => ({ ...t, partial: '' }));
  */
 export async function confirmDetection(reference) {
 const call = await invoke();
+// Read the claim BEFORE the round trip — the receipt below needs the method and
+// the words, and by the time it is written the card is gone from the list.
+const claim = get(detections).find((d) => d.reference === reference) ?? null;
 const thresholds = await call('confirm_detection', { reference });
 // Accepting an AI suggestion also takes us out of the plan — same reason as
 // manualFire.
 leavePlan();
 detections.update((list) => list.filter((d) => d.reference !== reference));
+// AFTER the await, never before. "Accepted — put on the screens" over a fire
+// that threw is rule 15 in another coat, and this function's own doc comment
+// records that exact bug happening to the card itself.
+if (claim) noteResolved(claim, 'accepted');
 capture.update((s) => ({ ...s, thresholds }));
 }
 
 /** Operator dismisses a suggestion → drop it + tighten the gate. */
 export async function dismissDetection(reference) {
+const claim = get(detections).find((d) => d.reference === reference) ?? null;
+if (claim) noteResolved(claim, 'dismissed');
 detections.update((list) => list.filter((d) => d.reference !== reference));
 // Noted before the round trip: dismissing is a decision the operator has already
 // made, and the practice drill is about the decision, not about whether the
@@ -1118,8 +1305,87 @@ return sequence.map((i) => sections[i]).filter(Boolean);
  *  future). Derived from the mirrored output content, so it clears the moment
  *  the screen is cleared or any other content goes live. */
 export function countdownRunning() {
-const l = get(live);
-return !!(l && l.countdown_to && l.countdown_to > Date.now());
+return countdownRemaining() !== null;
+}
+
+/** Is the countdown on the wall being HELD? Through the one reader, so the
+ *  transport, the wall and the stage page cannot disagree about it. */
+export function countdownHeld() {
+return countdownIsPaused(get(live));
+}
+
+/** How long the countdown ON THE WALL has left, in ms — or null when there is no
+ *  countdown on the wall. The transport reads THIS, never its own clock: one
+ *  timer, so the figure in the dock and the figure on the screen cannot drift
+ *  (docs/REBRAND.md §7). */
+export function countdownRemaining(atMs = Date.now()) {
+const left = countdownRemainingMs(get(live), atMs);
+// `countdownRemainingMs` distinguishes "finished" (0) from "there is no countdown"
+// (null) because a renderer has to show a done message for one and nothing for the
+// other. The TRANSPORT does not: a countdown that has run out is not something ±1
+// can re-aim, so both are null here.
+return left != null && left > 0 ? left : null;
+}
+
+/**
+ * RE-AIM THE RUNNING COUNTDOWN — Reset and ±1 on the transport.
+ *
+ * Separate from `startCountdown` on purpose. That one REFUSES while a countdown
+ * is running, which is right for "Start" (a second countdown over the first is
+ * always a mistake) and wrong for every transport press, all of which are about
+ * the countdown that is already there. One broadcast per press; the outputs go
+ * on ticking locally, so this adds no per-second traffic.
+ *
+ * THROWS (contract group 1) — it changes what a congregation is looking at.
+ *
+ * **The carry-over now happens in the engine, not here** (`main::adjust_countdown`).
+ * This used to rebuild the whole fire out of `$live` — the label, the done message
+ * and the template read back off the event and handed to `start_countdown` again —
+ * and it worked exactly as long as every caller remembered every field. A held
+ * countdown added one more to forget, and forgetting THAT one restarts a paused
+ * timer in front of a congregation from a press of `+1`. The engine keeps the
+ * countdown and this asks it to change one thing about it; the guarantees that used
+ * to be pinned here (the label does not change, and an UNPINNED template is never
+ * re-pinned — DECISIONS §29) are pinned in `e2e.rs` instead, where they now hold for
+ * every caller rather than for this one.
+ */
+export async function adjustCountdown(ms, keepPlan = true) {
+const remainingMs = Math.round(Number(ms));
+if (!Number.isFinite(remainingMs) || remainingMs <= 0) {
+  throw new Error('A countdown needs a length greater than zero.');
+}
+const call = await invoke();
+await call('adjust_countdown', { remainingMs, paused: null });
+// `keepPlan` DEFAULTS TRUE here, and it is the only wrapper in this file that
+// does. Every other take replaces what is on the wall, so the plan cue that was
+// amber is no longer what anyone is looking at. This one changes a NUMBER on
+// content that is already up: if a plan's countdown cue is on air, it is still on
+// air afterwards, and clearing `onAir` would grey out the correct cue and send
+// the next `→` back to cue 1. A countdown started from the dock already left the
+// plan when it started, so there is nothing left to clear either way.
+if (!keepPlan) leavePlan();
+}
+
+/**
+ * HOLD OR RELEASE THE COUNTDOWN ON THE SCREENS — the half of §7's transport that
+ * did not exist until the engine had a field for it.
+ *
+ * Every other press on that row re-aims an absolute instant, which is something
+ * `countdown_to` can already say. "Stopped" is not an instant, so it is said by
+ * `countdown_paused_ms` instead, and it is said by the engine: a held countdown must
+ * stay held through a `+1`, through a screen reconnecting mid-service, and through
+ * anything else that re-broadcasts it.
+ *
+ * THROWS (contract group 1) — it changes what a congregation is looking at. It
+ * cannot start a countdown: with nothing counting the engine refuses, in words.
+ *
+ * `keepPlan` defaults true for the same reason `adjustCountdown`'s does — holding a
+ * plan's countdown cue leaves that cue exactly as on-air as it was.
+ */
+export async function pauseCountdown(paused, keepPlan = true) {
+const call = await invoke();
+await call('adjust_countdown', { remainingMs: null, paused: !!paused });
+if (!keepPlan) leavePlan();
 }
 
 /** Start a pre-service countdown on every output. Outputs tick MM:SS locally
@@ -1247,15 +1513,6 @@ await call('delete_announcement', { id });
  *
  *  Distinct from `saveAnnouncement`, which is Library CONTENT planned in advance.
  *  This one does not touch the library and is not part of any plan. */
-export async function pushAnnouncement(message) {
-const call = await invoke();
-await call('push_announcement', { message });
-// No `keepPlan`: the emergency announcement is never a plan cue, and it covers
-// every screen. If the plan rail stayed amber under it, the one indicator that
-// says what a congregation is looking at would be naming a cue nobody can see.
-leavePlan();
-}
-
 /** How many times this verse already went out in the CURRENT service.
  *
  *  GROUP 2 (swallows, returns 0). A "shown earlier" badge is an affordance, not a
@@ -1268,7 +1525,7 @@ return guardedRead('verseRepeatCount', async (call) => {
 }, 0);
 }
 
-// ── Voice profiles (Settings → Voice Profiles) ───────────────────────────────
+// ── Voice profiles (Settings → AI & Detection) ───────────────────────────────
 //
 // Per-preacher accent + gate calibration: the STT language hint, the decoder-bias
 // vocabulary, the operator's sensitivity dial, and the thresholds the router has
@@ -1411,8 +1668,14 @@ return btoa(bin);
 export async function loadTemplates() {
 return guardedRead('loadTemplates', async (call) => {
     const list = await call('list_templates');
-    templates.set(list);
-    return list;
+    // THE DATABASE DOOR. Every template is migrated on the way in, so nothing
+    // downstream — the gallery, the editor, a save — ever handles a style with
+    // two homes for one property (docs/REBRAND.md §3.1). Migrating only at the
+    // renderer would keep the WALL correct while the legacy key sat in the
+    // database for ever, waiting for the next reader that does not resolve.
+    const migrated = Array.isArray(list) ? list.map(migrateTemplate) : list;
+    templates.set(migrated);
+    return migrated;
 }, []);
 }
 
@@ -1590,6 +1853,45 @@ async function persistThemes(list) {
   }
 }
 
+// ══ X1 · THE TRANSITION CONTROL (docs/REBRAND.md §8 · DECISIONS §84) ═══════════
+// One block, deliberately self-contained: this file is being edited by more than
+// one agent this wave, so an integrator can move these lines whole.
+//
+// GROUP 1 — THROWS. A congregation CAN see the difference: an operator who asked
+// for a cut and got an 800 ms crossfade is watching something they turned off.
+// The caller (the chrome picker in `App.svelte`) catches and puts the control back
+// where it was, so a failed change is visible as the picker refusing to move
+// rather than as a preference that quietly did not take.
+//
+// The STORE is `liveTransition` in `lib/transitions.js`, not here, and that is not
+// a drift from the one-store rule: `TemplateRender` reads it and also renders
+// `output.html`, which is served to a browser source with no backend. Importing
+// this module there would put the whole command surface on a congregation screen.
+// The bridge stays here; the value sits beside the register that defines it.
+export async function setLiveTransition(mode, ms) {
+  const call = await invoke();
+  await call('set_live_transition', { mode: mode ?? null, ms: ms ?? null });
+  liveTransition.set(mode ? { mode, ms } : null);
+}
+
+/**
+ * What override the BACKEND says is in force. The console can reload mid-service;
+ * the screens do not.
+ *
+ * GROUP 2, through `guardedRead` — and the guard is the point, not the swallow.
+ * A bare `catch` here would make "nobody has overridden anything" and "I could not
+ * ask" the same answer, and the second one is the state in which this picker would
+ * read `Follow template` over a building full of crossfading screens (rule 35).
+ * `readErrors.liveTransition` carries the reason, the way every other read does.
+ */
+export async function loadLiveTransition() {
+  const cur = await guardedRead('liveTransition', (call) => call('live_transition'), null);
+  liveTransition.set(
+    Array.isArray(cur) && cur[0] ? { mode: cur[0], ms: cur[1] ?? undefined } : null,
+  );
+}
+// ══ end X1 block ══════════════════════════════════════════════════════════════
+
 /**
  * Insert or update a custom theme; returns its id. A theme with no id (or a
  * builtin's negative id) is treated as NEW and gets a fresh positive id, so
@@ -1679,10 +1981,48 @@ return guardedRead('listOutputChannels', async (call) => {
 }, []);
 }
 
-/** Assign a template to a channel. */
+/**
+ * THE WORD CURRENTLY SENT TO THE PREACHER — what Relay last put on the stage
+ * monitor, or null.
+ *
+ * A store rather than a component variable, and the reason is the dock: the shell
+ * renders it as `{#if !liveFullscreen}<Dock />{/if}`, so pressing Full screen
+ * DESTROYS the panel. With the flag living in the component, a word that was still
+ * on the preacher's monitor came back as "nothing sent" — which disabled the only
+ * control that takes it down. The operator could send a new one and never clear
+ * the old one.
+ *
+ * It is a mirror of what Relay SENT, written only after the call resolves, and it
+ * claims nothing more than that.
+ */
+export const stageAlert = writable(null);
+
+/**
+ * A WORD TO THE PREACHER — one line, the whole stage monitor, and no other
+ * screen (docs/REBRAND.md §5). Empty or whitespace clears it.
+ *
+ * GROUP 1 (throws). The operator is sending a message to a person and is looking
+ * at the result; a failure that is swallowed leaves them believing the preacher
+ * has been told something they have not.
+ */
+export async function sendStageAlert(text) {
+const call = await invoke();
+await call('send_stage_alert', { text: text ?? null });
+// After, never before: a failed send must not leave the dock saying a word is on
+// the preacher's monitor.
+stageAlert.set(text?.trim() ? text.trim() : null);
+}
+
+/**
+ * Assign a template to a screen — or `null`, which means THIS SCREEN HAS NO LOOK
+ * OF ITS OWN and follows the content look (DECISIONS §70).
+ *
+ * GROUP 1 (throws). It is an operator action with a visible result; a failure
+ * that is swallowed leaves the picker showing a look the screen is not wearing.
+ */
 export async function setChannelTemplate(id, templateId) {
 const call = await invoke();
-await call('set_channel_template', { id, templateId });
+await call('set_channel_template', { id, templateId: templateId ?? null });
 }
 
 
@@ -1842,7 +2182,17 @@ export async function refreshChannelHealth() {
 }
 
 async function pollChannelHealth() {
-  const rows = await channelStatus();
+  // `channelStatus()` swallows a missing backend and returns `[]`, but it cannot
+  // vouch for the SHAPE of an answer that did arrive — and this ran bare on a
+  // 2000 ms timer (below), so a `channel_status` payload that was not an array
+  // threw `TypeError: rows is not iterable` as an unhandled rejection, which
+  // `crash.js` turned into the full-screen crash panel. Every two seconds. For the
+  // rest of the service. Reproduced in a browser against a running console.
+  //
+  // Degrade toward "not answering", never toward "all is well" — the guarantee
+  // `refreshChannelHealth` states twenty lines up and this door did not keep.
+  const answer = await channelStatus();
+  const rows = Array.isArray(answer) ? answer : [];
   const next = {};
   for (const r of rows) next[r.id] = r;
   const now = Date.now();
@@ -1865,8 +2215,12 @@ async function pollChannelHealth() {
  */
 export function startChannelHealth() {
   if (healthPoll) return;
-  pollChannelHealth();
-  healthPoll = setInterval(pollChannelHealth, 2000);
+  // Through the wrapped door, both times. `pollChannelHealth` is guarded from the
+  // inside now, but a health poll must not be the one caller that can raise an
+  // unhandled rejection at the shell — there is exactly one door out of this
+  // module and this is it (rule 36's reasoning, applied to a timer).
+  refreshChannelHealth();
+  healthPoll = setInterval(refreshChannelHealth, 2000);
 }
 
 export function stopChannelHealth() {
@@ -2028,9 +2382,15 @@ try {
   // In a plain browser there is no backend AND no output screen, so there is
   // nothing to warn about — don't cry wolf in a dev tab.
   if (get(capture).available) {
+    // `humanError`, not `String(e)`. Every Tauri command on this path returns the
+    // typed bridge error (`error.rs`, `{ kind, message }`), and `String({…})` is
+    // "[object Object]" — so the most serious sentence in the product ended
+    // "…clear it there. ([object Object])". Six other files already document this
+    // trap; the panic path was the one door nobody checked, which is rule 15 and
+    // "a guarantee is only kept on the doors you checked" arriving together.
     panicError.set(
       `${label} FAILED — the congregation may still be seeing the last thing you put up. ` +
-        `Check the output screen and clear it there. (${String(e).replace(/^Error:\s*/, '')})`,
+        `Check the output screen and clear it there. (${humanError(e)})`,
     );
   }
   return false;
@@ -2040,6 +2400,17 @@ try {
 /** Operator has read the panic warning (or a later panic control succeeded). */
 export function dismissPanicError() {
 panicError.set(null);
+}
+
+/**
+ * Acknowledge an audio device failure (RG-117).
+ *
+ * Dismissing says "I have read this", never "it is fixed": capture is already
+ * stopped by the time this banner exists, and the way back is to plug the
+ * microphone in and press start. It clears again on the next successful start.
+ */
+export function dismissAudioError() {
+capture.update((s) => ({ ...s, audioError: null }));
 }
 
 /** Push the "up next" preview to the stage/confidence monitor (null clears).

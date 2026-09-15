@@ -52,10 +52,22 @@
      is aliased to it rather than deleted — templates.js and a couple of views still
      name it, and a font that is only in the bundle for one preset is dead weight. */
   --f-display:'Inter',system-ui,sans-serif; --f-body:'Inter',sans-serif;
-  --f-serif:'Fraunces',serif; --f-mono:'JetBrains Mono',monospace;
+  --f-serif:'Fraunces',serif;
+  /* `--f-mono` is NOT declared here. It used to be, as 'JetBrains Mono', and it
+     was dead the whole time: the design-system :root below is later in the same
+     file at the same specificity, so its 'IBM Plex Mono' won. A reader looking
+     up the console's figure face found this line first and read the wrong
+     answer, and a reorder of the two blocks would have silently changed every
+     clock, confidence and latency in the app. It is declared ONCE now, below.
+     JetBrains Mono stays in the bundle because TEMPLATES offer it by name
+     (`TemplateEditor.svelte`) — an operator's saved choice, not chrome. */
 }
 *{box-sizing:border-box;}
-body{ margin:0; background:var(--bg); color:var(--text); font-family:var(--f-body); font-size:14px; -webkit-font-smoothing:antialiased; }
+/* 12px, not 14px. A control room is read at a glance from a metre away, and
+   the extra two pixels cost a row of the slide grid and, on a 1366x768 booth
+   laptop, the status bar itself. */
+body{ margin:0; background:var(--bg); color:var(--text); font-family:var(--f-body);
+  font-size:var(--v-fs-b1); line-height:1.45; -webkit-font-smoothing:antialiased; }
 .brand{ display:flex; align-items:center; gap:12px; }
 .status-pill.live{ background:var(--green-soft); color:var(--green); border:1px solid rgba(34,197,94,0.3); }
 .status-pill.idle{ background:var(--surface2); color:var(--text-dim); border:1px solid var(--border); }
@@ -71,14 +83,14 @@ body{ margin:0; background:var(--bg); color:var(--text); font-family:var(--f-bod
 
 .channels{ display:grid; grid-template-columns:1fr 1fr; gap:12px; }
 .prev-main .verse{ font-family:var(--f-serif); font-size:13.5px; line-height:1.5; color:#f4e4c8; max-width:88%; }
-.prev-main .ref{ margin-top:8px; font-family:var(--f-serif); font-style:italic; font-size:11.5px; color:var(--amber); }
-.prev-stage .verse{ font-family:var(--f-display); font-weight:700; font-size:17px; color:#f2f5f6; margin-top:12px; line-height:1.25; text-align:left; }
+.prev-main .ref{ margin-top:8px; font-family:var(--f-serif); font-style:italic; font-size:var(--v-fs-b2); color:var(--amber); }
+.prev-stage .verse{ font-family:var(--f-display); font-weight:700; font-size:var(--v-fs-h1); color:#f2f5f6; margin-top:12px; line-height:1.25; text-align:left; }
 .prev-stream .lower-third{ width:100%; background:linear-gradient(90deg, rgba(139,92,246,0.94), rgba(139,92,246,0.75)); padding:9px 14px; text-align:left; }
-.prev-stream .lower-third .ref{ font-family:var(--f-mono); font-size:9px; font-weight:600; letter-spacing:0.04em; text-transform:uppercase; color:#2a1840; margin-bottom:3px; }
-.prev-stream .verse{ font-family:var(--f-body); font-weight:600; font-size:12px; color:#1c1224; }
-.prev-lobby .verse{ font-family:var(--f-serif); font-size:11.5px; color:#f0dfe3; margin-top:6px; max-width:85%; }
+.prev-stream .lower-third .ref{ font-family:var(--f-mono); font-size:var(--v-fs-fig); font-weight:600; letter-spacing:0.04em; text-transform:uppercase; color:#2a1840; margin-bottom:3px; }
+.prev-stream .verse{ font-family:var(--f-body); font-weight:600; font-size:var(--v-fs-b1); color:#1c1224; }
+.prev-lobby .verse{ font-family:var(--f-serif); font-size:var(--v-fs-b2); color:#f0dfe3; margin-top:6px; max-width:85%; }
 .ctrl-btn .dot{ width:6px; height:6px; border-radius:50%; }
-.data-table td.mono{ font-family:var(--f-mono); font-size:12px; color:var(--text-dim); }
+.data-table td.mono{ font-family:var(--f-mono); font-size:var(--v-fs-b1); color:var(--text-dim); }
 .tmpl-row.active{ background:var(--v-accent-soft); border-color:var(--v-accent-line); color:var(--v-accent2); font-weight:600; }
 .tmpl-row.active .tag{ color:var(--v-accent2); opacity:.8; }
 .swatch.sel{ border-color:var(--text); }
@@ -92,116 +104,225 @@ body{ margin:0; background:var(--bg); color:var(--text); font-family:var(--f-bod
 
 /* ══════════════════════════════════════════════════════════════════════════
 
-   RELAY — "Spiritual High-Tech" rebrand (Stitch: stitch_relay).
+   RELAY STUDIO — the control-room rebrand (docs/REBRAND.md, phase 1).
    Global shell + shared component system. Fit-to-screen, retina, responsive.
-   New tokens are additive (--v-*, --f-head) so the output window (which shares
-   this file via output.js and relies on --f-serif/--bg) is never disturbed.
+   The token NAMES are stable, so the output window (which shares this file via
+   output.js and relies on --f-serif/--bg) and Stage move with the console
+   rather than being left on an older palette.
    ══════════════════════════════════════════════════════════════════════════ */
 :root{
-  /* ── Design-system palette (docs/design/relay-designsystem.png v1.0) ──
-     The token NAMES are unchanged so every consumer (console, Output window via
-     output.js, Stage via stage.js) moves together; only the hexes were retuned
-     to the published system. Neutrals are the 8-step ramp 950→500. */
-  --v-void:#0a0a0a;   /* 950 — deepest: shell + main + output canvas */
-  --v-bg:#141414;     /* 900 — sidebar, topbar, input fields          */
-  --v-surf:#1b1b1b;   /* 800 — default card                           */
-  --v-surf2:#262626;  /* 700 — raised / selected card                 */
-  --v-surf3:#333333;  /* 600 — hover / lightest chrome                */
-  --v-500:#4d4d4d;    /* 500 — hairline emphasis                      */
+  /* ══ RELAY STUDIO — the rebrand palette (docs/REBRAND.md §1) ══════════════
+     The grammar is a control room: OBS Studio's studio split and dock row
+     crossed with ProPresenter's object inspector. Dark only, because the booth
+     is dark and the wall is black.
+
+     The NAMES are unchanged, so every consumer moves together — the console,
+     the output window (via output.js) and Stage (via stage.js) all read these.
+     What changed is the tuning: the neutral ramp carries a slight blue cast so
+     a grey surface reads as equipment rather than as paper, and the semantic
+     colours were re-measured against it.
+
+     WHAT DID NOT CHANGE IS THE LAW. Amber still means ON AIR and nothing else,
+     amethyst still means rehearsal, cyan is still a guess and grey is still
+     CUED (CLAUDE.md rule 18, DECISIONS §21). A rebrand may retune a hex; it may
+     not move a promise onto a different colour. */
+
+  /* ── Neutrals, deepest to lightest ────────────────────────────────────── */
+  --v-void:#131418;   /* shell + main + the output-window canvas */
+  --v-bg:#1a1c21;     /* sidebar, dock, top bar, input fields    */
+  --v-surf:#212429;   /* default card                            */
+  --v-surf2:#292d34;  /* raised / selected card                  */
+  --v-surf3:#343942;  /* hover, lightest chrome                  */
+  --v-500:#3a404a;    /* edge — a visible hairline on a card     */
+  /* The seam between two regions is DARKER than either of them. A control room
+     divides by shadow, not by a light rule: a pale divider on a dark desk is the
+     first thing the eye goes to, and nothing on this desk deserves that. */
+  --v-rule:#0c0d10;
   --v-line:rgba(255,255,255,.075); --v-line2:rgba(255,255,255,.13);
-  /* Text ramp: Primary / Secondary / Muted.
-     Muted was the design's #8A8A8A and is now #8C8C8C — two steps, invisible to the
-     eye, and the difference between failing and passing WCAG AA on --v-surf2.
 
-     THE COMMENT THIS REPLACES KNEW ABOUT THE WRONG SURFACE. It said muted "passes
-     AA on --v-surf/--v-bg (~5:1)" and warned only about --v-surf3 — where faint text
-     is not in fact placed anywhere. It never checked --v-surf2 (#262626), where the
-     ratio was 4.38:1, and where five real rules put muted text on chips and badges.
-     A hand analysis that names two of four surfaces reads exactly like one that
-     names all four; that is why this is now a test (tokencontrast.test.js, RG-74).
+  /* ── Text ramp: primary / secondary / muted ───────────────────────────────
+     Every one of these is measured against every surface it can sit on by
+     `tokencontrast.test.js` (RG-74), which requires a hex literal here and
+     WCAG AA's 4.5:1 body bar. It has caught two real failures already.
 
-     The measured matrix, at AA's 4.5:1 body bar:
-       --v-faint on --v-void #0a0a0a  · --v-bg #141414 · --v-surf #1b1b1b · --v-surf2 #262626  → all ≥ 4.50
-       --v-faint on --v-surf3 #333333 → 3.79, and NOTHING pairs them; the test asserts
-       that stays true, because fixing surf3 would need #9B9B9B and collapse the ramp
-       into --v-dim. */
-  --v-txt:#f2f2f2; --v-dim:#b3b3b3; --v-faint:#8c8c8c;
-  --v-disabled:#555555; --v-inverse:#141414;
-  /* Semantic — the mode law (CLAUDE.md): amber ON AIR · amethyst rehearsal ·
-     cyan guess · green confirmed · red panic · grey cued. */
-  --v-amber:#ffb000; --v-amber2:#ffc24d; --v-amber-ink:#241a00;
-  --v-amber-soft:rgba(255,176,0,.13); --v-amber-glow:rgba(255,176,0,.42);
-  --v-cyan:#22d3ee; --v-cyan-soft:rgba(34,211,238,.14);
-  /* --v-rose is this app's "something is live / alert" colour (On Air badge +
-     panic bar). Retuned to the design system's Error/Panic red #EF4444. */
-  --v-rose:#ef4444; --v-rose-soft:rgba(239,68,68,.14);
-  --v-red:#ef4444; --v-red-soft:rgba(239,68,68,.14);
-  /* --v-amethyst2 is INFERRED: the design sheet publishes one amethyst, but the
-     splash renders the wordmark gradient and tagline a step lighter than it. */
-  --v-amethyst:#8b5cf6; --v-amethyst2:#a78bfa; --v-amethyst-mute:#4a4658;
-  --v-amethyst-soft:rgba(139,92,246,.13);
-  --v-emerald:#22c55e;   /* Confirmed / success / connected (design green) */
-  --v-grey:#6b7280;      /* Cued / plan position (not live) */
-  /* Radius scale */
-  --v-r-sm:4px; --v-r-md:8px; --v-r-lg:12px; --v-r-xl:16px; --v-r-2xl:24px;
+     THE PROTOTYPE'S MUTED STEP DID NOT SURVIVE THAT TEST. It was #7e8695, which
+     measures 4.25:1 on --v-surf and 3.77:1 on --v-surf2 — below AA on two of the
+     four surfaces muted text is actually placed on. The repository's rule wins
+     over the prototype (REBRAND.md, Context), so it is lifted to #8c94a1: same
+     hue, 4.52:1 at worst, and indistinguishable at a glance.
+
+     The measured matrix, at 4.5:1:
+       --v-txt   on void 15.28 · bg 14.15 · surf 12.92 · surf2 11.48
+       --v-dim   on void  8.43 · bg  7.81 · surf  7.13 · surf2  6.33
+       --v-faint on void  6.02 · bg  5.57 · surf  5.09 · surf2  4.52
+     --v-faint on --v-surf3 is 3.79 and NOTHING pairs them; the test asserts that
+     stays true, because clearing surf3 needs ~#9b9ba6 and collapses muted into
+     --v-dim. */
+  --v-txt:#e8eaee; --v-dim:#a9b0bc; --v-faint:#8c94a1;
+  --v-disabled:#5a6270; --v-inverse:#131418;
+
+  /* ── The four colours that carry a promise ────────────────────────────────
+     Retuned, not reassigned. Each has a soft fill (a chip's background) and a
+     line (its border) so no component has to hand-write an rgba() of it — five
+     rules drifted from the token that way before. */
+  /* ON AIR. The congregation is looking at this right now. */
+  --v-amber:#ffa31a; --v-amber2:#ffc266; --v-amber-ink:#251700;
+  --v-amber-soft:rgba(255,163,26,.15); --v-amber-line:rgba(255,163,26,.45);
+  --v-amber-glow:rgba(255,163,26,.42);
+  /* A GUESS — a paraphrase or semantic match, never a heard reference. */
+  --v-cyan:#4cc9f0; --v-cyan-soft:rgba(76,201,240,.15); --v-cyan-line:rgba(76,201,240,.4);
+  /* REHEARSAL — this cannot reach the congregation. No longer doing double duty
+     as the interactive accent: chrome moved to steel blue below, so amethyst now
+     means one thing again. */
+  --v-amethyst:#a96bf5; --v-amethyst2:#c49bfa; --v-amethyst-mute:#4a4658;
+  --v-amethyst-soft:rgba(169,107,245,.16); --v-amethyst-line:rgba(169,107,245,.45);
+  /* CUED — where the transport resumes, and NOT on screen. */
+  --v-grey:#8a929e; --v-grey-soft:rgba(138,146,158,.16);
+
+  /* ── The rest of the semantic set ─────────────────────────────────────── */
+  --v-emerald:#3fcf6a; --v-emerald-soft:rgba(63,207,106,.14); --v-emerald-line:rgba(63,207,106,.4);
+  /* Destructive, and the stage alert. --v-rose is the same colour under its
+     older name; both are kept because the output window shares this file. */
+  --v-red:#f4515b; --v-red-soft:rgba(244,81,91,.15); --v-red-line:rgba(244,81,91,.5);
+  --v-rose:#f4515b; --v-rose-soft:rgba(244,81,91,.15);
+
+  /* ── SELECTION — the thing you are working on ─────────────────────────────
+     Steel blue. The selected tab, a focus ring, a switch that is on, the filled
+     part of a slider, the transcript line being read right now.
+
+     This is the rebrand's one structural colour change. Interactive chrome used
+     to be amethyst, which was already an improvement on amber — but it meant the
+     rehearsal colour was also lit on every hover, every switch and every primary
+     button, in a product where telling a rehearsal from a live service is a
+     safety distinction. A colour that carries a promise cannot also be the
+     default for "clicked". So selection gets its own colour, and the promise
+     colours are now used ONLY where they mean what they say.
+
+     White on --v-sel-fill (#2e6fd4) is 4.84:1 — above AA for button text. The
+     lighter --v-sel is for borders, dots and text on a dark surface, where it is
+     the thing being read rather than the thing behind it. */
+  --v-sel:#5b9cf8; --v-sel-fill:#2e6fd4; --v-sel-ink:#ffffff;
+  --v-sel-soft:rgba(91,156,248,.16); --v-sel-line:rgba(91,156,248,.45);
+  --v-sel-glow:rgba(91,156,248,.5);
+  /* The --v-accent* family is the SAME colour under the name several hundred
+     rules already use. Kept as aliases rather than renamed, so the whole console
+     moves in one edit and nothing is left behind on a stale hex. */
+  --v-accent:var(--v-sel);
+  --v-accent2:#8bbcff;
+  --v-accent-fill:var(--v-sel-fill);
+  --v-accent-ink:var(--v-sel-ink);
+  --v-accent-soft:var(--v-sel-soft);
+  --v-accent-line:var(--v-sel-line);
+  --v-accent-glow:var(--v-sel-glow);
+
+  /* ── Collection colours (the Library) ─────────────────────────────────────
+     A collection is a KIND of content, so it borrows the colour that kind
+     already wears on the wall. None of these is a status: they tint an icon and
+     a row's left edge, never a badge that could be mistaken for ON AIR. */
+  --v-col-scripture:var(--v-amber);
+  --v-col-song:var(--v-sel);
+  --v-col-notice:var(--v-red);
+  --v-col-media:var(--v-amethyst);
+
+  /* ── Radius. 3px, and 5px for the things that hold other things ───────────
+     No pills on buttons, tabs or cards: a pill in a control room reads as a toy.
+     --v-r-round survives for the two shapes that are genuinely round — a slider
+     thumb and a status dot — and for nothing else. */
+  --v-r-sm:3px; --v-r-md:3px; --v-r-lg:5px; --v-r-xl:5px; --v-r-2xl:6px;
+  --v-r-round:99px;
+
   /* Spacing (8pt grid) */
   --v-sp-xs:4px; --v-sp-sm:8px; --v-sp-md:16px; --v-sp-lg:24px; --v-sp-xl:32px;
   --v-sp-2xl:48px; --v-sp-3xl:64px; --v-sp-4xl:96px; --v-sp-5xl:128px;
-  /* Elevation */
-  --v-shadow-sm:0 1px 2px rgba(0,0,0,.4);
-  --v-shadow-md:0 4px 16px rgba(0,0,0,.45);
-  --v-shadow-lg:0 12px 40px rgba(0,0,0,.6);
-  /* TYPOGRAPHY. The design system publishes ONE family — Inter — for Display,
-     Heading, Body, Label and Caption, with JetBrains Mono for the mono row.
-     `--f-head` was Playfair Display (the pre-rebrand serif); it is now Inter, so
-     every heading in the console moves to the system in one place. `--f-serif`
-     is untouched: that is VERSE body on the wall, which is template content, not
-     app chrome, and the design sheet does not govern it. */
+
+  /* Elevation — a dark room, so shadows are for depth, never for decoration. */
+  --v-shadow-sm:0 1px 2px rgba(0,0,0,.45);
+  --v-shadow-md:0 4px 16px rgba(0,0,0,.5);
+  --v-shadow-lg:0 20px 60px -24px #000;
+
+  /* Motion. One duration and one curve for every piece of chrome, so the desk
+     feels like one instrument. Honoured against prefers-reduced-motion below. */
+  --v-dur:120ms; --v-ease:cubic-bezier(.2,.7,.3,1);
+
+  /* ── TYPOGRAPHY ───────────────────────────────────────────────────────────
+     Inter for the interface, IBM Plex Mono for EVERY figure — a clock, a
+     confidence, a latency, a verse number — because tabular digits mean a
+     changing number never reflows the row beside it. Fraunces is the serif the
+     scripture templates render in; it is template content, not chrome, and the
+     console does not use it.
+
+     --f-display (Space Grotesk) and --f-head (Playfair) are aliases of Inter,
+     kept because templates.js and a few views still name them. */
   --f-head:'Inter',system-ui,-apple-system,sans-serif;
-  /* Type scale, read off the design sheet's TYPOGRAPHY block (size/line-height). */
-  --v-fs-d1:56px;  --v-lh-d1:64px;   /* Display 1 — Bold,      -0.02em */
-  --v-fs-d2:40px;  --v-lh-d2:48px;   /* Display 2 — Bold,      -0.02em */
-  --v-fs-h1:28px;  --v-lh-h1:36px;   /* H1        — Semi Bold, -0.02em */
-  --v-fs-h2:20px;  --v-lh-h2:28px;   /* H2        — Semi Bold, -0.01em */
-  --v-fs-h3:16px;  --v-lh-h3:24px;   /* H3        — Medium,     0      */
-  --v-fs-b1:14px;  --v-lh-b1:20px;   /* Body 1    — Regular,    0      */
-  --v-fs-b2:13px;  --v-lh-b2:18px;   /* Body 2    — Regular,    0      */
-  --v-fs-lbl:12px; --v-lh-lbl:16px;  /* Label     — Medium,     0.02em */
-  --v-fs-cap:11px; --v-lh-cap:14px;  /* Caption   — Regular,    0.02em */
-  --v-fs-mono:12px;--v-lh-mono:16px; /* Mono      — Mono,       0      */
-  --v-tr-tight:-.02em; --v-tr-h2:-.01em; --v-tr-wide:.02em;
-  /* Soft fills for the two semantic colours that had none (chips/badges). */
-  --v-emerald-soft:rgba(34,197,94,.13); --v-grey-soft:rgba(107,114,128,.16);
+  --f-mono:'IBM Plex Mono',ui-monospace,SFMono-Regular,monospace;
 
-  /* ── THE INTERACTIVE ACCENT — and why it is not amber ──────────────────────
-     Every piece of interactive CHROME points at this: the selected nav item, a
-     focus ring, a switch, a hover, a primary button.
+  /* The scale is DENSER than the one it replaces: 11–12px is the control-room
+     register, and the old 14px body pushed the dock row and the status bar off
+     the bottom of a 1366×768 booth laptop. */
+  --v-fs-d1:30px;  --v-lh-d1:34px;   /* Display — a splash, a gate           */
+  --v-fs-d2:21px;  --v-lh-d2:26px;   /* Page title                           */
+  --v-fs-h1:17px;  --v-lh-h1:22px;   /* Section heading                      */
+  --v-fs-h2:14px;  --v-lh-h2:19px;   /* Card heading                         */
+  /* ── The four steps the console proper actually uses, added wave 5 (M1).
+     The reference type scale is nine steps and six of them were already here
+     (12.5 · 12 · 11.5 · 11 · 9.5, plus 11 mono). The other four had NO token at
+     all, which is why a hundred and one hand-typed sizes survived wave 4's
+     sweep: there was nothing to convert them TO. They are named for their role
+     rather than for a position in a heading ladder, because that is what they
+     are — the ladder above ends at `h3` and these sit beside it, not under it.
 
-     It used to be amber. Amber is the tally light — the design sheet's MODE
-     INDICATORS and CLAUDE.md both say it means ONE thing: the congregation is
-     looking at something. Spending it on "this tab is selected" and on twenty
-     ordinary Save buttons meant the loudest colour in the product was lit
-     permanently, everywhere, whether or not anything was on a wall. A colour
-     that is always on cannot also be a warning.
-
-     The design reference settles it: in relay-production-interface.png the
-     active sidebar item is amethyst-tinted, not amber.
-
-     So: chrome is amethyst. Amber survives ONLY as `.r-badge.amber`,
-     `.r-btn.amber` and `.r-stat.amber` — the on-air cases, named explicitly at
-     the call site so using one is a decision rather than a default. */
-  --v-accent:var(--v-amethyst);
-  --v-accent2:var(--v-amethyst2);
-  /* A DEEPER amethyst, used only as a FILL behind white text.
-     White on --v-amethyst (#8b5cf6) is 4.22:1 — under WCAG AA for 13px semibold
-     button text. #7c3aed is 5.70:1 and reads as the same colour at a glance.
-     The lighter --v-accent stays for borders, dots and text on a dark surface,
-     where it is the thing being read rather than the thing behind it. */
-  --v-accent-fill:#7c3aed;
-  --v-accent-ink:#ffffff;
-  --v-accent-soft:rgba(139,92,246,.13);
-  --v-accent-line:rgba(139,92,246,.42);
-  --v-accent-glow:rgba(139,92,246,.55);
+     THE LADDER IS NOT A COMPLETE INVENTORY OF WHAT RENDERS, and saying so here
+     is cheaper than discovering it again. 10px became a real step below
+     (`--v-fs-b3`) once the widened scan showed twenty-seven of them in one role;
+     10.5px, 8px, 7px, 16px, 18px and 22px are still typed by hand, and those are
+     genuinely one-control decisions rather than a missing step — eight distinct
+     judgements that happened to land near each other. Converting one is a
+     restyle decision about that control, not a sweep, so they are left visible
+     rather than rounded into a neighbouring step to make a scanner quiet. */
+  --v-fs-ttl:15px; --v-lh-ttl:20px;  /* Object title — a settings page head, a
+                                        claim's reference. 600, -.012em.     */
+  --v-fs-h3:12.5px;--v-lh-h3:17px;   /* Row heading                          */
+  --v-fs-pr:13px;  --v-lh-pr:20px;   /* Prose — a paragraph, a standfirst.
+                                        13/1.55, the one step that is a
+                                        READING size rather than a UI one.   */
+  --v-fs-b1:12px;  --v-lh-b1:17px;   /* Body — the default                   */
+  --v-fs-b2:11.5px;--v-lh-b2:16px;   /* Body, secondary                      */
+  --v-fs-lbl:11px; --v-lh-lbl:15px;  /* Label                                */
+  /* THE TWO VERTICAL RULES OF THE DESK.
+     Measured at 1280 before these existed: left rails of 180/206/206/206/212 and
+     inspectors of 250/276/312/320/330, so BOTH seams moved on every tab press —
+     Live to Planner shifted the left one 26px and the right one 80px.
+     `WorkspaceFrame`'s own comment says an operator moving between the run
+     surface and a desk "should not be able to tell that two people built them".
+     One token each, referenced by the frame and by Live's hand-built desk. */
+  --v-rail:206px; --v-insp:300px;
+  --v-fs-b3:10px;  --v-lh-b3:14px;   /* Sub-label — the quieter line UNDER a
+                                        label. Added wave 5 (2026-09-15) after
+                                        the grammar scan was widened from six
+                                        desks to every view and reported 39
+                                        off-scale literals, of which TWENTY-SEVEN
+                                        were 10px, in one visual role, across
+                                        fourteen files. That is the definition of
+                                        a step the ladder did not publish — the
+                                        same finding that produced `ttl`, `pr`,
+                                        `fig` and `kind` above — and not
+                                        twenty-seven restyle decisions. The
+                                        reference uses 10px more than any other
+                                        size it omits from the nine-step table.
+                                        Converting is behaviour-preserving: every
+                                        one of them already rendered at 10px.   */
+  --v-fs-cap:9.5px;--v-lh-cap:13px;  /* Caption / the uppercase key line     */
+  --v-fs-mono:11px;--v-lh-mono:15px; /* Mono row                             */
+  --v-fs-fig:9px;  --v-lh-fig:12px;  /* Figure — a count, a unit, a key cap.
+                                        Mono, and never a sentence: at 9px a
+                                        line of prose is not readable at a
+                                        booth's viewing distance.            */
+  --v-fs-kind:8.5px;--v-lh-kind:11px;/* Kind chip — the smallest thing in the
+                                        product. Mono, uppercase, .09em, and
+                                        only ever ONE WORD.                  */
+  --v-tr-tight:-.022em; --v-tr-h2:-.01em; --v-tr-wide:.02em;
+  --v-tr-ttl:-.012em;  /* the object title, per the reference scale */
+  --v-tr-caps:.09em;   /* the uppercase caption line, and only that */
 }
 
 /* Fit-to-screen base — no body scroll; the shell owns the viewport, panels
@@ -214,7 +335,7 @@ body{ overflow:hidden; text-rendering:optimizeLegibility; -moz-osx-font-smoothin
 .mainscroll, .r-scroll{ scrollbar-width:thin; scrollbar-color:var(--v-surf3) transparent; }
 .mainscroll::-webkit-scrollbar, .r-scroll::-webkit-scrollbar{ width:10px; height:10px; }
 .mainscroll::-webkit-scrollbar-thumb, .r-scroll::-webkit-scrollbar-thumb{
-  background:var(--v-surf3); border-radius:99px; border:3px solid transparent; background-clip:content-box; }
+  background:var(--v-surf3); border-radius:var(--v-r-round); border:3px solid transparent; background-clip:content-box; }
 .mainscroll::-webkit-scrollbar-thumb:hover, .r-scroll::-webkit-scrollbar-thumb:hover{ background:#33333a; background-clip:content-box; }
 
 /* ── Shell ─────────────────────────────────────────────────────────────── */
@@ -232,73 +353,153 @@ body{ overflow:hidden; text-rendering:optimizeLegibility; -moz-osx-font-smoothin
    motion for its own sake. It appears, and the app is already out of its way. */
 .shell.has-panic{ padding-top:var(--panic-h,0px); }
 
-.side{ width:238px; flex:0 0 238px; background:var(--v-bg); border-right:1px solid var(--v-line);
-  display:flex; flex-direction:column; padding:18px 14px; gap:4px; }
-/* The BRAND lockup from the design sheet: mark + wordmark, wide tracking. */
-.side-brand{ display:flex; align-items:center; gap:10px; padding:0 8px 14px; }
-.side-brand span{ font-family:var(--f-head); font-size:19px; font-weight:700;
-  letter-spacing:.18em; color:var(--v-txt); }
-.side-profile{ display:flex; align-items:center; gap:11px; padding:11px; margin-bottom:12px;
-  background:var(--v-surf); border:1px solid var(--v-line); border-radius:12px; }
-.side-avatar{ width:38px; height:38px; border-radius:10px; flex:0 0 auto; display:grid; place-items:center;
-  background:linear-gradient(150deg,var(--v-accent),var(--v-accent-fill)); color:var(--v-accent-ink); }
-.side-profile .who{ min-width:0; }
-.side-profile .who b{ display:block; font-size:13.5px; font-weight:600; color:var(--v-txt);
-  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.side-profile .who span{ font-family:var(--f-mono); font-size:9px; letter-spacing:.14em; text-transform:uppercase; color:var(--v-faint); }
-
-.nav{ display:flex; flex-direction:column; gap:3px; }
-.nav-item{ display:flex; align-items:center; gap:12px; padding:11px 12px; border-radius:10px;
-  color:var(--v-dim); cursor:pointer; font-size:14px; font-weight:500; background:transparent;
-  border:1px solid transparent; text-align:left; transition:background .15s, color .15s, transform .15s; }
-.nav-item:hover{ background:var(--v-surf); color:var(--v-txt); }
-.nav-item.active{ background:var(--v-accent-soft); color:var(--v-accent2); border-color:var(--v-accent-line); transform:translateX(2px); }
-.nav-item .ic{ flex:0 0 auto; }
-.side-foot{ margin-top:auto; padding:12px; background:var(--v-surf); border:1px solid var(--v-line);
-  border-radius:12px; }
-.side-foot .row{ display:flex; align-items:center; justify-content:space-between; margin-bottom:7px; }
-.side-foot .row .k{ font-family:var(--f-mono); font-size:9px; font-weight:700; letter-spacing:.12em;
-  text-transform:uppercase; color:var(--v-faint); }
-.side-foot .dot{ width:7px; height:7px; border-radius:50%; }
-.side-foot .m{ font-family:var(--f-mono); font-size:10px; color:var(--v-dim); opacity:.85; line-height:1.6; }
-
+/* The sidebar is gone (docs/REBRAND.md §2) — its workspaces are the chrome bar's
+   menu and its foot is the status bar. Its rules went with its markup: a rule
+   whose class nothing renders is the dead CSS §6 warns about, and leaving these
+   would have left 238px of layout waiting for a class name to come back. */
 .main-v{ flex:1; min-width:0; display:flex; flex-direction:column; overflow:hidden; background:var(--v-void); }
-.topbar-v{ height:62px; flex:0 0 auto; display:flex; align-items:center; gap:16px;
-  padding:0 22px; border-bottom:1px solid var(--v-line); }
-.topbar-title{ margin:0; font-family:var(--f-head); font-size:25px; font-weight:700; letter-spacing:-.005em; color:var(--v-txt); }
-.topbar-spring{ flex:1; }
-.topbar-icons{ display:flex; align-items:center; gap:16px; color:var(--v-dim); }
-.topbar-icons .ib{ cursor:pointer; transition:color .15s; }
-.topbar-icons .ib:hover{ color:var(--v-accent2); }
-.mainscroll{ flex:1; overflow-y:auto; padding:22px; }
-.footer-v{ height:42px; flex:0 0 auto; display:flex; align-items:center; justify-content:space-between;
-  padding:0 22px; border-top:1px solid var(--v-line);
-  font-family:var(--f-mono); font-size:10px; letter-spacing:.05em; color:var(--v-faint); }
-.footer-v .fl{ display:flex; align-items:center; gap:18px; }
-.footer-v b{ color:var(--v-dim); font-weight:600; }
+/* THE CHROME BAR (docs/REBRAND.md §2). 34px: a control room's title bar, not a
+   web page's masthead. The 62px header and the 42px footer it replaces took 66
+   pixels of desk between them — on a 1366x768 booth laptop that is a row of the
+   slide grid, and the grid is the job. */
+.topbar-v{ height:34px; flex:0 0 auto; display:flex; align-items:center; gap:10px;
+  padding:0 10px; background:var(--v-bg); border-bottom:1px solid var(--v-rule); }
+.chrome-brand{ display:flex; align-items:center; gap:7px; flex:0 0 auto; }
+.chrome-brand b{ font-family:var(--f-head); font-size:var(--v-fs-h3); font-weight:700;
+  letter-spacing:.13em; color:var(--v-txt); }
+/* THE WORKSPACES. Across the top, where a desk puts them. They WRAP rather than
+   scroll: a workspace hidden behind a scrollbar is a workspace nobody knows is
+   there — the same rule as the object tabs in the template inspector. */
+.ws-menu{ display:flex; align-items:center; gap:2px; flex-wrap:wrap; min-width:0; }
+.ws-tab{ height:26px; display:inline-flex; align-items:center; padding:0 10px;
+  border:0; border-radius:var(--v-r-sm); background:transparent;
+  color:var(--v-dim); font-family:var(--f-body); font-size:var(--v-fs-b2); font-weight:600;
+  cursor:pointer; white-space:nowrap;
+  transition:background var(--v-dur) var(--v-ease), color var(--v-dur) var(--v-ease); }
+.ws-tab:hover:not(.on){ background:var(--v-surf3); color:var(--v-txt); }
+/* The selected workspace is marked by an underline in the SELECTION colour, not
+   by a filled chip: a permanently filled control in the chrome reads as a state,
+   and since 2026-09-14 no state belongs in this bar at all — it is navigation,
+   and every fact about the room is the status bar's. */
+.ws-tab.on{ background:var(--v-surf3); color:var(--v-txt); box-shadow:inset 0 -2px 0 var(--v-sel); }
+/* ── THE ONE LAMP THE STATUS BAR USES ─────────────────────────────────────────
+   A lamp is a 7px dot, and its COLOUR is the colour law and nothing else: amber
+   = on air, amethyst = rehearsal (and safe mode, which outranks it), grey =
+   everything else. Grey covers more than one situation on purpose — the
+   difference is in the WORDS beside it (`wallState` composes them), not in a
+   colour an operator has to learn.
+
+   The chrome's per-screen lamps were removed on 2026-09-14 and `.siglamps`,
+   `.siglamps .sig` and `.siglamps .signm` went with their markup — a rule whose
+   class nothing renders is the dead CSS §6 warns about. What is left is exactly
+   what the status bar's room cell can wear: the base dot and the three tones
+   `wallState` can actually return. */
+.lamp{ width:7px; height:7px; border-radius:var(--v-r-round); flex:0 0 auto;
+  display:inline-block; background:var(--v-faint); }
+.lamp.grey{ background:var(--v-faint); }
+.lamp.amber{ background:var(--v-amber); box-shadow:0 0 6px var(--v-amber); }
+.lamp.amethyst{ background:var(--v-amethyst); box-shadow:0 0 6px var(--v-amethyst); }
+/* (`.lamp.red` and its `lampbad` keyframe went with the chrome lamps on
+   2026-09-14. Red was the "not responding" colour and only a PER-SCREEN lamp
+   could ever wear it — `wallState` has no such tone, because the room is not a
+   screen. A screen that has stopped answering is still reported, in words and by
+   name, in the status bar's `Reduced` cell.) */
+.mainscroll{ flex:1; min-height:0; overflow-y:auto; padding:14px; }
+/* THE STATUS BAR. 26px of facts, each a key and a VALUE — never a dash standing
+   in for one (§11, and `settingValue` for the rows that can be absent). */
+.footer-v{ height:26px; flex:0 0 auto; display:flex; align-items:center; gap:0;
+  padding:0 4px; background:var(--v-bg); border-top:1px solid var(--v-rule);
+  overflow-x:auto; }
+.footer-v .st{ display:flex; align-items:center; gap:6px; height:100%; padding:0 10px;
+  border-right:1px solid var(--v-rule); white-space:nowrap; flex:0 0 auto; }
+.footer-v .st:last-child{ border-right:0; }
+.footer-v .k{ font-family:var(--f-mono); font-size:var(--v-fs-fig); letter-spacing:var(--v-tr-caps);
+  text-transform:uppercase; color:var(--v-faint); }
+.footer-v .v{ font-family:var(--f-mono); font-size:var(--v-fs-lbl); color:var(--v-dim);
+  max-width:38ch; overflow:hidden; text-overflow:ellipsis; }
+/* A counter that has moved off zero, or a fact that is failing. Red is
+   destructive/wrong in this room and nothing else; a shed partial and an engine
+   that has stopped answering are both "this is not right", at two severities the
+   title spells out. */
+.footer-v .v.bad{ color:var(--v-red); }
+/* The state cell is the one sentence in the strip, so it gets the room to be a
+   sentence: no mono, no ellipsis at 38ch, and it is the first thing read. */
+.footer-v .st-state{ min-width:0; }
+.footer-v .vw{ font-family:var(--f-body); font-size:var(--v-fs-b2); color:var(--v-txt);
+  max-width:44ch; overflow:hidden; text-overflow:ellipsis; }
+.footer-v .push{ flex:1; }
 
 /* Bottom nav (mobile only) */
 .botnav{ display:none; }
 
 /* ── Shared components (.r-*) ──────────────────────────────────────────── */
 .r-mono{ font-family:var(--f-mono); font-variant-numeric:tabular-nums; letter-spacing:.04em; }
-.r-lbl{ font-family:var(--f-mono); font-size:10px; font-weight:600; letter-spacing:.16em;
-  text-transform:uppercase; color:var(--v-faint); }
-.r-title{ font-family:var(--f-head); font-size:34px; font-weight:700; letter-spacing:-.01em;
-  color:var(--v-txt); line-height:1.1; }
-.r-lead{ color:var(--v-dim); font-size:14px; line-height:1.6; max-width:62ch; }
-.r-tile{ background:var(--v-surf); border:1px solid var(--v-line); border-radius:14px; }
+.r-lbl{ font-family:var(--f-mono); font-size:var(--v-fs-cap); font-weight:600;
+  letter-spacing:var(--v-tr-caps); text-transform:uppercase; color:var(--v-faint); }
+.r-title{ font-family:var(--f-head); font-size:var(--v-fs-d1); font-weight:700;
+  letter-spacing:var(--v-tr-tight); color:var(--v-txt); line-height:1.1; }
+.r-lead{ color:var(--v-dim); font-size:var(--v-fs-b1); line-height:1.55; max-width:74ch; }
+.r-tile{ background:var(--v-surf); border:1px solid var(--v-line); border-radius:var(--v-r-lg); }
 .r-dim{ color:var(--v-dim); }
 .r-amber{ color:var(--v-amber); }
 
-.r-btn{ display:inline-flex; align-items:center; justify-content:center; gap:8px; height:40px;
-  padding:0 18px; border-radius:9px; border:1px solid transparent; cursor:pointer; white-space:nowrap;
-  font-family:var(--f-body); font-size:13px; font-weight:600; transition:filter .14s, background .14s, border-color .14s, transform .1s; }
-.r-btn:active{ transform:scale(.98); }
+/* ── THE CONTROL METRICS ───────────────────────────────────────────────────
+   Wave 5 (M1). The reference names one height per control, and the reason is a
+   COLUMN, not a control: a settings rail stacks a select, a text input, a
+   switch and a button in one list, and four heights chosen one control at a
+   time make that column step in and out by two pixels a row. The same defect
+   as the range input's 2px UA margin a few rules down, which was found by
+   rendering it rather than by reading it.
+
+     chrome bar    34   .topbar-v          status bar 26   .footer-v
+     dock head     26   Dock.svelte .dhead (min-height, the head may grow)
+     button        26   .r-btn             small button 22  .r-btn.sm
+     input·select  26   .r-input,.r-select tab          26  .ws-tab
+     pill          26   .r-pill            segment btn  22  .r-seg button
+     switch     38x21   .r-switch          colour well  38x21  input[type=color]
+     slider  18 box · 3 track · 13 thumb   .r-range
+     control btn   34   .r-cbtn, with 32 as the floor when a grid stretches it
+
+   WHAT MOVED, and it is a visible change rather than a tidy-up: the ordinary
+   button was 30 and is 26, its small variant was 24 and is 22, and the text
+   input and select were 28 and are 26. Padding moved with the button (13 -> 11,
+   10 -> 8) because a 26px button at 13px of side padding reads as a lozenge.
+   The select's arrow sits 11px down rather than 12, or it is off-centre in the
+   shorter box — the sort of one-pixel wrongness nobody can name and everybody
+   can see.
+
+   NOT MOVED, deliberately: `.exit-fs` is still 30px. It is the only control on
+   a chromeless full-screen surface, with nothing to line up with and a viewing
+   distance the rest of this table does not assume. */
+/* THE ORDINARY BUTTON DRAWS THE HOUSE SURFACE — B1. It was the only shared
+   control that did not. `.r-input`, `.r-select` and `.r-cbtn` all open
+   `background:var(--v-surf3); border:1px solid var(--v-500)` a few rules from
+   here; `.r-btn` opened with no background at all and a TRANSPARENT border, so
+   a button with no variant on it drew no fill and no edge. Thirteen of them
+   ship that way. It is invisible while you read the stylesheet — every variant
+   below supplies its own fill, so the base is only ever seen bare — and plainly
+   wrong in the one place it matters, a settings rail that stacks an input, a
+   select and a button and gives two of the three an edge.
+   The transparent button is not lost; it is `.r-btn.quiet` below, which is what
+   the bare base was being used AS. Naming it is the difference between a choice
+   and an omission. */
+.r-btn{ display:inline-flex; align-items:center; justify-content:center; gap:7px; height:26px;
+  padding:0 11px; border-radius:var(--v-r-sm); cursor:pointer; white-space:nowrap;
+  /* REST IS --v-surf2, HOVER IS --v-surf3. The artifact draws a control at rest
+     on `--c3` (#292D34) and lifts it to `--c4` (#343942) under the cursor; this
+     rule opened at the HOVER step, so every button in the console sat one shade
+     too light and had nowhere to go when the pointer arrived (a brightness filter
+     is not the same move). Measured against the reference, 2026-09-14. */
+  background:var(--v-surf2); border:1px solid var(--v-500); color:var(--v-txt);
+  font-family:var(--f-body); font-size:var(--v-fs-b2); font-weight:600;
+  transition:filter var(--v-dur) var(--v-ease), background var(--v-dur) var(--v-ease),
+    border-color var(--v-dur) var(--v-ease), transform 90ms var(--v-ease); }
+.r-btn:hover:not(:disabled){ background:var(--v-surf3); }
 .r-btn:disabled{ opacity:.45; cursor:not-allowed; }
 /* PRIMARY — the ordinary "do the thing" button: Save, Add, Continue, Import.
-   Amethyst, because it is chrome. This is what the twenty-odd buttons that used
-   to be amber now wear. */
+   Steel blue, because it is chrome and nothing more. It was amber once, then
+   amethyst; both of those carry a promise elsewhere in the product, and a
+   colour that is lit on every Save button cannot also be a warning. */
 .r-btn.primary{ background:var(--v-accent-fill); color:var(--v-accent-ink); box-shadow:0 6px 18px -6px var(--v-accent-glow); }
 .r-btn.primary:hover:not(:disabled){ filter:brightness(1.08); }
 /* ON AIR ACTION — the design sheet's amber primary. RESERVED: use it only for a
@@ -307,68 +508,161 @@ body{ overflow:hidden; text-rendering:optimizeLegibility; -moz-osx-font-smoothin
    amber stopped meaning anything. */
 .r-btn.amber{ background:var(--v-amber); color:var(--v-amber-ink); box-shadow:0 6px 18px -6px var(--v-amber-glow); }
 .r-btn.amber:hover:not(:disabled){ filter:brightness(1.06); }
-.r-btn.ghost{ background:var(--v-surf2); border-color:var(--v-line2); color:var(--v-txt); }
+/* ONE EDGE, NOT TWO. `ghost` is the quieter FILL — it is not a second edge.
+   It drew `--v-line2` (rgba(255,255,255,.13)) while the base, the input, the
+   select and the control button all draw `--v-500` (#3A404A), and the two sit
+   side by side constantly: Cancel beside Save, a ghost beside a primary in
+   every dialog foot in the product. A hairline that changes between two
+   touching buttons is the thing an operator reads as "inconsistent" without
+   being able to name it. The fill still differs, which is the whole job. */
+.r-btn.ghost{ background:var(--v-surf2); border-color:var(--v-500); color:var(--v-txt); }
 .r-btn.ghost:hover:not(:disabled){ background:var(--v-surf3); }
-.r-btn.danger{ background:transparent; border-color:rgba(239,68,68,.5); color:var(--v-rose); }
-.r-btn.danger:hover:not(:disabled){ background:var(--v-rose-soft); }
-.r-btn.sm{ height:32px; padding:0 13px; font-size:12px; }
+/* QUIET — no fill, no edge. This is what a `.r-btn` with no variant used to
+   draw by accident; it is a real look (a link-weight action inside a dense
+   list) and it keeps the button's metrics, so it still lines up in a column. */
+.r-btn.quiet{ background:transparent; border-color:transparent; color:var(--v-dim); }
+.r-btn.quiet:hover:not(:disabled){ background:var(--v-surf2); color:var(--v-txt); }
+/* DANGER — one red, from the token. It drew `rgba(239,68,68,.5)`, which is in
+   no token in this repository: `--v-red-line` is `rgba(244,81,91,.5)`. Two
+   different reds under one variant name, in one stylesheet — `.r-cbtn.danger`
+   eight rules down already used the token, so Clear screens and a Delete button
+   were drawing different edges while claiming the same meaning. */
+.r-btn.danger{ background:transparent; border-color:var(--v-red-line); color:var(--v-red); }
+.r-btn.danger:hover:not(:disabled){ background:var(--v-red-soft); }
+.r-btn.sm{ height:22px; padding:0 8px; font-size:var(--v-fs-lbl); }
 
-.r-iconbtn{ width:34px; height:34px; border-radius:8px; display:grid; place-items:center; cursor:pointer;
-  background:var(--v-surf2); border:1px solid var(--v-line); color:var(--v-dim); transition:.14s; }
+.r-iconbtn{ width:26px; height:26px; border-radius:var(--v-r-sm); display:grid; place-items:center; cursor:pointer;
+  background:var(--v-surf2); border:1px solid var(--v-line); color:var(--v-dim);
+  transition:color var(--v-dur) var(--v-ease), border-color var(--v-dur) var(--v-ease); }
 .r-iconbtn:hover{ color:var(--v-accent2); border-color:var(--v-accent-line); }
 
-.r-badge{ display:inline-flex; align-items:center; gap:7px; padding:5px 11px; border-radius:99px;
-  font-family:var(--f-mono); font-size:10px; font-weight:600; letter-spacing:.08em; text-transform:uppercase; }
-.r-badge.amber{ background:var(--v-amber-soft); border:1px solid rgba(255,176,0,.32); color:var(--v-amber); }
-.r-badge.cyan{ background:var(--v-cyan-soft); border:1px solid rgba(34,211,238,.32); color:var(--v-cyan); }
-.r-badge.rose{ background:var(--v-rose-soft); border:1px solid rgba(239,68,68,.32); color:var(--v-rose); }
+.r-badge{ display:inline-flex; align-items:center; gap:6px; padding:3px 8px; border-radius:var(--v-r-sm);
+  font-family:var(--f-mono); font-size:var(--v-fs-cap); font-weight:600;
+  letter-spacing:var(--v-tr-caps); text-transform:uppercase; }
+.r-badge.amber{ background:var(--v-amber-soft); border:1px solid var(--v-amber-line); color:var(--v-amber); }
+.r-badge.cyan{ background:var(--v-cyan-soft); border:1px solid var(--v-cyan-line); color:var(--v-cyan); }
+.r-badge.rose{ background:var(--v-rose-soft); border:1px solid var(--v-red-line); color:var(--v-rose); }
 /* Rehearsal. Deliberately NOT amber and NOT rose: amber means the congregation is
    looking at it, rose means something is wrong. A rehearsal is neither. */
-.r-badge.amethyst{ background:rgba(139,92,246,.12); border:1px solid rgba(139,92,246,.42); color:var(--v-amethyst); }
+.r-badge.amethyst{ background:var(--v-amethyst-soft); border:1px solid var(--v-amethyst-line); color:var(--v-amethyst); }
 /* Cued / plan position / neutral — the design sheet's grey mode chip. Never amber:
    amber means the congregation is looking at it. */
 .r-badge.grey{ background:var(--v-grey-soft); border:1px solid var(--v-line2); color:var(--v-dim); }
-.r-badge.green{ background:var(--v-emerald-soft); border:1px solid rgba(34,197,94,.32); color:var(--v-emerald); }
+.r-badge.green{ background:var(--v-emerald-soft); border:1px solid var(--v-emerald-line); color:var(--v-emerald); }
 .r-badge .bd{ width:6px; height:6px; border-radius:50%; background:currentColor; }
 .r-badge.pulse .bd{ box-shadow:0 0 7px currentColor; animation:vpulse 1.7s ease-in-out infinite; }
 @keyframes vpulse{ 0%,100%{opacity:1} 50%{opacity:.4} }
 
-.r-input, .r-select{ height:40px; width:100%; padding:0 13px; border-radius:9px; background:var(--v-bg);
-  border:1px solid var(--v-line2); color:var(--v-txt); font-family:var(--f-body); font-size:13px; outline:none; transition:.15s; }
+.r-input, .r-select{ height:26px; width:100%; padding:0 9px; border-radius:var(--v-r-sm); background:var(--v-surf2);
+  border:1px solid var(--v-500); color:var(--v-txt); font-family:var(--f-body); font-size:var(--v-fs-b2);
+  outline:none; transition:border-color var(--v-dur) var(--v-ease), box-shadow var(--v-dur) var(--v-ease); }
 .r-input.mono{ font-family:var(--f-mono); }
 .r-input::placeholder{ color:var(--v-faint); }
 .r-input:focus, .r-select:focus{ border-color:var(--v-accent-line); box-shadow:0 0 0 3px var(--v-accent-soft); }
 .r-input:disabled, .r-select:disabled{ opacity:.5; }
 .r-select{ appearance:none; -webkit-appearance:none; cursor:pointer;
   background-image:linear-gradient(45deg,transparent 50%,var(--v-faint) 50%),linear-gradient(135deg,var(--v-faint) 50%,transparent 50%);
-  background-position:calc(100% - 16px) 17px,calc(100% - 11px) 17px; background-size:5px 5px,5px 5px; background-repeat:no-repeat; padding-right:32px; }
+  background-position:calc(100% - 14px) 11px,calc(100% - 10px) 11px; background-size:4px 4px,4px 4px;
+  background-repeat:no-repeat; padding-right:26px; }
 
-.r-range{ width:100%; height:6px; accent-color:var(--v-accent); cursor:pointer; }
+/* ── Sliders. ONE block, and it must stay the only one ──────────────────────
+   Every range input in the app is styled here, by element as well as by class,
+   so a slider added in a view is already the app's slider. Two facts this block
+   carries, both of them from real defects:
 
-/* ── Sliders ────────────────────────────────────────────────────────────────
-   Every range input in the app EXCEPT Live's sensitivity dial was a browser
-   default: `accent-color` colours the filled part but leaves the track the UA's
-   own light grey, so nineteen sliders across Settings, the Template editor and
-   the Theme editor rendered a WHITE bar on a dark surface. It read as unfinished
-   rather than as a control.
+   · A bare `accent-color` colours the filled part and leaves the track the UA's
+     own light grey — nineteen sliders across Settings, the Template editor and
+     the Theme editor painted a WHITE bar on a dark surface and read as
+     unfinished. The track is drawn here, on both engines.
+   · THE BAR IS 3px; THE CONTROL IS NOT. Styling the input itself as the track
+     left the whole element a few pixels tall, so a dial had a 4px pointer target
+     — and a near-miss on a live console lands on whatever is underneath. The
+     input carries a real 18px box and the bar is drawn by the track
+     pseudo-element.
 
-   Styled here rather than in each view because it is one control with one look;
-   Live's `.sens` rules are more specific and keep their own (identical) sizing.
-   The input carries a real 18px box, and the 4px bar is drawn by the track
-   pseudo-element — styling the input itself as the bar is what left the dial with
-   a 4px pointer target. */
-input[type="range"]{ -webkit-appearance:none; appearance:none; height:18px;
-  background:transparent; cursor:pointer; outline:none; }
-input[type="range"]::-webkit-slider-runnable-track{ height:4px; border-radius:99px;
-  background:var(--v-surf3); }
-input[type="range"]::-moz-range-track{ height:4px; border-radius:99px; background:var(--v-surf3); }
-input[type="range"]::-webkit-slider-thumb{ -webkit-appearance:none; appearance:none;
-  width:13px; height:13px; border-radius:50%; background:var(--v-accent);
-  border:2px solid var(--v-surf); box-shadow:var(--v-shadow-sm); margin-top:-6.5px; }
-input[type="range"]::-moz-range-thumb{ width:13px; height:13px; border-radius:50%;
-  background:var(--v-accent); border:2px solid var(--v-surf); box-shadow:var(--v-shadow-sm); }
-input[type="range"]:focus-visible{ box-shadow:0 0 0 3px var(--v-accent-soft); border-radius:99px; }
-input[type="range"]:disabled{ opacity:.5; cursor:not-allowed; }
+   · THE BROWSER GIVES A RANGE INPUT A MARGIN AND NOTHING HERE TOOK IT BACK.
+     Chromium's UA sheet sets `input[type=range]{ margin:2px; }`, which survives
+     `appearance:none`. So every slider in the product sat 2px inside the edge
+     its neighbours sat on: measured in the Theme editor, the three sliders ended
+     at x=1251 while the typeface select and all three colour wells ended at
+     x=1253 (and 871 vs 873 at a 900px viewport). Two pixels is invisible to
+     anyone reading the stylesheet and plainly wrong in a column — it is the same
+     class of defect as the seven-pixel-wide screen name, found the same way, by
+     rendering it. The vertical 2px was costing a dense 11-12px row four pixels
+     of height as well. Zeroed here, once, for every slider.
+
+   A SECOND `input[type=range]` block later in this file would win on equal
+   specificity and silently drop `--rp`, leaving a slider that paints half full
+   at every value. `rangefill.test.js` refuses one. */
+.r-range, input[type=range]{ -webkit-appearance:none; appearance:none; width:100%; height:18px;
+  margin:0; background:transparent; cursor:pointer; }
+.r-range::-webkit-slider-runnable-track, input[type=range]::-webkit-slider-runnable-track{
+  height:3px; border-radius:var(--v-r-round);
+  background:linear-gradient(90deg,var(--v-sel) 0 var(--rp,50%),var(--v-surf3) var(--rp,50%) 100%); }
+.r-range::-moz-range-track, input[type=range]::-moz-range-track{
+  height:3px; border-radius:var(--v-r-round); background:var(--v-surf3); }
+.r-range::-moz-range-progress, input[type=range]::-moz-range-progress{
+  height:3px; border-radius:var(--v-r-round); background:var(--v-sel); }
+.r-range::-webkit-slider-thumb, input[type=range]::-webkit-slider-thumb{
+  -webkit-appearance:none; appearance:none; width:13px; height:13px; margin-top:-5px;
+  border-radius:50%; background:#fff; box-shadow:0 1px 3px rgba(0,0,0,.6), 0 0 0 1px rgba(0,0,0,.25);
+  transition:transform var(--v-dur) var(--v-ease), box-shadow var(--v-dur) var(--v-ease); }
+.r-range::-moz-range-thumb, input[type=range]::-moz-range-thumb{
+  width:13px; height:13px; border:0; border-radius:50%; background:#fff; box-shadow:0 1px 3px rgba(0,0,0,.6); }
+.r-range:hover::-webkit-slider-thumb, input[type=range]:hover::-webkit-slider-thumb{ transform:scale(1.12); }
+.r-range:active::-webkit-slider-thumb, input[type=range]:active::-webkit-slider-thumb{
+  transform:scale(1.04); box-shadow:0 0 0 5px var(--v-sel-soft), 0 1px 3px rgba(0,0,0,.6); }
+.r-range:focus-visible::-webkit-slider-thumb, input[type=range]:focus-visible::-webkit-slider-thumb{
+  box-shadow:0 0 0 3px var(--v-sel-glow); }
+.r-range:disabled, input[type=range]:disabled{ opacity:.45; cursor:not-allowed; }
+
+/* COLOUR WELL. The native control carries a platform border and its own padding,
+   so every operating system drew a different swatch. This is the swatch alone,
+   at the size of a switch (38x21), so a mixed column of switches, wells and
+   inputs lines up on one right edge instead of stepping in and out by two
+   pixels a row. Styled on the ELEMENT, so every colour input in the product is
+   this control and none can be missed. */
+input[type=color]{ -webkit-appearance:none; appearance:none; width:38px; height:21px; padding:0;
+  flex:0 0 auto; border:1px solid var(--v-500); border-radius:var(--v-r-lg); background:transparent;
+  cursor:pointer; box-shadow:inset 0 0 0 1px rgba(0,0,0,.35);
+  transition:border-color var(--v-dur) var(--v-ease); }
+input[type=color]:hover:not(:disabled){ border-color:var(--v-sel); }
+input[type=color]:disabled{ opacity:.45; cursor:not-allowed; }
+input[type=color]::-webkit-color-swatch-wrapper{ padding:0; }
+input[type=color]::-webkit-color-swatch{ border:0; border-radius:2px; }
+input[type=color]::-moz-color-swatch{ border:0; border-radius:2px; }
+
+/* ── THE FOUR CONTROLS ─────────────────────────────────────────────────────
+   The two most consequential buttons in the room used to look alike. Each of
+   these now owns a colour nothing else in the dock wears:
+
+     End service  amber  — it owns the ON-AIR session, so it carries the tally
+                           colour. Go Live, before a service, is green.
+     Clear screens red   — it takes the wall away.
+     Blackout     black  — it is the black itself, with a light hairline so the
+                           button is still findable on a dark desk.
+     Rehearse     amethyst — the rehearsal colour, and nothing else uses it.
+
+   A panic control is never placed behind a validator and never scrolled out of
+   reach (CLAUDE.md rule 36, DECISIONS section 20), so these are sized to stay
+   legible at the smallest dock height rather than to look neat at the largest. */
+.r-ctl{ display:grid; grid-template-columns:1fr 1fr; gap:6px; }
+.r-cbtn{ height:34px; min-height:32px; padding:0 10px; border-radius:var(--v-r-sm); background:var(--v-surf2);
+  border:1px solid var(--v-500); color:var(--v-txt); cursor:pointer; white-space:nowrap;
+  font-family:var(--f-body); font-size:var(--v-fs-b2); font-weight:600;
+  transition:transform 90ms var(--v-ease), background var(--v-dur) var(--v-ease); }
+.r-cbtn:hover:not(:disabled){ background:var(--v-surf3); }
+.r-cbtn:active:not(:disabled){ transform:scale(.965); }
+.r-cbtn:disabled{ opacity:.45; cursor:not-allowed; }
+.r-cbtn.wide{ grid-column:1 / -1; }
+.r-cbtn.golive{ background:var(--v-emerald); border-color:transparent; color:#04230e; }
+.r-cbtn.golive[data-on="1"]{ background:var(--v-amber-soft); border-color:var(--v-amber-line);
+  color:var(--v-amber); box-shadow:inset 0 0 0 1px rgba(255,163,26,.14); }
+.r-cbtn.danger{ background:var(--v-red-soft); border-color:var(--v-red-line); color:var(--v-red); }
+.r-cbtn.black{ background:linear-gradient(180deg,#0b0d12,#050609); border-color:rgba(210,220,235,.34); color:#d7deea; }
+.r-cbtn.black[data-on="1"]{ background:#000; border-color:#e8edf5; color:#fff; }
+.r-cbtn.rehearse[data-on="1"]{ background:var(--v-amethyst-soft); border-color:var(--v-amethyst-line);
+  color:var(--v-amethyst); }
 
 /* Native checkboxes: the app has two hand-drawn ones (the crash gate, the verse
    deck) and one plain — which rendered as a white box on a dark panel. One line
@@ -376,84 +670,79 @@ input[type="range"]:disabled{ opacity:.5; cursor:not-allowed; }
 input[type="checkbox"]{ accent-color:var(--v-accent); }
 
 /* Pill toggle (visual switch) */
-.r-switch{ width:44px; height:24px; border-radius:99px; position:relative; flex:0 0 auto; cursor:pointer;
-  background:var(--v-surf3); border:1px solid var(--v-line2); transition:.18s; }
-.r-switch::after{ content:""; position:absolute; top:2px; left:2px; width:18px; height:18px; border-radius:50%;
-  background:var(--v-dim); transition:.18s; }
-.r-switch.on{ background:var(--v-accent-fill); border-color:transparent; }
-.r-switch.on::after{ left:22px; background:var(--v-accent-ink); }
+.r-switch{ width:38px; height:21px; border-radius:var(--v-r-round); position:relative; flex:0 0 auto;
+  cursor:pointer; background:var(--v-surf3); border:1px solid var(--v-500);
+  transition:background var(--v-dur) var(--v-ease), border-color var(--v-dur) var(--v-ease); }
+.r-switch:hover{ border-color:var(--v-sel); }
+.r-switch::after{ content:""; position:absolute; top:2px; left:2px; width:15px; height:15px; border-radius:50%;
+  background:var(--v-dim); box-shadow:0 1px 2px rgba(0,0,0,.5);
+  transition:transform 190ms var(--v-ease), background var(--v-dur) var(--v-ease); }
+.r-switch.on{ background:var(--v-sel); border-color:transparent; }
+.r-switch.on::after{ transform:translateX(17px); background:var(--v-sel-ink); }
 
 /* Stat card with left accent bar */
-.r-stat{ position:relative; background:var(--v-surf); border:1px solid var(--v-line); border-radius:12px;
+.r-stat{ position:relative; background:var(--v-surf); border:1px solid var(--v-line); border-radius:var(--v-r-lg);
   padding:16px 18px; overflow:hidden; }
 .r-stat::before{ content:""; position:absolute; left:0; top:0; bottom:0; width:3px; background:var(--v-accent); }
 .r-stat.cyan::before{ background:var(--v-cyan); }
 .r-stat.rose::before{ background:var(--v-rose); }
 .r-stat.plain::before{ background:var(--v-line2); }
-.r-stat .n{ font-family:var(--f-head); font-size:30px; font-weight:700; letter-spacing:-.01em; margin-top:6px; }
+.r-stat .n{ font-family:var(--f-head); font-size:var(--v-fs-d1); font-weight:700; letter-spacing:-.01em; margin-top:6px; }
 .r-stat.cyan .n{ color:var(--v-cyan); } .r-stat.amber .n{ color:var(--v-amber); }
 
 /* List row with accent bar */
 .r-row{ position:relative; display:flex; align-items:center; gap:16px; padding:16px 18px;
-  background:var(--v-surf); border:1px solid var(--v-line); border-radius:12px; transition:border-color .15s, background .15s; }
+  background:var(--v-surf); border:1px solid var(--v-line); border-radius:var(--v-r-lg); transition:border-color .15s, background .15s; }
 .r-row:hover{ border-color:var(--v-line2); }
-.r-row .bar{ position:absolute; left:0; top:12px; bottom:12px; width:3px; border-radius:0 3px 3px 0; }
+.r-row .bar{ position:absolute; left:0; top:12px; bottom:12px; width:3px; border-radius:0 var(--v-r-sm) var(--v-r-sm) 0; }
 
 /* ── Pills, segments, chips ────────────────────────────────────────────────
    The Library reference (docs/design/relay-main-library-screen.png) introduces
    three small controls that are not one-offs: the content-type PILL row, the
    view SEGMENT control, and the metadata CHIP. They live here so the Library,
    the Planner and anything after them cannot drift apart on radius or height. */
-.r-pill{ display:inline-flex; align-items:center; gap:8px; height:34px; padding:0 16px;
+.r-pill{ display:inline-flex; align-items:center; gap:7px; height:26px; padding:0 11px;
   border-radius:var(--v-r-md); border:1px solid transparent; background:var(--v-surf2);
-  color:var(--v-dim); font-family:var(--f-body); font-size:13px; font-weight:600;
-  cursor:pointer; white-space:nowrap; transition:background .14s, color .14s; }
+  color:var(--v-dim); font-family:var(--f-body); font-size:var(--v-fs-b2); font-weight:600;
+  cursor:pointer; white-space:nowrap;
+  transition:background var(--v-dur) var(--v-ease), color var(--v-dur) var(--v-ease); }
 .r-pill:hover:not(.on){ background:var(--v-surf3); color:var(--v-txt); }
-/* SELECTED is chrome, so it is amethyst. Amber here would mean the congregation
-   is looking at a tab (CLAUDE.md — amber is the tally light, and nothing else). */
+/* SELECTED is chrome, so it is the selection colour. Amber here would mean the
+   congregation is looking at a tab (CLAUDE.md — amber is the tally light). */
 .r-pill.on{ background:var(--v-accent-fill); color:var(--v-accent-ink); }
 
 .r-seg{ display:inline-flex; gap:2px; padding:3px; border-radius:var(--v-r-md);
   background:var(--v-bg); border:1px solid var(--v-line); }
-.r-seg button{ height:28px; padding:0 15px; border:0; border-radius:6px; background:transparent;
-  color:var(--v-dim); font-family:var(--f-body); font-size:12.5px; font-weight:600; cursor:pointer;
-  transition:background .14s, color .14s; }
+.r-seg button{ height:22px; padding:0 10px; border:0; border-radius:2px; background:transparent;
+  color:var(--v-faint); font-family:var(--f-body); font-size:var(--v-fs-lbl); font-weight:600; cursor:pointer;
+  transition:background var(--v-dur) var(--v-ease), color var(--v-dur) var(--v-ease); }
 .r-seg button:hover:not(.on){ color:var(--v-txt); }
 .r-seg button.on{ background:var(--v-accent-fill); color:var(--v-accent-ink); }
 
-.r-chip{ display:inline-flex; align-items:center; gap:5px; height:21px; padding:0 8px;
+.r-chip{ display:inline-flex; align-items:center; gap:5px; height:19px; padding:0 7px;
   border-radius:var(--v-r-sm); border:1px solid var(--v-line2); background:var(--v-surf2);
-  font-family:var(--f-mono); font-size:10.5px; font-variant-numeric:tabular-nums;
+  font-family:var(--f-mono); font-size:var(--v-fs-cap); font-variant-numeric:tabular-nums;
   letter-spacing:.02em; color:var(--v-dim); white-space:nowrap; }
-.r-chip.green{ background:var(--v-emerald-soft); border-color:rgba(34,197,94,.32); color:var(--v-emerald); }
-.r-chip.cyan{ background:var(--v-cyan-soft); border-color:rgba(34,211,238,.32); color:var(--v-cyan); }
-.r-chip.amethyst{ background:var(--v-accent-soft); border-color:var(--v-accent-line); color:var(--v-accent2); }
-.r-chip.amber{ background:var(--v-amber-soft); border-color:rgba(255,176,0,.32); color:var(--v-amber); }
+.r-chip.green{ background:var(--v-emerald-soft); border-color:var(--v-emerald-line); color:var(--v-emerald); }
+.r-chip.cyan{ background:var(--v-cyan-soft); border-color:var(--v-cyan-line); color:var(--v-cyan); }
+.r-chip.amethyst{ background:var(--v-amethyst-soft); border-color:var(--v-amethyst-line); color:var(--v-amethyst2); }
+.r-chip.amber{ background:var(--v-amber-soft); border-color:var(--v-amber-line); color:var(--v-amber); }
 
-.r-empty{ color:var(--v-faint); font-size:13.5px; }
-.r-focus:focus-visible, .r-btn:focus-visible, .r-iconbtn:focus-visible, .nav-item:focus-visible,
-.r-input:focus-visible, .r-select:focus-visible, .r-switch:focus-visible{ outline:2px solid var(--v-accent2); outline-offset:2px; }
+.r-empty{ color:var(--v-faint); font-size:var(--v-fs-b2); }
+.r-focus:focus-visible, .r-btn:focus-visible, .r-iconbtn:focus-visible, .ws-tab:focus-visible,
+.r-input:focus-visible, .r-select:focus-visible, .r-switch:focus-visible,
+.r-cbtn:focus-visible, .r-pill:focus-visible, .r-well:focus-within{
+  outline:2px solid var(--v-sel); outline-offset:2px; }
 
-/* ── Responsive: sidebar → icon rail → bottom nav ──────────────────────── */
-@media (max-width:1024px){
-  .side{ width:70px; flex-basis:70px; padding:16px 8px; align-items:center; }
-  .side-brand{ justify-content:center; padding:0 0 12px; }
-  .side-brand span{ display:none; }
-  .nav-item{ justify-content:center; padding:12px 0; }
-  .nav-item.active{ transform:none; }
-  .nav-label, .side-profile .who, .side-foot .m, .side-foot .row .k{ display:none; }
-  .side-profile{ padding:8px; justify-content:center; }
-  .side-foot{ padding:10px; display:flex; justify-content:center; }
-}
+/* ── Responsive ─────────────────────────────────────────────────────────── */
 @media (max-width:640px){
-  .side{ display:none; }
   /* WRAPS rather than clipping. At 375px this row wanted 490px and the thing that
      fell off the right edge was **Emergency Stop** — the control the whole product
      is arranged around. A second line is free; a panic button you cannot reach is
-     not. */
-  .topbar-v{ height:auto; min-height:54px; padding:8px 16px; flex-wrap:wrap; row-gap:6px; }
-  .topbar-title{ min-width:0; }
-  .topbar-title{ font-size:20px; }
+     not. The chrome bar is 34px now, not 62px, and the fix is the same fix: the
+     height goes auto and the row wraps, so the panic control moves down rather
+     than off. */
+  .topbar-v{ height:auto; min-height:34px; padding:2px 8px; flex-wrap:wrap; row-gap:4px; }
   .topbar-icons{ gap:12px; }
   .mainscroll{ padding:16px 14px 84px; }
   .r-title{ font-size:26px; }
@@ -462,7 +751,7 @@ input[type="checkbox"]{ accent-color:var(--v-accent); }
     background:var(--v-bg); border-top:1px solid var(--v-line2); padding:6px 6px calc(6px + env(safe-area-inset-bottom));
     justify-content:space-around; align-items:stretch; }
   .botnav .bn{ flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px;
-    background:none; border:0; color:var(--v-faint); font-size:10px; font-weight:600; cursor:pointer; border-radius:10px; }
+    background:none; border:0; color:var(--v-faint); font-size:var(--v-fs-b3); font-weight:600; cursor:pointer; border-radius:var(--v-r-sm); }
   .botnav .bn.active{ color:var(--v-accent2); background:var(--v-accent-soft); }
 }
 
@@ -475,13 +764,13 @@ input[type="checkbox"]{ accent-color:var(--v-accent); }
 
 /* Sub-tab strip (Library content types) */
 .subtabs{ display:flex; gap:6px; flex-wrap:wrap; }
-.subtab{ display:flex; align-items:center; gap:8px; padding:9px 14px; border-radius:10px;
+.subtab{ display:flex; align-items:center; gap:8px; padding:9px 14px; border-radius:var(--v-r-sm);
   border:1px solid var(--v-line2); background:var(--v-surf2); color:var(--v-dim);
-  font-family:var(--f-body); font-size:13px; font-weight:600; cursor:pointer; transition:.14s; }
+  font-family:var(--f-body); font-size:var(--v-fs-pr); font-weight:600; cursor:pointer; transition:.14s; }
 .subtab:hover{ color:var(--v-txt); }
 .subtab.on{ background:var(--v-surf3); color:var(--v-txt); border-color:var(--v-line2); }
-.subtab .c{ width:8px; height:8px; border-radius:3px; flex:0 0 auto; }
-.subtab .n{ font-family:var(--f-mono); font-size:9.5px; color:var(--v-faint); }
+.subtab .c{ width:8px; height:8px; border-radius:var(--v-r-sm); flex:0 0 auto; }
+.subtab .n{ font-family:var(--f-mono); font-size:var(--v-fs-cap); color:var(--v-faint); }
 
 /* Catalog toolbar + grid + card */
 .cat{ display:flex; flex-direction:column; gap:16px; max-width:1080px; }
@@ -489,21 +778,21 @@ input[type="checkbox"]{ accent-color:var(--v-accent); }
 .cat-bar .r-input{ max-width:300px; }
 .cat-bar .spring{ flex:1; }
 .cat-grid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(196px,1fr)); gap:14px; }
-.cat-card{ display:flex; flex-direction:column; border:1px solid var(--v-line); border-radius:14px;
+.cat-card{ display:flex; flex-direction:column; border:1px solid var(--v-line); border-radius:var(--v-r-lg);
   background:var(--v-surf); padding:13px; transition:border-color .14s; }
 .cat-card:hover{ border-color:var(--v-line2); }
-.cat-thumb{ aspect-ratio:16/9; border-radius:9px; margin-bottom:11px; position:relative; overflow:hidden;
+.cat-thumb{ aspect-ratio:16/9; border-radius:var(--v-r-sm); margin-bottom:11px; position:relative; overflow:hidden;
   background:repeating-linear-gradient(135deg,var(--v-surf2) 0 8px,var(--v-surf3) 8px 16px); }
 .cat-thumb.scripture{ background:radial-gradient(120% 140% at 50% 25%,#241a10,#0c0905); display:grid; place-items:center; padding:10px; }
-.cat-thumb.scripture .q{ font-family:var(--f-serif); color:#f4e4c8; font-size:12px; text-align:center; line-height:1.35; }
-.cat-kind{ position:absolute; top:8px; left:8px; font-family:var(--f-mono); font-size:8.5px; letter-spacing:.06em;
-  padding:2px 6px; border-radius:5px; background:rgba(0,0,0,.55); border:1px solid var(--v-line2); color:var(--v-dim); }
-.cat-t{ font-weight:600; font-size:13px; color:var(--v-txt); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.cat-m{ font-family:var(--f-mono); font-size:9px; color:var(--v-faint); margin-top:3px; letter-spacing:.03em;
+.cat-thumb.scripture .q{ font-family:var(--f-serif); color:#f4e4c8; font-size:var(--v-fs-b1); text-align:center; line-height:1.35; }
+.cat-kind{ position:absolute; top:8px; left:8px; font-family:var(--f-mono); font-size:var(--v-fs-kind); letter-spacing:.06em;
+  padding:2px 6px; border-radius:var(--v-r-sm); background:rgba(0,0,0,.55); border:1px solid var(--v-line2); color:var(--v-dim); }
+.cat-t{ font-weight:600; font-size:var(--v-fs-pr); color:var(--v-txt); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.cat-m{ font-family:var(--f-mono); font-size:var(--v-fs-fig); color:var(--v-faint); margin-top:3px; letter-spacing:.03em;
   overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .cat-card .cat-add{ margin-top:11px; width:100%; }
-.cat-empty{ padding:34px 20px; text-align:center; border:1px dashed var(--v-line2); border-radius:14px; }
-.cat-sketch{ font-family:var(--f-mono); font-size:10px; letter-spacing:.1em; text-transform:uppercase;
+.cat-empty{ padding:34px 20px; text-align:center; border:1px dashed var(--v-line2); border-radius:var(--v-r-lg); }
+.cat-sketch{ font-family:var(--f-mono); font-size:var(--v-fs-b3); letter-spacing:.1em; text-transform:uppercase;
   color:var(--v-faint); display:inline-flex; align-items:center; gap:7px; }
 .cat-sketch::before{ content:""; width:6px; height:6px; border-radius:50%; background:var(--v-accent); box-shadow:0 0 7px var(--v-accent); }
 
@@ -513,22 +802,22 @@ input[type="checkbox"]{ accent-color:var(--v-accent); }
 .cheat-scrim{ position:fixed; inset:0; z-index:900; display:grid; place-items:center;
   background:rgba(0,0,0,.62); padding:24px; cursor:default; }
 .cheat{ width:100%; max-width:520px; background:var(--v-surf); border:1px solid var(--v-line2);
-  border-radius:14px; padding:22px 24px; box-shadow:0 18px 50px rgba(0,0,0,.5); }
-.cheat h2{ margin:0 0 16px; font-family:var(--f-display); font-size:17px; font-weight:600; color:var(--v-txt); }
+  border-radius:var(--v-r-lg); padding:22px 24px; box-shadow:0 18px 50px rgba(0,0,0,.5); }
+.cheat h2{ margin:0 0 16px; font-family:var(--f-display); font-size:var(--v-fs-h1); font-weight:600; color:var(--v-txt); }
 .cheat table{ width:100%; border-collapse:collapse; }
 .cheat tr{ border-bottom:1px solid var(--v-line); }
 .cheat tr:last-child{ border-bottom:0; }
 .cheat td{ padding:9px 0; vertical-align:middle; }
 .cheat .keys{ white-space:nowrap; width:1%; padding-right:14px; }
 .cheat .lbl{ font-size:13.5px; color:var(--v-txt); }
-.cheat .scope{ text-align:right; font-family:var(--f-mono); font-size:9.5px; letter-spacing:.05em;
+.cheat .scope{ text-align:right; font-family:var(--f-mono); font-size:var(--v-fs-cap); letter-spacing:.05em;
   text-transform:uppercase; color:var(--v-faint); white-space:nowrap; padding-left:12px; }
 .cheat kbd{ display:inline-block; font-family:var(--f-mono); font-size:10.5px; line-height:1;
-  padding:5px 7px; margin-right:4px; border-radius:5px; background:var(--v-surf3);
+  padding:5px 7px; margin-right:4px; border-radius:var(--v-r-sm); background:var(--v-surf3);
   border:1px solid var(--v-line2); color:var(--v-txt); }
-.cheat-foot{ margin:16px 0 0; font-size:12px; color:var(--v-dim); line-height:1.6; }
-.cheat-foot kbd{ display:inline-block; font-family:var(--f-mono); font-size:10px; padding:3px 5px;
-  border-radius:4px; background:var(--v-surf3); border:1px solid var(--v-line2); color:var(--v-txt); }
+.cheat-foot{ margin:16px 0 0; font-size:var(--v-fs-b1); color:var(--v-dim); line-height:1.6; }
+.cheat-foot kbd{ display:inline-block; font-family:var(--f-mono); font-size:var(--v-fs-b3); padding:3px 5px;
+  border-radius:var(--v-r-sm); background:var(--v-surf3); border:1px solid var(--v-line2); color:var(--v-txt); }
 
 /* ===== Update banner =================================================
    Sits at rest only. updater.js will not even check while the mic is live —
@@ -544,42 +833,15 @@ input[type="checkbox"]{ accent-color:var(--v-accent); }
   border:1px solid color-mix(in srgb, var(--v-amethyst) 45%, transparent);
   border-radius:var(--v-r-md); box-shadow:0 8px 28px rgba(0,0,0,.35); }
 .prac-t{ flex:1; min-width:0; display:flex; flex-direction:column; gap:2px; }
-.prac-n{ font-size:9px; letter-spacing:.08em; color:var(--v-amethyst); }
+.prac-n{ font-size:var(--v-fs-fig); letter-spacing:.08em; color:var(--v-amethyst); }
 .prac-t b{ font-size:var(--v-fs-b2); font-weight:600; color:var(--v-txt); }
 .prac-t span{ font-size:var(--v-fs-cap); color:var(--v-dim); line-height:1.45; }
 
-/* DEGRADED. Quiet by default and never amber — amber means ON AIR, and nothing
-   here is about what a congregation is looking at. A blocked capability gets a
-   rose dot; a reduced one stays grey, because Relay is still doing the thing. */
-.deg{ position:fixed; left:50%; transform:translateX(-50%); bottom:18px; z-index:790;
-  max-width:min(680px, calc(100vw - 32px)); background:var(--v-surf2);
-  border:1px solid var(--v-line2); border-radius:var(--v-r-md);
-  box-shadow:0 8px 28px rgba(0,0,0,.35); overflow:hidden; }
-/* ABOVE the bottom nav. At its desktop `bottom:18px` the banner sat on top of the
-   narrow-width tab bar and covered six of the eight tab labels — navigation was
-   unreachable for as long as anything was degraded, which is exactly when an
-   operator needs to reach Outputs or Settings. Declared AFTER `.deg` so it wins:
-   same specificity, later rule. */
-@media (max-width:640px){
-  .deg{ bottom: calc(74px + env(safe-area-inset-bottom)); }
-}
-.deg-head{ display:flex; align-items:center; gap:10px; width:100%; padding:9px 12px;
-  background:none; border:0; color:var(--v-txt); font:inherit; cursor:pointer;
-  text-align:left; }
-.deg-head:hover{ background:var(--v-surf3); }
-.deg-dot{ width:7px; height:7px; border-radius:50%; background:var(--v-dim); flex:0 0 auto; }
-.deg.blocked .deg-dot{ background:var(--v-rose); }
-.deg-sum{ flex:1; min-width:0; font-size:var(--v-fs-b2); overflow:hidden;
-  text-overflow:ellipsis; white-space:nowrap; }
-.deg-more{ font-size:9px; letter-spacing:.06em; color:var(--v-faint); flex:0 0 auto; }
-.deg-list{ list-style:none; margin:0; padding:0 12px 10px; display:flex;
-  flex-direction:column; gap:8px; }
-.deg-item{ display:flex; flex-direction:column; gap:2px; padding-left:10px;
-  border-left:2px solid var(--v-line2); }
-.deg-item.blocked{ border-left-color:var(--v-rose); }
-.deg-item b{ font-size:var(--v-fs-b2); font-weight:600; }
-.deg-item span{ font-size:var(--v-fs-cap); color:var(--v-dim); line-height:1.45; }
-.deg-item i{ font-size:var(--v-fs-cap); color:var(--v-faint); font-style:normal; }
+/* WHAT IS REDUCED RIGHT NOW, in the status bar (DECISIONS §45). The floating
+   strip this replaces sat over the console at `bottom:18px`; the verdict it
+   carried is unchanged and lives in `degraded.js`. Never amber — amber means ON
+   AIR and nothing here is about what a congregation is looking at. */
+.st-deg .v{ max-width:34ch; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 
 /* The post-update banner when the database did NOT survive. Rose is the failure
    colour; amber is never spent here because nothing about this is on air. */
@@ -588,13 +850,13 @@ input[type="checkbox"]{ accent-color:var(--v-accent); }
 .upd .upd-msg{ display:block; color:var(--v-dim); margin-top:4px; }
 .upd{ position:fixed; left:50%; transform:translateX(-50%); bottom:18px; z-index:800;
   display:flex; align-items:center; gap:14px; max-width:min(760px,calc(100vw - 32px));
-  background:var(--v-surf); border:1px solid var(--v-accent-line); border-radius:12px;
+  background:var(--v-surf); border:1px solid var(--v-accent-line); border-radius:var(--v-r-lg);
   padding:12px 16px; box-shadow:0 14px 40px rgba(0,0,0,.45); }
 .upd-t{ display:flex; flex-direction:column; gap:2px; }
-.upd-t b{ font-size:13px; color:var(--v-accent2); }
-.upd-t span{ font-size:12px; color:var(--v-dim); line-height:1.5; }
-.upd-pct{ font-size:12px; color:var(--v-txt); }
-.upd.err{ border-color:rgba(239,68,68,.35); color:var(--v-txt); font-size:12.5px; line-height:1.55; }
+.upd-t b{ font-size:var(--v-fs-pr); color:var(--v-accent2); }
+.upd-t span{ font-size:var(--v-fs-b1); color:var(--v-dim); line-height:1.5; }
+.upd-pct{ font-size:var(--v-fs-b1); color:var(--v-txt); }
+.upd.err{ border-color:var(--v-red-line); color:var(--v-txt); font-size:var(--v-fs-h3); line-height:1.55; }
 
 /* A PANIC CONTROL FAILED — clear or blackout did not reach the outputs, so the
    congregation may still be looking at the last thing the operator put up.
@@ -610,35 +872,35 @@ input[type="checkbox"]{ accent-color:var(--v-accent); }
    The bug this exists for: `clearScreens()` swallowed its own errors and Live
    flashed "Screens cleared" regardless. The operator was told the screens were
    clean while the verse was still on the wall — and stopped looking at it. */
+/* THE MICROPHONE DIED (RG-117). Rose, because it is a fault and not a reduced
+   capability — never amber, which means ON AIR, and never amethyst, which means
+   rehearsal.
+
+   In flow rather than fixed, so it stacks UNDER the panic bar: a panic control
+   that failed outranks a dead microphone, because one of them means the
+   congregation is looking at something nobody chose. Quieter than `.panicbar` for
+   the same reason — same colour, no shadow, no full-bleed fixed position. */
+.audiobar{ display:flex; align-items:center; gap:14px; padding:10px 18px;
+  background:#2d0f16; border-bottom:1px solid var(--v-rose); }
+.audiobar b{ color:var(--v-rose); font-size:var(--v-fs-pr); letter-spacing:.02em; }
+.audiobar span{ color:var(--v-txt); font-size:var(--v-fs-h3); line-height:1.55; }
+.audiobar .panic-t{ display:flex; flex-direction:column; gap:2px; flex:1; min-width:0; }
+
 .panicbar{ position:fixed; top:0; left:0; right:0; z-index:1200;
   display:flex; align-items:center; gap:14px; padding:12px 18px;
   background:#3a1119; border-bottom:1px solid var(--v-rose);
   box-shadow:0 10px 30px rgba(0,0,0,.5); }
-.panicbar b{ color:var(--v-rose); font-size:13px; letter-spacing:.02em; }
-.panicbar span{ color:var(--v-txt); font-size:12.5px; line-height:1.55; }
+.panicbar b{ color:var(--v-rose); font-size:var(--v-fs-pr); letter-spacing:.02em; }
+.panicbar span{ color:var(--v-txt); font-size:var(--v-fs-h3); line-height:1.55; }
 .panicbar .panic-t{ display:flex; flex-direction:column; gap:2px; flex:1; min-width:0; }
 
-/* What is ACTUALLY on the congregation's screen — the reference, named, next to
-   the On Air badge. The operator should never have to hunt a 10px monospace
-   footer inside a monitor tile to answer "what are they looking at?". */
-.topbar-live{ font-size:12px; color:var(--v-txt); background:var(--v-surf2);
-  border:1px solid var(--v-line2); border-radius:6px; padding:3px 8px;
-  max-width:280px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-/* The microphone is a SEPARATE fact from what's on screen, and quieter. */
-.topbar-mic{ display:inline-flex; align-items:center; gap:6px; font-size:11px;
-  letter-spacing:.05em; text-transform:uppercase; color:var(--v-dim); }
-.mic-dot{ width:6px; height:6px; border-radius:50%; background:var(--v-emerald);
-  box-shadow:0 0 6px var(--v-emerald); }
-/* SERVICE LOCK. Grey and quiet on purpose: it reports that the console is being
-   careful, not that anything is wrong, and it must never compete with the amber
-   that says a congregation is looking at something. */
-.lockchip{ display:inline-flex; align-items:center; font-size:9px; letter-spacing:.09em;
-  color:var(--v-dim); border:1px solid var(--v-line2); border-radius:5px;
-  padding:2px 7px; background:var(--v-surf2); flex:0 0 auto; }
-@media (prefers-reduced-motion: no-preference){
-  .mic-dot{ animation:micpulse 1.8s ease-in-out infinite; }
-  @keyframes micpulse{ 0%,100%{opacity:1} 50%{opacity:.45} }
-}
+/* The chrome bar's own readouts lived here and are gone (2026-09-14, C1): the
+   ON AIR reference (`.topbar-live`), the LISTENING chip (`.topbar-mic`,
+   `.mic-dot` and its `micpulse` keyframes) and the service-lock chip
+   (`.lockchip`). The bar is navigation now — the wordmark and the six
+   workspaces — and the wall's state is the status bar's, through `wallState`.
+   The rules went out with the markup rather than waiting for the classes to
+   come back. */
 
 /* ══════════════════════════════════════════════════════════════════════════
    LAUNCH & STARTUP (.b-*) — the shared chrome for section 1 of
@@ -666,21 +928,21 @@ input[type="checkbox"]{ accent-color:var(--v-accent); }
    reads as one screen changing rather than four different apps. */
 .b-bar{ position:relative; flex:0 0 auto; display:flex; align-items:center; gap:var(--v-sp-sm);
   height:60px; padding:0 28px; border-bottom:1px solid var(--v-line); }
-.b-bar b{ font-size:14px; font-weight:700; letter-spacing:.1em; color:var(--v-txt); }
-.b-bar .b-ver{ font-size:11px; color:var(--v-faint); }
+.b-bar b{ font-size:var(--v-fs-h2); font-weight:700; letter-spacing:.1em; color:var(--v-txt); }
+.b-bar .b-ver{ font-size:var(--v-fs-lbl); color:var(--v-faint); }
 .b-bar .b-spring{ flex:1; }
 .b-mark{ display:flex; align-items:flex-end; gap:2px; height:16px; }
-.b-mark i{ width:2.5px; border-radius:99px; background:var(--v-amethyst); }
+.b-mark i{ width:2.5px; border-radius:var(--v-r-round); background:var(--v-amethyst); }
 .b-mark i:nth-child(1),.b-mark i:nth-child(5){ height:6px; opacity:.55; }
 .b-mark i:nth-child(2),.b-mark i:nth-child(4){ height:11px; }
 .b-mark i:nth-child(3){ height:16px; }
 
 /* Stage rail — where in the launch sequence we are. */
 .b-rail{ position:relative; display:flex; align-items:center; gap:10px; }
-.b-rail .s{ display:flex; align-items:center; gap:7px; font-family:var(--f-mono); font-size:9.5px;
+.b-rail .s{ display:flex; align-items:center; gap:7px; font-family:var(--f-mono); font-size:var(--v-fs-cap);
   letter-spacing:.12em; text-transform:uppercase; color:var(--v-faint); }
 .b-rail .s .n{ width:18px; height:18px; border-radius:50%; display:grid; place-items:center;
-  border:1px solid var(--v-line2); font-size:9px; color:var(--v-faint); }
+  border:1px solid var(--v-line2); font-size:var(--v-fs-fig); color:var(--v-faint); }
 .b-rail .s.on .n{ border-color:var(--v-amethyst); color:var(--v-amethyst); box-shadow:0 0 0 3px rgba(139,92,246,.14); }
 .b-rail .s.on{ color:var(--v-txt); }
 .b-rail .s.done .n{ border-color:rgba(34,197,94,.5); color:var(--v-emerald); }
@@ -692,7 +954,7 @@ input[type="checkbox"]{ accent-color:var(--v-accent); }
    centred flex child in a scroll container has its overflowing TOP clipped
    unreachably. This centres a short stage and lets a long one scroll. */
 .b-inner{ width:100%; max-width:760px; margin:auto 0; }
-.b-eyebrow{ font-family:var(--f-mono); font-size:10px; font-weight:600; letter-spacing:.18em;
+.b-eyebrow{ font-family:var(--f-mono); font-size:var(--v-fs-b3); font-weight:600; letter-spacing:.18em;
   text-transform:uppercase; color:var(--v-amethyst2); margin-bottom:var(--v-sp-sm); }
 .b-h1{ margin:0; font-family:var(--f-head); font-size:var(--v-fs-h1); line-height:var(--v-lh-h1);
   letter-spacing:var(--v-tr-tight); font-weight:600; color:var(--v-txt); }
@@ -700,12 +962,12 @@ input[type="checkbox"]{ accent-color:var(--v-accent); }
 
 /* Progress bar — design sheet PROGRESS / INDICATORS. */
 .b-prog{ margin-top:var(--v-sp-lg); display:flex; align-items:center; gap:12px; }
-.b-prog .track{ flex:1; height:6px; border-radius:99px; background:var(--v-surf2); overflow:hidden; }
+.b-prog .track{ flex:1; height:6px; border-radius:var(--v-r-round); background:var(--v-surf2); overflow:hidden; }
 /* Fills by scaleX, not width — a transform is composited on the GPU and never
    triggers layout, so the boot/download bar stays smooth on weak hardware. */
-.b-prog .fill{ height:100%; width:100%; border-radius:99px; transform-origin:left center; transform:scaleX(0);
+.b-prog .fill{ height:100%; width:100%; border-radius:var(--v-r-round); transform-origin:left center; transform:scaleX(0);
   background:linear-gradient(90deg,var(--v-amethyst),var(--v-amethyst2)); transition:transform .35s ease; }
-.b-prog .pct{ font-family:var(--f-mono); font-variant-numeric:tabular-nums; font-size:12px; color:var(--v-dim); min-width:38px; text-align:right; }
+.b-prog .pct{ font-family:var(--f-mono); font-variant-numeric:tabular-nums; font-size:var(--v-fs-b1); color:var(--v-dim); min-width:38px; text-align:right; }
 
 /* Check rows */
 .b-checks{ margin:var(--v-sp-lg) 0 0; padding:0; list-style:none; border:1px solid var(--v-line);
@@ -752,7 +1014,7 @@ input[type="checkbox"]{ accent-color:var(--v-accent); }
 .b-check.unknown .note{ color:var(--v-faint); }
 .b-stub{ display:inline-flex; align-items:center; gap:5px; margin-left:8px; padding:1px 6px;
   border-radius:var(--v-r-sm); border:1px solid var(--v-line2); background:var(--v-surf2);
-  font-family:var(--f-mono); font-size:9px; letter-spacing:.08em; text-transform:uppercase; color:var(--v-faint); }
+  font-family:var(--f-mono); font-size:var(--v-fs-fig); letter-spacing:.08em; text-transform:uppercase; color:var(--v-faint); }
 
 .b-spinner{ width:14px; height:14px; border-radius:50%; border:2px solid rgba(139,92,246,.25);
   border-top-color:var(--v-amethyst); animation:bspin .7s linear infinite; }
@@ -762,7 +1024,7 @@ input[type="checkbox"]{ accent-color:var(--v-accent); }
 .b-actions{ display:flex; align-items:center; gap:10px; margin-top:var(--v-sp-lg); flex-wrap:wrap; }
 .b-foot{ position:relative; flex:0 0 auto; display:flex; align-items:center; gap:var(--v-sp-md);
   padding:14px 28px; border-top:1px solid var(--v-line);
-  font-family:var(--f-mono); font-size:10px; letter-spacing:.06em; text-transform:uppercase; color:var(--v-faint); }
+  font-family:var(--f-mono); font-size:var(--v-fs-b3); letter-spacing:.06em; text-transform:uppercase; color:var(--v-faint); }
 .b-foot .b-spring{ flex:1; }
 .b-foot .dot{ width:7px; height:7px; border-radius:50%; background:var(--v-amethyst); flex:0 0 auto; }
 
@@ -775,23 +1037,23 @@ input[type="checkbox"]{ accent-color:var(--v-accent); }
 .b-card{ width:100%; max-width:600px; background:var(--v-surf); border:1px solid var(--v-line2);
   border-radius:var(--v-r-xl); padding:30px 32px; box-shadow:var(--v-shadow-lg); }
 .b-card .b-kicker{ display:flex; align-items:center; gap:9px; margin-bottom:16px;
-  font-family:var(--f-mono); font-size:10px; font-weight:600; letter-spacing:.14em; text-transform:uppercase; }
+  font-family:var(--f-mono); font-size:var(--v-fs-b3); font-weight:600; letter-spacing:.14em; text-transform:uppercase; }
 .b-card .b-kicker .d{ width:8px; height:8px; border-radius:50%; background:currentColor; flex:0 0 auto; }
 .b-card h2{ margin:0 0 12px; font-family:var(--f-head); font-size:24px; line-height:1.25;
   font-weight:600; letter-spacing:var(--v-tr-tight); color:var(--v-txt); }
 .b-card p{ margin:0 0 16px; font-size:var(--v-fs-b1); line-height:1.6; color:var(--v-dim); }
-.b-card p.lead{ font-size:15px; color:var(--v-txt); }
+.b-card p.lead{ font-size:var(--v-fs-ttl); color:var(--v-txt); }
 .b-card .b-facts{ margin:0 0 20px; padding:14px 16px; border:1px solid var(--v-line);
   border-radius:var(--v-r-md); background:var(--v-bg); }
 .b-card .b-facts dl{ margin:0; display:grid; grid-template-columns:auto 1fr; gap:7px 16px; }
-.b-card .b-facts dt{ font-family:var(--f-mono); font-size:10px; letter-spacing:.1em;
+.b-card .b-facts dt{ font-family:var(--f-mono); font-size:var(--v-fs-b3); letter-spacing:.1em;
   text-transform:uppercase; color:var(--v-faint); }
 .b-card .b-facts dd{ margin:0; font-size:var(--v-fs-b2); color:var(--v-txt);
   overflow:hidden; text-overflow:ellipsis; }
 .b-card details{ margin-top:20px; }
-.b-card summary{ cursor:pointer; font-size:12px; color:var(--v-faint); }
+.b-card summary{ cursor:pointer; font-size:var(--v-fs-b1); color:var(--v-faint); }
 .b-card pre{ margin:10px 0 0; padding:12px; background:var(--v-bg); border:1px solid var(--v-line);
-  border-radius:var(--v-r-md); font-family:var(--f-mono); font-size:11px; line-height:1.5;
+  border-radius:var(--v-r-md); font-family:var(--f-mono); font-size:var(--v-fs-lbl); line-height:1.5;
   color:var(--v-dim); white-space:pre-wrap; word-break:break-word; max-height:200px; overflow:auto; }
 /* The default checkbox paints a white square on a near-black card. `accent-color`
    only colours it once CHECKED, which is precisely the state this one starts
@@ -832,9 +1094,9 @@ input[type="checkbox"]{ accent-color:var(--v-accent); }
 .shell.chromeless .botnav{ display:none; }
 .shell.chromeless .mainscroll{ padding:14px; }
 .exit-fs{ position:absolute; top:10px; right:14px; z-index:60;
-  height:30px; padding:0 12px; border-radius:8px; cursor:pointer;
+  height:30px; padding:0 12px; border-radius:var(--v-r-sm); cursor:pointer;
   background:var(--v-surf2); border:1px solid var(--v-line2); color:var(--v-dim);
-  font-family:var(--f-body); font-size:12px; font-weight:600; }
+  font-family:var(--f-body); font-size:var(--v-fs-b1); font-weight:600; }
 .exit-fs:hover{ color:var(--v-txt); border-color:var(--v-accent-line); }
 .mainscroll{ position:relative; }
 
@@ -855,3 +1117,117 @@ input[type="checkbox"]{ accent-color:var(--v-accent); }
 @keyframes view-spin{ to{ transform:rotate(360deg); } }
 .view-loaderr{ display:flex; flex-direction:column; align-items:center; gap:14px;
   padding:56px 24px; color:var(--v-dim); text-align:center; }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   S1 · SHELL AND CHROME (wave 3). Append-only block — see the wave brief.
+   Two additions, both of them things the prototype has and the app did not.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* THE WORDMARK'S SECOND HALF (docs/REBRAND.md §1, the prototype's `.wordmark`).
+   `RELAY` is the product; `studio` is the room. Mono, a third the weight, on the
+   wordmark's own baseline rather than beside it as a second name — a tag, not a
+   rename. It is the first thing to go when the bar runs out of room: `flex` is
+   left at its default so the brand block never shrinks, and this child is hidden
+   below 1180px where the workspaces and the screen lamps are competing for the
+   same pixels (see .topbar-v's wrap rule at 640px — the panic control is what
+   that one is protecting, and this is the cheapest thing in the bar). */
+.chrome-brand .chrome-tag{ font-family:var(--f-mono); font-size:var(--v-fs-cap); font-weight:500;
+  letter-spacing:.06em; color:var(--v-faint); align-self:baseline; }
+@media (max-width:1180px){ .chrome-brand .chrome-tag{ display:none; } }
+
+/* END SERVICE (docs/REBRAND.md §1's fourth control). The colour IS the state:
+   an ordinary dock button while there is nothing to end, amber the moment a
+   service is recording. That satisfies §1 ("End service amber") and CLAUDE.md
+   rule 18 ("amber IS on air, and nothing else") at once, because the only time
+   it burns amber is the time the claim is true.
+
+   Green — the prototype's Go Live — is deliberately absent: Relay has no Go Live
+   (a service opens when the microphone does) and green is not in the colour law.
+   `.r-cbtn.golive` above is left untouched and is now an orphan class; it is the
+   integrator's to delete, not this block's to redefine. */
+.r-cbtn.endsvc[data-on="1"]{ background:var(--v-amber-soft); border-color:var(--v-amber-line);
+  color:var(--v-amber); box-shadow:inset 0 0 0 1px rgba(255,163,26,.14); }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   X1 · THE TRANSITION CONTROL — MOVED (L4)
+   The picker and its duration left this bar for Live's take rack, beside the
+   transport whose look they change (the operator's instruction, and it is the
+   better home: nothing about a transition is a fact about the room). Its rules
+   moved with it, into `views/Live.svelte`'s scoped stylesheet, rather than
+   staying here as a block no element matches — a dead rule in a shared file is
+   the thing the next agent reads and believes.
+
+   What did NOT move: `resolveTransition` is still the one ranking (DECISIONS
+   §84), `loadLiveTransition()` is still called once in the shell's mount, and
+   neither panic control passes through any of it. `transitionoverride.test.js`
+   follows the control to Live and holds the same two claims there.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* ══════════════════════════════════════════════════════════════════════════
+   B1 · ONE BUTTON, EVERYWHERE (docs/REBRAND.md §1 — the control metrics)
+   One block at the end of the file, per the wave-3 preamble, so a collision
+   with another agent's block resolves by moving these lines whole. The
+   corrections to `.r-btn` itself are NOT here: a second `.r-btn{}` at the foot
+   of the file would be the very defect this block exists to remove, so those
+   were made in place and are described where they sit.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* A BUTTON DOES NOT INHERIT ITS FONT, AND 128 OF THEM WERE NOT GIVEN ONE.
+   This is the largest single source of button drift in the app and it is
+   invisible to every existing instrument, because nothing is declared wrongly
+   — the declaration is simply absent. A `<button>` is a replaced-ish element
+   whose font comes from the UA sheet, not from the page: unstyled, Chrome
+   draws it `400 13.333px Arial`. Not Inter. Not a step on the type scale. Not
+   even the same WEIGHT as the text beside it.
+
+   That is the rail row measured at 13.33px, and it is also why a shape census
+   grouping on `font-size · weight · family` finds twenty-odd shapes per
+   workspace: two buttons a centimetre apart, one styled and one not, are a
+   different typeface at a size the scale does not contain.
+
+   An element selector loses to every class rule in this file and to every
+   Svelte-scoped rule (which carry a `.svelte-*` class of their own), so this
+   can only ever paint a button that nothing else had dressed. It cannot
+   override a deliberate choice — `Stage.svelte`'s 18px phone buttons and the
+   dock's control buttons both declare their own and are untouched. It is a
+   floor, not a policy.
+
+   `font: inherit` would be the tidier-looking line and it is the wrong one: it
+   would also inherit the SIZE of whatever the button happens to sit inside, so
+   the same control would render at three sizes in three panes. The point is
+   one button everywhere, so the floor names the step it wants. */
+button, [role="button"]{ font-family:var(--f-body); font-size:var(--v-fs-b2); }
+
+/* PRESS IS POINTER-DOWN, AND REDUCED MOTION STILL GETS A PRESS.
+   `:active` begins at pointerdown and ends at release, which is the beat a
+   press is — a class toggled on `click` arrives after the gesture is over and
+   reads as a flicker. Live.svelte's transport already had this (agent L2); it
+   was missing from the two shared controls, which is where most of the app's
+   buttons actually are.
+
+   `.r-btn`'s scale was unconditional before this, and `.r-cbtn`'s still is a
+   few hundred lines up — so an operator who has asked the OS for no animation
+   got movement anyway from every button in the product. Under `reduce` the
+   transform is switched OFF and the press becomes a brightness cut instead,
+   because somebody who wants no motion still has to be able to tell a press
+   from a dead button. That is the non-transform equivalent, not an absence.
+   `transform` only in the motion branch, so the compositor does the work and
+   nothing on a live console reflows under an operator's finger. */
+@media (prefers-reduced-motion: no-preference){
+  .r-btn:active:not(:disabled){ transform:scale(.98); }
+}
+@media (prefers-reduced-motion: reduce){
+  .r-btn:active:not(:disabled),
+  .r-cbtn:active:not(:disabled){ transform:none; filter:brightness(.88); }
+}
+
+
+/* ══════════════════════════════════════════════════════════════════════════
+   C1 · THE KEYS LEGEND IS GONE (2026-09-14)
+   A `.keyleg` strip briefly sat in the chrome, rendered from `liveShortcuts`.
+   The operator asked for the bar to be cleared back to the wordmark and the six
+   workspaces, so the markup went and these rules went with it — including the
+   two narrow-console rungs, which existed only to keep the strip from pushing a
+   panic control that is itself no longer in this bar. `?` remains the one place
+   the keys are documented.
+   ══════════════════════════════════════════════════════════════════════════ */

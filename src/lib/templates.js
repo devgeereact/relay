@@ -3,6 +3,8 @@
 // fetches the (editable) DB row instead. Sizes are in cqw (container-query
 // width %) so the same template scales identically at any output size.
 
+import { migrateStyle } from './templatemodel.js';
+
 export const BUILTINS = [
   {
     id: 1,
@@ -35,12 +37,26 @@ export const BUILTINS = [
   {
     id: 3,
     name: 'Lower Third',
-    layout: { regions: ['verse_text', 'reference'], align: 'left', lowerThird: true, refFirst: false },
+    // THE BAND FILL IS NEUTRAL, AND IT MATCHES THE RUST SEED EXACTLY.
+    //
+    // Two defects met here. The fill was `#8b5cf6` — amethyst, which rule 18
+    // reserves for REHEARSAL — so restoring the band (see `panelBg` in
+    // TemplateRender) would have put a lilac bar on every stream in a colour that
+    // already means something else. And the two seed lists disagreed about it:
+    // this file said `#8b5cf6`, `db/templates.rs` said `#b080e0`, and they also
+    // disagreed about `align`. A kiosk with no database resolves `template_id=3`
+    // against THIS list and a desktop resolves it against the DB row, so one
+    // screen wore a different purple from the next depending which door the
+    // content came in.
+    //
+    // Near-black at full strength with light type, matching `Lower Third Night`,
+    // which is the house answer for a caption bar over a camera.
+    layout: { regions: ['verse_text', 'reference'], align: 'center', lowerThird: true, refFirst: false },
     style: {
       font: 'var(--f-body)',
       background: 'transparent',
-      accent: '#8b5cf6',
-      verseColor: '#1c1224',
+      accent: '#101319',
+      verseColor: '#f2f4f8',
       verseSize: '2.6',
       refSize: '1.7',
       italicRef: false,
@@ -218,7 +234,10 @@ export function parseImportedTemplate(text) {
   return {
     name: String(parsed.name ?? 'Imported template'),
     layout: sanitiseLayout(parsed.layout),
-    style: sanitiseStyleValues(style),
+    // SANITISE FIRST, THEN MIGRATE. The migration copies values onto new keys;
+    // running it before the sanitiser would carry a hostile value past the check
+    // that exists to strip it, under a name the check had already cleared.
+    style: migrateStyle(sanitiseStyleValues(style)),
   };
 }
 

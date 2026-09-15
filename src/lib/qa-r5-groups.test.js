@@ -45,9 +45,17 @@ const GROUP_1 = {
   stopCapture: () => store.stopCapture(),
   fireContent: () => store.fireContent('Notice', 'Car park is blocked'),
   startCountdown: () => store.startCountdown(5),
-  // Not in the header's list, but it is the most literal member of the group:
-  // it paints over live scripture on every screen at once, for a fire alarm.
-  pushAnnouncement: () => store.pushAnnouncement('Please leave by the side door'),
+  // The transport's Reset and ±1. Same broadcast, same congregation, same rule —
+  // and it is the one that runs while a countdown is already on the wall, so a
+  // swallowed failure would leave the operator watching the OLD target tick down
+  // believing they had moved it.
+  adjustCountdown: () => store.adjustCountdown(4 * 60_000),
+  // `pushAnnouncement` WAS the most literal member of this group — it painted over
+  // live scripture on every screen at once. The control was removed from Quick
+  // tools on 2026-09-14 on the operator's instruction, and the command and its
+  // wrapper went with it rather than being left registered with nothing rendering
+  // them (CLAUDE.md: a command nothing calls is attack surface nobody is
+  // watching). Recorded here so the absence reads as a decision.
 };
 
 describe('GROUP 1 — every wrapper that can change what a congregation sees THROWS', () => {

@@ -25,6 +25,7 @@ import {
   BEAT_GRACE_MS,
   PAINT_STATES,
   screenSwitch,
+  screenReporting,
 } from './outputHealth.js';
 
 const ROOT = path.resolve(__dirname, '../..');
@@ -140,7 +141,111 @@ describe('describeScreen — the badge may never claim more than the screen did'
   });
 
   it('repeats the screen’s own last word rather than ours', () => {
-    expect(describeScreen(row({ paint_state: 'clear' }), ON_AIR).note).toBe('screen: clear');
+    expect(describeScreen(row({ paint_state: 'clear' }), ON_AIR).note).toMatch(/screen says clear/);
+    expect(describeScreen(row(), ON_AIR).note).toBe('screen: content');
+  });
+
+  // ── RG-129's half of the badge ──────────────────────────────────────────────
+  //
+  // The tests above cover a screen that has stopped ANSWERING. These cover the
+  // other half of the same bug: a screen that answers punctually, on time, and
+  // says it is showing nothing — while Relay is sending it a verse. Every one of
+  // these reads `On Air`, in amber, if the ok-branch goes back to deciding from
+  // `wall.live`, which is what it did until this wave.
+  describe('THE OTHER HALF: the screen’s own word, not Relay’s belief, decides', () => {
+    it('a screen that says CLEAR while a verse is live is not On Air, and not amber', () => {
+      // The measured RG-129 failure: an output page that reconnected mid-service
+      // came back blank and stayed blank. It kept beating the whole time — it was
+      // answering, it was just answering "clear" — so every instrument Relay had
+      // said On Air about a black screen with a congregation in front of it.
+      const d = describeScreen(row({ paint_state: 'clear' }), ON_AIR);
+      expect(d.label).toBe('Not confirmed');
+      expect(d.kind).not.toBe('onair');
+      expect(SCREEN_BADGE[d.kind]).not.toBe('amber');
+      // Both claims, side by side. When they disagree, that disagreement IS the
+      // finding, so neither half may be dropped.
+      expect(d.note).toMatch(/Relay is sending content/);
+      expect(d.note).toMatch(/screen says clear/);
+    });
+
+    it('a BLACKOUT that did not land does not read as a blackout', () => {
+      // Rule 15 / DECISIONS §20 on the reporting side: a panic control may never
+      // report a success it did not achieve. The screen is still painting the
+      // verse and says so.
+      const d = describeScreen(row({ paint_state: 'content' }), {
+        rehearsing: false,
+        live: true,
+        black: true,
+      });
+      expect(d.label).toBe('Not confirmed');
+      expect(d.note).toMatch(/blacked this screen out/);
+      expect(d.note).toMatch(/screen says content/);
+    });
+
+    it('a screen still showing a verse after a clear does not read Ready', () => {
+      // `clear_screens` returns Ok, nothing is on the programme, and the screen is
+      // still painting the last verse. "Ready" would be the reassuring word over
+      // the failure — rule 35 exactly.
+      const d = describeScreen(row({ paint_state: 'content' }), {
+        rehearsing: false,
+        live: false,
+        black: false,
+      });
+      expect(d.label).toBe('Not confirmed');
+      expect(d.note).toMatch(/nothing is on the programme/);
+    });
+
+    it('…and when the two agree it says so plainly, in three words and no more', () => {
+      expect(describeScreen(row({ paint_state: 'content' }), ON_AIR).label).toBe('On Air');
+      const off = { rehearsing: false, live: false, black: false };
+      expect(describeScreen(row({ paint_state: 'clear' }), off).label).toBe('Ready');
+      expect(describeScreen(row({ paint_state: 'black' }), off).label).toBe('Ready');
+      const blk = { rehearsing: false, live: true, black: true };
+      expect(describeScreen(row({ paint_state: 'black' }), blk).label).toBe('Blackout');
+      // A cleared screen satisfies a blackout too: both mean nothing of ours is
+      // on it, which is the whole of the claim that badge makes.
+      expect(describeScreen(row({ paint_state: 'clear' }), blk).label).toBe('Blackout');
+    });
+
+    it('a row that has not said what it is showing can never earn amber', () => {
+      // Rust reads the state and the age off ONE beat, so a `painting` row always
+      // carries a state. A row without one is a fixture — and a fixture must not
+      // be able to earn a colour a screen would not.
+      for (const bad of [undefined, null, 'ON AIR', '']) {
+        const d = describeScreen(row({ paint_state: bad }), ON_AIR);
+        expect(d.kind, `paint_state ${String(bad)}`).not.toBe('onair');
+        expect(d.note).toMatch(/has not said/);
+      }
+    });
+
+    it('a rehearsal still wins over everything, whatever the screen says', () => {
+      // Amethyst means rehearsal and nothing else. A disagreement inside a
+      // rehearsal is not a congregation-facing fault, and painting it as one
+      // would spend the operator's attention on a room nobody is watching.
+      for (const s of ['content', 'clear', 'black']) {
+        const d = describeScreen(row({ paint_state: s }), { rehearsing: true, live: true });
+        expect(d.label).toBe('Rehearsal');
+      }
+    });
+
+    it('the unconfirmed word is GREY, so it is a fact and not a false alarm', () => {
+      // It appears for a few seconds after every fire, while the screen's next
+      // beat is on its way. Rose there would be an alarm that cries on every
+      // correct fire, and an alarm like that gets ignored on the one that matters.
+      const d = describeScreen(row({ paint_state: 'clear' }), ON_AIR);
+      expect(SCREEN_BADGE[d.kind]).toBe('grey');
+    });
+
+    it('and an unconfirmed screen is not counted as live by the status bar', async () => {
+      // `screenTally` counts `onair` rows. It must not be possible to reach that
+      // count without the screen having said it is painting content.
+      const { screenTally } = await import('./statusbar.js');
+      const described = [
+        describeScreen(row({ id: 1, paint_state: 'content' }), ON_AIR),
+        describeScreen(row({ id: 2, paint_state: 'clear' }), ON_AIR),
+      ];
+      expect(screenTally(described)).toEqual({ live: 1, total: 2 });
+    });
   });
 
   it('claims nothing at all before the first poll', () => {
@@ -320,20 +425,104 @@ describe('the beat interval is one decision held in two languages', () => {
   });
 });
 
+describe('screenReporting — the heartbeat claim, and the two it must not collapse', () => {
+  it('a screen answering inside the window reports yes, with the evidence', () => {
+    const r = screenReporting(row());
+    expect(r.word).toBe('yes');
+    expect(r.note).toMatch(/screen: content/);
+  });
+
+  it('a screen that answered once and has gone quiet is NOT yes', () => {
+    // The whole point of the row. `online` stays true for a projector showing a
+    // dead renderer, so "is it attached" and "is it painting" are different
+    // questions and only the second can go false on its own.
+    const r = screenReporting(row({ painting: false, last_beat_ms: 30000 }));
+    expect(r.word).toBe('stopped');
+    expect(r.word).not.toBe('yes');
+    expect(r.note).toMatch(/last answered 30s ago/);
+  });
+
+  it('NEVER is not NO — they are different faults and want different repairs', () => {
+    // `never`: something IS attached and has not once said it is painting — a
+    // browser source on the wrong URL, a page that threw on load.
+    // `no`: nothing is attached to ask — the window was never opened.
+    // One reassuring word over both is rule 35 exactly.
+    expect(screenReporting(row({ painting: false, last_beat_ms: null })).word).toBe('never');
+    expect(screenReporting(row({ online: false, painting: false, last_beat_ms: null })).word).toBe(
+      'no',
+    );
+  });
+
+  it('claims nothing before the first poll, and nothing about a target Relay cannot drive', () => {
+    expect(screenReporting(null).word).toBe('—');
+    expect(screenReporting(row({ supported: false, online: false })).word).toBe('—');
+  });
+
+  it('every fault has a word, so the row can never render undefined', () => {
+    for (const st of [
+      null,
+      row(),
+      row({ supported: false }),
+      row({ online: false }),
+      row({ painting: false, last_beat_ms: null }),
+      row({ painting: false, last_beat_ms: 9000 }),
+    ]) {
+      expect(screenReporting(st).word).toBeTruthy();
+      expect(typeof screenReporting(st).note).toBe('string');
+    }
+  });
+});
+
+/**
+ * The same file with its prose removed.
+ *
+ * THIS HELPER IS A FINDING. The assertions below used to read the raw source, and
+ * when the Outputs tab was moved off `FAULT_WORD` and onto `describeScreen` they
+ * all still passed — because the replacement carries a COMMENT naming the defect
+ * it replaced, and `expect(outputs).toMatch(/FAULT_WORD\[/)` cannot tell a use
+ * from a description of one. A scanner that matches its own explanation is the
+ * "ipc.test.js was wrong twice" failure in miniature: it looks exhaustive while
+ * checking nothing. Precedent and prior art: `screenpreview.test.js`.
+ */
+const code = (src) =>
+  src
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^\s*\/\/.*$/gm, '');
+
 describe('both surfaces read the same fact', () => {
   it('Live and Outputs decide from the backend`s `painting`, not from global state', () => {
-    const live = read('src/lib/views/Live.svelte');
-    const outputs = read('src/lib/views/Channels.svelte');
+    const live = code(read('src/lib/views/Live.svelte'));
+    const outputs = code(read('src/lib/views/Channels.svelte'));
 
     // Live must go through the shared rule.
     expect(live).toMatch(/describeScreen\(/);
     // …and must no longer derive the output badge from what Relay believes it sent.
-    const pane = live.slice(live.indexOf('Output Status'), live.indexOf('ROW B'));
+    const pane = live.slice(live.indexOf('$: outs = channels.map'), live.indexOf('ROW B'));
     expect(pane).not.toMatch(/\{#if \$live && !\$rehearsing && !\$screenBlack\}/);
 
-    // Outputs must decide its word from the same helper.
-    expect(outputs).toMatch(/screenFault\(/);
-    expect(outputs).toMatch(/FAULT_WORD\[/);
+    // Outputs must decide its word from the same helper — the SAME one, not
+    // merely a helper from the same file. `FAULT_WORD[screenFault(st)]` is a
+    // second ladder: it is blind to a rehearsal and to a blackout, so the two
+    // surfaces could call one screen LIVE and Rehearsal in the same second.
+    expect(outputs).toMatch(/describeScreen\(/);
+    expect(outputs, 'the Outputs cards must not run a second health ladder').not.toMatch(
+      /FAULT_WORD\[/,
+    );
+  });
+
+  it('and the three inputs to that rule are NAMED in both, so neither pane can freeze', () => {
+    // Svelte tracks the identifiers in a reactive expression. A helper closing
+    // over `$channelHealth` is not tracked, and the pane would show its first
+    // reading for the rest of the service — which is the same class of defect as
+    // the badge that could not fail.
+    for (const f of ['src/lib/views/Live.svelte', 'src/lib/views/Channels.svelte']) {
+      const src = code(read(f));
+      const call = src.slice(src.indexOf('describeScreen('), src.indexOf('describeScreen(') + 320);
+      for (const name of ['$rehearsing', '$live', '$screenBlack', '$channelWaiting']) {
+        expect(call, `${f}: ${name} is not named at the describeScreen call`).toContain(name);
+      }
+    }
   });
 
   it('the output page reports on BOTH transports, not just the one that was easy', () => {

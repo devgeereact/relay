@@ -240,8 +240,13 @@ impl Unsafe {
 pub fn preflight(content: &OutputContent) -> Result<(), Unsafe> {
     // A cue that carries a countdown is showing the clock, and a countdown with no
     // text is the normal case rather than an empty screen.
-    let is_countdown =
-        content.countdown_to.is_some() || content.kind.as_deref() == Some("countdown");
+    // A HELD countdown counts too. `countdown_paused_ms` is checked alongside the
+    // instant rather than instead of it: a paused countdown carries both today, and
+    // a validator that could refuse a paused timer would blank a wall at the one
+    // moment the operator deliberately froze it.
+    let is_countdown = content.countdown_to.is_some()
+        || content.countdown_paused_ms.is_some()
+        || content.kind.as_deref() == Some("countdown");
     let has_text = content
         .text
         .as_deref()

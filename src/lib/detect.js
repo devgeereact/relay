@@ -27,7 +27,7 @@ export const heard = (d) => d?.method === 'direct';
  * What KIND of claim the machine is making — as an i18n KEY, not a sentence.
  *
  * This module stays pure and testable; it simply is not the place that decides which
- * language the operator reads. `Live.svelte` renders `$t(methodKey(d))`.
+ * language the operator reads. `DetectionInspector.svelte` renders `$t(methodKey(d))`.
  */
 export function methodKey(d) {
   if (d?.method === 'semantic') return 'live.paraphrase_a_guess';
@@ -41,6 +41,46 @@ export function methodKey(d) {
   // Numbers 3:16 in front of a congregation. See detection.rs.
   if (d?.method === 'uncertain_book') return 'live.book_name_uncertain';
   return 'live.heard_the_reference';
+}
+
+/**
+ * The SHORT form of `methodKey`, for the claim card's chip.
+ *
+ * Live rendered a hard-coded ternary — `heard(d) ? 'Heard' : 'Paraphrase'` — so
+ * all three non-direct methods wore the same word. `uncertain_book` is the method
+ * added after "please turn to hymn number three sixteen" put **Numbers 3:16** in
+ * front of a congregation, and CLAUDE.md rule 10 calls it the claim an operator
+ * most needs to look at; on the card they read, it was indistinguishable from a
+ * TF-IDF paraphrase. `methodKey` existed for exactly this and was imported into
+ * `Live.svelte` without ever being called.
+ *
+ * Short because it is a chip. The full sentence is `methodKey`, and the note
+ * beneath the chip is `methodNoteKey` — three registers, one source of truth for
+ * which method this is.
+ */
+export function methodBadgeKey(d) {
+  if (d?.method === 'semantic') return 'live.badge_paraphrase';
+  if (d?.method === 'ambiguous') return 'live.badge_ambiguous';
+  if (d?.method === 'uncertain_book') return 'live.badge_book_uncertain';
+  return 'live.badge_heard';
+}
+
+/**
+ * The sentence under an unheard claim, per method.
+ *
+ * "not a spoken reference" is TRUE of a paraphrase and FALSE of the other two —
+ * an ambiguous reference WAS spoken, and for `uncertain_book` the chapter and the
+ * verse were both heard and only the book was repaired. Live printed that one
+ * sentence for all three, so the card said the opposite of what had happened on
+ * the two methods where it mattered most.
+ *
+ * Returns null for a heard reference, which shows a confidence bar instead.
+ */
+export function methodNoteKey(d) {
+  if (d?.method === 'semantic') return 'live.not_a_spoken_reference';
+  if (d?.method === 'ambiguous') return 'live.note_ambiguous';
+  if (d?.method === 'uncertain_book') return 'live.note_book_uncertain';
+  return null;
 }
 
 /**

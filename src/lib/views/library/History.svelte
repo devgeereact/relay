@@ -266,7 +266,7 @@
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
           Export .md
         </button>
-        <button class="r-btn ghost sm lib-del" class:arm={delArm} on:click={doDelete}
+        <button class="r-btn danger sm lib-del" class:arm={delArm} on:click={doDelete}
           disabled={!$capture.available}
           title="Erase this service's transcript, detections and timeline. This cannot be undone.">
           {delArm ? 'Click again to erase' : 'Erase service'}
@@ -655,11 +655,11 @@
       <div class="lib-pager">
         <span class="r-mono">Showing {page * PER + 1}–{Math.min(services.length, page * PER + PER)} of {services.length}</span>
         <div class="pg">
-          <button class="pgbtn" disabled={page === 0} on:click={() => (page -= 1)} aria-label="Previous page">
+          <button class="r-iconbtn pgbtn" disabled={page === 0} on:click={() => (page -= 1)} aria-label="Previous page">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
           </button>
           <span class="pgnum r-mono">Page {page + 1} / {pageCount}</span>
-          <button class="pgbtn" disabled={page >= pageCount - 1} on:click={() => (page += 1)} aria-label="Next page">
+          <button class="r-iconbtn pgbtn" disabled={page >= pageCount - 1} on:click={() => (page += 1)} aria-label="Next page">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
           </button>
         </div>
@@ -675,11 +675,11 @@
   .lib-tl-list{ list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:2px; }
   .lib-tl-row{ display:flex; align-items:baseline; gap:10px; padding:5px 8px;
     border-radius:var(--v-r-sm); background:var(--v-surf2); font-size:var(--v-fs-b2); }
-  .lib-tl-at{ flex:0 0 52px; color:var(--v-faint); font-size:10px; }
-  .lib-tl-src{ flex:0 0 68px; color:var(--v-faint); font-size:9px; letter-spacing:.06em;
+  .lib-tl-at{ flex:0 0 52px; color:var(--v-faint); font-size:var(--v-fs-b3); }
+  .lib-tl-src{ flex:0 0 68px; color:var(--v-faint); font-size:var(--v-fs-fig); letter-spacing:.06em;
     text-transform:uppercase; }
   .lib-tl-what{ flex:1; min-width:0; color:var(--v-txt); }
-  .lib-tl-detail{ color:var(--v-dim); font-size:10px; overflow:hidden;
+  .lib-tl-detail{ color:var(--v-dim); font-size:var(--v-fs-b3); overflow:hidden;
     text-overflow:ellipsis; white-space:nowrap; max-width:40%; }
   .lib-tl-row.fault{ background:color-mix(in srgb, var(--v-rose) 8%, var(--v-surf2));
     border:1px solid color-mix(in srgb, var(--v-rose) 40%, transparent); }
@@ -693,7 +693,7 @@
   .lib-rep-cell{ background:var(--v-surf2); border:1px solid var(--v-line);
     border-radius:var(--v-r-sm); padding:9px 10px; display:flex; flex-direction:column; gap:2px; }
   .lib-rep-cell b{ font-size:var(--v-fs-h3); font-weight:600; color:var(--v-txt); }
-  .lib-rep-cell span{ font-size:9px; letter-spacing:.05em; color:var(--v-faint);
+  .lib-rep-cell span{ font-size:var(--v-fs-fig); letter-spacing:.05em; color:var(--v-faint);
     text-transform:uppercase; }
   .lib-rep-cell.bad{ border-color:color-mix(in srgb, var(--v-rose) 45%, transparent); }
   .lib-rep-cell.bad b{ color:var(--v-rose); }
@@ -704,6 +704,9 @@
     line-height:1.5; }
   /* The replay. A timeline row is a button now, so it has to keep looking like a
      row and gain a focus ring rather than a button's chrome. */
+  /* A LIST ROW, not a button — B2. One timeline entry, full width, expanding in
+     place when pressed. It carries `.fault` as a state; a button variant would
+     have to be a fifth red. */
   .lib-tl-row{ width:100%; text-align:left; border:1px solid transparent; cursor:pointer;
     font:inherit; }
   .lib-tl-row:hover{ background:var(--v-surf3); }
@@ -713,10 +716,10 @@
     border-left:2px solid var(--v-line2); border-radius:var(--v-r-sm); }
   .lib-rp-lines{ margin:4px 0 12px; padding-left:0; list-style:none;
     display:flex; flex-direction:column; gap:3px; font-size:var(--v-fs-b2); }
-  .lib-rp-lines span{ color:var(--v-faint); margin-right:6px; font-size:10px; }
+  .lib-rp-lines span{ color:var(--v-faint); margin-right:6px; font-size:var(--v-fs-b3); }
   .lib-rp-dl{ margin-bottom:10px; }
-  .lib-rp-lat{ font-size:10px; color:var(--v-dim); }
-  .lib-perf{ width:100%; border-collapse:collapse; font-size:10px; color:var(--v-dim); }
+  .lib-rp-lat{ font-size:var(--v-fs-b3); color:var(--v-dim); }
+  .lib-perf{ width:100%; border-collapse:collapse; font-size:var(--v-fs-b3); color:var(--v-dim); }
   .lib-perf th{ text-align:left; font-weight:500; color:var(--v-faint); padding:4px 6px;
     border-bottom:1px solid var(--v-line); }
   .lib-perf td{ padding:3px 6px; border-bottom:1px solid var(--v-line2); }
@@ -752,14 +755,14 @@
   .lib-head .c-verses, .lib-head .c-over{ text-align:center; }
   .c-open{ display:flex; justify-content:flex-end; }
 
-  .c-date{ color:var(--v-dim); font-size:12px; }
+  .c-date{ color:var(--v-dim); font-size:var(--v-fs-b1); }
   .c-date.is-latest{ color:var(--v-accent); }
-  .lib-svctitle{ font-weight:600; color:var(--v-txt); font-size:14px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .c-dur{ color:var(--v-dim); font-size:12px; }
-  .c-over{ color:var(--v-dim); font-size:12px; }
+  .lib-svctitle{ font-weight:600; color:var(--v-txt); font-size:var(--v-fs-h2); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .c-dur{ color:var(--v-dim); font-size:var(--v-fs-b1); }
+  .c-over{ color:var(--v-dim); font-size:var(--v-fs-b1); }
   .lib-pill{
-    display:inline-block; min-width:30px; text-align:center; padding:3px 9px; border-radius:99px;
-    background:var(--v-cyan-soft); border:1px solid rgba(34,211,238,.32); color:var(--v-cyan); font-size:11px;
+    display:inline-block; min-width:30px; text-align:center; padding:3px 9px; border-radius:var(--v-r-sm);
+    background:var(--v-cyan-soft); border:1px solid var(--v-cyan-line); color:var(--v-cyan); font-size:var(--v-fs-lbl);
   }
   .lib-openbtn svg{ transition:transform .15s; }
   .lib-row:hover .lib-openbtn{ color:var(--v-accent); border-color:var(--v-line2); }
@@ -770,44 +773,52 @@
   .lib-detail-head{ display:flex; align-items:baseline; gap:12px; min-width:0; flex:1; }
   .lib-detail-title{ font-family:var(--f-head); font-size:22px; font-weight:700; color:var(--v-txt); line-height:1.1;
     overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .lib-detail-date{ font-size:12px; color:var(--v-faint); flex-shrink:0; }
+  .lib-detail-date{ font-size:var(--v-fs-b1); color:var(--v-faint); flex-shrink:0; }
   .lib-detail-actions{ display:flex; align-items:center; gap:12px; flex-shrink:0; }
-  .lib-detail-count{ font-size:11px; color:var(--v-dim); }
+  .lib-detail-count{ font-size:var(--v-fs-lbl); color:var(--v-dim); }
 
-  .lib-exportmsg{ font-size:11px; color:var(--v-emerald); word-break:break-word; margin-top:-8px; }
+  .lib-exportmsg{ font-size:var(--v-fs-lbl); color:var(--v-emerald); word-break:break-word; margin-top:-8px; }
   /* Rose, not amber: nothing on this screen is on air, and amber is never spent
      on anything that is not. Armed reads as a warning, not as a live state. */
-  .lib-delmsg{ font-size:11px; color:var(--v-rose); word-break:break-word; margin-top:-8px; }
-  .lib-del{ color:var(--v-rose); }
-  .lib-del.arm{ background:var(--v-rose); color:var(--v-ink); }
+  .lib-delmsg{ font-size:var(--v-fs-lbl); color:var(--v-rose); word-break:break-word; margin-top:-8px; }
+  /* CONVERTED — B2. The fourth copy of the hand-rolled destructive button:
+     `.r-btn ghost sm` repainted rose. `.r-btn.danger` is that, with the edge
+     the ghost was still drawing from `--v-500`. The ARMED half below stays —
+     it is a filled state the variant does not describe, and its contrast was
+     fixed once already. */
+  /* `--v-ink` was never defined, so this resolved to `unset` — and `color` is
+     inherited, so the ARMED half of a two-step delete drew --v-txt (#e8eaee) on
+     the red fill: 2.82:1, a WCAG AA failure on the one word an operator has to
+     read before a record goes. --v-inverse is the palette's ink and is 5.41:1. */
+  .lib-del.arm{ background:var(--v-rose); color:var(--v-inverse); }
   /* `r-mono` is gone: it now carries a humanised sentence, and monospace is what
      made the old raw-error dumps read like a crash to a volunteer. */
-  .lib-detailerr{ font-size:12px; color:var(--v-rose); }
+  .lib-detailerr{ font-size:var(--v-fs-b1); color:var(--v-rose); }
 
   .lib-detail-grid{ display:grid; grid-template-columns:1fr 340px; gap:16px; align-items:start; }
   .lib-collabel{ margin-bottom:10px; }
   .lib-collabel-n{ color:var(--v-faint); letter-spacing:0; }
 
-  .lib-transcript{ padding:14px 16px; max-height:420px; overflow:auto; font-size:13px; line-height:1.6; }
+  .lib-transcript{ padding:14px 16px; max-height:420px; overflow:auto; font-size:var(--v-fs-pr); line-height:1.6; }
   .lib-collabel-row{ display:flex; align-items:baseline; gap:8px; }
   .lib-collabel-row .spring{ flex:1; }
-  .lib-hits{ font-size:10px; color:var(--v-faint); }
-  .lib-tsearch{ margin:8px 0 10px; height:34px; font-size:12.5px; }
+  .lib-hits{ font-size:var(--v-fs-b3); color:var(--v-faint); }
+  .lib-tsearch{ margin:8px 0 10px; height:34px; font-size:var(--v-fs-h3); }
   .lib-ttext :global(mark){ background:var(--v-accent-soft); color:var(--v-accent2);
-    border-radius:3px; padding:0 2px; }
+    border-radius:var(--v-r-sm); padding:0 2px; }
   .lib-detect-conf.muted{ color:var(--v-faint); }
 
   .lib-tline{ margin-bottom:12px; }
   .lib-tline:last-child{ margin-bottom:0; }
-  .lib-tmeta{ display:block; font-size:10px; color:var(--v-faint); margin-bottom:3px; }
+  .lib-tmeta{ display:block; font-size:var(--v-fs-b3); color:var(--v-faint); margin-bottom:3px; }
   .lib-ttext{ color:var(--v-dim); }
 
   .lib-detect-list{ display:flex; flex-direction:column; gap:9px; }
   .lib-detect{ padding:12px 14px; }
   .lib-detect-top{ display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:8px; }
-  .lib-detect-ref{ font-family:var(--f-head); font-weight:700; font-size:15px; color:var(--v-txt); }
+  .lib-detect-ref{ font-family:var(--f-head); font-weight:700; font-size:var(--v-fs-ttl); color:var(--v-txt); }
   .lib-detect-method{ text-transform:uppercase; }
-  .lib-detect-bottom{ display:flex; align-items:center; justify-content:space-between; font-size:10px; color:var(--v-faint); }
+  .lib-detect-bottom{ display:flex; align-items:center; justify-content:space-between; font-size:var(--v-fs-b3); color:var(--v-faint); }
   .lib-detect-conf{ color:var(--v-accent); }
   /* The evidence, quoted. Serif and italic like every other quotation of speech in
      this app, and quiet: it is context for the reference above it, not a headline. */
@@ -820,10 +831,12 @@
   .lib-pager{ display:flex; align-items:center; justify-content:space-between; gap:14px; padding:4px 6px; }
   .lib-pager .r-mono{ font-size:10.5px; color:var(--v-faint); }
   .pg{ display:flex; align-items:center; gap:8px; }
-  .pgnum{ font-size:11px; color:var(--v-dim); }
-  .pgbtn{ width:32px; height:32px; display:grid; place-items:center; border-radius:8px; cursor:pointer;
-    background:var(--v-surf2); border:1px solid var(--v-line); color:var(--v-dim); }
-  .pgbtn:hover:not(:disabled){ color:var(--v-accent); border-color:var(--v-line2); }
+  .pgnum{ font-size:var(--v-fs-lbl); color:var(--v-dim); }
+  /* CONVERTED — B2. Prev / next page were a 32px square with an 8px corner, in a
+     file that renders `.r-iconbtn lib-openbtn` (26px, `--v-r-sm`) forty lines
+     above them. Two icon-button shapes in one view, six pixels and a corner
+     apart, which is exactly the drift nobody can name while reading either rule
+     on its own. The shared instrument has no disabled state, so that stays. */
   .pgbtn:disabled{ opacity:.35; cursor:not-allowed; }
 
   /* ── Responsive ── */

@@ -138,39 +138,50 @@
   .ir-title{ font-family:var(--f-head); font-size:22px; font-weight:700; color:var(--v-txt); }
   .ir-sub{ font-size:10.5px; color:var(--v-faint); }
   .ir-spring{ flex:1; }
-  .ir-msg{ font-size:11px; color:var(--v-rose); }
+  .ir-msg{ font-size:var(--v-fs-lbl); color:var(--v-rose); }
 
   .ir-list{ display:flex; flex-direction:column; gap:10px; }
   .ir-song{ border:1px solid var(--v-line); border-radius:13px; background:var(--v-surf); overflow:hidden; transition:border-color .14s; }
   .ir-song:hover{ border-color:var(--v-line2); }
   .ir-song.skip{ opacity:.5; }
   .ir-songhead{ display:flex; align-items:center; gap:11px; padding:11px 14px; }
-  .ir-exp{ width:26px; height:26px; flex:0 0 auto; display:grid; place-items:center; border:0; background:none; color:var(--v-dim); cursor:pointer; border-radius:6px; }
+  /* A DISCLOSURE TRIANGLE, not a button — B2. It rotates rather than lights up,
+     and its whole state is which way the chevron points. */
+  .ir-exp{ width:26px; height:26px; flex:0 0 auto; display:grid; place-items:center; border:0; background:none; color:var(--v-dim); cursor:pointer; border-radius:var(--v-r-2xl); }
   .ir-exp:hover{ color:var(--v-accent); }
   .ir-titleinput{ flex:1; min-width:0; height:34px; padding:0 11px; border-radius:8px; background:var(--v-bg);
-    border:1px solid var(--v-line2); color:var(--v-txt); font-family:var(--f-head); font-weight:600; font-size:15px; outline:none; }
+    border:1px solid var(--v-line2); color:var(--v-txt); font-family:var(--f-head); font-weight:600; font-size:var(--v-fs-ttl); outline:none; }
   .ir-titleinput:focus{ border-color:var(--v-accent-line); }
-  .ir-slidecount{ font-size:10px; color:var(--v-faint); flex:0 0 auto; }
-  .ir-skip{ flex:0 0 auto; font-family:var(--f-mono); font-size:9px; font-weight:700; letter-spacing:.08em; text-transform:uppercase;
+  .ir-slidecount{ font-size:var(--v-fs-b3); color:var(--v-faint); flex:0 0 auto; }
+  /* A TOGGLE CHIP, not a button — B2. It STATES whether this song will be
+     imported ("Skip" / "Skipped") rather than doing something when pressed, and
+     it shares its row with a title input rather than with other buttons. */
+  .ir-skip{ flex:0 0 auto; font-family:var(--f-mono); font-size:var(--v-fs-fig); font-weight:700; letter-spacing:.08em; text-transform:uppercase;
     padding:5px 10px; border-radius:7px; border:1px solid var(--v-line2); background:var(--v-surf2); color:var(--v-dim); cursor:pointer; }
-  .ir-skip:hover{ color:var(--v-rose); border-color:rgba(239,68,68,.4); }
-  .ir-skip.on{ color:var(--v-rose); border-color:rgba(239,68,68,.4); background:var(--v-rose-soft); }
+  .ir-skip:hover{ color:var(--v-rose); border-color:var(--v-red-line); }
+  .ir-skip.on{ color:var(--v-rose); border-color:var(--v-red-line); background:var(--v-rose-soft); }
 
   .ir-slides{ display:grid; grid-template-columns:repeat(auto-fill, minmax(240px, 1fr)); gap:10px; padding:0 14px 14px; }
   .ir-slide{ border:1px solid var(--v-line); border-radius:10px; background:var(--v-surf2); padding:9px; }
   .ir-slidetop{ display:flex; align-items:center; gap:6px; margin-bottom:7px; }
-  .ir-tag{ width:52px; height:26px; padding:0 8px; border-radius:6px; background:var(--v-bg); border:1px solid var(--v-line2);
-    color:var(--v-accent); font-size:11px; font-weight:700; outline:none; }
-  .ir-idx{ font-size:9px; color:var(--v-faint); }
-  .ir-mini{ width:24px; height:24px; border-radius:6px; display:grid; place-items:center; cursor:pointer; font-size:11px;
+  .ir-tag{ width:52px; height:26px; padding:0 8px; border-radius:var(--v-r-2xl); background:var(--v-bg); border:1px solid var(--v-line2);
+    color:var(--v-accent); font-size:var(--v-fs-lbl); font-weight:700; outline:none; }
+  .ir-idx{ font-size:var(--v-fs-fig); color:var(--v-faint); }
+  /* A ROW AFFORDANCE, not a button — B2. Up · down · remove, 24px, inside a
+     slide card's own 26px top row beside a tag input. Kept deliberately. */
+  .ir-mini{ width:24px; height:24px; border-radius:var(--v-r-2xl); display:grid; place-items:center; cursor:pointer; font-size:var(--v-fs-lbl);
     background:var(--v-surf3); border:1px solid var(--v-line); color:var(--v-dim); }
   .ir-mini:hover:not(:disabled){ color:var(--v-accent); border-color:var(--v-line2); }
-  .ir-mini.danger:hover:not(:disabled){ color:var(--v-rose); border-color:rgba(239,68,68,.4); }
+  .ir-mini.danger:hover:not(:disabled){ color:var(--v-rose); border-color:var(--v-red-line); }
   .ir-mini:disabled{ opacity:.3; cursor:not-allowed; }
   .ir-lyrics{ width:100%; padding:9px 11px; border-radius:8px; background:var(--v-bg); border:1px solid var(--v-line2);
-    color:var(--v-txt); font-family:var(--f-serif); font-size:13px; line-height:1.4; resize:vertical; outline:none; }
+    color:var(--v-txt); font-family:var(--f-serif); font-size:var(--v-fs-pr); line-height:1.4; resize:vertical; outline:none; }
   .ir-lyrics:focus{ border-color:var(--v-accent-line); }
+  /* AN EMPTY GRID CELL, not a button — B2. It spans the slide grid's full width
+     as the last cell and is drawn as a DASHED outline: the standard "there is
+     room for one more here" shape. A filled button in that slot would read as
+     an action about the slides above it rather than as the next slide's place. */
   .ir-addslide{ grid-column:1 / -1; padding:11px; border:1.5px dashed var(--v-line2); border-radius:10px; background:transparent;
-    color:var(--v-faint); font-family:var(--f-mono); font-size:11px; letter-spacing:.06em; cursor:pointer; }
+    color:var(--v-faint); font-family:var(--f-mono); font-size:var(--v-fs-mono); letter-spacing:.06em; cursor:pointer; }
   .ir-addslide:hover{ color:var(--v-accent); border-color:var(--v-accent-line); }
 </style>

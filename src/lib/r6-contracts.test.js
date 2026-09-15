@@ -84,15 +84,33 @@ it('R6-3: every kiosk client has a DECISION about every kind the hub publishes',
       template: true,
       themes: true,
       stage_next: false, // monitor-only field; no congregation template renders it
+      // A WORD TO THE PREACHER is for the platform, not the room. This `false` is
+      // the guarantee in docs/REBRAND.md §5 — "it exists inside the stage renderer,
+      // so no congregation screen can show it" — held as a test rather than as a
+      // sentence about where the code happens to live.
+      stage_alert: false,
+      // The operator's transition override (DECISIONS §84). A congregation screen
+      // is the whole point of it — a picker that moved the console preview and left
+      // every OBS source cutting would be rule 35 on the one surface a congregation
+      // is looking at. Held here, not inferred from the absence of a call.
+      transition: true,
     },
     'src/Stage.svelte': {
       content: true,
       clear: true,
       black: true, // WAS false, and that was the finding — see the note above
       stage_next: true,
+      stage_alert: true, // the whole point of the message
       channel_template: false, // the stage page has one fixed look
       template: false,
       themes: false,
+      // DELIBERATELY NOT, and for the same reason the three above are not: the
+      // stage page has one fixed look and does not render through
+      // `TemplateRender`, so there is no slide for a transition to be of. It is
+      // also the screen a preacher reads from mid-sermon, and motion there is a
+      // distraction nobody asked for. A transition is about how a CONGREGATION
+      // screen changes (DECISIONS §84).
+      transition: false,
     },
   };
 
