@@ -43,3 +43,20 @@ describe('resolveOutputTemplate — the configured default', () => {
     expect(resolveOutputTemplate(null, null, false)).toBe(null);
   });
 });
+
+import { vi } from 'vitest';
+
+// CHANGING THE DEFAULT IS NEWS. `setDefaultTemplate` was a bare `set_setting`,
+// so the value changed in the database and no screen in the building was told.
+// The command it calls now is the one that also pushes.
+describe('setDefaultTemplate', () => {
+  it('goes through the command that broadcasts, not through set_setting', async () => {
+    const invoke = vi.fn().mockResolvedValue(null);
+    vi.doMock('@tauri-apps/api/core', () => ({ invoke: (...a) => invoke(...a) }));
+    const { setDefaultTemplate } = await import('./stores/capture.js');
+    await setDefaultTemplate(7);
+    const names = invoke.mock.calls.map((c) => c[0]);
+    expect(names).toContain('set_default_template');
+    expect(names).not.toContain('set_setting');
+  });
+});

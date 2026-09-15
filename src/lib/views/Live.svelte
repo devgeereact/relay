@@ -1356,10 +1356,12 @@
   // loadTemplates — flows straight into these panes instead of leaving them stale.
   $: mainChannel = channels.find((c) => c.render_target === 'native_window') ?? channels[0] ?? null;
   $: mainTpl =
-    (mainChannel && $templates.find((t) => t.id === mainChannel.template_id)) ||
-    $templates.find((t) => t.id === $defaultTemplateId) ||
-    $templates[0] ||
-    null;
+    resolveOutputTemplate(
+      (mainChannel && $templates.find((t) => t.id === mainChannel.template_id)) || null,
+      null,
+      false,
+      $templates.find((t) => t.id === $defaultTemplateId) || null,
+    ) || $templates[0] || null;
   $: previewTpl = mainTpl;
 
   // ── output status ────────────────────────────────────────────────────────
